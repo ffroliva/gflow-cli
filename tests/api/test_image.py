@@ -64,23 +64,26 @@ def _load_sample(name: str) -> dict[str, Any]:
 class TestImageAspect:
     def test_portrait(self) -> None:
         assert Aspect.from_cli("9:16") is Aspect.PORTRAIT
-        assert Aspect.PORTRAIT.wire_value == "IMAGE_ASPECT_RATIO_PORTRAIT"
+        assert Aspect.PORTRAIT.value == "IMAGE_ASPECT_RATIO_PORTRAIT"
 
     def test_landscape(self) -> None:
         assert Aspect.from_cli("16:9") is Aspect.LANDSCAPE
-        assert Aspect.LANDSCAPE.wire_value == "IMAGE_ASPECT_RATIO_LANDSCAPE"
+        assert Aspect.LANDSCAPE.value == "IMAGE_ASPECT_RATIO_LANDSCAPE"
 
     def test_square(self) -> None:
         assert Aspect.from_cli("1:1") is Aspect.SQUARE
-        assert Aspect.SQUARE.wire_value == "IMAGE_ASPECT_RATIO_SQUARE"
+        assert Aspect.SQUARE.value == "IMAGE_ASPECT_RATIO_SQUARE"
 
     def test_landscape_four_three(self) -> None:
         assert Aspect.from_cli("4:3") is Aspect.LANDSCAPE_FOUR_THREE
-        assert Aspect.LANDSCAPE_FOUR_THREE.wire_value == "IMAGE_ASPECT_RATIO_LANDSCAPE_FOUR_THREE"
+        assert Aspect.LANDSCAPE_FOUR_THREE.value == "IMAGE_ASPECT_RATIO_LANDSCAPE_FOUR_THREE"
 
     def test_portrait_three_four(self) -> None:
         assert Aspect.from_cli("3:4") is Aspect.PORTRAIT_THREE_FOUR
-        assert Aspect.PORTRAIT_THREE_FOUR.wire_value == "IMAGE_ASPECT_RATIO_PORTRAIT_THREE_FOUR"
+        assert Aspect.PORTRAIT_THREE_FOUR.value == "IMAGE_ASPECT_RATIO_PORTRAIT_THREE_FOUR"
+
+    def test_default_when_none(self) -> None:
+        assert Aspect.from_cli(None) is Aspect.PORTRAIT
 
     def test_garbage_raises(self) -> None:
         with pytest.raises(ValueError):
@@ -104,9 +107,9 @@ class TestImageModel:
         assert Model.from_cli(None) is Model.NARWHAL
 
     def test_wire_value(self) -> None:
-        assert Model.NARWHAL.wire_value == "NARWHAL"
-        assert Model.GEM_PIX_2.wire_value == "GEM_PIX_2"
-        assert Model.IMAGEN_3_5.wire_value == "IMAGEN_3_5"
+        assert Model.NARWHAL.value == "NARWHAL"
+        assert Model.GEM_PIX_2.value == "GEM_PIX_2"
+        assert Model.IMAGEN_3_5.value == "IMAGEN_3_5"
 
     def test_unknown_alias_raises(self) -> None:
         with pytest.raises(ValueError):
@@ -127,6 +130,25 @@ class TestImageRef:
     def test_whitespace_raises(self) -> None:
         with pytest.raises(ValueError):
             ImageRef("   ")
+
+    def test_whitespace_padded_raises(self) -> None:
+        # Padded values would emit garbage on the wire — reject explicitly.
+        with pytest.raises(ValueError):
+            ImageRef("  real-uuid  ")
+        with pytest.raises(ValueError):
+            ImageRef("real-uuid ")
+        with pytest.raises(ValueError):
+            ImageRef(" real-uuid")
+
+
+class TestGenerateImageRequest:
+    def test_empty_prompt_raises(self) -> None:
+        with pytest.raises(ValueError):
+            GenerateImageRequest(prompt="", aspect=Aspect.PORTRAIT, model=Model.NARWHAL)
+
+    def test_whitespace_only_prompt_raises(self) -> None:
+        with pytest.raises(ValueError):
+            GenerateImageRequest(prompt="   ", aspect=Aspect.PORTRAIT, model=Model.NARWHAL)
 
 
 class TestBuildBatchGenerateImagesBody:
