@@ -1,0 +1,44 @@
+{
+  "route_name": "01_upload_image",
+  "method": "POST",
+  "url": "https://aisandbox-pa.googleapis.com/v1/flow/uploadImage",
+  "request_headers": {
+    "authorization": "Bearer <REDACTED_BEARER>",
+    "content-type": "text/plain;charset=UTF-8"
+  },
+  "request_body": "{\"clientContext\":{\"projectId\":\"<UUID>\",\"tool\":\"PINHOLE\"},\"imageBytes\":\"/9j/4AAQSkZJRgABAQEBLAEsAAD/6xeJSlAAAQAAAAEAABd/anVtYgAAAB5qdW1kYzJwYQARABCAAACqADibcQNjMnBhAAAAF1lqdW1iAAAAR2p1bWRjMm1hABEAEIAAAKoAOJtxA3VybjpjMnBhOjFiOTZiOTgyLWZhMjktYzU2NS01MDkyLTRiM2NjNTQxODgzYQAAABMCanVtYgAAAChqdW1kYzJjcwARABCAAACqADibcQNjMnBhLnNpZ25hdHVyZQAAABLSY2JvctKEWQYrogEmGCGCWQM/MIIDOzCCAsCgAwIBAgIUAJ6vFWKBqUkCFltI/1ipbSSYHs4wCgYIKoZIzj0EAwMwUTELMAkGA1UEBhMCVVMxEzARBgNVBAoMCkdvb2dsZSB",
+  "response_status": 200,
+  "response_body_parsed": {
+    "media": {
+      "name": "<UUID>",
+      "projectId": "<UUID>",
+      "workflowId": "<UUID>",
+      "workflowStepId": "CAE",
+      "mediaMetadata": {
+        "createTime": "2026-05-08T22:54:24.386434Z",
+        "requestData": {
+          "clientPlatform": "CLIENT_PLATFORM_WEB"
+        },
+        "visibility": "PRIVATE"
+      },
+      "image": {
+        "userUploadedImage": {
+          "aspectRatio": "IMAGE_ASPECT_RATIO_UNSPECIFIED"
+        },
+        "dimensions": {
+          "width": 768,
+          "height": 1376
+        }
+      }
+    },
+    "workflow": {
+      "name": "<UUID>",
+      "metadata": {
+        "displayName": "s2c1.png",
+        "createTime": "2026-05-08T22:54:24.386434Z",
+        "primaryMediaId": "<UUID>"
+      },
+      "projectId": "<UUID>"
+    }
+  }
+}

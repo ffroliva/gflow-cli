@@ -1,0 +1,32 @@
+{
+  "route_name": "05_createProject",
+  "method": "POST",
+  "url": "https://labs.google/fx/api/trpc/project.createProject",
+  "request_headers": {
+    "content-type": "application/json"
+  },
+  "request_body": "<see request_body_parsed>",
+  "request_body_parsed": {
+    "json": {
+      "projectTitle": "May 08, 11:54 PM",
+      "toolName": "PINHOLE"
+    }
+  },
+  "response_status": 200,
+  "response_body_parsed": {
+    "result": {
+      "data": {
+        "json": {
+          "result": {
+            "projectId": "<UUID>",
+            "projectInfo": {
+              "projectTitle": "May 08, 11:54 PM"
+            }
+          },
+          "status": 200,
+          "statusText": "OK"
+        }
+      }
+    }
+  }
+}

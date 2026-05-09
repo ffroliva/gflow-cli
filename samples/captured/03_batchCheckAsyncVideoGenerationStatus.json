@@ -1,0 +1,72 @@
+{
+  "route_name": "03_batchCheckAsyncVideoGenerationStatus",
+  "method": "POST",
+  "url": "https://aisandbox-pa.googleapis.com/v1/video:batchCheckAsyncVideoGenerationStatus",
+  "request_headers": {
+    "authorization": "Bearer <REDACTED_BEARER>",
+    "content-type": "text/plain;charset=UTF-8"
+  },
+  "request_body": "<see request_body_parsed>",
+  "request_body_parsed": {
+    "media": [
+      {
+        "name": "<UUID>",
+        "projectId": "<UUID>"
+      }
+    ]
+  },
+  "response_status": 200,
+  "response_body_parsed": {
+    "media": [
+      {
+        "name": "<UUID>",
+        "projectId": "<UUID>",
+        "workflowId": "<UUID>",
+        "workflowStepId": "CAE",
+        "mediaMetadata": {
+          "createTime": "2026-05-08T22:55:22.781796Z",
+          "mediaTitle": "<root>\n  <context>\n  </context>\n  <instruction>\n    <prompt>test cinematic motion</prompt>\n  </instruction>\n</root>",
+          "requestData": {
+            "videoGenerationRequestData": {
+              "videoModelControlInput": {
+                "videoModelName": "veo_3_1_t2v_fast_portrait",
+                "videoGenerationMode": "VIDEO_GENERATION_MODE_TEXT_TO_VIDEO",
+                "videoAspectRatio": "VIDEO_ASPECT_RATIO_PORTRAIT"
+              }
+            },
+            "promptInputs": [
+              {
+                "structuredPrompt": {
+                  "parts": [
+                    {
+                      "text": "test cinematic motion"
+                    }
+                  ]
+                }
+              }
+            ],
+            "clientPlatform": "CLIENT_PLATFORM_WEB"
+          },
+          "mediaStatus": {
+            "mediaGenerationStatus": "MEDIA_GENERATION_STATUS_PENDING"
+          },
+          "visibility": "PRIVATE"
+        },
+        "video": {
+          "generatedVideo": {
+            "seed": 17066,
+            "prompt": "<root>\n  <context>\n  </context>\n  <instruction>\n    <prompt>test cinematic motion</prompt>\n  </instruction>\n</root>",
+            "model": "veo_3_1_t2v_fast_portrait",
+            "baseImageMediaGenerationId": "",
+            "isLooped": false,
+            "aspectRatio": "VIDEO_ASPECT_RATIO_PORTRAIT"
+          },
+          "dimensions": {},
+          "operation": {
+            "name": "<UUID>"
+          }
+        }
+      }
+    ]
+  }
+}

@@ -1,0 +1,118 @@
+{
+  "route_name": "02_batchAsyncGenerateVideoText",
+  "method": "POST",
+  "url": "https://aisandbox-pa.googleapis.com/v1/video:batchAsyncGenerateVideoText",
+  "request_headers": {
+    "authorization": "Bearer <REDACTED_BEARER>",
+    "content-type": "text/plain;charset=UTF-8"
+  },
+  "request_body": "<see request_body_parsed>",
+  "request_body_parsed": {
+    "mediaGenerationContext": {
+      "batchId": "<UUID>",
+      "audioFailurePreference": "BLOCK_SILENCED_VIDEOS"
+    },
+    "clientContext": {
+      "projectId": "<UUID>",
+      "tool": "PINHOLE",
+      "userPaygateTier": "PAYGATE_TIER_ONE",
+      "sessionId": ";1778280998293",
+      "recaptchaContext": {
+        "token": "0cAFcWeA6H_0ljNisfaOg1o916ebFFmK0wdBYdsxh32RYexRm_KTtiiiB9H8zYNcUwyOpzByk1_4jKgoRun9_V3tnFzSmO0cNPu9KItiu11QxuJly17iVS0lpjr1tV1gr9Xqk0MIG4EWAoz9pmPnWmlO-pOQPiW6wBye5daMfNi8XcP4yBMeew5YrcfCc93S2I30Mh7gQCSyaptQtiWkeYJgZAjOb5mqHx9S7RVI60aJZaWhhsl8O_gO9bHIHhOPdjDqIjOfJunxRIcGNU9J8mcdpJt4Lie4ieVAgN-Rm9sVbjUEPlo62QCYJuC3TYvBCTxiwESTwOxlz_zDrko9hi_nuQGaolMbUX13Z6aFSQAv3J9sDp_dstSJzCupsVcwpFUMRwFIAG42lT0d_vmZkEzUiCxNofJlTLVeoiVBG9-2r8PaMWMCpbERHLzEIaW9c9Yi5JzWIex03FqbGHt8KWSiZiZ8WWcB3fgNxHqz5DEI7T8pgXwBCS1ob7bcdllSEOnFD8ALEi-_M23xD27X9ipdSRo7PG6YN3cRSIsn4PmE9ZbZZ_8KTALe2973rFfv4sAZSdX6fDW7X1B6D058UuLvQzQf_48IYvuH_fxY3s1_EcG3Tf5TjMJIoryVHbo-fdjNg_ZPAKf71BgVv6xPLB3KJuJ4QtVUQfyQSZYqBzHDN9LEXtRdbBnJfQv_eO-5HnXzEPKBoQ7RZHMFEJ1zJxWvj25vtWKjDVUDlsWjspKhcxSLE-Gg98pzYyDJ1uBKP9a5K_aVz6UjRaTYA-qQCegxy1mfiv7VWGR8k6Ogqyp9YRhocrxdM8aP1MNQ5MQG4JaCZZQEi0ZmcrjcKPn5GaF5EeRqpCaQmvSP1jXn0JrbpUyhtpWLEd1w1fZ5QEY0nSkvQjsdoFWDf32jwY-y3vTK9i5RffiPqBbDjtCt8glcwEEBwPbL9CNI2XTrMEBdwC0NWEG2NdqOpED8kj39VS_OI2543jT2gurzzFae3HctW5mInWbmkpuCPXRPwXJV5VkvSrDAkmY8Li8rxAWGki03zURnMDoqJw1BQ4BLRAwB17Gg2WuYiSn0oAsLTikR5cau3UAhhJXeaI5-nEMiyBwHSnlHQr7g7gyJBbaLQL6rrt4Hm_or2ijEYOg42p_cIq9j--RpK-0-gVUG03cIStycH93j5IiOwNQe7ctWve8rgGQ7X-l-3ANTvVbeqGwEa9fkOcy3Eu3sjPciKlo6jwgYTWz_ASSDG0OdUVz4KjGhW8uo9p_2o9o6RtEj9pF1C9mfplYSbUTNbrzcfGSRMo9tbA193z1fNwa8ywIJDANP1PA8mw7IW2lthDuuXDwEBritYZXe0vg_oIA9AwDd6_HpwEZ2cB5ocQrm3neRJPcO39iAVo87B3Dd4D-hQonHVPYkjzk7wXn-vaDUcY17Bmr91eiOXBcrvTffPRV-_8F7G_2qNZ09BV6LeId_ugw0mcHC8k_Y8fBwGRKgApeUaeDGyo_J_1RlkTXKCV1Xp54PhuV7x2R-8hxZ9l5XPQHI43tt9P0U9avsxA_abr6S-YtjwrT3U3AoKkLYNrQ8VMsiaXVbNZMvPYN4O87tn6Eb_4UnLj6U9TrYRCuLSeQsddZnxmhwZw0vfByc-96Y5qGuL2BFGahYIBvT5tSR0NWXORjZbFCr4n4hQDuBs72svFGFJNDm825I60PTdv8qhjFeyBj7r40EcQLitU0563ZI6styc9polOv3RlTIW7J4_5iwf8LwlWrL1I2vn1bd1PvktFX3VOpBfaMZggYlfW49m5J4Hg1ZvhIlNTv5frq9_KgopRHT9HmBSPnnP6F9RIAXVk4nBtiyRENodthGNi4ckqSI3MIahZ2VVkQRjTn1KcsXlrq_3m4TLNu6aD4W54VS-_24rYHndM-znS2LvTY0L-vfxObsP-YCS3dtD_ub2iDWIsSu_U4Gg3BTh0KVrsRf-qLy3fM_3aY4NQUT6iIVEaFQsrfWjuU-PFUf0EBeEgOPCiw90HAfOpUU25JdSmzQxNyNwKXlkLTViv-zu9WHFMSbCtgg3w8TaDGQpGYrZpvNbIxvOAEZRxRf9vVVCmfumyu6ZToZSLblESvxG11WSGXtp-wv0l8SFohXfp0PLKwRLYWdEd6NtqJy2VqGyEhFtgUeTrJigYoc9uyljDREmYAh-u7tm9IRWstW5cZ9eODSxBN8QBkNDNsk1WP-7GPLiQfyj3fyBLyzEcqbxk_smFZy5_JlpcoSnkbEufct7GdWfEC90ddQRKVA",
+        "applicationType": "RECAPTCHA_APPLICATION_TYPE_WEB"
+      }
+    },
+    "requests": [
+      {
+        "aspectRatio": "VIDEO_ASPECT_RATIO_PORTRAIT",
+        "textInput": {
+          "structuredPrompt": {
+            "parts": [
+              {
+                "text": "test cinematic motion"
+              }
+            ]
+          }
+        },
+        "videoModelKey": "veo_3_1_t2v_fast_portrait",
+        "metadata": {},
+        "seed": 17066
+      }
+    ],
+    "useV2ModelConfig": true
+  },
+  "response_status": 200,
+  "response_body_parsed": {
+    "operations": [
+      {
+        "operation": {
+          "name": "<UUID>"
+        },
+        "sceneId": "",
+        "status": "MEDIA_GENERATION_STATUS_PENDING"
+      }
+    ],
+    "remainingCredits": 300,
+    "workflows": [
+      {
+        "name": "<UUID>",
+        "metadata": {
+          "displayName": "test cinematic motion",
+          "createTime": "2026-05-08T22:55:22.781796Z",
+          "primaryMediaId": "<UUID>",
+          "batchId": "<UUID>",
+          "updateTime": "2026-05-08T22:55:23.212825Z"
+        },
+        "projectId": "<UUID>"
+      }
+    ],
+    "media": [
+      {
+        "name": "<UUID>",
+        "projectId": "<UUID>",
+        "workflowId": "<UUID>",
+        "workflowStepId": "CAE",
+        "mediaMetadata": {
+          "createTime": "2026-05-08T22:55:22.781796Z",
+          "mediaTitle": "<root>\n  <context>\n  </context>\n  <instruction>\n    <prompt>test cinematic motion</prompt>\n  </instruction>\n</root>",
+          "requestData": {
+            "videoGenerationRequestData": {
+              "videoModelControlInput": {
+                "videoModelName": "veo_3_1_t2v_fast_portrait",
+                "videoGenerationMode": "VIDEO_GENERATION_MODE_TEXT_TO_VIDEO",
+                "videoAspectRatio": "VIDEO_ASPECT_RATIO_PORTRAIT"
+              }
+            },
+            "promptInputs": [
+              {
+                "structuredPrompt": {
+                  "parts": [
+                    {
+                      "text": "test cinematic motion"
+                    }
+                  ]
+                }
+              }
+            ],
+            "clientPlatform": "CLIENT_PLATFORM_WEB"
+          },
+          "mediaStatus": {
+            "mediaGenerationStatus": "MEDIA_GENERATION_STATUS_PENDING"
+          },
+          "visibility": "PRIVATE"
+        },
+        "video": {
+          "generatedVideo": {
+            "seed": 17066,
+            "prompt": "<root>\n  <context>\n  </context>\n  <instruction>\n    <prompt>test cinematic motion</prompt>\n  </instruction>\n</root>",
+            "model": "veo_3_1_t2v_fast_portrait",
+            "baseImageMediaGenerationId": "",
+            "isLooped": false,
+            "aspectRatio": "VIDEO_ASPECT_RATIO_PORTRAIT"
+          },
+          "dimensions": {}
+        }
+      }
+    ]
+  }
+}

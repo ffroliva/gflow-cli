@@ -1,0 +1,32 @@
+{
+  "route_name": "04_archive_workflow",
+  "method": "PATCH",
+  "url": "https://aisandbox-pa.googleapis.com/v1/flowWorkflows/<UUID>",
+  "request_headers": {
+    "authorization": "Bearer <REDACTED_BEARER>",
+    "content-type": "text/plain;charset=UTF-8"
+  },
+  "request_body": "<see request_body_parsed>",
+  "request_body_parsed": {
+    "workflow": {
+      "name": "<UUID>",
+      "projectId": "<UUID>",
+      "metadata": {
+        "archived": true
+      }
+    },
+    "updateMask": "metadata.archived"
+  },
+  "response_status": 200,
+  "response_body_parsed": {
+    "name": "<UUID>",
+    "metadata": {
+      "displayName": "s2c1.png",
+      "createTime": "2026-05-08T22:54:24.386434Z",
+      "archived": true,
+      "primaryMediaId": "<UUID>",
+      "updateTime": "2026-05-08T22:54:28.043715Z"
+    },
+    "projectId": "<UUID>"
+  }
+}
