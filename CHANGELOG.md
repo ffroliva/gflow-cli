@@ -8,6 +8,18 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 ## [Unreleased]
 
 ### Added
+- **`CLAUDE.md`** at repo root — project memory hub for AI coding agents
+  (Claude Code reads natively; Cursor/Codex/Gemini/Aider can read as
+  reference). Covers project purpose, on-session-start ritual, active phase
+  pointer, architecture skim, critical rules (no secrets, no AI co-authors,
+  pure domain layer, TDD discipline), coding conventions, quality gates,
+  where-to-look table, common tasks, things-not-to-do list.
+- **`.claude/`** directory — repo-local Claude Code surface for maintainers.
+  Distinct from the published end-user skill at `skills/flow-cli/`.
+  - `.claude/README.md` — what goes here, how to extend.
+  - `.claude/commands/release.md` — `/release` slash command that automates
+    version bump + CHANGELOG migration + tag + push, with quality gates and
+    "no AI co-author" reminders.
 - `flow_cli.profile_store` — profile inventory + default-profile persistence
   in `$FLOW_CLI_HOME/config.toml`. Five-step resolution chain (CLI flag > env >
   config > auto-select > raise) with named exceptions

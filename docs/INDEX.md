@@ -5,6 +5,7 @@ Welcome to the `flow-cli` documentation. This index is the routing layer: it tel
 | Doc | Purpose | Read when… |
 |---|---|---|
 | [README](../README.md) | Project overview, install, quick start | First time landing on the repo |
+| [CLAUDE.md](../CLAUDE.md) | Project memory hub for AI coding agents | First time an agent (Claude/Cursor/Codex/Gemini/Aider) opens the repo |
 | [PLAN.md](../PLAN.md) | Implementation plan (DDD / CQRS / phases / ADRs) | You want the architectural intent and roadmap |
 | [CHANGELOG](../CHANGELOG.md) | Version-by-version user-visible changes | Upgrading or auditing what shipped |
 | [KNOWN_ISSUES](../KNOWN_ISSUES.md) | Open / mitigated / resolved issues with workarounds | Before opening a bug report; when something feels off |

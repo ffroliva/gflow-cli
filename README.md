@@ -16,6 +16,7 @@
 > ⚠️ **Not affiliated with Google.** Reverse-engineered from public Flow web traffic. Endpoints can change at any time. See full [DISCLAIMER](DISCLAIMER.md) before use.
 
 📚 **Docs:** [INDEX](docs/INDEX.md) · [Architecture](docs/ARCHITECTURE.md) · [Authentication](docs/AUTHENTICATION.md) · [Configuration](docs/CONFIGURATION.md) · [Usage](docs/USAGE.md) · [Security](docs/SECURITY.md) · [Known issues](KNOWN_ISSUES.md) · [Plan](PLAN.md) · [Changelog](CHANGELOG.md)
+🤖 **For AI agents:** [CLAUDE.md](CLAUDE.md) · [`.claude/`](.claude/README.md)
 
 ---
 
