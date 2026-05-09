@@ -8,6 +8,27 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 ## [Unreleased]
 
 ### Added
+- `flow_cli.profile_store` — profile inventory + default-profile persistence
+  in `$FLOW_CLI_HOME/config.toml`. Five-step resolution chain (CLI flag > env >
+  config > auto-select > raise) with named exceptions
+  (`NoProfilesError`, `NoDefaultProfileError`).
+- New auth subcommands:
+  - bare `gflow auth` — shows profile inventory table; auto-launches `login`
+    when no profiles exist.
+  - `gflow auth list` — same table as bare command (no auto-login fallback).
+  - `gflow auth use <name>` — sets the default profile, persisted to
+    `config.toml`.
+  - `gflow auth logout [--profile NAME] [-y]` — deletes a profile's session.
+  - First successful `auth login` auto-sets the new profile as default so
+    single-account users never see "no default" friction.
+- `KNOWN_ISSUES.md` at repo root — open/mitigated/resolved issues with
+  workarounds. First entry: browser session expiry & re-login.
+- `docs/` tree (INDEX, AUTHENTICATION, CONFIGURATION, ARCHITECTURE, USAGE,
+  SECURITY) for deep-dive docs that don't belong in the README.
+- `.env.template` documenting every supported env var.
+- Tests: `tests/test_profile_store.py` covers list, set/clear/get default,
+  auto-select, full resolution chain precedence, and delete (incl. clearing
+  the default when the deleted profile was it).
 - Initial repo scaffold: pyproject (uv + hatchling), Click-based CLI, Rich console output.
 - `Provider` protocol for swappable backends (Flow now, official Veo 3.1 SDK later).
 - `FlowProvider` skeleton with stubbed methods + captured route documentation.

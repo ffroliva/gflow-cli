@@ -31,10 +31,18 @@ See [AUTHENTICATION § Session storage](AUTHENTICATION.md#session-storage) for t
 ### `FLOW_CLI_PROFILE`
 
 **What:** Default profile name used when `--profile` isn't passed on the CLI.
-**Default:** `default`
+**Default:** Resolved from `$FLOW_CLI_HOME/config.toml` → auto-pick if exactly one profile → otherwise prompts the user to choose.
 **CLI override:** `--profile <name>`
 
 A profile maps to a directory `$FLOW_CLI_HOME/profile_<name>/`. Profiles are isolated — different Google accounts, different cookies, different Flow project histories. See [AUTHENTICATION § Multiple accounts](AUTHENTICATION.md#multiple-accounts).
+
+#### Default-profile resolution chain
+
+1. CLI flag `--profile <name>` (highest)
+2. Env var `FLOW_CLI_PROFILE`
+3. `$FLOW_CLI_HOME/config.toml` → `default_profile = "..."` (set by `gflow auth use <name>`)
+4. Auto: if exactly one `profile_*` dir exists, it's the de-facto default
+5. Fail with the list of available profiles (lowest)
 
 ### `FLOW_CLI_OUTPUT_DIR`
 

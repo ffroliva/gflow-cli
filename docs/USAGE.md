@@ -10,9 +10,13 @@ CLI command reference. For environment variables see [CONFIGURATION](CONFIGURATI
 gflow [OPTIONS] COMMAND [ARGS]...
 
 Commands:
-  auth      Manage Google session for Flow.
+  auth      Manage Google sessions for Flow.
+    (no args)                   Show profile list, or trigger first login.
     login                       One-time interactive sign-in.
     status                      Show whether a profile has a saved session.
+    list                        List every profile and indicate the default.
+    use NAME                    Set NAME as the default profile.
+    logout                      Delete a profile's saved session (asks first).
 
   image     Image generation (Imagen via Flow).
     generate                    Generate one image from a prompt.

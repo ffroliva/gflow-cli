@@ -104,6 +104,27 @@ Even though profiles live outside the repo by default, three scenarios can put t
 
 ## Commands
 
+### `gflow auth` (no subcommand)
+
+The bare command does the right thing based on current state:
+
+- **No profiles yet** → automatically launches `gflow auth login` to create one.
+- **One or more profiles** → prints the inventory table (profile names, session present, last used, default marker, full path).
+
+```text
+$ gflow auth
+
+Profiles in /home/you/.local/share/flow-cli
+
+  Default  Name       Session   Last used (UTC)        Profile dir
+    ●      default    present   2026-05-09 14:42:18    /home/you/.local/share/flow-cli/profile_default
+           work       present   2026-05-08 09:11:02    /home/you/.local/share/flow-cli/profile_work
+           experiments missing  -                      /home/you/.local/share/flow-cli/profile_experiments
+
+Use `gflow auth use <name>` to set the default profile.
+Use `gflow auth login --profile <name>` to add or refresh a profile.
+```
+
 ### `gflow auth login`
 
 Opens a headed Chromium, navigates to `https://labs.google/fx/tools/flow?hl=en`, and waits for you to sign in. When you close the browser window (or after 10 minutes of inactivity), the captured session is persisted to disk.
@@ -130,16 +151,42 @@ Profile 'default' is configured.
 
 > Note: `cookies_present: True` only confirms the file exists — not that the session is still valid with Google. The first real API call (e.g. `gflow image generate`) is the actual probe. If Google has invalidated the session, the call will fail with `AuthExpiredError` and you'll be prompted to re-run `auth login`.
 
-### `gflow auth logout` *(planned, v0.2)*
+### `gflow auth list`
 
-Will delete a profile dir and any cached state. Until shipped, you can do this manually:
+Same output as bare `gflow auth` when profiles exist — useful when you want the table even from a script (no auto-login fallback).
+
+### `gflow auth use <name>`
+
+Sets `<name>` as the default profile. Persisted to `$FLOW_CLI_HOME/config.toml`.
 
 ```bash
-# Linux/macOS
-rm -rf ~/.local/share/flow-cli/profile_default
+gflow auth use work
+# Default profile set to work
+# Persisted in /home/you/.local/share/flow-cli/config.toml
+```
 
-# Windows (PowerShell)
-Remove-Item -Recurse -Force "$env:LOCALAPPDATA\flow-cli\profile_default"
+After this, every command without `--profile` and without `FLOW_CLI_PROFILE` resolves to `work`.
+
+### Default profile resolution
+
+Precedence (highest first):
+
+1. **CLI flag** `--profile <name>`
+2. **Env var** `FLOW_CLI_PROFILE`
+3. **`config.toml`** `default_profile` (set by `gflow auth use`)
+4. **Auto** — if exactly one profile exists, it becomes the de-facto default.
+5. **Fail** with a friendly error listing the available profiles, if 2+ profiles exist and none of (1)-(3) is set.
+
+The first successful `gflow auth login` automatically sets the new profile as default (so a single-account user never sees "no default" friction).
+
+### `gflow auth logout`
+
+Deletes the profile dir and clears it as default if it was set. Confirms before destroying state — pass `--yes` to skip the prompt for scripts.
+
+```bash
+gflow auth logout                     # uses resolved default
+gflow auth logout --profile work
+gflow auth logout --profile work --yes  # no confirmation
 ```
 
 ## Multiple accounts
