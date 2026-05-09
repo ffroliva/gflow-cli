@@ -19,10 +19,15 @@ These are the defaults — overridable per-process via env vars
 
 from __future__ import annotations
 
+import re
 from datetime import date
 from pathlib import Path
 
 from platformdirs import user_data_dir, user_downloads_dir
+
+# Allow only alphanumerics, hyphens, and underscores up to 128 chars.
+# Prevents path traversal via API-returned job IDs.
+_SAFE_ID_RE = re.compile(r"^[\w\-]{1,128}$")
 
 APP_NAME = "flow-cli"
 APP_AUTHOR = "ffroliva"  # Windows-only; Linux/macOS ignore this.
@@ -48,6 +53,12 @@ def config_file(home: Path) -> Path:
     return home / "config.toml"
 
 
+def _validate_job_id(job_id: str) -> str:
+    if not _SAFE_ID_RE.match(job_id):
+        raise ValueError(f"Unsafe job_id returned by API: {job_id!r}")
+    return job_id
+
+
 def video_output_path(
     output_dir: Path,
     *,
@@ -56,7 +67,7 @@ def video_output_path(
 ) -> Path:
     """`<output_dir>/videos/<YYYY-MM-DD>/<job_id>.mp4`."""
     on = on or date.today()
-    return output_dir / "videos" / on.isoformat() / f"{job_id}.mp4"
+    return output_dir / "videos" / on.isoformat() / f"{_validate_job_id(job_id)}.mp4"
 
 
 def image_output_path(
@@ -68,4 +79,4 @@ def image_output_path(
 ) -> Path:
     """`<output_dir>/images/<YYYY-MM-DD>/<job_id>_<index>.png`."""
     on = on or date.today()
-    return output_dir / "images" / on.isoformat() / f"{job_id}_{index}.png"
+    return output_dir / "images" / on.isoformat() / f"{_validate_job_id(job_id)}_{index}.png"

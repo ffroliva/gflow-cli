@@ -14,6 +14,7 @@ import asyncio
 import sys
 
 from rich.console import Console
+from rich.markup import escape
 
 from flow_cli import auth as auth_mod
 from flow_cli.api.client import FlowApiClient
@@ -41,28 +42,35 @@ async def main() -> int:
         )
         return 2
 
-    console.print(f"[bold]Smoke test:[/bold] T2V '{args.prompt}'")
+    console.print(f"[bold]Smoke test:[/bold] T2V '{escape(args.prompt)}'")
     async with FlowApiClient(profile_dir=pdir, headless=settings.headless) as client:
         project = await client.create_project(title="flow-cli smoke test")
-        console.print(f"  Project: [dim]{project.project_id}[/dim]")
+        console.print(f"  Project: [dim]{escape(project.project_id)}[/dim]")
         req = GenerateVideoRequest(prompt=args.prompt, aspect=Aspect.from_cli(args.aspect))
         op = await client.generate_video(project_id=project.project_id, req=req)
-        console.print(f"  Operation: [dim]{op.operation_name}[/dim]")
+        console.print(f"  Operation: [dim]{escape(op.operation_name)}[/dim]")
         console.print("  Polling (this takes ~90-180 s)...")
-        while True:
+        _MAX_POLLS = 72  # 6 minutes at 5 s interval
+        for _ in range(_MAX_POLLS):
             statuses = await client.get_video_status(project.project_id, [op.media_name])
+            if not statuses:
+                console.print("[red]Empty status response from API — aborting.[/red]")
+                return 1
             s = statuses[0]
             if s.is_terminal:
                 if not s.succeeded:
-                    console.print(f"[red]Failed:[/red] {s.status}")
+                    console.print(f"[red]Failed:[/red] {escape(s.status)}")
                     return 1
                 break
-            console.print(f"  {s.status}...")
+            console.print(f"  {escape(s.status)}...")
             await asyncio.sleep(5)
+        else:
+            console.print("[red]Timed out after 6 minutes — generation did not complete.[/red]")
+            return 1
         out = video_output_path(settings.output_dir, job_id=op.media_name)
         out.parent.mkdir(parents=True, exist_ok=True)
         await client.download(op.media_name, out)
-        console.print(f"[green]OK[/green] -> {out} ({out.stat().st_size:,} bytes)")
+        console.print(f"[green]OK[/green] -> {escape(str(out))} ({out.stat().st_size:,} bytes)")
         return 0
 
 
