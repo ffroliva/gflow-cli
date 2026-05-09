@@ -13,25 +13,25 @@ class TestDefaultRoots:
         h = paths.default_home()
         assert isinstance(h, Path)
         # The directory may not exist yet — we don't auto-create.
-        assert "flow-cli" in str(h).lower()
+        assert "gflow-cli" in str(h).lower()
 
     def test_default_output_dir_returns_path(self) -> None:
         out = paths.default_output_dir()
         assert isinstance(out, Path)
-        assert "flow-cli" in str(out).lower()
+        assert "gflow-cli" in str(out).lower()
 
 
 class TestProfileSubdir:
     def test_under_home(self) -> None:
-        home = Path("/x/flow-cli")
-        assert paths.profile_subdir(home, "default") == Path("/x/flow-cli/profile_default")
-        assert paths.profile_subdir(home, "work") == Path("/x/flow-cli/profile_work")
+        home = Path("/x/gflow-cli")
+        assert paths.profile_subdir(home, "default") == Path("/x/gflow-cli/profile_default")
+        assert paths.profile_subdir(home, "work") == Path("/x/gflow-cli/profile_work")
 
 
 class TestConfigFile:
     def test_under_home(self) -> None:
-        home = Path("/x/flow-cli")
-        assert paths.config_file(home) == Path("/x/flow-cli/config.toml")
+        home = Path("/x/gflow-cli")
+        assert paths.config_file(home) == Path("/x/gflow-cli/config.toml")
 
 
 class TestVideoOutputPath:

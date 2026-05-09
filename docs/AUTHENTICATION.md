@@ -1,6 +1,6 @@
 # Authentication
 
-`flow-cli` does **not** re-implement Google OAuth. Instead it piggybacks on Playwright's persistent context: you sign in once through a real Chromium window, and the resulting cookie jar is reused by every subsequent CLI invocation as the HTTP transport's session. The actual REST calls go to `aisandbox-pa.googleapis.com` over HTTPS — Playwright's `page.request` API auto-attaches the right cookies, so there is no token to extract or refresh manually.
+`gflow-cli` does **not** re-implement Google OAuth. Instead it piggybacks on Playwright's persistent context: you sign in once through a real Chromium window, and the resulting cookie jar is reused by every subsequent CLI invocation as the HTTP transport's session. The actual REST calls go to `aisandbox-pa.googleapis.com` over HTTPS — Playwright's `page.request` API auto-attaches the right cookies, so there is no token to extract or refresh manually.
 
 This page documents the full lifecycle: capture, storage, reuse, refresh, multi-account, revocation.
 
@@ -51,13 +51,13 @@ This page documents the full lifecycle: capture, storage, reuse, refresh, multi-
 
 ### Default location (well-known per OS)
 
-The session is **always stored outside the project tree** in a stable, user-local directory. `flow-cli` resolves the path via [`platformdirs`](https://github.com/platformdirs/platformdirs) — same conventions used by `pip`, `poetry`, `uv`, `httpx`, etc.
+The session is **always stored outside the project tree** in a stable, user-local directory. `gflow-cli` resolves the path via [`platformdirs`](https://github.com/platformdirs/platformdirs) — same conventions used by `pip`, `poetry`, `uv`, `httpx`, etc.
 
 | OS | Default profile dir |
 |---|---|
-| Windows | `%LOCALAPPDATA%\flow-cli\profile_<name>\`  (e.g. `C:\Users\<you>\AppData\Local\flow-cli\profile_default\`) |
-| macOS | `~/Library/Application Support/flow-cli/profile_<name>/` |
-| Linux (XDG) | `$XDG_DATA_HOME/flow-cli/profile_<name>/` (typically `~/.local/share/flow-cli/profile_<name>/`) |
+| Windows | `%LOCALAPPDATA%\gflow-cli\profile_<name>\`  (e.g. `C:\Users\<you>\AppData\Local\gflow-cli\profile_default\`) |
+| macOS | `~/Library/Application Support/gflow-cli/profile_<name>/` |
+| Linux (XDG) | `$XDG_DATA_HOME/gflow-cli/profile_<name>/` (typically `~/.local/share/gflow-cli/profile_<name>/`) |
 
 > ⚠️ **The session is NOT stored in the OS temp dir** (`/tmp`, `%TEMP%`). OS temp dirs get periodically reaped (boot-time cleanups, `tmpwatch`, `cleanmgr`), which would force you to re-login every reboot. We use the persistent user-data-dir instead — same place a regular Chromium profile lives.
 
@@ -67,17 +67,17 @@ Set `FLOW_CLI_HOME` to put profiles anywhere you want:
 
 ```bash
 # Linux/macOS
-export FLOW_CLI_HOME=/secure-volume/flow-cli
+export FLOW_CLI_HOME=/secure-volume/gflow-cli
 
 # Windows (PowerShell)
-$env:FLOW_CLI_HOME = "D:\flow-cli"
+$env:FLOW_CLI_HOME = "D:\gflow-cli"
 ```
 
 Resulting profile dir becomes `$FLOW_CLI_HOME/profile_<name>/`.
 
 ### What's actually inside a profile dir
 
-A profile dir is a full Chromium user-data-dir. The interesting files for `flow-cli`:
+A profile dir is a full Chromium user-data-dir. The interesting files for `gflow-cli`:
 
 ```
 profile_default/
@@ -98,7 +98,7 @@ Even though profiles live outside the repo by default, three scenarios can put t
 
 1. A user sets `FLOW_CLI_HOME=.` from inside the repo (e.g. for a sandboxed dev session).
 2. A test fixture writes a temporary profile to `tests/fixtures/profile_*/`.
-3. Someone clones the repo into a path that already has a `flow-cli/` folder with a profile.
+3. Someone clones the repo into a path that already has a `gflow-cli/` folder with a profile.
 
 `.gitignore` covers all three by excluding `auth/`, `profile_*/`, `*.cookies.json`, `storage_state.json`, `secrets.json` at the repository root. Never disable these rules. If you accidentally `git add` a profile, see [SECURITY § "I committed a session by mistake"](SECURITY.md#i-committed-a-session-by-mistake).
 
@@ -114,12 +114,12 @@ The bare command does the right thing based on current state:
 ```text
 $ gflow auth
 
-Profiles in /home/you/.local/share/flow-cli
+Profiles in /home/you/.local/share/gflow-cli
 
   Default  Name       Session   Last used (UTC)        Profile dir
-    ●      default    present   2026-05-09 14:42:18    /home/you/.local/share/flow-cli/profile_default
-           work       present   2026-05-08 09:11:02    /home/you/.local/share/flow-cli/profile_work
-           experiments missing  -                      /home/you/.local/share/flow-cli/profile_experiments
+    ●      default    present   2026-05-09 14:42:18    /home/you/.local/share/gflow-cli/profile_default
+           work       present   2026-05-08 09:11:02    /home/you/.local/share/gflow-cli/profile_work
+           experiments missing  -                      /home/you/.local/share/gflow-cli/profile_experiments
 
 Use `gflow auth use <name>` to set the default profile.
 Use `gflow auth login --profile <name>` to add or refresh a profile.
@@ -143,10 +143,10 @@ Reports whether a profile exists, where it lives, and whether the cookies file i
 ```bash
 $ gflow auth status
 Profile 'default' is configured.
-  profile: /home/you/.local/share/flow-cli/profile_default
+  profile: /home/you/.local/share/gflow-cli/profile_default
   exists: True
   cookies_present: True
-  cookies_path: /home/you/.local/share/flow-cli/profile_default/Default/Cookies
+  cookies_path: /home/you/.local/share/gflow-cli/profile_default/Default/Cookies
 ```
 
 > Note: `cookies_present: True` only confirms the file exists — not that the session is still valid with Google. The first real API call (e.g. `gflow image generate`) is the actual probe. If Google has invalidated the session, the call will fail with `AuthExpiredError` and you'll be prompted to re-run `auth login`.
@@ -162,7 +162,7 @@ Sets `<name>` as the default profile. Persisted to `$FLOW_CLI_HOME/config.toml`.
 ```bash
 gflow auth use work
 # Default profile set to work
-# Persisted in /home/you/.local/share/flow-cli/config.toml
+# Persisted in /home/you/.local/share/gflow-cli/config.toml
 ```
 
 After this, every command without `--profile` and without `FLOW_CLI_PROFILE` resolves to `work`.
@@ -215,7 +215,7 @@ Google sessions don't have a fixed lifetime; they expire when:
 - A long stretch of inactivity passes (typically months).
 - You explicitly sign out from another device's session manager.
 
-When this happens, the next REST call returns 401/403 and `flow-cli` raises `AuthExpiredError` with a remediation hint:
+When this happens, the next REST call returns 401/403 and `gflow-cli` raises `AuthExpiredError` with a remediation hint:
 
 ```text
 ERROR: Auth expired for profile 'default'.
@@ -230,7 +230,7 @@ Re-running `auth login` refreshes the cookies in place — no other state is los
 |---|---|
 | Session file leaked to a public repo | `.gitignore` excludes profile dirs at every layer; `gflow auth status` warns if it detects a profile inside a Git repo (planned v0.3). |
 | Multi-user shared machine | Profiles live under each user's home dir; OS file permissions (`0700` on POSIX, ACL on Windows) prevent cross-user reads by default. |
-| `flow-cli` itself becomes malicious | The package is open-source under MIT; pin a version (`uv tool install flow-cli==0.2.1`) and review release diffs before upgrading. |
+| `gflow-cli` itself becomes malicious | The package is open-source under MIT; pin a version (`uv tool install gflow-cli==0.2.1`) and review release diffs before upgrading. |
 | Stolen laptop | Anyone with disk access has your session. Use full-disk encryption (FileVault, BitLocker, LUKS). Consider a dedicated `--profile sandbox` for short-lived experiments. |
 | Sharing a profile between machines | Technically works (copy the profile dir), but Google may flag the device-fingerprint mismatch as suspicious. Re-login on the new machine instead. |
 
@@ -238,7 +238,7 @@ For deeper guidance see [SECURITY.md](SECURITY.md).
 
 ## FAQ
 
-**Q: Can I use `flow-cli` without a browser at all?**
+**Q: Can I use `gflow-cli` without a browser at all?**
 A: Not for `auth login` — that step needs Chromium so you can solve any 2FA/CAPTCHA challenge interactively. After login, all generation calls run headless. Plan to use a workstation for the one-time auth, then copy the profile dir to a headless server (re-running `auth login` there is recommended though, see threat model above).
 
 **Q: Does this support Google Workspace SSO?**

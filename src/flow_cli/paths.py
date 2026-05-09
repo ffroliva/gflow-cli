@@ -1,16 +1,16 @@
-"""XDG-aware default paths for flow-cli, via `platformdirs`.
+"""XDG-aware default paths for gflow-cli, via `platformdirs`.
 
 Single source of truth for where things live on disk:
 
-  * **profiles + config** under `<user_data_dir>/flow-cli/`
-    - Windows: `%LOCALAPPDATA%\\flow-cli\\`
-    - macOS:   `~/Library/Application Support/flow-cli/`
-    - Linux:   `$XDG_DATA_HOME/flow-cli/` (typically `~/.local/share/flow-cli/`)
+  * **profiles + config** under `<user_data_dir>/gflow-cli/`
+    - Windows: `%LOCALAPPDATA%\\gflow-cli\\`
+    - macOS:   `~/Library/Application Support/gflow-cli/`
+    - Linux:   `$XDG_DATA_HOME/gflow-cli/` (typically `~/.local/share/gflow-cli/`)
 
-  * **downloads** under `<user_downloads_dir>/flow-cli/`
-    - Windows: `%USERPROFILE%\\Downloads\\flow-cli\\`
-    - macOS:   `~/Downloads/flow-cli/`
-    - Linux:   `$XDG_DOWNLOAD_DIR/flow-cli/` (typically `~/Downloads/flow-cli/`)
+  * **downloads** under `<user_downloads_dir>/gflow-cli/`
+    - Windows: `%USERPROFILE%\\Downloads\\gflow-cli\\`
+    - macOS:   `~/Downloads/gflow-cli/`
+    - Linux:   `$XDG_DOWNLOAD_DIR/gflow-cli/` (typically `~/Downloads/gflow-cli/`)
 
 These are the defaults — overridable per-process via env vars
 `FLOW_CLI_HOME` and `FLOW_CLI_OUTPUT_DIR`. Resolution lives in
@@ -29,7 +29,7 @@ from platformdirs import user_data_dir, user_downloads_dir
 # Prevents path traversal via API-returned job IDs.
 _SAFE_ID_RE = re.compile(r"^[\w\-]{1,128}$")
 
-APP_NAME = "flow-cli"
+APP_NAME = "gflow-cli"
 APP_AUTHOR = "ffroliva"  # Windows-only; Linux/macOS ignore this.
 
 

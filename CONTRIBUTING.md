@@ -1,4 +1,4 @@
-# Contributing to flow-cli
+# Contributing to gflow-cli
 
 Thanks for considering a contribution! Pre-1.0 the repo is private and managed by [@ffroliva](https://github.com/ffroliva), but the workflow described here is what'll be opened up to the community at the v0.2 alpha milestone.
 
@@ -6,14 +6,14 @@ Thanks for considering a contribution! Pre-1.0 the repo is private and managed b
 
 ```bash
 git clone git@github.com:ffroliva/gflow-cli.git
-cd flow-cli
+cd gflow-cli
 uv sync --extra dev
 uv run playwright install chromium
 ```
 
 ## Test-driven development (mandatory)
 
-`flow-cli` is built test-first. Every change must include tests, and CI rejects PRs that lower coverage.
+`gflow-cli` is built test-first. Every change must include tests, and CI rejects PRs that lower coverage.
 
 The cycle:
 

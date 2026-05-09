@@ -255,7 +255,7 @@ Every Implementer dispatch uses this template (the Coordinator fills `<…>`):
 You are the Implementer for task <N> of the Video MVP.
 
 CONTEXT:
-- Repo: C:/development/github/flow-cli
+- Repo: C:/development/github/gflow-cli
 - Plan: docs/superpowers/plans/2026-05-09-video-mvp.md
 - Read CLAUDE.md before any code change.
 - Project rules (CRITICAL invariants):

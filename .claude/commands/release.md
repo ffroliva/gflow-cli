@@ -1,10 +1,10 @@
 ---
-description: Cut a new flow-cli release — bump version, update CHANGELOG, tag, push.
+description: Cut a new gflow-cli release — bump version, update CHANGELOG, tag, push.
 ---
 
-# `/release` — Cut a new flow-cli release
+# `/release` — Cut a new gflow-cli release
 
-You are about to release a new version of `flow-cli`. Follow this sequence verbatim — every step matters.
+You are about to release a new version of `gflow-cli`. Follow this sequence verbatim — every step matters.
 
 ## Inputs
 

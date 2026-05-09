@@ -3,10 +3,10 @@
 > **Unofficial, reverse-engineered Python CLI for Google Flow.**
 > Drive [Google Flow](https://labs.google/fx/tools/flow) Veo image-to-video generations from your terminal — **without the browser**.
 
-[![CI](https://github.com/ffroliva/ggflow-cli/actions/workflows/ci.yml/badge.svg)](https://github.com/ffroliva/ggflow-cli/actions/workflows/ci.yml)
-[![Release](https://github.com/ffroliva/ggflow-cli/actions/workflows/release.yml/badge.svg)](https://github.com/ffroliva/ggflow-cli/actions/workflows/release.yml)
-[![PyPI version](https://img.shields.io/pypi/v/ggflow-cli.svg)](https://pypi.org/project/ggflow-cli/)
-[![Python versions](https://img.shields.io/pypi/pyversions/ggflow-cli.svg)](https://pypi.org/project/ggflow-cli/)
+[![CI](https://github.com/ffroliva/gflow-cli/actions/workflows/ci.yml/badge.svg)](https://github.com/ffroliva/gflow-cli/actions/workflows/ci.yml)
+[![Release](https://github.com/ffroliva/gflow-cli/actions/workflows/release.yml/badge.svg)](https://github.com/ffroliva/gflow-cli/actions/workflows/release.yml)
+[![PyPI version](https://img.shields.io/pypi/v/gflow-cli.svg)](https://pypi.org/project/gflow-cli/)
+[![Python versions](https://img.shields.io/pypi/pyversions/gflow-cli.svg)](https://pypi.org/project/gflow-cli/)
 [![License: MIT](https://img.shields.io/badge/License-MIT-blue.svg)](LICENSE)
 [![Status: alpha](https://img.shields.io/badge/status-alpha-orange.svg)](#project-status)
 [![Code style: ruff](https://img.shields.io/badge/code%20style-ruff-000000.svg)](https://github.com/astral-sh/ruff)
@@ -107,7 +107,7 @@ This installs `gflow` (and `flow` if no conflict) on your `PATH` system-wide, is
 ### From source (current — pre-release)
 
 ```bash
-git clone git@github.com:ffroliva/ggflow-cli.git
+git clone git@github.com:ffroliva/gflow-cli.git
 cd gflow-cli
 uv sync                          # creates .venv, installs runtime + dev deps
 uv run playwright install chromium   # one-time browser download (~150 MB)
@@ -338,14 +338,14 @@ Note that the **Google service** this tool talks to has its own terms (Google La
 
 ## Stats
 
-[![GitHub stars](https://img.shields.io/github/stars/ffroliva/ggflow-cli?style=social)](https://github.com/ffroliva/ggflow-cli/stargazers)
-[![GitHub forks](https://img.shields.io/github/forks/ffroliva/ggflow-cli?style=social)](https://github.com/ffroliva/ggflow-cli/network/members)
-[![GitHub watchers](https://img.shields.io/github/watchers/ffroliva/ggflow-cli?style=social)](https://github.com/ffroliva/ggflow-cli/watchers)
-[![GitHub issues](https://img.shields.io/github/issues/ffroliva/ggflow-cli)](https://github.com/ffroliva/ggflow-cli/issues)
-[![GitHub pull requests](https://img.shields.io/github/issues-pr/ffroliva/ggflow-cli)](https://github.com/ffroliva/ggflow-cli/pulls)
-[![GitHub last commit](https://img.shields.io/github/last-commit/ffroliva/ggflow-cli)](https://github.com/ffroliva/ggflow-cli/commits/main)
-[![GitHub repo size](https://img.shields.io/github/repo-size/ffroliva/ggflow-cli)](https://github.com/ffroliva/ggflow-cli)
-[![PyPI downloads](https://img.shields.io/pypi/dm/ggflow-cli.svg)](https://pypi.org/project/ggflow-cli/)
-[![PyPI total downloads](https://img.shields.io/pypi/dt/ggflow-cli.svg)](https://pypi.org/project/ggflow-cli/)
+[![GitHub stars](https://img.shields.io/github/stars/ffroliva/gflow-cli?style=social)](https://github.com/ffroliva/gflow-cli/stargazers)
+[![GitHub forks](https://img.shields.io/github/forks/ffroliva/gflow-cli?style=social)](https://github.com/ffroliva/gflow-cli/network/members)
+[![GitHub watchers](https://img.shields.io/github/watchers/ffroliva/gflow-cli?style=social)](https://github.com/ffroliva/gflow-cli/watchers)
+[![GitHub issues](https://img.shields.io/github/issues/ffroliva/gflow-cli)](https://github.com/ffroliva/gflow-cli/issues)
+[![GitHub pull requests](https://img.shields.io/github/issues-pr/ffroliva/gflow-cli)](https://github.com/ffroliva/gflow-cli/pulls)
+[![GitHub last commit](https://img.shields.io/github/last-commit/ffroliva/gflow-cli)](https://github.com/ffroliva/gflow-cli/commits/main)
+[![GitHub repo size](https://img.shields.io/github/repo-size/ffroliva/gflow-cli)](https://github.com/ffroliva/gflow-cli)
+[![PyPI downloads](https://img.shields.io/pypi/dm/gflow-cli.svg)](https://pypi.org/project/gflow-cli/)
+[![PyPI total downloads](https://img.shields.io/pypi/dt/gflow-cli.svg)](https://pypi.org/project/gflow-cli/)
 
 If `gflow-cli` saves you time, please ⭐ the repo — it's the cheapest way to support the project.

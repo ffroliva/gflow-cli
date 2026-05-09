@@ -41,4 +41,4 @@ class TestApiError:
 class TestDefaultProjectTitle:
     def test_starts_with_flow_cli_prefix(self) -> None:
         title = _default_project_title()
-        assert title.startswith("flow-cli ")
+        assert title.startswith("gflow-cli ")

@@ -408,7 +408,7 @@ class FlowApiClient:
 
 
 def _default_project_title() -> str:
-    return datetime.now().strftime("flow-cli %b %d, %I:%M %p")
+    return datetime.now().strftime("gflow-cli %b %d, %I:%M %p")
 
 
 def _new_batch_id() -> str:

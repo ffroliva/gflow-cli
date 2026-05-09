@@ -1,19 +1,19 @@
 # Skills
 
-This directory ships an installable Skill that lets agents (Claude Code, Cursor, Codex, Gemini CLI, Aider, etc.) discover and invoke `flow-cli` correctly.
+This directory ships an installable Skill that lets agents (Claude Code, Cursor, Codex, Gemini CLI, Aider, etc.) discover and invoke `gflow-cli` correctly.
 
-## flow-cli skill
+## gflow-cli skill
 
-[`flow-cli/SKILL.md`](flow-cli/SKILL.md) — describes when to invoke `gflow`, prerequisites, the command surface, recipes, and common errors. Plain Markdown with frontmatter, so it works as both a Claude Code skill and a generic agent reference doc.
+[`gflow-cli/SKILL.md`](gflow-cli/SKILL.md) — describes when to invoke `gflow`, prerequisites, the command surface, recipes, and common errors. Plain Markdown with frontmatter, so it works as both a Claude Code skill and a generic agent reference doc.
 
 ### Install for Claude Code
 
 ```bash
 git clone git@github.com:ffroliva/gflow-cli.git
-ln -s "$(pwd)/flow-cli/skills/flow-cli" ~/.claude/skills/flow-cli
+ln -s "$(pwd)/gflow-cli/skills/gflow-cli" ~/.claude/skills/gflow-cli
 
 # Verify Claude Code picks it up:
-ls ~/.claude/skills/flow-cli/SKILL.md
+ls ~/.claude/skills/gflow-cli/SKILL.md
 ```
 
 ### Use with other agents

@@ -1,6 +1,6 @@
 # Configuration
 
-`flow-cli` is configured via three layers, with a strict precedence order:
+`gflow-cli` is configured via three layers, with a strict precedence order:
 
 ```text
 CLI flag (highest)  >  environment variable  >  .env file  >  built-in default (lowest)
@@ -16,14 +16,14 @@ Each variable in `.env.template` documented here:
 
 **What:** Root directory for Playwright persistent contexts (signed-in Google sessions).
 **Default:** Per-OS user-data-dir via [`platformdirs`](https://github.com/platformdirs/platformdirs):
-- Windows: `%LOCALAPPDATA%\flow-cli` (e.g. `C:\Users\<you>\AppData\Local\flow-cli`)
-- macOS: `~/Library/Application Support/flow-cli`
-- Linux (XDG): `$XDG_DATA_HOME/flow-cli` (typically `~/.local/share/flow-cli`)
+- Windows: `%LOCALAPPDATA%\gflow-cli` (e.g. `C:\Users\<you>\AppData\Local\gflow-cli`)
+- macOS: `~/Library/Application Support/gflow-cli`
+- Linux (XDG): `$XDG_DATA_HOME/gflow-cli` (typically `~/.local/share/gflow-cli`)
 
 **Override examples:**
 ```bash
-export FLOW_CLI_HOME=/secure-volume/flow-cli                       # POSIX
-$env:FLOW_CLI_HOME = "D:\flow-cli"                                # PowerShell
+export FLOW_CLI_HOME=/secure-volume/gflow-cli                       # POSIX
+$env:FLOW_CLI_HOME = "D:\gflow-cli"                                # PowerShell
 ```
 
 See [AUTHENTICATION § Session storage](AUTHENTICATION.md#session-storage) for the full layout.
@@ -47,10 +47,10 @@ A profile maps to a directory `$FLOW_CLI_HOME/profile_<name>/`. Profiles are iso
 ### `FLOW_CLI_OUTPUT_DIR`
 
 **What:** Root directory where downloaded assets land. Subfolders are created per kind/date.
-**Default:** Per-OS Downloads dir + `/flow-cli`:
-- Windows: `%USERPROFILE%\Downloads\flow-cli`
-- macOS: `~/Downloads/flow-cli`
-- Linux (XDG): `$XDG_DOWNLOAD_DIR/flow-cli` (falls back to `~/Downloads/flow-cli`)
+**Default:** Per-OS Downloads dir + `/gflow-cli`:
+- Windows: `%USERPROFILE%\Downloads\gflow-cli`
+- macOS: `~/Downloads/gflow-cli`
+- Linux (XDG): `$XDG_DOWNLOAD_DIR/gflow-cli` (falls back to `~/Downloads/gflow-cli`)
 
 **CLI override:** `--output <path>` per-call.
 
@@ -122,7 +122,7 @@ A file path always wins over a directory; passing `./out/foo.png` to a multi-ima
 
 ## .env loading
 
-`flow-cli` looks for `.env` files in this order:
+`gflow-cli` looks for `.env` files in this order:
 
 1. **Current working directory** (`$CWD/.env`) — highest precedence among `.env` sources.
 2. **Profile root** (`$FLOW_CLI_HOME/.env`) — handy for global per-machine defaults.
