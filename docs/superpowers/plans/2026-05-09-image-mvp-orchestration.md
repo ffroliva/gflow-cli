@@ -185,7 +185,118 @@ Phase 2 chose multi-agent orchestration over flat sub-agent dispatch because it 
 
 ---
 
-## Self-review checklist (completed by author)
+## 11. Concrete execution timeline
+
+The Coordinator dispatches agents in this exact sequence. Each row is one tool invocation. Reviewer rows marked `║ parallel ║` are dispatched in a SINGLE message with multiple `Agent` tool calls (per `superpowers:dispatching-parallel-agents`).
+
+Legend: `Impl` = `gsd-executor`, `TestAud` = `gsd-nyquist-auditor`, `PyRev` = `everything-claude-code:python-reviewer`, `CodeRev` = `everything-claude-code:code-reviewer`, `SecRev` = `everything-claude-code:security-reviewer`, `Verifier` = `gsd-verifier`. `—` in Sec column = Stage E skipped per § 3 matrix.
+
+| Step | Stage | Agent(s) | Inputs | Coordinator gate (must hold before next step) |
+|---|---|---|---|---|
+| **T1.A** | A | Impl | Task 1 block + reminders (§ 5) | Commit landed; 4 gates green |
+| **T1.C** | C | TestAud | diff + Task 1 acceptance criteria | PASS or FAIL+gaps |
+| **T1.D** | D | ║ PyRev ‖ CodeRev ║ | diff + Task 1 block | 0 CRITICAL / 0 HIGH from each |
+| T1.E | E | — | — | (skipped — pure module) |
+| **T1.F** | F | Coordinator (no agent) | All findings | Decide: advance / re-loop / escalate |
+| **T2.A** | A | Impl | Task 2 block + reminders | Commit landed; 4 gates green |
+| **T2.C** | C | TestAud | diff + Task 2 acceptance criteria | PASS or FAIL+gaps |
+| **T2.D** | D | ║ PyRev ‖ CodeRev ║ | diff + Task 2 block | 0 CRITICAL / 0 HIGH |
+| T2.E | E | — | — | (skipped — pure DTO) |
+| **T2.F** | F | Coordinator | All findings | Decide |
+| **T3.A** | A | Impl | Task 3 block + reminders | Commit landed; 4 gates green |
+| **T3.C** | C | TestAud | diff + Task 3 acceptance criteria | PASS |
+| **T3.D** | D | ║ PyRev ‖ CodeRev ║ | diff + Task 3 block | 0 CRITICAL / 0 HIGH |
+| **T3.E** | E | SecRev | diff + Task 3 + `docs/SECURITY.md` | 0 CRITICAL / 0 HIGH |
+| **T3.F** | F | Coordinator | All findings | Decide |
+| **T4.A** | A | Impl | Task 4 block + reminders | Commit landed; 4 gates green |
+| **T4.C** | C | TestAud | diff + Task 4 acceptance criteria | PASS |
+| **T4.D** | D | ║ PyRev ‖ CodeRev ║ | diff + Task 4 block | 0 CRITICAL / 0 HIGH |
+| **T4.E** | E | SecRev | diff + Task 4 (auth + reCAPTCHA) | 0 CRITICAL / 0 HIGH |
+| **T4.F** | F | Coordinator | All findings | Decide |
+| **T5.A** | A | Impl | Task 5 block + reminders | Commit landed; 4 gates green |
+| **T5.C** | C | TestAud | diff + Task 5 acceptance criteria | PASS |
+| **T5.D** | D | ║ PyRev ‖ CodeRev ║ | diff + Task 5 block | 0 CRITICAL / 0 HIGH |
+| **T5.E** | E | SecRev | diff + Task 5 (concurrency + tokens) | 0 CRITICAL / 0 HIGH |
+| **T5.F** | F | Coordinator | All findings | Decide |
+| **T6.A** | A | Impl | Task 6 block + reminders | Commit landed; 4 gates green |
+| **T6.C** | C | TestAud | diff + Task 6 acceptance criteria | PASS |
+| **T6.D** | D | ║ PyRev ‖ CodeRev ║ | diff + Task 6 block | 0 CRITICAL / 0 HIGH |
+| **T6.E** | E | SecRev | diff + Task 6 (file write from external URL) | 0 CRITICAL / 0 HIGH |
+| **T6.F** | F | Coordinator | All findings | Decide |
+| **T7.A** | A | Impl | Task 7 block + reminders | Commit landed; 4 gates green |
+| **T7.C** | C | TestAud | diff + Task 7 acceptance criteria | PASS |
+| **T7.D** | D | ║ PyRev ‖ CodeRev ║ | diff + Task 7 block | 0 CRITICAL / 0 HIGH |
+| **T7.E** | E | SecRev | diff + Task 7 (user-supplied path → upload) | 0 CRITICAL / 0 HIGH |
+| **T7.F** | F | Coordinator | All findings | Decide |
+| **T8.A** | A | Impl | Task 8 block + reminders | Commit landed; 4 gates green |
+| **T8.C** | C | TestAud | diff + Task 8 acceptance criteria | PASS |
+| **T8.D** | D | ║ PyRev ‖ CodeRev ║ | diff + Task 8 block | 0 CRITICAL / 0 HIGH |
+| T8.E | E | — | — | (skipped — wires existing pieces, no new attack surface) |
+| **T8.F** | F | Coordinator | All findings | Decide |
+| **T9.A** | A | Impl | Task 9 block + reminders | Commit landed; 4 gates green |
+| **T9.C** | C | TestAud | diff + Task 9 acceptance criteria | PASS |
+| **T9.D** | D | ║ PyRev ‖ CodeRev ║ | diff + Task 9 block | 0 CRITICAL / 0 HIGH |
+| **T9.E** | E | SecRev | diff + Task 9 (UUID parsing of user input) | 0 CRITICAL / 0 HIGH |
+| **T9.F** | F | Coordinator | All findings | Decide |
+| **T10.A** | A | Impl | Task 10 block + reminders | Commit landed; 4 gates green |
+| T10.C | C | — | — | (skipped — smoke script, no contract claims) |
+| **T10.D** | D | ║ PyRev ‖ CodeRev ║ | diff + Task 10 block | 0 CRITICAL / 0 HIGH |
+| T10.E | E | — | — | (skipped) |
+| **T10.F** | F | Coordinator | All findings | Decide |
+| **T11.A** | A | Impl | Task 11 block + reminders | Commit landed; quality gates not strictly applicable for docs-only |
+| T11.C | C | — | — | (skipped — docs-only) |
+| **T11.D** | D | CodeRev | diff + Task 11 block (prose review) | 0 CRITICAL / 0 HIGH |
+| T11.E | E | — | — | (skipped) |
+| **T11.F** | F | Coordinator | All findings | Decide |
+| **T12.A** | A | Coordinator | Task 12 block (version bump + tag) | `pyproject.toml` updated, commit landed, tag created |
+| T12.C–E | — | — | — | (skipped — release task is Coordinator-only) |
+| **T12.F** | F | Coordinator | git log + tag list | Tag pushed; CI release workflow green |
+| **PHASE.G** | G | Verifier | DoD checklist from `image-mvp.md` § Definition of done | Verifier returns PASS |
+
+**Reporting cadence to user:** Coordinator surfaces a one-line update only after each `T*.F` (task complete) and on any escalation. No chatter mid-task.
+
+**Total agent invocations under the happy path:** ~52 (one Impl + one TestAud + two parallel reviewers + zero-or-one SecRev per task, minus the Coordinator-only tasks). Re-loops add invocations only when findings warrant.
+
+---
+
+## 12. Kickoff prompt (paste this to start)
+
+The user pastes the prompt below into a fresh session (or continuation) where the main session is empty / just-cleared. The prompt installs the Coordinator role and starts at T1.A. Subsequent dispatches are driven by the Coordinator without further user input.
+
+```text
+You are the Coordinator for Phase 3 of the gflow-cli project. Execute
+the plan at docs/superpowers/plans/2026-05-09-image-mvp.md following
+the workflow at docs/superpowers/plans/2026-05-09-image-mvp-orchestration.md.
+
+Read both plan files in full before any dispatch. Then begin at step
+T1.A: dispatch a gsd-executor Implementer with the full Task 1 block,
+the quality-gates reminder, the CLAUDE.md invariants, and the
+captured-sample paths — exactly per § 5 of the orchestration plan.
+
+Proceed through every step in § 11 in order. After each task's Stage F:
+  - Tick the ledger in MEMORY (add commit SHA + any deferred MEDIUM
+    findings) and surface ONE line to me: "Tn done: <subject> [SHA]".
+  - Then proceed to T(n+1).A without waiting for my approval.
+
+Surface to me ONLY when:
+  - A task completes (one line as above).
+  - An escalation per § 7 fires (wire-format 4xx, undecidable reviewer
+    disagreement, build resolver invoked, blocker).
+  - Stage G (phase verifier) returns PASS or FAIL after Task 12.
+
+Do NOT pause between tasks. Do NOT ask for confirmation between stages.
+Do NOT skip Stage E for the security-touched tasks (3, 4, 5, 6, 7, 9).
+Do NOT batch parallel reviewer dispatches into separate messages — they
+must go in one message with two Agent tool calls per
+superpowers:dispatching-parallel-agents.
+
+When all 12 tasks are done, run Stage G (gsd-verifier) and report PASS
+or FAIL. If PASS, ask me to invoke /release for the v0.3.0a1 tag push.
+
+Begin.
+```
+
+
 
 - [x] References Phase 2 orchestration for shared structure rather than duplicating 388 lines.
 - [x] Specifies the task → agent matrix with explicit security-touched flags.
