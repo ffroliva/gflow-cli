@@ -20,8 +20,10 @@ Key wire-format observations:
 
 from __future__ import annotations
 
-from dataclasses import dataclass, field
+from collections.abc import Mapping
+from dataclasses import dataclass
 from enum import StrEnum
+from types import MappingProxyType
 from typing import Any
 
 __all__ = [
@@ -54,10 +56,6 @@ class Aspect(StrEnum):
     # inferred by naming pattern; verify on first capture
     PORTRAIT_THREE_FOUR = "IMAGE_ASPECT_RATIO_PORTRAIT_THREE_FOUR"
 
-    @property
-    def wire_value(self) -> str:
-        return self.value
-
     @classmethod
     def from_cli(cls, cli: str | None) -> Aspect:
         """Map a friendly CLI string (e.g. `"9:16"`) to the enum.
@@ -67,18 +65,11 @@ class Aspect(StrEnum):
         """
         if cli is None:
             return cls.PORTRAIT
-        mapping = {
-            "9:16": cls.PORTRAIT,
-            "16:9": cls.LANDSCAPE,
-            "1:1": cls.SQUARE,
-            "4:3": cls.LANDSCAPE_FOUR_THREE,
-            "3:4": cls.PORTRAIT_THREE_FOUR,
-        }
-        if cli not in mapping:
+        if cli not in _ASPECT_FROM_CLI:
             raise ValueError(
-                f"Unsupported image aspect ratio {cli!r}; choose from {sorted(mapping)}"
+                f"Unsupported image aspect ratio {cli!r}; choose from {sorted(_ASPECT_FROM_CLI)}"
             )
-        return mapping[cli]
+        return _ASPECT_FROM_CLI[cli]
 
 
 class Model(StrEnum):
@@ -93,10 +84,6 @@ class Model(StrEnum):
     GEM_PIX_2 = "GEM_PIX_2"
     IMAGEN_3_5 = "IMAGEN_3_5"
 
-    @property
-    def wire_value(self) -> str:
-        return self.value
-
     @classmethod
     def from_cli(cls, cli: str | None) -> Model:
         """Map a friendly CLI alias to the wire enum.
@@ -107,32 +94,47 @@ class Model(StrEnum):
         if cli is None:
             return cls.NARWHAL
         key = cli.strip().lower()
-        aliases: dict[str, Model] = {
-            # NARWHAL — Nano Banana 2
-            "narwhal": cls.NARWHAL,
-            "nano2": cls.NARWHAL,
-            "nano-banana-2": cls.NARWHAL,
-            "nano_banana_2": cls.NARWHAL,
-            "nanobanana2": cls.NARWHAL,
-            # GEM_PIX_2 — Nano Pro
-            "gem_pix_2": cls.GEM_PIX_2,
-            "gem-pix-2": cls.GEM_PIX_2,
-            "nano-pro": cls.GEM_PIX_2,
-            "nano_pro": cls.GEM_PIX_2,
-            "nanopro": cls.GEM_PIX_2,
-            # IMAGEN_3_5 — Imagen 4 family alias
-            "imagen_3_5": cls.IMAGEN_3_5,
-            "imagen-3-5": cls.IMAGEN_3_5,
-            "image4": cls.IMAGEN_3_5,
-            "imagen4": cls.IMAGEN_3_5,
-        }
-        if key not in aliases:
+        if key not in _MODEL_FROM_CLI:
             raise ValueError(
                 f"Unknown image model {cli!r}; choose from "
                 f"{sorted({m.value for m in cls})} or aliases "
-                f"{sorted(aliases)}"
+                f"{sorted(_MODEL_FROM_CLI)}"
             )
-        return aliases[key]
+        return _MODEL_FROM_CLI[key]
+
+
+# Module-level immutable alias maps — built once, not per-call.
+_ASPECT_FROM_CLI: Mapping[str, Aspect] = MappingProxyType(
+    {
+        "9:16": Aspect.PORTRAIT,
+        "16:9": Aspect.LANDSCAPE,
+        "1:1": Aspect.SQUARE,
+        "4:3": Aspect.LANDSCAPE_FOUR_THREE,
+        "3:4": Aspect.PORTRAIT_THREE_FOUR,
+    }
+)
+
+_MODEL_FROM_CLI: Mapping[str, Model] = MappingProxyType(
+    {
+        # NARWHAL — Nano Banana 2
+        "narwhal": Model.NARWHAL,
+        "nano2": Model.NARWHAL,
+        "nano-banana-2": Model.NARWHAL,
+        "nano_banana_2": Model.NARWHAL,
+        "nanobanana2": Model.NARWHAL,
+        # GEM_PIX_2 — Nano Pro
+        "gem_pix_2": Model.GEM_PIX_2,
+        "gem-pix-2": Model.GEM_PIX_2,
+        "nano-pro": Model.GEM_PIX_2,
+        "nano_pro": Model.GEM_PIX_2,
+        "nanopro": Model.GEM_PIX_2,
+        # IMAGEN_3_5 — Imagen 4 family alias
+        "imagen_3_5": Model.IMAGEN_3_5,
+        "imagen-3-5": Model.IMAGEN_3_5,
+        "image4": Model.IMAGEN_3_5,
+        "imagen4": Model.IMAGEN_3_5,
+    }
+)
 
 
 @dataclass(frozen=True)
@@ -147,8 +149,15 @@ class ImageRef:
     name: str
 
     def __post_init__(self) -> None:
-        if not self.name or not self.name.strip():
-            raise ValueError("ImageRef.name must be a non-empty UUID string")
+        # Reject empty, whitespace-only, AND whitespace-padded UUIDs.
+        # Padded values would emit garbage on the wire; we don't auto-strip
+        # because frozen dataclasses can't mutate, and explicit reject is
+        # clearer than silently accepting malformed input.
+        if not self.name or self.name != self.name.strip():
+            raise ValueError(
+                "ImageRef.name must be a non-empty UUID string with no "
+                "leading or trailing whitespace"
+            )
 
     def to_wire(self) -> dict[str, str]:
         return {"imageInputType": _IMAGE_INPUT_TYPE_REFERENCE, "name": self.name}
@@ -165,7 +174,7 @@ class GenerateImageRequest:
     prompt: str
     aspect: Aspect = Aspect.PORTRAIT
     model: Model = Model.NARWHAL
-    refs: tuple[ImageRef, ...] = field(default_factory=tuple)
+    refs: tuple[ImageRef, ...] = ()
 
     def __post_init__(self) -> None:
         if not self.prompt or not self.prompt.strip():
@@ -212,8 +221,8 @@ def _build_batch_generate_images_body(
             recaptcha_token=recaptcha_token,
             session_id=session_id,
         ),
-        "imageModelName": req.model.wire_value,
-        "imageAspectRatio": req.aspect.wire_value,
+        "imageModelName": req.model.value,
+        "imageAspectRatio": req.aspect.value,
         "structuredPrompt": {"parts": [{"text": req.prompt}]},
         "seed": seed,
         # Always present — empty list for T2I, populated for I2I.
