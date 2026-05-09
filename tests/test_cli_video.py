@@ -114,10 +114,7 @@ class TestVideoBatch:
         out_dir = tmp_path / "out"
         manifest = tmp_path / "m.tsv"
         manifest.write_text(
-            "# header\n"
-            "\tfirst t2v\t\t\t\n"
-            f"{png}\tsecond i2v\t\t\t\n"
-            "\tthird t2v\t\t16:9\t\n",
+            f"# header\n\tfirst t2v\t\t\t\n{png}\tsecond i2v\t\t\t\n\tthird t2v\t\t16:9\t\n",
             encoding="utf-8",
         )
         client = _make_mock_client()
@@ -131,11 +128,17 @@ class TestVideoBatch:
             patch("flow_cli.cli_video._resolve_profile", return_value="default"),
         ):
             from flow_cli.cli import main
+
             result = runner.invoke(
                 main,
                 [
-                    "video", "batch", str(manifest),
-                    "--out-dir", str(out_dir), "--poll-interval", "0",
+                    "video",
+                    "batch",
+                    str(manifest),
+                    "--out-dir",
+                    str(out_dir),
+                    "--poll-interval",
+                    "0",
                 ],
                 catch_exceptions=False,
             )
