@@ -12,6 +12,7 @@ from rich.table import Table
 
 from flow_cli import __version__, profile_store
 from flow_cli import auth as auth_mod
+from flow_cli.cli_image import image as _image_group
 from flow_cli.cli_video import video as _video_group
 
 console = Console()
@@ -178,6 +179,7 @@ def _resolve_or_prompt(default_for_first_run: str) -> str:
 
 
 main.add_command(_video_group)
+main.add_command(_image_group)
 
 
 if __name__ == "__main__":
