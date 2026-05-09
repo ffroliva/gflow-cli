@@ -22,6 +22,9 @@ from __future__ import annotations
 import base64
 import json
 import logging
+import secrets
+import time
+import uuid
 from datetime import datetime
 from pathlib import Path
 from typing import Any
@@ -29,7 +32,9 @@ from typing import Any
 from playwright.async_api import BrowserContext, Page, Playwright, async_playwright
 
 from flow_cli.api import routes
-from flow_cli.api.dto import AssetInfo, ProjectInfo, VideoStatus
+from flow_cli.api.dto import AssetInfo, ProjectInfo, VideoOperation, VideoStatus
+from flow_cli.api.recaptcha import TokenMinter
+from flow_cli.api.video import GenerateVideoRequest, build_generate_body
 
 logger = logging.getLogger(__name__)
 
@@ -204,6 +209,38 @@ class FlowApiClient:
         }
         await self._patch_json(url, body)
 
+    async def generate_video(
+        self,
+        *,
+        project_id: str,
+        req: GenerateVideoRequest,
+        seed: int | None = None,
+        recaptcha_action: str = "videoGeneration",
+        batch_id: str | None = None,
+    ) -> VideoOperation:
+        """Enqueue a Veo video generation. Returns the operation reference.
+
+        Mints a fresh reCAPTCHA token via the live page session before
+        submitting. Caller polls completion via `get_video_status`.
+        """
+        minter = TokenMinter(self.page)
+        token = await minter.mint(recaptcha_action)
+        body = build_generate_body(
+            req,
+            project_id=project_id,
+            recaptcha_token=token,
+            batch_id=batch_id or _new_batch_id(),
+            seed=seed if seed is not None else secrets.randbelow(2**31),
+            session_id=f";{int(time.time() * 1000)}",
+        )
+        data = await self._post_json(routes.GENERATE_VIDEO, body)
+        return VideoOperation.from_generate_response(data)
+
 
 def _default_project_title() -> str:
     return datetime.now().strftime("flow-cli %b %d, %I:%M %p")
+
+
+def _new_batch_id() -> str:
+    """Generate a fresh batch ID for the mediaGenerationContext."""
+    return str(uuid.uuid4())

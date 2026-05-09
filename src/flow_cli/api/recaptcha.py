@@ -19,7 +19,7 @@ class _PageLike(Protocol):
     Defined as a Protocol so tests can pass mocks without importing Playwright.
     """
 
-    async def evaluate(self, expression: str, *args: Any) -> Any: ...
+    async def evaluate(self, expression: str, arg: Any = None) -> Any: ...
 
 
 class RecaptchaError(RuntimeError):

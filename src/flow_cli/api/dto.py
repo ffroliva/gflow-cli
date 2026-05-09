@@ -104,3 +104,34 @@ class VideoStatus:
             )
         except (KeyError, TypeError) as e:
             raise ValueError(f"unexpected check-status item shape: {e}") from e
+
+
+@dataclass(frozen=True)
+class VideoOperation:
+    """Reference returned when a generation request is enqueued."""
+
+    media_name: str  # asset UUID — pass to get_video_status() to poll
+    project_id: str
+    operation_name: str
+    workflow_id: str
+
+    @classmethod
+    def from_generate_response(cls, data: dict[str, Any]) -> VideoOperation:
+        """Parse `POST /v1/video:batchAsyncGenerateVideoText` JSON.
+
+        Wire shape (one operation):
+            {operations: [{operation: {name}, ...}],
+             media: [{name, projectId, workflowId, ...}],
+             workflows: [{name, projectId, ...}]}
+        """
+        try:
+            op = data["operations"][0]["operation"]["name"]
+            media = data["media"][0]
+            return cls(
+                media_name=media["name"],
+                project_id=media["projectId"],
+                operation_name=op,
+                workflow_id=media["workflowId"],
+            )
+        except (KeyError, IndexError, TypeError) as e:
+            raise ValueError(f"unexpected generateVideo response shape: {e}") from e
