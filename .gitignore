@@ -29,12 +29,15 @@ htmlcov/
 *.swp
 .DS_Store
 
-# Project-specific
-auth/                  # captured Google session profiles (NEVER commit)
-profile_*/
-*.cookies.json
-storage_state.json
-secrets.json
+# Project-specific — secrets / session storage (NEVER commit)
+auth/                  # any project-local auth dir
+profile_*/             # Chromium persistent contexts (any name)
+*.cookies.json         # exported cookie jars
+storage_state.json     # Playwright storage_state output
+secrets.json           # generic secrets file
+.env                   # local env overrides (the .env.template IS committed)
+.env.local
+.env.*.local
 
 # Generated outputs
 out/
