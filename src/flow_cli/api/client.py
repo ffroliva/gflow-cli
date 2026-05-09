@@ -19,6 +19,7 @@ Usage:
 
 from __future__ import annotations
 
+import asyncio
 import base64
 import json
 import logging
@@ -237,6 +238,40 @@ class FlowApiClient:
         data = await self._post_json(routes.GENERATE_VIDEO, body)
         return VideoOperation.from_generate_response(data)
 
+    async def _post_generate_image(
+        self,
+        *,
+        project_id: str,
+        req: GenerateImageRequest,
+        recaptcha_token: str,
+        batch_id: str,
+        seed: int,
+    ) -> GeneratedImage:
+        """Body-build + POST + parse for a single image generation.
+
+        All inputs are pre-resolved (token already minted, batch_id and seed
+        already chosen). This is the shared path used by both ``generate_image``
+        (single-shot) and ``generate_images_batch`` (parallel fan-out).
+        """
+        body = _build_batch_generate_images_body(
+            req,
+            project_id=project_id,
+            recaptcha_token=recaptcha_token,
+            batch_id=batch_id,
+            seed=seed,
+            session_id=f";{int(time.time() * 1000)}",
+        )
+        url = routes.batch_generate_images_url(project_id)
+        data = await self._post_json(url, body)
+        images = GeneratedImage.from_response_dict(data)
+        if not images:
+            # Server returned 200 OK with an empty media[] — typically a
+            # silent content-policy rejection or quota exhaustion. Surface
+            # this through the regular error taxonomy instead of leaking
+            # an IndexError to callers.
+            raise FlowApiError(200, str(data)[:200], route=url)
+        return images[0]
+
     async def generate_image(
         self,
         *,
@@ -251,32 +286,85 @@ class FlowApiClient:
         Mints a fresh reCAPTCHA token (action ``imageGeneration`` by default —
         chosen to mirror the ``videoGeneration`` action used for Veo) and POSTs
         a one-request batch to ``flowMedia:batchGenerateImages``. Multi-image
-        fan-out is the caller's responsibility (see ``generate_images_batch``
-        in a later task) — this method always returns the FIRST media item.
+        fan-out is the caller's responsibility (see ``generate_images_batch``) —
+        this method always returns the FIRST media item.
 
         Idempotency: calling twice with the same ``seed`` and ``batch_id``
         yields identical bodies modulo the per-call reCAPTCHA token.
         """
         minter = TokenMinter(self.page)
         token = await minter.mint(recaptcha_action)
-        body = _build_batch_generate_images_body(
-            req,
+        return await self._post_generate_image(
             project_id=project_id,
+            req=req,
             recaptcha_token=token,
             batch_id=batch_id or _new_batch_id(),
             seed=seed if seed is not None else secrets.randbelow(2**31),
-            session_id=f";{int(time.time() * 1000)}",
         )
-        url = routes.batch_generate_images_url(project_id)
-        data = await self._post_json(url, body)
-        images = GeneratedImage.from_response_dict(data)
-        if not images:
-            # Server returned 200 OK with an empty media[] — typically a
-            # silent content-policy rejection or quota exhaustion. Surface
-            # this through the regular error taxonomy instead of leaking
-            # an IndexError to callers.
-            raise FlowApiError(200, str(data)[:200], route=url)
-        return images[0]
+
+    async def generate_images_batch(
+        self,
+        *,
+        project_id: str,
+        req: GenerateImageRequest,
+        count: int = 1,
+        seeds: list[int] | None = None,
+        recaptcha_action: str = "imageGeneration",
+    ) -> list[GeneratedImage]:
+        """Fan out N parallel image generations sharing one ``batchId``.
+
+        Mirrors how the Flow web UI implements the 1×–4× quantity selector:
+        N parallel POSTs to ``flowMedia:batchGenerateImages``, each with its
+        own freshly minted reCAPTCHA token and its own seed, but all sharing
+        the same ``mediaGenerationContext.batchId`` so Flow groups them as
+        one workflow.
+
+        Args:
+            project_id: Flow project ID.
+            req: Shared request (prompt, aspect, reference image, ...).
+            count: How many images to generate. Must be 1..4 (Flow UI cap).
+            seeds: Optional explicit seeds. Defaults to ``count`` random
+                31-bit ints. If provided, ``len(seeds)`` must equal ``count``.
+
+        Returns:
+            ``list[GeneratedImage]`` in the same order as ``seeds`` (or the
+            order of internally generated seeds if ``seeds`` is None).
+
+        Raises:
+            ValueError: if ``count`` is outside ``[1, 4]`` or ``seeds``
+                length disagrees with ``count``.
+            FlowApiError: if any of the parallel calls fail. The first
+                failure cancels siblings (``return_exceptions=False``).
+        """
+        if not 1 <= count <= 4:
+            raise ValueError(f"count must be between 1 and 4, got {count}")
+        if seeds is None:
+            seeds = [secrets.randbelow(2**31) for _ in range(count)]
+        elif len(seeds) != count:
+            raise ValueError(f"len(seeds)={len(seeds)} does not match count={count}")
+
+        shared_batch_id = _new_batch_id()
+        minter = TokenMinter(self.page)
+        # Mint one token per request — single-use.
+        tokens = [await minter.mint(recaptcha_action) for _ in range(count)]
+
+        # asyncio.gather preserves input order in its result list, so the
+        # caller sees results in the same order as `seeds` even though the
+        # network calls may complete out of order. return_exceptions=False
+        # ensures the first failure cancels the rest.
+        return await asyncio.gather(
+            *(
+                self._post_generate_image(
+                    project_id=project_id,
+                    req=req,
+                    recaptcha_token=tok,
+                    batch_id=shared_batch_id,
+                    seed=s,
+                )
+                for tok, s in zip(tokens, seeds, strict=True)
+            ),
+            return_exceptions=False,
+        )
 
 
 def _default_project_title() -> str:

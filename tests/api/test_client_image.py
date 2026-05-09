@@ -203,3 +203,147 @@ class TestGenerateImage:
             return d
 
         assert _strip_tokens(b0) == _strip_tokens(b1)
+
+
+def _fake_response_with_seed(seed: int, media_id: str = "media-uuid-x") -> dict:
+    """Build a fake response distinct per call so we can verify ordering."""
+    return {
+        "media": [
+            {
+                "name": media_id,
+                "workflowId": f"wf-{seed}",
+                "image": {
+                    "generatedImage": {
+                        "seed": seed,
+                        "prompt": "a warrior",
+                        "modelNameType": "NARWHAL",
+                        "aspectRatio": "IMAGE_ASPECT_RATIO_PORTRAIT",
+                        "fifeUrl": f"https://flow-content.google/image/{seed}",
+                        "workflowId": f"wf-{seed}",
+                    },
+                    "dimensions": {"width": 768, "height": 1376},
+                },
+            }
+        ],
+        "workflows": [{"name": f"wf-{seed}", "projectId": "proj-1"}],
+    }
+
+
+class TestGenerateImagesBatch:
+    async def test_batch_fan_out_uses_shared_batch_id(self, client: FlowApiClient) -> None:
+        """All N parallel POSTs must share one batchId."""
+        captured_bodies: list[dict] = []
+
+        async def fake_post_json(url, body, **kwargs):
+            captured_bodies.append(body)
+            seed = body["requests"][0]["seed"]
+            return _fake_response_with_seed(seed)
+
+        with (
+            patch.object(client, "_post_json", side_effect=fake_post_json),
+            patch("flow_cli.api.client.TokenMinter") as minter_cls,
+        ):
+            minter_cls.return_value.mint = AsyncMock(return_value="TOK")
+            await client.generate_images_batch(project_id="proj-1", req=_make_req(), count=3)
+
+        assert len(captured_bodies) == 3
+        batch_ids = {b["mediaGenerationContext"]["batchId"] for b in captured_bodies}
+        assert len(batch_ids) == 1, f"expected one shared batchId, got {batch_ids}"
+
+    async def test_batch_fan_out_uses_distinct_seeds(self, client: FlowApiClient) -> None:
+        """When seeds=None, the N bodies have N different seeds."""
+        captured_bodies: list[dict] = []
+
+        async def fake_post_json(url, body, **kwargs):
+            captured_bodies.append(body)
+            seed = body["requests"][0]["seed"]
+            return _fake_response_with_seed(seed)
+
+        with (
+            patch.object(client, "_post_json", side_effect=fake_post_json),
+            patch("flow_cli.api.client.TokenMinter") as minter_cls,
+        ):
+            minter_cls.return_value.mint = AsyncMock(return_value="TOK")
+            await client.generate_images_batch(project_id="proj-1", req=_make_req(), count=3)
+
+        seeds = {b["requests"][0]["seed"] for b in captured_bodies}
+        assert len(seeds) == 3, f"expected 3 distinct seeds, got {seeds}"
+
+    async def test_batch_fan_out_calls_token_minter_n_times(self, client: FlowApiClient) -> None:
+        """Single-use reCAPTCHA tokens — mint() called once per request."""
+
+        async def fake_post_json(url, body, **kwargs):
+            seed = body["requests"][0]["seed"]
+            return _fake_response_with_seed(seed)
+
+        with (
+            patch.object(client, "_post_json", side_effect=fake_post_json),
+            patch("flow_cli.api.client.TokenMinter") as minter_cls,
+        ):
+            mint_mock = AsyncMock(side_effect=["TOK-1", "TOK-2", "TOK-3"])
+            minter_cls.return_value.mint = mint_mock
+            await client.generate_images_batch(project_id="proj-1", req=_make_req(), count=3)
+
+        assert mint_mock.await_count == 3
+
+    async def test_batch_fan_out_returns_in_input_order(self, client: FlowApiClient) -> None:
+        """asyncio.gather may complete out of order — return list must match input seed order."""
+        import asyncio
+
+        # Make later calls finish FIRST by sleeping inversely proportional to seed.
+        async def fake_post_json(url, body, **kwargs):
+            seed = body["requests"][0]["seed"]
+            # seed=100 sleeps longest, seed=300 finishes first
+            delay = 0.03 if seed == 100 else (0.01 if seed == 200 else 0.0)
+            await asyncio.sleep(delay)
+            return _fake_response_with_seed(seed, media_id=f"media-{seed}")
+
+        with (
+            patch.object(client, "_post_json", side_effect=fake_post_json),
+            patch("flow_cli.api.client.TokenMinter") as minter_cls,
+        ):
+            minter_cls.return_value.mint = AsyncMock(return_value="TOK")
+            results = await client.generate_images_batch(
+                project_id="proj-1",
+                req=_make_req(),
+                count=3,
+                seeds=[100, 200, 300],
+            )
+
+        assert [r.seed for r in results] == [100, 200, 300]
+        assert [r.media_name for r in results] == ["media-100", "media-200", "media-300"]
+
+    async def test_batch_fan_out_partial_failure_propagates(self, client: FlowApiClient) -> None:
+        """One sibling raising FlowApiError -> whole batch raises."""
+        call_count = {"n": 0}
+
+        async def fake_post_json(url, body, **kwargs):
+            call_count["n"] += 1
+            seed = body["requests"][0]["seed"]
+            if seed == 200:
+                raise FlowApiError(429, "rate limited", route=url)
+            return _fake_response_with_seed(seed)
+
+        with (
+            patch.object(client, "_post_json", side_effect=fake_post_json),
+            patch("flow_cli.api.client.TokenMinter") as minter_cls,
+        ):
+            minter_cls.return_value.mint = AsyncMock(return_value="TOK")
+            with pytest.raises(FlowApiError) as exc_info:
+                await client.generate_images_batch(
+                    project_id="proj-1",
+                    req=_make_req(),
+                    count=3,
+                    seeds=[100, 200, 300],
+                )
+
+        assert exc_info.value.status == 429
+
+    async def test_batch_fan_out_count_must_be_1_to_4(self, client: FlowApiClient) -> None:
+        """count=0 and count=5 must raise ValueError. Matches Flow UI."""
+        with patch("flow_cli.api.client.TokenMinter") as minter_cls:
+            minter_cls.return_value.mint = AsyncMock(return_value="TOK")
+            with pytest.raises(ValueError):
+                await client.generate_images_batch(project_id="proj-1", req=_make_req(), count=0)
+            with pytest.raises(ValueError):
+                await client.generate_images_batch(project_id="proj-1", req=_make_req(), count=5)
