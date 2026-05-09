@@ -1,0 +1,68 @@
+"""reCAPTCHA Enterprise token minting via Playwright page.evaluate.
+
+The site key is discovered from the page source (loaded by the persistent
+context's bootstrap navigation in `FlowApiClient.__aenter__`). Tokens are
+single-use, ~2 min expiry — minted per `generate_video()` call.
+
+`TokenMinter` caches the discovered site key for the lifetime of one
+FlowApiClient session.
+"""
+
+from __future__ import annotations
+
+from typing import Any, Protocol
+
+
+class _PageLike(Protocol):
+    """Minimal subset of playwright.async_api.Page we need.
+
+    Defined as a Protocol so tests can pass mocks without importing Playwright.
+    """
+
+    async def evaluate(self, expression: str, *args: Any) -> Any: ...
+
+
+class RecaptchaError(RuntimeError):
+    """Raised when reCAPTCHA token minting fails (script missing,
+    Google refused to mint, etc.)."""
+
+
+_DISCOVER_SITE_KEY_JS = """
+() => {
+    const scripts = document.querySelectorAll('script[src*="recaptcha/enterprise.js"]');
+    for (const s of scripts) {
+        const m = (s.getAttribute('src') || '').match(/[?&]render=([^&]+)/);
+        if (m) return m[1];
+    }
+    return null;
+}
+"""
+
+
+async def discover_site_key(page: _PageLike) -> str:
+    """Read the reCAPTCHA Enterprise site key from the loaded page.
+
+    Raises `RecaptchaError` if the recaptcha/enterprise.js script tag is
+    missing or doesn't carry a `render=<key>` query param.
+    """
+    key = await page.evaluate(_DISCOVER_SITE_KEY_JS)
+    if not isinstance(key, str) or not key:
+        raise RecaptchaError(
+            "Could not discover reCAPTCHA site key from the page. "
+            "The Flow editor page may have failed to load, or the reCAPTCHA "
+            "script tag layout has changed."
+        )
+    return key
+
+
+class TokenMinter:
+    """Mint reCAPTCHA tokens. Caches the site key for the session."""
+
+    def __init__(self, page: _PageLike):
+        self._page = page
+        self._site_key: str | None = None
+
+    async def site_key(self) -> str:
+        if self._site_key is None:
+            self._site_key = await discover_site_key(self._page)
+        return self._site_key
