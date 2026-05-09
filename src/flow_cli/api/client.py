@@ -199,6 +199,35 @@ class FlowApiClient:
         out_path.write_bytes(await resp.body())
         return out_path
 
+    async def download_image(self, image: GeneratedImage, out_path: Path) -> Path:
+        """Download a generated image's signed ``fifeUrl`` straight to disk.
+
+        Distinct from :meth:`download`: ``fifeUrl`` is already a fully
+        qualified signed CDN URL on ``flow-content.google`` (carrying
+        ``Expires=...&Signature=...``), so we MUST NOT route it through
+        ``routes.media_download_url`` — that helper builds the
+        labs.google redirect path which doesn't apply here.
+
+        Args:
+            image: The :class:`GeneratedImage` returned from
+                :meth:`generate_image` / :meth:`generate_images_batch`.
+            out_path: Destination file path. Parent directories are
+                created if missing.
+
+        Returns:
+            ``out_path`` for ergonomic chaining.
+
+        Raises:
+            FlowApiError: when the CDN responds with a 4xx/5xx status
+                (e.g. the signature has already expired).
+        """
+        out_path.parent.mkdir(parents=True, exist_ok=True)
+        resp = await self.page.request.get(image.fife_url, max_redirects=2, timeout=120_000)
+        if resp.status >= 400:
+            raise FlowApiError(resp.status, await resp.text(), route=image.fife_url)
+        out_path.write_bytes(await resp.body())
+        return out_path
+
     async def archive_workflow(self, workflow_id: str, project_id: str) -> None:
         """Soft-delete (archive) a workflow — used by clear-library tooling.
 

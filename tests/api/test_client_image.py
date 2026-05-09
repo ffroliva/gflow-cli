@@ -386,3 +386,109 @@ class TestGenerateImagesBatch:
                     count=count,
                     seeds=seeds,
                 )
+
+
+def _make_image(fife_url: str = _FAKE_FIFE_URL) -> GeneratedImage:
+    """Build a minimal GeneratedImage for download_image tests."""
+    return GeneratedImage(
+        media_name="media-uuid-1",
+        workflow_id="wf-uuid-1",
+        seed=42,
+        prompt="a warrior",
+        model_name_type="NARWHAL",
+        aspect_ratio="IMAGE_ASPECT_RATIO_PORTRAIT",
+        fife_url=fife_url,
+        dimensions=(768, 1376),
+    )
+
+
+class TestDownloadImage:
+    async def test_download_image_writes_bytes_to_path(
+        self, client: FlowApiClient, tmp_path: Path
+    ) -> None:
+        """Bytes returned by page.request.get land on disk at out_path."""
+        payload = b"\x89PNG\r\n\x1a\nfake-image-bytes"
+
+        async def fake_request_get(url, **kwargs):
+            resp = MagicMock()
+            resp.status = 200
+            resp.body = AsyncMock(return_value=payload)
+            return resp
+
+        client._page.request.get = AsyncMock(side_effect=fake_request_get)
+
+        out_path = tmp_path / "out.png"
+        result = await client.download_image(_make_image(), out_path)
+
+        assert result == out_path
+        assert out_path.read_bytes() == payload
+
+    async def test_download_image_creates_parent_dirs(
+        self, client: FlowApiClient, tmp_path: Path
+    ) -> None:
+        """When out_path.parent doesn't exist, it's created."""
+        payload = b"image-bytes"
+
+        async def fake_request_get(url, **kwargs):
+            resp = MagicMock()
+            resp.status = 200
+            resp.body = AsyncMock(return_value=payload)
+            return resp
+
+        client._page.request.get = AsyncMock(side_effect=fake_request_get)
+
+        out_path = tmp_path / "deep" / "nested" / "dir" / "out.png"
+        assert not out_path.parent.exists()
+
+        result = await client.download_image(_make_image(), out_path)
+
+        assert result == out_path
+        assert out_path.parent.is_dir()
+        assert out_path.read_bytes() == payload
+
+    async def test_download_image_does_not_use_redirect_helper(
+        self, client: FlowApiClient, tmp_path: Path
+    ) -> None:
+        """The URL passed to page.request.get is the raw fife_url, NOT
+        the labs.google redirect helper. fife_url is already a fully
+        signed CDN URL."""
+        captured: dict = {}
+
+        async def fake_request_get(url, **kwargs):
+            captured["url"] = url
+            resp = MagicMock()
+            resp.status = 200
+            resp.body = AsyncMock(return_value=b"x")
+            return resp
+
+        client._page.request.get = AsyncMock(side_effect=fake_request_get)
+
+        signed = "https://flow-content.google/image/abc-123?Expires=1778380305&Signature=XYZ"
+        image = _make_image(fife_url=signed)
+
+        with patch("flow_cli.api.client.routes") as mock_routes:
+            await client.download_image(image, tmp_path / "out.png")
+            # The redirect helper must NOT be involved.
+            mock_routes.media_download_url.assert_not_called()
+
+        assert captured["url"] == signed
+
+    async def test_download_image_raises_on_4xx(
+        self, client: FlowApiClient, tmp_path: Path
+    ) -> None:
+        """A 4xx response surfaces as FlowApiError, like the existing
+        download() method does."""
+
+        async def fake_request_get(url, **kwargs):
+            resp = MagicMock()
+            resp.status = 403
+            resp.text = AsyncMock(return_value="signed url expired")
+            resp.body = AsyncMock(return_value=b"")
+            return resp
+
+        client._page.request.get = AsyncMock(side_effect=fake_request_get)
+
+        with pytest.raises(FlowApiError) as exc_info:
+            await client.download_image(_make_image(), tmp_path / "out.png")
+
+        assert exc_info.value.status == 403
