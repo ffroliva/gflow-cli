@@ -84,6 +84,13 @@ class TestEnvOverrides:
         with pytest.raises(ValidationError):
             Settings()
 
+    def test_headless_defaults_true(self, clean_env: None) -> None:
+        assert Settings().headless is True
+
+    def test_headless_override_false(self, monkeypatch: pytest.MonkeyPatch) -> None:
+        monkeypatch.setenv("FLOW_CLI_HEADLESS", "false")
+        assert Settings().headless is False
+
 
 class TestDerivedPaths:
     def test_profile_subdir(self, monkeypatch: pytest.MonkeyPatch, tmp_path: Path) -> None:

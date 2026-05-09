@@ -84,6 +84,13 @@ class Settings(BaseSettings):
     # --- runtime ----------------------------------------------------------
     timeout_seconds: int = Field(default=600, ge=1, le=3600)
     concurrency: int = Field(default=1, ge=1, le=16)
+    headless: bool = Field(
+        default=True,
+        description=(
+            "Run the Playwright Chromium headless. Set to False if reCAPTCHA "
+            "fails to mint tokens (Google sometimes detects headless)."
+        ),
+    )
 
     # --- logging ----------------------------------------------------------
     log_level: LogLevel = LogLevel.INFO
