@@ -9,7 +9,7 @@ This directory ships an installable Skill that lets agents (Claude Code, Cursor,
 ### Install for Claude Code
 
 ```bash
-git clone git@github.com:ffroliva/flow-cli.git
+git clone git@github.com:ffroliva/gflow-cli.git
 ln -s "$(pwd)/flow-cli/skills/flow-cli" ~/.claude/skills/flow-cli
 
 # Verify Claude Code picks it up:

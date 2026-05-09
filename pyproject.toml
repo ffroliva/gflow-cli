@@ -41,8 +41,8 @@ gflow = "flow_cli.cli:main"
 flow = "flow_cli.cli:main"
 
 [project.urls]
-Homepage = "https://github.com/ffroliva/flow-cli"
-Issues = "https://github.com/ffroliva/flow-cli/issues"
+Homepage = "https://github.com/ffroliva/gflow-cli"
+Issues = "https://github.com/ffroliva/gflow-cli/issues"
 
 [build-system]
 requires = ["hatchling"]

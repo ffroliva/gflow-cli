@@ -133,7 +133,7 @@ _(none yet — first release pending)_
 
 If you hit something not listed here:
 
-1. Search existing issues at <https://github.com/ffroliva/flow-cli/issues>.
+1. Search existing issues at <https://github.com/ffroliva/gflow-cli/issues>.
 2. If none match, open a new issue with:
    - `flow-cli` version (`gflow --version`)
    - Python version (`python --version`)

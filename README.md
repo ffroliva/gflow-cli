@@ -1,12 +1,12 @@
-# flow-cli
+# gflow-cli
 
 > **Unofficial, reverse-engineered Python CLI for Google Flow.**
 > Drive [Google Flow](https://labs.google/fx/tools/flow) Veo image-to-video generations from your terminal — **without the browser**.
 
-[![CI](https://github.com/ffroliva/flow-cli/actions/workflows/ci.yml/badge.svg)](https://github.com/ffroliva/flow-cli/actions/workflows/ci.yml)
-[![Release](https://github.com/ffroliva/flow-cli/actions/workflows/release.yml/badge.svg)](https://github.com/ffroliva/flow-cli/actions/workflows/release.yml)
-[![PyPI version](https://img.shields.io/pypi/v/gflow-cli.svg)](https://pypi.org/project/gflow-cli/)
-[![Python versions](https://img.shields.io/pypi/pyversions/gflow-cli.svg)](https://pypi.org/project/gflow-cli/)
+[![CI](https://github.com/ffroliva/ggflow-cli/actions/workflows/ci.yml/badge.svg)](https://github.com/ffroliva/ggflow-cli/actions/workflows/ci.yml)
+[![Release](https://github.com/ffroliva/ggflow-cli/actions/workflows/release.yml/badge.svg)](https://github.com/ffroliva/ggflow-cli/actions/workflows/release.yml)
+[![PyPI version](https://img.shields.io/pypi/v/ggflow-cli.svg)](https://pypi.org/project/ggflow-cli/)
+[![Python versions](https://img.shields.io/pypi/pyversions/ggflow-cli.svg)](https://pypi.org/project/ggflow-cli/)
 [![License: MIT](https://img.shields.io/badge/License-MIT-blue.svg)](LICENSE)
 [![Status: alpha](https://img.shields.io/badge/status-alpha-orange.svg)](#project-status)
 [![Code style: ruff](https://img.shields.io/badge/code%20style-ruff-000000.svg)](https://github.com/astral-sh/ruff)
@@ -26,7 +26,7 @@
 
 Your subscription includes a generous Veo credit allowance, but the Flow web UI was designed for hand-crafted, one-at-a-time video creation — not for the batch workflows that actually justify burning through hundreds of credits a month. The UI is slow (waiting for the React app, dragging assets, clicking through dialogs), the DOM is fragile to automate, and there's no way to script "generate these 50 clips while I'm at lunch."
 
-`flow-cli` reverse-engineers Flow's internal REST API on `aisandbox-pa.googleapis.com` and exposes it as a clean command-line tool. **Same Veo model, same quality, same Ultra/Pro billing — without ever opening a browser** (after a one-time auth capture).
+`gflow-cli` reverse-engineers Flow's internal REST API on `aisandbox-pa.googleapis.com` and exposes it as a clean command-line tool. **Same Veo model, same quality, same Ultra/Pro billing — without ever opening a browser** (after a one-time auth capture).
 
 Now you can:
 
@@ -41,7 +41,7 @@ This project is the same pattern as [`edge-tts`](https://github.com/rany2/edge-t
 
 ## Disclaimer
 
-`flow-cli` is **not affiliated with, endorsed by, or sponsored by Google**. It calls a private API surface (`aisandbox-pa.googleapis.com`) that Google can change or restrict at any time. By using this tool you accept that:
+`gflow-cli` is **not affiliated with, endorsed by, or sponsored by Google**. It calls a private API surface (`aisandbox-pa.googleapis.com`) that Google can change or restrict at any time. By using this tool you accept that:
 
 - You must already have a valid Google AI Ultra or Pro subscription with Flow access.
 - All generations bill against **your own Google account**, subject to Google's terms.
@@ -90,7 +90,7 @@ Tested on Windows 11 + macOS 14 + Ubuntu 24.04. Linux + WSL work but `auth login
 ### Try it without installing (zero-config, recommended for first run)
 
 ```bash
-uvx --from flow-cli gflow --help
+uvx --from gflow-cli gflow --help
 ```
 
 `uvx` (from [uv](https://docs.astral.sh/uv/)) downloads and runs the package in a throwaway environment. **No global install, no virtualenv to manage.** Perfect for occasional batch runs or trying it before committing.
@@ -98,17 +98,17 @@ uvx --from flow-cli gflow --help
 ### Install as a user tool
 
 ```bash
-uv tool install flow-cli
+uv tool install gflow-cli
 gflow --help
 ```
 
-This installs `gflow` (and `flow` if no conflict) on your `PATH` system-wide, isolated from your project venvs. Update with `uv tool upgrade flow-cli`.
+This installs `gflow` (and `flow` if no conflict) on your `PATH` system-wide, isolated from your project venvs. Update with `uv tool upgrade gflow-cli`.
 
 ### From source (current — pre-release)
 
 ```bash
-git clone git@github.com:ffroliva/flow-cli.git
-cd flow-cli
+git clone git@github.com:ffroliva/ggflow-cli.git
+cd gflow-cli
 uv sync                          # creates .venv, installs runtime + dev deps
 uv run playwright install chromium   # one-time browser download (~150 MB)
 uv run gflow --help
@@ -117,9 +117,9 @@ uv run gflow --help
 ### Install Playwright Chromium (one-time, any install method)
 
 ```bash
-uvx --from flow-cli playwright install chromium
+uvx --from gflow-cli playwright install chromium
 # or after `uv tool install`:
-uv tool run --from flow-cli playwright install chromium
+uv tool run --from gflow-cli playwright install chromium
 ```
 
 ---
@@ -229,25 +229,25 @@ The `Provider` interface keeps backends interchangeable. v0.1 ships `FlowProvide
 
 ### Auth strategy
 
-`flow-cli` doesn't reverse-engineer Google's OAuth flow. Instead it **piggybacks on Playwright's persistent context**: `gflow auth login` opens a Chromium window, you sign in normally, and the resulting cookie jar is saved to `~/.flow-cli/profile_default/`. Subsequent commands launch a **headless** Playwright context using that profile and call REST endpoints via Playwright's HTTP client — which auto-attaches the cookies. No tokens to refresh manually, no SSO scraping. Auth is the only browser interaction, and it's a one-time event.
+`gflow-cli` doesn't reverse-engineer Google's OAuth flow. Instead it **piggybacks on Playwright's persistent context**: `gflow auth login` opens a Chromium window, you sign in normally, and the resulting cookie jar is saved to `~/.gflow-cli/profile_default/`. Subsequent commands launch a **headless** Playwright context using that profile and call REST endpoints via Playwright's HTTP client — which auto-attaches the cookies. No tokens to refresh manually, no SSO scraping. Auth is the only browser interaction, and it's a one-time event.
 
 ---
 
 ## Use as a Claude Code (or other agent) skill
 
-`flow-cli` ships an installable [Claude Code Skill](https://docs.claude.com/en/docs/agents-and-tools/agent-skills/overview) at [`skills/flow-cli/SKILL.md`](skills/flow-cli/SKILL.md).
+`gflow-cli` ships an installable [Claude Code Skill](https://docs.claude.com/en/docs/agents-and-tools/agent-skills/overview) at [`skills/gflow-cli/SKILL.md`](skills/gflow-cli/SKILL.md).
 
 **Install for Claude Code:**
 
 ```bash
 # Clone the repo, then symlink the skill into your Claude skills dir:
-ln -s "$(pwd)/skills/flow-cli" ~/.claude/skills/flow-cli
+ln -s "$(pwd)/skills/gflow-cli" ~/.claude/skills/gflow-cli
 ```
 
 **Use in any other agent (Cursor, Codex, Gemini CLI, Aider, ...):** the SKILL.md is plain Markdown — point your agent's context at it as a reference doc. The CLI is the same regardless of caller.
 
 When the skill is loaded, an agent sees:
-- When to invoke flow-cli (the user wants to generate a Veo video, has Flow access, etc.)
+- When to invoke gflow-cli (the user wants to generate a Veo video, has Flow access, etc.)
 - The full command surface
 - How to handle auth (kick off `gflow auth login` once, then headless)
 - Common error modes and fixes
@@ -256,7 +256,7 @@ When the skill is loaded, an agent sees:
 
 ## Development & TDD workflow
 
-`flow-cli` is **test-driven**. Every public function in `Provider` implementations starts as a **red test** that locks the contract before any production code is written. CI rejects any PR that lowers test coverage.
+`gflow-cli` is **test-driven**. Every public function in `Provider` implementations starts as a **red test** that locks the contract before any production code is written. CI rejects any PR that lowers test coverage.
 
 ```bash
 # Setup
@@ -288,7 +288,7 @@ Each `Provider` method has a corresponding test file under `tests/`. New routes 
 
 ## Releases
 
-`flow-cli` follows **[Semantic Versioning 2.0.0](https://semver.org/)** — breaking changes bump MAJOR, new features bump MINOR, fixes bump PATCH.
+`gflow-cli` follows **[Semantic Versioning 2.0.0](https://semver.org/)** — breaking changes bump MAJOR, new features bump MINOR, fixes bump PATCH.
 
 ### Cadence
 
@@ -310,7 +310,7 @@ Each `Provider` method has a corresponding test file under `tests/`. New routes 
    - Publishes to PyPI via [Trusted Publishing](https://docs.pypi.org/trusted-publishers/) — no API tokens stored
    - Creates a GitHub Release with the changelog excerpt + built artifacts attached
 
-Pre-release tags (`v*.*.*-rc*`, `v*.*.*-alpha*`, `v*.*.*-beta*`) auto-flag as pre-releases on GitHub. Install with `pip install --pre flow-cli` or `uvx --from "flow-cli==0.2.0a1" gflow`.
+Pre-release tags (`v*.*.*-rc*`, `v*.*.*-alpha*`, `v*.*.*-beta*`) auto-flag as pre-releases on GitHub. Install with `pip install --pre gflow-cli` or `uvx --from "gflow-cli==0.2.0a1" gflow`.
 
 ---
 
@@ -324,7 +324,7 @@ The full text is in [LICENSE](LICENSE). In short:
 - ❗ No warranty — provided as-is.
 - ❗ Must include the original license + copyright in any copy/derivative.
 
-Note that the **Google service** this tool talks to has its own terms (Google Labs Additional Terms, Google AI Ultra/Pro subscription terms, etc.). The MIT license here covers `flow-cli`'s code only — it does not grant any rights to Flow itself or to Veo model output. See [DISCLAIMER](DISCLAIMER.md).
+Note that the **Google service** this tool talks to has its own terms (Google Labs Additional Terms, Google AI Ultra/Pro subscription terms, etc.). The MIT license here covers `gflow-cli`'s code only — it does not grant any rights to Flow itself or to Veo model output. See [DISCLAIMER](DISCLAIMER.md).
 
 ---
 
@@ -338,14 +338,14 @@ Note that the **Google service** this tool talks to has its own terms (Google La
 
 ## Stats
 
-[![GitHub stars](https://img.shields.io/github/stars/ffroliva/flow-cli?style=social)](https://github.com/ffroliva/flow-cli/stargazers)
-[![GitHub forks](https://img.shields.io/github/forks/ffroliva/flow-cli?style=social)](https://github.com/ffroliva/flow-cli/network/members)
-[![GitHub watchers](https://img.shields.io/github/watchers/ffroliva/flow-cli?style=social)](https://github.com/ffroliva/flow-cli/watchers)
-[![GitHub issues](https://img.shields.io/github/issues/ffroliva/flow-cli)](https://github.com/ffroliva/flow-cli/issues)
-[![GitHub pull requests](https://img.shields.io/github/issues-pr/ffroliva/flow-cli)](https://github.com/ffroliva/flow-cli/pulls)
-[![GitHub last commit](https://img.shields.io/github/last-commit/ffroliva/flow-cli)](https://github.com/ffroliva/flow-cli/commits/main)
-[![GitHub repo size](https://img.shields.io/github/repo-size/ffroliva/flow-cli)](https://github.com/ffroliva/flow-cli)
-[![PyPI downloads](https://img.shields.io/pypi/dm/gflow-cli.svg)](https://pypi.org/project/gflow-cli/)
-[![PyPI total downloads](https://img.shields.io/pypi/dt/gflow-cli.svg)](https://pypi.org/project/gflow-cli/)
+[![GitHub stars](https://img.shields.io/github/stars/ffroliva/ggflow-cli?style=social)](https://github.com/ffroliva/ggflow-cli/stargazers)
+[![GitHub forks](https://img.shields.io/github/forks/ffroliva/ggflow-cli?style=social)](https://github.com/ffroliva/ggflow-cli/network/members)
+[![GitHub watchers](https://img.shields.io/github/watchers/ffroliva/ggflow-cli?style=social)](https://github.com/ffroliva/ggflow-cli/watchers)
+[![GitHub issues](https://img.shields.io/github/issues/ffroliva/ggflow-cli)](https://github.com/ffroliva/ggflow-cli/issues)
+[![GitHub pull requests](https://img.shields.io/github/issues-pr/ffroliva/ggflow-cli)](https://github.com/ffroliva/ggflow-cli/pulls)
+[![GitHub last commit](https://img.shields.io/github/last-commit/ffroliva/ggflow-cli)](https://github.com/ffroliva/ggflow-cli/commits/main)
+[![GitHub repo size](https://img.shields.io/github/repo-size/ffroliva/ggflow-cli)](https://github.com/ffroliva/ggflow-cli)
+[![PyPI downloads](https://img.shields.io/pypi/dm/ggflow-cli.svg)](https://pypi.org/project/ggflow-cli/)
+[![PyPI total downloads](https://img.shields.io/pypi/dt/ggflow-cli.svg)](https://pypi.org/project/ggflow-cli/)
 
-If `flow-cli` saves you time, please ⭐ the repo — it's the cheapest way to support the project.
+If `gflow-cli` saves you time, please ⭐ the repo — it's the cheapest way to support the project.

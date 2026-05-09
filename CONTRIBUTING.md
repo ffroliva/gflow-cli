@@ -5,7 +5,7 @@ Thanks for considering a contribution! Pre-1.0 the repo is private and managed b
 ## Development setup
 
 ```bash
-git clone git@github.com:ffroliva/flow-cli.git
+git clone git@github.com:ffroliva/gflow-cli.git
 cd flow-cli
 uv sync --extra dev
 uv run playwright install chromium

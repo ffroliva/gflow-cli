@@ -54,6 +54,6 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 First skeleton. Not functional end-to-end yet.
 
-[Unreleased]: https://github.com/ffroliva/flow-cli/compare/v0.2.0a1...HEAD
-[0.2.0a1]: https://github.com/ffroliva/flow-cli/releases/tag/v0.2.0a1
-[0.1.0]: https://github.com/ffroliva/flow-cli/releases/tag/v0.1.0
+[Unreleased]: https://github.com/ffroliva/gflow-cli/compare/v0.2.0a1...HEAD
+[0.2.0a1]: https://github.com/ffroliva/gflow-cli/releases/tag/v0.2.0a1
+[0.1.0]: https://github.com/ffroliva/gflow-cli/releases/tag/v0.1.0

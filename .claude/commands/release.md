@@ -46,8 +46,8 @@ Ask the user (if not already provided):
    - Leave `## [Unreleased]` empty.
    - Update the link footer:
      ```
-     [Unreleased]: https://github.com/ffroliva/flow-cli/compare/v<NEW_VERSION>...HEAD
-     [<NEW_VERSION>]: https://github.com/ffroliva/flow-cli/releases/tag/v<NEW_VERSION>
+     [Unreleased]: https://github.com/ffroliva/gflow-cli/compare/v<NEW_VERSION>...HEAD
+     [<NEW_VERSION>]: https://github.com/ffroliva/gflow-cli/releases/tag/v<NEW_VERSION>
      ```
 
 6. **Commit the release prep.**
@@ -69,7 +69,7 @@ Ask the user (if not already provided):
 
 9. **Report.** Tell the user:
    - The pushed tag triggers `.github/workflows/release.yml`.
-   - Watch <https://github.com/ffroliva/flow-cli/actions> for the release workflow.
+   - Watch <https://github.com/ffroliva/gflow-cli/actions> for the release workflow.
    - On success: PyPI publish + GitHub Release with auto-generated notes.
    - On failure (most common: PyPI Trusted Publishing not yet configured), point them to <https://pypi.org/manage/account/publishing/>.
 

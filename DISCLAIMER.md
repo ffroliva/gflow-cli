@@ -49,7 +49,7 @@ If Google formally requests that `flow-cli` cease or restrict any reverse-engine
 2. Comply by archiving / removing the affected code path.
 3. Update the README and CHANGELOG to document the change.
 
-If you are at Google and reading this: please open an issue at <https://github.com/ffroliva/flow-cli/issues> or email `ffroliva@gmail.com`.
+If you are at Google and reading this: please open an issue at <https://github.com/ffroliva/gflow-cli/issues> or email `ffroliva@gmail.com`.
 
 ## No warranty
 
@@ -64,7 +64,7 @@ See [LICENSE](LICENSE) for the full legal text. By installing or using `flow-cli
 ## Reporting issues
 
 - **Security issues** (auth handling, secret leakage): please email `ffroliva@gmail.com` privately rather than opening a public issue.
-- **Functional bugs** (something broke after a Flow update): open an issue at <https://github.com/ffroliva/flow-cli/issues> with the error output and your Python/OS versions.
+- **Functional bugs** (something broke after a Flow update): open an issue at <https://github.com/ffroliva/gflow-cli/issues> with the error output and your Python/OS versions.
 - **Legal / takedown / DMCA**: email `ffroliva@gmail.com`.
 
 ---
