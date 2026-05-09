@@ -26,9 +26,10 @@ import logging
 import secrets
 import time
 import uuid
+from collections.abc import Sequence
 from datetime import datetime
 from pathlib import Path
-from typing import Any
+from typing import Any, cast
 
 from playwright.async_api import BrowserContext, Page, Playwright, async_playwright
 
@@ -114,7 +115,10 @@ class FlowApiClient:
         (not application/json) — see samples/captured/*.json. The tRPC
         host on labs.google accepts standard application/json."""
         body_str = json.dumps(body)
-        logger.debug("POST %s body=%s", url, body_str[:300])
+        # docs/SECURITY.md: "No cookies, no tokens, no API keys" in logs.
+        # The reCAPTCHA token is single-use with ~2min TTL, but the policy
+        # holds regardless. Redact before logging.
+        logger.debug("POST %s body=%s", url, _redact_for_log(body_str)[:300])
         resp = await self.page.request.post(
             url,
             data=body_str,
@@ -308,7 +312,7 @@ class FlowApiClient:
         project_id: str,
         req: GenerateImageRequest,
         count: int = 1,
-        seeds: list[int] | None = None,
+        seeds: Sequence[int] | None = None,
         recaptcha_action: str = "imageGeneration",
     ) -> list[GeneratedImage]:
         """Fan out N parallel image generations sharing one ``batchId``.
@@ -333,25 +337,32 @@ class FlowApiClient:
         Raises:
             ValueError: if ``count`` is outside ``[1, 4]`` or ``seeds``
                 length disagrees with ``count``.
-            FlowApiError: if any of the parallel calls fail. The first
-                failure cancels siblings (``return_exceptions=False``).
+            FlowApiError: if any of the parallel calls fail. The first failure
+                propagates immediately via asyncio.gather(return_exceptions=False);
+                remaining in-flight requests are not cancelled and may complete
+                (or fail) in the background. With count <= 4 the leakage is
+                time-bounded and the tokens expire harmlessly.
         """
         if not 1 <= count <= 4:
             raise ValueError(f"count must be between 1 and 4, got {count}")
+        seeds_list: list[int]
         if seeds is None:
-            seeds = [secrets.randbelow(2**31) for _ in range(count)]
+            seeds_list = [secrets.randbelow(2**31) for _ in range(count)]
         elif len(seeds) != count:
             raise ValueError(f"len(seeds)={len(seeds)} does not match count={count}")
+        else:
+            seeds_list = list(seeds)
 
         shared_batch_id = _new_batch_id()
         minter = TokenMinter(self.page)
-        # Mint one token per request — single-use.
+        # NOTE: Sequential mint is intentional. TokenMinter.mint calls page.evaluate()
+        # on the shared Playwright Page; concurrent page.evaluate is not re-entrant.
+        # Only the POSTs themselves are parallelized below.
         tokens = [await minter.mint(recaptcha_action) for _ in range(count)]
 
         # asyncio.gather preserves input order in its result list, so the
         # caller sees results in the same order as `seeds` even though the
-        # network calls may complete out of order. return_exceptions=False
-        # ensures the first failure cancels the rest.
+        # network calls may complete out of order.
         return await asyncio.gather(
             *(
                 self._post_generate_image(
@@ -361,7 +372,7 @@ class FlowApiClient:
                     batch_id=shared_batch_id,
                     seed=s,
                 )
-                for tok, s in zip(tokens, seeds, strict=True)
+                for tok, s in zip(tokens, seeds_list, strict=True)
             ),
             return_exceptions=False,
         )
@@ -374,3 +385,47 @@ def _default_project_title() -> str:
 def _new_batch_id() -> str:
     """Generate a fresh batch ID for the mediaGenerationContext."""
     return str(uuid.uuid4())
+
+
+def _redact_for_log(body_str: str) -> str:
+    """Replace any reCAPTCHA token in a JSON request body with ``<redacted>``.
+
+    The Flow batch image/video routes embed the token in two places:
+
+    - root ``clientContext.recaptchaContext.token``
+    - each ``requests[*].clientContext.recaptchaContext.token``
+
+    If parsing fails (the body is not the JSON shape we expect), we degrade
+    safely by returning a string that hides the body entirely — better to
+    lose log fidelity than to leak a token because of a parser hiccup.
+    """
+    try:
+        parsed = json.loads(body_str)
+    except (json.JSONDecodeError, ValueError):
+        return "<unparseable body redacted>"
+
+    if not isinstance(parsed, dict):
+        return body_str
+
+    parsed_dict = cast(dict[str, Any], parsed)
+    _redact_in_client_context(parsed_dict.get("clientContext"))
+    requests_list = parsed_dict.get("requests")
+    if isinstance(requests_list, list):
+        for item in cast(list[Any], requests_list):
+            if isinstance(item, dict):
+                _redact_in_client_context(cast(dict[str, Any], item).get("clientContext"))
+
+    return json.dumps(parsed_dict)
+
+
+def _redact_in_client_context(client_context: Any) -> None:
+    """Mutate ``client_context["recaptchaContext"]["token"]`` to ``<redacted>``
+    if present. No-op for any non-dict shape."""
+    if not isinstance(client_context, dict):
+        return
+    ctx_dict = cast(dict[str, Any], client_context)
+    recaptcha = ctx_dict.get("recaptchaContext")
+    if isinstance(recaptcha, dict):
+        recaptcha_dict = cast(dict[str, Any], recaptcha)
+        if "token" in recaptcha_dict:
+            recaptcha_dict["token"] = "<redacted>"
