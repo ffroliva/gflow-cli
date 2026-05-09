@@ -32,6 +32,18 @@ def media_download_url(name: str) -> str:
     return f"{LABS_BASE}/fx/api/trpc/media.getMediaUrlRedirect?name={name}"
 
 
+# Image generation — projectId is in the URL path, not the body.
+def batch_generate_images_url(project_id: str) -> str:
+    """Build the batchGenerateImages URL for a given project.
+
+    Guards against path traversal / injection — the project_id is interpolated
+    directly into the URL path, so reject anything that could escape the segment.
+    """
+    if not project_id or "/" in project_id or "\\" in project_id or ".." in project_id:
+        raise ValueError(f"Unsafe project_id: {project_id!r}")
+    return f"{FLOW_API_BASE}/projects/{project_id}/flowMedia:batchGenerateImages"
+
+
 # Bootstrap URL — the Flow editor page. The persistent context navigates here
 # once before making API calls so Google's cookies + reCAPTCHA JS are loaded.
 EDITOR_BOOTSTRAP_URL = "https://labs.google/fx/tools/flow?hl=en"
