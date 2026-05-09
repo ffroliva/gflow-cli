@@ -1,0 +1,63 @@
+# Normalise line endings to LF in the repository (working tree gets LF too).
+# Cross-platform contributors don't need to worry about CRLF/LF — the repo
+# is the source of truth, and Git enforces LF on add/commit.
+
+# Default: detect text vs binary, force LF on text.
+* text=auto eol=lf
+
+# Code
+*.py        text eol=lf
+*.toml      text eol=lf
+*.json      text eol=lf
+*.yml       text eol=lf
+*.yaml      text eol=lf
+*.lock      text eol=lf
+*.txt       text eol=lf
+*.cfg       text eol=lf
+*.ini       text eol=lf
+
+# Docs / config
+*.md        text eol=lf
+*.template  text eol=lf
+*.example   text eol=lf
+.gitignore  text eol=lf
+.gitattributes text eol=lf
+LICENSE     text eol=lf
+
+# Shell scripts
+*.sh        text eol=lf
+*.bash      text eol=lf
+
+# Windows scripts MUST stay CRLF or they break under PowerShell / cmd.exe
+*.ps1       text eol=crlf
+*.bat       text eol=crlf
+*.cmd       text eol=crlf
+
+# Binary — never touch
+*.png       binary
+*.jpg       binary
+*.jpeg      binary
+*.gif       binary
+*.webp      binary
+*.ico       binary
+*.mp4       binary
+*.mov       binary
+*.webm      binary
+*.mp3       binary
+*.wav       binary
+*.flac      binary
+*.zip       binary
+*.tar       binary
+*.gz        binary
+*.bz2       binary
+*.7z        binary
+*.pdf       binary
+*.woff      binary
+*.woff2     binary
+*.ttf       binary
+*.otf       binary
+*.eot       binary
+*.so        binary
+*.dll       binary
+*.dylib     binary
+*.exe       binary

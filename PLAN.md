@@ -1,42 +1,46 @@
 # flow-cli — Implementation Plan
 
-> **Status:** Living document — updated as phases complete.
+> **Status:** Living document. Updated as phases complete.
 > **Owner:** [@ffroliva](https://github.com/ffroliva)
-> **Last revised:** 2026-05-09
+> **Last revised:** 2026-05-09 (Video MVP scope rewrite)
 
-This plan turns the v0.1 scaffold into a production-grade CLI that lets Google AI Ultra/Pro subscribers generate **images** and **videos** through Flow's REST API, individually or in batch, from a single executable.
-
-The plan is intentionally opinionated — it treats this repo as a **portfolio-grade benchmark** of how to structure a small but serious Python CLI: DDD-shaped domain, CQRS for write/read separation, Clean Architecture for dependency direction, BDD for behaviour specs, TDD for the tight loop. Where a pattern would be theatre instead of value, it's omitted on purpose and the rationale is noted.
+This plan turns the v0.1 scaffold into a production-grade CLI for Google AI Ultra/Pro subscribers who want to spend their Flow credits via batch automation. The plan is opinionated, treating this repo as a portfolio-grade benchmark.
 
 ---
 
 ## 1. Goals
 
-### Functional
+### Functional (MVP — v0.2.0a1)
 
 | # | Goal | Phase |
 |---|---|---|
-| F1 | Authenticate once via browser, persist session | 1 |
-| F2 | Generate **a single image** from a prompt with chosen aspect ratio + count | **2** |
-| F3 | Generate **a batch of images** from a manifest (file or stdin) | 2 |
-| F4 | Generate **a single Veo video** (I2V) from a start image + motion prompt + aspect | 3 |
-| F5 | Generate **a batch of videos** from a manifest | 3 |
-| F6 | Download all outputs to a configurable, well-known directory | 2 (images), 3 (videos) |
-| F7 | Per-account profiles (`--profile`) for multi-account usage | 1 |
-| F8 | Concurrency across accounts (pool) | 4 |
+| F1 | Authenticate once via browser, persist session | ✅ Phase 1 (shipped) |
+| F2 | Generate **a single video from text** (T2V) | **Phase 2** |
+| F3 | Generate **a single video from image + text** (I2V) | **Phase 2** |
+| F4 | Generate **a batch of videos** from a TSV manifest | **Phase 2** |
+| F5 | Download all outputs to a configurable directory | **Phase 2** |
+| F6 | Per-account profiles (`--profile`) for multi-account use | ✅ Phase 1 (shipped) |
 
-### Non-functional
+### Functional (post-MVP)
 
-| # | Goal | Where it shows up |
+| # | Goal | Phase |
 |---|---|---|
-| N1 | **Maintainable** — clear boundaries, small files, no god modules | Layer separation (§3) |
-| N2 | **Testable** — every behaviour has an automated check | TDD (§5), BDD (§6) |
-| N3 | **Observable** — what failed, where, why, in one log line | Structured logging via `structlog` (§7) |
-| N4 | **Configurable** — env vars > flags > sane defaults | `pydantic-settings` (§4) |
-| N5 | **Vitrine-grade** — code a senior engineer would put on their CV | DDD + CQRS + Clean Architecture (§2) |
-| N6 | **Cross-platform** — Windows, macOS, Linux | OS-native paths via `pathlib` + `platformdirs` |
+| F7 | Generate images (T2I via Imagen) | Phase 3 (needs route capture) |
+| F8 | Concurrency across accounts (pool) | Phase 4 |
+| F9 | Switch to official Veo 3.1 SDK as `--provider official` | Phase 5 |
 
-### Explicit non-goals (this version)
+### Non-functional (every phase)
+
+| # | Goal |
+|---|---|
+| N1 | Maintainable — clear boundaries, small files, no god modules |
+| N2 | Testable — every behaviour has an automated check (unit + integration) |
+| N3 | Observable — what failed, where, why, in one structured log line |
+| N4 | Configurable — env vars > flags > sane defaults |
+| N5 | Vitrine-grade — code a senior engineer would put on their CV |
+| N6 | Cross-platform — Windows, macOS, Linux working uniformly |
+
+### Explicit non-goals
 
 - ❌ A GUI. CLI only.
 - ❌ Hosting / multi-tenancy. Single user, local CLI.
@@ -45,494 +49,288 @@ The plan is intentionally opinionated — it treats this repo as a **portfolio-g
 
 ---
 
-## 2. Architecture
+## 2. Architecture (steady state)
 
-### 2.1 Layered (Clean / Hexagonal)
+Documented in detail in [docs/ARCHITECTURE.md](docs/ARCHITECTURE.md). Summary:
 
 ```
 ┌──────────────────────────────────────────────────────────────┐
-│  interfaces/   ← CLI (Click)                                 │
-│                  one entry point per user-facing command     │
+│  interfaces/cli/   ← Click commands (gflow auth/video/...)    │
 └──────────────────────┬───────────────────────────────────────┘
-                       │ dispatches Command/Query objects
+                       │ instantiates + calls
 ┌──────────────────────▼───────────────────────────────────────┐
-│  application/  ← Use cases                                   │
-│                  Commands (writes) + Queries (reads),        │
-│                  one Handler per Command/Query.              │
-│                  Handlers depend on PORTS only.              │
+│  api/              ← FlowApiClient (Playwright + REST)        │
+│                      + DTOs + URL constants + reCAPTCHA mint  │
 └──────────────────────┬───────────────────────────────────────┘
-                       │ depends on Protocol (port)
-┌──────────────────────▼───────────────────────────────────────┐
-│  domain/       ← Pure business logic                         │
-│                  Entities, value objects, domain events,     │
-│                  domain errors. No I/O, no frameworks.       │
-└──────────────────────▲───────────────────────────────────────┘
-                       │ implements
-┌──────────────────────┴───────────────────────────────────────┐
-│  infrastructure/  ← Adapters (driven side)                   │
-│                     FlowProvider (REST), AuthSession         │
-│                     (Playwright), LocalStorage (filesystem). │
-└──────────────────────────────────────────────────────────────┘
+                       │ HTTP via page.request
+                       ▼
+        aisandbox-pa.googleapis.com  +  labs.google/fx/api/trpc
 ```
 
-**Dependency direction** (hexagonal rule): `interfaces → application → domain ← infrastructure`. Domain depends on nothing. Application depends on domain + ports (Protocols). Infrastructure implements the ports.
+The original PLAN included a full DDD/CQRS/Clean refactor. **Deferred** — for a single-user CLI, the layered shape becomes theatre. We keep the package boundaries (`api/`, `cli/`, `config.py`, `paths.py`) but skip the bus/handler/port indirection until there's a second `Provider` (v0.5+).
 
-### 2.2 CQRS
-
-Every state-changing intent is a **Command**. Every read is a **Query**. They're both immutable dataclasses; their handlers are sync facades over async work.
-
-```python
-# application/commands/generate_image.py
-@dataclass(frozen=True)
-class GenerateImageCommand:
-    prompt: Prompt
-    aspect: AspectRatio
-    count: OutputCount
-    output_path: OutputPath
-
-class GenerateImageHandler:
-    def __init__(self, provider: ImageProvider, storage: AssetStorage): ...
-    async def handle(self, cmd: GenerateImageCommand) -> list[Asset]: ...
-```
-
-A tiny in-process **CommandBus** dispatches `cmd → handler.handle(cmd)`. No middleware, no event sourcing — that would be theatre for a CLI.
-
-```python
-# application/bus.py
-class CommandBus:
-    def __init__(self): self._handlers = {}
-    def register(self, cmd_type, handler): self._handlers[cmd_type] = handler
-    async def dispatch(self, cmd): return await self._handlers[type(cmd)].handle(cmd)
-```
-
-Why CQRS in a CLI? Two real wins:
-1. **Testability** — handlers are easy to test in isolation; CLI is just thin Click glue.
-2. **Future-proof** — when v0.3 adds a `gflow serve` HTTP front-end, the command/query layer is reused as-is.
-
-### 2.3 DDD pieces
-
-**Aggregates**
-- `GenerationProject` — owns a Flow project lifecycle, the assets uploaded into it, and the jobs spawned from it.
-- `GenerationJob` — async work (Veo/Imagen) with status, progress, and outputs.
-
-**Entities**
-- `Asset` — uploaded image OR generated image OR generated video. Has stable UUID, media URL, kind, source-job (if generated).
-
-**Value objects** (`@dataclass(frozen=True)`)
-- `AspectRatio` (`"9:16" | "16:9" | "1:1" | "4:3" | "3:4"`) — validated on construction.
-- `Prompt` — non-empty, length-checked.
-- `MotionPrompt` — same as Prompt but with semantic intent.
-- `OutputCount` — integer 1–4.
-- `JobId`, `AssetId`, `ProjectId` — `NewType` over `str` (UUID4 format).
-- `OutputPath` — Path with directory-vs-file role tagged.
-
-**Domain events** (in-process for now, eventable later)
-- `AssetUploaded`, `JobStarted`, `JobProgressed`, `JobCompleted`, `JobFailed`, `AssetDownloaded`.
-
-**Domain errors** (typed exceptions, no stringly typed HTTP codes leaking out)
-- `AuthExpiredError`, `RateLimitExceededError`, `QuotaExhaustedError`, `InvalidPromptError`, `ProjectNotFoundError`, `JobNotFoundError`, `ProviderUnavailableError`.
-
-### 2.4 Folder layout (target end-of-Phase-1)
+Current package layout:
 
 ```
 src/flow_cli/
-├── domain/
-│   ├── __init__.py
-│   ├── models.py            # Asset, GenerationJob, GenerationProject
-│   ├── value_objects.py     # AspectRatio, Prompt, OutputCount, etc.
-│   ├── events.py            # domain events
-│   └── errors.py            # typed exceptions
-├── application/
-│   ├── __init__.py
-│   ├── ports/
-│   │   ├── image_provider.py    # Protocol
-│   │   ├── video_provider.py    # Protocol
-│   │   ├── asset_storage.py     # Protocol
-│   │   └── auth_session.py      # Protocol
-│   ├── commands/
-│   │   ├── upload_image.py
-│   │   ├── generate_image.py
-│   │   ├── generate_image_batch.py
-│   │   ├── generate_video.py
-│   │   ├── generate_video_batch.py
-│   │   └── download_asset.py
-│   ├── queries/
-│   │   ├── get_job_status.py
-│   │   └── list_generations.py
-│   ├── handlers/            # one file per command/query handler
-│   └── bus.py               # CommandBus + QueryBus
-├── infrastructure/
-│   ├── __init__.py
-│   ├── flow/                # adapter for aisandbox-pa
-│   │   ├── client.py
-│   │   ├── image_provider.py
-│   │   ├── video_provider.py
-│   │   └── routes.py        # captured route shapes
-│   ├── auth/
-│   │   └── playwright_session.py
-│   ├── storage/
-│   │   └── local.py
-│   └── observability/
-│       └── logging.py
-├── interfaces/
-│   └── cli/
-│       ├── main.py          # Click entry
-│       ├── image.py         # `gflow image …`
-│       ├── video.py         # `gflow video …`
-│       └── auth.py          # `gflow auth …`
-└── shared/
-    ├── config.py            # pydantic-settings, .env loader
-    └── paths.py             # XDG / platformdirs default dirs
+├── __init__.py
+├── __main__.py
+├── auth.py             ← login + status (Playwright headed for login)
+├── cli.py              ← Click app
+├── config.py           ← pydantic-settings
+├── models.py           ← legacy domain DTOs (will fold into api/dto.py)
+├── paths.py            ← XDG-aware default paths
+├── profile_store.py    ← profile inventory + default-profile config.toml
+├── providers/          ← legacy stub (will be removed in Phase 2 — superseded by api/)
+└── api/                ← NEW
+    ├── __init__.py
+    ├── client.py       ← FlowApiClient (Playwright persistent context + REST)
+    ├── dto.py          ← ProjectInfo, AssetInfo, VideoStatus, ...
+    ├── routes.py       ← URL constants
+    └── recaptcha.py    ← Phase 2 — token mint via page.evaluate
 ```
 
 ---
 
 ## 3. Configuration
 
-### 3.1 `.env.template` (committed)
+Documented in [docs/CONFIGURATION.md](docs/CONFIGURATION.md) and [.env.template](.env.template). Variables:
 
-```dotenv
-# Auth profile root — Playwright persistent contexts live here.
-# Default: %USERPROFILE%/.flow-cli (Windows) or ~/.flow-cli (POSIX)
-FLOW_CLI_HOME=
+`FLOW_CLI_HOME`, `FLOW_CLI_OUTPUT_DIR`, `FLOW_CLI_PROFILE`, `FLOW_CLI_PROVIDER`, `FLOW_CLI_GEMINI_API_KEY`, `FLOW_CLI_TIMEOUT_SECONDS`, `FLOW_CLI_LOG_LEVEL`, `FLOW_CLI_LOG_FORMAT`, `FLOW_CLI_CONCURRENCY`.
 
-# Default profile name (multi-account: pass --profile to override)
-FLOW_CLI_PROFILE=default
-
-# Where downloaded assets land. Subfolders created per kind/date.
-# Default: <user-downloads-dir>/flow-cli  (via platformdirs)
-#   - Windows: %USERPROFILE%\Downloads\flow-cli
-#   - macOS:   ~/Downloads/flow-cli
-#   - Linux:   $XDG_DOWNLOAD_DIR/flow-cli  (falls back to ~/Downloads/flow-cli)
-FLOW_CLI_OUTPUT_DIR=
-
-# Provider — "flow" (default, reverse-engineered) or "official" (v0.3+)
-FLOW_CLI_PROVIDER=flow
-
-# Optional Gemini API key for the official Veo 3.1 provider (v0.3+)
-# Get one at https://aistudio.google.com/apikey
-FLOW_CLI_GEMINI_API_KEY=
-
-# Per-request HTTP timeout (seconds)
-FLOW_CLI_TIMEOUT_SECONDS=600
-
-# Logging — DEBUG | INFO | WARNING | ERROR
-FLOW_CLI_LOG_LEVEL=INFO
-
-# Concurrency for batch operations (v0.4+)
-FLOW_CLI_CONCURRENCY=1
-```
-
-### 3.2 Resolution order
-
-1. **CLI flag** (highest precedence, e.g. `--output ./my-out`)
-2. **Environment variable** (`FLOW_CLI_OUTPUT_DIR`)
-3. **`.env` file** in CWD
-4. **`.env` file** in `$FLOW_CLI_HOME`
-5. **Built-in default** (lowest precedence)
-
-Implemented via `pydantic-settings` `BaseSettings` — single source of truth, validated at startup, fails loudly on bad values.
-
-### 3.3 Default output paths
+Default paths via `platformdirs`:
 
 ```text
-<output_root>/
-├── images/<YYYY-MM-DD>/<job_id>_<index>.png
-├── videos/<YYYY-MM-DD>/<job_id>.mp4
-└── manifests/<YYYY-MM-DD>/<batch_id>.tsv   # batch input snapshot
-```
+$FLOW_CLI_HOME/                   ← user_data_dir/flow-cli
+├── profile_<name>/               ← Chromium persistent contexts
+└── config.toml                   ← default_profile = "..."
 
-Predictable, sorted, easy to clean up.
+$FLOW_CLI_OUTPUT_DIR/             ← user_downloads_dir/flow-cli
+├── videos/<YYYY-MM-DD>/<job_id>.mp4
+└── images/<YYYY-MM-DD>/<job_id>_<i>.png  (Phase 3)
+```
 
 ---
 
-## 4. Feature specs
+## 4. Phase status
 
-### 4.1 Image generation (Phase 2)
+### Phase 1 — Foundation ✅ MOSTLY DONE
 
-#### CLI surface
+Shipped:
+- `pydantic-settings` config layer with full env-var resolution
+- XDG-aware paths via `platformdirs`
+- `auth login/status/list/use/logout` + bare `gflow auth` UX
+- Profile inventory (`profile_store`) with `config.toml` default persistence
+- 79 tests passing, CI green
+- Documentation tree (`docs/INDEX/AUTHENTICATION/CONFIGURATION/USAGE/SECURITY/ARCHITECTURE`)
+- `CLAUDE.md` + `.claude/` for AI agents
+- `KNOWN_ISSUES.md` + `DISCLAIMER.md` + `CONTRIBUTING.md`
 
-```bash
-# Single image
-gflow image generate \
-  -p "a serene mountain lake at sunset" \
-  [--aspect 1:1 | 9:16 | 16:9 | 4:3 | 3:4]   # default: 1:1
-  [--count 1..4]                              # default: 1
-  [--output PATH]                             # default: $FLOW_CLI_OUTPUT_DIR/images/<date>/<job_id>_<i>.png
-  [--profile NAME]                            # default: $FLOW_CLI_PROFILE or "default"
+Deferred (NOT blocking MVP):
+- Full DDD/CQRS layered refactor — overkill for single-user CLI
+- `structlog` wiring (deferred until logs are needed in anger)
+- Per-folder `CLAUDE.md` files (only valuable when domains grow)
 
-# Batch (manifest = TSV: prompt\tcount\taspect\toutput_path? )
-gflow image batch <manifest.tsv> \
-  [--out-dir DIR]                             # default: $FLOW_CLI_OUTPUT_DIR/images/<date>/
-  [--concurrency N]                           # default: 1 (v0.4+: account-pool aware)
-  [--profile NAME]
-```
+---
 
-#### Manifest format (TSV — terse, scriptable, vim-friendly)
+### Phase 2 — Video MVP (T2V + I2V + batch) — **CURRENT FOCUS**
 
-```tsv
-# prompt	count	aspect	output_path
-a serene mountain lake at sunset	2	1:1	./out/lake-{i}.png
-black-and-white portrait of a fisherman	1	3:4	./out/fisherman.png
-```
+#### Scope
 
-`{i}` is replaced by 1-based index when `count > 1`. Empty `output_path` falls back to the default scheme.
+`gflow video t2v "<prompt>"` and `gflow video i2v <image> "<prompt>"` produce real Veo videos against a live Google AI Ultra/Pro account — end-to-end, no UI automation.
 
-#### Routes to capture (Phase 2 prerequisite — discovery run)
+#### Captured routes (from samples/captured/, sanitised reference traffic)
 
-We have video routes captured but **not** image routes. Phase 2 starts with a focused discovery session against the Flow Imagen flow. Expected:
+| Route | Status | reCAPTCHA? |
+|---|---|---|
+| `POST .../trpc/project.createProject` | ✅ wired | No |
+| `POST /v1/flow/uploadImage` | ✅ wired (I2V only) | No |
+| `POST /v1/video:batchAsyncGenerateVideoText` | 🔧 to wire | **Yes** |
+| `POST /v1/video:batchCheckAsyncVideoGenerationStatus` | ✅ wired | No |
+| `getMediaUrlRedirect?name=...` (download) | ✅ wired | No |
+| `PATCH /v1/flowWorkflows/{id}` (archive cleanup) | ✅ wired | No |
 
-```text
-POST /v1/flow/uploadImage                            (already known — for I2I; not needed for T2I)
-POST /v1/flow/createImage  or  /v1/imagen:generate   (TBD — capture in P2.1)
-POST /v1/flow/createImage:checkStatus  or similar   (TBD)
-GET  signed URL pattern for downloading PNG          (likely same getMediaUrlRedirect)
-```
+The `generate_video` route is the only one with a hard prerequisite that's not just "have cookies" — it needs a fresh **reCAPTCHA Enterprise token** per call.
 
-#### Domain & handlers
+#### Architecture decision: reCAPTCHA token minting
+
+The reCAPTCHA token (~3000 chars, starts `0cAFcWe…`) is minted by the browser executing reCAPTCHA's JS challenge. Single-use, ~2 min expiry. Cannot be generated server-side.
+
+**Approach:** the existing Playwright persistent context is already navigated to a Flow editor page (`EDITOR_BOOTSTRAP_URL`) on `__aenter__`. Before each `generate_video` call, we run `page.evaluate("grecaptcha.execute(siteKey, {action})")` to mint a fresh token, then include it in the request body.
+
+**Site key + action discovery:** read from page source on first use, cache for the session:
 
 ```python
-# application/commands/generate_image.py
-@dataclass(frozen=True)
-class GenerateImageCommand:
-    prompt: Prompt
-    aspect: AspectRatio
-    count: OutputCount
-    output_path: Optional[OutputPath] = None        # None → use default scheme
-    profile: ProfileName = ProfileName("default")
-
-# application/handlers/generate_image_handler.py
-class GenerateImageHandler:
-    def __init__(
-        self,
-        image_provider: ImageProvider,         # port
-        storage: AssetStorage,                 # port
-        clock: Clock,                          # port (for testable date-based folders)
-    ):
-        ...
-    async def handle(self, cmd: GenerateImageCommand) -> list[Asset]:
-        job = await self.image_provider.start_generation(...)
-        while not job.is_terminal():
-            await asyncio.sleep(2)
-            job = await self.image_provider.poll(job.id)
-        if job.failed():
-            raise job.error
-        outputs = await self.image_provider.list_outputs(job.id)
-        paths = []
-        for i, asset in enumerate(outputs, 1):
-            path = self.storage.resolve_path(cmd.output_path, kind="image",
-                                              job_id=job.id, index=i)
-            await self.storage.download(asset.media_url, path)
-            paths.append(asset.with_local_path(path))
-        return paths
+async def discover_recaptcha_site_key(page: Page) -> str:
+    return await page.evaluate("""() => {
+        const scripts = document.querySelectorAll('script[src*="recaptcha/enterprise.js"]');
+        for (const s of scripts) {
+            const m = s.src.match(/[?&]render=([^&]+)/);
+            if (m) return m[1];
+        }
+        throw new Error("reCAPTCHA Enterprise script not found");
+    }""")
 ```
 
-### 4.2 Video generation (Phase 3)
+**Action name:** the captured token has metadata that reveals the action — Flow uses something like `videoGeneration` or similar. We discover this from the bound JS handler or from network capture in the discovery script.
 
-#### CLI surface
+**Risk: headless detection.** Google's reCAPTCHA Enterprise can detect headless Chromium and refuse to mint tokens (returns a "challenge required" response that we can't solve programmatically). If this triggers:
 
-```bash
-# Single video (I2V)
-gflow video generate \
-  -i ./input.png \
-  -p "Slow cinematic push-in"
-  [--end-image PATH]                          # optional end-frame
-  [--aspect 9:16 | 16:9 | 1:1]                # default: 9:16
-  [--output PATH]                             # default: <output_root>/videos/<date>/<job_id>.mp4
-  [--profile NAME]
+| Fallback | What changes |
+|---|---|
+| **Headed mode by default for video gen** | Worse UX (window opens) but reliable. Add `FLOW_CLI_HEADLESS=auto\|true\|false`; default `auto` = headless until first failure, then headed. |
+| **Headed only for token mint, headless for everything else** | More complex but keeps the rest invisible. |
+| **Defer to user reporting** | Ship with headless default + clear error message instructing the user to set `FLOW_CLI_HEADLESS=false`. |
 
-# Batch (TSV: start_image\tprompt\tend_image?\taspect\toutput_path?)
-gflow video batch <manifest.tsv> \
-  [--out-dir DIR]
-  [--concurrency N]
-  [--profile NAME]
+Default plan: **headless first**, instrument the failure with a remediation hint. If users report it failing, switch to headed-by-default.
 
-# Convenience alias for Phase-2 ergonomics
-gflow video i2v <image> "<prompt>" -o out.mp4
-```
+#### Implementation sequence
 
-#### Routes (already captured — see `samples/captured_requests.json`)
+Each step is a separate commit. Each one runs the four quality gates locally + verifies CI green before moving on.
 
-```text
-POST  /v1/flow/uploadImage
-POST  /v1/video:batchAsyncGenerateVideoText
-POST  /v1/video:batchCheckAsyncVideoGenerationStatus
-PATCH /v1/flowWorkflows/{id}                   (archive — not user-facing)
-```
+**2.1 — reCAPTCHA token mint** (~1-2h)
+- New file: `src/flow_cli/api/recaptcha.py`
+  - `discover_site_key(page) -> str`
+  - `mint_token(page, site_key, action) -> str`
+  - Cache site_key on first discovery
+- Tests: `tests/api/test_recaptcha.py`
+  - Mock `page.evaluate` calls
+  - Verify error path when reCAPTCHA script not found
+  - Verify cache behaviour
+- Defer real "does the live API accept it" verification to step 2.4 (smoke).
 
-#### Notes
+**2.2 — `FlowApiClient.generate_video()` method** (~1h)
+- Add method on FlowApiClient: `generate_video(project_id, prompt, *, start_asset=None, aspect="9:16", model_tier="fast", seed=None) -> VideoOperation`
+- Encode model key: `veo_3_1_t2v_fast_portrait` (T2V) or `veo_3_1_i2v_fast_portrait` (I2V), parameterised by aspect + tier
+- Body assembly using captured shape from `samples/captured/02_batchAsyncGenerateVideoText.json`
+- Tests: body shape verification + reCAPTCHA token plumbing (mocked)
 
-- A video generation always needs an uploaded start frame → upload happens implicitly inside the handler if `--start-uuid` isn't passed.
-- End-frame is optional (Veo I2V supports "transition between two frames").
-- Default aspect 9:16 because Flow's primary Veo use case is short-form vertical reels.
+**2.3 — CLI commands** (~1h)
+- New file: `src/flow_cli/cli_video.py` (or extend `cli.py`)
+  - `gflow video t2v "<prompt>" [--aspect 9:16|16:9|1:1] [--output PATH] [--profile NAME] [--async]`
+  - `gflow video i2v <image> "<prompt>" [...same options + auto-uploads start frame]`
+  - `gflow video batch <manifest.tsv> [--out-dir DIR] [--concurrency N]`
+  - `gflow video status <job_id>` (poll a previously-async'd job)
+- Manifest TSV format: `start_image\tprompt\tend_image?\taspect?\toutput_path?` (start_image empty → T2V)
+- Default polling loop with progress output via Rich
+- Tests: Click runner-based + handler logic with mocked FlowApiClient
+
+**2.4 — Live smoke test** (~30m)
+- New file: `scripts/smoke_e2e.py` — tiny script user runs once
+- Sequence: create project → t2v "test cinematic motion" → poll → download → assert mp4 size
+- Document in README: "Run after first `gflow auth login`"
+
+**2.5 — Remove legacy `providers/` package** (~30m)
+- Already superseded by `api/`. Delete the stub. Update tests + cli.py imports.
+
+**2.6 — Update docs + CHANGELOG** (~30m)
+- `docs/USAGE.md`: rewrite the Video commands section with real examples
+- `KNOWN_ISSUES.md`: add a new entry about reCAPTCHA headless detection (only if 2.4 reveals it)
+- `CHANGELOG.md`: collect all `[Unreleased]` entries into the v0.2.0a1 section
+
+**2.7 — Tag `v0.2.0a1`** (~15m, automatable via `/release`)
+- Bump version in `pyproject.toml`
+- Final CHANGELOG migration
+- `git tag v0.2.0a1 && git push origin v0.2.0a1`
+- GitHub Release auto-created by workflow
+- (PyPI Trusted Publishing not yet configured — that ships in v0.2.0)
+
+#### Total effort estimate
+
+~5-6 hours focused. Can be split across two sessions if reCAPTCHA discovery proves nasty.
+
+#### Definition of done (Phase 2)
+
+- [ ] `gflow video t2v "..."` produces a real .mp4 against the user's Google AI Ultra/Pro account
+- [ ] `gflow video i2v <png> "..."` produces a .mp4 whose first frame matches the input PNG
+- [ ] `gflow video batch <tsv>` processes 3+ clips end-to-end
+- [ ] All four quality gates green (ruff / format / pyright / pytest)
+- [ ] Test coverage ≥ 80% on `src/flow_cli/api/`
+- [ ] `samples/captured/` documents every wire format we depend on
+- [ ] `KNOWN_ISSUES.md` updated with anything surprising discovered during 2.4
+- [ ] Tagged `v0.2.0a1` on GitHub
 
 ---
 
-## 5. TDD discipline
+### Phase 3 — Image generation (T2I via Imagen) — DEFERRED
 
-Already documented in [CONTRIBUTING.md](CONTRIBUTING.md). Summary:
+#### Scope
 
-- **Red → Green → Refactor → Commit.**
-- Every command/query handler has a test file under `tests/handlers/`.
-- Every Provider port has contract tests under `tests/providers/` (red until route is wired, then mocked HTTP, then live-opt-in).
-- Coverage floor: **80% overall**, **90% on `domain/` and `application/`**.
+`gflow image generate -p "<prompt>" [--aspect 1:1|9:16|...] [--count 1..4]` and `gflow image batch <tsv>`.
 
-Failure to follow → CI rejects the PR.
+#### Prerequisite
 
----
+We have NOT captured the Imagen route. Phase 3 starts with a focused 5-min discovery run against a real Flow Imagen flow, then mirrors the Phase 2 implementation pattern (DTO + client method + CLI + smoke).
 
-## 6. BDD scenarios
+#### Why deferred
 
-Behaviour specs live in `tests/features/` as Gherkin `.feature` files, executed by [`pytest-bdd`](https://pytest-bdd.readthedocs.io/). They describe user-visible behaviour and double as living documentation.
-
-```gherkin
-# tests/features/image_generation.feature
-Feature: Image generation
-
-  Background:
-    Given a signed-in profile "default"
-
-  Scenario: Single image with default settings
-    When I run "gflow image generate -p 'a serene mountain lake'"
-    Then a PNG is saved under "<output_dir>/images/<today>/"
-    And exit code is 0
-
-  Scenario: Multiple images with explicit aspect
-    When I run "gflow image generate -p 'forest' --aspect 16:9 --count 3"
-    Then 3 PNGs are saved under "<output_dir>/images/<today>/"
-    And each PNG has aspect ratio 16:9
-
-  Scenario: Output path override via flag
-    Given env "FLOW_CLI_OUTPUT_DIR=/tmp/env-default"
-    When I run "gflow image generate -p 'sky' --output /tmp/flag-override/sky.png"
-    Then the file "/tmp/flag-override/sky.png" exists
-    And nothing was written to "/tmp/env-default"
-
-  Scenario: Output dir from env var
-    Given env "FLOW_CLI_OUTPUT_DIR=/tmp/env-out"
-    When I run "gflow image generate -p 'sky'"
-    Then a PNG is saved under "/tmp/env-out/images/<today>/"
-```
-
-```gherkin
-# tests/features/video_generation.feature
-Feature: Video generation (I2V)
-
-  Background:
-    Given a signed-in profile "default"
-    And an input image "tests/fixtures/start.png"
-
-  Scenario: Single I2V clip
-    When I run "gflow video generate -i tests/fixtures/start.png -p 'push-in'"
-    Then an MP4 is saved under "<output_dir>/videos/<today>/"
-    And the first frame of the MP4 visually matches "tests/fixtures/start.png"
-```
-
-The "first frame visually matches" step uses the same Pillow MAE check that already lives in this monorepo's `verify_first_frames.py`.
+Video gen is the user's primary need. Image gen has no captured routes yet, so it would block on a discovery run. Cleaner to ship video MVP first, then add images as v0.3.
 
 ---
 
-## 7. Observability
+### Phase 4 — Hardening — POST-v0.2.0a1
 
-`structlog` configured at startup via `shared/observability/logging.py`. Every log line has:
-
-- `event` (canonical key e.g. `image.generation.started`)
-- `command_id` (UUID4 per command invocation)
-- `provider` / `profile`
-- domain context (`prompt_chars`, `aspect`, `count`, etc.)
-- timing where relevant (`duration_ms`)
-
-Output format defaults to **human-readable on TTY**, **JSON when piped or `FLOW_CLI_LOG_FORMAT=json`**. Lets the CLI feel friendly interactively but pipe cleanly into `jq`/`Loki` in pipelines.
+- Per-account pool + `FLOW_CLI_CONCURRENCY > 1` for parallel batches
+- Retry / exponential backoff on 5xx + rate-limited responses
+- Domain-error → exit-code mapping (so shell scripts can branch)
+- Verbose error messages with remediation hints (e.g. "reCAPTCHA failed → run `gflow auth login` again")
+- `structlog` configured with auto/text/json formats
+- BDD scenarios in `tests/features/*.feature` via `pytest-bdd`
 
 ---
 
-## 8. Phasing
+### Phase 5 — Public alpha release on PyPI
 
-### Phase 1 — Foundation (target: 1–2 days)
-1. Refactor scaffold into `domain/`, `application/`, `infrastructure/`, `interfaces/`, `shared/` per §2.4.
-2. Add `pydantic-settings` config (§3) + `.env.template` (committed).
-3. Implement `CommandBus` + `QueryBus` (§2.2).
-4. Move existing CLI commands to dispatch via the bus.
-5. Wire `structlog` (§7).
-6. Migrate existing red tests to the new layout.
-7. **Exit criteria:** all current tests still pass, no functional regression, `gflow --help` works, layered structure complete.
-
-### Phase 2 — Image generation (target: 2–3 days)
-1. **Discovery run** (P2.1): capture image-gen routes from a real Flow session, dump to `samples/captured_image_requests.json`.
-2. Domain models for image generation: `Asset(kind="image")`, `GenerationJob`, value objects.
-3. `ImageProvider` port + `FlowImageProvider` adapter using captured routes.
-4. Commands: `GenerateImageCommand`, `GenerateImageBatchCommand`, `DownloadAssetCommand`.
-5. Handlers + tests (red, then green).
-6. CLI: `gflow image generate`, `gflow image batch`.
-7. BDD feature file `image_generation.feature` — passes against live API (opt-in).
-8. **Exit criteria:** `gflow image generate -p "..."` produces a real PNG end-to-end, batch works, output path resolution honours flag → env → default.
-
-### Phase 3 — Video generation (target: 2–3 days)
-1. Domain models for video: `GenerationJob(kind="video")`, `MotionPrompt`.
-2. `VideoProvider` port + `FlowVideoProvider` adapter (uses already-captured routes).
-3. Commands: `GenerateVideoCommand`, `GenerateVideoBatchCommand`.
-4. CLI: `gflow video generate`, `gflow video batch`, `gflow video i2v` (alias).
-5. BDD `video_generation.feature` with first-frame MAE assertion.
-6. Migrate Compiled Growth's worker to call `gflow` instead of in-tree Playwright.
-7. **Exit criteria:** F002 short produces 12/12 correct clips via `gflow`.
-
-### Phase 4 — Hardening (target: 1–2 days)
-1. Per-account pool + `FLOW_CLI_CONCURRENCY > 1` for batch ops.
-2. Retry / backoff on rate limits and transient 5xx.
-3. Domain-error → exit-code mapping (so shell scripts can branch).
-4. Verbose-by-default error messages with remediation hints.
-5. Architecture doc (`docs/ARCHITECTURE.md`) — diagrams + decision records.
-6. **Exit criteria:** can drive 12 clips concurrently across 2 accounts in ≤ half wall time.
-
-### Phase 5 — Public alpha release
-1. Set up PyPI Trusted Publishing for `flow-cli`.
-2. Tag `v0.2.0a1`.
-3. Verify `uvx --from flow-cli gflow --help` works end-to-end on a fresh machine.
-4. Announce (LinkedIn / X / dev.to / Hacker News "Show HN").
+- Configure PyPI Trusted Publishing for `flow-cli`
+- Verify `uvx --from flow-cli gflow --help` works on a fresh machine
+- Tag `v0.2.0` (drop the alpha suffix) when MVP is stable enough for external use
+- Announce (LinkedIn / X / dev.to / "Show HN")
 
 ---
 
-## 9. Decision log (ADRs in miniature)
+## 5. Decision log (ADRs in miniature)
 
 | # | Decision | Rationale |
 |---|---|---|
-| 1 | DDD + CQRS + Clean Arch | Vitrine-grade structure; future REST/gRPC adapter is a free lunch. |
-| 2 | Use `pydantic-settings`, not `python-dotenv` directly | Validated config, single source, fails fast. |
-| 3 | TSV manifests over JSON/YAML | Editable in any tool, scriptable, friendly to `awk`/`cut`. |
-| 4 | `structlog` over stdlib `logging` | Structured-by-default, human-readable on TTY. |
-| 5 | `pytest-bdd` over `behave` | Same runner as unit tests; one CI command. |
-| 6 | Default aspect 1:1 (image), 9:16 (video) | Imagen's natural default; Flow's primary use case is reels. |
-| 7 | Output path defaults under `Downloads/flow-cli/` | OS-native, discoverable, easy to clean. |
-| 8 | No event-sourcing, no message queue, no SaaS dependencies | YAGNI for a local CLI. |
-| 9 | Playwright for auth + REST transport (`page.request`) | Avoids re-implementing Google OAuth; cookie jar auto-attaches. |
-| 10 | Both `gflow` and `flow` binary names installed | `flow` is friendlier; `gflow` avoids conflicts. |
+| 1 | Hybrid Playwright + REST, not pure HTTP client | reCAPTCHA token mint requires a real browser context; same context piggybacks for cookies |
+| 2 | DDD/CQRS layered refactor deferred indefinitely | YAGNI for a single-user CLI; revisit if `gflow serve` HTTP front-end ever lands |
+| 3 | `pydantic-settings` over raw `python-dotenv` | Validated config, single source, fails fast |
+| 4 | `platformdirs` for default paths | Same convention as `pip`, `uv`, `httpx` — no surprises |
+| 5 | TSV manifests over JSON/YAML | Editable in any tool, scriptable, vim/awk-friendly |
+| 6 | `text/plain` content-type for aisandbox-pa POSTs | Verified in samples — server 400s on `application/json` despite the body being JSON |
+| 7 | Default video aspect 9:16 | Flow's primary use case is short-form vertical reels |
+| 8 | Output dir under `Downloads/flow-cli/` via platformdirs | OS-native, discoverable, easy to clean |
+| 9 | No event sourcing, no message queue, no SaaS dependencies | YAGNI for a local CLI |
+| 10 | Both `gflow` and `flow` binary names installed | `flow` is friendlier; `gflow` avoids conflicts with Facebook Flow / MS Power Automate |
+| 11 | LF-only line endings via `.gitattributes` | Single repo source of truth; cross-platform contributors don't think about it |
+| 12 | `Provider` indirection (legacy `providers/`) removed | Superseded by `api.FlowApiClient`. Re-introduce when we add `OfficialVeoProvider` in Phase 5 |
 
 ---
 
-## 10. Open questions (need confirmation before Phase 2)
-
-| # | Question | Default if no answer |
-|---|---|---|
-| Q1 | Do you want a full layered refactor (Phase 1) before Phase 2, or grow into it as features land? | Full refactor first — clean foundation is cheaper now than retrofitted later. |
-| Q2 | Image batch: TSV manifest format above OK, or prefer YAML/JSON? | TSV (terse, scriptable). |
-| Q3 | Default image count when not specified? | `1` |
-| Q4 | Should `gflow image generate` block until done (default) or return job_id for later polling? | Block by default; add `--async` flag to return job_id. |
-| Q5 | Where should the `.env` be loaded from by default? CWD only, or also `$FLOW_CLI_HOME/.env`? | Both, with CWD taking precedence. |
-| Q6 | Are you OK with `pydantic-settings`, `structlog`, `pytest-bdd`, `platformdirs` as new dependencies? | Yes — all small, all stable, all heavily-used. |
-
----
-
-## 11. Definition of done (per phase)
+## 6. Definition of done (per phase)
 
 A phase ships when:
 
-- [ ] All exit criteria above are met.
-- [ ] CI is green (lint + type + test + coverage ≥ 80%).
-- [ ] CHANGELOG.md `[Unreleased]` block lists every user-visible change.
-- [ ] README is updated if user-facing surface changed.
-- [ ] One BDD feature file exists for any new user-visible command.
-- [ ] No `# TODO` left without a tracked issue link.
+- [ ] All exit criteria for that phase are met
+- [ ] CI is green (lint + format + type + test + coverage ≥ 80%)
+- [ ] `CHANGELOG.md` `[Unreleased]` block lists every user-visible change
+- [ ] README is updated if user-facing surface changed
+- [ ] One BDD feature file exists for any new user-visible command (Phase 4+)
+- [ ] No `# TODO` left in the diff without a tracked issue link
 
 ---
 
-_End of plan. Updates to this file ship as part of the phase that motivated them._
+## 7. Open questions for confirmation before Phase 2 starts
+
+| # | Question | Suggested default |
+|---|---|---|
+| Q1 | If reCAPTCHA fails headless, default to headed (visible window) or fail loud and tell user? | **Fail loud** with `FLOW_CLI_HEADLESS=false` remediation. Headed pop-ups in batch mode would be unbearable. |
+| Q2 | Default model tier — `fast` (Veo 3.1 Fast) or `quality` (Veo 3.1)? | **`fast`** — burns less credit per clip; users can opt into quality. |
+| Q3 | Default seed behaviour — random or deterministic-from-prompt? | **Random** — matches Flow UI behaviour. `--seed N` for reproducibility. |
+| Q4 | Default audio handling — `BLOCK_SILENCED_VIDEOS` (captured shape) or new `audio` flag? | **Block silenced** for v0.2.0a1; revisit if users want audio control. |
+| Q5 | Manifest concurrency — sequential by default or parallel-by-account? | **Sequential** for v0.2.0a1. Concurrency lands in Phase 4. |
+| Q6 | Should `gflow video i2v` auto-archive the uploaded start frame after generation, or keep it in the library? | **Keep**, with `--no-archive` flag. Auto-archive can leak quota in batch runs but lets users reuse uploads. |
+
+---
+
+_End of plan. Updates ship as part of the phase that motivated them._
