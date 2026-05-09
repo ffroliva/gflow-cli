@@ -1,0 +1,65 @@
+[project]
+name = "flow-cli"
+version = "0.1.0"
+description = "Unofficial CLI for Google Flow — drive Veo image-to-video generations from the terminal."
+readme = "README.md"
+license = { file = "LICENSE" }
+requires-python = ">=3.11"
+authors = [{ name = "Felipe Oliva", email = "dev@axelate.io" }]
+keywords = ["google", "flow", "veo", "video", "ai", "cli"]
+classifiers = [
+    "Development Status :: 3 - Alpha",
+    "Environment :: Console",
+    "Intended Audience :: Developers",
+    "License :: OSI Approved :: MIT License",
+    "Programming Language :: Python :: 3.11",
+    "Programming Language :: Python :: 3.12",
+    "Programming Language :: Python :: 3.13",
+    "Topic :: Multimedia :: Video",
+]
+
+dependencies = [
+    "click>=8.1.0",
+    "httpx>=0.27.0",
+    "playwright>=1.45.0",
+    "rich>=13.7.0",
+]
+
+[project.optional-dependencies]
+dev = [
+    "pytest>=8.0.0",
+    "pytest-asyncio>=0.23.0",
+    "ruff>=0.5.0",
+    "pyright>=1.1.0",
+]
+
+[project.scripts]
+gflow = "flow_cli.cli:main"
+flow = "flow_cli.cli:main"
+
+[project.urls]
+Homepage = "https://github.com/ffroliva/flow-cli"
+Issues = "https://github.com/ffroliva/flow-cli/issues"
+
+[build-system]
+requires = ["hatchling"]
+build-backend = "hatchling.build"
+
+[tool.hatch.build.targets.wheel]
+packages = ["src/flow_cli"]
+
+[tool.ruff]
+line-length = 100
+target-version = "py311"
+
+[tool.ruff.lint]
+select = ["E", "F", "W", "I", "B", "UP", "N"]
+
+[tool.pyright]
+include = ["src", "tests"]
+strict = ["src/flow_cli"]
+pythonVersion = "3.11"
+
+[tool.pytest.ini_options]
+testpaths = ["tests"]
+asyncio_mode = "auto"

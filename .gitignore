@@ -1,0 +1,46 @@
+# Python
+__pycache__/
+*.py[cod]
+*$py.class
+*.egg-info/
+.eggs/
+dist/
+build/
+.venv/
+venv/
+env/
+
+# uv
+.uv-cache/
+
+# Test / coverage
+.pytest_cache/
+.coverage
+.coverage.*
+htmlcov/
+.tox/
+.mypy_cache/
+.ruff_cache/
+.pyright/
+
+# Editors
+.vscode/
+.idea/
+*.swp
+.DS_Store
+
+# Project-specific
+auth/                  # captured Google session profiles (NEVER commit)
+profile_*/
+*.cookies.json
+storage_state.json
+secrets.json
+
+# Generated outputs
+out/
+tmp/
+*.mp4
+*.png
+!docs/**/*.png         # docs images are OK
+!tests/fixtures/**/*.png
+samples/*.captured.json # sandbox-recorded API exchanges may contain PII
