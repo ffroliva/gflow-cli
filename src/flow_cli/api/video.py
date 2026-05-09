@@ -55,6 +55,13 @@ class GenerateVideoRequest:
         return Mode.I2V if self.start_asset_uuid else Mode.T2V
 
 
+# Wire-format constants discovered from samples/captured/02_batchAsyncGenerateVideoText.json
+_AUDIO_FAILURE_PREF = "BLOCK_SILENCED_VIDEOS"
+_CLIENT_TOOL = "PINHOLE"
+_PAYGATE_TIER = "PAYGATE_TIER_ONE"
+_RECAPTCHA_APP_TYPE = "RECAPTCHA_APPLICATION_TYPE_WEB"
+
+
 def model_key(mode: Mode, tier: Tier, aspect: Aspect) -> str:
     """Compose Flow's `videoModelKey` wire string."""
     return f"veo_3_1_{mode.value}_{tier.value}_{aspect.value}"
@@ -74,28 +81,30 @@ def build_generate_body(
     Shape mirrors `samples/captured/02_batchAsyncGenerateVideoText.json` —
     every field there is required by the server.
     """
+    image_input: dict[str, Any] = (
+        {"imageInput": {"mediaId": req.start_asset_uuid}} if req.start_asset_uuid else {}
+    )
     request: dict[str, Any] = {
         "aspectRatio": req.aspect.wire(),
         "textInput": {"structuredPrompt": {"parts": [{"text": req.prompt}]}},
         "videoModelKey": model_key(req.mode, req.tier, req.aspect),
         "metadata": {},
         "seed": seed,
+        **image_input,
     }
-    if req.start_asset_uuid:
-        request["imageInput"] = {"mediaId": req.start_asset_uuid}
     return {
         "mediaGenerationContext": {
             "batchId": batch_id,
-            "audioFailurePreference": "BLOCK_SILENCED_VIDEOS",
+            "audioFailurePreference": _AUDIO_FAILURE_PREF,
         },
         "clientContext": {
             "projectId": project_id,
-            "tool": "PINHOLE",
-            "userPaygateTier": "PAYGATE_TIER_ONE",
+            "tool": _CLIENT_TOOL,
+            "userPaygateTier": _PAYGATE_TIER,
             "sessionId": session_id,
             "recaptchaContext": {
                 "token": recaptcha_token,
-                "applicationType": "RECAPTCHA_APPLICATION_TYPE_WEB",
+                "applicationType": _RECAPTCHA_APP_TYPE,
             },
         },
         "requests": [request],
