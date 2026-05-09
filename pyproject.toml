@@ -71,3 +71,8 @@ markers = [
     "integration: real Provider plumbing with mocked HTTP",
     "live: hits the real Flow API — opt-in via GFLOW_LIVE=1",
 ]
+
+[dependency-groups]
+dev = [
+    "pytest-cov>=7.1.0",
+]
