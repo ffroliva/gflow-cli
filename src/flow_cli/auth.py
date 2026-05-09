@@ -1,12 +1,23 @@
-"""Auth — capture/refresh Google session via Playwright persistent context."""
+"""Auth — capture/refresh Google session via Playwright persistent context.
+
+Sessions live under `Settings.home / profile_<name>/`. Default location is
+the OS-native user-data-dir (via `platformdirs`):
+
+  * Windows: `%LOCALAPPDATA%\\flow-cli\\profile_<name>`
+  * macOS:   `~/Library/Application Support/flow-cli/profile_<name>`
+  * Linux:   `~/.local/share/flow-cli/profile_<name>` (XDG)
+
+Override the root with `FLOW_CLI_HOME`. See `docs/AUTHENTICATION.md`.
+"""
 
 from __future__ import annotations
 
 import logging
-import os
 from pathlib import Path
 
 from playwright.async_api import async_playwright
+
+from flow_cli.config import get_settings
 
 logger = logging.getLogger(__name__)
 
@@ -14,13 +25,16 @@ GEMINI_URL = "https://labs.google/fx/tools/flow?hl=en"
 
 
 def default_profile_root() -> Path:
-    """~/.flow-cli/ on POSIX, %USERPROFILE%/.flow-cli/ on Windows."""
-    home = Path(os.environ.get("FLOW_CLI_HOME") or Path.home() / ".flow-cli")
-    return home
+    """Root dir under which `profile_<name>/` subdirectories live.
+
+    Returns `Settings.home`. Reads env via `get_settings()` so changes to
+    `FLOW_CLI_HOME` after import are honoured (provided the cache is reset).
+    """
+    return get_settings().home
 
 
 def profile_dir(name: str = "default") -> Path:
-    return default_profile_root() / f"profile_{name}"
+    return get_settings().profile_subdir(name)
 
 
 async def login(name: str = "default") -> Path:
@@ -45,7 +59,6 @@ async def login(name: str = "default") -> Path:
                 "\n  Sign into your Google account in the open window.\n"
                 "  Once you reach the Flow editor, close the window to save the session.\n"
             )
-            # Wait until the user closes the context
             try:
                 await ctx.wait_for_event("close", timeout=600_000)  # pyright: ignore[reportUnknownMemberType]
             except Exception:

@@ -12,9 +12,13 @@ from flow_cli import profile_store
 @pytest.fixture
 def home(tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> Path:
     """Pretend $FLOW_CLI_HOME is a fresh tmp dir."""
+    from flow_cli.config import reset_settings
+
     monkeypatch.setenv("FLOW_CLI_HOME", str(tmp_path))
     monkeypatch.delenv("FLOW_CLI_PROFILE", raising=False)
-    return tmp_path
+    reset_settings()
+    yield tmp_path
+    reset_settings()
 
 
 def _mk_profile(home: Path, name: str, with_cookies: bool = True) -> Path:
