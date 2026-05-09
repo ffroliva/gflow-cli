@@ -32,7 +32,8 @@ from typing import Any
 from playwright.async_api import BrowserContext, Page, Playwright, async_playwright
 
 from flow_cli.api import routes
-from flow_cli.api.dto import AssetInfo, ProjectInfo, VideoOperation, VideoStatus
+from flow_cli.api.dto import AssetInfo, GeneratedImage, ProjectInfo, VideoOperation, VideoStatus
+from flow_cli.api.image import GenerateImageRequest, _build_batch_generate_images_body
 from flow_cli.api.recaptcha import TokenMinter
 from flow_cli.api.video import GenerateVideoRequest, build_generate_body
 
@@ -235,6 +236,40 @@ class FlowApiClient:
         )
         data = await self._post_json(routes.GENERATE_VIDEO, body)
         return VideoOperation.from_generate_response(data)
+
+    async def generate_image(
+        self,
+        *,
+        project_id: str,
+        req: GenerateImageRequest,
+        seed: int | None = None,
+        recaptcha_action: str = "imageGeneration",
+        batch_id: str | None = None,
+    ) -> GeneratedImage:
+        """Single-shot Imagen/Narwhal image generation.
+
+        Mints a fresh reCAPTCHA token (action ``imageGeneration`` by default —
+        chosen to mirror the ``videoGeneration`` action used for Veo) and POSTs
+        a one-request batch to ``flowMedia:batchGenerateImages``. Multi-image
+        fan-out is the caller's responsibility (see ``generate_images_batch``
+        in a later task) — this method always returns the FIRST media item.
+
+        Idempotency: calling twice with the same ``seed`` and ``batch_id``
+        yields identical bodies modulo the per-call reCAPTCHA token.
+        """
+        minter = TokenMinter(self.page)
+        token = await minter.mint(recaptcha_action)
+        body = _build_batch_generate_images_body(
+            req,
+            project_id=project_id,
+            recaptcha_token=token,
+            batch_id=batch_id or _new_batch_id(),
+            seed=seed if seed is not None else secrets.randbelow(2**31),
+            session_id=f";{int(time.time() * 1000)}",
+        )
+        url = routes.batch_generate_images_url(project_id)
+        data = await self._post_json(url, body)
+        return GeneratedImage.from_response_dict(data)[0]
 
 
 def _default_project_title() -> str:
