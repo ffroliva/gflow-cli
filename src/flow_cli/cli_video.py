@@ -19,6 +19,7 @@ from flow_cli import profile_store
 from flow_cli.api.client import FlowApiClient
 from flow_cli.api.video import Aspect, GenerateVideoRequest
 from flow_cli.config import get_settings
+from flow_cli.manifest import ManifestEntry, parse_manifest
 from flow_cli.paths import video_output_path
 
 console = Console()
@@ -255,3 +256,67 @@ async def _run_i2v(
             output=output or video_output_path(output_root, job_id=op.media_name),
             poll_interval=poll_interval,
         )
+
+
+# ---------------------------------------------------------------------------
+# batch subcommand
+# ---------------------------------------------------------------------------
+
+
+@video.command("batch")
+@click.argument("manifest", type=click.Path(exists=True, dir_okay=False, path_type=Path))
+@click.option("--out-dir", type=click.Path(path_type=Path), default=None)
+@click.option("--profile", default=None)
+@click.option("--poll-interval", type=float, default=5.0, show_default=True)
+def batch(
+    manifest: Path,
+    out_dir: Path | None,
+    profile: str | None,
+    poll_interval: float,
+) -> None:
+    """Run a TSV manifest of video generations."""
+    profile_name = _resolve_profile(profile)
+    pdir = _make_provider_dir(profile_name)
+    settings = get_settings()
+    entries = parse_manifest(manifest)
+    out_root = out_dir or settings.output_dir
+    asyncio.run(
+        _run_batch(
+            profile_dir=pdir,
+            headless=settings.headless,
+            entries=entries,
+            out_root=out_root,
+            poll_interval=poll_interval,
+        )
+    )
+
+
+async def _run_batch(
+    *,
+    profile_dir: Path,
+    headless: bool,
+    entries: list[ManifestEntry],
+    out_root: Path,
+    poll_interval: float,
+) -> None:
+    async with FlowApiClient(profile_dir=profile_dir, headless=headless) as client:
+        console.print(f"  Creating project for {len(entries)} clips...")
+        project = await client.create_project()
+        for i, e in enumerate(entries, start=1):
+            console.print(f"  [{i}/{len(entries)}] [bold]{e.prompt[:60]}[/bold]")
+            start_uuid = None
+            if e.start_image:
+                asset = await client.upload_image(project.project_id, e.start_image)
+                start_uuid = asset.name
+            req = GenerateVideoRequest(
+                prompt=e.prompt, aspect=e.aspect, start_asset_uuid=start_uuid
+            )
+            op = await client.generate_video(project_id=project.project_id, req=req)
+            output = e.output_path or video_output_path(out_root, job_id=op.media_name)
+            await _poll_and_download(
+                client=client,
+                project_id=project.project_id,
+                media_name=op.media_name,
+                output=output,
+                poll_interval=poll_interval,
+            )
