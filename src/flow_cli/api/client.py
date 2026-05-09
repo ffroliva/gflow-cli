@@ -269,7 +269,14 @@ class FlowApiClient:
         )
         url = routes.batch_generate_images_url(project_id)
         data = await self._post_json(url, body)
-        return GeneratedImage.from_response_dict(data)[0]
+        images = GeneratedImage.from_response_dict(data)
+        if not images:
+            # Server returned 200 OK with an empty media[] — typically a
+            # silent content-policy rejection or quota exhaustion. Surface
+            # this through the regular error taxonomy instead of leaking
+            # an IndexError to callers.
+            raise FlowApiError(200, str(data)[:200], route=url)
+        return images[0]
 
 
 def _default_project_title() -> str:
