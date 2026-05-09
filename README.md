@@ -313,7 +313,7 @@ Pre-release tags (`v*.*.*-rc*`, `v*.*.*-alpha*`, `v*.*.*-beta*`) auto-flag as pr
 
 ## License
 
-[MIT License](LICENSE) © 2026 Felipe Oliva (`ffroliva`).
+[MIT License](LICENSE) © 2026 Flavio Oliva (`ffroliva`).
 
 The full text is in [LICENSE](LICENSE). In short:
 

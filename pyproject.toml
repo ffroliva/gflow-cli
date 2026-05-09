@@ -5,7 +5,7 @@ description = "Unofficial CLI for Google Flow — drive Veo image-to-video gener
 readme = "README.md"
 license = { file = "LICENSE" }
 requires-python = ">=3.11"
-authors = [{ name = "Felipe Oliva", email = "dev@axelate.io" }]
+authors = [{ name = "Flavio Oliva", email = "dev@axelate.io" }]
 keywords = ["google", "flow", "veo", "video", "ai", "cli"]
 classifiers = [
     "Development Status :: 3 - Alpha",
