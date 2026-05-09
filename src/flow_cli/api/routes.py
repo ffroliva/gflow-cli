@@ -7,9 +7,20 @@ Two hosts are involved:
 
 from __future__ import annotations
 
+import re
+
 FLOW_API_BASE = "https://aisandbox-pa.googleapis.com/v1"
 LABS_TRPC_BASE = "https://labs.google/fx/api/trpc"
 LABS_BASE = "https://labs.google"
+
+# Strict allowlist for Google project IDs interpolated into URL paths.
+# Alphanumeric + hyphen, 1-128 chars. Closes URL-injection vectors:
+#   - percent-encoded slashes (%2F normalized by GCP/nginx L7 LBs)
+#   - Unicode lookalikes (U+FF0F, U+2215, U+29F8, ...)
+#   - CRLF / NUL bytes (header injection)
+#   - URL metacharacters '?' and '#'
+#   - whitespace-only / empty / oversized strings
+_PROJECT_ID_RE = re.compile(r"^[A-Za-z0-9\-]{1,128}$")
 
 # Asset / media
 UPLOAD_IMAGE = f"{FLOW_API_BASE}/flow/uploadImage"
@@ -36,11 +47,14 @@ def media_download_url(name: str) -> str:
 def batch_generate_images_url(project_id: str) -> str:
     """Build the batchGenerateImages URL for a given project.
 
-    Guards against path traversal / injection — the project_id is interpolated
-    directly into the URL path, so reject anything that could escape the segment.
+    Validates project_id against a strict allowlist (alphanumeric + hyphen,
+    1-128 chars) to prevent URL-path injection via percent-encoding,
+    Unicode lookalikes, CRLF, NUL, query/fragment metacharacters, or path
+    traversal. The project_id is interpolated directly into the URL path,
+    so anything outside the allowlist is rejected.
     """
-    if not project_id or "/" in project_id or "\\" in project_id or ".." in project_id:
-        raise ValueError(f"Unsafe project_id: {project_id!r}")
+    if not _PROJECT_ID_RE.fullmatch(project_id):
+        raise ValueError(f"Invalid project_id: {project_id!r}")
     return f"{FLOW_API_BASE}/projects/{project_id}/flowMedia:batchGenerateImages"
 
 

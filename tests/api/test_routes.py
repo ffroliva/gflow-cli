@@ -47,12 +47,47 @@ def test_batch_generate_images_url() -> None:
 @pytest.mark.parametrize(
     "bad",
     [
+        # Original denylist regression cases — must still be rejected.
         "../evil",
         "/leading-slash",
         "with\\backslash",
         "",
+        # Percent-encoded slash (GCP/nginx L7 LBs normalize %2F → /).
+        "proj%2F..%2Fevil",
+        # Unicode lookalikes for '/'.
+        "proj／evil",  # U+FF0F FULLWIDTH SOLIDUS
+        "proj∕evil",  # U+2215 DIVISION SLASH
+        "proj⧸evil",  # U+29F8 BIG SOLIDUS
+        # CRLF / NUL byte injection.
+        "proj\nevil",
+        "proj\revil",
+        "proj\x00evil",
+        # URL metacharacters that would corrupt path semantics.
+        "proj?injected=param",
+        "proj#frag",
+        # Whitespace-only is truthy but invalid.
+        "   ",
+        # Length cap: 129 chars exceeds the 128 limit.
+        "a" * 129,
     ],
 )
-def test_batch_generate_images_url_rejects_path_traversal(bad: str) -> None:
+def test_batch_generate_images_url_rejects_invalid_project_id(bad: str) -> None:
     with pytest.raises(ValueError):
         routes.batch_generate_images_url(bad)
+
+
+@pytest.mark.parametrize(
+    "good",
+    [
+        "abc-123",
+        "a",
+        "A1",
+        "my-project-id",
+        "a" * 128,  # exactly at the length cap
+    ],
+)
+def test_batch_generate_images_url_accepts_valid_project_id(good: str) -> None:
+    url = routes.batch_generate_images_url(good)
+    assert url == (
+        f"https://aisandbox-pa.googleapis.com/v1/projects/{good}/flowMedia:batchGenerateImages"
+    )
