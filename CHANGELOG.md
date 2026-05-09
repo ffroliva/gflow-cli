@@ -1,6 +1,6 @@
 # Changelog
 
-All notable changes to `flow-cli` will be documented in this file.
+All notable changes to `gflow-cli` will be documented in this file.
 
 The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/),
 and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
@@ -43,7 +43,7 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 - GitHub Actions CI: ruff, pyright, pytest on Python 3.11 and 3.12.
 - GitHub Actions release workflow: tag-triggered PyPI publish via Trusted Publishing.
 - MIT license, comprehensive README, [`DISCLAIMER.md`](DISCLAIMER.md), [`CONTRIBUTING.md`](CONTRIBUTING.md).
-- [`skills/flow-cli/SKILL.md`](skills/flow-cli/SKILL.md) — installable Claude Code Skill.
+- [`skills/gflow-cli/SKILL.md`](skills/gflow-cli/SKILL.md) — installable Claude Code Skill.
 
 ### Removed
 - `flow_cli.providers.FlowProvider` and `flow_cli.models` — superseded by `flow_cli.api`.

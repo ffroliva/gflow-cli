@@ -1,4 +1,4 @@
-# flow-cli — Implementation Plan
+# gflow-cli — Implementation Plan
 
 > **Status:** Living document. Updated as phases complete.
 > **Owner:** [@ffroliva](https://github.com/ffroliva)
@@ -101,11 +101,11 @@ Documented in [docs/CONFIGURATION.md](docs/CONFIGURATION.md) and [.env.template]
 Default paths via `platformdirs`:
 
 ```text
-$FLOW_CLI_HOME/                   ← user_data_dir/flow-cli
+$FLOW_CLI_HOME/                   ← user_data_dir/gflow-cli
 ├── profile_<name>/               ← Chromium persistent contexts
 └── config.toml                   ← default_profile = "..."
 
-$FLOW_CLI_OUTPUT_DIR/             ← user_downloads_dir/flow-cli
+$FLOW_CLI_OUTPUT_DIR/             ← user_downloads_dir/gflow-cli
 ├── videos/<YYYY-MM-DD>/<job_id>.mp4
 └── images/<YYYY-MM-DD>/<job_id>_<i>.png  (Phase 3)
 ```
@@ -281,8 +281,8 @@ Video gen is the user's primary need. Image gen has no captured routes yet, so i
 
 ### Phase 5 — Public alpha release on PyPI
 
-- Configure PyPI Trusted Publishing for `flow-cli`
-- Verify `uvx --from flow-cli gflow --help` works on a fresh machine
+- Configure PyPI Trusted Publishing for `gflow-cli`
+- Verify `uvx --from gflow-cli gflow --help` works on a fresh machine
 - Tag `v0.2.0` (drop the alpha suffix) when MVP is stable enough for external use
 - Announce (LinkedIn / X / dev.to / "Show HN")
 
@@ -299,7 +299,7 @@ Video gen is the user's primary need. Image gen has no captured routes yet, so i
 | 5 | TSV manifests over JSON/YAML | Editable in any tool, scriptable, vim/awk-friendly |
 | 6 | `text/plain` content-type for aisandbox-pa POSTs | Verified in samples — server 400s on `application/json` despite the body being JSON |
 | 7 | Default video aspect 9:16 | Flow's primary use case is short-form vertical reels |
-| 8 | Output dir under `Downloads/flow-cli/` via platformdirs | OS-native, discoverable, easy to clean |
+| 8 | Output dir under `Downloads/gflow-cli/` via platformdirs | OS-native, discoverable, easy to clean |
 | 9 | No event sourcing, no message queue, no SaaS dependencies | YAGNI for a local CLI |
 | 10 | Both `gflow` and `flow` binary names installed | `flow` is friendlier; `gflow` avoids conflicts with Facebook Flow / MS Power Automate |
 | 11 | LF-only line endings via `.gitattributes` | Single repo source of truth; cross-platform contributors don't think about it |

@@ -1,4 +1,4 @@
-"""URL constants for every Flow REST route flow-cli touches.
+"""URL constants for every Flow REST route gflow-cli touches.
 
 Two hosts are involved:
   * aisandbox-pa.googleapis.com — the actual Flow API surface

@@ -1,6 +1,6 @@
 # Documentation Index
 
-Welcome to the `flow-cli` documentation. This index is the routing layer: it tells you where each topic lives. Keep `README.md` slim (high-level overview + install) and document deep details here.
+Welcome to the `gflow-cli` documentation. This index is the routing layer: it tells you where each topic lives. Keep `README.md` slim (high-level overview + install) and document deep details here.
 
 | Doc | Purpose | Read when… |
 |---|---|---|

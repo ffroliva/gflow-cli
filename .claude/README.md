@@ -2,7 +2,7 @@
 
 This directory holds **internal maintainer workflows** that are bundled with the repo so any contributor running Claude Code in this checkout gets the same environment.
 
-> Distinct from `skills/flow-cli/SKILL.md` at the repo root, which is the **published** Skill end users install into their own Claude Code to learn how to use `gflow` from agent contexts. `.claude/` is for *us*, the maintainers; `skills/` is for *them*, the users.
+> Distinct from `skills/gflow-cli/SKILL.md` at the repo root, which is the **published** Skill end users install into their own Claude Code to learn how to use `gflow` from agent contexts. `.claude/` is for *us*, the maintainers; `skills/` is for *them*, the users.
 
 ## Layout
 
@@ -31,7 +31,7 @@ Example: `commands/foo.md` → invoked as `/foo`.
 
 ## Adding an internal skill
 
-Same shape as the published one in `skills/flow-cli/`:
+Same shape as the published one in `skills/gflow-cli/`:
 
 ```markdown
 ---

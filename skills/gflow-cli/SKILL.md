@@ -1,11 +1,11 @@
 ---
-name: flow-cli
-description: Use when the user wants to generate Veo videos via Google Flow from the terminal or a script — including image-to-video (I2V) clips, batch video pipelines, or burning Flow Ultra/Pro credits programmatically. The CLI is `gflow` (or `flow`); install with `uv tool install flow-cli` or run ad-hoc with `uvx --from flow-cli gflow ...`. Bypasses the web UI entirely after a one-time browser sign-in.
+name: gflow-cli
+description: Use when the user wants to generate Veo videos via Google Flow from the terminal or a script — including image-to-video (I2V) clips, batch video pipelines, or burning Flow Ultra/Pro credits programmatically. The CLI is `gflow` (or `flow`); install with `uv tool install gflow-cli` or run ad-hoc with `uvx --from gflow-cli gflow ...`. Bypasses the web UI entirely after a one-time browser sign-in.
 ---
 
-# flow-cli skill
+# gflow-cli skill
 
-`flow-cli` is an unofficial Python CLI that drives [Google Flow](https://labs.google/fx/tools/flow) Veo image-to-video generations from the terminal, bypassing the web UI. Source: <https://github.com/ffroliva/flow-cli>.
+`gflow-cli` is an unofficial Python CLI that drives [Google Flow](https://labs.google/fx/tools/flow) Veo image-to-video generations from the terminal, bypassing the web UI. Source: <https://github.com/ffroliva/gflow-cli>.
 
 ## When to invoke this skill
 
@@ -24,14 +24,14 @@ The user wants to:
 
 ## Prerequisites
 
-Before any flow-cli invocation, verify:
+Before any gflow-cli invocation, verify:
 
 1. **Python 3.11+** is available (`python --version`).
 2. **uv** is installed (`uv --version`). If not, install: `curl -LsSf https://astral.sh/uv/install.sh | sh` (or Windows equivalent from <https://docs.astral.sh/uv/>).
-3. **flow-cli** is installed OR available via uvx:
-   - Quick: `uvx --from flow-cli gflow --help` (no install)
-   - Persistent: `uv tool install flow-cli && gflow --help`
-4. **Playwright Chromium** has been downloaded once: `uvx --from flow-cli playwright install chromium` (~150 MB).
+3. **gflow-cli** is installed OR available via uvx:
+   - Quick: `uvx --from gflow-cli gflow --help` (no install)
+   - Persistent: `uv tool install gflow-cli && gflow --help`
+4. **Playwright Chromium** has been downloaded once: `uvx --from gflow-cli playwright install chromium` (~150 MB).
 5. **A signed-in profile** exists: `gflow auth status` should show `Profile 'default' is configured`. If not, run `gflow auth login` and walk the user through the one-time browser sign-in.
 6. **The user has Flow access** — Google AI Ultra or Pro subscription with Flow rolled out. If `gflow upload` returns 403, this is the cause.
 
@@ -140,17 +140,17 @@ asyncio.run(make_clip(Path("in.png"), "Push-in", Path("out.mp4")))
 | `No session for profile 'default'` | First run, no auth | `gflow auth login` |
 | `403 Forbidden` from upload | Account doesn't have Flow access | Verify in [labs.google/fx/tools/flow](https://labs.google/fx/tools/flow) |
 | `RuntimeError: project.createProject not yet wired` | Pre-release stub still in place | Check `gflow --version`; install latest |
-| `Playwright Executable doesn't exist` | Chromium not downloaded | `uvx --from flow-cli playwright install chromium` |
+| `Playwright Executable doesn't exist` | Chromium not downloaded | `uvx --from gflow-cli playwright install chromium` |
 | Generations all fail with the same UUID | Stale Flow session | `gflow auth login` again to refresh cookies |
 | Quota exceeded | Burned through monthly credits | Wait for reset, or upgrade subscription |
 
 ## Important constraints
 
 - **Costs real money / credits.** Each `gflow i2v` call burns a Veo credit from the user's Google AI Ultra/Pro subscription. Confirm before running batches.
-- **Not for production-grade SLAs.** flow-cli reverse-engineers a private Google API. It can break without notice. For production, use the [official Gen AI SDK](https://github.com/googleapis/python-genai).
-- **Don't share auth profiles.** `~/.flow-cli/profile_*` contains Google session cookies — treat as secrets.
+- **Not for production-grade SLAs.** gflow-cli reverse-engineers a private Google API. It can break without notice. For production, use the [official Gen AI SDK](https://github.com/googleapis/python-genai).
+- **Don't share auth profiles.** `~/.gflow-cli/profile_*` contains Google session cookies — treat as secrets.
 - **Respect Google's [Generative AI Prohibited Use Policy](https://policies.google.com/terms/generative-ai/use-policy).** Don't generate content that would get the user's Google account banned.
 
 ## Disclaimer
 
-flow-cli is **not affiliated with Google**. Reverse-engineered, pre-release, may break. Read the [DISCLAIMER](https://github.com/ffroliva/flow-cli/blob/main/DISCLAIMER.md) before deploying in any sensitive setting.
+gflow-cli is **not affiliated with Google**. Reverse-engineered, pre-release, may break. Read the [DISCLAIMER](https://github.com/ffroliva/gflow-cli/blob/main/DISCLAIMER.md) before deploying in any sensitive setting.

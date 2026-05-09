@@ -2,7 +2,7 @@
 
 ## Threat model
 
-`flow-cli` is a single-user, local CLI. The threat model is therefore:
+`gflow-cli` is a single-user, local CLI. The threat model is therefore:
 
 | Asset | Threat | Severity |
 |---|---|---|
@@ -44,11 +44,11 @@
 For users on shared / multi-user / production-adjacent machines:
 
 - [ ] **Enable full-disk encryption** (FileVault on macOS, BitLocker on Windows, LUKS on Linux). Protects session cookies if the machine is lost.
-- [ ] **Use a dedicated Google account** for `flow-cli` automation if your main account has sensitive data (Gmail, Drive, etc.). Compromising the session compromises the *whole* Google account, not just Flow.
+- [ ] **Use a dedicated Google account** for `gflow-cli` automation if your main account has sensitive data (Gmail, Drive, etc.). Compromising the session compromises the *whole* Google account, not just Flow.
 - [ ] **Set `FLOW_CLI_HOME` to a non-default path** if you want the session away from the standard `LOCALAPPDATA` / `~/.local/share` location for any reason (auditability, separate volumes).
 - [ ] **Use `--profile sandbox`** for short-lived experiments. Easy to delete (`rm -rf $FLOW_CLI_HOME/profile_sandbox`) without disturbing your main profile.
 - [ ] **Rotate sessions monthly** by signing out of Google → re-running `gflow auth login`. Limits blast radius of an unnoticed session theft.
-- [ ] **Pin a flow-cli version** in production (`uv tool install flow-cli==0.2.1`) and review release diffs before upgrading.
+- [ ] **Pin a gflow-cli version** in production (`uv tool install gflow-cli==0.2.1`) and review release diffs before upgrading.
 - [ ] **Keep the package up-to-date for security fixes.** Subscribe to GitHub Releases for `ffroliva/gflow-cli`.
 - [ ] **Scan your repo for accidentally-committed profiles** before pushing: `git ls-files | grep -E "profile_|cookies\.json|\.env$"`.
 
@@ -79,7 +79,7 @@ secrets.json             # generic secrets file (commonly used by other tools)
 *.env                    # any .env file (the .env.template is committed; .env is not)
 ```
 
-These are belt-and-braces protection for the case where a user puts profiles inside the repo dir. **Default profile location is outside the repo** (`$LOCALAPPDATA/flow-cli/...`, `~/.local/share/flow-cli/...`). The `.gitignore` is the second line of defence.
+These are belt-and-braces protection for the case where a user puts profiles inside the repo dir. **Default profile location is outside the repo** (`$LOCALAPPDATA/gflow-cli/...`, `~/.local/share/gflow-cli/...`). The `.gitignore` is the second line of defence.
 
 ## TLS / network
 
@@ -107,7 +107,7 @@ No transitive dep with known CVEs at the time of v0.1.0 scaffold.
 
 | Issue type | How |
 |---|---|
-| **Security vulnerability** (RCE, auth bypass, secret leak in logs/output) | Email <ffroliva@gmail.com> with `flow-cli SECURITY` in the subject. **Do not** open a public GitHub issue. PGP key available on request. |
+| **Security vulnerability** (RCE, auth bypass, secret leak in logs/output) | Email <ffroliva@gmail.com> with `gflow-cli SECURITY` in the subject. **Do not** open a public GitHub issue. PGP key available on request. |
 | **Suspected supply-chain compromise** | Email + open a private GitHub Security Advisory at <https://github.com/ffroliva/gflow-cli/security/advisories/new>. |
 | **Functional bug** (something just broke) | Public issue at <https://github.com/ffroliva/gflow-cli/issues> — include error output, OS, Python version. |
 | **Documentation issue** (this page is wrong / unclear) | PR welcome. |

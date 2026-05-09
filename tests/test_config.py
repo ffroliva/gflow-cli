@@ -45,12 +45,12 @@ class TestDefaults:
         # Don't assume a specific OS layout — just check it resolves to *something*.
         h = Settings().home
         assert isinstance(h, Path)
-        assert "flow-cli" in str(h).lower()
+        assert "gflow-cli" in str(h).lower()
 
     def test_output_dir_default_includes_flow_cli(self, clean_env: None) -> None:
         out = Settings().output_dir
         assert isinstance(out, Path)
-        assert "flow-cli" in str(out).lower()
+        assert "gflow-cli" in str(out).lower()
 
 
 class TestEnvOverrides:

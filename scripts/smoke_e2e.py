@@ -44,7 +44,7 @@ async def main() -> int:
 
     console.print(f"[bold]Smoke test:[/bold] T2V '{escape(args.prompt)}'")
     async with FlowApiClient(profile_dir=pdir, headless=settings.headless) as client:
-        project = await client.create_project(title="flow-cli smoke test")
+        project = await client.create_project(title="gflow-cli smoke test")
         console.print(f"  Project: [dim]{escape(project.project_id)}[/dim]")
         req = GenerateVideoRequest(prompt=args.prompt, aspect=Aspect.from_cli(args.aspect))
         op = await client.generate_video(project_id=project.project_id, req=req)

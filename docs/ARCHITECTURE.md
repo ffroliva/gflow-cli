@@ -1,6 +1,6 @@
 # Architecture
 
-This document is the steady-state reference for how `flow-cli` is organised. The intent and sequencing live in [PLAN.md](../PLAN.md) — this file describes the **shape** that PLAN converges on.
+This document is the steady-state reference for how `gflow-cli` is organised. The intent and sequencing live in [PLAN.md](../PLAN.md) — this file describes the **shape** that PLAN converges on.
 
 ## Layers
 

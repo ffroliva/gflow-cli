@@ -1,6 +1,6 @@
 # `samples/captured/` — sanitised reference traffic from a real Flow session
 
-These JSON files are the **ground truth** for what `flow-cli` sends to and receives from `aisandbox-pa.googleapis.com` and `labs.google/fx/api`. Each one was captured during a live discovery run, then sanitised: UUIDs → `<UUID>`, bearer tokens → `<REDACTED_BEARER>`, image bytes → `<BASE64_IMAGE_BYTES_LEN_N>`, emails → `<EMAIL>`.
+These JSON files are the **ground truth** for what `gflow-cli` sends to and receives from `aisandbox-pa.googleapis.com` and `labs.google/fx/api`. Each one was captured during a live discovery run, then sanitised: UUIDs → `<UUID>`, bearer tokens → `<REDACTED_BEARER>`, image bytes → `<BASE64_IMAGE_BYTES_LEN_N>`, emails → `<EMAIL>`.
 
 Use them when:
 - Implementing or extending a route in `src/flow_cli/api/`
@@ -27,7 +27,7 @@ The `clientContext.recaptchaContext.token` field is a fresh reCAPTCHA Enterprise
 - Single-use
 - Expires in ~2 minutes
 
-This is why `flow-cli` keeps a Playwright persistent context open even for "API-driven" calls — we need to mint a fresh token via `page.evaluate("grecaptcha.execute(...)")` per generation request. The architecture is hybrid: Playwright for auth + reCAPTCHA token mint, REST (`page.request`) for everything else.
+This is why `gflow-cli` keeps a Playwright persistent context open even for "API-driven" calls — we need to mint a fresh token via `page.evaluate("grecaptcha.execute(...)")` per generation request. The architecture is hybrid: Playwright for auth + reCAPTCHA token mint, REST (`page.request`) for everything else.
 
 **Model selection (route 02):**
 `videoModelKey` encodes the full variant: `veo_3_1_t2v_fast_portrait` = Veo 3.1 / text-to-video / fast tier / portrait orientation. I2V uses the same shape: `veo_3_1_i2v_fast_portrait`. We map our CLI flags (`--model fast|quality`, `--aspect 9:16|16:9`) to the right key.
@@ -52,7 +52,7 @@ If you re-run the discovery script (in the Compiled Growth monorepo) and want to
 - reCAPTCHA tokens — keep them as a reference (they're already expired by the time you commit)
 - emails — replace with `<EMAIL>`
 
-The script that does this lives in the Compiled Growth monorepo at `python/workers/google-flow-worker/_extract_samples.py` (or run the inline Python that produced these — see the relevant flow-cli commit message for the snippet).
+The script that does this lives in the Compiled Growth monorepo at `python/workers/google-flow-worker/_extract_samples.py` (or run the inline Python that produced these — see the relevant gflow-cli commit message for the snippet).
 
 ## License
 

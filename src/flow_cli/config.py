@@ -45,7 +45,7 @@ class Provider(StrEnum):
 
 
 class Settings(BaseSettings):
-    """All flow-cli configuration. Build via `Settings()` (or `get_settings()`)."""
+    """All gflow-cli configuration. Build via `Settings()` (or `get_settings()`)."""
 
     model_config = SettingsConfigDict(
         env_prefix="FLOW_CLI_",

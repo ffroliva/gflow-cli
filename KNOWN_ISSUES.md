@@ -24,7 +24,7 @@ Google's web session cookies aren't permanent. They expire when:
 - You sign out from another device's session manager
 - Google flags the session as suspicious (geo-jump, new device fingerprint)
 
-When this happens, the next API call returns 401/403 and `flow-cli` raises `AuthExpiredError`.
+When this happens, the next API call returns 401/403 and `gflow-cli` raises `AuthExpiredError`.
 
 **Workaround:**
 ```bash
@@ -71,11 +71,11 @@ The current published code is a **scaffold**. `upload_image`, `start_generation`
 
 ### Flow's first-upload terms-of-use dialog ("Aviso") blocks the worker (worker-only)
 
-- **Status:** Open · **Severity:** Low · **Affects:** the legacy in-tree Compiled Growth worker, NOT `flow-cli` itself
+- **Status:** Open · **Severity:** Low · **Affects:** the legacy in-tree Compiled Growth worker, NOT `gflow-cli` itself
 
-Flow shows a one-time "Aviso" / "Notice" terms-of-use confirmation on the first image upload of a new account session. The legacy Playwright worker has to explicitly click "Concordo" / "Agree". `flow-cli`'s API-driven path bypasses this dialog entirely (the REST endpoint already implies acceptance).
+Flow shows a one-time "Aviso" / "Notice" terms-of-use confirmation on the first image upload of a new account session. The legacy Playwright worker has to explicitly click "Concordo" / "Agree". `gflow-cli`'s API-driven path bypasses this dialog entirely (the REST endpoint already implies acceptance).
 
-**Workaround in flow-cli:** none needed.
+**Workaround in gflow-cli:** none needed.
 
 **Workaround in legacy worker:** see Compiled Growth's `flow_video.py` consent-dismiss block.
 
@@ -85,7 +85,7 @@ Flow shows a one-time "Aviso" / "Notice" terms-of-use confirmation on the first 
 
 - **Status:** Open · **Severity:** Low · **Roadmap:** v0.5
 
-`flow-cli` doesn't yet show how many Veo / Imagen credits remain on your Ultra/Pro subscription. You can check at <https://gemini.google/subscriptions/> in the meantime.
+`gflow-cli` doesn't yet show how many Veo / Imagen credits remain on your Ultra/Pro subscription. You can check at <https://gemini.google/subscriptions/> in the meantime.
 
 **Roadmap:** v0.5 will surface remaining quota via `gflow auth status` once we capture the relevant Google API.
 
@@ -107,12 +107,12 @@ Other ratios may be silently rejected or coerced server-side. We validate in the
 
 - **Status:** Open · **Severity:** Low · **By design**
 
-`flow-cli` never deletes from `$FLOW_CLI_OUTPUT_DIR`. Generated assets accumulate forever unless you clean them up.
+`gflow-cli` never deletes from `$FLOW_CLI_OUTPUT_DIR`. Generated assets accumulate forever unless you clean them up.
 
 **Workaround:** schedule a cron / Task Scheduler job, e.g.:
 ```bash
 # Delete files older than 30 days
-find "$HOME/Downloads/flow-cli" -type f -mtime +30 -delete
+find "$HOME/Downloads/gflow-cli" -type f -mtime +30 -delete
 ```
 
 ---
@@ -135,7 +135,7 @@ If you hit something not listed here:
 
 1. Search existing issues at <https://github.com/ffroliva/gflow-cli/issues>.
 2. If none match, open a new issue with:
-   - `flow-cli` version (`gflow --version`)
+   - `gflow-cli` version (`gflow --version`)
    - Python version (`python --version`)
    - OS + version
    - Exact command that failed + full error output

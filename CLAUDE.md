@@ -4,7 +4,7 @@
 
 ## What this project is
 
-`flow-cli` is an unofficial Python CLI that drives [Google Flow](https://labs.google/fx/tools/flow) (Veo image-to-video, Imagen text-to-image) from the terminal by reverse-engineering Flow's private REST API at `aisandbox-pa.googleapis.com`. Built for Google AI Ultra/Pro subscribers who want to spend their Flow credits via batch automation rather than the web UI.
+`gflow-cli` is an unofficial Python CLI that drives [Google Flow](https://labs.google/fx/tools/flow) (Veo image-to-video, Imagen text-to-image) from the terminal by reverse-engineering Flow's private REST API at `aisandbox-pa.googleapis.com`. Built for Google AI Ultra/Pro subscribers who want to spend their Flow credits via batch automation rather than the web UI.
 
 **Same pattern as `edge-tts`:** a community SDK over a private cloud API.
 
@@ -37,7 +37,7 @@ Dependency rule: **`domain/` depends on nothing**. `application/` depends on `do
 
 - **Never commit secrets.** `.gitignore` excludes `auth/`, `profile_*/`, `*.cookies.json`, `storage_state.json`, `secrets.json`, `.env`, `.env.local`, `.env.*.local`. If you see one of these staged, abort and tell the user.
 - **Never add `Co-Authored-By: Claude` (or any AI co-author) to commit messages.** Author attribution is the human user's only.
-- **Sessions belong outside the repo.** Default location is `$LOCALAPPDATA/flow-cli/profile_*` (Windows) or `~/.local/share/flow-cli/profile_*` (POSIX) via [`platformdirs`](https://github.com/platformdirs/platformdirs). Never store sessions in `/tmp`, `%TEMP%`, or anywhere the OS auto-reaps.
+- **Sessions belong outside the repo.** Default location is `$LOCALAPPDATA/gflow-cli/profile_*` (Windows) or `~/.local/share/gflow-cli/profile_*` (POSIX) via [`platformdirs`](https://github.com/platformdirs/platformdirs). Never store sessions in `/tmp`, `%TEMP%`, or anywhere the OS auto-reaps.
 - **No `print()` in `src/`** — use `structlog` (or `logging` until structlog lands in Phase 1).
 - **Domain layer is pure** — `src/flow_cli/domain/*` must not import `application/`, `infrastructure/`, or `interfaces/`. No I/O, no frameworks.
 - **Frozen dataclasses for value objects.** Aggregates may have controlled mutation methods, but VOs (AspectRatio, Prompt, JobId, ...) are immutable.

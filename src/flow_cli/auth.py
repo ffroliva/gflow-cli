@@ -3,9 +3,9 @@
 Sessions live under `Settings.home / profile_<name>/`. Default location is
 the OS-native user-data-dir (via `platformdirs`):
 
-  * Windows: `%LOCALAPPDATA%\\flow-cli\\profile_<name>`
-  * macOS:   `~/Library/Application Support/flow-cli/profile_<name>`
-  * Linux:   `~/.local/share/flow-cli/profile_<name>` (XDG)
+  * Windows: `%LOCALAPPDATA%\\gflow-cli\\profile_<name>`
+  * macOS:   `~/Library/Application Support/gflow-cli/profile_<name>`
+  * Linux:   `~/.local/share/gflow-cli/profile_<name>` (XDG)
 
 Override the root with `FLOW_CLI_HOME`. See `docs/AUTHENTICATION.md`.
 """
