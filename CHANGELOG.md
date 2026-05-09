@@ -7,59 +7,53 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+## [0.2.0a1] — 2026-05-09
+
 ### Added
+- **`gflow video t2v`** — generate a video from a text prompt via Veo 3.1.
+  Flags: `--aspect 9:16|16:9|1:1`, `--seed`, `--output`, `--profile`, `--poll-interval`.
+- **`gflow video i2v`** — generate a video from a start image + text prompt (Veo 3.1 I2V).
+- **`gflow video batch`** — run a TSV manifest of video generations against one shared project.
+- `flow_cli.api` package — low-level REST client (`FlowApiClient`) + value objects
+  (`GenerateVideoRequest`, `VideoOperation`, `VideoStatus`) for video generation.
+- `flow_cli.api.recaptcha` — reCAPTCHA Enterprise token minting via Playwright `page.evaluate`.
+  `TokenMinter` caches the discovered site key per session; `mint(action)` is called immediately
+  before each generation request.
+- `flow_cli.manifest` — TSV manifest parser for `gflow video batch`. Supports optional
+  `start_image`, `end_image`, `aspect`, `output_path` columns; skips `# `-prefixed comments.
+- `FLOW_CLI_HEADLESS` env var (`bool`, default `true`). Set to `false` if reCAPTCHA refuses
+  to mint tokens in headless mode (Google bot detection fallback).
+- `scripts/smoke_e2e.py` — one-shot live T2V smoke test; run after `gflow auth login` to
+  verify the full happy path (create project → generate_video → poll → download).
 - **`CLAUDE.md`** at repo root — project memory hub for AI coding agents
-  (Claude Code reads natively; Cursor/Codex/Gemini/Aider can read as
-  reference). Covers project purpose, on-session-start ritual, active phase
-  pointer, architecture skim, critical rules (no secrets, no AI co-authors,
-  pure domain layer, TDD discipline), coding conventions, quality gates,
-  where-to-look table, common tasks, things-not-to-do list.
+  (Claude Code reads natively; Cursor/Codex/Gemini/Aider can read as reference).
 - **`.claude/`** directory — repo-local Claude Code surface for maintainers.
-  Distinct from the published end-user skill at `skills/flow-cli/`.
   - `.claude/README.md` — what goes here, how to extend.
   - `.claude/commands/release.md` — `/release` slash command that automates
-    version bump + CHANGELOG migration + tag + push, with quality gates and
-    "no AI co-author" reminders.
+    version bump + CHANGELOG migration + tag + push, with quality gates.
 - `flow_cli.profile_store` — profile inventory + default-profile persistence
   in `$FLOW_CLI_HOME/config.toml`. Five-step resolution chain (CLI flag > env >
   config > auto-select > raise) with named exceptions
   (`NoProfilesError`, `NoDefaultProfileError`).
-- New auth subcommands:
-  - bare `gflow auth` — shows profile inventory table; auto-launches `login`
-    when no profiles exist.
-  - `gflow auth list` — same table as bare command (no auto-login fallback).
-  - `gflow auth use <name>` — sets the default profile, persisted to
-    `config.toml`.
-  - `gflow auth logout [--profile NAME] [-y]` — deletes a profile's session.
-  - First successful `auth login` auto-sets the new profile as default so
-    single-account users never see "no default" friction.
-- `KNOWN_ISSUES.md` at repo root — open/mitigated/resolved issues with
-  workarounds. First entry: browser session expiry & re-login.
-- `docs/` tree (INDEX, AUTHENTICATION, CONFIGURATION, ARCHITECTURE, USAGE,
-  SECURITY) for deep-dive docs that don't belong in the README.
+- New auth subcommands: bare `gflow auth`, `gflow auth list`, `gflow auth use <name>`,
+  `gflow auth logout [--profile NAME] [-y]`. First login auto-sets default profile.
+- `KNOWN_ISSUES.md` at repo root — open/mitigated/resolved issues with workarounds.
+- `docs/` tree (INDEX, AUTHENTICATION, CONFIGURATION, ARCHITECTURE, USAGE, SECURITY).
 - `.env.template` documenting every supported env var.
-- Tests: `tests/test_profile_store.py` covers list, set/clear/get default,
-  auto-select, full resolution chain precedence, and delete (incl. clearing
-  the default when the deleted profile was it).
-- Initial repo scaffold: pyproject (uv + hatchling), Click-based CLI, Rich console output.
-- `Provider` protocol for swappable backends (Flow now, official Veo 3.1 SDK later).
-- `FlowProvider` skeleton with stubbed methods + captured route documentation.
-- `auth login` / `auth status` commands using Playwright persistent context.
-- CLI commands: `upload`, `generate`, `status`, `download`, `i2v` (stubbed pending route wiring).
-- Smoke tests covering imports + `--help` exit code.
-- Red-light TDD tests for every Provider method (under `tests/providers/`) — they pin the contract before implementation lands.
-- Tests for `models` (frozen dataclasses, JobStatus enum) and `auth` helpers (no Playwright, no network).
 - GitHub Actions CI: ruff, pyright, pytest on Python 3.11 and 3.12.
 - GitHub Actions release workflow: tag-triggered PyPI publish via Trusted Publishing.
-- MIT license, comprehensive README with badges (CI, version, downloads, stars), architecture diagram, install paths (uv, uvx, source), stack docs, TDD workflow, release policy.
-- [`DISCLAIMER.md`](DISCLAIMER.md) — full unaffiliated/use-at-own-risk legal scope, takedown policy.
-- [`CONTRIBUTING.md`](CONTRIBUTING.md) — TDD discipline, test categories, coverage targets, commit conventions.
-- [`skills/flow-cli/SKILL.md`](skills/flow-cli/SKILL.md) — installable Claude Code Skill with frontmatter + agent recipes, also usable as a generic reference doc by Cursor / Codex / Gemini CLI / Aider.
-- README "Stats" section at the bottom: stars, forks, watchers, issues, last commit, repo size, PyPI downloads (monthly + total via pepy.tech).
+- MIT license, comprehensive README, [`DISCLAIMER.md`](DISCLAIMER.md), [`CONTRIBUTING.md`](CONTRIBUTING.md).
+- [`skills/flow-cli/SKILL.md`](skills/flow-cli/SKILL.md) — installable Claude Code Skill.
+
+### Removed
+- `flow_cli.providers.FlowProvider` and `flow_cli.models` — superseded by `flow_cli.api`.
+- Legacy CLI stubs: `gflow upload`, `gflow generate`, `gflow status`, `gflow download`,
+  `gflow i2v`. Replaced by the wired `gflow video` subgroup.
 
 ## [0.1.0] — _unreleased_
 
 First skeleton. Not functional end-to-end yet.
 
-[Unreleased]: https://github.com/ffroliva/flow-cli/compare/v0.1.0...HEAD
+[Unreleased]: https://github.com/ffroliva/flow-cli/compare/v0.2.0a1...HEAD
+[0.2.0a1]: https://github.com/ffroliva/flow-cli/releases/tag/v0.2.0a1
 [0.1.0]: https://github.com/ffroliva/flow-cli/releases/tag/v0.1.0

@@ -2,7 +2,7 @@
 
 CLI command reference. For environment variables see [CONFIGURATION](CONFIGURATION.md). For auth see [AUTHENTICATION](AUTHENTICATION.md).
 
-> ⚠️ **Status.** Most commands below are CLI surface decisions documented for v0.1. The route wiring lands in Phase 2 (images) and Phase 3 (videos) — see [PLAN](../PLAN.md). Until then the CLI returns `NotImplementedError` for the substantive subcommands.
+> ⚠️ **Status.** `gflow video` commands are fully wired as of v0.2.0a1. `gflow image` commands remain stubs — route wiring lands in a future phase.
 
 ## Synopsis
 
@@ -22,10 +22,10 @@ Commands:
     generate                    Generate one image from a prompt.
     batch                       Generate many images from a TSV manifest.
 
-  video     Video generation (Veo I2V via Flow).
-    generate                    Generate one video from a start image + prompt.
-    batch                       Generate many videos from a TSV manifest.
-    i2v                         Convenience: upload + generate + poll + download.
+  video     Video generation (Veo via Flow).
+    t2v                         Generate a video from a text prompt.
+    i2v                         Generate a video from a start image + text prompt.
+    batch                       Run a TSV manifest of video generations.
 ```
 
 Global flags:
@@ -111,59 +111,66 @@ forest at dawn		16:9
 cat manifest.tsv | gflow image batch -
 ```
 
-## `gflow video generate`
+## `gflow video t2v`
+
+Generate a video from a text prompt only.
 
 ```text
-gflow video generate -i IMAGE -p "<motion prompt>" [OPTIONS]
+gflow video t2v PROMPT [OPTIONS]
 
 Options:
-  -i, --start-image PATH    Start frame (PNG/JPG).                 [required]
-  -p, --prompt TEXT         Motion prompt.                         [required]
-  --end-image PATH          Optional end frame for transition I2V.
-  --aspect [9:16|16:9|1:1]  Aspect ratio.                       [default: 9:16]
-  --output PATH             Output mp4. Default:
-                            $FLOW_CLI_OUTPUT_DIR/videos/<date>/<job_id>.mp4
-  --async                   Don't wait — print job_id and return.
-  --profile NAME            Profile name. [default: $FLOW_CLI_PROFILE]
+  -o, --output PATH       Output mp4. Default: $FLOW_CLI_OUTPUT_DIR/videos/<date>/<media>.mp4
+  --aspect 9:16|16:9|1:1  Default: 9:16
+  --seed INTEGER          Reproducibility. Default: random.
+  --profile NAME          Account profile. Default: resolved from env/config.
+  --poll-interval FLOAT   Seconds between status polls. Default: 5.
 ```
 
-**Examples:**
+Examples:
 
 ```bash
-# Standard short-form vertical
-gflow video generate -i ./input.png -p "Slow cinematic push-in"
-
-# Specific output
-gflow video generate -i ./hero.png -p "Pan left across the table" -o ./out/hero.mp4
-
-# With end frame (transition)
-gflow video generate -i ./start.png --end-image ./end.png -p "Smooth transition"
-```
-
-## `gflow video batch`
-
-Same shape as `gflow image batch`, with TSV columns:
-
-```tsv
-# start_image	prompt	end_image	aspect	output_path
-./inputs/s1c1.png	Slow push-in			9:16	./out/s1c1.mp4
-./inputs/s1c2.png	Pan left	./inputs/s1c2_end.png	9:16	./out/s1c2.mp4
-./inputs/s1c3.png	Crash zoom			9:16	
+gflow video t2v "Slow cinematic push-in toward a candle flame"
+gflow video t2v "Aerial shot of a coastline at sunset" --aspect 16:9 -o ./coast.mp4
 ```
 
 ## `gflow video i2v`
 
-Convenience alias for `upload + generate + poll + download` in one shot. Most common entry point for ad-hoc usage.
+Generate a video from a START IMAGE + text prompt.
 
 ```text
-gflow video i2v IMAGE PROMPT -o OUTPUT [OPTIONS]
+gflow video i2v IMAGE PROMPT [OPTIONS]
 ```
+
+Options identical to `t2v`. The image is uploaded once per call; the resulting clip animates from it according to PROMPT.
 
 ```bash
-gflow video i2v ./input.png "Slow cinematic push-in" -o out.mp4
+gflow video i2v ./hero.png "Slow camera arc, soft golden light"
 ```
 
-Exits 0 on success, non-zero on failure with a remediation hint in stderr.
+## `gflow video batch`
+
+Run a TSV manifest of generations against ONE shared project.
+
+```text
+gflow video batch MANIFEST [--out-dir DIR] [--profile NAME] [--poll-interval SEC]
+```
+
+Manifest format (tab-separated; `# `-prefixed lines are comments):
+
+```tsv
+# start_image	prompt	end_image	aspect	output_path
+	A serene mountain lake at sunset		9:16	./out/lake.mp4
+hero.png	Slow camera arc		9:16	./out/hero.mp4
+	Aerial coastline		16:9	./out/coast.mp4
+```
+
+| Column | Required | Default |
+|---|---|---|
+| `start_image` | no (empty -> T2V) | - |
+| `prompt` | **yes** | - |
+| `end_image` | no (reserved, not yet wired) | - |
+| `aspect` | no | `9:16` |
+| `output_path` | no | `<out_dir>/videos/<date>/<media>.mp4` |
 
 ## `gflow status` / `gflow download` *(planned)*
 
