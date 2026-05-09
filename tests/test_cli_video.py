@@ -140,6 +140,8 @@ class TestVideoBatch:
                 catch_exceptions=False,
             )
         assert result.exit_code == 0, result.output
+        # single shared project for the whole batch
+        client.create_project.assert_awaited_once()
         # 3 generations, 1 upload (only the i2v row)
         assert client.generate_video.await_count == 3
         assert client.upload_image.await_count == 1

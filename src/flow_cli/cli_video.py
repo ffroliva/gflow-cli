@@ -19,6 +19,7 @@ from flow_cli import profile_store
 from flow_cli.api.client import FlowApiClient
 from flow_cli.api.video import Aspect, GenerateVideoRequest
 from flow_cli.config import get_settings
+from flow_cli.manifest import ManifestEntry, parse_manifest
 from flow_cli.paths import video_output_path
 
 console = Console()
@@ -274,8 +275,6 @@ def batch(
     poll_interval: float,
 ) -> None:
     """Run a TSV manifest of video generations."""
-    from flow_cli.manifest import parse_manifest
-
     profile_name = _resolve_profile(profile)
     pdir = _make_provider_dir(profile_name)
     settings = get_settings()
@@ -296,7 +295,7 @@ async def _run_batch(
     *,
     profile_dir: Path,
     headless: bool,
-    entries: list,
+    entries: list[ManifestEntry],
     out_root: Path,
     poll_interval: float,
 ) -> None:
