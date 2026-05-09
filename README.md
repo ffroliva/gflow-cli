@@ -346,6 +346,6 @@ Note that the **Google service** this tool talks to has its own terms (Google La
 [![GitHub last commit](https://img.shields.io/github/last-commit/ffroliva/flow-cli)](https://github.com/ffroliva/flow-cli/commits/main)
 [![GitHub repo size](https://img.shields.io/github/repo-size/ffroliva/flow-cli)](https://github.com/ffroliva/flow-cli)
 [![PyPI downloads](https://img.shields.io/pypi/dm/flow-cli.svg)](https://pypi.org/project/flow-cli/)
-[![PyPI total downloads](https://static.pepy.tech/badge/flow-cli)](https://pepy.tech/project/flow-cli)
+[![PyPI total downloads](https://img.shields.io/pypi/dt/flow-cli.svg)](https://pypi.org/project/flow-cli/)
 
 If `flow-cli` saves you time, please ⭐ the repo — it's the cheapest way to support the project.
