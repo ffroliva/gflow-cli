@@ -5,8 +5,8 @@
 
 [![CI](https://github.com/ffroliva/flow-cli/actions/workflows/ci.yml/badge.svg)](https://github.com/ffroliva/flow-cli/actions/workflows/ci.yml)
 [![Release](https://github.com/ffroliva/flow-cli/actions/workflows/release.yml/badge.svg)](https://github.com/ffroliva/flow-cli/actions/workflows/release.yml)
-[![PyPI version](https://img.shields.io/pypi/v/flow-cli.svg)](https://pypi.org/project/flow-cli/)
-[![Python versions](https://img.shields.io/pypi/pyversions/flow-cli.svg)](https://pypi.org/project/flow-cli/)
+[![PyPI version](https://img.shields.io/pypi/v/gflow-cli.svg)](https://pypi.org/project/gflow-cli/)
+[![Python versions](https://img.shields.io/pypi/pyversions/gflow-cli.svg)](https://pypi.org/project/gflow-cli/)
 [![License: MIT](https://img.shields.io/badge/License-MIT-blue.svg)](LICENSE)
 [![Status: alpha](https://img.shields.io/badge/status-alpha-orange.svg)](#project-status)
 [![Code style: ruff](https://img.shields.io/badge/code%20style-ruff-000000.svg)](https://github.com/astral-sh/ruff)
@@ -345,7 +345,7 @@ Note that the **Google service** this tool talks to has its own terms (Google La
 [![GitHub pull requests](https://img.shields.io/github/issues-pr/ffroliva/flow-cli)](https://github.com/ffroliva/flow-cli/pulls)
 [![GitHub last commit](https://img.shields.io/github/last-commit/ffroliva/flow-cli)](https://github.com/ffroliva/flow-cli/commits/main)
 [![GitHub repo size](https://img.shields.io/github/repo-size/ffroliva/flow-cli)](https://github.com/ffroliva/flow-cli)
-[![PyPI downloads](https://img.shields.io/pypi/dm/flow-cli.svg)](https://pypi.org/project/flow-cli/)
-[![PyPI total downloads](https://img.shields.io/pypi/dt/flow-cli.svg)](https://pypi.org/project/flow-cli/)
+[![PyPI downloads](https://img.shields.io/pypi/dm/gflow-cli.svg)](https://pypi.org/project/gflow-cli/)
+[![PyPI total downloads](https://img.shields.io/pypi/dt/gflow-cli.svg)](https://pypi.org/project/gflow-cli/)
 
 If `flow-cli` saves you time, please ⭐ the repo — it's the cheapest way to support the project.
