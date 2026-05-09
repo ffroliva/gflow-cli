@@ -492,3 +492,86 @@ class TestDownloadImage:
             await client.download_image(_make_image(), tmp_path / "out.png")
 
         assert exc_info.value.status == 403
+
+    async def test_download_image_error_route_redacts_signed_url_query(
+        self, client: FlowApiClient, tmp_path: Path
+    ) -> None:
+        """The bearer-style ``Signature=...`` token in fife_url MUST NOT
+        leak into FlowApiError.route or str(exc). See docs/SECURITY.md."""
+
+        async def fake_request_get(url, **kwargs):
+            resp = MagicMock()
+            resp.status = 403
+            resp.text = AsyncMock(return_value="forbidden")
+            resp.body = AsyncMock(return_value=b"")
+            return resp
+
+        client._page.request.get = AsyncMock(side_effect=fake_request_get)
+
+        signed = (
+            "https://flow-content.google/image/abc-123"
+            "?Expires=1778380305&Signature=DEADBEEFSECRET&KeyPair=KP"
+        )
+        with pytest.raises(FlowApiError) as exc_info:
+            await client.download_image(_make_image(fife_url=signed), tmp_path / "out.png")
+
+        # The exception's structured route must not carry sensitive query bits.
+        assert "Signature=" not in exc_info.value.route
+        assert "Expires=" not in exc_info.value.route
+        assert "DEADBEEFSECRET" not in exc_info.value.route
+        # Same applies to its rendered string form (used by logging).
+        rendered = str(exc_info.value)
+        assert "Signature=" not in rendered
+        assert "DEADBEEFSECRET" not in rendered
+        # Sanity: the path is preserved so debugging is still possible.
+        assert "/image/abc-123" in exc_info.value.route
+
+    @pytest.mark.parametrize(
+        "bad_url",
+        [
+            "http://flow-content.google/image/abc",  # http scheme
+            "ftp://flow-content.google/image/abc",  # non-http scheme
+            "https://localhost/image/abc",  # localhost
+            "https://127.0.0.1/image/abc",  # loopback v4
+            "https://169.254.169.254/latest/meta-data/",  # AWS IMDS
+            "https://evil.com/image/abc",  # arbitrary host
+            "https://flow-content.google.evil.com/image/abc",  # confusable suffix
+        ],
+    )
+    async def test_download_image_rejects_untrusted_url(
+        self, client: FlowApiClient, tmp_path: Path, bad_url: str
+    ) -> None:
+        """SSRF guard: any URL that is not HTTPS-on-Google must raise
+        ValueError BEFORE any network call is attempted."""
+        get_mock = AsyncMock()
+        client._page.request.get = get_mock
+
+        with pytest.raises(ValueError):
+            await client.download_image(_make_image(fife_url=bad_url), tmp_path / "out.png")
+
+        # Crucially, no request was issued — the guard fires pre-flight.
+        get_mock.assert_not_called()
+
+    @pytest.mark.parametrize(
+        "good_url",
+        [
+            "https://flow-content.google/image/abc-123?Expires=1&Signature=Z",
+            "https://cdn.flow-content.google/image/abc",  # subdomain of .google
+            "https://lh3.googleusercontent.google/x",  # any *.google subdomain
+        ],
+    )
+    async def test_download_image_accepts_google_https_hosts(
+        self, client: FlowApiClient, tmp_path: Path, good_url: str
+    ) -> None:
+        """Happy path: HTTPS on flow-content.google or any *.google host
+        is allowed through the SSRF guard."""
+
+        async def fake_request_get(url, **kwargs):
+            resp = MagicMock()
+            resp.status = 200
+            resp.body = AsyncMock(return_value=b"png")
+            return resp
+
+        client._page.request.get = AsyncMock(side_effect=fake_request_get)
+        out = await client.download_image(_make_image(fife_url=good_url), tmp_path / "out.png")
+        assert out.read_bytes() == b"png"
