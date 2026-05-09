@@ -2,6 +2,8 @@
 
 from __future__ import annotations
 
+import pytest
+
 from flow_cli.api import routes
 
 
@@ -34,3 +36,23 @@ def test_media_download_url_appends_name() -> None:
     url = routes.media_download_url("abc-123")
     assert "name=abc-123" in url
     assert "getMediaUrlRedirect" in url
+
+
+def test_batch_generate_images_url() -> None:
+    assert routes.batch_generate_images_url("abc-123") == (
+        "https://aisandbox-pa.googleapis.com/v1/projects/abc-123/flowMedia:batchGenerateImages"
+    )
+
+
+@pytest.mark.parametrize(
+    "bad",
+    [
+        "../evil",
+        "/leading-slash",
+        "with\\backslash",
+        "",
+    ],
+)
+def test_batch_generate_images_url_rejects_path_traversal(bad: str) -> None:
+    with pytest.raises(ValueError):
+        routes.batch_generate_images_url(bad)
