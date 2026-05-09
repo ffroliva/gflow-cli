@@ -18,6 +18,7 @@ from flow_cli import auth as auth_mod
 from flow_cli import profile_store
 from flow_cli.api.client import FlowApiClient
 from flow_cli.api.video import Aspect, GenerateVideoRequest
+from flow_cli.config import get_settings
 from flow_cli.paths import video_output_path
 
 console = Console()
@@ -150,3 +151,107 @@ def t2v(
             console.print(f"[green]Saved[/green] {saved}")
 
     asyncio.run(_run())
+
+
+# ---------------------------------------------------------------------------
+# Shared polling helper
+# ---------------------------------------------------------------------------
+
+
+async def _poll_and_download(
+    *,
+    client: FlowApiClient,
+    project_id: str,
+    media_name: str,
+    output: Path,
+    poll_interval: float,
+) -> None:
+    """Poll until terminal status, then download the result to *output*."""
+    while True:
+        statuses = await client.get_video_status(project_id, [media_name])
+        if not statuses:
+            console.print("[red]No status returned from API.[/red]")
+            raise SystemExit(1)
+        st = statuses[0]
+        console.print(f"  Status: {st.status}")
+        if st.status in _TERMINAL:
+            break
+        await asyncio.sleep(poll_interval)
+
+    if not st.succeeded:
+        console.print(f"[red]Generation failed (status={st.status}).[/red]")
+        raise SystemExit(1)
+
+    saved = await client.download(media_name, output)
+    console.print(f"[green]Saved[/green] {saved}")
+
+
+# ---------------------------------------------------------------------------
+# i2v subcommand
+# ---------------------------------------------------------------------------
+
+
+@video.command("i2v")
+@click.argument("image", type=click.Path(exists=True, dir_okay=False, path_type=Path))
+@click.argument("prompt")
+@click.option("-o", "--output", type=click.Path(path_type=Path), default=None)
+@click.option("--aspect", type=click.Choice(["9:16", "16:9", "1:1"]), default="9:16")
+@click.option("--seed", type=int, default=None)
+@click.option("--profile", default=None)
+@click.option("--poll-interval", type=float, default=5.0)
+def i2v(
+    image: Path,
+    prompt: str,
+    output: Path | None,
+    aspect: str,
+    seed: int | None,
+    profile: str | None,
+    poll_interval: float,
+) -> None:
+    """Generate a video from a START IMAGE + text prompt."""
+    profile_name = _resolve_profile(profile)
+    pdir = _make_provider_dir(profile_name)
+    settings = get_settings()
+    asyncio.run(
+        _run_i2v(
+            profile_dir=pdir,
+            headless=settings.headless,
+            image=image,
+            prompt=prompt,
+            output=output,
+            aspect=Aspect.from_cli(aspect),
+            seed=seed,
+            poll_interval=poll_interval,
+            output_root=settings.output_dir,
+        )
+    )
+
+
+async def _run_i2v(
+    *,
+    profile_dir: Path,
+    headless: bool,
+    image: Path,
+    prompt: str,
+    output: Path | None,
+    aspect: Aspect,
+    seed: int | None,
+    poll_interval: float,
+    output_root: Path,
+) -> None:
+    async with FlowApiClient(profile_dir=profile_dir, headless=headless) as client:
+        console.print("  Creating project...")
+        project = await client.create_project()
+        console.print(f"  Uploading {image.name}...")
+        asset = await client.upload_image(project.project_id, image)
+        console.print(f"  Asset: [dim]{asset.name}[/dim]")
+        req = GenerateVideoRequest(prompt=prompt, aspect=aspect, start_asset_uuid=asset.name)
+        console.print("  Submitting generation...")
+        op = await client.generate_video(project_id=project.project_id, req=req, seed=seed)
+        await _poll_and_download(
+            client=client,
+            project_id=project.project_id,
+            media_name=op.media_name,
+            output=output or video_output_path(output_root, job_id=op.media_name),
+            poll_interval=poll_interval,
+        )

@@ -66,3 +66,42 @@ class TestVideoT2V:
         client.generate_video.assert_awaited_once()
         client.download.assert_awaited_once()
         assert "Saved" in result.output
+
+
+class TestVideoI2V:
+    def test_happy_path(self, runner: CliRunner, tmp_path: Path) -> None:
+        png = tmp_path / "in.png"
+        png.write_bytes(b"\x89PNG\r\n\x1a\n")  # not a real PNG but enough for the test
+        out = tmp_path / "result.mp4"
+        client = _make_mock_client()
+        client.upload_image = AsyncMock(return_value=MagicMock(name="asset-1"))
+        # mock returns a MagicMock; .name attribute is special — set explicitly:
+        client.upload_image.return_value.name = "asset-1"
+
+        with (
+            patch("flow_cli.cli_video.FlowApiClient", return_value=client),
+            patch("flow_cli.cli_video._make_provider_dir", return_value=tmp_path / "prof"),
+            patch("flow_cli.cli_video._resolve_profile", return_value="default"),
+        ):
+            from flow_cli.cli import main
+
+            result = runner.invoke(
+                main,
+                [
+                    "video",
+                    "i2v",
+                    str(png),
+                    "push in",
+                    "-o",
+                    str(out),
+                    "--poll-interval",
+                    "0",
+                ],
+                catch_exceptions=False,
+            )
+        assert result.exit_code == 0, result.output
+        client.upload_image.assert_awaited_once()
+        # The generate_video request should carry start_asset_uuid
+        call = client.generate_video.await_args
+        req = call.kwargs.get("req") or call.args[1]
+        assert req.start_asset_uuid == "asset-1"
