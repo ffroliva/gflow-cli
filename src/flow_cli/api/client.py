@@ -30,6 +30,7 @@ from collections.abc import Sequence
 from datetime import datetime
 from pathlib import Path
 from typing import Any, cast
+from urllib.parse import urlsplit, urlunsplit
 
 from playwright.async_api import BrowserContext, Page, Playwright, async_playwright
 
@@ -195,7 +196,10 @@ class FlowApiClient:
         out_path.parent.mkdir(parents=True, exist_ok=True)
         resp = await self.page.request.get(url, max_redirects=5, timeout=120_000)
         if resp.status >= 400:
-            raise FlowApiError(resp.status, await resp.text(), route=url)
+            # Strip query string before logging — signed CDN URLs carry
+            # bearer-style tokens (Signature=, Expires=) that must not
+            # leak via str(exc) or log lines. See docs/SECURITY.md.
+            raise FlowApiError(resp.status, await resp.text(), route=_strip_query(url))
         out_path.write_bytes(await resp.body())
         return out_path
 
@@ -219,12 +223,22 @@ class FlowApiClient:
 
         Raises:
             FlowApiError: when the CDN responds with a 4xx/5xx status
-                (e.g. the signature has already expired).
+                (e.g. the signature has already expired). The ``route``
+                attribute carries a query-stripped URL so the time-limited
+                ``Signature=...`` token cannot leak through logs.
+            ValueError: when ``image.fife_url`` is not an HTTPS URL on a
+                trusted Google host (SSRF guard — the response is parsed
+                from the wire, so we refuse to follow attacker-controlled
+                URLs blindly).
         """
+        _validate_fife_url(image.fife_url)
         out_path.parent.mkdir(parents=True, exist_ok=True)
         resp = await self.page.request.get(image.fife_url, max_redirects=2, timeout=120_000)
         if resp.status >= 400:
-            raise FlowApiError(resp.status, await resp.text(), route=image.fife_url)
+            # Strip query string before logging — signed CDN URLs carry
+            # bearer-style tokens (Signature=, Expires=) that must not
+            # leak via str(exc) or log lines. See docs/SECURITY.md.
+            raise FlowApiError(resp.status, await resp.text(), route=_strip_query(image.fife_url))
         out_path.write_bytes(await resp.body())
         return out_path
 
@@ -414,6 +428,43 @@ def _default_project_title() -> str:
 def _new_batch_id() -> str:
     """Generate a fresh batch ID for the mediaGenerationContext."""
     return str(uuid.uuid4())
+
+
+def _strip_query(url: str) -> str:
+    """Return ``url`` with its query string and fragment removed.
+
+    Signed CDN URLs from ``flow-content.google`` carry a time-limited
+    ``Signature=...&Expires=...`` query — that's a bearer-style credential
+    for the resource. We strip it before passing the URL to ``FlowApiError``
+    so it cannot leak via ``str(exc)`` or any log line that formats the
+    exception. See docs/SECURITY.md ("No cookies, no tokens, no API keys").
+    """
+    parts = urlsplit(url)
+    return urlunsplit((parts.scheme, parts.netloc, parts.path, "", ""))
+
+
+def _validate_fife_url(url: str) -> None:
+    """Reject non-HTTPS URLs and hosts outside Google's CDN namespace.
+
+    SSRF guard: ``GeneratedImage.fife_url`` is parsed verbatim from the
+    server response. If that response is tampered with (or the DTO is
+    constructed from untrusted input), the URL could point to internal
+    services (``http://169.254.169.254/``, ``http://localhost:6006/``,
+    ``http://127.0.0.1/``, ...). Playwright's ``max_redirects`` does not
+    constrain the redirect target host, so we validate up-front.
+
+    Allowlist: scheme must be ``https`` AND host must be ``flow-content.google``
+    or any subdomain of ``.google``. The captured samples (see
+    ``samples/captured/06_batchGenerateImages.json``) only ever serve from
+    ``flow-content.google``; the ``.google`` allowance is a small concession
+    for any future CDN swap that stays inside Google's TLD.
+    """
+    parts = urlsplit(url)
+    if parts.scheme != "https":
+        raise ValueError(f"Refusing non-HTTPS download URL: scheme={parts.scheme!r}")
+    host = parts.hostname or ""
+    if not (host == "flow-content.google" or host.endswith(".google")):
+        raise ValueError(f"Refusing download from unexpected host: {host!r}")
 
 
 def _redact_for_log(body_str: str) -> str:
