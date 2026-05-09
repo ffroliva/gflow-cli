@@ -1,0 +1,121 @@
+{
+  "route_name": "07_batchGenerateImages_seeded",
+  "notes": [
+    "Same endpoint as 06_*, but exercises three additional features:",
+    "  1. Seed image (I2I) via imageInputs[] — references a media.name UUID from a prior /v1/flow/uploadImage call.",
+    "  2. Aspect 4:3 — IMAGE_ASPECT_RATIO_LANDSCAPE_FOUR_THREE (confirmed; 1:1 SQUARE and 3:4 PORTRAIT_THREE_FOUR inferred from naming).",
+    "  3. Quantity x2 — encoded as TWO parallel POSTs with the same batchId, different seeds, fresh reCAPTCHA token per call. Multi-image is client-side fan-out, NOT a single batched request."
+  ],
+  "method": "POST",
+  "url": "https://aisandbox-pa.googleapis.com/v1/projects/<UUID>/flowMedia:batchGenerateImages",
+  "request_headers": {
+    "authorization": "Bearer <REDACTED_BEARER>",
+    "content-type": "text/plain;charset=UTF-8"
+  },
+  "request_body": "<see request_body_parsed>",
+  "request_body_parsed": {
+    "clientContext": {
+      "recaptchaContext": {
+        "token": "0cAFcWeA6Vrlk6oRNo0psPK7QtSXE_UopJEXsb8uGtGILwRnZruR0JuILyaYRiQyRPSQXJef1obXUagtFCbLwa0iXBCwVeVqGnr7HRuXvUPTmXd8p_yoGQ7LcviJnN5Et6EBJumYN3ZFPOi8Msd4SLkeuVi_J7gg26rYGbBhZqxQRNa5YNsgA_4D9DUbtcfA5bpCWtNHext0lFRc-ZaiSR8r5E8FzUIKnWVDIoAl9qGZSPch4y33qI1kdoN-hEa4-M6x0S9uGEdJm9-kq1zD_ObcL6uw7vRVX_TQo0lrNftgFDiXZNbA-_3V-q2DGi2oUeKiJKQUMPAVOoYi7L2_CqiuSfKTLQRQPbbHDXmSYHQlFc3mJU4jWQASp94Sx_cJubpOQA2nv_9WT3aQ37859n_vscV-e8si74YbUfrfb-kvyQJ64PbVeeIzY3D5n0_uegA-ZI73MILgvNG1xfqf29x1TNBOPY0pedMJZZa5F1bIPVH3J0jZIbrmeRCmzrJKax3vJXjTZQ_UGSE4U1rqvgZS5c5Fo-c-l-4MVPMW0qjCVUOllKr7w_CBYfoiwblWC6pryNvmkIuyJN6snMs0R3DsawSn8n15vEWesAPkMxvUVdI7OW63MYt8BiPCHpZ9hU_dPK11P4RX2NPBlAGmP9YVqa7KIOGDvG9Y1XqMGZW4I_-4VMgIrK8Zc4WRCZ-QA-1A_55boRpvdefI-bUBpkbchpLSvA3BY8EM2Au5FFz4vCCatti5oDoXoBGcKhz1b3kVB61cT--FXNCDAcQJmm13I1wo7VsAJhFP1Br0J0adWPrN7wzrsLL3ohK2-dxnfFf790CY2hppZ0ef9QGHVAVqp61e0m6-0Ic4-IYs4v1gbNbRwQ5SMVtBgN_AaqD4g-CmmnSByGib3sKQlniO1c36o8tqw4jiScIovXfiD9-nUbZcd_NuM0cLHALH7IJrhkCEJ0AC6xOg7f_5hBK7hpKiY3HiwXmVkLjQM_6_qoMutTAYtrKGHfVCgGQl4XkBntuOkR70G1C3GeZoseX8Em2BbKwiEpTAGL7SaVfO8stkOgS-GiA8_LNcLgGTJJGAZGAPkHWwkd9nSbg4dBIbgUP6Z2LxM-NzI-Wd6aujOyTHgrpSedXkF4th0wizP6tO4WTEq2kjCBoejkF_C-KKYVgVY6J9pr7shsywgnw9Bf9pznul03PRiC9_aI9Nw55HXaO9b_0GaMjt8P8gJR4hUmFEKbt_BzstOkyZdFuNq0jWphkwz-AAJICc6mfxIayzp7zueqaIKoeXJ8qdKtXmQ_x5kvcoSmwy4yhu28QDH0TGRWrMkeQyJ0htcC4Xcl8E_apiCEiXKnNNNy_EFgYOl7Q8WyuZ58aactKo-9NZBQAZOC0MuW3AW288waZViNWkUUgcR4CWt_MWhcOdFpOE8aF7TFP7--hpbPbq7gIWlTi9nAAozLHk7hXiaSxj6st1JqGUuPJcfDyvgaq9QB97fqiJ0ajmdzxutC9gQnTbM2Nm4kHlsCTXB4lTikQVoTUslh-aakhq2aPdaZvHJYjgLen5ZjjUWjgNzLOA0hDD2yp6wNAdU1vI7mE8wYPJsfZiSDb_OuIsZWu5xe3Shxo6C7ZHXkidJV48Q4Qc0mPXOifGNXup-hof4sNSrDKMNm8QnXpSrV24lctl3U4nQUFRA-hvT0YcwElFNpvMKgcWiVPKmlakUYn1RpBCWv_W93_OKP7RS6ig9ZS18ugOHS-IDRPdAu1sO3oGxLxC7Hn3wbjrmgksfWMzVVATCdYCec3pkYam36cB992Lu5Tx9Y-gksWfJZbASa9DwO9T_kAnyTi7Dt7oQYztxuVG9_RsHOj_8LbLynYDgZZmLVaxbqAkbstia-_y29uAV5KLYzwlnvLK1FIDu85I93_tlLpf-peYOhKW5Dm0evLaCkXdb4sJoc_ybQj4r56ZNkhhPI5Y8QiARQZwNPr8wNfMtP_7fFsunTNh4yaCMEvKy7CFPDGoV37REAUosNt_AF5fmhfbzVPuFrS2O-yv_7BqNiiQmqnxWtPxEEfZ9PoEXCEtXNMgr7QJffO2k0Yw4Q7uz_tt_RwnlO0Da0YzMuOy5dljyn5lc1xG_PaR-_yoSspOZSF9kEvINtxSTfBiuOYoQknqQSDPW7JlvU6GfnMbwfqj7m7wRd1IKljmgYpQGAT1CaBLoWj0q5MSZvj2lotaDn1edLz4TfIxn1VsQB6pI",
+        "applicationType": "RECAPTCHA_APPLICATION_TYPE_WEB"
+      },
+      "projectId": "<UUID>",
+      "tool": "PINHOLE",
+      "sessionId": ";1778359165212"
+    },
+    "mediaGenerationContext": {
+      "batchId": "<UUID>"
+    },
+    "useNewMedia": true,
+    "requests": [
+      {
+        "clientContext": {
+          "recaptchaContext": {
+            "token": "0cAFcWeA6Vrlk6oRNo0psPK7QtSXE_UopJEXsb8uGtGILwRnZruR0JuILyaYRiQyRPSQXJef1obXUagtFCbLwa0iXBCwVeVqGnr7HRuXvUPTmXd8p_yoGQ7LcviJnN5Et6EBJumYN3ZFPOi8Msd4SLkeuVi_J7gg26rYGbBhZqxQRNa5YNsgA_4D9DUbtcfA5bpCWtNHext0lFRc-ZaiSR8r5E8FzUIKnWVDIoAl9qGZSPch4y33qI1kdoN-hEa4-M6x0S9uGEdJm9-kq1zD_ObcL6uw7vRVX_TQo0lrNftgFDiXZNbA-_3V-q2DGi2oUeKiJKQUMPAVOoYi7L2_CqiuSfKTLQRQPbbHDXmSYHQlFc3mJU4jWQASp94Sx_cJubpOQA2nv_9WT3aQ37859n_vscV-e8si74YbUfrfb-kvyQJ64PbVeeIzY3D5n0_uegA-ZI73MILgvNG1xfqf29x1TNBOPY0pedMJZZa5F1bIPVH3J0jZIbrmeRCmzrJKax3vJXjTZQ_UGSE4U1rqvgZS5c5Fo-c-l-4MVPMW0qjCVUOllKr7w_CBYfoiwblWC6pryNvmkIuyJN6snMs0R3DsawSn8n15vEWesAPkMxvUVdI7OW63MYt8BiPCHpZ9hU_dPK11P4RX2NPBlAGmP9YVqa7KIOGDvG9Y1XqMGZW4I_-4VMgIrK8Zc4WRCZ-QA-1A_55boRpvdefI-bUBpkbchpLSvA3BY8EM2Au5FFz4vCCatti5oDoXoBGcKhz1b3kVB61cT--FXNCDAcQJmm13I1wo7VsAJhFP1Br0J0adWPrN7wzrsLL3ohK2-dxnfFf790CY2hppZ0ef9QGHVAVqp61e0m6-0Ic4-IYs4v1gbNbRwQ5SMVtBgN_AaqD4g-CmmnSByGib3sKQlniO1c36o8tqw4jiScIovXfiD9-nUbZcd_NuM0cLHALH7IJrhkCEJ0AC6xOg7f_5hBK7hpKiY3HiwXmVkLjQM_6_qoMutTAYtrKGHfVCgGQl4XkBntuOkR70G1C3GeZoseX8Em2BbKwiEpTAGL7SaVfO8stkOgS-GiA8_LNcLgGTJJGAZGAPkHWwkd9nSbg4dBIbgUP6Z2LxM-NzI-Wd6aujOyTHgrpSedXkF4th0wizP6tO4WTEq2kjCBoejkF_C-KKYVgVY6J9pr7shsywgnw9Bf9pznul03PRiC9_aI9Nw55HXaO9b_0GaMjt8P8gJR4hUmFEKbt_BzstOkyZdFuNq0jWphkwz-AAJICc6mfxIayzp7zueqaIKoeXJ8qdKtXmQ_x5kvcoSmwy4yhu28QDH0TGRWrMkeQyJ0htcC4Xcl8E_apiCEiXKnNNNy_EFgYOl7Q8WyuZ58aactKo-9NZBQAZOC0MuW3AW288waZViNWkUUgcR4CWt_MWhcOdFpOE8aF7TFP7--hpbPbq7gIWlTi9nAAozLHk7hXiaSxj6st1JqGUuPJcfDyvgaq9QB97fqiJ0ajmdzxutC9gQnTbM2Nm4kHlsCTXB4lTikQVoTUslh-aakhq2aPdaZvHJYjgLen5ZjjUWjgNzLOA0hDD2yp6wNAdU1vI7mE8wYPJsfZiSDb_OuIsZWu5xe3Shxo6C7ZHXkidJV48Q4Qc0mPXOifGNXup-hof4sNSrDKMNm8QnXpSrV24lctl3U4nQUFRA-hvT0YcwElFNpvMKgcWiVPKmlakUYn1RpBCWv_W93_OKP7RS6ig9ZS18ugOHS-IDRPdAu1sO3oGxLxC7Hn3wbjrmgksfWMzVVATCdYCec3pkYam36cB992Lu5Tx9Y-gksWfJZbASa9DwO9T_kAnyTi7Dt7oQYztxuVG9_RsHOj_8LbLynYDgZZmLVaxbqAkbstia-_y29uAV5KLYzwlnvLK1FIDu85I93_tlLpf-peYOhKW5Dm0evLaCkXdb4sJoc_ybQj4r56ZNkhhPI5Y8QiARQZwNPr8wNfMtP_7fFsunTNh4yaCMEvKy7CFPDGoV37REAUosNt_AF5fmhfbzVPuFrS2O-yv_7BqNiiQmqnxWtPxEEfZ9PoEXCEtXNMgr7QJffO2k0Yw4Q7uz_tt_RwnlO0Da0YzMuOy5dljyn5lc1xG_PaR-_yoSspOZSF9kEvINtxSTfBiuOYoQknqQSDPW7JlvU6GfnMbwfqj7m7wRd1IKljmgYpQGAT1CaBLoWj0q5MSZvj2lotaDn1edLz4TfIxn1VsQB6pI",
+            "applicationType": "RECAPTCHA_APPLICATION_TYPE_WEB"
+          },
+          "projectId": "<UUID>",
+          "tool": "PINHOLE",
+          "sessionId": ";1778359165212"
+        },
+        "imageModelName": "NARWHAL",
+        "imageAspectRatio": "IMAGE_ASPECT_RATIO_LANDSCAPE_FOUR_THREE",
+        "structuredPrompt": {
+          "parts": [
+            {
+              "text": "the space seem from the distance. cinematic. amazing. eye catching."
+            }
+          ]
+        },
+        "seed": 689072,
+        "imageInputs": [
+          {
+            "imageInputType": "IMAGE_INPUT_TYPE_REFERENCE",
+            "name": "<UUID>"
+          }
+        ]
+      }
+    ]
+  },
+  "response_status": 200,
+  "response_body_parsed": {
+    "media": [
+      {
+        "name": "<UUID>",
+        "workflowId": "<UUID>",
+        "image": {
+          "generatedImage": {
+            "seed": 689072,
+            "mediaGenerationId": "CAMSJGFjOWZkNDdlLTc2ODktNDM2OC04MzEzLTk3MGMwZDU0MzNkZRokMjVlODNkMjYtNDE0NS00N2EyLWJhOWQtYWQ0ZWM1NTY4ODRjIgNDQUUqJDFmYzYyMzdiLWFmMjYtNDM1NS1hNmZlLTY3NzRlMTY5OWUxZg",
+            "mediaVisibility": "PRIVATE",
+            "prompt": "the space seem from the distance. cinematic. amazing. eye catching.",
+            "modelNameType": "NARWHAL",
+            "workflowId": "<UUID>",
+            "fifeUrl": "https://flow-content.google/image/<UUID>?Expires=1778383852&KeyName=labs-flow-prod-cdn-key&Signature=-uICMfztk99Ou443wBSvXIeAOqc",
+            "aspectRatio": "IMAGE_ASPECT_RATIO_LANDSCAPE_FOUR_THREE",
+            "requestData": {
+              "promptInputs": [
+                {
+                  "textInput": "the space seem from the distance. cinematic. amazing. eye catching.",
+                  "structuredPrompt": {
+                    "parts": [
+                      {
+                        "text": "the space seem from the distance. cinematic. amazing. eye catching."
+                      }
+                    ]
+                  }
+                }
+              ],
+              "imageGenerationRequestData": {
+                "imageGenerationImageInputs": [
+                  {
+                    "imageInputType": "IMAGE_INPUT_TYPE_REFERENCE",
+                    "mediaId": "<UUID>"
+                  }
+                ]
+              }
+            },
+            "mediaId": "<UUID>"
+          },
+          "dimensions": {
+            "width": 1200,
+            "height": 896
+          }
+        }
+      }
+    ],
+    "workflows": [
+      {
+        "name": "<UUID>",
+        "metadata": {
+          "displayName": "Space seen from distance",
+          "createTime": "2026-05-09T21:30:53.809726Z",
+          "primaryMediaId": "<UUID>",
+          "batchId": "<UUID>",
+          "updateTime": "2026-05-09T21:31:27.185789Z"
+        },
+        "projectId": "<UUID>"
+      }
+    ]
+  }
+}

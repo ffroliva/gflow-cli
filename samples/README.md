@@ -16,6 +16,8 @@ Use them when:
 | `03_batchCheckAsyncVideoGenerationStatus.json` | `POST /v1/video:batchCheckAsyncVideoGenerationStatus` | Body is just `{media: [{name, projectId}]}`. Response carries `mediaStatus.mediaGenerationStatus` and a `video.operation.name` once started. |
 | `04_archive_workflow.json` | `PATCH /v1/flowWorkflows/{id}` | Soft-delete via `metadata.archived = true`. Used by `clear_flow_library`. |
 | `05_createProject.json` | `POST labs.google/fx/api/trpc/project.createProject` | tRPC route. Different host. Body: `{json: {projectTitle, toolName: "PINHOLE"}}`. Response wrapped in `result.data.json.result.projectId`. |
+| `06_batchGenerateImages.json` | `POST /v1/projects/{projectId}/flowMedia:batchGenerateImages` | T2I (no seed images). **Synchronous** — response includes `media[].image.generatedImage.fifeUrl` (signed Google CDN URL, short-lived). `projectId` lives in the URL path, not the body. Per-request fields: `imageModelName: "NARWHAL"` (the UI's "Nano Banana 2"), `imageAspectRatio` (symbolic), `structuredPrompt`, `seed`, `imageInputs: []`. Top-level body adds `useNewMedia: true`. |
+| `07_batchGenerateImages_seeded.json` | same | I2I variant — exercises seed image refs, aspect `LANDSCAPE_FOUR_THREE`, and parallel-call quantity. `imageInputs[]` is populated with `{imageInputType: "IMAGE_INPUT_TYPE_REFERENCE", name: "<media-uuid>"}` where `name` came from `01_upload_image.json`. **Multi-image quantity (x2/x3/x4) is N parallel POSTs**, not a batched request — same `batchId` shared, different `seed` and fresh reCAPTCHA token per call. |
 
 ## Critical observations
 

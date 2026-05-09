@@ -1,0 +1,103 @@
+{
+  "route_name": "06_batchGenerateImages",
+  "method": "POST",
+  "url": "https://aisandbox-pa.googleapis.com/v1/projects/<UUID>/flowMedia:batchGenerateImages",
+  "request_headers": {
+    "authorization": "Bearer <REDACTED_BEARER>",
+    "content-type": "text/plain;charset=UTF-8"
+  },
+  "request_body": "<see request_body_parsed>",
+  "request_body_parsed": {
+    "clientContext": {
+      "recaptchaContext": {
+        "token": "0cAFcWeA4wVRh84epL_7KSh8VF3LGvvNsM9M55MlYcju1EbNbuxAt2HfUOXeuynOz2YkUV4AlhcHPEbpnI60zUDVFnxtwV147AuHv3fJzT_2tJF8v-jrInSeWgoSmO8x2tyC2VewrzxmL2445UfdkPn4fYqsk1yDv4oS3IJzLrhYFhg2K-lAyirominokjxuwd-n21fbT1TPxsPnWo4rJTFSCTPeXlVZzw1ymcXBHzp_xQn1Aj5MbHrakh-z0GYapTKSmOLbjM_n5fA7lAHLkxOBAKHEivmavwOFCPJfbyI6xXhdu3mXxt6gluYLEuQDOqaIi34lI4eI0dneql8Ol_BZ1BFSgCHr1gDt5O5Ujxdkd_UvjBmw4HCq0KuwuVCQOzdwuL27Yi-aa7Ot2S3j8xJj3FlEX-QYNa1TRx2LgoHIG3Qx9zgN7jiIwIpp4mAbrk6xnZW0DTduo1ftkE4a0123yutgS2i5rhV9o4sTPTgkhaNNC6fVwwVmfVn63ZAqdkDvXnOLEMpXYU9EkV4gwbnVtIYvjM6aTBSTY_DXVVabIHpGkOQsvZrI3FkRR4Sp-9a0RUikbucPv55S_QmOsL4_CYaU-8Oi7QcpIH-9HkVkp_Iuht93jFbN2aUmlTRGpIJggIknEmONQk1YMc8sxILaVQXm0GRqVqNq1Bc_6be1qoxdhHKzfnkRu9B8qJ4T4RTPti0s_LI6GRm1-dDhXgOvs90EPF0ZWniCsdYW2jPZIyCmMg53twLOPVXjxUuJKk2iAGxKUKC5aGwHUbnFmWRoBAzW7i6nxysoMKeGk6Q5PyFA_-w3tE_JlociZqqGRHnUjjnv_zyX9lonA-H8XBNP13Bl8yLiwdzQNMlQ5YN4cNAPnSzCzdLtf55CU7uSL9gsVfMUMCQxXopvRXPYKHVbIZqgukjDBi3qEk2mUDCHtilrANct83bG01sx12bc0WCTBlaAVHimehDEi-5N0svc_bjTY4269dCjzLjNOw-m2WjJ7q5BCiQ5vrZSAF2mdOWv3ziSo2_FFVMJ-OAhvfahbEFqzJu-ap-Nc4BknDUAnmKQNKprc7cvfI7vhpA4ggejixq_4iy44JSBNSdq6j2eU1SHeDefyimv8C0ppQMcPlmspKaUzYByJWu9lgPrLhUT9Kt66SZRpOun5PPNX7Xy6hI5bdDKuc0ZKybEKldzHgEFlWzzgUcg3-M6WCb0WCX9puDHuTy5bsygt4yKEJhnUadFSkXAZYYWF8ql_bj0eSsvhVZOzrf3KCrhiabAZj7BqQ6NXykd6BcYjidAy7Z3Kn3Vl0BfRfxQizcxZpYemtt4m1fORe2eepdHIUKu_q8X9fiZiSyNDgs9PnWVHdAaP-1tSoW6vYBjWk2qzAWp7zBTLOUeQWnQZAR7B2bauyiAW4EfS9SY1yd8MaGLCPnhpLlZgxe5j0QwZ5qfosk3N4wfLdCLZOw40yzjEhsJpTPy4SQXK9_RXEXYQApg4nfaF2mIyQBLLiLYsjjRYe5qVEk06yjHrIhgDhRVWv2gJnkm403nwovWqZZXKiMwvXdaEuHhXdDXlX8oDUUC47Aj7hJxFzia1_bAxfIafCwVMUD8lvl_0wxAe03G4v-NbzC40G36ZVYPdWS6bV6lxEGCYtpesJNpOWv2rQuPYqfxfI2rU7qzvqZKi-e5ctzZSmOnjnwtO49_mJ6qplJa7NPlLVYReWG6RSlWkGsIjQQ3l5bQqcv9TjoUvEPZb_JZwx4CgY5q9o_kfqhJIzn4CJF53SGByyrJg9cybzHCg65sh9I40mIM5lzZZ9moGC0fiqXC4c50r9o7hztaVSrGwN68WkZCSX5hl3pRxfycD_dxitk499acMUL4el-bxmHvn3F_IMBcWMszpTXsl2F43BdgKCiXEGqCXXKnvJMq9NNOxUOYxRLTh9Uwm5DzDOD8i6NgNLQtxBcqRkgjrdSfKOafbxprhggkRTlUsDC50X5_5CZGCyLJiXCBQj8ssjJThflXZqKpt9kXqGLf1EY8aGHLDTNSPF8hqwh0IsPC4HxlSd6pxBF2hQKab6vfz72u3IBTdMvcnQutvWAIoTaiAwXZuWwimmJOga_q1q5hd7TtUXe21r_37L2LowIpOJ2KUIwm0AUO0SuYraDkoo8wDAgxMtIGyJD6I9bmEzQcJzf4iMfaeOZz1CP9pp",
+        "applicationType": "RECAPTCHA_APPLICATION_TYPE_WEB"
+      },
+      "projectId": "<UUID>",
+      "tool": "PINHOLE",
+      "sessionId": ";1778359165212"
+    },
+    "mediaGenerationContext": {
+      "batchId": "<UUID>"
+    },
+    "useNewMedia": true,
+    "requests": [
+      {
+        "clientContext": {
+          "recaptchaContext": {
+            "token": "0cAFcWeA4wVRh84epL_7KSh8VF3LGvvNsM9M55MlYcju1EbNbuxAt2HfUOXeuynOz2YkUV4AlhcHPEbpnI60zUDVFnxtwV147AuHv3fJzT_2tJF8v-jrInSeWgoSmO8x2tyC2VewrzxmL2445UfdkPn4fYqsk1yDv4oS3IJzLrhYFhg2K-lAyirominokjxuwd-n21fbT1TPxsPnWo4rJTFSCTPeXlVZzw1ymcXBHzp_xQn1Aj5MbHrakh-z0GYapTKSmOLbjM_n5fA7lAHLkxOBAKHEivmavwOFCPJfbyI6xXhdu3mXxt6gluYLEuQDOqaIi34lI4eI0dneql8Ol_BZ1BFSgCHr1gDt5O5Ujxdkd_UvjBmw4HCq0KuwuVCQOzdwuL27Yi-aa7Ot2S3j8xJj3FlEX-QYNa1TRx2LgoHIG3Qx9zgN7jiIwIpp4mAbrk6xnZW0DTduo1ftkE4a0123yutgS2i5rhV9o4sTPTgkhaNNC6fVwwVmfVn63ZAqdkDvXnOLEMpXYU9EkV4gwbnVtIYvjM6aTBSTY_DXVVabIHpGkOQsvZrI3FkRR4Sp-9a0RUikbucPv55S_QmOsL4_CYaU-8Oi7QcpIH-9HkVkp_Iuht93jFbN2aUmlTRGpIJggIknEmONQk1YMc8sxILaVQXm0GRqVqNq1Bc_6be1qoxdhHKzfnkRu9B8qJ4T4RTPti0s_LI6GRm1-dDhXgOvs90EPF0ZWniCsdYW2jPZIyCmMg53twLOPVXjxUuJKk2iAGxKUKC5aGwHUbnFmWRoBAzW7i6nxysoMKeGk6Q5PyFA_-w3tE_JlociZqqGRHnUjjnv_zyX9lonA-H8XBNP13Bl8yLiwdzQNMlQ5YN4cNAPnSzCzdLtf55CU7uSL9gsVfMUMCQxXopvRXPYKHVbIZqgukjDBi3qEk2mUDCHtilrANct83bG01sx12bc0WCTBlaAVHimehDEi-5N0svc_bjTY4269dCjzLjNOw-m2WjJ7q5BCiQ5vrZSAF2mdOWv3ziSo2_FFVMJ-OAhvfahbEFqzJu-ap-Nc4BknDUAnmKQNKprc7cvfI7vhpA4ggejixq_4iy44JSBNSdq6j2eU1SHeDefyimv8C0ppQMcPlmspKaUzYByJWu9lgPrLhUT9Kt66SZRpOun5PPNX7Xy6hI5bdDKuc0ZKybEKldzHgEFlWzzgUcg3-M6WCb0WCX9puDHuTy5bsygt4yKEJhnUadFSkXAZYYWF8ql_bj0eSsvhVZOzrf3KCrhiabAZj7BqQ6NXykd6BcYjidAy7Z3Kn3Vl0BfRfxQizcxZpYemtt4m1fORe2eepdHIUKu_q8X9fiZiSyNDgs9PnWVHdAaP-1tSoW6vYBjWk2qzAWp7zBTLOUeQWnQZAR7B2bauyiAW4EfS9SY1yd8MaGLCPnhpLlZgxe5j0QwZ5qfosk3N4wfLdCLZOw40yzjEhsJpTPy4SQXK9_RXEXYQApg4nfaF2mIyQBLLiLYsjjRYe5qVEk06yjHrIhgDhRVWv2gJnkm403nwovWqZZXKiMwvXdaEuHhXdDXlX8oDUUC47Aj7hJxFzia1_bAxfIafCwVMUD8lvl_0wxAe03G4v-NbzC40G36ZVYPdWS6bV6lxEGCYtpesJNpOWv2rQuPYqfxfI2rU7qzvqZKi-e5ctzZSmOnjnwtO49_mJ6qplJa7NPlLVYReWG6RSlWkGsIjQQ3l5bQqcv9TjoUvEPZb_JZwx4CgY5q9o_kfqhJIzn4CJF53SGByyrJg9cybzHCg65sh9I40mIM5lzZZ9moGC0fiqXC4c50r9o7hztaVSrGwN68WkZCSX5hl3pRxfycD_dxitk499acMUL4el-bxmHvn3F_IMBcWMszpTXsl2F43BdgKCiXEGqCXXKnvJMq9NNOxUOYxRLTh9Uwm5DzDOD8i6NgNLQtxBcqRkgjrdSfKOafbxprhggkRTlUsDC50X5_5CZGCyLJiXCBQj8ssjJThflXZqKpt9kXqGLf1EY8aGHLDTNSPF8hqwh0IsPC4HxlSd6pxBF2hQKab6vfz72u3IBTdMvcnQutvWAIoTaiAwXZuWwimmJOga_q1q5hd7TtUXe21r_37L2LowIpOJ2KUIwm0AUO0SuYraDkoo8wDAgxMtIGyJD6I9bmEzQcJzf4iMfaeOZz1CP9pp",
+            "applicationType": "RECAPTCHA_APPLICATION_TYPE_WEB"
+          },
+          "projectId": "<UUID>",
+          "tool": "PINHOLE",
+          "sessionId": ";1778359165212"
+        },
+        "imageModelName": "NARWHAL",
+        "imageAspectRatio": "IMAGE_ASPECT_RATIO_PORTRAIT",
+        "structuredPrompt": {
+          "parts": [
+            {
+              "text": "a warrior zelda in a dangeon. cinematic. 8k "
+            }
+          ]
+        },
+        "seed": 646428,
+        "imageInputs": []
+      }
+    ]
+  },
+  "response_status": 200,
+  "response_body_parsed": {
+    "media": [
+      {
+        "name": "<UUID>",
+        "workflowId": "<UUID>",
+        "image": {
+          "generatedImage": {
+            "seed": 646428,
+            "mediaGenerationId": "CAMSJGFjOWZkNDdlLTc2ODktNDM2OC04MzEzLTk3MGMwZDU0MzNkZRokZWYwMjRiODgtMzRkYS00MmY5LThjMTctZGQzYTRhNjk2ODA0IgNDQUUqJGZmNTRmYjJhLWYyMjMtNDEyNi1iM2QxLTFjZTU1ZGViODNjOQ",
+            "mediaVisibility": "PRIVATE",
+            "prompt": "a warrior zelda in a dangeon. cinematic. 8k ",
+            "modelNameType": "NARWHAL",
+            "workflowId": "<UUID>",
+            "fifeUrl": "https://flow-content.google/image/<UUID>?Expires=1778380305&KeyName=labs-flow-prod-cdn-key&Signature=F0w0SE4CeB54qWisuPyR100dJQc",
+            "aspectRatio": "IMAGE_ASPECT_RATIO_PORTRAIT",
+            "requestData": {
+              "promptInputs": [
+                {
+                  "textInput": "a warrior zelda in a dangeon. cinematic. 8k ",
+                  "structuredPrompt": {
+                    "parts": [
+                      {
+                        "text": "a warrior zelda in a dangeon. cinematic. 8k "
+                      }
+                    ]
+                  }
+                }
+              ],
+              "imageGenerationRequestData": {}
+            },
+            "mediaId": "<UUID>"
+          },
+          "dimensions": {
+            "width": 768,
+            "height": 1376
+          }
+        }
+      }
+    ],
+    "workflows": [
+      {
+        "name": "<UUID>",
+        "metadata": {
+          "displayName": "Warrior Zelda in dungeon",
+          "createTime": "2026-05-09T20:31:46.340014Z",
+          "primaryMediaId": "<UUID>",
+          "batchId": "<UUID>",
+          "updateTime": "2026-05-09T20:32:05.901918Z"
+        },
+        "projectId": "<UUID>"
+      }
+    ]
+  }
+}
