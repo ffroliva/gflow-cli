@@ -38,6 +38,22 @@ _DISCOVER_SITE_KEY_JS = """
 }
 """
 
+_EXECUTE_JS = """
+async ([siteKey, action]) => {
+    return await new Promise((resolve, reject) => {
+        if (typeof grecaptcha === 'undefined' || !grecaptcha.enterprise) {
+            return reject(new Error('grecaptcha.enterprise not loaded'));
+        }
+        grecaptcha.enterprise.ready(() => {
+            grecaptcha.enterprise
+                .execute(siteKey, { action })
+                .then(resolve)
+                .catch(reject);
+        });
+    });
+}
+"""
+
 
 async def discover_site_key(page: _PageLike) -> str:
     """Read the reCAPTCHA Enterprise site key from the loaded page.
@@ -66,3 +82,19 @@ class TokenMinter:
         if self._site_key is None:
             self._site_key = await discover_site_key(self._page)
         return self._site_key
+
+    async def mint(self, action: str) -> str:
+        """Mint a fresh reCAPTCHA Enterprise token for the given action.
+
+        Tokens are single-use and expire in ~2 minutes — call this immediately
+        before the API request that consumes the token.
+        """
+        site_key = await self.site_key()
+        token = await self._page.evaluate(_EXECUTE_JS, [site_key, action])
+        if not isinstance(token, str) or not token:
+            raise RecaptchaError(
+                f"reCAPTCHA returned an empty token for action={action!r}. "
+                "Likely causes: headless detection by Google, or the page "
+                "navigated away before mint. Try FLOW_CLI_HEADLESS=false."
+            )
+        return token
