@@ -49,3 +49,10 @@ class TestTokenMinter:
         minter = TokenMinter(page)
         with pytest.raises(RecaptchaError, match="empty"):
             await minter.mint("videoGen")
+
+    async def test_mint_wraps_evaluate_exception_as_recaptcha_error(self) -> None:
+        page = AsyncMock()
+        page.evaluate.side_effect = ["site-key", RuntimeError("grecaptcha not loaded")]
+        minter = TokenMinter(page)
+        with pytest.raises(RecaptchaError):
+            await minter.mint("videoGen")

@@ -90,7 +90,14 @@ class TokenMinter:
         before the API request that consumes the token.
         """
         site_key = await self.site_key()
-        token = await self._page.evaluate(_EXECUTE_JS, [site_key, action])
+        try:
+            token = await self._page.evaluate(_EXECUTE_JS, [site_key, action])
+        except Exception as exc:
+            raise RecaptchaError(
+                f"reCAPTCHA evaluate failed for action={action!r}: {exc}. "
+                "Likely causes: grecaptcha not loaded, page navigated away, "
+                "or Playwright timeout. Try FLOW_CLI_HEADLESS=false."
+            ) from exc
         if not isinstance(token, str) or not token:
             raise RecaptchaError(
                 f"reCAPTCHA returned an empty token for action={action!r}. "
