@@ -13,6 +13,7 @@ from rich.table import Table
 
 from flow_cli import __version__, profile_store
 from flow_cli import auth as auth_mod
+from flow_cli.cli_video import video as _video_group
 from flow_cli.providers.flow import FlowProvider
 
 console = Console()
@@ -306,6 +307,9 @@ def i2v(
             console.print(f"[green]Saved[/green] {output}")
 
     asyncio.run(run())
+
+
+main.add_command(_video_group)
 
 
 if __name__ == "__main__":
