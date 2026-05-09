@@ -5,6 +5,7 @@ Mirrors the mocking style of `tests/api/test_client_generate_video.py`.
 
 from __future__ import annotations
 
+import asyncio
 import copy
 import json
 from pathlib import Path
@@ -287,8 +288,17 @@ class TestGenerateImagesBatch:
         assert mint_mock.await_count == 3
 
     async def test_batch_fan_out_returns_in_input_order(self, client: FlowApiClient) -> None:
-        """asyncio.gather may complete out of order — return list must match input seed order."""
-        import asyncio
+        """asyncio.gather may complete out of order — return list must match input seed order.
+
+        Two assertions together prove the contract:
+
+        1. ``completion_log`` is NOT in submission order (seed=300 finishes first
+           because seed=100 sleeps longest) — proves real interleaving happened
+           and a sequential ``for`` loop wouldn't pass.
+        2. ``results`` IS in submission order — proves ``asyncio.gather``
+           preserves input order despite out-of-order completion.
+        """
+        completion_log: list[int] = []
 
         # Make later calls finish FIRST by sleeping inversely proportional to seed.
         async def fake_post_json(url, body, **kwargs):
@@ -296,6 +306,7 @@ class TestGenerateImagesBatch:
             # seed=100 sleeps longest, seed=300 finishes first
             delay = 0.03 if seed == 100 else (0.01 if seed == 200 else 0.0)
             await asyncio.sleep(delay)
+            completion_log.append(seed)
             return _fake_response_with_seed(seed, media_id=f"media-{seed}")
 
         with (
@@ -310,7 +321,14 @@ class TestGenerateImagesBatch:
                 seeds=[100, 200, 300],
             )
 
-        assert [r.seed for r in results] == [100, 200, 300]
+        # Out-of-order completion actually occurred — a sequential for-loop
+        # implementation would log [100, 200, 300] and fail this assertion.
+        submission_order = [100, 200, 300]
+        assert completion_log != submission_order, (
+            f"expected interleaved completion, got submission-order log {completion_log}"
+        )
+        # gather() preserves input order despite the out-of-order completion above.
+        assert [r.seed for r in results] == submission_order
         assert [r.media_name for r in results] == ["media-100", "media-200", "media-300"]
 
     async def test_batch_fan_out_partial_failure_propagates(self, client: FlowApiClient) -> None:
@@ -343,7 +361,28 @@ class TestGenerateImagesBatch:
         """count=0 and count=5 must raise ValueError. Matches Flow UI."""
         with patch("flow_cli.api.client.TokenMinter") as minter_cls:
             minter_cls.return_value.mint = AsyncMock(return_value="TOK")
-            with pytest.raises(ValueError):
+            with pytest.raises(ValueError, match="count must be between 1 and 4"):
                 await client.generate_images_batch(project_id="proj-1", req=_make_req(), count=0)
-            with pytest.raises(ValueError):
+            with pytest.raises(ValueError, match="count must be between 1 and 4"):
                 await client.generate_images_batch(project_id="proj-1", req=_make_req(), count=5)
+
+    @pytest.mark.parametrize(
+        "seeds,count",
+        [
+            ([1, 2], 3),
+            ([1, 2, 3, 4], 2),
+        ],
+    )
+    async def test_batch_seeds_count_mismatch_raises(
+        self, client: FlowApiClient, seeds: list[int], count: int
+    ) -> None:
+        """If caller supplies ``seeds``, its length must equal ``count``."""
+        with patch("flow_cli.api.client.TokenMinter") as minter_cls:
+            minter_cls.return_value.mint = AsyncMock(return_value="TOK")
+            with pytest.raises(ValueError, match="does not match count"):
+                await client.generate_images_batch(
+                    project_id="proj-1",
+                    req=_make_req(),
+                    count=count,
+                    seeds=seeds,
+                )
