@@ -105,3 +105,41 @@ class TestVideoI2V:
         call = client.generate_video.await_args
         req = call.kwargs.get("req") or call.args[1]
         assert req.start_asset_uuid == "asset-1"
+
+
+class TestVideoBatch:
+    def test_three_clip_manifest(self, runner: CliRunner, tmp_path: Path) -> None:
+        png = tmp_path / "in.png"
+        png.write_bytes(b"\x89PNG\r\n\x1a\n")
+        out_dir = tmp_path / "out"
+        manifest = tmp_path / "m.tsv"
+        manifest.write_text(
+            "# header\n"
+            "\tfirst t2v\t\t\t\n"
+            f"{png}\tsecond i2v\t\t\t\n"
+            "\tthird t2v\t\t16:9\t\n",
+            encoding="utf-8",
+        )
+        client = _make_mock_client()
+        client.upload_image = AsyncMock()
+        client.upload_image.return_value = MagicMock()
+        client.upload_image.return_value.name = "asset-x"
+
+        with (
+            patch("flow_cli.cli_video.FlowApiClient", return_value=client),
+            patch("flow_cli.cli_video._make_provider_dir", return_value=tmp_path / "prof"),
+            patch("flow_cli.cli_video._resolve_profile", return_value="default"),
+        ):
+            from flow_cli.cli import main
+            result = runner.invoke(
+                main,
+                [
+                    "video", "batch", str(manifest),
+                    "--out-dir", str(out_dir), "--poll-interval", "0",
+                ],
+                catch_exceptions=False,
+            )
+        assert result.exit_code == 0, result.output
+        # 3 generations, 1 upload (only the i2v row)
+        assert client.generate_video.await_count == 3
+        assert client.upload_image.await_count == 1
