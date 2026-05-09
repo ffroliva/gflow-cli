@@ -63,3 +63,8 @@ pythonVersion = "3.11"
 [tool.pytest.ini_options]
 testpaths = ["tests"]
 asyncio_mode = "auto"
+markers = [
+    "unit: pure logic, no I/O (the default category)",
+    "integration: real Provider plumbing with mocked HTTP",
+    "live: hits the real Flow API — opt-in via GFLOW_LIVE=1",
+]

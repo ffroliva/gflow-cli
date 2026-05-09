@@ -1,4 +1,5 @@
 """Provider protocol — implemented by FlowProvider, future OfficialVeoProvider, etc."""
+
 from __future__ import annotations
 
 from pathlib import Path

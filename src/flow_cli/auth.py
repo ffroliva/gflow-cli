@@ -1,10 +1,10 @@
 """Auth — capture/refresh Google session via Playwright persistent context."""
+
 from __future__ import annotations
 
 import logging
 import os
 from pathlib import Path
-from typing import Optional
 
 from playwright.async_api import async_playwright
 
@@ -47,7 +47,7 @@ async def login(name: str = "default") -> Path:
             )
             # Wait until the user closes the context
             try:
-                await ctx.wait_for_event("close", timeout=600_000)
+                await ctx.wait_for_event("close", timeout=600_000)  # pyright: ignore[reportUnknownMemberType]
             except Exception:
                 pass
         finally:
@@ -61,7 +61,7 @@ async def login(name: str = "default") -> Path:
 def status(name: str = "default") -> dict[str, object]:
     """Lightweight check — does the profile dir exist and have cookies file?"""
     pdir = profile_dir(name)
-    cookies_file: Optional[Path] = None
+    cookies_file: Path | None = None
     for candidate in (pdir / "Default" / "Cookies", pdir / "Cookies"):
         if candidate.exists():
             cookies_file = candidate

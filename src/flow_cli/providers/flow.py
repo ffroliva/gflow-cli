@@ -15,16 +15,16 @@ Routes captured (2026-05-09):
   PATCH  https://aisandbox-pa.googleapis.com/v1/flowWorkflows/{id}
   POST   https://labs.google/fx/api/trpc/project.createProject
 """
+
 from __future__ import annotations
 
 import base64
 import logging
 from pathlib import Path
-from typing import Optional
 
 from playwright.async_api import BrowserContext, async_playwright
 
-from flow_cli.models import Asset, GenerationJob, GenerationRequest, JobStatus
+from flow_cli.models import Asset, GenerationJob, GenerationRequest
 
 logger = logging.getLogger(__name__)
 
@@ -45,10 +45,10 @@ class FlowProvider:
 
     def __init__(self, profile_dir: Path):
         self.profile_dir = profile_dir
-        self._context: Optional[BrowserContext] = None
-        self._project_id: Optional[str] = None
+        self._context: BrowserContext | None = None
+        self._project_id: str | None = None
 
-    async def __aenter__(self) -> "FlowProvider":
+    async def __aenter__(self) -> FlowProvider:
         pw = await async_playwright().start()
         self._pw = pw
         self._context = await pw.chromium.launch_persistent_context(
@@ -58,7 +58,7 @@ class FlowProvider:
         )
         return self
 
-    async def __aexit__(self, *exc):
+    async def __aexit__(self, *exc: object) -> None:
         if self._context:
             await self._context.close()
         if self._pw:
@@ -74,7 +74,7 @@ class FlowProvider:
 
     async def upload_image(self, path: Path) -> Asset:
         """POST /v1/flow/uploadImage with base64-encoded image bytes."""
-        project_id = await self._ensure_project()
+        await self._ensure_project()
         image_b64 = base64.b64encode(path.read_bytes()).decode()
         # TODO: POST /v1/flow/uploadImage
         # body: {"clientContext": {"projectId": project_id, "tool": "PINHOLE"},

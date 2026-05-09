@@ -1,4 +1,5 @@
 """CLI entry point — Click app exposing the v0.1 commands."""
+
 from __future__ import annotations
 
 import asyncio
@@ -10,9 +11,8 @@ import click
 from rich.console import Console
 from rich.table import Table
 
-from flow_cli import __version__
+from flow_cli import __version__, profile_store
 from flow_cli import auth as auth_mod
-from flow_cli import profile_store
 from flow_cli.providers.flow import FlowProvider
 
 console = Console()
@@ -48,9 +48,7 @@ def _render_profiles_table(profiles: list[profile_store.ProfileMeta]) -> None:
         last = p.last_used_at.strftime("%Y-%m-%d %H:%M:%S") if p.last_used_at else "-"
         table.add_row(marker, p.name, session, last, str(p.profile_dir))
     console.print(table)
-    console.print(
-        "\nUse [bold]gflow auth use <name>[/bold] to set the default profile."
-    )
+    console.print("\nUse [bold]gflow auth use <name>[/bold] to set the default profile.")
     console.print(
         "Use [bold]gflow auth login --profile <name>[/bold] to add or refresh a profile.\n"
     )
@@ -71,6 +69,7 @@ def main(ctx: click.Context, verbose: bool) -> None:
 
 # --- auth -------------------------------------------------------------------
 
+
 @main.group(invoke_without_command=True)
 @click.pass_context
 def auth(ctx: click.Context) -> None:
@@ -83,10 +82,7 @@ def auth(ctx: click.Context) -> None:
         return
     profiles = profile_store.list_profiles()
     if not profiles:
-        console.print(
-            "[yellow]No profiles found.[/yellow] "
-            "Launching first-time login...\n"
-        )
+        console.print("[yellow]No profiles found.[/yellow] Launching first-time login...\n")
         ctx.invoke(auth_login)
         return
     _render_profiles_table(profiles)
@@ -108,9 +104,7 @@ def auth_login(profile: str | None) -> None:
     profiles = profile_store.list_profiles()
     if len(profiles) == 1:
         profile_store.set_default_profile(profiles[0].name)
-        console.print(
-            f"[dim]Set [bold]{profiles[0].name}[/bold] as default profile.[/dim]"
-        )
+        console.print(f"[dim]Set [bold]{profiles[0].name}[/bold] as default profile.[/dim]")
 
 
 @auth.command("status")
@@ -147,8 +141,7 @@ def auth_use(name: str) -> None:
         console.print(f"[red]{e}[/red]")
         sys.exit(2)
     console.print(
-        f"[green]Default profile set to[/green] [bold]{name}[/bold]\n"
-        f"[dim]Persisted in {cfg}[/dim]"
+        f"[green]Default profile set to[/green] [bold]{name}[/bold]\n[dim]Persisted in {cfg}[/dim]"
     )
 
 
@@ -168,10 +161,7 @@ def auth_logout(profile: str | None, yes: bool) -> None:
     except FileNotFoundError as e:
         console.print(f"[red]{e}[/red]")
         sys.exit(2)
-    console.print(
-        f"[yellow]Profile '{name}' removed.[/yellow]\n"
-        f"[dim]Deleted dir: {deleted}[/dim]"
-    )
+    console.print(f"[yellow]Profile '{name}' removed.[/yellow]\n[dim]Deleted dir: {deleted}[/dim]")
 
 
 def _resolve_or_exit() -> str:
@@ -201,15 +191,18 @@ def _resolve_or_prompt(default_for_first_run: str) -> str:
 
 # --- generation commands ----------------------------------------------------
 
+
 @main.command()
 @click.argument("image", type=click.Path(exists=True, dir_okay=False, path_type=Path))
 @click.option("--profile", default=None)
 def upload(image: Path, profile: str | None) -> None:
     """Upload IMAGE to Flow library, print the asset UUID."""
+
     async def run() -> None:
         async with _make_provider(profile or _resolve_or_exit()) as p:
             asset = await p.upload_image(image)
             console.print(asset.uuid)
+
     asyncio.run(run())
 
 
@@ -220,17 +213,20 @@ def upload(image: Path, profile: str | None) -> None:
 @click.option("--profile", default=None)
 def generate(start_uuid: str, prompt: str, aspect: str, profile: str | None) -> None:
     """Kick off a Veo I2V generation. Prints the job_id."""
+
     async def run() -> None:
         from flow_cli.models import GenerationRequest
+
         async with _make_provider(profile or _resolve_or_exit()) as p:
+            _ = start_uuid  # TODO(phase-3): wire start_uuid through GenerationRequest
             req = GenerationRequest(
                 start_image=Path(""),  # TODO: refine when start_uuid wired
                 motion_prompt=prompt,
                 aspect=aspect,
             )
-            del start_uuid
             job = await p.start_generation(req)
             console.print(job.job_id)
+
     asyncio.run(run())
 
 
@@ -239,10 +235,12 @@ def generate(start_uuid: str, prompt: str, aspect: str, profile: str | None) -> 
 @click.option("--profile", default=None)
 def status(job_id: str, profile: str | None) -> None:
     """Poll the status of a generation job."""
+
     async def run() -> None:
         async with _make_provider(profile or _resolve_or_exit()) as p:
             job = await p.get_job(job_id)
             console.print(f"{job.status.value} {job.output_url or ''}")
+
     asyncio.run(run())
 
 
@@ -252,16 +250,16 @@ def status(job_id: str, profile: str | None) -> None:
 @click.option("--profile", default=None)
 def download(job_id: str, output: Path, profile: str | None) -> None:
     """Download the rendered mp4 from a SUCCEEDED job."""
+
     async def run() -> None:
         async with _make_provider(profile or _resolve_or_exit()) as p:
             job = await p.get_job(job_id)
             if not job.output_url:
-                console.print(
-                    f"[red]Job {job_id} has no output_url (status={job.status}).[/red]"
-                )
+                console.print(f"[red]Job {job_id} has no output_url (status={job.status}).[/red]")
                 sys.exit(1)
             out = await p.download(job.output_url, output)
             console.print(f"[green]Saved[/green] {out}")
+
     asyncio.run(run())
 
 
@@ -273,8 +271,12 @@ def download(job_id: str, output: Path, profile: str | None) -> None:
 @click.option("--profile", default=None)
 @click.option("--poll-interval", default=5, show_default=True)
 def i2v(
-    image: Path, prompt: str, output: Path, aspect: str,
-    profile: str | None, poll_interval: int,
+    image: Path,
+    prompt: str,
+    output: Path,
+    aspect: str,
+    profile: str | None,
+    poll_interval: int,
 ) -> None:
     """Convenience: upload + generate + poll + download in one shot."""
     from flow_cli.models import GenerationRequest, JobStatus
@@ -286,7 +288,9 @@ def i2v(
             console.print(f"  Asset uuid: {asset.uuid}")
             console.print("  Starting generation...")
             req = GenerationRequest(
-                start_image=image, motion_prompt=prompt, aspect=aspect,
+                start_image=image,
+                motion_prompt=prompt,
+                aspect=aspect,
             )
             job = await p.start_generation(req)
             console.print(f"  Job id: {job.job_id}")

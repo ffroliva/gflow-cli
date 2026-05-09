@@ -1,4 +1,5 @@
 """Tests for the profile inventory + default-resolution logic."""
+
 from __future__ import annotations
 
 from pathlib import Path
@@ -70,11 +71,22 @@ class TestSetDefault:
 
 
 class TestClearDefault:
-    def test_removes_key(self, home: Path) -> None:
+    def test_removes_key_with_multiple_profiles(self, home: Path) -> None:
+        # Two profiles so auto-select doesn't fall through to a single profile.
         _mk_profile(home, "x")
+        _mk_profile(home, "y")
         profile_store.set_default_profile("x")
         profile_store.clear_default_profile()
-        assert profile_store.get_default_profile() is None  # falls through to auto
+        assert profile_store.get_default_profile() is None
+
+    def test_clear_then_single_profile_autoselects(self, home: Path) -> None:
+        # With exactly one profile, clearing the explicit default still yields
+        # that profile via auto-select. This documents the layered default
+        # resolution chain.
+        _mk_profile(home, "only")
+        profile_store.set_default_profile("only")
+        profile_store.clear_default_profile()
+        assert profile_store.get_default_profile() == "only"
 
 
 class TestGetDefaultAutoselect:

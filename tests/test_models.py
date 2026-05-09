@@ -1,4 +1,5 @@
 """Models — frozen dataclasses, JobStatus enum."""
+
 from __future__ import annotations
 
 from pathlib import Path
@@ -18,8 +19,10 @@ class TestJobStatus:
 
 class TestAsset:
     def test_frozen(self) -> None:
+        from dataclasses import FrozenInstanceError
+
         a = Asset(uuid="u", media_url="https://example", kind="image")
-        with pytest.raises(Exception):  # FrozenInstanceError
+        with pytest.raises(FrozenInstanceError):
             a.uuid = "other"  # type: ignore[misc]
 
 

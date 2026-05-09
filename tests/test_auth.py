@@ -1,7 +1,7 @@
 """Auth helpers — pure-function tests (no Playwright, no network)."""
+
 from __future__ import annotations
 
-import os
 from pathlib import Path
 
 from flow_cli import auth

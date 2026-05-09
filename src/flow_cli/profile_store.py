@@ -14,16 +14,15 @@ Resolution precedence (highest first):
     4. Auto-select if exactly one profile exists
     5. Raise NoDefaultProfileError with the list of available profiles
 """
+
 from __future__ import annotations
 
 import os
 import shutil
-import sys
 import tomllib
 from dataclasses import dataclass
-from datetime import datetime, timezone
+from datetime import UTC, datetime
 from pathlib import Path
-from typing import Optional
 
 from flow_cli.auth import default_profile_root, profile_dir, status
 
@@ -34,10 +33,11 @@ PROFILE_DIR_PREFIX = "profile_"
 @dataclass(frozen=True)
 class ProfileMeta:
     """Snapshot of one profile on disk."""
+
     name: str
     profile_dir: Path
     cookies_present: bool
-    last_used_at: Optional[datetime]
+    last_used_at: datetime | None
     is_default: bool
 
 
@@ -97,7 +97,7 @@ def has_any_profiles() -> bool:
     return len(list_profiles()) > 0
 
 
-def get_default_profile() -> Optional[str]:
+def get_default_profile() -> str | None:
     """Resolved default profile name, or None if no rule applies.
 
     Order:
@@ -123,8 +123,7 @@ def set_default_profile(name: str) -> Path:
     pdir = profile_dir(name)
     if not pdir.exists():
         raise FileNotFoundError(
-            f"Profile dir not found: {pdir}\n"
-            f"Run `gflow auth login --profile {name}` first."
+            f"Profile dir not found: {pdir}\nRun `gflow auth login --profile {name}` first."
         )
     cfg = config_path()
     cfg.parent.mkdir(parents=True, exist_ok=True)
@@ -159,7 +158,7 @@ def delete_profile(name: str) -> Path:
     return pdir
 
 
-def resolve_profile(cli_flag: Optional[str]) -> str:
+def resolve_profile(cli_flag: str | None) -> str:
     """Apply the full precedence chain. Raises if no profile can be picked."""
     if cli_flag:
         return cli_flag
@@ -171,16 +170,14 @@ def resolve_profile(cli_flag: Optional[str]) -> str:
         return default
     profiles = list_profiles()
     if not profiles:
-        raise NoProfilesError(
-            "No profiles found. Run `gflow auth login` to create one."
-        )
+        raise NoProfilesError("No profiles found. Run `gflow auth login` to create one.")
     raise NoDefaultProfileError([p.name for p in profiles])
 
 
 # --- internals --------------------------------------------------------------
 
 
-def _read_default_profile_name() -> Optional[str]:
+def _read_default_profile_name() -> str | None:
     cfg = _load_config()
     val = cfg.get("default_profile")
     return val if isinstance(val, str) and val else None
@@ -216,7 +213,7 @@ def _dump_config(data: dict[str, object]) -> str:
     return "\n".join(lines) + "\n"
 
 
-def _last_modified(path: Path) -> Optional[datetime]:
+def _last_modified(path: Path) -> datetime | None:
     try:
         # Best-effort: latest mtime among the cookies file or the dir itself.
         candidates = [path]
@@ -224,6 +221,6 @@ def _last_modified(path: Path) -> Optional[datetime]:
             if sub.exists():
                 candidates.append(sub)
         ts = max(p.stat().st_mtime for p in candidates)
-        return datetime.fromtimestamp(ts, tz=timezone.utc)
+        return datetime.fromtimestamp(ts, tz=UTC)
     except OSError:
         return None
