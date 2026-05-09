@@ -5,6 +5,8 @@ Mirrors the mocking style of `tests/api/test_client_generate_video.py`.
 
 from __future__ import annotations
 
+import copy
+import json
 from pathlib import Path
 from unittest.mock import AsyncMock, MagicMock, patch
 
@@ -75,11 +77,10 @@ class TestGenerateImage:
         seen_request: dict = {}
 
         async def fake_request_post(url, *, data, headers):
-            seen_request["url"] = url
             seen_request["headers"] = headers
             resp = MagicMock()
             resp.status = 200
-            resp.text = AsyncMock(return_value='{"media":[],"workflows":[]}')
+            resp.text = AsyncMock(return_value=json.dumps(_FAKE_RESPONSE))
             return resp
 
         # Bypass _post_json's mock-out so we exercise the real header path.
@@ -87,14 +88,33 @@ class TestGenerateImage:
 
         with patch("flow_cli.api.client.TokenMinter") as minter_cls:
             minter_cls.return_value.mint = AsyncMock(return_value="TOK")
-            # An empty media[] response makes from_response_dict() return [],
-            # which would IndexError; catch that to keep the test focused on
-            # the header assertion.
-            with pytest.raises(IndexError):
+            # Use a valid single-item response so the call completes normally
+            # and we can isolate the header assertion.
+            await client.generate_image(project_id="proj-1", req=_make_req(), seed=1)
+
+        assert seen_request["headers"]["content-type"] == "text/plain;charset=UTF-8"
+
+    async def test_generate_image_raises_flow_api_error_on_empty_media(
+        self, client: FlowApiClient
+    ) -> None:
+        """200 OK with empty media[] (e.g. content-policy rejection) must
+        surface as FlowApiError, not a bare IndexError."""
+
+        async def fake_request_post(url, *, data, headers):
+            resp = MagicMock()
+            resp.status = 200
+            resp.text = AsyncMock(return_value='{"media":[],"workflows":[]}')
+            return resp
+
+        client._page.request.post = AsyncMock(side_effect=fake_request_post)
+
+        with patch("flow_cli.api.client.TokenMinter") as minter_cls:
+            minter_cls.return_value.mint = AsyncMock(return_value="TOK")
+            with pytest.raises(FlowApiError) as exc_info:
                 await client.generate_image(project_id="proj-1", req=_make_req(), seed=1)
 
-        assert "/projects/proj-1/flowMedia:batchGenerateImages" in seen_request["url"]
-        assert seen_request["headers"]["content-type"] == "text/plain;charset=UTF-8"
+        assert exc_info.value.status == 200
+        assert "/projects/proj-1/flowMedia:batchGenerateImages" in exc_info.value.route
 
     async def test_generate_image_mints_recaptcha_token(self, client: FlowApiClient) -> None:
         async def fake_post_json(url, body, **kwargs):
@@ -177,8 +197,6 @@ class TestGenerateImage:
 
         # Strip recaptcha tokens from both bodies — the rest must be identical.
         def _strip_tokens(b: dict) -> dict:
-            import copy
-
             d = copy.deepcopy(b)
             d["clientContext"]["recaptchaContext"]["token"] = "X"
             d["requests"][0]["clientContext"]["recaptchaContext"]["token"] = "X"
