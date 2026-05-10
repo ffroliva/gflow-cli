@@ -201,7 +201,11 @@ _ASPECT_CHOICES = ["9:16", "16:9", "1:1", "4:3", "3:4"]
     "out",
     default=None,
     type=click.Path(file_okay=False, path_type=Path),
-    help="Output directory. Defaults to <output_dir>/images/<YYYY-MM-DD>/.",
+    help=(
+        "Directory to write generated PNGs. When omitted, files land under "
+        "<output_dir>/images/<YYYY-MM-DD>/ (date-partitioned). When provided, "
+        "files are written flat as <dir>/<media_name>_<n>.png."
+    ),
 )
 @click.option("--profile", default=None, help="Profile name (overrides default).")
 def t2i(
@@ -256,6 +260,8 @@ async def _run_t2i(
 ) -> None:
     async with FlowApiClient(profile_dir=profile_dir, headless=headless) as client:
         console.print("  Creating project...")
+        # Title is a `gflow-cli ...` prefix per project convention (post-rename a02684f).
+        # cli_video.py's _run_t2v / _run_i2v don't currently set a title — tracked separately.
         project = await client.create_project(title="gflow-cli t2i")
         console.print(f"  Project: [dim]{project.project_id}[/dim]")
         console.print(f"  Generating {count} image(s) ({req.model.value}, {req.aspect.value})...")
