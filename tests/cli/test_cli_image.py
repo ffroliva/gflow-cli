@@ -282,3 +282,178 @@ class TestImageT2I:
         req = call.kwargs["req"]
         assert req.model == Model.GEM_PIX_2
         assert req.model.value == "GEM_PIX_2"
+
+
+# ---------------------------------------------------------------------------
+# i2i subcommand
+# ---------------------------------------------------------------------------
+
+
+def _make_i2i_client(
+    *,
+    images: list[GeneratedImage] | None = None,
+    upload_uuid: str = "ddb6ef97-262d-49f4-8269-4a28c0fae6a2",
+) -> MagicMock:
+    """Stub FlowApiClient: create_project + upload_image + generate_image[s_batch]."""
+    images = images or [_make_generated_image()]
+    client = MagicMock()
+    client.__aenter__ = AsyncMock(return_value=client)
+    client.__aexit__ = AsyncMock(return_value=None)
+    client.create_project = AsyncMock(
+        return_value=MagicMock(project_id="proj-1", title="gflow-cli i2i")
+    )
+    client.upload_image = AsyncMock(
+        return_value=AssetInfo(
+            name=upload_uuid,
+            project_id="proj-1",
+            workflow_id="wf-1",
+            display_name="hero.png",
+            width=1024,
+            height=1536,
+        )
+    )
+    client.generate_image = AsyncMock(return_value=images[0])
+    client.generate_images_batch = AsyncMock(return_value=images)
+
+    async def _fake_download(image: GeneratedImage, out_path: Path) -> Path:
+        out_path.parent.mkdir(parents=True, exist_ok=True)
+        out_path.write_bytes(b"\x89PNG\r\n\x1a\n")
+        return out_path
+
+    client.download_image = AsyncMock(side_effect=_fake_download)
+    return client
+
+
+class TestImageI2I:
+    def test_i2i_uploads_local_ref_paths(self, runner: CliRunner, tmp_path: Path) -> None:
+        """Local --ref path triggers upload_image; the returned UUID lands in
+        the GenerateImageRequest.refs and downstream imageInputs[]."""
+        png = tmp_path / "hero.png"
+        png.write_bytes(b"\x89PNG\r\n\x1a\n")
+        upload_uuid = "ddb6ef97-262d-49f4-8269-4a28c0fae6a2"
+        client = _make_i2i_client(upload_uuid=upload_uuid)
+        out_dir = tmp_path / "out"
+
+        with (
+            patch("flow_cli.cli_image.FlowApiClient", return_value=client),
+            patch("flow_cli.cli_image._make_provider_dir", return_value=tmp_path / "prof"),
+            patch("flow_cli.cli_image._resolve_profile", return_value="default"),
+        ):
+            from flow_cli.cli import main
+
+            result = runner.invoke(
+                main,
+                ["image", "i2i", "make it cinematic", "--ref", str(png), "--out", str(out_dir)],
+                catch_exceptions=False,
+            )
+
+        assert result.exit_code == 0, result.output
+        client.upload_image.assert_awaited_once()
+        # Inspect the GenerateImageRequest passed to generate_image — UUID
+        # from upload_image should appear in req.refs.
+        call = client.generate_image.await_args
+        assert call is not None
+        req = call.kwargs["req"]
+        assert len(req.refs) == 1
+        assert req.refs[0].name == upload_uuid
+
+    def test_i2i_passes_through_uuid_refs(self, runner: CliRunner, tmp_path: Path) -> None:
+        """Bare-UUID --ref must NOT trigger upload_image and must be used verbatim."""
+        uuid_str = "ddb6ef97-262d-49f4-8269-4a28c0fae6a2"
+        client = _make_i2i_client(upload_uuid="should-not-be-used")
+        out_dir = tmp_path / "out"
+
+        with (
+            patch("flow_cli.cli_image.FlowApiClient", return_value=client),
+            patch("flow_cli.cli_image._make_provider_dir", return_value=tmp_path / "prof"),
+            patch("flow_cli.cli_image._resolve_profile", return_value="default"),
+        ):
+            from flow_cli.cli import main
+
+            result = runner.invoke(
+                main,
+                ["image", "i2i", "stylize this", "--ref", uuid_str, "--out", str(out_dir)],
+                catch_exceptions=False,
+            )
+
+        assert result.exit_code == 0, result.output
+        client.upload_image.assert_not_called()
+        call = client.generate_image.await_args
+        assert call is not None
+        req = call.kwargs["req"]
+        assert len(req.refs) == 1
+        assert req.refs[0].name == uuid_str
+
+    def test_i2i_mixes_paths_and_uuids(self, runner: CliRunner, tmp_path: Path) -> None:
+        """Mixed `--ref path --ref uuid` → one upload, two ordered entries."""
+        png = tmp_path / "hero.png"
+        png.write_bytes(b"\x89PNG\r\n\x1a\n")
+        uploaded_uuid = "11111111-1111-1111-1111-111111111111"
+        passthrough_uuid = "22222222-2222-2222-2222-222222222222"
+        client = _make_i2i_client(upload_uuid=uploaded_uuid)
+        out_dir = tmp_path / "out"
+
+        with (
+            patch("flow_cli.cli_image.FlowApiClient", return_value=client),
+            patch("flow_cli.cli_image._make_provider_dir", return_value=tmp_path / "prof"),
+            patch("flow_cli.cli_image._resolve_profile", return_value="default"),
+        ):
+            from flow_cli.cli import main
+
+            result = runner.invoke(
+                main,
+                [
+                    "image",
+                    "i2i",
+                    "blend",
+                    "--ref",
+                    str(png),
+                    "--ref",
+                    passthrough_uuid,
+                    "--out",
+                    str(out_dir),
+                ],
+                catch_exceptions=False,
+            )
+
+        assert result.exit_code == 0, result.output
+        # Exactly one upload (for the path) — the bare UUID must be passed through.
+        assert client.upload_image.await_count == 1
+        call = client.generate_image.await_args
+        assert call is not None
+        req = call.kwargs["req"]
+        # Order matters: path → uploaded_uuid first, then passthrough_uuid.
+        assert [r.name for r in req.refs] == [uploaded_uuid, passthrough_uuid]
+
+    def test_i2i_errors_on_no_refs(self, runner: CliRunner) -> None:
+        """`image i2i` without any --ref must exit 2 with a clear message."""
+        from flow_cli.cli import main
+
+        # No mocks — should fail Click validation BEFORE any I/O.
+        result = runner.invoke(
+            main,
+            ["image", "i2i", "a cat"],
+            catch_exceptions=False,
+        )
+
+        assert result.exit_code == 2, result.output
+        # Click's "Missing option '--ref'" is acceptable; we also want users to
+        # know t2i exists for text-only generation. The custom message lands in
+        # the option's help text and (when raised by us) in stderr.
+        lower = result.output.lower()
+        assert "ref" in lower
+
+    def test_i2i_errors_on_missing_ref_file(self, runner: CliRunner, tmp_path: Path) -> None:
+        """`--ref nonexistent.png` (looks like a path, file missing) → exit 2."""
+        missing = tmp_path / "does_not_exist.png"
+        from flow_cli.cli import main
+
+        result = runner.invoke(
+            main,
+            ["image", "i2i", "a cat", "--ref", str(missing)],
+            catch_exceptions=False,
+        )
+
+        assert result.exit_code == 2, result.output
+        lower = result.output.lower()
+        assert "does not exist" in lower or "not found" in lower or str(missing) in result.output

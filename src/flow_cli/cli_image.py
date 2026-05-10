@@ -5,6 +5,7 @@ Subcommands:
 * ``upload PATH`` — uploads a local image into a Flow project's library and
   prints the resulting media UUID and inferred dimensions.
 * ``t2i PROMPT`` — text-to-image generation (1-4 images per call).
+* ``i2i PROMPT --ref PATH_OR_UUID`` — image-to-image with seed references.
 
 Helper functions ``_resolve_profile`` and ``_make_provider_dir`` mirror the
 ones in :mod:`flow_cli.cli_video` so the test suite can patch them locally.
@@ -16,6 +17,7 @@ should not require a cross-module patch dance in tests.
 from __future__ import annotations
 
 import asyncio
+import re
 import sys
 from pathlib import Path
 
@@ -27,9 +29,18 @@ from flow_cli import auth as auth_mod
 from flow_cli import profile_store
 from flow_cli.api.client import FlowApiClient
 from flow_cli.api.dto import GeneratedImage
-from flow_cli.api.image import Aspect, GenerateImageRequest, Model
+from flow_cli.api.image import Aspect, GenerateImageRequest, ImageRef, Model
 from flow_cli.config import get_settings
 from flow_cli.paths import image_output_path
+
+# Case-insensitive 8-4-4-4-12 hex with hyphens — Flow's media UUIDs.
+# When a `--ref` value matches this regex it's treated as an already-uploaded
+# asset and passed through verbatim; anything else is treated as a local path
+# that needs to be uploaded first.
+_UUID_RE = re.compile(
+    r"^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$",
+    re.IGNORECASE,
+)
 
 console = Console()
 
@@ -69,8 +80,7 @@ def _make_provider_dir(profile_name: str) -> Path:
 def image() -> None:
     """Upload and generate images via Google Flow Imagen.
 
-    Provides ``upload`` and ``t2i``. Image-to-image (``i2i``) lands in a
-    subsequent task.
+    Provides ``upload``, ``t2i``, and ``i2i``.
     """
 
 
@@ -289,6 +299,227 @@ async def _run_t2i(
 def _print_t2i_summary(images: list[GeneratedImage], saved_paths: list[Path]) -> None:
     """Render a Rich table of generated images and where they landed."""
     table = Table(title="gflow-cli t2i")
+    table.add_column("media_name", overflow="fold")
+    table.add_column("seed", justify="right")
+    table.add_column("dimensions")
+    table.add_column("output_path", overflow="fold")
+    for img, path in zip(images, saved_paths, strict=True):
+        w, h = img.dimensions
+        table.add_row(img.media_name, str(img.seed), f"{w}x{h}", str(path))
+    console.print(table)
+
+
+# ---------------------------------------------------------------------------
+# i2i subcommand
+# ---------------------------------------------------------------------------
+
+
+@image.command(
+    "i2i",
+    short_help="Generate image(s) from a prompt + one or more reference images.",
+    help=(
+        "Image-to-image generation: blend a text prompt with one or more "
+        "reference images. Each --ref is either a local image path (auto-uploaded) "
+        "or an already-uploaded asset UUID (from a prior `gflow image upload`).\n\n"
+        "\b\n"
+        "Examples:\n"
+        '  gflow image i2i "make it cinematic" --ref hero.png\n'
+        '  gflow image i2i "blend these" --ref a.png --ref b.png\n'
+        '  gflow image i2i "stylize" --ref ddb6ef97-262d-49f4-8269-4a28c0fae6a2\n'
+        '  gflow image i2i "mix" --ref hero.png --ref ddb6ef97-262d-49f4-8269-4a28c0fae6a2\n\n'
+        "For text-only generation, use `gflow image t2i` instead.\n"
+        "Note: --seed is only valid when generating a single image (-n 1)."
+    ),
+)
+@click.argument("prompt")
+@click.option(
+    "--ref",
+    "refs",
+    multiple=True,
+    required=True,
+    help=(
+        "Reference image: either a local path (auto-uploaded) or an already-uploaded "
+        "asset UUID. Repeat to pass multiple refs (order is preserved). "
+        "For text-only generation, use `gflow image t2i` instead."
+    ),
+)
+@click.option(
+    "--model",
+    default="nano2",
+    show_default=True,
+    type=click.Choice(_MODEL_CHOICES),
+    help="Image model alias.",
+)
+@click.option(
+    "--aspect",
+    default="9:16",
+    show_default=True,
+    type=click.Choice(_ASPECT_CHOICES),
+    help="Image aspect ratio.",
+)
+@click.option(
+    "-n",
+    "--count",
+    "count",
+    default=1,
+    show_default=True,
+    type=click.IntRange(1, 4),
+    help="How many images to generate (1-4).",
+)
+@click.option(
+    "--seed",
+    default=None,
+    type=int,
+    help="RNG seed for reproducibility (only valid when -n 1).",
+)
+@click.option(
+    "--out",
+    "out",
+    default=None,
+    type=click.Path(file_okay=False, path_type=Path),
+    help=(
+        "Directory to write generated PNGs. When omitted, files land under "
+        "<output_dir>/images/<YYYY-MM-DD>/ (date-partitioned). When provided, "
+        "files are written flat as <dir>/<media_name>_<n>.png."
+    ),
+)
+@click.option("--profile", default=None, help="Profile name (overrides default).")
+def i2i(
+    prompt: str,
+    refs: tuple[str, ...],
+    model: str,
+    aspect: str,
+    count: int,
+    seed: int | None,
+    out: Path | None,
+    profile: str | None,
+) -> None:
+    """Generate image(s) from PROMPT + reference image(s) (image-to-image)."""
+    # Mirror t2i's seed/count cross-flag rule — see _run_t2i for the rationale.
+    if seed is not None and count != 1:
+        raise click.UsageError(
+            "--seed is only valid when generating a single image (-n 1). "
+            "For multi-image runs, omit --seed and let each shot get its own."
+        )
+
+    # Validate each --ref upfront: either a UUID (passes regex) or an existing
+    # local file. Click's `multiple=True` with `required=True` already rejects
+    # the "no --ref" case with exit 2, but we need our own per-value check
+    # because a value can be either a path OR a UUID.
+    for ref in refs:
+        if _UUID_RE.match(ref):
+            continue
+        ref_path = Path(ref)
+        if not ref_path.exists():
+            # UsageError -> exit 2, with a friendly message that disambiguates
+            # "you typo'd a path" from "your UUID has bad hex".
+            raise click.UsageError(
+                f"--ref {ref!r} does not exist as a file and is not a valid asset UUID. "
+                "Pass either a local image path or a 32-char hex UUID with hyphens "
+                "(from a prior `gflow image upload`)."
+            )
+
+    profile_name = _resolve_profile(profile)
+    provider_dir = _make_provider_dir(profile_name)
+    settings = get_settings()
+    asyncio.run(
+        _run_i2i(
+            profile_dir=provider_dir,
+            headless=settings.headless,
+            prompt=prompt,
+            refs=refs,
+            aspect=Aspect.from_cli(aspect),
+            model=Model.from_cli(model),
+            count=count,
+            seed=seed,
+            out=out,
+            output_root=settings.output_dir,
+        )
+    )
+
+
+async def _resolve_refs(
+    client: FlowApiClient,
+    project_id: str,
+    refs: tuple[str, ...],
+) -> tuple[ImageRef, ...]:
+    """Resolve each --ref into an ``ImageRef``.
+
+    Bare UUIDs pass through verbatim. Local paths are uploaded sequentially —
+    parallel uploads are tempting but Flow's web UI uploads serially and we
+    don't want to surprise the rate limiter. Order is preserved so the
+    resulting ``imageInputs[]`` matches the order the user specified.
+    """
+    resolved: list[ImageRef] = []
+    for ref in refs:
+        if _UUID_RE.match(ref):
+            resolved.append(ImageRef(name=ref))
+            continue
+        # _run_i2i already validated existence; uploading is the only side
+        # effect remaining.
+        ref_path = Path(ref)
+        console.print(f"  Uploading {ref_path.name}...")
+        asset = await client.upload_image(project_id, ref_path)
+        resolved.append(ImageRef(name=asset.name))
+    return tuple(resolved)
+
+
+async def _run_i2i(
+    *,
+    profile_dir: Path,
+    headless: bool,
+    prompt: str,
+    refs: tuple[str, ...],
+    aspect: Aspect,
+    model: Model,
+    count: int,
+    seed: int | None,
+    out: Path | None,
+    output_root: Path,
+) -> None:
+    async with FlowApiClient(profile_dir=profile_dir, headless=headless) as client:
+        console.print("  Creating project...")
+        # Title is a `gflow-cli ...` prefix per project convention (post-rename a02684f).
+        # cli_video.py's _run_t2v / _run_i2v don't currently set a title — tracked separately.
+        project = await client.create_project(title="gflow-cli i2i")
+        console.print(f"  Project: [dim]{project.project_id}[/dim]")
+
+        resolved_refs = await _resolve_refs(client, project.project_id, refs)
+        req = GenerateImageRequest(
+            prompt=prompt,
+            aspect=aspect,
+            model=model,
+            refs=resolved_refs,
+        )
+
+        console.print(
+            f"  Generating {count} image(s) with {len(resolved_refs)} ref(s) "
+            f"({req.model.value}, {req.aspect.value})..."
+        )
+        if count == 1:
+            img = await client.generate_image(project_id=project.project_id, req=req, seed=seed)
+            images: list[GeneratedImage] = [img]
+        else:
+            images = await client.generate_images_batch(
+                project_id=project.project_id, req=req, count=count
+            )
+
+        saved_paths: list[Path] = []
+        for i, img in enumerate(images, start=1):
+            target = (
+                out / f"{img.media_name}_{i}.png"
+                if out is not None
+                else image_output_path(output_root, job_id=img.media_name, index=i)
+            )
+            saved = await client.download_image(img, target)
+            saved_paths.append(saved)
+
+        _print_i2i_summary(images, saved_paths)
+
+
+def _print_i2i_summary(images: list[GeneratedImage], saved_paths: list[Path]) -> None:
+    """Render a Rich table of generated images and where they landed."""
+    table = Table(title="gflow-cli i2i")
     table.add_column("media_name", overflow="fold")
     table.add_column("seed", justify="right")
     table.add_column("dimensions")
