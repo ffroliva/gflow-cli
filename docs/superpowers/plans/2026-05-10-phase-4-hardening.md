@@ -372,7 +372,7 @@ class ProblemDetails(TypedDict, total=False):
     """RFC 9457 Problem Details JSON shape (https://datatracker.ietf.org/doc/html/rfc9457).
     Two gflow extensions: `remediation_hint` and `route`."""
 
-    type: str           # required
+    type: str           # required  # noqa: A003 — RFC 9457 wire field name; cannot rename
     title: str          # required
     status: int         # optional — only the literal HTTP status of the failed call
     detail: str         # optional
@@ -828,7 +828,9 @@ async def __aexit__(self, *exc_info) -> None:
             try:
                 await self._context.close()
             except Exception:
-                pass
+                # Browser cleanup is best-effort but MUST be surfaced for
+                # diagnosis (CLAUDE.md: never silently swallow errors).
+                logger.warning("browser_context_close_error", exc_info=True)
         if self._pw:
             await self._pw.stop()
     finally:
@@ -930,16 +932,21 @@ def _resp(status: int, headers: dict[str, str] | None = None):
 
 @pytest.mark.asyncio
 async def test_5xx_retried_3_times_then_raises_NetworkError():
-    """3 attempts on 5xx, original exception reraised (no RetryError)."""
+    """3 attempts on 5xx, original exception reraised (no RetryError). Zero-wait
+    via `_make_retrying(wait_seconds=lambda _: 0)` so the test runs in <50ms
+    instead of incurring 1+2+4=7s of real backoff."""
+    from gflow_cli.api._retry import _make_retrying
+
     attempts = {"n": 0}
 
     async def attempt():
         attempts["n"] += 1
         return _resp(503)
 
-    with pytest.raises(Exception) as ei:
-        async for retrying in post_with_retry(retry_on_5xx=True):
-            with retrying:
+    retrying = _make_retrying(wait_seconds=lambda _: 0)
+    with pytest.raises(NetworkError) as ei:
+        async for r in retrying:
+            with r:
                 resp = await attempt()
                 if resp.status >= 500:
                     raise NetworkError(detail=f"HTTP {resp.status}", status=resp.status)
@@ -950,15 +957,19 @@ async def test_5xx_retried_3_times_then_raises_NetworkError():
 
 @pytest.mark.asyncio
 async def test_429_retried_then_RateLimitError():
+    """Zero-wait variant — same rationale as the 5xx test above."""
+    from gflow_cli.api._retry import _make_retrying
+
     attempts = {"n": 0}
 
     async def attempt():
         attempts["n"] += 1
         return _resp(429, headers={"retry-after": "2"})
 
+    retrying = _make_retrying(wait_seconds=lambda _: 0)
     with pytest.raises(RateLimitError):
-        async for retrying in post_with_retry(retry_on_5xx=True):
-            with retrying:
+        async for r in retrying:
+            with r:
                 resp = await attempt()
                 if resp.status == 429:
                     raise RateLimitError(
@@ -1328,6 +1339,7 @@ from __future__ import annotations
 from unittest.mock import patch
 
 import pytest
+import structlog
 from click.testing import CliRunner
 
 from gflow_cli.cli import cli
@@ -1338,6 +1350,20 @@ from gflow_cli.errors import (
     RateLimitError,
     WireFormatError,
 )
+
+
+@pytest.fixture(autouse=True)
+def _isolate_structlog():
+    """structlog.configure() is global state. T4a tests repeatedly install
+    LogCapture processors — without this fixture, captured events from prior
+    tests would leak into the current test's log_capture list and
+    bind_contextvars values would persist. Reset both before AND after each
+    test so order doesn't matter."""
+    structlog.reset_defaults()
+    structlog.contextvars.clear_contextvars()
+    yield
+    structlog.reset_defaults()
+    structlog.contextvars.clear_contextvars()
 
 
 @pytest.mark.parametrize(
@@ -1596,6 +1622,18 @@ git commit -m "feat(cli): add unified GFlowError + unhandled-exception handlers"
 - Test: `tests/cli/test_helpers.py` (new)
 
 **Steps.**
+
+- [ ] **Step 4b.0: Preflight — read pre-relocation source to lock semantics**
+
+Open `src/gflow_cli/cli_image.py:81-110` and `src/gflow_cli/cli_video.py:36-65` and write down the exact fallback chain each helper follows. Specifically answer these questions before authoring Step 4b.1's tests:
+
+1. Does `_resolve_profile(profile: str | None)` consult `Settings().profile` (pydantic-settings auto-binds `GFLOW_CLI_PROFILE`) when `profile is None`? Or does it call `profile_store.resolve_profile(...)` directly (which has its own auto-pick + config.toml resolution)? **If the latter, the test below that sets `GFLOW_CLI_PROFILE` will NOT trigger the fallback** — the helper bypasses Settings.
+2. Does `_make_provider_dir(profile_name)` consult `Settings().output_dir` (pydantic-settings auto-binds `GFLOW_CLI_OUTPUT_DIR`) or call `paths.default_output_dir(...)` directly?
+3. Are the two implementations in `cli_image.py` and `cli_video.py` byte-identical, or are there subtle differences (one uses `Settings()`, the other reads the env var raw)?
+
+T4b is a **pure relocation** — the post-move helpers MUST preserve identical semantics. If the source helpers don't consult Settings (i.e. they pull from `profile_store` / `paths` directly), rewrite the Step 4b.1 tests below to exercise the actual fallback path (e.g. by populating a fake `config.toml` under `GFLOW_CLI_HOME` rather than setting `GFLOW_CLI_PROFILE`).
+
+Record findings as a short comment at the top of `tests/cli/test_helpers.py` so a future maintainer can verify the test reflects reality.
 
 - [ ] **Step 4b.1: Write failing test** in `tests/cli/test_helpers.py`
 
@@ -1876,6 +1914,7 @@ import hashlib
 import logging
 import sys
 import traceback
+from typing import Any
 
 import structlog
 
@@ -1895,13 +1934,20 @@ def configure_logging(log_format: LogFormat = LogFormat.AUTO) -> None:
         log_format = LogFormat.TEXT if is_tty else LogFormat.JSON
 
     timestamper = structlog.processors.TimeStamper(fmt="iso", utc=True)
-    shared_processors: list = [
+    # Critical: show_locals=False explicitly via ExceptionRenderer +
+    # ExceptionDictTransformer. `format_exc_info` (a simpler processor) does
+    # NOT honor a show_locals flag — its default behavior happens to omit
+    # locals, but a future maintainer adding RichTracebackFormatter(show_locals=True)
+    # would silently leak frame locals (auth tokens). Use the explicit form.
+    exc_renderer = structlog.processors.ExceptionRenderer(
+        structlog.tracebacks.ExceptionDictTransformer(show_locals=False)
+    )
+    shared_processors: list[Any] = [
         structlog.contextvars.merge_contextvars,
         structlog.processors.add_log_level,
         timestamper,
         structlog.processors.StackInfoRenderer(),
-        # Critical: show_locals=False — never leak frame locals (auth tokens).
-        structlog.processors.format_exc_info,
+        exc_renderer,
     ]
     renderer = (
         structlog.dev.ConsoleRenderer(colors=True)
@@ -1929,7 +1975,7 @@ def emit_error_event(
       - ContentPolicyError → upstream_status=200 (literal upstream HTTP status)
       - WireFormatError    → discovery payload (route_name, http_status, top_level_keys, ...)
     """
-    payload: dict = {
+    payload: dict[str, Any] = {
         "error_class": type(exc).__name__,
         "problem": exc.to_problem_details(),
         "cli_command": cli_command,
@@ -2089,6 +2135,25 @@ def fixtures_dir() -> Path:
 def _isolate_tmp_output(tmp_path, monkeypatch):
     monkeypatch.setenv("GFLOW_CLI_OUTPUT_DIR", str(tmp_path))
     yield
+
+
+@pytest.fixture(autouse=True)
+def _forbid_live_playwright(monkeypatch):
+    """Strict mocked-only enforcement (spec §6 DoD wording).
+
+    Any BDD step that accidentally tries to start Playwright — directly via
+    `async_playwright()` or indirectly via an unmocked `FlowApiClient` — will
+    fail this fixture's tripwire instead of opening a real browser. Catches
+    test drift before it can hide a live-network regression.
+    """
+    def _explode(*args, **kwargs):
+        raise AssertionError(
+            "BDD step attempted to start live Playwright. All steps MUST use "
+            "the `mock_flow_client` fixture. If you need a new mocked response "
+            "shape, extend mock_flow_client in conftest.py — do not bypass it."
+        )
+    monkeypatch.setattr("playwright.async_api.async_playwright", _explode)
+    yield
 ```
 
 - [ ] **Step 6.3: Author `tests/features/auth.feature`** (4 scenarios)
@@ -2183,6 +2248,15 @@ Feature: Image generation
     Then the exit code is 7
     And the output contains "File a bug"
 ```
+
+- [ ] **Step 6.5.5: Verify red — feature files declared, step bindings absent**
+
+Run:
+```bash
+uv run pytest tests/features/ -q
+```
+
+Expected output: pytest-bdd reports `StepDefinitionNotFoundError` (or equivalent missing-step error) for every scenario in all three feature files — 12 failures total. This is the RED phase of T6 — features are defined, bindings aren't yet. If pytest reports zero scenarios collected or all scenarios pass, the `pytest_bdd` plugin isn't installed correctly or the feature files aren't being discovered; STOP and reconcile before proceeding to Step 6.6.
 
 - [ ] **Step 6.6: Author the per-feature step files**
 
@@ -2298,6 +2372,106 @@ def _check_file_bug(cli_result_holder):
 ```
 
 Apply analogous shape to `test_auth_steps.py` and `test_video_steps.py`.
+
+**Explicit binding for the behaviorally complex `video.feature` scenario** (`Batch with concurrency=4`):
+
+```python
+# in tests/features/test_video_steps.py
+import asyncio
+from unittest.mock import patch, AsyncMock, MagicMock
+
+from pytest_bdd import given, scenarios, then, when
+
+scenarios("video.feature")
+
+
+@given("a manifest with 4 prompts")
+def _manifest_4(tmp_path, runner):
+    """Write a 4-row TSV manifest into tmp_path so `gflow video batch <manifest>`
+    has real input. Each row: prompt + output filename."""
+    manifest = tmp_path / "manifest.tsv"
+    manifest.write_text(
+        "prompt\toutput\n"
+        "a kite over a beach\tkite.mp4\n"
+        "a hot air balloon over Tokyo\tballoon.mp4\n"
+        "a steam locomotive at dusk\ttrain.mp4\n"
+        "a candle flickering in a window\tcandle.mp4\n",
+        encoding="utf-8",
+    )
+    runner.fixture_state["manifest_path"] = manifest
+
+
+@given("concurrency is set to 4")
+def _concurrency_4(monkeypatch):
+    monkeypatch.setenv("GFLOW_CLI_CONCURRENCY", "4")
+
+
+@when('I run "gflow video batch manifest.tsv"')
+def _run_video_batch(runner, cli_result_holder, mock_flow_client, tmp_path):
+    """Track concurrent-call peak by side-effecting an in-flight counter on the
+    mock. The Then-step `was called concurrently` asserts peak >= 2 (proves
+    parallel fan-out, not sequential)."""
+    in_flight = {"current": 0, "peak": 0}
+
+    async def _generate_video_concurrent(*args, **kwargs):
+        in_flight["current"] += 1
+        in_flight["peak"] = max(in_flight["peak"], in_flight["current"])
+        await asyncio.sleep(0.01)  # Hold the slot briefly so others can pile on.
+        try:
+            return MagicMock(
+                media_name=f"vid-{in_flight['current']}",
+                fife_url="https://flow-content.google/signed/v.mp4",
+            )
+        finally:
+            in_flight["current"] -= 1
+
+    mock_flow_client.generate_video = AsyncMock(side_effect=_generate_video_concurrent)
+
+    async def _fake_download(image, out_path):
+        out_path.parent.mkdir(parents=True, exist_ok=True)
+        out_path.write_bytes(b"\x00\x00\x00\x20ftypisom")  # MP4 magic header bytes
+        return out_path
+
+    mock_flow_client.download = AsyncMock(side_effect=_fake_download)
+
+    runner.fixture_state["in_flight"] = in_flight
+
+    manifest = runner.fixture_state["manifest_path"]
+    with patch("gflow_cli.cli_video.FlowApiClient", return_value=mock_flow_client):
+        cli_result_holder["result"] = runner.invoke(
+            cli, ["video", "batch", str(manifest)]
+        )
+
+
+@then("4 video files are created")
+def _check_four_videos(tmp_path):
+    files = list(tmp_path.rglob("*.mp4"))
+    assert len(files) == 4, f"expected 4 .mp4 files, got {len(files)}: {files}"
+
+
+@then("the FlowApiClient was called concurrently")
+def _check_called_concurrently(runner):
+    """Peak in-flight count > 1 is necessary-and-sufficient proof that the
+    batch fan-out actually parallelized. Concurrency=4 → expect peak in 2..4."""
+    in_flight = runner.fixture_state["in_flight"]
+    assert in_flight["peak"] >= 2, (
+        f"video batch ran sequentially (peak in-flight = {in_flight['peak']}). "
+        "Either concurrency env var didn't propagate or generate_video calls "
+        "are not actually parallel."
+    )
+```
+
+The `runner.fixture_state` dict isn't built into Click's `CliRunner` — extend the local `runner` fixture in `test_video_steps.py`:
+
+```python
+@pytest.fixture
+def runner() -> CliRunner:
+    r = CliRunner()
+    r.fixture_state = {}  # type: ignore[attr-defined]
+    return r
+```
+
+The "Rate-limit retry succeeds on second attempt" and "Network failure after retries" scenarios follow the same shape — mock `generate_video.side_effect` with a list (`[FakeResp429, FakeResp200]` for retry-success) or `[NetworkError] * 3` (for after-retries failure).
 
 - [ ] **Step 6.7: Add a step-phrase collision regression test**
 
