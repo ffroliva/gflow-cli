@@ -40,13 +40,22 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   image's signed `fifeUrl` to disk. Streams to a temp file and atomically
   renames on success; enforces an SSRF host allowlist (only Google-controlled
   CDNs accepted).
+- `scripts/smoke_image.py` — live single-image E2E smoke script (image
+  counterpart of `scripts/smoke_e2e.py` for video). Run after
+  `gflow auth login` to exercise the full happy path: project create →
+  `batchGenerateImages` → fifeUrl download.
 
 ### Changed
-- `FlowApiClient.upload_image` now validates **PNG/JPEG magic bytes** and
-  rejects files larger than **20 MB** before issuing the upload request.
-  Existing callers (`gflow video i2v`, `gflow video batch`) inherit the
-  stricter validation; previously-undocumented use of `upload_image` for
+- `FlowApiClient.upload_image` now validates **PNG/JPEG/WebP/GIF magic
+  bytes** and rejects files larger than **20 MB** before issuing the upload
+  request. Existing callers (`gflow video i2v`, `gflow video batch`) inherit
+  the stricter validation; previously-undocumented use of `upload_image` for
   non-image payloads no longer works (was never officially supported).
+- Project renamed `flow-cli` → `gflow-cli` across all docs and source. The
+  PyPI package and GitHub repo were already at the new name in v0.2.0a1;
+  this commit completes the in-source rename. Local clones may want to
+  rename their working directory to match `gh clone https://github.com/ffroliva/gflow-cli`
+  behavior.
 
 ### Security
 - DEBUG-level body logs now redact reCAPTCHA Enterprise tokens and other
@@ -57,6 +66,13 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   (`*.googleusercontent.com`, etc.) are followed; any other host raises
   before the GET is issued. Defends against a Flow-side bug or compromise
   redirecting downloads to an attacker-controlled origin.
+- `project_id` allowlist regex `^[A-Za-z0-9-]{1,128}$` on
+  `batch_generate_images_url` — closes percent-encoded slash (`%2F`),
+  Unicode-lookalike (U+FF0F / U+2215 / U+29F8), and CRLF/NUL injection
+  bypasses that the previous denylist guard let through.
+
+### CI
+- Test matrix now includes Python 3.13 alongside 3.11 and 3.12.
 
 ## [0.2.0a1] — 2026-05-09
 

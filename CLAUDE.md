@@ -17,11 +17,18 @@
 
 ## Active phase
 
-**Phase 1 — Foundation** (refactor scaffold into layered structure, wire `pydantic-settings`, `structlog`, command/query bus). See [PLAN § Phase 1](PLAN.md#phase-1--foundation-target-12-days). Subset already landed: profile-store + `gflow auth` UX (commit `d821f39`).
+**Phase 3 — Image MVP DONE (v0.3.0a1).** `gflow image upload/t2i/i2i` shipped.
+Tag at `ccce4d5`. Next phase TBD (Phase 4 Hardening — concurrency pool,
+retry/backoff, structlog, BDD).
 
 ## Architecture (skim)
 
-Layered Clean / Hexagonal — see **[docs/ARCHITECTURE.md](docs/ARCHITECTURE.md)** for the full diagram and rationale.
+> Note: the layered diagram below describes the **target** architecture
+> (deferred per [PLAN.md ADR #2](PLAN.md#5-decision-log-adrs-in-miniature)).
+> The current package layout is the simpler
+> `src/flow_cli/{api/, cli.py, cli_image.py, cli_video.py, auth.py,
+> config.py, paths.py, profile_store.py}`. See
+> [docs/ARCHITECTURE.md](docs/ARCHITECTURE.md) for the full target shape.
 
 ```text
 interfaces/   →  application/   →  domain/   ←  infrastructure/

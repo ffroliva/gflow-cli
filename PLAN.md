@@ -2,7 +2,7 @@
 
 > **Status:** Living document. Updated as phases complete.
 > **Owner:** [@ffroliva](https://github.com/ffroliva)
-> **Last revised:** 2026-05-09 (Video MVP scope rewrite)
+> **Last revised:** 2026-05-10 (Image MVP shipped, v0.3.0a1)
 
 This plan turns the v0.1 scaffold into a production-grade CLI for Google AI Ultra/Pro subscribers who want to spend their Flow credits via batch automation. The plan is opinionated, treating this repo as a portfolio-grade benchmark.
 
@@ -25,7 +25,7 @@ This plan turns the v0.1 scaffold into a production-grade CLI for Google AI Ultr
 
 | # | Goal | Phase |
 |---|---|---|
-| F7 | Generate images (T2I via Imagen) | Phase 3 (needs route capture) |
+| F7 | Generate images (T2I via Imagen) | ✅ done (v0.3.0a1) |
 | F8 | Concurrency across accounts (pool) | Phase 4 |
 | F9 | Switch to official Veo 3.1 SDK as `--provider official` | Phase 5 |
 
@@ -133,7 +133,7 @@ Deferred (NOT blocking MVP):
 
 ---
 
-### Phase 2 — Video MVP (T2V + I2V + batch) — **CURRENT FOCUS**
+### Phase 2 — Video MVP (T2V + I2V + batch) — ✅ DONE (v0.2.0a1)
 
 #### Scope
 
@@ -241,34 +241,49 @@ Each step is a separate commit. Each one runs the four quality gates locally + v
 
 #### Definition of done (Phase 2)
 
-- [ ] `gflow video t2v "..."` produces a real .mp4 against the user's Google AI Ultra/Pro account
-- [ ] `gflow video i2v <png> "..."` produces a .mp4 whose first frame matches the input PNG
-- [ ] `gflow video batch <tsv>` processes 3+ clips end-to-end
-- [ ] All four quality gates green (ruff / format / pyright / pytest)
-- [ ] Test coverage ≥ 80% on `src/flow_cli/api/`
-- [ ] `samples/captured/` documents every wire format we depend on
-- [ ] `KNOWN_ISSUES.md` updated with anything surprising discovered during 2.4
-- [ ] Tagged `v0.2.0a1` on GitHub
+- [x] `gflow video t2v "..."` produces a real .mp4 against the user's Google AI Ultra/Pro account
+- [x] `gflow video i2v <png> "..."` produces a .mp4 whose first frame matches the input PNG
+- [x] `gflow video batch <tsv>` processes 3+ clips end-to-end
+- [x] All four quality gates green (ruff / format / pyright / pytest)
+- [x] Test coverage ≥ 80% on `src/flow_cli/api/`
+- [x] `samples/captured/` documents every wire format we depend on
+- [x] `KNOWN_ISSUES.md` updated with anything surprising discovered during 2.4
+- [x] Tagged `v0.2.0a1` on GitHub
 
 ---
 
-### Phase 3 — Image generation (T2I via Imagen) — DEFERRED
+### Phase 3 — Image MVP (T2I + I2I + upload) — ✅ DONE (v0.3.0a1)
 
-#### Scope
+#### Scope (shipped)
 
-`gflow image t2i "<prompt>" [--aspect 1:1|9:16|16:9|4:3|3:4] [-n 1..4]`, `gflow image i2i "<prompt>" --ref ...`, `gflow image upload <path>`.
+- `gflow image upload <path>` — upload PNG/JPEG/WebP/GIF, print asset UUID + dimensions.
+- `gflow image t2i "<prompt>" [--model {nano2|nano-pro|image4}] [--aspect ...] [-n 1..4] [--seed N] [--out DIR]`
+- `gflow image i2i "<prompt>" --ref PATH_OR_UUID [--ref ...] [...same as t2i]`
 
-#### Prerequisite
+Three models behind aliases (`nano2` → `NARWHAL`, `nano-pro` → `GEM_PIX_2`, `image4` → `IMAGEN_3_5`); five aspect ratios (`9:16` / `16:9` / `1:1` / `4:3` / `3:4`); 1–4 images per call via N parallel POSTs sharing one `batchId`.
 
-We have NOT captured the Imagen route. Phase 3 starts with a focused 5-min discovery run against a real Flow Imagen flow, then mirrors the Phase 2 implementation pattern (DTO + client method + CLI + smoke).
+#### Captured routes
 
-#### Why deferred
+| Route | Status |
+|---|---|
+| `POST /v1/projects/{projectId}/flowMedia:batchGenerateImages` | ✅ wired |
+| Direct download from signed `fifeUrl` (`*.googleusercontent.com` / `flow-content.google` allowlist) | ✅ wired |
 
-Video gen is the user's primary need. Image gen has no captured routes yet, so it would block on a discovery run. Cleaner to ship video MVP first, then add images as v0.3.
+Body envelope mirrors video (clientContext + mediaGenerationContext.batchId + useNewMedia + requests[]). `text/plain` content-type, fresh reCAPTCHA Enterprise token per call.
+
+#### Definition of done (Phase 3) — all checked
+
+- [x] `gflow image t2i "..."` produces a real .png against the user's Google AI Ultra/Pro account
+- [x] `gflow image i2i ... --ref hero.png` produces a .png that visibly references the input
+- [x] `gflow image upload hero.png` prints a reusable asset UUID
+- [x] All four quality gates green (208 tests, 82% coverage, image.py at 100%)
+- [x] `samples/captured/06_batchGenerateImages.json` + `07_batchGenerateImages_seeded.json` document the wire format
+- [x] DEBUG body logs redact reCAPTCHA tokens; project_id allowlist closes a percent-encoded-slash bypass; download path enforces SSRF host allowlist
+- [x] Tagged `v0.3.0a1` on GitHub at `ccce4d5`
 
 ---
 
-### Phase 4 — Hardening — POST-v0.2.0a1
+### Phase 4 — Hardening — POST-v0.3.0a1
 
 - Per-account pool + `FLOW_CLI_CONCURRENCY > 1` for parallel batches
 - Retry / exponential backoff on 5xx + rate-limited responses
@@ -283,7 +298,7 @@ Video gen is the user's primary need. Image gen has no captured routes yet, so i
 
 - Configure PyPI Trusted Publishing for `gflow-cli`
 - Verify `uvx --from gflow-cli gflow --help` works on a fresh machine
-- Tag `v0.2.0` (drop the alpha suffix) when MVP is stable enough for external use
+- Tag `v0.3.0` (drop the alpha suffix) when the video + image MVP is stable enough for external use
 - Announce (LinkedIn / X / dev.to / "Show HN")
 
 ---

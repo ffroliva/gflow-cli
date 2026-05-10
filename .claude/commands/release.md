@@ -83,4 +83,4 @@ Ask the user (if not already provided):
 ## See also
 
 - [README § Releases](../../README.md#releases) — full release policy & cadence
-- [PLAN § Phase 5](../../PLAN.md#phase-5--public-alpha-release) — first-release exit criteria
+- [PLAN § Phase 5](../../PLAN.md#phase-5--public-alpha-release-on-pypi) — first-release exit criteria

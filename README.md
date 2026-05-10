@@ -54,7 +54,7 @@ Read the full [DISCLAIMER](DISCLAIMER.md) before deploying this in any productio
 
 ## Project status
 
-**v0.1.0 — pre-release alpha.** Routes captured, scaffold in place, implementations being filled in. **Not yet usable end-to-end.**
+**v0.3.0a1 — alpha.** Video (T2V/I2V/batch) and image (T2I/I2I/upload) commands are functional end-to-end against a live Google AI Ultra/Pro Flow account.
 
 | Milestone | Status |
 |---|---|
