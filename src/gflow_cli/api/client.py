@@ -39,6 +39,7 @@ from gflow_cli.api.dto import AssetInfo, GeneratedImage, ProjectInfo, VideoOpera
 from gflow_cli.api.image import GenerateImageRequest, _build_batch_generate_images_body
 from gflow_cli.api.recaptcha import TokenMinter
 from gflow_cli.api.video import GenerateVideoRequest, build_generate_body
+from gflow_cli.config import Settings
 from gflow_cli.errors import FlowApiError
 
 logger = logging.getLogger(__name__)
@@ -85,11 +86,31 @@ class FlowApiClient:
     has from a prior `gflow auth login`.
     """
 
-    def __init__(self, profile_dir: Path, *, headless: bool = True):
+    def __init__(
+        self,
+        profile_dir: Path,
+        *,
+        headless: bool = True,
+        settings: Settings | None = None,
+    ) -> None:
         self.profile_dir = profile_dir
         self.headless = headless
+        # NOTE: A bare ``Settings()`` here would resolve env vars / .env at
+        # construction time, which is fine for production but lets tests
+        # opt out by supplying a fully built settings object.
+        self.settings = settings if settings is not None else Settings()
         self._pw: Playwright | None = None
         self._context: BrowserContext | None = None
+        # Per-worker Page pool (Phase 4 T2). All Pages live inside ONE
+        # persistent BrowserContext and therefore SHARE cookies + auth state
+        # at the Context level — this is intentional and matches Playwright's
+        # per-worker-Page recommendation. If per-user isolation is ever
+        # needed, separate Contexts (one per user) would be required.
+        self._pages: list[Page] = []
+        self._page_queue: asyncio.Queue[Page] | None = None
+        # Back-compat: existing callers in this module still reach for
+        # ``self._page``. T3 rewires them to ``_checkout_page()`` /
+        # ``_checkin_page()`` and this alias goes away.
         self._page: Page | None = None
 
     # --- lifecycle --------------------------------------------------------
@@ -103,27 +124,72 @@ class FlowApiClient:
             locale="en-US",
             extra_http_headers={"Accept-Language": "en-US,en;q=0.9"},
         )
-        self._page = (
-            self._context.pages[0] if self._context.pages else await self._context.new_page()
-        )
+        # Open ``Settings.concurrency`` Pages inside the one persistent
+        # BrowserContext. ``launch_persistent_context`` opens one Page by
+        # default; reuse it as slot 0 to avoid an unused N+1 Page.
+        n = max(1, self.settings.concurrency)
+        self._pages = []
+        if self._context.pages:
+            self._pages.append(self._context.pages[0])
+            for _ in range(n - 1):
+                self._pages.append(await self._context.new_page())
+        else:
+            for _ in range(n):
+                self._pages.append(await self._context.new_page())
+        # asyncio.Queue gives FIFO checkout/checkin with no manual locking.
+        # ``put_nowait`` is safe here: the queue is sized to exactly ``n``
+        # and we never push more items than we created, so QueueFull is
+        # structurally impossible.
+        self._page_queue = asyncio.Queue()
+        for p in self._pages:
+            self._page_queue.put_nowait(p)
+        # Back-compat alias for callers that still touch ``self._page``
+        # directly. T3 removes the field entirely.
+        self._page = self._pages[0]
         # Bootstrap navigation so cookies + JS context are loaded before any
         # API call. Many endpoints 401 if you POST cold without an active page.
+        # (Phase 3 deferred ``_new_session_id`` flake is addressed in T3 by
+        # re-minting reCAPTCHA inside each retry loop on the worker's own
+        # Page; no session-id work happens in T2.)
         await self._page.goto(
             routes.EDITOR_BOOTSTRAP_URL, wait_until="domcontentloaded", timeout=60_000
         )
         return self
 
     async def __aexit__(self, *exc: object) -> None:
-        if self._context:
-            try:
-                await self._context.close()
-            except Exception:
-                pass
-        if self._pw:
-            try:
-                await self._pw.stop()
-            except Exception:
-                pass
+        try:
+            if self._context:
+                try:
+                    await self._context.close()
+                except Exception:
+                    # Browser cleanup is best-effort but MUST be surfaced for
+                    # diagnosis (CLAUDE.md: never silently swallow errors).
+                    logger.warning("browser_context_close_error", exc_info=True)
+            if self._pw:
+                try:
+                    await self._pw.stop()
+                except Exception:
+                    logger.warning("playwright_stop_error", exc_info=True)
+        finally:
+            # Always reset pool state — even if close() raised — so a
+            # reused client instance doesn't keep dangling references to a
+            # dead BrowserContext's Pages.
+            self._pages = []
+            self._page_queue = None
+            self._page = None
+            self._context = None
+            self._pw = None
+
+    async def _checkout_page(self) -> Page:
+        """Block until a Page is available from the pool; FIFO."""
+        assert self._page_queue is not None, "FlowApiClient not entered"
+        return await self._page_queue.get()
+
+    def _checkin_page(self, page: Page) -> None:
+        """Return a Page to the pool. Non-blocking; pool size is bounded
+        by construction so ``put_nowait`` cannot raise ``QueueFull``."""
+        assert self._page_queue is not None, "FlowApiClient not entered"
+        self._page_queue.put_nowait(page)
 
     @property
     def page(self) -> Page:
