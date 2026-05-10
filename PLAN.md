@@ -292,6 +292,21 @@ Body envelope mirrors video (clientContext + mediaGenerationContext.batchId + us
 - `structlog` configured with auto/text/json formats
 - BDD scenarios in `tests/features/*.feature` via `pytest-bdd`
 
+#### Phase 4 — T0 Page-pool spike note (2026-05-10)
+
+Page creation averaged **44.7–48.1 ms per page** across N=2/4/8/16 inside one persistent `BrowserContext` on Windows 11 / Playwright Chromium (headless); cookies confirmed shared at Context level ✓. The per-Page cost is well under the 200 ms/page hard-cap threshold, so the design choice (per-worker Page within a shared persistent Context, mirroring `browser-use`'s pattern) is industry-supported and safe.
+
+| N  | avg_create_ms | total_ms | pages_open_after |
+|----|---------------|----------|------------------|
+|  2 |          44.7 |     44.7 |                2 |
+|  4 |          45.4 |    136.3 |                4 |
+|  8 |          46.2 |    323.6 |                8 |
+| 16 |          48.1 |    721.2 |               16 |
+
+`cookies_shared_between_pages = True` — confirmed by navigating Page 0 to `https://example.com`, opening a second Page, and observing identical `ctx.cookies()` output before/after. This validates that the per-account auth state (`storage_state.json`) persists once at the Context level and every pooled worker Page inherits it for free.
+
+**Verdict.** ✅ Page pool feasible up to N=16 — `Settings.concurrency` cap unchanged (`le=16`). No T2 test adjustments needed.
+
 ---
 
 ### Phase 5 — Public alpha release on PyPI
