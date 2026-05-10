@@ -1,6 +1,6 @@
 [project]
 name = "gflow-cli"
-version = "0.2.0a1"
+version = "0.3.0a1"
 description = "Unofficial CLI for Google Flow — drive Veo image-to-video generations from the terminal."
 readme = "README.md"
 license = { file = "LICENSE" }
