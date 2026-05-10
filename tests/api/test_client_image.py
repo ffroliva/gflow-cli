@@ -13,9 +13,9 @@ from unittest.mock import AsyncMock, MagicMock, patch
 
 import pytest
 
-from flow_cli.api.client import FlowApiClient, FlowApiError
-from flow_cli.api.dto import GeneratedImage
-from flow_cli.api.image import Aspect, GenerateImageRequest
+from gflow_cli.api.client import FlowApiClient, FlowApiError
+from gflow_cli.api.dto import GeneratedImage
+from gflow_cli.api.image import Aspect, GenerateImageRequest
 
 # Realistic mock response distilled from samples/captured/06_batchGenerateImages.json
 _FAKE_FIFE_URL = "https://flow-content.google/image/abc-123?Expires=1778380305&Signature=XYZ"
@@ -65,7 +65,7 @@ class TestGenerateImage:
 
         with (
             patch.object(client, "_post_json", side_effect=fake_post_json),
-            patch("flow_cli.api.client.TokenMinter") as minter_cls,
+            patch("gflow_cli.api.client.TokenMinter") as minter_cls,
         ):
             minter_cls.return_value.mint = AsyncMock(return_value="TOK")
             await client.generate_image(project_id="proj-1", req=_make_req(), seed=42)
@@ -87,7 +87,7 @@ class TestGenerateImage:
         # Bypass _post_json's mock-out so we exercise the real header path.
         client._page.request.post = AsyncMock(side_effect=fake_request_post)
 
-        with patch("flow_cli.api.client.TokenMinter") as minter_cls:
+        with patch("gflow_cli.api.client.TokenMinter") as minter_cls:
             minter_cls.return_value.mint = AsyncMock(return_value="TOK")
             # Use a valid single-item response so the call completes normally
             # and we can isolate the header assertion.
@@ -109,7 +109,7 @@ class TestGenerateImage:
 
         client._page.request.post = AsyncMock(side_effect=fake_request_post)
 
-        with patch("flow_cli.api.client.TokenMinter") as minter_cls:
+        with patch("gflow_cli.api.client.TokenMinter") as minter_cls:
             minter_cls.return_value.mint = AsyncMock(return_value="TOK")
             with pytest.raises(FlowApiError) as exc_info:
                 await client.generate_image(project_id="proj-1", req=_make_req(), seed=1)
@@ -123,7 +123,7 @@ class TestGenerateImage:
 
         with (
             patch.object(client, "_post_json", side_effect=fake_post_json),
-            patch("flow_cli.api.client.TokenMinter") as minter_cls,
+            patch("gflow_cli.api.client.TokenMinter") as minter_cls,
         ):
             mint_mock = AsyncMock(return_value="TOK-Z")
             minter_cls.return_value.mint = mint_mock
@@ -137,7 +137,7 @@ class TestGenerateImage:
 
         with (
             patch.object(client, "_post_json", side_effect=fake_post_json),
-            patch("flow_cli.api.client.TokenMinter") as minter_cls,
+            patch("gflow_cli.api.client.TokenMinter") as minter_cls,
         ):
             minter_cls.return_value.mint = AsyncMock(return_value="TOK")
             result = await client.generate_image(project_id="proj-1", req=_make_req(), seed=42)
@@ -159,7 +159,7 @@ class TestGenerateImage:
 
         client._page.request.post = AsyncMock(side_effect=fake_request_post)
 
-        with patch("flow_cli.api.client.TokenMinter") as minter_cls:
+        with patch("gflow_cli.api.client.TokenMinter") as minter_cls:
             minter_cls.return_value.mint = AsyncMock(return_value="TOK")
             with pytest.raises(FlowApiError) as exc_info:
                 await client.generate_image(project_id="proj-1", req=_make_req(), seed=1)
@@ -179,7 +179,7 @@ class TestGenerateImage:
 
         with (
             patch.object(client, "_post_json", side_effect=fake_post_json),
-            patch("flow_cli.api.client.TokenMinter") as minter_cls,
+            patch("gflow_cli.api.client.TokenMinter") as minter_cls,
         ):
             minter_cls.return_value.mint = AsyncMock(side_effect=["TOK-A", "TOK-B"])
             await client.generate_image(
@@ -245,7 +245,7 @@ class TestGenerateImagesBatch:
 
         with (
             patch.object(client, "_post_json", side_effect=fake_post_json),
-            patch("flow_cli.api.client.TokenMinter") as minter_cls,
+            patch("gflow_cli.api.client.TokenMinter") as minter_cls,
         ):
             minter_cls.return_value.mint = AsyncMock(return_value="TOK")
             await client.generate_images_batch(project_id="proj-1", req=_make_req(), count=3)
@@ -265,7 +265,7 @@ class TestGenerateImagesBatch:
 
         with (
             patch.object(client, "_post_json", side_effect=fake_post_json),
-            patch("flow_cli.api.client.TokenMinter") as minter_cls,
+            patch("gflow_cli.api.client.TokenMinter") as minter_cls,
         ):
             minter_cls.return_value.mint = AsyncMock(return_value="TOK")
             await client.generate_images_batch(project_id="proj-1", req=_make_req(), count=3)
@@ -282,7 +282,7 @@ class TestGenerateImagesBatch:
 
         with (
             patch.object(client, "_post_json", side_effect=fake_post_json),
-            patch("flow_cli.api.client.TokenMinter") as minter_cls,
+            patch("gflow_cli.api.client.TokenMinter") as minter_cls,
         ):
             mint_mock = AsyncMock(side_effect=["TOK-1", "TOK-2", "TOK-3"])
             minter_cls.return_value.mint = mint_mock
@@ -314,7 +314,7 @@ class TestGenerateImagesBatch:
 
         with (
             patch.object(client, "_post_json", side_effect=fake_post_json),
-            patch("flow_cli.api.client.TokenMinter") as minter_cls,
+            patch("gflow_cli.api.client.TokenMinter") as minter_cls,
         ):
             minter_cls.return_value.mint = AsyncMock(return_value="TOK")
             results = await client.generate_images_batch(
@@ -347,7 +347,7 @@ class TestGenerateImagesBatch:
 
         with (
             patch.object(client, "_post_json", side_effect=fake_post_json),
-            patch("flow_cli.api.client.TokenMinter") as minter_cls,
+            patch("gflow_cli.api.client.TokenMinter") as minter_cls,
         ):
             minter_cls.return_value.mint = AsyncMock(return_value="TOK")
             with pytest.raises(FlowApiError) as exc_info:
@@ -362,7 +362,7 @@ class TestGenerateImagesBatch:
 
     async def test_batch_fan_out_count_must_be_1_to_4(self, client: FlowApiClient) -> None:
         """count=0 and count=5 must raise ValueError. Matches Flow UI."""
-        with patch("flow_cli.api.client.TokenMinter") as minter_cls:
+        with patch("gflow_cli.api.client.TokenMinter") as minter_cls:
             minter_cls.return_value.mint = AsyncMock(return_value="TOK")
             with pytest.raises(ValueError, match="count must be between 1 and 4"):
                 await client.generate_images_batch(project_id="proj-1", req=_make_req(), count=0)
@@ -380,7 +380,7 @@ class TestGenerateImagesBatch:
         self, client: FlowApiClient, seeds: list[int], count: int
     ) -> None:
         """If caller supplies ``seeds``, its length must equal ``count``."""
-        with patch("flow_cli.api.client.TokenMinter") as minter_cls:
+        with patch("gflow_cli.api.client.TokenMinter") as minter_cls:
             minter_cls.return_value.mint = AsyncMock(return_value="TOK")
             with pytest.raises(ValueError, match="does not match count"):
                 await client.generate_images_batch(
@@ -469,7 +469,7 @@ class TestDownloadImage:
         signed = "https://flow-content.google/image/abc-123?Expires=1778380305&Signature=XYZ"
         image = _make_image(fife_url=signed)
 
-        with patch("flow_cli.api.client.routes") as mock_routes:
+        with patch("gflow_cli.api.client.routes") as mock_routes:
             await client.download_image(image, tmp_path / "out.png")
             # The redirect helper must NOT be involved.
             mock_routes.media_download_url.assert_not_called()

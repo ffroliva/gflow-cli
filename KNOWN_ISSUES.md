@@ -97,7 +97,7 @@ Other ratios may be silently rejected or coerced server-side. We validate in the
 
 - **Status:** Open · **Severity:** Low · **By design**
 
-`gflow-cli` never deletes from `$FLOW_CLI_OUTPUT_DIR`. Generated assets accumulate forever unless you clean them up.
+`gflow-cli` never deletes from `$GFLOW_CLI_OUTPUT_DIR`. Generated assets accumulate forever unless you clean them up.
 
 **Workaround:** schedule a cron / Task Scheduler job, e.g.:
 ```bash
@@ -119,7 +119,7 @@ _(none yet)_
 
 - **Status:** Resolved · **Severity:** Critical (blocked usage) · **Fixed in:** v0.2.0a1
 
-The v0.1 scaffold left `upload_image`, `start_generation`, `get_job`, `download` raising `NotImplementedError`. v0.2.0a1 wired the video routes (T2V/I2V/batch) on a new `flow_cli.api.client.FlowApiClient` and removed the legacy `providers/` + `models` modules. v0.3.0a1 added the image routes (`gflow image upload/t2i/i2i`) on the same client.
+The v0.1 scaffold left `upload_image`, `start_generation`, `get_job`, `download` raising `NotImplementedError`. v0.2.0a1 wired the video routes (T2V/I2V/batch) on a new `gflow_cli.api.client.FlowApiClient` and removed the legacy `providers/` + `models` modules. v0.3.0a1 added the image routes (`gflow image upload/t2i/i2i`) on the same client.
 
 ---
 

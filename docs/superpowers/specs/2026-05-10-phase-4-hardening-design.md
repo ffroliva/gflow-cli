@@ -10,7 +10,7 @@
 > - v1: initial draft.
 > - v2: closed 19 CRITICAL+HIGH from 1st Claude council (status+shape error classification, `tenacity.AsyncRetrying`, `Retry-After` cap, `show_locals=False`, Playwright exception types, `errors.py` top-level, `FlowApiError` alias, reuse existing `LogFormat`/`concurrency`).
 > - v3: user evolutions — RFC 9457 Problem Details, `error_raised` telemetry, modular monolith codified, Phase 6/7 backlog (PLAN.md), helper dedup folded into T4.
-> - v4: applied 2nd-round 7-reviewer findings (5 Claude + Gemini APPROVED + Codex REQUEST_CHANGES). Major: **per-worker Page concurrency model** (Option A from research) replaces shared-Page-with-Semaphore; **exception hierarchy refactored** to OpenAI/Anthropic SDK convention (`GFlowError → FlowApiError → typed subclasses`) so `except FlowApiError` actually catches typed errors; **`error_unhandled` event added** + `WireFormatError` enriched with discovery fields; **`flow_cli/_cli_helpers.py`** (top-level, no package) replaces broken `cli/_helpers.py`; status/instance fields tightened for RFC 9457 semantics; T4 split into T4a + T4b.
+> - v4: applied 2nd-round 7-reviewer findings (5 Claude + Gemini APPROVED + Codex REQUEST_CHANGES). Major: **per-worker Page concurrency model** (Option A from research) replaces shared-Page-with-Semaphore; **exception hierarchy refactored** to OpenAI/Anthropic SDK convention (`GFlowError → FlowApiError → typed subclasses`) so `except FlowApiError` actually catches typed errors; **`error_unhandled` event added** + `WireFormatError` enriched with discovery fields; **`gflow_cli/_cli_helpers.py`** (top-level, no package) replaces broken `cli/_helpers.py`; status/instance fields tightened for RFC 9457 semantics; T4 split into T4a + T4b.
 
 ## 1. Why this phase
 
@@ -27,14 +27,14 @@ Phase 3 (v0.3.0a1) shipped image MVP. Five user-visible weaknesses remain: seque
 | C5 | Telemetry — two events | **`error_raised`** (caught `GFlowError` at CLI boundary): fields `error_class`, `problem` (Problem Details dict), `cli_command`, `correlation_id`. **`error_unhandled`** (any `Exception` not subclassing `GFlowError`): fields `exception_class`, `message_hash` (SHA-256 of `str(exc)`, no full message — bounded log size + privacy), `stack_hash` (SHA-256 of traceback), `cli_command`, `correlation_id`. **`WireFormatError` carries discovery fields**: `route_name`, `http_status`, `content_type`, `top_level_keys` (sorted JSON object keys), `shape_signature` (hash of sorted keys+types), `body_prefix_redacted` (first 200 chars after `_redact_for_log`). Together: `grep error_class=WireFormatError` reveals WHAT was unexpected, not just THAT something was. |
 | C6 | structlog | Auto-detect TTY → text; piped → JSON. Reuses existing `LogFormat` StrEnum + `Settings.log_format`. Full migration of `logging.*` calls. `show_locals=False` in exception renderer. `bind_contextvars` for `cli_version` and `correlation_id` at process boundary; never inside async tasks (avoid cross-task leakage). |
 | C7 | BDD coverage | One feature file per command group (`auth.feature`, `video.feature`, `image.feature`). 3–5 scenarios each. Per-feature directory `conftest.py` to namespace step phrases. Required: BDD step defs use only mocked `FlowApiClient` — never live API. |
-| C8 | Modular monolith (architectural rule) | Codified in `docs/ARCHITECTURE.md` and §3.5 of this spec. Per-package public interface via `__init__.py`; per-file private helpers prefixed `_` (allowed within their own module; never imported across modules). NOT redefining single-file modules as packages — files are first-class modules. Phase 4 adds: `flow_cli.errors`, `flow_cli.observability`, `flow_cli._cli_helpers` (top-level file, NOT a `cli/` package — prevents collision with existing `cli.py`). Full `cli/` promotion deferred to Phase 5. |
+| C8 | Modular monolith (architectural rule) | Codified in `docs/ARCHITECTURE.md` and §3.5 of this spec. Per-package public interface via `__init__.py`; per-file private helpers prefixed `_` (allowed within their own module; never imported across modules). NOT redefining single-file modules as packages — files are first-class modules. Phase 4 adds: `gflow_cli.errors`, `gflow_cli.observability`, `gflow_cli._cli_helpers` (top-level file, NOT a `cli/` package — prevents collision with existing `cli.py`). Full `cli/` promotion deferred to Phase 5. |
 | C9 | Orchestration | Same multi-agent pattern as Phase 3. Security-touched tasks: T2 (per-worker Page model), T3 (retry on auth-bearing requests). |
 
 ## 3. Architecture
 
 ### 3.1 New modules
 
-#### `src/flow_cli/errors.py` (top-level — both `cli.py` and `api/client.py` import)
+#### `src/gflow_cli/errors.py` (top-level — both `cli.py` and `api/client.py` import)
 
 ```python
 from __future__ import annotations
@@ -156,7 +156,7 @@ class AuthExpiredError(FlowApiError):
 class RateLimitError(FlowApiError):
     problem_type = "https://gflow-cli.dev/errors/rate-limit"
     title = "Rate limit or quota hit"
-    _default_remediation = "Wait a few minutes; reduce FLOW_CLI_CONCURRENCY if persistent."
+    _default_remediation = "Wait a few minutes; reduce GFLOW_CLI_CONCURRENCY if persistent."
 
     def __init__(
         self,
@@ -241,7 +241,7 @@ EXIT_CODE_MAP: dict[type[GFlowError], int] = {
 }
 ```
 
-#### `src/flow_cli/observability.py`
+#### `src/gflow_cli/observability.py`
 
 ```python
 def configure_logging(log_format: LogFormat = LogFormat.AUTO) -> None:
@@ -268,17 +268,17 @@ def emit_unhandled_event(
     correlation_id. Privacy: full message + traceback NOT logged."""
 ```
 
-#### `src/flow_cli/api/_retry.py` (private — extracted from client.py)
+#### `src/gflow_cli/api/_retry.py` (private — extracted from client.py)
 
 Houses `tenacity.AsyncRetrying` setup + `Retry-After`-aware wait function. Constants: `RETRY_AFTER_CAP_SECONDS = 60.0`, `MAX_ATTEMPTS = 3`. Uses `reraise=True` to surface the original exception (no `RetryError` leakage).
 
-#### `src/flow_cli/_cli_helpers.py` (top-level, NOT under a `cli/` package — prevents file/package collision with existing `cli.py`)
+#### `src/gflow_cli/_cli_helpers.py` (top-level, NOT under a `cli/` package — prevents file/package collision with existing `cli.py`)
 
 Houses `_resolve_profile`, `_make_provider_dir` (currently duplicated in `cli_image.py` + `cli_video.py`) plus the new `_handle_gflow_error` helper used by all CLI command groups.
 
 ### 3.2 Modified modules
 
-#### `src/flow_cli/api/client.py`
+#### `src/gflow_cli/api/client.py`
 
 Per-worker Page model:
 
@@ -361,9 +361,9 @@ Order: `retry-loop → checkout-page → mint-on-this-page → POST-on-this-page
 
 Phase 3 deferred `_new_session_id` flake fix is folded into T2 or T3.
 
-#### `src/flow_cli/config.py` — already correct; no changes
+#### `src/gflow_cli/config.py` — already correct; no changes
 
-#### `src/flow_cli/cli.py`, `cli_image.py`, `cli_video.py`
+#### `src/gflow_cli/cli.py`, `cli_image.py`, `cli_video.py`
 
 Each `_run_*` async helper wraps in try/except and dispatches via `_cli_helpers._handle_gflow_error` (catches `GFlowError`) or `_handle_unhandled_error` (catches anything else). Both emit the appropriate structured event before exiting.
 
@@ -388,7 +388,7 @@ T0 is now narrower since per-worker Pages eliminate the shared-Page concurrency 
 
 ### 3.5 Architectural rule: modular monolith
 
-(Per docs/ARCHITECTURE.md — moved verbatim into the canonical reference. Summary: per-package public interface via `__init__.py`; per-file private helpers prefixed `_`; private helpers never imported across modules; modules don't share global mutable state; >400 line file → extract; Phase 4 keeps the flat structure with three additions: `flow_cli.errors`, `flow_cli.observability`, `flow_cli._cli_helpers`.)
+(Per docs/ARCHITECTURE.md — moved verbatim into the canonical reference. Summary: per-package public interface via `__init__.py`; per-file private helpers prefixed `_`; private helpers never imported across modules; modules don't share global mutable state; >400 line file → extract; Phase 4 keeps the flat structure with three additions: `gflow_cli.errors`, `gflow_cli.observability`, `gflow_cli._cli_helpers`.)
 
 ### 3.6 New dependencies (all via `uv add`)
 
@@ -445,7 +445,7 @@ T0 outcome conditional clause: if Page pool is infeasible (e.g., Playwright caps
 **Post-merge (user-actioned):**
 
 - [ ] Tag `v0.4.0a1` pushed; release workflow green.
-- [ ] Manual smoke (~1 credit): `FLOW_CLI_CONCURRENCY=4 gflow video batch tests/fixtures/manifest_4.tsv` ≤ 1.5× slowest single call.
+- [ ] Manual smoke (~1 credit): `GFLOW_CLI_CONCURRENCY=4 gflow video batch tests/fixtures/manifest_4.tsv` ≤ 1.5× slowest single call.
 - [ ] Manual smoke: kill session cookie → `gflow image t2i ...` exits 3 + remediation prints.
 
 ## 7. Open risks (post-v4)

@@ -6,16 +6,16 @@ from pathlib import Path
 
 import pytest
 
-from flow_cli import profile_store
+from gflow_cli import profile_store
 
 
 @pytest.fixture
 def home(tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> Path:
-    """Pretend $FLOW_CLI_HOME is a fresh tmp dir."""
-    from flow_cli.config import reset_settings
+    """Pretend $GFLOW_CLI_HOME is a fresh tmp dir."""
+    from gflow_cli.config import reset_settings
 
-    monkeypatch.setenv("FLOW_CLI_HOME", str(tmp_path))
-    monkeypatch.delenv("FLOW_CLI_PROFILE", raising=False)
+    monkeypatch.setenv("GFLOW_CLI_HOME", str(tmp_path))
+    monkeypatch.delenv("GFLOW_CLI_PROFILE", raising=False)
     reset_settings()
     yield tmp_path
     reset_settings()
@@ -108,13 +108,13 @@ class TestGetDefaultAutoselect:
 class TestResolveProfile:
     def test_cli_flag_wins(self, home: Path, monkeypatch: pytest.MonkeyPatch) -> None:
         _mk_profile(home, "default")
-        monkeypatch.setenv("FLOW_CLI_PROFILE", "env_pref")
+        monkeypatch.setenv("GFLOW_CLI_PROFILE", "env_pref")
         assert profile_store.resolve_profile("flag_pref") == "flag_pref"
 
     def test_env_beats_config(self, home: Path, monkeypatch: pytest.MonkeyPatch) -> None:
         _mk_profile(home, "from_config")
         profile_store.set_default_profile("from_config")
-        monkeypatch.setenv("FLOW_CLI_PROFILE", "env_choice")
+        monkeypatch.setenv("GFLOW_CLI_PROFILE", "env_choice")
         assert profile_store.resolve_profile(None) == "env_choice"
 
     def test_config_beats_autoselect(self, home: Path) -> None:

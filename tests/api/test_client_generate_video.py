@@ -7,8 +7,8 @@ from unittest.mock import AsyncMock, MagicMock, patch
 
 import pytest
 
-from flow_cli.api.client import FlowApiClient
-from flow_cli.api.video import Aspect, GenerateVideoRequest
+from gflow_cli.api.client import FlowApiClient
+from gflow_cli.api.video import Aspect, GenerateVideoRequest
 
 
 @pytest.fixture
@@ -35,7 +35,7 @@ class TestGenerateVideo:
 
         with (
             patch.object(client, "_post_json", side_effect=fake_post_json),
-            patch("flow_cli.api.client.TokenMinter") as minter_cls,
+            patch("gflow_cli.api.client.TokenMinter") as minter_cls,
         ):
             minter_cls.return_value.mint = AsyncMock(return_value="TOKEN-X")
             req = GenerateVideoRequest(prompt="cat", aspect=Aspect.PORTRAIT)
@@ -65,7 +65,7 @@ class TestGenerateVideo:
 
         with (
             patch.object(client, "_post_json", side_effect=fake_post_json),
-            patch("flow_cli.api.client.TokenMinter") as minter_cls,
+            patch("gflow_cli.api.client.TokenMinter") as minter_cls,
         ):
             minter_cls.return_value.mint = AsyncMock(return_value="TOK")
             req = GenerateVideoRequest(

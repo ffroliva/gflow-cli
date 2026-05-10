@@ -96,12 +96,12 @@ class TokenMinter:
             raise RecaptchaError(
                 f"reCAPTCHA evaluate failed for action={action!r}: {exc}. "
                 "Likely causes: grecaptcha not loaded, page navigated away, "
-                "or Playwright timeout. Try FLOW_CLI_HEADLESS=false."
+                "or Playwright timeout. Try GFLOW_CLI_HEADLESS=false."
             ) from exc
         if not isinstance(token, str) or not token:
             raise RecaptchaError(
                 f"reCAPTCHA returned an empty token for action={action!r}. "
                 "Likely causes: headless detection by Google, or the page "
-                "navigated away before mint. Try FLOW_CLI_HEADLESS=false."
+                "navigated away before mint. Try GFLOW_CLI_HEADLESS=false."
             )
         return token

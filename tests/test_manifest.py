@@ -6,8 +6,8 @@ from pathlib import Path
 
 import pytest
 
-from flow_cli.api.video import Aspect
-from flow_cli.manifest import ManifestEntry, parse_manifest
+from gflow_cli.api.video import Aspect
+from gflow_cli.manifest import ManifestEntry, parse_manifest
 
 
 class TestParseManifest:

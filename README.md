@@ -131,22 +131,22 @@ gflow auth login
 # 2. Verify
 gflow auth status
 
-# 3a. Generate an image from a text prompt (lands at $FLOW_CLI_OUTPUT_DIR/images/<date>/)
+# 3a. Generate an image from a text prompt (lands at $GFLOW_CLI_OUTPUT_DIR/images/<date>/)
 gflow image t2i "a hot air balloon over Tokyo at sunrise"
 
 # 3b. Generate a clip end-to-end
 gflow video i2v ./input.png "Slow cinematic push-in, soft golden light" -o out.mp4
 ```
 
-The image lands at `$FLOW_CLI_OUTPUT_DIR/images/<YYYY-MM-DD>/<media_name>_1.png` (defaults to `./out/` when the env var is unset). See [docs/USAGE.md § `gflow image t2i`](docs/USAGE.md#gflow-image-t2i) for `--model`, `--aspect`, `-n/--count`, `--seed`, and `--out` flags.
+The image lands at `$GFLOW_CLI_OUTPUT_DIR/images/<YYYY-MM-DD>/<media_name>_1.png` (defaults to `./out/` when the env var is unset). See [docs/USAGE.md § `gflow image t2i`](docs/USAGE.md#gflow-image-t2i) for `--model`, `--aspect`, `-n/--count`, `--seed`, and `--out` flags.
 
 Same call from Python:
 
 ```python
 import asyncio
 from pathlib import Path
-from flow_cli.api.client import FlowApiClient
-from flow_cli.paths import profile_dir
+from gflow_cli.api.client import FlowApiClient
+from gflow_cli.paths import profile_dir
 
 async def make_clip() -> None:
     async with FlowApiClient(profile_dir=profile_dir("default")) as client:
@@ -194,7 +194,7 @@ Each command supports `--profile <name>` for managing multiple Google accounts s
 | Console UI | [`rich`](https://rich.readthedocs.io/) | Pretty progress bars, colour, tables |
 | HTTP transport | [`playwright`](https://playwright.dev/python/) (`page.request`) | Auto-attaches Google session cookies — no OAuth scraping |
 | Async | stdlib `asyncio` | Concurrency primitive for parallel generations |
-| Type checking | [`pyright`](https://github.com/microsoft/pyright) (strict on `src/flow_cli`) | Catches errors before runtime |
+| Type checking | [`pyright`](https://github.com/microsoft/pyright) (strict on `src/gflow_cli`) | Catches errors before runtime |
 | Linting / format | [`ruff`](https://github.com/astral-sh/ruff) | Single tool, fast |
 | Testing | [`pytest`](https://docs.pytest.org/) + [`pytest-asyncio`](https://pytest-asyncio.readthedocs.io/) | Standard, async-aware |
 | CI/CD | GitHub Actions | Free, matrix builds, OIDC trusted publishing |
@@ -211,7 +211,7 @@ No FastAPI, no Django, no SQLAlchemy. This is a CLI + library — keeping the ru
 └────────┬────────┘
          │
 ┌────────▼────────┐
-│  Provider       │ ← protocol (Provider in flow_cli/providers/base.py)
+│  Provider       │ ← protocol (Provider in gflow_cli/providers/base.py)
 │  abstraction    │
 └────────┬────────┘
          │
@@ -284,7 +284,7 @@ uv run pyright src
 
 # Tests
 uv run pytest -q                    # all tests
-uv run pytest -q --cov=flow_cli     # with coverage
+uv run pytest -q --cov=gflow_cli     # with coverage
 uv run pytest tests/test_providers.py -q   # one file
 uv run pytest -k "i2v" -q                  # by keyword
 ```

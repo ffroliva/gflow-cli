@@ -6,8 +6,8 @@ from pathlib import Path
 
 import pytest
 
-from flow_cli import auth
-from flow_cli.config import reset_settings
+from gflow_cli import auth
+from gflow_cli.config import reset_settings
 
 
 @pytest.fixture(autouse=True)
@@ -21,13 +21,13 @@ class TestProfileDir:
     def test_default_profile_under_home(
         self, tmp_path: Path, monkeypatch: pytest.MonkeyPatch
     ) -> None:
-        monkeypatch.setenv("FLOW_CLI_HOME", str(tmp_path))
+        monkeypatch.setenv("GFLOW_CLI_HOME", str(tmp_path))
         reset_settings()
         pdir = auth.profile_dir()
         assert pdir == tmp_path / "profile_default"
 
     def test_named_profile(self, tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> None:
-        monkeypatch.setenv("FLOW_CLI_HOME", str(tmp_path))
+        monkeypatch.setenv("GFLOW_CLI_HOME", str(tmp_path))
         reset_settings()
         pdir = auth.profile_dir("alt")
         assert pdir == tmp_path / "profile_alt"
@@ -35,7 +35,7 @@ class TestProfileDir:
 
 class TestStatus:
     def test_missing_profile(self, tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> None:
-        monkeypatch.setenv("FLOW_CLI_HOME", str(tmp_path))
+        monkeypatch.setenv("GFLOW_CLI_HOME", str(tmp_path))
         reset_settings()
         s = auth.status("noexist")
         assert s["exists"] is False
@@ -44,7 +44,7 @@ class TestStatus:
     def test_present_profile_no_cookies(
         self, tmp_path: Path, monkeypatch: pytest.MonkeyPatch
     ) -> None:
-        monkeypatch.setenv("FLOW_CLI_HOME", str(tmp_path))
+        monkeypatch.setenv("GFLOW_CLI_HOME", str(tmp_path))
         reset_settings()
         (tmp_path / "profile_x").mkdir()
         s = auth.status("x")

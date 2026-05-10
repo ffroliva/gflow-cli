@@ -3,13 +3,13 @@
 Single source of truth for: which Google sessions exist, which one to use
 when no `--profile` flag is given, and how to set/clear that default.
 
-Storage layout under $FLOW_CLI_HOME (default: see flow_cli.auth.default_profile_root):
+Storage layout under $GFLOW_CLI_HOME (default: see gflow_cli.auth.default_profile_root):
     ./profile_<name>/        ← Chromium persistent context per profile
     ./config.toml            ← `default_profile = "<name>"`
 
 Resolution precedence (highest first):
     1. Explicit CLI --profile flag
-    2. FLOW_CLI_PROFILE env var
+    2. GFLOW_CLI_PROFILE env var
     3. config.toml's default_profile
     4. Auto-select if exactly one profile exists
     5. Raise NoDefaultProfileError with the list of available profiles
@@ -24,7 +24,7 @@ from dataclasses import dataclass
 from datetime import UTC, datetime
 from pathlib import Path
 
-from flow_cli.auth import default_profile_root, profile_dir, status
+from gflow_cli.auth import default_profile_root, profile_dir, status
 
 CONFIG_FILENAME = "config.toml"
 PROFILE_DIR_PREFIX = "profile_"
@@ -49,7 +49,7 @@ class NoDefaultProfileError(RuntimeError):
         msg = (
             "Cannot pick a default profile.\n"
             f"Available: {', '.join(available) if available else '(none)'}\n"
-            "Run `gflow auth use <name>`, set FLOW_CLI_PROFILE, or pass --profile."
+            "Run `gflow auth use <name>`, set GFLOW_CLI_PROFILE, or pass --profile."
         )
         super().__init__(msg)
 
@@ -59,12 +59,12 @@ class NoProfilesError(RuntimeError):
 
 
 def config_path() -> Path:
-    """Path to the user-level config.toml (under $FLOW_CLI_HOME)."""
+    """Path to the user-level config.toml (under $GFLOW_CLI_HOME)."""
     return default_profile_root() / CONFIG_FILENAME
 
 
 def list_profiles() -> list[ProfileMeta]:
-    """Discover every `profile_*` directory under $FLOW_CLI_HOME.
+    """Discover every `profile_*` directory under $GFLOW_CLI_HOME.
 
     Returns them sorted by name. Each entry includes whether it has a Chromium
     cookies file (a coarse "has session" probe — actual validity is only known
@@ -162,7 +162,7 @@ def resolve_profile(cli_flag: str | None) -> str:
     """Apply the full precedence chain. Raises if no profile can be picked."""
     if cli_flag:
         return cli_flag
-    env = os.environ.get("FLOW_CLI_PROFILE")
+    env = os.environ.get("GFLOW_CLI_PROFILE")
     if env:
         return env
     default = get_default_profile()

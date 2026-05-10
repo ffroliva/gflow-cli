@@ -12,7 +12,7 @@ from pathlib import Path
 
 import pytest
 
-from flow_cli.api.dto import GeneratedImage, UploadedImage
+from gflow_cli.api.dto import GeneratedImage, UploadedImage
 
 CAPTURED = Path(__file__).parent.parent.parent / "samples" / "captured"
 

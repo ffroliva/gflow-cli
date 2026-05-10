@@ -6,9 +6,9 @@
 
 | Asset | Threat | Severity |
 |---|---|---|
-| Google session cookies (in `$FLOW_CLI_HOME/profile_<name>/Default/Cookies`) | Theft → full access to user's Google account | **High** |
-| Generated outputs (`$FLOW_CLI_OUTPUT_DIR/...`) | Unwanted disclosure | Medium (depends on content) |
-| `.env` file with `FLOW_CLI_GEMINI_API_KEY` | Theft → API quota theft, billing | Medium |
+| Google session cookies (in `$GFLOW_CLI_HOME/profile_<name>/Default/Cookies`) | Theft → full access to user's Google account | **High** |
+| Generated outputs (`$GFLOW_CLI_OUTPUT_DIR/...`) | Unwanted disclosure | Medium (depends on content) |
+| `.env` file with `GFLOW_CLI_GEMINI_API_KEY` | Theft → API quota theft, billing | Medium |
 | Project-internal logs | Leaking prompts / asset IDs | Low |
 
 ## What we don't do
@@ -22,14 +22,14 @@
 
 ### Google session
 
-- **Location:** `$FLOW_CLI_HOME/profile_<name>/Default/Cookies` (a SQLite file managed by Chromium).
+- **Location:** `$GFLOW_CLI_HOME/profile_<name>/Default/Cookies` (a SQLite file managed by Chromium).
 - **Format:** Standard Chromium cookie store, encrypted at rest by Chromium with the OS keystore (`keychain` on macOS, `Credential Manager` on Windows, `kwallet`/`gnome-keyring` on Linux).
 - **Access:** OS file permissions enforce single-user access. On POSIX, `chmod 0700` is applied to the profile dir at creation time. On Windows, ACLs grant access only to the current user.
 - **Lifetime:** Persists until `gflow auth logout`, manual deletion, or session invalidation by Google.
 
 ### Gemini API key (Phase 2+)
 
-- **Location:** `$FLOW_CLI_GEMINI_API_KEY` env var, optionally loaded from a `.env` file in `$CWD` or `$FLOW_CLI_HOME`.
+- **Location:** `$GFLOW_CLI_GEMINI_API_KEY` env var, optionally loaded from a `.env` file in `$CWD` or `$GFLOW_CLI_HOME`.
 - **In memory:** Held only in the `Settings` dataclass, never logged.
 - **In transit:** Sent only to `generativelanguage.googleapis.com` over HTTPS.
 - **Rotate:** Set a new value in `.env`, restart the CLI. No persistence beyond the env var.
@@ -45,8 +45,8 @@ For users on shared / multi-user / production-adjacent machines:
 
 - [ ] **Enable full-disk encryption** (FileVault on macOS, BitLocker on Windows, LUKS on Linux). Protects session cookies if the machine is lost.
 - [ ] **Use a dedicated Google account** for `gflow-cli` automation if your main account has sensitive data (Gmail, Drive, etc.). Compromising the session compromises the *whole* Google account, not just Flow.
-- [ ] **Set `FLOW_CLI_HOME` to a non-default path** if you want the session away from the standard `LOCALAPPDATA` / `~/.local/share` location for any reason (auditability, separate volumes).
-- [ ] **Use `--profile sandbox`** for short-lived experiments. Easy to delete (`rm -rf $FLOW_CLI_HOME/profile_sandbox`) without disturbing your main profile.
+- [ ] **Set `GFLOW_CLI_HOME` to a non-default path** if you want the session away from the standard `LOCALAPPDATA` / `~/.local/share` location for any reason (auditability, separate volumes).
+- [ ] **Use `--profile sandbox`** for short-lived experiments. Easy to delete (`rm -rf $GFLOW_CLI_HOME/profile_sandbox`) without disturbing your main profile.
 - [ ] **Rotate sessions monthly** by signing out of Google → re-running `gflow auth login`. Limits blast radius of an unnoticed session theft.
 - [ ] **Pin a gflow-cli version** in production (`uv tool install gflow-cli==0.3.0a1`) and review release diffs before upgrading.
 - [ ] **Keep the package up-to-date for security fixes.** Subscribe to GitHub Releases for `ffroliva/gflow-cli`.

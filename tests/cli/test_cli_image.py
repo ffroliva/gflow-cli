@@ -8,7 +8,7 @@ from unittest.mock import AsyncMock, MagicMock, patch
 import pytest
 from click.testing import CliRunner
 
-from flow_cli.api.dto import AssetInfo, GeneratedImage
+from gflow_cli.api.dto import AssetInfo, GeneratedImage
 
 
 @pytest.fixture
@@ -44,11 +44,11 @@ class TestImageUpload:
         client = _make_mock_client(asset_name="asset-uuid-123")
 
         with (
-            patch("flow_cli.cli_image.FlowApiClient", return_value=client),
-            patch("flow_cli.cli_image._make_provider_dir", return_value=tmp_path / "prof"),
-            patch("flow_cli.cli_image._resolve_profile", return_value="default"),
+            patch("gflow_cli.cli_image.FlowApiClient", return_value=client),
+            patch("gflow_cli.cli_image._make_provider_dir", return_value=tmp_path / "prof"),
+            patch("gflow_cli.cli_image._resolve_profile", return_value="default"),
         ):
-            from flow_cli.cli import main
+            from gflow_cli.cli import main
 
             result = runner.invoke(
                 main,
@@ -74,11 +74,11 @@ class TestImageUpload:
         # _resolve_profile is the single chokepoint — assert it's invoked with None
         # when --profile is omitted, which is what "uses default" means in this CLI.
         with (
-            patch("flow_cli.cli_image.FlowApiClient", return_value=client),
-            patch("flow_cli.cli_image._make_provider_dir", return_value=tmp_path / "prof"),
-            patch("flow_cli.cli_image._resolve_profile", return_value="default") as resolve_mock,
+            patch("gflow_cli.cli_image.FlowApiClient", return_value=client),
+            patch("gflow_cli.cli_image._make_provider_dir", return_value=tmp_path / "prof"),
+            patch("gflow_cli.cli_image._resolve_profile", return_value="default") as resolve_mock,
         ):
-            from flow_cli.cli import main
+            from gflow_cli.cli import main
 
             result = runner.invoke(
                 main,
@@ -92,7 +92,7 @@ class TestImageUpload:
     def test_image_upload_errors_on_missing_file(self, runner: CliRunner, tmp_path: Path) -> None:
         missing = tmp_path / "does_not_exist.png"
         # No mocks needed — Click's `exists=True` should reject before any I/O.
-        from flow_cli.cli import main
+        from gflow_cli.cli import main
 
         result = runner.invoke(
             main,
@@ -161,11 +161,11 @@ class TestImageT2I:
         out_dir = tmp_path / "out"
 
         with (
-            patch("flow_cli.cli_image.FlowApiClient", return_value=client),
-            patch("flow_cli.cli_image._make_provider_dir", return_value=tmp_path / "prof"),
-            patch("flow_cli.cli_image._resolve_profile", return_value="default"),
+            patch("gflow_cli.cli_image.FlowApiClient", return_value=client),
+            patch("gflow_cli.cli_image._make_provider_dir", return_value=tmp_path / "prof"),
+            patch("gflow_cli.cli_image._resolve_profile", return_value="default"),
         ):
-            from flow_cli.cli import main
+            from gflow_cli.cli import main
 
             result = runner.invoke(
                 main,
@@ -192,11 +192,11 @@ class TestImageT2I:
         out_dir = tmp_path / "out"
 
         with (
-            patch("flow_cli.cli_image.FlowApiClient", return_value=client),
-            patch("flow_cli.cli_image._make_provider_dir", return_value=tmp_path / "prof"),
-            patch("flow_cli.cli_image._resolve_profile", return_value="default"),
+            patch("gflow_cli.cli_image.FlowApiClient", return_value=client),
+            patch("gflow_cli.cli_image._make_provider_dir", return_value=tmp_path / "prof"),
+            patch("gflow_cli.cli_image._resolve_profile", return_value="default"),
         ):
-            from flow_cli.cli import main
+            from gflow_cli.cli import main
 
             result = runner.invoke(
                 main,
@@ -212,7 +212,7 @@ class TestImageT2I:
         assert written == ["m1_1.png", "m2_2.png", "m3_3.png"], written
 
     def test_t2i_seed_with_n_gt_1_errors(self, runner: CliRunner, tmp_path: Path) -> None:
-        from flow_cli.cli import main
+        from gflow_cli.cli import main
 
         # No mocks — should fail Click validation BEFORE any I/O.
         result = runner.invoke(
@@ -225,7 +225,7 @@ class TestImageT2I:
         assert "seed" in result.output.lower()
 
     def test_t2i_invalid_aspect_errors(self, runner: CliRunner) -> None:
-        from flow_cli.cli import main
+        from gflow_cli.cli import main
 
         result = runner.invoke(
             main,
@@ -237,7 +237,7 @@ class TestImageT2I:
 
     @pytest.mark.parametrize("count", ["0", "5"])
     def test_t2i_invalid_count_errors(self, runner: CliRunner, count: str) -> None:
-        from flow_cli.cli import main
+        from gflow_cli.cli import main
 
         result = runner.invoke(
             main,
@@ -253,11 +253,11 @@ class TestImageT2I:
         out_dir = tmp_path / "out"
 
         with (
-            patch("flow_cli.cli_image.FlowApiClient", return_value=client),
-            patch("flow_cli.cli_image._make_provider_dir", return_value=tmp_path / "prof"),
-            patch("flow_cli.cli_image._resolve_profile", return_value="default"),
+            patch("gflow_cli.cli_image.FlowApiClient", return_value=client),
+            patch("gflow_cli.cli_image._make_provider_dir", return_value=tmp_path / "prof"),
+            patch("gflow_cli.cli_image._resolve_profile", return_value="default"),
         ):
-            from flow_cli.cli import main
+            from gflow_cli.cli import main
 
             result = runner.invoke(
                 main,
@@ -275,7 +275,7 @@ class TestImageT2I:
 
         assert result.exit_code == 0, result.output
         # Inspect the GenerateImageRequest passed to generate_image.
-        from flow_cli.api.image import Model
+        from gflow_cli.api.image import Model
 
         call = client.generate_image.await_args
         assert call is not None
@@ -335,11 +335,11 @@ class TestImageI2I:
         out_dir = tmp_path / "out"
 
         with (
-            patch("flow_cli.cli_image.FlowApiClient", return_value=client),
-            patch("flow_cli.cli_image._make_provider_dir", return_value=tmp_path / "prof"),
-            patch("flow_cli.cli_image._resolve_profile", return_value="default"),
+            patch("gflow_cli.cli_image.FlowApiClient", return_value=client),
+            patch("gflow_cli.cli_image._make_provider_dir", return_value=tmp_path / "prof"),
+            patch("gflow_cli.cli_image._resolve_profile", return_value="default"),
         ):
-            from flow_cli.cli import main
+            from gflow_cli.cli import main
 
             result = runner.invoke(
                 main,
@@ -364,11 +364,11 @@ class TestImageI2I:
         out_dir = tmp_path / "out"
 
         with (
-            patch("flow_cli.cli_image.FlowApiClient", return_value=client),
-            patch("flow_cli.cli_image._make_provider_dir", return_value=tmp_path / "prof"),
-            patch("flow_cli.cli_image._resolve_profile", return_value="default"),
+            patch("gflow_cli.cli_image.FlowApiClient", return_value=client),
+            patch("gflow_cli.cli_image._make_provider_dir", return_value=tmp_path / "prof"),
+            patch("gflow_cli.cli_image._resolve_profile", return_value="default"),
         ):
-            from flow_cli.cli import main
+            from gflow_cli.cli import main
 
             result = runner.invoke(
                 main,
@@ -394,11 +394,11 @@ class TestImageI2I:
         out_dir = tmp_path / "out"
 
         with (
-            patch("flow_cli.cli_image.FlowApiClient", return_value=client),
-            patch("flow_cli.cli_image._make_provider_dir", return_value=tmp_path / "prof"),
-            patch("flow_cli.cli_image._resolve_profile", return_value="default"),
+            patch("gflow_cli.cli_image.FlowApiClient", return_value=client),
+            patch("gflow_cli.cli_image._make_provider_dir", return_value=tmp_path / "prof"),
+            patch("gflow_cli.cli_image._resolve_profile", return_value="default"),
         ):
-            from flow_cli.cli import main
+            from gflow_cli.cli import main
 
             result = runner.invoke(
                 main,
@@ -427,7 +427,7 @@ class TestImageI2I:
 
     def test_i2i_errors_on_no_refs(self, runner: CliRunner) -> None:
         """`image i2i` without any --ref must exit 2 with a clear message."""
-        from flow_cli.cli import main
+        from gflow_cli.cli import main
 
         # No mocks — should fail Click validation BEFORE any I/O.
         result = runner.invoke(
@@ -446,7 +446,7 @@ class TestImageI2I:
     def test_i2i_errors_on_missing_ref_file(self, runner: CliRunner, tmp_path: Path) -> None:
         """`--ref nonexistent.png` (looks like a path, file missing) → exit 2."""
         missing = tmp_path / "does_not_exist.png"
-        from flow_cli.cli import main
+        from gflow_cli.cli import main
 
         result = runner.invoke(
             main,

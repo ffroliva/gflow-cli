@@ -4,7 +4,7 @@ from __future__ import annotations
 
 import pytest
 
-from flow_cli.api.video import (
+from gflow_cli.api.video import (
     Aspect,
     GenerateVideoRequest,
     Mode,

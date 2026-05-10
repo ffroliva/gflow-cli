@@ -38,7 +38,7 @@ The hexagonal target above is the steady state. The **current** package — and 
 
 **Per-module rules:**
 
-- Each top-level package or file under `src/flow_cli/` is a module with one clear domain (`auth`, `api`, `cli`, `errors`, `observability`, `manifest`, `paths`, `config`, `profile_store`).
+- Each top-level package or file under `src/gflow_cli/` is a module with one clear domain (`auth`, `api`, `cli`, `errors`, `observability`, `manifest`, `paths`, `config`, `profile_store`).
 - Each module exposes a public interface via `__init__.py` and (where applicable) explicit `__all__`.
 - Internals are prefixed with `_` (single leading underscore) and never imported across modules.
 - Cross-module communication goes through public interfaces, never private internals.
@@ -47,8 +47,8 @@ The hexagonal target above is the steady state. The **current** package — and 
 
 **Phase 4 module additions (in v0.4.0a1):**
 
-- `flow_cli.errors` — exception taxonomy aligned with [RFC 9457 Problem Details](https://datatracker.ietf.org/doc/html/rfc9457). Each `GFlowError` subclass carries `type` (URI), `title`, `status`, `detail`, `instance`, `remediation_hint`. The `to_problem_details()` method serializes to the RFC 9457 JSON shape and is the stable contract for telemetry consumers.
-- `flow_cli.observability` — structlog configuration + the `error_raised` event emitter. This is the future home for metrics + tracing (Phase 5+) too.
+- `gflow_cli.errors` — exception taxonomy aligned with [RFC 9457 Problem Details](https://datatracker.ietf.org/doc/html/rfc9457). Each `GFlowError` subclass carries `type` (URI), `title`, `status`, `detail`, `instance`, `remediation_hint`. The `to_problem_details()` method serializes to the RFC 9457 JSON shape and is the stable contract for telemetry consumers.
+- `gflow_cli.observability` — structlog configuration + the `error_raised` event emitter. This is the future home for metrics + tracing (Phase 5+) too.
 
 **Why RFC 9457 for errors:** Problem Details is the IETF-standard shape for machine-readable HTTP error responses. Even though gflow-cli is a CLI (not an HTTP server), adopting the same vocabulary means: (a) the error log shape is greppable by stable `type` URI, (b) future cloud-edge integrations (e.g., a `gflow serve` HTTP front-end) can return our errors directly without translation, (c) downstream telemetry tools recognize the shape immediately.
 
@@ -57,20 +57,20 @@ The hexagonal target above is the steady state. The **current** package — and 
 - Restructure existing modules beyond minimal dedup (e.g., shared CLI helpers move to `cli/_helpers.py`).
 - Introduce dependency-injection containers, command/query buses, or any DDD/CQRS scaffolding (deferred per [PLAN ADR #2](../PLAN.md#5-decision-log-adrs-in-miniature)).
 
-When the project converges on the hexagonal target above, modules graduate to layers: e.g., today's `flow_cli.api` becomes `flow_cli.infrastructure.flow_api`, `flow_cli.cli` becomes `flow_cli.interfaces.cli`, and so on. The modular-monolith shape is the staging area, not the destination.
+When the project converges on the hexagonal target above, modules graduate to layers: e.g., today's `gflow_cli.api` becomes `gflow_cli.infrastructure.flow_api`, `gflow_cli.cli` becomes `gflow_cli.interfaces.cli`, and so on. The modular-monolith shape is the staging area, not the destination.
 
 ## Folder layout
 
 > **Note: this document describes the TARGET architecture, not the current
 > package layout.** The current shape (per [PLAN.md § 2](../PLAN.md#2-architecture-steady-state)
 > and [ADR #2](../PLAN.md#5-decision-log-adrs-in-miniature)) is the simpler
-> `src/flow_cli/{api/, cli.py, cli_image.py, cli_video.py, auth.py,
+> `src/gflow_cli/{api/, cli.py, cli_image.py, cli_video.py, auth.py,
 > config.py, paths.py, profile_store.py}`. The DDD layout below was deferred
 > indefinitely; converge toward it incrementally if/when a second `Provider`
 > or a `gflow serve` HTTP front-end justifies the split.
 
 ```text
-src/flow_cli/
+src/gflow_cli/
 ├── domain/
 │   ├── models.py            # Asset, GenerationJob, GenerationProject
 │   ├── value_objects.py     # AspectRatio, Prompt, OutputCount, etc.
@@ -232,7 +232,7 @@ def generate(prompt: str) -> None:
 
 - **Single-process, single-event-loop** (`asyncio`).
 - Within a profile: serial per-Chromium-context (Chromium can't open the same profile dir twice).
-- Across profiles: parallelism is enabled by spawning multiple browser contexts (one per profile). Coordination via `asyncio.Semaphore(FLOW_CLI_CONCURRENCY)`.
+- Across profiles: parallelism is enabled by spawning multiple browser contexts (one per profile). Coordination via `asyncio.Semaphore(GFLOW_CLI_CONCURRENCY)`.
 - No multiprocessing, no threading except what Playwright uses internally.
 
 This caps the parallelism at `min(concurrency_limit, profile_count)`. v0.4 will add account-pool aware scheduling (round-robin across logged-in profiles).
@@ -247,7 +247,7 @@ This caps the parallelism at `min(concurrency_limit, profile_count)`. v0.4 will 
 - domain context (`prompt_chars`, `aspect`, `count`, etc.)
 - timing (`duration_ms`) where relevant
 
-Format defaults to **human-readable on TTY**, **JSON when piped or `FLOW_CLI_LOG_FORMAT=json`**. Pipes cleanly into `jq` / Loki / Datadog without configuration.
+Format defaults to **human-readable on TTY**, **JSON when piped or `GFLOW_CLI_LOG_FORMAT=json`**. Pipes cleanly into `jq` / Loki / Datadog without configuration.
 
 ## Testing topology
 

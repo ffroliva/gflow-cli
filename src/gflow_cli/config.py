@@ -1,14 +1,18 @@
 """Process-wide configuration via `pydantic-settings`.
 
-All knobs are env-var-driven (prefix `FLOW_CLI_`), with a `.env` fallback
-loaded from CWD or `$FLOW_CLI_HOME/.env`. Validated at startup; bad values
+All knobs are env-var-driven (prefix `GFLOW_CLI_`), with a `.env` fallback
+loaded from CWD or `$GFLOW_CLI_HOME/.env`. Validated at startup; bad values
 fail loudly with the offending key + the rule it violated.
+
+Legacy `FLOW_CLI_*` env vars are still honored in v0.4.x via the
+`_migrate_legacy_env` shim below, which emits a `DeprecationWarning`.
+Legacy support will be removed in v0.5.0.
 
 Resolution precedence (highest first):
     1. CLI flag (passed at call site, not here)
     2. Environment variable
-    3. `.env` file (CWD wins over $FLOW_CLI_HOME/.env)
-    4. Built-in default (from `flow_cli.paths`)
+    3. `.env` file (CWD wins over $GFLOW_CLI_HOME/.env)
+    4. Built-in default (from `gflow_cli.paths`)
 
 Use `get_settings()` to access the cached singleton. Tests should call
 `reset_settings()` between cases.
@@ -16,6 +20,8 @@ Use `get_settings()` to access the cached singleton. Tests should call
 
 from __future__ import annotations
 
+import os
+import warnings
 from enum import StrEnum
 from functools import lru_cache
 from pathlib import Path
@@ -23,7 +29,35 @@ from pathlib import Path
 from pydantic import Field
 from pydantic_settings import BaseSettings, SettingsConfigDict
 
-from flow_cli import paths
+from gflow_cli import paths
+
+_LEGACY_ENV_PREFIX = "FLOW_CLI_"
+_NEW_ENV_PREFIX = "GFLOW_CLI_"
+
+
+def _migrate_legacy_env() -> None:
+    """Promote legacy `FLOW_CLI_*` env vars to `GFLOW_CLI_*` when the new
+    var is unset. Emits a single `DeprecationWarning` summarizing the
+    promoted keys. Removed in v0.5.0.
+    """
+    promoted: list[str] = []
+    for key in list(os.environ):
+        if not key.startswith(_LEGACY_ENV_PREFIX):
+            continue
+        new_key = _NEW_ENV_PREFIX + key[len(_LEGACY_ENV_PREFIX) :]
+        if new_key not in os.environ:
+            os.environ[new_key] = os.environ[key]
+            promoted.append(key)
+    if promoted:
+        warnings.warn(
+            f"Legacy env vars promoted to GFLOW_CLI_* prefix: {sorted(promoted)}. "
+            "Update your .env / shell exports — legacy support is removed in v0.5.0.",
+            DeprecationWarning,
+            stacklevel=2,
+        )
+
+
+_migrate_legacy_env()
 
 
 class LogLevel(StrEnum):
@@ -48,7 +82,7 @@ class Settings(BaseSettings):
     """All gflow-cli configuration. Build via `Settings()` (or `get_settings()`)."""
 
     model_config = SettingsConfigDict(
-        env_prefix="FLOW_CLI_",
+        env_prefix="GFLOW_CLI_",
         env_file=(".env",),
         env_file_encoding="utf-8",
         case_sensitive=False,

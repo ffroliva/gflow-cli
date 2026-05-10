@@ -6,7 +6,7 @@ so Google's session cookies attach automatically — no manual bearer-token
 extraction.
 
 The video-generation route requires a fresh reCAPTCHA token per call;
-that piece lives in `flow_cli.api.recaptcha` and `generate_video()` (added
+that piece lives in `gflow_cli.api.recaptcha` and `generate_video()` (added
 in a later commit). For now this client implements the four routes that
 DON'T need reCAPTCHA: createProject, uploadImage, checkStatus, download.
 
@@ -34,11 +34,11 @@ from urllib.parse import urlsplit, urlunsplit
 
 from playwright.async_api import BrowserContext, Page, Playwright, async_playwright
 
-from flow_cli.api import routes
-from flow_cli.api.dto import AssetInfo, GeneratedImage, ProjectInfo, VideoOperation, VideoStatus
-from flow_cli.api.image import GenerateImageRequest, _build_batch_generate_images_body
-from flow_cli.api.recaptcha import TokenMinter
-from flow_cli.api.video import GenerateVideoRequest, build_generate_body
+from gflow_cli.api import routes
+from gflow_cli.api.dto import AssetInfo, GeneratedImage, ProjectInfo, VideoOperation, VideoStatus
+from gflow_cli.api.image import GenerateImageRequest, _build_batch_generate_images_body
+from gflow_cli.api.recaptcha import TokenMinter
+from gflow_cli.api.video import GenerateVideoRequest, build_generate_body
 
 logger = logging.getLogger(__name__)
 

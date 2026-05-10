@@ -16,11 +16,11 @@ import sys
 from rich.console import Console
 from rich.markup import escape
 
-from flow_cli import auth as auth_mod
-from flow_cli.api.client import FlowApiClient
-from flow_cli.api.video import Aspect, GenerateVideoRequest
-from flow_cli.config import get_settings
-from flow_cli.paths import video_output_path
+from gflow_cli import auth as auth_mod
+from gflow_cli.api.client import FlowApiClient
+from gflow_cli.api.video import Aspect, GenerateVideoRequest
+from gflow_cli.config import get_settings
+from gflow_cli.paths import video_output_path
 
 console = Console()
 

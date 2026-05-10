@@ -115,8 +115,8 @@ gflow video batch ./manifest.tsv --out-dir ./out/
 ```python
 import asyncio
 from pathlib import Path
-from flow_cli.api.client import FlowApiClient
-from flow_cli.paths import profile_dir
+from gflow_cli.api.client import FlowApiClient
+from gflow_cli.paths import profile_dir
 
 async def make_clip(image: Path, prompt: str, out: Path) -> None:
     async with FlowApiClient(profile_dir=profile_dir("default")) as client:
@@ -140,7 +140,7 @@ asyncio.run(make_clip(Path("in.png"), "Push-in", Path("out.mp4")))
 |---|---|---|
 | `No session for profile 'default'` | First run, no auth | `gflow auth login` |
 | `403 Forbidden` from upload / generate | Account doesn't have Flow access | Verify in [labs.google/fx/tools/flow](https://labs.google/fx/tools/flow) |
-| reCAPTCHA refuses to mint a token (headless detected) | Google bot-detection | Set `FLOW_CLI_HEADLESS=false` and re-run; the visible window passes detection |
+| reCAPTCHA refuses to mint a token (headless detected) | Google bot-detection | Set `GFLOW_CLI_HEADLESS=false` and re-run; the visible window passes detection |
 | `Playwright Executable doesn't exist` | Chromium not downloaded | `uvx --from gflow-cli playwright install chromium` |
 | Generations all fail with the same UUID | Stale Flow session | `gflow auth login` again to refresh cookies |
 | Quota exceeded | Burned through monthly credits | Wait for reset, or upgrade subscription |

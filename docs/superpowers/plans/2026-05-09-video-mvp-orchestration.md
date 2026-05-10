@@ -180,7 +180,7 @@ For every task in `2026-05-09-video-mvp.md`, the agents involved + their estimat
 | **3.** reCAPTCHA token mint | gsd-executor | nyquist-auditor | python-reviewer | code-reviewer | **security-reviewer** | 25m |
 | **4.** `FlowApiClient.generate_video()` | gsd-executor | nyquist-auditor | python-reviewer | code-reviewer | **security-reviewer** | 35m |
 | **5.** TSV manifest parser | gsd-executor | nyquist-auditor | python-reviewer | code-reviewer | **security-reviewer** (path traversal) | 25m |
-| **6.** `FLOW_CLI_HEADLESS` setting | gsd-executor | nyquist-auditor | python-reviewer | code-reviewer | **security-reviewer** (env handling) | 15m |
+| **6.** `GFLOW_CLI_HEADLESS` setting | gsd-executor | nyquist-auditor | python-reviewer | code-reviewer | **security-reviewer** (env handling) | 15m |
 | **7.** `gflow video t2v` CLI | gsd-executor | nyquist-auditor | python-reviewer | code-reviewer | — | 35m |
 | **8.** `gflow video i2v` CLI | gsd-executor | nyquist-auditor | python-reviewer | code-reviewer | — | 25m |
 | **9.** `gflow video batch` CLI | gsd-executor | nyquist-auditor | python-reviewer | code-reviewer | — | 30m |
@@ -260,7 +260,7 @@ CONTEXT:
 - Read CLAUDE.md before any code change.
 - Project rules (CRITICAL invariants):
   * Never add `Co-Authored-By: Claude` to a commit
-  * Frozen-domain rule: src/flow_cli/api/dto.py has no I/O
+  * Frozen-domain rule: src/gflow_cli/api/dto.py has no I/O
   * No `print()` in src/ — use logging
   * TDD: tests come first
   * All four quality gates must be green BEFORE you commit

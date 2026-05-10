@@ -8,7 +8,7 @@ Subcommands:
 * ``i2i PROMPT --ref PATH_OR_UUID`` — image-to-image with seed references.
 
 Helper functions ``_resolve_profile`` and ``_make_provider_dir`` mirror the
-ones in :mod:`flow_cli.cli_video` so the test suite can patch them locally.
+ones in :mod:`gflow_cli.cli_video` so the test suite can patch them locally.
 We deliberately duplicate them (rather than re-export) to keep each command
 group self-contained: a future split into ``cli/image.py``/``cli/video.py``
 should not require a cross-module patch dance in tests.
@@ -25,13 +25,13 @@ import click
 from rich.console import Console
 from rich.table import Table
 
-from flow_cli import auth as auth_mod
-from flow_cli import profile_store
-from flow_cli.api.client import FlowApiClient
-from flow_cli.api.dto import GeneratedImage
-from flow_cli.api.image import Aspect, GenerateImageRequest, ImageRef, Model
-from flow_cli.config import get_settings
-from flow_cli.paths import image_output_path
+from gflow_cli import auth as auth_mod
+from gflow_cli import profile_store
+from gflow_cli.api.client import FlowApiClient
+from gflow_cli.api.dto import GeneratedImage
+from gflow_cli.api.image import Aspect, GenerateImageRequest, ImageRef, Model
+from gflow_cli.config import get_settings
+from gflow_cli.paths import image_output_path
 
 # Case-insensitive 8-4-4-4-12 hex with hyphens — Flow's media UUIDs.
 # When a `--ref` value matches this regex it's treated as an already-uploaded

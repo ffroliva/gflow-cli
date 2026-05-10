@@ -31,7 +31,7 @@ This page documents the full lifecycle: capture, storage, reuse, refresh, multi-
                                            ▼
                               ┌──────────────────────────────────────┐
                               │  Cookies + IndexedDB persist to       │
-                              │  $FLOW_CLI_HOME/profile_<name>/       │
+                              │  $GFLOW_CLI_HOME/profile_<name>/       │
                               │  (Chromium user-data-dir layout)      │
                               └────────────┬─────────────────────────┘
                                            │
@@ -63,17 +63,17 @@ The session is **always stored outside the project tree** in a stable, user-loca
 
 ### Override
 
-Set `FLOW_CLI_HOME` to put profiles anywhere you want:
+Set `GFLOW_CLI_HOME` to put profiles anywhere you want:
 
 ```bash
 # Linux/macOS
-export FLOW_CLI_HOME=/secure-volume/gflow-cli
+export GFLOW_CLI_HOME=/secure-volume/gflow-cli
 
 # Windows (PowerShell)
-$env:FLOW_CLI_HOME = "D:\gflow-cli"
+$env:GFLOW_CLI_HOME = "D:\gflow-cli"
 ```
 
-Resulting profile dir becomes `$FLOW_CLI_HOME/profile_<name>/`.
+Resulting profile dir becomes `$GFLOW_CLI_HOME/profile_<name>/`.
 
 ### What's actually inside a profile dir
 
@@ -96,7 +96,7 @@ profile_default/
 
 Even though profiles live outside the repo by default, three scenarios can put them inside:
 
-1. A user sets `FLOW_CLI_HOME=.` from inside the repo (e.g. for a sandboxed dev session).
+1. A user sets `GFLOW_CLI_HOME=.` from inside the repo (e.g. for a sandboxed dev session).
 2. A test fixture writes a temporary profile to `tests/fixtures/profile_*/`.
 3. Someone clones the repo into a path that already has a `gflow-cli/` folder with a profile.
 
@@ -157,7 +157,7 @@ Same output as bare `gflow auth` when profiles exist — useful when you want th
 
 ### `gflow auth use <name>`
 
-Sets `<name>` as the default profile. Persisted to `$FLOW_CLI_HOME/config.toml`.
+Sets `<name>` as the default profile. Persisted to `$GFLOW_CLI_HOME/config.toml`.
 
 ```bash
 gflow auth use work
@@ -165,14 +165,14 @@ gflow auth use work
 # Persisted in /home/you/.local/share/gflow-cli/config.toml
 ```
 
-After this, every command without `--profile` and without `FLOW_CLI_PROFILE` resolves to `work`.
+After this, every command without `--profile` and without `GFLOW_CLI_PROFILE` resolves to `work`.
 
 ### Default profile resolution
 
 Precedence (highest first):
 
 1. **CLI flag** `--profile <name>`
-2. **Env var** `FLOW_CLI_PROFILE`
+2. **Env var** `GFLOW_CLI_PROFILE`
 3. **`config.toml`** `default_profile` (set by `gflow auth use`)
 4. **Auto** — if exactly one profile exists, it becomes the de-facto default.
 5. **Fail** with a friendly error listing the available profiles, if 2+ profiles exist and none of (1)-(3) is set.

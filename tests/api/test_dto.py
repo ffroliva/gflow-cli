@@ -7,7 +7,7 @@ from pathlib import Path
 
 import pytest
 
-from flow_cli.api.dto import AssetInfo, ProjectInfo, VideoStatus
+from gflow_cli.api.dto import AssetInfo, ProjectInfo, VideoStatus
 
 CAPTURED = Path(__file__).parent.parent.parent / "samples" / "captured"
 

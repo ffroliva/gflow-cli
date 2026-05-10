@@ -6,7 +6,7 @@ from unittest.mock import AsyncMock
 
 import pytest
 
-from flow_cli.api.recaptcha import (
+from gflow_cli.api.recaptcha import (
     RecaptchaError,
     TokenMinter,  # noqa: F401 — imported to assert it is exported from the module
     discover_site_key,
