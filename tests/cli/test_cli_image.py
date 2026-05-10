@@ -57,7 +57,9 @@ class TestImageUpload:
             )
 
         assert result.exit_code == 0, result.output
-        client.create_project.assert_awaited_once()
+        # Lock the wire contract: project must be titled "gflow-cli upload" so
+        # uploads don't pollute the user's library with untitled drafts.
+        client.create_project.assert_awaited_once_with(title="gflow-cli upload")
         client.upload_image.assert_awaited_once()
         # The UUID must be visible in stdout (primary user-facing value).
         assert "asset-uuid-123" in result.output

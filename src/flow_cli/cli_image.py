@@ -90,7 +90,17 @@ def image() -> None:
 )
 @click.argument(
     "path",
-    type=click.Path(exists=True, dir_okay=False, readable=True, path_type=Path),
+    type=click.Path(
+        exists=True,
+        dir_okay=False,
+        readable=True,
+        # resolve_path follows symlinks AND canonicalises the path. Closes the
+        # exfiltration vector where `./hero.png -> ~/.ssh/id_rsa` would pass
+        # `exists=True` and silently upload a private key. The magic-byte check
+        # in `FlowApiClient.upload_image` is the second layer of defense.
+        resolve_path=True,
+        path_type=Path,
+    ),
 )
 @click.option("--profile", default=None, help="Profile name (overrides default).")
 def upload(path: Path, profile: str | None) -> None:
@@ -115,7 +125,7 @@ async def _run_upload(
 ) -> None:
     async with FlowApiClient(profile_dir=profile_dir, headless=headless) as client:
         console.print("  Creating project...")
-        project = await client.create_project()
+        project = await client.create_project(title="gflow-cli upload")
         console.print(f"  Project: [dim]{project.project_id}[/dim]")
         console.print(f"  Uploading {image_path.name}...")
         asset = await client.upload_image(project.project_id, image_path)

@@ -42,6 +42,39 @@ from flow_cli.api.video import GenerateVideoRequest, build_generate_body
 
 logger = logging.getLogger(__name__)
 
+# Cap matches Flow's UI upload limit (~20 MB observed in captured traffic). Used
+# by `upload_image` to reject oversize files BEFORE reading them into memory —
+# protects this process from OOM and the remote endpoint from DoS-shaped traffic.
+MAX_IMAGE_BYTES = 20 * 1024 * 1024  # 20 MB
+
+
+def _is_supported_image_header(header: bytes) -> bool:
+    """Return True if ``header`` (first 12 bytes of a file) matches a known image
+    container's magic bytes.
+
+    Allowed formats — every one is accepted by Flow's web UI:
+
+    * **PNG** — ``\\x89PNG\\r\\n\\x1a\\n``
+    * **JPEG** — bytes 0..2 are ``\\xff\\xd8\\xff``
+    * **WebP** — bytes 0..3 ``RIFF`` + bytes 8..11 ``WEBP``
+    * **GIF** — ``GIF87a`` or ``GIF89a``
+
+    Rejecting anything else is a defense-in-depth measure: combined with
+    ``resolve_path=True`` on the CLI argument it stops a symlink-laundering
+    attack (``./photo.png -> ~/.ssh/id_rsa``) at the bytes layer.
+    """
+    if len(header) < 12:
+        return False
+    if header.startswith(b"\x89PNG\r\n\x1a\n"):
+        return True
+    if header[:3] == b"\xff\xd8\xff":
+        return True
+    if header[:4] == b"RIFF" and header[8:12] == b"WEBP":
+        return True
+    if header[:6] in (b"GIF87a", b"GIF89a"):
+        return True
+    return False
+
 
 class FlowApiError(RuntimeError):
     """Raised when a Flow API call returns a non-2xx response."""
@@ -166,9 +199,32 @@ class FlowApiClient:
 
         Maps to `POST /v1/flow/uploadImage`. Image bytes go in base64.
         Returns the asset UUID + dimensions Flow inferred.
+
+        Validates BEFORE reading the full file:
+
+        * **Size cap** — files larger than ``MAX_IMAGE_BYTES`` (20 MB, matching
+          Flow's UI limit) are rejected. Prevents OOM on accidental uploads of
+          huge files and protects the remote endpoint from DoS-shaped traffic.
+        * **Magic-byte check** — the first 12 bytes must match a PNG / JPEG /
+          WebP / GIF signature. Stops users from silently exfiltrating
+          arbitrary local files (e.g. ``~/.bashrc``, ``~/.ssh/id_rsa``) just
+          because the path resolved cleanly.
+
+        Both validations run before ``image_path.read_bytes()`` so a hostile
+        path is never fully loaded into memory.
         """
         if not image_path.exists():
             raise FileNotFoundError(image_path)
+        size = image_path.stat().st_size
+        if size > MAX_IMAGE_BYTES:
+            raise ValueError(
+                f"Image too large: {size / 1_048_576:.1f} MB exceeds "
+                f"{MAX_IMAGE_BYTES // 1_048_576} MB limit"
+            )
+        with image_path.open("rb") as fh:
+            header = fh.read(12)
+        if not _is_supported_image_header(header):
+            raise ValueError(f"Not a supported image format: {image_path.name}")
         b64 = base64.b64encode(image_path.read_bytes()).decode()
         body = {
             "clientContext": {"projectId": project_id, "tool": "PINHOLE"},
