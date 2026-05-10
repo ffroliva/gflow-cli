@@ -43,6 +43,22 @@ async def main() -> int:
     parser.add_argument(
         "--model",
         default="narwhal",
+        choices=[
+            "narwhal",
+            "nano2",
+            "nano-banana-2",
+            "nano_banana_2",
+            "nanobanana2",
+            "gem_pix_2",
+            "gem-pix-2",
+            "nano-pro",
+            "nano_pro",
+            "nanopro",
+            "imagen_3_5",
+            "imagen-3-5",
+            "image4",
+            "imagen4",
+        ],
         help="Image model alias (e.g. narwhal, nano-pro, imagen4).",
     )
     parser.add_argument(
@@ -50,20 +66,17 @@ async def main() -> int:
         "--count",
         type=int,
         default=1,
+        choices=range(1, 5),
         help="How many images to generate (1..4).",
     )
     args = parser.parse_args()
-
-    if not 1 <= args.count <= 4:
-        console.print(f"[red]--count must be between 1 and 4, got {args.count}[/red]")
-        return 2
 
     settings = get_settings()
     profile_name = args.profile or settings.profile or "default"
     pdir = auth_mod.profile_dir(profile_name)
     if not pdir.exists():
         console.print(
-            f"[red]No session for profile '{profile_name}'.[/red] "
+            f"[red]No session for profile '{escape(profile_name)}'.[/red] "
             f"Run [bold]gflow auth login[/bold] first."
         )
         return 2
@@ -95,18 +108,38 @@ async def main() -> int:
         table.add_column("path", style="green")
         table.add_column("bytes", justify="right")
 
+        failures = 0
         for i, img in enumerate(images, start=1):
             out = image_output_path(settings.output_dir, job_id=img.media_name, index=i)
-            await client.download_image(img, out)
-            table.add_row(
-                str(i),
-                escape(img.media_name),
-                escape(str(out)),
-                f"{out.stat().st_size:,}",
-            )
+            try:
+                # Defense-in-depth: download_image already mkdirs, but mirror
+                # the explicit pattern used in scripts/smoke_e2e.py.
+                out.parent.mkdir(parents=True, exist_ok=True)
+                await client.download_image(img, out)
+                table.add_row(
+                    str(i),
+                    escape(img.media_name),
+                    escape(str(out)),
+                    f"{out.stat().st_size:,}",
+                )
+            except Exception as exc:  # noqa: BLE001 — partial-failure summary
+                failures += 1
+                console.print(f"  [red]download {i} failed: {escape(str(exc))}[/red]")
+                table.add_row(
+                    str(i),
+                    escape(img.media_name),
+                    "[red]FAILED[/red]",
+                    "-",
+                )
 
         console.print(table)
-        console.print(f"[green]OK[/green] -> {len(images)} image(s) written")
+        ok = len(images) - failures
+        if failures:
+            console.print(
+                f"[yellow]Partial:[/yellow] {ok}/{len(images)} image(s) written, {failures} failed"
+            )
+            return 1
+        console.print(f"[green]OK[/green] -> {ok} image(s) written")
         return 0
 
 
