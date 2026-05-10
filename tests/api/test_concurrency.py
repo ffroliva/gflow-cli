@@ -60,19 +60,49 @@ async def test_aenter_opens_n_pages(
 
 
 @pytest.mark.asyncio
-async def test_checkout_checkin_returns_same_page(
+async def test_checkout_checkin_preserves_identity_and_fifo(
     tmp_path: Path, settings_n4: Settings, fake_context: MagicMock
 ) -> None:
+    """Checkout returns slot-0 first (FIFO); checkin + re-checkout returns the
+    SAME Page object — proves identity is preserved across the queue round-trip
+    (not just the qsize delta)."""
     with patch("gflow_cli.api.client.async_playwright") as mock_pw_factory:
         pw = MagicMock()
+        pw.stop = AsyncMock()
         pw.chromium.launch_persistent_context = AsyncMock(return_value=fake_context)
         mock_pw_factory.return_value.start = AsyncMock(return_value=pw)
         async with FlowApiClient(profile_dir=tmp_path, settings=settings_n4) as client:
             page = await client._checkout_page()
+            assert page is client._pages[0]  # FIFO: slot 0 first
             assert client._page_queue is not None
             qsize_before = client._page_queue.qsize()
             client._checkin_page(page)
             assert client._page_queue.qsize() == qsize_before + 1
+            # After full round, all 4 pages should cycle through and the original
+            # slot-0 Page should re-appear (FIFO across 4 cycles).
+            seen = [await client._checkout_page() for _ in range(4)]
+            assert seen[-1] is page  # slot-0 came back last after the cycle
+
+
+@pytest.mark.asyncio
+async def test_aenter_reuses_existing_first_page(
+    tmp_path: Path, settings_n4: Settings, fake_context: MagicMock
+) -> None:
+    """When ``launch_persistent_context`` opens a default Page (the common case),
+    __aenter__ MUST reuse it as slot 0 — total Pages = N, not N+1."""
+    existing_page = MagicMock(name="ExistingDefaultPage")
+    existing_page.goto = AsyncMock()
+    fake_context.pages = [existing_page]
+    with patch("gflow_cli.api.client.async_playwright") as mock_pw_factory:
+        pw = MagicMock()
+        pw.stop = AsyncMock()
+        pw.chromium.launch_persistent_context = AsyncMock(return_value=fake_context)
+        mock_pw_factory.return_value.start = AsyncMock(return_value=pw)
+        async with FlowApiClient(profile_dir=tmp_path, settings=settings_n4) as client:
+            # N=4, one already existed → open exactly 3 more (NOT 4).
+            assert fake_context.new_page.await_count == 3
+            assert client._pages[0] is existing_page
+            assert len(client._pages) == 4
 
 
 @pytest.mark.asyncio
@@ -126,17 +156,44 @@ async def test_aenter_with_concurrency_1_opens_one_page(
 
 
 @pytest.mark.asyncio
-async def test_aexit_closes_all_pages(
+async def test_aexit_closes_browser_context(
     tmp_path: Path, settings_n4: Settings, fake_context: MagicMock
 ) -> None:
-    """All N Pages closed on __aexit__ (resource cleanup)."""
+    """__aexit__ closes the BrowserContext. (BrowserContext.close closes its
+    child Pages implicitly per Playwright's API contract — no per-Page close
+    call is needed.)"""
     with patch("gflow_cli.api.client.async_playwright") as mock_pw_factory:
         pw = MagicMock()
+        pw.stop = AsyncMock()
         pw.chromium.launch_persistent_context = AsyncMock(return_value=fake_context)
         mock_pw_factory.return_value.start = AsyncMock(return_value=pw)
         client = FlowApiClient(profile_dir=tmp_path, settings=settings_n4)
         async with client:
-            pages_opened = list(client._pages)
-            assert len(pages_opened) == 4
-        # Context closed; verify each Page received .close() OR Context.close handles them
+            assert len(client._pages) == 4
         fake_context.close.assert_awaited()
+        pw.stop.assert_awaited()
+
+
+@pytest.mark.asyncio
+async def test_aexit_resets_pool_even_when_close_raises(
+    tmp_path: Path, settings_n4: Settings, fake_context: MagicMock
+) -> None:
+    """Spec § 3.2: cleanup MUST run even if context.close() raises. The H6 fix
+    (logger.warning instead of silent pass) preserves the finally-block reset
+    of pool fields. A regression that moves the reset OUT of finally would
+    leave the next client instance with dangling Pages."""
+    fake_context.close = AsyncMock(side_effect=RuntimeError("simulated browser crash"))
+    with patch("gflow_cli.api.client.async_playwright") as mock_pw_factory:
+        pw = MagicMock()
+        pw.stop = AsyncMock()
+        pw.chromium.launch_persistent_context = AsyncMock(return_value=fake_context)
+        mock_pw_factory.return_value.start = AsyncMock(return_value=pw)
+        client = FlowApiClient(profile_dir=tmp_path, settings=settings_n4)
+        async with client:
+            assert client._page_queue is not None
+        # close() raised, but cleanup ran in `finally`:
+        assert client._pages == []
+        assert client._page_queue is None
+        assert client._page is None
+        assert client._context is None
+        assert client._pw is None

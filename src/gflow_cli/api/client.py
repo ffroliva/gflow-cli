@@ -137,10 +137,10 @@ class FlowApiClient:
             for _ in range(n):
                 self._pages.append(await self._context.new_page())
         # asyncio.Queue gives FIFO checkout/checkin with no manual locking.
-        # ``put_nowait`` is safe here: the queue is sized to exactly ``n``
-        # and we never push more items than we created, so QueueFull is
-        # structurally impossible.
-        self._page_queue = asyncio.Queue()
+        # ``maxsize=n`` makes the upper bound STRUCTURAL — a double-checkin
+        # (bug in a future caller) raises QueueFull rather than silently
+        # corrupting the pool. The generic parameter satisfies pyright strict.
+        self._page_queue = asyncio.Queue[Page](maxsize=n)
         for p in self._pages:
             self._page_queue.put_nowait(p)
         # Back-compat alias for callers that still touch ``self._page``
@@ -181,14 +181,22 @@ class FlowApiClient:
             self._pw = None
 
     async def _checkout_page(self) -> Page:
-        """Block until a Page is available from the pool; FIFO."""
-        assert self._page_queue is not None, "FlowApiClient not entered"
+        """Block until a Page is available from the pool; FIFO.
+
+        Waits indefinitely if the pool is exhausted (no Pages available).
+        Callers that need a deadline must wrap the call themselves (T3's
+        retry layer applies the per-attempt timeout).
+        """
+        if self._page_queue is None:
+            raise RuntimeError("FlowApiClient not entered — use `async with`")
         return await self._page_queue.get()
 
     def _checkin_page(self, page: Page) -> None:
         """Return a Page to the pool. Non-blocking; pool size is bounded
-        by construction so ``put_nowait`` cannot raise ``QueueFull``."""
-        assert self._page_queue is not None, "FlowApiClient not entered"
+        by ``maxsize=n`` so a double-checkin raises ``QueueFull`` loudly
+        rather than corrupting the pool silently."""
+        if self._page_queue is None:
+            raise RuntimeError("FlowApiClient not entered — use `async with`")
         self._page_queue.put_nowait(page)
 
     @property
