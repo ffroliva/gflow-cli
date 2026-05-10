@@ -16,6 +16,7 @@ import pytest
 from gflow_cli.api.client import FlowApiClient, FlowApiError
 from gflow_cli.api.dto import GeneratedImage
 from gflow_cli.api.image import Aspect, GenerateImageRequest
+from gflow_cli.errors import ContentPolicyError
 
 # Realistic mock response distilled from samples/captured/06_batchGenerateImages.json
 _FAKE_FIFE_URL = "https://flow-content.google/image/abc-123?Expires=1778380305&Signature=XYZ"
@@ -95,11 +96,18 @@ class TestGenerateImage:
 
         assert seen_request["headers"]["content-type"] == "text/plain;charset=UTF-8"
 
-    async def test_generate_image_raises_flow_api_error_on_empty_media(
+    async def test_generate_image_raises_content_policy_on_empty_media(
         self, client: FlowApiClient
     ) -> None:
-        """200 OK with empty media[] (e.g. content-policy rejection) must
-        surface as FlowApiError, not a bare IndexError."""
+        """200 OK with empty media[] (silent content-policy rejection) must
+        surface as ContentPolicyError, not a bare IndexError.
+
+        Phase 4 T3 contract: ContentPolicyError extends FlowApiError (so
+        ``except FlowApiError`` still catches it for back-compat) but its
+        ``status`` is intentionally stripped per RFC 9457 (no 2xx on errors).
+        The literal upstream 200 is recorded only via observability as
+        ``upstream_status``.
+        """
 
         async def fake_request_post(url, *, data, headers):
             resp = MagicMock()
@@ -111,10 +119,13 @@ class TestGenerateImage:
 
         with patch("gflow_cli.api.client.TokenMinter") as minter_cls:
             minter_cls.return_value.mint = AsyncMock(return_value="TOK")
-            with pytest.raises(FlowApiError) as exc_info:
+            with pytest.raises(ContentPolicyError) as exc_info:
                 await client.generate_image(project_id="proj-1", req=_make_req(), seed=1)
 
-        assert exc_info.value.status == 200
+        # ContentPolicyError IS a FlowApiError — back-compat preserved.
+        assert isinstance(exc_info.value, FlowApiError)
+        # RFC 9457: status not carried for 2xx-success-with-empty-media case.
+        assert exc_info.value.to_problem_details().get("status") is None
         assert "/projects/proj-1/flowMedia:batchGenerateImages" in exc_info.value.route
 
     async def test_generate_image_mints_recaptcha_token(self, client: FlowApiClient) -> None:

@@ -26,6 +26,7 @@ dependencies = [
     "pydantic-settings>=2.5.0",
     "platformdirs>=4.0.0",
     "structlog>=24.0.0",
+    "tenacity>=8.2",
 ]
 
 [project.optional-dependencies]
