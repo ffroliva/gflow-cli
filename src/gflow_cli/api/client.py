@@ -22,7 +22,6 @@ from __future__ import annotations
 import asyncio
 import base64
 import json
-import logging
 import secrets
 import time
 import uuid
@@ -32,17 +31,30 @@ from pathlib import Path
 from typing import Any, cast
 from urllib.parse import urlsplit, urlunsplit
 
+import structlog
 from playwright.async_api import BrowserContext, Page, Playwright, async_playwright
 
 from gflow_cli.api import routes
+from gflow_cli.api._retry import parse_retry_after, post_with_retry
 from gflow_cli.api.dto import AssetInfo, GeneratedImage, ProjectInfo, VideoOperation, VideoStatus
 from gflow_cli.api.image import GenerateImageRequest, _build_batch_generate_images_body
 from gflow_cli.api.recaptcha import TokenMinter
 from gflow_cli.api.video import GenerateVideoRequest, build_generate_body
 from gflow_cli.config import Settings
-from gflow_cli.errors import FlowApiError
+from gflow_cli.errors import (
+    AuthExpiredError,
+    ContentPolicyError,
+    FlowApiError,  # re-exported via gflow_cli.api.__init__
+    NetworkError,
+    RateLimitError,
+    WireFormatError,
+)
 
-logger = logging.getLogger(__name__)
+# Silence "imported but unused" — FlowApiError is re-exported from this module
+# via ``gflow_cli.api.__init__`` for back-compat with Phase 3 call sites.
+__all__ = ["FlowApiClient", "FlowApiError"]
+
+logger = structlog.get_logger(__name__)
 
 # Cap matches Flow's UI upload limit (~20 MB observed in captured traffic). Used
 # by `upload_image` to reject oversize files BEFORE reading them into memory —
@@ -186,17 +198,29 @@ class FlowApiClient:
         Waits indefinitely if the pool is exhausted (no Pages available).
         Callers that need a deadline must wrap the call themselves (T3's
         retry layer applies the per-attempt timeout).
+
+        Test affordance: when ``_page_queue`` is None but ``_page`` was
+        injected directly (existing test pattern: ``c._page = MagicMock()``),
+        return ``_page`` so the mock-based test surface keeps working without
+        having to populate the queue. Production code always enters via
+        ``async with`` which initializes the queue.
         """
         if self._page_queue is None:
+            if self._page is not None:
+                return self._page
             raise RuntimeError("FlowApiClient not entered — use `async with`")
         return await self._page_queue.get()
 
     def _checkin_page(self, page: Page) -> None:
         """Return a Page to the pool. Non-blocking; pool size is bounded
         by ``maxsize=n`` so a double-checkin raises ``QueueFull`` loudly
-        rather than corrupting the pool silently."""
+        rather than corrupting the pool silently.
+
+        Test affordance mirrors :meth:`_checkout_page`: when the queue is
+        absent (mock-injected ``_page``), checkin is a no-op.
+        """
         if self._page_queue is None:
-            raise RuntimeError("FlowApiClient not entered — use `async with`")
+            return
         self._page_queue.put_nowait(page)
 
     @property
@@ -208,44 +232,119 @@ class FlowApiClient:
     # --- private HTTP helpers --------------------------------------------
 
     async def _post_json(
-        self, url: str, body: dict[str, Any], *, content_type: str = "text/plain;charset=UTF-8"
+        self,
+        url: str,
+        body: dict[str, Any],
+        *,
+        content_type: str = "text/plain;charset=UTF-8",
+        route_name: str | None = None,
     ) -> Any:
-        """POST a JSON body. aisandbox-pa requires text/plain content-type
-        (not application/json) — see samples/captured/*.json. The tRPC
-        host on labs.google accepts standard application/json."""
+        """POST a JSON body with retry + typed-error classification.
+
+        aisandbox-pa requires text/plain content-type (not application/json)
+        — see samples/captured/*.json. The tRPC host on labs.google accepts
+        standard application/json.
+
+        ``route_name`` is the sanitized route identifier used in raised errors
+        (RFC 9457 ``route`` extension). Defaults to the URL when omitted; pass
+        an explicit short name (e.g. ``"createProject"``) so logs are stable
+        across query-string churn.
+        """
         body_str = json.dumps(body)
         # docs/SECURITY.md: "No cookies, no tokens, no API keys" in logs.
         # The reCAPTCHA token is single-use with ~2min TTL, but the policy
         # holds regardless. Redact before logging.
-        logger.debug("POST %s body=%s", url, _redact_for_log(body_str)[:300])
-        resp = await self.page.request.post(
-            url,
-            data=body_str,
-            headers={"content-type": content_type},
-        )
+        logger.debug("post_json", url=url, body=_redact_for_log(body_str)[:300])
+        route = route_name or url
+
+        async def attempt() -> Any:
+            page = await self._checkout_page()
+            try:
+                return await page.request.post(
+                    url,
+                    data=body_str,
+                    headers={"content-type": content_type},
+                )
+            finally:
+                self._checkin_page(page)
+
+        resp = await self._run_with_retry(attempt, route=route)
         text = await resp.text()
-        if resp.status >= 400:
-            raise FlowApiError(resp.status, text, route=url)
+        _raise_for_non_retryable(resp, text, route=route)
         try:
             return json.loads(text)
         except json.JSONDecodeError as e:
-            raise FlowApiError(resp.status, f"non-JSON response: {text[:200]}", route=url) from e
+            instance = _make_instance()
+            raise WireFormatError(
+                detail=f"non-JSON response: {text[:200]}",
+                status=resp.status,
+                instance=instance,
+                route=route,
+                discovery={
+                    "route_name": route,
+                    "http_status": resp.status,
+                    "content_type": resp.headers.get("content-type", "")
+                    if hasattr(resp, "headers")
+                    else "",
+                    "top_level_keys": [],
+                    "body_prefix_redacted": _redact_for_log(text[:200]),
+                },
+            ) from e
 
-    async def _patch_json(self, url: str, body: dict[str, Any]) -> Any:
+    async def _patch_json(
+        self, url: str, body: dict[str, Any], *, route_name: str | None = None
+    ) -> Any:
         body_str = json.dumps(body)
-        logger.debug("PATCH %s body=%s", url, body_str[:300])
-        resp = await self.page.request.patch(
-            url,
-            data=body_str,
-            headers={"content-type": "text/plain;charset=UTF-8"},
-        )
+        logger.debug("patch_json", url=url, body=body_str[:300])
+        route = route_name or url
+
+        async def attempt() -> Any:
+            page = await self._checkout_page()
+            try:
+                return await page.request.patch(
+                    url,
+                    data=body_str,
+                    headers={"content-type": "text/plain;charset=UTF-8"},
+                )
+            finally:
+                self._checkin_page(page)
+
+        resp = await self._run_with_retry(attempt, route=route)
         text = await resp.text()
-        if resp.status >= 400:
-            raise FlowApiError(resp.status, text, route=url)
+        _raise_for_non_retryable(resp, text, route=route)
         try:
             return json.loads(text) if text else {}
         except json.JSONDecodeError:
             return {}
+
+    async def _run_with_retry(self, attempt: Any, *, route: str) -> Any:
+        """Execute ``attempt()`` under the tenacity retry policy.
+
+        Inside the retry block we ONLY classify retryable failures
+        (429 → RateLimitError, 5xx → NetworkError) so tenacity can act.
+        Non-retryable 4xx fallthrough is classified outside this helper via
+        ``_raise_for_non_retryable`` to keep retry-vs-classify concerns
+        separate.
+        """
+        response: Any = None
+        async for retrying in post_with_retry():
+            with retrying:
+                response = await attempt()
+                if response.status == 429:
+                    raise RateLimitError(
+                        detail=f"HTTP {response.status}",
+                        status=response.status,
+                        retry_after=parse_retry_after(response),
+                        route=route,
+                    )
+                if response.status >= 500:
+                    raise NetworkError(
+                        detail=f"HTTP {response.status}",
+                        status=response.status,
+                        route=route,
+                    )
+        assert response is not None  # tenacity reraise=True guarantees this
+        return response
 
     # --- public API -------------------------------------------------------
 
@@ -308,19 +407,33 @@ class FlowApiClient:
         return [VideoStatus.from_check_status_item(it) for it in data.get("media", [])]
 
     async def download(self, name_or_url: str, out_path: Path) -> Path:
-        """Download an asset (image or video) to `out_path`. Returns out_path."""
+        """Download an asset (image or video) to `out_path`. Returns out_path.
+
+        Retries 5xx (transient CDN hiccups) via the tenacity layer. 429 from
+        Google's CDN on signed URLs is rare-to-impossible in practice but the
+        retry predicate handles it uniformly if it ever happens.
+        """
         url = (
             name_or_url
             if name_or_url.startswith("http")
             else routes.media_download_url(name_or_url)
         )
         out_path.parent.mkdir(parents=True, exist_ok=True)
-        resp = await self.page.request.get(url, max_redirects=5, timeout=120_000)
+        route = "mediaDownload"
+
+        async def attempt() -> Any:
+            page = await self._checkout_page()
+            try:
+                return await page.request.get(url, max_redirects=5, timeout=120_000)
+            finally:
+                self._checkin_page(page)
+
+        resp = await self._run_with_retry(attempt, route=route)
+        # Strip query string before logging — signed CDN URLs carry
+        # bearer-style tokens (Signature=, Expires=) that must not
+        # leak via str(exc) or log lines. See docs/SECURITY.md.
         if resp.status >= 400:
-            # Strip query string before logging — signed CDN URLs carry
-            # bearer-style tokens (Signature=, Expires=) that must not
-            # leak via str(exc) or log lines. See docs/SECURITY.md.
-            raise FlowApiError(resp.status, await resp.text(), route=_strip_query(url))
+            _raise_for_non_retryable(resp, await resp.text(), route=_strip_query(url))
         out_path.write_bytes(await resp.body())
         return out_path
 
@@ -354,12 +467,21 @@ class FlowApiClient:
         """
         _validate_fife_url(image.fife_url)
         out_path.parent.mkdir(parents=True, exist_ok=True)
-        resp = await self.page.request.get(image.fife_url, max_redirects=2, timeout=120_000)
+        # Strip query string before logging — signed CDN URLs carry
+        # bearer-style tokens (Signature=, Expires=) that must not
+        # leak via str(exc) or log lines. See docs/SECURITY.md.
+        route = _strip_query(image.fife_url)
+
+        async def attempt() -> Any:
+            page = await self._checkout_page()
+            try:
+                return await page.request.get(image.fife_url, max_redirects=2, timeout=120_000)
+            finally:
+                self._checkin_page(page)
+
+        resp = await self._run_with_retry(attempt, route=route)
         if resp.status >= 400:
-            # Strip query string before logging — signed CDN URLs carry
-            # bearer-style tokens (Signature=, Expires=) that must not
-            # leak via str(exc) or log lines. See docs/SECURITY.md.
-            raise FlowApiError(resp.status, await resp.text(), route=_strip_query(image.fife_url))
+            _raise_for_non_retryable(resp, await resp.text(), route=route)
         out_path.write_bytes(await resp.body())
         return out_path
 
@@ -420,6 +542,10 @@ class FlowApiClient:
         All inputs are pre-resolved (token already minted, batch_id and seed
         already chosen). This is the shared path used by both ``generate_image``
         (single-shot) and ``generate_images_batch`` (parallel fan-out).
+
+        Retry + typed-error classification live in ``_post_json``. The
+        empty-media[] case is a 200-OK content-policy rejection and surfaces
+        as :class:`ContentPolicyError` per RFC 9457 (no 2xx status on errors).
         """
         body = _build_batch_generate_images_body(
             req,
@@ -430,14 +556,19 @@ class FlowApiClient:
             session_id=f";{int(time.time() * 1000)}",
         )
         url = routes.batch_generate_images_url(project_id)
-        data = await self._post_json(url, body)
+        data = await self._post_json(url, body, route_name=url)
         images = GeneratedImage.from_response_dict(data)
         if not images:
-            # Server returned 200 OK with an empty media[] — typically a
-            # silent content-policy rejection or quota exhaustion. Surface
-            # this through the regular error taxonomy instead of leaking
-            # an IndexError to callers.
-            raise FlowApiError(200, str(data)[:200], route=url)
+            # Server returned 200 OK with an empty media[] — silent
+            # content-policy rejection or quota exhaustion. Surface as
+            # ContentPolicyError (RFC 9457 strips status; the literal 200 is
+            # recorded only via observability.emit_error_event as
+            # ``upstream_status``).
+            raise ContentPolicyError(
+                detail="empty media[]",
+                instance=_make_instance(),
+                route=url,
+            )
         return images[0]
 
     async def generate_image(
@@ -586,6 +717,68 @@ def _validate_fife_url(url: str) -> None:
     host = parts.hostname or ""
     if not (host == "flow-content.google" or host.endswith(".google")):
         raise ValueError(f"Refusing download from unexpected host: {host!r}")
+
+
+def _make_instance() -> str:
+    """Build the RFC 9457 ``instance`` URI from the current correlation context.
+
+    Returns ``gflow:error:<correlation_id>`` so error tracking can group
+    occurrences without leaking the failed route URL. When no correlation
+    context is bound (e.g. unit tests run outside the CLI boundary),
+    ``correlation_id`` resolves to an empty string and we still emit a
+    well-formed prefix to keep the parser side simple.
+    """
+    correlation = structlog.contextvars.get_contextvars().get("correlation_id", "")
+    return f"gflow:error:{correlation}"
+
+
+def _raise_for_non_retryable(resp: Any, body_text: str, *, route: str) -> None:
+    """Classify a response that survived the retry loop.
+
+    Called on responses that EITHER succeeded (2xx) OR fell through with a
+    non-retryable 4xx (e.g. 400, 401, 403, 404, 422). Anything outside those
+    ranges should have been raised inside the retry loop and never reach
+    here. Side-effect-only: raises on 4xx, returns silently on 2xx.
+
+    * 401/403 → :class:`AuthExpiredError`
+    * other 4xx → :class:`WireFormatError` with discovery payload so
+      ``grep error_class=WireFormatError`` reveals what was unexpected.
+    """
+    if resp.status < 400:
+        return
+    instance = _make_instance()
+    if resp.status in (401, 403):
+        raise AuthExpiredError(
+            detail=f"HTTP {resp.status}",
+            status=resp.status,
+            instance=instance,
+            route=route,
+        )
+    if 400 <= resp.status < 500:
+        try:
+            content_type = resp.headers.get("content-type", "") if hasattr(resp, "headers") else ""
+        except (AttributeError, TypeError):
+            content_type = ""
+        top_keys: list[str] = []
+        try:
+            parsed = json.loads(body_text) if content_type.startswith("application/json") else None
+            if isinstance(parsed, dict):
+                top_keys = sorted(cast(dict[str, Any], parsed).keys())
+        except (json.JSONDecodeError, ValueError):
+            top_keys = []
+        raise WireFormatError(
+            detail=f"HTTP {resp.status} on 4xx fallthrough",
+            status=resp.status,
+            instance=instance,
+            route=route,
+            discovery={
+                "route_name": route,
+                "http_status": resp.status,
+                "content_type": content_type,
+                "top_level_keys": top_keys,
+                "body_prefix_redacted": _redact_for_log(body_text[:200]),
+            },
+        )
 
 
 def _redact_for_log(body_str: str) -> str:
