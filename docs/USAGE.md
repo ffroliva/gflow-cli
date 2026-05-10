@@ -113,7 +113,7 @@ Options:
 
 **Output paths.**
 
-- **Default (`--out` omitted).** Files land under `$FLOW_CLI_OUTPUT_DIR/images/<YYYY-MM-DD>/<media_name>_<n>.png`. The date partition keeps long-running batches navigable.
+- **Default (`--out` omitted).** Files land under `$GFLOW_CLI_OUTPUT_DIR/images/<YYYY-MM-DD>/<media_name>_<n>.png`. The date partition keeps long-running batches navigable.
 - **`--out DIR` provided.** Files are written **flat** as `<DIR>/<media_name>_<n>.png` — no date subdirectory. `--out` must be a directory; flat-file output paths are not supported (you can rename after the fact).
 
 **Examples:**
@@ -206,7 +206,7 @@ Generate a video from a text prompt only.
 gflow video t2v PROMPT [OPTIONS]
 
 Options:
-  -o, --output PATH       Output mp4. Default: $FLOW_CLI_OUTPUT_DIR/videos/<date>/<media>.mp4
+  -o, --output PATH       Output mp4. Default: $GFLOW_CLI_OUTPUT_DIR/videos/<date>/<media>.mp4
   --aspect 9:16|16:9|1:1  Default: 9:16
   --seed INTEGER          Reproducibility. Default: random.
   --profile NAME          Account profile. Default: resolved from env/config.
@@ -232,7 +232,7 @@ Arguments:
   PROMPT                  Text prompt.                            [required]
 
 Options:
-  -o, --output PATH       Output mp4. Default: $FLOW_CLI_OUTPUT_DIR/videos/<date>/<media>.mp4
+  -o, --output PATH       Output mp4. Default: $GFLOW_CLI_OUTPUT_DIR/videos/<date>/<media>.mp4
   --aspect 9:16|16:9|1:1  Default: 9:16
   --seed INTEGER          Reproducibility. Default: random.
   --profile NAME          Account profile. Default: resolved from env/config.
@@ -310,7 +310,7 @@ gflow video batch ./batch-b.tsv --profile personal
 ### JSON logs for piping into Loki/Datadog
 
 ```bash
-FLOW_CLI_LOG_FORMAT=json gflow image t2i "..." 2>&1 | jq .
+GFLOW_CLI_LOG_FORMAT=json gflow image t2i "..." 2>&1 | jq .
 ```
 
 ## Exit codes
@@ -335,13 +335,13 @@ fi
 
 ## Programmatic use
 
-The CLI is a thin shell over `flow_cli.api.client.FlowApiClient`. All public methods used by the commands above are also available directly:
+The CLI is a thin shell over `gflow_cli.api.client.FlowApiClient`. All public methods used by the commands above are also available directly:
 
 ```python
 import asyncio
 from pathlib import Path
-from flow_cli.api.client import FlowApiClient
-from flow_cli.paths import profile_dir
+from gflow_cli.api.client import FlowApiClient
+from gflow_cli.paths import profile_dir
 
 async def main() -> None:
     async with FlowApiClient(profile_dir=profile_dir("default")) as client:

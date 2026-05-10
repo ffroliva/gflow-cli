@@ -1,4 +1,4 @@
-"""Tests for `flow_cli.api.image` — pure value objects + body builder.
+"""Tests for `gflow_cli.api.image` — pure value objects + body builder.
 
 Tests load the captured samples in `samples/captured/` and assert structural
 equality (modulo the four variable fields: recaptcha token, projectId,
@@ -14,7 +14,7 @@ from typing import Any
 
 import pytest
 
-from flow_cli.api.image import (
+from gflow_cli.api.image import (
     Aspect,
     GenerateImageRequest,
     ImageRef,

@@ -72,7 +72,7 @@ The original PLAN included a full DDD/CQRS/Clean refactor. **Deferred** — for 
 Current package layout:
 
 ```
-src/flow_cli/
+src/gflow_cli/
 ├── __init__.py
 ├── __main__.py
 ├── auth.py             ← login + status (Playwright headed for login)
@@ -96,16 +96,16 @@ src/flow_cli/
 
 Documented in [docs/CONFIGURATION.md](docs/CONFIGURATION.md) and [.env.template](.env.template). Variables:
 
-`FLOW_CLI_HOME`, `FLOW_CLI_OUTPUT_DIR`, `FLOW_CLI_PROFILE`, `FLOW_CLI_PROVIDER`, `FLOW_CLI_GEMINI_API_KEY`, `FLOW_CLI_TIMEOUT_SECONDS`, `FLOW_CLI_LOG_LEVEL`, `FLOW_CLI_LOG_FORMAT`, `FLOW_CLI_CONCURRENCY`.
+`GFLOW_CLI_HOME`, `GFLOW_CLI_OUTPUT_DIR`, `GFLOW_CLI_PROFILE`, `GFLOW_CLI_PROVIDER`, `GFLOW_CLI_GEMINI_API_KEY`, `GFLOW_CLI_TIMEOUT_SECONDS`, `GFLOW_CLI_LOG_LEVEL`, `GFLOW_CLI_LOG_FORMAT`, `GFLOW_CLI_CONCURRENCY`.
 
 Default paths via `platformdirs`:
 
 ```text
-$FLOW_CLI_HOME/                   ← user_data_dir/gflow-cli
+$GFLOW_CLI_HOME/                   ← user_data_dir/gflow-cli
 ├── profile_<name>/               ← Chromium persistent contexts
 └── config.toml                   ← default_profile = "..."
 
-$FLOW_CLI_OUTPUT_DIR/             ← user_downloads_dir/gflow-cli
+$GFLOW_CLI_OUTPUT_DIR/             ← user_downloads_dir/gflow-cli
 ├── videos/<YYYY-MM-DD>/<job_id>.mp4
 └── images/<YYYY-MM-DD>/<job_id>_<i>.png  (Phase 3)
 ```
@@ -178,9 +178,9 @@ async def discover_recaptcha_site_key(page: Page) -> str:
 
 | Fallback | What changes |
 |---|---|
-| **Headed mode by default for video gen** | Worse UX (window opens) but reliable. Add `FLOW_CLI_HEADLESS=auto\|true\|false`; default `auto` = headless until first failure, then headed. |
+| **Headed mode by default for video gen** | Worse UX (window opens) but reliable. Add `GFLOW_CLI_HEADLESS=auto\|true\|false`; default `auto` = headless until first failure, then headed. |
 | **Headed only for token mint, headless for everything else** | More complex but keeps the rest invisible. |
-| **Defer to user reporting** | Ship with headless default + clear error message instructing the user to set `FLOW_CLI_HEADLESS=false`. |
+| **Defer to user reporting** | Ship with headless default + clear error message instructing the user to set `GFLOW_CLI_HEADLESS=false`. |
 
 Default plan: **headless first**, instrument the failure with a remediation hint. If users report it failing, switch to headed-by-default.
 
@@ -189,7 +189,7 @@ Default plan: **headless first**, instrument the failure with a remediation hint
 Each step is a separate commit. Each one runs the four quality gates locally + verifies CI green before moving on.
 
 **2.1 — reCAPTCHA token mint** (~1-2h)
-- New file: `src/flow_cli/api/recaptcha.py`
+- New file: `src/gflow_cli/api/recaptcha.py`
   - `discover_site_key(page) -> str`
   - `mint_token(page, site_key, action) -> str`
   - Cache site_key on first discovery
@@ -206,7 +206,7 @@ Each step is a separate commit. Each one runs the four quality gates locally + v
 - Tests: body shape verification + reCAPTCHA token plumbing (mocked)
 
 **2.3 — CLI commands** (~1h)
-- New file: `src/flow_cli/cli_video.py` (or extend `cli.py`)
+- New file: `src/gflow_cli/cli_video.py` (or extend `cli.py`)
   - `gflow video t2v "<prompt>" [--aspect 9:16|16:9|1:1] [--output PATH] [--profile NAME] [--async]`
   - `gflow video i2v <image> "<prompt>" [...same options + auto-uploads start frame]`
   - `gflow video batch <manifest.tsv> [--out-dir DIR] [--concurrency N]`
@@ -245,7 +245,7 @@ Each step is a separate commit. Each one runs the four quality gates locally + v
 - [x] `gflow video i2v <png> "..."` produces a .mp4 whose first frame matches the input PNG
 - [x] `gflow video batch <tsv>` processes 3+ clips end-to-end
 - [x] All four quality gates green (ruff / format / pyright / pytest)
-- [x] Test coverage ≥ 80% on `src/flow_cli/api/`
+- [x] Test coverage ≥ 80% on `src/gflow_cli/api/`
 - [x] `samples/captured/` documents every wire format we depend on
 - [x] `KNOWN_ISSUES.md` updated with anything surprising discovered during 2.4
 - [x] Tagged `v0.2.0a1` on GitHub
@@ -285,7 +285,7 @@ Body envelope mirrors video (clientContext + mediaGenerationContext.batchId + us
 
 ### Phase 4 — Hardening — POST-v0.3.0a1
 
-- Per-account pool + `FLOW_CLI_CONCURRENCY > 1` for parallel batches
+- Per-account pool + `GFLOW_CLI_CONCURRENCY > 1` for parallel batches
 - Retry / exponential backoff on 5xx + rate-limited responses
 - Domain-error → exit-code mapping (so shell scripts can branch)
 - Verbose error messages with remediation hints (e.g. "reCAPTCHA failed → run `gflow auth login` again")
@@ -307,7 +307,7 @@ Body envelope mirrors video (clientContext + mediaGenerationContext.batchId + us
 
 Foundation laid by Phase 4's structured `error_raised` events + Problem Details. Phase 6 adds a local persistence layer so users can answer "what did I generate last week and what did it cost?".
 
-- Local SQLite (or DuckDB if analytical queries dominate) at `$FLOW_CLI_HOME/operations.db`
+- Local SQLite (or DuckDB if analytical queries dominate) at `$GFLOW_CLI_HOME/operations.db`
 - Schema: `operations(id, timestamp, profile, cli_command, project_id, media_uuids, prompt, model, aspect, seed_count, status, error_class, error_problem, duration_ms, output_paths)` — every CLI invocation appends one row
 - Schema versioned via Alembic-style migrations
 - New CLI: `gflow history list/show/search` — query operations by date / profile / command / status
@@ -317,11 +317,11 @@ Foundation laid by Phase 4's structured `error_raised` events + Problem Details.
 
 ### Phase 7 — Pluggable storage backend — BACKLOG
 
-Today the CLI writes media to `$FLOW_CLI_OUTPUT_DIR` on the local filesystem. Phase 7 makes the storage backend pluggable so generated assets can stream directly to S3 / GCS / Azure Blob without an intermediate local copy.
+Today the CLI writes media to `$GFLOW_CLI_OUTPUT_DIR` on the local filesystem. Phase 7 makes the storage backend pluggable so generated assets can stream directly to S3 / GCS / Azure Blob without an intermediate local copy.
 
-- New `flow_cli.storage` module with a `StorageBackend` Protocol (write_bytes, exists, stat, list)
+- New `gflow_cli.storage` module with a `StorageBackend` Protocol (write_bytes, exists, stat, list)
 - Implementations: `LocalStorage` (today's behaviour, default), `S3Storage`, `GCSStorage`, `AzureBlobStorage`
-- Configure via `FLOW_CLI_STORAGE_BACKEND` env (`local|s3|gcs|azure`) + backend-specific creds
+- Configure via `GFLOW_CLI_STORAGE_BACKEND` env (`local|s3|gcs|azure`) + backend-specific creds
 - New flag: `--storage-backend s3://bucket/prefix/` for per-call override
 - Object naming convention: `{profile}/{command}/{YYYY-MM-DD}/{media_uuid}.png|mp4`
 - Metadata sidecar: each object has a corresponding `.problem.json` (RFC 9457 Problem Details for any error during retrieval) and `.manifest.json` (prompt, model, aspect, seed) for full provenance
@@ -366,7 +366,7 @@ A phase ships when:
 
 | # | Question | Suggested default |
 |---|---|---|
-| Q1 | If reCAPTCHA fails headless, default to headed (visible window) or fail loud and tell user? | **Fail loud** with `FLOW_CLI_HEADLESS=false` remediation. Headed pop-ups in batch mode would be unbearable. |
+| Q1 | If reCAPTCHA fails headless, default to headed (visible window) or fail loud and tell user? | **Fail loud** with `GFLOW_CLI_HEADLESS=false` remediation. Headed pop-ups in batch mode would be unbearable. |
 | Q2 | Default model tier — `fast` (Veo 3.1 Fast) or `quality` (Veo 3.1)? | **`fast`** — burns less credit per clip; users can opt into quality. |
 | Q3 | Default seed behaviour — random or deterministic-from-prompt? | **Random** — matches Flow UI behaviour. `--seed N` for reproducibility. |
 | Q4 | Default audio handling — `BLOCK_SILENCED_VIDEOS` (captured shape) or new `audio` flag? | **Block silenced** for v0.2.0a1; revisit if users want audio control. |

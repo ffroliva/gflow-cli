@@ -82,7 +82,7 @@ When dispatching the Implementer for task N, the Coordinator's `Task` tool promp
      uv run ruff check src tests
      uv run ruff format --check src tests
      uv run pyright src
-     uv run pytest -q --cov=flow_cli
+     uv run pytest -q --cov=gflow_cli
    All must pass. Coverage must not regress below current baseline.
    ```
 3. **CLAUDE.md invariants reminder** — verbatim:

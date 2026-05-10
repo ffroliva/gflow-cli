@@ -7,6 +7,21 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+### Breaking — package + env-var rename (will ship in v0.4.0a1)
+
+- **Python package renamed: `flow_cli` → `gflow_cli`.** All imports must
+  change: `from gflow_cli...` (was `from flow_cli...`). The PyPI distribution
+  name (`gflow-cli`), the CLI binary (`gflow`), and the user data directory
+  (`gflow-cli/` under `platformdirs`) are unchanged.
+- **Env var prefix renamed: `FLOW_CLI_*` → `GFLOW_CLI_*`.** Affected vars:
+  `GFLOW_CLI_HOME`, `GFLOW_CLI_OUTPUT_DIR`, `GFLOW_CLI_PROFILE`,
+  `GFLOW_CLI_HEADLESS`, `GFLOW_CLI_LOG_LEVEL`, `GFLOW_CLI_LOG_FORMAT`,
+  `GFLOW_CLI_PROVIDER`, `GFLOW_CLI_TIMEOUT_SECONDS`, `GFLOW_CLI_CONCURRENCY`.
+- **Backwards-compat shim.** Legacy `FLOW_CLI_*` env vars continue to work
+  in v0.4.x; on first encounter the process emits a single
+  `DeprecationWarning` to stderr summarising the promoted keys. The shim
+  will be removed in v0.5.0 — update your `.env` files and shell exports.
+
 ## [0.3.0a1] — 2026-05-10
 
 ### Added
@@ -18,7 +33,7 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   via Google Flow's Imagen / Nano Banana models.
   Flags: `--model {nano2|nano-pro|image4}`, `--aspect {9:16|16:9|1:1|4:3|3:4}`,
   `-n/--count` (1–4), `--seed` (single-image only), `--out DIR`, `--profile`.
-  Files land date-partitioned under `$FLOW_CLI_OUTPUT_DIR/images/<YYYY-MM-DD>/`
+  Files land date-partitioned under `$GFLOW_CLI_OUTPUT_DIR/images/<YYYY-MM-DD>/`
   by default; `--out DIR` writes flat as `<DIR>/<media_name>_<n>.png`.
 - **`gflow image i2i PROMPT --ref PATH_OR_UUID`** — image-to-image generation
   with one or more reference images. Each `--ref` is classified at the CLI
@@ -81,14 +96,14 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   Flags: `--aspect 9:16|16:9|1:1`, `--seed`, `--output`, `--profile`, `--poll-interval`.
 - **`gflow video i2v`** — generate a video from a start image + text prompt (Veo 3.1 I2V).
 - **`gflow video batch`** — run a TSV manifest of video generations against one shared project.
-- `flow_cli.api` package — low-level REST client (`FlowApiClient`) + value objects
+- `gflow_cli.api` package — low-level REST client (`FlowApiClient`) + value objects
   (`GenerateVideoRequest`, `VideoOperation`, `VideoStatus`) for video generation.
-- `flow_cli.api.recaptcha` — reCAPTCHA Enterprise token minting via Playwright `page.evaluate`.
+- `gflow_cli.api.recaptcha` — reCAPTCHA Enterprise token minting via Playwright `page.evaluate`.
   `TokenMinter` caches the discovered site key per session; `mint(action)` is called immediately
   before each generation request.
-- `flow_cli.manifest` — TSV manifest parser for `gflow video batch`. Supports optional
+- `gflow_cli.manifest` — TSV manifest parser for `gflow video batch`. Supports optional
   `start_image`, `end_image`, `aspect`, `output_path` columns; skips `# `-prefixed comments.
-- `FLOW_CLI_HEADLESS` env var (`bool`, default `true`). Set to `false` if reCAPTCHA refuses
+- `GFLOW_CLI_HEADLESS` env var (`bool`, default `true`). Set to `false` if reCAPTCHA refuses
   to mint tokens in headless mode (Google bot detection fallback).
 - `scripts/smoke_e2e.py` — one-shot live T2V smoke test; run after `gflow auth login` to
   verify the full happy path (create project → generate_video → poll → download).
@@ -98,8 +113,8 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   - `.claude/README.md` — what goes here, how to extend.
   - `.claude/commands/release.md` — `/release` slash command that automates
     version bump + CHANGELOG migration + tag + push, with quality gates.
-- `flow_cli.profile_store` — profile inventory + default-profile persistence
-  in `$FLOW_CLI_HOME/config.toml`. Five-step resolution chain (CLI flag > env >
+- `gflow_cli.profile_store` — profile inventory + default-profile persistence
+  in `$GFLOW_CLI_HOME/config.toml`. Five-step resolution chain (CLI flag > env >
   config > auto-select > raise) with named exceptions
   (`NoProfilesError`, `NoDefaultProfileError`).
 - New auth subcommands: bare `gflow auth`, `gflow auth list`, `gflow auth use <name>`,
@@ -113,7 +128,7 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 - [`skills/gflow-cli/SKILL.md`](skills/gflow-cli/SKILL.md) — installable Claude Code Skill.
 
 ### Removed
-- `flow_cli.providers.FlowProvider` and `flow_cli.models` — superseded by `flow_cli.api`.
+- `gflow_cli.providers.FlowProvider` and `gflow_cli.models` — superseded by `gflow_cli.api`.
 - Legacy CLI stubs: `gflow upload`, `gflow generate`, `gflow status`, `gflow download`,
   `gflow i2v`. Replaced by the wired `gflow video` subgroup.
 

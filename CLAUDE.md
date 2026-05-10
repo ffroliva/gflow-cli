@@ -26,7 +26,7 @@ retry/backoff, structlog, BDD).
 > Note: the layered diagram below describes the **target** architecture
 > (deferred per [PLAN.md ADR #2](PLAN.md#5-decision-log-adrs-in-miniature)).
 > The current package layout is the simpler
-> `src/flow_cli/{api/, cli.py, cli_image.py, cli_video.py, auth.py,
+> `src/gflow_cli/{api/, cli.py, cli_image.py, cli_video.py, auth.py,
 > config.py, paths.py, profile_store.py}`. See
 > [docs/ARCHITECTURE.md](docs/ARCHITECTURE.md) for the full target shape.
 
@@ -46,14 +46,14 @@ Dependency rule: **`domain/` depends on nothing**. `application/` depends on `do
 - **Never add `Co-Authored-By: Claude` (or any AI co-author) to commit messages.** Author attribution is the human user's only.
 - **Sessions belong outside the repo.** Default location is `$LOCALAPPDATA/gflow-cli/profile_*` (Windows) or `~/.local/share/gflow-cli/profile_*` (POSIX) via [`platformdirs`](https://github.com/platformdirs/platformdirs). Never store sessions in `/tmp`, `%TEMP%`, or anywhere the OS auto-reaps.
 - **No `print()` in `src/`** — use `structlog` (or `logging` until structlog lands in Phase 1).
-- **Domain layer is pure** — `src/flow_cli/domain/*` must not import `application/`, `infrastructure/`, or `interfaces/`. No I/O, no frameworks.
+- **Domain layer is pure** — `src/gflow_cli/domain/*` must not import `application/`, `infrastructure/`, or `interfaces/`. No I/O, no frameworks.
 - **Frozen dataclasses for value objects.** Aggregates may have controlled mutation methods, but VOs (AspectRatio, Prompt, JobId, ...) are immutable.
 - **Async all the way down.** Handlers and providers are `async def`. CLI is the only place that calls `asyncio.run(...)`.
 - **TDD is non-negotiable.** Red → Green → Refactor → Commit. Coverage floor: **80% overall**, **90% on `domain/` and `application/`**. See [CONTRIBUTING.md](CONTRIBUTING.md).
 
 ## Coding conventions
 
-- **Python 3.11+**, strict typing (`pyright --strict` on `src/flow_cli/`), `from __future__ import annotations` at the top of every module.
+- **Python 3.11+**, strict typing (`pyright --strict` on `src/gflow_cli/`), `from __future__ import annotations` at the top of every module.
 - **`@dataclass(frozen=True)`** for value objects and DTOs. `Protocol` for ports.
 - **`pathlib.Path`** everywhere — never raw strings for filesystem paths.
 - **Click + Rich** for the CLI, **httpx + Playwright** for I/O, **pytest + pytest-bdd** for tests.
@@ -68,7 +68,7 @@ Run all four BEFORE asking to commit:
 uv run ruff check src tests          # lint
 uv run ruff format --check src tests # formatting
 uv run pyright src                   # types
-uv run pytest -q --cov=flow_cli      # tests + coverage
+uv run pytest -q --cov=gflow_cli      # tests + coverage
 ```
 
 CI runs the same four on every push (see `.github/workflows/ci.yml`).
@@ -78,10 +78,10 @@ CI runs the same four on every push (see `.github/workflows/ci.yml`).
 | I need to… | Read this |
 |---|---|
 | Understand the architecture | [docs/ARCHITECTURE.md](docs/ARCHITECTURE.md) |
-| Add a CLI command | [docs/USAGE.md](docs/USAGE.md) + existing patterns in `src/flow_cli/cli.py` |
-| Add an API route | [PLAN.md § 4 Phase status](PLAN.md#4-phase-status) + existing client in `src/flow_cli/api/client.py` + capture data under `samples/captured/` |
+| Add a CLI command | [docs/USAGE.md](docs/USAGE.md) + existing patterns in `src/gflow_cli/cli.py` |
+| Add an API route | [PLAN.md § 4 Phase status](PLAN.md#4-phase-status) + existing client in `src/gflow_cli/api/client.py` + capture data under `samples/captured/` |
 | Touch auth | [docs/AUTHENTICATION.md](docs/AUTHENTICATION.md) |
-| Add a config knob | [docs/CONFIGURATION.md](docs/CONFIGURATION.md) + `.env.template` + (later) `src/flow_cli/shared/config.py` |
+| Add a config knob | [docs/CONFIGURATION.md](docs/CONFIGURATION.md) + `.env.template` + (later) `src/gflow_cli/shared/config.py` |
 | Write a test | [CONTRIBUTING.md § TDD](CONTRIBUTING.md#test-driven-development-mandatory) + existing patterns in `tests/` |
 | Cut a release | [README § Releases](README.md#releases) — bump version in `pyproject.toml`, update CHANGELOG, `git tag vX.Y.Z`, push |
 | Track a known issue | [KNOWN_ISSUES.md](KNOWN_ISSUES.md) |
@@ -104,7 +104,7 @@ uv run gflow auth login --profile experiments  # named profile
 2. `uv run pytest tests/<area>/test_<thing>.py` — verify it fails for the right reason.
 3. Implement the minimum production code to pass.
 4. Refactor.
-5. `uv run pytest -q --cov=flow_cli` — verify nothing else broke and coverage didn't regress.
+5. `uv run pytest -q --cov=gflow_cli` — verify nothing else broke and coverage didn't regress.
 
 ### Update a doc
 

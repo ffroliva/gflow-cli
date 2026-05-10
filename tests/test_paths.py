@@ -5,7 +5,7 @@ from __future__ import annotations
 from datetime import date
 from pathlib import Path
 
-from flow_cli import paths
+from gflow_cli import paths
 
 
 class TestDefaultRoots:

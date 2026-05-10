@@ -10,10 +10,10 @@ import click
 from rich.console import Console
 from rich.table import Table
 
-from flow_cli import __version__, profile_store
-from flow_cli import auth as auth_mod
-from flow_cli.cli_image import image as _image_group
-from flow_cli.cli_video import video as _video_group
+from gflow_cli import __version__, profile_store
+from gflow_cli import auth as auth_mod
+from gflow_cli.cli_image import image as _image_group
+from gflow_cli.cli_video import video as _video_group
 
 console = Console()
 
@@ -89,7 +89,7 @@ def auth_login(profile: str | None) -> None:
     pdir = asyncio.run(auth_mod.login(name))
     console.print(f"[green]Session saved.[/green] Profile dir: {pdir}")
     # If this was the very first profile, set it as default automatically so
-    # subsequent commands work without explicit --profile / FLOW_CLI_PROFILE.
+    # subsequent commands work without explicit --profile / GFLOW_CLI_PROFILE.
     profiles = profile_store.list_profiles()
     if len(profiles) == 1:
         profile_store.set_default_profile(profiles[0].name)

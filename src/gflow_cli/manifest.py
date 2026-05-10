@@ -18,7 +18,7 @@ from __future__ import annotations
 from dataclasses import dataclass
 from pathlib import Path
 
-from flow_cli.api.video import Aspect
+from gflow_cli.api.video import Aspect
 
 
 @dataclass(frozen=True)

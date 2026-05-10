@@ -3,7 +3,7 @@
 These JSON files are the **ground truth** for what `gflow-cli` sends to and receives from `aisandbox-pa.googleapis.com` and `labs.google/fx/api`. Each one was captured during a live discovery run, then sanitised: UUIDs → `<UUID>`, bearer tokens → `<REDACTED_BEARER>`, image bytes → `<BASE64_IMAGE_BYTES_LEN_N>`, emails → `<EMAIL>`.
 
 Use them when:
-- Implementing or extending a route in `src/flow_cli/api/`
+- Implementing or extending a route in `src/gflow_cli/api/`
 - Writing contract tests in `tests/api/`
 - Debugging a "this used to work" regression after a Flow update
 

@@ -19,11 +19,11 @@
 **Tech Stack:** Python 3.11+, Click, Rich, Playwright (per-Page pool), httpx, **tenacity** (new), **structlog** (already declared in `pyproject.toml`; bootstrap added in T5), **pytest-bdd** (new, dev), pytest-asyncio.
 
 **Discoveries vs spec (informational — do NOT re-do):**
-- `Settings.log_format: LogFormat` is already correctly named in `src/flow_cli/config.py:97` (no rename needed; spec self-review item already applied).
+- `Settings.log_format: LogFormat` is already correctly named in `src/gflow_cli/config.py:97` (no rename needed; spec self-review item already applied).
 - `structlog>=24.0.0` already in `pyproject.toml` `[project] dependencies`. Do **not** `uv add structlog`. Only `tenacity` (production) and `pytest-bdd` (dev) are net-new.
-- `Settings.concurrency: int = Field(default=1, ge=1, le=16)` already declared at `src/flow_cli/config.py:86` — T2 reuses it; do not re-declare.
-- `FlowApiError(RuntimeError)` currently lives at `src/flow_cli/api/client.py:79` with the legacy `(status, body, *, route)` signature. T1 moves it to `src/flow_cli/errors.py` and re-parents under `GFlowError`. The legacy positional signature is preserved (auto-detected in `__init__`) so all 7 existing raise sites in `client.py` continue to compile until T3 rewrites them.
-- Existing `_resolve_profile` / `_make_provider_dir` duplicates: `src/flow_cli/cli_image.py:81,95` + `src/flow_cli/cli_video.py:36,50`. T4b dedups.
+- `Settings.concurrency: int = Field(default=1, ge=1, le=16)` already declared at `src/gflow_cli/config.py:86` — T2 reuses it; do not re-declare.
+- `FlowApiError(RuntimeError)` currently lives at `src/gflow_cli/api/client.py:79` with the legacy `(status, body, *, route)` signature. T1 moves it to `src/gflow_cli/errors.py` and re-parents under `GFlowError`. The legacy positional signature is preserved (auto-detected in `__init__`) so all 7 existing raise sites in `client.py` continue to compile until T3 rewrites them.
+- Existing `_resolve_profile` / `_make_provider_dir` duplicates: `src/gflow_cli/cli_image.py:81,95` + `src/gflow_cli/cli_video.py:36,50`. T4b dedups.
 - 5 wrapped methods needing per-worker Page restructure (T2/T3): `_post_json` (`client.py:~156`), `_post_generate_image` (`client.py:~325`), `download` (`client.py:~250`), `download_image` (`client.py:~290`), `upload_image` (`client.py:~450`).
 - Baseline at HEAD `2f6b936`: 208 tests collected, all green.
 
@@ -34,10 +34,10 @@
 ### New files
 
 ```
-src/flow_cli/errors.py                   ← RFC 9457 exception hierarchy + EXIT_CODE_MAP + ProblemDetails TypedDict
-src/flow_cli/observability.py            ← structlog bootstrap + emit_error_event + emit_unhandled_event
-src/flow_cli/_cli_helpers.py             ← _resolve_profile + _make_provider_dir + _handle_gflow_error + _handle_unhandled_error  (top-level file, NOT a cli/ package)
-src/flow_cli/api/_retry.py               ← tenacity AsyncRetrying setup + Retry-After-aware wait + constants
+src/gflow_cli/errors.py                   ← RFC 9457 exception hierarchy + EXIT_CODE_MAP + ProblemDetails TypedDict
+src/gflow_cli/observability.py            ← structlog bootstrap + emit_error_event + emit_unhandled_event
+src/gflow_cli/_cli_helpers.py             ← _resolve_profile + _make_provider_dir + _handle_gflow_error + _handle_unhandled_error  (top-level file, NOT a cli/ package)
+src/gflow_cli/api/_retry.py               ← tenacity AsyncRetrying setup + Retry-After-aware wait + constants
 tests/test_errors.py                     ← parametrized to_problem_details + EXIT_CODE_MAP isinstance walk + legacy ctor + redaction mandate
 tests/test_observability.py              ← TTY auto-detect + show_locals=False + emit_*_event shape + correlation_id binding
 tests/api/test_retry.py                  ← Event-gated AsyncRetrying + 4xx no-retry table + Retry-After cap + reraise=True
@@ -57,18 +57,18 @@ tests/features/test_image_steps.py
 ### Modified files
 
 ```
-src/flow_cli/api/client.py               ← T2 (Page pool in __aenter__, checkout/checkin) + T3 (rewrite 5 wrapped methods + raise typed errors at parse sites + structlog logger)
-src/flow_cli/cli.py                      ← T4a wraps _run_* via _handle_gflow_error/_handle_unhandled_error; T5 swaps logging.basicConfig → configure_logging
-src/flow_cli/cli_image.py                ← T4a wraps _run_*; T4b drops local _resolve_profile/_make_provider_dir, imports from _cli_helpers
-src/flow_cli/cli_video.py                ← T4a wraps _run_*; T4b same as cli_image
-src/flow_cli/auth.py                     ← T5 swaps logging.getLogger → structlog.get_logger; remove print()
-src/flow_cli/__init__.py                 ← T8 bump __version__ to "0.4.0a1"
+src/gflow_cli/api/client.py               ← T2 (Page pool in __aenter__, checkout/checkin) + T3 (rewrite 5 wrapped methods + raise typed errors at parse sites + structlog logger)
+src/gflow_cli/cli.py                      ← T4a wraps _run_* via _handle_gflow_error/_handle_unhandled_error; T5 swaps logging.basicConfig → configure_logging
+src/gflow_cli/cli_image.py                ← T4a wraps _run_*; T4b drops local _resolve_profile/_make_provider_dir, imports from _cli_helpers
+src/gflow_cli/cli_video.py                ← T4a wraps _run_*; T4b same as cli_image
+src/gflow_cli/auth.py                     ← T5 swaps logging.getLogger → structlog.get_logger; remove print()
+src/gflow_cli/__init__.py                 ← T8 bump __version__ to "0.4.0a1"
 pyproject.toml                           ← T3 adds tenacity; T6 adds pytest-bdd dev dep; T8 bumps version
 PLAN.md                                  ← T0 spike note; T7 marks Phase 4 ✅, Phase 5/6/7 backlog confirmed
 docs/ARCHITECTURE.md                     ← T7 modular-monolith section + Problem Details note
 docs/USAGE.md                            ← T7 error remediation hints + log_format toggle
-docs/CONFIGURATION.md                    ← T7 FLOW_CLI_CONCURRENCY caveat (Page pool memory) + FLOW_CLI_LOG_FORMAT
-.env.template                            ← T7 add FLOW_CLI_LOG_FORMAT, document FLOW_CLI_CONCURRENCY
+docs/CONFIGURATION.md                    ← T7 GFLOW_CLI_CONCURRENCY caveat (Page pool memory) + GFLOW_CLI_LOG_FORMAT
+.env.template                            ← T7 add GFLOW_CLI_LOG_FORMAT, document GFLOW_CLI_CONCURRENCY
 CHANGELOG.md                             ← T7 [0.4.0a1] section
 ```
 
@@ -155,11 +155,11 @@ git commit -m "docs(plan): T0 Page-pool feasibility spike note"
 
 ## Task 1: `errors.py` — RFC 9457 exception hierarchy + EXIT_CODE_MAP
 
-**Goal.** Create `src/flow_cli/errors.py` with the full Problem Details exception hierarchy: `GFlowError` (root) → `FlowApiError` (parent of all API errors, kept as a named class for back-compat) → typed leaves (`AuthExpiredError`, `RateLimitError`, `ContentPolicyError`, `NetworkError`, `WireFormatError`). Plus `ProblemDetails` TypedDict and `EXIT_CODE_MAP` (`isinstance`-walk, subclass-aware). The legacy `FlowApiError(status, body, *, route)` constructor signature is preserved (auto-detected) so all 7 existing raise sites in `client.py` continue to work until T3 rewrites them. Move the existing `FlowApiError` declaration **out** of `client.py` in this task — `client.py` then imports from `flow_cli.errors`.
+**Goal.** Create `src/gflow_cli/errors.py` with the full Problem Details exception hierarchy: `GFlowError` (root) → `FlowApiError` (parent of all API errors, kept as a named class for back-compat) → typed leaves (`AuthExpiredError`, `RateLimitError`, `ContentPolicyError`, `NetworkError`, `WireFormatError`). Plus `ProblemDetails` TypedDict and `EXIT_CODE_MAP` (`isinstance`-walk, subclass-aware). The legacy `FlowApiError(status, body, *, route)` constructor signature is preserved (auto-detected) so all 7 existing raise sites in `client.py` continue to work until T3 rewrites them. Move the existing `FlowApiError` declaration **out** of `client.py` in this task — `client.py` then imports from `gflow_cli.errors`.
 
 **Files.**
-- Create: `src/flow_cli/errors.py`
-- Modify: `src/flow_cli/api/client.py` (delete the old `class FlowApiError(RuntimeError)` block at line ~79; add `from flow_cli.errors import FlowApiError` near the top with the other imports)
+- Create: `src/gflow_cli/errors.py`
+- Modify: `src/gflow_cli/api/client.py` (delete the old `class FlowApiError(RuntimeError)` block at line ~79; add `from gflow_cli.errors import FlowApiError` near the top with the other imports)
 - Test: `tests/test_errors.py`
 
 **Steps.**
@@ -167,14 +167,14 @@ git commit -m "docs(plan): T0 Page-pool feasibility spike note"
 - [ ] **Step 1.1: Write the failing tests first** in `tests/test_errors.py`
 
 ```python
-"""Tests for flow_cli.errors — RFC 9457 Problem Details hierarchy."""
+"""Tests for gflow_cli.errors — RFC 9457 Problem Details hierarchy."""
 from __future__ import annotations
 
 import json
 
 import pytest
 
-from flow_cli.errors import (
+from gflow_cli.errors import (
     EXIT_CODE_MAP,
     AuthExpiredError,
     ContentPolicyError,
@@ -358,9 +358,9 @@ def test_rate_limit_error_carries_retry_after():
 uv run pytest tests/test_errors.py -q
 ```
 
-Expected: every test fails with `ModuleNotFoundError: No module named 'flow_cli.errors'`.
+Expected: every test fails with `ModuleNotFoundError: No module named 'gflow_cli.errors'`.
 
-- [ ] **Step 1.3: Implement `src/flow_cli/errors.py`** — paste the full module from spec §3.1 (lines 39–242) verbatim:
+- [ ] **Step 1.3: Implement `src/gflow_cli/errors.py`** — paste the full module from spec §3.1 (lines 39–242) verbatim:
 
 ```python
 from __future__ import annotations
@@ -480,7 +480,7 @@ class AuthExpiredError(FlowApiError):
 class RateLimitError(FlowApiError):
     problem_type = "https://gflow-cli.dev/errors/rate-limit"
     title = "Rate limit or quota hit"
-    _default_remediation = "Wait a few minutes; reduce FLOW_CLI_CONCURRENCY if persistent."
+    _default_remediation = "Wait a few minutes; reduce GFLOW_CLI_CONCURRENCY if persistent."
 
     def __init__(
         self,
@@ -570,9 +570,9 @@ EXIT_CODE_MAP: dict[type[GFlowError], int] = {
 
 - [ ] **Step 1.4: Move the old `FlowApiError` out of `client.py`**
 
-In `src/flow_cli/api/client.py`:
+In `src/gflow_cli/api/client.py`:
 - Delete the existing `class FlowApiError(RuntimeError):` block (currently at line ~79).
-- Add `from flow_cli.errors import FlowApiError` to the import block at the top (alongside the other `from flow_cli.*` imports).
+- Add `from gflow_cli.errors import FlowApiError` to the import block at the top (alongside the other `from gflow_cli.*` imports).
 
 Don't touch the 7 `raise FlowApiError(resp.status, text, route=...)` raise sites yet — they still compile because the new `FlowApiError.__init__` accepts the legacy positional signature. T3 rewrites them.
 
@@ -591,20 +591,20 @@ Expected: all pass. The 7 existing client.py raise sites continue to work via th
 uv run ruff check src tests
 uv run ruff format --check src tests
 uv run pyright src
-uv run pytest -q --cov=flow_cli --cov-report=term-missing
+uv run pytest -q --cov=gflow_cli --cov-report=term-missing
 ```
 
-Coverage on `src/flow_cli/errors.py` should be ≥ 95% (DoD requirement).
+Coverage on `src/gflow_cli/errors.py` should be ≥ 95% (DoD requirement).
 
 - [ ] **Step 1.7: Commit**
 
 ```bash
-git add src/flow_cli/errors.py src/flow_cli/api/client.py tests/test_errors.py
+git add src/gflow_cli/errors.py src/gflow_cli/api/client.py tests/test_errors.py
 git commit -m "feat(errors): add RFC 9457 Problem Details exception hierarchy"
 ```
 
 **Acceptance criteria.**
-- `src/flow_cli/errors.py` exists with `GFlowError`, `FlowApiError`, 5 typed subclasses, `ProblemDetails` TypedDict, `EXIT_CODE_MAP`.
+- `src/gflow_cli/errors.py` exists with `GFlowError`, `FlowApiError`, 5 typed subclasses, `ProblemDetails` TypedDict, `EXIT_CODE_MAP`.
 - All 9+ tests in `test_errors.py` GREEN (parametrized table counts as 5 rows).
 - `coverage.py` shows `errors.py` ≥ 95%.
 - Existing 208 tests still GREEN — no regressions in the 7 raise sites in `client.py`.
@@ -620,7 +620,7 @@ git commit -m "feat(errors): add RFC 9457 Problem Details exception hierarchy"
 **Security-touched.** Reviewers: `python-reviewer` + `code-reviewer` + `security-reviewer`.
 
 **Files.**
-- Modify: `src/flow_cli/api/client.py` (`__init__`, `__aenter__`, `__aexit__`, new `_checkout_page` / `_checkin_page`)
+- Modify: `src/gflow_cli/api/client.py` (`__init__`, `__aenter__`, `__aexit__`, new `_checkout_page` / `_checkin_page`)
 - Test: `tests/api/test_concurrency.py` (new)
 
 **Steps.**
@@ -642,8 +642,8 @@ from unittest.mock import AsyncMock, MagicMock, patch
 
 import pytest
 
-from flow_cli.api.client import FlowApiClient
-from flow_cli.config import Settings
+from gflow_cli.api.client import FlowApiClient
+from gflow_cli.config import Settings
 
 
 @pytest.fixture
@@ -672,7 +672,7 @@ def fake_context() -> MagicMock:
 @pytest.mark.asyncio
 async def test_aenter_opens_N_pages(tmp_path, settings_n4, fake_context):
     """N=4 → 4 Pages opened on __aenter__."""
-    with patch("flow_cli.api.client.async_playwright") as mock_pw_factory:
+    with patch("gflow_cli.api.client.async_playwright") as mock_pw_factory:
         pw = MagicMock()
         pw.chromium.launch_persistent_context = AsyncMock(return_value=fake_context)
         mock_pw_factory.return_value.start = AsyncMock(return_value=pw)
@@ -685,7 +685,7 @@ async def test_aenter_opens_N_pages(tmp_path, settings_n4, fake_context):
 
 @pytest.mark.asyncio
 async def test_checkout_checkin_returns_same_page(tmp_path, settings_n4, fake_context):
-    with patch("flow_cli.api.client.async_playwright") as mock_pw_factory:
+    with patch("gflow_cli.api.client.async_playwright") as mock_pw_factory:
         pw = MagicMock()
         pw.chromium.launch_persistent_context = AsyncMock(return_value=fake_context)
         mock_pw_factory.return_value.start = AsyncMock(return_value=pw)
@@ -708,7 +708,7 @@ async def test_parallel_checkouts_hold_N_distinct_pages(tmp_path, settings_n4, f
         await gate.wait()
         client._checkin_page(page)
 
-    with patch("flow_cli.api.client.async_playwright") as mock_pw_factory:
+    with patch("gflow_cli.api.client.async_playwright") as mock_pw_factory:
         pw = MagicMock()
         pw.chromium.launch_persistent_context = AsyncMock(return_value=fake_context)
         mock_pw_factory.return_value.start = AsyncMock(return_value=pw)
@@ -731,7 +731,7 @@ async def test_parallel_checkouts_hold_N_distinct_pages(tmp_path, settings_n4, f
 async def test_aenter_with_concurrency_1_opens_one_page(tmp_path, fake_context):
     """Default N=1 retains single-Page behavior."""
     settings = Settings(concurrency=1, profile="t", default_profile="t", output_dir=tmp_path)
-    with patch("flow_cli.api.client.async_playwright") as mock_pw_factory:
+    with patch("gflow_cli.api.client.async_playwright") as mock_pw_factory:
         pw = MagicMock()
         pw.chromium.launch_persistent_context = AsyncMock(return_value=fake_context)
         mock_pw_factory.return_value.start = AsyncMock(return_value=pw)
@@ -743,7 +743,7 @@ async def test_aenter_with_concurrency_1_opens_one_page(tmp_path, fake_context):
 @pytest.mark.asyncio
 async def test_aexit_closes_all_pages(tmp_path, settings_n4, fake_context):
     """All N Pages closed on __aexit__ (resource cleanup)."""
-    with patch("flow_cli.api.client.async_playwright") as mock_pw_factory:
+    with patch("gflow_cli.api.client.async_playwright") as mock_pw_factory:
         pw = MagicMock()
         pw.chromium.launch_persistent_context = AsyncMock(return_value=fake_context)
         mock_pw_factory.return_value.start = AsyncMock(return_value=pw)
@@ -762,7 +762,7 @@ uv run pytest tests/api/test_concurrency.py -q
 
 Expected: tests fail because `FlowApiClient` lacks `_pages`, `_page_queue`, `_checkout_page`, `_checkin_page`.
 
-- [ ] **Step 2.3: Implement the Page pool in `src/flow_cli/api/client.py`**
+- [ ] **Step 2.3: Implement the Page pool in `src/gflow_cli/api/client.py`**
 
 In `FlowApiClient.__init__`, add:
 
@@ -854,13 +854,13 @@ Expected: 5 new concurrency tests + 208 existing = 213 GREEN. Existing tests sho
 uv run ruff check src tests
 uv run ruff format --check src tests
 uv run pyright src
-uv run pytest -q --cov=flow_cli
+uv run pytest -q --cov=gflow_cli
 ```
 
 - [ ] **Step 2.6: Commit**
 
 ```bash
-git add src/flow_cli/api/client.py tests/api/test_concurrency.py
+git add src/gflow_cli/api/client.py tests/api/test_concurrency.py
 git commit -m "feat(api): add per-worker Page pool to FlowApiClient"
 ```
 
@@ -875,13 +875,13 @@ git commit -m "feat(api): add per-worker Page pool to FlowApiClient"
 
 ## Task 3: Retry policy + 4xx classification + structlog logger swap
 
-**Goal.** Extract `tenacity.AsyncRetrying` setup into `src/flow_cli/api/_retry.py` (private). Rewrite the 5 wrapped methods in `client.py` to (a) use the per-worker Page model from T2, (b) wrap the per-attempt closure in the retry loop, (c) re-mint reCAPTCHA inside the loop body on the worker's own Page, (d) classify the response at the parse site → raise typed errors (`AuthExpiredError`/`RateLimitError`/`ContentPolicyError`/`NetworkError`/`WireFormatError`) with full RFC 9457 fields including `instance = f"gflow:error:{correlation_id}"` (read from structlog contextvars; empty string if not bound). Honor `Retry-After` capped at 60s. Use `reraise=True` so original exceptions surface (no `RetryError` leak). Swap `logging.getLogger(__name__)` to `structlog.get_logger(__name__)` in `client.py` (full migration of the other modules happens in T5).
+**Goal.** Extract `tenacity.AsyncRetrying` setup into `src/gflow_cli/api/_retry.py` (private). Rewrite the 5 wrapped methods in `client.py` to (a) use the per-worker Page model from T2, (b) wrap the per-attempt closure in the retry loop, (c) re-mint reCAPTCHA inside the loop body on the worker's own Page, (d) classify the response at the parse site → raise typed errors (`AuthExpiredError`/`RateLimitError`/`ContentPolicyError`/`NetworkError`/`WireFormatError`) with full RFC 9457 fields including `instance = f"gflow:error:{correlation_id}"` (read from structlog contextvars; empty string if not bound). Honor `Retry-After` capped at 60s. Use `reraise=True` so original exceptions surface (no `RetryError` leak). Swap `logging.getLogger(__name__)` to `structlog.get_logger(__name__)` in `client.py` (full migration of the other modules happens in T5).
 
 **Security-touched.** Reviewers: `python-reviewer` + `code-reviewer` + `security-reviewer` (retry on auth-bearing requests; redaction in `WireFormatError.discovery.body_prefix_redacted`).
 
 **Files.**
-- Create: `src/flow_cli/api/_retry.py`
-- Modify: `src/flow_cli/api/client.py` (rewrite `_post_json`, `_post_generate_image`, `download`, `download_image`, `upload_image`)
+- Create: `src/gflow_cli/api/_retry.py`
+- Modify: `src/gflow_cli/api/client.py` (rewrite `_post_json`, `_post_generate_image`, `download`, `download_image`, `upload_image`)
 - Modify: `pyproject.toml` (add `tenacity>=8.2`)
 - Test: `tests/api/test_retry.py` (new)
 - Modify: `tests/api/test_client.py` and `tests/api/test_client_image.py` and `tests/api/test_client_generate_video.py` only if they break (likely not — the legacy `FlowApiError` constructor still works, and the new typed errors `isinstance` of `FlowApiError` so `except FlowApiError` clauses continue to catch).
@@ -907,13 +907,13 @@ from unittest.mock import AsyncMock, MagicMock
 
 import pytest
 
-from flow_cli.api._retry import (
+from gflow_cli.api._retry import (
     MAX_ATTEMPTS,
     RETRY_AFTER_CAP_SECONDS,
     parse_retry_after,
     post_with_retry,
 )
-from flow_cli.errors import (
+from gflow_cli.errors import (
     AuthExpiredError,
     NetworkError,
     RateLimitError,
@@ -1013,7 +1013,7 @@ async def test_event_gated_retry_does_not_block_real_time():
         return _resp(503)
 
     # Use a custom retry config with near-zero wait for the test only.
-    from flow_cli.api._retry import _make_retrying
+    from gflow_cli.api._retry import _make_retrying
 
     retrying = _make_retrying(wait_seconds=lambda _attempt: 0)
     with pytest.raises(NetworkError):
@@ -1031,9 +1031,9 @@ async def test_event_gated_retry_does_not_block_real_time():
 uv run pytest tests/api/test_retry.py -q
 ```
 
-Expected: ImportError on `flow_cli.api._retry`.
+Expected: ImportError on `gflow_cli.api._retry`.
 
-- [ ] **Step 3.4: Implement `src/flow_cli/api/_retry.py`**
+- [ ] **Step 3.4: Implement `src/gflow_cli/api/_retry.py`**
 
 ```python
 """Private retry layer for FlowApiClient. tenacity.AsyncRetrying with
@@ -1060,7 +1060,7 @@ from tenacity import (
     wait_base,
 )
 
-from flow_cli.errors import NetworkError, RateLimitError
+from gflow_cli.errors import NetworkError, RateLimitError
 
 MAX_ATTEMPTS = 3
 RETRY_AFTER_CAP_SECONDS = 60.0
@@ -1150,8 +1150,8 @@ For each of `_post_json`, `_post_generate_image`, `download`, `download_image`, 
 import structlog
 import asyncio  # already imported
 
-from flow_cli.api._retry import parse_retry_after, post_with_retry
-from flow_cli.errors import (
+from gflow_cli.api._retry import parse_retry_after, post_with_retry
+from gflow_cli.errors import (
     AuthExpiredError,
     ContentPolicyError,
     FlowApiError,
@@ -1283,18 +1283,18 @@ Expected: 7 retry tests + 5 concurrency tests + all existing tests pass. Existin
 uv run ruff check src tests
 uv run ruff format --check src tests
 uv run pyright src
-uv run pytest -q --cov=flow_cli
+uv run pytest -q --cov=gflow_cli
 ```
 
 - [ ] **Step 3.8: Commit**
 
 ```bash
-git add src/flow_cli/api/_retry.py src/flow_cli/api/client.py tests/api/test_retry.py pyproject.toml uv.lock
+git add src/gflow_cli/api/_retry.py src/gflow_cli/api/client.py tests/api/test_retry.py pyproject.toml uv.lock
 git commit -m "feat(api): add tenacity retry layer with typed error classification"
 ```
 
 **Acceptance criteria.**
-- `src/flow_cli/api/_retry.py` exists. `MAX_ATTEMPTS=3`, `RETRY_AFTER_CAP_SECONDS=60.0`.
+- `src/gflow_cli/api/_retry.py` exists. `MAX_ATTEMPTS=3`, `RETRY_AFTER_CAP_SECONDS=60.0`.
 - All 7 retry tests GREEN; mock call count == 3 on 5xx; `Retry-After` honored and capped at 60s; `reraise=True` (no `RetryError` leak — tests use `pytest.raises(NetworkError)`).
 - `_post_generate_image`, `_post_json`, `download`, `download_image`, `upload_image` all use the per-worker Page checkout pattern.
 - `WireFormatError` raise sites carry full discovery payload including `body_prefix_redacted`.
@@ -1305,13 +1305,13 @@ git commit -m "feat(api): add tenacity retry layer with typed error classificati
 
 ## Task 4a: `_handle_gflow_error` + `_handle_unhandled_error` in `_cli_helpers.py`
 
-**Goal.** Create `src/flow_cli/_cli_helpers.py` (top-level file, NOT a `cli/` package — avoids collision with the existing `cli.py`). Add the two CLI-boundary handlers that catch `GFlowError` (and subclasses) vs. anything else, emit the appropriate structured event via `flow_cli.observability` (T5 ships the helpers; for T4a the handlers import lazily so the call sites don't break before T5 lands), print Rich-formatted user-facing messages with remediation hints, and exit with the right code via `EXIT_CODE_MAP`. Wire each `_run_*` async helper in `cli.py`/`cli_image.py`/`cli_video.py` to dispatch through these handlers.
+**Goal.** Create `src/gflow_cli/_cli_helpers.py` (top-level file, NOT a `cli/` package — avoids collision with the existing `cli.py`). Add the two CLI-boundary handlers that catch `GFlowError` (and subclasses) vs. anything else, emit the appropriate structured event via `gflow_cli.observability` (T5 ships the helpers; for T4a the handlers import lazily so the call sites don't break before T5 lands), print Rich-formatted user-facing messages with remediation hints, and exit with the right code via `EXIT_CODE_MAP`. Wire each `_run_*` async helper in `cli.py`/`cli_image.py`/`cli_video.py` to dispatch through these handlers.
 
 **Files.**
-- Create: `src/flow_cli/_cli_helpers.py` (with `_handle_gflow_error` + `_handle_unhandled_error` only — no `_resolve_profile`/`_make_provider_dir` yet; T4b moves those)
-- Modify: `src/flow_cli/cli.py` (wrap `_run_*` calls)
-- Modify: `src/flow_cli/cli_image.py` (wrap `_run_*` calls; existing `_resolve_profile` stays put — T4b dedups)
-- Modify: `src/flow_cli/cli_video.py` (wrap `_run_*` calls; existing `_resolve_profile` stays put)
+- Create: `src/gflow_cli/_cli_helpers.py` (with `_handle_gflow_error` + `_handle_unhandled_error` only — no `_resolve_profile`/`_make_provider_dir` yet; T4b moves those)
+- Modify: `src/gflow_cli/cli.py` (wrap `_run_*` calls)
+- Modify: `src/gflow_cli/cli_image.py` (wrap `_run_*` calls; existing `_resolve_profile` stays put — T4b dedups)
+- Modify: `src/gflow_cli/cli_video.py` (wrap `_run_*` calls; existing `_resolve_profile` stays put)
 - Test: `tests/cli/test_error_handling.py` (new)
 
 **Steps.**
@@ -1327,8 +1327,8 @@ from unittest.mock import patch
 import pytest
 from click.testing import CliRunner
 
-from flow_cli.cli import cli
-from flow_cli.errors import (
+from gflow_cli.cli import cli
+from gflow_cli.errors import (
     AuthExpiredError,
     ContentPolicyError,
     NetworkError,
@@ -1355,7 +1355,7 @@ from flow_cli.errors import (
 def test_cli_error_to_exit_code_and_remediation(exc, expected_exit_code, expected_in_output):
     runner = CliRunner()
     # Mock the deepest async helper for one command; example: `gflow image t2i`.
-    with patch("flow_cli.cli_image._run_t2i", side_effect=exc):
+    with patch("gflow_cli.cli_image._run_t2i", side_effect=exc):
         result = runner.invoke(cli, ["image", "t2i", "test prompt"])
     assert result.exit_code == expected_exit_code, result.output
     assert expected_in_output.lower() in result.output.lower()
@@ -1367,7 +1367,7 @@ def test_cli_unhandled_exception_exits_1_and_emits_unhandled_event(caplog):
     log_capture: list = []
     structlog.configure(processors=[structlog.testing.LogCapture(log_capture)])  # noqa: SLF001
     runner = CliRunner()
-    with patch("flow_cli.cli_image._run_t2i", side_effect=ValueError("bad input")):
+    with patch("gflow_cli.cli_image._run_t2i", side_effect=ValueError("bad input")):
         result = runner.invoke(cli, ["image", "t2i", "test prompt"])
     assert result.exit_code == 1
     events = [e for e in log_capture if e.get("event") == "error_unhandled"]
@@ -1386,7 +1386,7 @@ def test_cli_gflow_error_emits_error_raised_event_with_correlation_id():
     structlog.configure(processors=[structlog.testing.LogCapture(log_capture)])  # noqa: SLF001
     runner = CliRunner()
     exc = AuthExpiredError(detail="401", status=401, route="createProject")
-    with patch("flow_cli.cli_image._run_t2i", side_effect=exc):
+    with patch("gflow_cli.cli_image._run_t2i", side_effect=exc):
         result = runner.invoke(cli, ["image", "t2i", "test prompt"])
     assert result.exit_code == 3
     events = [e for e in log_capture if e.get("event") == "error_raised"]
@@ -1414,7 +1414,7 @@ def test_cli_wire_format_error_logs_discovery_fields():
             "body_prefix_redacted": "{\"error\": \"...\"}",
         },
     )
-    with patch("flow_cli.cli_image._run_t2i", side_effect=exc):
+    with patch("gflow_cli.cli_image._run_t2i", side_effect=exc):
         result = runner.invoke(cli, ["image", "t2i", "test"])
     events = [e for e in log_capture if e.get("event") == "error_raised"]
     pd = events[0]["problem"]
@@ -1429,7 +1429,7 @@ def test_content_policy_logs_upstream_status_200_extension():
     structlog.configure(processors=[structlog.testing.LogCapture(log_capture)])  # noqa: SLF001
     runner = CliRunner()
     exc = ContentPolicyError(detail="empty media[]")
-    with patch("flow_cli.cli_image._run_t2i", side_effect=exc):
+    with patch("gflow_cli.cli_image._run_t2i", side_effect=exc):
         result = runner.invoke(cli, ["image", "t2i", "test"])
     events = [e for e in log_capture if e.get("event") == "error_raised"]
     assert events[0].get("upstream_status") == 200
@@ -1443,9 +1443,9 @@ def test_content_policy_logs_upstream_status_200_extension():
 uv run pytest tests/cli/test_error_handling.py -q
 ```
 
-Expected: ImportError on `flow_cli._cli_helpers` or attribute errors on missing handlers.
+Expected: ImportError on `gflow_cli._cli_helpers` or attribute errors on missing handlers.
 
-- [ ] **Step 4a.3: Implement `src/flow_cli/_cli_helpers.py`** (handlers only — helpers in T4b)
+- [ ] **Step 4a.3: Implement `src/gflow_cli/_cli_helpers.py`** (handlers only — helpers in T4b)
 
 ```python
 """CLI-boundary handlers shared across cli.py / cli_image.py / cli_video.py.
@@ -1461,7 +1461,7 @@ import click
 import structlog
 from rich.console import Console
 
-from flow_cli.errors import EXIT_CODE_MAP, GFlowError
+from gflow_cli.errors import EXIT_CODE_MAP, GFlowError
 
 _logger = structlog.get_logger(__name__)
 _console = Console()
@@ -1477,11 +1477,11 @@ def _exit_code_for(exc: GFlowError) -> int:
 def _handle_gflow_error(exc: GFlowError, *, cli_command: str) -> int:
     """Print user-facing message + remediation, emit error_raised event, return exit code.
 
-    Lazy imports `flow_cli.observability` so this module is usable even before
+    Lazy imports `gflow_cli.observability` so this module is usable even before
     T5 lands (observability bootstrap).
     """
     try:
-        from flow_cli.observability import emit_error_event
+        from gflow_cli.observability import emit_error_event
         emit_error_event(_logger, exc, cli_command=cli_command)
     except ImportError:
         # T4a may land before T5; degrade gracefully.
@@ -1500,7 +1500,7 @@ def _handle_gflow_error(exc: GFlowError, *, cli_command: str) -> int:
 def _handle_unhandled_error(exc: BaseException, *, cli_command: str) -> int:
     """Catch-all for non-GFlowError. Privacy-safe: hashes message+stack, never logs raw."""
     try:
-        from flow_cli.observability import emit_unhandled_event
+        from gflow_cli.observability import emit_unhandled_event
         emit_unhandled_event(_logger, exc, cli_command=cli_command)
     except ImportError:
         import hashlib, traceback
@@ -1540,10 +1540,10 @@ def run_with_handlers(coro_factory, *, cli_command: str) -> None:
 
 - [ ] **Step 4a.4: Wire `_run_*` callers via `run_with_handlers`**
 
-In `src/flow_cli/cli_image.py`, find the existing pattern (typically `asyncio.run(_run_t2i(...))` inside the Click command body) and replace with:
+In `src/gflow_cli/cli_image.py`, find the existing pattern (typically `asyncio.run(_run_t2i(...))` inside the Click command body) and replace with:
 
 ```python
-from flow_cli._cli_helpers import run_with_handlers
+from gflow_cli._cli_helpers import run_with_handlers
 
 @image_grp.command()
 @click.argument("prompt")
@@ -1569,12 +1569,12 @@ uv run pytest -q
 - [ ] **Step 4a.7: Commit**
 
 ```bash
-git add src/flow_cli/_cli_helpers.py src/flow_cli/cli.py src/flow_cli/cli_image.py src/flow_cli/cli_video.py tests/cli/test_error_handling.py
+git add src/gflow_cli/_cli_helpers.py src/gflow_cli/cli.py src/gflow_cli/cli_image.py src/gflow_cli/cli_video.py tests/cli/test_error_handling.py
 git commit -m "feat(cli): add unified GFlowError + unhandled-exception handlers"
 ```
 
 **Acceptance criteria.**
-- `src/flow_cli/_cli_helpers.py` exists at top level (NOT under a `cli/` package).
+- `src/gflow_cli/_cli_helpers.py` exists at top level (NOT under a `cli/` package).
 - `_handle_gflow_error` returns the right exit code for each typed error (3/4/5/6/7).
 - `_handle_unhandled_error` returns 1; emits `error_unhandled` with `message_hash` + `stack_hash` only (no raw message).
 - All 7 tests in `test_error_handling.py` GREEN.
@@ -1587,9 +1587,9 @@ git commit -m "feat(cli): add unified GFlowError + unhandled-exception handlers"
 **Goal.** Move `_resolve_profile` and `_make_provider_dir` from `cli_image.py` (lines 81 and 95) and `cli_video.py` (lines 36 and 50) to `_cli_helpers.py`. Add a negative import test asserting that neither helper is defined locally in `cli_image.py` / `cli_video.py` after the move (prevents future drift).
 
 **Files.**
-- Modify: `src/flow_cli/_cli_helpers.py` (add `_resolve_profile`, `_make_provider_dir`)
-- Modify: `src/flow_cli/cli_image.py` (remove local definitions; import from `_cli_helpers`)
-- Modify: `src/flow_cli/cli_video.py` (same)
+- Modify: `src/gflow_cli/_cli_helpers.py` (add `_resolve_profile`, `_make_provider_dir`)
+- Modify: `src/gflow_cli/cli_image.py` (remove local definitions; import from `_cli_helpers`)
+- Modify: `src/gflow_cli/cli_video.py` (same)
 - Test: `tests/cli/test_helpers.py` (new)
 
 **Steps.**
@@ -1612,7 +1612,7 @@ def _toplevel_function_names(path: Path) -> set[str]:
 
 
 def test_helpers_relocated_to_cli_helpers_module():
-    from flow_cli import _cli_helpers
+    from gflow_cli import _cli_helpers
     assert callable(_cli_helpers._resolve_profile)
     assert callable(_cli_helpers._make_provider_dir)
 
@@ -1620,14 +1620,14 @@ def test_helpers_relocated_to_cli_helpers_module():
 @pytest.mark.parametrize(
     "module_path",
     [
-        Path("src/flow_cli/cli_image.py"),
-        Path("src/flow_cli/cli_video.py"),
+        Path("src/gflow_cli/cli_image.py"),
+        Path("src/gflow_cli/cli_video.py"),
     ],
 )
 def test_no_local_helper_definitions_in_cli_modules(module_path):
     """Negative test — drift prevention. After T4b, neither cli_image.py nor
     cli_video.py defines `_resolve_profile` or `_make_provider_dir` locally;
-    they import from `flow_cli._cli_helpers`.
+    they import from `gflow_cli._cli_helpers`.
     """
     names = _toplevel_function_names(module_path)
     assert "_resolve_profile" not in names, (
@@ -1639,14 +1639,14 @@ def test_no_local_helper_definitions_in_cli_modules(module_path):
 
 
 def test_resolve_profile_returns_default(tmp_path, monkeypatch):
-    from flow_cli._cli_helpers import _resolve_profile
+    from gflow_cli._cli_helpers import _resolve_profile
     # mock profile_store / config so we don't depend on real env
     # (use the same fixtures as the existing tests/test_profile_store.py)
     # ... shape this to mirror the pre-existing _resolve_profile semantics ...
 
 
 def test_make_provider_dir_creates_path(tmp_path, monkeypatch):
-    from flow_cli._cli_helpers import _make_provider_dir
+    from gflow_cli._cli_helpers import _make_provider_dir
     # ... mirror existing semantics ...
 ```
 
@@ -1658,7 +1658,7 @@ def test_make_provider_dir_creates_path(tmp_path, monkeypatch):
 
 - [ ] **Step 4b.3: Move both helpers** to `_cli_helpers.py`
 
-Read the current implementation of `_resolve_profile` and `_make_provider_dir` in `cli_image.py:81-100` and `cli_video.py:36-65`. They should be identical (or near-identical — verify and reconcile to one canonical form). Paste the canonical version into `_cli_helpers.py`. Remove the local definitions from both `cli_image.py` and `cli_video.py`. Add `from flow_cli._cli_helpers import _resolve_profile, _make_provider_dir` to both call-site modules.
+Read the current implementation of `_resolve_profile` and `_make_provider_dir` in `cli_image.py:81-100` and `cli_video.py:36-65`. They should be identical (or near-identical — verify and reconcile to one canonical form). Paste the canonical version into `_cli_helpers.py`. Remove the local definitions from both `cli_image.py` and `cli_video.py`. Add `from gflow_cli._cli_helpers import _resolve_profile, _make_provider_dir` to both call-site modules.
 
 - [ ] **Step 4b.4: Verify green**
 
@@ -1674,7 +1674,7 @@ The negative import test is the key drift-prevention assertion.
 - [ ] **Step 4b.6: Commit**
 
 ```bash
-git add src/flow_cli/_cli_helpers.py src/flow_cli/cli_image.py src/flow_cli/cli_video.py tests/cli/test_helpers.py
+git add src/gflow_cli/_cli_helpers.py src/gflow_cli/cli_image.py src/gflow_cli/cli_video.py tests/cli/test_helpers.py
 git commit -m "refactor(cli): relocate _resolve_profile and _make_provider_dir to _cli_helpers"
 ```
 
@@ -1687,12 +1687,12 @@ git commit -m "refactor(cli): relocate _resolve_profile and _make_provider_dir t
 
 ## Task 5: `observability.py` — structlog bootstrap + emit_*_event + full migration
 
-**Goal.** Create `src/flow_cli/observability.py` with `configure_logging`, `emit_error_event`, `emit_unhandled_event`. Bootstrap structlog with TTY-auto detection, `show_locals=False` exception renderer, and `bind_contextvars` for `cli_version` + `correlation_id` at process boundary. Replace `logging.basicConfig` in `cli.py` and the remaining `logging.getLogger` in `auth.py` with `configure_logging` + `structlog.get_logger`. Confirm `caplog` integration still works for legacy tests.
+**Goal.** Create `src/gflow_cli/observability.py` with `configure_logging`, `emit_error_event`, `emit_unhandled_event`. Bootstrap structlog with TTY-auto detection, `show_locals=False` exception renderer, and `bind_contextvars` for `cli_version` + `correlation_id` at process boundary. Replace `logging.basicConfig` in `cli.py` and the remaining `logging.getLogger` in `auth.py` with `configure_logging` + `structlog.get_logger`. Confirm `caplog` integration still works for legacy tests.
 
 **Files.**
-- Create: `src/flow_cli/observability.py`
-- Modify: `src/flow_cli/cli.py` (swap `logging.basicConfig` → `configure_logging` at process entry, bind `cli_version` + new `correlation_id` per invocation)
-- Modify: `src/flow_cli/auth.py` (swap `logging.getLogger` → `structlog.get_logger`; remove the `print()` at line 58)
+- Create: `src/gflow_cli/observability.py`
+- Modify: `src/gflow_cli/cli.py` (swap `logging.basicConfig` → `configure_logging` at process entry, bind `cli_version` + new `correlation_id` per invocation)
+- Modify: `src/gflow_cli/auth.py` (swap `logging.getLogger` → `structlog.get_logger`; remove the `print()` at line 58)
 - Test: `tests/test_observability.py` (new)
 
 **Steps.**
@@ -1711,13 +1711,13 @@ from unittest.mock import patch
 import pytest
 import structlog
 
-from flow_cli.errors import AuthExpiredError, ContentPolicyError, WireFormatError
-from flow_cli.observability import (
+from gflow_cli.errors import AuthExpiredError, ContentPolicyError, WireFormatError
+from gflow_cli.observability import (
     configure_logging,
     emit_error_event,
     emit_unhandled_event,
 )
-from flow_cli.config import LogFormat
+from gflow_cli.config import LogFormat
 
 
 def test_auto_detects_tty_renders_text(monkeypatch):
@@ -1841,7 +1841,7 @@ def test_correlation_id_bound_at_boundary_appears_in_events():
 
 - [ ] **Step 5.2: Verify red**
 
-- [ ] **Step 5.3: Implement `src/flow_cli/observability.py`**
+- [ ] **Step 5.3: Implement `src/gflow_cli/observability.py`**
 
 ```python
 """structlog bootstrap + structured error event emitters.
@@ -1860,9 +1860,9 @@ import traceback
 
 import structlog
 
-from flow_cli import __version__ as _CLI_VERSION
-from flow_cli.config import LogFormat
-from flow_cli.errors import ContentPolicyError, GFlowError, WireFormatError
+from gflow_cli import __version__ as _CLI_VERSION
+from gflow_cli.config import LogFormat
+from gflow_cli.errors import ContentPolicyError, GFlowError, WireFormatError
 
 
 def configure_logging(log_format: LogFormat = LogFormat.AUTO) -> None:
@@ -1946,14 +1946,14 @@ def emit_unhandled_event(
 
 - [ ] **Step 5.4: Wire `configure_logging` at process boundary in `cli.py`**
 
-Replace the existing `logging.basicConfig(...)` call in `src/flow_cli/cli.py:52` with:
+Replace the existing `logging.basicConfig(...)` call in `src/gflow_cli/cli.py:52` with:
 
 ```python
 import uuid
 import structlog
-from flow_cli import __version__ as CLI_VERSION
-from flow_cli.observability import configure_logging
-from flow_cli.config import Settings
+from gflow_cli import __version__ as CLI_VERSION
+from gflow_cli.observability import configure_logging
+from gflow_cli.config import Settings
 
 @click.group()
 @click.option("--verbose", "-v", is_flag=True, help="Verbose logging.")
@@ -1977,7 +1977,7 @@ Remove `import logging` from `cli.py`.
 
 - [ ] **Step 5.5: Migrate `auth.py`**
 
-In `src/flow_cli/auth.py`:
+In `src/gflow_cli/auth.py`:
 - `import logging` → `import structlog`
 - `logger = logging.getLogger(__name__)` → `logger = structlog.get_logger(__name__)`
 - `print(...)` at line 58 → `_console = Console(); _console.print(...)` (or remove if it's debug-only output that the structured log already covers)
@@ -1997,12 +1997,12 @@ Expected: 8 new observability tests + all existing pass. `caplog` integration in
 - [ ] **Step 5.8: Commit**
 
 ```bash
-git add src/flow_cli/observability.py src/flow_cli/cli.py src/flow_cli/auth.py tests/test_observability.py
+git add src/gflow_cli/observability.py src/gflow_cli/cli.py src/gflow_cli/auth.py tests/test_observability.py
 git commit -m "feat(observability): structlog bootstrap with error_raised/error_unhandled events"
 ```
 
 **Acceptance criteria.**
-- `src/flow_cli/observability.py` exists. Coverage ≥ 95%.
+- `src/gflow_cli/observability.py` exists. Coverage ≥ 95%.
 - All 8 observability tests GREEN.
 - `git grep "import logging" src/` returns NO hits in non-test code.
 - `git grep "print(" src/` shows only Rich `console.print` (Click/CLI output is allowed via Rich, raw `print()` is not).
@@ -2068,7 +2068,7 @@ def fixtures_dir() -> Path:
 
 @pytest.fixture(autouse=True)
 def _isolate_tmp_output(tmp_path, monkeypatch):
-    monkeypatch.setenv("FLOW_CLI_OUTPUT_DIR", str(tmp_path))
+    monkeypatch.setenv("GFLOW_CLI_OUTPUT_DIR", str(tmp_path))
     yield
 ```
 
@@ -2182,8 +2182,8 @@ import pytest
 from click.testing import CliRunner
 from pytest_bdd import given, scenarios, then, when
 
-from flow_cli.cli import cli
-from flow_cli.errors import ContentPolicyError, WireFormatError
+from gflow_cli.cli import cli
+from gflow_cli.errors import ContentPolicyError, WireFormatError
 
 scenarios("image.feature")
 
@@ -2216,25 +2216,25 @@ def _mock_wire_format(mock_flow_client):
 
 @when('I run "gflow image t2i a peaceful lake"')
 def _run_t2i_lake(runner, cli_result_holder, mock_flow_client):
-    with patch("flow_cli.cli_image.FlowApiClient", return_value=mock_flow_client):
+    with patch("gflow_cli.cli_image.FlowApiClient", return_value=mock_flow_client):
         cli_result_holder["result"] = runner.invoke(cli, ["image", "t2i", "a peaceful lake"])
 
 
 @when('I run "gflow image t2i mountains -n 4"')
 def _run_t2i_n4(runner, cli_result_holder, mock_flow_client):
-    with patch("flow_cli.cli_image.FlowApiClient", return_value=mock_flow_client):
+    with patch("gflow_cli.cli_image.FlowApiClient", return_value=mock_flow_client):
         cli_result_holder["result"] = runner.invoke(cli, ["image", "t2i", "mountains", "-n", "4"])
 
 
 @when('I run "gflow image t2i something rejected"')
 def _run_t2i_rejected(runner, cli_result_holder, mock_flow_client):
-    with patch("flow_cli.cli_image.FlowApiClient", return_value=mock_flow_client):
+    with patch("gflow_cli.cli_image.FlowApiClient", return_value=mock_flow_client):
         cli_result_holder["result"] = runner.invoke(cli, ["image", "t2i", "something rejected"])
 
 
 @when('I run "gflow image t2i wire-fail"')
 def _run_t2i_wire_fail(runner, cli_result_holder, mock_flow_client):
-    with patch("flow_cli.cli_image.FlowApiClient", return_value=mock_flow_client):
+    with patch("gflow_cli.cli_image.FlowApiClient", return_value=mock_flow_client):
         cli_result_holder["result"] = runner.invoke(cli, ["image", "t2i", "wire-fail"])
 
 
@@ -2319,7 +2319,7 @@ git commit -m "test(bdd): add pytest-bdd scenarios for auth/video/image"
 
 ## Task 7: Documentation (USAGE / CONFIGURATION / CHANGELOG / .env.template / PLAN.md / ARCHITECTURE.md)
 
-**Goal.** Update user-facing docs for Phase 4. Add the modular monolith section + Problem Details note to `docs/ARCHITECTURE.md`. Document `FLOW_CLI_CONCURRENCY` semantics + memory cost. Document `FLOW_CLI_LOG_FORMAT`. Mark Phase 4 ✅ in `PLAN.md` and confirm Phase 5/6/7 backlog. Add `[0.4.0a1]` to `CHANGELOG.md`.
+**Goal.** Update user-facing docs for Phase 4. Add the modular monolith section + Problem Details note to `docs/ARCHITECTURE.md`. Document `GFLOW_CLI_CONCURRENCY` semantics + memory cost. Document `GFLOW_CLI_LOG_FORMAT`. Mark Phase 4 ✅ in `PLAN.md` and confirm Phase 5/6/7 backlog. Add `[0.4.0a1]` to `CHANGELOG.md`.
 
 **Files.**
 - Modify: `docs/USAGE.md`
@@ -2344,7 +2344,7 @@ git commit -m "test(bdd): add pytest-bdd scenarios for auth/video/image"
 | 1         | unhandled exception    | Re-run with `--verbose`; file a bug if it persists              |
 | 2         | usage error (Click)    | Standard CLI usage error                                        |
 | 3         | `AuthExpiredError`     | `gflow auth login --profile <name>`                             |
-| 4         | `RateLimitError`       | Wait + reduce `FLOW_CLI_CONCURRENCY`                            |
+| 4         | `RateLimitError`       | Wait + reduce `GFLOW_CLI_CONCURRENCY`                            |
 | 5         | `ContentPolicyError`   | Soften prompt wording                                           |
 | 6         | `NetworkError`         | Check connectivity                                              |
 | 7         | `WireFormatError`      | File a bug (Flow API shape changed)                             |
@@ -2355,13 +2355,13 @@ All error events are logged in structured form with stable fields (`error_class`
 - [ ] **Step 7.2: `docs/CONFIGURATION.md`** — add:
 
 ```markdown
-### `FLOW_CLI_CONCURRENCY` (1–16, default 1)
+### `GFLOW_CLI_CONCURRENCY` (1–16, default 1)
 
 When > 1, `FlowApiClient` opens N Playwright Pages inside the persistent BrowserContext on `__aenter__` and routes each in-flight operation through one. Pages share cookies + auth (correct — same session). Memory cost is roughly **30–60 MiB per Page** on Chromium; benchmark with `gflow video batch` before raising above 8.
 
-### `FLOW_CLI_LOG_FORMAT` (`auto` | `text` | `json`, default `auto`)
+### `GFLOW_CLI_LOG_FORMAT` (`auto` | `text` | `json`, default `auto`)
 
-`auto` renders text on a TTY, JSON when stdout is piped — same convention as `kubectl`/`gh`. Override with `FLOW_CLI_LOG_FORMAT=json gflow ...` to force JSON in interactive shells (e.g. for piping into `jq`).
+`auto` renders text on a TTY, JSON when stdout is piped — same convention as `kubectl`/`gh`. Override with `GFLOW_CLI_LOG_FORMAT=json gflow ...` to force JSON in interactive shells (e.g. for piping into `jq`).
 ```
 
 - [ ] **Step 7.3: `docs/ARCHITECTURE.md`** — add the modular monolith section verbatim from `project_conventions.md`, plus a "RFC 9457 Problem Details for errors" subsection that links to `errors.py`. Document the per-worker Page concurrency model.
@@ -2374,7 +2374,7 @@ When > 1, `FlowApiClient` opens N Playwright Pages inside the persistent Browser
 ## [0.4.0a1] - 2026-05-XX
 
 ### Added
-- Per-worker Playwright Page pool — `FLOW_CLI_CONCURRENCY=N` now actually parallelizes `gflow video batch`.
+- Per-worker Playwright Page pool — `GFLOW_CLI_CONCURRENCY=N` now actually parallelizes `gflow video batch`.
 - `tenacity`-based retry policy (3 attempts, exp jittered backoff, Retry-After capped at 60s) on 5xx / 429 / Playwright transport errors.
 - RFC 9457 Problem Details exception hierarchy: `GFlowError → FlowApiError → AuthExpiredError | RateLimitError | ContentPolicyError | NetworkError | WireFormatError`.
 - Per-class exit codes: 3 (auth) / 4 (rate-limit) / 5 (content-policy) / 6 (network) / 7 (wire-format).
@@ -2384,15 +2384,15 @@ When > 1, `FlowApiClient` opens N Playwright Pages inside the persistent Browser
 
 ### Changed
 - `FlowApiError` re-parented under `GFlowError`. Legacy `FlowApiError(status, body, *, route)` constructor preserved (back-compat).
-- `_resolve_profile` and `_make_provider_dir` deduped into `flow_cli._cli_helpers`.
+- `_resolve_profile` and `_make_provider_dir` deduped into `gflow_cli._cli_helpers`.
 - All `logging.*` call sites in `src/` migrated to `structlog`.
 - `print()` in `auth.py` replaced with Rich console output.
 
 ### Internal
-- New module: `flow_cli.errors`.
-- New module: `flow_cli.observability`.
-- New module: `flow_cli.api._retry`.
-- New module: `flow_cli._cli_helpers`.
+- New module: `gflow_cli.errors`.
+- New module: `gflow_cli.observability`.
+- New module: `gflow_cli.api._retry`.
+- New module: `gflow_cli._cli_helpers`.
 ```
 
 - [ ] **Step 7.6: `.env.template`** — add:
@@ -2400,10 +2400,10 @@ When > 1, `FlowApiClient` opens N Playwright Pages inside the persistent Browser
 ```env
 # Concurrency for `gflow video batch` and `gflow image t2i -n N`.
 # Each Playwright Page costs ~30-60 MiB; benchmark before raising above 8.
-FLOW_CLI_CONCURRENCY=1
+GFLOW_CLI_CONCURRENCY=1
 
 # Log output format. Default `auto` = text on TTY, JSON when piped.
-FLOW_CLI_LOG_FORMAT=auto
+GFLOW_CLI_LOG_FORMAT=auto
 ```
 
 - [ ] **Step 7.7: Visual review** — read each modified doc end-to-end. No broken links, no stale phase references, no `[Unreleased]` overlap with `[0.4.0a1]`.
@@ -2419,7 +2419,7 @@ git commit -m "docs: document Phase 4 hardening for v0.4.0a1"
 - All 6 modified docs reflect Phase 4.
 - `CHANGELOG.md` has `[0.4.0a1]` block with Added/Changed/Internal subsections.
 - `PLAN.md` shows Phase 4 ✅ and Phase 5 active; Phase 6/7 backlog entries present.
-- `.env.template` documents `FLOW_CLI_CONCURRENCY` and `FLOW_CLI_LOG_FORMAT`.
+- `.env.template` documents `GFLOW_CLI_CONCURRENCY` and `GFLOW_CLI_LOG_FORMAT`.
 - `docs/ARCHITECTURE.md` has modular monolith + Problem Details + per-worker Page sections.
 
 ---
@@ -2430,7 +2430,7 @@ git commit -m "docs: document Phase 4 hardening for v0.4.0a1"
 
 **Files.**
 - Modify: `pyproject.toml` (`version = "0.4.0a1"`)
-- Modify: `src/flow_cli/__init__.py` (`__version__ = "0.4.0a1"`)
+- Modify: `src/gflow_cli/__init__.py` (`__version__ = "0.4.0a1"`)
 - Tag: `v0.4.0a1`
 
 **Steps.**
@@ -2443,7 +2443,7 @@ version = "0.4.0a1"
 ```
 
 ```python
-# src/flow_cli/__init__.py
+# src/gflow_cli/__init__.py
 __version__ = "0.4.0a1"
 ```
 
@@ -2453,7 +2453,7 @@ __version__ = "0.4.0a1"
 uv run ruff check src tests
 uv run ruff format --check src tests
 uv run pyright src
-uv run pytest -q --cov=flow_cli --cov-report=term-missing
+uv run pytest -q --cov=gflow_cli --cov-report=term-missing
 ```
 
 Expected: all GREEN. Coverage ≥ 80% overall, ≥ 95% on `errors.py` + `observability.py`.
@@ -2461,7 +2461,7 @@ Expected: all GREEN. Coverage ≥ 80% overall, ≥ 95% on `errors.py` + `observa
 - [ ] **Step 8.3: Commit version bump**
 
 ```bash
-git add pyproject.toml src/flow_cli/__init__.py
+git add pyproject.toml src/gflow_cli/__init__.py
 git commit -m "chore(release): v0.4.0a1"
 ```
 
@@ -2519,7 +2519,7 @@ git tag v0.4.0a1
 **Post-merge (user-actioned):**
 
 - [ ] Tag `v0.4.0a1` pushed; release workflow green.
-- [ ] Manual smoke (~1 credit): `FLOW_CLI_CONCURRENCY=4 gflow video batch tests/fixtures/manifest_4.tsv` ≤ 1.5× slowest single call.
+- [ ] Manual smoke (~1 credit): `GFLOW_CLI_CONCURRENCY=4 gflow video batch tests/fixtures/manifest_4.tsv` ≤ 1.5× slowest single call.
 - [ ] Manual smoke: kill session cookie → `gflow image t2i ...` exits 3 + remediation prints.
 
 _End of plan._

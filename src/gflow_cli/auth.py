@@ -7,7 +7,7 @@ the OS-native user-data-dir (via `platformdirs`):
   * macOS:   `~/Library/Application Support/gflow-cli/profile_<name>`
   * Linux:   `~/.local/share/gflow-cli/profile_<name>` (XDG)
 
-Override the root with `FLOW_CLI_HOME`. See `docs/AUTHENTICATION.md`.
+Override the root with `GFLOW_CLI_HOME`. See `docs/AUTHENTICATION.md`.
 """
 
 from __future__ import annotations
@@ -17,7 +17,7 @@ from pathlib import Path
 
 from playwright.async_api import async_playwright
 
-from flow_cli.config import get_settings
+from gflow_cli.config import get_settings
 
 logger = logging.getLogger(__name__)
 
@@ -28,7 +28,7 @@ def default_profile_root() -> Path:
     """Root dir under which `profile_<name>/` subdirectories live.
 
     Returns `Settings.home`. Reads env via `get_settings()` so changes to
-    `FLOW_CLI_HOME` after import are honoured (provided the cache is reset).
+    `GFLOW_CLI_HOME` after import are honoured (provided the cache is reset).
     """
     return get_settings().home
 

@@ -8,7 +8,7 @@ from unittest.mock import AsyncMock, MagicMock, patch
 import pytest
 from click.testing import CliRunner
 
-from flow_cli.api.dto import VideoOperation, VideoStatus
+from gflow_cli.api.dto import VideoOperation, VideoStatus
 
 
 @pytest.fixture
@@ -50,11 +50,11 @@ class TestVideoT2V:
         out = tmp_path / "result.mp4"
         client = _make_mock_client()
         with (
-            patch("flow_cli.cli_video.FlowApiClient", return_value=client),
-            patch("flow_cli.cli_video._make_provider_dir", return_value=tmp_path / "prof"),
-            patch("flow_cli.cli_video._resolve_profile", return_value="default"),
+            patch("gflow_cli.cli_video.FlowApiClient", return_value=client),
+            patch("gflow_cli.cli_video._make_provider_dir", return_value=tmp_path / "prof"),
+            patch("gflow_cli.cli_video._resolve_profile", return_value="default"),
         ):
-            from flow_cli.cli import main
+            from gflow_cli.cli import main
 
             result = runner.invoke(
                 main,
@@ -79,11 +79,11 @@ class TestVideoI2V:
         client.upload_image.return_value.name = "asset-1"
 
         with (
-            patch("flow_cli.cli_video.FlowApiClient", return_value=client),
-            patch("flow_cli.cli_video._make_provider_dir", return_value=tmp_path / "prof"),
-            patch("flow_cli.cli_video._resolve_profile", return_value="default"),
+            patch("gflow_cli.cli_video.FlowApiClient", return_value=client),
+            patch("gflow_cli.cli_video._make_provider_dir", return_value=tmp_path / "prof"),
+            patch("gflow_cli.cli_video._resolve_profile", return_value="default"),
         ):
-            from flow_cli.cli import main
+            from gflow_cli.cli import main
 
             result = runner.invoke(
                 main,
@@ -123,11 +123,11 @@ class TestVideoBatch:
         client.upload_image.return_value.name = "asset-x"
 
         with (
-            patch("flow_cli.cli_video.FlowApiClient", return_value=client),
-            patch("flow_cli.cli_video._make_provider_dir", return_value=tmp_path / "prof"),
-            patch("flow_cli.cli_video._resolve_profile", return_value="default"),
+            patch("gflow_cli.cli_video.FlowApiClient", return_value=client),
+            patch("gflow_cli.cli_video._make_provider_dir", return_value=tmp_path / "prof"),
+            patch("gflow_cli.cli_video._resolve_profile", return_value="default"),
         ):
-            from flow_cli.cli import main
+            from gflow_cli.cli import main
 
             result = runner.invoke(
                 main,

@@ -32,7 +32,7 @@ Ask the user (if not already provided):
    uv run ruff check src tests
    uv run ruff format --check src tests
    uv run pyright src
-   uv run pytest -q --cov=flow_cli --cov-fail-under=80
+   uv run pytest -q --cov=gflow_cli --cov-fail-under=80
    ```
 
 4. **Bump version** in `pyproject.toml`:

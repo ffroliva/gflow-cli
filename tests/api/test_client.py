@@ -11,7 +11,7 @@ from unittest.mock import AsyncMock
 
 import pytest
 
-from flow_cli.api.client import (
+from gflow_cli.api.client import (
     MAX_IMAGE_BYTES,
     FlowApiClient,
     FlowApiError,

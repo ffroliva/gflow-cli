@@ -9,7 +9,7 @@ import sys
 def test_help_exits_zero() -> None:
     """`gflow --help` should print and exit 0."""
     result = subprocess.run(
-        [sys.executable, "-m", "flow_cli", "--help"],
+        [sys.executable, "-m", "gflow_cli", "--help"],
         capture_output=True,
         text=True,
     )
@@ -19,10 +19,10 @@ def test_help_exits_zero() -> None:
 
 def test_imports_succeed() -> None:
     """All public modules import without error."""
-    import flow_cli  # noqa
-    import flow_cli.auth  # noqa
-    import flow_cli.cli  # noqa
-    import flow_cli.api.client  # noqa
-    import flow_cli.api.dto  # noqa
+    import gflow_cli  # noqa
+    import gflow_cli.auth  # noqa
+    import gflow_cli.cli  # noqa
+    import gflow_cli.api.client  # noqa
+    import gflow_cli.api.dto  # noqa
 
-    assert flow_cli.__version__ == "0.3.0a1"
+    assert gflow_cli.__version__ == "0.3.0a1"

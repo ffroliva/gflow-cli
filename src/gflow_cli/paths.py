@@ -13,8 +13,8 @@ Single source of truth for where things live on disk:
     - Linux:   `$XDG_DOWNLOAD_DIR/gflow-cli/` (typically `~/Downloads/gflow-cli/`)
 
 These are the defaults — overridable per-process via env vars
-`FLOW_CLI_HOME` and `FLOW_CLI_OUTPUT_DIR`. Resolution lives in
-`flow_cli.config.Settings`.
+`GFLOW_CLI_HOME` and `GFLOW_CLI_OUTPUT_DIR`. Resolution lives in
+`gflow_cli.config.Settings`.
 """
 
 from __future__ import annotations
@@ -34,12 +34,12 @@ APP_AUTHOR = "ffroliva"  # Windows-only; Linux/macOS ignore this.
 
 
 def default_home() -> Path:
-    """Default `FLOW_CLI_HOME` — profiles + config.toml live here."""
+    """Default `GFLOW_CLI_HOME` — profiles + config.toml live here."""
     return Path(user_data_dir(APP_NAME, APP_AUTHOR, ensure_exists=False))
 
 
 def default_output_dir() -> Path:
-    """Default `FLOW_CLI_OUTPUT_DIR` — generated assets land here."""
+    """Default `GFLOW_CLI_OUTPUT_DIR` — generated assets land here."""
     return Path(user_downloads_dir()) / APP_NAME
 
 

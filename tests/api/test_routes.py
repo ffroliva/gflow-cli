@@ -4,7 +4,7 @@ from __future__ import annotations
 
 import pytest
 
-from flow_cli.api import routes
+from gflow_cli.api import routes
 
 
 def test_upload_image_url() -> None:
