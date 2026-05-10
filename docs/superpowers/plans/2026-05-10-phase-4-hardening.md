@@ -1126,10 +1126,13 @@ def post_with_retry(*, retry_on_5xx: bool = True) -> AsyncIterator:
     Usage:
         async for retrying in post_with_retry():
             with retrying:
-                resp = await page.request.post(...)
+                resp = await page.request.post(url, ...)
+                if resp.status == 429:
+                    raise RateLimitError(status=429, retry_after=parse_retry_after(resp))
                 if resp.status >= 500:
-                    raise NetworkError(...)
-                ...
+                    raise NetworkError(status=resp.status)
+                # 4xx (non-429) falls through; classifier outside the loop turns
+                # them into AuthExpiredError / WireFormatError (NOT retried).
     """
     return _make_retrying().__aiter__()
 ```
@@ -1638,19 +1641,35 @@ def test_no_local_helper_definitions_in_cli_modules(module_path):
     )
 
 
-def test_resolve_profile_returns_default(tmp_path, monkeypatch):
+def test_resolve_profile_returns_explicit_when_given(tmp_path, monkeypatch):
+    """When the caller passes --profile, _resolve_profile must return it verbatim."""
+    monkeypatch.setenv("GFLOW_CLI_HOME", str(tmp_path))
     from gflow_cli._cli_helpers import _resolve_profile
-    # mock profile_store / config so we don't depend on real env
-    # (use the same fixtures as the existing tests/test_profile_store.py)
-    # ... shape this to mirror the pre-existing _resolve_profile semantics ...
+
+    assert _resolve_profile("experiments") == "experiments"
 
 
-def test_make_provider_dir_creates_path(tmp_path, monkeypatch):
+def test_resolve_profile_falls_back_to_env(tmp_path, monkeypatch):
+    """When --profile is None, _resolve_profile falls back to GFLOW_CLI_PROFILE."""
+    monkeypatch.setenv("GFLOW_CLI_HOME", str(tmp_path))
+    monkeypatch.setenv("GFLOW_CLI_PROFILE", "work")
+    from gflow_cli._cli_helpers import _resolve_profile
+
+    assert _resolve_profile(None) == "work"
+
+
+def test_make_provider_dir_creates_and_returns_path(tmp_path, monkeypatch):
+    """_make_provider_dir creates the provider directory under $GFLOW_CLI_OUTPUT_DIR
+    for the named profile and returns its Path."""
+    monkeypatch.setenv("GFLOW_CLI_OUTPUT_DIR", str(tmp_path))
     from gflow_cli._cli_helpers import _make_provider_dir
-    # ... mirror existing semantics ...
+
+    pdir = _make_provider_dir("experiments")
+    assert pdir.exists() and pdir.is_dir()
+    assert str(tmp_path) in str(pdir)
 ```
 
-(For the last two stub tests, copy the assertion shapes from the current `cli_image.py` callsite expectations. The exact body depends on the helpers' semantics — read the pre-relocation source and mirror.)
+> **Note on pre-existing semantics.** The two helpers existed on `cli_image.py` and `cli_video.py` before T4b (Phase 3 code). After the T4b move, their public behavior is unchanged — only their import path differs. If the engineer discovers a richer signature in the pre-relocation source (e.g. `_resolve_profile` consulting `config.toml` as a third fallback layer), extend the two tests above to exercise that path and update the post-move helper accordingly. Do NOT change the helpers' semantics in T4b — relocation only.
 
 - [ ] **Step 4b.2: Verify red**
 
@@ -2199,9 +2218,27 @@ def cli_result_holder():
 
 
 @given("the mocked FlowApiClient returns a successful image")
-def _mock_success(mock_flow_client, fixtures_dir):
-    # set generate_image to return a known DTO referencing a fixture file
-    ...
+def _mock_success(mock_flow_client, fixtures_dir, tmp_path):
+    """Wire generate_image + download_image so the scenario produces a real file
+    on disk under tmp_path — needed for the `one image file is created` step."""
+    from unittest.mock import MagicMock
+
+    fake_image = MagicMock(
+        media_name="media-uuid-abc",
+        fife_url="https://flow-content.google/signed/img.png",
+        dimensions=(1024, 1024),
+        is_signed_url=True,
+    )
+    mock_flow_client.generate_image.return_value = fake_image
+    mock_flow_client.generate_images_batch.return_value = [fake_image] * 4
+
+    async def _fake_download(image, out_path):
+        out_path.parent.mkdir(parents=True, exist_ok=True)
+        # PNG magic bytes — enough for "file exists and is PNG-shaped" assertions.
+        out_path.write_bytes(b"\x89PNG\r\n\x1a\n")
+        return out_path
+
+    mock_flow_client.download_image.side_effect = _fake_download
 
 
 @given("the mocked FlowApiClient raises ContentPolicyError")
