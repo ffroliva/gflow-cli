@@ -59,16 +59,6 @@ gflow image batch ./batch-b.tsv --profile personal
 
 ---
 
-### v0.1 — provider methods are stubs
-
-- **Status:** Open · **Severity:** Critical (blocks usage) · **Resolution:** v0.2
-
-The current published code is a **scaffold**. `upload_image`, `start_generation`, `get_job`, `download` all raise `NotImplementedError` until the route wiring lands in [PLAN](PLAN.md) Phases 2 and 3.
-
-**Workaround:** none — wait for v0.2.
-
----
-
 ### Flow's first-upload terms-of-use dialog ("Aviso") blocks the worker (worker-only)
 
 - **Status:** Open · **Severity:** Low · **Affects:** the legacy in-tree Compiled Growth worker, NOT `gflow-cli` itself
@@ -125,7 +115,11 @@ _(none yet)_
 
 ## Resolved
 
-_(none yet — first release pending)_
+### v0.1 — provider methods are stubs
+
+- **Status:** Resolved · **Severity:** Critical (blocked usage) · **Fixed in:** v0.2.0a1
+
+The v0.1 scaffold left `upload_image`, `start_generation`, `get_job`, `download` raising `NotImplementedError`. v0.2.0a1 wired the video routes (T2V/I2V/batch) on a new `flow_cli.api.client.FlowApiClient` and removed the legacy `providers/` + `models` modules. v0.3.0a1 added the image routes (`gflow image upload/t2i/i2i`) on the same client.
 
 ---
 

@@ -34,6 +34,14 @@ This document is the steady-state reference for how `gflow-cli` is organised. Th
 
 ## Folder layout
 
+> **Note: this document describes the TARGET architecture, not the current
+> package layout.** The current shape (per [PLAN.md § 2](../PLAN.md#2-architecture-steady-state)
+> and [ADR #2](../PLAN.md#5-decision-log-adrs-in-miniature)) is the simpler
+> `src/flow_cli/{api/, cli.py, cli_image.py, cli_video.py, auth.py,
+> config.py, paths.py, profile_store.py}`. The DDD layout below was deferred
+> indefinitely; converge toward it incrementally if/when a second `Provider`
+> or a `gflow serve` HTTP front-end justifies the split.
+
 ```text
 src/flow_cli/
 ├── domain/
