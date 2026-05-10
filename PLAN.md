@@ -256,7 +256,7 @@ Each step is a separate commit. Each one runs the four quality gates locally + v
 
 #### Scope
 
-`gflow image generate -p "<prompt>" [--aspect 1:1|9:16|...] [--count 1..4]` and `gflow image batch <tsv>`.
+`gflow image t2i "<prompt>" [--aspect 1:1|9:16|16:9|4:3|3:4] [-n 1..4]`, `gflow image i2i "<prompt>" --ref ...`, `gflow image upload <path>`.
 
 #### Prerequisite
 

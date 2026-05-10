@@ -47,9 +47,9 @@ CI runs `unit` + `integration` on every push. `live` tests run only on the maint
 
 ### Coverage targets
 
-- **`src/flow_cli/cli.py`**: 70%+ (CLI plumbing — some Click branches are hard to unit-test)
-- **`src/flow_cli/providers/`**: 90%+ (the meat — every captured route has a contract test)
-- **`src/flow_cli/auth.py`, `models.py`**: 80%+
+- **`src/flow_cli/cli.py`, `src/flow_cli/cli_image.py`, `src/flow_cli/cli_video.py`**: 70%+ (CLI plumbing — some Click branches are hard to unit-test)
+- **`src/flow_cli/api/`**: 90%+ (the meat — every captured route has a contract test)
+- **`src/flow_cli/auth.py`, `config.py`, `paths.py`, `profile_store.py`**: 80%+
 - **Overall**: 80%+
 
 `uv run pytest --cov=flow_cli --cov-fail-under=80` enforces the floor. Don't merge below it.
@@ -75,17 +75,16 @@ repos:
       - id: ruff-format
 ```
 
-## Adding a new Provider route
+## Adding a new API route
 
-1. **Capture the live request** — add to `samples/captured_requests.json` (sanitise project IDs, asset UUIDs).
-2. **Write the contract test first** — `tests/providers/test_flow_<route>.py`:
+1. **Capture the live request** — add a sanitised JSON sample under `samples/captured/` (numbered, e.g. `08_<route>.json`; scrub project IDs, asset UUIDs, bearer tokens, and reCAPTCHA tokens).
+2. **Write the contract test first** — under `tests/api/`:
    ```python
-   async def test_upload_image_returns_asset(mock_flow_provider):
-       asset = await mock_flow_provider.upload_image(Path("tests/fixtures/sample.png"))
-       assert asset.uuid
-       assert asset.kind == "image"
+   async def test_new_route_returns_expected_dto(mock_client):
+       result = await mock_client.new_route(...)
+       assert result.some_field
    ```
-3. **Implement** in `src/flow_cli/providers/flow.py` until green.
+3. **Implement** in `src/flow_cli/api/client.py` (and add helpers under `src/flow_cli/api/` as needed) until green.
 4. **Add a `live` test** that runs the real flow end-to-end (skipped in CI by default).
 5. **Update `CHANGELOG.md`** under `[Unreleased] → Added`.
 6. **Document** the route in the README's Architecture section if it's a new capability.

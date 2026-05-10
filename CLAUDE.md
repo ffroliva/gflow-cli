@@ -72,7 +72,7 @@ CI runs the same four on every push (see `.github/workflows/ci.yml`).
 |---|---|
 | Understand the architecture | [docs/ARCHITECTURE.md](docs/ARCHITECTURE.md) |
 | Add a CLI command | [docs/USAGE.md](docs/USAGE.md) + existing patterns in `src/flow_cli/cli.py` |
-| Add a Provider route | [PLAN.md § 4 Feature specs](PLAN.md#4-feature-specs) + existing stubs in `src/flow_cli/providers/flow.py` + capture data in `samples/captured_requests.json` |
+| Add an API route | [PLAN.md § 4 Phase status](PLAN.md#4-phase-status) + existing client in `src/flow_cli/api/client.py` + capture data under `samples/captured/` |
 | Touch auth | [docs/AUTHENTICATION.md](docs/AUTHENTICATION.md) |
 | Add a config knob | [docs/CONFIGURATION.md](docs/CONFIGURATION.md) + `.env.template` + (later) `src/flow_cli/shared/config.py` |
 | Write a test | [CONTRIBUTING.md § TDD](CONTRIBUTING.md#test-driven-development-mandatory) + existing patterns in `tests/` |
