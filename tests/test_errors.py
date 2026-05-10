@@ -1,0 +1,235 @@
+"""Tests for gflow_cli.errors — RFC 9457 Problem Details hierarchy."""
+
+from __future__ import annotations
+
+import json
+
+import pytest
+
+from gflow_cli.errors import (
+    EXIT_CODE_MAP,
+    AuthExpiredError,
+    ContentPolicyError,
+    FlowApiError,
+    GFlowError,
+    NetworkError,
+    ProblemDetails,
+    RateLimitError,
+    WireFormatError,
+)
+
+# ---------- parametrized to_problem_details() round-trip table ----------
+
+
+@pytest.mark.parametrize(
+    "exc_cls, kwargs, expect_keys, expect_absent, expected_status",
+    [
+        # AuthExpiredError — minimal
+        (
+            AuthExpiredError,
+            {
+                "detail": "401",
+                "status": 401,
+                "instance": "gflow:error:abc",
+                "route": "createProject",
+            },
+            {"type", "title", "status", "detail", "instance", "remediation_hint", "route"},
+            set(),
+            401,
+        ),
+        # RateLimitError — with retry_after
+        (
+            RateLimitError,
+            {
+                "detail": "429",
+                "status": 429,
+                "instance": "gflow:error:def",
+                "route": "batchGenerateImages",
+            },
+            {"type", "title", "status", "detail", "instance", "remediation_hint", "route"},
+            set(),
+            429,
+        ),
+        # ContentPolicyError — status MUST be omitted (RFC 9457: 200 conflates with success)
+        (
+            ContentPolicyError,
+            {
+                "detail": "empty media[]",
+                "instance": "gflow:error:ghi",
+                "route": "batchGenerateImages",
+            },
+            {"type", "title", "detail", "instance", "remediation_hint", "route"},
+            {"status"},
+            None,
+        ),
+        # NetworkError — exhausted retries
+        (
+            NetworkError,
+            {
+                "detail": "503 after 3 retries",
+                "status": 503,
+                "instance": "gflow:error:jkl",
+                "route": "createProject",
+            },
+            {"type", "title", "status", "detail", "instance", "remediation_hint", "route"},
+            set(),
+            503,
+        ),
+        # WireFormatError — minimal (no detail, no instance)
+        (
+            WireFormatError,
+            {},
+            {"type", "title", "remediation_hint"},
+            {"status", "detail", "instance", "route"},
+            None,
+        ),
+    ],
+)
+def test_to_problem_details_table(exc_cls, kwargs, expect_keys, expect_absent, expected_status):
+    exc = exc_cls(**kwargs)
+    pd: ProblemDetails = exc.to_problem_details()
+    assert expect_keys.issubset(pd.keys()), f"missing keys: {expect_keys - pd.keys()}"
+    assert expect_absent.isdisjoint(pd.keys()), (
+        f"unexpected keys present: {expect_absent & pd.keys()}"
+    )
+    if expected_status is not None:
+        assert pd["status"] == expected_status
+    # Round-trips through JSON without TypeError
+    assert json.loads(json.dumps(pd)) == pd
+
+
+def test_problem_type_uris_stable():
+    """Lock the URIs — they're greppable identifiers in production logs."""
+    assert AuthExpiredError.problem_type == "https://gflow-cli.dev/errors/auth-expired"
+    assert RateLimitError.problem_type == "https://gflow-cli.dev/errors/rate-limit"
+    assert ContentPolicyError.problem_type == "https://gflow-cli.dev/errors/content-policy"
+    assert NetworkError.problem_type == "https://gflow-cli.dev/errors/network"
+    assert WireFormatError.problem_type == "https://gflow-cli.dev/errors/wire-format"
+    assert FlowApiError.problem_type == "https://gflow-cli.dev/errors/api-error"
+    assert GFlowError.problem_type == "about:blank"
+
+
+# ---------- EXIT_CODE_MAP isinstance walk ----------
+
+
+class _SyntheticAuthError(AuthExpiredError):
+    """Hypothetical future subclass — must inherit AuthExpired's exit code 3."""
+
+
+def _exit_code_for(exc: GFlowError) -> int:
+    for cls, code in EXIT_CODE_MAP.items():
+        if isinstance(exc, cls):
+            return code
+    return 1
+
+
+def test_exit_code_map_synthetic_subclass_inherits_parent_code():
+    # The whole point of the isinstance walk: subclass inherits parent's code.
+    assert _exit_code_for(_SyntheticAuthError(detail="expired again")) == 3
+
+
+@pytest.mark.parametrize(
+    "exc_cls, expected_code",
+    [
+        (AuthExpiredError, 3),
+        (RateLimitError, 4),
+        (ContentPolicyError, 5),
+        (NetworkError, 6),
+        (WireFormatError, 7),
+    ],
+)
+def test_exit_code_map_per_class(exc_cls, expected_code):
+    assert _exit_code_for(exc_cls(detail="x")) == expected_code
+
+
+def test_exit_code_map_ordering_invariant():
+    """Most-specific classes MUST appear before parent classes in EXIT_CODE_MAP.
+
+    The isinstance walk returns the FIRST match, so adding a parent before its
+    subclasses would mask the subclass's code.
+    """
+    seen: list[type] = []
+    for cls in EXIT_CODE_MAP:
+        for prior in seen:
+            assert not issubclass(prior, cls), (
+                f"{prior.__name__} is a subclass of {cls.__name__} but appears AFTER it; "
+                f"swap their order in EXIT_CODE_MAP."
+            )
+        seen.append(cls)
+
+
+# ---------- FlowApiError legacy constructor (back-compat) ----------
+
+
+def test_flow_api_error_legacy_positional_constructor():
+    exc = FlowApiError(401, "body text", route="createProject")
+    assert exc.status == 401
+    assert exc.route == "createProject"
+    assert exc.body == "body text"
+    assert "HTTP 401" in str(exc)
+
+
+def test_flow_api_error_new_style_constructor():
+    exc = FlowApiError("custom detail", status=500, route="r", instance="gflow:error:x")
+    assert exc.status == 500
+    assert exc.route == "r"
+    assert exc.detail == "custom detail"
+    assert exc.body == ""
+
+
+def test_typed_subclass_caught_by_flow_api_error_clause():
+    """Back-compat: legacy `except FlowApiError` MUST catch typed subclasses."""
+    raised: FlowApiError | None = None
+    try:
+        raise AuthExpiredError(detail="x", status=401)
+    except FlowApiError as e:
+        raised = e
+    assert isinstance(raised, AuthExpiredError)
+    assert isinstance(raised, FlowApiError)
+    assert isinstance(raised, GFlowError)
+
+
+# ---------- _redact_for_log mandate ----------
+
+
+def test_flow_api_error_legacy_body_redaction_mandate():
+    """The body argument MUST be passed through _redact_for_log BEFORE construction.
+
+    Convention: callers redact at the raise site. This test asserts that *if* a
+    caller forgets, the body is at least truncated to 200 chars in detail —
+    documented behavior.
+    """
+    long_body = "x" * 1000
+    exc = FlowApiError(500, long_body, route="r")
+    pd = exc.to_problem_details()
+    # detail is truncated/sanitized — full 1000-char body must NOT appear verbatim.
+    assert len(pd.get("detail", "")) <= 250  # 200 body + "HTTP 500: " prefix
+
+
+# ---------- WireFormatError discovery payload ----------
+
+
+def test_wire_format_error_carries_discovery_fields():
+    exc = WireFormatError(
+        detail="unknown shape",
+        status=200,
+        instance="gflow:error:xyz",
+        route="batchGenerateImages",
+        discovery={
+            "route_name": "batchGenerateImages",
+            "http_status": 200,
+            "content_type": "application/json",
+            "top_level_keys": ["error", "status"],
+            "body_prefix_redacted": '{"error": "..."}',
+        },
+    )
+    assert exc.discovery["top_level_keys"] == ["error", "status"]
+    assert exc.discovery["http_status"] == 200
+
+
+# ---------- RateLimitError retry_after ----------
+
+
+def test_rate_limit_error_carries_retry_after():
+    exc = RateLimitError(detail="429", status=429, retry_after=42.0)
+    assert exc.retry_after == 42.0

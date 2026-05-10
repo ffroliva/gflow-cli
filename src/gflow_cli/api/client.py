@@ -39,6 +39,7 @@ from gflow_cli.api.dto import AssetInfo, GeneratedImage, ProjectInfo, VideoOpera
 from gflow_cli.api.image import GenerateImageRequest, _build_batch_generate_images_body
 from gflow_cli.api.recaptcha import TokenMinter
 from gflow_cli.api.video import GenerateVideoRequest, build_generate_body
+from gflow_cli.errors import FlowApiError
 
 logger = logging.getLogger(__name__)
 
@@ -74,16 +75,6 @@ def _is_supported_image_header(header: bytes) -> bool:
     if header[:6] in (b"GIF87a", b"GIF89a"):
         return True
     return False
-
-
-class FlowApiError(RuntimeError):
-    """Raised when a Flow API call returns a non-2xx response."""
-
-    def __init__(self, status: int, body: str, *, route: str):
-        self.status = status
-        self.body = body
-        self.route = route
-        super().__init__(f"Flow API {route} -> HTTP {status}: {body[:200]}")
 
 
 class FlowApiClient:
