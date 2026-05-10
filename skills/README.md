@@ -10,7 +10,8 @@ This directory ships an installable Skill that lets agents (Claude Code, Cursor,
 
 ```bash
 git clone git@github.com:ffroliva/gflow-cli.git
-ln -s "$(pwd)/gflow-cli/skills/gflow-cli" ~/.claude/skills/gflow-cli
+cd gflow-cli
+ln -s "$(pwd)/skills/gflow-cli" ~/.claude/skills/gflow-cli
 
 # Verify Claude Code picks it up:
 ls ~/.claude/skills/gflow-cli/SKILL.md

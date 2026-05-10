@@ -15,7 +15,7 @@
 
 - ❌ We don't store or transmit your Google password.
 - ❌ We don't ship telemetry. No phone-home, no usage stats, no remote logging by default.
-- ❌ We don't write secrets to logs (verified by tests in `tests/security/`).
+- ❌ We don't write secrets to logs (verified by `_post_json` redaction tests in `tests/api/test_client.py`; reCAPTCHA tokens and bearer-style fields are scrubbed before any DEBUG-level body emission).
 - ❌ We don't enable insecure TLS or skip certificate validation anywhere.
 
 ## Where secrets live
@@ -25,7 +25,7 @@
 - **Location:** `$FLOW_CLI_HOME/profile_<name>/Default/Cookies` (a SQLite file managed by Chromium).
 - **Format:** Standard Chromium cookie store, encrypted at rest by Chromium with the OS keystore (`keychain` on macOS, `Credential Manager` on Windows, `kwallet`/`gnome-keyring` on Linux).
 - **Access:** OS file permissions enforce single-user access. On POSIX, `chmod 0700` is applied to the profile dir at creation time. On Windows, ACLs grant access only to the current user.
-- **Lifetime:** Persists until `gflow auth logout` (planned v0.2), manual deletion, or session invalidation by Google.
+- **Lifetime:** Persists until `gflow auth logout`, manual deletion, or session invalidation by Google.
 
 ### Gemini API key (Phase 2+)
 
@@ -48,7 +48,7 @@ For users on shared / multi-user / production-adjacent machines:
 - [ ] **Set `FLOW_CLI_HOME` to a non-default path** if you want the session away from the standard `LOCALAPPDATA` / `~/.local/share` location for any reason (auditability, separate volumes).
 - [ ] **Use `--profile sandbox`** for short-lived experiments. Easy to delete (`rm -rf $FLOW_CLI_HOME/profile_sandbox`) without disturbing your main profile.
 - [ ] **Rotate sessions monthly** by signing out of Google → re-running `gflow auth login`. Limits blast radius of an unnoticed session theft.
-- [ ] **Pin a gflow-cli version** in production (`uv tool install gflow-cli==0.2.1`) and review release diffs before upgrading.
+- [ ] **Pin a gflow-cli version** in production (`uv tool install gflow-cli==0.3.0a1`) and review release diffs before upgrading.
 - [ ] **Keep the package up-to-date for security fixes.** Subscribe to GitHub Releases for `ffroliva/gflow-cli`.
 - [ ] **Scan your repo for accidentally-committed profiles** before pushing: `git ls-files | grep -E "profile_|cookies\.json|\.env$"`.
 

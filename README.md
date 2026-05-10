@@ -145,19 +145,21 @@ Same call from Python:
 ```python
 import asyncio
 from pathlib import Path
-from flow_cli.providers.flow import FlowProvider
-from flow_cli.auth import profile_dir
-from flow_cli.models import GenerationRequest
+from flow_cli.api.client import FlowApiClient
+from flow_cli.paths import profile_dir
 
-async def make_clip():
-    async with FlowProvider(profile_dir=profile_dir()) as p:
-        asset = await p.upload_image(Path("input.png"))
-        job = await p.start_generation(GenerationRequest(
-            start_image=Path("input.png"),
-            motion_prompt="Slow cinematic push-in, soft golden light",
-        ))
-        # Poll until job.status == JobStatus.SUCCEEDED, then:
-        # await p.download(job.output_url, Path("out.mp4"))
+async def make_clip() -> None:
+    async with FlowApiClient(profile_dir=profile_dir("default")) as client:
+        project = await client.create_project(title="gflow-cli demo")
+        asset = await client.upload_image(Path("input.png"), project.project_id)
+        op = await client.generate_video(
+            project_id=project.project_id,
+            prompt="Slow cinematic push-in, soft golden light",
+            start_asset=asset,
+            aspect="9:16",
+        )
+        # Poll op.workflow_id with client.poll_video_status(...)
+        # then client.download_video(...) to disk.
 
 asyncio.run(make_clip())
 ```
@@ -215,10 +217,12 @@ No FastAPI, no Django, no SQLAlchemy. This is a CLI + library — keeping the ru
          │
    ┌─────┴─────┬───────────────┐
    │           │               │
-┌──▼──┐    ┌───▼───┐       ┌───▼───┐
+┌──▼──┐    ┌────────┐       ┌───────┐
 │Flow │    │Official│       │ Mock  │
-│(v0.1)│   │ Veo    │       │(tests)│
-│     │    │(v0.3+) │       │       │
+│(now)│    │ Veo    │       │(tests)│
+│     │    │(planned│       │       │
+│     │    │ post-  │       │       │
+│     │    │ v0.3)  │       │       │
 └──┬──┘    └────────┘       └───────┘
    │
    │   POST /v1/flow/uploadImage
@@ -233,7 +237,13 @@ The `Provider` interface keeps backends interchangeable. v0.1 ships `FlowProvide
 
 ### Auth strategy
 
-`gflow-cli` doesn't reverse-engineer Google's OAuth flow. Instead it **piggybacks on Playwright's persistent context**: `gflow auth login` opens a Chromium window, you sign in normally, and the resulting cookie jar is saved to `~/.gflow-cli/profile_default/`. Subsequent commands launch a **headless** Playwright context using that profile and call REST endpoints via Playwright's HTTP client — which auto-attaches the cookies. No tokens to refresh manually, no SSO scraping. Auth is the only browser interaction, and it's a one-time event.
+`gflow-cli` doesn't reverse-engineer Google's OAuth flow. Instead it **piggybacks on Playwright's persistent context**: `gflow auth login` opens a Chromium window, you sign in normally, and the resulting cookie jar is saved to a per-OS user-data dir via [`platformdirs`](https://github.com/platformdirs/platformdirs):
+
+- Windows: `%LOCALAPPDATA%\gflow-cli\profile_default\`
+- macOS: `~/Library/Application Support/gflow-cli/profile_default/`
+- Linux: `~/.local/share/gflow-cli/profile_default/`
+
+Subsequent commands launch a **headless** Playwright context using that profile and call REST endpoints via Playwright's HTTP client — which auto-attaches the cookies. No tokens to refresh manually, no SSO scraping. Auth is the only browser interaction, and it's a one-time event.
 
 ---
 

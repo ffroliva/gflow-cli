@@ -33,7 +33,8 @@ Global flags:
 
 - `-V`, `--version` — print version and exit.
 - `-v`, `--verbose` — log at DEBUG level.
-- `--profile NAME` — pick which Google profile to use (any subcommand).
+
+Note: `--profile NAME` is **per-subcommand**, not global — pass it after the subcommand name (e.g. `gflow image t2i "..." --profile experiments`, not `gflow --profile experiments image t2i ...`).
 
 ## `gflow auth`
 
@@ -41,19 +42,19 @@ See [AUTHENTICATION § Commands](AUTHENTICATION.md#commands).
 
 ## `gflow image upload`
 
-Upload a local PNG/JPEG into a fresh Flow project and print the asset UUID + dimensions Flow inferred. The UUID is what later subcommands (`gflow image i2i --ref UUID`, `gflow video i2v`) accept as a starting frame.
+Upload a local PNG/JPEG/WebP/GIF into a fresh Flow project and print the asset UUID + dimensions Flow inferred. The UUID is what later subcommands (`gflow image i2i --ref UUID`, `gflow video i2v`) accept as a starting frame.
 
 ```text
 gflow image upload PATH [OPTIONS]
 
 Arguments:
-  PATH                      Local image file (PNG or JPEG).        [required]
+  PATH                      Local image file (PNG, JPEG, WebP, or GIF). [required]
 
 Options:
   --profile NAME            Profile name (overrides default).
 ```
 
-The uploader **validates the file's magic bytes** (PNG `\x89PNG` or JPEG `\xff\xd8\xff`) before calling Flow — anything else is rejected client-side. There is also a hard **20 MB size cap** to match Flow's documented per-file limit; oversize files fail fast without burning a network round-trip.
+The uploader **validates the file's magic bytes** (PNG `\x89PNG`, JPEG `\xff\xd8\xff`, WebP `RIFF...WEBP`, or GIF87a/89a) before calling Flow — anything else is rejected client-side. There is also a hard **20 MB size cap** to match Flow's documented per-file limit; oversize files fail fast without burning a network round-trip.
 
 **Examples:**
 
@@ -221,13 +222,22 @@ gflow video t2v "Aerial shot of a coastline at sunset" --aspect 16:9 -o ./coast.
 
 ## `gflow video i2v`
 
-Generate a video from a START IMAGE + text prompt.
+Generate a video from a START IMAGE + text prompt. The image must be a local PNG, JPEG, WebP, or GIF; it's uploaded once per call and the resulting clip animates from it according to PROMPT.
 
 ```text
 gflow video i2v IMAGE PROMPT [OPTIONS]
-```
 
-Options identical to `t2v`. The image is uploaded once per call; the resulting clip animates from it according to PROMPT.
+Arguments:
+  IMAGE                   Local start image (PNG/JPEG/WebP/GIF). [required]
+  PROMPT                  Text prompt.                            [required]
+
+Options:
+  -o, --output PATH       Output mp4. Default: $FLOW_CLI_OUTPUT_DIR/videos/<date>/<media>.mp4
+  --aspect 9:16|16:9|1:1  Default: 9:16
+  --seed INTEGER          Reproducibility. Default: random.
+  --profile NAME          Account profile. Default: resolved from env/config.
+  --poll-interval FLOAT   Seconds between status polls. Default: 5.
+```
 
 ```bash
 gflow video i2v ./hero.png "Slow camera arc, soft golden light"
@@ -258,19 +268,6 @@ hero.png	Slow camera arc		9:16	./out/hero.mp4
 | `aspect` | no | `9:16` |
 | `output_path` | no | `<out_dir>/videos/<date>/<media>.mp4` |
 
-## `gflow status` / `gflow download` *(planned)*
-
-For async workflows triggered with `--async`:
-
-```bash
-JOB=$(gflow image generate -p "..." --async)
-# ... do other work ...
-while ! gflow status "$JOB" | grep -q succeeded; do sleep 5; done
-gflow download "$JOB" -o ./out.png
-```
-
-(Polled internally by the synchronous commands, so most users won't need these directly.)
-
 ## Recipes
 
 ### Burn through a directory of inputs
@@ -292,20 +289,20 @@ Get-ChildItem ./inputs/*.png | ForEach-Object {
 }
 ```
 
-### Generate a manifest from a TSV with prompts already in it
+### Fan out an image prompt 4-way
 
 ```bash
-gflow image batch ./prompts.tsv --out-dir ./generated/
+gflow image t2i "variations of a minimalist fox logo" -n 4 --aspect 1:1 --out ./logos/
 ```
 
 ### Run two profiles concurrently
 
 ```bash
 # Terminal 1
-gflow image batch ./batch-a.tsv --profile work
+gflow video batch ./batch-a.tsv --profile work
 
 # Terminal 2 (different profile = different Chromium context = OK)
-gflow image batch ./batch-b.tsv --profile personal
+gflow video batch ./batch-b.tsv --profile personal
 ```
 
 (Same profile concurrently → second invocation fails with "Chromium profile locked". Use different profiles or wait.)
@@ -313,7 +310,7 @@ gflow image batch ./batch-b.tsv --profile personal
 ### JSON logs for piping into Loki/Datadog
 
 ```bash
-FLOW_CLI_LOG_FORMAT=json gflow image generate -p "..." 2>&1 | jq .
+FLOW_CLI_LOG_FORMAT=json gflow image t2i "..." 2>&1 | jq .
 ```
 
 ## Exit codes
@@ -322,23 +319,41 @@ FLOW_CLI_LOG_FORMAT=json gflow image generate -p "..." 2>&1 | jq .
 |---|---|
 | `0` | Success |
 | `1` | Generic error (with stderr message) |
-| `2` | Bad usage / missing required argument / no auth |
-| `3` | Auth expired (run `gflow auth login`) |
-| `4` | Rate-limited / quota exhausted |
-| `5` | Provider unavailable (Flow returned 5xx) |
-| `64..125` | Reserved for future granular categorisation |
+| `2` | Bad usage / missing required argument / auth/profile error |
+| `64..125` | Reserved for future granular categorisation (rate-limit, provider-unavailable, etc.) |
 
 Use them to branch in shell scripts:
 
 ```bash
 if ! gflow video i2v ./in.png "test" -o out.mp4; then
   case $? in
-    3) echo "Re-auth needed"; gflow auth login; exit 1 ;;
-    4) echo "Quota hit; cooling off 1h"; sleep 3600; exec "$0" "$@" ;;
+    2) echo "Bad usage or auth issue"; gflow auth status; exit 1 ;;
     *) echo "Unknown failure"; exit 1 ;;
   esac
 fi
 ```
+
+## Programmatic use
+
+The CLI is a thin shell over `flow_cli.api.client.FlowApiClient`. All public methods used by the commands above are also available directly:
+
+```python
+import asyncio
+from pathlib import Path
+from flow_cli.api.client import FlowApiClient
+from flow_cli.paths import profile_dir
+
+async def main() -> None:
+    async with FlowApiClient(profile_dir=profile_dir("default")) as client:
+        project = await client.create_project(title="archive demo")
+        # ... do work in this project ...
+        # When you no longer need it, archive to keep the library tidy:
+        await client.archive_workflow(workflow_id=project.workflow_id, project_id=project.project_id)
+
+asyncio.run(main())
+```
+
+`FlowApiClient.archive_workflow(workflow_id, project_id)` issues `PATCH /v1/flowWorkflows/{id}` to soft-delete a workflow. Useful in batch scripts that spin up a project per call and want to clean up afterwards.
 
 ## See also
 

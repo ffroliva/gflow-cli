@@ -57,9 +57,9 @@ A profile maps to a directory `$FLOW_CLI_HOME/profile_<name>/`. Profiles are iso
 ### `FLOW_CLI_PROVIDER`
 
 **What:** Backend to use for generations.
-**Values:** `flow` (default — reverse-engineered, requires Ultra/Pro) | `official` (planned v0.3+, requires Gemini API key).
+**Values:** `flow` (default — reverse-engineered, requires Ultra/Pro) | `official` (planned v0.5+ — Phase 5 official Veo SDK swap, will require a Gemini API key).
 **Default:** `flow`
-**CLI override:** `--provider <name>` per-call.
+**CLI override:** none yet — set the env var to switch backends once `official` is wired.
 
 ### `FLOW_CLI_GEMINI_API_KEY`
 
@@ -95,37 +95,43 @@ A profile maps to a directory `$FLOW_CLI_HOME/profile_<name>/`. Profiles are iso
 **Default:** `1`
 **Note:** Planned full effect in v0.4 once the per-account pool ships. Current scaffold ignores this and runs sequentially.
 
+### `FLOW_CLI_HEADLESS`
+
+**What:** Run Playwright in headless mode for non-`auth login` commands.
+**Values:** `true` | `false`
+**Default:** `true`
+**When to flip to `false`:** if reCAPTCHA Enterprise refuses to mint tokens (Google's bot-detection sometimes refuses headless Chromium but accepts a visible window). Set to `false` and re-run; the browser will appear during generation but the session is still reused from the persistent profile.
+
 ## Output paths
 
 The default output scheme keeps generated assets sortable, dated, and grouped by job:
 
 ```text
 $FLOW_CLI_OUTPUT_DIR/
-├── images/<YYYY-MM-DD>/<job_id>_<index>.png
-├── videos/<YYYY-MM-DD>/<job_id>.mp4
-└── manifests/<YYYY-MM-DD>/<batch_id>.tsv      # snapshot of the batch input
+├── images/<YYYY-MM-DD>/<media_name>_<index>.png
+└── videos/<YYYY-MM-DD>/<media_name>.mp4
 ```
 
-`<job_id>` is the Flow workflow ID (UUID4); `<index>` is 1-based for multi-image jobs.
+`<media_name>` is the per-asset UUID Flow assigns; `<index>` is the 1-based shot number for multi-image runs (`-n 2..4`).
 
 ### Per-call override
 
 ```bash
-# File path (single image)
-gflow image generate -p "..." --output ./out/specific-name.png
+# Image: --out is a directory; files written flat (no date subdir)
+gflow image t2i "..." --out ./shots/
 
-# Directory path (batch — files placed inside)
-gflow image batch ./manifest.tsv --out-dir ./batch-out/
+# Video: -o / --output is a single mp4 path
+gflow video t2v "..." -o ./out/clip.mp4
+
+# Video batch: --out-dir overrides the videos/<date>/ root
+gflow video batch ./manifest.tsv --out-dir ./batch-out/
 ```
 
-A file path always wins over a directory; passing `./out/foo.png` to a multi-image generation gets templated as `./out/foo_1.png`, `./out/foo_2.png`, etc.
+For images, `--out DIR` writes flat as `<DIR>/<media_name>_<n>.png` — file paths are not accepted (rename after the fact if needed). For videos, `-o FILE` controls the single output `.mp4`.
 
 ## .env loading
 
-`gflow-cli` looks for `.env` files in this order:
-
-1. **Current working directory** (`$CWD/.env`) — highest precedence among `.env` sources.
-2. **Profile root** (`$FLOW_CLI_HOME/.env`) — handy for global per-machine defaults.
+`gflow-cli` (via [`pydantic-settings`](https://docs.pydantic.dev/latest/concepts/pydantic_settings/)) loads a single `.env` from the **current working directory** at startup. There is no second load from `$FLOW_CLI_HOME` — keep your `.env` next to where you invoke `gflow`.
 
 Variables already set in the actual environment always beat any `.env` file. Anything explicitly passed on the CLI beats everything else.
 
@@ -150,7 +156,7 @@ FLOW_CLI_OUTPUT_DIR=/mnt/big-disk/flow-output
 ```bash
 FLOW_CLI_LOG_FORMAT=json \
 FLOW_CLI_TIMEOUT_SECONDS=300 \
-gflow image batch ./manifest.tsv
+gflow video batch ./manifest.tsv
 ```
 
 ### "I want to test against the official Veo SDK"
@@ -158,16 +164,16 @@ gflow image batch ./manifest.tsv
 ```bash
 FLOW_CLI_PROVIDER=official \
 FLOW_CLI_GEMINI_API_KEY=AIza... \
-gflow image generate -p "test"
+gflow video t2v "test"
 ```
 
-(planned v0.3 — current scaffold accepts but ignores `--provider official`.)
+(planned v0.5+ — current scaffold accepts but ignores `FLOW_CLI_PROVIDER=official`.)
 
 ### "I want a sandbox profile that doesn't pollute my main one"
 
 ```bash
 gflow auth login --profile experiments
-gflow image generate -p "test idea" --profile experiments
+gflow image t2i "test idea" --profile experiments
 # sandbox dir lives at $FLOW_CLI_HOME/profile_experiments/
 ```
 
@@ -178,5 +184,5 @@ gflow image generate -p "test idea" --profile experiments
 | `ValidationError: FLOW_CLI_TIMEOUT_SECONDS must be a positive integer` | Bad `.env` value | Set to a number ≥ 1 |
 | `FileNotFoundError: $FLOW_CLI_HOME/profile_default not found` | First run, no auth yet | `gflow auth login` |
 | `AuthExpiredError` | Cookies expired or revoked | `gflow auth login --profile <name>` |
-| Output files don't appear where I expect | Flag > env > .env > default — check actual resolved path | `gflow image generate ... --verbose` shows the resolved output path |
+| Output files don't appear where I expect | Flag > env > .env > default — check actual resolved path | `gflow image t2i ... --verbose` shows the resolved output path |
 | Two concurrent calls fail with "Chromium profile locked" | Same profile used twice | Use `--profile other` for the second call |

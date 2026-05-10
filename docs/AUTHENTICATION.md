@@ -36,7 +36,7 @@ This page documents the full lifecycle: capture, storage, reuse, refresh, multi-
                               └────────────┬─────────────────────────┘
                                            │
                                            ▼
-  $ gflow image generate ...               (later, headless)
+  $ gflow image t2i ...                    (later, headless)
                                            │
                                            ▼
                               ┌──────────────────────────────────────┐
@@ -127,7 +127,7 @@ Use `gflow auth login --profile <name>` to add or refresh a profile.
 
 ### `gflow auth login`
 
-Opens a headed Chromium, navigates to `https://labs.google/fx/tools/flow?hl=en`, and waits for you to sign in. When you close the browser window (or after 10 minutes of inactivity), the captured session is persisted to disk.
+Opens a headed Chromium, navigates to `https://labs.google/fx/tools/flow?hl=en`, and waits for you to sign in. The browser window must be closed within **10 minutes total** (the underlying `wait_for_event("close", timeout=600_000)`); after that the command times out. When the window is closed, the captured session is persisted to disk.
 
 ```bash
 gflow auth login                  # default profile
@@ -149,7 +149,7 @@ Profile 'default' is configured.
   cookies_path: /home/you/.local/share/gflow-cli/profile_default/Default/Cookies
 ```
 
-> Note: `cookies_present: True` only confirms the file exists — not that the session is still valid with Google. The first real API call (e.g. `gflow image generate`) is the actual probe. If Google has invalidated the session, the call will fail with `AuthExpiredError` and you'll be prompted to re-run `auth login`.
+> Note: `cookies_present: True` only confirms the file exists — not that the session is still valid with Google. The first real API call (e.g. `gflow image t2i`) is the actual probe. If Google has invalidated the session, the call will fail with an authentication error and you'll be prompted to re-run `auth login`.
 
 ### `gflow auth list`
 
@@ -198,13 +198,13 @@ gflow auth login --profile personal
 gflow auth login --profile client-a
 gflow auth login --profile client-b
 
-gflow image generate -p "test"          --profile personal
-gflow image generate -p "client work"   --profile client-a
+gflow image t2i "test"          --profile personal
+gflow image t2i "client work"   --profile client-a
 ```
 
 Each profile is fully isolated (its own cookies, its own Flow project history). You can run multiple `gflow` calls concurrently across profiles since each launches its own Chromium context — but **never run two concurrent calls against the same profile**, because Chromium will refuse to open a second persistent context on a locked user-data-dir.
 
-For automated multi-account batching, see [PLAN § Phase 4 — Hardening](../PLAN.md#phase-4--hardening-target-1-2-days) (concurrency pool ships in v0.4).
+For automated multi-account batching, see [PLAN § Phase 4 — Hardening](../PLAN.md#phase-4--hardening--post-v030a1) (concurrency pool ships in v0.4).
 
 ## Refresh / expiry
 
@@ -230,7 +230,7 @@ Re-running `auth login` refreshes the cookies in place — no other state is los
 |---|---|
 | Session file leaked to a public repo | `.gitignore` excludes profile dirs at every layer; `gflow auth status` warns if it detects a profile inside a Git repo (planned v0.3). |
 | Multi-user shared machine | Profiles live under each user's home dir; OS file permissions (`0700` on POSIX, ACL on Windows) prevent cross-user reads by default. |
-| `gflow-cli` itself becomes malicious | The package is open-source under MIT; pin a version (`uv tool install gflow-cli==0.2.1`) and review release diffs before upgrading. |
+| `gflow-cli` itself becomes malicious | The package is open-source under MIT; pin a version (`uv tool install gflow-cli==0.3.0a1`) and review release diffs before upgrading. |
 | Stolen laptop | Anyone with disk access has your session. Use full-disk encryption (FileVault, BitLocker, LUKS). Consider a dedicated `--profile sandbox` for short-lived experiments. |
 | Sharing a profile between machines | Technically works (copy the profile dir), but Google may flag the device-fingerprint mismatch as suspicious. Re-login on the new machine instead. |
 
