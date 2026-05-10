@@ -303,6 +303,33 @@ Body envelope mirrors video (clientContext + mediaGenerationContext.batchId + us
 
 ---
 
+### Phase 6 — Operations history & cost tracking — BACKLOG
+
+Foundation laid by Phase 4's structured `error_raised` events + Problem Details. Phase 6 adds a local persistence layer so users can answer "what did I generate last week and what did it cost?".
+
+- Local SQLite (or DuckDB if analytical queries dominate) at `$FLOW_CLI_HOME/operations.db`
+- Schema: `operations(id, timestamp, profile, cli_command, project_id, media_uuids, prompt, model, aspect, seed_count, status, error_class, error_problem, duration_ms, output_paths)` — every CLI invocation appends one row
+- Schema versioned via Alembic-style migrations
+- New CLI: `gflow history list/show/search` — query operations by date / profile / command / status
+- Cost tracking: best-effort credit estimation per call (Veo 3.1 ≈ X credits/sec, Imagen ≈ Y credits/image — tabulate from observation)
+- Privacy: prompts are user-generated content; persist locally only, never transmit
+- Out of scope until Phase 6 ships: cloud sync, multi-user history
+
+### Phase 7 — Pluggable storage backend — BACKLOG
+
+Today the CLI writes media to `$FLOW_CLI_OUTPUT_DIR` on the local filesystem. Phase 7 makes the storage backend pluggable so generated assets can stream directly to S3 / GCS / Azure Blob without an intermediate local copy.
+
+- New `flow_cli.storage` module with a `StorageBackend` Protocol (write_bytes, exists, stat, list)
+- Implementations: `LocalStorage` (today's behaviour, default), `S3Storage`, `GCSStorage`, `AzureBlobStorage`
+- Configure via `FLOW_CLI_STORAGE_BACKEND` env (`local|s3|gcs|azure`) + backend-specific creds
+- New flag: `--storage-backend s3://bucket/prefix/` for per-call override
+- Object naming convention: `{profile}/{command}/{YYYY-MM-DD}/{media_uuid}.png|mp4`
+- Metadata sidecar: each object has a corresponding `.problem.json` (RFC 9457 Problem Details for any error during retrieval) and `.manifest.json` (prompt, model, aspect, seed) for full provenance
+- Hooks into Phase 6: `operations` table records the storage URL alongside the local path
+- Out of scope until Phase 7 ships: lifecycle policies, deduplication, presigned URL generation
+
+---
+
 ## 5. Decision log (ADRs in miniature)
 
 | # | Decision | Rationale |

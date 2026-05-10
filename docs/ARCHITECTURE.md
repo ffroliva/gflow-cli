@@ -32,6 +32,33 @@ This document is the steady-state reference for how `gflow-cli` is organised. Th
 
 **Dependency rule (hexagonal):** `interfaces → application → domain ← infrastructure`. Domain depends on nothing. Application depends on domain + ports (Protocols). Infrastructure implements the ports. Compile this rule into the import graph: `domain/*` must not import from `application/`, `infrastructure/`, or `interfaces/`.
 
+## Modular monolith (current shape)
+
+The hexagonal target above is the steady state. The **current** package — and the shape Phase 4+ work converges to before any DDD restructure — is a flat-namespace **modular monolith**: one deployable artifact, organized as a flat namespace of clearly-bounded modules.
+
+**Per-module rules:**
+
+- Each top-level package or file under `src/flow_cli/` is a module with one clear domain (`auth`, `api`, `cli`, `errors`, `observability`, `manifest`, `paths`, `config`, `profile_store`).
+- Each module exposes a public interface via `__init__.py` and (where applicable) explicit `__all__`.
+- Internals are prefixed with `_` (single leading underscore) and never imported across modules.
+- Cross-module communication goes through public interfaces, never private internals.
+- Modules don't share global mutable state. Configuration is read-only at the boundary (`Settings`).
+- When a module file grows past 400 lines, prefer extraction to a sub-package over inline growth.
+
+**Phase 4 module additions (in v0.4.0a1):**
+
+- `flow_cli.errors` — exception taxonomy aligned with [RFC 9457 Problem Details](https://datatracker.ietf.org/doc/html/rfc9457). Each `GFlowError` subclass carries `type` (URI), `title`, `status`, `detail`, `instance`, `remediation_hint`. The `to_problem_details()` method serializes to the RFC 9457 JSON shape and is the stable contract for telemetry consumers.
+- `flow_cli.observability` — structlog configuration + the `error_raised` event emitter. This is the future home for metrics + tracing (Phase 5+) too.
+
+**Why RFC 9457 for errors:** Problem Details is the IETF-standard shape for machine-readable HTTP error responses. Even though gflow-cli is a CLI (not an HTTP server), adopting the same vocabulary means: (a) the error log shape is greppable by stable `type` URI, (b) future cloud-edge integrations (e.g., a `gflow serve` HTTP front-end) can return our errors directly without translation, (c) downstream telemetry tools recognize the shape immediately.
+
+**Phase 4 does NOT:**
+
+- Restructure existing modules beyond minimal dedup (e.g., shared CLI helpers move to `cli/_helpers.py`).
+- Introduce dependency-injection containers, command/query buses, or any DDD/CQRS scaffolding (deferred per [PLAN ADR #2](../PLAN.md#5-decision-log-adrs-in-miniature)).
+
+When the project converges on the hexagonal target above, modules graduate to layers: e.g., today's `flow_cli.api` becomes `flow_cli.infrastructure.flow_api`, `flow_cli.cli` becomes `flow_cli.interfaces.cli`, and so on. The modular-monolith shape is the staging area, not the destination.
+
 ## Folder layout
 
 > **Note: this document describes the TARGET architecture, not the current
