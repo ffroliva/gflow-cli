@@ -25,4 +25,4 @@ def test_imports_succeed() -> None:
     import flow_cli.api.client  # noqa
     import flow_cli.api.dto  # noqa
 
-    assert flow_cli.__version__ == "0.2.0a1"
+    assert flow_cli.__version__ == "0.3.0a1"

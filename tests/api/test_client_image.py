@@ -196,11 +196,14 @@ class TestGenerateImage:
         t1 = b1["clientContext"]["recaptchaContext"]["token"]
         assert t0 != t1
 
-        # Strip recaptcha tokens from both bodies — the rest must be identical.
+        # Strip recaptcha tokens AND sessionId (millisecond-based) from both bodies
+        # — the rest must be identical.
         def _strip_tokens(b: dict) -> dict:
             d = copy.deepcopy(b)
             d["clientContext"]["recaptchaContext"]["token"] = "X"
+            d["clientContext"]["sessionId"] = "S"
             d["requests"][0]["clientContext"]["recaptchaContext"]["token"] = "X"
+            d["requests"][0]["clientContext"]["sessionId"] = "S"
             return d
 
         assert _strip_tokens(b0) == _strip_tokens(b1)
