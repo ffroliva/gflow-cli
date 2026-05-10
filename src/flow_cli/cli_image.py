@@ -1,9 +1,10 @@
 """`gflow image` command group — image asset operations.
 
-Currently exposes a single subcommand:
+Subcommands:
 
 * ``upload PATH`` — uploads a local image into a Flow project's library and
   prints the resulting media UUID and inferred dimensions.
+* ``t2i PROMPT`` — text-to-image generation (1-4 images per call).
 
 Helper functions ``_resolve_profile`` and ``_make_provider_dir`` mirror the
 ones in :mod:`flow_cli.cli_video` so the test suite can patch them locally.
@@ -20,11 +21,15 @@ from pathlib import Path
 
 import click
 from rich.console import Console
+from rich.table import Table
 
 from flow_cli import auth as auth_mod
 from flow_cli import profile_store
 from flow_cli.api.client import FlowApiClient
+from flow_cli.api.dto import GeneratedImage
+from flow_cli.api.image import Aspect, GenerateImageRequest, Model
 from flow_cli.config import get_settings
+from flow_cli.paths import image_output_path
 
 console = Console()
 
@@ -64,8 +69,8 @@ def _make_provider_dir(profile_name: str) -> Path:
 def image() -> None:
     """Upload and generate images via Google Flow Imagen.
 
-    Currently provides ``upload``. Text-to-image (``t2i``) and
-    image-to-image (``i2i``) land in subsequent tasks.
+    Provides ``upload`` and ``t2i``. Image-to-image (``i2i``) lands in a
+    subsequent task.
     """
 
 
@@ -135,3 +140,154 @@ async def _run_upload(
             f"[dim]Dimensions:[/dim] {asset.width} x {asset.height}  "
             f"[dim]Project:[/dim] {project.project_id}"
         )
+
+
+# ---------------------------------------------------------------------------
+# t2i subcommand
+# ---------------------------------------------------------------------------
+
+# Click choices kept aligned with `Model.from_cli` and `Aspect.from_cli` aliases.
+_MODEL_CHOICES = ["nano2", "nano-pro", "image4"]
+_ASPECT_CHOICES = ["9:16", "16:9", "1:1", "4:3", "3:4"]
+
+
+@image.command(
+    "t2i",
+    short_help="Generate image(s) from a text prompt.",
+    help=(
+        "Generate 1-4 images from a text prompt using Google Flow's Imagen / "
+        "Nano Banana models.\n\n"
+        "\b\n"
+        "Examples:\n"
+        '  gflow image t2i "a serene mountain lake at dawn"\n'
+        '  gflow image t2i "neon cyberpunk alley" --model nano-pro --aspect 16:9\n'
+        '  gflow image t2i "variations of a logo" -n 4 --aspect 1:1\n'
+        '  gflow image t2i "reproducible shot" --seed 42\n\n'
+        "Note: --seed is only valid when generating a single image (-n 1)."
+    ),
+)
+@click.argument("prompt")
+@click.option(
+    "--model",
+    default="nano2",
+    show_default=True,
+    type=click.Choice(_MODEL_CHOICES),
+    help="Image model alias.",
+)
+@click.option(
+    "--aspect",
+    default="9:16",
+    show_default=True,
+    type=click.Choice(_ASPECT_CHOICES),
+    help="Image aspect ratio.",
+)
+@click.option(
+    "-n",
+    "--count",
+    "count",
+    default=1,
+    show_default=True,
+    type=click.IntRange(1, 4),
+    help="How many images to generate (1-4).",
+)
+@click.option(
+    "--seed",
+    default=None,
+    type=int,
+    help="RNG seed for reproducibility (only valid when -n 1).",
+)
+@click.option(
+    "--out",
+    "out",
+    default=None,
+    type=click.Path(file_okay=False, path_type=Path),
+    help="Output directory. Defaults to <output_dir>/images/<YYYY-MM-DD>/.",
+)
+@click.option("--profile", default=None, help="Profile name (overrides default).")
+def t2i(
+    prompt: str,
+    model: str,
+    aspect: str,
+    count: int,
+    seed: int | None,
+    out: Path | None,
+    profile: str | None,
+) -> None:
+    """Generate image(s) from PROMPT (text-to-image)."""
+    # Validate flag combinations BEFORE any I/O. Click's IntRange already
+    # bounds count to [1, 4]; here we enforce the cross-flag rule that --seed
+    # is only meaningful when generating a single image (multi-image fan-out
+    # uses N independent random seeds and a shared batch_id).
+    if seed is not None and count != 1:
+        raise click.UsageError(
+            "--seed is only valid when generating a single image (-n 1). "
+            "For multi-image runs, omit --seed and let each shot get its own."
+        )
+
+    profile_name = _resolve_profile(profile)
+    provider_dir = _make_provider_dir(profile_name)
+    settings = get_settings()
+    asyncio.run(
+        _run_t2i(
+            profile_dir=provider_dir,
+            headless=settings.headless,
+            req=GenerateImageRequest(
+                prompt=prompt,
+                aspect=Aspect.from_cli(aspect),
+                model=Model.from_cli(model),
+            ),
+            count=count,
+            seed=seed,
+            out=out,
+            output_root=settings.output_dir,
+        )
+    )
+
+
+async def _run_t2i(
+    *,
+    profile_dir: Path,
+    headless: bool,
+    req: GenerateImageRequest,
+    count: int,
+    seed: int | None,
+    out: Path | None,
+    output_root: Path,
+) -> None:
+    async with FlowApiClient(profile_dir=profile_dir, headless=headless) as client:
+        console.print("  Creating project...")
+        project = await client.create_project(title="gflow-cli t2i")
+        console.print(f"  Project: [dim]{project.project_id}[/dim]")
+        console.print(f"  Generating {count} image(s) ({req.model.value}, {req.aspect.value})...")
+        if count == 1:
+            img = await client.generate_image(project_id=project.project_id, req=req, seed=seed)
+            images: list[GeneratedImage] = [img]
+        else:
+            images = await client.generate_images_batch(
+                project_id=project.project_id, req=req, count=count
+            )
+
+        saved_paths: list[Path] = []
+        for i, img in enumerate(images, start=1):
+            target = (
+                out / f"{img.media_name}_{i}.png"
+                if out is not None
+                else image_output_path(output_root, job_id=img.media_name, index=i)
+            )
+            saved = await client.download_image(img, target)
+            saved_paths.append(saved)
+
+        _print_t2i_summary(images, saved_paths)
+
+
+def _print_t2i_summary(images: list[GeneratedImage], saved_paths: list[Path]) -> None:
+    """Render a Rich table of generated images and where they landed."""
+    table = Table(title="gflow-cli t2i")
+    table.add_column("media_name", overflow="fold")
+    table.add_column("seed", justify="right")
+    table.add_column("dimensions")
+    table.add_column("output_path", overflow="fold")
+    for img, path in zip(images, saved_paths, strict=True):
+        w, h = img.dimensions
+        table.add_row(img.media_name, str(img.seed), f"{w}x{h}", str(path))
+    console.print(table)
