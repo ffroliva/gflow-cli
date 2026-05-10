@@ -7,6 +7,57 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+## [0.3.0a1] — 2026-05-10
+
+### Added
+- **`gflow image upload PATH`** — upload a single local image (PNG/JPEG) into a
+  fresh Flow project and print the asset UUID + dimensions Flow inferred. The
+  UUID is reusable as a starting frame for `gflow image i2i --ref` and
+  `gflow video i2v`.
+- **`gflow image t2i PROMPT`** — text-to-image generation (1–4 images per call)
+  via Google Flow's Imagen / Nano Banana models.
+  Flags: `--model {nano2|nano-pro|image4}`, `--aspect {9:16|16:9|1:1|4:3|3:4}`,
+  `-n/--count` (1–4), `--seed` (single-image only), `--out DIR`, `--profile`.
+  Files land date-partitioned under `$FLOW_CLI_OUTPUT_DIR/images/<YYYY-MM-DD>/`
+  by default; `--out DIR` writes flat as `<DIR>/<media_name>_<n>.png`.
+- **`gflow image i2i PROMPT --ref PATH_OR_UUID`** — image-to-image generation
+  with one or more reference images. Each `--ref` is classified at the CLI
+  boundary: case-insensitive 8-4-4-4-12 hex UUIDs are passed through verbatim
+  (no upload), anything else is canonicalized (symlinks resolved at validation
+  time) and uploaded before use. `--ref` is repeatable; UUIDs and paths can mix
+  freely on the same call. Same flag set as `t2i` otherwise.
+- **Multi-image fan-out** — `t2i` / `i2i` with `-n {2..4}` mint a single shared
+  `batch_id` and issue N parallel POSTs (one per shot, each with its own random
+  seed). Same-batch images share the prompt + refs; per-shot variation comes
+  from independent seeds.
+- **Three image models** wired behind CLI aliases:
+  `nano2` → `NARWHAL` (Nano Banana 2; default, fast/balanced),
+  `nano-pro` → `GEM_PIX_2` (Nano Banana Pro; higher quality),
+  `image4` → `IMAGEN_3_5` (Imagen 4; photoreal-leaning).
+- **Five aspect ratios** for image generation: `9:16`, `16:9`, `1:1`, `4:3`,
+  `3:4` (default `9:16`, matching the Flow web UI).
+- `download_image()` on `FlowApiClient` — direct download of a generated
+  image's signed `fifeUrl` to disk. Streams to a temp file and atomically
+  renames on success; enforces an SSRF host allowlist (only Google-controlled
+  CDNs accepted).
+
+### Changed
+- `FlowApiClient.upload_image` now validates **PNG/JPEG magic bytes** and
+  rejects files larger than **20 MB** before issuing the upload request.
+  Existing callers (`gflow video i2v`, `gflow video batch`) inherit the
+  stricter validation; previously-undocumented use of `upload_image` for
+  non-image payloads no longer works (was never officially supported).
+
+### Security
+- DEBUG-level body logs now redact reCAPTCHA Enterprise tokens and other
+  bearer-style fields before emission, eliminating a token-leak vector when
+  users share verbose logs while filing bug reports.
+- `download_image()` enforces an **SSRF host allowlist** on the signed
+  `fifeUrl` returned by Flow — only Google-controlled image CDNs
+  (`*.googleusercontent.com`, etc.) are followed; any other host raises
+  before the GET is issued. Defends against a Flow-side bug or compromise
+  redirecting downloads to an attacker-controlled origin.
+
 ## [0.2.0a1] — 2026-05-09
 
 ### Added
@@ -54,6 +105,7 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 First skeleton. Not functional end-to-end yet.
 
-[Unreleased]: https://github.com/ffroliva/gflow-cli/compare/v0.2.0a1...HEAD
+[Unreleased]: https://github.com/ffroliva/gflow-cli/compare/v0.3.0a1...HEAD
+[0.3.0a1]: https://github.com/ffroliva/gflow-cli/releases/tag/v0.3.0a1
 [0.2.0a1]: https://github.com/ffroliva/gflow-cli/releases/tag/v0.2.0a1
 [0.1.0]: https://github.com/ffroliva/gflow-cli/releases/tag/v0.1.0

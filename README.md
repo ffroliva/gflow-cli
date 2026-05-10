@@ -59,14 +59,12 @@ Read the full [DISCLAIMER](DISCLAIMER.md) before deploying this in any productio
 | Milestone | Status |
 |---|---|
 | Repo scaffold, CI, license, README, disclaimer | ✅ done |
-| Auth login flow (one-time browser capture) | 🔧 in progress |
-| `upload_image` route wired | 🔧 in progress |
-| `start_generation` route wired | 🔧 in progress |
-| `get_job` polling | 🔧 in progress |
-| `download` signed URL fetch | 🔧 in progress |
-| End-to-end smoke test against live Flow | 🔧 in progress |
-| First public alpha release on PyPI | ⏳ planned (v0.2) |
-| Provider abstraction for official Veo 3.1 API | ⏳ planned (v0.3) |
+| Auth login flow (one-time browser capture) | ✅ done |
+| Video: `t2v` / `i2v` / `batch` (Veo 3.1) | ✅ done (v0.2.0a1) |
+| Image generation (T2I/I2I, 1–4 per call, 5 ratios, 3 models) | ✅ done (v0.3.0a1) |
+| End-to-end smoke test against live Flow | ✅ done |
+| First public alpha release on PyPI | ✅ done (v0.2.0a1) |
+| Provider abstraction for official Veo 3.1 API | ⏳ planned |
 | Concurrency / per-account pool | ⏳ planned (v0.4) |
 
 ---
@@ -133,9 +131,14 @@ gflow auth login
 # 2. Verify
 gflow auth status
 
-# 3. Generate a clip end-to-end
-gflow i2v ./input.png "Slow cinematic push-in, soft golden light" -o out.mp4
+# 3a. Generate an image from a text prompt (lands at $FLOW_CLI_OUTPUT_DIR/images/<date>/)
+gflow image t2i "a hot air balloon over Tokyo at sunrise"
+
+# 3b. Generate a clip end-to-end
+gflow video i2v ./input.png "Slow cinematic push-in, soft golden light" -o out.mp4
 ```
+
+The image lands at `$FLOW_CLI_OUTPUT_DIR/images/<YYYY-MM-DD>/<media_name>_1.png` (defaults to `./out/` when the env var is unset). See [docs/USAGE.md § `gflow image t2i`](docs/USAGE.md#gflow-image-t2i) for `--model`, `--aspect`, `-n/--count`, `--seed`, and `--out` flags.
 
 Same call from Python:
 
@@ -161,18 +164,19 @@ asyncio.run(make_clip())
 
 ---
 
-## Commands (v0.1)
+## Commands
 
 ```text
-gflow auth login                          # one-time browser sign-in
-gflow auth status                         # show current session
+gflow auth login                                         # one-time browser sign-in
+gflow auth status                                        # show current session
 
-gflow upload <image>                      # → asset UUID
-gflow generate -s <uuid> -p "<prompt>"    # kick off Veo gen, returns job_id
-gflow status <job_id>                     # poll job status
-gflow download <job_id> -o out.mp4        # fetch result
+gflow image upload <path>                                # upload PNG/JPEG → asset UUID
+gflow image t2i "<prompt>" [--model] [--aspect] [-n]     # text-to-image (1–4 per call)
+gflow image i2i "<prompt>" --ref PATH_OR_UUID [...]      # image-to-image (1–4 per call)
 
-gflow i2v <image> "<prompt>" -o out.mp4   # convenience: upload + generate + poll + download
+gflow video t2v "<prompt>" -o out.mp4                    # text-to-video (Veo 3.1)
+gflow video i2v <image> "<prompt>" -o out.mp4            # image-to-video (Veo 3.1)
+gflow video batch <manifest.tsv>                         # TSV-driven batch
 ```
 
 Each command supports `--profile <name>` for managing multiple Google accounts side-by-side.
