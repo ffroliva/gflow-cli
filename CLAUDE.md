@@ -121,6 +121,8 @@ uv run gflow auth login --profile experiments  # named profile
 - **Question scope creep.** If the user asks for X and you're tempted to also fix Y, ask first.
 - **Plan before implementing** for anything > 1 file or > 50 LoC. Write the plan into PLAN.md or a comment, then execute.
 - **Show your work.** When you change something non-obvious, leave a one-line comment with the WHY (not the WHAT — the diff already shows the what).
+- **Fix bugs autonomously.** Given a bug report, reproduce it, trace the root cause, fix it, and verify — no hand-holding needed. Point at logs/errors/failing tests, then resolve them.
+- **Learn from corrections.** After any user correction, append the pattern to `tasks/lessons.md` (create if absent) as a rule that prevents the same mistake. Review it at session start for relevant context.
 
 ## See also
 
