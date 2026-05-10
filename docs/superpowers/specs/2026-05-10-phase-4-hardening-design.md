@@ -193,7 +193,12 @@ Top-level error handler. Pseudocode:
 
 ```python
 def _handle_gflow_error(exc: GFlowError) -> int:
-    code = EXIT_CODE_MAP.get(type(exc), 1)
+    # isinstance walk (not `type(exc)` lookup) so subclasses inherit the
+    # parent class's exit code if they don't have their own entry.
+    code = next(
+        (c for cls, c in EXIT_CODE_MAP.items() if isinstance(exc, cls)),
+        1,
+    )
     console.print(f"[red]{exc}[/red]")
     if exc.remediation_hint:
         console.print(f"[dim]{exc.remediation_hint}[/dim]")
