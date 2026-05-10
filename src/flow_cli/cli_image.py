@@ -45,6 +45,39 @@ _UUID_RE = re.compile(
 console = Console()
 
 
+def _classify_ref(ref: str) -> ImageRef | Path:
+    """Classify a ``--ref`` value as either a pre-uploaded UUID or a local path.
+
+    UUIDs are wrapped in :class:`ImageRef` and returned verbatim. Path-like
+    values are canonicalized via ``Path.resolve(strict=True)`` so that:
+
+    * Symlinks are followed once at validation time, eliminating the
+      symlink-laundering vector where ``./hero.png -> ~/.ssh/id_rsa`` would
+      pass an ``exists()`` check and then be uploaded. This mirrors the
+      ``resolve_path=True`` behavior of the ``upload`` subcommand.
+    * Broken symlinks and non-existent paths surface as ``FileNotFoundError``
+      (raised by ``strict=True``) which we re-raise as :class:`click.UsageError`
+      for an exit-2 + friendly message.
+
+    Centralized here so the ``i2i`` Click callback (upfront validation) and
+    the ``_resolve_refs`` async helper (dispatch) share one implementation
+    instead of duplicating the UUID regex check.
+
+    Raises:
+        click.UsageError: if *ref* is neither a UUID nor an existing path.
+    """
+    if _UUID_RE.fullmatch(ref):
+        return ImageRef(name=ref)
+    try:
+        return Path(ref).resolve(strict=True)
+    except FileNotFoundError as exc:
+        raise click.UsageError(
+            f"--ref {ref!r} does not exist as a file and is not a valid asset UUID. "
+            "Pass either a local image path or a 32-char hex UUID with hyphens "
+            "(from a prior `gflow image upload`)."
+        ) from exc
+
+
 def _resolve_profile(profile: str | None) -> str:
     """Return the active profile name or exit with a friendly message."""
     if profile:
@@ -402,22 +435,12 @@ def i2i(
             "For multi-image runs, omit --seed and let each shot get its own."
         )
 
-    # Validate each --ref upfront: either a UUID (passes regex) or an existing
-    # local file. Click's `multiple=True` with `required=True` already rejects
-    # the "no --ref" case with exit 2, but we need our own per-value check
-    # because a value can be either a path OR a UUID.
-    for ref in refs:
-        if _UUID_RE.match(ref):
-            continue
-        ref_path = Path(ref)
-        if not ref_path.exists():
-            # UsageError -> exit 2, with a friendly message that disambiguates
-            # "you typo'd a path" from "your UUID has bad hex".
-            raise click.UsageError(
-                f"--ref {ref!r} does not exist as a file and is not a valid asset UUID. "
-                "Pass either a local image path or a 32-char hex UUID with hyphens "
-                "(from a prior `gflow image upload`)."
-            )
+    # Classify each --ref upfront: UUIDs become ImageRef, path-likes become
+    # canonical Paths (with symlinks resolved). _classify_ref raises
+    # click.UsageError on missing/broken paths, which Click maps to exit 2.
+    # Click's `multiple=True` with `required=True` already rejects the
+    # "no --ref" case with exit 2 before we get here.
+    classified_refs: list[ImageRef | Path] = [_classify_ref(ref) for ref in refs]
 
     profile_name = _resolve_profile(profile)
     provider_dir = _make_provider_dir(profile_name)
@@ -427,7 +450,7 @@ def i2i(
             profile_dir=provider_dir,
             headless=settings.headless,
             prompt=prompt,
-            refs=refs,
+            classified_refs=classified_refs,
             aspect=Aspect.from_cli(aspect),
             model=Model.from_cli(model),
             count=count,
@@ -441,25 +464,31 @@ def i2i(
 async def _resolve_refs(
     client: FlowApiClient,
     project_id: str,
-    refs: tuple[str, ...],
+    classified_refs: list[ImageRef | Path],
 ) -> tuple[ImageRef, ...]:
-    """Resolve each --ref into an ``ImageRef``.
+    """Resolve a pre-classified ref list into a tuple of :class:`ImageRef`.
 
-    Bare UUIDs pass through verbatim. Local paths are uploaded sequentially —
-    parallel uploads are tempting but Flow's web UI uploads serially and we
-    don't want to surprise the rate limiter. Order is preserved so the
-    resulting ``imageInputs[]`` matches the order the user specified.
+    The input list is produced by :func:`_classify_ref` at the CLI boundary,
+    so this helper only has to dispatch on type:
+
+    * :class:`ImageRef` — append verbatim (already-uploaded asset).
+    * :class:`Path` — upload and wrap the returned UUID.
+
+    Uploads are sequential — parallel uploads are tempting but Flow's web UI
+    uploads serially and we don't want to surprise the rate limiter. Order is
+    preserved so the resulting ``imageInputs[]`` matches the order the user
+    specified on the command line.
     """
     resolved: list[ImageRef] = []
-    for ref in refs:
-        if _UUID_RE.match(ref):
-            resolved.append(ImageRef(name=ref))
+    for item in classified_refs:
+        if isinstance(item, ImageRef):
+            resolved.append(item)
             continue
-        # _run_i2i already validated existence; uploading is the only side
-        # effect remaining.
-        ref_path = Path(ref)
-        console.print(f"  Uploading {ref_path.name}...")
-        asset = await client.upload_image(project_id, ref_path)
+        # Per-file progress feedback. Acceptable Rich `console.print` inside
+        # this async helper because cli_image.py *is* the CLI layer; structlog
+        # will replace this when it lands in Phase 1.
+        console.print(f"  Uploading {item.name}...")
+        asset = await client.upload_image(project_id, item)
         resolved.append(ImageRef(name=asset.name))
     return tuple(resolved)
 
@@ -469,7 +498,7 @@ async def _run_i2i(
     profile_dir: Path,
     headless: bool,
     prompt: str,
-    refs: tuple[str, ...],
+    classified_refs: list[ImageRef | Path],
     aspect: Aspect,
     model: Model,
     count: int,
@@ -484,7 +513,7 @@ async def _run_i2i(
         project = await client.create_project(title="gflow-cli i2i")
         console.print(f"  Project: [dim]{project.project_id}[/dim]")
 
-        resolved_refs = await _resolve_refs(client, project.project_id, refs)
+        resolved_refs = await _resolve_refs(client, project.project_id, classified_refs)
         req = GenerateImageRequest(
             prompt=prompt,
             aspect=aspect,
