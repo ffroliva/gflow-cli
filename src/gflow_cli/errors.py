@@ -87,7 +87,11 @@ class FlowApiError(GFlowError):
     title = "Flow API error"
 
     def __init__(self, *args: Any, **kwargs: Any) -> None:
-        if args and isinstance(args[0], int):
+        # `bool` is a subclass of `int`, so `isinstance(True, int)` is True.
+        # Exclude bools explicitly so an accidental FlowApiError(True, ...) takes
+        # the new-style path (and surfaces as a TypeError downstream) instead of
+        # silently being treated as legacy with status=1.
+        if args and isinstance(args[0], int) and not isinstance(args[0], bool):
             status = args[0]
             body = args[1] if len(args) > 1 else ""
             route_kw = kwargs.pop("route", "")
@@ -140,7 +144,12 @@ class ContentPolicyError(FlowApiError):
     omitted from to_problem_details() per RFC 9457 — ``status`` is the HTTP
     status of the problem, and 200 conflates with success. The literal
     upstream status (200) is recorded only via the ``error_raised`` log event
-    as an ``upstream_status`` extension (see observability.py)."""
+    as an ``upstream_status`` extension (see observability.py).
+
+    Enforcement is at the class level (overrides to_problem_details) — relying
+    on callers to omit ``status=`` would silently break the RFC 9457 contract
+    the first time someone added it for symmetry with other error classes.
+    """
 
     problem_type = "https://gflow-cli.dev/errors/content-policy"
     title = "Content policy rejection"
@@ -148,6 +157,12 @@ class ContentPolicyError(FlowApiError):
         "Flow rejected the prompt under its content policy. "
         "Soften wording or remove disallowed elements."
     )
+
+    def to_problem_details(self) -> ProblemDetails:
+        pd = super().to_problem_details()
+        # RFC 9457 contract: an error must not carry a 2xx status.
+        pd.pop("status", None)
+        return pd
 
 
 class NetworkError(FlowApiError):

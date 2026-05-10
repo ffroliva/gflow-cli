@@ -93,7 +93,9 @@ def test_to_problem_details_table(exc_cls, kwargs, expect_keys, expect_absent, e
         f"unexpected keys present: {expect_absent & pd.keys()}"
     )
     if expected_status is not None:
-        assert pd["status"] == expected_status
+        # Use .get() — `status` is `total=False` on the TypedDict, so direct
+        # subscript trips pyright's reportTypedDictNotRequiredAccess.
+        assert pd.get("status") == expected_status
     # Round-trips through JSON without TypeError
     assert json.loads(json.dumps(pd)) == pd
 
@@ -233,3 +235,42 @@ def test_wire_format_error_carries_discovery_fields():
 def test_rate_limit_error_carries_retry_after():
     exc = RateLimitError(detail="429", status=429, retry_after=42.0)
     assert exc.retry_after == 42.0
+
+
+def test_rate_limit_error_retry_after_defaults_to_none():
+    """Default `retry_after` is None — branch missed by the table test."""
+    exc = RateLimitError(detail="429", status=429)
+    assert exc.retry_after is None
+
+
+# ---------- T1 review-loop regression tests ----------
+
+
+def test_content_policy_error_explicit_status_200_still_omitted():
+    """Class-level enforcement of RFC 9457: even if a caller passes status=200
+    (e.g. the literal upstream Flow HTTP status), to_problem_details() MUST
+    NOT include `status` — a 2xx code on a Problem Details object conflates
+    error with success. The instance attribute is preserved for telemetry
+    (observability emits it as the `upstream_status` extension)."""
+    exc = ContentPolicyError(detail="empty media[]", status=200)
+    pd = exc.to_problem_details()
+    assert "status" not in pd
+    assert exc.status == 200  # preserved on the instance for log emission
+
+
+def test_flow_api_error_one_arg_legacy_constructor():
+    """One-arg legacy form: body defaults to ''. Branch missed by the
+    two-arg test."""
+    exc = FlowApiError(401)
+    assert exc.status == 401
+    assert exc.body == ""
+
+
+def test_flow_api_error_bool_does_not_silently_take_legacy_path():
+    """`bool` is a subclass of `int`, so `isinstance(True, int)` is True.
+    Without the explicit `and not isinstance(args[0], bool)` guard, a caller
+    accidentally passing a boolean would silently take the legacy path with
+    `status=True`. After the fix, bools fall through to the new-style branch
+    and `status` is unset."""
+    exc = FlowApiError(True)
+    assert exc.status is None  # bool did NOT become status
