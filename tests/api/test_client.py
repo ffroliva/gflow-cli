@@ -175,3 +175,86 @@ class TestUploadImageValidation:
         with pytest.raises(ValueError, match="Image too large"):
             await c.upload_image("proj-1", big)
         c._post_json.assert_not_awaited()  # type: ignore[attr-defined]
+
+
+# ---------------------------------------------------------------------------
+# Transport lifecycle ownership tests (Task A.5)
+# ---------------------------------------------------------------------------
+
+
+class _FakeTransport:
+    name = "fake"
+
+    def __init__(self) -> None:
+        self.setup_called = 0
+        self.teardown_called = 0
+
+    async def setup(self, profile_dir: Path) -> None:
+        self.setup_called += 1
+
+    async def refresh_auth(self) -> None:
+        pass
+
+    async def generate_images(
+        self, *, project_id: str, request: object
+    ) -> list[object]:
+        return []
+
+    async def teardown(self) -> None:
+        self.teardown_called += 1
+
+
+def _patch_playwright(monkeypatch: pytest.MonkeyPatch) -> None:
+    """Stub out the Playwright stack so lifecycle tests run without a real browser."""
+    from unittest.mock import AsyncMock, MagicMock
+
+    fake_page = MagicMock()
+    # Stub out page.goto so __aenter__ bootstrap navigation doesn't fail.
+    fake_page.goto = AsyncMock()
+
+    fake_context = MagicMock()
+    fake_context.pages = [fake_page]
+    fake_context.close = AsyncMock()
+    fake_context.new_page = AsyncMock(return_value=fake_page)
+
+    fake_pw = MagicMock()
+    fake_pw.stop = AsyncMock()
+    fake_pw.chromium.launch_persistent_context = AsyncMock(return_value=fake_context)
+
+    # async_playwright() returns an object whose .start() coroutine resolves to `fake_pw`.
+    fake_pw_starter = MagicMock()
+    fake_pw_starter.start = AsyncMock(return_value=fake_pw)
+
+    monkeypatch.setattr("gflow_cli.api.client.async_playwright", lambda: fake_pw_starter)
+
+
+@pytest.mark.asyncio
+async def test_client_with_preinitialized_transport_does_not_own_lifecycle(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    """Pre-initialized transport: client must NOT call setup() or teardown()."""
+    monkeypatch.delenv("GFLOW_CLI_TRANSPORT", raising=False)
+    _patch_playwright(monkeypatch)
+    fake = _FakeTransport()
+    async with FlowApiClient(profile_dir=tmp_path, transport=fake) as client:
+        assert client.transport is fake
+        assert fake.setup_called == 0
+    assert fake.teardown_called == 0
+
+
+@pytest.mark.asyncio
+async def test_client_with_string_transport_owns_lifecycle(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    """String/None transport: client resolves via make_transport, owns lifecycle."""
+    monkeypatch.delenv("GFLOW_CLI_TRANSPORT", raising=False)
+    _patch_playwright(monkeypatch)
+    fake = _FakeTransport()
+    monkeypatch.setattr(
+        "gflow_cli.api.client.make_transport",
+        lambda name=None: fake,
+    )
+    async with FlowApiClient(profile_dir=tmp_path, transport=None) as client:
+        assert client.transport is fake
+        assert fake.setup_called == 1
+    assert fake.teardown_called == 1

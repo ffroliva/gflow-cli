@@ -184,6 +184,7 @@ dev = [
 [package.dev-dependencies]
 dev = [
     { name = "pyright" },
+    { name = "pytest-asyncio" },
     { name = "pytest-bdd" },
     { name = "pytest-cov" },
     { name = "ruff" },
@@ -209,6 +210,7 @@ provides-extras = ["dev"]
 [package.metadata.requires-dev]
 dev = [
     { name = "pyright", specifier = ">=1.1.409" },
+    { name = "pytest-asyncio", specifier = ">=1.3.0" },
     { name = "pytest-bdd", specifier = ">=8.1.0" },
     { name = "pytest-cov", specifier = ">=7.1.0" },
     { name = "ruff", specifier = ">=0.15.12" },
