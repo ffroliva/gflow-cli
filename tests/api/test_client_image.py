@@ -16,7 +16,7 @@ import pytest
 from gflow_cli.api.client import FlowApiClient, FlowApiError
 from gflow_cli.api.dto import GeneratedImage
 from gflow_cli.api.image import Aspect, GenerateImageRequest
-from gflow_cli.errors import ContentPolicyError
+from gflow_cli.errors import ContentPolicyError, WireFormatError
 
 # Realistic mock response distilled from samples/captured/06_batchGenerateImages.json
 _FAKE_FIFE_URL = "https://flow-content.google/image/abc-123?Expires=1778380305&Signature=XYZ"
@@ -55,19 +55,31 @@ def _make_req() -> GenerateImageRequest:
     return GenerateImageRequest(prompt="a warrior", aspect=Aspect.PORTRAIT)
 
 
+def _fake_ok_post(captured: dict | None = None, response: dict | None = None):
+    """Build an ``async def`` mock for ``page.request.post`` that returns 200
+    with ``response`` (or ``_FAKE_RESPONSE``) and captures the call kwargs."""
+    payload = json.dumps(response if response is not None else _FAKE_RESPONSE)
+
+    async def fake_request_post(url, *, data, headers):
+        if captured is not None:
+            captured["url"] = url
+            captured["body"] = json.loads(data)
+            captured["headers"] = headers
+        resp = MagicMock()
+        resp.status = 200
+        resp.text = AsyncMock(return_value=payload)
+        resp.headers = {"content-type": "application/json"}
+        return resp
+
+    return fake_request_post
+
+
 class TestGenerateImage:
     async def test_generate_image_posts_to_correct_url(self, client: FlowApiClient) -> None:
         captured: dict = {}
+        client._page.request.post = AsyncMock(side_effect=_fake_ok_post(captured))
 
-        async def fake_post_json(url, body, **kwargs):
-            captured["url"] = url
-            captured["body"] = body
-            return _FAKE_RESPONSE
-
-        with (
-            patch.object(client, "_post_json", side_effect=fake_post_json),
-            patch("gflow_cli.api.client.TokenMinter") as minter_cls,
-        ):
+        with patch("gflow_cli.api.client.TokenMinter") as minter_cls:
             minter_cls.return_value.mint = AsyncMock(return_value="TOK")
             await client.generate_image(project_id="proj-1", req=_make_req(), seed=42)
 
@@ -129,13 +141,9 @@ class TestGenerateImage:
         assert "/projects/proj-1/flowMedia:batchGenerateImages" in exc_info.value.route
 
     async def test_generate_image_mints_recaptcha_token(self, client: FlowApiClient) -> None:
-        async def fake_post_json(url, body, **kwargs):
-            return _FAKE_RESPONSE
+        client._page.request.post = AsyncMock(side_effect=_fake_ok_post())
 
-        with (
-            patch.object(client, "_post_json", side_effect=fake_post_json),
-            patch("gflow_cli.api.client.TokenMinter") as minter_cls,
-        ):
+        with patch("gflow_cli.api.client.TokenMinter") as minter_cls:
             mint_mock = AsyncMock(return_value="TOK-Z")
             minter_cls.return_value.mint = mint_mock
             await client.generate_image(project_id="proj-1", req=_make_req(), seed=42)
@@ -143,13 +151,9 @@ class TestGenerateImage:
         mint_mock.assert_awaited_once_with("imageGeneration")
 
     async def test_generate_image_returns_generated_image(self, client: FlowApiClient) -> None:
-        async def fake_post_json(url, body, **kwargs):
-            return _FAKE_RESPONSE
+        client._page.request.post = AsyncMock(side_effect=_fake_ok_post())
 
-        with (
-            patch.object(client, "_post_json", side_effect=fake_post_json),
-            patch("gflow_cli.api.client.TokenMinter") as minter_cls,
-        ):
+        with patch("gflow_cli.api.client.TokenMinter") as minter_cls:
             minter_cls.return_value.mint = AsyncMock(return_value="TOK")
             result = await client.generate_image(project_id="proj-1", req=_make_req(), seed=42)
 
@@ -183,15 +187,19 @@ class TestGenerateImage:
     ) -> None:
         """Same seed → identical body except for the recaptcha token."""
         captured_bodies: list[dict] = []
+        payload = json.dumps(_FAKE_RESPONSE)
 
-        async def fake_post_json(url, body, **kwargs):
-            captured_bodies.append(body)
-            return _FAKE_RESPONSE
+        async def fake_request_post(url, *, data, headers):
+            captured_bodies.append(json.loads(data))
+            resp = MagicMock()
+            resp.status = 200
+            resp.text = AsyncMock(return_value=payload)
+            resp.headers = {"content-type": "application/json"}
+            return resp
 
-        with (
-            patch.object(client, "_post_json", side_effect=fake_post_json),
-            patch("gflow_cli.api.client.TokenMinter") as minter_cls,
-        ):
+        client._page.request.post = AsyncMock(side_effect=fake_request_post)
+
+        with patch("gflow_cli.api.client.TokenMinter") as minter_cls:
             minter_cls.return_value.mint = AsyncMock(side_effect=["TOK-A", "TOK-B"])
             await client.generate_image(
                 project_id="proj-1", req=_make_req(), seed=42, batch_id="batch-1"
@@ -244,20 +252,44 @@ def _fake_response_with_seed(seed: int, media_id: str = "media-uuid-x") -> dict:
     }
 
 
+def _seed_dispatch_post(
+    captured_bodies: list[dict],
+    delays: dict[int, float] | None = None,
+    fail_on_seed: int | None = None,
+):
+    """Build an ``async def`` mock for ``page.request.post`` that responds with
+    a per-seed fake response. Optional ``delays`` and ``fail_on_seed`` let
+    individual tests assert interleaving / partial-failure behavior."""
+
+    async def fake_request_post(url, *, data, headers):
+        body = json.loads(data)
+        captured_bodies.append(body)
+        seed = body["requests"][0]["seed"]
+        if delays and seed in delays:
+            await asyncio.sleep(delays[seed])
+        if fail_on_seed is not None and seed == fail_on_seed:
+            resp = MagicMock()
+            resp.status = 429
+            resp.headers = {"content-type": "application/json"}
+            resp.text = AsyncMock(return_value="rate limited")
+            return resp
+        media_id = f"media-{seed}"
+        resp = MagicMock()
+        resp.status = 200
+        resp.headers = {"content-type": "application/json"}
+        resp.text = AsyncMock(return_value=json.dumps(_fake_response_with_seed(seed, media_id)))
+        return resp
+
+    return fake_request_post
+
+
 class TestGenerateImagesBatch:
     async def test_batch_fan_out_uses_shared_batch_id(self, client: FlowApiClient) -> None:
         """All N parallel POSTs must share one batchId."""
         captured_bodies: list[dict] = []
+        client._page.request.post = AsyncMock(side_effect=_seed_dispatch_post(captured_bodies))
 
-        async def fake_post_json(url, body, **kwargs):
-            captured_bodies.append(body)
-            seed = body["requests"][0]["seed"]
-            return _fake_response_with_seed(seed)
-
-        with (
-            patch.object(client, "_post_json", side_effect=fake_post_json),
-            patch("gflow_cli.api.client.TokenMinter") as minter_cls,
-        ):
+        with patch("gflow_cli.api.client.TokenMinter") as minter_cls:
             minter_cls.return_value.mint = AsyncMock(return_value="TOK")
             await client.generate_images_batch(project_id="proj-1", req=_make_req(), count=3)
 
@@ -268,16 +300,9 @@ class TestGenerateImagesBatch:
     async def test_batch_fan_out_uses_distinct_seeds(self, client: FlowApiClient) -> None:
         """When seeds=None, the N bodies have N different seeds."""
         captured_bodies: list[dict] = []
+        client._page.request.post = AsyncMock(side_effect=_seed_dispatch_post(captured_bodies))
 
-        async def fake_post_json(url, body, **kwargs):
-            captured_bodies.append(body)
-            seed = body["requests"][0]["seed"]
-            return _fake_response_with_seed(seed)
-
-        with (
-            patch.object(client, "_post_json", side_effect=fake_post_json),
-            patch("gflow_cli.api.client.TokenMinter") as minter_cls,
-        ):
+        with patch("gflow_cli.api.client.TokenMinter") as minter_cls:
             minter_cls.return_value.mint = AsyncMock(return_value="TOK")
             await client.generate_images_batch(project_id="proj-1", req=_make_req(), count=3)
 
@@ -285,16 +310,16 @@ class TestGenerateImagesBatch:
         assert len(seeds) == 3, f"expected 3 distinct seeds, got {seeds}"
 
     async def test_batch_fan_out_calls_token_minter_n_times(self, client: FlowApiClient) -> None:
-        """Single-use reCAPTCHA tokens — mint() called once per request."""
+        """Single-use reCAPTCHA tokens — mint() called once per request.
 
-        async def fake_post_json(url, body, **kwargs):
-            seed = body["requests"][0]["seed"]
-            return _fake_response_with_seed(seed)
+        Spec C2 post-fixup: with the retry+mint loop now inside each per-shot
+        ``_drive_image_generation``, the count==N happy-path invariant still
+        holds (one mint per successful attempt, no retries triggered here).
+        """
+        captured_bodies: list[dict] = []
+        client._page.request.post = AsyncMock(side_effect=_seed_dispatch_post(captured_bodies))
 
-        with (
-            patch.object(client, "_post_json", side_effect=fake_post_json),
-            patch("gflow_cli.api.client.TokenMinter") as minter_cls,
-        ):
+        with patch("gflow_cli.api.client.TokenMinter") as minter_cls:
             mint_mock = AsyncMock(side_effect=["TOK-1", "TOK-2", "TOK-3"])
             minter_cls.return_value.mint = mint_mock
             await client.generate_images_batch(project_id="proj-1", req=_make_req(), count=3)
@@ -315,18 +340,23 @@ class TestGenerateImagesBatch:
         completion_log: list[int] = []
 
         # Make later calls finish FIRST by sleeping inversely proportional to seed.
-        async def fake_post_json(url, body, **kwargs):
+        async def fake_request_post(url, *, data, headers):
+            body = json.loads(data)
             seed = body["requests"][0]["seed"]
-            # seed=100 sleeps longest, seed=300 finishes first
             delay = 0.03 if seed == 100 else (0.01 if seed == 200 else 0.0)
             await asyncio.sleep(delay)
             completion_log.append(seed)
-            return _fake_response_with_seed(seed, media_id=f"media-{seed}")
+            resp = MagicMock()
+            resp.status = 200
+            resp.headers = {"content-type": "application/json"}
+            resp.text = AsyncMock(
+                return_value=json.dumps(_fake_response_with_seed(seed, media_id=f"media-{seed}"))
+            )
+            return resp
 
-        with (
-            patch.object(client, "_post_json", side_effect=fake_post_json),
-            patch("gflow_cli.api.client.TokenMinter") as minter_cls,
-        ):
+        client._page.request.post = AsyncMock(side_effect=fake_request_post)
+
+        with patch("gflow_cli.api.client.TokenMinter") as minter_cls:
             minter_cls.return_value.mint = AsyncMock(return_value="TOK")
             results = await client.generate_images_batch(
                 project_id="proj-1",
@@ -346,20 +376,27 @@ class TestGenerateImagesBatch:
         assert [r.media_name for r in results] == ["media-100", "media-200", "media-300"]
 
     async def test_batch_fan_out_partial_failure_propagates(self, client: FlowApiClient) -> None:
-        """One sibling raising FlowApiError -> whole batch raises."""
-        call_count = {"n": 0}
+        """One sibling raising FlowApiError -> whole batch raises.
 
-        async def fake_post_json(url, body, **kwargs):
-            call_count["n"] += 1
-            seed = body["requests"][0]["seed"]
-            if seed == 200:
-                raise FlowApiError(429, "rate limited", route=url)
-            return _fake_response_with_seed(seed)
+        With per-shot retry now in the loop, a sustained 429 attempt for
+        seed=200 is retried 3x (all returning 429) before surfacing as
+        :class:`gflow_cli.errors.RateLimitError` (which IS a FlowApiError).
+        """
+        captured_bodies: list[dict] = []
+        client._page.request.post = AsyncMock(
+            side_effect=_seed_dispatch_post(captured_bodies, fail_on_seed=200)
+        )
 
         with (
-            patch.object(client, "_post_json", side_effect=fake_post_json),
             patch("gflow_cli.api.client.TokenMinter") as minter_cls,
+            # Zero-wait so the 3x retry for the failing seed completes fast.
+            patch("gflow_cli.api.client.post_with_retry") as patched_retry,
         ):
+            from gflow_cli.api._retry import _make_retrying
+
+            patched_retry.side_effect = lambda **_kw: _make_retrying(
+                wait_seconds=lambda _: 0
+            ).__aiter__()
             minter_cls.return_value.mint = AsyncMock(return_value="TOK")
             with pytest.raises(FlowApiError) as exc_info:
                 await client.generate_images_batch(
@@ -589,3 +626,174 @@ class TestDownloadImage:
         client._page.request.get = AsyncMock(side_effect=fake_request_get)
         out = await client.download_image(_make_image(fife_url=good_url), tmp_path / "out.png")
         assert out.read_bytes() == b"png"
+
+
+class TestSpecC2TokenReMint:
+    """Spec C2: reCAPTCHA token is minted INSIDE the retry loop, EVERY attempt.
+
+    These tests pin the behavior so a future refactor can't accidentally hoist
+    the mint back outside the retry boundary (which is exactly the deviation
+    the council audit caught in the T3 base commit).
+    """
+
+    async def test_recaptcha_token_re_minted_every_attempt(self, client: FlowApiClient) -> None:
+        """503 → 503 → 200 across 3 attempts → 3 distinct mints with 3
+        distinct tokens embedded in the 3 POST bodies."""
+        captured_bodies: list[dict] = []
+        responses_iter = iter(
+            [
+                # attempt 1: 503 (retryable)
+                (503, "service unavailable"),
+                # attempt 2: 503 (retryable)
+                (503, "still unavailable"),
+                # attempt 3: 200 with valid response
+                (200, json.dumps(_FAKE_RESPONSE)),
+            ]
+        )
+
+        async def fake_request_post(url, *, data, headers):
+            captured_bodies.append(json.loads(data))
+            status, text = next(responses_iter)
+            resp = MagicMock()
+            resp.status = status
+            resp.text = AsyncMock(return_value=text)
+            resp.headers = {"content-type": "application/json"}
+            return resp
+
+        client._page.request.post = AsyncMock(side_effect=fake_request_post)
+
+        with (
+            patch("gflow_cli.api.client.TokenMinter") as minter_cls,
+            # Zero-wait so the test runs fast instead of incurring real
+            # exponential backoff.
+            patch("gflow_cli.api.client.post_with_retry") as patched_retry,
+        ):
+            from gflow_cli.api._retry import _make_retrying
+
+            patched_retry.side_effect = lambda **_kw: _make_retrying(
+                wait_seconds=lambda _: 0
+            ).__aiter__()
+            mint_mock = AsyncMock(side_effect=["T1", "T2", "T3"])
+            minter_cls.return_value.mint = mint_mock
+            await client.generate_image(project_id="proj-1", req=_make_req(), seed=42)
+
+        # Three attempts, three mints, three distinct tokens in the wire bodies.
+        assert mint_mock.await_count == 3
+        tokens = [b["clientContext"]["recaptchaContext"]["token"] for b in captured_bodies]
+        assert tokens == ["T1", "T2", "T3"], f"expected per-attempt fresh tokens, got {tokens}"
+
+    async def test_generate_video_recaptcha_token_re_minted_every_attempt(
+        self, client: FlowApiClient
+    ) -> None:
+        """Spec C2 for the video route too — symmetric to the image test above."""
+        from gflow_cli.api.video import Aspect as VAspect
+        from gflow_cli.api.video import GenerateVideoRequest
+
+        captured_bodies: list[dict] = []
+        fake_video_response = {
+            "operations": [{"operation": {"name": "op-1"}, "status": "PENDING"}],
+            "media": [{"name": "m1", "projectId": "proj-1", "workflowId": "w1"}],
+            "workflows": [{"name": "w1", "projectId": "proj-1"}],
+        }
+        responses_iter = iter(
+            [
+                (503, "down"),
+                (503, "still down"),
+                (200, json.dumps(fake_video_response)),
+            ]
+        )
+
+        async def fake_request_post(url, *, data, headers):
+            captured_bodies.append(json.loads(data))
+            status, text = next(responses_iter)
+            resp = MagicMock()
+            resp.status = status
+            resp.text = AsyncMock(return_value=text)
+            resp.headers = {"content-type": "application/json"}
+            return resp
+
+        client._page.request.post = AsyncMock(side_effect=fake_request_post)
+
+        with (
+            patch("gflow_cli.api.client.TokenMinter") as minter_cls,
+            patch("gflow_cli.api.client.post_with_retry") as patched_retry,
+        ):
+            from gflow_cli.api._retry import _make_retrying
+
+            patched_retry.side_effect = lambda **_kw: _make_retrying(
+                wait_seconds=lambda _: 0
+            ).__aiter__()
+            mint_mock = AsyncMock(side_effect=["V1", "V2", "V3"])
+            minter_cls.return_value.mint = mint_mock
+            req = GenerateVideoRequest(prompt="cat", aspect=VAspect.PORTRAIT)
+            await client.generate_video(project_id="proj-1", req=req, seed=1)
+
+        assert mint_mock.await_count == 3
+        tokens = [b["clientContext"]["recaptchaContext"]["token"] for b in captured_bodies]
+        assert tokens == ["V1", "V2", "V3"]
+
+
+class TestWireFormatDiscoveryAndRedaction:
+    """Audit gaps #9 and #11: discovery payload completeness + redaction-before-prefix."""
+
+    async def test_wire_format_error_full_discovery_on_4xx(self, client: FlowApiClient) -> None:
+        """The 4xx fallthrough WireFormatError carries a complete RFC 9457
+        ``discovery`` extension: route_name, http_status, content_type,
+        top_level_keys (sorted), body_prefix_redacted."""
+
+        async def fake_request_post(url, *, data, headers):
+            resp = MagicMock()
+            resp.status = 422
+            resp.headers = {"content-type": "application/json"}
+            resp.text = AsyncMock(
+                return_value=json.dumps({"error": "bad_payload", "code": 422, "details": []})
+            )
+            return resp
+
+        client._page.request.post = AsyncMock(side_effect=fake_request_post)
+
+        with patch("gflow_cli.api.client.TokenMinter") as minter_cls:
+            minter_cls.return_value.mint = AsyncMock(return_value="TOK")
+            with pytest.raises(WireFormatError) as exc_info:
+                await client.generate_image(project_id="proj-1", req=_make_req(), seed=1)
+
+        discovery = exc_info.value.discovery
+        assert isinstance(discovery, dict)
+        assert discovery["http_status"] == 422
+        assert discovery["content_type"] == "application/json"
+        # SORTED top-level keys (json.dumps emits them in insertion order, but
+        # _build_wire_format_discovery sorts before storing).
+        assert discovery["top_level_keys"] == ["code", "details", "error"]
+        assert "body_prefix_redacted" in discovery
+        # The route_name comes through verbatim (no signed-CDN query to strip
+        # for the batchGenerateImages route).
+        assert "batchGenerateImages" in discovery["route_name"]
+
+    async def test_body_prefix_redacted_excludes_tokens(self, client: FlowApiClient) -> None:
+        """Audit gap #11: a 4xx response whose body echoes our request body
+        (with the token in it) must NOT leak the token via the
+        ``body_prefix_redacted`` discovery field. Redaction happens BEFORE
+        the 200-char prefix is taken."""
+
+        async def fake_request_post(url, *, data, headers):
+            resp = MagicMock()
+            resp.status = 400
+            resp.headers = {"content-type": "application/json"}
+            # Simulate the server echoing back our request body (with the
+            # recaptcha token in it).
+            resp.text = AsyncMock(return_value=data)
+            return resp
+
+        client._page.request.post = AsyncMock(side_effect=fake_request_post)
+
+        with patch("gflow_cli.api.client.TokenMinter") as minter_cls:
+            minter_cls.return_value.mint = AsyncMock(return_value="SECRET-TOKEN-XYZ")
+            with pytest.raises(WireFormatError) as exc_info:
+                await client.generate_image(project_id="proj-1", req=_make_req(), seed=1)
+
+        discovery = exc_info.value.discovery
+        body_prefix = discovery.get("body_prefix_redacted", "")
+        # The literal token must not survive into the discovery payload.
+        assert "SECRET-TOKEN-XYZ" not in body_prefix
+        # And the redacted marker should be present.
+        assert "<redacted>" in body_prefix

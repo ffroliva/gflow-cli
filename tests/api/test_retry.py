@@ -114,7 +114,13 @@ def test_parse_retry_after_missing_returns_none():
 
 @pytest.mark.asyncio
 async def test_event_gated_retry_does_not_block_real_time():
-    """Async test that uses asyncio.Event-gated wait so it runs in <0.1s."""
+    """Async test that uses asyncio.Event-gated wait so it runs in <0.1s.
+
+    The ``asyncio.Event`` is set inside the attempt body so we can both (a)
+    prove zero-wait retries complete promptly and (b) assert that the first
+    attempt actually ran before the retry loop exhausts — addresses code-rev
+    MEDIUM-4 about the previously unasserted Event.
+    """
     started = asyncio.Event()
     attempts = {"n": 0}
 
@@ -134,3 +140,104 @@ async def test_event_gated_retry_does_not_block_real_time():
                 if resp.status >= 500:
                     raise NetworkError(detail=f"HTTP {resp.status}", status=resp.status)
     assert attempts["n"] == MAX_ATTEMPTS
+    assert started.is_set()  # at least one attempt actually executed
+
+
+@pytest.mark.asyncio
+async def test_playwright_error_retried():
+    """Spec C2: :class:`playwright.async_api.Error` is in the retry set.
+
+    Transport-level Playwright failures (TCP reset, DNS hiccup, connect
+    timeout) need to retry rather than surface raw to the caller.
+    """
+    from playwright.async_api import Error as PlaywrightError
+
+    from gflow_cli.api._retry import _make_retrying
+
+    attempts = {"n": 0}
+
+    async def attempt():
+        attempts["n"] += 1
+        raise PlaywrightError("simulated network failure")
+
+    retrying = _make_retrying(wait_seconds=lambda _: 0)
+    with pytest.raises(PlaywrightError):
+        async for r in retrying:
+            with r:
+                await attempt()
+    assert attempts["n"] == MAX_ATTEMPTS
+
+
+@pytest.mark.asyncio
+async def test_playwright_timeout_error_retried():
+    """Spec C2: :class:`playwright.async_api.TimeoutError` is in the retry set."""
+    from playwright.async_api import TimeoutError as PlaywrightTimeoutError
+
+    from gflow_cli.api._retry import _make_retrying
+
+    attempts = {"n": 0}
+
+    async def attempt():
+        attempts["n"] += 1
+        raise PlaywrightTimeoutError("simulated timeout")
+
+    retrying = _make_retrying(wait_seconds=lambda _: 0)
+    with pytest.raises(PlaywrightTimeoutError):
+        async for r in retrying:
+            with r:
+                await attempt()
+    assert attempts["n"] == MAX_ATTEMPTS
+
+
+def test_jittered_exponential_wait_default_schedule():
+    """Exercise :class:`_JitteredExponentialWait` default exponential schedule.
+
+    Without this test all retry tests inject ``_LambdaWait(lambda _: 0)`` and
+    ``_JitteredExponentialWait.__call__`` stays 0% executed — pulling the
+    module under the 80% coverage floor. Pins schedule: 1s, 2s, 4s ±25%.
+    """
+    from gflow_cli.api._retry import _JitteredExponentialWait
+
+    waiter = _JitteredExponentialWait()
+    # Tenacity passes a RetryCallState. We only need outcome (None → use
+    # default schedule) and attempt_number (1-indexed).
+    state = MagicMock()
+    state.outcome = None
+    state.attempt_number = 1
+    wait_1 = waiter(state)
+    state.attempt_number = 2
+    wait_2 = waiter(state)
+    state.attempt_number = 3
+    wait_3 = waiter(state)
+    # base = 2 ** (attempt - 1), so 1, 2, 4. Jitter is ±25% of base.
+    assert 0.75 <= wait_1 <= 1.25
+    assert 1.5 <= wait_2 <= 2.5
+    assert 3.0 <= wait_3 <= 5.0
+
+
+def test_jittered_exponential_wait_honors_retry_after_cap():
+    """If previous attempt raised :class:`RateLimitError` with ``retry_after``,
+    that value (capped at 60s) wins over the exponential schedule."""
+    from gflow_cli.api._retry import _JitteredExponentialWait
+
+    waiter = _JitteredExponentialWait()
+    state = MagicMock()
+    outcome = MagicMock()
+    outcome.exception.return_value = RateLimitError(retry_after=999.0)  # way over cap
+    state.outcome = outcome
+    state.attempt_number = 2
+    wait = waiter(state)
+    assert wait == RETRY_AFTER_CAP_SECONDS  # capped at 60.0
+
+
+def test_jittered_exponential_wait_honors_retry_after_uncapped():
+    """RateLimitError with small ``retry_after`` (under the cap) is used directly."""
+    from gflow_cli.api._retry import _JitteredExponentialWait
+
+    waiter = _JitteredExponentialWait()
+    state = MagicMock()
+    outcome = MagicMock()
+    outcome.exception.return_value = RateLimitError(retry_after=5.0)
+    state.outcome = outcome
+    state.attempt_number = 2
+    assert waiter(state) == 5.0
