@@ -2,6 +2,9 @@
 
 from __future__ import annotations
 
+from pathlib import Path
+from typing import Any
+
 import pytest
 import structlog
 from click.testing import CliRunner
@@ -10,6 +13,7 @@ from gflow_cli.cli import main
 from gflow_cli.errors import (
     AuthExpiredError,
     ContentPolicyError,
+    GFlowError,
     NetworkError,
     RateLimitError,
     WireFormatError,
@@ -28,6 +32,15 @@ def _isolate_structlog():
     yield
     structlog.reset_defaults()
     structlog.contextvars.clear_contextvars()
+
+
+def _patch_profile_resolution(monkeypatch: pytest.MonkeyPatch, tmp_path: Path, module: str) -> None:
+    """Patch `_resolve_profile` and `_make_provider_dir` on the given CLI module so
+    commands reach the `run_with_handlers` wrapper instead of bailing out with
+    exit 2 during profile resolution. ``tmp_path`` is the real per-test temp dir
+    so any code that touches the provider dir (e.g. mkdir checks) works on Windows."""
+    monkeypatch.setattr(f"{module}._resolve_profile", lambda profile: "test")
+    monkeypatch.setattr(f"{module}._make_provider_dir", lambda name: tmp_path)
 
 
 @pytest.mark.parametrize(
@@ -49,16 +62,14 @@ def _isolate_structlog():
     ],
 )
 def test_cli_error_to_exit_code_and_remediation(
-    exc, expected_exit_code, expected_in_output, monkeypatch
-):
+    exc: GFlowError,
+    expected_exit_code: int,
+    expected_in_output: str,
+    monkeypatch: pytest.MonkeyPatch,
+    tmp_path: Path,
+) -> None:
     """Each typed GFlowError surfaces with the right exit code + remediation hint."""
-    # Patch BOTH _resolve_profile and _make_provider_dir so the command body
-    # doesn't bail with exit 2 before reaching the run_with_handlers wrapper.
-    monkeypatch.setattr("gflow_cli.cli_image._resolve_profile", lambda profile: "test")
-    monkeypatch.setattr(
-        "gflow_cli.cli_image._make_provider_dir",
-        lambda name: __import__("pathlib").Path("/tmp/fake"),
-    )
+    _patch_profile_resolution(monkeypatch, tmp_path, "gflow_cli.cli_image")
     monkeypatch.setattr("gflow_cli.cli_image._run_t2i", _make_raiser(exc))
 
     runner = CliRunner()
@@ -67,17 +78,117 @@ def test_cli_error_to_exit_code_and_remediation(
     assert expected_in_output.lower() in result.output.lower()
 
 
-def test_cli_unhandled_exception_exits_1_and_emits_unhandled_event(monkeypatch):
+# ---- wiring smoke: all 6 wrapped _run_* helpers ----
+
+
+def _make_image_file(parent: Path, name: str = "in.png") -> Path:
+    """Create a real PNG-magic-byte file so Click's existence/path checks pass."""
+    p = parent / name
+    p.write_bytes(b"\x89PNG\r\n\x1a\n" + b"\x00" * 64)
+    return p
+
+
+def _make_manifest_file(parent: Path, name: str = "manifest.tsv") -> Path:
+    """Create a real TSV manifest with one valid prompt row."""
+    p = parent / name
+    p.write_text("prompt\toutput\nhello world\tout.mp4\n", encoding="utf-8")
+    return p
+
+
+def test_image_upload_wires_run_with_handlers(
+    monkeypatch: pytest.MonkeyPatch, tmp_path: Path
+) -> None:
+    _patch_profile_resolution(monkeypatch, tmp_path, "gflow_cli.cli_image")
+    img = _make_image_file(tmp_path)
+    monkeypatch.setattr(
+        "gflow_cli.cli_image._run_upload",
+        _make_raiser(AuthExpiredError(detail="401", status=401, route="upload")),
+    )
+    runner = CliRunner()
+    result = runner.invoke(main, ["image", "upload", str(img)])
+    assert result.exit_code == 3, result.output
+
+
+def test_image_i2i_wires_run_with_handlers(monkeypatch: pytest.MonkeyPatch, tmp_path: Path) -> None:
+    _patch_profile_resolution(monkeypatch, tmp_path, "gflow_cli.cli_image")
+    ref = _make_image_file(tmp_path, "ref.png")
+    monkeypatch.setattr(
+        "gflow_cli.cli_image._run_i2i",
+        _make_raiser(AuthExpiredError(detail="401", status=401, route="batchGenerateImages")),
+    )
+    runner = CliRunner()
+    result = runner.invoke(main, ["image", "i2i", "make it stormy", "--ref", str(ref)])
+    assert result.exit_code == 3, result.output
+
+
+def test_video_t2v_wires_run_with_handlers(monkeypatch: pytest.MonkeyPatch, tmp_path: Path) -> None:
+    _patch_profile_resolution(monkeypatch, tmp_path, "gflow_cli.cli_video")
+    monkeypatch.setattr(
+        "gflow_cli.cli_video._run_t2v",
+        _make_raiser(AuthExpiredError(detail="401", status=401, route="generateVideo")),
+    )
+    runner = CliRunner()
+    result = runner.invoke(main, ["video", "t2v", "a kite over a beach"])
+    assert result.exit_code == 3, result.output
+
+
+def test_video_i2v_wires_run_with_handlers(monkeypatch: pytest.MonkeyPatch, tmp_path: Path) -> None:
+    _patch_profile_resolution(monkeypatch, tmp_path, "gflow_cli.cli_video")
+    img = _make_image_file(tmp_path, "first_frame.png")
+    monkeypatch.setattr(
+        "gflow_cli.cli_video._run_i2v",
+        _make_raiser(AuthExpiredError(detail="401", status=401, route="generateVideo")),
+    )
+    runner = CliRunner()
+    result = runner.invoke(main, ["video", "i2v", str(img), "make it move"])
+    assert result.exit_code == 3, result.output
+
+
+def test_video_batch_wires_run_with_handlers(
+    monkeypatch: pytest.MonkeyPatch, tmp_path: Path
+) -> None:
+    _patch_profile_resolution(monkeypatch, tmp_path, "gflow_cli.cli_video")
+    manifest = _make_manifest_file(tmp_path)
+    monkeypatch.setattr(
+        "gflow_cli.cli_video._run_batch",
+        _make_raiser(AuthExpiredError(detail="401", status=401, route="generateVideo")),
+    )
+    runner = CliRunner()
+    result = runner.invoke(main, ["video", "batch", str(manifest)])
+    assert result.exit_code == 3, result.output
+
+
+# ---- SIGINT / KeyboardInterrupt path ----
+
+
+def test_cli_keyboard_interrupt_exits_130(monkeypatch: pytest.MonkeyPatch, tmp_path: Path) -> None:
+    """`run_with_handlers` translates KeyboardInterrupt -> exit 130 (standard SIGINT code).
+    Without this the user's Ctrl-C would surface as exit 1 (catch-all) and the telemetry
+    layer would emit a noisy error_unhandled event for what is normal control flow."""
+    _patch_profile_resolution(monkeypatch, tmp_path, "gflow_cli.cli_image")
+
+    async def _interrupt(*args: Any, **kwargs: Any) -> None:
+        raise KeyboardInterrupt
+
+    monkeypatch.setattr("gflow_cli.cli_image._run_t2i", _interrupt)
+
+    runner = CliRunner()
+    result = runner.invoke(main, ["image", "t2i", "test prompt"])
+    assert result.exit_code == 130, result.output
+
+
+# ---- telemetry events ----
+
+
+def test_cli_unhandled_exception_exits_1_and_emits_unhandled_event(
+    monkeypatch: pytest.MonkeyPatch, tmp_path: Path
+) -> None:
     """Non-GFlowError exception -> exit code 1 + error_unhandled event fires."""
     cap = structlog.testing.LogCapture()
     structlog.configure(processors=[cap])
     log_capture = cap.entries
 
-    monkeypatch.setattr("gflow_cli.cli_image._resolve_profile", lambda profile: "test")
-    monkeypatch.setattr(
-        "gflow_cli.cli_image._make_provider_dir",
-        lambda name: __import__("pathlib").Path("/tmp/fake"),
-    )
+    _patch_profile_resolution(monkeypatch, tmp_path, "gflow_cli.cli_image")
     monkeypatch.setattr(
         "gflow_cli.cli_image._run_t2i",
         _make_raiser(ValueError("bad input")),
@@ -96,17 +207,15 @@ def test_cli_unhandled_exception_exits_1_and_emits_unhandled_event(monkeypatch):
     assert "bad input" not in str(e)
 
 
-def test_cli_gflow_error_emits_error_raised_event_with_correlation_id(monkeypatch):
+def test_cli_gflow_error_emits_error_raised_event_with_correlation_id(
+    monkeypatch: pytest.MonkeyPatch, tmp_path: Path
+) -> None:
     """A typed GFlowError -> exit 3 + structured error_raised event with Problem Details."""
     cap = structlog.testing.LogCapture()
     structlog.configure(processors=[cap])
     log_capture = cap.entries
 
-    monkeypatch.setattr("gflow_cli.cli_image._resolve_profile", lambda profile: "test")
-    monkeypatch.setattr(
-        "gflow_cli.cli_image._make_provider_dir",
-        lambda name: __import__("pathlib").Path("/tmp/fake"),
-    )
+    _patch_profile_resolution(monkeypatch, tmp_path, "gflow_cli.cli_image")
     exc = AuthExpiredError(detail="401", status=401, route="createProject")
     monkeypatch.setattr("gflow_cli.cli_image._run_t2i", _make_raiser(exc))
 
@@ -123,19 +232,23 @@ def test_cli_gflow_error_emits_error_raised_event_with_correlation_id(monkeypatc
     # is provided by the in-line _handle_gflow_error helper.
     assert "correlation_id" in e
     assert e["cli_command"].startswith("image t2i")
+    # Cross-contamination guard — error_unhandled MUST NOT fire on a GFlowError.
+    assert not [evt for evt in log_capture if evt.get("event") == "error_unhandled"]
 
 
-def test_cli_wire_format_error_logs_discovery_fields(monkeypatch):
-    """WireFormatError surfaces its discovery payload in the structured event."""
+def test_cli_wire_format_error_logs_full_discovery_payload(
+    monkeypatch: pytest.MonkeyPatch, tmp_path: Path
+) -> None:
+    """WireFormatError surfaces ALL 5 discovery payload fields in the structured event.
+
+    Spec § 3.1 / C5: discovery must carry route_name, http_status, content_type,
+    top_level_keys, body_prefix_redacted — the five log-grep-evolution fields that
+    let log mining propose new error subclasses."""
     cap = structlog.testing.LogCapture()
     structlog.configure(processors=[cap])
     log_capture = cap.entries
 
-    monkeypatch.setattr("gflow_cli.cli_image._resolve_profile", lambda profile: "test")
-    monkeypatch.setattr(
-        "gflow_cli.cli_image._make_provider_dir",
-        lambda name: __import__("pathlib").Path("/tmp/fake"),
-    )
+    _patch_profile_resolution(monkeypatch, tmp_path, "gflow_cli.cli_image")
     exc = WireFormatError(
         detail="unknown shape",
         status=200,
@@ -154,22 +267,32 @@ def test_cli_wire_format_error_logs_discovery_fields(monkeypatch):
     runner.invoke(main, ["image", "t2i", "test"])
     events = [e for e in log_capture if e.get("event") == "error_raised"]
     assert events
-    # Discovery fields land in the structured event extension (NOT in Problem Details type/title).
-    assert "discovery" in events[0]
-    assert events[0]["discovery"]["top_level_keys"] == ["error", "status"]
+    discovery = events[0]["discovery"]
+    # All 5 spec-mandated discovery fields present
+    for field in (
+        "route_name",
+        "http_status",
+        "content_type",
+        "top_level_keys",
+        "body_prefix_redacted",
+    ):
+        assert field in discovery, f"missing discovery field: {field}"
+    assert discovery["route_name"] == "batchGenerateImages"
+    assert discovery["http_status"] == 200
+    assert discovery["content_type"] == "application/json"
+    assert discovery["top_level_keys"] == ["error", "status"]
+    assert discovery["body_prefix_redacted"] == '{"error": "..."}'
 
 
-def test_content_policy_logs_upstream_status_200_extension(monkeypatch):
+def test_content_policy_logs_upstream_status_200_extension(
+    monkeypatch: pytest.MonkeyPatch, tmp_path: Path
+) -> None:
     """ContentPolicyError -> upstream_status=200 extension + RFC 9457 omits status."""
     cap = structlog.testing.LogCapture()
     structlog.configure(processors=[cap])
     log_capture = cap.entries
 
-    monkeypatch.setattr("gflow_cli.cli_image._resolve_profile", lambda profile: "test")
-    monkeypatch.setattr(
-        "gflow_cli.cli_image._make_provider_dir",
-        lambda name: __import__("pathlib").Path("/tmp/fake"),
-    )
+    _patch_profile_resolution(monkeypatch, tmp_path, "gflow_cli.cli_image")
     exc = ContentPolicyError(detail="empty media[]")
     monkeypatch.setattr("gflow_cli.cli_image._run_t2i", _make_raiser(exc))
 
@@ -182,10 +305,10 @@ def test_content_policy_logs_upstream_status_200_extension(monkeypatch):
     assert "status" not in events[0]["problem"]
 
 
-def _make_raiser(exc):
+def _make_raiser(exc: BaseException):
     """Return an async function that raises *exc* when awaited."""
 
-    async def _raise(*args, **kwargs):
+    async def _raise(*args: Any, **kwargs: Any) -> None:
         raise exc
 
     return _raise
