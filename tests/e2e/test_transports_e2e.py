@@ -248,37 +248,61 @@ async def test_e2e_30s_timeout_budget(
     strategy: str,
     monkeypatch: pytest.MonkeyPatch,
 ) -> None:
-    """C5: A transport whose HTTP send blocks > 30 s raises TransportTimeoutError
-    within 35 s.
+    """C5: A transport whose inner HTTP send blocks > 30 s raises
+    TransportTimeoutError within 35 s.
 
-    The strategy's HTTP send method is monkeypatched to sleep for 60 s so the
-    test does not require real network access.  The client's timeout budget
-    must fire and surface TransportTimeoutError before the 35 s wall-clock
-    deadline.
+    Strategy-specific patching of the inner async I/O point — each strategy
+    has a different one. We bypass FlowApiClient entirely because this test
+    asserts the strategy's own asyncio.wait_for budget, not the client wrapper.
+    No real Flow auth is required.
 
-    NOTE: This test does NOT run for 30+ seconds in collect-only mode — the
-    ``asyncio.sleep(60)`` is only reached when the test body actually executes.
+    Per-strategy patch surface:
+      - evaluate_fetch  → ``transport._page.evaluate``
+      - bearer          → ``transport._http_post``
+      - sapisidhash     → ``transport._http_post``
     """
-    profile = _profile_dir()
+    from gflow_cli.api.transports._fingerprint import BrowserFingerprint
+
     transport = make_transport(strategy)
 
-    # Patch the transport's send method to block indefinitely.
-    # All three strategies ultimately call an async method named `send` on the
-    # transport instance (base interface defined in transports/base.py).
-    async def _slow_send(*args: object, **kwargs: object) -> object:  # type: ignore[return]
+    async def _hang(*_args: object, **_kwargs: object) -> object:
         await asyncio.sleep(60)
+        return None  # never reached
 
-    monkeypatch.setattr(transport, "send", _slow_send)
+    if strategy == "evaluate_fetch":
+        # S1 calls self._page.evaluate(...) inside generate_images.
+        # Inject a fake page + the hang; mark setup_done so the strategy
+        # skips its lazy-init path.
+        from unittest.mock import MagicMock
 
+        fake_page = MagicMock()
+        fake_page.evaluate = _hang  # type: ignore[assignment]
+        transport._page = fake_page  # type: ignore[attr-defined]
+        transport._setup_done = True  # type: ignore[attr-defined]
+    elif strategy == "bearer":
+        # S2 calls self._http_post(...) after checking self._cached.
+        # Build a valid cached auth so the proactive-refresh path is skipped.
+        from gflow_cli.api.transports.bearer import _CachedAuth
+
+        transport._cached = _CachedAuth(  # type: ignore[attr-defined]
+            token="fake-bearer-for-timeout-test",
+            expires_at=time.time() + 3600,
+            fingerprint=BrowserFingerprint(),
+        )
+        monkeypatch.setattr(transport, "_http_post", _hang)
+    elif strategy == "sapisidhash":
+        # S3 calls self._http_post(...) after reading _sapisid + _fingerprint.
+        transport._sapisid = "fake-sapisid-for-timeout-test"  # type: ignore[attr-defined]
+        transport._fingerprint = BrowserFingerprint()  # type: ignore[attr-defined]
+        monkeypatch.setattr(transport, "_http_post", _hang)
+
+    req = GenerateImageRequest(prompt=_PROMPT, model=Model.NARWHAL)
     start = time.monotonic()
     with pytest.raises(TransportTimeoutError):
-        async with FlowApiClient(
-            profile_dir=profile, transport=transport
-        ) as client:
-            project = await client.create_project(title=f"e2e-c5-{strategy}")
-            req = GenerateImageRequest(prompt=_PROMPT, model=Model.NARWHAL)
-            await client.generate_image(project_id=project.project_id, req=req)
-
+        await transport.generate_images(
+            project_id="00000000-0000-0000-0000-000000000000",
+            request=req,
+        )
     elapsed = time.monotonic() - start
     assert elapsed < 35.0, (
         f"TransportTimeoutError must fire within 35 s; took {elapsed:.1f} s"
