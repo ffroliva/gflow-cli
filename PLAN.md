@@ -283,14 +283,19 @@ Body envelope mirrors video (clientContext + mediaGenerationContext.batchId + us
 
 ---
 
-### Phase 4 — Hardening — POST-v0.3.0a1
+### Phase 4 — Hardening — ✅ COMPLETE (v0.4.0a1, 2026-05-11)
 
-- Per-account pool + `GFLOW_CLI_CONCURRENCY > 1` for parallel batches
-- Retry / exponential backoff on 5xx + rate-limited responses
-- Domain-error → exit-code mapping (so shell scripts can branch)
-- Verbose error messages with remediation hints (e.g. "reCAPTCHA failed → run `gflow auth login` again")
-- `structlog` configured with auto/text/json formats
-- BDD scenarios in `tests/features/*.feature` via `pytest-bdd`
+All 9 tasks (T0 spike + T1–T8) shipped. See `CHANGELOG.md` `[0.4.0a1]` for
+user-facing notes and `docs/superpowers/plans/2026-05-10-phase-4-hardening.md`
+for the task-by-task ledger.
+
+- [x] Per-worker Page pool inside shared `BrowserContext`; `GFLOW_CLI_CONCURRENCY` (1–16) drives in-flight degree.
+- [x] `gflow video batch` fans out via `asyncio.gather` (was sequential pre-v0.4.0a1).
+- [x] `tenacity.AsyncRetrying` retry — 3 attempts, exp-jittered backoff, `Retry-After` capped at 60 s, `reraise=True`, retry on 5xx / 429 / `playwright.Error` / `TimeoutError`, reCAPTCHA token re-minted **inside** the retry loop on the worker's own Page.
+- [x] RFC 9457 Problem Details exception hierarchy (`GFlowError → FlowApiError → 5 typed leaves`) with per-class exit codes 3–7 (130 for SIGINT).
+- [x] `WireFormatError` discovery payload (route_name, http_status, content_type, top_level_keys, body_prefix_redacted) for log-grep-driven error-taxonomy evolution.
+- [x] `structlog` bootstrap — TTY auto-detect (text/JSON), `show_locals=False` mandatory on exception renderer, `correlation_id` + `cli_version` bound via `contextvars` at process boundary, `error_raised` + `error_unhandled` events.
+- [x] 12 BDD scenarios (`pytest-bdd`) across auth/video/image with a `_forbid_live_playwright` autouse tripwire — mocked-only contract enforced.
 
 #### Phase 4 — T0 Page-pool spike note (2026-05-10)
 
