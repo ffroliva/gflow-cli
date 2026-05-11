@@ -192,4 +192,83 @@ T7 vs T8 separation: write the user-facing notes against `[Unreleased]` during t
 
 ---
 
+---
+
+## 2026-05-11 — Doc-council polish session (v0.4.0a2)
+
+### L16 — `if ! cmd; then case $?` always sees 0 (shell footgun in shipped docs)
+
+**Context:** USAGE.md L346–356 had a shell example for exit-code branching that used `if ! gflow ...; then case $? in 2) ...`. Codex caught it; verification with `bash -c 'false; if ! false; then echo $?; fi'` printed `0`. The `if` consumed the exit code; the `case` never matched the real failure code.
+
+**Rule:** When documenting exit-code branching in shell, capture `$?` BEFORE the conditional consumes it:
+
+```bash
+cmd                          # WRONG: if ! cmd; then case $? in ...
+rc=$?                        # ✓ capture first
+if [ "$rc" -ne 0 ]; then
+  case "$rc" in ...
+```
+
+PowerShell equivalent uses `$LASTEXITCODE` (per-call). This is a documentation-only bug — no test catches it — so it must be enforced by review discipline.
+
+**Source:** Commit `507de9a`. Originating reviewer: Codex CLI 0.130.0 + Claude python-reviewer (both flagged) on the v0.4.0a2 council.
+
+---
+
+### L17 — Verify doc claims against code-of-record before applying any reviewer's "fix"
+
+**Context:** Claude python-reviewer's CRITICAL list claimed the README Python snippet had 4 bugs. I checked the actual signatures with `grep` against `src/gflow_cli/api/client.py` and `src/gflow_cli/api/dto.py`. Three of the 4 were real bugs; one was off by a different mechanism than the reviewer described. Codex independently flagged `tasks/lessons.md` as missing — the file existed at 195 lines (false positive).
+
+**Rule:** No reviewer (Claude, Codex, Gemini) earns a `✓verified` row in the council consensus matrix without a literal `grep`/`sed`/file-existence check against the actual source. The discipline is named "don't guess" — the consequence of skipping it is propagating a reviewer's invented "fix" into a release. Wire one `ctx_execute(language: shell)` block per audit that probes every CLI signature, dto shape, route name, and method that the reviewers reference.
+
+**Source:** Commit `507de9a`. Multiple council audits.
+
+---
+
+### L18 — `.env.template` should COMMENT OUT its defaults, not hard-pin them
+
+**Context:** `.env.template` had `GFLOW_CLI_PROFILE=default`, `GFLOW_CLI_PROVIDER=flow`, `GFLOW_CLI_TIMEOUT_SECONDS=600`, etc. as active assignments — meaning a user who copies to `.env` (the documented onboarding step) and previously exported `GFLOW_CLI_PROFILE=experiments` in their shell would have their export silently overridden by the template's hard-pin.
+
+**Rule:** Every default value in `.env.template` ships commented out: `# GFLOW_CLI_PROFILE=default`. The template's job is documentation (here's what you can set), not configuration (here's what you must set). Only truly required values (none in this project) get uncommented defaults.
+
+**Source:** Commit `507de9a`. Originating reviewer: Claude python-reviewer + Codex MEDIUM on v0.4.0a2 council.
+
+---
+
+### L19 — Never assert billing behaviour of a private API
+
+**Context:** USER_GUIDE.md Journey 7.3 said "Flow doesn't re-bill for previously-completed media". That's a confident claim about Google Flow's internal billing logic — a system we have no contract with and cannot inspect. If we're wrong, our readers (Ultra/Pro subscribers running batch automation) lose real Veo credits.
+
+**Rule:** When documenting a reverse-engineered surface, claims about cost, retry semantics, idempotency, or refund behaviour are AT MOST observations ("**may** re-issue paid generations"), never assertions ("**doesn't** re-bill"). The cost-of-being-wrong is the user's money — soften the wording even if the observation has held in every test run so far.
+
+**Source:** Commit `507de9a`. Originating reviewer: Claude article-writing + Codex (both flagged HIGH) on v0.4.0a2 council.
+
+---
+
+### L20 — Private-API endpoint names in user-facing docs should be generalised
+
+**Context:** USER_GUIDE.md Journey 2 named an endpoint `flowMedia:batchGenerateVeoVideo` — invented, no such route exists in `samples/captured/` or `api/routes.py`. The real route is `/v1/video:batchAsyncGenerateVideoText`. The drift happened because someone wrote the prose against a recollected guess instead of grepping `routes.py`.
+
+**Rule:** When prose names a private-API route, either:
+1. Pin to the EXACT route from `samples/captured/` + `api/routes.py` and link to those files as ground truth, OR
+2. Generalise ("POSTs to Flow's video generation endpoint on `aisandbox-pa.googleapis.com`") and let `samples/README.md` be the canonical name reference.
+
+**Why both options:** Option 1 is reader-friendly but ages poorly when Flow rotates a route. Option 2 is safer for user-facing docs; option 1 is appropriate in `ARCHITECTURE.md` + `samples/README.md` where a contributor needs the literal name.
+
+**Source:** Commit `507de9a`. Originating reviewer: Claude code-reviewer + Codex (both flagged HIGH) on v0.4.0a2 council.
+
+---
+
+### L21 — Tag the release-quality commit; let post-release housekeeping land on top
+
+**Context:** v0.4.0a1 was tagged locally at `fa2b76e`. The doc council found ~38 distinct issues — material enough to warrant cutting v0.4.0a2 instead of polishing v0.4.0a1 in place. The doc-polish commit landed at `507de9a`; that's where we put the new tag. AFTER the tag, the Stage G verifier wrote a verification report (`docs/superpowers/verifications/2026-05-11-phase-4-stage-g.md`) — that landed as a separate commit `d075620` on `main`, NOT inside the tag.
+
+**Rule:** A release tag points at the **release-quality** commit. Post-release housekeeping (verifier reports, council scratch artifacts, follow-up TODO acknowledgements) lands AFTER the tag on the branch. CI/CD release workflows trigger on tag-push and build the tag SHA; they don't see HEAD-after-tag. This keeps the tagged artifact reproducible while not blocking forward motion on the branch.
+
+**Corollary:** A local-only tag can be deleted and replaced (`git tag -d v0.4.0a1 && git tag -a v0.4.0a2 -m "..."`) before push without harming history — the original commit remains as an ancestor of HEAD, just unlabelled. Public sees only the kept tag.
+
+**Source:** This session. Originating insight: Coordinator's decision tree after the council audit determined v0.4.0a1 had too many doc bugs to ship as-is.
+
+---
+
 _End. Convert stable rules from this file into `project_conventions.md` once they survive a second phase without revision._
