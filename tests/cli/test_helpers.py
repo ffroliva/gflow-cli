@@ -44,7 +44,9 @@ _CLI_VIDEO_PATH = _REPO_ROOT / "src" / "gflow_cli" / "cli_video.py"
 def _toplevel_function_names(path: Path) -> set[str]:
     """Return the set of top-level ``def`` names in *path* (no classes, no nested)."""
     tree = ast.parse(path.read_text(encoding="utf-8"))
-    return {n.name for n in tree.body if isinstance(n, ast.FunctionDef)}
+    # Match BOTH FunctionDef and AsyncFunctionDef — a future regression that
+    # re-introduces the helper as ``async def`` would otherwise silently pass.
+    return {n.name for n in tree.body if isinstance(n, (ast.FunctionDef, ast.AsyncFunctionDef))}
 
 
 def test_helpers_relocated_to_cli_helpers_module() -> None:
