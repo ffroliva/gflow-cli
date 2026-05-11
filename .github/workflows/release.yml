@@ -50,4 +50,8 @@ jobs:
         with:
           generate_release_notes: true
           files: dist/*
-          prerelease: ${{ contains(github.ref_name, '-') }}
+          # Pre-release detection covers both conventions:
+          #   - semver suffixes:  v1.2.3-alpha1, v1.2.3-rc1, v1.2.3-beta1   (any '-' qualifies)
+          #   - PEP 440 suffixes: v1.2.3a1, v1.2.3b1, v1.2.3rc1             (any 'a' / 'b' / 'rc')
+          # Stable tags like v1.2.3 contain none of these substrings.
+          prerelease: ${{ contains(github.ref_name, '-') || contains(github.ref_name, 'a') || contains(github.ref_name, 'b') || contains(github.ref_name, 'rc') }}
