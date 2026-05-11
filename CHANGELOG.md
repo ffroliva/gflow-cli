@@ -7,7 +7,9 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
-### Breaking — package + env-var rename (will ship in v0.4.0a1)
+## [0.4.0a1] — 2026-05-11
+
+### Breaking — package + env-var rename
 
 - **Python package renamed: `flow_cli` → `gflow_cli`.** All imports must
   change: `from gflow_cli...` (was `from flow_cli...`). The PyPI distribution
@@ -21,6 +23,68 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   in v0.4.x; on first encounter the process emits a single
   `DeprecationWarning` to stderr summarising the promoted keys. The shim
   will be removed in v0.5.0 — update your `.env` files and shell exports.
+
+### Added — Phase 4 hardening
+
+- **Per-worker Playwright Page pool.** `FlowApiClient.__aenter__` opens
+  `Settings.concurrency` Pages inside a single persistent BrowserContext.
+  Operations check out a Page via `asyncio.Queue` (FIFO, bounded by
+  `maxsize=N`). `GFLOW_CLI_CONCURRENCY=N` (1–16) now actually parallelizes.
+- **`gflow video batch` fans out via `asyncio.gather`** over manifest
+  entries — was sequential pre-v0.4.0a1.
+- **`tenacity`-based retry layer** (3 attempts, exponential jittered
+  backoff 1s±25% → 2s±25% → 4s±25%) on 5xx / 429 / `playwright.async_api.Error`
+  / `TimeoutError`. `Retry-After` honoured, **capped at 60 s**. `reraise=True`
+  so the original exception's `__cause__` chain is preserved. reCAPTCHA
+  token re-minted **inside the retry loop, every attempt**, on the worker's
+  own Page.
+- **RFC 9457 Problem Details exception hierarchy:**
+  `GFlowError → FlowApiError → {AuthExpiredError, RateLimitError,
+  ContentPolicyError, NetworkError, WireFormatError}`. `except FlowApiError`
+  catches the typed subclasses (back-compat). Each carries
+  `problem_type` URI, `title`, `status`, `detail`, `instance`
+  (`gflow:error:<correlation_id>`), `remediation_hint`, and `route`.
+  `to_problem_details()` serializes to the RFC 9457 JSON shape.
+- **Per-class exit codes**: 3 (auth) / 4 (rate-limit) / 5 (content-policy) /
+  6 (network) / 7 (wire-format). Exit 1 = unhandled. Exit 130 = SIGINT.
+- **`WireFormatError` discovery payload** — `route_name`, `http_status`,
+  `content_type`, `top_level_keys`, `body_prefix_redacted` so log mining
+  can propose new error subclasses for unexpected response shapes.
+- **`structlog` bootstrap** with TTY auto-detection (text on TTY, JSON when
+  piped). `show_locals=False` mandatory on the exception renderer so frame
+  locals (which may contain auth tokens) NEVER reach the log stream.
+  `correlation_id` + `cli_version` bound via `contextvars` at the process
+  boundary.
+- **`error_raised` and `error_unhandled` events.** `error_raised` for caught
+  `GFlowError`s — carries Problem Details. `error_unhandled` for anything
+  else — privacy-safe: hashes message + stack with SHA-256, never logs raw
+  payload.
+- **12 `pytest-bdd` scenarios** across `auth.feature`, `video.feature`,
+  `image.feature` — all use a mocked `FlowApiClient`. A
+  `_forbid_live_playwright` autouse tripwire fails any scenario that
+  accidentally tries to start a real browser.
+
+### Changed
+
+- `FlowApiError` re-parented under `GFlowError`. Legacy positional
+  constructor `FlowApiError(status, body, *, route)` preserved (auto-detected
+  via `isinstance(args[0], int) and not isinstance(args[0], bool)`).
+- `_resolve_profile` and `_make_provider_dir` deduped — relocated from
+  `cli_image.py` + `cli_video.py` to `gflow_cli._cli_helpers`. AST-based
+  drift guard in `tests/cli/test_helpers.py` prevents regression.
+- All `logging.*` callsites in `src/` migrated to `structlog`. The
+  remaining `print()` in `auth.py` swapped to Rich `console.print()`.
+
+### Internal
+
+- New module: `gflow_cli.errors` (RFC 9457 hierarchy + `EXIT_CODE_MAP`).
+- New module: `gflow_cli.observability` (structlog bootstrap + event
+  emitters; `show_locals=False` via
+  `ExceptionRenderer(ExceptionDictTransformer(show_locals=False))`).
+- New module: `gflow_cli.api._retry` (tenacity `AsyncRetrying` +
+  `Retry-After` parser, capped at 60 s).
+- New module: `gflow_cli._cli_helpers` (shared CLI-boundary handlers +
+  profile/provider helpers).
 
 ## [0.3.0a1] — 2026-05-10
 

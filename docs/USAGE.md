@@ -315,20 +315,42 @@ GFLOW_CLI_LOG_FORMAT=json gflow image t2i "..." 2>&1 | jq .
 
 ## Exit codes
 
-| Code | Meaning |
-|---|---|
-| `0` | Success |
-| `1` | Generic error (with stderr message) |
-| `2` | Bad usage / missing required argument / auth/profile error |
-| `64..125` | Reserved for future granular categorisation (rate-limit, provider-unavailable, etc.) |
+Phase 4 (v0.4.0a1+) maps every `GFlowError` subclass to a stable exit code so
+shell scripts can branch on the failure mode without parsing stderr.
 
-Use them to branch in shell scripts:
+| Code | Error class           | Meaning                                          | Remediation                                                |
+|------|-----------------------|--------------------------------------------------|------------------------------------------------------------|
+| `0`  | —                     | Success                                          | —                                                          |
+| `1`  | unhandled exception   | Anything not derived from `GFlowError`           | Re-run with `--verbose`; file a bug if it persists         |
+| `2`  | usage error (Click)   | Bad usage / missing arg / profile missing        | Standard CLI usage error                                   |
+| `3`  | `AuthExpiredError`    | Session cookies rejected by Flow (401/403)       | `gflow auth login --profile <name>`                        |
+| `4`  | `RateLimitError`      | Quota / rate limit hit, exhausted retries        | Wait + reduce `GFLOW_CLI_CONCURRENCY`                      |
+| `5`  | `ContentPolicyError`  | Flow rejected the prompt (200 + empty `media[]`) | Soften prompt wording                                      |
+| `6`  | `NetworkError`        | Network failure persisted across 3 attempts      | Check connectivity                                         |
+| `7`  | `WireFormatError`     | Unexpected response shape — Flow API changed     | File a bug (do NOT include captured tokens or signed URLs) |
+| `130`| SIGINT                | User-interrupted (Ctrl-C)                        | —                                                          |
+
+All errors emit a structured `error_raised` event (or `error_unhandled` for
+exit code 1) with stable fields — `error_class`, `problem` (RFC 9457 Problem
+Details), `cli_command`, `correlation_id`. Pipe stderr to a file and grep
+for telemetry forensics:
+
+```bash
+GFLOW_CLI_LOG_FORMAT=json gflow video t2v "..." 2> events.jsonl
+jq 'select(.event == "error_raised") | .error_class' events.jsonl
+```
+
+Branch in shell scripts:
 
 ```bash
 if ! gflow video i2v ./in.png "test" -o out.mp4; then
   case $? in
-    2) echo "Bad usage or auth issue"; gflow auth status; exit 1 ;;
-    *) echo "Unknown failure"; exit 1 ;;
+    2)   echo "Bad usage or auth issue"; gflow auth status; exit 1 ;;
+    3)   echo "Auth expired — re-run gflow auth login"; exit 1 ;;
+    4|6) echo "Transient infra issue — try again later"; exit 1 ;;
+    5)   echo "Content policy rejected the prompt"; exit 1 ;;
+    7)   echo "Flow API shape changed — update gflow-cli"; exit 1 ;;
+    *)   echo "Unknown failure"; exit 1 ;;
   esac
 fi
 ```
