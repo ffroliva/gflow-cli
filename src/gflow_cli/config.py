@@ -115,6 +115,15 @@ class Settings(BaseSettings):
         description="Required when provider=official (v0.3+).",
     )
 
+    # --- transport --------------------------------------------------------
+    transport: str | None = Field(
+        default=None,
+        description=(
+            "Default transport strategy: evaluate_fetch | bearer | sapisidhash. "
+            "Set via GFLOW_CLI_TRANSPORT env var."
+        ),
+    )
+
     # --- runtime ----------------------------------------------------------
     timeout_seconds: int = Field(default=600, ge=1, le=3600)
     concurrency: int = Field(default=1, ge=1, le=16)
