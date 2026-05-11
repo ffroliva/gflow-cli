@@ -25,17 +25,27 @@ imported directly from :mod:`gflow_cli.observability` (no submodules).
 from __future__ import annotations
 
 import hashlib
-import logging
 import sys
 import traceback
 from typing import Any
 
 import structlog
+from structlog.types import FilteringBoundLogger
 
 from gflow_cli.config import LogFormat
 from gflow_cli.errors import ContentPolicyError, GFlowError, WireFormatError
 
+# Numeric stdlib-logging level constants, mirrored here so observability.py and
+# cli.py do NOT need to `import logging` solely for one constant each. Source
+# of truth: Python's logging module (logging.DEBUG == 10, logging.INFO == 20).
+# Single point of definition prevents the half-and-half state the council
+# flagged (cli.py inlined 10, observability.py imported logging.INFO).
+DEBUG_LEVEL: int = 10
+INFO_LEVEL: int = 20
+
 __all__ = [
+    "DEBUG_LEVEL",
+    "INFO_LEVEL",
     "configure_logging",
     "emit_error_event",
     "emit_unhandled_event",
@@ -81,13 +91,13 @@ def configure_logging(log_format: LogFormat = LogFormat.AUTO) -> None:
         renderer = structlog.processors.JSONRenderer()
     structlog.configure(
         processors=[*shared_processors, renderer],
-        wrapper_class=structlog.make_filtering_bound_logger(logging.INFO),
+        wrapper_class=structlog.make_filtering_bound_logger(INFO_LEVEL),
         cache_logger_on_first_use=True,
     )
 
 
 def emit_error_event(
-    logger: Any,
+    logger: FilteringBoundLogger,
     exc: GFlowError,
     *,
     cli_command: str,
@@ -127,7 +137,7 @@ def emit_error_event(
 
 
 def emit_unhandled_event(
-    logger: Any,
+    logger: FilteringBoundLogger,
     exc: BaseException,
     *,
     cli_command: str,

@@ -189,16 +189,12 @@ def test_cli_keyboard_interrupt_exits_130(monkeypatch: pytest.MonkeyPatch, tmp_p
 
 
 def test_cli_unhandled_exception_exits_1_and_emits_unhandled_event(
-    monkeypatch: pytest.MonkeyPatch, tmp_path: Path
+    monkeypatch: pytest.MonkeyPatch,
+    tmp_path: Path,
+    install_log_capture: structlog.testing.LogCapture,
 ) -> None:
     """Non-GFlowError exception -> exit code 1 + error_unhandled event fires."""
-    cap = structlog.testing.LogCapture()
-    # merge_contextvars must precede LogCapture so process-boundary
-    # contextvars (correlation_id, cli_version) bound in cli.main land in
-    # the captured event dict. T5 moved correlation_id from an in-line
-    # helper kwarg to a contextvar; tests must hydrate it the same way.
-    structlog.configure(processors=[structlog.contextvars.merge_contextvars, cap])
-    log_capture = cap.entries
+    log_capture = install_log_capture.entries
 
     _patch_profile_resolution(monkeypatch, tmp_path, "gflow_cli.cli_image")
     monkeypatch.setattr(
@@ -220,16 +216,12 @@ def test_cli_unhandled_exception_exits_1_and_emits_unhandled_event(
 
 
 def test_cli_gflow_error_emits_error_raised_event_with_correlation_id(
-    monkeypatch: pytest.MonkeyPatch, tmp_path: Path
+    monkeypatch: pytest.MonkeyPatch,
+    tmp_path: Path,
+    install_log_capture: structlog.testing.LogCapture,
 ) -> None:
     """A typed GFlowError -> exit 3 + structured error_raised event with Problem Details."""
-    cap = structlog.testing.LogCapture()
-    # merge_contextvars must precede LogCapture so process-boundary
-    # contextvars (correlation_id, cli_version) bound in cli.main land in
-    # the captured event dict. T5 moved correlation_id from an in-line
-    # helper kwarg to a contextvar; tests must hydrate it the same way.
-    structlog.configure(processors=[structlog.contextvars.merge_contextvars, cap])
-    log_capture = cap.entries
+    log_capture = install_log_capture.entries
 
     _patch_profile_resolution(monkeypatch, tmp_path, "gflow_cli.cli_image")
     exc = AuthExpiredError(detail="401", status=401, route="createProject")
@@ -254,20 +246,16 @@ def test_cli_gflow_error_emits_error_raised_event_with_correlation_id(
 
 
 def test_cli_wire_format_error_logs_full_discovery_payload(
-    monkeypatch: pytest.MonkeyPatch, tmp_path: Path
+    monkeypatch: pytest.MonkeyPatch,
+    tmp_path: Path,
+    install_log_capture: structlog.testing.LogCapture,
 ) -> None:
     """WireFormatError surfaces ALL 5 discovery payload fields in the structured event.
 
     Spec § 3.1 / C5: discovery must carry route_name, http_status, content_type,
     top_level_keys, body_prefix_redacted — the five log-grep-evolution fields that
     let log mining propose new error subclasses."""
-    cap = structlog.testing.LogCapture()
-    # merge_contextvars must precede LogCapture so process-boundary
-    # contextvars (correlation_id, cli_version) bound in cli.main land in
-    # the captured event dict. T5 moved correlation_id from an in-line
-    # helper kwarg to a contextvar; tests must hydrate it the same way.
-    structlog.configure(processors=[structlog.contextvars.merge_contextvars, cap])
-    log_capture = cap.entries
+    log_capture = install_log_capture.entries
 
     _patch_profile_resolution(monkeypatch, tmp_path, "gflow_cli.cli_image")
     exc = WireFormatError(
@@ -306,16 +294,12 @@ def test_cli_wire_format_error_logs_full_discovery_payload(
 
 
 def test_content_policy_logs_upstream_status_200_extension(
-    monkeypatch: pytest.MonkeyPatch, tmp_path: Path
+    monkeypatch: pytest.MonkeyPatch,
+    tmp_path: Path,
+    install_log_capture: structlog.testing.LogCapture,
 ) -> None:
     """ContentPolicyError -> upstream_status=200 extension + RFC 9457 omits status."""
-    cap = structlog.testing.LogCapture()
-    # merge_contextvars must precede LogCapture so process-boundary
-    # contextvars (correlation_id, cli_version) bound in cli.main land in
-    # the captured event dict. T5 moved correlation_id from an in-line
-    # helper kwarg to a contextvar; tests must hydrate it the same way.
-    structlog.configure(processors=[structlog.contextvars.merge_contextvars, cap])
-    log_capture = cap.entries
+    log_capture = install_log_capture.entries
 
     _patch_profile_resolution(monkeypatch, tmp_path, "gflow_cli.cli_image")
     exc = ContentPolicyError(detail="empty media[]")

@@ -16,7 +16,7 @@ from gflow_cli import auth as auth_mod
 from gflow_cli.cli_image import image as _image_group
 from gflow_cli.cli_video import video as _video_group
 from gflow_cli.config import get_settings
-from gflow_cli.observability import configure_logging
+from gflow_cli.observability import DEBUG_LEVEL, configure_logging
 
 console = Console()
 
@@ -66,13 +66,12 @@ def main(ctx: click.Context, verbose: bool) -> None:
         correlation_id=str(uuid.uuid4()),
     )
     if verbose:
-        # Lower the structlog filter to DEBUG (level 10). We DO NOT call
-        # `logging.basicConfig` — structlog owns logging in v0.4+. Inlining
-        # the int avoids re-importing the stdlib `logging` module just for
-        # one constant (spec acceptance: `git grep "^import logging" src/`
-        # returns no hits).
+        # Lower the structlog filter to DEBUG. We DO NOT call
+        # `logging.basicConfig` — structlog owns logging in v0.4+. The
+        # `DEBUG_LEVEL` constant is defined in `observability.py` so this
+        # module doesn't need to `import logging` solely for one constant.
         structlog.configure(
-            wrapper_class=structlog.make_filtering_bound_logger(10),
+            wrapper_class=structlog.make_filtering_bound_logger(DEBUG_LEVEL),
         )
     ctx.ensure_object(dict)
 
