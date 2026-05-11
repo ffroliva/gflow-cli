@@ -26,6 +26,7 @@ import secrets
 import time
 import uuid
 from collections.abc import Sequence
+from dataclasses import replace as _dc_replace
 from datetime import datetime
 from pathlib import Path
 from typing import Any, cast
@@ -582,10 +583,10 @@ class FlowApiClient:
             try:
                 minter = TokenMinter(page)
                 token = await minter.mint(recaptcha_action)
+                req_with_token = _dc_replace(req, recaptcha_token=token)
                 body = _build_batch_generate_images_body(
-                    req,
+                    req_with_token,
                     project_id=project_id,
-                    recaptcha_token=token,
                     batch_id=batch_id,
                     seed=seed,
                     session_id=f";{int(time.time() * 1000)}",

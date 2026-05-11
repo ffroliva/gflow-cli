@@ -169,12 +169,19 @@ class GenerateImageRequest:
 
     T2I when ``refs`` is empty, I2I otherwise. Quantity > 1 is the caller's
     responsibility — fan out into N parallel calls sharing a batch_id.
+
+    ``recaptcha_token`` is populated by the caller right before send via
+    ``dataclasses.replace(req, recaptcha_token=minted_token)``. The empty
+    string default means "unminted" — the caller is responsible for minting
+    a fresh token and attaching it; the expiry contract is visible at the
+    call site rather than buried inside the body builder.
     """
 
     prompt: str
     aspect: Aspect = Aspect.PORTRAIT
     model: Model = Model.NARWHAL
     refs: tuple[ImageRef, ...] = ()
+    recaptcha_token: str = ""  # populated by caller right before send; "" means unminted
 
     def __post_init__(self) -> None:
         if not self.prompt or not self.prompt.strip():
@@ -198,7 +205,6 @@ def _build_batch_generate_images_body(
     req: GenerateImageRequest,
     *,
     project_id: str,
-    recaptcha_token: str,
     batch_id: str,
     seed: int,
     session_id: str,
@@ -208,17 +214,21 @@ def _build_batch_generate_images_body(
     Shape mirrors ``samples/captured/06_batchGenerateImages.json`` and
     ``07_batchGenerateImages_seeded.json``. Every field present in those
     samples is required; nothing extra is added.
+
+    The reCAPTCHA token is read from ``req.recaptcha_token``. Callers MUST
+    attach a freshly minted token via ``dataclasses.replace(req,
+    recaptcha_token=token)`` before calling this function.
     """
     cc = _client_context(
         project_id=project_id,
-        recaptcha_token=recaptcha_token,
+        recaptcha_token=req.recaptcha_token,
         session_id=session_id,
     )
     request: dict[str, Any] = {
         # `clientContext` is duplicated inside the request — same shape, same token.
         "clientContext": _client_context(
             project_id=project_id,
-            recaptcha_token=recaptcha_token,
+            recaptcha_token=req.recaptcha_token,
             session_id=session_id,
         ),
         "imageModelName": req.model.value,
