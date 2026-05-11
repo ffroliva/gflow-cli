@@ -26,19 +26,16 @@ Exports:
   a given profile name, or exit 2 if the user hasn't run ``gflow auth login``
   yet. Also relocated in T4b.
 
-Observability bootstrap (T5) is not yet shipped. Both error handlers therefore
-import ``gflow_cli.observability`` lazily inside the function body; when the
-import fails they fall back to building the structured event in-line via
-the stdlib ``structlog`` logger. Tests exercise the fallback path until
-T5 lands.
+T5 (this commit) shipped :mod:`gflow_cli.observability`, so the lazy-import
+fallback that T4a carried while observability was a forward reference has
+been removed. Both error handlers now import
+:func:`gflow_cli.observability.emit_error_event` /
+:func:`gflow_cli.observability.emit_unhandled_event` at module load time.
 """
 
 from __future__ import annotations
 
-import hashlib
 import sys
-import traceback
-import uuid
 from collections.abc import Callable, Coroutine
 from pathlib import Path
 from typing import Any
@@ -51,21 +48,22 @@ from gflow_cli import auth as auth_mod
 from gflow_cli import profile_store
 from gflow_cli.errors import (
     EXIT_CODE_MAP,
-    ContentPolicyError,
     GFlowError,
-    WireFormatError,
 )
+from gflow_cli.observability import emit_error_event, emit_unhandled_event
 
 _logger = structlog.get_logger(__name__)
 _console = Console()
 
 # Explicit re-export list. The underscore prefix on ``_resolve_profile`` and
-# ``_make_provider_dir`` is historical (they were module-private helpers in
-# cli_image.py / cli_video.py pre-T4b); the negative-import test in
-# ``tests/cli/test_helpers.py`` pins those exact names. Listing them in
-# ``__all__`` tells pyright (`reportPrivateUsage`, `reportUnusedFunction`)
+# ``_make_provider_dir`` (and the two error handlers) is historical — they
+# were module-private helpers in cli_image.py / cli_video.py before T4b — and
+# the negative-import test in ``tests/cli/test_helpers.py`` pins those exact
+# names. Listing them in ``__all__`` tells pyright (`reportPrivateUsage`)
 # that despite the leading underscore these are part of this module's
-# documented API and cross-module imports are sanctioned.
+# documented API and cross-module imports are sanctioned. Pyright's
+# `reportPrivateUsage` rule does NOT honor the PEP 484 `from X import Y as Y`
+# re-export idiom for underscore names, so __all__ is the practical fix.
 __all__ = [
     "_handle_gflow_error",
     "_handle_unhandled_error",
@@ -88,47 +86,11 @@ def _exit_code_for(exc: GFlowError) -> int:
     return 1
 
 
-def _emit_error_raised_fallback(exc: GFlowError, *, cli_command: str) -> None:
-    """In-line fallback emitter used until T5 ships ``observability.py``.
-
-    Builds the same payload the future ``emit_error_event`` helper will
-    build: ``error_class``, RFC 9457 ``problem`` dict, ``cli_command``,
-    ``correlation_id``, plus class-specific extensions (``upstream_status``
-    for :class:`ContentPolicyError`, ``discovery`` for
-    :class:`WireFormatError`).
-    """
-    correlation_id = exc.instance or f"gflow:error:{uuid.uuid4()}"
-    extras: dict[str, Any] = {}
-    if isinstance(exc, ContentPolicyError):
-        # Flow returns HTTP 200 for content rejections; RFC 9457 forbids 2xx
-        # on the Problem Details status field, so we surface the raw upstream
-        # status only as an event extension (see ContentPolicyError docstring).
-        extras["upstream_status"] = 200
-    if isinstance(exc, WireFormatError):
-        extras["discovery"] = exc.discovery
-    _logger.error(
-        "error_raised",
-        error_class=type(exc).__name__,
-        problem=exc.to_problem_details(),
-        cli_command=cli_command,
-        correlation_id=correlation_id,
-        **extras,
-    )
-
-
 def _handle_gflow_error(exc: GFlowError, *, cli_command: str) -> int:
     """Print user-facing message + remediation, emit ``error_raised`` event,
     return exit code.
-
-    Lazy-imports :mod:`gflow_cli.observability` so this module is usable even
-    before T5 lands. On ``ImportError`` we fall back to the in-line emitter.
     """
-    try:
-        from gflow_cli.observability import emit_error_event  # type: ignore[import-not-found]
-
-        emit_error_event(_logger, exc, cli_command=cli_command)
-    except ImportError:
-        _emit_error_raised_fallback(exc, cli_command=cli_command)
+    emit_error_event(_logger, exc, cli_command=cli_command)
     _console.print(f"[red]{exc.title}:[/red] {exc.detail or ''}")
     if exc.remediation_hint:
         _console.print(f"[yellow]-> {exc.remediation_hint}[/yellow]")
@@ -139,22 +101,7 @@ def _handle_unhandled_error(exc: BaseException, *, cli_command: str) -> int:
     """Catch-all for non-:class:`GFlowError`. Privacy-safe: hashes message + stack,
     never logs raw payload. Always returns exit code 1.
     """
-    try:
-        from gflow_cli.observability import emit_unhandled_event  # type: ignore[import-not-found]
-
-        emit_unhandled_event(_logger, exc, cli_command=cli_command)
-    except ImportError:
-        message_hash = hashlib.sha256(str(exc).encode("utf-8", "replace")).hexdigest()
-        stack_hash = hashlib.sha256(
-            "".join(traceback.format_tb(exc.__traceback__)).encode("utf-8", "replace")
-        ).hexdigest()
-        _logger.error(
-            "error_unhandled",
-            exception_class=type(exc).__name__,
-            message_hash=message_hash,
-            stack_hash=stack_hash,
-            cli_command=cli_command,
-        )
+    emit_unhandled_event(_logger, exc, cli_command=cli_command)
     _console.print(
         "[red]Unexpected error.[/red] Re-run with --verbose to capture details. "
         "If this persists, file a bug at https://github.com/ffroliva/gflow-cli/issues."

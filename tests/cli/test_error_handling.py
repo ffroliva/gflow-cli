@@ -21,14 +21,22 @@ from gflow_cli.errors import (
 
 
 @pytest.fixture(autouse=True)
-def _isolate_structlog():
+def _isolate_structlog(monkeypatch: pytest.MonkeyPatch):
     """structlog.configure() is global state. T4a tests repeatedly install
     LogCapture processors -- without this fixture, captured events from prior
     tests would leak into the current test's log_capture list and
     bind_contextvars values would persist. Reset both before AND after each
-    test so order doesn't matter."""
+    test so order doesn't matter.
+
+    Also patches the ``configure_logging`` calls that ``gflow_cli.cli.main``
+    invokes at the process boundary (T5) to a no-op so the test's own
+    ``LogCapture`` (installed BEFORE ``runner.invoke``) survives the CLI
+    bootstrap. Without this, ``configure_logging`` overwrites the test's
+    processor chain with the production stack and captured events vanish.
+    """
     structlog.reset_defaults()
     structlog.contextvars.clear_contextvars()
+    monkeypatch.setattr("gflow_cli.cli.configure_logging", lambda *a, **kw: None)
     yield
     structlog.reset_defaults()
     structlog.contextvars.clear_contextvars()
@@ -185,7 +193,11 @@ def test_cli_unhandled_exception_exits_1_and_emits_unhandled_event(
 ) -> None:
     """Non-GFlowError exception -> exit code 1 + error_unhandled event fires."""
     cap = structlog.testing.LogCapture()
-    structlog.configure(processors=[cap])
+    # merge_contextvars must precede LogCapture so process-boundary
+    # contextvars (correlation_id, cli_version) bound in cli.main land in
+    # the captured event dict. T5 moved correlation_id from an in-line
+    # helper kwarg to a contextvar; tests must hydrate it the same way.
+    structlog.configure(processors=[structlog.contextvars.merge_contextvars, cap])
     log_capture = cap.entries
 
     _patch_profile_resolution(monkeypatch, tmp_path, "gflow_cli.cli_image")
@@ -212,7 +224,11 @@ def test_cli_gflow_error_emits_error_raised_event_with_correlation_id(
 ) -> None:
     """A typed GFlowError -> exit 3 + structured error_raised event with Problem Details."""
     cap = structlog.testing.LogCapture()
-    structlog.configure(processors=[cap])
+    # merge_contextvars must precede LogCapture so process-boundary
+    # contextvars (correlation_id, cli_version) bound in cli.main land in
+    # the captured event dict. T5 moved correlation_id from an in-line
+    # helper kwarg to a contextvar; tests must hydrate it the same way.
+    structlog.configure(processors=[structlog.contextvars.merge_contextvars, cap])
     log_capture = cap.entries
 
     _patch_profile_resolution(monkeypatch, tmp_path, "gflow_cli.cli_image")
@@ -228,8 +244,9 @@ def test_cli_gflow_error_emits_error_raised_event_with_correlation_id(
     assert e["error_class"] == "AuthExpiredError"
     assert e["problem"]["type"] == "https://gflow-cli.dev/errors/auth-expired"
     assert e["problem"]["status"] == 401
-    # In the T4a fallback path (observability.py not yet shipped) correlation_id
-    # is provided by the in-line _handle_gflow_error helper.
+    # T5: correlation_id flows from a contextvar bound at the cli.main
+    # process boundary. merge_contextvars (installed above) folds it into
+    # the event dict before LogCapture sees the call.
     assert "correlation_id" in e
     assert e["cli_command"].startswith("image t2i")
     # Cross-contamination guard — error_unhandled MUST NOT fire on a GFlowError.
@@ -245,7 +262,11 @@ def test_cli_wire_format_error_logs_full_discovery_payload(
     top_level_keys, body_prefix_redacted — the five log-grep-evolution fields that
     let log mining propose new error subclasses."""
     cap = structlog.testing.LogCapture()
-    structlog.configure(processors=[cap])
+    # merge_contextvars must precede LogCapture so process-boundary
+    # contextvars (correlation_id, cli_version) bound in cli.main land in
+    # the captured event dict. T5 moved correlation_id from an in-line
+    # helper kwarg to a contextvar; tests must hydrate it the same way.
+    structlog.configure(processors=[structlog.contextvars.merge_contextvars, cap])
     log_capture = cap.entries
 
     _patch_profile_resolution(monkeypatch, tmp_path, "gflow_cli.cli_image")
@@ -289,7 +310,11 @@ def test_content_policy_logs_upstream_status_200_extension(
 ) -> None:
     """ContentPolicyError -> upstream_status=200 extension + RFC 9457 omits status."""
     cap = structlog.testing.LogCapture()
-    structlog.configure(processors=[cap])
+    # merge_contextvars must precede LogCapture so process-boundary
+    # contextvars (correlation_id, cli_version) bound in cli.main land in
+    # the captured event dict. T5 moved correlation_id from an in-line
+    # helper kwarg to a contextvar; tests must hydrate it the same way.
+    structlog.configure(processors=[structlog.contextvars.merge_contextvars, cap])
     log_capture = cap.entries
 
     _patch_profile_resolution(monkeypatch, tmp_path, "gflow_cli.cli_image")

@@ -3,10 +3,11 @@
 from __future__ import annotations
 
 import asyncio
-import logging
 import sys
+import uuid
 
 import click
+import structlog
 from rich.console import Console
 from rich.table import Table
 
@@ -14,6 +15,8 @@ from gflow_cli import __version__, profile_store
 from gflow_cli import auth as auth_mod
 from gflow_cli.cli_image import image as _image_group
 from gflow_cli.cli_video import video as _video_group
+from gflow_cli.config import get_settings
+from gflow_cli.observability import configure_logging
 
 console = Console()
 
@@ -49,10 +52,28 @@ def _render_profiles_table(profiles: list[profile_store.ProfileMeta]) -> None:
 @click.pass_context
 def main(ctx: click.Context, verbose: bool) -> None:
     """gflow — drive Google Flow Veo I2V from the terminal."""
-    logging.basicConfig(
-        level=logging.DEBUG if verbose else logging.INFO,
-        format="%(asctime)s %(levelname)s %(name)s: %(message)s",
+    # Process-boundary bootstrap. Order matters:
+    # 1. configure_logging() installs structlog processors (TTY-aware renderer,
+    #    show_locals=False exception formatter, etc.).
+    # 2. bind_contextvars() attaches process-scoped fields that flow through
+    #    every event emitted in this invocation. We bind these ONLY here —
+    #    binding inside async tasks risks cross-task leakage (spec C6).
+    settings = get_settings()
+    configure_logging(settings.log_format)
+    structlog.contextvars.clear_contextvars()
+    structlog.contextvars.bind_contextvars(
+        cli_version=__version__,
+        correlation_id=str(uuid.uuid4()),
     )
+    if verbose:
+        # Lower the structlog filter to DEBUG (level 10). We DO NOT call
+        # `logging.basicConfig` — structlog owns logging in v0.4+. Inlining
+        # the int avoids re-importing the stdlib `logging` module just for
+        # one constant (spec acceptance: `git grep "^import logging" src/`
+        # returns no hits).
+        structlog.configure(
+            wrapper_class=structlog.make_filtering_bound_logger(10),
+        )
     ctx.ensure_object(dict)
 
 
