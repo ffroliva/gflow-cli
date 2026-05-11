@@ -203,10 +203,59 @@ class WireFormatError(FlowApiError):
         self.discovery = discovery or {}
 
 
+class TransportTimeoutError(GFlowError):
+    """Raised when a transport strategy hangs > 30s on a single API call."""
+
+    problem_type = "https://gflow-cli.dev/errors/transport-timeout"
+    title = "Transport strategy timed out"
+    _default_remediation = (
+        "A single API call exceeded the 30 s deadline. "
+        "Check connectivity or reduce request complexity."
+    )
+
+
+class WafRejectionError(GFlowError):
+    """Raised on HTTP 403 from Flow API; likely WAF / browser-fingerprint mismatch."""
+
+    problem_type = "https://gflow-cli.dev/errors/waf-rejection"
+    title = "WAF rejection (HTTP 403)"
+    _default_remediation = (
+        "Flow returned 403; the request was blocked by a WAF or fingerprint check. "
+        "Re-authenticate or rotate the transport profile."
+    )
+
+
+class ConfigurationError(GFlowError):
+    """Raised when configuration is invalid (e.g. unknown transport name)."""
+
+    problem_type = "https://gflow-cli.dev/errors/configuration"
+    title = "Configuration error"
+    _default_remediation = (
+        "Check that the transport name is registered via make_transport(). "
+        "Run `gflow config list-transports` to see available strategies."
+    )
+
+
+class AuthMissingError(GFlowError):
+    """Raised when a strategy lacks a required prerequisite credential
+    (e.g. SAPISID cookie missing from profile dir for SapisidhashTransport)."""
+
+    problem_type = "https://gflow-cli.dev/errors/auth-missing"
+    title = "Authentication credential missing"
+    _default_remediation = (
+        "A required credential (e.g. SAPISID cookie) is absent from the profile. "
+        "Run `gflow auth login --profile <name>` to capture a fresh session."
+    )
+
+
 # EXIT_CODE_MAP — most-specific class FIRST per isinstance walk semantics.
 # Subclasses inherit their parent's exit code if they don't have their own
 # entry. New entries MUST go BEFORE their parent class in this dict.
 EXIT_CODE_MAP: dict[type[GFlowError], int] = {
+    AuthMissingError: 8,
+    TransportTimeoutError: 9,
+    WafRejectionError: 10,
+    ConfigurationError: 11,
     AuthExpiredError: 3,
     RateLimitError: 4,
     ContentPolicyError: 5,

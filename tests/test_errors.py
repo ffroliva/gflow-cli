@@ -9,12 +9,16 @@ import pytest
 from gflow_cli.errors import (
     EXIT_CODE_MAP,
     AuthExpiredError,
+    AuthMissingError,
+    ConfigurationError,
     ContentPolicyError,
     FlowApiError,
     GFlowError,
     NetworkError,
     ProblemDetails,
     RateLimitError,
+    TransportTimeoutError,
+    WafRejectionError,
     WireFormatError,
 )
 
@@ -274,3 +278,27 @@ def test_flow_api_error_bool_does_not_silently_take_legacy_path():
     and `status` is unset."""
     exc = FlowApiError(True)
     assert exc.status is None  # bool did NOT become status
+
+
+# ---------- Task A.1 — transport strategy exception classes ----------
+
+
+def test_transport_timeout_error_exit_code():
+    err = TransportTimeoutError("hung for 31s on batchGenerateImages")
+    assert _exit_code_for(err) == 9
+    assert "31s" in str(err)
+
+
+def test_waf_rejection_error_exit_code():
+    err = WafRejectionError("HTTP 403 from aisandbox-pa")
+    assert _exit_code_for(err) == 10
+
+
+def test_configuration_error_exit_code():
+    err = ConfigurationError("Transport 'foo' is not registered.")
+    assert _exit_code_for(err) == 11
+
+
+def test_auth_missing_error_exit_code():
+    err = AuthMissingError("SAPISID cookie missing in profile")
+    assert _exit_code_for(err) == 8
