@@ -92,9 +92,15 @@ def _profile_dir() -> Path:
 
 
 def _make_client(strategy: str, profile: Path) -> FlowApiClient:
-    """Construct a FlowApiClient wired to the requested transport strategy."""
-    transport = make_transport(strategy)
-    return FlowApiClient(profile_dir=profile, transport=transport)
+    """Construct a FlowApiClient wired to the requested transport strategy.
+
+    Pass `transport=strategy_name` (string) — NOT an instance — so the client
+    owns the lifecycle and calls `transport.setup(profile_dir)` in __aenter__.
+    Per spec § 4.3, passing a pre-initialized instance signals the caller
+    owns lifecycle and the client SKIPS setup. The strategy then refuses
+    `generate_images` with AuthMissingError because state is uninitialized.
+    """
+    return FlowApiClient(profile_dir=profile, transport=strategy)
 
 
 # ---------------------------------------------------------------------------
