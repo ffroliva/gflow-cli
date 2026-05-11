@@ -15,7 +15,7 @@
 
 > ⚠️ **Not affiliated with Google.** Reverse-engineered from public Flow web traffic. Endpoints can change at any time. See full [DISCLAIMER](DISCLAIMER.md) before use.
 
-📚 **Docs:** [INDEX](docs/INDEX.md) · [User Guide](docs/USER_GUIDE.md) · [Architecture](docs/ARCHITECTURE.md) · [Authentication](docs/AUTHENTICATION.md) · [Configuration](docs/CONFIGURATION.md) · [Usage](docs/USAGE.md) · [Security](docs/SECURITY.md) · [Known issues](KNOWN_ISSUES.md) · [Plan](PLAN.md) · [Changelog](CHANGELOG.md)
+📚 **Docs:** [INDEX](docs/INDEX.md) · [User Guide](docs/USER_GUIDE.md) · [Architecture](docs/ARCHITECTURE.md) · [Authentication](docs/AUTHENTICATION.md) · [Configuration](docs/CONFIGURATION.md) · [Usage](docs/USAGE.md) · [Security](docs/SECURITY.md) · [Known issues](KNOWN_ISSUES.md) · [Release protocol](RELEASE.md) · [Plan](PLAN.md) · [Changelog](CHANGELOG.md)
 🤖 **For AI agents:** [CLAUDE.md](CLAUDE.md) · [`.claude/`](.claude/README.md)
 
 ---
@@ -322,17 +322,20 @@ Each `Provider` method has a corresponding test file under `tests/`. New routes 
 
 1. Update [`CHANGELOG.md`](CHANGELOG.md) with the version's changes (Keep-a-Changelog format).
 2. Bump `version` in `pyproject.toml`.
-3. Tag the commit:
+3. Bump `__version__` in `src/gflow_cli/__init__.py`.
+4. Tag the commit:
    ```bash
-   git tag vX.Y.Z          # or vX.Y.ZaN for an alpha
-   git push origin vX.Y.Z
+   git tag v<version>          # for example, v0.4.0 or v0.4.0a3
+   git push origin v<version>
    ```
-4. The [`release.yml`](.github/workflows/release.yml) GitHub Action runs:
+5. The [`release.yml`](.github/workflows/release.yml) GitHub Action runs:
    - Builds the wheel + sdist with `uv build`
    - Publishes to PyPI via [Trusted Publishing](https://docs.pypi.org/trusted-publishers/) — no API tokens stored
    - Creates a GitHub Release with the changelog excerpt + built artifacts attached
 
-Pre-release tags (`v*.*.*-rc*`, `v*.*.*-alpha*`, `v*.*.*-beta*`) auto-flag as pre-releases on GitHub. Install with `pip install --pre gflow-cli` or `uvx --from "gflow-cli==0.4.0a2" gflow`.
+PEP 440 prerelease tags (`vX.Y.ZaN`, `vX.Y.ZbN`, `vX.Y.ZrcN`) and hyphenated prerelease tags (`vX.Y.Z-alphaN`, `vX.Y.Z-betaN`, `vX.Y.Z-rcN`) auto-flag as prereleases on GitHub. Stable tags such as `v0.4.0` become full GitHub Releases. See [RELEASE.md](RELEASE.md) for the checklist and the prerelease/full-release policy.
+
+Install prereleases explicitly with `pip install --pre gflow-cli` or `uvx --from "gflow-cli==0.4.0a2" gflow`.
 
 ---
 
@@ -368,6 +371,7 @@ Note that the **Google service** this tool talks to has its own terms (Google La
 [![GitHub last commit](https://img.shields.io/github/last-commit/ffroliva/gflow-cli)](https://github.com/ffroliva/gflow-cli/commits/main)
 [![GitHub repo size](https://img.shields.io/github/repo-size/ffroliva/gflow-cli)](https://github.com/ffroliva/gflow-cli)
 [![PyPI downloads](https://img.shields.io/pypi/dm/gflow-cli.svg)](https://pypi.org/project/gflow-cli/)
-[![PyPI total downloads](https://img.shields.io/pypi/dt/gflow-cli.svg)](https://pypi.org/project/gflow-cli/)
+
+[![Star History Chart](https://starchart.cc/ffroliva/gflow-cli.svg)](https://starchart.cc/ffroliva/gflow-cli)
 
 If `gflow-cli` saves you time, please ⭐ the repo — it's the cheapest way to support the project.

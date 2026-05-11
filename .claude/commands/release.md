@@ -9,8 +9,8 @@ You are about to release a new version of `gflow-cli`. Follow this sequence verb
 ## Inputs
 
 Ask the user (if not already provided):
-1. **Version** — the new SemVer (e.g. `0.2.0`, `0.2.0a1`, `1.0.0-rc1`). If they don't know, look at the latest entry in `CHANGELOG.md` `[Unreleased]` and propose the next bump (PATCH for fixes only, MINOR for new features, MAJOR for breaks).
-2. **Pre-release?** — `0.x.y` is alpha by definition. Only the user can say if a `0.x.y-rc1` should ship.
+1. **Version** — the new version (e.g. `0.4.0`, `0.4.0a3`, `1.0.0rc1`). Use PEP 440 prerelease suffixes (`aN`, `bN`, `rcN`) for Python package releases. If they don't know, look at the latest entry in `CHANGELOG.md` `[Unreleased]` and propose the next bump (PATCH for fixes only, MINOR for new features, MAJOR for breaks).
+2. **Pre-release?** — prerelease versions such as `0.4.0a3` should stay marked as GitHub prereleases. Only the user can say when a release line is ready for the stable tag, such as `0.4.0`.
 
 ## Sequence
 
@@ -41,7 +41,17 @@ Ask the user (if not already provided):
    version = "<NEW_VERSION>"
    ```
 
-5. **Update `CHANGELOG.md`:**
+5. **Bump package version** in `src/gflow_cli/__init__.py`:
+   ```python
+   __version__ = "<NEW_VERSION>"
+   ```
+
+6. **Update version assertion tests** if present:
+   ```bash
+   rg -n "__version__|<OLD_VERSION>|version assertion" tests src pyproject.toml
+   ```
+
+7. **Update `CHANGELOG.md`:**
    - Move all entries under `## [Unreleased]` to a new `## [<NEW_VERSION>] — YYYY-MM-DD` section.
    - Leave `## [Unreleased]` empty.
    - Update the link footer:
@@ -50,24 +60,24 @@ Ask the user (if not already provided):
      [<NEW_VERSION>]: https://github.com/ffroliva/gflow-cli/releases/tag/v<NEW_VERSION>
      ```
 
-6. **Commit the release prep.**
+8. **Commit the release prep.**
    ```bash
-   git add pyproject.toml CHANGELOG.md
-   git commit -m "release: v<NEW_VERSION>"
+   git add pyproject.toml src/gflow_cli/__init__.py CHANGELOG.md tests
+   git commit -m "chore(release): v<NEW_VERSION>"
    ```
 
-7. **Tag.** Pre-release tags include `-rc*` / `-alpha*` / `-beta*`:
+9. **Tag.** PEP 440 prerelease tags include `aN` / `bN` / `rcN`:
    ```bash
    git tag -a v<NEW_VERSION> -m "v<NEW_VERSION>"
    ```
 
-8. **Push commit + tag.**
+10. **Push commit + tag.**
    ```bash
    git push origin main
    git push origin v<NEW_VERSION>
    ```
 
-9. **Report.** Tell the user:
+11. **Report.** Tell the user:
    - The pushed tag triggers `.github/workflows/release.yml`.
    - Watch <https://github.com/ffroliva/gflow-cli/actions> for the release workflow.
    - On success: PyPI publish + GitHub Release with auto-generated notes.
@@ -82,5 +92,6 @@ Ask the user (if not already provided):
 
 ## See also
 
-- [README § Releases](../../README.md#releases) — full release policy & cadence
+- [RELEASE.md](../../RELEASE.md) — full release protocol, prerelease policy, and checklist
+- [README § Releases](../../README.md#releases) — short release policy & cadence
 - [PLAN § Phase 5](../../PLAN.md#phase-5--public-alpha-release-on-pypi) — first-release exit criteria
