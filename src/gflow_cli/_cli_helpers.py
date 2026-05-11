@@ -1,9 +1,10 @@
-"""CLI-boundary handlers shared across cli.py / cli_image.py / cli_video.py.
+"""CLI-boundary handlers + profile/provider helpers shared across cli.py /
+cli_image.py / cli_video.py.
 
 Top-level file (NOT a ``cli/`` package) to avoid file/package collision with
 the existing ``cli.py``. Per Phase 4 modular-monolith rule (spec C8).
 
-Three exports:
+Exports:
 
 * :func:`_handle_gflow_error` -- catches :class:`gflow_cli.errors.GFlowError`
   (and subclasses), emits a structured ``error_raised`` event with the
@@ -16,8 +17,16 @@ Three exports:
 * :func:`run_with_handlers` -- wraps an ``asyncio.run(coro)`` call in the two
   handlers above plus a ``KeyboardInterrupt`` / :class:`click.Abort` handler
   that exits with 130 (the conventional SIGINT exit code).
+* :func:`_resolve_profile` -- normalize ``--profile`` flag against the profile
+  precedence chain (CLI flag > ``GFLOW_CLI_PROFILE`` env > config.toml default
+  > single discovered profile). Relocated from cli_image.py / cli_video.py in
+  T4b; the negative-import test in ``tests/cli/test_helpers.py`` enforces no
+  drift back into the call-site modules.
+* :func:`_make_provider_dir` -- return the on-disk Playwright profile dir for
+  a given profile name, or exit 2 if the user hasn't run ``gflow auth login``
+  yet. Also relocated in T4b.
 
-Observability bootstrap (T5) is not yet shipped. Both handlers therefore
+Observability bootstrap (T5) is not yet shipped. Both error handlers therefore
 import ``gflow_cli.observability`` lazily inside the function body; when the
 import fails they fall back to building the structured event in-line via
 the stdlib ``structlog`` logger. Tests exercise the fallback path until
@@ -31,12 +40,15 @@ import sys
 import traceback
 import uuid
 from collections.abc import Callable, Coroutine
+from pathlib import Path
 from typing import Any
 
 import click
 import structlog
 from rich.console import Console
 
+from gflow_cli import auth as auth_mod
+from gflow_cli import profile_store
 from gflow_cli.errors import (
     EXIT_CODE_MAP,
     ContentPolicyError,
@@ -46,6 +58,21 @@ from gflow_cli.errors import (
 
 _logger = structlog.get_logger(__name__)
 _console = Console()
+
+# Explicit re-export list. The underscore prefix on ``_resolve_profile`` and
+# ``_make_provider_dir`` is historical (they were module-private helpers in
+# cli_image.py / cli_video.py pre-T4b); the negative-import test in
+# ``tests/cli/test_helpers.py`` pins those exact names. Listing them in
+# ``__all__`` tells pyright (`reportPrivateUsage`, `reportUnusedFunction`)
+# that despite the leading underscore these are part of this module's
+# documented API and cross-module imports are sanctioned.
+__all__ = [
+    "_handle_gflow_error",
+    "_handle_unhandled_error",
+    "_make_provider_dir",
+    "_resolve_profile",
+    "run_with_handlers",
+]
 
 
 def _exit_code_for(exc: GFlowError) -> int:
@@ -164,3 +191,48 @@ def run_with_handlers(
         sys.exit(130)
     except BaseException as e:  # noqa: BLE001 — intentional catch-all at the CLI boundary
         sys.exit(_handle_unhandled_error(e, cli_command=cli_command))
+
+
+# ---------------------------------------------------------------------------
+# Profile / provider helpers (relocated from cli_image.py + cli_video.py in T4b)
+# ---------------------------------------------------------------------------
+
+
+def _resolve_profile(profile: str | None) -> str:
+    """Return the active profile name or exit with a friendly message.
+
+    Precedence (delegated to :func:`profile_store.resolve_profile`):
+
+    1. *profile* argument (the CLI ``--profile`` flag) if truthy
+    2. ``GFLOW_CLI_PROFILE`` env var
+    3. ``config.toml`` default under ``$GFLOW_CLI_HOME``
+    4. single discovered ``profile_*`` directory under ``$GFLOW_CLI_HOME``
+    5. raise — surfaced to the user as a yellow Rich message and exit 2
+    """
+    if profile:
+        return profile
+    try:
+        return profile_store.resolve_profile(None)
+    except profile_store.NoProfilesError as exc:
+        _console.print(f"[yellow]{exc}[/yellow]")
+        sys.exit(2)
+    except profile_store.NoDefaultProfileError as exc:
+        _console.print(f"[yellow]{exc}[/yellow]")
+        sys.exit(2)
+
+
+def _make_provider_dir(profile_name: str) -> Path:
+    """Return the Playwright profile dir for *profile_name*, or exit if absent.
+
+    Does NOT create the directory — that's :func:`gflow_cli.auth.login`'s
+    responsibility. If the dir is missing the user is prompted to run
+    ``gflow auth login`` and the process exits with code 2.
+    """
+    pdir = auth_mod.profile_dir(profile_name)
+    if not pdir.exists():
+        _console.print(
+            f"[red]No session for profile '{profile_name}'.[/red] "
+            "Run [bold]gflow auth login[/bold] first."
+        )
+        sys.exit(2)
+    return pdir
