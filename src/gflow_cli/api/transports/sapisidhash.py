@@ -66,20 +66,45 @@ def read_sapisid_from_profile(profile_dir: Path) -> str:
             f"sapisidhash: cookie DB not found at {db_path}. "
             "Run `gflow auth login --profile <name>` first."
         )
-    conn = sqlite3.connect(str(db_path))
+    # HIGH #6: open read-only via URI mode — Chromium holds an exclusive write
+    # lock on this file; an RW open can raise OperationalError or corrupt the
+    # journal on some platforms.
     try:
-        row = conn.execute(
-            "SELECT value FROM cookies "
-            "WHERE name = 'SAPISID' AND host_key LIKE '%google.com%' "
-            "LIMIT 1"
-        ).fetchone()
-    finally:
-        conn.close()
-    if row is None or not row[0]:
+        with sqlite3.connect(f"file:{db_path}?mode=ro", uri=True) as conn:
+            row = conn.execute(
+                "SELECT value, encrypted_value FROM cookies "
+                "WHERE name = 'SAPISID' AND host_key LIKE '%google.com%' "
+                "LIMIT 1"
+            ).fetchone()
+    except sqlite3.Error as exc:
+        # MEDIUM #17: map DB errors to AuthMissingError so callers see a
+        # consistent error type (e.g. schema mismatch on a different Chromium).
         raise AuthMissingError(
-            "sapisidhash: SAPISID cookie not found in profile. Re-login required."
+            f"sapisidhash: failed reading SAPISID from {db_path}: {exc}. "
+            "Run `gflow auth login --profile <name>`."
+        ) from exc
+    if row is None:
+        raise AuthMissingError(
+            "sapisidhash: SAPISID cookie not found in profile. "
+            "Run `gflow auth login --profile <name>`."
         )
-    return str(row[0])
+    value, encrypted_value = row[0], row[1]
+    if not value and encrypted_value:
+        # HIGH #8: Chromium 80+ stores the cookie in encrypted_value (DPAPI /
+        # libsecret / Keychain); the plaintext value column is empty.
+        raise AuthMissingError(
+            "sapisidhash: SAPISID cookie is encrypted "
+            "(Chromium 80+ DPAPI/libsecret/Keychain). "
+            "S3 cannot decrypt this. "
+            "Use the `evaluate_fetch` or `bearer` strategy instead via "
+            "`--transport evaluate_fetch` or `GFLOW_CLI_TRANSPORT=bearer`."
+        )
+    if not value:
+        raise AuthMissingError(
+            "sapisidhash: SAPISID cookie not found in profile. "
+            "Run `gflow auth login --profile <name>`."
+        )
+    return str(value)
 
 
 # ---------------------------------------------------------------------------
@@ -230,8 +255,15 @@ class SapisidhashTransport:
             "authorization": f"SAPISIDHASH {hash_value}",
             "content-type": "text/plain;charset=UTF-8",
         }
+        # MEDIUM #16: explicitly set origin so it always matches the
+        # SAPISIDHASH-computed origin, regardless of what the fingerprint captured.
+        headers["origin"] = _ORIGIN
+
+        # HIGH #7: pass NO timeout to _http_post — asyncio.wait_for below is
+        # the sole wall-clock guard.  Having both caused httpx.ReadTimeout
+        # (mapped to NetworkError) to fire before asyncio saw the hang.
         coro = self._http_post(
-            url, headers=headers, content=body_bytes, timeout=PER_CALL_TIMEOUT_S
+            url, headers=headers, content=body_bytes
         )
         try:
             return await asyncio.wait_for(coro, timeout=PER_CALL_TIMEOUT_S)
@@ -248,10 +280,13 @@ class SapisidhashTransport:
         *,
         headers: dict[str, str],
         content: bytes,
-        timeout: float,
     ) -> Any:
-        """Injectable seam: real httpx POST. Tests replace this with a fake."""
+        """Injectable seam: real httpx POST. Tests replace this with a fake.
+
+        No timeout is set on the client — the asyncio.wait_for in _call_once
+        is the sole wall-clock guard (HIGH #7).
+        """
         import httpx  # lazy import
 
-        async with httpx.AsyncClient(timeout=timeout) as client:
+        async with httpx.AsyncClient(timeout=None) as client:
             return await client.post(url, headers=headers, content=content)
