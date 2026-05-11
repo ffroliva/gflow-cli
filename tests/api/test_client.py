@@ -18,6 +18,8 @@ from gflow_cli.api.client import (
     _default_project_title,
     _is_supported_image_header,
 )
+from gflow_cli.api.dto import GeneratedImage
+from gflow_cli.api.image import Aspect, GenerateImageRequest, Model
 
 
 class TestConstruction:
@@ -258,3 +260,52 @@ async def test_client_with_string_transport_owns_lifecycle(
         assert client.transport is fake
         assert fake.setup_called == 1
     assert fake.teardown_called == 1
+
+
+# ---------------------------------------------------------------------------
+# Image-gen transport delegation test (Task A.7)
+# ---------------------------------------------------------------------------
+
+
+@pytest.mark.asyncio
+async def test_client_delegates_image_gen_to_transport(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    """A.7 — client.generate_image MUST delegate to self.transport.generate_images,
+    not POST directly. This is the contract introduced by Phase A and consumed by
+    Phase B strategy implementations."""
+    monkeypatch.delenv("GFLOW_CLI_TRANSPORT", raising=False)
+    _patch_playwright(monkeypatch)
+    fake = _FakeTransport()
+
+    sentinel = GeneratedImage(
+        media_name="sentinel-uuid",
+        workflow_id="wf-sentinel",
+        seed=42,
+        prompt="delegated",
+        model_name_type="NARWHAL",
+        aspect_ratio="IMAGE_ASPECT_RATIO_PORTRAIT",
+        fife_url="https://example.com/img.png",
+        dimensions=(512, 512),
+    )
+
+    async def fake_gen(
+        *, project_id: str, request: object
+    ) -> list[GeneratedImage]:
+        assert project_id == "test-proj-xyz"
+        assert isinstance(request, GenerateImageRequest)
+        assert request.prompt == "delegated"
+        return [sentinel]
+
+    fake.generate_images = fake_gen  # type: ignore[method-assign]
+
+    async with FlowApiClient(profile_dir=tmp_path, transport=fake) as client:
+        result = await client.generate_image(
+            project_id="test-proj-xyz",
+            req=GenerateImageRequest(
+                prompt="delegated",
+                model=Model.NARWHAL,
+                aspect=Aspect.PORTRAIT,
+            ),
+        )
+    assert result is sentinel

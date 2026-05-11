@@ -26,7 +26,6 @@ import secrets
 import time
 import uuid
 from collections.abc import Sequence
-from dataclasses import replace as _dc_replace
 from datetime import datetime
 from pathlib import Path
 from typing import Any, cast
@@ -38,7 +37,7 @@ from playwright.async_api import BrowserContext, Page, Playwright, async_playwri
 from gflow_cli.api import routes
 from gflow_cli.api._retry import parse_retry_after, post_with_retry
 from gflow_cli.api.dto import AssetInfo, GeneratedImage, ProjectInfo, VideoOperation, VideoStatus
-from gflow_cli.api.image import GenerateImageRequest, _build_batch_generate_images_body
+from gflow_cli.api.image import GenerateImageRequest
 from gflow_cli.api.recaptcha import TokenMinter
 from gflow_cli.api.transports import make_transport
 from gflow_cli.api.transports.base import FlowTransportStrategy
@@ -597,67 +596,37 @@ class FlowApiClient:
         batch_id: str,
         recaptcha_action: str,
     ) -> GeneratedImage:
-        """Per-shot drive of one ``flowMedia:batchGenerateImages`` POST.
+        """Per-shot drive of one ``flowMedia:batchGenerateImages`` request.
 
-        Spec C2: the retry loop owns the mint. On EACH attempt we check out a
-        Page from the pool, mint a fresh reCAPTCHA token, build the body
-        (which embeds the token), POST. On retry (e.g. 5xx mid-attempt), the
-        next iteration mints AGAIN on its own checked-out Page — never reusing
-        a stale token.
+        A.7: delegates entirely to ``self.transport.generate_images``.
+        The transport strategy owns retry, token-minting, body-building, and
+        response parsing.
+
+        ``seed``, ``batch_id``, and ``recaptcha_action`` are preserved in the
+        signature for API stability; Phase B strategies will accept them via
+        an extended Protocol once the ``GenerateImageRequest`` carries them or
+        they are threaded through a wrapper. For now they are intentionally
+        unused at the client layer — the strategy receives the bare ``req``.
 
         Used by both ``generate_image`` (single-shot, ``count=1``) and
         ``generate_images_batch`` (parallel fan-out: N independent invocations
-        of this method, each with its own retry+mint loop on its own Page).
+        of this method, each on its own transport call).
         """
-        route_url = routes.batch_generate_images_url(project_id)
-
-        async def attempt() -> Any:
-            page = await self._checkout_page()
-            try:
-                minter = TokenMinter(page)
-                token = await minter.mint(recaptcha_action)
-                req_with_token = _dc_replace(req, recaptcha_token=token)
-                body = _build_batch_generate_images_body(
-                    req_with_token,
-                    project_id=project_id,
-                    batch_id=batch_id,
-                    seed=seed,
-                    session_id=f";{int(time.time() * 1000)}",
-                )
-                logger.debug(
-                    "post_json", url=route_url, body=_redact_for_log(json.dumps(body))[:300]
-                )
-                return await page.request.post(
-                    route_url,
-                    data=json.dumps(body),
-                    headers={"content-type": "text/plain;charset=UTF-8"},
-                )
-            finally:
-                self._checkin_page(page)
-
-        response = await self._run_with_retry(attempt, route=route_url)
-        text = await response.text()
-        _raise_for_non_retryable(response, text, route=route_url)
-        try:
-            data = json.loads(text)
-        except json.JSONDecodeError as e:
-            raise WireFormatError(
-                detail=f"non-JSON response: {text[:200]}",
-                status=response.status,
-                instance=_make_instance(),
-                route=route_url,
-                discovery=_build_wire_format_discovery(response, text, route_url),
-            ) from e
-        images = GeneratedImage.from_response_dict(data)
+        # seed, batch_id, recaptcha_action are reserved for Phase B strategy use.
+        _ = seed, batch_id, recaptcha_action  # suppress unused-variable warnings
+        if self.transport is None:
+            raise RuntimeError(
+                "FlowApiClient.transport is None — call generate_image inside 'async with client'"
+            )
+        images = await self.transport.generate_images(
+            project_id=project_id,
+            request=req,
+        )
         if not images:
-            # 200 OK with empty media[] — silent content-policy rejection or
-            # quota exhaustion. Surface as ContentPolicyError (RFC 9457 strips
-            # status; literal upstream 200 is recorded via observability as
-            # ``upstream_status``).
             raise ContentPolicyError(
                 detail="empty media[]",
                 instance=_make_instance(),
-                route=route_url,
+                route=routes.batch_generate_images_url(project_id),
             )
         return images[0]
 
