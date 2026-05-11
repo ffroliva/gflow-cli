@@ -65,9 +65,13 @@ _E2E_PROFILE_ENV = "GFLOW_CLI_E2E_PROFILE"
 def _profile_dir() -> Path:
     """Resolve the Chromium profile directory from the environment variable.
 
-    Raises ``pytest.skip`` when the variable is absent so that the test is
-    skipped gracefully in CI / normal ``pytest`` runs rather than failing with
-    a confusing error.
+    Uses gflow-cli's real profile-dir resolver (``gflow_cli.auth.profile_dir``)
+    which is `platformdirs`-based — on Windows this is
+    ``%LOCALAPPDATA%\\<author>\\gflow-cli\\profile_<name>``, NOT
+    ``~/.config/gflow-cli/profiles/<name>``.
+
+    Raises ``pytest.skip`` when the env var is absent or the profile dir
+    does not exist (e.g. user has not yet run ``gflow auth login --profile``).
     """
     name = os.environ.get(_E2E_PROFILE_ENV, "")
     if not name:
@@ -75,12 +79,15 @@ def _profile_dir() -> Path:
             f"E2E tests require {_E2E_PROFILE_ENV} env var — "
             "set it to a logged-in Chromium profile name and re-run with -m e2e"
         )
-    # Resolve against the gflow-cli default profiles location.  The transport
-    # strategies all accept an arbitrary Path so we can point at any directory.
-    base = Path.home() / ".config" / "gflow-cli" / "profiles"
-    candidate = base / name
+    # Use the actual resolver — must match where `gflow auth login` writes.
+    from gflow_cli.auth import profile_dir as _resolve_profile_dir
+
+    candidate = _resolve_profile_dir(name)
     if not candidate.exists():
-        pytest.skip(f"Profile directory not found: {candidate}")
+        pytest.skip(
+            f"Profile directory not found: {candidate}. "
+            f"Run `gflow auth login --profile {name}` to create it."
+        )
     return candidate
 
 
