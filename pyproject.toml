@@ -75,5 +75,6 @@ markers = [
 
 [dependency-groups]
 dev = [
+    "pytest-bdd>=8.1.0",
     "pytest-cov>=7.1.0",
 ]
