@@ -23,6 +23,8 @@ import random
 from collections.abc import AsyncIterator, Callable
 from typing import Any
 
+from playwright.async_api import Error as PlaywrightError
+from playwright.async_api import TimeoutError as PlaywrightTimeoutError
 from tenacity import (
     AsyncRetrying,
     RetryCallState,
@@ -91,7 +93,10 @@ def _make_retrying(
 ) -> AsyncRetrying:
     """Internal factory; tests override ``wait_seconds`` to skip real sleeps.
 
-    Retry policy: only on :class:`NetworkError` and :class:`RateLimitError`.
+    Retry policy: on :class:`NetworkError`, :class:`RateLimitError`, AND on the
+    transport-level Playwright errors (:class:`playwright.async_api.Error` and
+    :class:`playwright.async_api.TimeoutError`) so a TCP reset / DNS hiccup /
+    connect timeout mid-attempt is retried rather than surfaced raw to callers.
     4xx classification raises :class:`AuthExpiredError` / :class:`WireFormatError`
     /  :class:`ContentPolicyError` which fall straight through (no retry) because
     those classes are NOT in ``retry_if_exception_type``.
@@ -102,17 +107,20 @@ def _make_retrying(
     return AsyncRetrying(
         stop=stop_after_attempt(MAX_ATTEMPTS),
         wait=waiter,
-        retry=retry_if_exception_type((NetworkError, RateLimitError)),
+        retry=retry_if_exception_type(
+            (NetworkError, RateLimitError, PlaywrightError, PlaywrightTimeoutError)
+        ),
         reraise=True,
     )
 
 
-def post_with_retry(*, retry_on_5xx: bool = True) -> AsyncIterator[Any]:
+def post_with_retry(*, _retry_on_5xx: bool = True) -> AsyncIterator[Any]:
     """Public: returns the configured ``AsyncRetrying`` async iterator.
 
     Args:
-        retry_on_5xx: Reserved for future toggling. Currently retries on
-            5xx and 429 because both surface as :class:`NetworkError` /
+        _retry_on_5xx: Reserved for future toggling — the leading underscore
+            signals "intentionally unused". Currently retries on 5xx and 429
+            because both surface as :class:`NetworkError` /
             :class:`RateLimitError` and the retry predicate matches them.
 
     Usage::
@@ -127,5 +135,4 @@ def post_with_retry(*, retry_on_5xx: bool = True) -> AsyncIterator[Any]:
                 # 4xx (non-429) falls through; classifier outside the loop turns
                 # them into AuthExpiredError / WireFormatError (NOT retried).
     """
-    del retry_on_5xx  # reserved
     return _make_retrying().__aiter__()

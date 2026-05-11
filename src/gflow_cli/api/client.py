@@ -274,21 +274,12 @@ class FlowApiClient:
         try:
             return json.loads(text)
         except json.JSONDecodeError as e:
-            instance = _make_instance()
             raise WireFormatError(
                 detail=f"non-JSON response: {text[:200]}",
                 status=resp.status,
-                instance=instance,
+                instance=_make_instance(),
                 route=route,
-                discovery={
-                    "route_name": route,
-                    "http_status": resp.status,
-                    "content_type": resp.headers.get("content-type", "")
-                    if hasattr(resp, "headers")
-                    else "",
-                    "top_level_keys": [],
-                    "body_prefix_redacted": _redact_for_log(text[:200]),
-                },
+                discovery=_build_wire_format_discovery(resp, text, route),
             ) from e
 
     async def _patch_json(
@@ -512,62 +503,127 @@ class FlowApiClient:
     ) -> VideoOperation:
         """Enqueue a Veo video generation. Returns the operation reference.
 
-        Mints a fresh reCAPTCHA token via the live page session before
-        submitting. Caller polls completion via `get_video_status`.
+        Spec C2: mints a fresh reCAPTCHA token INSIDE the retry loop body, on
+        the worker's OWN checked-out Page, EVERY attempt. The single-use Flow
+        token has a ~2 min TTL — reusing a stale token across retries is the
+        most common cause of "INVALID_ARGUMENT" on the second attempt of a
+        flaky generation.
         """
-        minter = TokenMinter(self.page)
-        token = await minter.mint(recaptcha_action)
-        body = build_generate_body(
-            req,
-            project_id=project_id,
-            recaptcha_token=token,
-            batch_id=batch_id or _new_batch_id(),
-            seed=seed if seed is not None else secrets.randbelow(2**31),
-            session_id=f";{int(time.time() * 1000)}",
-        )
-        data = await self._post_json(routes.GENERATE_VIDEO, body)
+        resolved_seed = seed if seed is not None else secrets.randbelow(2**31)
+        resolved_batch_id = batch_id or _new_batch_id()
+        route_name = "batchAsyncGenerateVideoText"
+
+        async def attempt() -> Any:
+            page = await self._checkout_page()
+            try:
+                minter = TokenMinter(page)
+                token = await minter.mint(recaptcha_action)
+                body = build_generate_body(
+                    req,
+                    project_id=project_id,
+                    recaptcha_token=token,
+                    batch_id=resolved_batch_id,
+                    seed=resolved_seed,
+                    session_id=f";{int(time.time() * 1000)}",
+                )
+                logger.debug(
+                    "post_json",
+                    url=routes.GENERATE_VIDEO,
+                    body=_redact_for_log(json.dumps(body))[:300],
+                )
+                return await page.request.post(
+                    routes.GENERATE_VIDEO,
+                    data=json.dumps(body),
+                    headers={"content-type": "text/plain;charset=UTF-8"},
+                )
+            finally:
+                self._checkin_page(page)
+
+        response = await self._run_with_retry(attempt, route=route_name)
+        text = await response.text()
+        _raise_for_non_retryable(response, text, route=route_name)
+        try:
+            data = json.loads(text)
+        except json.JSONDecodeError as e:
+            raise WireFormatError(
+                detail=f"non-JSON response: {text[:200]}",
+                status=response.status,
+                instance=_make_instance(),
+                route=route_name,
+                discovery=_build_wire_format_discovery(response, text, route_name),
+            ) from e
         return VideoOperation.from_generate_response(data)
 
-    async def _post_generate_image(
+    async def _drive_image_generation(
         self,
         *,
         project_id: str,
         req: GenerateImageRequest,
-        recaptcha_token: str,
-        batch_id: str,
         seed: int,
+        batch_id: str,
+        recaptcha_action: str,
     ) -> GeneratedImage:
-        """Body-build + POST + parse for a single image generation.
+        """Per-shot drive of one ``flowMedia:batchGenerateImages`` POST.
 
-        All inputs are pre-resolved (token already minted, batch_id and seed
-        already chosen). This is the shared path used by both ``generate_image``
-        (single-shot) and ``generate_images_batch`` (parallel fan-out).
+        Spec C2: the retry loop owns the mint. On EACH attempt we check out a
+        Page from the pool, mint a fresh reCAPTCHA token, build the body
+        (which embeds the token), POST. On retry (e.g. 5xx mid-attempt), the
+        next iteration mints AGAIN on its own checked-out Page — never reusing
+        a stale token.
 
-        Retry + typed-error classification live in ``_post_json``. The
-        empty-media[] case is a 200-OK content-policy rejection and surfaces
-        as :class:`ContentPolicyError` per RFC 9457 (no 2xx status on errors).
+        Used by both ``generate_image`` (single-shot, ``count=1``) and
+        ``generate_images_batch`` (parallel fan-out: N independent invocations
+        of this method, each with its own retry+mint loop on its own Page).
         """
-        body = _build_batch_generate_images_body(
-            req,
-            project_id=project_id,
-            recaptcha_token=recaptcha_token,
-            batch_id=batch_id,
-            seed=seed,
-            session_id=f";{int(time.time() * 1000)}",
-        )
-        url = routes.batch_generate_images_url(project_id)
-        data = await self._post_json(url, body, route_name=url)
+        route_url = routes.batch_generate_images_url(project_id)
+
+        async def attempt() -> Any:
+            page = await self._checkout_page()
+            try:
+                minter = TokenMinter(page)
+                token = await minter.mint(recaptcha_action)
+                body = _build_batch_generate_images_body(
+                    req,
+                    project_id=project_id,
+                    recaptcha_token=token,
+                    batch_id=batch_id,
+                    seed=seed,
+                    session_id=f";{int(time.time() * 1000)}",
+                )
+                logger.debug(
+                    "post_json", url=route_url, body=_redact_for_log(json.dumps(body))[:300]
+                )
+                return await page.request.post(
+                    route_url,
+                    data=json.dumps(body),
+                    headers={"content-type": "text/plain;charset=UTF-8"},
+                )
+            finally:
+                self._checkin_page(page)
+
+        response = await self._run_with_retry(attempt, route=route_url)
+        text = await response.text()
+        _raise_for_non_retryable(response, text, route=route_url)
+        try:
+            data = json.loads(text)
+        except json.JSONDecodeError as e:
+            raise WireFormatError(
+                detail=f"non-JSON response: {text[:200]}",
+                status=response.status,
+                instance=_make_instance(),
+                route=route_url,
+                discovery=_build_wire_format_discovery(response, text, route_url),
+            ) from e
         images = GeneratedImage.from_response_dict(data)
         if not images:
-            # Server returned 200 OK with an empty media[] — silent
-            # content-policy rejection or quota exhaustion. Surface as
-            # ContentPolicyError (RFC 9457 strips status; the literal 200 is
-            # recorded only via observability.emit_error_event as
+            # 200 OK with empty media[] — silent content-policy rejection or
+            # quota exhaustion. Surface as ContentPolicyError (RFC 9457 strips
+            # status; literal upstream 200 is recorded via observability as
             # ``upstream_status``).
             raise ContentPolicyError(
                 detail="empty media[]",
                 instance=_make_instance(),
-                route=url,
+                route=route_url,
             )
         return images[0]
 
@@ -582,23 +638,22 @@ class FlowApiClient:
     ) -> GeneratedImage:
         """Single-shot Imagen/Narwhal image generation.
 
-        Mints a fresh reCAPTCHA token (action ``imageGeneration`` by default —
-        chosen to mirror the ``videoGeneration`` action used for Veo) and POSTs
-        a one-request batch to ``flowMedia:batchGenerateImages``. Multi-image
-        fan-out is the caller's responsibility (see ``generate_images_batch``) —
-        this method always returns the FIRST media item.
+        Spec C2: retry+mint live in the per-method closure inside
+        :meth:`_drive_image_generation` — fresh token on each attempt.
+        Multi-image fan-out is the caller's responsibility
+        (see ``generate_images_batch``); this method always returns the FIRST
+        media item.
 
         Idempotency: calling twice with the same ``seed`` and ``batch_id``
-        yields identical bodies modulo the per-call reCAPTCHA token.
+        yields identical bodies modulo the per-call reCAPTCHA token AND the
+        per-attempt session-id timestamp.
         """
-        minter = TokenMinter(self.page)
-        token = await minter.mint(recaptcha_action)
-        return await self._post_generate_image(
+        return await self._drive_image_generation(
             project_id=project_id,
             req=req,
-            recaptcha_token=token,
-            batch_id=batch_id or _new_batch_id(),
             seed=seed if seed is not None else secrets.randbelow(2**31),
+            batch_id=batch_id or _new_batch_id(),
+            recaptcha_action=recaptcha_action,
         )
 
     async def generate_images_batch(
@@ -612,11 +667,12 @@ class FlowApiClient:
     ) -> list[GeneratedImage]:
         """Fan out N parallel image generations sharing one ``batchId``.
 
-        Mirrors how the Flow web UI implements the 1×–4× quantity selector:
-        N parallel POSTs to ``flowMedia:batchGenerateImages``, each with its
-        own freshly minted reCAPTCHA token and its own seed, but all sharing
-        the same ``mediaGenerationContext.batchId`` so Flow groups them as
-        one workflow.
+        Spec C2: each of the N parallel tasks runs ITS OWN retry+mint loop
+        (see :meth:`_drive_image_generation`) on its OWN checked-out Page.
+        This sidesteps the previous shared-Page bottleneck where N tokens had
+        to be minted sequentially (because ``page.evaluate`` is not re-entrant)
+        before any POST could fire. With the per-worker pool, mints happen
+        concurrently — one per Page.
 
         Args:
             project_id: Flow project ID.
@@ -649,25 +705,20 @@ class FlowApiClient:
             seeds_list = list(seeds)
 
         shared_batch_id = _new_batch_id()
-        minter = TokenMinter(self.page)
-        # NOTE: Sequential mint is intentional. TokenMinter.mint calls page.evaluate()
-        # on the shared Playwright Page; concurrent page.evaluate is not re-entrant.
-        # Only the POSTs themselves are parallelized below.
-        tokens = [await minter.mint(recaptcha_action) for _ in range(count)]
 
         # asyncio.gather preserves input order in its result list, so the
         # caller sees results in the same order as `seeds` even though the
-        # network calls may complete out of order.
+        # network calls (and per-shot retry loops) may complete out of order.
         return await asyncio.gather(
             *(
-                self._post_generate_image(
+                self._drive_image_generation(
                     project_id=project_id,
                     req=req,
-                    recaptcha_token=tok,
-                    batch_id=shared_batch_id,
                     seed=s,
+                    batch_id=shared_batch_id,
+                    recaptcha_action=recaptcha_action,
                 )
-                for tok, s in zip(tokens, seeds_list, strict=True)
+                for s in seeds_list
             ),
             return_exceptions=False,
         )
@@ -732,6 +783,44 @@ def _make_instance() -> str:
     return f"gflow:error:{correlation}"
 
 
+def _build_wire_format_discovery(resp: Any, body_text: str, route: str) -> dict[str, Any]:
+    """Build the RFC 9457 ``discovery`` payload for a :class:`WireFormatError`.
+
+    Shared between the JSON-parse-failure raise site (``_post_json``,
+    ``generate_video``, ``_drive_image_generation``) and the 4xx-fallthrough
+    raise site (``_raise_for_non_retryable``) so the ``top_level_keys`` and
+    ``body_prefix_redacted`` fields are populated uniformly. Addresses
+    code-review MEDIUM-3 about cross-raise-site consistency.
+
+    ``top_level_keys`` is the SORTED list of top-level dict keys if the body
+    parses as JSON; ``[]`` otherwise (matches the pre-fixup behavior for the
+    non-JSON branch).
+    """
+    try:
+        content_type = resp.headers.get("content-type", "") if hasattr(resp, "headers") else ""
+    except (AttributeError, TypeError):
+        content_type = ""
+    top_keys: list[str] = []
+    try:
+        parsed = json.loads(body_text) if content_type.startswith("application/json") else None
+        if isinstance(parsed, dict):
+            top_keys = sorted(cast(dict[str, Any], parsed).keys())
+    except (json.JSONDecodeError, ValueError):
+        top_keys = []
+    # SECURITY: redact BEFORE truncating to 200 chars. If we truncated first,
+    # a body slightly over 200 chars could carry an intact reCAPTCHA token in
+    # the prefix and the redactor (which parses JSON) would fail to recognize
+    # it (truncated JSON is invalid → returns "<unparseable body redacted>"
+    # which is safe by accident but not by design). Audit gap #11.
+    return {
+        "route_name": route,
+        "http_status": resp.status,
+        "content_type": content_type,
+        "top_level_keys": top_keys,
+        "body_prefix_redacted": _redact_for_log(body_text)[:200],
+    }
+
+
 def _raise_for_non_retryable(resp: Any, body_text: str, *, route: str) -> None:
     """Classify a response that survived the retry loop.
 
@@ -755,29 +844,12 @@ def _raise_for_non_retryable(resp: Any, body_text: str, *, route: str) -> None:
             route=route,
         )
     if 400 <= resp.status < 500:
-        try:
-            content_type = resp.headers.get("content-type", "") if hasattr(resp, "headers") else ""
-        except (AttributeError, TypeError):
-            content_type = ""
-        top_keys: list[str] = []
-        try:
-            parsed = json.loads(body_text) if content_type.startswith("application/json") else None
-            if isinstance(parsed, dict):
-                top_keys = sorted(cast(dict[str, Any], parsed).keys())
-        except (json.JSONDecodeError, ValueError):
-            top_keys = []
         raise WireFormatError(
             detail=f"HTTP {resp.status} on 4xx fallthrough",
             status=resp.status,
             instance=instance,
             route=route,
-            discovery={
-                "route_name": route,
-                "http_status": resp.status,
-                "content_type": content_type,
-                "top_level_keys": top_keys,
-                "body_prefix_redacted": _redact_for_log(body_text[:200]),
-            },
+            discovery=_build_wire_format_discovery(resp, body_text, route),
         )
 
 
