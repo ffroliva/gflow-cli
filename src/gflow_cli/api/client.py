@@ -141,22 +141,12 @@ class FlowApiClient:
     # --- lifecycle --------------------------------------------------------
 
     async def __aenter__(self) -> FlowApiClient:
-        # Resolve transport ownership before touching Playwright.
-        # Branch on the discriminating types (str, None) so pyright narrows
-        # the else-branch to FlowTransportStrategy. We deliberately avoid
-        # `@runtime_checkable` on the Protocol — that would freeze its
-        # public surface and constrain future evolution.
-        inp = self._transport_input
-        if inp is None or isinstance(inp, str):
-            # Client-owned: resolve from factory, run full lifecycle.
-            self.transport = make_transport(inp)
-            await self.transport.setup(self.profile_dir)
-            self._owns_transport = True
-        else:
-            # Caller-owned: pre-initialized FlowTransportStrategy instance.
-            self.transport = inp
-            self._owns_transport = False
-
+        # --- Step 1: Launch Playwright FIRST so self._page is ready before
+        # transport.setup() is called.  This order is load-bearing for S1
+        # (EvaluateFetchTransport): it needs a live Page passed via the
+        # ``page=`` kwarg so it can reuse the client's context instead of
+        # opening a second Playwright process against the same profile dir
+        # (which would conflict on the Chromium lockfile — spec § 5.4.4).
         self._pw = await async_playwright().start()
         self._context = await self._pw.chromium.launch_persistent_context(
             user_data_dir=str(self.profile_dir),
@@ -195,6 +185,27 @@ class FlowApiClient:
         await self._page.goto(
             routes.EDITOR_BOOTSTRAP_URL, wait_until="domcontentloaded", timeout=60_000
         )
+
+        # --- Step 2: Resolve and set up transport, passing the live Page so
+        # S1 can share this context rather than opening its own.
+        # Branch on the discriminating types (str, None) so pyright narrows
+        # the else-branch to FlowTransportStrategy. We deliberately avoid
+        # `@runtime_checkable` on the Protocol — that would freeze its
+        # public surface and constrain future evolution.
+        inp = self._transport_input
+        if inp is None or isinstance(inp, str):
+            # Client-owned: resolve from factory, run full lifecycle.
+            # Pass self._page so S1 can reuse the already-open context.
+            # S2 and S3 accept and ignore the page= kwarg.
+            self.transport = make_transport(inp)
+            await self.transport.setup(self.profile_dir, page=self._page)
+            self._owns_transport = True
+        else:
+            # Caller-owned: pre-initialized FlowTransportStrategy instance.
+            # Do NOT call setup() — the caller already did that.
+            self.transport = inp
+            self._owns_transport = False
+
         return self
 
     async def __aexit__(self, *exc: object) -> None:

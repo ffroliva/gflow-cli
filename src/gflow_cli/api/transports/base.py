@@ -5,7 +5,10 @@ See docs/superpowers/specs/2026-05-11-gflow-cli-b007-transport-strategy-design.m
 from __future__ import annotations
 
 from pathlib import Path
-from typing import Protocol
+from typing import TYPE_CHECKING, Protocol
+
+if TYPE_CHECKING:
+    from playwright.async_api import Page
 
 from gflow_cli.api.dto import GeneratedImage
 from gflow_cli.api.image import GenerateImageRequest
@@ -22,9 +25,16 @@ class FlowTransportStrategy(Protocol):
 
     name: str  # e.g. "evaluate_fetch", "bearer", "sapisidhash"
 
-    async def setup(self, profile_dir: Path) -> None:
+    async def setup(self, profile_dir: Path, *, page: Page | None = None) -> None:
         """Initialize. Idempotent. Strategy may launch playwright, capture
-        a Bearer token, derive SAPISIDHASH inputs from cookies, etc."""
+        a Bearer token, derive SAPISIDHASH inputs from cookies, etc.
+
+        The optional ``page`` kwarg is for the S1 shared-page fix (spec § 5.4.4):
+        FlowApiClient passes its already-open Page so EvaluateFetchTransport can
+        reuse it instead of launching a second Playwright context against the same
+        profile dir (which would conflict on the Chromium lockfile). S2 and S3
+        accept and ignore this kwarg for Protocol conformance.
+        """
         ...
 
     async def refresh_auth(self) -> None:

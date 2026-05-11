@@ -6,10 +6,12 @@ leaves the browser. page.request.post() bypasses that JS layer — this
 strategy avoids that pitfall by firing fetch from inside the page context.
 
 Lifecycle:
-    setup(profile_dir)  — launch persistent context, open page, navigate to Flow.
-    generate_images(*)  — page.evaluate("async (args) => fetch(...)").
-    refresh_auth()      — re-navigate to Flow URL to refresh page-context tokens.
-    teardown()          — close page + context + stop playwright (idempotent).
+    setup(profile_dir)           — launch own persistent context, open page, navigate to Flow.
+    setup(profile_dir, page=p)   — shared-page path: reuse caller's Page, skip own launch.
+    generate_images(*)           — page.evaluate("async (args) => fetch(...)").
+    refresh_auth()               — re-navigate to Flow URL to refresh page-context tokens.
+    teardown()                   — close page + context + stop playwright (idempotent).
+                                   No-op when _owns_playwright is False (caller owns context).
 """
 
 from __future__ import annotations
@@ -19,7 +21,10 @@ import hashlib
 import json
 import time
 from pathlib import Path
-from typing import Any
+from typing import TYPE_CHECKING, Any
+
+if TYPE_CHECKING:
+    from playwright.async_api import Page
 
 import structlog
 
@@ -93,25 +98,53 @@ class EvaluateFetchTransport:
         self._ctx: Any | None = None
         self._page: Any | None = None
         self._setup_done: bool = False
+        # Tracks whether THIS instance opened its own Playwright context.
+        # False when setup() was called with page= (shared-page path, spec § 5.4.4).
+        # teardown() is a no-op for Playwright resources when False.
+        self._owns_playwright: bool = False
 
     # ------------------------------------------------------------------
     # Lifecycle
     # ------------------------------------------------------------------
 
-    async def setup(self, profile_dir: Path) -> None:
+    async def setup(self, profile_dir: Path, *, page: Page | None = None) -> None:
         """Launch a persistent Playwright context and navigate to Flow.
 
         Idempotent — a second call is a no-op.
+
+        When ``page`` is provided (shared-page path), the strategy stores the
+        caller's Page and marks ``_owns_playwright = False`` — teardown() will
+        NOT close the context or stop playwright; that responsibility stays with
+        the caller (FlowApiClient).  This eliminates the Chromium lockfile
+        conflict described in spec § 5.4.4.
+
+        When ``page`` is None (back-compat / standalone use), the strategy
+        opens its own context as before with ``_owns_playwright = True``.
         """
         if self._setup_done:
             return
 
+        if page is not None:
+            # Shared-page path: caller owns Playwright lifecycle.
+            self._page = page
+            self._owns_playwright = False
+            self._setup_done = True
+            log.info("evaluate_fetch.setup_shared_page")
+            return
+
+        # Own-context path: strategy owns the full Playwright lifecycle.
         # Lazy import: keeps module-level import cheap when other transports
         # are selected; only imported when S1 is actually used.
         from playwright.async_api import async_playwright  # noqa: PLC0415
 
         pw_cm = async_playwright()
         self._pw_cm = pw_cm
+        # Mark ownership BEFORE the risky operations so partial-setup teardown
+        # can correctly identify "we own this pw_cm, close it on failure".
+        # Without this, a failure between __aenter__ and the end of setup would
+        # leak the open Playwright handles (teardown's `if _owns_playwright`
+        # guard would skip the close).
+        self._owns_playwright = True
         try:
             pw = await pw_cm.__aenter__()
             ctx = await pw.chromium.launch_persistent_context(
@@ -122,9 +155,9 @@ class EvaluateFetchTransport:
                 locale="en-US",
             )
             self._ctx = ctx
-            page = await ctx.new_page()
-            self._page = page
-            await page.goto(FLOW_URL, wait_until="domcontentloaded", timeout=30_000)
+            new_page = await ctx.new_page()
+            self._page = new_page
+            await new_page.goto(FLOW_URL, wait_until="domcontentloaded", timeout=30_000)
             self._setup_done = True
             log.info("evaluate_fetch.setup_done", profile=str(profile_dir))
         except BaseException:
@@ -207,25 +240,35 @@ class EvaluateFetchTransport:
         )
 
     async def teardown(self) -> None:
-        """Close the page, context, and playwright instance. Idempotent."""
-        if self._ctx is not None:
-            try:
-                await self._ctx.close()
-            except Exception:
-                log.warning("evaluate_fetch.teardown: ctx.close() failed", exc_info=True)
-            finally:
-                self._ctx = None
-                self._page = None
+        """Close the page, context, and playwright instance. Idempotent.
 
-        if self._pw_cm is not None:
-            try:
-                await self._pw_cm.__aexit__(None, None, None)
-            except Exception:
-                log.warning("evaluate_fetch.teardown: pw_cm.__aexit__() failed", exc_info=True)
-            finally:
-                self._pw_cm = None
+        When ``_owns_playwright`` is False (shared-page path), this method is a
+        no-op for Playwright resources — the caller (FlowApiClient) owns the
+        context and is responsible for closing it.  Internal state flags are
+        still reset so a reused instance is clean.
+        """
+        if self._owns_playwright:
+            if self._ctx is not None:
+                try:
+                    await self._ctx.close()
+                except Exception:
+                    log.warning("evaluate_fetch.teardown: ctx.close() failed", exc_info=True)
+                finally:
+                    self._ctx = None
+                    self._page = None
+
+            if self._pw_cm is not None:
+                try:
+                    await self._pw_cm.__aexit__(None, None, None)
+                except Exception:
+                    log.warning(
+                        "evaluate_fetch.teardown: pw_cm.__aexit__() failed", exc_info=True
+                    )
+                finally:
+                    self._pw_cm = None
 
         self._setup_done = False
+        self._owns_playwright = False
         log.info("evaluate_fetch.teardown_done")
 
     # ------------------------------------------------------------------

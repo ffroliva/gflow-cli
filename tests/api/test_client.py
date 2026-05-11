@@ -191,7 +191,9 @@ class _FakeTransport:
         self.setup_called = 0
         self.teardown_called = 0
 
-    async def setup(self, profile_dir: Path) -> None:
+    async def setup(self, profile_dir: Path, *, page: object | None = None) -> None:
+        # page kwarg accepted (Protocol-compliance for S1 shared-page fix); not used by the fake.
+        _ = page
         self.setup_called += 1
 
     async def refresh_auth(self) -> None:
