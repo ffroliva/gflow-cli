@@ -457,3 +457,99 @@ class TestImageI2I:
         assert result.exit_code == 2, result.output
         lower = result.output.lower()
         assert "does not exist" in lower or "not found" in lower or str(missing) in result.output
+
+
+# ---------------------------------------------------------------------------
+# --transport flag (A.6)
+# ---------------------------------------------------------------------------
+
+
+class TestTransportFlag:
+    """--transport flag wiring tests for image subcommands."""
+
+    def test_t2i_help_shows_transport_flag(self, runner: CliRunner, monkeypatch: pytest.MonkeyPatch) -> None:
+        monkeypatch.delenv("GFLOW_CLI_TRANSPORT", raising=False)
+        from gflow_cli.cli import main
+
+        result = runner.invoke(main, ["image", "t2i", "--help"])
+
+        assert result.exit_code == 0, f"--help should succeed:\n{result.output}"
+        assert "--transport" in result.output
+
+    def test_i2i_help_shows_transport_flag(self, runner: CliRunner, monkeypatch: pytest.MonkeyPatch) -> None:
+        monkeypatch.delenv("GFLOW_CLI_TRANSPORT", raising=False)
+        from gflow_cli.cli import main
+
+        result = runner.invoke(main, ["image", "i2i", "--help"])
+
+        assert result.exit_code == 0, f"--help should succeed:\n{result.output}"
+        assert "--transport" in result.output
+
+    def test_upload_help_shows_transport_flag(self, runner: CliRunner, monkeypatch: pytest.MonkeyPatch) -> None:
+        monkeypatch.delenv("GFLOW_CLI_TRANSPORT", raising=False)
+        from gflow_cli.cli import main
+
+        result = runner.invoke(main, ["image", "upload", "--help"])
+
+        assert result.exit_code == 0, f"--help should succeed:\n{result.output}"
+        assert "--transport" in result.output
+
+    def test_t2i_rejects_unknown_transport_value(self, runner: CliRunner) -> None:
+        from gflow_cli.cli import main
+
+        result = runner.invoke(
+            main,
+            ["image", "t2i", "a cat", "--transport", "nonsense_xyz"],
+        )
+
+        assert result.exit_code != 0
+        assert "nonsense_xyz" in result.output or "invalid value" in result.output.lower()
+
+    def test_t2i_accepts_valid_transport_evaluate_fetch(
+        self, runner: CliRunner, tmp_path: Path
+    ) -> None:
+        images = [_make_generated_image(media_name="m1")]
+        client = _make_t2i_client(images=images)
+        out_dir = tmp_path / "out"
+
+        with (
+            patch("gflow_cli.cli_image.FlowApiClient", return_value=client) as mock_cls,
+            patch("gflow_cli.cli_image._make_provider_dir", return_value=tmp_path / "prof"),
+            patch("gflow_cli.cli_image._resolve_profile", return_value="default"),
+        ):
+            from gflow_cli.cli import main
+
+            result = runner.invoke(
+                main,
+                ["image", "t2i", "a cat", "--transport", "evaluate_fetch", "--out", str(out_dir)],
+                catch_exceptions=False,
+            )
+
+        assert result.exit_code == 0, result.output
+        # transport value must be forwarded to FlowApiClient constructor
+        _, kwargs = mock_cls.call_args
+        assert kwargs.get("transport") == "evaluate_fetch"
+
+    def test_t2i_accepts_valid_transport_bearer(
+        self, runner: CliRunner, tmp_path: Path
+    ) -> None:
+        images = [_make_generated_image(media_name="m1")]
+        client = _make_t2i_client(images=images)
+        out_dir = tmp_path / "out"
+
+        with (
+            patch("gflow_cli.cli_image.FlowApiClient", return_value=client) as mock_cls,
+            patch("gflow_cli.cli_image._make_provider_dir", return_value=tmp_path / "prof"),
+            patch("gflow_cli.cli_image._resolve_profile", return_value="default"),
+        ):
+            from gflow_cli.cli import main
+
+            result = runner.invoke(
+                main,
+                ["image", "t2i", "a cat", "--transport", "bearer", "--out", str(out_dir)],
+                catch_exceptions=False,
+            )
+
+        assert result.exit_code == 0, result.output
+        _, kwargs = mock_cls.call_args
+        assert kwargs.get("transport") == "bearer"
