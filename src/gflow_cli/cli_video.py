@@ -16,6 +16,7 @@ from rich.console import Console
 
 from gflow_cli import auth as auth_mod
 from gflow_cli import profile_store
+from gflow_cli._cli_helpers import run_with_handlers
 from gflow_cli.api.client import FlowApiClient
 from gflow_cli.api.video import Aspect, GenerateVideoRequest
 from gflow_cli.config import get_settings
@@ -112,8 +113,8 @@ def t2v(
     profile_name = _resolve_profile(profile)
     provider_dir = _make_provider_dir(profile_name)
     settings = get_settings()
-    asyncio.run(
-        _run_t2v(
+    run_with_handlers(
+        lambda: _run_t2v(
             profile_dir=provider_dir,
             headless=settings.headless,
             prompt=prompt,
@@ -122,7 +123,8 @@ def t2v(
             seed=seed,
             poll_interval=poll_interval,
             output_root=settings.output_dir,
-        )
+        ),
+        cli_command="video t2v",
     )
 
 
@@ -213,8 +215,8 @@ def i2v(
     profile_name = _resolve_profile(profile)
     pdir = _make_provider_dir(profile_name)
     settings = get_settings()
-    asyncio.run(
-        _run_i2v(
+    run_with_handlers(
+        lambda: _run_i2v(
             profile_dir=pdir,
             headless=settings.headless,
             image=image,
@@ -224,7 +226,8 @@ def i2v(
             seed=seed,
             poll_interval=poll_interval,
             output_root=settings.output_dir,
-        )
+        ),
+        cli_command="video i2v",
     )
 
 
@@ -280,14 +283,15 @@ def batch(
     settings = get_settings()
     entries = parse_manifest(manifest)
     out_root = out_dir or settings.output_dir
-    asyncio.run(
-        _run_batch(
+    run_with_handlers(
+        lambda: _run_batch(
             profile_dir=pdir,
             headless=settings.headless,
             entries=entries,
             out_root=out_root,
             poll_interval=poll_interval,
-        )
+        ),
+        cli_command="video batch",
     )
 
 
