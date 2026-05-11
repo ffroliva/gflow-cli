@@ -17,7 +17,9 @@ def test_protocol_setup_signature():
     assert "profile_dir" in sig.parameters
     # from __future__ import annotations makes annotations lazy strings
     annotation = sig.parameters["profile_dir"].annotation
-    assert annotation == "Path" or (hasattr(annotation, "__name__") and annotation.__name__ == "Path")
+    is_lazy_string = annotation == "Path"
+    is_class_obj = hasattr(annotation, "__name__") and annotation.__name__ == "Path"
+    assert is_lazy_string or is_class_obj
 
 
 def test_protocol_generate_images_signature_omits_recaptcha_token():
