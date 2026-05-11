@@ -63,8 +63,12 @@ def _no_live_login(monkeypatch: pytest.MonkeyPatch) -> None:
     async def _fake_login(name: str = "default") -> Path:
         # Don't actually create a profile dir — the "List profiles when none
         # exist" scenario asserts the empty-state banner BEFORE the login
-        # would persist anything in the real flow.
-        return Path("/dev/null")
+        # would persist anything in the real flow. ``Path(os.devnull)`` is
+        # portable (``NUL`` on Windows, ``/dev/null`` on POSIX); a hardcoded
+        # ``/dev/null`` would break on the project's Windows target.
+        import os
+
+        return Path(os.devnull)
 
     monkeypatch.setattr("gflow_cli.auth.login", _fake_login)
 

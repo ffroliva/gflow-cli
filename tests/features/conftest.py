@@ -5,10 +5,13 @@ Required: BDD step defs MUST use only mocked clients — never live API.
 
 from __future__ import annotations
 
+from collections.abc import Generator
 from pathlib import Path
 from unittest.mock import AsyncMock, MagicMock
 
 import pytest
+
+from gflow_cli import config as _config
 
 
 @pytest.fixture
@@ -44,18 +47,35 @@ def fixtures_dir() -> Path:
 
 
 @pytest.fixture(autouse=True)
-def _isolate_tmp_output(tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> None:
+def _isolate_tmp_output(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> Generator[None, None, None]:
+    """Point GFLOW_CLI_OUTPUT_DIR at a per-test tmp dir AND flush the cached
+    Settings singleton so the new env var actually takes effect. Without the
+    reset, a previously-cached Settings would carry the prior tmp dir into
+    this test (the cache is lru-decorated in :mod:`gflow_cli.config`)."""
     monkeypatch.setenv("GFLOW_CLI_OUTPUT_DIR", str(tmp_path))
+    _config.reset_settings()
+    yield
+    _config.reset_settings()
 
 
 @pytest.fixture(autouse=True)
-def _forbid_live_playwright(monkeypatch: pytest.MonkeyPatch) -> None:
+def _forbid_live_playwright(
+    monkeypatch: pytest.MonkeyPatch,
+) -> Generator[None, None, None]:
     """Strict mocked-only enforcement (spec §6 DoD wording).
 
     Any BDD step that accidentally tries to start Playwright — directly via
     ``async_playwright()`` or indirectly via an unmocked ``FlowApiClient`` —
     will fail this fixture's tripwire instead of opening a real browser.
     Catches test drift before it can hide a live-network regression.
+
+    Uses ``yield`` even though ``monkeypatch`` would tear the patch down on
+    its own — explicit yield is consistent with the other generator fixtures
+    in this directory and signals "this fixture has a lifecycle" to future
+    contributors who may add post-yield assertions (e.g. an
+    ``assert _explode.call_count == 0`` invariant).
     """
 
     def _explode(*args: object, **kwargs: object) -> object:
@@ -66,3 +86,4 @@ def _forbid_live_playwright(monkeypatch: pytest.MonkeyPatch) -> None:
         )
 
     monkeypatch.setattr("playwright.async_api.async_playwright", _explode)
+    yield
