@@ -300,6 +300,8 @@ async def test_client_delegates_image_gen_to_transport(
     fake.generate_images = fake_gen  # type: ignore[method-assign]
 
     async with FlowApiClient(profile_dir=tmp_path, transport=fake) as client:
+        # Stub the reCAPTCHA mint — real mint needs a Page with reCAPTCHA Enterprise JS loaded.
+        client._mint_recaptcha_token = AsyncMock(return_value="test_recaptcha_token")  # type: ignore[method-assign]
         result = await client.generate_image(
             project_id="test-proj-xyz",
             req=GenerateImageRequest(

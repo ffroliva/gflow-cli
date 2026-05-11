@@ -116,6 +116,10 @@ def _client_with_transport(tmp_path: Path, transport: _FakeTransport) -> FlowApi
     # transport is pre-initialized (caller-owned) so skip Playwright lifecycle.
     c.transport = transport
     c._page = MagicMock()
+    # `_drive_image_generation` mints a fresh reCAPTCHA token via the client's
+    # Page on every attempt. Unit tests stub this with a static fake — the real
+    # mint requires a Playwright Page running Google's reCAPTCHA Enterprise JS.
+    c._mint_recaptcha_token = AsyncMock(return_value="test_recaptcha_token")  # type: ignore[method-assign]
     return c
 
 

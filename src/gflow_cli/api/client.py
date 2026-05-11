@@ -26,6 +26,7 @@ import secrets
 import time
 import uuid
 from collections.abc import Sequence
+from dataclasses import replace as _dc_replace
 from datetime import datetime
 from pathlib import Path
 from typing import Any, cast
@@ -587,6 +588,25 @@ class FlowApiClient:
             ) from e
         return VideoOperation.from_generate_response(data)
 
+    async def _mint_recaptcha_token(self, action: str) -> str:
+        """Mint a single-use reCAPTCHA Enterprise token via the client's Page.
+
+        Flow's `batchGenerateImages` (and `batchAsyncGenerateVideoText`) endpoints
+        reject requests with empty / stale tokens with HTTP 403 "reCAPTCHA
+        evaluation failed". Tokens are single-use, ~2 min TTL — mint fresh per call.
+
+        Extracted from `_drive_image_generation` so unit tests can monkeypatch
+        the mint without standing up a real Playwright Page + reCAPTCHA
+        Enterprise script (which requires loading `enterprise.js` from Google).
+        Production code path is unchanged.
+        """
+        page = await self._checkout_page()
+        try:
+            minter = TokenMinter(page)
+            return await minter.mint(action)
+        finally:
+            self._checkin_page(page)
+
     async def _drive_image_generation(
         self,
         *,
@@ -598,29 +618,38 @@ class FlowApiClient:
     ) -> GeneratedImage:
         """Per-shot drive of one ``flowMedia:batchGenerateImages`` request.
 
-        A.7: delegates entirely to ``self.transport.generate_images``.
-        The transport strategy owns retry, token-minting, body-building, and
-        response parsing.
+        Flow requires a freshly-minted reCAPTCHA Enterprise token on every
+        ``batchGenerateImages`` request (single-use, ~2 min TTL). Minting
+        requires a real Page context — Google's reCAPTCHA JS runs in the
+        browser, not in httpx. So the **client** owns minting (it holds the
+        persistent Chromium context) and the **strategy** owns sending.
 
-        ``seed``, ``batch_id``, and ``recaptcha_action`` are preserved in the
-        signature for API stability; Phase B strategies will accept them via
-        an extended Protocol once the ``GenerateImageRequest`` carries them or
-        they are threaded through a wrapper. For now they are intentionally
-        unused at the client layer — the strategy receives the bare ``req``.
+        A.7 + Phase B: the strategy receives the request with the freshly
+        minted ``recaptcha_token`` attached, builds the body via the shared
+        ``_build_batch_generate_images_body`` (which reads
+        ``request.recaptcha_token``), and sends via its transport mechanism.
 
-        Used by both ``generate_image`` (single-shot, ``count=1``) and
-        ``generate_images_batch`` (parallel fan-out: N independent invocations
-        of this method, each on its own transport call).
+        ``seed`` and ``batch_id`` are currently consumed inside the body
+        builder via the request object after Phase A.2 moved
+        ``recaptcha_token`` there. They are kept in the signature for caller
+        APIs; the strategy receives ``req`` enriched with the live token.
         """
-        # seed, batch_id, recaptcha_action are reserved for Phase B strategy use.
-        _ = seed, batch_id, recaptcha_action  # suppress unused-variable warnings
         if self.transport is None:
             raise RuntimeError(
                 "FlowApiClient.transport is None — call generate_image inside 'async with client'"
             )
+        # Mint a single-use reCAPTCHA token via the client's Page (extracted to
+        # a method so unit tests can monkeypatch it without standing up a real
+        # Playwright Page + reCAPTCHA Enterprise script).
+        token = await self._mint_recaptcha_token(recaptcha_action)
+
+        # `seed` + `batch_id` are reserved here for future extension; the
+        # strategy uses what's already on the request.
+        _ = seed, batch_id  # suppress unused-variable warnings
+        req_with_token = _dc_replace(req, recaptcha_token=token)
         images = await self.transport.generate_images(
             project_id=project_id,
-            request=req,
+            request=req_with_token,
         )
         if not images:
             raise ContentPolicyError(
