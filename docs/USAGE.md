@@ -2,7 +2,7 @@
 
 CLI command reference. For environment variables see [CONFIGURATION](CONFIGURATION.md). For auth see [AUTHENTICATION](AUTHENTICATION.md).
 
-> ⚠️ **Status.** `gflow video` commands are fully wired as of v0.2.0a1. `gflow image` commands (`upload`, `t2i`, `i2i`) are wired as of v0.3.0a1.
+> ⚠️ **Status.** `gflow video` commands are fully wired as of v0.2.0a1. `gflow image` commands (`upload`, `t2i`, `i2i`) are wired as of v0.3.0a1. **v0.4.0a2** added per-class exit codes (3–7) for shell branching, JSON-on-pipe structured logs (`GFLOW_CLI_LOG_FORMAT=json`), per-worker batch concurrency (`GFLOW_CLI_CONCURRENCY=N`), and tenacity-driven retry/backoff on transient failures.
 
 ## Synopsis
 
@@ -340,20 +340,25 @@ GFLOW_CLI_LOG_FORMAT=json gflow video t2v "..." 2> events.jsonl
 jq 'select(.event == "error_raised") | .error_class' events.jsonl
 ```
 
-Branch in shell scripts:
+Branch in shell scripts — capture the exit code **before** the `if`/`case` consumes it:
 
 ```bash
-if ! gflow video i2v ./in.png "test" -o out.mp4; then
-  case $? in
-    2)   echo "Bad usage or auth issue"; gflow auth status; exit 1 ;;
-    3)   echo "Auth expired — re-run gflow auth login"; exit 1 ;;
-    4|6) echo "Transient infra issue — try again later"; exit 1 ;;
-    5)   echo "Content policy rejected the prompt"; exit 1 ;;
-    7)   echo "Flow API shape changed — update gflow-cli"; exit 1 ;;
-    *)   echo "Unknown failure"; exit 1 ;;
+gflow video i2v ./in.png "test" -o out.mp4
+rc=$?
+if [ "$rc" -ne 0 ]; then
+  case "$rc" in
+    2)   echo "Bad CLI usage (missing arg, bad flag)"; exit 1 ;;
+    3)   echo "Auth expired — run: gflow auth login"; exit 1 ;;
+    4|6) echo "Transient infra issue (rate limit / network) — try again later"; exit 1 ;;
+    5)   echo "Content policy rejected the prompt — rewrite and retry"; exit 1 ;;
+    7)   echo "Flow API shape changed — upgrade gflow-cli or file a bug"; exit 1 ;;
+    130) echo "Cancelled with Ctrl-C"; exit 130 ;;
+    *)   echo "Unknown failure (exit $rc)"; exit 1 ;;
   esac
 fi
 ```
+
+> **Why `rc=$?` first?** Inside `if ! cmd; then ...`, `$?` reflects the negation pipeline (always `0` when the `then` branch fires), not the failing command. Capturing into `rc` immediately after the call is the portable pattern across bash/zsh/dash. PowerShell uses `$LASTEXITCODE` for the same purpose.
 
 ## Programmatic use
 
@@ -363,19 +368,26 @@ The CLI is a thin shell over `gflow_cli.api.client.FlowApiClient`. All public me
 import asyncio
 from pathlib import Path
 from gflow_cli.api.client import FlowApiClient
-from gflow_cli.paths import profile_dir
+from gflow_cli.config import get_settings
 
 async def main() -> None:
-    async with FlowApiClient(profile_dir=profile_dir("default")) as client:
+    settings = get_settings()
+    profile_dir = settings.profile_subdir("default")
+    async with FlowApiClient(profile_dir=profile_dir, headless=settings.headless) as client:
         project = await client.create_project(title="archive demo")
-        # ... do work in this project ...
-        # When you no longer need it, archive to keep the library tidy:
-        await client.archive_workflow(workflow_id=project.workflow_id, project_id=project.project_id)
+        asset = await client.upload_image(project.project_id, Path("hero.png"))
+        # ... do work with project.project_id and asset.name ...
+        # Each uploaded asset and each generated media item has its own
+        # workflow_id — pass that to archive_workflow when you're done:
+        await client.archive_workflow(
+            workflow_id=asset.workflow_id,
+            project_id=project.project_id,
+        )
 
 asyncio.run(main())
 ```
 
-`FlowApiClient.archive_workflow(workflow_id, project_id)` issues `PATCH /v1/flowWorkflows/{id}` to soft-delete a workflow. Useful in batch scripts that spin up a project per call and want to clean up afterwards.
+`FlowApiClient.archive_workflow(workflow_id, project_id)` issues `PATCH /v1/flowWorkflows/{id}` to soft-delete a workflow. Useful in batch scripts that spin up a project per call and want to clean up afterwards. `workflow_id` comes from any `AssetInfo` (`upload_image` return) or `VideoOperation` / `VideoStatus` / `ImageResult` (generation returns) — `ProjectInfo` itself only carries `project_id` and `title`.
 
 ## See also
 

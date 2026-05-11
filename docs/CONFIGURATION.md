@@ -6,7 +6,7 @@
 CLI flag (highest)  >  environment variable  >  .env file  >  built-in default (lowest)
 ```
 
-Every setting validates at startup via [`pydantic-settings`](https://docs.pydantic.dev/latest/concepts/pydantic_settings/) (planned for Phase 1). Bad values fail loudly with the offending key + the rule it violated, never silently.
+Every setting validates at startup via [`pydantic-settings`](https://docs.pydantic.dev/latest/concepts/pydantic_settings/). Bad values fail loudly with the offending key + the rule it violated, never silently.
 
 ## Reference
 
@@ -91,9 +91,11 @@ A profile maps to a directory `$GFLOW_CLI_HOME/profile_<name>/`. Profiles are is
 
 ### `GFLOW_CLI_CONCURRENCY`
 
-**What:** Max concurrent operations during batch runs.
-**Default:** `1`
-**Note:** Planned full effect in v0.4 once the per-account pool ships. Current scaffold ignores this and runs sequentially.
+**What:** Per-worker Playwright Page-pool size for batch runs. `FlowApiClient.__aenter__` opens N Pages inside one shared persistent BrowserContext; operations check out a Page via an `asyncio.Queue` (FIFO, bounded by `maxsize=N`). `gflow video batch` fans out manifest entries via `asyncio.gather`.
+**Values:** `1`–`16`
+**Default:** `1` (no fan-out)
+**Recommended starting point:** `4`. Each Page costs ~30–60 MiB of memory on Chromium headless; don't exceed `8` without measuring resident-set size. Cookies and storage state are shared at Context level, so every Page inherits the signed-in profile for free.
+**Shipped in:** v0.4.0a2.
 
 ### `GFLOW_CLI_HEADLESS`
 

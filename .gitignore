@@ -51,3 +51,6 @@ samples/*.captured.json # sandbox-recorded API exchanges may contain PII
 # Claude Code worktrees and lock files
 .claude/worktrees/
 .claude/scheduled_tasks.lock
+
+# Doc-council scratch dir (bundles + raw reviews + consensus matrix)
+.doc-council/

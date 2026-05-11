@@ -15,7 +15,7 @@
 
 > ⚠️ **Not affiliated with Google.** Reverse-engineered from public Flow web traffic. Endpoints can change at any time. See full [DISCLAIMER](DISCLAIMER.md) before use.
 
-📚 **Docs:** [INDEX](docs/INDEX.md) · [Architecture](docs/ARCHITECTURE.md) · [Authentication](docs/AUTHENTICATION.md) · [Configuration](docs/CONFIGURATION.md) · [Usage](docs/USAGE.md) · [Security](docs/SECURITY.md) · [Known issues](KNOWN_ISSUES.md) · [Plan](PLAN.md) · [Changelog](CHANGELOG.md)
+📚 **Docs:** [INDEX](docs/INDEX.md) · [User Guide](docs/USER_GUIDE.md) · [Architecture](docs/ARCHITECTURE.md) · [Authentication](docs/AUTHENTICATION.md) · [Configuration](docs/CONFIGURATION.md) · [Usage](docs/USAGE.md) · [Security](docs/SECURITY.md) · [Known issues](KNOWN_ISSUES.md) · [Plan](PLAN.md) · [Changelog](CHANGELOG.md)
 🤖 **For AI agents:** [CLAUDE.md](CLAUDE.md) · [`.claude/`](.claude/README.md)
 
 ---
@@ -30,10 +30,10 @@ Your subscription includes a generous Veo credit allowance, but the Flow web UI 
 
 Now you can:
 
-- **Burn credits efficiently** — `for img in ./inputs/*.png; do gflow i2v "$img" "$prompt" -o "out/$(basename "$img" .png).mp4"; done`
+- **Burn credits efficiently** — `for img in ./inputs/*.png; do gflow video i2v "$img" "$prompt" -o "out/$(basename "$img" .png).mp4"; done`
 - **Build pipelines** — wire Veo into your AI video production stack, content automation, or batch experiments
 - **Stay in the terminal** — no Chromium, no waiting for the UI to load, no clicking through 4 dialogs per clip
-- **Parallelise** — drive multiple accounts side-by-side with `--profile` (planned v0.4)
+- **Parallelise** — `GFLOW_CLI_CONCURRENCY=4 gflow video batch manifest.tsv` fans out across 4 Playwright Pages on one profile (v0.4.0a2); `--profile` swaps accounts
 
 This project is the same pattern as [`edge-tts`](https://github.com/rany2/edge-tts) — an unofficial Python client over Microsoft's Azure TTS service used by the Edge browser.
 
@@ -54,7 +54,7 @@ Read the full [DISCLAIMER](DISCLAIMER.md) before deploying this in any productio
 
 ## Project status
 
-**v0.3.0a1 — alpha.** Video (T2V/I2V/batch) and image (T2I/I2I/upload) commands are functional end-to-end against a live Google AI Ultra/Pro Flow account.
+**v0.4.0a2 — alpha.** Video (T2V/I2V/batch), image (T2I/I2I/upload), and **batch concurrency, typed errors, retry/backoff, and structured logging** are functional end-to-end against a live Google AI Ultra/Pro Flow account.
 
 | Milestone | Status |
 |---|---|
@@ -64,8 +64,11 @@ Read the full [DISCLAIMER](DISCLAIMER.md) before deploying this in any productio
 | Image generation (T2I/I2I, 1–4 per call, 5 ratios, 3 models) | ✅ done (v0.3.0a1) |
 | End-to-end smoke test against live Flow | ✅ done |
 | First public alpha release on PyPI | ✅ done (v0.2.0a1) |
-| Provider abstraction for official Veo 3.1 API | ⏳ planned |
-| Concurrency / per-account pool | ⏳ planned (v0.4) |
+| Batch concurrency / per-worker Page pool (`GFLOW_CLI_CONCURRENCY=N`) | ✅ done (v0.4.0a2) |
+| Typed errors (RFC 9457 Problem Details) + per-class exit codes 3–7 | ✅ done (v0.4.0a2) |
+| Retry / backoff + reCAPTCHA re-mint inside the retry loop | ✅ done (v0.4.0a2) |
+| Structured logs (`structlog`, JSON on pipe) | ✅ done (v0.4.0a2) |
+| Provider abstraction for official Veo 3.1 API | ⏳ planned (v0.5+) |
 
 ---
 
@@ -146,20 +149,23 @@ Same call from Python:
 import asyncio
 from pathlib import Path
 from gflow_cli.api.client import FlowApiClient
-from gflow_cli.paths import profile_dir
+from gflow_cli.api.video import Aspect, GenerateVideoRequest
+from gflow_cli.config import get_settings
 
 async def make_clip() -> None:
-    async with FlowApiClient(profile_dir=profile_dir("default")) as client:
+    settings = get_settings()
+    profile_dir = settings.profile_subdir("default")
+    async with FlowApiClient(profile_dir=profile_dir, headless=True) as client:
         project = await client.create_project(title="gflow-cli demo")
-        asset = await client.upload_image(Path("input.png"), project.project_id)
-        op = await client.generate_video(
-            project_id=project.project_id,
+        asset = await client.upload_image(project.project_id, Path("input.png"))
+        req = GenerateVideoRequest(
             prompt="Slow cinematic push-in, soft golden light",
-            start_asset=asset,
-            aspect="9:16",
+            aspect=Aspect.PORTRAIT,
+            start_asset_uuid=asset.name,
         )
-        # Poll op.workflow_id with client.poll_video_status(...)
-        # then client.download_video(...) to disk.
+        op = await client.generate_video(project_id=project.project_id, req=req)
+        # Poll with client.get_video_status(project.project_id, [op.media_name])
+        # until VideoStatus.is_terminal, then download via the returned URL.
 
 asyncio.run(make_clip())
 ```
@@ -194,6 +200,8 @@ Each command supports `--profile <name>` for managing multiple Google accounts s
 | Console UI | [`rich`](https://rich.readthedocs.io/) | Pretty progress bars, colour, tables |
 | HTTP transport | [`playwright`](https://playwright.dev/python/) (`page.request`) | Auto-attaches Google session cookies — no OAuth scraping |
 | Async | stdlib `asyncio` | Concurrency primitive for parallel generations |
+| Retry / backoff | [`tenacity`](https://github.com/jd/tenacity) | Exponential jittered backoff on transient 5xx / 429 / network errors |
+| Structured logs | [`structlog`](https://www.structlog.org/) | Privacy-safe JSON-on-pipe, `error_raised` / `error_unhandled` events |
 | Type checking | [`pyright`](https://github.com/microsoft/pyright) (strict on `src/gflow_cli`) | Catches errors before runtime |
 | Linting / format | [`ruff`](https://github.com/astral-sh/ruff) | Single tool, fast |
 | Testing | [`pytest`](https://docs.pytest.org/) + [`pytest-asyncio`](https://pytest-asyncio.readthedocs.io/) | Standard, async-aware |
@@ -221,8 +229,8 @@ No FastAPI, no Django, no SQLAlchemy. This is a CLI + library — keeping the ru
 │Flow │    │Official│       │ Mock  │
 │(now)│    │ Veo    │       │(tests)│
 │     │    │(planned│       │       │
-│     │    │ post-  │       │       │
-│     │    │ v0.3)  │       │       │
+│     │    │ v0.5+) │       │       │
+│     │    │        │       │       │
 └──┬──┘    └────────┘       └───────┘
    │
    │   POST /v1/flow/uploadImage
@@ -233,7 +241,7 @@ No FastAPI, no Django, no SQLAlchemy. This is a CLI + library — keeping the ru
 aisandbox-pa.googleapis.com  (Google's private Flow API)
 ```
 
-The `Provider` interface keeps backends interchangeable. v0.1 ships `FlowProvider`. v0.3+ will add `OfficialVeoProvider` (uses [`googleapis/python-genai`](https://github.com/googleapis/python-genai) against `generativelanguage.googleapis.com`) — same code path, swap with `--provider official`.
+The `Provider` interface keeps backends interchangeable. v0.1 ships `FlowProvider`. A future release (planned v0.5+) may add `OfficialVeoProvider` (uses [`googleapis/python-genai`](https://github.com/googleapis/python-genai) against `generativelanguage.googleapis.com`) — same code path, swap with `GFLOW_CLI_PROVIDER=official`.
 
 ### Auth strategy
 
@@ -316,15 +324,15 @@ Each `Provider` method has a corresponding test file under `tests/`. New routes 
 2. Bump `version` in `pyproject.toml`.
 3. Tag the commit:
    ```bash
-   git tag v0.2.0
-   git push origin v0.2.0
+   git tag vX.Y.Z          # or vX.Y.ZaN for an alpha
+   git push origin vX.Y.Z
    ```
 4. The [`release.yml`](.github/workflows/release.yml) GitHub Action runs:
    - Builds the wheel + sdist with `uv build`
    - Publishes to PyPI via [Trusted Publishing](https://docs.pypi.org/trusted-publishers/) — no API tokens stored
    - Creates a GitHub Release with the changelog excerpt + built artifacts attached
 
-Pre-release tags (`v*.*.*-rc*`, `v*.*.*-alpha*`, `v*.*.*-beta*`) auto-flag as pre-releases on GitHub. Install with `pip install --pre gflow-cli` or `uvx --from "gflow-cli==0.2.0a1" gflow`.
+Pre-release tags (`v*.*.*-rc*`, `v*.*.*-alpha*`, `v*.*.*-beta*`) auto-flag as pre-releases on GitHub. Install with `pip install --pre gflow-cli` or `uvx --from "gflow-cli==0.4.0a2" gflow`.
 
 ---
 
@@ -345,7 +353,7 @@ Note that the **Google service** this tool talks to has its own terms (Google La
 ## Acknowledgements
 
 - [`edge-tts`](https://github.com/rany2/edge-tts) — design inspiration for community SDKs over private cloud APIs.
-- [`googleapis/python-genai`](https://github.com/googleapis/python-genai) — the official Veo SDK that v0.3+ will alias.
+- [`googleapis/python-genai`](https://github.com/googleapis/python-genai) — the official Veo SDK that a future release (v0.5+) may alias.
 - [Keysight Technologies — *Google Labs – Flow AI with Veo3: A Network Traffic Analysis*](https://www.keysight.com/blogs/en/tech/nwvs/2025/08/04/google-flow-ai-har-analysis) — independent traffic capture that helped validate the captured route patterns.
 
 ---

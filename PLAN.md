@@ -2,7 +2,7 @@
 
 > **Status:** Living document. Updated as phases complete.
 > **Owner:** [@ffroliva](https://github.com/ffroliva)
-> **Last revised:** 2026-05-10 (Image MVP shipped, v0.3.0a1)
+> **Last revised:** 2026-05-11 (Phase 4 Hardening shipped, v0.4.0a2)
 
 This plan turns the v0.1 scaffold into a production-grade CLI for Google AI Ultra/Pro subscribers who want to spend their Flow credits via batch automation. The plan is opinionated, treating this repo as a portfolio-grade benchmark.
 
@@ -25,9 +25,10 @@ This plan turns the v0.1 scaffold into a production-grade CLI for Google AI Ultr
 
 | # | Goal | Phase |
 |---|---|---|
-| F7 | Generate images (T2I via Imagen) | ✅ done (v0.3.0a1) |
-| F8 | Concurrency across accounts (pool) | Phase 4 |
-| F9 | Switch to official Veo 3.1 SDK as `--provider official` | Phase 5 |
+| F7 | Generate images (T2I/I2I via Imagen + Nano Banana) | ✅ done (v0.3.0a1) |
+| F8 | Batch concurrency within one profile (per-worker Page pool) | ✅ done (v0.4.0a2) |
+| F9 | Cross-account scheduling (round-robin across profiles) | Backlog (post-v0.5) |
+| F10 | Switch to official Veo SDK as `GFLOW_CLI_PROVIDER=official` | Phase 5+ |
 
 ### Non-functional (every phase)
 
@@ -69,25 +70,31 @@ Documented in detail in [docs/ARCHITECTURE.md](docs/ARCHITECTURE.md). Summary:
 
 The original PLAN included a full DDD/CQRS/Clean refactor. **Deferred** — for a single-user CLI, the layered shape becomes theatre. We keep the package boundaries (`api/`, `cli/`, `config.py`, `paths.py`) but skip the bus/handler/port indirection until there's a second `Provider` (v0.5+).
 
-Current package layout:
+Current package layout (post-Phase 4):
 
 ```
 src/gflow_cli/
 ├── __init__.py
 ├── __main__.py
 ├── auth.py             ← login + status (Playwright headed for login)
-├── cli.py              ← Click app
-├── config.py           ← pydantic-settings
-├── models.py           ← legacy domain DTOs (will fold into api/dto.py)
+├── cli.py              ← Click app, top-level + auth subgroup
+├── cli_image.py        ← gflow image upload/t2i/i2i (Click subgroup)
+├── cli_video.py        ← gflow video t2v/i2v/batch (Click subgroup)
+├── _cli_helpers.py     ← Phase 4 — shared profile/handler helpers
+├── config.py           ← pydantic-settings + legacy-env-var shim
+├── errors.py           ← Phase 4 — RFC 9457 hierarchy + EXIT_CODE_MAP
+├── observability.py    ← Phase 4 — structlog bootstrap + event emitters
 ├── paths.py            ← XDG-aware default paths
 ├── profile_store.py    ← profile inventory + default-profile config.toml
-├── providers/          ← legacy stub (will be removed in Phase 2 — superseded by api/)
-└── api/                ← NEW
+└── api/
     ├── __init__.py
+    ├── _retry.py       ← Phase 4 — tenacity AsyncRetrying + Retry-After cap
     ├── client.py       ← FlowApiClient (Playwright persistent context + REST)
-    ├── dto.py          ← ProjectInfo, AssetInfo, VideoStatus, ...
+    ├── dto.py          ← ProjectInfo, AssetInfo, VideoStatus, VideoOperation, ...
+    ├── image.py        ← image request/response builders
+    ├── recaptcha.py    ← reCAPTCHA Enterprise token mint via page.evaluate
     ├── routes.py       ← URL constants
-    └── recaptcha.py    ← Phase 2 — token mint via page.evaluate
+    └── video.py        ← GenerateVideoRequest + Aspect/Mode/Tier enums
 ```
 
 ---
@@ -283,7 +290,7 @@ Body envelope mirrors video (clientContext + mediaGenerationContext.batchId + us
 
 ---
 
-### Phase 4 — Hardening — ✅ COMPLETE (v0.4.0a1, 2026-05-11)
+### Phase 4 — Hardening — ✅ COMPLETE (v0.4.0a1 → v0.4.0a2, 2026-05-11)
 
 All 9 tasks (T0 spike + T1–T8) shipped. See `CHANGELOG.md` `[0.4.0a1]` for
 user-facing notes and `docs/superpowers/plans/2026-05-10-phase-4-hardening.md`
@@ -314,12 +321,16 @@ Page creation averaged **44.7–48.1 ms per page** across N=2/4/8/16 inside one 
 
 ---
 
-### Phase 5 — Public alpha release on PyPI
+### Phase 5 — Public alpha soak + first non-alpha release
 
-- Configure PyPI Trusted Publishing for `gflow-cli`
-- Verify `uvx --from gflow-cli gflow --help` works on a fresh machine
-- Tag `v0.3.0` (drop the alpha suffix) when the video + image MVP is stable enough for external use
-- Announce (LinkedIn / X / dev.to / "Show HN")
+`v0.2.0a1` through `v0.4.0a2` are already on PyPI under Trusted Publishing.
+Phase 5 is the soak window before dropping the `aN` suffix:
+
+- Let `v0.4.0a2` soak on PyPI for at least 1 week with external installs
+- Verify `uvx --from "gflow-cli==0.4.0a2" gflow --help` works on a fresh machine on all three OSes (Windows / macOS / Linux)
+- Triage any issues filed by external users (`gh issue list`)
+- Tag the first non-alpha (`v0.4.0`) once the surface is stable enough for external automation
+- Optional follow-up: scaffold `OfficialVeoProvider` against [`googleapis/python-genai`](https://github.com/googleapis/python-genai) behind `GFLOW_CLI_PROVIDER=official`
 
 ---
 
@@ -365,7 +376,7 @@ Today the CLI writes media to `$GFLOW_CLI_OUTPUT_DIR` on the local filesystem. P
 | 9 | No event sourcing, no message queue, no SaaS dependencies | YAGNI for a local CLI |
 | 10 | Both `gflow` and `flow` binary names installed | `flow` is friendlier; `gflow` avoids conflicts with Facebook Flow / MS Power Automate |
 | 11 | LF-only line endings via `.gitattributes` | Single repo source of truth; cross-platform contributors don't think about it |
-| 12 | `Provider` indirection (legacy `providers/`) removed | Superseded by `api.FlowApiClient`. Re-introduce when we add `OfficialVeoProvider` in Phase 5 |
+| 12 | `Provider` indirection (legacy `providers/`) removed | Superseded by `api.FlowApiClient`. Re-introduce when we add `OfficialVeoProvider` (planned v0.5+) |
 
 ---
 

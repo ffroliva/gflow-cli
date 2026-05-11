@@ -54,7 +54,7 @@ The hexagonal target above is the steady state. The **current** package — and 
 
 **Phase 4 does NOT:**
 
-- Restructure existing modules beyond minimal dedup (e.g., shared CLI helpers move to `cli/_helpers.py`).
+- Restructure existing modules beyond minimal dedup (shared CLI helpers were promoted to `gflow_cli._cli_helpers` at the package top level — kept flat to avoid a `cli.py` file / `cli/` package collision).
 - Introduce dependency-injection containers, command/query buses, or any DDD/CQRS scaffolding (deferred per [PLAN ADR #2](../PLAN.md#5-decision-log-adrs-in-miniature)).
 
 When the project converges on the hexagonal target above, modules graduate to layers: e.g., today's `gflow_cli.api` becomes `gflow_cli.infrastructure.flow_api`, `gflow_cli.cli` becomes `gflow_cli.interfaces.cli`, and so on. The modular-monolith shape is the staging area, not the destination.
@@ -142,7 +142,8 @@ src/gflow_cli/
 
 **Domain errors** (typed exceptions; no stringly-typed HTTP codes leaking out)
 
-- `AuthExpiredError`, `RateLimitExceededError`, `QuotaExhaustedError`, `InvalidPromptError`, `ProjectNotFoundError`, `JobNotFoundError`, `ProviderUnavailableError`.
+- **Target DDD names** (not yet implemented): `RateLimitExceededError`, `QuotaExhaustedError`, `InvalidPromptError`, `ProjectNotFoundError`, `JobNotFoundError`, `ProviderUnavailableError`.
+- **Current Phase 4 classes** (shipped in v0.4.0a2, see `gflow_cli.errors`): `AuthExpiredError`, `RateLimitError`, `ContentPolicyError`, `NetworkError`, `WireFormatError`. All inherit from `FlowApiError → GFlowError`; `EXIT_CODE_MAP` walks them in subclass-first order so `except FlowApiError` still catches every typed leaf. Per-class exit codes: 3 (auth), 4 (rate-limit), 5 (content-policy), 6 (network), 7 (wire-format).
 
 ## CQRS
 
@@ -205,7 +206,7 @@ A single function in `interfaces/cli/main.py` wires the dependency graph. No glo
 
 ```python
 def build_bus(settings: Settings) -> CommandBus:
-    auth_session = PlaywrightSession(profile_dir=settings.profile_dir())
+    auth_session = PlaywrightSession(profile_dir=settings.profile_subdir(profile_name))
     image_provider = FlowImageProvider(auth_session)
     video_provider = FlowVideoProvider(auth_session)
     storage = LocalStorage(settings.output_dir)
@@ -221,33 +222,35 @@ Click commands then become tiny:
 
 ```python
 @click.command()
-@click.option("-p", "--prompt", required=True)
+@click.argument("prompt")
 def generate(prompt: str) -> None:
     bus = build_bus(load_settings())
     cmd = GenerateImageCommand(prompt=Prompt(prompt), aspect=AspectRatio("1:1"), count=OutputCount(1))
     asyncio.run(bus.dispatch(cmd))
 ```
 
-## Concurrency model
+## Concurrency model (shipped, Phase 4 / v0.4.0a2)
 
-- **Single-process, single-event-loop** (`asyncio`).
-- Within a profile: serial per-Chromium-context (Chromium can't open the same profile dir twice).
-- Across profiles: parallelism is enabled by spawning multiple browser contexts (one per profile). Coordination via `asyncio.Semaphore(GFLOW_CLI_CONCURRENCY)`.
-- No multiprocessing, no threading except what Playwright uses internally.
+- **Single-process, single-event-loop** (`asyncio`). No multiprocessing, no application-level threads (only what Playwright uses internally).
+- **Within one `gflow video batch`:** `FlowApiClient.__aenter__` opens `Settings.concurrency` Playwright Pages inside **one shared persistent `BrowserContext`**. Operations check out a Page via an `asyncio.Queue` (FIFO, bounded by `maxsize=N`); a double-checkin raises `QueueFull` loudly rather than corrupting the pool. `gflow video batch` fans out manifest entries via `asyncio.gather`. See `gflow_cli.api.client.FlowApiClient._checkout_page` / `_checkin_page`.
+- **Across profiles:** parallelism by spawning one shell per profile. Chromium refuses two persistent contexts on the same `user-data-dir`, so cross-profile parallelism is a process-level concern, not a coroutine one. See [KNOWN_ISSUES § Same profile can't be used in parallel](../KNOWN_ISSUES.md#same-profile-cant-be-used-in-parallel).
+- **Why a Page pool and not a `Semaphore`?** A semaphore over a single shared Page would serialize at `page.request.post` anyway (Playwright doesn't make a Page thread-safe). N Pages inside one Context let Chromium pipeline the requests while still sharing the auth cookies. T0 of the Phase 4 spike measured ~45 ms per Page creation at N=16 — well under the 200 ms/Page threshold.
+- **What's backlog (post-v0.5):** account-pool aware scheduling across multiple signed-in profiles (round-robin), and a separate-process driver so two `gflow video batch` invocations against the same profile can serialize properly via OS file lock.
 
-This caps the parallelism at `min(concurrency_limit, profile_count)`. v0.4 will add account-pool aware scheduling (round-robin across logged-in profiles).
+## Observability (shipped, Phase 4 / v0.4.0a2)
 
-## Observability
+`structlog` is configured at startup via `gflow_cli.observability.configure(...)`, called by `_cli_helpers.run_with_handlers(...)` at the CLI boundary.
 
-`structlog` configured at startup via `infrastructure/observability/logging.py`. Each log line carries:
+Stable event names emitted at the boundary:
 
-- `event` — canonical key (e.g. `image.generation.started`)
-- `command_id` — UUID4 per dispatched command
-- `provider`, `profile`
-- domain context (`prompt_chars`, `aspect`, `count`, etc.)
-- timing (`duration_ms`) where relevant
+- **`error_raised`** — caught `GFlowError` (and subclasses). Carries `error_class`, `problem` (the full RFC 9457 Problem Details dict including `type`, `title`, `status`, `detail`, `instance`, `remediation_hint`, `route`), and `cli_command`.
+- **`error_unhandled`** — any non-`GFlowError` reaching the boundary. Privacy-safe: hashes the exception message + stack trace with SHA-256; never logs raw payload. Carries `error_class`, `message_hash`, `stack_hash`, `cli_command`.
 
-Format defaults to **human-readable on TTY**, **JSON when piped or `GFLOW_CLI_LOG_FORMAT=json`**. Pipes cleanly into `jq` / Loki / Datadog without configuration.
+Process-boundary contextvars bind once: `correlation_id` (UUID4 per CLI invocation) and `cli_version`. Both ride along on every event line.
+
+Format defaults to **human-readable on TTY**, **JSON when piped or `GFLOW_CLI_LOG_FORMAT=json`**. The exception renderer is constructed as `structlog.processors.ExceptionRenderer(structlog.tracebacks.ExceptionDictTransformer(show_locals=False))` — the verbose form makes the privacy guarantee visible at the call site (frame locals may contain auth cookies and signed URLs, never log them).
+
+Pipes cleanly into `jq` / Loki / Datadog without configuration. See [`docs/USER_GUIDE.md` § Journey 6](USER_GUIDE.md#journey-6--read-the-structured-logs) for `jq` recipes.
 
 ## Testing topology
 

@@ -13,7 +13,7 @@ This tool calls Google's private REST API at `aisandbox-pa.googleapis.com`. That
 - **Subject to access controls.** Google may rate-limit, throttle, restrict, or revoke access to this surface for any account at any time.
 - **Not covered by any Google SLA.** When this surface goes down, you have no support recourse.
 
-If you need a stable, supported, contractual API, use the [official Google Gen AI SDK](https://github.com/googleapis/python-genai) and the public Veo API on `generativelanguage.googleapis.com`. `gflow-cli` plans to support that path as a `--provider official` option in v0.3+.
+If you need a stable, supported, contractual API, use the [official Google Gen AI SDK](https://github.com/googleapis/python-genai) and the public Veo API on `generativelanguage.googleapis.com`. `gflow-cli` may support that path as a `GFLOW_CLI_PROVIDER=official` option in a future release (planned v0.5+); it is **not** part of v0.4.0a2.
 
 ## Account responsibility
 
@@ -69,4 +69,4 @@ See [LICENSE](LICENSE) for the full legal text. By installing or using `gflow-cl
 
 ---
 
-_Last updated: 2026-05-09._
+_Last updated: 2026-05-11 — refreshed for v0.4.0a2._
