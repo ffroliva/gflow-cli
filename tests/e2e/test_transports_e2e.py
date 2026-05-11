@@ -291,8 +291,10 @@ async def test_e2e_30s_timeout_budget(
         )
         monkeypatch.setattr(transport, "_http_post", _hang)
     elif strategy == "sapisidhash":
-        # S3 calls self._http_post(...) after reading _sapisid + _fingerprint.
+        # S3 guards `generate_images` on `_sapisid is None or _profile_dir is None`.
+        # Populate both + the captured fingerprint, then patch the I/O point.
         transport._sapisid = "fake-sapisid-for-timeout-test"  # type: ignore[attr-defined]
+        transport._profile_dir = Path("/dev/null")  # type: ignore[attr-defined]
         transport._fingerprint = BrowserFingerprint()  # type: ignore[attr-defined]
         monkeypatch.setattr(transport, "_http_post", _hang)
 
