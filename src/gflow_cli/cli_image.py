@@ -7,26 +7,25 @@ Subcommands:
 * ``t2i PROMPT`` — text-to-image generation (1-4 images per call).
 * ``i2i PROMPT --ref PATH_OR_UUID`` — image-to-image with seed references.
 
-Helper functions ``_resolve_profile`` and ``_make_provider_dir`` mirror the
-ones in :mod:`gflow_cli.cli_video` so the test suite can patch them locally.
-We deliberately duplicate them (rather than re-export) to keep each command
-group self-contained: a future split into ``cli/image.py``/``cli/video.py``
-should not require a cross-module patch dance in tests.
+The profile/auth helpers ``_resolve_profile`` and ``_make_provider_dir`` live
+in :mod:`gflow_cli._cli_helpers` since T4b — a negative AST-based test in
+``tests/cli/test_helpers.py`` prevents drift back into this module.
 """
 
 from __future__ import annotations
 
 import re
-import sys
 from pathlib import Path
 
 import click
 from rich.console import Console
 from rich.table import Table
 
-from gflow_cli import auth as auth_mod
-from gflow_cli import profile_store
-from gflow_cli._cli_helpers import run_with_handlers
+from gflow_cli._cli_helpers import (
+    _make_provider_dir,
+    _resolve_profile,
+    run_with_handlers,
+)
 from gflow_cli.api.client import FlowApiClient
 from gflow_cli.api.dto import GeneratedImage
 from gflow_cli.api.image import Aspect, GenerateImageRequest, ImageRef, Model
@@ -76,32 +75,6 @@ def _classify_ref(ref: str) -> ImageRef | Path:
             "Pass either a local image path or a 32-char hex UUID with hyphens "
             "(from a prior `gflow image upload`)."
         ) from exc
-
-
-def _resolve_profile(profile: str | None) -> str:
-    """Return the active profile name or exit with a friendly message."""
-    if profile:
-        return profile
-    try:
-        return profile_store.resolve_profile(None)
-    except profile_store.NoProfilesError as exc:
-        console.print(f"[yellow]{exc}[/yellow]")
-        sys.exit(2)
-    except profile_store.NoDefaultProfileError as exc:
-        console.print(f"[yellow]{exc}[/yellow]")
-        sys.exit(2)
-
-
-def _make_provider_dir(profile_name: str) -> Path:
-    """Return the Playwright profile dir for *profile_name*, or exit if absent."""
-    pdir = auth_mod.profile_dir(profile_name)
-    if not pdir.exists():
-        console.print(
-            f"[red]No session for profile '{profile_name}'.[/red] "
-            "Run [bold]gflow auth login[/bold] first."
-        )
-        sys.exit(2)
-    return pdir
 
 
 # ---------------------------------------------------------------------------
