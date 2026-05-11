@@ -16,6 +16,7 @@ from pathlib import Path
 from typing import TYPE_CHECKING, Any, cast
 
 if TYPE_CHECKING:
+    from playwright.async_api import Page
     from playwright.async_api import Request as PlaywrightRequest
 
 import structlog
@@ -140,8 +141,12 @@ class BearerTransport:
     # Lifecycle
     # ------------------------------------------------------------------
 
-    async def setup(self, profile_dir: Path) -> None:
+    async def setup(self, profile_dir: Path, *, page: Page | None = None) -> None:
         """Initialise transport.
+
+        The ``page`` kwarg is accepted for Protocol conformance with the S1
+        shared-page fix (spec § 5.4.4) but is intentionally ignored — S2
+        manages its own Playwright lifecycle for Bearer capture.
 
         Loads cached Bearer from disk if present and not expired; otherwise
         launches Playwright to capture a fresh Bearer + fingerprint.

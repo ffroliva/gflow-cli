@@ -22,6 +22,17 @@ def test_protocol_setup_signature():
     assert is_lazy_string or is_class_obj
 
 
+def test_protocol_setup_accepts_page_kwarg():
+    """setup() must accept an optional `page` keyword argument (S1 shared-page fix)."""
+    sig = inspect.signature(FlowTransportStrategy.setup)
+    assert "page" in sig.parameters, "setup() must have a `page` kwarg for the shared-page fix"
+    param = sig.parameters["page"]
+    # Must be keyword-only (defined after *)
+    assert param.kind == inspect.Parameter.KEYWORD_ONLY
+    # Must have a default of None (optional — back-compat for direct callers)
+    assert param.default is None
+
+
 def test_protocol_generate_images_signature_omits_recaptcha_token():
     """Per spec § 4.1 — recaptcha_token lives in GenerateImageRequest, not the Protocol."""
     sig = inspect.signature(FlowTransportStrategy.generate_images)

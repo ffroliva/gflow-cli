@@ -15,7 +15,10 @@ import json
 import sqlite3
 import time
 from pathlib import Path
-from typing import Any
+from typing import TYPE_CHECKING, Any
+
+if TYPE_CHECKING:
+    from playwright.async_api import Page
 
 import structlog
 
@@ -134,8 +137,14 @@ class SapisidhashTransport:
     # Lifecycle
     # ------------------------------------------------------------------
 
-    async def setup(self, profile_dir: Path) -> None:
-        """Read SAPISID and capture browser fingerprint via one Playwright run."""
+    async def setup(self, profile_dir: Path, *, page: Page | None = None) -> None:
+        """Read SAPISID and capture browser fingerprint via one Playwright run.
+
+        The ``page`` kwarg is accepted for Protocol conformance with the S1
+        shared-page fix (spec § 5.4.4) but is intentionally ignored — S3
+        reads SAPISID from the SQLite cookie DB and has its own Playwright
+        fingerprint-capture step.
+        """
         self._profile_dir = profile_dir
         self._sapisid = self._read_sapisid(profile_dir)
         self._fingerprint = await self._capture_fingerprint_via_playwright(profile_dir)

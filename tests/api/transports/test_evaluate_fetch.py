@@ -386,3 +386,78 @@ async def test_generate_images_seed_is_deterministic_for_same_ref() -> None:
     assert captured_seeds[0] == captured_seeds[1], (
         f"Seeds differ across runs: {captured_seeds[0]} vs {captured_seeds[1]}"
     )
+
+
+# ---------------------------------------------------------------------------
+# T10 — S1 shared-page fix (D.2.1): setup(profile_dir, page=<page>) path
+# ---------------------------------------------------------------------------
+
+
+async def test_setup_with_shared_page_does_not_open_new_context(tmp_path: Path) -> None:
+    """When a Page is passed via the `page=` kwarg, setup() must NOT launch its
+    own Playwright context.  The caller (FlowApiClient) owns the context."""
+    transport = EvaluateFetchTransport()
+
+    fake_page = MagicMock()
+    fake_page.goto = AsyncMock()
+
+    # Pass a pre-existing page — no playwright launch should happen.
+    with patch(
+        "playwright.async_api.async_playwright",
+    ) as mock_apw:
+        await transport.setup(tmp_path, page=fake_page)
+
+    # async_playwright must NOT have been called.
+    mock_apw.assert_not_called()
+    # The transport's internal page must be the one we passed in.
+    assert transport._page is fake_page
+    # The ownership flag must be False — we do NOT own playwright.
+    assert transport._owns_playwright is False
+    assert transport._setup_done is True
+
+
+async def test_setup_without_shared_page_opens_own_context(tmp_path: Path) -> None:
+    """When no page is passed, setup() must open its own Playwright context
+    (original behaviour preserved for back-compat)."""
+    transport = EvaluateFetchTransport()
+
+    fake_page = MagicMock()
+    fake_page.goto = AsyncMock()
+    fake_ctx = MagicMock()
+    fake_ctx.new_page = AsyncMock(return_value=fake_page)
+    fake_pw = _make_fake_playwright(fake_ctx)
+
+    with patch(
+        "playwright.async_api.async_playwright",
+        return_value=_AsyncCtxManager(fake_pw),
+    ):
+        await transport.setup(tmp_path)
+
+    # Must have opened its own context.
+    fake_pw.chromium.launch_persistent_context.assert_awaited_once()
+    assert transport._owns_playwright is True
+    assert transport._setup_done is True
+
+
+async def test_teardown_noop_when_not_owning_playwright() -> None:
+    """teardown() must be a no-op (not close ctx/pw) when _owns_playwright is False."""
+    transport = EvaluateFetchTransport()
+
+    # Simulate shared-page path: ctx + pw_cm are set but not owned.
+    fake_ctx = MagicMock()
+    fake_ctx.close = AsyncMock()
+    fake_pw_cm = MagicMock()
+    fake_pw_cm.__aexit__ = AsyncMock()
+
+    transport._ctx = fake_ctx
+    transport._pw_cm = fake_pw_cm
+    transport._owns_playwright = False
+    transport._setup_done = True
+
+    await transport.teardown()
+
+    # Neither the context nor playwright should have been closed.
+    fake_ctx.close.assert_not_awaited()
+    fake_pw_cm.__aexit__.assert_not_awaited()
+    # State IS reset so the object is clean.
+    assert transport._setup_done is False
