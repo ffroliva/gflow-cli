@@ -10,6 +10,7 @@ Adaptations vs. PLAN.md examples:
 from __future__ import annotations
 
 import json
+import os
 import time
 from pathlib import Path
 from unittest.mock import AsyncMock, MagicMock
@@ -348,3 +349,95 @@ async def test_teardown_clears_cached_and_is_idempotent() -> None:
     # Second call must not raise
     await transport.teardown()
     assert transport._cached is None
+
+
+# ---------------------------------------------------------------------------
+# _BearerCache — corruption resilience (HIGH #4)
+# ---------------------------------------------------------------------------
+
+
+def test_bearer_cache_load_returns_none_on_corrupted_json(tmp_path: Path) -> None:
+    """Simulate a partial/truncated write; load() must return None, not raise."""
+    path = tmp_path / "transport_bearer.json"
+    path.write_text('{"token": "partial"')  # truncated — JSONDecodeError
+    cache = _BearerCache(path)
+    assert cache.load() is None
+
+
+def test_bearer_cache_load_returns_none_on_missing_keys(tmp_path: Path) -> None:
+    """Valid JSON but missing required keys → KeyError → returns None."""
+    path = tmp_path / "transport_bearer.json"
+    path.write_text('{"something_else": 42}')
+    cache = _BearerCache(path)
+    assert cache.load() is None
+
+
+# ---------------------------------------------------------------------------
+# _BearerCache — file permissions (HIGH #5)
+# ---------------------------------------------------------------------------
+
+
+def test_bearer_cache_save_sets_owner_only_permissions(tmp_path: Path) -> None:
+    """tmp file permissions must be 0o600 before rename (owner-only)."""
+    if os.name == "nt":
+        pytest.skip("chmod is a no-op on Windows — permission semantics differ")
+    path = tmp_path / "transport_bearer.json"
+    cache = _BearerCache(path)
+    fp = BrowserFingerprint(headers={"user-agent": "ua-perm-test"})
+    cache.save(token="tok-perm", expires_at=time.time() + 3600, fingerprint=fp)
+    mode = path.stat().st_mode & 0o777
+    assert mode == 0o600, f"Expected 0o600, got {oct(mode)}"
+
+
+# ---------------------------------------------------------------------------
+# refresh_auth() — clears _cached even on failure (MEDIUM #14)
+# ---------------------------------------------------------------------------
+
+
+async def test_refresh_auth_clears_cached_on_playwright_failure(tmp_path: Path) -> None:
+    """_cached must be None after refresh_auth() raises, even if a stale token existed."""
+    transport = BearerTransport()
+    transport._profile_dir = tmp_path
+    transport._cache = _BearerCache(tmp_path / "transport_bearer.json")
+    # Seed a stale cached value
+    transport._cached = _CachedAuth(
+        token="stale",
+        expires_at=time.time() - 1,
+        fingerprint=BrowserFingerprint(),
+    )
+
+    async def _boom(*_args: object, **_kwargs: object) -> None:
+        raise RuntimeError("browser crashed")
+
+    transport._capture_bearer_via_playwright = _boom  # type: ignore[method-assign]
+
+    from gflow_cli.errors import AuthExpiredError as _AuthExpiredError
+
+    with pytest.raises(_AuthExpiredError):
+        await transport.refresh_auth()
+
+    assert transport._cached is None
+
+
+# ---------------------------------------------------------------------------
+# refresh_auth() — wraps non-AuthExpiredError as AuthExpiredError (MEDIUM #13)
+# ---------------------------------------------------------------------------
+
+
+async def test_refresh_auth_wraps_arbitrary_exception_as_auth_expired(
+    tmp_path: Path,
+) -> None:
+    """Any exception from _capture_bearer_via_playwright must become AuthExpiredError."""
+    transport = BearerTransport()
+    transport._profile_dir = tmp_path
+    transport._cache = _BearerCache(tmp_path / "transport_bearer.json")
+
+    async def _crash(*_args: object, **_kwargs: object) -> None:
+        raise ConnectionResetError("network died")
+
+    transport._capture_bearer_via_playwright = _crash  # type: ignore[method-assign]
+
+    from gflow_cli.errors import AuthExpiredError as _AuthExpiredError
+
+    with pytest.raises(_AuthExpiredError, match="bearer: refresh failed"):
+        await transport.refresh_auth()

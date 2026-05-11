@@ -9,6 +9,7 @@ from __future__ import annotations
 
 import asyncio
 import json
+import os
 import time
 from dataclasses import dataclass
 from pathlib import Path
@@ -45,7 +46,7 @@ log = structlog.get_logger(__name__)
 # ---------------------------------------------------------------------------
 
 
-@dataclass
+@dataclass(frozen=True)
 class _CachedAuth:
     """In-memory representation of a captured Bearer session."""
 
@@ -60,6 +61,9 @@ class _CachedAuth:
 
 class _BearerCache:
     """Persist / load Bearer auth to ``profile_dir / "transport_bearer.json"``.
+
+    WARNING: contains live OAuth Bearer token — ``transport_bearer.json`` must
+    NOT be committed to version control.  Add it to ``.gitignore``.
 
     JSON shape::
 
@@ -80,31 +84,41 @@ class _BearerCache:
         expires_at: float,
         fingerprint: BrowserFingerprint,
     ) -> None:
+        """Write cache atomically (tmp → rename) with owner-only permissions."""
         self.path.parent.mkdir(parents=True, exist_ok=True)
         payload = {
             "token": token,
             "expires_at": expires_at,
             "fingerprint": json.loads(fingerprint.to_json()),
         }
-        self.path.write_text(json.dumps(payload))
+        tmp_path = self.path.with_suffix(".tmp")
+        tmp_path.write_text(json.dumps(payload))
+        # chmod before rename so the file is never world-readable, even briefly.
+        # On Windows chmod(0o600) is a no-op but does not raise.
+        tmp_path.chmod(0o600)
+        os.replace(tmp_path, self.path)
 
     def load(self) -> _CachedAuth | None:
-        """Return a ``_CachedAuth`` from disk, or ``None`` if the file is absent."""
+        """Return a ``_CachedAuth`` from disk, or ``None`` if absent or corrupted."""
         if not self.path.exists():
             return None
-        data: dict[str, Any] = json.loads(self.path.read_text())
-        fp_raw: Any = data.get("fingerprint", {})
-        fp_headers: dict[str, str] = (
-            cast(dict[str, str], fp_raw["headers"])
-            if isinstance(fp_raw, dict) and "headers" in fp_raw
-            else {}
-        )
-        fingerprint = BrowserFingerprint(headers=fp_headers)
-        return _CachedAuth(
-            token=str(data["token"]),
-            expires_at=float(data["expires_at"]),
-            fingerprint=fingerprint,
-        )
+        try:
+            data: dict[str, Any] = json.loads(self.path.read_text())
+            fp_raw: Any = data.get("fingerprint", {})
+            fp_headers: dict[str, str] = (
+                cast(dict[str, str], fp_raw["headers"])
+                if isinstance(fp_raw, dict) and "headers" in fp_raw
+                else {}
+            )
+            fingerprint = BrowserFingerprint(headers=fp_headers)
+            return _CachedAuth(
+                token=str(data["token"]),
+                expires_at=float(data["expires_at"]),
+                fingerprint=fingerprint,
+            )
+        except (json.JSONDecodeError, KeyError, TypeError, ValueError):
+            log.warning("bearer.cache_corrupt_ignored", path=str(self.path))
+            return None
 
 
 # ---------------------------------------------------------------------------
@@ -157,13 +171,29 @@ class BearerTransport:
     async def refresh_auth(self) -> None:
         """Re-capture Bearer via Playwright and update cache.
 
-        Raises ``AuthExpiredError`` if re-capture fails (e.g. cookies expired).
+        Clears ``_cached`` immediately so that any failure leaves the transport
+        in an unauthenticated state (callers will surface ``AuthMissingError``
+        rather than re-using a stale token).
+
+        Raises ``AuthExpiredError`` if re-capture fails (e.g. cookies expired,
+        browser crash, or any other unexpected error).
         """
+        # MEDIUM #14 — clear before capture; if capture fails, _cached stays None.
+        self._cached = None
+
         if self._profile_dir is None:
             raise AuthExpiredError(
                 "bearer: cannot refresh — setup() was never called"
             )
-        token, expires_at, fp = await self._capture_bearer_via_playwright(self._profile_dir)
+        try:
+            token, expires_at, fp = await self._capture_bearer_via_playwright(
+                self._profile_dir
+            )
+        except AuthExpiredError:
+            raise
+        except Exception as exc:
+            raise AuthExpiredError(f"bearer: refresh failed: {exc}") from exc
+
         if self._cache is not None:
             self._cache.save(token=token, expires_at=expires_at, fingerprint=fp)
         self._cached = _CachedAuth(token=token, expires_at=expires_at, fingerprint=fp)
@@ -302,5 +332,5 @@ class BearerTransport:
         """Injectable seam: real httpx POST.  Tests replace this with a fake."""
         import httpx  # lazy import
 
-        async with httpx.AsyncClient(timeout=timeout) as client:
+        async with httpx.AsyncClient(timeout=timeout, follow_redirects=False) as client:
             return await client.post(url, headers=headers, content=content)
