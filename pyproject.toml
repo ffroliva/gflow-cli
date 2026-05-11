@@ -71,6 +71,7 @@ markers = [
     "unit: pure logic, no I/O (the default category)",
     "integration: real Provider plumbing with mocked HTTP",
     "live: hits the real Flow API — opt-in via GFLOW_LIVE=1",
+    "e2e: real Flow API tests; require GFLOW_CLI_E2E_PROFILE env var; opt-in via -m e2e",
 ]
 
 [dependency-groups]
