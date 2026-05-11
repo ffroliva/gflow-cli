@@ -25,7 +25,6 @@ from gflow_cli.api.image import Aspect, GenerateImageRequest, ImageRef, Model
 from gflow_cli.api.transports.evaluate_fetch import EvaluateFetchTransport
 from gflow_cli.errors import AuthExpiredError, TransportTimeoutError, WafRejectionError
 
-
 # ---------------------------------------------------------------------------
 # Helpers
 # ---------------------------------------------------------------------------

@@ -5,17 +5,17 @@ RED phase: all tests fail with ModuleNotFoundError until _common.py is created.
 from __future__ import annotations
 
 import json
-
-import pytest
 from unittest.mock import MagicMock
 
+import pytest
+
 from gflow_cli.api.transports._common import (
+    BEARER_DEFAULT_TTL_S,
     FLOW_URL,
     PER_CALL_TIMEOUT_S,
-    BEARER_DEFAULT_TTL_S,
     REFRESH_SAFETY_MARGIN_S,
-    mint_batch_id,
     interpret_response,
+    mint_batch_id,
 )
 from gflow_cli.errors import (
     AuthExpiredError,
@@ -25,7 +25,6 @@ from gflow_cli.errors import (
     WafRejectionError,
     WireFormatError,
 )
-
 
 # ---------------------------------------------------------------------------
 # Helper — build a minimal valid wire-format media item
