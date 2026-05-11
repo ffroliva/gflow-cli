@@ -12,14 +12,16 @@ Override the root with `GFLOW_CLI_HOME`. See `docs/AUTHENTICATION.md`.
 
 from __future__ import annotations
 
-import logging
 from pathlib import Path
 
+import structlog
 from playwright.async_api import async_playwright
+from rich.console import Console
 
 from gflow_cli.config import get_settings
 
-logger = logging.getLogger(__name__)
+logger = structlog.get_logger(__name__)
+_console = Console()
 
 GEMINI_URL = "https://labs.google/fx/tools/flow?hl=en"
 
@@ -45,7 +47,7 @@ async def login(name: str = "default") -> Path:
     """
     pdir = profile_dir(name)
     pdir.mkdir(parents=True, exist_ok=True)
-    logger.info("login: launching browser, profile=%s", pdir)
+    logger.info("auth_login_started", profile_dir=str(pdir))
     async with async_playwright() as pw:
         ctx = await pw.chromium.launch_persistent_context(
             user_data_dir=str(pdir),
@@ -55,7 +57,9 @@ async def login(name: str = "default") -> Path:
         try:
             page = ctx.pages[0] if ctx.pages else await ctx.new_page()
             await page.goto(GEMINI_URL, wait_until="domcontentloaded", timeout=60_000)
-            print(
+            # User-facing instructions — Rich console, not raw print() (CLAUDE.md
+            # invariant: no `print()` under src/).
+            _console.print(
                 "\n  Sign into your Google account in the open window.\n"
                 "  Once you reach the Flow editor, close the window to save the session.\n"
             )
