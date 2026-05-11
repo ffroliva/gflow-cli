@@ -40,6 +40,8 @@ from gflow_cli.api._retry import parse_retry_after, post_with_retry
 from gflow_cli.api.dto import AssetInfo, GeneratedImage, ProjectInfo, VideoOperation, VideoStatus
 from gflow_cli.api.image import GenerateImageRequest, _build_batch_generate_images_body
 from gflow_cli.api.recaptcha import TokenMinter
+from gflow_cli.api.transports import make_transport
+from gflow_cli.api.transports.base import FlowTransportStrategy
 from gflow_cli.api.video import GenerateVideoRequest, build_generate_body
 from gflow_cli.config import Settings
 from gflow_cli.errors import (
@@ -105,6 +107,7 @@ class FlowApiClient:
         *,
         headless: bool = True,
         settings: Settings | None = None,
+        transport: FlowTransportStrategy | str | None = None,
     ) -> None:
         self.profile_dir = profile_dir
         self.headless = headless
@@ -112,6 +115,15 @@ class FlowApiClient:
         # construction time, which is fine for production but lets tests
         # opt out by supplying a fully built settings object.
         self.settings = settings if settings is not None else Settings()
+        # Transport lifecycle ownership (spec § 4.3):
+        # - pre-initialized instance → caller owns (no setup/teardown invoked)
+        # - str/None → client owns (resolves via make_transport, calls setup/teardown)
+        # Duck-check instead of isinstance(x, FlowTransportStrategy) because the
+        # Protocol is not @runtime_checkable — adding that decorator would widen
+        # its API surface and constrain future Protocol evolution.
+        self._transport_input: FlowTransportStrategy | str | None = transport
+        self.transport: FlowTransportStrategy | None = None
+        self._owns_transport: bool = False
         self._pw: Playwright | None = None
         self._context: BrowserContext | None = None
         # Per-worker Page pool (Phase 4 T2). All Pages live inside ONE
@@ -129,6 +141,22 @@ class FlowApiClient:
     # --- lifecycle --------------------------------------------------------
 
     async def __aenter__(self) -> FlowApiClient:
+        # Resolve transport ownership before touching Playwright.
+        # Branch on the discriminating types (str, None) so pyright narrows
+        # the else-branch to FlowTransportStrategy. We deliberately avoid
+        # `@runtime_checkable` on the Protocol — that would freeze its
+        # public surface and constrain future evolution.
+        inp = self._transport_input
+        if inp is None or isinstance(inp, str):
+            # Client-owned: resolve from factory, run full lifecycle.
+            self.transport = make_transport(inp)
+            await self.transport.setup(self.profile_dir)
+            self._owns_transport = True
+        else:
+            # Caller-owned: pre-initialized FlowTransportStrategy instance.
+            self.transport = inp
+            self._owns_transport = False
+
         self._pw = await async_playwright().start()
         self._context = await self._pw.chromium.launch_persistent_context(
             user_data_dir=str(self.profile_dir),
@@ -183,6 +211,11 @@ class FlowApiClient:
                     await self._pw.stop()
                 except Exception:
                     logger.warning("playwright_stop_error", exc_info=True)
+            if self._owns_transport and self.transport is not None:
+                try:
+                    await self.transport.teardown()
+                except Exception:
+                    logger.warning("transport_teardown_error", exc_info=True)
         finally:
             # Always reset pool state — even if close() raised — so a
             # reused client instance doesn't keep dangling references to a
