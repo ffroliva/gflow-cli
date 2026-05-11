@@ -204,7 +204,7 @@ gflow image t2i "client work"   --profile client-a
 
 Each profile is fully isolated (its own cookies, its own Flow project history). You can run multiple `gflow` calls concurrently across profiles since each launches its own Chromium context — but **never run two concurrent calls against the same profile**, because Chromium will refuse to open a second persistent context on a locked user-data-dir.
 
-For automated multi-account batching, see [PLAN § Phase 4 — Hardening](../PLAN.md#phase-4--hardening--post-v030a1) (concurrency pool ships in v0.4).
+For automated multi-account batching: concurrency *within* one profile shipped in v0.4.0a2 — set `GFLOW_CLI_CONCURRENCY=N` (1–16) and `gflow video batch` fans out across N Playwright Pages on one shared BrowserContext. Cross-profile parallel batches are still "one shell per profile" (Chromium per-profile lock; see [KNOWN_ISSUES § Same profile can't be used in parallel](../KNOWN_ISSUES.md#same-profile-cant-be-used-in-parallel)).
 
 ## Refresh / expiry
 
@@ -228,9 +228,9 @@ Re-running `auth login` refreshes the cookies in place — no other state is los
 
 | Threat | Mitigation |
 |---|---|
-| Session file leaked to a public repo | `.gitignore` excludes profile dirs at every layer; `gflow auth status` warns if it detects a profile inside a Git repo (planned v0.3). |
+| Session file leaked to a public repo | `.gitignore` excludes profile dirs at every layer. Recommended belt-and-braces: keep the gflow-cli home outside the repo (default location via `platformdirs` already does this) and run `git status` before any commit. Automatic in-repo detection is on the backlog (not yet scheduled). |
 | Multi-user shared machine | Profiles live under each user's home dir; OS file permissions (`0700` on POSIX, ACL on Windows) prevent cross-user reads by default. |
-| `gflow-cli` itself becomes malicious | The package is open-source under MIT; pin a version (`uv tool install gflow-cli==0.3.0a1`) and review release diffs before upgrading. |
+| `gflow-cli` itself becomes malicious | The package is open-source under MIT; pin a version (`uv tool install gflow-cli==0.4.0a2`) and review release diffs before upgrading. |
 | Stolen laptop | Anyone with disk access has your session. Use full-disk encryption (FileVault, BitLocker, LUKS). Consider a dedicated `--profile sandbox` for short-lived experiments. |
 | Sharing a profile between machines | Technically works (copy the profile dir), but Google may flag the device-fingerprint mismatch as suspicious. Re-login on the new machine instead. |
 

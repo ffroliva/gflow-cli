@@ -7,22 +7,92 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+## [0.4.0a2] — 2026-05-11
+
+> **Documentation polish.** Same release surface as v0.4.0a1; this tag fixes
+> a doc-council pass: four broken Python snippets in the README, a shell
+> exit-code branching example that silently dropped failures, a stale anchor
+> link in `AUTHENTICATION.md`, three USER_GUIDE journeys the target audience
+> needs (credit budgeting, pipeline wiring, error recovery), and a sweep of
+> "planned v0.3 / v0.4" callouts across 9 files that had been overtaken by
+> the Phase 4 release. No code changes. No tests changed.
+
+### Fixed (docs)
+
+- **`README.md` Python quick-start snippet rewritten** — the prior block had
+  four real bugs (`from gflow_cli.paths import profile_dir` → import error,
+  `upload_image(path, project_id)` args reversed, `generate_video(prompt=,
+  start_asset=, aspect=)` wrong kwargs, `poll_video_status` method does not
+  exist). Snippet now uses the same invocation pattern as
+  `gflow_cli.cli_video._run_i2v` and would actually run.
+- **`docs/USAGE.md` exit-code branching example** — `if ! cmd; then case $?`
+  always saw `0` because the `if` consumed the exit code; rewritten to
+  capture `rc=$?` first. Exit code `2` re-labelled "Bad CLI usage" (auth is
+  exit `3`).
+- **`docs/AUTHENTICATION.md` anchor link** to the Phase 4 PLAN heading
+  fixed (was `#phase-4--hardening--post-v030a1`, did not exist).
+- **`CHANGELOG.md` footer** — added `[0.4.0a1]:` and `[0.4.0a2]:` compare
+  links; reset `[Unreleased]` to compare from v0.4.0a2.
+- **`docs/USER_GUIDE.md` Journey 2** endpoint name `flowMedia:batchGenerateVeoVideo`
+  → real route `/v1/video:batchAsyncGenerateVideoText`.
+- **`docs/USER_GUIDE.md` Journey 5.2** invalid placeholder UUID
+  (`media-uuid-abc-...`) → canonical hex shape.
+- **`docs/USER_GUIDE.md` Journey 7.1** `echo $?` placement — previously
+  captured the exit code of an intermediate command, not the failing batch.
+- **`docs/USER_GUIDE.md` Journey 7.3** softened the "Flow doesn't re-bill"
+  claim — billing is a private-API contract we cannot assert.
+- **`KNOWN_ISSUES.md` same-profile examples** swapped `gflow image batch`
+  (does not exist) → `gflow video batch`.
+
+### Added (docs)
+
+- **`docs/USER_GUIDE.md` Journey on credit budgeting** — rule-of-thumb credit
+  cost per `video t2v` / `video i2v` / `image t2i` / `image i2i` call, links
+  to Flow's credit-balance UI, batch-cost math example.
+- **`docs/USER_GUIDE.md` Journey on wiring outputs into a pipeline** —
+  deterministic output-dir layout, `find` (POSIX) + `Get-ChildItem`
+  (PowerShell) recipes, `ffmpeg` consumer example.
+- **`docs/USER_GUIDE.md` Journey on `ContentPolicyError` / `RateLimitError`
+  recovery** — what each error means, how long to wait, prompt-rewrite
+  pattern, when retry is futile.
+- **`README.md` doc-nav** now links `docs/USER_GUIDE.md` (was missing).
+- **`README.md` Stack table** lists `tenacity` and `structlog` (were
+  shipped in v0.4.0a1 but not in the stack overview).
+
+### Changed (docs)
+
+- **`CHANGELOG.md` [0.4.0a1] section reordered** — `Added — Phase 4
+  hardening` now appears before `Breaking`. The hardening release was
+  user-visible value; the env-var rename was a one-line update for most
+  users.
+- **Per-class exit codes 3–7** promoted from a bullet to its own "Migration
+  notes" subsection in the [0.4.0a1] block.
+- **Version-time-warp sweep across 9 files** — every `(planned v0.3)`,
+  `(planned v0.4)`, `v0.3+ will add`, `v0.4 will add`, and `current scaffold
+  ignores this` line either describes shipped behaviour or points at v0.5+.
+  Files touched: `README.md`, `CHANGELOG.md`, `CLAUDE.md`, `PLAN.md`,
+  `KNOWN_ISSUES.md`, `CONFIGURATION.md`, `AUTHENTICATION.md`,
+  `ARCHITECTURE.md`, `DISCLAIMER.md`, `SECURITY.md`, `CONTRIBUTING.md`,
+  `.env.template`.
+- **`docs/ARCHITECTURE.md` Concurrency section** describes the shipped
+  `asyncio.Queue` Page pool, not the target-DDD `Semaphore` model.
+- **`docs/ARCHITECTURE.md` Observability section** describes the shipped
+  `error_raised` / `error_unhandled` event names, not the target-DDD
+  dot-path names.
+- **`docs/ARCHITECTURE.md` DDD error class names** annotated as target —
+  shipped Phase 4 names (`AuthExpiredError`, `RateLimitError`,
+  `ContentPolicyError`, `NetworkError`, `WireFormatError`) listed alongside.
+- **`docs/CONFIGURATION.md` `GFLOW_CLI_CONCURRENCY`** describes shipped
+  behaviour (per-worker Page pool, `asyncio.gather` fan-out).
+
 ## [0.4.0a1] — 2026-05-11
 
-### Breaking — package + env-var rename
-
-- **Python package renamed: `flow_cli` → `gflow_cli`.** All imports must
-  change: `from gflow_cli...` (was `from flow_cli...`). The PyPI distribution
-  name (`gflow-cli`), the CLI binary (`gflow`), and the user data directory
-  (`gflow-cli/` under `platformdirs`) are unchanged.
-- **Env var prefix renamed: `FLOW_CLI_*` → `GFLOW_CLI_*`.** Affected vars:
-  `GFLOW_CLI_HOME`, `GFLOW_CLI_OUTPUT_DIR`, `GFLOW_CLI_PROFILE`,
-  `GFLOW_CLI_HEADLESS`, `GFLOW_CLI_LOG_LEVEL`, `GFLOW_CLI_LOG_FORMAT`,
-  `GFLOW_CLI_PROVIDER`, `GFLOW_CLI_TIMEOUT_SECONDS`, `GFLOW_CLI_CONCURRENCY`.
-- **Backwards-compat shim.** Legacy `FLOW_CLI_*` env vars continue to work
-  in v0.4.x; on first encounter the process emits a single
-  `DeprecationWarning` to stderr summarising the promoted keys. The shim
-  will be removed in v0.5.0 — update your `.env` files and shell exports.
+> **Phase 4 hardening release.** Concurrency, retry/backoff, typed errors,
+> and structured logs ship — your existing scripts keep running (the
+> `FLOW_CLI_*` env-var shim is in place until v0.5.0). The user-visible
+> contract that changed: shell scripts can now branch on stable per-class
+> exit codes (3–7) for auth / rate-limit / content-policy / network /
+> wire-format failures.
 
 ### Added — Phase 4 hardening
 
@@ -63,6 +133,43 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   `image.feature` — all use a mocked `FlowApiClient`. A
   `_forbid_live_playwright` autouse tripwire fails any scenario that
   accidentally tries to start a real browser.
+
+### Migration notes — stable exit codes
+
+Shell scripts that previously branched on exit code `1` for any failure
+can now distinguish the failure class. The mapping is locked by an
+ordering-invariant test in `tests/test_errors.py`:
+
+| Exit | Error class           | Meaning                              | Retry?         |
+|------|-----------------------|--------------------------------------|----------------|
+| 0    | —                     | Success                              | —              |
+| 1    | (unhandled)           | Bug. Filed via `error_unhandled`     | No             |
+| 2    | (Click)               | Bad CLI usage / missing arg          | Fix the call   |
+| 3    | `AuthExpiredError`    | Session cookies invalidated          | After re-login |
+| 4    | `RateLimitError`      | Flow returned 429                    | Yes, with wait |
+| 5    | `ContentPolicyError`  | Prompt blocked upstream              | After rewrite  |
+| 6    | `NetworkError`        | DNS / TLS / 5xx after retry          | Yes            |
+| 7    | `WireFormatError`     | Response shape changed (Flow update) | File a bug     |
+| 130  | (SIGINT)              | User Ctrl-C                          | —              |
+
+See [`docs/USAGE.md § Exit codes`](docs/USAGE.md#exit-codes) for a
+shell-script template that branches on these codes.
+
+### Breaking — package + env-var rename
+
+- **Python package renamed: `flow_cli` → `gflow_cli`.** All imports must
+  change: `from gflow_cli...` (was `from flow_cli...`). The PyPI distribution
+  name (`gflow-cli`), the CLI binary (`gflow`), and the user data directory
+  (`gflow-cli/` under `platformdirs`) are unchanged.
+- **Env var prefix renamed: `FLOW_CLI_*` → `GFLOW_CLI_*`.** Affected vars:
+  `GFLOW_CLI_HOME`, `GFLOW_CLI_OUTPUT_DIR`, `GFLOW_CLI_PROFILE`,
+  `GFLOW_CLI_HEADLESS`, `GFLOW_CLI_LOG_LEVEL`, `GFLOW_CLI_LOG_FORMAT`,
+  `GFLOW_CLI_PROVIDER`, `GFLOW_CLI_TIMEOUT_SECONDS`, `GFLOW_CLI_CONCURRENCY`,
+  `GFLOW_CLI_GEMINI_API_KEY`.
+- **Backwards-compat shim.** Legacy `FLOW_CLI_*` env vars continue to work
+  in v0.4.x; on first encounter the process emits a single
+  `DeprecationWarning` to stderr summarising the promoted keys. The shim
+  will be removed in v0.5.0 — update your `.env` files and shell exports.
 
 ### Changed
 
@@ -200,7 +307,9 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 First skeleton. Not functional end-to-end yet.
 
-[Unreleased]: https://github.com/ffroliva/gflow-cli/compare/v0.3.0a1...HEAD
+[Unreleased]: https://github.com/ffroliva/gflow-cli/compare/v0.4.0a2...HEAD
+[0.4.0a2]: https://github.com/ffroliva/gflow-cli/compare/v0.4.0a1...v0.4.0a2
+[0.4.0a1]: https://github.com/ffroliva/gflow-cli/compare/v0.3.0a1...v0.4.0a1
 [0.3.0a1]: https://github.com/ffroliva/gflow-cli/releases/tag/v0.3.0a1
 [0.2.0a1]: https://github.com/ffroliva/gflow-cli/releases/tag/v0.2.0a1
 [0.1.0]: https://github.com/ffroliva/gflow-cli/releases/tag/v0.1.0

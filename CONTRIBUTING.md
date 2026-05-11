@@ -1,6 +1,6 @@
 # Contributing to gflow-cli
 
-Thanks for considering a contribution! Pre-1.0 the repo is private and managed by [@ffroliva](https://github.com/ffroliva), but the workflow described here is what'll be opened up to the community at the v0.2 alpha milestone.
+Thanks for considering a contribution! The repo is public and PRs are welcome. Pre-1.0 means APIs may shift between minor versions; check [PLAN.md](PLAN.md) for the active phase before starting a non-trivial change.
 
 ## Development setup
 
@@ -39,6 +39,8 @@ def test_parse_uuid_from_url(): ...
 async def test_upload_returns_asset(): ...
 
 @pytest.mark.live              # Hits the real Flow API. Requires GFLOW_LIVE=1 env var.
+# Note: the live-test gate is GFLOW_LIVE (deliberately short — not GFLOW_CLI_LIVE) so
+# you can opt in with a single export. Runtime config still uses the GFLOW_CLI_* prefix.
 @pytest.mark.skipif(not os.getenv("GFLOW_LIVE"), reason="live tests opt-in")
 async def test_full_i2v_roundtrip(): ...
 ```

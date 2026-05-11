@@ -17,17 +17,22 @@
 
 ## Active phase
 
-**Phase 3 — Image MVP DONE (v0.3.0a1).** `gflow image upload/t2i/i2i` shipped.
-Tag at `ccce4d5`. Next phase TBD (Phase 4 Hardening — concurrency pool,
-retry/backoff, structlog, BDD).
+**Phase 4 — Hardening DONE (v0.4.0a2).** Per-worker Page pool, tenacity
+retry/backoff with reCAPTCHA re-mint, RFC 9457 Problem Details error
+taxonomy with per-class exit codes 3–7, structlog observability with
+`error_raised` / `error_unhandled` events, and 12 pytest-bdd scenarios all
+shipped. Documentation polish landed in v0.4.0a2. Next phase TBD — likely
+Phase 5 public alpha on PyPI followed by Phase 6 operations history
+(see `PLAN.md`).
 
 ## Architecture (skim)
 
 > Note: the layered diagram below describes the **target** architecture
 > (deferred per [PLAN.md ADR #2](PLAN.md#5-decision-log-adrs-in-miniature)).
 > The current package layout is the simpler
-> `src/gflow_cli/{api/, cli.py, cli_image.py, cli_video.py, auth.py,
-> config.py, paths.py, profile_store.py}`. See
+> `src/gflow_cli/{api/, cli.py, cli_image.py, cli_video.py, _cli_helpers.py,
+> auth.py, config.py, errors.py, observability.py, paths.py,
+> profile_store.py}`. See
 > [docs/ARCHITECTURE.md](docs/ARCHITECTURE.md) for the full target shape.
 
 ```text
@@ -45,7 +50,7 @@ Dependency rule: **`domain/` depends on nothing**. `application/` depends on `do
 - **Never commit secrets.** `.gitignore` excludes `auth/`, `profile_*/`, `*.cookies.json`, `storage_state.json`, `secrets.json`, `.env`, `.env.local`, `.env.*.local`. If you see one of these staged, abort and tell the user.
 - **Never add `Co-Authored-By: Claude` (or any AI co-author) to commit messages.** Author attribution is the human user's only.
 - **Sessions belong outside the repo.** Default location is `$LOCALAPPDATA/gflow-cli/profile_*` (Windows) or `~/.local/share/gflow-cli/profile_*` (POSIX) via [`platformdirs`](https://github.com/platformdirs/platformdirs). Never store sessions in `/tmp`, `%TEMP%`, or anywhere the OS auto-reaps.
-- **No `print()` in `src/`** — use `structlog` (or `logging` until structlog lands in Phase 1).
+- **No raw `print()` and no `import logging` in `src/`** — use `structlog` for structured events, or Rich `console.print(...)` for user-facing output.
 - **Domain layer is pure** — `src/gflow_cli/domain/*` must not import `application/`, `infrastructure/`, or `interfaces/`. No I/O, no frameworks.
 - **Frozen dataclasses for value objects.** Aggregates may have controlled mutation methods, but VOs (AspectRatio, Prompt, JobId, ...) are immutable.
 - **Async all the way down.** Handlers and providers are `async def`. CLI is the only place that calls `asyncio.run(...)`.
@@ -56,7 +61,7 @@ Dependency rule: **`domain/` depends on nothing**. `application/` depends on `do
 - **Python 3.11+**, strict typing (`pyright --strict` on `src/gflow_cli/`), `from __future__ import annotations` at the top of every module.
 - **`@dataclass(frozen=True)`** for value objects and DTOs. `Protocol` for ports.
 - **`pathlib.Path`** everywhere — never raw strings for filesystem paths.
-- **Click + Rich** for the CLI, **httpx + Playwright** for I/O, **pytest + pytest-bdd** for tests.
+- **Click + Rich** for the CLI, **Playwright `page.request`** as the HTTP transport (auto-attaches Google session cookies), **`tenacity`** for retry/backoff, **`structlog`** for structured logs, **`pytest + pytest-bdd`** for tests.
 - **Conventional Commits** for messages (`feat:`, `fix:`, `docs:`, `test:`, `chore:`, `refactor:`, etc.). See examples in `git log`.
 - **Short files, single responsibility.** ~200-400 lines typical, 800 max. Split into `package/<topic>.py` if growing.
 

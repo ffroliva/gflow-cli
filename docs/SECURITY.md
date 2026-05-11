@@ -27,9 +27,11 @@
 - **Access:** OS file permissions enforce single-user access. On POSIX, `chmod 0700` is applied to the profile dir at creation time. On Windows, ACLs grant access only to the current user.
 - **Lifetime:** Persists until `gflow auth logout`, manual deletion, or session invalidation by Google.
 
-### Gemini API key (Phase 2+)
+### Gemini API key (future official provider, planned v0.5+)
 
-- **Location:** `$GFLOW_CLI_GEMINI_API_KEY` env var, optionally loaded from a `.env` file in `$CWD` or `$GFLOW_CLI_HOME`.
+Not used by v0.4.0a2's reverse-engineered Flow provider. Documented here in advance of `GFLOW_CLI_PROVIDER=official`.
+
+- **Location:** `$GFLOW_CLI_GEMINI_API_KEY` env var, optionally loaded from a `.env` file in the directory where you invoke `gflow` (CWD only — `$GFLOW_CLI_HOME` is not a `.env` search path; see [CONFIGURATION.md](CONFIGURATION.md)).
 - **In memory:** Held only in the `Settings` dataclass, never logged.
 - **In transit:** Sent only to `generativelanguage.googleapis.com` over HTTPS.
 - **Rotate:** Set a new value in `.env`, restart the CLI. No persistence beyond the env var.
@@ -48,7 +50,7 @@ For users on shared / multi-user / production-adjacent machines:
 - [ ] **Set `GFLOW_CLI_HOME` to a non-default path** if you want the session away from the standard `LOCALAPPDATA` / `~/.local/share` location for any reason (auditability, separate volumes).
 - [ ] **Use `--profile sandbox`** for short-lived experiments. Easy to delete (`rm -rf $GFLOW_CLI_HOME/profile_sandbox`) without disturbing your main profile.
 - [ ] **Rotate sessions monthly** by signing out of Google → re-running `gflow auth login`. Limits blast radius of an unnoticed session theft.
-- [ ] **Pin a gflow-cli version** in production (`uv tool install gflow-cli==0.3.0a1`) and review release diffs before upgrading.
+- [ ] **Pin a gflow-cli version** in production (`uv tool install gflow-cli==0.4.0a2`) and review release diffs before upgrading.
 - [ ] **Keep the package up-to-date for security fixes.** Subscribe to GitHub Releases for `ffroliva/gflow-cli`.
 - [ ] **Scan your repo for accidentally-committed profiles** before pushing: `git ls-files | grep -E "profile_|cookies\.json|\.env$"`.
 
@@ -94,12 +96,12 @@ These are belt-and-braces protection for the case where a user puts profiles ins
 
 Audited with `pip-audit` in CI on every push. Major dependency surface:
 
-- `playwright` — Microsoft, mature, security-reviewed, large user base.
-- `httpx` — Encode/Anyio, security-reviewed, used by FastAPI and many others.
+- `playwright` — Microsoft, mature, security-reviewed, large user base. **Also the HTTP transport** (`page.request.post`) — auto-attaches Google session cookies; no separate `httpx`/`requests` runtime dep.
 - `click` — Pallets, decade-old, stable.
 - `rich` — Textualize, mature.
 - `pydantic` / `pydantic-settings` — Pydantic, used by FastAPI ecosystem.
 - `structlog` — Hynek Schlawack, mature.
+- `tenacity` — Mature retry-helper, used widely in async-Python ecosystems.
 
 No transitive dep with known CVEs at the time of v0.1.0 scaffold.
 

@@ -5,7 +5,7 @@
 **Audience:** Google AI Ultra / Pro subscribers who want to drive Flow (Veo + Imagen) from the terminal instead of the web UI.
 
 **Prerequisites:**
-- Python 3.11+
+- Python 3.11+ (required for `from source` installs; `uvx` / `uv tool install` ship a managed Python)
 - An active Google AI Ultra or Pro subscription
 - ~500 MB disk (Chromium binary via Playwright)
 
@@ -22,6 +22,9 @@
 - [Journey 7 — Recovering from an `AuthExpiredError` mid-batch](#journey-7--recovering-from-an-authexpirederror-mid-batch)
 - [Journey 8 — Switching between Google accounts (profiles)](#journey-8--switching-between-google-accounts-profiles)
 - [Journey 9 — Migrating from `FLOW_CLI_*` to `GFLOW_CLI_*` (v0.3.x → v0.4.x)](#journey-9--migrating-from-flow_cli_-to-gflow_cli_-v03x--v04x)
+- [Journey 10 — Budgeting credits before a batch run](#journey-10--budgeting-credits-before-a-batch-run)
+- [Journey 11 — Wiring gflow outputs into a downstream pipeline](#journey-11--wiring-gflow-outputs-into-a-downstream-pipeline)
+- [Journey 12 — Recovering from `ContentPolicyError` or `RateLimitError`](#journey-12--recovering-from-contentpolicyerror-or-ratelimiterror)
 - [Common errors quick-reference](#common-errors-quick-reference)
 
 ---
@@ -54,7 +57,7 @@ uv tool run --from gflow-cli playwright install chromium
 uvx --from gflow-cli playwright install chromium
 ```
 
-This is a ~250 MB download. It happens once per user.
+This is a ~150 MB download. It happens once per user.
 
 ### 1.3 Authenticate
 
@@ -92,11 +95,11 @@ gflow video t2v "a hot air balloon over Tokyo at sunrise"
 What happens:
 
 1. `gflow-cli` reuses the saved Playwright session — no browser opens (headless).
-2. It creates an ephemeral Flow project, mints a reCAPTCHA Enterprise token via the live page, POSTs to `aisandbox-pa.googleapis.com/v1/projects/{id}/flowMedia:batchGenerateVeoVideo`.
-3. Polls the operation every ~5 seconds until terminal status.
+2. It creates an ephemeral Flow project, mints a reCAPTCHA Enterprise token via the live page, POSTs to `aisandbox-pa.googleapis.com/v1/video:batchAsyncGenerateVideoText` (see [`samples/README.md`](../samples/README.md) for the captured request/response shapes).
+3. Polls the operation every ~5 seconds via `POST /v1/video:batchCheckAsyncVideoGenerationStatus` until a terminal status.
 4. Downloads the resulting `.mp4` to a date-partitioned path under `$GFLOW_CLI_OUTPUT_DIR/videos/<YYYY-MM-DD>/`.
 
-**Typical wall-clock:** 60-180 seconds for an 8-second Veo clip. Faster on Imagen image jobs.
+**Typical wall-clock:** 60–180 seconds for an 8-second Veo clip. Imagen image jobs (`gflow image t2i` / `i2i`) finish in 10–30 seconds — closer to a single shot.
 
 **Cost:** ~1 credit per ~8-second clip on Ultra. Watch your credits at <https://labs.google/fx/tools/flow>.
 
@@ -122,15 +125,15 @@ You want to render 20 clips overnight from a TSV manifest.
 Five tab-separated columns, all but `prompt` optional:
 
 ```
-start_image	prompt	end_image	aspect	output_path
+# columns: start_image  prompt  end_image  aspect  output_path
 	a kite over a beach		16:9	clips/kite.mp4
 ./hero.png	a hot air balloon takes off				clips/balloon.mp4
 	a candle flickering in a window		1:1	clips/candle.mp4
 ```
 
-The first row is **not** a header — `parse_manifest` treats every non-blank, non-`#`-prefixed line as data. To leave a column blank, write nothing between the tabs.
+`parse_manifest` treats every non-blank, non-`#`-prefixed line as data — **there is no header row.** The column-name line above is `#`-prefixed so the parser skips it. To leave a column blank, write nothing between the tabs.
 
-Lines starting with `#` and blank lines are comments / spacing.
+Lines starting with `#` (after any leading whitespace) and blank lines are comments / spacing.
 
 Save as e.g. `manifest.tsv`.
 
@@ -144,7 +147,18 @@ GFLOW_CLI_CONCURRENCY=4 gflow video batch manifest.tsv --out-dir ./out
 
 **Memory budget:** ~30-60 MiB per Page on Chromium. Don't raise `N` above 8 without measuring.
 
-**Failure mode:** if any one entry fails (e.g. `AuthExpiredError` mid-batch), `asyncio.gather` cancels the siblings and the whole batch exits with the appropriate code (3, 4, 5, 6, or 7). Rerun the manifest after fixing the root cause — Flow doesn't charge for cancelled inflight calls.
+**Failure mode (today):** if any one entry fails (e.g. `AuthExpiredError` mid-batch), `asyncio.gather` cancels the siblings and the whole batch exits with the appropriate code (3, 4, 5, 6, or 7). In-flight requests that Flow had already accepted **may still consume credits** — Flow's private API does not give us a "cancel-and-refund" handshake. Inspect the output directory before rerunning; trim the manifest to only the rows whose `output_path` does not yet exist (recipe in [Journey 11](#journey-11--wiring-gflow-outputs-into-a-downstream-pipeline)).
+
+**Soft-fail-and-continue (workaround):** if you'd rather have one bad row not torpedo the rest, drive each row from a shell loop instead of `gflow video batch`:
+
+```bash
+while IFS=$'\t' read -r start prompt _ aspect out; do
+    [ -z "$prompt" ] || [ "${prompt:0:1}" = "#" ] && continue
+    gflow video i2v "$start" "$prompt" -o "$out" || echo "skipped: $out (exit $?)"
+done < manifest.tsv
+```
+
+Native soft-fail handling for `gflow video batch` is in the backlog (see `KNOWN_ISSUES.md`).
 
 **Watch progress:**
 
@@ -206,9 +220,9 @@ gflow image i2i "make it stormy" --ref ./hero.png
 
 ```bash
 gflow image upload ./hero.png
-# → media-uuid-abc-...
+# → ddb6ef97-262d-49f4-8269-4a28c0fae6a2
 
-gflow image i2i "now at sunset" --ref media-uuid-abc-...
+gflow image i2i "now at sunset" --ref ddb6ef97-262d-49f4-8269-4a28c0fae6a2
 ```
 
 `--ref` accepts EITHER a local path OR a 32-char hex UUID (with hyphens) — `gflow-cli` classifies by regex and skips the upload if it's already a UUID.
@@ -279,11 +293,18 @@ You started an overnight 50-clip batch. You wake up. The batch died on entry 23 
 
 ### 7.1 Diagnose
 
+`$?` reflects the **most recently completed foreground command**, so read it before running anything else (including `gflow auth status`):
+
 ```bash
-echo $?         # 3 — AuthExpiredError
+# In the same shell the batch ran in, immediately after the batch returned:
+echo "Batch exit code was: $?"      # 3 — AuthExpiredError
+
+# Then check session state (this command will overwrite $?):
 gflow auth status
-# cookies_present: True, but Google has invalidated the session
+# Likely output: cookies_present: True, but Google has invalidated the session.
 ```
+
+If you've already lost the original `$?` (closed the terminal, ran other commands), the same information landed in the structured log: `jq -r 'select(.error_class == "AuthExpiredError")' events.jsonl`.
 
 ### 7.2 Refresh
 
@@ -298,7 +319,7 @@ A Chromium window opens. Sign in again. Cookies overwrite.
 `asyncio.gather` cancels siblings on first failure, so SOME entries beyond 23 may have completed. Check `$GFLOW_CLI_OUTPUT_DIR/videos/<today>/` for what exists, then:
 
 - Either: copy the surviving rows out of `manifest.tsv` and rerun the rest.
-- Or: rerun the full manifest — Flow doesn't re-bill for previously-completed media, but `gflow video batch` doesn't skip-existing today (filed in [KNOWN_ISSUES](../KNOWN_ISSUES.md)).
+- Or: rerun the full manifest — **be aware that doing so may re-issue paid generations.** Flow's private API does not expose a "have I generated this before?" predicate, and `gflow video batch` does not yet maintain a local manifest-of-outputs to skip already-rendered rows. Filed in [KNOWN_ISSUES § `gflow video batch` does not skip already-completed entries](../KNOWN_ISSUES.md#gflow-video-batch-does-not-skip-already-completed-entries) with a one-liner `awk` workaround.
 
 ### 7.4 Prevent recurrence
 
@@ -360,7 +381,219 @@ All other vars follow the same `FLOW_CLI_` → `GFLOW_CLI_` rename. The full set
 + from gflow_cli.api.client import FlowApiClient
 ```
 
-The PyPI distribution name (`gflow-cli`) and CLI binary (`gflow`) are **unchanged**.
+Only the **Python import path** changed (`flow_cli` → `gflow_cli`). The PyPI distribution name (`gflow-cli`), the CLI binary (`gflow`), and the user data directory (`gflow-cli/` under `platformdirs`) are **unchanged**.
+
+---
+
+## Journey 10 — Budgeting credits before a batch run
+
+Your AI Ultra/Pro subscription includes a finite Veo / Imagen credit allowance — these journeys spend real money. Before kicking off a 200-row manifest, get a rough cost estimate.
+
+### 10.1 Check the balance
+
+Flow does not expose a credit-balance API today. Check your remaining quota at:
+
+- <https://labs.google/fx/tools/flow> — bottom-right "Credits" badge.
+- <https://gemini.google/subscriptions/> — monthly usage report.
+
+There is no programmatic way to fetch this from `gflow-cli` yet (see [KNOWN_ISSUES § No in-CLI quota visibility](../KNOWN_ISSUES.md#no-in-cli-quota-visibility)).
+
+### 10.2 Rule-of-thumb credit cost per call
+
+Costs are not published by Google. The numbers below are **rough observations from `samples/captured/` runs** and may drift as Flow tunes pricing — always test with a small batch first.
+
+| Command | Rough cost (Ultra) | Notes |
+|---|---|---|
+| `gflow video t2v "..."` (Veo 3.1 Fast, ~8 s clip) | ~1 credit / clip | Most expensive surface. |
+| `gflow video i2v IMAGE "..."` (Veo 3.1 Fast, ~8 s clip) | ~1 credit / clip | Same as t2v in practice. |
+| `gflow image upload PATH` | 0 credits | Asset upload is free; only generations bill. |
+| `gflow image t2i "..." --model nano2 -n 1` | ~0 credits / image observed | Nano Banana 2 is the cheap tier. |
+| `gflow image t2i "..." --model nano-pro -n 1` | ~low fractional / image | Nano Banana Pro = higher quality, higher cost. |
+| `gflow image t2i "..." --model image4 -n 1` | ~low fractional / image | Imagen 4 = photoreal lean. |
+| `gflow image i2i "..." --ref PATH -n 1` | Same as t2i for the model | Reference uploads are free. |
+| `gflow image t2i "..." -n 4` | 4× the single-shot cost | Fan-out issues N parallel POSTs, one credit-event per shot. |
+
+**Failed generations may still bill.** Retries inside the tenacity loop are atomic — only the final accepted attempt is what counts — but if Flow accepts a generation and then returns a `ContentPolicyError` or your manifest later cancels via `asyncio.gather`, **the credit is generally already gone**.
+
+### 10.3 Batch-cost math
+
+For a 50-row manifest of `gflow video i2v` clips at ~1 credit / clip:
+
+```text
+50 clips × ~1 credit/clip = ~50 credits.
++ Retries: tenacity caps at 3 attempts per row, but only the successful attempt
+  is "the" generation. Budget +5-10% headroom for transient failures that did
+  succeed on the first try (≈ 55 credits worst case).
+```
+
+### 10.4 Dry-run before committing the batch
+
+The cheapest "dry run" today is to **run the manifest's first 2 rows** end-to-end and inspect the outputs + log:
+
+```bash
+head -3 manifest.tsv > manifest.preview.tsv     # 1 comment line + 2 data rows
+gflow video batch manifest.preview.tsv --out-dir ./preview/
+```
+
+If the preview clips look right, run the full manifest. If they're wrong, fix the prompts before spending credits at scale.
+
+A `--dry-run` flag that validates the manifest + estimates cost without making any paid calls is planned (not yet scheduled).
+
+---
+
+## Journey 11 — Wiring gflow outputs into a downstream pipeline
+
+You want to feed `gflow-cli`'s output into `ffmpeg`, a CMS, or another automation step.
+
+### 11.1 The deterministic output layout
+
+Both default outputs and `--out` flags produce **predictable paths**:
+
+```text
+$GFLOW_CLI_OUTPUT_DIR/
+├── videos/
+│   └── <YYYY-MM-DD>/
+│       └── <media_uuid>.mp4
+└── images/
+    └── <YYYY-MM-DD>/
+        └── <media_uuid>_<n>.png        # _1 / _2 / _3 / _4 for -n>1
+```
+
+`<media_uuid>` is the asset UUID returned by Flow — globally unique. Same UUID across the operation poll response and the on-disk filename.
+
+When you pass `-o ./custom/path.mp4` or `--out-dir ./custom/`, `gflow-cli` writes there instead.
+
+### 11.2 Enumerate today's renders (POSIX shell)
+
+```bash
+TODAY=$(date +%F)
+find "$GFLOW_CLI_OUTPUT_DIR/videos/$TODAY/" -name '*.mp4' -newer ./manifest.tsv -print
+```
+
+### 11.3 Enumerate today's renders (PowerShell)
+
+```powershell
+$today = Get-Date -Format 'yyyy-MM-dd'
+Get-ChildItem "$env:GFLOW_CLI_OUTPUT_DIR\videos\$today\" -Filter *.mp4 |
+    Where-Object { $_.LastWriteTime -gt (Get-Item .\manifest.tsv).LastWriteTime }
+```
+
+### 11.4 Chain into ffmpeg (concat all of today's clips)
+
+```bash
+TODAY=$(date +%F)
+DIR="$GFLOW_CLI_OUTPUT_DIR/videos/$TODAY"
+( cd "$DIR" && for f in *.mp4; do echo "file '$f'"; done > concat.txt )
+ffmpeg -f concat -safe 0 -i "$DIR/concat.txt" -c copy "$DIR/_compiled.mp4"
+```
+
+### 11.5 Trim the manifest to unrendered rows only (skip-existing workaround)
+
+`gflow video batch` does not skip-existing yet. To rerun only the rows whose `output_path` does not exist:
+
+```bash
+awk -F'\t' 'NR==1 || /^#/ || /^$/ { print; next } { if (system("test -e " $NF) != 0) print }' \
+    manifest.tsv > manifest.remaining.tsv
+gflow video batch manifest.remaining.tsv
+```
+
+(`$NF` is the last column = `output_path`.)
+
+### 11.6 Subscribe a Python pipeline to new files (inotify / FSEvents / watchdog)
+
+```python
+# pip install watchdog
+from pathlib import Path
+from watchdog.events import FileSystemEventHandler
+from watchdog.observers import Observer
+
+class OnNewClip(FileSystemEventHandler):
+    def on_created(self, event):
+        if event.is_directory or not event.src_path.endswith(".mp4"):
+            return
+        clip = Path(event.src_path)
+        # ... hand off to your next step (upload, transcode, post to CMS) ...
+
+obs = Observer()
+obs.schedule(OnNewClip(), path=str(Path.home() / "Downloads" / "gflow-cli" / "videos"),
+             recursive=True)
+obs.start()
+```
+
+---
+
+## Journey 12 — Recovering from `ContentPolicyError` or `RateLimitError`
+
+You see exit code 4 or 5. Different mitigations apply.
+
+### 12.1 Exit 5 — `ContentPolicyError`
+
+Flow's safety classifier blocked the prompt or generated output. Common triggers:
+
+- **Named real people** (e.g. "Brad Pitt eating ramen"). Flow blocks identifiable likenesses by default.
+- **Brand and product names** ("Pepsi can rolling down a hill"). Trademark / IP filters fire here.
+- **Explicit content** (sexual, graphic violence, self-harm). Hard-blocked.
+- **Children** (any reference to "kids", "a child", named ages under 18). Blocked.
+- **Political figures** / electoral content. Flow blocks these in many jurisdictions.
+
+**Retry is futile until you rewrite the prompt.** The retry loop sees `ContentPolicyError` as non-retryable and exits immediately.
+
+**Rewrite patterns that often work:**
+
+| Failing prompt | Try instead |
+|---|---|
+| "Brad Pitt eating ramen" | "A handsome 40-year-old man with blond hair eating ramen" |
+| "A Pepsi can rolling" | "A red soda can rolling" |
+| "Two children playing" | "Two stylized cartoon characters playing" |
+
+Re-run the single failing row in isolation while iterating:
+
+```bash
+gflow video t2v "your rewritten prompt" -o ./debug/test.mp4
+```
+
+Once it passes, edit the manifest and rerun the batch.
+
+### 12.2 Exit 4 — `RateLimitError`
+
+Flow returned `429 Too Many Requests`. The `tenacity` retry layer already retried up to 3× with exponential jittered backoff (1 s → 2 s → 4 s, ±25% jitter, capped at 60 s when `Retry-After` is set). If it still failed, you're hitting either:
+
+- **Sustained rate limit** — the API thinks you're spamming. Wait and resume.
+- **Daily quota** — your Ultra/Pro allowance for the day is exhausted. Check the credit balance UI.
+
+**Recovery steps, in order:**
+
+```bash
+# 1. Drop the concurrency to 1 (sequential) and try again — sometimes the limit
+#    is per-N-in-flight rather than per-N-per-minute.
+GFLOW_CLI_CONCURRENCY=1 gflow video batch manifest.remaining.tsv
+
+# 2. If still 429: wait. 60 seconds for transient, up to a few hours for daily.
+sleep 300
+
+# 3. If a 60-second wait clears it, gradually ramp concurrency back up:
+GFLOW_CLI_CONCURRENCY=2 gflow video batch manifest.remaining.tsv
+
+# 4. If the wait does not clear it: check Flow's web UI. If credits are zero or
+#    the dashboard shows quota exhausted, you must wait for the quota window
+#    to reset.
+```
+
+The structured event lets you spot the underlying cause:
+
+```bash
+jq -r 'select(.error_class == "RateLimitError") | {detail, route, retry_after: .problem.retry_after}' events.jsonl
+```
+
+If `retry_after` is present and reasonable, the retry-loop wait that's used per attempt; if absent, treat as daily-quota.
+
+### 12.3 When neither pattern applies
+
+If exit 4 or 5 keeps firing on a prompt that looks tame:
+
+1. Capture the full `error_raised` event with `2> events.jsonl`.
+2. Open an issue at <https://github.com/ffroliva/gflow-cli/issues> with the redacted prompt + the event dict.
+3. While waiting, work around with a paraphrased prompt and lower concurrency.
 
 ---
 

@@ -35,7 +35,7 @@ Re-running `auth login` reuses the existing profile dir (you typically just clic
 
 **Why we don't auto-refresh:** Google's session-refresh flow can include CAPTCHA / device verification that only a human can complete. A community SDK can't reliably automate that step. See [docs/AUTHENTICATION.md § Refresh / expiry](docs/AUTHENTICATION.md#refresh--expiry).
 
-**Roadmap:** v0.4 will add a periodic background "session liveness" check that warns ~24h before expected expiry, and a `gflow auth refresh` command that opens the browser only if needed.
+**Roadmap:** not scheduled. The Phase 4 hardening pass (v0.4.0a2) added typed `AuthExpiredError` + exit code `3` so scripts can branch on auth expiry deterministically. A periodic "session liveness" check + a `gflow auth refresh` command are still candidates for a later phase, but not committed to a version yet.
 
 ---
 
@@ -49,13 +49,13 @@ Chromium refuses to open two persistent contexts on the same `user-data-dir` sim
 
 ```bash
 # Terminal 1
-gflow image batch ./batch-a.tsv --profile work
+gflow video batch ./batch-a.tsv --profile work
 
 # Terminal 2 — different profile, same time, OK
-gflow image batch ./batch-b.tsv --profile personal
+gflow video batch ./batch-b.tsv --profile personal
 ```
 
-**Roadmap:** v0.4's per-account pool will queue same-profile calls automatically.
+**Roadmap:** Phase 4 (v0.4.0a2) added concurrency *inside* one `gflow video batch` process via `GFLOW_CLI_CONCURRENCY=N` (per-worker Page pool on one shared BrowserContext). Cross-process same-profile serialization is a Chromium constraint we cannot work around without rewriting the auth model — multiple shells against the same profile remains a "use different profiles" workaround.
 
 ---
 
@@ -90,6 +90,24 @@ Currently confirmed:
 - Imagen: `1:1`, `9:16`, `16:9`, `4:3`, `3:4`
 
 Other ratios may be silently rejected or coerced server-side. We validate in the CLI to whitelisted values to fail fast.
+
+---
+
+### `gflow video batch` does not skip already-completed entries
+
+- **Status:** Open · **Severity:** Medium · **Affects:** v0.2.0a1+
+
+If a `gflow video batch` run dies partway through (auth expiry, network blip, Ctrl-C) and you rerun the same TSV manifest, every row is re-submitted to Flow. Flow's private API does not expose a "have I generated this before?" predicate, and `gflow-cli` does not yet maintain a local manifest-of-outputs to compare against.
+
+**Cost implication:** re-running a partially completed manifest **may consume additional Veo / Imagen credits**. We cannot guarantee that Flow de-duplicates server-side — credit accounting on a private API is not contractual.
+
+**Workaround:** before rerunning, trim the manifest down to the rows whose `output_path` does not yet exist on disk:
+```bash
+awk -F'\t' 'NR==1 || (system("test -e " $NF) != 0)' manifest.tsv > manifest.remaining.tsv
+gflow video batch manifest.remaining.tsv
+```
+
+**Roadmap:** under consideration for Phase 6 (operations history with a local SQLite ledger — see `PLAN.md`).
 
 ---
 
