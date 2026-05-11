@@ -13,10 +13,9 @@ files:
 
 The project is now public on GitHub and PyPI and has enough release/process
 surface to benefit from a more polished presentation. The README was cleaned up
-with working badges, a star-history chart, and a public `RELEASE.md`, but the
-next promotion step is still undecided: whether to add a logo/social preview,
-whether to create a GitHub Pages documentation site, and which static-docs stack
-to use.
+with working badges and a public `RELEASE.md`, but the next promotion step is
+still undecided: whether to add a logo/social preview, whether to create a
+GitHub Pages documentation site, and which static-docs stack to use.
 
 Jekyll is available on GitHub Pages, but for this Python CLI project the better
 default is likely MkDocs Material: it fits Markdown-heavy CLI docs, has search
@@ -33,5 +32,7 @@ After E2E validation, decide a small promotion package:
 3. If docs navigation grows cramped, add a MkDocs Material site published to
    GitHub Pages.
 4. Avoid Jekyll unless the goal shifts toward a blog-style marketing site.
-5. Keep `RELEASE.md`, README release policy, and `.claude/commands/release.md`
+5. Add the star-history chart only after the repo has enough activity for the
+   graph to render as useful signal rather than empty axes.
+6. Keep `RELEASE.md`, README release policy, and `.claude/commands/release.md`
    in sync when the release process changes.

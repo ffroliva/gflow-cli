@@ -372,6 +372,4 @@ Note that the **Google service** this tool talks to has its own terms (Google La
 [![GitHub repo size](https://img.shields.io/github/repo-size/ffroliva/gflow-cli)](https://github.com/ffroliva/gflow-cli)
 [![PyPI downloads](https://img.shields.io/pypi/dm/gflow-cli.svg)](https://pypi.org/project/gflow-cli/)
 
-[![Star History Chart](https://starchart.cc/ffroliva/gflow-cli.svg)](https://starchart.cc/ffroliva/gflow-cli)
-
 If `gflow-cli` saves you time, please ⭐ the repo — it's the cheapest way to support the project.
