@@ -271,6 +271,39 @@ def batch(
     )
 
 
+async def _process_batch_entry(
+    *,
+    client: FlowApiClient,
+    project_id: str,
+    entry: ManifestEntry,
+    out_root: Path,
+    poll_interval: float,
+    index: int,
+    total: int,
+) -> None:
+    """Run one manifest row end-to-end. Concurrent execution is provided by
+    :func:`_run_batch` via :func:`asyncio.gather`; each entry checks out a
+    Page from ``FlowApiClient``'s per-worker pool (Phase 4 T2).
+    """
+    console.print(f"  [{index}/{total}] [bold]{entry.prompt[:60]}[/bold]")
+    start_uuid = None
+    if entry.start_image:
+        asset = await client.upload_image(project_id, entry.start_image)
+        start_uuid = asset.name
+    req = GenerateVideoRequest(
+        prompt=entry.prompt, aspect=entry.aspect, start_asset_uuid=start_uuid
+    )
+    op = await client.generate_video(project_id=project_id, req=req)
+    output = entry.output_path or video_output_path(out_root, job_id=op.media_name)
+    await _poll_and_download(
+        client=client,
+        project_id=project_id,
+        media_name=op.media_name,
+        output=output,
+        poll_interval=poll_interval,
+    )
+
+
 async def _run_batch(
     *,
     profile_dir: Path,
@@ -279,24 +312,29 @@ async def _run_batch(
     out_root: Path,
     poll_interval: float,
 ) -> None:
+    """Process a TSV manifest. Entries fan out via :func:`asyncio.gather` —
+    the per-worker Page pool in ``FlowApiClient`` (size = ``Settings.concurrency``,
+    default 1) gates the actual in-flight degree. With ``GFLOW_CLI_CONCURRENCY=4``
+    and ``len(entries)>=4`` four entries are in flight simultaneously.
+
+    :func:`asyncio.gather` runs with ``return_exceptions=False`` — the first
+    failure cancels siblings, matching Phase 3 ``generate_images_batch``
+    semantics. Users rerun the manifest on failure.
+    """
     async with FlowApiClient(profile_dir=profile_dir, headless=headless) as client:
         console.print(f"  Creating project for {len(entries)} clips...")
         project = await client.create_project()
-        for i, e in enumerate(entries, start=1):
-            console.print(f"  [{i}/{len(entries)}] [bold]{e.prompt[:60]}[/bold]")
-            start_uuid = None
-            if e.start_image:
-                asset = await client.upload_image(project.project_id, e.start_image)
-                start_uuid = asset.name
-            req = GenerateVideoRequest(
-                prompt=e.prompt, aspect=e.aspect, start_asset_uuid=start_uuid
-            )
-            op = await client.generate_video(project_id=project.project_id, req=req)
-            output = e.output_path or video_output_path(out_root, job_id=op.media_name)
-            await _poll_and_download(
+        total = len(entries)
+        tasks = [
+            _process_batch_entry(
                 client=client,
                 project_id=project.project_id,
-                media_name=op.media_name,
-                output=output,
+                entry=entry,
+                out_root=out_root,
                 poll_interval=poll_interval,
+                index=i,
+                total=total,
             )
+            for i, entry in enumerate(entries, start=1)
+        ]
+        await asyncio.gather(*tasks)
