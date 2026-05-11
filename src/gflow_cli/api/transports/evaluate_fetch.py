@@ -15,10 +15,11 @@ Lifecycle:
 from __future__ import annotations
 
 import asyncio
+import hashlib
 import json
 import time
 from pathlib import Path
-from typing import TYPE_CHECKING, Any
+from typing import Any
 
 import structlog
 
@@ -38,9 +39,6 @@ from gflow_cli.errors import (
     TransportTimeoutError,
     WafRejectionError,
 )
-
-if TYPE_CHECKING:
-    pass
 
 log = structlog.get_logger(__name__)
 
@@ -80,6 +78,12 @@ class EvaluateFetchTransport:
 
     The safest known-working approach: fetch fires from inside the page's JS
     context so Flow's own scripts attach the Authorization header.
+
+    Single-flight per ``profile_dir`` — do not share a profile directory across
+    concurrent processes. Chromium holds an exclusive lockfile on the
+    user-data-dir; two ``EvaluateFetchTransport.setup()`` calls against the
+    same profile will conflict. See spec § 5.4.4. S2 and S3 are
+    concurrent-safe after their initial setup capture.
     """
 
     name = "evaluate_fetch"
@@ -108,20 +112,24 @@ class EvaluateFetchTransport:
 
         pw_cm = async_playwright()
         self._pw_cm = pw_cm
-        pw = await pw_cm.__aenter__()
-        ctx = await pw.chromium.launch_persistent_context(
-            str(profile_dir),
-            headless=True,
-            args=["--disable-blink-features=AutomationControlled"],
-            viewport={"width": 1280, "height": 720},
-            locale="en-US",
-        )
-        self._ctx = ctx
-        page = await ctx.new_page()
-        self._page = page
-        await page.goto(FLOW_URL, wait_until="domcontentloaded", timeout=30_000)
-        self._setup_done = True
-        log.info("evaluate_fetch.setup_done", profile=str(profile_dir))
+        try:
+            pw = await pw_cm.__aenter__()
+            ctx = await pw.chromium.launch_persistent_context(
+                str(profile_dir),
+                headless=True,
+                args=["--disable-blink-features=AutomationControlled"],
+                viewport={"width": 1280, "height": 720},
+                locale="en-US",
+            )
+            self._ctx = ctx
+            page = await ctx.new_page()
+            self._page = page
+            await page.goto(FLOW_URL, wait_until="domcontentloaded", timeout=30_000)
+            self._setup_done = True
+            log.info("evaluate_fetch.setup_done", profile=str(profile_dir))
+        except BaseException:
+            await self.teardown()
+            raise
 
     async def refresh_auth(self) -> None:
         """Re-navigate to Flow URL to refresh page-context tokens.
@@ -146,21 +154,37 @@ class EvaluateFetchTransport:
         *,
         project_id: str,
         request: GenerateImageRequest,
-        _is_retry: bool = False,
     ) -> list[GeneratedImage]:
         """Generate images via page.evaluate fetch.
 
         Enforces a 30 s wall-clock budget. On HTTP 401, calls refresh_auth()
         and retries exactly once; a second 401 raises AuthExpiredError.
         """
+        return await self._generate_images_inner(
+            project_id=project_id, request=request, is_retry=False
+        )
+
+    async def _generate_images_inner(
+        self,
+        *,
+        project_id: str,
+        request: GenerateImageRequest,
+        is_retry: bool,
+    ) -> list[GeneratedImage]:
+        """Internal implementation; ``is_retry`` tracks single-retry state."""
         if self._page is None:
             raise RuntimeError("evaluate_fetch: setup() must be called before generate_images()")
 
+        seed = (
+            int(hashlib.sha256(request.refs[0].name.encode("utf-8")).hexdigest(), 16) % 2**31
+            if request.refs
+            else int(time.time())
+        )
         body = _build_batch_generate_images_body(
             request,
             project_id=project_id,
             batch_id=mint_batch_id(),
-            seed=request.refs[0].name.__hash__() % 2**31 if request.refs else int(time.time()),
+            seed=seed,
             session_id=f";{int(time.time() * 1000)}",
         )
         url = _BATCH_GENERATE_URL_TEMPLATE.format(project_id=project_id)
@@ -179,7 +203,7 @@ class EvaluateFetchTransport:
             ) from exc
 
         return await self._handle_response(
-            raw, project_id=project_id, request=request, is_retry=_is_retry
+            raw, project_id=project_id, request=request, is_retry=is_retry
         )
 
     async def teardown(self) -> None:
@@ -226,10 +250,10 @@ class EvaluateFetchTransport:
                 )
             # First 401: refresh then retry exactly once.
             await self.refresh_auth()
-            return await self.generate_images(
+            return await self._generate_images_inner(
                 project_id=project_id,
                 request=request,
-                _is_retry=True,
+                is_retry=True,
             )
 
         if status == 403:
