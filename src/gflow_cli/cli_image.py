@@ -16,7 +16,6 @@ should not require a cross-module patch dance in tests.
 
 from __future__ import annotations
 
-import asyncio
 import re
 import sys
 from pathlib import Path
@@ -27,6 +26,7 @@ from rich.table import Table
 
 from gflow_cli import auth as auth_mod
 from gflow_cli import profile_store
+from gflow_cli._cli_helpers import run_with_handlers
 from gflow_cli.api.client import FlowApiClient
 from gflow_cli.api.dto import GeneratedImage
 from gflow_cli.api.image import Aspect, GenerateImageRequest, ImageRef, Model
@@ -156,12 +156,13 @@ def upload(path: Path, profile: str | None) -> None:
     profile_name = _resolve_profile(profile)
     provider_dir = _make_provider_dir(profile_name)
     settings = get_settings()
-    asyncio.run(
-        _run_upload(
+    run_with_handlers(
+        lambda: _run_upload(
             profile_dir=provider_dir,
             headless=settings.headless,
             image_path=path,
-        )
+        ),
+        cli_command="image upload",
     )
 
 
@@ -274,8 +275,8 @@ def t2i(
     profile_name = _resolve_profile(profile)
     provider_dir = _make_provider_dir(profile_name)
     settings = get_settings()
-    asyncio.run(
-        _run_t2i(
+    run_with_handlers(
+        lambda: _run_t2i(
             profile_dir=provider_dir,
             headless=settings.headless,
             req=GenerateImageRequest(
@@ -287,7 +288,8 @@ def t2i(
             seed=seed,
             out=out,
             output_root=settings.output_dir,
-        )
+        ),
+        cli_command="image t2i",
     )
 
 
@@ -445,8 +447,8 @@ def i2i(
     profile_name = _resolve_profile(profile)
     provider_dir = _make_provider_dir(profile_name)
     settings = get_settings()
-    asyncio.run(
-        _run_i2i(
+    run_with_handlers(
+        lambda: _run_i2i(
             profile_dir=provider_dir,
             headless=settings.headless,
             prompt=prompt,
@@ -457,7 +459,8 @@ def i2i(
             seed=seed,
             out=out,
             output_root=settings.output_dir,
-        )
+        ),
+        cli_command="image i2i",
     )
 
 
