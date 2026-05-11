@@ -8,6 +8,8 @@ Covers:
 - 30s timeout raises TransportTimeoutError
 - teardown() is idempotent (safe to call multiple times)
 - name class attribute is "evaluate_fetch"
+- partial-setup failure triggers teardown() cleanup (resource-leak guard)
+- seed is deterministic for the same ref name (stable sha256 digest)
 """
 
 from __future__ import annotations
@@ -19,7 +21,7 @@ from unittest.mock import AsyncMock, MagicMock, patch
 
 import pytest
 
-from gflow_cli.api.image import Aspect, GenerateImageRequest, Model
+from gflow_cli.api.image import Aspect, GenerateImageRequest, ImageRef, Model
 from gflow_cli.api.transports.evaluate_fetch import EvaluateFetchTransport
 from gflow_cli.errors import AuthExpiredError, TransportTimeoutError, WafRejectionError
 
@@ -298,3 +300,90 @@ async def test_teardown_before_setup_does_not_raise() -> None:
     """teardown() on a never-setup transport must be a no-op."""
     transport = EvaluateFetchTransport()
     await transport.teardown()  # should not raise
+
+
+# ---------------------------------------------------------------------------
+# T8 — HIGH #1: partial-setup resource leak guard
+# ---------------------------------------------------------------------------
+
+
+async def test_setup_partial_failure_calls_teardown(tmp_path: Path) -> None:
+    """If ctx.new_page() raises mid-setup, teardown() must be invoked to release
+    the already-opened playwright/context handles (no leak)."""
+    transport = EvaluateFetchTransport()
+
+    fake_ctx = MagicMock()
+    # Simulate failure at ctx.new_page()
+    fake_ctx.new_page = AsyncMock(side_effect=RuntimeError("simulated new_page failure"))
+    fake_ctx.close = AsyncMock()
+
+    fake_pw = _make_fake_playwright(fake_ctx)
+
+    fake_pw_cm = MagicMock()
+    fake_pw_cm.__aenter__ = AsyncMock(return_value=fake_pw)
+    fake_pw_cm.__aexit__ = AsyncMock(return_value=None)
+
+    with patch(
+        "playwright.async_api.async_playwright",
+        return_value=fake_pw_cm,
+    ):
+        with pytest.raises(RuntimeError, match="simulated new_page failure"):
+            await transport.setup(tmp_path)
+
+    # pw_cm.__aexit__ must have been called (playwright closed, no leak)
+    fake_pw_cm.__aexit__.assert_awaited_once()
+    # Transport state must be fully reset
+    assert transport._pw_cm is None
+    assert transport._ctx is None
+    assert transport._page is None
+    assert transport._setup_done is False
+
+
+# ---------------------------------------------------------------------------
+# T9 — MEDIUM #10: deterministic seed (sha256-based)
+# ---------------------------------------------------------------------------
+
+
+async def test_generate_images_seed_is_deterministic_for_same_ref() -> None:
+    """The seed passed to _build_batch_generate_images_body must be identical
+    across two calls with the same request.refs[0].name (sha256-stable)."""
+    captured_seeds: list[int] = []
+
+    def _capture_seed(*args: object, **kwargs: object) -> dict:  # type: ignore[return]
+        captured_seeds.append(kwargs["seed"])
+        return {}  # minimal — generate_images will fail later but that's OK
+
+    req_with_ref = GenerateImageRequest(
+        prompt="sunrise",
+        model=Model.NARWHAL,
+        aspect=Aspect.PORTRAIT,
+        recaptcha_token="tok",
+        refs=(ImageRef(name="550e8400-e29b-41d4-a716-446655440000"),),
+    )
+
+    transport = EvaluateFetchTransport()
+    fake_page = MagicMock()
+    # Return a 200 body so interpret_response can parse it
+    fake_page.evaluate = AsyncMock(
+        return_value={"status": 200, "body": _flow_200_body()}
+    )
+    transport._page = fake_page  # type: ignore[attr-defined]
+    transport._setup_done = True  # type: ignore[attr-defined]
+
+    with patch(
+        "gflow_cli.api.transports.evaluate_fetch._build_batch_generate_images_body",
+        side_effect=_capture_seed,
+    ):
+        try:
+            await transport.generate_images(project_id="proj", request=req_with_ref)
+        except Exception:
+            pass
+        try:
+            await transport.generate_images(project_id="proj", request=req_with_ref)
+        except Exception:
+            pass
+
+    assert len(captured_seeds) == 2, "Expected _build_batch_generate_images_body called twice"
+    assert captured_seeds[0] == captured_seeds[1], (
+        f"Seeds differ across runs: {captured_seeds[0]} vs {captured_seeds[1]}"
+    )
