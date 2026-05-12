@@ -4,7 +4,7 @@ Spec § 11 mentioned a captured wire sample (samples/captured/06_batchGenerateIm
 but the file doesn't exist. This script produces that ground truth — what
 headers does Flow's UI actually attach when it calls aisandbox-pa?
 
-Run: `uv run python scripts/diag_capture_flow_traffic.py --profile denon82`
+Run: `uv run python scripts/diag_capture_flow_traffic.py --profile <your-profile>`
 
 Output goes to `tmp/captured/flow_outgoing_<utc>.jsonl` by default. **NEVER write
 captured traffic to `samples/captured/`** — those files contain live Bearer tokens
@@ -104,7 +104,7 @@ async def run(profile_name: str, wait_seconds: int, out_path: Path) -> None:
 
 def main() -> None:
     parser = argparse.ArgumentParser(description=__doc__)
-    parser.add_argument("--profile", required=True, help="gflow profile name (e.g. denon82)")
+    parser.add_argument("--profile", required=True, help="gflow profile name (e.g. my-profile)")
     parser.add_argument("--wait", type=int, default=30, help="Seconds to keep capturing")
     parser.add_argument(
         "--out",

@@ -3,7 +3,7 @@
 These tests hit the **real Flow API** and therefore:
   - Are NOT collected by default ``pytest`` runs.
   - Opt-in: ``GFLOW_CLI_E2E_PROFILE=<profile_name> pytest -m e2e``
-  - Require the named Chromium profile to be logged-in (``denon82`` account).
+  - Require the named Chromium profile to be logged-in (a Pro/Ultra account).
   - Task D.2 drives the real execution; this file is the Task D.1 scaffold.
 
 Criteria covered (spec § 8.4):

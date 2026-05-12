@@ -81,7 +81,7 @@ class TestBatchConfigFromJson:
         path = _write_config(
             tmp_path,
             {
-                "profile": "denon82",
+                "profile": "example-profile",
                 "transport": "ui_automation",
                 "output_dir": "custom/out",
                 "prompts": [
@@ -97,7 +97,7 @@ class TestBatchConfigFromJson:
             },
         )
         cfg = BatchConfig.from_json_path(path)
-        assert cfg.profile == "denon82"
+        assert cfg.profile == "example-profile"
         assert cfg.transport == "ui_automation"
         assert cfg.output_dir == "custom/out"
         assert len(cfg.prompts) == 2
@@ -247,7 +247,7 @@ class TestGflowRunCommand:
     def test_happy_path_three_prompts(
         self, tmp_path: Path, monkeypatch: pytest.MonkeyPatch
     ) -> None:
-        monkeypatch.setenv("GFLOW_CLI_PROFILE", "denon82")
+        monkeypatch.setenv("GFLOW_CLI_PROFILE", "example-profile")
         cfg_path = _write_config(
             tmp_path,
             {
@@ -262,10 +262,10 @@ class TestGflowRunCommand:
         fake_client = _patched_client_factory()
         with (
             patch("gflow_cli.cli_run.FlowApiClient", return_value=fake_client),
-            patch("gflow_cli.cli_run._resolve_profile", return_value="denon82"),
+            patch("gflow_cli.cli_run._resolve_profile", return_value="example-profile"),
             patch(
                 "gflow_cli.cli_run._make_provider_dir",
-                return_value=tmp_path / "profiles" / "denon82",
+                return_value=tmp_path / "profiles" / "example-profile",
             ),
         ):
             result = CliRunner().invoke(
