@@ -127,6 +127,40 @@ class UiAutomationTransport:
             await pw_cm.__aexit__(None, None, None)
             raise
 
+    # ------------------------------------------------------------------
+    # Internal helpers — auth detection (unit 3.3)
+    # ------------------------------------------------------------------
+
+    @staticmethod
+    async def _check_logged_in(page: Page) -> bool:
+        """True if the page shows the authenticated Flow UI.
+
+        Gates (pattern G13):
+        - URL is on labs.google AND contains /flow (locale-stable;
+          /fx/pt/tools/flow, /fx/es/tools/flow, etc. all match).
+        - URL is NOT on accounts.google.com.
+        - /project/<uuid> URLs short-circuit to True (editor already open).
+        - Otherwise reject if a top-level Sign-in CTA is visible.
+
+        A failure in the locator probe is treated as "no Sign-in button"
+        — the URL gate already established Flow context, and a transient
+        DOM error shouldn't force a re-auth loop.
+        """
+        if "accounts.google.com" in page.url:
+            return False
+        on_flow = "labs.google" in page.url and "/flow" in page.url
+        if not on_flow:
+            return False
+        if "/project/" in page.url:
+            return True
+        try:
+            signin_button = await page.locator(
+                "button:has-text('Sign in'), a:has-text('Sign in')"
+            ).count()
+        except Exception:  # noqa: BLE001 — defensive: transient DOM probe
+            signin_button = 0
+        return signin_button == 0
+
     async def refresh_auth(self) -> None:
         raise NotImplementedError("UiAutomationTransport.refresh_auth — unit 3.10")
 
