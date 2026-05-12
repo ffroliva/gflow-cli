@@ -445,56 +445,6 @@ class UiAutomationTransport:
         )
 
     # ------------------------------------------------------------------
-    # Internal helpers — image URL extraction (unit 3.7)
-    # ------------------------------------------------------------------
-
-    @staticmethod
-    def _extract_image_urls(response: dict[str, Any]) -> list[str]:
-        """Extract image URLs from a batchGenerateImages response dict.
-
-        Real wire shape (observed 2026-05-12)::
-
-            body.media[].image.generatedImage.fifeUrl
-
-        Legacy / fallback keys are accepted in case Flow's response
-        evolves: ``image.uri``, ``image.downloadUrl``,
-        ``image.encodedImage``, ``generatedImage.encodedImage``.
-
-        Also walks ``body.requests[].media[]`` for batched-multi
-        response shapes.
-        """
-        body: dict[str, Any] = cast("dict[str, Any]", response.get("body") or {})
-        urls: list[str] = []
-
-        def _pull(media_list: Any) -> None:
-            if not isinstance(media_list, list):
-                return
-            for m_raw in cast("list[Any]", media_list):
-                if not isinstance(m_raw, dict):
-                    continue
-                m: dict[str, Any] = cast("dict[str, Any]", m_raw)
-                img: dict[str, Any] = cast("dict[str, Any]", m.get("image") or {})
-                gen: dict[str, Any] = cast("dict[str, Any]", img.get("generatedImage") or {})
-                u = (
-                    gen.get("fifeUrl")
-                    or img.get("uri")
-                    or img.get("downloadUrl")
-                    or img.get("encodedImage")
-                    or gen.get("encodedImage")
-                )
-                if isinstance(u, str) and u:
-                    urls.append(u)
-
-        _pull(body.get("media", []))
-        requests_obj = body.get("requests", [])
-        if isinstance(requests_obj, list):
-            for req_raw in cast("list[Any]", requests_obj):
-                if isinstance(req_raw, dict):
-                    req: dict[str, Any] = cast("dict[str, Any]", req_raw)
-                    _pull(req.get("media", []))
-        return urls
-
-    # ------------------------------------------------------------------
     # Internal helpers — image download (unit 3.8)
     # ------------------------------------------------------------------
 
