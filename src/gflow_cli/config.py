@@ -119,8 +119,11 @@ class Settings(BaseSettings):
     transport: str | None = Field(
         default=None,
         description=(
-            "Default transport strategy: evaluate_fetch | bearer | sapisidhash. "
-            "Set via GFLOW_CLI_TRANSPORT env var."
+            "Default transport strategy: ui_automation (production-validated; default). "
+            "Set GFLOW_CLI_EXPERIMENTAL_TRANSPORTS=1 to expose evaluate_fetch / bearer / "
+            "sapisidhash in the --transport CLI Choice list. The Python API accepts any "
+            "registered key regardless of that env var. Override via GFLOW_CLI_TRANSPORT "
+            "env var or --transport."
         ),
     )
 

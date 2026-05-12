@@ -29,6 +29,7 @@ from gflow_cli._cli_helpers import (
 from gflow_cli.api.client import FlowApiClient
 from gflow_cli.api.dto import GeneratedImage
 from gflow_cli.api.image import Aspect, GenerateImageRequest, ImageRef, Model
+from gflow_cli.api.transports import transport_choices
 from gflow_cli.config import get_settings
 from gflow_cli.paths import image_output_path
 
@@ -126,11 +127,12 @@ def image() -> None:
 @click.option("--profile", default=None, help="Profile name (overrides default).")
 @click.option(
     "--transport",
-    type=click.Choice(["evaluate_fetch", "bearer", "sapisidhash"], case_sensitive=False),
+    type=click.Choice(transport_choices(), case_sensitive=False),
     default=None,
     help=(
         "Override transport strategy. Falls back to GFLOW_CLI_TRANSPORT env var "
-        "or built-in default (evaluate_fetch)."
+        "or built-in default (ui_automation). Set "
+        "GFLOW_CLI_EXPERIMENTAL_TRANSPORTS=1 to enable evaluate_fetch/bearer/sapisidhash."
     ),
 )
 def upload(path: Path, profile: str | None, transport: str | None) -> None:
@@ -240,11 +242,12 @@ _ASPECT_CHOICES = ["9:16", "16:9", "1:1", "4:3", "3:4"]
 @click.option("--profile", default=None, help="Profile name (overrides default).")
 @click.option(
     "--transport",
-    type=click.Choice(["evaluate_fetch", "bearer", "sapisidhash"], case_sensitive=False),
+    type=click.Choice(transport_choices(), case_sensitive=False),
     default=None,
     help=(
         "Override transport strategy. Falls back to GFLOW_CLI_TRANSPORT env var "
-        "or built-in default (evaluate_fetch)."
+        "or built-in default (ui_automation). Set "
+        "GFLOW_CLI_EXPERIMENTAL_TRANSPORTS=1 to enable evaluate_fetch/bearer/sapisidhash."
     ),
 )
 def t2i(
@@ -421,11 +424,12 @@ def _print_t2i_summary(images: list[GeneratedImage], saved_paths: list[Path]) ->
 @click.option("--profile", default=None, help="Profile name (overrides default).")
 @click.option(
     "--transport",
-    type=click.Choice(["evaluate_fetch", "bearer", "sapisidhash"], case_sensitive=False),
+    type=click.Choice(transport_choices(), case_sensitive=False),
     default=None,
     help=(
         "Override transport strategy. Falls back to GFLOW_CLI_TRANSPORT env var "
-        "or built-in default (evaluate_fetch)."
+        "or built-in default (ui_automation). Set "
+        "GFLOW_CLI_EXPERIMENTAL_TRANSPORTS=1 to enable evaluate_fetch/bearer/sapisidhash."
     ),
 )
 def i2i(
