@@ -50,7 +50,7 @@ For users on shared / multi-user / production-adjacent machines:
 - [ ] **Set `GFLOW_CLI_HOME` to a non-default path** if you want the session away from the standard `LOCALAPPDATA` / `~/.local/share` location for any reason (auditability, separate volumes).
 - [ ] **Use `--profile sandbox`** for short-lived experiments. Easy to delete (`rm -rf $GFLOW_CLI_HOME/profile_sandbox`) without disturbing your main profile.
 - [ ] **Rotate sessions monthly** by signing out of Google → re-running `gflow auth login`. Limits blast radius of an unnoticed session theft.
-- [ ] **Pin a gflow-cli version** in production (`uv tool install gflow-cli==0.4.0a2`) and review release diffs before upgrading.
+- [ ] **Pin a gflow-cli version** in production (`uv tool install gflow-cli==0.5.0a1`) and review release diffs before upgrading.
 - [ ] **Keep the package up-to-date for security fixes.** Subscribe to GitHub Releases for `ffroliva/gflow-cli`.
 - [ ] **Scan your repo for accidentally-committed profiles** before pushing: `git ls-files | grep -E "profile_|cookies\.json|\.env$"`.
 

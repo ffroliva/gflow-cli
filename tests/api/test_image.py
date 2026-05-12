@@ -9,6 +9,7 @@ from __future__ import annotations
 
 import json
 from copy import deepcopy
+from dataclasses import replace as dc_replace
 from pathlib import Path
 from typing import Any
 
@@ -150,6 +151,19 @@ class TestGenerateImageRequest:
         with pytest.raises(ValueError):
             GenerateImageRequest(prompt="   ", aspect=Aspect.PORTRAIT, model=Model.NARWHAL)
 
+    def test_carries_recaptcha_token(self) -> None:
+        req = GenerateImageRequest(
+            prompt="test",
+            model=Model.NARWHAL,
+            aspect=Aspect.PORTRAIT,
+            recaptcha_token="abc123_recaptcha",
+        )
+        assert req.recaptcha_token == "abc123_recaptcha"
+
+    def test_recaptcha_token_defaults_to_empty(self) -> None:
+        req = GenerateImageRequest(prompt="test", model=Model.NARWHAL, aspect=Aspect.PORTRAIT)
+        assert req.recaptcha_token == ""
+
 
 class TestBuildBatchGenerateImagesBody:
     def test_matches_sample_06_t2i(self) -> None:
@@ -165,9 +179,8 @@ class TestBuildBatchGenerateImagesBody:
             refs=(),
         )
         built = _build_batch_generate_images_body(
-            req,
+            dc_replace(req, recaptcha_token="any-token"),
             project_id="any-project",
-            recaptcha_token="any-token",
             batch_id="any-batch",
             seed=seed,
             session_id="any-session",
@@ -188,9 +201,8 @@ class TestBuildBatchGenerateImagesBody:
             refs=(ImageRef(ref_uuid),),
         )
         built = _build_batch_generate_images_body(
-            req,
+            dc_replace(req, recaptcha_token="any-token"),
             project_id="any-project",
-            recaptcha_token="any-token",
             batch_id="any-batch",
             seed=seed,
             session_id="any-session",
@@ -204,9 +216,8 @@ class TestBuildBatchGenerateImagesBody:
             model=Model.NARWHAL,
         )
         body = _build_batch_generate_images_body(
-            req,
+            dc_replace(req, recaptcha_token="tok-1"),
             project_id="proj-1",
-            recaptcha_token="tok-1",
             batch_id="batch-1",
             seed=42,
             session_id=";1234567890",
@@ -224,9 +235,8 @@ class TestBuildBatchGenerateImagesBody:
     def test_use_new_media_flag_set_true(self) -> None:
         req = GenerateImageRequest(prompt="hello", aspect=Aspect.PORTRAIT, model=Model.NARWHAL)
         body = _build_batch_generate_images_body(
-            req,
+            dc_replace(req, recaptcha_token="t"),
             project_id="p",
-            recaptcha_token="t",
             batch_id="b",
             seed=1,
             session_id="s",
@@ -241,9 +251,8 @@ class TestBuildBatchGenerateImagesBody:
             refs=(),
         )
         body = _build_batch_generate_images_body(
-            req,
+            dc_replace(req, recaptcha_token="t"),
             project_id="p",
-            recaptcha_token="t",
             batch_id="b",
             seed=1,
             session_id="s",

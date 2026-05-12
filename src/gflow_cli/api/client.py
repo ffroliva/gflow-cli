@@ -26,6 +26,7 @@ import secrets
 import time
 import uuid
 from collections.abc import Sequence
+from dataclasses import replace as _dc_replace
 from datetime import datetime
 from pathlib import Path
 from typing import Any, cast
@@ -37,8 +38,10 @@ from playwright.async_api import BrowserContext, Page, Playwright, async_playwri
 from gflow_cli.api import routes
 from gflow_cli.api._retry import parse_retry_after, post_with_retry
 from gflow_cli.api.dto import AssetInfo, GeneratedImage, ProjectInfo, VideoOperation, VideoStatus
-from gflow_cli.api.image import GenerateImageRequest, _build_batch_generate_images_body
+from gflow_cli.api.image import GenerateImageRequest
 from gflow_cli.api.recaptcha import TokenMinter
+from gflow_cli.api.transports import make_transport
+from gflow_cli.api.transports.base import FlowTransportStrategy
 from gflow_cli.api.video import GenerateVideoRequest, build_generate_body
 from gflow_cli.config import Settings
 from gflow_cli.errors import (
@@ -104,6 +107,7 @@ class FlowApiClient:
         *,
         headless: bool = True,
         settings: Settings | None = None,
+        transport: FlowTransportStrategy | str | None = None,
     ) -> None:
         self.profile_dir = profile_dir
         self.headless = headless
@@ -111,6 +115,15 @@ class FlowApiClient:
         # construction time, which is fine for production but lets tests
         # opt out by supplying a fully built settings object.
         self.settings = settings if settings is not None else Settings()
+        # Transport lifecycle ownership (spec § 4.3):
+        # - pre-initialized instance → caller owns (no setup/teardown invoked)
+        # - str/None → client owns (resolves via make_transport, calls setup/teardown)
+        # Duck-check instead of isinstance(x, FlowTransportStrategy) because the
+        # Protocol is not @runtime_checkable — adding that decorator would widen
+        # its API surface and constrain future Protocol evolution.
+        self._transport_input: FlowTransportStrategy | str | None = transport
+        self.transport: FlowTransportStrategy | None = None
+        self._owns_transport: bool = False
         self._pw: Playwright | None = None
         self._context: BrowserContext | None = None
         # Per-worker Page pool (Phase 4 T2). All Pages live inside ONE
@@ -128,6 +141,12 @@ class FlowApiClient:
     # --- lifecycle --------------------------------------------------------
 
     async def __aenter__(self) -> FlowApiClient:
+        # --- Step 1: Launch Playwright FIRST so self._page is ready before
+        # transport.setup() is called.  This order is load-bearing for S1
+        # (EvaluateFetchTransport): it needs a live Page passed via the
+        # ``page=`` kwarg so it can reuse the client's context instead of
+        # opening a second Playwright process against the same profile dir
+        # (which would conflict on the Chromium lockfile — spec § 5.4.4).
         self._pw = await async_playwright().start()
         self._context = await self._pw.chromium.launch_persistent_context(
             user_data_dir=str(self.profile_dir),
@@ -166,6 +185,27 @@ class FlowApiClient:
         await self._page.goto(
             routes.EDITOR_BOOTSTRAP_URL, wait_until="domcontentloaded", timeout=60_000
         )
+
+        # --- Step 2: Resolve and set up transport, passing the live Page so
+        # S1 can share this context rather than opening its own.
+        # Branch on the discriminating types (str, None) so pyright narrows
+        # the else-branch to FlowTransportStrategy. We deliberately avoid
+        # `@runtime_checkable` on the Protocol — that would freeze its
+        # public surface and constrain future evolution.
+        inp = self._transport_input
+        if inp is None or isinstance(inp, str):
+            # Client-owned: resolve from factory, run full lifecycle.
+            # Pass self._page so S1 can reuse the already-open context.
+            # S2 and S3 accept and ignore the page= kwarg.
+            self.transport = make_transport(inp)
+            await self.transport.setup(self.profile_dir, page=self._page)
+            self._owns_transport = True
+        else:
+            # Caller-owned: pre-initialized FlowTransportStrategy instance.
+            # Do NOT call setup() — the caller already did that.
+            self.transport = inp
+            self._owns_transport = False
+
         return self
 
     async def __aexit__(self, *exc: object) -> None:
@@ -182,6 +222,11 @@ class FlowApiClient:
                     await self._pw.stop()
                 except Exception:
                     logger.warning("playwright_stop_error", exc_info=True)
+            if self._owns_transport and self.transport is not None:
+                try:
+                    await self.transport.teardown()
+                except Exception:
+                    logger.warning("transport_teardown_error", exc_info=True)
         finally:
             # Always reset pool state — even if close() raised — so a
             # reused client instance doesn't keep dangling references to a
@@ -554,6 +599,25 @@ class FlowApiClient:
             ) from e
         return VideoOperation.from_generate_response(data)
 
+    async def _mint_recaptcha_token(self, action: str) -> str:
+        """Mint a single-use reCAPTCHA Enterprise token via the client's Page.
+
+        Flow's `batchGenerateImages` (and `batchAsyncGenerateVideoText`) endpoints
+        reject requests with empty / stale tokens with HTTP 403 "reCAPTCHA
+        evaluation failed". Tokens are single-use, ~2 min TTL — mint fresh per call.
+
+        Extracted from `_drive_image_generation` so unit tests can monkeypatch
+        the mint without standing up a real Playwright Page + reCAPTCHA
+        Enterprise script (which requires loading `enterprise.js` from Google).
+        Production code path is unchanged.
+        """
+        page = await self._checkout_page()
+        try:
+            minter = TokenMinter(page)
+            return await minter.mint(action)
+        finally:
+            self._checkin_page(page)
+
     async def _drive_image_generation(
         self,
         *,
@@ -563,67 +627,46 @@ class FlowApiClient:
         batch_id: str,
         recaptcha_action: str,
     ) -> GeneratedImage:
-        """Per-shot drive of one ``flowMedia:batchGenerateImages`` POST.
+        """Per-shot drive of one ``flowMedia:batchGenerateImages`` request.
 
-        Spec C2: the retry loop owns the mint. On EACH attempt we check out a
-        Page from the pool, mint a fresh reCAPTCHA token, build the body
-        (which embeds the token), POST. On retry (e.g. 5xx mid-attempt), the
-        next iteration mints AGAIN on its own checked-out Page — never reusing
-        a stale token.
+        Flow requires a freshly-minted reCAPTCHA Enterprise token on every
+        ``batchGenerateImages`` request (single-use, ~2 min TTL). Minting
+        requires a real Page context — Google's reCAPTCHA JS runs in the
+        browser, not in httpx. So the **client** owns minting (it holds the
+        persistent Chromium context) and the **strategy** owns sending.
 
-        Used by both ``generate_image`` (single-shot, ``count=1``) and
-        ``generate_images_batch`` (parallel fan-out: N independent invocations
-        of this method, each with its own retry+mint loop on its own Page).
+        A.7 + Phase B: the strategy receives the request with the freshly
+        minted ``recaptcha_token`` attached, builds the body via the shared
+        ``_build_batch_generate_images_body`` (which reads
+        ``request.recaptcha_token``), and sends via its transport mechanism.
+
+        ``seed`` and ``batch_id`` are currently consumed inside the body
+        builder via the request object after Phase A.2 moved
+        ``recaptcha_token`` there. They are kept in the signature for caller
+        APIs; the strategy receives ``req`` enriched with the live token.
         """
-        route_url = routes.batch_generate_images_url(project_id)
+        if self.transport is None:
+            raise RuntimeError(
+                "FlowApiClient.transport is None — call generate_image inside 'async with client'"
+            )
+        # Mint a single-use reCAPTCHA token via the client's Page (extracted to
+        # a method so unit tests can monkeypatch it without standing up a real
+        # Playwright Page + reCAPTCHA Enterprise script).
+        token = await self._mint_recaptcha_token(recaptcha_action)
 
-        async def attempt() -> Any:
-            page = await self._checkout_page()
-            try:
-                minter = TokenMinter(page)
-                token = await minter.mint(recaptcha_action)
-                body = _build_batch_generate_images_body(
-                    req,
-                    project_id=project_id,
-                    recaptcha_token=token,
-                    batch_id=batch_id,
-                    seed=seed,
-                    session_id=f";{int(time.time() * 1000)}",
-                )
-                logger.debug(
-                    "post_json", url=route_url, body=_redact_for_log(json.dumps(body))[:300]
-                )
-                return await page.request.post(
-                    route_url,
-                    data=json.dumps(body),
-                    headers={"content-type": "text/plain;charset=UTF-8"},
-                )
-            finally:
-                self._checkin_page(page)
-
-        response = await self._run_with_retry(attempt, route=route_url)
-        text = await response.text()
-        _raise_for_non_retryable(response, text, route=route_url)
-        try:
-            data = json.loads(text)
-        except json.JSONDecodeError as e:
-            raise WireFormatError(
-                detail=f"non-JSON response: {text[:200]}",
-                status=response.status,
-                instance=_make_instance(),
-                route=route_url,
-                discovery=_build_wire_format_discovery(response, text, route_url),
-            ) from e
-        images = GeneratedImage.from_response_dict(data)
+        # `seed` + `batch_id` are reserved here for future extension; the
+        # strategy uses what's already on the request.
+        _ = seed, batch_id  # suppress unused-variable warnings
+        req_with_token = _dc_replace(req, recaptcha_token=token)
+        images = await self.transport.generate_images(
+            project_id=project_id,
+            request=req_with_token,
+        )
         if not images:
-            # 200 OK with empty media[] — silent content-policy rejection or
-            # quota exhaustion. Surface as ContentPolicyError (RFC 9457 strips
-            # status; literal upstream 200 is recorded via observability as
-            # ``upstream_status``).
             raise ContentPolicyError(
                 detail="empty media[]",
                 instance=_make_instance(),
-                route=route_url,
+                route=routes.batch_generate_images_url(project_id),
             )
         return images[0]
 
