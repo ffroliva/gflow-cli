@@ -579,9 +579,7 @@ class TestAtomicLockfile:
             patch("gflow_cli.browser_manager._is_logged_in_to_flow", return_value=True),
             patch("sys.platform", "linux"),
         ):
-            asyncio.get_event_loop().run_until_complete(
-                get_or_launch_browser(profile_dir, port=9222)
-            )
+            asyncio.run(get_or_launch_browser(profile_dir, port=9222))
 
         assert mock_popen.called, "Spawn should have been called after stale lock cleanup"
 
@@ -614,9 +612,7 @@ class TestAtomicLockfile:
             patch("gflow_cli.browser_manager._is_logged_in_to_flow", return_value=True),
             patch("sys.platform", "linux"),
         ):
-            asyncio.get_event_loop().run_until_complete(
-                get_or_launch_browser(profile_dir, port=9222)
-            )
+            asyncio.run(get_or_launch_browser(profile_dir, port=9222))
 
         lock_path = profile_dir / ".gflow-cdp.lock"
         assert lock_path.exists()
