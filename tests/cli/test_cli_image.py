@@ -467,7 +467,9 @@ class TestImageI2I:
 class TestTransportFlag:
     """--transport flag wiring tests for image subcommands."""
 
-    def test_t2i_help_shows_transport_flag(self, runner: CliRunner, monkeypatch: pytest.MonkeyPatch) -> None:
+    def test_t2i_help_shows_transport_flag(
+        self, runner: CliRunner, monkeypatch: pytest.MonkeyPatch
+    ) -> None:
         monkeypatch.delenv("GFLOW_CLI_TRANSPORT", raising=False)
         from gflow_cli.cli import main
 
@@ -476,7 +478,9 @@ class TestTransportFlag:
         assert result.exit_code == 0, f"--help should succeed:\n{result.output}"
         assert "--transport" in result.output
 
-    def test_i2i_help_shows_transport_flag(self, runner: CliRunner, monkeypatch: pytest.MonkeyPatch) -> None:
+    def test_i2i_help_shows_transport_flag(
+        self, runner: CliRunner, monkeypatch: pytest.MonkeyPatch
+    ) -> None:
         monkeypatch.delenv("GFLOW_CLI_TRANSPORT", raising=False)
         from gflow_cli.cli import main
 
@@ -485,7 +489,9 @@ class TestTransportFlag:
         assert result.exit_code == 0, f"--help should succeed:\n{result.output}"
         assert "--transport" in result.output
 
-    def test_upload_help_shows_transport_flag(self, runner: CliRunner, monkeypatch: pytest.MonkeyPatch) -> None:
+    def test_upload_help_shows_transport_flag(
+        self, runner: CliRunner, monkeypatch: pytest.MonkeyPatch
+    ) -> None:
         monkeypatch.delenv("GFLOW_CLI_TRANSPORT", raising=False)
         from gflow_cli.cli import main
 
@@ -506,8 +512,20 @@ class TestTransportFlag:
         assert "nonsense_xyz" in result.output or "invalid value" in result.output.lower()
 
     def test_t2i_accepts_valid_transport_evaluate_fetch(
-        self, runner: CliRunner, tmp_path: Path
+        self, runner: CliRunner, tmp_path: Path, monkeypatch: pytest.MonkeyPatch
     ) -> None:
+        # Experimental keys are gated behind GFLOW_CLI_EXPERIMENTAL_TRANSPORTS=1 at
+        # the CLI Choice list (AUDIT_E1 Section B). Set env + reload so the Click
+        # decorator picks up the expanded transport_choices().
+        import importlib
+
+        import gflow_cli.cli as _cli_mod
+        import gflow_cli.cli_image as _cli_image_mod
+
+        monkeypatch.setenv("GFLOW_CLI_EXPERIMENTAL_TRANSPORTS", "1")
+        importlib.reload(_cli_image_mod)
+        importlib.reload(_cli_mod)
+
         images = [_make_generated_image(media_name="m1")]
         client = _make_t2i_client(images=images)
         out_dir = tmp_path / "out"
@@ -517,10 +535,8 @@ class TestTransportFlag:
             patch("gflow_cli.cli_image._make_provider_dir", return_value=tmp_path / "prof"),
             patch("gflow_cli.cli_image._resolve_profile", return_value="default"),
         ):
-            from gflow_cli.cli import main
-
             result = runner.invoke(
-                main,
+                _cli_mod.main,
                 ["image", "t2i", "a cat", "--transport", "evaluate_fetch", "--out", str(out_dir)],
                 catch_exceptions=False,
             )
@@ -531,8 +547,17 @@ class TestTransportFlag:
         assert kwargs.get("transport") == "evaluate_fetch"
 
     def test_t2i_accepts_valid_transport_bearer(
-        self, runner: CliRunner, tmp_path: Path
+        self, runner: CliRunner, tmp_path: Path, monkeypatch: pytest.MonkeyPatch
     ) -> None:
+        import importlib
+
+        import gflow_cli.cli as _cli_mod
+        import gflow_cli.cli_image as _cli_image_mod
+
+        monkeypatch.setenv("GFLOW_CLI_EXPERIMENTAL_TRANSPORTS", "1")
+        importlib.reload(_cli_image_mod)
+        importlib.reload(_cli_mod)
+
         images = [_make_generated_image(media_name="m1")]
         client = _make_t2i_client(images=images)
         out_dir = tmp_path / "out"
@@ -542,10 +567,8 @@ class TestTransportFlag:
             patch("gflow_cli.cli_image._make_provider_dir", return_value=tmp_path / "prof"),
             patch("gflow_cli.cli_image._resolve_profile", return_value="default"),
         ):
-            from gflow_cli.cli import main
-
             result = runner.invoke(
-                main,
+                _cli_mod.main,
                 ["image", "t2i", "a cat", "--transport", "bearer", "--out", str(out_dir)],
                 catch_exceptions=False,
             )
