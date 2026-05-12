@@ -10,7 +10,9 @@ from __future__ import annotations
 import asyncio
 import json
 import os
+import sys
 import tempfile
+import threading
 from pathlib import Path
 from unittest.mock import AsyncMock, MagicMock, patch
 
@@ -354,11 +356,13 @@ class TestProcessDetachmentFlags:
 class TestAtomicLockfile:
     @pytest.mark.asyncio
     async def test_atomic_lockfile_prevents_double_spawn(self, tmp_path: Path) -> None:
-        """Two concurrent get_or_launch_browser calls → only ONE Popen invocation.
+        """Two concurrent get_or_launch_browser calls IN THE SAME EVENT LOOP →
+        only ONE Popen invocation.
 
-        The asyncio.Lock inside get_or_launch_browser serializes the two calls.
-        The second call finds the lockfile written by the first and attaches
-        instead of spawning again.
+        NOTE: This test verifies the module-level ``asyncio.Lock`` serialises
+        in-process concurrency. It does NOT exercise the file-lock race across
+        independent processes / event loops — see
+        ``test_file_lockfile_prevents_double_spawn_across_processes`` for that.
         """
         profile_dir = _make_profile_dir(tmp_path)
 
@@ -419,6 +423,116 @@ class TestAtomicLockfile:
             )
 
         assert len(popen_calls) == 1, f"Expected 1 spawn, got {len(popen_calls)}"
+
+    def test_file_lockfile_prevents_double_spawn_across_processes(self, tmp_path: Path) -> None:
+        """Two independent event loops in separate threads → only ONE spawn.
+
+        Each thread runs ``asyncio.run(get_or_launch_browser(...))`` so they
+        share NO asyncio.Lock state — the file-level O_EXCL hardlink on the
+        lockfile is the only thing that prevents a double-spawn. This is the
+        scenario the asyncio-Lock test cannot cover.
+        """
+        profile_dir = _make_profile_dir(tmp_path)
+
+        spawn_calls: list[int] = []
+        spawn_lock_for_test = threading.Lock()
+
+        fake_page = AsyncMock()
+        fake_page.url = "https://labs.google/fx/tools/flow"
+        # Stub the locator chain so the (now-async) login check returns "logged in"
+        locator_chain = MagicMock()
+        locator_chain.count = AsyncMock(return_value=0)
+        fake_page.locator = MagicMock(return_value=locator_chain)
+        fake_context = AsyncMock()
+        fake_context.new_page = AsyncMock(return_value=fake_page)
+
+        import httpx
+
+        # Track when the first thread has finished spawning so the second
+        # can see Chrome as "alive"
+        spawn_done = threading.Event()
+
+        def mock_health(url: str, **kwargs: object) -> object:
+            if spawn_done.is_set():
+                resp = MagicMock()
+                resp.json.return_value = {"Browser": "Chrome/124.0.0.0"}
+                resp.raise_for_status = MagicMock()
+                return resp
+            raise httpx.ConnectError("refused")
+
+        def mock_popen(cmd: list, **kwargs: object) -> object:
+            with spawn_lock_for_test:
+                spawn_calls.append(1)
+            proc = MagicMock()
+            proc.pid = 42 + len(spawn_calls)
+            spawn_done.set()
+            return proc
+
+        async def mock_connect(endpoint: str) -> object:
+            return fake_context
+
+        results: list[BaseException | None] = []
+        results_lock = threading.Lock()
+
+        def run_one() -> None:
+            from gflow_cli import browser_manager
+            from gflow_cli.browser_manager import get_or_launch_browser
+
+            # CRITICAL: unittest.mock.patch is NOT thread-safe — if both
+            # threads enter `with patch(...)` simultaneously, the saved
+            # "original" values get tangled and the module attribute is
+            # left as a MagicMock after the test ends, poisoning all
+            # subsequent tests. Patches are applied at module scope OUTSIDE
+            # this function (see the with-block surrounding t1.start()).
+            try:
+                # Fresh lock per thread; Runner ensures clean loop teardown.
+                browser_manager._spawn_lock = asyncio.Lock()
+                with asyncio.Runner() as runner:
+                    runner.run(get_or_launch_browser(profile_dir, port=9222))
+                with results_lock:
+                    results.append(None)
+            except BaseException as e:  # noqa: BLE001
+                with results_lock:
+                    results.append(e)
+
+        from gflow_cli import browser_manager
+
+        # Apply patches at the MAIN thread scope so unittest.mock.patch's
+        # save/restore is performed exactly once — preventing the race in
+        # which two thread-local `with patch(...)` blocks tangle the
+        # module attribute on exit. The patches stay live for both threads.
+        with (
+            patch("gflow_cli.browser_manager.httpx.get", side_effect=mock_health),
+            patch("gflow_cli.browser_manager.subprocess.Popen", side_effect=mock_popen),
+            patch("gflow_cli.browser_manager._connect_cdp", side_effect=mock_connect),
+            patch(
+                "gflow_cli.browser_manager._find_chrome_binary",
+                return_value="/usr/bin/chrome",
+            ),
+            patch("gflow_cli.browser_manager._is_logged_in_to_flow", return_value=True),
+            patch("gflow_cli.browser_manager._pid_alive", return_value=True),
+            patch("sys.platform", "linux"),
+        ):
+            try:
+                t1 = threading.Thread(target=run_one)
+                t2 = threading.Thread(target=run_one)
+                t1.start()
+                t2.start()
+                t1.join(timeout=20)
+                t2.join(timeout=20)
+
+                # Exactly one thread reaches the spawn branch. The other sees
+                # FileExistsError on _write_lock and falls into the race-lost
+                # attach branch (which succeeds because spawn_done.is_set()).
+                assert len(spawn_calls) == 1, (
+                    f"Expected exactly 1 spawn across both threads, got {len(spawn_calls)}"
+                )
+            finally:
+                # Replace the module-level lock with a fresh one — the thread
+                # event loops are now dead and the lock that ran in them must
+                # not leak into subsequent tests. A new asyncio.Lock() defers
+                # binding to its first ``acquire()`` so this is loop-safe.
+                browser_manager._spawn_lock = asyncio.Lock()
 
     def test_stale_lockfile_is_cleaned_up(self, tmp_path: Path) -> None:
         """Lock points to dead PID → lock is removed and spawn proceeds."""
@@ -560,6 +674,29 @@ class TestSingletonLockPrecheck:
 
         profile_dir = _make_profile_dir(tmp_path)
         _check_chrome_singleton_lock(profile_dir)
+
+    @pytest.mark.skipif(sys.platform == "win32", reason="POSIX symlink-based test")
+    def test_singleton_lock_symlink_is_read_via_readlink(self, tmp_path: Path) -> None:
+        """SEC-M2: real Chrome creates SingletonLock as a SYMLINK whose target is
+        ``hostname-PID``. We must extract the PID via os.readlink — NOT
+        Path.read_text() which would follow the link.
+        """
+        from gflow_cli.browser_manager import _check_chrome_singleton_lock
+
+        profile_dir = _make_profile_dir(tmp_path)
+        lock_file = profile_dir / "SingletonLock"
+        # Create symlink with target string "localhost-12345" — typical Chrome layout
+        os.symlink("localhost-12345", lock_file)
+
+        with (
+            patch("sys.platform", "linux"),
+            patch("gflow_cli.browser_manager._pid_alive", return_value=True) as mock_alive,
+        ):
+            with pytest.raises(ConfigurationError):
+                _check_chrome_singleton_lock(profile_dir)
+
+        # _pid_alive must have been called with the integer extracted from the link
+        mock_alive.assert_called_with(12345)
 
 
 # ---------------------------------------------------------------------------
@@ -783,31 +920,60 @@ class TestPreSpawnLoggedInCheck:
 
         assert "gflow auth login" in str(exc_info.value)
 
-    def test_is_logged_in_to_flow_returns_false_for_signin_redirect(self) -> None:
+    @pytest.mark.asyncio
+    async def test_is_logged_in_to_flow_returns_false_for_signin_redirect(self) -> None:
         """_is_logged_in_to_flow returns False when page is on accounts.google.com."""
         from gflow_cli.browser_manager import _is_logged_in_to_flow
 
         fake_page = MagicMock()
         fake_page.url = "https://accounts.google.com/signin/v2/identifier"
-        fake_page.locator = MagicMock(
-            return_value=MagicMock(first=MagicMock(is_visible=MagicMock(return_value=True)))
-        )
+        # locator(...).count() is awaitable on real Playwright; we don't reach it
+        # here because url-check short-circuits, but stub it for safety.
+        locator_chain = MagicMock()
+        locator_chain.count = AsyncMock(return_value=1)
+        fake_page.locator = MagicMock(return_value=locator_chain)
 
-        result = _is_logged_in_to_flow(fake_page)
+        result = await _is_logged_in_to_flow(fake_page)
         assert result is False
 
-    def test_is_logged_in_to_flow_returns_true_for_flow_url(self) -> None:
+    @pytest.mark.asyncio
+    async def test_is_logged_in_to_flow_returns_true_for_flow_url(self) -> None:
         """_is_logged_in_to_flow returns True when page is on Flow and no sign-in CTA."""
         from gflow_cli.browser_manager import _is_logged_in_to_flow
 
         fake_page = MagicMock()
         fake_page.url = "https://labs.google/fx/tools/flow"
-        fake_page.locator = MagicMock(
-            return_value=MagicMock(first=MagicMock(is_visible=MagicMock(return_value=False)))
-        )
+        locator_chain = MagicMock()
+        locator_chain.count = AsyncMock(return_value=0)
+        fake_page.locator = MagicMock(return_value=locator_chain)
 
-        result = _is_logged_in_to_flow(fake_page)
+        result = await _is_logged_in_to_flow(fake_page)
         assert result is True
+
+    @pytest.mark.asyncio
+    async def test_logged_in_check_handles_coroutine_return_from_count(self) -> None:
+        """Real Playwright returns a coroutine from locator(...).count() — we must await it.
+
+        If the implementation forgets to await, the coroutine object is truthy → every
+        real session falsely fails the logged-in check. This test proves we DO await.
+        """
+        from gflow_cli.browser_manager import _is_logged_in_to_flow
+
+        fake_page = MagicMock()
+        fake_page.url = "https://labs.google/fx/tools/flow"
+
+        # count() returns a coroutine resolving to 0 (no Sign-in button)
+        locator_chain = MagicMock()
+        locator_chain.count = AsyncMock(return_value=0)
+        fake_page.locator = MagicMock(return_value=locator_chain)
+
+        result = await _is_logged_in_to_flow(fake_page)
+        assert result is True
+
+        # And the inverse: count() resolves to 1 (Sign-in button present) → False
+        locator_chain.count = AsyncMock(return_value=1)
+        result = await _is_logged_in_to_flow(fake_page)
+        assert result is False
 
 
 # ---------------------------------------------------------------------------
@@ -1028,10 +1194,210 @@ class TestLockfileHelpers:
         with pytest.raises(FileExistsError):
             _write_lock(lock, pid=2, port=9223, profile_name="y")
 
+    def test_lockfile_write_is_atomic(self, tmp_path: Path) -> None:
+        """If os.write fails mid-write, the final lockfile must NOT exist.
+
+        Atomicity comes from writing to a sibling .tmp file then os.replace().
+        A crash between os.open() and os.write() should not leave an empty
+        lockfile that would cause _read_lock to return None and trigger
+        a double-spawn on the next call.
+        """
+        import os as _os
+
+        from gflow_cli.browser_manager import _write_lock
+
+        lock = tmp_path / "atomic.lock"
+
+        real_write = _os.write
+
+        def failing_write(fd: int, data: bytes) -> int:
+            raise OSError("simulated mid-write crash")
+
+        with patch("gflow_cli.browser_manager.os.write", side_effect=failing_write):
+            with pytest.raises(OSError):
+                _write_lock(lock, pid=1, port=9222, profile_name="x")
+
+        # Final lockfile must not exist — only the tmp may have leaked, but
+        # the public path must be untouched.
+        assert not lock.exists(), "Final lockfile must not exist after mid-write failure"
+        # Re-bind real_write so the assignment is used (lint hygiene)
+        assert real_write is _os.write
+
+    @pytest.mark.skipif(sys.platform == "win32", reason="POSIX-only file modes")
+    def test_lockfile_has_owner_only_permissions_on_posix(self, tmp_path: Path) -> None:
+        """Lockfile is created with mode 0o600 — no group/other read access."""
+        from gflow_cli.browser_manager import _write_lock
+
+        lock = tmp_path / "perm.lock"
+        _write_lock(lock, pid=1, port=9222, profile_name="x")
+
+        mode = lock.stat().st_mode
+        # Mask out file-type bits, only check permission bits
+        assert (mode & 0o077) == 0, f"Lockfile mode {oct(mode & 0o777)} leaks group/other access"
+
+    @pytest.mark.skipif(sys.platform == "win32", reason="O_NOFOLLOW is POSIX-only")
+    def test_lockfile_refuses_to_follow_symlink_on_posix(self, tmp_path: Path) -> None:
+        """If the lock TMP path pre-exists as a symlink, _write_lock must NOT follow it.
+
+        Defense against symlink-squatting attacks where an attacker pre-creates
+        the .tmp path as a symlink to a sensitive file (/etc/passwd, etc.).
+        O_NOFOLLOW on os.open() causes ELOOP/OSError instead of opening the
+        symlink target.
+
+        Critical invariant: the sentinel target file is unchanged.
+        """
+        from gflow_cli.browser_manager import _write_lock
+
+        # Create a sentinel file an attacker might want us to overwrite
+        sentinel = tmp_path / "sentinel.txt"
+        sentinel.write_text("original_contents")
+
+        lock = tmp_path / "symlinked.lock"
+        tmp_target = lock.with_suffix(lock.suffix + ".tmp")
+        # Attacker pre-creates the TMP path as symlink to sentinel
+        os.symlink(sentinel, tmp_target)
+
+        # O_NOFOLLOW + O_EXCL means os.open on the symlink fails — either
+        # with FileExistsError (O_EXCL) or OSError/ELOOP (O_NOFOLLOW).
+        with pytest.raises((FileExistsError, OSError)):
+            _write_lock(lock, pid=1, port=9222, profile_name="x")
+
+        assert sentinel.read_text() == "original_contents", (
+            "Symlink target was modified — O_NOFOLLOW is not blocking the attack"
+        )
+
 
 # ---------------------------------------------------------------------------
 # get_or_launch_browser — attach path without existing lockfile
 # ---------------------------------------------------------------------------
+
+
+class TestLockfilePidTypeGuard:
+    @pytest.mark.asyncio
+    async def test_tampered_lockfile_with_string_pid_is_removed(self, tmp_path: Path) -> None:
+        """SEC-M1: a lockfile with a non-int pid (e.g. attacker-planted string)
+        must be removed and the spawn path must proceed normally — never pass
+        the unsafe value to tasklist/os.kill.
+        """
+        from gflow_cli.browser_manager import get_or_launch_browser
+
+        profile_dir = _make_profile_dir(tmp_path)
+        lock_path = profile_dir / ".gflow-cdp.lock"
+        # Plant a string pid an attacker might have written
+        lock_path.write_text(
+            json.dumps({"pid": "evil; rm -rf /", "port": 9222, "profile_name": "test"})
+        )
+
+        mock_proc = MagicMock()
+        mock_proc.pid = 42
+
+        fake_page = AsyncMock()
+        fake_page.url = "https://labs.google/fx/tools/flow"
+        fake_context = AsyncMock()
+        fake_context.new_page = AsyncMock(return_value=fake_page)
+
+        import httpx
+
+        async def mock_connect(endpoint: str) -> object:
+            return fake_context
+
+        with (
+            patch(
+                "gflow_cli.browser_manager.httpx.get",
+                side_effect=httpx.ConnectError("refused"),
+            ),
+            patch(
+                "gflow_cli.browser_manager.subprocess.Popen", return_value=mock_proc
+            ) as mock_popen,
+            patch("gflow_cli.browser_manager._connect_cdp", side_effect=mock_connect),
+            patch(
+                "gflow_cli.browser_manager._find_chrome_binary",
+                return_value="/usr/bin/chrome",
+            ),
+            patch("gflow_cli.browser_manager._is_logged_in_to_flow", return_value=True),
+            # _pid_alive must NOT be reached with the string pid — assert via side_effect
+            patch(
+                "gflow_cli.browser_manager._pid_alive",
+                side_effect=lambda pid: (
+                    (_ for _ in ()).throw(
+                        AssertionError(f"_pid_alive was called with unvalidated pid={pid!r}")
+                    )
+                    if not isinstance(pid, int)
+                    else False
+                ),
+            ),
+            patch("sys.platform", "linux"),
+        ):
+            await get_or_launch_browser(profile_dir, port=9222)
+
+        # Spawn must proceed normally after tampered lock is cleaned up
+        mock_popen.assert_called_once()
+
+
+class TestRaceLossWinnerVerification:
+    @pytest.mark.asyncio
+    async def test_race_loss_raises_if_winner_chrome_dead(self, tmp_path: Path) -> None:
+        """If we lose the lock race but the winner's Chrome isn't responding,
+        raise ConfigurationError with cleanup hint instead of letting Playwright
+        fail with an obscure CDP error.
+        """
+        from gflow_cli.browser_manager import get_or_launch_browser
+
+        profile_dir = _make_profile_dir(tmp_path)
+        lock_path = profile_dir / ".gflow-cdp.lock"
+
+        # Pre-write a "winner" lockfile so _write_lock will raise FileExistsError
+        winner_pid = os.getpid()
+        winner_port = 9222
+
+        mock_proc = MagicMock()
+        mock_proc.pid = 99999
+
+        import httpx
+
+        # Health check returns False for all calls (winner Chrome is dead).
+        # First call (line ~422 — locked-pid+is_browser_running gate)
+        # must NOT see a lockfile, so we structure: no lock at entry, then
+        # the spawn path writes a fresh tmp BUT we pre-occupy with hardlink
+        # to force FileExistsError.
+        # Simpler: write the winner lock BEFORE entry but make _pid_alive False
+        # so the stale-lock branch removes it. Then we hit the spawn path,
+        # and the actual race needs a separate writer.
+        # Easiest: patch _write_lock directly to raise FileExistsError so we
+        # exercise the race-loss branch deterministically.
+        from gflow_cli import browser_manager as bm
+
+        def race_lost_write(lock_path: Path, pid: int, port: int, profile_name: str) -> None:
+            # Simulate the race: another process won, leaves a lockfile
+            lock_path.write_text(
+                json.dumps({"pid": winner_pid, "port": winner_port, "profile_name": "test"})
+            )
+            raise FileExistsError(lock_path)
+
+        async def mock_connect(endpoint: str) -> object:
+            raise AssertionError("Must not connect when winner is dead")
+
+        with (
+            patch(
+                "gflow_cli.browser_manager.httpx.get",
+                side_effect=httpx.ConnectError("refused"),
+            ),
+            patch("gflow_cli.browser_manager.subprocess.Popen", return_value=mock_proc),
+            patch("gflow_cli.browser_manager._connect_cdp", side_effect=mock_connect),
+            patch("gflow_cli.browser_manager._find_chrome_binary", return_value="/usr/bin/chrome"),
+            patch("gflow_cli.browser_manager._is_logged_in_to_flow", return_value=True),
+            patch("gflow_cli.browser_manager._pid_alive", return_value=False),
+            patch.object(bm, "_write_lock", side_effect=race_lost_write),
+            patch("sys.platform", "linux"),
+        ):
+            with pytest.raises(ConfigurationError) as exc_info:
+                await get_or_launch_browser(profile_dir, port=9222)
+
+        # Don't leak winner-lock to other tests
+        if lock_path.exists():
+            lock_path.unlink()
+        msg = str(exc_info.value).lower()
+        assert "not responsive" in msg or "chrome stop" in msg or "gflow chrome" in msg
 
 
 class TestGetOrLaunchBrowserNoLockAttach:
@@ -1069,6 +1435,53 @@ class TestGetOrLaunchBrowserNoLockAttach:
 
         mock_popen.assert_not_called()
         assert result is fake_context
+
+    @pytest.mark.asyncio
+    async def test_no_lock_attach_logs_warning_about_unmanaged_chrome(self, tmp_path: Path) -> None:
+        """SEC-3: attaching to a Chrome we didn't spawn must log a warning so
+        operators can spot multi-user CDP hijack risk in production logs.
+        """
+        import structlog
+
+        from gflow_cli.browser_manager import get_or_launch_browser
+
+        profile_dir = _make_profile_dir(tmp_path)
+
+        mock_resp = MagicMock()
+        mock_resp.json.return_value = {"Browser": "Chrome/124.0.0.0"}
+        mock_resp.raise_for_status = MagicMock()
+
+        fake_page = AsyncMock()
+        fake_page.url = "https://labs.google/fx/tools/flow"
+        fake_context = AsyncMock()
+        fake_context.new_page = AsyncMock(return_value=fake_page)
+
+        async def mock_connect(endpoint: str) -> object:
+            return fake_context
+
+        cap = structlog.testing.LogCapture()
+        structlog.configure(processors=[cap])
+
+        try:
+            with (
+                patch("gflow_cli.browser_manager.httpx.get", return_value=mock_resp),
+                patch("gflow_cli.browser_manager._connect_cdp", side_effect=mock_connect),
+                patch("gflow_cli.browser_manager._is_logged_in_to_flow", return_value=True),
+            ):
+                await get_or_launch_browser(profile_dir, port=9222)
+        finally:
+            # Reset structlog to its default configuration so other tests
+            # aren't affected by the capture processor.
+            structlog.reset_defaults()
+
+        warnings = [
+            e
+            for e in cap.entries
+            if e.get("log_level") == "warning" and e.get("attached_to_unmanaged_chrome") is True
+        ]
+        assert warnings, (
+            f"Expected a warning with attached_to_unmanaged_chrome=True; got {cap.entries}"
+        )
 
     @pytest.mark.asyncio
     async def test_raises_auth_missing_when_no_lockfile_not_logged_in(self, tmp_path: Path) -> None:
