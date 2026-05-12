@@ -33,8 +33,8 @@ import pytest
 from gflow_cli.api.client import FlowApiClient
 from gflow_cli.api.image import GenerateImageRequest, Model
 from gflow_cli.api.transports import make_transport
-from gflow_cli.api.transports.bearer import BearerTransport
-from gflow_cli.api.transports.sapisidhash import SapisidhashTransport
+from gflow_cli.api.transports.experimental.bearer import BearerTransport
+from gflow_cli.api.transports.experimental.sapisidhash import SapisidhashTransport
 from gflow_cli.errors import (
     EXIT_CODE_MAP,
     AuthExpiredError,
@@ -288,7 +288,7 @@ async def test_e2e_30s_timeout_budget(
     elif strategy == "bearer":
         # S2 calls self._http_post(...) after checking self._cached.
         # Build a valid cached auth so the proactive-refresh path is skipped.
-        from gflow_cli.api.transports.bearer import _CachedAuth
+        from gflow_cli.api.transports.experimental.bearer import _CachedAuth
 
         transport._cached = _CachedAuth(  # type: ignore[attr-defined]
             token="fake-bearer-for-timeout-test",

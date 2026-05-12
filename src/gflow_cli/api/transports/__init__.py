@@ -19,9 +19,11 @@ _DEFAULT_TRANSPORT = "evaluate_fetch"  # S1 — see spec § 4.2.1
 
 def _registry() -> dict[str, type[FlowTransportStrategy]]:
     """Lazy registry import — keeps the factory cheap to import."""
-    from gflow_cli.api.transports.bearer import BearerTransport
-    from gflow_cli.api.transports.evaluate_fetch import EvaluateFetchTransport
-    from gflow_cli.api.transports.sapisidhash import SapisidhashTransport
+    from gflow_cli.api.transports.experimental.bearer import BearerTransport
+    from gflow_cli.api.transports.experimental.evaluate_fetch import (
+        EvaluateFetchTransport,
+    )
+    from gflow_cli.api.transports.experimental.sapisidhash import SapisidhashTransport
 
     return {
         "evaluate_fetch": EvaluateFetchTransport,
