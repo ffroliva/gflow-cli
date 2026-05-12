@@ -23,7 +23,7 @@ _spawn_chrome(binary, profile_dir, port) -> subprocess.Popen
 _find_available_cdp_port(profile_dir, start_port) -> int
 _check_chrome_singleton_lock(profile_dir) -> None
 _pid_alive(pid) -> bool
-_is_logged_in_to_flow(page) -> bool
+_is_logged_in_to_flow(page) -> bool  (async, awaits Playwright Locator.count)
 _connect_cdp(endpoint) -> BrowserContext  (async, patched in tests)
 """
 
@@ -229,7 +229,16 @@ def _check_chrome_singleton_lock(profile_dir: Path) -> None:
     if not lock_candidate.exists():
         return
 
-    raw = lock_candidate.read_text().strip()
+    # SEC-M2: on POSIX, Chrome stores SingletonLock as a SYMBOLIC LINK whose
+    # target is the string "hostname-PID" — there is no regular file to read.
+    # Path.read_text() would dereference the symlink and try to open whatever
+    # the attacker pointed it at (potentially blocking on a fifo, reading a
+    # huge file, etc.). os.readlink reads the link contents directly without
+    # following.
+    if sys.platform != "win32" and lock_candidate.is_symlink():
+        raw = os.readlink(str(lock_candidate)).strip()
+    else:
+        raw = lock_candidate.read_text().strip()
     # Extract numeric PID from the raw content (may be "hostname-PID" on POSIX)
     pid_str = raw.split("-")[-1] if "-" in raw else raw
     try:
@@ -288,17 +297,62 @@ def _spawn_chrome(binary: str, profile_dir: Path, port: int) -> subprocess.Popen
 
 
 def _write_lock(lock_path: Path, pid: int, port: int, profile_name: str) -> None:
-    """Atomically write the gflow CDP lockfile using O_CREAT|O_EXCL.
+    """Atomically write the gflow CDP lockfile.
 
-    If the lock already exists, this raises FileExistsError.
+    Strategy:
+    1. Write payload to a sibling ``<lock>.tmp`` file using ``O_CREAT|O_EXCL``
+       so two concurrent writers cannot share a tmp name.
+    2. ``os.replace()`` the tmp into the final lockfile path — atomic on POSIX
+       and Windows (Python 3.8+).
+
+    This protects against the failure mode where a process crashes after
+    ``os.open`` but before ``os.write``/``os.close`` finishes, leaving an
+    empty lockfile that ``_read_lock`` would return as ``None`` and trigger
+    a double-spawn.
+
+    Security hardening:
+    - ``mode=0o600`` so the lockfile (containing PID + CDP port) is not
+      world-readable on multi-user POSIX boxes.
+    - ``O_NOFOLLOW`` (no-op on Windows) prevents symlink-squatting where an
+      attacker pre-creates the lockfile path as a symlink to a sensitive
+      target.
+
+    Raises:
+        FileExistsError: another process already holds the lock OR a stale
+            tmp file blocks creation (caller should treat as race-lost).
     """
     payload = json.dumps({"pid": pid, "port": port, "profile_name": profile_name})
-    flags = os.O_CREAT | os.O_EXCL | os.O_WRONLY
-    fd = os.open(str(lock_path), flags)
+    tmp_path = lock_path.with_suffix(lock_path.suffix + ".tmp")
+    flags = os.O_CREAT | os.O_EXCL | os.O_WRONLY | getattr(os, "O_NOFOLLOW", 0)
+
+    # Step 1: write payload fully to a sibling tmp file under O_EXCL +
+    # O_NOFOLLOW (mode 0o600 on POSIX). If we crash here, only the .tmp
+    # exists — the public lockfile is untouched.
+    fd = os.open(str(tmp_path), flags, 0o600)
     try:
-        os.write(fd, payload.encode())
+        os.write(fd, payload.encode("utf-8"))
     finally:
         os.close(fd)
+
+    # Step 2: atomically link tmp → lock_path. os.link fails with
+    # FileExistsError if lock_path already exists (atomic on POSIX, atomic
+    # on Windows for NTFS). This gives us O_EXCL semantics on the FINAL
+    # path while keeping the write itself crash-safe.
+    try:
+        os.link(str(tmp_path), str(lock_path))
+    except BaseException:
+        # Race lost (or hardlink unsupported) — clean up tmp and propagate
+        try:
+            tmp_path.unlink()
+        except FileNotFoundError:
+            pass
+        raise
+    else:
+        # Success: drop the tmp hardlink; the lockfile now stands alone
+        try:
+            tmp_path.unlink()
+        except FileNotFoundError:
+            pass
 
 
 def _read_lock(lock_path: Path) -> dict[str, Any] | None:
@@ -362,22 +416,24 @@ def _find_available_cdp_port(profile_dir: Path, start_port: int = _CDP_PORT_STAR
 # ---------------------------------------------------------------------------
 
 
-def _is_logged_in_to_flow(page: Any) -> bool:
+async def _is_logged_in_to_flow(page: Any) -> bool:
     """Heuristic: return True if the page looks like an authenticated Flow session.
 
     Checks:
     1. URL does NOT contain ``accounts.google.com`` (redirect means not logged in)
-    2. No visible "Sign in" CTA on the page (timeout 1000ms)
+    2. No <button> with text "Sign in" exists in the DOM. We scope to ``button``
+       to avoid false-positives from footer links (``a:has-text("Sign in")``).
 
-    This function is deliberately permissive and patchable in tests.
-    D.2.3c smoke test will tell us if the selector needs refinement.
+    Async because real Playwright's ``Locator.count`` returns a coroutine. The
+    previous sync implementation assigned the coroutine directly to a variable
+    making it always truthy — every real session would fail the logged-in check.
     """
     if "accounts.google.com" in page.url:
         return False
 
     try:
-        sign_in_visible = page.locator("text=Sign in").first.is_visible(timeout=1000)
-        if sign_in_visible:
+        sign_in_count = await page.locator('button:has-text("Sign in")').count()
+        if sign_in_count and sign_in_count > 0:
             return False
     except Exception:
         # If the locator call fails for any reason, assume logged in
@@ -410,13 +466,34 @@ async def get_or_launch_browser(
     """
     lock_path = profile_dir / _LOCK_FILENAME
     profile_name = profile_dir.name
+    # Defaults so locked_pid / locked_port are always bound for pyright even
+    # when no lockfile exists (the second `if existing_lock is not None` block
+    # below is guarded, but the type checker can't correlate across blocks).
+    locked_pid: int = 0
+    locked_port: int = port
 
     async with _spawn_lock:
         existing_lock = _read_lock(lock_path)
         if existing_lock is not None:
-            locked_pid = existing_lock.get("pid", 0)
+            locked_pid_raw = existing_lock.get("pid", 0)
             locked_port = existing_lock.get("port", port)
 
+            # SEC-M1: lockfile is JSON on disk — anyone with write access can
+            # plant a non-int pid (e.g. "evil; rm -rf /") that would later be
+            # passed to tasklist/os.kill. Guard the type strictly.
+            if not isinstance(locked_pid_raw, int) or locked_pid_raw <= 0:
+                log.warning(
+                    "lockfile_corrupted_or_tampered",
+                    removing=True,
+                    raw_pid=str(locked_pid_raw),
+                )
+                _remove_lock(lock_path)
+                existing_lock = None
+                locked_pid = 0
+            else:
+                locked_pid = locked_pid_raw
+
+        if existing_lock is not None:
             if _pid_alive(locked_pid):
                 # Our Chrome is alive — try to attach
                 if is_browser_running(port=locked_port):
@@ -428,7 +505,7 @@ async def get_or_launch_browser(
                         "https://labs.google/fx/tools/flow",
                         wait_until="domcontentloaded",
                     )
-                    if not _is_logged_in_to_flow(page):
+                    if not await _is_logged_in_to_flow(page):
                         raise AuthMissingError(
                             "Profile not logged in to Flow."
                             f" Run: gflow auth login --profile {profile_name}"
@@ -439,9 +516,17 @@ async def get_or_launch_browser(
                 log.warning("stale_lock_removed", pid=locked_pid, lock_path=str(lock_path))
                 _remove_lock(lock_path)
 
-        # No live lock — check if Chrome is already running on the port (fresh attach)
+        # No live lock — check if Chrome is already running on the port (fresh attach).
+        # SEC-3: this is a trust caveat — we attach to whoever owns the CDP port.
+        # On a shared / multi-user box this is a hijack vector. We log a warning
+        # so operators can spot unmanaged-Chrome attaches in production logs.
         if is_browser_running(port=port):
-            log.info("chrome_attach_no_lock", port=port)
+            log.warning(
+                "chrome_attach_no_lock",
+                port=port,
+                attached_to_unmanaged_chrome=True,
+                hint="Verify localhost CDP trust on shared machines",
+            )
             endpoint = f"http://localhost:{port}"
             context = await _connect_cdp(endpoint)
             page = await context.new_page()
@@ -449,7 +534,7 @@ async def get_or_launch_browser(
                 "https://labs.google/fx/tools/flow",
                 wait_until="domcontentloaded",
             )
-            if not _is_logged_in_to_flow(page):
+            if not await _is_logged_in_to_flow(page):
                 raise AuthMissingError(
                     f"Profile not logged in to Flow. Run: gflow auth login --profile {profile_name}"
                 )
@@ -463,21 +548,39 @@ async def get_or_launch_browser(
         proc = _spawn_chrome(binary, profile_dir, actual_port)
 
         # Write atomic lockfile
+        race_lost = False
         try:
             _write_lock(lock_path, proc.pid, actual_port, profile_name)
         except FileExistsError:
             # Another process won the race — read their lock and attach
+            race_lost = True
             log.warning("lock_race_lost", port=actual_port)
             existing_lock = _read_lock(lock_path)
+            winner_pid = existing_lock.get("pid", 0) if existing_lock else 0
             if existing_lock:
                 actual_port = existing_lock.get("port", actual_port)
 
-        # Wait for Chrome to be ready
+            # Verify the winner's Chrome is actually responsive before we
+            # try to connect — otherwise Playwright raises an opaque error.
+            winner_alive = False
+            for _ in range(int(_SPAWN_WAIT_SECONDS / 0.5)):
+                if is_browser_running(port=actual_port):
+                    winner_alive = True
+                    break
+                await asyncio.sleep(0.5)
+            if not winner_alive:
+                raise ConfigurationError(
+                    f"Lockfile exists (PID {winner_pid}, port {actual_port}) but "
+                    "Chrome is not responsive. Run `gflow chrome stop` to clean up."
+                ) from None
+
+        # Wait for Chrome to be ready (skip if we already waited in race-loss branch)
         log.info("chrome_spawned", pid=proc.pid, port=actual_port)
-        for _ in range(int(_SPAWN_WAIT_SECONDS / 0.5)):
-            if is_browser_running(port=actual_port):
-                break
-            await asyncio.sleep(0.5)
+        if not race_lost:
+            for _ in range(int(_SPAWN_WAIT_SECONDS / 0.5)):
+                if is_browser_running(port=actual_port):
+                    break
+                await asyncio.sleep(0.5)
 
         endpoint = f"http://localhost:{actual_port}"
         context = await _connect_cdp(endpoint)
@@ -486,7 +589,7 @@ async def get_or_launch_browser(
             "https://labs.google/fx/tools/flow",
             wait_until="domcontentloaded",
         )
-        if not _is_logged_in_to_flow(page):
+        if not await _is_logged_in_to_flow(page):
             raise AuthMissingError(
                 f"Profile not logged in to Flow. Run: gflow auth login --profile {profile_name}"
             )

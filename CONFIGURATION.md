@@ -52,5 +52,17 @@ If all 8 ports are occupied, a `ConfigurationError` is raised.
 ### Lockfile
 
 `<profile_dir>/.gflow-cdp.lock` — JSON file containing `{pid, port, profile_name}`.
-Written atomically (`O_CREAT|O_EXCL`) when Chrome is first spawned. Stale locks
-(PID no longer alive) are cleaned up automatically on the next CLI invocation.
+Written atomically (tmp + `os.link`, `O_CREAT|O_EXCL|O_NOFOLLOW`, mode `0o600`)
+when Chrome is first spawned. Stale locks (PID no longer alive) are cleaned up
+automatically on the next CLI invocation.
+
+### Security note — localhost CDP trust model
+
+The Chrome DevTools Protocol endpoint (`http://localhost:<port>/json/version`)
+is **not authenticated**. Any process on the same machine that can reach
+`localhost:9222` can drive the browser. gflow-cli treats a port owner that
+matches our lockfile as trusted; an unmanaged Chrome on the same port is
+attached with a `attached_to_unmanaged_chrome=true` warning logged.
+
+**Do not run gflow-cli on a shared multi-user machine** where untrusted users
+have shell access. Use a dedicated user account or a VM per worker.
