@@ -19,7 +19,7 @@ import pytest
 
 from gflow_cli.api.image import Aspect, GenerateImageRequest, Model
 from gflow_cli.api.transports._fingerprint import BrowserFingerprint
-from gflow_cli.api.transports.bearer import BearerTransport, _BearerCache, _CachedAuth
+from gflow_cli.api.transports.experimental.bearer import BearerTransport, _BearerCache, _CachedAuth
 from gflow_cli.errors import AuthExpiredError, TransportTimeoutError
 
 # ---------------------------------------------------------------------------

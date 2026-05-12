@@ -22,7 +22,7 @@ from unittest.mock import AsyncMock, MagicMock, patch
 import pytest
 
 from gflow_cli.api.image import Aspect, GenerateImageRequest, ImageRef, Model
-from gflow_cli.api.transports.evaluate_fetch import EvaluateFetchTransport
+from gflow_cli.api.transports.experimental.evaluate_fetch import EvaluateFetchTransport
 from gflow_cli.errors import AuthExpiredError, TransportTimeoutError, WafRejectionError
 
 # ---------------------------------------------------------------------------
@@ -257,7 +257,7 @@ async def test_generate_images_30s_timeout_raises_transport_timeout() -> None:
     transport._setup_done = True  # type: ignore[attr-defined]
 
     # Patch PER_CALL_TIMEOUT_S to a tiny value so the test is fast
-    with patch("gflow_cli.api.transports.evaluate_fetch.PER_CALL_TIMEOUT_S", 0.05):
+    with patch("gflow_cli.api.transports.experimental.evaluate_fetch.PER_CALL_TIMEOUT_S", 0.05):
         with pytest.raises(TransportTimeoutError):
             await transport.generate_images(project_id="proj", request=_req())
 
@@ -370,7 +370,7 @@ async def test_generate_images_seed_is_deterministic_for_same_ref() -> None:
     transport._setup_done = True  # type: ignore[attr-defined]
 
     with patch(
-        "gflow_cli.api.transports.evaluate_fetch._build_batch_generate_images_body",
+        "gflow_cli.api.transports.experimental.evaluate_fetch._build_batch_generate_images_body",
         side_effect=_capture_seed,
     ):
         try:

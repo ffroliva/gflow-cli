@@ -20,7 +20,7 @@ import pytest
 
 from gflow_cli.api.image import Aspect, GenerateImageRequest, Model
 from gflow_cli.api.transports._fingerprint import BrowserFingerprint
-from gflow_cli.api.transports.sapisidhash import (
+from gflow_cli.api.transports.experimental.sapisidhash import (
     SapisidhashTransport,
     compute_sapisidhash,
     read_sapisid_from_profile,
