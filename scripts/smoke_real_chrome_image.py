@@ -64,23 +64,36 @@ SUBMIT_BUTTON_SELECTORS = [
     'button[aria-label*="Create"]',
 ]
 
-# Copied from CG Worker flow_logic.py @ 2026-05-12. DO NOT cross-import.
+# Selectors for the gallery's "new project" CTA. Flow's actual label
+# observed 2026-05-12: "+ Project" (short form, not "+ New project").
+# Order matters — most specific first. Uses :has-text not :text-matches so
+# we match child-element text too (the "+" + " Project" may live in
+# separate spans inside the clickable wrapper).
 NEW_PROJECT_SELECTORS = [
-    r"button:text-matches('^\s*\+\s+\S+', 'i')",
-    r"[role='button']:text-matches('^\s*\+\s+\S+', 'i')",
-    r"a:text-matches('^\s*\+\s+\S+', 'i')",
+    "button:has-text('+ Project')",
+    "[role='button']:has-text('+ Project')",
+    "div[role='button']:has-text('+ Project')",
+    "a:has-text('+ Project')",
+    # Broader regex match for "+ <word>" CTAs across locales / future renames
+    r"button:text-matches('\+\s+\S+', 'i')",
+    r"[role='button']:text-matches('\+\s+\S+', 'i')",
+    r"a:text-matches('\+\s+\S+', 'i')",
+    # Localised "New project" fallbacks (CG Worker)
     "button:has-text('New project')",
     "[role='button']:has-text('New project')",
     "a:has-text('New project')",
-    ":text('New project')",
+    "[aria-label*='Project' i]",
     "[aria-label*='New project' i]",
 ]
 
 
 async def _check_logged_in(page: Page) -> bool:
-    """Positive-signal auth check — True only if all indicators agree."""
+    """Positive-signal auth check — True if we're on Flow with no sign-in CTA."""
     on_accounts = "accounts.google.com" in page.url
     if on_accounts:
+        return False
+    on_flow = "labs.google" in page.url and "/flow" in page.url
+    if not on_flow:
         return False
     in_project = "/project/" in page.url
     try:
@@ -93,11 +106,27 @@ async def _check_logged_in(page: Page) -> bool:
         return False
     if in_project:
         return True
+    # On the gallery — try any of the new-project selectors as positive
+    # confirmation that the authenticated UI rendered (not the public landing).
+    for sel in NEW_PROJECT_SELECTORS:
+        try:
+            if await page.locator(sel).count() > 0:
+                return True
+        except Exception:  # noqa: BLE001
+            continue
+    # As a final permissive signal, look for *any* logged-in indicator —
+    # the user's avatar / profile button is always present when authenticated.
     try:
-        new_project_visible = await page.locator(NEW_PROJECT_SELECTORS[0]).count()
+        avatar = await page.locator(
+            "img[alt*='profile' i], img[alt*='account' i], "
+            "button[aria-label*='Google Account' i], "
+            "[aria-label*='Account' i]"
+        ).count()
+        if avatar > 0:
+            return True
     except Exception:  # noqa: BLE001
-        new_project_visible = 0
-    return new_project_visible > 0
+        pass
+    return False
 
 
 async def _ensure_logged_in_to_flow(
