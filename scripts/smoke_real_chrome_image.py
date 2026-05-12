@@ -8,13 +8,12 @@ image. The selectors are pinned copies of CG Worker's
 ``flow_logic.py`` (DO NOT cross-import from the monorepo; this is a
 sample copy with a revision-cite below).
 
-Selectors copied from
-``C:/development/github/compiled-growth/compile-growth-monorepo/python/workers/google-flow-worker/flow_logic.py``
-on 2026-05-12. Re-check if Flow's DOM changes.
+Selectors copied from an internal Google Flow worker reference
+implementation on 2026-05-12. Re-check if Flow's DOM changes.
 
 First-run UX:
   1. Script spawns Chrome against the working profile dir (default:
-     ``C:/Users/ffrol/gflow-cdp-smoke``).
+     ``~/gflow-cdp-smoke``).
   2. If not logged in to Flow, script pauses with a prompt asking the
      operator to sign in manually inside the opened Chrome window.
   3. Once authenticated, script types the prompt, clicks Generate, waits
@@ -27,7 +26,7 @@ re-attach to Chrome if it's still running.
 Usage::
 
     uv run python scripts/smoke_real_chrome_image.py \\
-        --profile-dir C:/Users/ffrol/gflow-cdp-smoke \\
+        --profile-dir ~/gflow-cdp-smoke \\
         --prompt "a calm forest at dawn, cinematic photography, 16:9"
 """
 
@@ -389,8 +388,8 @@ def main() -> None:
     parser.add_argument(
         "--profile-dir",
         type=Path,
-        default=Path("C:/Users/ffrol/gflow-cdp-smoke"),
-        help="Chrome user-data-dir (default: C:/Users/ffrol/gflow-cdp-smoke)",
+        default=Path.home() / "gflow-cdp-smoke",
+        help="Chrome user-data-dir (default: $HOME/gflow-cdp-smoke)",
     )
     parser.add_argument("--port", type=int, default=9222, help="CDP port (default: 9222)")
     parser.add_argument(

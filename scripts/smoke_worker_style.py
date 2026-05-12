@@ -18,7 +18,7 @@ if Flow's DOM evolves.
 
 First-run UX:
   1. Script launches Chromium against ``--profile-dir`` (default:
-     ``C:/Users/ffrol/gflow-worker-style-smoke`` — a fresh dir,
+     ``~/gflow-worker-style-smoke`` — a fresh dir,
      Playwright-Chromium-compatible).
   2. If not signed in to Flow, polls every 5s until you authenticate
      manually inside the open Chromium window (no stdin needed; works under
@@ -32,7 +32,7 @@ Subsequent runs reuse the same profile dir (cookies + Flow session persist).
 Usage::
 
     uv run python scripts/smoke_worker_style.py \\
-        --profile-dir C:/Users/ffrol/gflow-worker-style-smoke \\
+        --profile-dir ~/gflow-worker-style-smoke \\
         --prompt "a calm forest at dawn, cinematic photography, 16:9"
 """
 
@@ -96,7 +96,7 @@ async def _check_logged_in(page: Page) -> bool:
     DOM text is "add_2"; not all locale renderings match our text
     selectors. URL gating + sign-in-page negation is sufficient here:
     if accounts.google.com isn't in the URL and we're on
-    labs.google/<locale>/tools/flow, denon82 cookies have already
+    labs.google/<locale>/tools/flow, the profile's cookies have already
     authenticated us — the gallery is shown.
     """
     if "accounts.google.com" in page.url:
@@ -387,9 +387,9 @@ def main() -> None:
     parser.add_argument(
         "--profile-dir",
         type=Path,
-        default=Path("C:/Users/ffrol/gflow-worker-style-smoke"),
-        help="Playwright Chromium user-data-dir (default: "
-        "C:/Users/ffrol/gflow-worker-style-smoke)",
+        default=Path.home() / "gflow-worker-style-smoke",
+        help="Playwright Chromium user-data-dir "
+        "(default: $HOME/gflow-worker-style-smoke)",
     )
     parser.add_argument(
         "--prompt",
