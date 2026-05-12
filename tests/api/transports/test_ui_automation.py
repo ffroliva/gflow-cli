@@ -706,3 +706,160 @@ class TestCaptureBatchResponse:
         await handlers[0][1](_make_response(json_raises=ValueError("bad json")))
         with pytest.raises(TimeoutError):
             await task
+
+
+# ---------------------------------------------------------------------------
+# Unit 3.7 — _extract_image_urls(response)
+# ---------------------------------------------------------------------------
+
+
+class TestExtractImageUrls:
+    """Pull image URLs from a batchGenerateImages response dict."""
+
+    def test_extracts_fife_url_from_real_shape(self) -> None:
+        response = {"body": _flow_200_body()}
+        urls = UiAutomationTransport._extract_image_urls(response)
+        assert urls == ["https://lh3.googleusercontent.com/abc123"]
+
+    def test_extracts_multiple_media(self) -> None:
+        body = _flow_200_body()
+        body["media"].append(
+            {
+                "name": "projects/p/assets/asset-002",
+                "workflowId": "wf-002",
+                "image": {
+                    "generatedImage": {
+                        "seed": 43,
+                        "prompt": "x",
+                        "modelNameType": "NARWHAL",
+                        "aspectRatio": "IMAGE_ASPECT_RATIO_PORTRAIT",
+                        "fifeUrl": "https://lh3.googleusercontent.com/def456",
+                    },
+                    "dimensions": {"width": 576, "height": 1024},
+                },
+            }
+        )
+        urls = UiAutomationTransport._extract_image_urls({"body": body})
+        assert len(urls) == 2
+
+    def test_falls_back_to_legacy_uri_when_no_fifeurl(self) -> None:
+        body = {
+            "media": [
+                {
+                    "name": "x",
+                    "workflowId": "wf",
+                    "image": {"uri": "https://legacy.example.com/img.png"},
+                }
+            ]
+        }
+        urls = UiAutomationTransport._extract_image_urls({"body": body})
+        assert urls == ["https://legacy.example.com/img.png"]
+
+    def test_empty_response_returns_empty_list(self) -> None:
+        assert UiAutomationTransport._extract_image_urls({"body": {}}) == []
+        assert UiAutomationTransport._extract_image_urls({}) == []
+
+    def test_extracts_from_requests_nested_media(self) -> None:
+        body = {
+            "requests": [
+                {
+                    "media": [
+                        {
+                            "name": "x",
+                            "image": {"generatedImage": {"fifeUrl": "https://nested.example/png"}},
+                        }
+                    ]
+                }
+            ]
+        }
+        urls = UiAutomationTransport._extract_image_urls({"body": body})
+        assert urls == ["https://nested.example/png"]
+
+
+# ---------------------------------------------------------------------------
+# Unit 3.8 — _download(urls, out_dir, cookies)
+# ---------------------------------------------------------------------------
+
+
+class _FakeHttpxResponse:
+    def __init__(self, content: bytes, status: int = 200) -> None:
+        self.content = content
+        self.status_code = status
+
+    def raise_for_status(self) -> None:
+        if self.status_code >= 400:
+            raise RuntimeError(f"HTTP {self.status_code}")
+
+
+class _FakeHttpxClient:
+    """Minimal stand-in for httpx.AsyncClient as an async ctx manager."""
+
+    def __init__(self, responses: dict[str, _FakeHttpxResponse] | None = None) -> None:
+        self._responses = responses or {}
+        self.requested_urls: list[str] = []
+
+    async def __aenter__(self) -> _FakeHttpxClient:
+        return self
+
+    async def __aexit__(self, *args: object) -> None:
+        pass
+
+    async def get(self, url: str) -> _FakeHttpxResponse:
+        self.requested_urls.append(url)
+        if url in self._responses:
+            return self._responses[url]
+        return _FakeHttpxResponse(b"\x89PNG fake")
+
+
+class TestDownload:
+    """_download fetches URLs via httpx and saves as image_NN.png."""
+
+    @pytest.mark.asyncio
+    async def test_saves_single_url(self, tmp_path: Path) -> None:
+        client = _FakeHttpxClient()
+        with patch("httpx.AsyncClient", return_value=client):
+            paths = await UiAutomationTransport._download(
+                ["https://example.com/a.png"], tmp_path, cookies={"a": "1"}
+            )
+        assert len(paths) == 1
+        assert paths[0] == tmp_path / "image_00.png"
+        assert paths[0].read_bytes() == b"\x89PNG fake"
+
+    @pytest.mark.asyncio
+    async def test_saves_multiple_urls_zero_padded(self, tmp_path: Path) -> None:
+        client = _FakeHttpxClient()
+        with patch("httpx.AsyncClient", return_value=client):
+            paths = await UiAutomationTransport._download(
+                ["https://example.com/a.png", "https://example.com/b.png"],
+                tmp_path,
+                cookies={},
+            )
+        assert [p.name for p in paths] == ["image_00.png", "image_01.png"]
+
+    @pytest.mark.asyncio
+    async def test_continues_past_individual_download_failure(self, tmp_path: Path) -> None:
+        """One URL fails, the other still downloads. Failure is logged, not raised."""
+        bad_resp = _FakeHttpxResponse(b"", status=500)
+        good_resp = _FakeHttpxResponse(b"good")
+        client = _FakeHttpxClient(
+            responses={
+                "https://example.com/bad.png": bad_resp,
+                "https://example.com/good.png": good_resp,
+            }
+        )
+        with patch("httpx.AsyncClient", return_value=client):
+            paths = await UiAutomationTransport._download(
+                ["https://example.com/bad.png", "https://example.com/good.png"],
+                tmp_path,
+                cookies={},
+            )
+        assert len(paths) == 1
+        assert paths[0].name == "image_01.png"
+        assert paths[0].read_bytes() == b"good"
+
+    @pytest.mark.asyncio
+    async def test_empty_urls_returns_empty_paths(self, tmp_path: Path) -> None:
+        client = _FakeHttpxClient()
+        with patch("httpx.AsyncClient", return_value=client):
+            paths = await UiAutomationTransport._download([], tmp_path, cookies={})
+        assert paths == []
