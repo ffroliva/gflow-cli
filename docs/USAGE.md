@@ -268,6 +268,67 @@ hero.png	Slow camera arc		9:16	./out/hero.mp4
 | `aspect` | no | `9:16` |
 | `output_path` | no | `<out_dir>/videos/<date>/<media>.mp4` |
 
+## `gflow run`
+
+Sequential JSON-described batch image generation. New in v0.5.0a1.
+
+```text
+gflow run --config FILE [--output-dir DIR] [--profile NAME] [--continue-on-error|--fail-fast]
+```
+
+The config is a JSON file with a top-level `prompts` array; each entry
+produces 1–4 images through one `FlowApiClient` session (one Playwright
+browser, one Flow project, sequential reCAPTCHA mints).
+
+### Config schema
+
+```json
+{
+  "profile": "<your-profile>",
+  "transport": "ui_automation",
+  "output_dir": "out/example-batch",
+  "prompts": [
+    {
+      "text": "a quiet mountain lake at dawn, cinematic photography",
+      "aspect_ratio": "9:16",
+      "model": "nano2",
+      "count": 1,
+      "output_filename": "lake_scene"
+    },
+    {
+      "text": "a sunlit forest path in autumn",
+      "aspect_ratio": "16:9"
+    }
+  ]
+}
+```
+
+| Key | Required | Default | Notes |
+|---|---|---|---|
+| `prompts` | **yes** | — | 1–50 entries. |
+| `prompts[].text` | **yes** | — | 1–2000 chars. |
+| `prompts[].aspect_ratio` | no | `9:16` | `9:16` / `16:9` / `1:1` / `4:3` / `3:4`. |
+| `prompts[].model` | no | `nano2` | `nano2` / `nano-pro` / `imagen4`. |
+| `prompts[].count` | no | `1` | 1–4. |
+| `prompts[].output_filename` | no | `prompt_<index>` | Filename stem; saved as `<stem>_<image-index>.png`. |
+| `profile` | no | active profile | CLI `--profile` overrides. |
+| `transport` | no | `ui_automation` | Experimental strategies need `GFLOW_CLI_EXPERIMENTAL_TRANSPORTS=1`. |
+| `output_dir` | no | `out/<UTC-timestamp>/` | CLI `--output-dir` overrides. |
+
+### Error semantics
+
+`--continue-on-error` (default): one prompt failing logs the error and continues. Final exit code is the max per-prompt exit code (so a `WafRejectionError` anywhere in the batch makes the whole run exit 10).
+
+`--fail-fast`: first failure stops the batch. Remaining prompts are reported as SKIPPED in the summary table.
+
+### Example
+
+```bash
+GFLOW_EXAMPLE_PROFILE=<your-profile> python examples/batch_from_config.py
+```
+
+The bundled `examples/sample_config.json` produces three images at three aspect ratios in `gflow-output/example-batch/`. Copy and edit for your own scenes.
+
 ## Recipes
 
 ### Burn through a directory of inputs

@@ -7,6 +7,96 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+## [0.5.0a1] — 2026-05-12
+
+> **Pluggable image transport + JSON-described batch runs.** The image
+> generation surface now ships a new default `ui_automation` transport —
+> a Playwright-driven UI mimicry strategy validated end-to-end against
+> real Flow on a Google AI Pro/Ultra profile. Three earlier HTTP
+> transport strategies (`evaluate_fetch`, `bearer`, `sapisidhash`) move
+> into a new `experimental/` subpackage; they remain importable for
+> research but are hidden from the CLI by default. New top-level
+> `gflow run --config <file>` command drives JSON-described sequential
+> batches through one shared session.
+
+### Added
+
+- **`UiAutomationTransport`** (`gflow_cli.api.transports.ui_automation`)
+  — new default transport. Drives the Flow editor on a logged-in
+  profile through a Playwright-managed persistent context (internal CDP
+  port; no externally-exposed debug port). Mirrors the validated
+  reference flow in `scripts/smoke_worker_style.py`.
+- **`gflow run --config <file>`** — sequential JSON-described batch
+  command. Schema covers `profile`, `transport`, `output_dir`, and a
+  `prompts` list (1–50 entries) with per-prompt `text`,
+  `aspect_ratio`, `model`, `count`, and `output_filename`. Supports
+  `--continue-on-error` (default) and `--fail-fast` semantics; final
+  exit code is the max per-prompt exit code. ONE `FlowApiClient`
+  session wraps the whole loop so the browser/project persist across
+  prompts.
+- **`examples/` directory** — three runnable scripts (`single_image_t2i.py`,
+  `batch_from_config.py`) + a copy-and-edit `sample_config.json` + an
+  index `examples/README.md`. All sanitised: no hardcoded profile
+  names, generic placeholder prompts, parameterised via `--profile` /
+  `$GFLOW_EXAMPLE_PROFILE`.
+- **Opt-in real-Flow smoke test** at `tests/smoke/test_real_flow.py`,
+  gated by `GFLOW_E2E=1` + `GFLOW_E2E_PROFILE`. Runs the full
+  `UiAutomationTransport` flow against real Flow and asserts a
+  non-trivial PNG was written.
+- **`EXPERIMENTAL_TRANSPORTS` constant** + **`transport_choices()`
+  helper** in `gflow_cli.api.transports`. The factory continues to
+  accept every registered key; the CLI `--transport` Choice list is
+  the gated surface (default = `ui_automation` only;
+  `GFLOW_CLI_EXPERIMENTAL_TRANSPORTS=1` expands to all four).
+- **Download host allow-list** in `UiAutomationTransport._download`
+  (`googleusercontent.com`, `googleapis.com`, `google.com` suffix
+  match). `follow_redirects=False`. Prevents session cookies from
+  reaching a non-Google host through a malformed or compromised
+  `fifeUrl`.
+
+### Changed
+
+- **Default `--transport` flag** flipped from `evaluate_fetch` to
+  `ui_automation` across `gflow image t2i`, `gflow image i2i`, and
+  `gflow image upload`. The change is transparent to existing scripts
+  unless they pinned `--transport evaluate_fetch` explicitly.
+- **`evaluate_fetch` / `bearer` / `sapisidhash` strategies moved** to
+  `gflow_cli.api.transports.experimental.*`. Public registry keys
+  (the strings used by `make_transport()` and the
+  `GFLOW_CLI_TRANSPORT` env var) are unchanged. Import paths within
+  the package are the only user-visible delta.
+- **Debug screenshots** captured by the strategy on `_enter_editor` /
+  `_send_prompt` failures are now **viewport-only**
+  (`full_page=False`) and emit a `WARNING` log line noting the file
+  may contain identifying information from the authenticated session.
+
+### Fixed
+
+- Listener-attach race in `generate_images`. The earlier
+  `asyncio.create_task(_capture_batch_response(page))` scheduled the
+  listener registration AFTER the next event-loop tick; on a busy
+  loop the prompt click could fire before the listener attached,
+  causing the capture to time out. Refactored into a synchronous
+  `_attach_batch_response_listener(page)` + an `async
+  _await_captured(captured, ...)`. No more orphaned task on partial
+  failure.
+
+### Removed
+
+- Dead `_extract_image_urls(response)` helper on
+  `UiAutomationTransport` and its five tests.
+  `generate_images` parses `body.media[]` directly through
+  `GeneratedImage.from_response_item`; the parallel helper was
+  unreachable.
+
+### Documentation
+
+- `BrowserManager` module docstring updated to make explicit that the
+  module is retained for research / non-Flow use, not on the
+  v0.5.0a1 image-generation critical path. No behavior change.
+- README "Project status" table updated with v0.5.0a1 row.
+- `docs/USAGE.md` gains a `gflow run` section.
+
 ## [0.4.0a2] — 2026-05-11
 
 > **Documentation polish.** Same release surface as v0.4.0a1; this tag fixes
