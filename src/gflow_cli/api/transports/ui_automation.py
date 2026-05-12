@@ -39,6 +39,24 @@ FLOW_URL = "https://labs.google/fx/tools/flow?hl=en"
 # Browser viewport — matches the validated smoke (also matches the CG Worker).
 _VIEWPORT = {"width": 1280, "height": 800}
 
+# Prompt input selectors — Slate.js editor is the canonical target on
+# Flow's editor page; the contenteditable/textarea fallbacks cover UI
+# evolutions.
+PROMPT_INPUT_SELECTORS = (
+    'div[role="textbox"][data-slate-editor="true"]',
+    'div[contenteditable="true"]',
+    "textarea",
+    '[aria-label*="prompt"]',
+)
+
+# Submit button selectors — the canonical button wraps an
+# ``arrow_forward`` Material Symbols icon. Localized labels follow.
+SUBMIT_BUTTON_SELECTORS = (
+    'button:has(i.google-symbols:has-text("arrow_forward"))',
+    'button:has-text("arrow_forward"):has-text("Create")',
+    'button[aria-label*="Create"]',
+)
+
 # "+ New project" CTA selectors. Pattern G13: the Material Symbols icon
 # (``i.google-symbols`` with inner text ``add_2``) is locale-stable; the
 # localized button label ("New project", "Novo projeto", ...) is not.
@@ -227,6 +245,72 @@ class UiAutomationTransport:
             f"Could not find 'New project' CTA on Flow gallery. URL: {page.url}. "
             f"Screenshot: {shot_path}"
         )
+
+    # ------------------------------------------------------------------
+    # Internal helpers — prompt submission (unit 3.5)
+    # ------------------------------------------------------------------
+
+    async def _send_prompt(
+        self,
+        page: Page,
+        prompt_text: str,
+        out_dir: Path | None = None,
+    ) -> None:
+        """Type ``prompt_text`` into Flow's editor and submit.
+
+        Selectors are tried in priority order; the first visible match
+        wins. The text input is cleared first (Slate.js requires real
+        keyboard events — ``.fill()`` bypasses onChange handlers).
+
+        Submission is preferred via the Create button; if no submit
+        button is visible, Enter is pressed as a fallback.
+
+        On input-not-found, a debug screenshot is written to ``out_dir``
+        (if provided) and ``RuntimeError`` is raised.
+        """
+        input_box = None
+        for selector in PROMPT_INPUT_SELECTORS:
+            try:
+                loc = page.locator(selector).first
+                await loc.wait_for(state="visible", timeout=10_000)
+                input_box = loc
+                log.info("ui_automation.prompt_input_found", selector=selector)
+                break
+            except Exception:  # noqa: BLE001 — try next selector
+                continue
+
+        if input_box is None:
+            shot_path: Path | None = None
+            if out_dir is not None:
+                out_dir.mkdir(parents=True, exist_ok=True)
+                shot_path = out_dir / "debug_prompt_not_found.png"
+                try:
+                    await page.screenshot(path=str(shot_path), full_page=True)
+                except Exception:  # noqa: BLE001 — screenshot best-effort
+                    pass
+            raise RuntimeError(
+                f"Prompt input not found in Flow UI. URL: {page.url}. Screenshot: {shot_path}"
+            )
+
+        await input_box.click()
+        await page.keyboard.press("Control+A")
+        await page.keyboard.press("Delete")
+        # Slate.js requires real keyboard events; .fill() bypasses onChange.
+        await page.keyboard.type(prompt_text)
+        await page.wait_for_timeout(500)
+
+        for sel in SUBMIT_BUTTON_SELECTORS:
+            try:
+                btn = page.locator(sel).first
+                await btn.wait_for(state="visible", timeout=2_000)
+                await btn.click()
+                log.info("ui_automation.prompt_submitted", via=sel)
+                return
+            except Exception:  # noqa: BLE001 — try next submit selector
+                continue
+
+        log.info("ui_automation.prompt_submitted", via="enter_key_fallback")
+        await page.keyboard.press("Enter")
 
     async def refresh_auth(self) -> None:
         raise NotImplementedError("UiAutomationTransport.refresh_auth — unit 3.10")

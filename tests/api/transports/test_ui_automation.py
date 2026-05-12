@@ -504,3 +504,105 @@ class TestEnterEditor:
         with pytest.raises(RuntimeError):
             await t._enter_editor(page)  # type: ignore[attr-defined]
         page.screenshot.assert_not_called()
+
+
+# ---------------------------------------------------------------------------
+# Unit 3.5 — _send_prompt(page, prompt_text, out_dir)
+# ---------------------------------------------------------------------------
+
+
+def _make_prompt_page(
+    *,
+    input_visible: bool = True,
+    submit_visible: bool = True,
+    url: str = "https://labs.google/fx/tools/flow/project/abc-123",
+) -> MagicMock:
+    """Build a fake page that simulates input + submit-button visibility.
+
+    Dispatches on selector text so input-selector calls always hit the
+    input locator and submit-selector calls always hit the submit
+    locator — independent of call order or selector count.
+    """
+    page = MagicMock()
+    page.url = url
+    page.wait_for_timeout = AsyncMock()
+    page.screenshot = AsyncMock()
+    page.keyboard = MagicMock()
+    page.keyboard.press = AsyncMock()
+    page.keyboard.type = AsyncMock()
+
+    input_loc = MagicMock()
+    input_loc.wait_for = (
+        AsyncMock() if input_visible else AsyncMock(side_effect=RuntimeError("not visible"))
+    )
+    input_loc.click = AsyncMock()
+    input_wrapper = MagicMock()
+    input_wrapper.first = input_loc
+
+    submit_loc = MagicMock()
+    submit_loc.wait_for = (
+        AsyncMock() if submit_visible else AsyncMock(side_effect=RuntimeError("not visible"))
+    )
+    submit_loc.click = AsyncMock()
+    submit_wrapper = MagicMock()
+    submit_wrapper.first = submit_loc
+
+    # Selector fingerprints — input selectors mention slate/contenteditable/
+    # textarea/prompt; submit selectors mention arrow_forward/Create.
+    def _is_input_selector(sel: str) -> bool:
+        lowered = sel.lower()
+        return any(k in lowered for k in ("slate", "contenteditable", "textarea", "prompt"))
+
+    def _locator(sel: str) -> MagicMock:
+        return input_wrapper if _is_input_selector(sel) else submit_wrapper
+
+    page.locator = MagicMock(side_effect=_locator)
+    page._input_loc = input_loc  # type: ignore[attr-defined]
+    page._submit_loc = submit_loc  # type: ignore[attr-defined]
+    return page
+
+
+class TestSendPrompt:
+    """_send_prompt types into the editor and submits via button or Enter."""
+
+    @pytest.mark.asyncio
+    async def test_types_prompt_and_clicks_submit(self) -> None:
+        t = UiAutomationTransport()
+        page = _make_prompt_page(input_visible=True, submit_visible=True)
+        await t._send_prompt(page, "hello world")  # type: ignore[attr-defined]
+        page._input_loc.click.assert_called_once()  # type: ignore[attr-defined]
+        # Clear (Ctrl+A + Delete) then type.
+        press_calls = [c.args[0] for c in page.keyboard.press.call_args_list]
+        assert "Control+A" in press_calls
+        assert "Delete" in press_calls
+        page.keyboard.type.assert_called_once_with("hello world")
+        page._submit_loc.click.assert_called_once()  # type: ignore[attr-defined]
+
+    @pytest.mark.asyncio
+    async def test_falls_back_to_enter_when_no_submit_button(self) -> None:
+        t = UiAutomationTransport()
+        page = _make_prompt_page(input_visible=True, submit_visible=False)
+        await t._send_prompt(page, "no submit btn")  # type: ignore[attr-defined]
+        page._submit_loc.click.assert_not_called()  # type: ignore[attr-defined]
+        # Enter pressed as fallback.
+        press_calls = [c.args[0] for c in page.keyboard.press.call_args_list]
+        assert "Enter" in press_calls
+
+    @pytest.mark.asyncio
+    async def test_input_not_found_raises_with_screenshot(self, tmp_path: Path) -> None:
+        t = UiAutomationTransport()
+        page = _make_prompt_page(input_visible=False)
+        with pytest.raises(RuntimeError, match="Prompt input not found"):
+            await t._send_prompt(  # type: ignore[attr-defined]
+                page, "any", out_dir=tmp_path
+            )
+        page.screenshot.assert_called_once()
+        assert Path(page.screenshot.call_args.kwargs["path"]).parent == tmp_path
+
+    @pytest.mark.asyncio
+    async def test_input_not_found_no_screenshot_when_out_dir_none(self) -> None:
+        t = UiAutomationTransport()
+        page = _make_prompt_page(input_visible=False)
+        with pytest.raises(RuntimeError):
+            await t._send_prompt(page, "x")  # type: ignore[attr-defined]
+        page.screenshot.assert_not_called()
