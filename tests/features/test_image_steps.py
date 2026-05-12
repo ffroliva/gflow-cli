@@ -13,6 +13,7 @@ that either write fake .png files (success scenarios) or raise typed
 
 from __future__ import annotations
 
+from collections.abc import Generator
 from pathlib import Path
 from typing import Any
 
@@ -52,7 +53,7 @@ def _patch_image_profile_resolution(monkeypatch: pytest.MonkeyPatch, tmp_path: P
 
 
 @pytest.fixture(autouse=True)
-def _reset_settings_cache() -> None:
+def _reset_settings_cache() -> Generator[None, None, None]:
     config.reset_settings()
     yield
     config.reset_settings()
