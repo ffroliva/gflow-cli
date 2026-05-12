@@ -77,52 +77,84 @@ NEW_PROJECT_SELECTORS = [
 ]
 
 
-async def _ensure_logged_in_to_flow(page: Page, out_dir: Path) -> None:
-    """Robust auth check — pause for manual sign-in if not authenticated."""
-    while True:
-        try:
-            await page.goto(FLOW_URL, wait_until="networkidle", timeout=45_000)
-        except Exception as e:  # noqa: BLE001
-            log.warning("flow_goto_failed_retrying", error=str(e))
-            await page.wait_for_timeout(2000)
-            continue
-
-        # Authenticated indicators
-        on_accounts = "accounts.google.com" in page.url
+async def _check_logged_in(page: Page) -> bool:
+    """Positive-signal auth check — True only if all indicators agree."""
+    on_accounts = "accounts.google.com" in page.url
+    if on_accounts:
+        return False
+    in_project = "/project/" in page.url
+    try:
         signin_button = await page.locator(
             "button:has-text('Sign in'), a:has-text('Sign in')"
         ).count()
-        # Positive auth signal: the gallery page renders the "+ New project" CTA
-        # or any /project/<uuid> URL (already in editor).
-        in_project = "/project/" in page.url
+    except Exception:  # noqa: BLE001
+        signin_button = 0
+    if signin_button > 0:
+        return False
+    if in_project:
+        return True
+    try:
+        new_project_visible = await page.locator(NEW_PROJECT_SELECTORS[0]).count()
+    except Exception:  # noqa: BLE001
         new_project_visible = 0
-        if not on_accounts and signin_button == 0 and not in_project:
-            try:
-                new_project_visible = await page.locator(
-                    NEW_PROJECT_SELECTORS[0]
-                ).count()
-            except Exception:  # noqa: BLE001
-                new_project_visible = 0
+    return new_project_visible > 0
 
-        if (not on_accounts and signin_button == 0 and (in_project or new_project_visible > 0)):
-            log.info("logged_in", url=page.url, in_project=in_project)
+
+async def _ensure_logged_in_to_flow(
+    page: Page,
+    out_dir: Path,
+    poll_interval_s: float = 5.0,
+    timeout_s: float = 600.0,
+) -> None:
+    """Wait for the operator to sign in inside Chrome (poll, no stdin needed)."""
+    try:
+        await page.goto(FLOW_URL, wait_until="networkidle", timeout=45_000)
+    except Exception as e:  # noqa: BLE001
+        log.warning("flow_initial_goto_failed", error=str(e))
+
+    if await _check_logged_in(page):
+        log.info("logged_in", url=page.url)
+        return
+
+    # Drop a screenshot so the operator can see the state we detected
+    out_dir.mkdir(parents=True, exist_ok=True)
+    shot = out_dir / "auth_pending.png"
+    try:
+        await page.screenshot(path=str(shot), full_page=True)
+    except Exception:  # noqa: BLE001
+        pass
+    print(
+        "\n>> Not signed in to Flow yet.\n"
+        f">> Current URL : {page.url}\n"
+        f">> Screenshot  : {shot}\n"
+        ">> Sign in inside the open Chrome window (any Flow account).\n"
+        ">> Script will auto-detect when you're authenticated and continue.\n"
+        f">> Polling every {poll_interval_s:.0f}s, max wait {timeout_s:.0f}s.",
+        flush=True,
+    )
+
+    deadline = time.monotonic() + timeout_s
+    while time.monotonic() < deadline:
+        await asyncio.sleep(poll_interval_s)
+        if await _check_logged_in(page):
+            log.info("logged_in_detected", url=page.url)
+            print(">> Detected sign-in — continuing.\n", flush=True)
             return
-
-        out_dir.mkdir(parents=True, exist_ok=True)
-        shot = out_dir / "auth_pending.png"
-        try:
-            await page.screenshot(path=str(shot), full_page=True)
-        except Exception:  # noqa: BLE001
-            pass
-        print(
-            "\n>> Not signed in to Flow in this Chrome window.\n"
-            f">> URL: {page.url}\n"
-            f">> Screenshot: {shot}\n"
-            ">> Sign in manually inside the open Chrome window,\n"
-            ">> then press Enter to continue (Ctrl+C to abort).",
-            flush=True,
-        )
-        input()
+        # Safety net: if we're stuck on accounts.google.com or another non-Flow
+        # URL for a while, gently nudge the page back to Flow gallery so
+        # post-auth redirects don't strand us.
+        if (
+            "accounts.google.com" not in page.url
+            and "labs.google" not in page.url
+        ):
+            try:
+                await page.goto(FLOW_URL, wait_until="networkidle", timeout=15_000)
+            except Exception:  # noqa: BLE001
+                pass
+        log.info("polling_for_signin", url=page.url[:80])
+    raise TimeoutError(
+        f"Sign-in not detected within {timeout_s:.0f}s. Last URL: {page.url}"
+    )
 
 
 async def _enter_editor(page: Page, out_dir: Path) -> None:
