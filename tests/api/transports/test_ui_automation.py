@@ -275,3 +275,97 @@ class TestSetup:
             # Should NOT raise.
             await t.setup(Path("/tmp/prof"))
         assert t._setup_done is True  # type: ignore[attr-defined]
+
+
+# ---------------------------------------------------------------------------
+# Unit 3.3 — _check_logged_in(page)
+# ---------------------------------------------------------------------------
+
+
+def _make_page(
+    *,
+    url: str,
+    signin_count: int = 0,
+    raise_on_count: bool = False,
+) -> MagicMock:
+    """Build a fake Page with the given URL and sign-in button count."""
+    page = MagicMock()
+    page.url = url
+    locator = MagicMock()
+    if raise_on_count:
+        locator.count = AsyncMock(side_effect=RuntimeError("locator failed"))
+    else:
+        locator.count = AsyncMock(return_value=signin_count)
+    page.locator = MagicMock(return_value=locator)
+    return page
+
+
+class TestCheckLoggedIn:
+    """_check_logged_in URL-gates + negates on sign-in CTA presence (pattern G13).
+
+    Authenticated when (a) we're on a labs.google/.../flow URL, (b) not on
+    accounts.google.com, and (c) no top-level Sign-in button is visible.
+    """
+
+    @pytest.mark.asyncio
+    async def test_returns_false_when_on_accounts_google_com(self) -> None:
+        t = UiAutomationTransport()
+        page = _make_page(url="https://accounts.google.com/v3/signin/identifier")
+        assert await t._check_logged_in(page) is False  # type: ignore[attr-defined]
+
+    @pytest.mark.asyncio
+    async def test_returns_false_when_not_on_flow(self) -> None:
+        """Any URL outside labs.google/.../flow is treated as unauthenticated."""
+        t = UiAutomationTransport()
+        page = _make_page(url="https://example.com/")
+        assert await t._check_logged_in(page) is False  # type: ignore[attr-defined]
+
+    @pytest.mark.asyncio
+    async def test_returns_true_when_in_project_editor(self) -> None:
+        """A /project/<uuid> URL means we're already in the editor."""
+        t = UiAutomationTransport()
+        page = _make_page(
+            url="https://labs.google/fx/tools/flow/project/abc-123",
+            signin_count=99,  # ignored — /project/ short-circuits.
+        )
+        assert await t._check_logged_in(page) is True  # type: ignore[attr-defined]
+
+    @pytest.mark.asyncio
+    async def test_returns_true_on_flow_gallery_without_signin_button(self) -> None:
+        t = UiAutomationTransport()
+        page = _make_page(
+            url="https://labs.google/fx/tools/flow?hl=en",
+            signin_count=0,
+        )
+        assert await t._check_logged_in(page) is True  # type: ignore[attr-defined]
+
+    @pytest.mark.asyncio
+    async def test_returns_false_on_flow_landing_with_signin_button(self) -> None:
+        t = UiAutomationTransport()
+        page = _make_page(
+            url="https://labs.google/fx/tools/flow",
+            signin_count=1,
+        )
+        assert await t._check_logged_in(page) is False  # type: ignore[attr-defined]
+
+    @pytest.mark.asyncio
+    async def test_locator_failure_treats_as_no_signin_button(self) -> None:
+        """Defensive: if locator.count() raises (DOM transient), treat as 0
+        — the URL gate already established Flow context."""
+        t = UiAutomationTransport()
+        page = _make_page(
+            url="https://labs.google/fx/tools/flow?hl=en",
+            raise_on_count=True,
+        )
+        assert await t._check_logged_in(page) is True  # type: ignore[attr-defined]
+
+    @pytest.mark.asyncio
+    async def test_returns_true_for_localized_flow_paths(self) -> None:
+        """`/fx/pt/tools/flow` (Portuguese) and other locale variants still
+        satisfy the labs.google + /flow gate."""
+        t = UiAutomationTransport()
+        page = _make_page(
+            url="https://labs.google/fx/pt/tools/flow",
+            signin_count=0,
+        )
+        assert await t._check_logged_in(page) is True  # type: ignore[attr-defined]
