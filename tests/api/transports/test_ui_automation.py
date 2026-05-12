@@ -815,7 +815,7 @@ class TestDownload:
         client = _FakeHttpxClient()
         with patch("httpx.AsyncClient", return_value=client):
             paths = await UiAutomationTransport._download(
-                ["https://example.com/a.png"], tmp_path, cookies={"a": "1"}
+                ["https://lh3.googleusercontent.com/a.png"], tmp_path, cookies={"a": "1"}
             )
         assert len(paths) == 1
         assert paths[0] == tmp_path / "image_00.png"
@@ -826,7 +826,10 @@ class TestDownload:
         client = _FakeHttpxClient()
         with patch("httpx.AsyncClient", return_value=client):
             paths = await UiAutomationTransport._download(
-                ["https://example.com/a.png", "https://example.com/b.png"],
+                [
+                    "https://lh3.googleusercontent.com/a.png",
+                    "https://lh3.googleusercontent.com/b.png",
+                ],
                 tmp_path,
                 cookies={},
             )
@@ -839,13 +842,16 @@ class TestDownload:
         good_resp = _FakeHttpxResponse(b"good")
         client = _FakeHttpxClient(
             responses={
-                "https://example.com/bad.png": bad_resp,
-                "https://example.com/good.png": good_resp,
+                "https://lh3.googleusercontent.com/bad.png": bad_resp,
+                "https://lh3.googleusercontent.com/good.png": good_resp,
             }
         )
         with patch("httpx.AsyncClient", return_value=client):
             paths = await UiAutomationTransport._download(
-                ["https://example.com/bad.png", "https://example.com/good.png"],
+                [
+                    "https://lh3.googleusercontent.com/bad.png",
+                    "https://lh3.googleusercontent.com/good.png",
+                ],
                 tmp_path,
                 cookies={},
             )
@@ -859,6 +865,48 @@ class TestDownload:
         with patch("httpx.AsyncClient", return_value=client):
             paths = await UiAutomationTransport._download([], tmp_path, cookies={})
         assert paths == []
+
+    @pytest.mark.asyncio
+    async def test_rejects_url_with_disallowed_host(self, tmp_path: Path) -> None:
+        """A fifeUrl pointing at a non-Google host is skipped — session
+        cookies never reach the foreign domain. This is the H1 security fix."""
+        client = _FakeHttpxClient()
+        with patch("httpx.AsyncClient", return_value=client):
+            paths = await UiAutomationTransport._download(
+                ["https://evil.example.com/payload.png"],
+                tmp_path,
+                cookies={"SAPISID": "secret"},
+            )
+        # No file written, no HTTP request made.
+        assert paths == []
+        assert client.requested_urls == []
+
+    @pytest.mark.asyncio
+    async def test_rejects_http_scheme(self, tmp_path: Path) -> None:
+        """Plain-http URLs are rejected even on allowed hosts — fifeUrl is
+        always https in practice."""
+        client = _FakeHttpxClient()
+        with patch("httpx.AsyncClient", return_value=client):
+            paths = await UiAutomationTransport._download(
+                ["http://lh3.googleusercontent.com/x.png"],
+                tmp_path,
+                cookies={},
+            )
+        assert paths == []
+        assert client.requested_urls == []
+
+    @pytest.mark.asyncio
+    async def test_accepts_other_google_subdomains(self, tmp_path: Path) -> None:
+        """Suffix-match covers any googleusercontent.com / googleapis.com host."""
+        client = _FakeHttpxClient()
+        with patch("httpx.AsyncClient", return_value=client):
+            paths = await UiAutomationTransport._download(
+                ["https://aisandbox-pa.googleapis.com/v1/something.png"],
+                tmp_path,
+                cookies={},
+            )
+        assert len(paths) == 1
+        assert paths[0].name == "image_00.png"
 
 
 # ---------------------------------------------------------------------------

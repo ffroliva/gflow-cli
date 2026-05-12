@@ -17,6 +17,7 @@ import asyncio
 import time
 from pathlib import Path
 from typing import TYPE_CHECKING, Any, cast
+from urllib.parse import urlparse
 
 import structlog
 
@@ -40,6 +41,36 @@ FLOW_URL = "https://labs.google/fx/tools/flow?hl=en"
 
 # Browser viewport — matches the validated smoke (also matches the CG Worker).
 _VIEWPORT = {"width": 1280, "height": 800}
+
+# Hosts allowed when downloading generated PNGs. Flow's fifeUrl currently
+# resolves to lh3.googleusercontent.com; the broader allow-list covers
+# Google-owned redirect targets without leaking session cookies elsewhere.
+# Suffix-match: "googleusercontent.com" matches "lh3.googleusercontent.com".
+_ALLOWED_DOWNLOAD_HOST_SUFFIXES: tuple[str, ...] = (
+    "googleusercontent.com",
+    "googleapis.com",
+    "google.com",
+)
+
+
+def _is_allowed_download_host(url: str) -> bool:
+    """True if ``url``'s host ends with one of the allowed Google domains.
+
+    Refuses URLs that lack a host or use a non-https scheme — both shapes
+    are unexpected for Flow-issued fifeUrls and treating them as suspect
+    is safer than treating them as trustworthy.
+    """
+    try:
+        parsed = urlparse(url)
+    except (ValueError, TypeError):
+        return False
+    if parsed.scheme != "https" or not parsed.hostname:
+        return False
+    host = parsed.hostname.lower()
+    return any(
+        host == suffix or host.endswith("." + suffix) for suffix in _ALLOWED_DOWNLOAD_HOST_SUFFIXES
+    )
+
 
 # Prompt input selectors — Slate.js editor is the canonical target on
 # Flow's editor page; the contenteditable/textarea fallbacks cover UI
@@ -429,6 +460,13 @@ class UiAutomationTransport:
         Saves to ``out_dir / image_NN.png`` (zero-padded index). Individual
         download failures are logged and skipped — the function returns the
         list of paths that DID write successfully.
+
+        URLs whose host is not in :data:`_ALLOWED_DOWNLOAD_HOST_SUFFIXES`
+        are skipped before any HTTP request is made — this prevents
+        session cookies from being forwarded to a non-Google host through
+        a malicious or compromised fifeUrl. Redirects are also disabled
+        (``follow_redirects=False``) so an open-redirect on an allowed
+        host cannot rebound the request to a third party.
         """
         import httpx  # local import — httpx is a runtime dependency
 
@@ -436,10 +474,17 @@ class UiAutomationTransport:
         paths: list[Path] = []
         async with httpx.AsyncClient(
             timeout=30.0,
-            follow_redirects=True,
+            follow_redirects=False,
             cookies=cookies,
         ) as client:
             for i, url in enumerate(urls):
+                if not _is_allowed_download_host(url):
+                    log.error(
+                        "ui_automation.download_host_rejected",
+                        url=url,
+                        allowed_suffixes=list(_ALLOWED_DOWNLOAD_HOST_SUFFIXES),
+                    )
+                    continue
                 try:
                     resp = await client.get(url)
                     resp.raise_for_status()
