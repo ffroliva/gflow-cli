@@ -364,6 +364,101 @@ class UiAutomationTransport:
             raise TimeoutError(f"No batchGenerateImages response within {timeout_s:.1f}s.")
         return captured[0]
 
+    # ------------------------------------------------------------------
+    # Internal helpers — image URL extraction (unit 3.7)
+    # ------------------------------------------------------------------
+
+    @staticmethod
+    def _extract_image_urls(response: dict[str, Any]) -> list[str]:
+        """Extract image URLs from a batchGenerateImages response dict.
+
+        Real wire shape (observed 2026-05-12)::
+
+            body.media[].image.generatedImage.fifeUrl
+
+        Legacy / fallback keys are accepted in case Flow's response
+        evolves: ``image.uri``, ``image.downloadUrl``,
+        ``image.encodedImage``, ``generatedImage.encodedImage``.
+
+        Also walks ``body.requests[].media[]`` for batched-multi
+        response shapes.
+        """
+        body: dict[str, Any] = cast("dict[str, Any]", response.get("body") or {})
+        urls: list[str] = []
+
+        def _pull(media_list: Any) -> None:
+            if not isinstance(media_list, list):
+                return
+            for m_raw in cast("list[Any]", media_list):
+                if not isinstance(m_raw, dict):
+                    continue
+                m: dict[str, Any] = cast("dict[str, Any]", m_raw)
+                img: dict[str, Any] = cast("dict[str, Any]", m.get("image") or {})
+                gen: dict[str, Any] = cast("dict[str, Any]", img.get("generatedImage") or {})
+                u = (
+                    gen.get("fifeUrl")
+                    or img.get("uri")
+                    or img.get("downloadUrl")
+                    or img.get("encodedImage")
+                    or gen.get("encodedImage")
+                )
+                if isinstance(u, str) and u:
+                    urls.append(u)
+
+        _pull(body.get("media", []))
+        requests_obj = body.get("requests", [])
+        if isinstance(requests_obj, list):
+            for req_raw in cast("list[Any]", requests_obj):
+                if isinstance(req_raw, dict):
+                    req: dict[str, Any] = cast("dict[str, Any]", req_raw)
+                    _pull(req.get("media", []))
+        return urls
+
+    # ------------------------------------------------------------------
+    # Internal helpers — image download (unit 3.8)
+    # ------------------------------------------------------------------
+
+    @staticmethod
+    async def _download(
+        urls: list[str],
+        out_dir: Path,
+        cookies: dict[str, str],
+    ) -> list[Path]:
+        """Download each URL into ``out_dir`` using session cookies.
+
+        Saves to ``out_dir / image_NN.png`` (zero-padded index). Individual
+        download failures are logged and skipped — the function returns the
+        list of paths that DID write successfully.
+        """
+        import httpx  # local import — httpx is a runtime dependency
+
+        out_dir.mkdir(parents=True, exist_ok=True)
+        paths: list[Path] = []
+        async with httpx.AsyncClient(
+            timeout=30.0,
+            follow_redirects=True,
+            cookies=cookies,
+        ) as client:
+            for i, url in enumerate(urls):
+                try:
+                    resp = await client.get(url)
+                    resp.raise_for_status()
+                    p = out_dir / f"image_{i:02d}.png"
+                    p.write_bytes(resp.content)
+                    paths.append(p)
+                    log.info(
+                        "ui_automation.png_saved",
+                        path=str(p),
+                        bytes=len(resp.content),
+                    )
+                except Exception as e:  # noqa: BLE001 — log and skip
+                    log.error(
+                        "ui_automation.download_failed",
+                        url=url,
+                        error=str(e),
+                    )
+        return paths
+
     async def refresh_auth(self) -> None:
         raise NotImplementedError("UiAutomationTransport.refresh_auth — unit 3.10")
 
