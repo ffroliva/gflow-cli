@@ -144,15 +144,11 @@ class TestProtocolConformance:
         assert inspect.iscoroutinefunction(UiAutomationTransport.teardown)
 
     @pytest.mark.asyncio
-    async def test_unimplemented_methods_still_raise(self) -> None:
-        """Methods not yet TDD'd raise NotImplementedError."""
+    async def test_generate_images_requires_setup(self) -> None:
+        """Calling generate_images() before setup() raises a clear error."""
         t = UiAutomationTransport()
-        with pytest.raises(NotImplementedError):
-            await t.refresh_auth()
-        with pytest.raises(NotImplementedError):
+        with pytest.raises(RuntimeError, match="setup\\(\\) must be called"):
             await t.generate_images(project_id="x", request=_req())
-        with pytest.raises(NotImplementedError):
-            await t.teardown()
 
 
 # ---------------------------------------------------------------------------
@@ -863,3 +859,158 @@ class TestDownload:
         with patch("httpx.AsyncClient", return_value=client):
             paths = await UiAutomationTransport._download([], tmp_path, cookies={})
         assert paths == []
+
+
+# ---------------------------------------------------------------------------
+# Unit 3.9 — generate_images(*, project_id, request)
+# ---------------------------------------------------------------------------
+
+
+def _flow_200_capture(body: dict | None = None) -> dict:
+    """Build a captured response dict like _capture_batch_response returns."""
+    return {
+        "status": 200,
+        "url": "https://aisandbox-pa.googleapis.com/v1/projects/p/flowMedia:batchGenerateImages",
+        "body": body or _flow_200_body(),
+    }
+
+
+class TestGenerateImages:
+    """generate_images orchestrates enter_editor → send_prompt → capture → parse."""
+
+    @pytest.mark.asyncio
+    async def test_happy_path_returns_generated_images(self) -> None:
+        t = UiAutomationTransport()
+        # Pretend setup() already ran with a shared page.
+        t._setup_done = True  # type: ignore[attr-defined]
+        t._page = MagicMock()  # type: ignore[attr-defined]
+
+        with (
+            patch.object(t, "_enter_editor", new=AsyncMock()),
+            patch.object(t, "_send_prompt", new=AsyncMock()),
+            patch.object(
+                t,
+                "_capture_batch_response",
+                new=AsyncMock(return_value=_flow_200_capture()),
+            ),
+        ):
+            images = await t.generate_images(project_id="ignored", request=_req())
+
+        assert len(images) == 1
+        assert images[0].fife_url == "https://lh3.googleusercontent.com/abc123"
+        assert images[0].seed == 42
+
+    @pytest.mark.asyncio
+    async def test_non_200_response_raises(self) -> None:
+        t = UiAutomationTransport()
+        t._setup_done = True  # type: ignore[attr-defined]
+        t._page = MagicMock()  # type: ignore[attr-defined]
+
+        with (
+            patch.object(t, "_enter_editor", new=AsyncMock()),
+            patch.object(t, "_send_prompt", new=AsyncMock()),
+            patch.object(
+                t,
+                "_capture_batch_response",
+                new=AsyncMock(
+                    return_value={
+                        "status": 403,
+                        "url": "https://aisandbox-pa.googleapis.com/x",
+                        "body": {},
+                    }
+                ),
+            ),
+            pytest.raises(RuntimeError, match="HTTP 403"),
+        ):
+            await t.generate_images(project_id="x", request=_req())
+
+    @pytest.mark.asyncio
+    async def test_200_with_no_parseable_media_raises(self) -> None:
+        t = UiAutomationTransport()
+        t._setup_done = True  # type: ignore[attr-defined]
+        t._page = MagicMock()  # type: ignore[attr-defined]
+
+        with (
+            patch.object(t, "_enter_editor", new=AsyncMock()),
+            patch.object(t, "_send_prompt", new=AsyncMock()),
+            patch.object(
+                t,
+                "_capture_batch_response",
+                new=AsyncMock(return_value=_flow_200_capture(body={"media": []})),
+            ),
+            pytest.raises(RuntimeError, match="no parseable image URLs"),
+        ):
+            await t.generate_images(project_id="x", request=_req())
+
+
+# ---------------------------------------------------------------------------
+# Unit 3.10 — refresh_auth (no-op)
+# ---------------------------------------------------------------------------
+
+
+class TestRefreshAuth:
+    @pytest.mark.asyncio
+    async def test_refresh_auth_is_a_noop(self) -> None:
+        """refresh_auth() returns without raising — UI auto-refreshes."""
+        t = UiAutomationTransport()
+        await t.refresh_auth()  # Should not raise.
+
+
+# ---------------------------------------------------------------------------
+# Unit 3.11 — teardown
+# ---------------------------------------------------------------------------
+
+
+class TestTeardown:
+    @pytest.mark.asyncio
+    async def test_teardown_is_noop_on_shared_page_setup(self) -> None:
+        """When _owns_playwright is False, teardown does not close anything."""
+        t = UiAutomationTransport()
+        # Simulate post-shared-page-setup state.
+        t._setup_done = True  # type: ignore[attr-defined]
+        t._owns_playwright = False  # type: ignore[attr-defined]
+        shared_pw_cm = AsyncMock()
+        t._pw_cm = shared_pw_cm  # type: ignore[attr-defined]
+        await t.teardown()
+        shared_pw_cm.__aexit__.assert_not_called()
+        # State reset regardless.
+        assert t._setup_done is False  # type: ignore[attr-defined]
+
+    @pytest.mark.asyncio
+    async def test_teardown_closes_own_context(self) -> None:
+        """When _owns_playwright is True, teardown closes ctx + exits pw_cm."""
+        t = UiAutomationTransport()
+        t._setup_done = True  # type: ignore[attr-defined]
+        t._owns_playwright = True  # type: ignore[attr-defined]
+        ctx = AsyncMock()
+        pw_cm = AsyncMock()
+        t._ctx = ctx  # type: ignore[attr-defined]
+        t._pw_cm = pw_cm  # type: ignore[attr-defined]
+        await t.teardown()
+        ctx.close.assert_called_once()
+        pw_cm.__aexit__.assert_called_once()
+        assert t._setup_done is False  # type: ignore[attr-defined]
+
+    @pytest.mark.asyncio
+    async def test_teardown_idempotent(self) -> None:
+        """Second teardown() is a no-op (already torn down)."""
+        t = UiAutomationTransport()
+        # No setup() — never opened anything.
+        await t.teardown()
+        await t.teardown()
+        # Doesn't raise.
+
+    @pytest.mark.asyncio
+    async def test_teardown_swallows_close_errors(self) -> None:
+        """Errors during ctx.close or pw_cm.__aexit__ are logged, not raised."""
+        t = UiAutomationTransport()
+        t._setup_done = True  # type: ignore[attr-defined]
+        t._owns_playwright = True  # type: ignore[attr-defined]
+        ctx = MagicMock()
+        ctx.close = AsyncMock(side_effect=RuntimeError("ctx close boom"))
+        pw_cm = MagicMock()
+        pw_cm.__aexit__ = AsyncMock(side_effect=RuntimeError("pw_cm boom"))
+        t._ctx = ctx  # type: ignore[attr-defined]
+        t._pw_cm = pw_cm  # type: ignore[attr-defined]
+        # Should NOT raise.
+        await t.teardown()
