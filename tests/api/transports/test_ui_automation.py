@@ -12,6 +12,7 @@ Each test pins ONE Protocol method's behavior. The implementation lives at
 
 from __future__ import annotations
 
+import asyncio
 import inspect
 from pathlib import Path
 from unittest.mock import AsyncMock, MagicMock, patch
@@ -606,3 +607,102 @@ class TestSendPrompt:
         with pytest.raises(RuntimeError):
             await t._send_prompt(page, "x")  # type: ignore[attr-defined]
         page.screenshot.assert_not_called()
+
+
+# ---------------------------------------------------------------------------
+# Unit 3.6 — _capture_batch_response(page, timeout_s, poll_interval_s)
+# ---------------------------------------------------------------------------
+
+
+def _make_listener_page() -> tuple[MagicMock, list]:
+    """Build a fake page that captures registered event handlers."""
+    page = MagicMock()
+    handlers: list = []
+
+    def _on(event: str, cb: object) -> None:
+        handlers.append((event, cb))
+
+    page.on = MagicMock(side_effect=_on)
+    return page, handlers
+
+
+def _make_response(
+    *,
+    url: str = "https://aisandbox-pa.googleapis.com/v1/projects/x/flowMedia:batchGenerateImages",
+    status: int = 200,
+    body: dict | None = None,
+    json_raises: Exception | None = None,
+) -> MagicMock:
+    """Build a fake Playwright Response object."""
+    resp = MagicMock()
+    resp.url = url
+    resp.status = status
+    if json_raises is not None:
+        resp.json = AsyncMock(side_effect=json_raises)
+    else:
+        resp.json = AsyncMock(return_value=body or _flow_200_body())
+    return resp
+
+
+class TestCaptureBatchResponse:
+    """Captures the first batchGenerateImages response or times out."""
+
+    @pytest.mark.asyncio
+    async def test_returns_first_batch_response(self) -> None:
+        page, handlers = _make_listener_page()
+
+        async def _runner() -> dict:
+            return await UiAutomationTransport._capture_batch_response(
+                page, timeout_s=2.0, poll_interval_s=0.05
+            )
+
+        task = asyncio.create_task(_runner())
+        # Wait a moment for the handler to be registered.
+        await asyncio.sleep(0.05)
+        assert handlers and handlers[0][0] == "response"
+        await handlers[0][1](_make_response())
+        result = await task
+        assert result["status"] == 200
+        assert "batchGenerateImages" in result["url"]
+        assert result["body"]["media"][0]["image"]["generatedImage"]["fifeUrl"]
+
+    @pytest.mark.asyncio
+    async def test_ignores_non_batch_responses(self) -> None:
+        page, handlers = _make_listener_page()
+
+        async def _runner() -> dict:
+            return await UiAutomationTransport._capture_batch_response(
+                page, timeout_s=0.5, poll_interval_s=0.05
+            )
+
+        task = asyncio.create_task(_runner())
+        await asyncio.sleep(0.05)
+        # Fire a NON-matching response.
+        await handlers[0][1](_make_response(url="https://example.com/other-endpoint"))
+        # Should time out since no batch response was captured.
+        with pytest.raises(TimeoutError):
+            await task
+
+    @pytest.mark.asyncio
+    async def test_timeout_raises_when_no_response(self) -> None:
+        page, _ = _make_listener_page()
+        with pytest.raises(TimeoutError, match="No batchGenerateImages response"):
+            await UiAutomationTransport._capture_batch_response(
+                page, timeout_s=0.2, poll_interval_s=0.05
+            )
+
+    @pytest.mark.asyncio
+    async def test_parse_failure_does_not_capture(self) -> None:
+        """Response.json() raising means the response is skipped, not crashed."""
+        page, handlers = _make_listener_page()
+
+        async def _runner() -> dict:
+            return await UiAutomationTransport._capture_batch_response(
+                page, timeout_s=0.5, poll_interval_s=0.05
+            )
+
+        task = asyncio.create_task(_runner())
+        await asyncio.sleep(0.05)
+        await handlers[0][1](_make_response(json_raises=ValueError("bad json")))
+        with pytest.raises(TimeoutError):
+            await task

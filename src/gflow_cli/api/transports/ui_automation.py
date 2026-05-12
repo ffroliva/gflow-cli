@@ -13,6 +13,8 @@ Protocol contract.
 
 from __future__ import annotations
 
+import asyncio
+import time
 from pathlib import Path
 from typing import TYPE_CHECKING, Any, cast
 
@@ -311,6 +313,56 @@ class UiAutomationTransport:
 
         log.info("ui_automation.prompt_submitted", via="enter_key_fallback")
         await page.keyboard.press("Enter")
+
+    # ------------------------------------------------------------------
+    # Internal helpers — batchGenerateImages capture (unit 3.6)
+    # ------------------------------------------------------------------
+
+    @staticmethod
+    async def _capture_batch_response(
+        page: Page,
+        timeout_s: float = 120.0,
+        *,
+        poll_interval_s: float = 0.5,
+    ) -> dict[str, Any]:
+        """Register a Playwright ``response`` listener and return the first
+        ``batchGenerateImages`` response.
+
+        Non-matching responses are ignored. Response-body parse failures
+        are logged but do not propagate — the capture loop simply doesn't
+        record that response and keeps waiting.
+
+        Raises ``TimeoutError`` if no matching response arrives within
+        ``timeout_s``.
+        """
+        captured: list[dict[str, Any]] = []
+
+        async def on_response(response: Any) -> None:
+            if "batchGenerateImages" not in response.url:
+                return
+            try:
+                body = await response.json()
+            except Exception as e:  # noqa: BLE001 — parse failures are non-fatal
+                log.warning(
+                    "ui_automation.batch_response_parse_failed",
+                    error=str(e),
+                    url=response.url,
+                )
+                return
+            captured.append({"status": response.status, "url": response.url, "body": body})
+            log.info(
+                "ui_automation.batch_response_captured",
+                status=response.status,
+                url=response.url,
+            )
+
+        page.on("response", on_response)
+        deadline = time.monotonic() + timeout_s
+        while time.monotonic() < deadline and not captured:
+            await asyncio.sleep(poll_interval_s)
+        if not captured:
+            raise TimeoutError(f"No batchGenerateImages response within {timeout_s:.1f}s.")
+        return captured[0]
 
     async def refresh_auth(self) -> None:
         raise NotImplementedError("UiAutomationTransport.refresh_auth — unit 3.10")
