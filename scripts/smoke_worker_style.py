@@ -275,20 +275,31 @@ async def _capture_batch_response(page: Page, timeout_s: int = 120) -> dict:
 
 
 def _extract_image_urls(response: dict) -> list[str]:
-    """Pull image URLs from a batchGenerateImages response body."""
+    """Pull image URLs from a batchGenerateImages response body.
+
+    Real Flow response shape (observed 2026-05-12):
+      media[].image.generatedImage.fifeUrl
+    """
     body = response.get("body", {})
     urls: list[str] = []
-    for m in body.get("media", []):
-        img = m.get("image", {})
-        u = img.get("uri") or img.get("downloadUrl") or img.get("encodedImage")
-        if u:
-            urls.append(u)
-    for req in body.get("requests", []):
-        for m in req.get("media", []):
-            img = m.get("image", {})
-            u = img.get("uri") or img.get("downloadUrl") or img.get("encodedImage")
+
+    def _pull(media_list: list) -> None:
+        for m in media_list:
+            img = m.get("image", {}) or {}
+            gen = img.get("generatedImage", {}) or {}
+            u = (
+                gen.get("fifeUrl")
+                or img.get("uri")
+                or img.get("downloadUrl")
+                or img.get("encodedImage")
+                or gen.get("encodedImage")
+            )
             if u:
                 urls.append(u)
+
+    _pull(body.get("media", []))
+    for req in body.get("requests", []):
+        _pull(req.get("media", []))
     return urls
 
 
