@@ -49,6 +49,8 @@ from gflow_cli.errors import AuthMissingError, ConfigurationError
 log = structlog.get_logger(__name__)
 
 
+FLOW_URL = "https://labs.google/fx/tools/flow?hl=en"
+
 PROMPT_INPUT_SELECTORS = [
     'div[role="textbox"][data-slate-editor="true"]',
     'div[contenteditable="true"]',
@@ -62,44 +64,124 @@ SUBMIT_BUTTON_SELECTORS = [
     'button[aria-label*="Create"]',
 ]
 
+# Copied from CG Worker flow_logic.py @ 2026-05-12. DO NOT cross-import.
+NEW_PROJECT_SELECTORS = [
+    r"button:text-matches('^\s*\+\s+\S+', 'i')",
+    r"[role='button']:text-matches('^\s*\+\s+\S+', 'i')",
+    r"a:text-matches('^\s*\+\s+\S+', 'i')",
+    "button:has-text('New project')",
+    "[role='button']:has-text('New project')",
+    "a:has-text('New project')",
+    ":text('New project')",
+    "[aria-label*='New project' i]",
+]
 
-async def _wait_for_logged_in(page: Page) -> None:
-    """Block until the user has signed in to Flow inside the open Chrome window."""
+
+async def _ensure_logged_in_to_flow(page: Page, out_dir: Path) -> None:
+    """Robust auth check — pause for manual sign-in if not authenticated."""
     while True:
-        await page.goto(
-            "https://labs.google/fx/tools/flow",
-            wait_until="domcontentloaded",
-            timeout=30_000,
-        )
-        if "accounts.google.com" not in page.url:
-            sign_in = await page.locator(
-                'button:has-text("Sign in"), a:has-text("Sign in")'
-            ).count()
-            if sign_in == 0:
-                return
+        try:
+            await page.goto(FLOW_URL, wait_until="networkidle", timeout=45_000)
+        except Exception as e:  # noqa: BLE001
+            log.warning("flow_goto_failed_retrying", error=str(e))
+            await page.wait_for_timeout(2000)
+            continue
+
+        # Authenticated indicators
+        on_accounts = "accounts.google.com" in page.url
+        signin_button = await page.locator(
+            "button:has-text('Sign in'), a:has-text('Sign in')"
+        ).count()
+        # Positive auth signal: the gallery page renders the "+ New project" CTA
+        # or any /project/<uuid> URL (already in editor).
+        in_project = "/project/" in page.url
+        new_project_visible = 0
+        if not on_accounts and signin_button == 0 and not in_project:
+            try:
+                new_project_visible = await page.locator(
+                    NEW_PROJECT_SELECTORS[0]
+                ).count()
+            except Exception:  # noqa: BLE001
+                new_project_visible = 0
+
+        if (not on_accounts and signin_button == 0 and (in_project or new_project_visible > 0)):
+            log.info("logged_in", url=page.url, in_project=in_project)
+            return
+
+        out_dir.mkdir(parents=True, exist_ok=True)
+        shot = out_dir / "auth_pending.png"
+        try:
+            await page.screenshot(path=str(shot), full_page=True)
+        except Exception:  # noqa: BLE001
+            pass
         print(
             "\n>> Not signed in to Flow in this Chrome window.\n"
-            ">> Sign in manually (ffroliva@gmail.com or any Flow account),\n"
-            ">> then press Enter to continue, or Ctrl+C to abort.",
+            f">> URL: {page.url}\n"
+            f">> Screenshot: {shot}\n"
+            ">> Sign in manually inside the open Chrome window,\n"
+            ">> then press Enter to continue (Ctrl+C to abort).",
             flush=True,
         )
         input()
 
 
-async def _send_prompt(page: Page, prompt_text: str) -> None:
+async def _enter_editor(page: Page, out_dir: Path) -> None:
+    """If on the gallery, click 'New project' and wait for /project/UUID nav."""
+    if "/project/" in page.url:
+        log.info("editor_already_open", url=page.url)
+        return
+    await page.wait_for_timeout(3000)  # gallery stabilisation per CG Worker
+    for selector in NEW_PROJECT_SELECTORS:
+        try:
+            loc = page.locator(selector).first
+            await loc.wait_for(state="visible", timeout=5000)
+            log.info("clicking_new_project", selector=selector)
+            await loc.click()
+            try:
+                await page.wait_for_url(
+                    lambda url: "/project/" in url, timeout=15_000
+                )
+                log.info("entered_editor", url=page.url)
+                return
+            except Exception:
+                log.warning("new_project_click_did_not_navigate", selector=selector)
+        except Exception:
+            continue
+    out_dir.mkdir(parents=True, exist_ok=True)
+    shot = out_dir / "debug_new_project.png"
+    try:
+        await page.screenshot(path=str(shot), full_page=True)
+    except Exception:  # noqa: BLE001
+        pass
+    raise RuntimeError(
+        f"Could not find 'New project' on Flow gallery. URL: {page.url}. "
+        f"Screenshot: {shot}"
+    )
+
+
+async def _send_prompt(page: Page, prompt_text: str, out_dir: Path) -> None:
     """Type the prompt into the Slate editor and click submit (or press Enter)."""
     input_box = None
     for selector in PROMPT_INPUT_SELECTORS:
         try:
             loc = page.locator(selector).first
-            await loc.wait_for(state="visible", timeout=5_000)
+            await loc.wait_for(state="visible", timeout=10_000)
             input_box = loc
             log.info("prompt_input_found", selector=selector)
             break
         except Exception:
             continue
     if input_box is None:
-        raise RuntimeError("Prompt input not found in Flow UI.")
+        out_dir.mkdir(parents=True, exist_ok=True)
+        shot = out_dir / "debug_prompt_not_found.png"
+        try:
+            await page.screenshot(path=str(shot), full_page=True)
+        except Exception:  # noqa: BLE001
+            pass
+        raise RuntimeError(
+            f"Prompt input not found in Flow UI. URL: {page.url}. "
+            f"Screenshot: {shot}"
+        )
 
     await input_box.click()
     await page.keyboard.press("Control+A")
@@ -198,24 +280,22 @@ async def run(profile_dir: Path, port: int, prompt_text: str, out_dir: Path) -> 
         raise
 
     page = context.pages[0] if context.pages else await context.new_page()
-    await _wait_for_logged_in(page)
 
-    # Re-navigate to Flow editor after sign-in confirmation
-    await page.goto(
-        "https://labs.google/fx/tools/flow?hl=en",
-        wait_until="domcontentloaded",
-    )
-    # Wait for the prompt input to be visible
+    await _ensure_logged_in_to_flow(page, out_dir)
+    await _enter_editor(page, out_dir)
+
+    # Wait for the editor's prompt input to render
     for selector in PROMPT_INPUT_SELECTORS:
         try:
             await page.locator(selector).first.wait_for(state="visible", timeout=30_000)
+            log.info("editor_ready", selector=selector)
             break
         except Exception:
             continue
 
     # Set up response listener BEFORE clicking submit
     listener_task = asyncio.create_task(_capture_batch_response(page, timeout_s=120))
-    await _send_prompt(page, prompt_text)
+    await _send_prompt(page, prompt_text, out_dir)
     response = await listener_task
 
     if response["status"] != 200:
