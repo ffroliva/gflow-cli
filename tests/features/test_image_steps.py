@@ -76,6 +76,7 @@ def _make_fake_t2i(file_count: int):
         seed: int | None,
         out: Path | None,
         output_root: Path,
+        transport: str | None = None,
     ) -> None:
         # Honor ``count`` if the scenario set it; otherwise fall back to the
         # builder-bound ``file_count`` (lets us write exactly the right
