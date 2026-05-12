@@ -47,7 +47,6 @@ async def test_ui_automation_ships_one_image(tmp_path: Path) -> None:
     from gflow_cli import auth as auth_mod
     from gflow_cli.api.client import FlowApiClient
     from gflow_cli.api.image import Aspect, GenerateImageRequest, Model
-    from gflow_cli.api.transports.ui_automation import UiAutomationTransport
 
     profile_name = os.getenv("GFLOW_E2E_PROFILE")
     if not profile_name:
@@ -70,20 +69,20 @@ async def test_ui_automation_ships_one_image(tmp_path: Path) -> None:
         model=Model.NARWHAL,
     )
 
-    transport = UiAutomationTransport()
+    # Pass the transport key (string) — FlowApiClient resolves via the
+    # factory and owns the setup/teardown lifecycle. Passing a pre-built
+    # instance would put lifecycle ownership on the caller, which is the
+    # advanced-use path and not what the smoke needs.
     async with FlowApiClient(
-        profile_dir=profile_dir, headless=False, transport=transport
+        profile_dir=profile_dir, headless=False, transport="ui_automation"
     ) as client:
         project = await client.create_project(title="gflow-cli e2e smoke")
-        image = await client.generate_image(
-            project_id=project.project_id, req=req
-        )
+        image = await client.generate_image(project_id=project.project_id, req=req)
         target = tmp_path / "smoke_output.png"
         saved = await client.download_image(image, target)
 
     assert saved.exists(), f"Expected PNG at {saved}, none written."
     size = saved.stat().st_size
     assert size >= 100_000, (
-        f"PNG at {saved} is suspiciously small: {size} bytes. "
-        "Possible truncated stream."
+        f"PNG at {saved} is suspiciously small: {size} bytes. Possible truncated stream."
     )
