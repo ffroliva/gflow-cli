@@ -684,14 +684,15 @@ class TestSingletonLockPrecheck:
         profile_dir = _make_profile_dir(tmp_path)
         _check_chrome_singleton_lock(profile_dir)
 
-    @pytest.mark.skip(
+    @pytest.mark.skipif(sys.platform == "win32", reason="POSIX symlink-based test")
+    @pytest.mark.xfail(
+        strict=False,
         reason=(
-            "POSIX symlink test fails on Linux CI (DID NOT RAISE) and is "
-            "skipped on Windows by design. `_check_chrome_singleton_lock` does "
-            "not raise when SingletonLock is a symlink with a live PID — "
-            "possibly a regression in the symlink-vs-readlink branch. "
-            "BrowserManager demoted in 4d53aca; investigation tracked as "
-            "v0.5.0a1 follow-up."
+            "Linux CI: DID NOT RAISE. `_check_chrome_singleton_lock` does not "
+            "raise when SingletonLock is a symlink with a live PID — possibly "
+            "a regression in the symlink-vs-readlink branch. BrowserManager "
+            "demoted in 4d53aca; xfail (not skip) so a future fix surfaces "
+            "as xpass instead of silent green. v0.5.0a1 follow-up."
         ),
     )
     def test_singleton_lock_symlink_is_read_via_readlink(self, tmp_path: Path) -> None:
