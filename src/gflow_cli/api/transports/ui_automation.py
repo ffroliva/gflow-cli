@@ -372,21 +372,15 @@ class UiAutomationTransport:
     # ------------------------------------------------------------------
 
     @staticmethod
-    async def _capture_batch_response(
-        page: Page,
-        timeout_s: float = 120.0,
-        *,
-        poll_interval_s: float = 0.5,
-    ) -> dict[str, Any]:
-        """Register a Playwright ``response`` listener and return the first
-        ``batchGenerateImages`` response.
+    def _attach_batch_response_listener(page: Page) -> list[dict[str, Any]]:
+        """Synchronously register a ``page.on('response', ...)`` listener
+        that records ``batchGenerateImages`` responses into a shared list.
 
-        Non-matching responses are ignored. Response-body parse failures
-        are logged but do not propagate — the capture loop simply doesn't
-        record that response and keeps waiting.
-
-        Raises ``TimeoutError`` if no matching response arrives within
-        ``timeout_s``.
+        Returns the shared list — the caller submits the prompt next, then
+        polls / awaits that list via :meth:`_await_captured`. Registering
+        the listener BEFORE issuing the prompt click eliminates the race
+        where the click could fire before an ``asyncio.create_task``-
+        scheduled listener attaches.
         """
         captured: list[dict[str, Any]] = []
 
@@ -410,12 +404,45 @@ class UiAutomationTransport:
             )
 
         page.on("response", on_response)
+        return captured
+
+    @staticmethod
+    async def _await_captured(
+        captured: list[dict[str, Any]],
+        timeout_s: float = 120.0,
+        *,
+        poll_interval_s: float = 0.5,
+    ) -> dict[str, Any]:
+        """Wait for the shared ``captured`` list to receive its first
+        ``batchGenerateImages`` response, polling every ``poll_interval_s``.
+
+        Raises ``TimeoutError`` if no response arrives within ``timeout_s``.
+        """
         deadline = time.monotonic() + timeout_s
         while time.monotonic() < deadline and not captured:
             await asyncio.sleep(poll_interval_s)
         if not captured:
             raise TimeoutError(f"No batchGenerateImages response within {timeout_s:.1f}s.")
         return captured[0]
+
+    @staticmethod
+    async def _capture_batch_response(
+        page: Page,
+        timeout_s: float = 120.0,
+        *,
+        poll_interval_s: float = 0.5,
+    ) -> dict[str, Any]:
+        """Convenience wrapper: attach + await in one call.
+
+        Useful when the caller has no work to interleave between attach
+        and wait. ``generate_images`` does NOT use this — it splits the
+        two halves so the listener is attached synchronously before
+        ``_send_prompt`` issues the click.
+        """
+        captured = UiAutomationTransport._attach_batch_response_listener(page)
+        return await UiAutomationTransport._await_captured(
+            captured, timeout_s, poll_interval_s=poll_interval_s
+        )
 
     # ------------------------------------------------------------------
     # Internal helpers — image URL extraction (unit 3.7)
@@ -558,9 +585,14 @@ class UiAutomationTransport:
 
         await self._enter_editor(page)
 
-        capture_task = asyncio.create_task(self._capture_batch_response(page))
+        # Attach the response listener SYNCHRONOUSLY before any prompt
+        # action. asyncio.create_task is unsafe here: it defers the listener
+        # registration until the new task gets event-loop scheduling, which
+        # could happen AFTER _send_prompt's click on a busy loop. Splitting
+        # attach/await eliminates that race.
+        captured = self._attach_batch_response_listener(page)
         await self._send_prompt(page, request.prompt)
-        response = await capture_task
+        response = await self._await_captured(captured)
 
         status = response.get("status")
         if status != 200:

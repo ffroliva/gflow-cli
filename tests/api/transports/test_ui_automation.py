@@ -938,7 +938,7 @@ class TestGenerateImages:
             patch.object(t, "_send_prompt", new=AsyncMock()),
             patch.object(
                 t,
-                "_capture_batch_response",
+                "_await_captured",
                 new=AsyncMock(return_value=_flow_200_capture()),
             ),
         ):
@@ -959,7 +959,7 @@ class TestGenerateImages:
             patch.object(t, "_send_prompt", new=AsyncMock()),
             patch.object(
                 t,
-                "_capture_batch_response",
+                "_await_captured",
                 new=AsyncMock(
                     return_value={
                         "status": 403,
@@ -983,7 +983,7 @@ class TestGenerateImages:
             patch.object(t, "_send_prompt", new=AsyncMock()),
             patch.object(
                 t,
-                "_capture_batch_response",
+                "_await_captured",
                 new=AsyncMock(return_value=_flow_200_capture(body={"media": []})),
             ),
             pytest.raises(RuntimeError, match="no parseable image URLs"),
