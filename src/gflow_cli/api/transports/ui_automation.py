@@ -459,8 +459,9 @@ class UiAutomationTransport:
                     )
         return paths
 
-    async def refresh_auth(self) -> None:
-        raise NotImplementedError("UiAutomationTransport.refresh_auth — unit 3.10")
+    # ------------------------------------------------------------------
+    # Protocol — generate_images (unit 3.9)
+    # ------------------------------------------------------------------
 
     async def generate_images(
         self,
@@ -468,7 +469,94 @@ class UiAutomationTransport:
         project_id: str,
         request: GenerateImageRequest,
     ) -> list[GeneratedImage]:
-        raise NotImplementedError("UiAutomationTransport.generate_images — unit 3.9")
+        """Submit ``request.prompt`` through Flow's editor and return the
+        generated images as DTOs.
+
+        ``project_id`` is accepted for Protocol parity but the UI flow
+        creates a new Flow project on each call (Flow's gallery → editor
+        navigation is the same surface a human uses). Downloading the
+        actual PNG bytes is the caller's responsibility; the DTOs carry
+        the ``fife_url`` which expires roughly 6 hours after generation.
+
+        Raises ``RuntimeError`` if setup() has not been called, the
+        ``batchGenerateImages`` response is non-200, or the response is
+        200 but contains no image URLs.
+        """
+        _ = project_id  # accepted for Protocol parity; UI creates its own project
+        if not self._setup_done or self._page is None:
+            raise RuntimeError(
+                "UiAutomationTransport.setup() must be called before generate_images()"
+            )
+        page: Page = self._page
+
+        await self._enter_editor(page)
+
+        capture_task = asyncio.create_task(self._capture_batch_response(page))
+        await self._send_prompt(page, request.prompt)
+        response = await capture_task
+
+        status = response.get("status")
+        if status != 200:
+            raise RuntimeError(
+                f"batchGenerateImages returned HTTP {status} "
+                f"(expected 200). Response URL: {response.get('url')}"
+            )
+
+        body: dict[str, Any] = cast("dict[str, Any]", response.get("body") or {})
+        media_list_raw = body.get("media", [])
+        if not isinstance(media_list_raw, list):
+            raise RuntimeError("batchGenerateImages returned 200 but body.media is not a list.")
+
+        images: list[GeneratedImage] = []
+        for item_raw in cast("list[Any]", media_list_raw):
+            if not isinstance(item_raw, dict):
+                continue
+            item: dict[str, Any] = cast("dict[str, Any]", item_raw)
+            try:
+                images.append(GeneratedImage.from_response_item(item))
+            except ValueError as e:
+                log.warning("ui_automation.parse_media_item_failed", error=str(e))
+
+        if not images:
+            raise RuntimeError("batchGenerateImages returned 200 but no parseable image URLs.")
+        return images
+
+    # ------------------------------------------------------------------
+    # Protocol — refresh_auth (unit 3.10) + teardown (unit 3.11)
+    # ------------------------------------------------------------------
+
+    async def refresh_auth(self) -> None:
+        """No-op for the UI strategy.
+
+        Flow's own JavaScript re-mints reCAPTCHA tokens and refreshes
+        auth state inside the Page on every prompt submission. There is
+        no separate token cache to refresh from this strategy's side.
+        Kept on the Protocol surface for consistency with the HTTP
+        strategies (S1/S2/S3) where refresh_auth has real work to do.
+        """
+        log.debug("ui_automation.refresh_auth_noop")
 
     async def teardown(self) -> None:
-        raise NotImplementedError("UiAutomationTransport.teardown — unit 3.11")
+        """Close the Playwright context if this strategy owns it.
+
+        Idempotent — safe to call multiple times. When ``_owns_playwright``
+        is False (shared-page setup) the caller retains lifecycle
+        ownership; this method releases nothing and just resets state.
+        """
+        if not self._setup_done:
+            return
+        if self._owns_playwright and self._pw_cm is not None:
+            try:
+                if self._ctx is not None:
+                    await self._ctx.close()
+            except Exception as e:  # noqa: BLE001 — log and continue cleanup
+                log.warning("ui_automation.context_close_failed", error=str(e))
+            try:
+                await self._pw_cm.__aexit__(None, None, None)
+            except Exception as e:  # noqa: BLE001 — log and continue cleanup
+                log.warning("ui_automation.playwright_exit_failed", error=str(e))
+        self._pw_cm = None
+        self._ctx = None
+        self._page = None
+        self._setup_done = False
+        self._owns_playwright = False
