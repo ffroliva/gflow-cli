@@ -48,6 +48,13 @@ tmp/
 !tests/fixtures/**/*.png
 samples/*.captured.json # sandbox-recorded API exchanges may contain PII
 
+# Live Flow traffic captures — NEVER commit (contain real Bearer tokens / API keys).
+# Diagnostic scripts MUST default-write here, NOT to samples/captured/.
+# Sanitised reference samples (no secrets) can still live under samples/captured/.
+tmp/captured/
+samples/captured/flow_outgoing_*.jsonl
+samples/captured/flow_outgoing_*.json
+
 # Claude Code worktrees and lock files
 .claude/worktrees/
 .claude/scheduled_tasks.lock

@@ -54,7 +54,7 @@ Read the full [DISCLAIMER](DISCLAIMER.md) before deploying this in any productio
 
 ## Project status
 
-**v0.4.0a2 — alpha.** Video (T2V/I2V/batch), image (T2I/I2I/upload), and **batch concurrency, typed errors, retry/backoff, and structured logging** are functional end-to-end against a live Google AI Ultra/Pro Flow account.
+**v0.5.0a1 — alpha.** Video (T2V/I2V/batch), image (T2I/I2I/upload), the new **`gflow run` JSON-batch command**, and the **`ui_automation` default transport** are functional end-to-end against a live Google AI Pro/Ultra Flow account. Three earlier HTTP transport strategies (`evaluate_fetch` / `bearer` / `sapisidhash`) move to an `experimental/` subpackage in this release; the production path is `ui_automation`.
 
 | Milestone | Status |
 |---|---|
@@ -68,7 +68,17 @@ Read the full [DISCLAIMER](DISCLAIMER.md) before deploying this in any productio
 | Typed errors (RFC 9457 Problem Details) + per-class exit codes 3–7 | ✅ done (v0.4.0a2) |
 | Retry / backoff + reCAPTCHA re-mint inside the retry loop | ✅ done (v0.4.0a2) |
 | Structured logs (`structlog`, JSON on pipe) | ✅ done (v0.4.0a2) |
-| Provider abstraction for official Veo 3.1 API | ⏳ planned (v0.5+) |
+| Pluggable image transport + `ui_automation` default strategy | ✅ done (v0.5.0a1) |
+| `gflow run --config <file>` sequential JSON batches | ✅ done (v0.5.0a1) |
+| `examples/` directory with runnable single-image + batch scripts | ✅ done (v0.5.0a1) |
+| Provider abstraction for official Veo 3.1 API | ⏳ planned (v0.6+) |
+
+### What's new in v0.5.0a1
+
+- `UiAutomationTransport` is now the default image-generation strategy — Playwright-driven UI mimicry against the Flow editor on a logged-in Pro/Ultra profile (no externally-exposed CDP debug port).
+- New top-level `gflow run --config <file>` command for JSON-described sequential batches (1–50 prompts per file, `--continue-on-error` / `--fail-fast` modes). See [`docs/USAGE.md`](docs/USAGE.md#gflow-run) for the schema.
+- Three runnable example scripts shipped under [`examples/`](examples/README.md) — copy and edit for your own pipelines.
+- See the full [CHANGELOG](CHANGELOG.md#0501) for the security follow-ups (download host allow-list, viewport-only debug screenshots) and the listener-attach race fix.
 
 ---
 

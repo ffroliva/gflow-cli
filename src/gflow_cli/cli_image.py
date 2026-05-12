@@ -29,6 +29,7 @@ from gflow_cli._cli_helpers import (
 from gflow_cli.api.client import FlowApiClient
 from gflow_cli.api.dto import GeneratedImage
 from gflow_cli.api.image import Aspect, GenerateImageRequest, ImageRef, Model
+from gflow_cli.api.transports import transport_choices
 from gflow_cli.config import get_settings
 from gflow_cli.paths import image_output_path
 
@@ -124,7 +125,17 @@ def image() -> None:
     ),
 )
 @click.option("--profile", default=None, help="Profile name (overrides default).")
-def upload(path: Path, profile: str | None) -> None:
+@click.option(
+    "--transport",
+    type=click.Choice(transport_choices(), case_sensitive=False),
+    default=None,
+    help=(
+        "Override transport strategy. Falls back to GFLOW_CLI_TRANSPORT env var "
+        "or built-in default (ui_automation). Set "
+        "GFLOW_CLI_EXPERIMENTAL_TRANSPORTS=1 to enable evaluate_fetch/bearer/sapisidhash."
+    ),
+)
+def upload(path: Path, profile: str | None, transport: str | None) -> None:
     """Upload PATH and print the asset UUID."""
     profile_name = _resolve_profile(profile)
     provider_dir = _make_provider_dir(profile_name)
@@ -134,6 +145,7 @@ def upload(path: Path, profile: str | None) -> None:
             profile_dir=provider_dir,
             headless=settings.headless,
             image_path=path,
+            transport=transport,
         ),
         cli_command="image upload",
     )
@@ -144,8 +156,11 @@ async def _run_upload(
     profile_dir: Path,
     headless: bool,
     image_path: Path,
+    transport: str | None = None,
 ) -> None:
-    async with FlowApiClient(profile_dir=profile_dir, headless=headless) as client:
+    async with FlowApiClient(
+        profile_dir=profile_dir, headless=headless, transport=transport
+    ) as client:
         console.print("  Creating project...")
         project = await client.create_project(title="gflow-cli upload")
         console.print(f"  Project: [dim]{project.project_id}[/dim]")
@@ -225,6 +240,16 @@ _ASPECT_CHOICES = ["9:16", "16:9", "1:1", "4:3", "3:4"]
     ),
 )
 @click.option("--profile", default=None, help="Profile name (overrides default).")
+@click.option(
+    "--transport",
+    type=click.Choice(transport_choices(), case_sensitive=False),
+    default=None,
+    help=(
+        "Override transport strategy. Falls back to GFLOW_CLI_TRANSPORT env var "
+        "or built-in default (ui_automation). Set "
+        "GFLOW_CLI_EXPERIMENTAL_TRANSPORTS=1 to enable evaluate_fetch/bearer/sapisidhash."
+    ),
+)
 def t2i(
     prompt: str,
     model: str,
@@ -233,6 +258,7 @@ def t2i(
     seed: int | None,
     out: Path | None,
     profile: str | None,
+    transport: str | None,
 ) -> None:
     """Generate image(s) from PROMPT (text-to-image)."""
     # Validate flag combinations BEFORE any I/O. Click's IntRange already
@@ -261,6 +287,7 @@ def t2i(
             seed=seed,
             out=out,
             output_root=settings.output_dir,
+            transport=transport,
         ),
         cli_command="image t2i",
     )
@@ -275,8 +302,11 @@ async def _run_t2i(
     seed: int | None,
     out: Path | None,
     output_root: Path,
+    transport: str | None = None,
 ) -> None:
-    async with FlowApiClient(profile_dir=profile_dir, headless=headless) as client:
+    async with FlowApiClient(
+        profile_dir=profile_dir, headless=headless, transport=transport
+    ) as client:
         console.print("  Creating project...")
         # Title is a `gflow-cli ...` prefix per project convention (post-rename a02684f).
         # cli_video.py's _run_t2v / _run_i2v don't currently set a title — tracked separately.
@@ -392,6 +422,16 @@ def _print_t2i_summary(images: list[GeneratedImage], saved_paths: list[Path]) ->
     ),
 )
 @click.option("--profile", default=None, help="Profile name (overrides default).")
+@click.option(
+    "--transport",
+    type=click.Choice(transport_choices(), case_sensitive=False),
+    default=None,
+    help=(
+        "Override transport strategy. Falls back to GFLOW_CLI_TRANSPORT env var "
+        "or built-in default (ui_automation). Set "
+        "GFLOW_CLI_EXPERIMENTAL_TRANSPORTS=1 to enable evaluate_fetch/bearer/sapisidhash."
+    ),
+)
 def i2i(
     prompt: str,
     refs: tuple[str, ...],
@@ -401,6 +441,7 @@ def i2i(
     seed: int | None,
     out: Path | None,
     profile: str | None,
+    transport: str | None,
 ) -> None:
     """Generate image(s) from PROMPT + reference image(s) (image-to-image)."""
     # Mirror t2i's seed/count cross-flag rule — see _run_t2i for the rationale.
@@ -432,6 +473,7 @@ def i2i(
             seed=seed,
             out=out,
             output_root=settings.output_dir,
+            transport=transport,
         ),
         cli_command="image i2i",
     )
@@ -481,8 +523,11 @@ async def _run_i2i(
     seed: int | None,
     out: Path | None,
     output_root: Path,
+    transport: str | None = None,
 ) -> None:
-    async with FlowApiClient(profile_dir=profile_dir, headless=headless) as client:
+    async with FlowApiClient(
+        profile_dir=profile_dir, headless=headless, transport=transport
+    ) as client:
         console.print("  Creating project...")
         # Title is a `gflow-cli ...` prefix per project convention (post-rename a02684f).
         # cli_video.py's _run_t2v / _run_i2v don't currently set a title — tracked separately.

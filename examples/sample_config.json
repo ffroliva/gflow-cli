@@ -1,0 +1,18 @@
+{
+  "output_dir": "gflow-output/example-batch",
+  "prompts": [
+    {
+      "text": "a quiet mountain lake at dawn, cinematic photography",
+      "aspect_ratio": "9:16"
+    },
+    {
+      "text": "a sunlit forest path in autumn, soft mist, golden hour",
+      "aspect_ratio": "16:9"
+    },
+    {
+      "text": "a minimalist desk setup with warm lighting, top-down view",
+      "aspect_ratio": "1:1",
+      "model": "nano-pro"
+    }
+  ]
+}
