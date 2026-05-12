@@ -66,25 +66,39 @@ SUBMIT_BUTTON_SELECTORS = [
     'button[aria-label*="Create"]',
 ]
 
-# Copied from CG Worker flow_logic.py @ 2026-05-12. DO NOT cross-import.
+# Selectors for the "new project" gallery CTA. From the live DOM dump
+# (2026-05-12): the button wraps a Material Symbols icon (text "add_2",
+# rendered as "+") followed by localized label text "New project" /
+# "Novo projeto" / etc. The most robust match is the icon class, which is
+# stable across locales: `i.google-symbols` is the Material Symbols span.
 NEW_PROJECT_SELECTORS = [
-    "button:has-text('+ Project')",
-    "[role='button']:has-text('+ Project')",
-    "div[role='button']:has-text('+ Project')",
-    "a:has-text('+ Project')",
-    r"button:text-matches('\+\s+\S+', 'i')",
-    r"[role='button']:text-matches('\+\s+\S+', 'i')",
-    r"a:text-matches('\+\s+\S+', 'i')",
+    # Universal: any button containing the google-symbols "add_2" icon.
+    "button:has(i.google-symbols:text('add_2'))",
+    "button:has(i:text('add_2'))",
+    # Localized text fallbacks
     "button:has-text('New project')",
+    "button:has-text('Novo projeto')",
+    "button:has-text('Nuevo proyecto')",
+    "button:has-text('Nouveau projet')",
     "[role='button']:has-text('New project')",
     "a:has-text('New project')",
-    "[aria-label*='Project' i]",
+    r"button:text-matches('\+\s+\S+', 'i')",
     "[aria-label*='New project' i]",
+    "[aria-label*='Project' i]",
 ]
 
 
 async def _check_logged_in(page: Page) -> bool:
-    """Positive-signal auth check — True if we're on Flow with no sign-in CTA."""
+    """Authenticated if we're on a Flow URL and not on a sign-in page.
+
+    The strict-positive variant (require visible +New project CTA) failed
+    because the button uses Material Symbols ligature icons whose
+    DOM text is "add_2"; not all locale renderings match our text
+    selectors. URL gating + sign-in-page negation is sufficient here:
+    if accounts.google.com isn't in the URL and we're on
+    labs.google/<locale>/tools/flow, denon82 cookies have already
+    authenticated us — the gallery is shown.
+    """
     if "accounts.google.com" in page.url:
         return False
     on_flow = "labs.google" in page.url and "/flow" in page.url
@@ -92,31 +106,15 @@ async def _check_logged_in(page: Page) -> bool:
         return False
     if "/project/" in page.url:
         return True
+    # Reject only if there's a top-level sign-in CTA (which exists on the
+    # public landing page but not on the authenticated gallery).
     try:
         signin_button = await page.locator(
             "button:has-text('Sign in'), a:has-text('Sign in')"
         ).count()
     except Exception:  # noqa: BLE001
         signin_button = 0
-    if signin_button > 0:
-        return False
-    for sel in NEW_PROJECT_SELECTORS:
-        try:
-            if await page.locator(sel).count() > 0:
-                return True
-        except Exception:  # noqa: BLE001
-            continue
-    try:
-        avatar = await page.locator(
-            "img[alt*='profile' i], img[alt*='account' i], "
-            "button[aria-label*='Google Account' i], "
-            "[aria-label*='Account' i]"
-        ).count()
-        if avatar > 0:
-            return True
-    except Exception:  # noqa: BLE001
-        pass
-    return False
+    return signin_button == 0
 
 
 async def _ensure_logged_in_to_flow(
@@ -347,7 +345,7 @@ async def _drive(context: BrowserContext, prompt_text: str, out_dir: Path) -> No
 
     log.info("urls_extracted", count=len(urls))
     cookie_list = await context.cookies("https://labs.google")
-    cookies = {c["name"]: c["value"] for c in cookie_list}
+    cookies = {c.get("name", ""): c.get("value", "") for c in cookie_list if c.get("name")}
     paths = await _download(urls, out_dir, cookies)
 
     print(f"\n>> Smoke complete. {len(paths)} PNG(s) saved to {out_dir}")
