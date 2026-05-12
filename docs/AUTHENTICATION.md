@@ -230,7 +230,7 @@ Re-running `auth login` refreshes the cookies in place — no other state is los
 |---|---|
 | Session file leaked to a public repo | `.gitignore` excludes profile dirs at every layer. Recommended belt-and-braces: keep the gflow-cli home outside the repo (default location via `platformdirs` already does this) and run `git status` before any commit. Automatic in-repo detection is on the backlog (not yet scheduled). |
 | Multi-user shared machine | Profiles live under each user's home dir; OS file permissions (`0700` on POSIX, ACL on Windows) prevent cross-user reads by default. |
-| `gflow-cli` itself becomes malicious | The package is open-source under MIT; pin a version (`uv tool install gflow-cli==0.4.0a2`) and review release diffs before upgrading. |
+| `gflow-cli` itself becomes malicious | The package is open-source under MIT; pin a version (`uv tool install gflow-cli==0.5.0a1`) and review release diffs before upgrading. |
 | Stolen laptop | Anyone with disk access has your session. Use full-disk encryption (FileVault, BitLocker, LUKS). Consider a dedicated `--profile sandbox` for short-lived experiments. |
 | Sharing a profile between machines | Technically works (copy the profile dir), but Google may flag the device-fingerprint mismatch as suspicious. Re-login on the new machine instead. |
 
