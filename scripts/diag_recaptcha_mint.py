@@ -13,7 +13,6 @@ from __future__ import annotations
 
 import argparse
 import asyncio
-from pathlib import Path
 
 from playwright.async_api import async_playwright
 
@@ -45,8 +44,9 @@ async def run(profile_name: str) -> None:
         print("Discovering site_key...")
         try:
             site_key = await discover_site_key(page)
+            expected_key = "6LdsFiUsAAAAAIjVDZcuLhaHiDn5nnHVXVRQGeMV"
             print(f"  site_key: {site_key}")
-            print(f"  matches HAR (6LdsFi...): {site_key == '6LdsFiUsAAAAAIjVDZcuLhaHiDn5nnHVXVRQGeMV'}")
+            print(f"  matches HAR (6LdsFi...): {site_key == expected_key}")
         except Exception as exc:
             print(f"  FAILED: {exc}")
             await ctx.close()
