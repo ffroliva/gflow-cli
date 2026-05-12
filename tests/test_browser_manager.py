@@ -281,6 +281,10 @@ class TestPortRange:
 
 
 class TestProcessDetachmentFlags:
+    @pytest.mark.skipif(
+        sys.platform != "win32",
+        reason="subprocess.DETACHED_PROCESS / CREATE_NEW_PROCESS_GROUP are Windows-only attributes",
+    )
     def test_spawn_uses_detached_flags_on_windows(self, tmp_path: Path) -> None:
         """On win32, Popen is called with DETACHED_PROCESS | CREATE_NEW_PROCESS_GROUP."""
         import subprocess
