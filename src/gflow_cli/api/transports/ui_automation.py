@@ -72,6 +72,42 @@ def _is_allowed_download_host(url: str) -> bool:
     )
 
 
+async def _capture_debug_screenshot(
+    page: Any,
+    out_dir: Path | None,
+    filename: str,
+) -> Path | None:
+    """Best-effort viewport screenshot for debug troubleshooting.
+
+    Writes to ``out_dir / filename`` and returns the path, or ``None``
+    when ``out_dir`` is not provided. Captures only the current viewport
+    (``full_page=False``) to bound the PII surface — even a viewport
+    screenshot of a logged-in Flow page includes the user's avatar /
+    email indicator in the top-right corner, so a warning is logged so
+    the operator knows the file may contain identifying information.
+
+    Failures during screenshot capture are swallowed — debugging aids
+    must not become a second source of exceptions during a real failure.
+    """
+    if out_dir is None:
+        return None
+    out_dir.mkdir(parents=True, exist_ok=True)
+    shot_path = out_dir / filename
+    try:
+        await page.screenshot(path=str(shot_path), full_page=False)
+        log.warning(
+            "ui_automation.debug_screenshot_may_contain_pii",
+            path=str(shot_path),
+            note=(
+                "viewport may include account avatar / email indicator from "
+                "the authenticated Google session"
+            ),
+        )
+    except Exception as e:  # noqa: BLE001 — screenshot is best-effort
+        log.debug("ui_automation.screenshot_capture_failed", error=str(e))
+    return shot_path
+
+
 # Prompt input selectors — Slate.js editor is the canonical target on
 # Flow's editor page; the contenteditable/textarea fallbacks cover UI
 # evolutions.
@@ -266,14 +302,7 @@ class UiAutomationTransport:
             except Exception:  # noqa: BLE001 — selector didn't match; try next
                 continue
 
-        shot_path: Path | None = None
-        if out_dir is not None:
-            out_dir.mkdir(parents=True, exist_ok=True)
-            shot_path = out_dir / "debug_new_project.png"
-            try:
-                await page.screenshot(path=str(shot_path), full_page=True)
-            except Exception:  # noqa: BLE001 — screenshot best-effort
-                pass
+        shot_path = await _capture_debug_screenshot(page, out_dir, "debug_new_project.png")
         raise RuntimeError(
             f"Could not find 'New project' CTA on Flow gallery. URL: {page.url}. "
             f"Screenshot: {shot_path}"
@@ -313,14 +342,7 @@ class UiAutomationTransport:
                 continue
 
         if input_box is None:
-            shot_path: Path | None = None
-            if out_dir is not None:
-                out_dir.mkdir(parents=True, exist_ok=True)
-                shot_path = out_dir / "debug_prompt_not_found.png"
-                try:
-                    await page.screenshot(path=str(shot_path), full_page=True)
-                except Exception:  # noqa: BLE001 — screenshot best-effort
-                    pass
+            shot_path = await _capture_debug_screenshot(page, out_dir, "debug_prompt_not_found.png")
             raise RuntimeError(
                 f"Prompt input not found in Flow UI. URL: {page.url}. Screenshot: {shot_path}"
             )
