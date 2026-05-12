@@ -44,7 +44,7 @@ async def test_ui_automation_ships_one_image(tmp_path: Path) -> None:
     where ``batchGenerateImages`` returned 200 but the download stream
     truncated.
     """
-    from gflow_cli import profile_store
+    from gflow_cli import auth as auth_mod
     from gflow_cli.api.client import FlowApiClient
     from gflow_cli.api.image import Aspect, GenerateImageRequest, Model
     from gflow_cli.api.transports.ui_automation import UiAutomationTransport
@@ -56,7 +56,7 @@ async def test_ui_automation_ships_one_image(tmp_path: Path) -> None:
             "Playwright user-data-dir already signed in to Flow."
         )
 
-    profile_dir = profile_store.profile_dir(profile_name)
+    profile_dir = auth_mod.profile_dir(profile_name)
     if not profile_dir.exists():
         pytest.fail(
             f"Profile dir does not exist: {profile_dir}. Run "
