@@ -1,8 +1,24 @@
-"""BrowserManager — owns Chrome lifecycle for persistent-browser-via-CDP architecture.
+"""BrowserManager — persistent system Chrome via CDP attach.
 
-Single responsibility: manage a long-lived system Chrome process that survives
-CLI invocations. Subsequent CLI calls attach via CDP instead of spawning fresh
-Playwright Chromium.
+.. note::
+
+   This module is retained for research use and non-Flow use cases. It is
+   **not** on the v0.5.0a1 image-generation critical path; the production
+   transport is :class:`gflow_cli.api.transports.ui_automation.UiAutomationTransport`,
+   which uses Playwright's internal CDP port (Playwright manages it
+   privately) rather than an externally-exposed debug port.
+
+   Empirical results from 2026-05-12 showed that an externally-discoverable
+   CDP debug port (the pattern this module implements) is itself rejected
+   by Google's Flow surface on `aisandbox-pa.googleapis.com`. The module
+   stays in the codebase so the lifecycle helpers remain available for
+   any future tool that needs a managed Chrome process for a non-Flow
+   target, but ``gflow image t2i`` / ``gflow image i2i`` / ``gflow run``
+   do not route through here.
+
+Single responsibility: manage a long-lived system Chrome process that
+survives CLI invocations. Subsequent CLI calls attach via CDP instead of
+spawning fresh Playwright Chromium.
 
 Public API
 ----------
@@ -11,7 +27,7 @@ get_or_launch_browser(profile_dir, port=9222) -> BrowserContext
     Chrome and attach. Returns a Playwright BrowserContext.
 
 close_browser(profile_dir, port=9222) -> None
-    Opt-in shutdown. Used by ``gflow chrome stop`` (D.2.3d, separate task).
+    Opt-in shutdown.
 
 is_browser_running(port=9222) -> bool
     Sync health check. CDP ``GET /json/version`` with 3s timeout + 1 retry.
