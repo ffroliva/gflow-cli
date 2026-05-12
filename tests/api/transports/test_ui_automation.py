@@ -369,3 +369,138 @@ class TestCheckLoggedIn:
             signin_count=0,
         )
         assert await t._check_logged_in(page) is True  # type: ignore[attr-defined]
+
+
+# ---------------------------------------------------------------------------
+# Unit 3.4 — _enter_editor(page, out_dir)
+# ---------------------------------------------------------------------------
+
+
+def _make_editor_page(
+    *,
+    initial_url: str = "https://labs.google/fx/tools/flow",
+    locator_visible: bool = True,
+    nav_succeeds: bool = True,
+    post_click_url: str = "https://labs.google/fx/tools/flow/project/abc-123",
+) -> MagicMock:
+    """Build a fake Page that simulates the new-project CTA flow."""
+    page = MagicMock()
+    page.url = initial_url
+    page.wait_for_timeout = AsyncMock()
+    page.screenshot = AsyncMock()
+
+    # Locator chain: page.locator(sel).first → wait_for / click
+    loc = MagicMock()
+    if locator_visible:
+        loc.wait_for = AsyncMock()
+    else:
+        loc.wait_for = AsyncMock(side_effect=RuntimeError("not visible"))
+
+    async def _click() -> None:
+        # Successful click simulates Flow navigating to /project/<uuid>.
+        if nav_succeeds:
+            page.url = post_click_url
+
+    loc.click = AsyncMock(side_effect=_click)
+
+    page_locator = MagicMock()
+    page_locator.first = loc
+    page.locator = MagicMock(return_value=page_locator)
+
+    async def _wait_for_url(predicate, timeout) -> None:  # noqa: ANN001
+        if not nav_succeeds:
+            raise RuntimeError("nav did not happen")
+        if not predicate(page.url):
+            raise RuntimeError("predicate not satisfied")
+
+    page.wait_for_url = AsyncMock(side_effect=_wait_for_url)
+    return page
+
+
+class TestEnterEditor:
+    """_enter_editor clicks '+ New project' and waits for /project/ navigation."""
+
+    @pytest.mark.asyncio
+    async def test_noop_when_already_in_editor(self) -> None:
+        t = UiAutomationTransport()
+        page = _make_editor_page(
+            initial_url="https://labs.google/fx/tools/flow/project/zzz",
+        )
+        await t._enter_editor(page)  # type: ignore[attr-defined]
+        # No timeout, no locator, no click.
+        page.wait_for_timeout.assert_not_called()
+        page.locator.assert_not_called()
+
+    @pytest.mark.asyncio
+    async def test_first_selector_works(self) -> None:
+        t = UiAutomationTransport()
+        page = _make_editor_page()
+        await t._enter_editor(page)  # type: ignore[attr-defined]
+        # locator called at least once with the first (icon-class) selector.
+        first_call_sel = page.locator.call_args_list[0].args[0]
+        assert "google-symbols" in first_call_sel
+        assert "/project/" in page.url
+
+    @pytest.mark.asyncio
+    async def test_falls_back_through_selectors_on_visibility_miss(self) -> None:
+        """When the first locator's wait_for raises, the loop should try
+        the next selector. Use a page where wait_for fails N-1 times then
+        succeeds — verify multiple selector probes happen."""
+        t = UiAutomationTransport()
+
+        # Build a page where the FIRST two selectors raise on wait_for,
+        # the THIRD succeeds + navigates.
+        page = MagicMock()
+        page.url = "https://labs.google/fx/tools/flow"
+        page.wait_for_timeout = AsyncMock()
+        page.screenshot = AsyncMock()
+
+        call_count = {"n": 0}
+
+        def _make_loc() -> MagicMock:
+            call_count["n"] += 1
+            loc = MagicMock()
+            if call_count["n"] < 3:
+                loc.wait_for = AsyncMock(side_effect=RuntimeError("not visible"))
+            else:
+                loc.wait_for = AsyncMock()
+
+            async def _click() -> None:
+                page.url = "https://labs.google/fx/tools/flow/project/xyz"
+
+            loc.click = AsyncMock(side_effect=_click)
+            wrapper = MagicMock()
+            wrapper.first = loc
+            return wrapper
+
+        page.locator = MagicMock(side_effect=lambda _sel: _make_loc())
+
+        async def _wait_for_url(predicate, timeout) -> None:  # noqa: ANN001
+            if not predicate(page.url):
+                raise RuntimeError("predicate not satisfied")
+
+        page.wait_for_url = AsyncMock(side_effect=_wait_for_url)
+
+        await t._enter_editor(page)  # type: ignore[attr-defined]
+        assert call_count["n"] >= 3
+        assert "/project/" in page.url
+
+    @pytest.mark.asyncio
+    async def test_all_selectors_fail_raises_runtime_error(self, tmp_path: Path) -> None:
+        """Every selector miss + screenshot written + RuntimeError raised."""
+        t = UiAutomationTransport()
+        page = _make_editor_page(locator_visible=False)
+        with pytest.raises(RuntimeError, match="Could not find 'New project'"):
+            await t._enter_editor(page, out_dir=tmp_path)  # type: ignore[attr-defined]
+        page.screenshot.assert_called_once()
+        # Screenshot path created under out_dir.
+        called_path = Path(page.screenshot.call_args.kwargs["path"])
+        assert called_path.parent == tmp_path
+
+    @pytest.mark.asyncio
+    async def test_all_selectors_fail_no_screenshot_when_out_dir_none(self) -> None:
+        t = UiAutomationTransport()
+        page = _make_editor_page(locator_visible=False)
+        with pytest.raises(RuntimeError):
+            await t._enter_editor(page)  # type: ignore[attr-defined]
+        page.screenshot.assert_not_called()

@@ -39,6 +39,24 @@ FLOW_URL = "https://labs.google/fx/tools/flow?hl=en"
 # Browser viewport — matches the validated smoke (also matches the CG Worker).
 _VIEWPORT = {"width": 1280, "height": 800}
 
+# "+ New project" CTA selectors. Pattern G13: the Material Symbols icon
+# (``i.google-symbols`` with inner text ``add_2``) is locale-stable; the
+# localized button label ("New project", "Novo projeto", ...) is not.
+# Icon-class match is tried first; localized text variants are fallbacks.
+NEW_PROJECT_SELECTORS = (
+    "button:has(i.google-symbols:text('add_2'))",
+    "button:has(i:text('add_2'))",
+    "button:has-text('New project')",
+    "button:has-text('Novo projeto')",
+    "button:has-text('Nuevo proyecto')",
+    "button:has-text('Nouveau projet')",
+    "[role='button']:has-text('New project')",
+    "a:has-text('New project')",
+    r"button:text-matches('\+\s+\S+', 'i')",
+    "[aria-label*='New project' i]",
+    "[aria-label*='Project' i]",
+)
+
 
 class UiAutomationTransport:
     """D.2.4 — Playwright UI mimicry strategy.
@@ -160,6 +178,55 @@ class UiAutomationTransport:
         except Exception:  # noqa: BLE001 — defensive: transient DOM probe
             signin_button = 0
         return signin_button == 0
+
+    # ------------------------------------------------------------------
+    # Internal helpers — gallery → editor navigation (unit 3.4)
+    # ------------------------------------------------------------------
+
+    async def _enter_editor(self, page: Page, out_dir: Path | None = None) -> None:
+        """Click "+ New project" on the gallery and wait for /project/ nav.
+
+        No-op when the URL already contains ``/project/``. Tries each
+        selector in :data:`NEW_PROJECT_SELECTORS` in order — locale-stable
+        icon-class first, localized text fallbacks after. On total failure
+        a debug screenshot is written to ``out_dir`` (if provided) and
+        ``RuntimeError`` is raised with the captured URL + path.
+        """
+        if "/project/" in page.url:
+            log.info("ui_automation.editor_already_open", url=page.url)
+            return
+
+        await page.wait_for_timeout(3000)
+        for selector in NEW_PROJECT_SELECTORS:
+            try:
+                loc = page.locator(selector).first
+                await loc.wait_for(state="visible", timeout=5000)
+                log.info("ui_automation.clicking_new_project", selector=selector)
+                await loc.click()
+                try:
+                    await page.wait_for_url(lambda url: "/project/" in url, timeout=15_000)
+                    log.info("ui_automation.entered_editor", url=page.url)
+                    return
+                except Exception:  # noqa: BLE001 — try next selector
+                    log.warning(
+                        "ui_automation.new_project_click_did_not_navigate",
+                        selector=selector,
+                    )
+            except Exception:  # noqa: BLE001 — selector didn't match; try next
+                continue
+
+        shot_path: Path | None = None
+        if out_dir is not None:
+            out_dir.mkdir(parents=True, exist_ok=True)
+            shot_path = out_dir / "debug_new_project.png"
+            try:
+                await page.screenshot(path=str(shot_path), full_page=True)
+            except Exception:  # noqa: BLE001 — screenshot best-effort
+                pass
+        raise RuntimeError(
+            f"Could not find 'New project' CTA on Flow gallery. URL: {page.url}. "
+            f"Screenshot: {shot_path}"
+        )
 
     async def refresh_auth(self) -> None:
         raise NotImplementedError("UiAutomationTransport.refresh_auth — unit 3.10")
