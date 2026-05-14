@@ -160,7 +160,7 @@ toml = [
 
 [[package]]
 name = "gflow-cli"
-version = "0.5.0a1"
+version = "0.6.0a1"
 source = { editable = "." }
 dependencies = [
     { name = "click" },
