@@ -43,6 +43,11 @@ def cli_result_holder() -> dict[str, Any]:
     return {"result": None}
 
 
+@pytest.fixture
+def batch_state() -> dict[str, Any]:
+    return {"prompts": []}
+
+
 @pytest.fixture(autouse=True)
 def _patch_image_profile_resolution(monkeypatch: pytest.MonkeyPatch, tmp_path: Path) -> None:
     """Bypass profile resolution + provider-dir existence checks so image
@@ -121,6 +126,44 @@ def _mock_wire_format(monkeypatch: pytest.MonkeyPatch) -> None:
     monkeypatch.setattr("gflow_cli.cli_image._run_t2i", _raise)
 
 
+@given("the mocked t2i batch runner writes one image per prompt")
+def _mock_t2i_batch_runner(
+    monkeypatch: pytest.MonkeyPatch, batch_state: dict[str, Any]
+) -> None:
+    async def _fake_batch(**kwargs: Any) -> list[Any]:
+        from gflow_cli.image_batch import BatchOutcome
+
+        prompts = list(kwargs["prompts"])
+        batch_state["prompts"] = prompts
+        output_dir = kwargs["output_dir"]
+        output_dir.mkdir(parents=True, exist_ok=True)
+        outcomes = []
+        for prompt in prompts:
+            path = output_dir / f"{prompt.output_filename}_0.png"
+            path.write_bytes(b"\x89PNG\r\n\x1a\n")
+            outcomes.append(
+                BatchOutcome(
+                    index=prompt.index,
+                    prompt=prompt,
+                    status="ok",
+                    saved_paths=[path],
+                    error=None,
+                    exit_code=0,
+                )
+            )
+        return outcomes
+
+    monkeypatch.setattr("gflow_cli.cli_image.run_image_batch", _fake_batch)
+
+
+@given("a prompt file with 3 valid prompts, 1 blank line, and 1 comment")
+def _prompt_file_with_comments(tmp_path: Path) -> None:
+    (tmp_path / "prompts.txt").write_text(
+        "p1\n\n# skipped\np2\np3\n",
+        encoding="utf-8",
+    )
+
+
 # ---------------------------------------------------------------------------
 # When steps
 # ---------------------------------------------------------------------------
@@ -146,6 +189,53 @@ def _run_t2i_wire_fail(runner: CliRunner, cli_result_holder: dict[str, Any]) -> 
     cli_result_holder["result"] = runner.invoke(main, ["image", "t2i", "wire-fail"])
 
 
+@when('I run "gflow image t2i p1 p2 p3 --aspect 16:9 --model image4"')
+def _run_t2i_multi_positional(
+    runner: CliRunner, cli_result_holder: dict[str, Any]
+) -> None:
+    cli_result_holder["result"] = runner.invoke(
+        main,
+        ["image", "t2i", "p1", "p2", "p3", "--aspect", "16:9", "--model", "image4"],
+    )
+
+
+@when('I run "gflow image t2i --prompts-file prompts.txt"')
+def _run_t2i_prompt_file(
+    runner: CliRunner, cli_result_holder: dict[str, Any], tmp_path: Path
+) -> None:
+    cli_result_holder["result"] = runner.invoke(
+        main,
+        ["image", "t2i", "--prompts-file", str(tmp_path / "prompts.txt")],
+    )
+
+
+@when('I run "gflow image t2i p1 --prompts-file prompts.txt"')
+def _run_t2i_multiple_sources(
+    runner: CliRunner, cli_result_holder: dict[str, Any], tmp_path: Path
+) -> None:
+    cli_result_holder["result"] = runner.invoke(
+        main,
+        ["image", "t2i", "p1", "--prompts-file", str(tmp_path / "prompts.txt")],
+    )
+
+
+@when('I pipe 3 prompts into "gflow image t2i --stdin"')
+def _run_t2i_stdin(runner: CliRunner, cli_result_holder: dict[str, Any]) -> None:
+    cli_result_holder["result"] = runner.invoke(
+        main,
+        ["image", "t2i", "--stdin"],
+        input="p1\np2\np3\n",
+    )
+
+
+@when('I run "gflow image t2i" with 51 positional prompts')
+def _run_t2i_51_prompts(runner: CliRunner, cli_result_holder: dict[str, Any]) -> None:
+    cli_result_holder["result"] = runner.invoke(
+        main,
+        ["image", "t2i", *[f"p{i}" for i in range(51)]],
+    )
+
+
 # ---------------------------------------------------------------------------
 # Then steps
 # ---------------------------------------------------------------------------
@@ -167,6 +257,12 @@ def _check_exit_5(cli_result_holder: dict[str, Any]) -> None:
 def _check_exit_7(cli_result_holder: dict[str, Any]) -> None:
     result = cli_result_holder["result"]
     assert result.exit_code == 7, result.output
+
+
+@then("the exit code is 2")
+def _check_exit_2(cli_result_holder: dict[str, Any]) -> None:
+    result = cli_result_holder["result"]
+    assert result.exit_code == 2, result.output
 
 
 @then("one image file is created")
@@ -191,3 +287,23 @@ def _check_content_policy_output(cli_result_holder: dict[str, Any]) -> None:
 def _check_file_bug_output(cli_result_holder: dict[str, Any]) -> None:
     result = cli_result_holder["result"]
     assert "File a bug" in result.output
+
+
+@then('the output contains "mutually exclusive"')
+def _check_mutually_exclusive_output(cli_result_holder: dict[str, Any]) -> None:
+    result = cli_result_holder["result"]
+    assert "mutually exclusive" in result.output.lower()
+
+
+@then('the output contains "between 1 and 50"')
+def _check_between_1_and_50_output(cli_result_holder: dict[str, Any]) -> None:
+    result = cli_result_holder["result"]
+    assert "between 1 and 50" in result.output
+
+
+@then(parsers.parse('every batch prompt used aspect "{aspect}" and model "{model}"'))
+def _check_batch_prompt_options(batch_state: dict[str, Any], aspect: str, model: str) -> None:
+    prompts = batch_state["prompts"]
+    assert prompts
+    assert all(prompt.aspect_ratio == aspect for prompt in prompts)
+    assert all(prompt.model == model for prompt in prompts)
