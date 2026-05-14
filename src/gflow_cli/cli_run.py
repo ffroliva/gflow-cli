@@ -16,76 +16,71 @@ import asyncio
 import json
 import sys
 import time
-from dataclasses import dataclass, field
+from dataclasses import dataclass
 from pathlib import Path
-from typing import TYPE_CHECKING, Any, cast
+from typing import Any, cast
 
 import click
-import structlog
 from rich.console import Console
-from rich.table import Table
 
 from gflow_cli._cli_helpers import _make_provider_dir, _resolve_profile
 from gflow_cli.api.client import FlowApiClient
-from gflow_cli.api.image import Aspect, GenerateImageRequest, Model
 from gflow_cli.api.transports import EXPERIMENTAL_TRANSPORTS
 from gflow_cli.config import get_settings
-from gflow_cli.errors import EXIT_CODE_MAP, ConfigurationError, GFlowError
+from gflow_cli.errors import ConfigurationError
+from gflow_cli.image_batch import (
+    ALLOWED_ASPECT_RATIOS as _ALLOWED_ASPECT_RATIOS,
+)
+from gflow_cli.image_batch import (
+    ALLOWED_MODELS as _ALLOWED_MODELS,
+)
+from gflow_cli.image_batch import (
+    DEFAULT_ASPECT_RATIO as _DEFAULT_ASPECT_RATIO,
+)
+from gflow_cli.image_batch import (
+    DEFAULT_COUNT as _DEFAULT_COUNT,
+)
+from gflow_cli.image_batch import (
+    DEFAULT_MODEL as _DEFAULT_MODEL,
+)
+from gflow_cli.image_batch import (
+    MAX_COUNT as _MAX_COUNT,
+)
+from gflow_cli.image_batch import (
+    MAX_PROMPTS as _MAX_PROMPTS,
+)
+from gflow_cli.image_batch import (
+    MAX_TEXT_LEN as _MAX_TEXT_LEN,
+)
+from gflow_cli.image_batch import (
+    MIN_COUNT as _MIN_COUNT,
+)
+from gflow_cli.image_batch import (
+    MIN_PROMPTS as _MIN_PROMPTS,
+)
+from gflow_cli.image_batch import (
+    MIN_TEXT_LEN as _MIN_TEXT_LEN,
+)
+from gflow_cli.image_batch import (
+    BatchOutcome,
+    BatchPromptItem,
+    render_image_batch_summary,
+    resolve_exit_code,
+    run_image_batch,
+)
 
-if TYPE_CHECKING:
-    from gflow_cli.api.dto import GeneratedImage
-
-log = structlog.get_logger(__name__)
 console = Console()
 
 
-# Schema enums — mirror the spec D.1 schema. Source of truth for both
-# validation and the user-facing error messages.
-_ALLOWED_ASPECT_RATIOS: tuple[str, ...] = ("9:16", "16:9", "1:1", "4:3", "3:4")
-_ALLOWED_MODELS: tuple[str, ...] = ("nano2", "nano-pro", "imagen4")
 _ALLOWED_TOP_LEVEL_KEYS: frozenset[str] = frozenset(
     {"profile", "transport", "output_dir", "prompts"}
 )
 _ALLOWED_PROMPT_KEYS: frozenset[str] = frozenset(
     {"text", "aspect_ratio", "model", "count", "output_filename"}
 )
-_MIN_PROMPTS = 1
-_MAX_PROMPTS = 50
-_MIN_TEXT_LEN = 1
-_MAX_TEXT_LEN = 2000
-_MIN_COUNT = 1
-_MAX_COUNT = 4
-_DEFAULT_ASPECT_RATIO = "9:16"
-_DEFAULT_MODEL = "nano2"
-_DEFAULT_COUNT = 1
-
-
-def _resolve_exit_code(exc: GFlowError) -> int:
-    """Map ``exc`` to its CLI exit code via isinstance walk on EXIT_CODE_MAP.
-
-    Most-specific subclass wins (the dict is ordered most-specific-first
-    in errors.py). Falls back to 1 for unmapped exception classes.
-    """
-    for cls, code in EXIT_CODE_MAP.items():
-        if isinstance(exc, cls):
-            return code
-    return 1
-
-
 # ---------------------------------------------------------------------------
 # Dataclasses — validated config + per-prompt outcome.
 # ---------------------------------------------------------------------------
-
-
-@dataclass(frozen=True)
-class BatchPromptItem:
-    """One prompt entry from the batch config."""
-
-    text: str
-    aspect_ratio: str = _DEFAULT_ASPECT_RATIO
-    model: str = _DEFAULT_MODEL
-    count: int = _DEFAULT_COUNT
-    output_filename: str | None = None
 
 
 @dataclass(frozen=True)
@@ -208,19 +203,8 @@ class BatchConfig:
             model=model,
             count=count,
             output_filename=output_filename,
+            index=idx,
         )
-
-
-@dataclass
-class _PromptOutcome:
-    """Single-prompt outcome tracked in the run loop."""
-
-    index: int
-    prompt: BatchPromptItem
-    status: str  # "ok" | "fail" | "skipped"
-    saved_paths: list[Path] = field(default_factory=lambda: [])
-    error: str | None = None
-    exit_code: int = 0
 
 
 # ---------------------------------------------------------------------------
@@ -269,7 +253,7 @@ async def _run_batch(
     prompts: tuple[BatchPromptItem, ...],
     output_dir: Path,
     continue_on_error: bool,
-) -> list[_PromptOutcome]:
+) -> list[BatchOutcome]:
     """Run ``prompts`` sequentially through ONE FlowApiClient session.
 
     Per AUDIT_E1 D.2: a single ``async with FlowApiClient(...)`` block
@@ -277,116 +261,17 @@ async def _run_batch(
     across iterations. reCAPTCHA tokens mint fresh on each
     ``generate_image`` call.
     """
-    output_dir.mkdir(parents=True, exist_ok=True)
-    outcomes: list[_PromptOutcome] = []
-    async with FlowApiClient(
-        profile_dir=profile_dir, headless=headless, transport=transport
-    ) as client:
-        project = await client.create_project(title="gflow-cli run")
-        log.info(
-            "cli_run.project_created",
-            project_id=project.project_id,
-            n_prompts=len(prompts),
-        )
-        for idx, item in enumerate(prompts):
-            outcome = await _run_one_prompt(
-                client=client,
-                project_id=project.project_id,
-                idx=idx,
-                item=item,
-                output_dir=output_dir,
-            )
-            outcomes.append(outcome)
-            if outcome.status == "fail" and not continue_on_error:
-                # Fail-fast: append a "skipped" marker for the remaining
-                # prompts so the summary table is complete and the caller
-                # can see how many were not attempted.
-                for skip_idx in range(idx + 1, len(prompts)):
-                    outcomes.append(
-                        _PromptOutcome(
-                            index=skip_idx,
-                            prompt=prompts[skip_idx],
-                            status="skipped",
-                        )
-                    )
-                break
+    outcomes = await run_image_batch(
+        profile_dir=profile_dir,
+        headless=headless,
+        transport=transport,
+        prompts=prompts,
+        output_dir=output_dir,
+        continue_on_error=continue_on_error,
+        project_title="gflow-cli run",
+        client_factory=FlowApiClient,
+    )
     return outcomes
-
-
-async def _run_one_prompt(
-    *,
-    client: FlowApiClient,
-    project_id: str,
-    idx: int,
-    item: BatchPromptItem,
-    output_dir: Path,
-) -> _PromptOutcome:
-    """Generate ``count`` image(s) for one prompt + download each."""
-    req = GenerateImageRequest(
-        prompt=item.text,
-        aspect=Aspect.from_cli(item.aspect_ratio),
-        model=Model.from_cli(item.model),
-    )
-    stem = item.output_filename or f"prompt_{idx}"
-    try:
-        if item.count == 1:
-            img = await client.generate_image(project_id=project_id, req=req)
-            images: list[GeneratedImage] = [img]
-        else:
-            images = await client.generate_images_batch(
-                project_id=project_id, req=req, count=item.count
-            )
-        saved: list[Path] = []
-        for img_idx, img in enumerate(images):
-            target = output_dir / f"{stem}_{img_idx}.png"
-            path = await client.download_image(img, target)
-            saved.append(path)
-        return _PromptOutcome(index=idx, prompt=item, status="ok", saved_paths=saved)
-    except GFlowError as e:
-        return _PromptOutcome(
-            index=idx,
-            prompt=item,
-            status="fail",
-            error=f"{type(e).__name__}: {e}",
-            exit_code=_resolve_exit_code(e),
-        )
-
-
-def _render_summary(outcomes: list[_PromptOutcome]) -> int:
-    """Print a Rich table + return the aggregate exit code."""
-    table = Table(title="gflow run")
-    table.add_column("#", justify="right")
-    table.add_column("prompt", overflow="fold")
-    table.add_column("ratio")
-    table.add_column("status")
-    table.add_column("detail", overflow="fold")
-    for o in outcomes:
-        if o.status == "ok":
-            detail = " · ".join(str(p) for p in o.saved_paths)
-            status_str = "[green]OK[/green]"
-        elif o.status == "fail":
-            detail = o.error or ""
-            status_str = "[red]FAIL[/red]"
-        else:
-            detail = "(not attempted)"
-            status_str = "[yellow]SKIPPED[/yellow]"
-        # Truncate the prompt to keep the row readable.
-        text_preview = o.prompt.text if len(o.prompt.text) <= 60 else o.prompt.text[:57] + "..."
-        table.add_row(
-            str(o.index),
-            text_preview,
-            o.prompt.aspect_ratio,
-            status_str,
-            detail,
-        )
-    console.print(table)
-    succeeded = sum(1 for o in outcomes if o.status == "ok")
-    failed = sum(1 for o in outcomes if o.status == "fail")
-    skipped = sum(1 for o in outcomes if o.status == "skipped")
-    console.print(
-        f"\n{succeeded}/{len(outcomes)} succeeded · {failed} failure(s) · {skipped} skipped"
-    )
-    return max((o.exit_code for o in outcomes), default=0)
 
 
 # ---------------------------------------------------------------------------
@@ -435,7 +320,7 @@ def run(
         _check_transport_gated(cfg.transport)
     except ConfigurationError as e:
         console.print(f"[red]Config error:[/red] {e}")
-        sys.exit(_resolve_exit_code(e))
+        sys.exit(resolve_exit_code(e))
 
     profile_name = _resolve_profile(profile or cfg.profile)
     provider_dir = _make_provider_dir(profile_name)
@@ -461,6 +346,6 @@ def run(
             continue_on_error=continue_on_error,
         )
     )
-    exit_code = _render_summary(outcomes)
+    exit_code = render_image_batch_summary(outcomes, title="gflow run")
     if exit_code != 0:
         sys.exit(exit_code)

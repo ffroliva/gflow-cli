@@ -14,7 +14,9 @@ in :mod:`gflow_cli._cli_helpers` since T4b — a negative AST-based test in
 
 from __future__ import annotations
 
+import asyncio
 import re
+import sys
 from pathlib import Path
 
 import click
@@ -31,6 +33,17 @@ from gflow_cli.api.dto import GeneratedImage
 from gflow_cli.api.image import Aspect, GenerateImageRequest, ImageRef, Model
 from gflow_cli.api.transports import transport_choices
 from gflow_cli.config import get_settings
+from gflow_cli.errors import ConfigurationError
+from gflow_cli.image_batch import (
+    parse_prompt_lines,
+    prompt_items_from_parsed,
+    prompt_items_from_texts,
+    read_prompt_file,
+    render_image_batch_summary,
+    resolve_t2i_batch_output_dir,
+    run_image_batch,
+    safe_terminal_text,
+)
 from gflow_cli.paths import image_output_path
 
 # Case-insensitive 8-4-4-4-12 hex with hyphens — Flow's media UUIDs.
@@ -192,13 +205,39 @@ _ASPECT_CHOICES = ["9:16", "16:9", "1:1", "4:3", "3:4"]
         "\b\n"
         "Examples:\n"
         '  gflow image t2i "a serene mountain lake at dawn"\n'
+        '  gflow image t2i "prompt one" "prompt two" "prompt three"\n'
+        "  gflow image t2i --prompts-file prompts.txt\n"
+        "  cat prompts.txt | gflow image t2i --stdin\n"
         '  gflow image t2i "neon cyberpunk alley" --model nano-pro --aspect 16:9\n'
         '  gflow image t2i "variations of a logo" -n 4 --aspect 1:1\n'
         '  gflow image t2i "reproducible shot" --seed 42\n\n'
-        "Note: --seed is only valid when generating a single image (-n 1)."
+        "Note: --seed is only valid when generating a single image (-n 1) "
+        "and is not supported in multi-prompt mode."
     ),
 )
-@click.argument("prompt")
+@click.argument("prompts", nargs=-1, required=False)
+@click.option(
+    "--prompts-file",
+    "prompts_file",
+    default=None,
+    type=click.Path(path_type=Path),
+    help=(
+        "Read prompts from a UTF-8 text file: one prompt per non-empty line; "
+        "whole-line # comments skipped."
+    ),
+)
+@click.option(
+    "--stdin",
+    "read_stdin",
+    is_flag=True,
+    help="Read prompts from stdin using the same format as --prompts-file.",
+)
+@click.option(
+    "--continue-on-error/--fail-fast",
+    default=True,
+    show_default=True,
+    help="In multi-prompt mode, continue after per-prompt failures or stop at the first failure.",
+)
 @click.option(
     "--model",
     default="nano2",
@@ -251,7 +290,10 @@ _ASPECT_CHOICES = ["9:16", "16:9", "1:1", "4:3", "3:4"]
     ),
 )
 def t2i(
-    prompt: str,
+    prompts: tuple[str, ...],
+    prompts_file: Path | None,
+    read_stdin: bool,
+    continue_on_error: bool,
     model: str,
     aspect: str,
     count: int,
@@ -260,37 +302,124 @@ def t2i(
     profile: str | None,
     transport: str | None,
 ) -> None:
-    """Generate image(s) from PROMPT (text-to-image)."""
+    """Generate image(s) from one or more text prompts."""
     # Validate flag combinations BEFORE any I/O. Click's IntRange already
     # bounds count to [1, 4]; here we enforce the cross-flag rule that --seed
     # is only meaningful when generating a single image (multi-image fan-out
     # uses N independent random seeds and a shared batch_id).
+    source_count = _count_t2i_sources(prompts, prompts_file, read_stdin)
+    if source_count == 0:
+        raise click.UsageError("Provide a prompt, multiple prompts, --prompts-file, or --stdin.")
+    if source_count > 1:
+        raise click.UsageError(
+            "Prompt sources are mutually exclusive: use positional prompts, "
+            "--prompts-file, or --stdin."
+        )
+    is_multi_prompt = len(prompts) > 1 or prompts_file is not None or read_stdin
     if seed is not None and count != 1:
         raise click.UsageError(
             "--seed is only valid when generating a single image (-n 1). "
             "For multi-image runs, omit --seed and let each shot get its own."
         )
+    if seed is not None and is_multi_prompt:
+        raise click.UsageError(
+            "--seed is not supported for multi-prompt `gflow image t2i`. "
+            "Use one single-prompt command per seed today; per-prompt seeds belong "
+            "to a future `gflow run --config` schema update."
+        )
+
+    if not is_multi_prompt:
+        if not prompts:
+            raise click.UsageError(
+                "Provide a prompt, multiple prompts, --prompts-file, or --stdin."
+            )
+        prompt = prompts[0]
+        profile_name = _resolve_profile(profile)
+        provider_dir = _make_provider_dir(profile_name)
+        settings = get_settings()
+        run_with_handlers(
+            lambda: _run_t2i(
+                profile_dir=provider_dir,
+                headless=settings.headless,
+                req=GenerateImageRequest(
+                    prompt=prompt,
+                    aspect=Aspect.from_cli(aspect),
+                    model=Model.from_cli(model),
+                ),
+                count=count,
+                seed=seed,
+                out=out,
+                output_root=settings.output_dir,
+                transport=transport,
+            ),
+            cli_command="image t2i",
+        )
+        return
+
+    try:
+        if prompts_file is not None:
+            parsed = read_prompt_file(prompts_file)
+            batch_prompts = prompt_items_from_parsed(
+                parsed,
+                aspect_ratio=aspect,
+                model=model,
+                count=count,
+            )
+        elif read_stdin:
+            parsed = parse_prompt_lines(sys.stdin.read(), source_label="--stdin")
+            batch_prompts = prompt_items_from_parsed(
+                parsed,
+                aspect_ratio=aspect,
+                model=model,
+                count=count,
+            )
+        else:
+            batch_prompts = prompt_items_from_texts(
+                prompts,
+                aspect_ratio=aspect,
+                model=model,
+                count=count,
+                source_label="positional",
+            )
+    except ConfigurationError as exc:
+        raise _as_usage_error(exc) from exc
 
     profile_name = _resolve_profile(profile)
     provider_dir = _make_provider_dir(profile_name)
     settings = get_settings()
-    run_with_handlers(
-        lambda: _run_t2i(
+    output_dir = resolve_t2i_batch_output_dir(out=out, output_root=settings.output_dir)
+    console.print(
+        f"\n[bold]gflow image t2i[/bold] · profile=[bold]{profile_name}[/bold] "
+        f"· {len(batch_prompts)} prompt(s) · up to {len(batch_prompts) * count} image(s)"
+    )
+    console.print(f"  output_dir: [dim]{safe_terminal_text(str(output_dir))}[/dim]")
+    if not continue_on_error:
+        console.print("  mode: [yellow]fail-fast[/yellow]")
+
+    outcomes = asyncio.run(
+        run_image_batch(
             profile_dir=provider_dir,
             headless=settings.headless,
-            req=GenerateImageRequest(
-                prompt=prompt,
-                aspect=Aspect.from_cli(aspect),
-                model=Model.from_cli(model),
-            ),
-            count=count,
-            seed=seed,
-            out=out,
-            output_root=settings.output_dir,
             transport=transport,
-        ),
-        cli_command="image t2i",
+            prompts=batch_prompts,
+            output_dir=output_dir,
+            continue_on_error=continue_on_error,
+            project_title="gflow-cli t2i",
+        )
     )
+    exit_code = render_image_batch_summary(outcomes, title="gflow-cli t2i")
+    if exit_code != 0:
+        sys.exit(exit_code)
+
+
+def _count_t2i_sources(
+    prompts: tuple[str, ...], prompts_file: Path | None, read_stdin: bool
+) -> int:
+    return int(bool(prompts)) + int(prompts_file is not None) + int(read_stdin)
+
+
+def _as_usage_error(exc: ConfigurationError) -> click.UsageError:
+    return click.UsageError(str(exc))
 
 
 async def _run_t2i(

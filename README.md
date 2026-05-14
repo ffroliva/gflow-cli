@@ -71,6 +71,7 @@ Read the full [DISCLAIMER](DISCLAIMER.md) before deploying this in any productio
 | Pluggable image transport + `ui_automation` default strategy | ✅ done (v0.5.0a1) |
 | `gflow run --config <file>` sequential JSON batches | ✅ done (v0.5.0a1) |
 | `examples/` directory with runnable single-image + batch scripts | ✅ done (v0.5.0a1) |
+| Shell multi-prompt `gflow image t2i` (`PROMPT...`, `--prompts-file`, `--stdin`) | ✅ done (v0.6.0a1) |
 | Provider abstraction for official Veo 3.1 API | ⏳ planned (v0.6+) |
 
 ### What's new in v0.5.0a1
@@ -207,7 +208,9 @@ gflow auth login                                         # one-time browser sign
 gflow auth status                                        # show current session
 
 gflow image upload <path>                                # upload PNG/JPEG → asset UUID
-gflow image t2i "<prompt>" [--model] [--aspect] [-n]     # text-to-image (1–4 per call)
+gflow image t2i "<prompt>" [...] [--model] [--aspect]    # text-to-image; repeat prompts for a warm batch
+gflow image t2i --prompts-file prompts.txt               # text-file multi-prompt batch
+gflow image t2i --stdin                                  # stdin multi-prompt batch
 gflow image i2i "<prompt>" --ref PATH_OR_UUID [...]      # image-to-image (1–4 per call)
 
 gflow video t2v "<prompt>" -o out.mp4                    # text-to-video (Veo 3.1)
