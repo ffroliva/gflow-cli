@@ -127,9 +127,7 @@ def _mock_wire_format(monkeypatch: pytest.MonkeyPatch) -> None:
 
 
 @given("the mocked t2i batch runner writes one image per prompt")
-def _mock_t2i_batch_runner(
-    monkeypatch: pytest.MonkeyPatch, batch_state: dict[str, Any]
-) -> None:
+def _mock_t2i_batch_runner(monkeypatch: pytest.MonkeyPatch, batch_state: dict[str, Any]) -> None:
     async def _fake_batch(**kwargs: Any) -> list[Any]:
         from gflow_cli.image_batch import BatchOutcome
 
@@ -190,9 +188,7 @@ def _run_t2i_wire_fail(runner: CliRunner, cli_result_holder: dict[str, Any]) -> 
 
 
 @when('I run "gflow image t2i p1 p2 p3 --aspect 16:9 --model image4"')
-def _run_t2i_multi_positional(
-    runner: CliRunner, cli_result_holder: dict[str, Any]
-) -> None:
+def _run_t2i_multi_positional(runner: CliRunner, cli_result_holder: dict[str, Any]) -> None:
     cli_result_holder["result"] = runner.invoke(
         main,
         ["image", "t2i", "p1", "p2", "p3", "--aspect", "16:9", "--model", "image4"],

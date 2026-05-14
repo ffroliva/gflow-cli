@@ -82,15 +82,24 @@ gflow image i2i "make it cinematic" --ref "$UUID"
 
 ## `gflow image t2i`
 
-Generate 1–4 images from a text prompt using Google Flow's Imagen / Nano Banana models.
+Generate 1–4 images from one text prompt, or run a shell-friendly batch of 1–50
+prompts through one Flow session/project.
 
 ```text
-gflow image t2i PROMPT [OPTIONS]
+gflow image t2i PROMPT [PROMPT ...] [OPTIONS]
+gflow image t2i --prompts-file FILE [OPTIONS]
+gflow image t2i --stdin [OPTIONS]
 
 Arguments:
-  PROMPT                    Text prompt.                           [required]
+  PROMPT                    Text prompt. Repeat for multi-prompt mode.
 
 Options:
+  --prompts-file FILE       UTF-8 text file: one prompt per non-empty line;
+                            whole-line # comments skipped.
+  --stdin                   Read prompts from stdin using the same format.
+  --continue-on-error /
+  --fail-fast               Continue after per-prompt failures or stop at the
+                            first failed prompt. [default: continue-on-error]
   --model [nano2|nano-pro|image4]
                             Image model alias.                [default: nano2]
   --aspect [9:16|16:9|1:1|4:3|3:4]
@@ -109,12 +118,26 @@ Options:
 | `nano-pro` | Nano Banana Pro (`GEM_PIX_2`) | Higher quality, slower. |
 | `image4` | Imagen 4 (`IMAGEN_3_5`) | Photoreal-leaning Imagen variant. |
 
-**Seed-requires-count==1 invariant.** `--seed` is only valid when generating a single image (`-n 1`). For multi-image runs the CLI rejects the combination upfront — multi-image fan-out uses N independent random seeds (one per shot) wired to a shared `batch_id`, which gives you variation. If you need reproducibility across many shots, run `--seed` once per call in a loop.
+**Multi-prompt shortcut.**
+
+- Positional multi-prompt: `gflow image t2i "p1" "p2" "p3"`.
+- `--prompts-file FILE`: UTF-8 text, one prompt per non-empty line, whole-line
+  `#` comments skipped.
+- `--stdin`: same format as `--prompts-file`.
+- Sources are mutually exclusive.
+- Output names use `prompt_<prompt-index>_<variation-index>.png`.
+- With `-n 4`, each prompt produces four images; the maximum shell shortcut
+  fan-out is 50 prompts * 4 = 200 images.
+- `--continue-on-error` is default; `--fail-fast` stops after the first failed
+  prompt.
+
+**Seed-requires-count==1 invariant.** `--seed` is only valid when generating a single image (`-n 1`). For multi-image runs the CLI rejects the combination upfront — multi-image fan-out uses N independent random seeds (one per shot) wired to a shared `batch_id`, which gives you variation. `--seed` is not supported in multi-prompt mode; use separate single-prompt commands for seeded work today.
 
 **Output paths.**
 
 - **Default (`--out` omitted).** Files land under `$GFLOW_CLI_OUTPUT_DIR/images/<YYYY-MM-DD>/<media_name>_<n>.png`. The date partition keeps long-running batches navigable.
 - **`--out DIR` provided.** Files are written **flat** as `<DIR>/<media_name>_<n>.png` — no date subdirectory. `--out` must be a directory; flat-file output paths are not supported (you can rename after the fact).
+- **Multi-prompt mode.** Files are written as `prompt_<prompt-index>_<variation-index>.png`; the prompt index and variation index are zero-based.
 
 **Examples:**
 
@@ -130,6 +153,15 @@ gflow image t2i "variations of a minimalist fox logo" -n 4 --aspect 1:1 --out ./
 
 # Reproducible single shot
 gflow image t2i "reproducible reference shot" --seed 42
+
+# Three prompts in one warm Flow session/project
+gflow image t2i "p1" "p2" "p3" --aspect 16:9 --model image4
+
+# Text file input: comments and blank lines are ignored
+gflow image t2i --prompts-file prompts.txt --fail-fast
+
+# Pipeline input
+Get-Content prompts.txt | gflow image t2i --stdin
 ```
 
 A 4-image run with `--out ./logos/` produces:
