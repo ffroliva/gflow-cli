@@ -27,6 +27,7 @@ from gflow_cli._cli_helpers import (
     _make_provider_dir,
     _resolve_profile,
     run_with_handlers,
+    safe_path_text,
 )
 from gflow_cli.api.client import FlowApiClient
 from gflow_cli.api.dto import GeneratedImage
@@ -61,7 +62,6 @@ from gflow_cli.image_batch import (
     render_image_batch_summary,
     resolve_t2i_batch_output_dir,
     run_image_batch,
-    safe_terminal_text,
 )
 from gflow_cli.image_batch import (
     MIN_COUNT as _MIN_COUNT,
@@ -422,7 +422,7 @@ def t2i(
         f"\n[bold]gflow image t2i[/bold] · profile=[bold]{profile_name}[/bold] "
         f"· {len(batch_prompts)} prompt(s) · up to {len(batch_prompts) * count} image(s)"
     )
-    console.print(f"  output_dir: [dim]{safe_terminal_text(str(output_dir))}[/dim]")
+    console.print(f"  output_dir: [dim]{safe_path_text(output_dir)}[/dim]")
     if not continue_on_error:
         console.print("  mode: [yellow]fail-fast[/yellow]")
 
@@ -502,7 +502,7 @@ def _print_t2i_summary(images: list[GeneratedImage], saved_paths: list[Path]) ->
     table.add_column("output_path", overflow="fold")
     for img, path in zip(images, saved_paths, strict=True):
         w, h = img.dimensions
-        table.add_row(img.media_name, str(img.seed), f"{w}x{h}", str(path))
+        table.add_row(img.media_name, str(img.seed), f"{w}x{h}", safe_path_text(path))
     console.print(table)
 
 
@@ -735,5 +735,5 @@ def _print_i2i_summary(images: list[GeneratedImage], saved_paths: list[Path]) ->
     table.add_column("output_path", overflow="fold")
     for img, path in zip(images, saved_paths, strict=True):
         w, h = img.dimensions
-        table.add_row(img.media_name, str(img.seed), f"{w}x{h}", str(path))
+        table.add_row(img.media_name, str(img.seed), f"{w}x{h}", safe_path_text(path))
     console.print(table)

@@ -12,6 +12,9 @@ from rich.console import Console
 from rich.markup import escape
 from rich.table import Table
 
+from gflow_cli._cli_helpers import (
+    safe_path_text,
+)
 from gflow_cli.api.client import FlowApiClient
 from gflow_cli.api.image import Aspect, GenerateImageRequest, Model
 from gflow_cli.errors import EXIT_CODE_MAP, ConfigurationError, GFlowError
@@ -332,7 +335,7 @@ def render_image_batch_summary(outcomes: list[BatchOutcome], *, title: str) -> i
     table.add_column("detail", overflow="fold")
     for outcome in outcomes:
         if outcome.status == "ok":
-            detail = " · ".join(str(path) for path in outcome.saved_paths)
+            detail = " · ".join(safe_path_text(path) for path in outcome.saved_paths)
             status_str = "[green]OK[/green]"
         elif outcome.status == "fail":
             detail = outcome.error or ""

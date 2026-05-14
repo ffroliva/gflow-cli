@@ -70,7 +70,38 @@ __all__ = [
     "_make_provider_dir",
     "_resolve_profile",
     "run_with_handlers",
+    "safe_path_text",
 ]
+
+
+def safe_path_text(path: Path) -> str:
+    """Format a path for terminal display, avoiding absolute path leaks.
+
+    Tries to:
+    1. Make path relative to CWD if it's underneath.
+    2. Replace Path.home() with '~' if it's underneath.
+    3. Fall back to str(path) but warn in review that this might leak.
+    """
+    try:
+        # 1. CWD relative
+        cwd = Path.cwd().resolve()
+        p_resolved = path.resolve()
+        if p_resolved.is_relative_to(cwd):
+            return str(p_resolved.relative_to(cwd))
+
+        # 2. Home relative
+        home = Path.home().resolve()
+        if p_resolved.is_relative_to(home):
+            # Using forward slashes for cross-platform feel in ~ paths
+            rel = p_resolved.relative_to(home)
+            return "~/" + str(rel).replace("\\", "/")
+
+        # 3. If it's still absolute, and we're on Windows, check if it's in a drive root
+        # that isn't the home drive, or just return the resolved path.
+        return str(p_resolved)
+    except (ValueError, RuntimeError, OSError):
+        # Fallback for any resolution error (e.g. invalid chars on Win)
+        return str(path)
 
 
 def _exit_code_for(exc: GFlowError) -> int:
