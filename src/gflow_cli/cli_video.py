@@ -18,6 +18,7 @@ from gflow_cli._cli_helpers import (
     _make_provider_dir,
     _resolve_profile,
     run_with_handlers,
+    safe_path_text,
 )
 from gflow_cli.api.client import FlowApiClient
 from gflow_cli.api.video import Aspect, GenerateVideoRequest
@@ -162,7 +163,7 @@ async def _poll_and_download(
         sys.exit(1)
 
     saved = await client.download(media_name, output)
-    console.print(f"[green]Saved[/green] {saved}")
+    console.print(f"[green]Saved[/green] {safe_path_text(saved)}")
 
 
 # ---------------------------------------------------------------------------
