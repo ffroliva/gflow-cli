@@ -323,14 +323,25 @@ Page creation averaged **44.7–48.1 ms per page** across N=2/4/8/16 inside one 
 
 ### Phase 5 — Public alpha soak + first non-alpha release
 
-`v0.2.0a1` through `v0.4.0a2` are already on PyPI under Trusted Publishing.
+`v0.2.0a1` through `v0.6.0a1` are already on PyPI under Trusted Publishing.
 Phase 5 is the soak window before dropping the `aN` suffix:
 
-- Let `v0.4.0a2` soak on PyPI for at least 1 week with external installs
-- Verify `uvx --from "gflow-cli==0.4.0a2" gflow --help` works on a fresh machine on all three OSes (Windows / macOS / Linux)
+- Let `v0.6.0a1` soak on PyPI for at least 1 week with external installs
+- Verify `uvx --from "gflow-cli==0.6.0a1" gflow --help` works on a fresh machine on all three OSes (Windows / macOS / Linux)
 - Triage any issues filed by external users (`gh issue list`)
-- Tag the first non-alpha (`v0.4.0`) once the surface is stable enough for external automation
+- Tag the first non-alpha (`v0.6.0`) once the surface is stable enough for external automation
 - Optional follow-up: scaffold `OfficialVeoProvider` against [`googleapis/python-genai`](https://github.com/googleapis/python-genai) behind `GFLOW_CLI_PROVIDER=official`
+
+---
+
+### Technical Debt & Refactoring — BACKLOG
+
+Identified during v0.6.0a1 Council Review. To be addressed before or during Phase 6.
+
+- **Unify Output Resolution**: `cli_run.py` uses `out/<UTC>` while `cli_image.py` uses `images/<YYYY-MM-DD>`. Align both to the date-partitioned daily strategy or a single shared helper.
+- **Deduplicate JSON Validation**: `cli_run.py` duplicates model/aspect validation logic. Consolidate into `image_batch.py` helpers.
+- **Generic Batch Orchestrator**: Refactor `run_image_batch` to accept a worker callback. This will allow the same sequential/fail-fast orchestration to support `video` batches in the future.
+- **Playwright Thread Safety**: Investigate why `unittest.mock.patch` plus multi-threaded `asyncio` hangs in `tests/test_browser_manager.py`. The test is currently skipped.
 
 ---
 
