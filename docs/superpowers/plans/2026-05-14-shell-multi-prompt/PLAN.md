@@ -105,7 +105,7 @@ Add `tests/cli/test_t2i_multi_prompt.py` with this initial content:
 from __future__ import annotations
 
 from pathlib import Path
-from unittest.mock import patch
+from unittest.mock import AsyncMock, MagicMock, patch
 
 import pytest
 from click.testing import CliRunner
@@ -192,6 +192,39 @@ def test_read_prompt_file_uses_basename_in_error(tmp_path: Path) -> None:
 
     assert "--prompts-file prompts.txt" in str(exc.value)
     assert str(tmp_path) not in str(exc.value)
+
+
+def test_read_prompt_file_sanitizes_basename_in_error(tmp_path: Path) -> None:
+    from gflow_cli.errors import ConfigurationError
+    from gflow_cli.image_batch import read_prompt_file
+
+    weird = tmp_path / "bad[red]\x1b[31m.txt"
+    with pytest.raises(ConfigurationError) as exc:
+        read_prompt_file(weird)
+
+    msg = str(exc.value)
+    assert "\x1b[31m" not in msg
+    assert "\\[red]" in msg
+
+
+def test_read_prompt_file_read_error_uses_basename(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    from gflow_cli.errors import ConfigurationError
+    from gflow_cli.image_batch import read_prompt_file
+
+    prompts = tmp_path / "prompts.txt"
+    prompts.write_text("p1\n", encoding="utf-8")
+
+    def _raise(*_args, **_kwargs):
+        raise OSError("permission denied")
+
+    monkeypatch.setattr(Path, "read_text", _raise)
+    with pytest.raises(ConfigurationError) as exc:
+        read_prompt_file(prompts)
+
+    assert "--prompts-file prompts.txt" in str(exc.value)
+    assert "permission denied" not in str(exc.value)
 ```
 
 - [ ] **Step 1.3: Add CLI preflight tests**
@@ -237,6 +270,118 @@ def test_t2i_rejects_empty_stdin_before_profile_resolution() -> None:
 
     assert result.exit_code == 2
     resolve_profile.assert_not_called()
+
+
+def test_t2i_rejects_51_positional_prompts_before_profile_and_output_dir() -> None:
+    from gflow_cli.cli import main
+
+    with (
+        patch("gflow_cli.cli_image._resolve_profile") as resolve_profile,
+        patch("gflow_cli.cli_image.resolve_t2i_batch_output_dir") as resolve_output,
+    ):
+        result = CliRunner().invoke(
+            main,
+            ["image", "t2i", *[f"p{i}" for i in range(51)]],
+            catch_exceptions=False,
+        )
+
+    assert result.exit_code == 2
+    assert "between 1 and 50" in result.output
+    resolve_profile.assert_not_called()
+    resolve_output.assert_not_called()
+
+
+def test_t2i_rejects_long_positional_prompt_before_profile_and_output_dir() -> None:
+    from gflow_cli.cli import main
+
+    with (
+        patch("gflow_cli.cli_image._resolve_profile") as resolve_profile,
+        patch("gflow_cli.cli_image.resolve_t2i_batch_output_dir") as resolve_output,
+    ):
+        result = CliRunner().invoke(
+            main,
+            ["image", "t2i", "ok", "x" * 2001],
+            catch_exceptions=False,
+        )
+
+    assert result.exit_code == 2
+    assert "2000" in result.output
+    resolve_profile.assert_not_called()
+    resolve_output.assert_not_called()
+
+
+@pytest.mark.parametrize(
+    "filename, content, expected",
+    [
+        ("invalid_utf8.txt", b"\xff\xfe\x00", "UTF-8"),
+        ("empty.txt", b"# comment\n\n", "between 1 and 50"),
+        ("long.txt", ("x" * 2001).encode("utf-8"), "2000"),
+        ("too_many.txt", "\n".join(f"p{i}" for i in range(51)).encode("utf-8"), "between 1 and 50"),
+    ],
+)
+def test_t2i_rejects_invalid_prompt_files_before_profile_and_output_dir(
+    tmp_path: Path, filename: str, content: bytes, expected: str
+) -> None:
+    from gflow_cli.cli import main
+
+    path = tmp_path / filename
+    path.write_bytes(content)
+    with (
+        patch("gflow_cli.cli_image._resolve_profile") as resolve_profile,
+        patch("gflow_cli.cli_image.resolve_t2i_batch_output_dir") as resolve_output,
+    ):
+        result = CliRunner().invoke(
+            main,
+            ["image", "t2i", "--prompts-file", str(path)],
+            catch_exceptions=False,
+        )
+
+    assert result.exit_code == 2
+    assert expected in result.output
+    resolve_profile.assert_not_called()
+    resolve_output.assert_not_called()
+
+
+def test_t2i_rejects_missing_prompt_file_before_profile_and_output_dir(tmp_path: Path) -> None:
+    from gflow_cli.cli import main
+
+    missing = tmp_path / "missing.txt"
+    with (
+        patch("gflow_cli.cli_image._resolve_profile") as resolve_profile,
+        patch("gflow_cli.cli_image.resolve_t2i_batch_output_dir") as resolve_output,
+    ):
+        result = CliRunner().invoke(
+            main,
+            ["image", "t2i", "--prompts-file", str(missing)],
+            catch_exceptions=False,
+        )
+
+    assert result.exit_code == 2
+    assert "--prompts-file missing.txt" in result.output
+    assert str(tmp_path) not in result.output
+    resolve_profile.assert_not_called()
+    resolve_output.assert_not_called()
+
+
+def test_t2i_rejects_prompt_file_directory_before_profile_and_output_dir(tmp_path: Path) -> None:
+    from gflow_cli.cli import main
+
+    directory = tmp_path / "prompts.txt"
+    directory.mkdir()
+    with (
+        patch("gflow_cli.cli_image._resolve_profile") as resolve_profile,
+        patch("gflow_cli.cli_image.resolve_t2i_batch_output_dir") as resolve_output,
+    ):
+        result = CliRunner().invoke(
+            main,
+            ["image", "t2i", "--prompts-file", str(directory)],
+            catch_exceptions=False,
+        )
+
+    assert result.exit_code == 2
+    assert "regular file" in result.output
+    resolve_profile.assert_not_called()
+    resolve_output.assert_not_called()
 ```
 
 - [ ] **Step 1.4: Add CLI wiring tests for multi-prompt mode**
@@ -247,14 +392,16 @@ Append:
 def test_t2i_multi_positional_delegates_to_batch_runner(tmp_path: Path) -> None:
     from gflow_cli.cli import main
 
+    async def _fake_run_batch(**_kwargs):
+        return []
+
     out = tmp_path / "out"
     with (
         patch("gflow_cli.cli_image._resolve_profile", return_value="default"),
         patch("gflow_cli.cli_image._make_provider_dir", return_value=tmp_path / "profile"),
-        patch("gflow_cli.cli_image.run_image_batch") as run_batch,
+        patch("gflow_cli.cli_image.run_image_batch", side_effect=_fake_run_batch) as run_batch,
         patch("gflow_cli.cli_image.render_image_batch_summary", return_value=0),
     ):
-        run_batch.return_value = []
         result = CliRunner().invoke(
             main,
             ["image", "t2i", "p1", "p2", "p3", "--aspect", "16:9", "--model", "image4", "--out", str(out)],
@@ -269,6 +416,28 @@ def test_t2i_multi_positional_delegates_to_batch_runner(tmp_path: Path) -> None:
     assert all(p.model == "image4" for p in kwargs["prompts"])
     assert kwargs["output_dir"] == out
     assert kwargs["project_title"] == "gflow-cli t2i"
+
+
+def test_t2i_multi_prompt_prints_fanout_before_batch_runner(tmp_path: Path) -> None:
+    from gflow_cli.cli import main
+
+    async def _fake_run_batch(**_kwargs):
+        return []
+
+    with (
+        patch("gflow_cli.cli_image._resolve_profile", return_value="default"),
+        patch("gflow_cli.cli_image._make_provider_dir", return_value=tmp_path / "profile"),
+        patch("gflow_cli.cli_image.run_image_batch", side_effect=_fake_run_batch),
+        patch("gflow_cli.cli_image.render_image_batch_summary", return_value=0),
+    ):
+        result = CliRunner().invoke(
+            main,
+            ["image", "t2i", "p1", "p2", "-n", "4", "--out", str(tmp_path / "out")],
+            catch_exceptions=False,
+        )
+
+    assert result.exit_code == 0, result.output
+    assert "up to 8 image(s)" in result.output
 
 
 def test_t2i_single_prompt_fail_fast_is_inert(tmp_path: Path) -> None:
@@ -562,7 +731,7 @@ MAX_COUNT = 4
 
 log = structlog.get_logger(__name__)
 console = Console()
-_CONTROL_RE = re.compile(r"[\x00-\x08\x0b\x0c\x0e-\x1f\x7f]")
+_CONTROL_RE = re.compile(r"[\x00-\x1f\x7f]")
 
 
 @dataclass(frozen=True)
@@ -595,11 +764,15 @@ class BatchOutcome:
     exit_code: int = 0
 
 
-def safe_prompt_preview(text: str, *, limit: int = 60) -> str:
+def safe_terminal_text(text: str, *, limit: int | None = None) -> str:
     visible = _CONTROL_RE.sub("\uFFFD", text)
-    if len(visible) > limit:
+    if limit is not None and len(visible) > limit:
         visible = visible[: max(0, limit - 3)] + "..."
     return rich_escape(visible)
+
+
+def safe_prompt_preview(text: str, *, limit: int = 60) -> str:
+    return safe_terminal_text(text, limit=limit)
 
 
 def resolve_exit_code(exc: GFlowError) -> int:
@@ -607,6 +780,20 @@ def resolve_exit_code(exc: GFlowError) -> int:
         if isinstance(exc, cls):
             return code
     return 1
+
+
+def _prompt_config_error(message: str) -> GFlowError:
+    from gflow_cli.errors import ConfigurationError
+
+    return ConfigurationError(message)
+
+
+def _validate_prompt_count(count: int, *, source_label: str) -> None:
+    if not (MIN_PROMPTS <= count <= MAX_PROMPTS):
+        raise _prompt_config_error(
+            f"{source_label}: prompts must have between {MIN_PROMPTS} and "
+            f"{MAX_PROMPTS} entries (got {count})."
+        )
 
 
 def prompt_items_from_texts(
@@ -617,6 +804,13 @@ def prompt_items_from_texts(
     count: int,
     source_label: str,
 ) -> tuple[BatchPromptItem, ...]:
+    _validate_prompt_count(len(prompts), source_label=source_label)
+    for i, text in enumerate(prompts):
+        if not (MIN_TEXT_LEN <= len(text) <= MAX_TEXT_LEN):
+            raise _prompt_config_error(
+                f"{source_label} prompt {i}: prompt length must be between "
+                f"{MIN_TEXT_LEN} and {MAX_TEXT_LEN} characters (got {len(text)})."
+            )
     return tuple(
         BatchPromptItem(
             index=i,
@@ -723,10 +917,10 @@ def render_image_batch_summary(outcomes: list[BatchOutcome], *, title: str) -> i
     table.add_column("detail", overflow="fold")
     for o in outcomes:
         if o.status == "ok":
-            detail = " · ".join(str(p) for p in o.saved_paths)
+            detail = " · ".join(safe_terminal_text(str(p)) for p in o.saved_paths)
             status_str = "[green]OK[/green]"
         elif o.status == "fail":
-            detail = rich_escape(o.error or "")
+            detail = safe_terminal_text(o.error or "")
             status_str = "[red]FAIL[/red]"
         else:
             detail = "(not attempted)"
@@ -745,6 +939,11 @@ def render_image_batch_summary(outcomes: list[BatchOutcome], *, title: str) -> i
     console.print(f"\n{succeeded}/{len(outcomes)} succeeded · {failed} failure(s) · {skipped} skipped")
     return max((o.exit_code for o in outcomes), default=0)
 ```
+
+The shared renderer deliberately makes `gflow run` prompt previews, error
+details, and saved paths terminal-safe. It must otherwise preserve the existing
+`gflow run` table columns, title when called with `title="gflow run"`,
+aggregate counts, skipped semantics, output filenames, and exit-code behavior.
 
 - [ ] **Step 3.4: Add output-dir helper for `t2i` multi-prompt**
 
@@ -772,8 +971,10 @@ from gflow_cli.image_batch import (
 )
 ```
 
-Keep `BatchConfig` in `cli_run.py`. Remove the local `_PromptOutcome`, `_run_batch`,
-`_run_one_prompt`, and `_render_summary` definitions after adapting call sites.
+Keep `BatchConfig` in `cli_run.py`. Re-export `BatchPromptItem` by importing it
+at module scope so existing internal imports from `gflow_cli.cli_run` continue
+to work. Remove the local `_PromptOutcome`, `_run_batch`, `_run_one_prompt`, and
+`_render_summary` definitions after adapting call sites.
 
 - [ ] **Step 3.6: Adapt `BatchConfig._parse_prompt` to new `BatchPromptItem`**
 
@@ -883,9 +1084,11 @@ def parse_prompt_lines(text: str, *, source_label: str) -> tuple[ParsedPrompt, .
     return tuple(parsed)
 ```
 
-- [ ] **Step 4.2: Implement count and error helpers**
+- [ ] **Step 4.2: Verify count and error helpers**
 
-Add:
+Task 3 should already have added these helpers because positional prompt
+validation depends on them. Verify they exist in `image_batch.py` before adding
+`parse_prompt_lines()`:
 
 ```python
 def _prompt_config_error(message: str) -> GFlowError:
@@ -908,7 +1111,7 @@ Add:
 
 ```python
 def _prompt_file_label(path: Path) -> str:
-    return f"--prompts-file {path.name}"
+    return f"--prompts-file {safe_terminal_text(path.name)}"
 
 
 def read_prompt_file(path: Path) -> tuple[ParsedPrompt, ...]:
@@ -963,14 +1166,84 @@ Add this test if not already present:
 
 ```python
 def test_safe_prompt_preview_escapes_markup_and_controls() -> None:
-    from gflow_cli.image_batch import safe_prompt_preview
+    from gflow_cli.image_batch import safe_prompt_preview, safe_terminal_text
 
-    preview = safe_prompt_preview("[red]hello[/red]\x1b[31m")
+    preview = safe_prompt_preview("[red]hello[/red]\x1b[31m\r\nnext")
     assert "\\[red]" in preview
     assert "\x1b" not in preview
+    assert "\r" not in preview
+    assert "\n" not in preview
+
+    path_preview = safe_terminal_text("out/[red]\x1b[31m/file.png")
+    assert "\\[red]" in path_preview
+    assert "\x1b" not in path_preview
 ```
 
-- [ ] **Step 4.6: Run focused tests**
+- [ ] **Step 4.6: Add summary terminal-safety test**
+
+Append this test to `tests/cli/test_t2i_multi_prompt.py`:
+
+```python
+def test_render_summary_escapes_saved_paths_and_errors(capsys: pytest.CaptureFixture[str]) -> None:
+    from gflow_cli.image_batch import BatchOutcome, BatchPromptItem, render_image_batch_summary
+
+    item = BatchPromptItem(index=0, text="prompt", output_filename="prompt_0")
+    outcomes = [
+        BatchOutcome(
+            index=0,
+            prompt=item,
+            status="ok",
+            saved_paths=[Path("out/[red]\x1b[31m/file.png")],
+        ),
+        BatchOutcome(
+            index=1,
+            prompt=item,
+            status="fail",
+            error="bad [red]\x1b[31m",
+            exit_code=5,
+        ),
+    ]
+
+    render_image_batch_summary(outcomes, title="test")
+    output = capsys.readouterr().out
+    assert "\x1b[31m" not in output
+    assert "[red]" in output
+```
+
+- [ ] **Step 4.7: Add raw prompt preservation test**
+
+Append this test to `tests/cli/test_t2i_multi_prompt.py`:
+
+```python
+@pytest.mark.asyncio
+async def test_run_one_image_prompt_passes_raw_prompt_to_api(tmp_path: Path) -> None:
+    from gflow_cli.api.dto import GeneratedImage
+    from gflow_cli.image_batch import BatchPromptItem, run_one_image_prompt, safe_prompt_preview
+
+    raw_prompt = "[red]hello[/red]\x1b[31m\r\nsecond line"
+    image = GeneratedImage(
+        media_name="m1",
+        workflow_id="wf1",
+        seed=1,
+        prompt=raw_prompt,
+        model_name_type="NARWHAL",
+        aspect_ratio="IMAGE_ASPECT_RATIO_PORTRAIT",
+        fife_url="https://flow-content.google/x",
+        dimensions=(1, 1),
+    )
+    client = MagicMock()
+    client.generate_image = AsyncMock(return_value=image)
+    client.download_image = AsyncMock(side_effect=lambda _img, path: path)
+
+    item = BatchPromptItem(index=0, text=raw_prompt, output_filename="prompt_0")
+    await run_one_image_prompt(client=client, project_id="proj", idx=0, item=item, output_dir=tmp_path)
+
+    req = client.generate_image.await_args.kwargs["req"]
+    assert req.prompt == raw_prompt
+    assert safe_prompt_preview(raw_prompt) != raw_prompt
+```
+
+- [ ] **Step 4.8: Run focused tests**
 
 Run:
 
@@ -980,7 +1253,7 @@ uv run pytest tests/cli/test_t2i_multi_prompt.py -q
 
 Expected: parser/file/preview tests pass; CLI wiring tests may still fail until Task 5.
 
-- [ ] **Step 4.7: Commit parser implementation**
+- [ ] **Step 4.9: Commit parser implementation**
 
 ```bash
 git add src/gflow_cli/image_batch.py tests/cli/test_t2i_multi_prompt.py
@@ -1018,6 +1291,7 @@ import sys
 Add shared imports:
 
 ```python
+from gflow_cli.errors import ConfigurationError
 from gflow_cli.image_batch import (
     parse_prompt_lines,
     prompt_items_from_parsed,
@@ -1025,6 +1299,7 @@ from gflow_cli.image_batch import (
     read_prompt_file,
     render_image_batch_summary,
     resolve_t2i_batch_output_dir,
+    safe_terminal_text,
     run_image_batch,
 )
 ```
@@ -1093,6 +1368,10 @@ def _count_t2i_sources(
     prompts: tuple[str, ...], prompts_file: Path | None, read_stdin: bool
 ) -> int:
     return int(bool(prompts)) + int(prompts_file is not None) + int(read_stdin)
+
+
+def _as_usage_error(exc: ConfigurationError) -> click.UsageError:
+    return click.UsageError(str(exc))
 ```
 
 - [ ] **Step 5.5: Implement preflight branching in `t2i`**
@@ -1158,30 +1437,33 @@ if not is_multi_prompt:
 After legacy branch:
 
 ```python
-if prompts_file is not None:
-    parsed = read_prompt_file(prompts_file)
-    batch_prompts = prompt_items_from_parsed(
-        parsed,
-        aspect_ratio=aspect,
-        model=model,
-        count=count,
-    )
-elif read_stdin:
-    parsed = parse_prompt_lines(sys.stdin.read(), source_label="--stdin")
-    batch_prompts = prompt_items_from_parsed(
-        parsed,
-        aspect_ratio=aspect,
-        model=model,
-        count=count,
-    )
-else:
-    batch_prompts = prompt_items_from_texts(
-        prompts,
-        aspect_ratio=aspect,
-        model=model,
-        count=count,
-        source_label="positional",
-    )
+try:
+    if prompts_file is not None:
+        parsed = read_prompt_file(prompts_file)
+        batch_prompts = prompt_items_from_parsed(
+            parsed,
+            aspect_ratio=aspect,
+            model=model,
+            count=count,
+        )
+    elif read_stdin:
+        parsed = parse_prompt_lines(sys.stdin.read(), source_label="--stdin")
+        batch_prompts = prompt_items_from_parsed(
+            parsed,
+            aspect_ratio=aspect,
+            model=model,
+            count=count,
+        )
+    else:
+        batch_prompts = prompt_items_from_texts(
+            prompts,
+            aspect_ratio=aspect,
+            model=model,
+            count=count,
+            source_label="positional",
+        )
+except ConfigurationError as exc:
+    raise _as_usage_error(exc) from exc
 ```
 
 - [ ] **Step 5.8: Implement multi-prompt execution in `t2i`**
@@ -1198,7 +1480,7 @@ console.print(
     f"\n[bold]gflow image t2i[/bold] · profile=[bold]{profile_name}[/bold] "
     f"· {len(batch_prompts)} prompt(s) · up to {len(batch_prompts) * count} image(s)"
 )
-console.print(f"  output_dir: [dim]{output_dir}[/dim]")
+console.print(f"  output_dir: [dim]{safe_terminal_text(str(output_dir))}[/dim]")
 if not continue_on_error:
     console.print("  mode: [yellow]fail-fast[/yellow]")
 
