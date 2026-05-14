@@ -15,6 +15,7 @@ env/
 
 # Test / coverage
 .pytest_cache/
+pytest-of-*/
 .coverage
 .coverage.*
 htmlcov/
