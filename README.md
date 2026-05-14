@@ -82,6 +82,24 @@ Read the full [DISCLAIMER](DISCLAIMER.md) before deploying this in any productio
 
 ---
 
+## Demo
+
+![gflow image t2i — single 9:16 prompt, streaming structlog output, PNG on disk](docs/assets/example-run.gif)
+
+*A single `gflow image t2i "..." --aspect 9:16 --model nano2 --out ...` call against a logged-in Pro/Ultra profile. The terminal shows the streaming `structlog` JSON for the run, the final `ls` of the written PNG, and nothing else — Chromium drives the Flow editor silently in the background because the persistent Playwright session is already warm, so this take is intentionally terminal-only.*
+
+**Try it yourself** — this is the exact command the GIF runs:
+
+```bash
+gflow image t2i "a quiet mountain lake at dawn, cinematic photography" --aspect 9:16 --model nano2 --out ./gflow-output/example-single
+```
+
+One prompt, default model (`nano2` = Nano Banana 2), 9:16 portrait, written as `./gflow-output/example-single/<media_name>_0.png`. Wall time is typically 30–90s on a warm profile; the first call after a fresh `gflow auth login` is slower because Playwright spins up Chromium and navigates to the Flow editor. See [`docs/USAGE.md`](docs/USAGE.md) for the full `gflow image t2i` flag reference (`--model`, `--aspect`, `-n`, `--seed`, `--profile`, `--transport`).
+
+To reproduce the recording yourself, see [`scripts/record_demo.ps1`](scripts/record_demo.ps1) (Windows, requires OBS + ffmpeg + gifski).
+
+---
+
 ## Prerequisites
 
 | Requirement | Why |
