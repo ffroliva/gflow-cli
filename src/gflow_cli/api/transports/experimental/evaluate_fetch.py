@@ -62,8 +62,7 @@ async (args) => {
 """.strip()
 
 _BATCH_GENERATE_URL_TEMPLATE = (
-    "https://aisandbox-pa.googleapis.com/v1/projects/{project_id}"
-    "/flowMedia:batchGenerateImages"
+    "https://aisandbox-pa.googleapis.com/v1/projects/{project_id}/flowMedia:batchGenerateImages"
 )
 
 
@@ -178,9 +177,7 @@ class EvaluateFetchTransport:
             await self._page.goto(FLOW_URL, wait_until="domcontentloaded", timeout=30_000)
             log.info("evaluate_fetch.refresh_auth_done")
         except Exception as exc:
-            raise AuthExpiredError(
-                f"evaluate_fetch: refresh navigation failed: {exc}"
-            ) from exc
+            raise AuthExpiredError(f"evaluate_fetch: refresh navigation failed: {exc}") from exc
 
     async def generate_images(
         self,
@@ -261,9 +258,7 @@ class EvaluateFetchTransport:
                 try:
                     await self._pw_cm.__aexit__(None, None, None)
                 except Exception:
-                    log.warning(
-                        "evaluate_fetch.teardown: pw_cm.__aexit__() failed", exc_info=True
-                    )
+                    log.warning("evaluate_fetch.teardown: pw_cm.__aexit__() failed", exc_info=True)
                 finally:
                     self._pw_cm = None
 

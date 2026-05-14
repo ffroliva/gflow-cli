@@ -1,4 +1,5 @@
 """FlowTransportStrategy Protocol shape tests."""
+
 from __future__ import annotations
 
 import inspect

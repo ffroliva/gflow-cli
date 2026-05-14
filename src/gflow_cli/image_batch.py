@@ -3,7 +3,6 @@
 from __future__ import annotations
 
 import re
-import time
 from collections.abc import Callable
 from dataclasses import dataclass, field
 from pathlib import Path
@@ -239,8 +238,10 @@ def prompt_items_from_texts(
 def resolve_t2i_batch_output_dir(*, out: Path | None, output_root: Path) -> Path:
     if out is not None:
         return out
-    stamp = time.strftime("%Y%m%dT%H%M%SZ", time.gmtime())
-    return output_root / "images" / stamp
+    from datetime import date
+
+    today = date.today().isoformat()
+    return output_root / "images" / today
 
 
 async def run_one_image_prompt(

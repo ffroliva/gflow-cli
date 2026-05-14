@@ -5,6 +5,7 @@ Per spec §§ 5.4.1 + 5.4.2:
   - Proactive TTL refresh: check expiry before each call; single-retry-on-401.
   - Playwright is only invoked during setup() / refresh_auth() — kept lazy.
 """
+
 from __future__ import annotations
 
 import asyncio
@@ -187,13 +188,9 @@ class BearerTransport:
         self._cached = None
 
         if self._profile_dir is None:
-            raise AuthExpiredError(
-                "bearer: cannot refresh — setup() was never called"
-            )
+            raise AuthExpiredError("bearer: cannot refresh — setup() was never called")
         try:
-            token, expires_at, fp = await self._capture_bearer_via_playwright(
-                self._profile_dir
-            )
+            token, expires_at, fp = await self._capture_bearer_via_playwright(self._profile_dir)
         except AuthExpiredError:
             raise
         except Exception as exc:
@@ -233,7 +230,7 @@ class BearerTransport:
                         return
                     auth: str = req.headers.get("authorization", "")
                     if auth.startswith("Bearer ") and captured_token is None:
-                        captured_token = auth[len("Bearer "):]
+                        captured_token = auth[len("Bearer ") :]
 
                 page.on("request", _on_request)
                 await page.goto(FLOW_URL, wait_until="networkidle", timeout=60_000)
@@ -292,9 +289,7 @@ class BearerTransport:
             await self.refresh_auth()
             resp = await self._call_once(url, body_bytes)
             if resp.status_code == 401:
-                raise AuthExpiredError(
-                    "bearer: refresh succeeded but retry still returned 401"
-                )
+                raise AuthExpiredError("bearer: refresh succeeded but retry still returned 401")
 
         return interpret_response("bearer", resp)
 
@@ -314,9 +309,7 @@ class BearerTransport:
             "authorization": f"Bearer {self._cached.token}",
             "content-type": "text/plain;charset=UTF-8",
         }
-        coro = self._http_post(
-            url, headers=headers, content=body_bytes, timeout=PER_CALL_TIMEOUT_S
-        )
+        coro = self._http_post(url, headers=headers, content=body_bytes, timeout=PER_CALL_TIMEOUT_S)
         try:
             return await asyncio.wait_for(coro, timeout=PER_CALL_TIMEOUT_S)
         except TimeoutError as exc:

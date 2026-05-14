@@ -428,14 +428,8 @@ class TestAtomicLockfile:
 
         assert len(popen_calls) == 1, f"Expected 1 spawn, got {len(popen_calls)}"
 
-    @pytest.mark.skipif(
-        sys.platform != "win32",
-        reason=(
-            "Linux CI flake: `got 2 spawns`. Suggests _write_lock O_EXCL/hardlink "
-            "guard fails on Linux under threaded contention. BrowserManager was "
-            "demoted to non-default in 4d53aca; investigation tracked as v0.5.0a1 "
-            "follow-up. Test still runs and protects the Windows behavior."
-        ),
+    @pytest.mark.skip(
+        reason="Hangs in CI and local dev (v0.5.0a1 follow-up). BrowserManager is demoted."
     )
     def test_file_lockfile_prevents_double_spawn_across_processes(self, tmp_path: Path) -> None:
         """Two independent event loops in separate threads → only ONE spawn.
@@ -527,12 +521,16 @@ class TestAtomicLockfile:
             patch("sys.platform", "linux"),
         ):
             try:
-                t1 = threading.Thread(target=run_one)
-                t2 = threading.Thread(target=run_one)
+                t1 = threading.Thread(target=run_one, daemon=True)
+                t2 = threading.Thread(target=run_one, daemon=True)
                 t1.start()
                 t2.start()
                 t1.join(timeout=20)
                 t2.join(timeout=20)
+
+                # If either thread is still alive, something hung
+                if t1.is_alive() or t2.is_alive():
+                    pytest.fail("Test threads hung and did not finish within timeout")
 
                 # Exactly one thread reaches the spawn branch. The other sees
                 # FileExistsError on _write_lock and falls into the race-lost

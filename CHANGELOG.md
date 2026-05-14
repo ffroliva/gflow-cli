@@ -7,15 +7,45 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+## [0.6.0a1] — 2026-05-14
+
+> **Shell-friendly multi-prompt `t2i` + performance hardening.** This release 
+> promotes `gflow image t2i` to a variadic command that can consume multiple 
+> prompts from positional arguments, a line-delimited text file, or standard 
+> input. Core generation logic has been consolidated into a shared 
+> `image_batch` module, ensuring architectural consistency between shell runs 
+> and JSON-described batches. This version also ships critical resource 
+> cleanup fixes for SQLite connections and OOM protection for stdin streams.
+
 ### Added
 
-- Shell-friendly multi-prompt `gflow image t2i`: variadic prompts,
-  `--prompts-file`, and `--stdin`, all reusing one Flow session/project for
-  the batch.
-- `examples/multi_prompt_t2i.py` + `examples/sample_prompts.txt` —
-  runnable template for the new shell-multi-prompt surface, indexed in
-  `examples/README.md`.
-- Demo GIF in README (`docs/assets/example-run.gif`) showing a single `gflow image t2i "..." --aspect 9:16 --model nano2` run against a Pro/Ultra profile, with streaming `structlog` JSON output and the resulting PNG on disk. Recorded 2026-05-13; terminal-only (the persistent Playwright session was already warm, so Chromium stayed in the background).
+- **Variadic `gflow image t2i`** — now accepts multiple positional prompts. 
+  Example: `gflow image t2i "prompt 1" "prompt 2"`.
+- **`--prompts-file <PATH>` and `--stdin`** — read batches of prompts from 
+  text files or pipes. All prompts in a batch share a single Flow session 
+  and project, significantly reducing reCAPTCHA and project-init overhead.
+- **Shared `image_batch` logic** (`src/gflow_cli/image_batch.py`) — unified 
+  orchestration, validation, and rendering for all multi-prompt generation 
+  surfaces.
+- **Memory safety for stdin** — bounded read on standard input prevents 
+  memory exhaustion when piping large or infinite streams.
+- **`examples/multi_prompt_t2i.py` + `examples/sample_prompts.txt`** — 
+  runnable template for the new shell-multi-prompt surface.
+
+### Fixed
+
+- **Resource leaks in SQLite** — ensured all `sqlite3` connections are 
+  properly closed via `try...finally` blocks, resolving resource exhaust 
+  warnings and potential hangs in long-running processes.
+- **Output directory partitioning** — `t2i` batches now correctly land in 
+  date-partitioned folders (`images/YYYY-MM-DD/`) by default, aligning 
+  with the core design spec.
+
+### Changed
+
+- **CLI validation alignment** — `t2i` and `i2i` subcommands now use 
+  authoritative domain constants for model, aspect, and count validation, 
+  ensuring UI help text and defaults stay in perfect sync with the engine.
 
 ## [0.5.0a1] — 2026-05-12
 
@@ -407,9 +437,9 @@ shell-script template that branches on these codes.
 
 First skeleton. Not functional end-to-end yet.
 
-[Unreleased]: https://github.com/ffroliva/gflow-cli/compare/v0.4.0a2...HEAD
-[0.4.0a2]: https://github.com/ffroliva/gflow-cli/compare/v0.4.0a1...v0.4.0a2
-[0.4.0a1]: https://github.com/ffroliva/gflow-cli/compare/v0.3.0a1...v0.4.0a1
+[Unreleased]: https://github.com/ffroliva/gflow-cli/compare/v0.6.0a1...HEAD
+[0.6.0a1]: https://github.com/ffroliva/gflow-cli/compare/v0.5.0a1...v0.6.0a1
+[0.5.0a1]: https://github.com/ffroliva/gflow-cli/compare/v0.4.0a2...v0.5.0a1
 [0.3.0a1]: https://github.com/ffroliva/gflow-cli/releases/tag/v0.3.0a1
 [0.2.0a1]: https://github.com/ffroliva/gflow-cli/releases/tag/v0.2.0a1
 [0.1.0]: https://github.com/ffroliva/gflow-cli/releases/tag/v0.1.0

@@ -9,6 +9,7 @@ the shared utility for capturing and serializing that fingerprint.
 capture_fingerprint() is NOT unit-tested (requires live Playwright page).
 Phase D e2e tests exercise it. Phase B.0 tests cover the dataclass + constants.
 """
+
 from __future__ import annotations
 
 import asyncio
@@ -41,9 +42,7 @@ REQUIRED_HEADERS: frozenset[str] = frozenset(
 
 # Preflight target that reliably triggers browser credential headers without
 # producing a real API side-effect.
-_PREFLIGHT_URL = (
-    "https://aisandbox-pa.googleapis.com/v1/internal/healthz"
-)
+_PREFLIGHT_URL = "https://aisandbox-pa.googleapis.com/v1/internal/healthz"
 
 
 # ---------------------------------------------------------------------------
@@ -82,10 +81,7 @@ class BrowserFingerprint:
         headers_raw = parsed.get("headers", {})
         headers: dict[str, str]
         if isinstance(headers_raw, dict):
-            headers = {
-                str(k): str(v)
-                for k, v in cast(dict[object, object], headers_raw).items()
-            }
+            headers = {str(k): str(v) for k, v in cast(dict[object, object], headers_raw).items()}
         else:
             headers = {}
         return cls(headers=headers)
@@ -116,11 +112,7 @@ async def capture_fingerprint(page: Page) -> BrowserFingerprint:
             return
         all_headers: dict[str, str] = request.headers or {}
         captured.update(
-            {
-                k.lower(): v
-                for k, v in all_headers.items()
-                if k.lower() in REQUIRED_HEADERS
-            }
+            {k.lower(): v for k, v in all_headers.items() if k.lower() in REQUIRED_HEADERS}
         )
         event.set()
 
