@@ -1,0 +1,4 @@
+# One prompt per non-empty line. Whole-line comments are skipped.
+a quiet mountain lake at dawn, cinematic photography
+a sunlit forest path in autumn, shallow depth of field
+a neon-lit market street at night, wide angle

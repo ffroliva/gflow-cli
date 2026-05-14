@@ -30,8 +30,10 @@ subscription.
 | Script | What it does |
 |---|---|
 | [`single_image_t2i.py`](single_image_t2i.py) | Generate ONE image from a prompt and save the PNG. |
+| [`multi_prompt_t2i.py`](multi_prompt_t2i.py) | Run N different prompts in one Flow session via `gflow image t2i --prompts-file` (v0.6 shell-multi-prompt shortcut). |
 | [`batch_from_config.py`](batch_from_config.py) | Run a sequence of prompts from a JSON config file (wraps `gflow run --config ...`). |
 | [`sample_config.json`](sample_config.json) | Template batch config — three prompts at different aspect ratios. Copy and edit. |
+| [`sample_prompts.txt`](sample_prompts.txt) | Template prompts file for `--prompts-file` / `--stdin`. One prompt per non-empty line; `#` comments skipped. |
 
 ## Quick start
 
@@ -40,7 +42,15 @@ subscription.
 GFLOW_EXAMPLE_PROFILE=<your-profile> python examples/single_image_t2i.py \
     --prompt "a quiet mountain lake at dawn, cinematic photography"
 
-# Batch from JSON:
+# Multi-prompt shortcut (v0.6) — three different prompts, one session:
+GFLOW_EXAMPLE_PROFILE=<your-profile> python examples/multi_prompt_t2i.py
+
+# Or call the CLI directly (positional / file / stdin all work):
+gflow image t2i "p1" "p2" "p3" --aspect 9:16
+gflow image t2i --prompts-file examples/sample_prompts.txt
+cat examples/sample_prompts.txt | gflow image t2i --stdin
+
+# Batch from JSON (per-prompt overrides supported):
 GFLOW_EXAMPLE_PROFILE=<your-profile> python examples/batch_from_config.py
 ```
 
