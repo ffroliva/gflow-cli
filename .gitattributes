@@ -28,8 +28,10 @@ LICENSE     text eol=lf
 *.sh        text eol=lf
 *.bash      text eol=lf
 
-# Windows scripts MUST stay CRLF or they break under PowerShell / cmd.exe
-*.ps1       text eol=crlf
+# PowerShell handles LF fine on both PS 5.1 and Core, so keep .ps1 as LF.
+# cmd.exe has historical edge cases with multi-line batch files, so .bat/.cmd
+# stay CRLF.
+*.ps1       text eol=lf
 *.bat       text eol=crlf
 *.cmd       text eol=crlf
 
