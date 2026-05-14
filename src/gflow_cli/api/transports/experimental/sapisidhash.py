@@ -7,6 +7,7 @@ Per spec § 5.4.3:
   - Browser-fingerprint headers MUST be cloned on every httpx call (§ 5.4.1).
   - No Playwright after setup() — cheapest steady-state strategy.
 """
+
 from __future__ import annotations
 
 import asyncio
@@ -73,12 +74,15 @@ def read_sapisid_from_profile(profile_dir: Path) -> str:
     # lock on this file; an RW open can raise OperationalError or corrupt the
     # journal on some platforms.
     try:
-        with sqlite3.connect(f"file:{db_path}?mode=ro", uri=True) as conn:
+        conn = sqlite3.connect(f"file:{db_path}?mode=ro", uri=True)
+        try:
             row = conn.execute(
                 "SELECT value, encrypted_value FROM cookies "
                 "WHERE name = 'SAPISID' AND host_key LIKE '%google.com%' "
                 "LIMIT 1"
             ).fetchone()
+        finally:
+            conn.close()
     except sqlite3.Error as exc:
         # MEDIUM #17: map DB errors to AuthMissingError so callers see a
         # consistent error type (e.g. schema mismatch on a different Chromium).
@@ -168,9 +172,7 @@ class SapisidhashTransport:
             AuthExpiredError: if setup() was never called, or the cookie is now missing.
         """
         if self._profile_dir is None:
-            raise AuthExpiredError(
-                "sapisidhash: cannot refresh — setup() was never called"
-            )
+            raise AuthExpiredError("sapisidhash: cannot refresh — setup() was never called")
         try:
             self._sapisid = self._read_sapisid(self._profile_dir)
         except AuthMissingError as exc:
@@ -183,9 +185,7 @@ class SapisidhashTransport:
     # Playwright fingerprint capture (injectable for tests)
     # ------------------------------------------------------------------
 
-    async def _capture_fingerprint_via_playwright(
-        self, profile_dir: Path
-    ) -> BrowserFingerprint:
+    async def _capture_fingerprint_via_playwright(self, profile_dir: Path) -> BrowserFingerprint:
         """One-shot Playwright launch to capture browser fingerprint headers."""
         from playwright.async_api import async_playwright  # lazy import
 
@@ -256,9 +256,7 @@ class SapisidhashTransport:
         import httpx  # lazy import
 
         ts = int(time.time())
-        hash_value = compute_sapisidhash(
-            timestamp=ts, sapisid=self._sapisid or "", origin=_ORIGIN
-        )
+        hash_value = compute_sapisidhash(timestamp=ts, sapisid=self._sapisid or "", origin=_ORIGIN)
         headers: dict[str, str] = {
             **self._fingerprint.to_dict(),
             "authorization": f"SAPISIDHASH {hash_value}",
@@ -271,9 +269,7 @@ class SapisidhashTransport:
         # HIGH #7: pass NO timeout to _http_post — asyncio.wait_for below is
         # the sole wall-clock guard.  Having both caused httpx.ReadTimeout
         # (mapped to NetworkError) to fire before asyncio saw the hang.
-        coro = self._http_post(
-            url, headers=headers, content=body_bytes
-        )
+        coro = self._http_post(url, headers=headers, content=body_bytes)
         try:
             return await asyncio.wait_for(coro, timeout=PER_CALL_TIMEOUT_S)
         except TimeoutError as exc:

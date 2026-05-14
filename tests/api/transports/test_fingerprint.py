@@ -7,6 +7,7 @@ Playwright page). Phase D e2e tests cover it. This module covers:
 - BrowserFingerprint round-trip serialization via to_json() / from_json()
 - Edge cases: empty headers, extra keys in JSON
 """
+
 from __future__ import annotations
 
 import json

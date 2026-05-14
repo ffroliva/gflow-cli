@@ -162,6 +162,23 @@ def test_t2i_rejects_empty_stdin_before_profile_resolution() -> None:
     resolve_profile.assert_not_called()
 
 
+def test_t2i_rejects_oversized_stdin_before_profile_resolution() -> None:
+    from gflow_cli.cli import main
+    from gflow_cli.image_batch import MAX_PROMPT_FILE_BYTES
+
+    with patch("gflow_cli.cli_image._resolve_profile") as resolve_profile:
+        result = CliRunner().invoke(
+            main,
+            ["image", "t2i", "--stdin"],
+            input="x" * (MAX_PROMPT_FILE_BYTES + 1),
+            catch_exceptions=False,
+        )
+
+    assert result.exit_code == 2
+    assert "exceeds the maximum allowed size" in result.output
+    resolve_profile.assert_not_called()
+
+
 def test_t2i_rejects_51_positional_prompts_before_profile_and_output_dir() -> None:
     from gflow_cli.cli import main
 

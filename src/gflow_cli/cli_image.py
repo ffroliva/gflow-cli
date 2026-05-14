@@ -35,6 +35,25 @@ from gflow_cli.api.transports import transport_choices
 from gflow_cli.config import get_settings
 from gflow_cli.errors import ConfigurationError
 from gflow_cli.image_batch import (
+    ALLOWED_ASPECT_RATIOS as _ALLOWED_ASPECT_RATIOS,
+)
+from gflow_cli.image_batch import (
+    ALLOWED_MODELS as _ALLOWED_MODELS,
+)
+from gflow_cli.image_batch import (
+    DEFAULT_ASPECT_RATIO as _DEFAULT_ASPECT_RATIO,
+)
+from gflow_cli.image_batch import (
+    DEFAULT_COUNT as _DEFAULT_COUNT,
+)
+from gflow_cli.image_batch import (
+    DEFAULT_MODEL as _DEFAULT_MODEL,
+)
+from gflow_cli.image_batch import (
+    MAX_COUNT as _MAX_COUNT,
+)
+from gflow_cli.image_batch import (
+    MAX_PROMPT_FILE_BYTES,
     parse_prompt_lines,
     prompt_items_from_parsed,
     prompt_items_from_texts,
@@ -43,6 +62,9 @@ from gflow_cli.image_batch import (
     resolve_t2i_batch_output_dir,
     run_image_batch,
     safe_terminal_text,
+)
+from gflow_cli.image_batch import (
+    MIN_COUNT as _MIN_COUNT,
 )
 from gflow_cli.paths import image_output_path
 
@@ -191,9 +213,9 @@ async def _run_upload(
 # t2i subcommand
 # ---------------------------------------------------------------------------
 
-# Click choices kept aligned with `Model.from_cli` and `Aspect.from_cli` aliases.
-_MODEL_CHOICES = ["nano2", "nano-pro", "image4"]
-_ASPECT_CHOICES = ["9:16", "16:9", "1:1", "4:3", "3:4"]
+# ---------------------------------------------------------------------------
+# t2i subcommand
+# ---------------------------------------------------------------------------
 
 
 @image.command(
@@ -240,26 +262,26 @@ _ASPECT_CHOICES = ["9:16", "16:9", "1:1", "4:3", "3:4"]
 )
 @click.option(
     "--model",
-    default="nano2",
+    default=_DEFAULT_MODEL,
     show_default=True,
-    type=click.Choice(_MODEL_CHOICES),
+    type=click.Choice(_ALLOWED_MODELS),
     help="Image model alias.",
 )
 @click.option(
     "--aspect",
-    default="9:16",
+    default=_DEFAULT_ASPECT_RATIO,
     show_default=True,
-    type=click.Choice(_ASPECT_CHOICES),
+    type=click.Choice(_ALLOWED_ASPECT_RATIOS),
     help="Image aspect ratio.",
 )
 @click.option(
     "-n",
     "--count",
     "count",
-    default=1,
+    default=_DEFAULT_COUNT,
     show_default=True,
-    type=click.IntRange(1, 4),
-    help="How many images to generate (1-4).",
+    type=click.IntRange(_MIN_COUNT, _MAX_COUNT),
+    help=f"How many images to generate ({_MIN_COUNT}-{_MAX_COUNT}).",
 )
 @click.option(
     "--seed",
@@ -366,7 +388,15 @@ def t2i(
                 count=count,
             )
         elif read_stdin:
-            parsed = parse_prompt_lines(sys.stdin.read(), source_label="--stdin")
+            # Security: implement a bounded read for standard input to prevent OOM
+            # crashes if a massive stream is piped to the CLI.
+            raw_stdin = sys.stdin.read(MAX_PROMPT_FILE_BYTES + 1)
+            if len(raw_stdin) > MAX_PROMPT_FILE_BYTES:
+                raise click.UsageError(
+                    f"Standard input exceeds the maximum allowed size of "
+                    f"{MAX_PROMPT_FILE_BYTES // 1024} KiB."
+                )
+            parsed = parse_prompt_lines(raw_stdin, source_label="--stdin")
             batch_prompts = prompt_items_from_parsed(
                 parsed,
                 aspect_ratio=aspect,
@@ -512,16 +542,16 @@ def _print_t2i_summary(images: list[GeneratedImage], saved_paths: list[Path]) ->
 )
 @click.option(
     "--model",
-    default="nano2",
+    default=_DEFAULT_MODEL,
     show_default=True,
-    type=click.Choice(_MODEL_CHOICES),
+    type=click.Choice(_ALLOWED_MODELS),
     help="Image model alias.",
 )
 @click.option(
     "--aspect",
-    default="9:16",
+    default=_DEFAULT_ASPECT_RATIO,
     show_default=True,
-    type=click.Choice(_ASPECT_CHOICES),
+    type=click.Choice(_ALLOWED_ASPECT_RATIOS),
     help="Image aspect ratio.",
 )
 @click.option(

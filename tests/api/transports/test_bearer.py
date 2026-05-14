@@ -7,6 +7,7 @@ Adaptations vs. PLAN.md examples:
 - asyncio_mode="auto" in pyproject.toml — no @pytest.mark.asyncio needed.
 - _http_post is an injectable seam on the transport instance.
 """
+
 from __future__ import annotations
 
 import json

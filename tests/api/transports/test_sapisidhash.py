@@ -8,6 +8,7 @@ Adaptations vs. PLAN.md examples:
 - _http_post is an injectable seam on the transport instance.
 - Wire-shaped media JSON matches B.2 fixture shape (name/workflowId/image.*).
 """
+
 from __future__ import annotations
 
 import json
@@ -86,16 +87,17 @@ def _build_cookie_db(
     """Create a minimal Chromium-shaped cookies SQLite DB."""
     db_path.parent.mkdir(parents=True, exist_ok=True)
     conn = sqlite3.connect(str(db_path))
-    conn.execute(
-        "CREATE TABLE cookies "
-        "(host_key TEXT, name TEXT, value TEXT, encrypted_value BLOB)"
-    )
-    conn.execute(
-        "INSERT INTO cookies VALUES ('.google.com', 'SAPISID', ?, ?)",
-        (sapisid_value, encrypted_value),
-    )
-    conn.commit()
-    conn.close()
+    try:
+        conn.execute(
+            "CREATE TABLE cookies (host_key TEXT, name TEXT, value TEXT, encrypted_value BLOB)"
+        )
+        conn.execute(
+            "INSERT INTO cookies VALUES ('.google.com', 'SAPISID', ?, ?)",
+            (sapisid_value, encrypted_value),
+        )
+        conn.commit()
+    finally:
+        conn.close()
 
 
 # ---------------------------------------------------------------------------
@@ -113,22 +115,14 @@ def test_compute_sapisidhash_format() -> None:
 
 
 def test_compute_sapisidhash_deterministic() -> None:
-    h1 = compute_sapisidhash(
-        timestamp=1700000000, sapisid="x", origin="https://labs.google"
-    )
-    h2 = compute_sapisidhash(
-        timestamp=1700000000, sapisid="x", origin="https://labs.google"
-    )
+    h1 = compute_sapisidhash(timestamp=1700000000, sapisid="x", origin="https://labs.google")
+    h2 = compute_sapisidhash(timestamp=1700000000, sapisid="x", origin="https://labs.google")
     assert h1 == h2
 
 
 def test_compute_sapisidhash_changes_with_inputs() -> None:
-    base = compute_sapisidhash(
-        timestamp=1700000000, sapisid="x", origin="https://labs.google"
-    )
-    diff_ts = compute_sapisidhash(
-        timestamp=1700000001, sapisid="x", origin="https://labs.google"
-    )
+    base = compute_sapisidhash(timestamp=1700000000, sapisid="x", origin="https://labs.google")
+    diff_ts = compute_sapisidhash(timestamp=1700000001, sapisid="x", origin="https://labs.google")
     diff_sapisid = compute_sapisidhash(
         timestamp=1700000000, sapisid="y", origin="https://labs.google"
     )
@@ -160,15 +154,14 @@ def test_read_sapisid_from_profile_missing_row_raises(tmp_path: Path) -> None:
     db_path = tmp_path / "Default" / "Network" / "Cookies"
     db_path.parent.mkdir(parents=True, exist_ok=True)
     conn = sqlite3.connect(str(db_path))
-    conn.execute(
-        "CREATE TABLE cookies "
-        "(host_key TEXT, name TEXT, value TEXT, encrypted_value BLOB)"
-    )
-    conn.execute(
-        "INSERT INTO cookies VALUES ('.google.com', 'OTHER_COOKIE', 'val', NULL)"
-    )
-    conn.commit()
-    conn.close()
+    try:
+        conn.execute(
+            "CREATE TABLE cookies (host_key TEXT, name TEXT, value TEXT, encrypted_value BLOB)"
+        )
+        conn.execute("INSERT INTO cookies VALUES ('.google.com', 'OTHER_COOKIE', 'val', NULL)")
+        conn.commit()
+    finally:
+        conn.close()
     with pytest.raises(AuthMissingError, match="gflow auth login"):
         read_sapisid_from_profile(tmp_path)
 
@@ -188,11 +181,13 @@ def test_read_sapisid_from_profile_sqlite_error_mapped(tmp_path: Path) -> None:
     db_path = tmp_path / "Default" / "Network" / "Cookies"
     db_path.parent.mkdir(parents=True, exist_ok=True)
     conn = sqlite3.connect(str(db_path))
-    # Deliberately create a cookies table with WRONG schema (missing columns)
-    conn.execute("CREATE TABLE cookies (host_key TEXT, name TEXT)")
-    conn.execute("INSERT INTO cookies VALUES ('.google.com', 'SAPISID')")
-    conn.commit()
-    conn.close()
+    try:
+        # Deliberately create a cookies table with WRONG schema (missing columns)
+        conn.execute("CREATE TABLE cookies (host_key TEXT, name TEXT)")
+        conn.execute("INSERT INTO cookies VALUES ('.google.com', 'SAPISID')")
+        conn.commit()
+    finally:
+        conn.close()
     with pytest.raises(AuthMissingError, match="failed reading SAPISID"):
         read_sapisid_from_profile(tmp_path)
 
@@ -232,9 +227,7 @@ async def test_generate_images_includes_sapisidhash_and_fingerprint_headers(
 
     captured: dict[str, str] = {}
 
-    async def fake_post(
-        url: str, *, headers: dict[str, str], content: bytes
-    ) -> MagicMock:
+    async def fake_post(url: str, *, headers: dict[str, str], content: bytes) -> MagicMock:
         captured.update(headers)
         return _make_200_response()
 
@@ -242,7 +235,7 @@ async def test_generate_images_includes_sapisidhash_and_fingerprint_headers(
     images = await transport.generate_images(project_id="proj", request=_req())
 
     assert captured["authorization"].startswith("SAPISIDHASH ")
-    ts_part, hash_part = captured["authorization"][len("SAPISIDHASH "):].split("_")
+    ts_part, hash_part = captured["authorization"][len("SAPISIDHASH ") :].split("_")
     assert ts_part.isdigit()
     assert len(hash_part) == 40  # sha1 hex
     assert captured["user-agent"] == "ua"
@@ -266,9 +259,7 @@ async def test_generate_images_origin_overrides_fingerprint_origin(
 
     captured: dict[str, str] = {}
 
-    async def fake_post(
-        url: str, *, headers: dict[str, str], content: bytes
-    ) -> MagicMock:
+    async def fake_post(url: str, *, headers: dict[str, str], content: bytes) -> MagicMock:
         captured.update(headers)
         return _make_200_response()
 
@@ -298,9 +289,7 @@ async def test_generate_images_401_rereads_cookie_then_retries(
 
     calls: dict[str, int] = {"n": 0}
 
-    async def fake_post(
-        url: str, *, headers: dict[str, str], content: bytes
-    ) -> MagicMock:
+    async def fake_post(url: str, *, headers: dict[str, str], content: bytes) -> MagicMock:
         calls["n"] += 1
         if calls["n"] == 1:
             return _make_response(401, "unauth")
@@ -326,9 +315,7 @@ async def test_generate_images_401_persists_raises_auth_expired() -> None:
     transport._profile_dir = Path("/fake")
     transport.refresh_auth = AsyncMock()  # type: ignore[method-assign]
 
-    async def always_401(
-        url: str, *, headers: dict[str, str], content: bytes
-    ) -> MagicMock:
+    async def always_401(url: str, *, headers: dict[str, str], content: bytes) -> MagicMock:
         return _make_response(401, "still unauth")
 
     transport._http_post = always_401  # type: ignore[method-assign]
@@ -354,9 +341,7 @@ async def test_generate_images_30s_timeout_raises_transport_timeout(
     transport._fingerprint = BrowserFingerprint()
     transport._profile_dir = tmp_path
 
-    async def hang(
-        url: str, *, headers: dict[str, str], content: bytes
-    ) -> MagicMock:
+    async def hang(url: str, *, headers: dict[str, str], content: bytes) -> MagicMock:
         await asyncio.sleep(9999)
         return MagicMock()  # unreachable
 

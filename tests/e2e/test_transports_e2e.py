@@ -148,9 +148,7 @@ async def test_e2e_5_sequential_batches(strategy: str) -> None:
             )
             all_images.extend(batch)
 
-    assert len(all_images) == 20, (
-        f"Expected 20 images across 5 batches, got {len(all_images)}"
-    )
+    assert len(all_images) == 20, f"Expected 20 images across 5 batches, got {len(all_images)}"
     for img in all_images:
         assert img.fife_url.startswith("https://"), (
             f"fife_url must be https://, got: {img.fife_url!r}"
@@ -312,6 +310,4 @@ async def test_e2e_30s_timeout_budget(
             request=req,
         )
     elapsed = time.monotonic() - start
-    assert elapsed < 35.0, (
-        f"TransportTimeoutError must fire within 35 s; took {elapsed:.1f} s"
-    )
+    assert elapsed < 35.0, f"TransportTimeoutError must fire within 35 s; took {elapsed:.1f} s"

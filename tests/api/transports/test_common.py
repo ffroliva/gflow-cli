@@ -2,6 +2,7 @@
 
 RED phase: all tests fail with ModuleNotFoundError until _common.py is created.
 """
+
 from __future__ import annotations
 
 import json
@@ -29,6 +30,7 @@ from gflow_cli.errors import (
 # ---------------------------------------------------------------------------
 # Helper — build a minimal valid wire-format media item
 # ---------------------------------------------------------------------------
+
 
 def _make_media_item(
     name: str = "asset-uuid-1",
@@ -200,4 +202,5 @@ def test_interpret_response_non_json_body_chained_from_json_decode_error() -> No
         interpret_response("s1", resp)
     assert exc_info.value.__cause__ is not None
     import json as _json
+
     assert isinstance(exc_info.value.__cause__, _json.JSONDecodeError)

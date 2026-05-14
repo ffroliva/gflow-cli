@@ -2,6 +2,7 @@
 
 See docs/superpowers/specs/2026-05-11-gflow-cli-b007-transport-strategy-design.md § 4.1.
 """
+
 from __future__ import annotations
 
 from pathlib import Path

@@ -8,6 +8,7 @@ Council edit (Claude, 2026-05-11): _FLOW_URL was about to be triplicated
 across B.1/B.2/B.3 and interpret_response() duplicated in B.2/B.3.
 Extracted before strategies are written so the duplication never lands.
 """
+
 from __future__ import annotations
 
 import json
@@ -68,9 +69,7 @@ def interpret_response(strategy_name: str, resp: Any) -> list[GeneratedImage]:
         try:
             payload = json.loads(text)
         except json.JSONDecodeError as exc:
-            raise WireFormatError(
-                f"{strategy_name}: non-JSON response body: {text[:200]}"
-            ) from exc
+            raise WireFormatError(f"{strategy_name}: non-JSON response body: {text[:200]}") from exc
 
         media = payload.get("media")
         if not isinstance(media, list):
@@ -78,28 +77,18 @@ def interpret_response(strategy_name: str, resp: Any) -> list[GeneratedImage]:
                 f"{strategy_name}: missing or invalid 'media' list in response: {text[:200]}"
             )
         if not media:
-            raise ContentPolicyError(
-                f"{strategy_name}: empty media[] — content policy rejection"
-            )
+            raise ContentPolicyError(f"{strategy_name}: empty media[] — content policy rejection")
         return GeneratedImage.from_response_dict(payload)
 
     if status == 401:
-        raise AuthExpiredError(
-            f"{strategy_name}: HTTP 401 from Flow API — session expired"
-        )
+        raise AuthExpiredError(f"{strategy_name}: HTTP 401 from Flow API — session expired")
     if status == 403:
         raise WafRejectionError(
             f"{strategy_name}: HTTP 403 — likely WAF/fingerprint mismatch: {text[:200]}"
         )
     if status == 429:
-        raise RateLimitError(
-            f"{strategy_name}: HTTP 429 — rate limit hit: {text[:200]}"
-        )
+        raise RateLimitError(f"{strategy_name}: HTTP 429 — rate limit hit: {text[:200]}")
     if status >= 500:
-        raise NetworkError(
-            f"{strategy_name}: HTTP {status} server error: {text[:200]}"
-        )
+        raise NetworkError(f"{strategy_name}: HTTP {status} server error: {text[:200]}")
 
-    raise WireFormatError(
-        f"{strategy_name}: unexpected HTTP status {status}: {text[:200]}"
-    )
+    raise WireFormatError(f"{strategy_name}: unexpected HTTP status {status}: {text[:200]}")

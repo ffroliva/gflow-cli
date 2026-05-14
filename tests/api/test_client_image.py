@@ -124,9 +124,7 @@ def _client_with_transport(tmp_path: Path, transport: _FakeTransport) -> FlowApi
 
 
 class TestGenerateImage:
-    async def test_generate_image_posts_to_correct_url(
-        self, tmp_path: Path
-    ) -> None:
+    async def test_generate_image_posts_to_correct_url(self, tmp_path: Path) -> None:
         """generate_image() delegates to transport.generate_images with the right project_id.
 
         URL routing (/projects/{id}/flowMedia:batchGenerateImages) is owned by
@@ -141,9 +139,7 @@ class TestGenerateImage:
         assert len(transport.calls) == 1
         assert transport.calls[0]["project_id"] == "proj-1"
 
-    async def test_generate_image_uses_text_plain_content_type(
-        self, tmp_path: Path
-    ) -> None:
+    async def test_generate_image_uses_text_plain_content_type(self, tmp_path: Path) -> None:
         """Content-type header is a transport-internal concern.
 
         The client delegates the full POST to transport.generate_images. This
@@ -190,9 +186,7 @@ class TestGenerateImage:
         assert exc_info.value.to_problem_details().get("status") is None
         assert "/projects/proj-1/flowMedia:batchGenerateImages" in exc_info.value.route
 
-    async def test_generate_image_mints_recaptcha_token(
-        self, tmp_path: Path
-    ) -> None:
+    async def test_generate_image_mints_recaptcha_token(self, tmp_path: Path) -> None:
         """Token minting is a transport-internal concern (Spec C2).
 
         The transport strategy owns the reCAPTCHA mint+retry loop. This test
@@ -206,9 +200,7 @@ class TestGenerateImage:
 
         assert len(transport.calls) == 1
 
-    async def test_generate_image_returns_generated_image(
-        self, tmp_path: Path
-    ) -> None:
+    async def test_generate_image_returns_generated_image(self, tmp_path: Path) -> None:
         """Client contract: generate_image returns the first GeneratedImage
         from transport.generate_images."""
         transport = _FakeTransport(images=[_FAKE_IMAGE])
@@ -222,9 +214,7 @@ class TestGenerateImage:
         assert result.seed == 646428
         assert result.dimensions == (768, 1376)
 
-    async def test_generate_image_propagates_flow_api_error_on_4xx(
-        self, tmp_path: Path
-    ) -> None:
+    async def test_generate_image_propagates_flow_api_error_on_4xx(self, tmp_path: Path) -> None:
         """FlowApiError raised by transport.generate_images propagates to caller.
 
         4xx classification is performed inside the transport strategy. The
@@ -249,9 +239,7 @@ class TestGenerateImage:
         assert "/projects/proj-1/flowMedia:batchGenerateImages" in exc_info.value.route
         assert exc_info.value.status == 400
 
-    async def test_generate_image_idempotent_body_modulo_recaptcha(
-        self, tmp_path: Path
-    ) -> None:
+    async def test_generate_image_idempotent_body_modulo_recaptcha(self, tmp_path: Path) -> None:
         """Same seed+batch_id → transport called twice with the same project_id.
 
         Body idempotency (recaptchaContext.token, sessionId fields) is a
@@ -662,9 +650,7 @@ class TestSpecC2TokenReMint:
     its Spec C2 contract is verified below.
     """
 
-    async def test_recaptcha_token_re_minted_every_attempt(
-        self, tmp_path: Path
-    ) -> None:
+    async def test_recaptcha_token_re_minted_every_attempt(self, tmp_path: Path) -> None:
         """Transport.generate_images is called once per generate_image() call.
 
         Spec C2 (token re-minted every retry attempt) is a transport-internal
@@ -740,9 +726,7 @@ class TestWireFormatDiscoveryAndRedaction:
     derivation from real HTTP responses) are covered in tests/api/transports/.
     """
 
-    async def test_wire_format_error_full_discovery_on_4xx(
-        self, tmp_path: Path
-    ) -> None:
+    async def test_wire_format_error_full_discovery_on_4xx(self, tmp_path: Path) -> None:
         """WireFormatError raised by transport propagates with complete discovery dict.
 
         The 4xx fallthrough WireFormatError must carry a complete RFC 9457
@@ -784,9 +768,7 @@ class TestWireFormatDiscoveryAndRedaction:
         # The route_name comes through verbatim.
         assert "batchGenerateImages" in discovery["route_name"]
 
-    async def test_body_prefix_redacted_excludes_tokens(
-        self, tmp_path: Path
-    ) -> None:
+    async def test_body_prefix_redacted_excludes_tokens(self, tmp_path: Path) -> None:
         """Audit gap #11: body_prefix_redacted must not leak reCAPTCHA tokens.
 
         The transport is responsible for redacting sensitive tokens before

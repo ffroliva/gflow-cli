@@ -29,6 +29,7 @@ from gflow_cli.errors import AuthExpiredError, TransportTimeoutError, WafRejecti
 # Helpers
 # ---------------------------------------------------------------------------
 
+
 def _req(prompt: str = "a motivational sunrise") -> GenerateImageRequest:
     """Build a minimal GenerateImageRequest using real field names."""
     return GenerateImageRequest(
@@ -41,25 +42,27 @@ def _req(prompt: str = "a motivational sunrise") -> GenerateImageRequest:
 
 def _flow_200_body() -> str:
     """Return a minimal valid batchGenerateImages 200 response body."""
-    return json.dumps({
-        "media": [
-            {
-                "name": "projects/proj-uuid/assets/asset-001",
-                "workflowId": "wf-001",
-                "image": {
-                    "generatedImage": {
-                        "seed": 42,
-                        "prompt": "a motivational sunrise",
-                        "modelNameType": "NARWHAL",
-                        "aspectRatio": "IMAGE_ASPECT_RATIO_PORTRAIT",
-                        "fifeUrl": "https://lh3.googleusercontent.com/abc123",
+    return json.dumps(
+        {
+            "media": [
+                {
+                    "name": "projects/proj-uuid/assets/asset-001",
+                    "workflowId": "wf-001",
+                    "image": {
+                        "generatedImage": {
+                            "seed": 42,
+                            "prompt": "a motivational sunrise",
+                            "modelNameType": "NARWHAL",
+                            "aspectRatio": "IMAGE_ASPECT_RATIO_PORTRAIT",
+                            "fifeUrl": "https://lh3.googleusercontent.com/abc123",
+                        },
+                        "dimensions": {"width": 576, "height": 1024},
                     },
-                    "dimensions": {"width": 576, "height": 1024},
-                },
-            }
-        ],
-        "workflows": [],
-    })
+                }
+            ],
+            "workflows": [],
+        }
+    )
 
 
 class _AsyncCtxManager:
@@ -158,9 +161,7 @@ async def test_generate_images_uses_page_evaluate_fetch() -> None:
     transport = EvaluateFetchTransport()
 
     fake_page = MagicMock()
-    fake_page.evaluate = AsyncMock(
-        return_value={"status": 200, "body": _flow_200_body()}
-    )
+    fake_page.evaluate = AsyncMock(return_value={"status": 200, "body": _flow_200_body()})
     transport._page = fake_page  # type: ignore[attr-defined]
     transport._setup_done = True  # type: ignore[attr-defined]
 
@@ -363,9 +364,7 @@ async def test_generate_images_seed_is_deterministic_for_same_ref() -> None:
     transport = EvaluateFetchTransport()
     fake_page = MagicMock()
     # Return a 200 body so interpret_response can parse it
-    fake_page.evaluate = AsyncMock(
-        return_value={"status": 200, "body": _flow_200_body()}
-    )
+    fake_page.evaluate = AsyncMock(return_value={"status": 200, "body": _flow_200_body()})
     transport._page = fake_page  # type: ignore[attr-defined]
     transport._setup_done = True  # type: ignore[attr-defined]
 
