@@ -127,7 +127,7 @@ Task-specific focused gates are listed in `PLAN.md`. Any failure blocks progress
 - **Prompt-file safety regression:** stop and fix before continuing. Oversized/non-file/invalid UTF-8 cases must fail before profile resolution and browser/API work.
 - **Path disclosure dispute:** prefer basename/source labels in user-facing output; full absolute paths only under established debug logging policy.
 - **Seed-scope dispute:** do not add seed to shell multi-prompt or JSON config in v0.6. Record follow-up only.
-- **Docs/code commit split:** if user-facing behavior lands without docs in the same commit, add docs in an immediate fixup commit and note the deviation before release.
+- **Docs/code commit split:** if user-facing behavior lands without docs in the same commit, stop. Amend/replace the offending behavior commit before proceeding unless Flavio explicitly approves a deviation. The locked project rule is that every commit affecting user-facing behavior updates docs in the same commit.
 - **Reviewer disagreement:** Coordinator decides if one reviewer is clearly wrong. If uncertain, summarize the disagreement to Flavio for a decision.
 
 ---
