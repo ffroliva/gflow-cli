@@ -7,6 +7,10 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+### Added
+
+- Demo GIF in README (`docs/assets/example-run.gif`) showing a single `gflow image t2i "..." --aspect 9:16 --model nano2` run against a Pro/Ultra profile, with streaming `structlog` JSON output and the resulting PNG on disk. Recorded 2026-05-13; terminal-only (the persistent Playwright session was already warm, so Chromium stayed in the background).
+
 ## [0.5.0a1] — 2026-05-12
 
 > **Pluggable image transport + JSON-described batch runs.** The image
