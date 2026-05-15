@@ -2,7 +2,7 @@
 
 > **Status:** Living document. Updated as phases complete.
 > **Owner:** [@ffroliva](https://github.com/ffroliva)
-> **Last revised:** 2026-05-11 (Phase 4 Hardening shipped, v0.4.0a2)
+> **Last revised:** 2026-05-15 (Phase 6 / v0.6.0a2 — Real Chrome auth)
 
 This plan turns the v0.1 scaffold into a production-grade CLI for Google AI Ultra/Pro subscribers who want to spend their Flow credits via batch automation. The plan is opinionated, treating this repo as a portfolio-grade benchmark.
 
@@ -76,7 +76,12 @@ Current package layout (post-Phase 4):
 src/gflow_cli/
 ├── __init__.py
 ├── __main__.py
-├── auth.py             ← login + status (Playwright headed for login)
+├── auth/               ← v0.6.0a2: strategy pattern (real Chrome + internal Chromium)
+│   ├── __init__.py     ← login(), AuthStatus, get_status(), list_profiles()
+│   ├── base.py         ← AuthStrategy Protocol
+│   ├── factory.py      ← AuthStrategyFactory (auto/chrome/internal routing)
+│   ├── internal_chromium.py  ← bundled Chromium (legacy fallback)
+│   └── real_chrome.py  ← system Chrome with G12 stealth flags
 ├── cli.py              ← Click app, top-level + auth subgroup
 ├── cli_image.py        ← gflow image upload/t2i/i2i (Click subgroup)
 ├── cli_video.py        ← gflow video t2v/i2v/batch (Click subgroup)
