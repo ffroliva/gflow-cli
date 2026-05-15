@@ -272,3 +272,37 @@ PowerShell equivalent uses `$LASTEXITCODE` (per-call). This is a documentation-o
 ---
 
 _End. Convert stable rules from this file into `project_conventions.md` once they survive a second phase without revision._
+
+---
+
+## 2026-05-15 — Code Mode / agent workflow session
+
+### L22 — Namespace all project slash commands under `/gflow:`
+
+**Rule:** Project commands live in `.claude/commands/gflow/` and are invoked as `/gflow:<name>`. Prevents collision with Claude Code built-ins and user-global commands. Never drop project commands at the root `commands/` level — no namespace means silent collision risk when a built-in of the same name is introduced.
+
+**Source:** This session.
+
+---
+
+### L23 — `/gflow:check` auto-fixes but does not commit
+
+**Rule:** `ruff check --fix` and `ruff format` rewrite files in place. The command must stop there — leave the diff for the agent or human to review before staging. Auto-committing lint fixes removes the review gate. Report which files changed; let the committer decide.
+
+**Source:** This session.
+
+---
+
+### L24 — INDEX.md is worth loading at session start; heavy docs are not
+
+**Rule:** INDEX.md is a small routing table (~37 lines) — cheap enough to load at every session start. It enables lazy loading of everything else. PLAN.md, KNOWN_ISSUES.md, and CHANGELOG.md are loaded on demand via `/gflow:plan`, `/gflow:known-issues`, and `/gflow:changelog`. Loading all four upfront burns tokens on sessions where only one is needed.
+
+**Source:** This session.
+
+---
+
+### L25 — Changelog entries during development; migration owned by `/gflow:release`
+
+**Rule:** Add entries to `[Unreleased]` in the same commit as the user-visible change (during development). `/gflow:release` owns the migration: moving `[Unreleased]` to a versioned section. Never accumulate all entries at release time — the diff is meaningless and defeats `git blame` on the changelog.
+
+**Source:** This session. Reinforces L15.

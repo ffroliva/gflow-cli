@@ -10,10 +10,12 @@
 
 ## On every session start
 
-1. Read **[docs/INDEX.md](docs/INDEX.md)** — routing layer for all project docs.
-2. Read **[PLAN.md](PLAN.md)** — current phase, next concrete tasks, ADRs.
-3. Read **[KNOWN_ISSUES.md](KNOWN_ISSUES.md)** — open issues to avoid re-discovering.
-4. Check **[CHANGELOG.md](CHANGELOG.md) `[Unreleased]`** — what's recently shipped.
+1. Read **[docs/INDEX.md](docs/INDEX.md)** — routing layer for all project docs and commands.
+2. Pull deeper context on demand — do not read these upfront:
+   - Starting a feature or task → `/gflow:plan`
+   - Touching auth or reCAPTCHA → `/gflow:known-issues`
+   - Cutting a release → `/gflow:release` (calls `/gflow:changelog` automatically)
+   - Before any commit → `/gflow:check`
 
 ## Active phase
 
