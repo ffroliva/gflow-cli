@@ -60,7 +60,9 @@ def _no_live_login(monkeypatch: pytest.MonkeyPatch) -> None:
     exist — which would open a real Chromium window. Stub out the async
     Playwright login so the "no profiles" scenario stays mocked-only."""
 
-    async def _fake_login(name: str = "default") -> Path:
+    async def _fake_login(
+        name: str = "default", browser: str = "auto", headless: bool = False
+    ) -> Path:
         # Don't actually create a profile dir — the "List profiles when none
         # exist" scenario asserts the empty-state banner BEFORE the login
         # would persist anything in the real flow. ``Path(os.devnull)`` is

@@ -127,14 +127,45 @@ Use `gflow auth login --profile <name>` to add or refresh a profile.
 
 ### `gflow auth login`
 
-Opens a headed Chromium, navigates to `https://labs.google/fx/tools/flow?hl=en`, and waits for you to sign in. The browser window must be closed within **10 minutes total** (the underlying `wait_for_event("close", timeout=600_000)`); after that the command times out. When the window is closed, the captured session is persisted to disk.
+Opens a headed browser, navigates to `https://labs.google/fx/tools/flow?hl=en`, and waits
+for you to sign in. The CLI polls for a `SAPISID` cookie + the Flow editor UI to confirm
+success (up to 10 minutes). When detected, the session is persisted to disk.
 
 ```bash
-gflow auth login                  # default profile
-gflow auth login --profile work   # named profile (creates if missing)
+gflow auth login                   # default profile, auto browser
+gflow auth login --profile work    # named profile (creates if missing)
+gflow auth login --browser chrome  # force real Chrome (bypasses G12 block)
 ```
 
-Re-running this command refreshes an expired session: it reuses the existing profile dir, so you typically just have to click "Continue as <you>" on the Google account chooser.
+Re-running this command refreshes an expired session: it reuses the existing profile dir,
+so you typically just have to click "Continue as <you>" on the Google account chooser.
+
+#### `--browser [auto|chrome|internal]`
+
+| Value | Browser used | When to use |
+|---|---|---|
+| `auto` (default) | Real Chrome if installed; falls back to internal Chromium | First choice for most users |
+| `chrome` | System Google Chrome (stealth config) | Required if Google blocks the sign-in |
+| `internal` | Playwright's bundled Chromium | Fallback when Chrome isn't installed |
+
+Override with the env var: `GFLOW_CLI_AUTH_BROWSER=chrome gflow auth login`
+
+**Why `chrome` bypasses bot detection:** Playwright's bundled Chromium exposes
+`navigator.webdriver = true` as a non-configurable native property (set in C++ before
+any JS can override it). Google detects this and redirects to
+`/v3/signin/rejected` — the "G12 block". The `chrome` strategy launches real system Chrome
+with `--disable-blink-features=AutomationControlled`, which prevents Blink from ever
+setting the property, plus a JS `add_init_script` as belt-and-suspenders.
+
+**Expected cosmetic notice:** A yellow "You are using an unsupported command-line flag:
+`--disable-blink-features=AutomationControlled`" banner may appear at the top of the
+Chrome window. This is harmless — you can dismiss it. It is the accepted trade-off for
+bypassing G12.
+
+**Privacy guard:** The `chrome` strategy will refuse to use any profile directory outside
+`GFLOW_CLI_HOME`. This prevents accidental use of your primary Chrome profile (which could
+corrupt your everyday browsing data). `gflow-cli` always creates a dedicated isolated
+profile directory under `GFLOW_CLI_HOME`.
 
 ### `gflow auth status`
 

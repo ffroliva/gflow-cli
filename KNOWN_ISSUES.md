@@ -133,6 +133,35 @@ _(none yet)_
 
 ## Resolved
 
+### G12 "browser not secure" block — Google rejects automated sign-in
+
+- **Status:** Resolved · **Severity:** Critical (blocked `gflow auth login`) · **Fixed in:** v0.6.0a2
+
+Google's sign-in flow (`accounts.google.com/v3/signin/rejected`) detected Playwright's bundled Chromium as an automated browser and refused the login with no user-facing error.
+
+**Root cause (timing race):** Without `--disable-blink-features=AutomationControlled`,
+Blink's C++ engine sets `navigator.webdriver = true` as a non-configurable, non-writable
+native property at Chrome startup — before any JavaScript (including `add_init_script`)
+can run. The `Object.defineProperty` override silently fails. With the flag, the property
+is never set; the JS override then works as belt-and-suspenders.
+
+**Resolution:** `v0.6.0a2` adds `RealChromeStrategy` — a new auth strategy that launches
+the system's real Google Chrome via Playwright's `channel="chrome"` with stealth flags.
+
+```bash
+# Bypass G12 block explicitly:
+gflow auth login --browser chrome
+
+# Or rely on auto-detection (default behaviour; picks real Chrome if installed):
+gflow auth login
+```
+
+A cosmetic "You are using an unsupported command-line flag" notice may appear briefly in
+the Chrome window — this is harmless and can be dismissed. It is the accepted trade-off
+for bypassing G12.
+
+---
+
 ### v0.1 — provider methods are stubs
 
 - **Status:** Resolved · **Severity:** Critical (blocked usage) · **Fixed in:** v0.2.0a1

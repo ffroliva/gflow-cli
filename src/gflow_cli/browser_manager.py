@@ -163,6 +163,15 @@ def _find_chrome_binary() -> str:
     )
 
 
+def is_chrome_available() -> bool:
+    """Return True if a Google Chrome binary can be found on this system."""
+    try:
+        _find_chrome_binary()
+        return True
+    except ConfigurationError:
+        return False
+
+
 # ---------------------------------------------------------------------------
 # Health check
 # ---------------------------------------------------------------------------

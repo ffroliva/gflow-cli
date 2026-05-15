@@ -7,7 +7,62 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
-## [0.6.0a1] — 2026-05-14
+## [0.6.0a2] — 2026-05-16
+
+> **Real Chrome auth strategy — G12 block resolved.** This release restores
+> `gflow auth login` reliability by routing logins through the system's real
+> Google Chrome instead of Playwright's bundled Chromium. A carefully ordered
+> stealth configuration prevents Google's bot-detection from blocking the sign-in
+> flow.
+
+### Added
+
+- **`--browser [auto|chrome|internal]` flag** on `gflow auth login` — selects
+  the browser strategy. `chrome` uses real system Chrome (stealth). `internal`
+  falls back to bundled Chromium. `auto` (default) probes for real Chrome and
+  falls back gracefully.
+- **`GFLOW_CLI_AUTH_BROWSER` env var** — overrides the browser strategy without
+  a CLI flag.
+- **`RealChromeStrategy`** (`src/gflow_cli/auth/real_chrome.py`) — stealth
+  persistent context via `channel="chrome"` with
+  `--disable-blink-features=AutomationControlled` and a JS init-script to mask
+  `navigator.webdriver`.
+- **`InternalChromiumStrategy`** — extracted from the previous `auth.py` monolith
+  as an explicit fallback strategy.
+- **`AuthStrategyFactory`** — routes `auto`/`chrome`/`internal` to the
+  appropriate strategy based on system state.
+- **`is_chrome_available()`** in `browser_manager.py` — non-raising probe for
+  system Chrome presence.
+- **4 new BDD scenarios** in `tests/features/auth_login.feature` covering all
+  `--browser` modes.
+
+### Fixed
+
+- **G12 bot-detection block** — Google's "browser not secure" rejection (`/v3/signin/rejected`)
+  is bypassed by the stealth Chrome launch configuration. Root cause: without
+  `--disable-blink-features=AutomationControlled`, Blink's C++ engine sets
+  `navigator.webdriver = true` as a non-configurable native property before any
+  JS init script can run, making `Object.defineProperty` overrides silently fail.
+- **`add_init_script` timing** — registration now occurs before any page is
+  accessed, ensuring the stealth script fires on every navigation including the
+  first `goto()`.
+- **Privacy Guard** — `RealChromeStrategy` validates that `profile_dir` is inside
+  `GFLOW_CLI_HOME` and raises `SecurityError` if it is not, preventing accidental
+  use of the user's primary system Chrome profile.
+- **`ConfigurationError` on missing Chrome** — clear "Chrome binary not found"
+  message with install guidance when `--browser chrome` is requested but Chrome
+  is not on the system.
+- **Two pyright `TypedDict` errors** in cookie access (`c["name"]` → `c.get("name")`).
+
+### Changed
+
+- `src/gflow_cli/auth.py` promoted to `src/gflow_cli/auth/` package with
+  `__init__.py`, `base.py`, `factory.py`, `internal_chromium.py`,
+  `real_chrome.py`, `strategies.py`.
+- `gflow auth login` now prints the launch strategy announcement before opening
+  any browser window.
+
+
 
 > **Shell-friendly multi-prompt `t2i` + performance hardening.** This release 
 > promotes `gflow image t2i` to a variadic command that can consume multiple 
