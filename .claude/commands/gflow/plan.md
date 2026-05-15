@@ -1,24 +1,39 @@
 ---
-description: Show the current phase — scope, implementation sequence, and definition of done.
+description: Show the active plan — next task if a superpowers plan is running, current phase otherwise.
 ---
 
-# `/gflow:plan` — Current phase
-
-Read PLAN.md and return only the block marked **CURRENT FOCUS**. Do not return past or future phases unless asked.
+# `/gflow:plan` — Active plan
 
 ## Steps
 
-1. Read [PLAN.md](../../../PLAN.md)
-2. Identify the phase marked **CURRENT FOCUS**
-3. Return:
-   - Phase name and number
-   - Scope paragraph
-   - Implementation sequence with per-step status
-   - Definition of done checklist
-   - Open questions relevant to current work (if any)
+**1. Check conversation context.**
+
+Has the user mentioned a specific feature or invoked the write-plan skill in this session?
+If yes, note the feature name (e.g. `shell-multi-prompt`, `image-mvp`, `phase-4-hardening`).
+
+**2. Run the discovery script.**
+
+With a feature name identified in step 1:
+```bash
+uv run python scripts/dev/active_plan.py --feature <feature-name>
+```
+
+Without a feature name (uses most-recent superpowers plan, falls back to PLAN.md):
+```bash
+uv run python scripts/dev/active_plan.py
+```
+
+**3. Return the output verbatim.**
+
+The script already filters to the relevant block. Do not read additional files.
+
+## What the script returns
+
+- **Superpowers plan active:** file path, title, goal, progress (X/N steps), and the next unchecked task block
+- **No superpowers plan:** the first incomplete phase from `PLAN.md` (scope, sequence, definition of done)
 
 ## When to call
 
-- When starting a new task and unsure what's in scope
+- When starting a task and unsure what's in scope
 - When the user asks "what are we working on?" or "what's next?"
-- Before adding a feature, to check it belongs to the current phase
+- Before adding a feature, to check it belongs to the current scope
