@@ -66,10 +66,15 @@ Ask the user (if not already provided):
    git commit -m "chore(release): v<NEW_VERSION>"
    ```
 
-9. **Tag.** PEP 440 prerelease tags include `aN` / `bN` / `rcN`:
+9. **Tag.** PEP 440 prerelease tags include `aN` / `bN` / `rcN`. Use `-s` for a
+   signed annotated tag so GitHub shows the "Verified" badge:
    ```bash
-   git tag -a v<NEW_VERSION> -m "v<NEW_VERSION>"
+   git tag -s v<NEW_VERSION> -m "v<NEW_VERSION>"
    ```
+   Requires a GPG or SSH signing key registered in your GitHub account settings.
+   Run `git config --global user.signingkey` to confirm a key is set.
+   If signing is not available in the current environment, create the tag on
+   your local machine and push it: `git push origin v<NEW_VERSION>`.
 
 10. **Push commit + tag.**
    ```bash
