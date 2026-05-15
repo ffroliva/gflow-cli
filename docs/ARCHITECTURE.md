@@ -57,6 +57,43 @@ The hexagonal target above is the steady state. The **current** package — and 
 - Restructure existing modules beyond minimal dedup (shared CLI helpers were promoted to `gflow_cli._cli_helpers` at the package top level — kept flat to avoid a `cli.py` file / `cli/` package collision).
 - Introduce dependency-injection containers, command/query buses, or any DDD/CQRS scaffolding (deferred per [PLAN ADR #2](../PLAN.md#5-decision-log-adrs-in-miniature)).
 
+**v0.6.0a2 module additions — auth strategy package:**
+
+`auth.py` was promoted to a sub-package `gflow_cli.auth/` with the strategy pattern to support multiple browser backends for the `gflow auth login` command:
+
+```text
+src/gflow_cli/auth/
+├── __init__.py          # public: login(), AuthStatus, get_status(), list_profiles()
+├── base.py              # AuthStrategy Protocol — the shared contract
+├── factory.py           # AuthStrategyFactory — routes auto/chrome/internal modes
+├── internal_chromium.py # InternalChromiumStrategy — Playwright bundled Chromium (legacy)
+├── real_chrome.py       # RealChromeStrategy — system Google Chrome with stealth flags
+└── strategies.py        # (internal) shared Playwright helpers
+```
+
+**Why:** Google's bot-detection ("G12 block") rejects Playwright's bundled Chromium during `gflow auth login`. Launching the user's installed Google Chrome with `--disable-blink-features=AutomationControlled` plus a JS `add_init_script` that overrides `navigator.webdriver` bypasses detection. Two strategies are needed because the setup (persistent-context flags, Chrome binary path, stealth init) differs fundamentally between them.
+
+**AuthStrategy Protocol** (`base.py`):
+```python
+class AuthStrategy(Protocol):
+    name: str
+    async def login(self, profile_dir: Path, headless: bool) -> None: ...
+```
+
+**AuthStrategyFactory** (`factory.py`):
+- `mode="auto"` — probes `is_chrome_available()` → `RealChromeStrategy` if found, else `InternalChromiumStrategy` with a warning.
+- `mode="chrome"` — explicit `RealChromeStrategy`; raises `ConfigurationError` if Chrome binary missing.
+- `mode="internal"` — explicit `InternalChromiumStrategy`.
+
+**RealChromeStrategy stealth design** (`real_chrome.py`):
+- Uses `playwright.chromium.launch_persistent_context(executable_path=chrome_path, args=["--disable-blink-features=AutomationControlled", ...])`.
+- Registers `add_init_script` **before** accessing `ctx.pages[0]`. Chrome opens a blank tab on launch; the init script must be in place before any navigation so Blink never exposes `navigator.webdriver = true`.
+- C++-level flag disables the Blink feature at startup; the JS override is belt-and-suspenders.
+- Privacy guard: raises `SecurityError` if the resolved `profile_dir` is outside `GFLOW_CLI_HOME` — protects the user's primary system Chrome profile from being used as a session store.
+- Cosmetic trade-off: `--disable-blink-features=AutomationControlled` triggers an info bar ("you're using an unsupported flag") inside Chrome. This is dismissed by the user and cannot be suppressed further without re-triggering the G12 block.
+
+**CLI surface:** `gflow auth login [--browser auto|chrome|internal]` (env: `GFLOW_CLI_AUTH_BROWSER`).
+
 When the project converges on the hexagonal target above, modules graduate to layers: e.g., today's `gflow_cli.api` becomes `gflow_cli.infrastructure.flow_api`, `gflow_cli.cli` becomes `gflow_cli.interfaces.cli`, and so on. The modular-monolith shape is the staging area, not the destination.
 
 ## Folder layout
@@ -64,7 +101,7 @@ When the project converges on the hexagonal target above, modules graduate to la
 > **Note: this document describes the TARGET architecture, not the current
 > package layout.** The current shape (per [PLAN.md § 2](../PLAN.md#2-architecture-steady-state)
 > and [ADR #2](../PLAN.md#5-decision-log-adrs-in-miniature)) is the simpler
-> `src/gflow_cli/{api/, cli.py, cli_image.py, cli_video.py, auth.py,
+> `src/gflow_cli/{api/, auth/, cli.py, cli_image.py, cli_video.py,
 > config.py, paths.py, profile_store.py}`. The DDD layout below was deferred
 > indefinitely; converge toward it incrementally if/when a second `Provider`
 > or a `gflow serve` HTTP front-end justifies the split.
