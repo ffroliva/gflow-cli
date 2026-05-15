@@ -104,10 +104,39 @@ def auth(ctx: click.Context) -> None:
     default=None,
     help="Profile name. Defaults to the resolved default (env > config > auto).",
 )
-def auth_login(profile: str | None) -> None:
+@click.option(
+    "--browser",
+    default=None,
+    type=click.Choice(["auto", "chrome", "internal"], case_sensitive=False),
+    help="Browser strategy for login. 'chrome' bypasses Google secure blocks.",
+    envvar="GFLOW_CLI_AUTH_BROWSER",
+)
+def auth_login(profile: str | None, browser: str | None) -> None:
     """One-time interactive sign-in. Opens a browser window."""
+    from gflow_cli.browser_manager import is_chrome_available
+    from gflow_cli.errors import ConfigurationError
+
     name = profile or _resolve_or_prompt(default_for_first_run="default")
-    pdir = asyncio.run(auth_mod.login(name))
+    # Resolve browser strategy: CLI > Env > auto
+    selected_browser = browser or "auto"
+
+    # Announce the launch strategy (peek at Chrome availability for auto mode)
+    if selected_browser == "internal":
+        console.print("Launching internal Chromium...")
+    elif selected_browser == "chrome":
+        console.print("Launching real Chrome...")
+    else:  # auto
+        console.print(
+            "Launching real Chrome..."
+            if is_chrome_available()
+            else "Launching internal Chromium..."
+        )
+
+    try:
+        pdir = asyncio.run(auth_mod.login(name, browser=selected_browser))
+    except ConfigurationError as e:
+        console.print(f"[red]{e}[/red]")
+        sys.exit(1)
     console.print(f"[green]Session saved.[/green] Profile dir: {pdir}")
     # If this was the very first profile, set it as default automatically so
     # subsequent commands work without explicit --profile / GFLOW_CLI_PROFILE.

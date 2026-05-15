@@ -14,16 +14,21 @@ from __future__ import annotations
 
 from pathlib import Path
 
-import structlog
-from playwright.async_api import async_playwright
-from rich.console import Console
-
 from gflow_cli.config import get_settings
 
-logger = structlog.get_logger(__name__)
-_console = Console()
+from .factory import AuthStrategyFactory
+from .internal_chromium import InternalChromiumStrategy
+from .real_chrome import RealChromeStrategy
 
-GEMINI_URL = "https://labs.google/fx/tools/flow?hl=en"
+__all__ = [
+    "AuthStrategyFactory",
+    "InternalChromiumStrategy",
+    "RealChromeStrategy",
+    "default_profile_root",
+    "profile_dir",
+    "status",
+    "login",
+]
 
 
 def default_profile_root() -> Path:
@@ -39,39 +44,16 @@ def profile_dir(name: str = "default") -> Path:
     return get_settings().profile_subdir(name)
 
 
-async def login(name: str = "default") -> Path:
+async def login(name: str = "default", browser: str = "auto", headless: bool = False) -> Path:
     """Open a HEADED Chromium window, let user sign into Google, persist session.
 
     Returns the profile directory path. On subsequent runs the saved cookies
     are reused; if Google's session expires, calling this again re-captures it.
     """
     pdir = profile_dir(name)
-    pdir.mkdir(parents=True, exist_ok=True)
-    logger.info("auth_login_started", profile_dir=str(pdir))
-    async with async_playwright() as pw:
-        ctx = await pw.chromium.launch_persistent_context(
-            user_data_dir=str(pdir),
-            headless=False,
-            viewport={"width": 1280, "height": 800},
-        )
-        try:
-            page = ctx.pages[0] if ctx.pages else await ctx.new_page()
-            await page.goto(GEMINI_URL, wait_until="domcontentloaded", timeout=60_000)
-            # User-facing instructions — Rich console, not raw print() (CLAUDE.md
-            # invariant: no `print()` under src/).
-            _console.print(
-                "\n  Sign into your Google account in the open window.\n"
-                "  Once you reach the Flow editor, close the window to save the session.\n"
-            )
-            try:
-                await ctx.wait_for_event("close", timeout=600_000)  # pyright: ignore[reportUnknownMemberType]
-            except Exception:
-                pass
-        finally:
-            try:
-                await ctx.close()
-            except Exception:
-                pass
+    factory = AuthStrategyFactory()
+    strategy = factory.create(browser)
+    await strategy.login(pdir, headless=headless)
     return pdir
 
 

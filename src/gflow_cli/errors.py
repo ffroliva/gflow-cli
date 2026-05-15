@@ -236,6 +236,14 @@ class ConfigurationError(GFlowError):
     )
 
 
+class SecurityError(GFlowError):
+    """Raised when a security boundary is violated (e.g. profile_dir outside HOME)."""
+
+    problem_type = "https://gflow-cli.dev/errors/security"
+    title = "Security violation"
+    _default_remediation = "Ensure all file paths are within the allowed GFLOW_CLI_HOME directory."
+
+
 class AuthMissingError(GFlowError):
     """Raised when a strategy lacks a required prerequisite credential
     (e.g. SAPISID cookie missing from profile dir for SapisidhashTransport)."""
