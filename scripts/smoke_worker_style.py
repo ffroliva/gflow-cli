@@ -61,9 +61,11 @@ PROMPT_INPUT_SELECTORS = [
 ]
 
 SUBMIT_BUTTON_SELECTORS = [
-    'button:has(i.google-symbols:has-text("arrow_forward"))',
-    'button:has-text("arrow_forward"):has-text("Create")',
-    'button[aria-label*="Create"]',
+    # Universal: icon-based selector (locale-invariant, same pattern as NEW_PROJECT_SELECTORS)
+    "button:has(i.google-symbols:text('arrow_forward'))",
+    "button:has(i:text('arrow_forward'))",
+    # Fallback: button whose visible text includes the icon ligature text
+    "button:has-text('arrow_forward')",
 ]
 
 # Selectors for the "new project" gallery CTA. From the live DOM dump
@@ -231,14 +233,15 @@ async def _send_prompt(page: Page, prompt_text: str, out_dir: Path) -> None:
     await input_box.click()
     await page.keyboard.press("Control+A")
     await page.keyboard.press("Delete")
-    # Slate.js requires real keyboard events; .fill() bypasses onChange.
-    await page.keyboard.type(prompt_text)
-    await page.wait_for_timeout(500)
+    # insertText fires a single 'beforeinput' event that Slate.js handles
+    # natively — much faster than per-keystroke type() (~1.5s/char in headed Chrome).
+    await page.keyboard.insert_text(prompt_text)
+    await page.wait_for_timeout(600)
 
     for sel in SUBMIT_BUTTON_SELECTORS:
         try:
             btn = page.locator(sel).first
-            await btn.wait_for(state="visible", timeout=2_000)
+            await btn.wait_for(state="visible", timeout=3_000)
             await btn.click()
             log.info("prompt_submitted", via=sel)
             return
@@ -248,12 +251,25 @@ async def _send_prompt(page: Page, prompt_text: str, out_dir: Path) -> None:
     await page.keyboard.press("Enter")
 
 
-async def _capture_batch_response(page: Page, timeout_s: int = 120) -> dict:
-    """Wait for the next ``batchGenerateImages`` response and return its parsed body."""
+async def _capture_batch_response(page: Page, project_id: str, timeout_s: int = 120) -> dict:
+    """Wait for a ``batchGenerateImages`` response scoped to *project_id*.
+
+    Filters by project_id in the URL to avoid capturing stale responses from
+    previously-visited projects still pending in the browser context.
+    Removes the listener after capture or timeout to prevent accumulation.
+    """
     captured: list[dict] = []
+    url_marker = f"/projects/{project_id}/"
 
     async def on_response(response: Response) -> None:
         if "batchGenerateImages" not in response.url:
+            return
+        if url_marker not in response.url:
+            log.debug(
+                "batch_response_skipped_wrong_project",
+                url=response.url,
+                expected_project=project_id,
+            )
             return
         try:
             body = await response.json()
@@ -266,9 +282,10 @@ async def _capture_batch_response(page: Page, timeout_s: int = 120) -> dict:
     deadline = time.monotonic() + timeout_s
     while time.monotonic() < deadline and not captured:
         await asyncio.sleep(0.5)
+    page.remove_listener("response", on_response)  # prevent listener accumulation
     if not captured:
         raise TimeoutError(
-            f"No batchGenerateImages response within {timeout_s}s. "
+            f"No batchGenerateImages response for project {project_id} within {timeout_s}s. "
             "Did the Create click fire? Did reCAPTCHA fail silently?"
         )
     return captured[0]
@@ -312,16 +329,19 @@ async def _download(urls: list[str], out_dir: Path, cookies: dict) -> list[Path]
             try:
                 resp = await client.get(url)
                 resp.raise_for_status()
-                p = out_dir / f"image_{i:02d}.png"
+                # Detect actual format from Content-Type or magic bytes
+                ct = resp.headers.get("content-type", "")
+                ext = ".jpg" if ("jpeg" in ct or resp.content[:2] == b"\xff\xd8") else ".png"
+                p = out_dir / f"image_{i:02d}{ext}"
                 p.write_bytes(resp.content)
                 paths.append(p)
-                log.info("png_saved", path=str(p), bytes=len(resp.content))
+                log.info("image_saved", path=str(p), bytes=len(resp.content), format=ext)
             except Exception as e:  # noqa: BLE001
                 log.error("download_failed", url=url, error=str(e))
     return paths
 
 
-async def _drive(context: BrowserContext, prompt_text: str, out_dir: Path) -> None:
+async def _drive(context: BrowserContext, prompt_text: str, out_dir: Path, expected_count: int = 2) -> None:
     page = context.pages[0] if context.pages else await context.new_page()
 
     await _ensure_logged_in_to_flow(page, out_dir)
@@ -335,49 +355,88 @@ async def _drive(context: BrowserContext, prompt_text: str, out_dir: Path) -> No
         except Exception:
             continue
 
-    listener_task = asyncio.create_task(_capture_batch_response(page, timeout_s=120))
+    project_id = page.url.split("/project/")[1].split("?")[0]
+    # Collect responses until expected_count reached or timeout.
+    responses: list[dict] = []
+    all_urls: list[str] = []
+
+    async def on_response(response: Response) -> None:
+        if "batchGenerateImages" not in response.url:
+            return
+        if f"/projects/{project_id}/" not in response.url:
+            return
+        try:
+            body = await response.json()
+            entry = {"status": response.status, "url": response.url, "body": body}
+            responses.append(entry)
+            urls = _extract_image_urls(entry)
+            all_urls.extend(urls)
+            log.info("batch_response_captured", status=response.status, total_so_far=len(all_urls))
+        except Exception as e:  # noqa: BLE001
+            log.warning("batch_response_parse_failed", error=str(e))
+
+    page.on("response", on_response)
     await _send_prompt(page, prompt_text, out_dir)
-    response = await listener_task
 
-    if response["status"] != 200:
-        body_str = json.dumps(response["body"], indent=2)[:500]
-        log.error(
-            "batch_request_failed",
-            status=response["status"],
-            body_preview=body_str,
+    # Wait up to 180s for all expected images to arrive.
+    deadline = time.monotonic() + 180
+    while time.monotonic() < deadline:
+        if len(all_urls) >= expected_count:
+            break
+        await asyncio.sleep(0.5)
+    page.remove_listener("response", on_response)
+
+    if not all_urls:
+        raise RuntimeError(
+            f"No image URLs captured for project {project_id} within 180s. "
+            "Did generation fire? Check the browser window."
         )
-        raise RuntimeError(f"batchGenerateImages returned {response['status']}")
 
-    urls = _extract_image_urls(response)
-    if not urls:
-        body_str = json.dumps(response["body"], indent=2)[:1000]
-        log.error("no_image_urls_in_response", body_preview=body_str)
-        raise RuntimeError("batchGenerateImages returned 200 but no image URLs found.")
+    log.info("urls_extracted", count=len(all_urls), expected=expected_count)
+    if len(all_urls) < expected_count:
+        log.warning("fewer_images_than_expected", got=len(all_urls), expected=expected_count)
 
-    log.info("urls_extracted", count=len(urls))
     cookie_list = await context.cookies("https://labs.google")
     cookies = {c.get("name", ""): c.get("value", "") for c in cookie_list if c.get("name")}
-    paths = await _download(urls, out_dir, cookies)
+    paths = await _download(all_urls, out_dir, cookies)
 
-    print(f"\n>> Smoke complete. {len(paths)} PNG(s) saved to {out_dir}")
+    print(f"\n>> Smoke complete. {len(paths)} image(s) saved to {out_dir}")
     for p in paths:
         print(f"   - {p}")
 
 
-async def run(profile_dir: Path, prompt_text: str, out_dir: Path) -> None:
+async def run(profile_dir: Path, prompt_text: str, out_dir: Path, expected_count: int = 2) -> None:
     """Drive the smoke using Playwright's persistent context (Worker pattern)."""
     log.info("launching_persistent_context", profile_dir=str(profile_dir))
     async with async_playwright() as pw:
         # MUST be headed — reCAPTCHA Enterprise + Flow JS rely on a real
-        # rendering pipeline. Same flag the Worker uses.
+        # rendering pipeline.
+        
+        # New in v0.6.0a3/a4: use real Chrome channel if requested/available
+        # to avoid ShaderCache access-denied errors (exit 33).
+        from gflow_cli.browser_manager import channel_for_profile
+        channel = channel_for_profile(profile_dir)
+        
         context = await pw.chromium.launch_persistent_context(
             str(profile_dir),
             headless=False,
             viewport={"width": 1280, "height": 800},
             locale="en-US",
+            channel=channel,
+            ignore_default_args=["--enable-automation", "--no-sandbox"],
+            args=["--disable-blink-features=AutomationControlled"],
         )
+        
+        # Stealth init script
+        await context.add_init_script("""
+            Object.defineProperty(navigator, 'webdriver', { get: () => undefined });
+            window.chrome = { runtime: {} };
+            Object.defineProperty(navigator, 'plugins', { get: () => [1, 2, 3, 4, 5] });
+            Object.defineProperty(navigator, 'languages', { get: () => ['en-US', 'en'] });
+        """)
+
         try:
-            await _drive(context, prompt_text, out_dir)
+            await _drive(context, prompt_text, out_dir, expected_count=expected_count)
         finally:
             await context.close()
 
@@ -402,13 +461,19 @@ def main() -> None:
         default=None,
         help="Output dir (default: tmp/smoke/<utc>)",
     )
+    parser.add_argument(
+        "--count", "-n",
+        type=int,
+        default=2,
+        help="Number of images to wait for (default: 2, Flow's default per generation)",
+    )
     args = parser.parse_args()
 
     out_dir = args.out or (
         Path("tmp") / "smoke" / time.strftime("%Y%m%dT%H%M%SZ", time.gmtime())
     )
     args.profile_dir.mkdir(parents=True, exist_ok=True)
-    asyncio.run(run(args.profile_dir, args.prompt, out_dir))
+    asyncio.run(run(args.profile_dir, args.prompt, out_dir, expected_count=args.count))
 
 
 if __name__ == "__main__":
