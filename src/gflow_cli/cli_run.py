@@ -15,7 +15,6 @@ from __future__ import annotations
 import asyncio
 import json
 import sys
-import time
 from dataclasses import dataclass
 from pathlib import Path
 from typing import Any, cast
@@ -29,54 +28,22 @@ from gflow_cli.api.transports import EXPERIMENTAL_TRANSPORTS
 from gflow_cli.config import get_settings
 from gflow_cli.errors import ConfigurationError
 from gflow_cli.image_batch import (
-    ALLOWED_ASPECT_RATIOS as _ALLOWED_ASPECT_RATIOS,
-)
-from gflow_cli.image_batch import (
-    ALLOWED_MODELS as _ALLOWED_MODELS,
-)
-from gflow_cli.image_batch import (
-    DEFAULT_ASPECT_RATIO as _DEFAULT_ASPECT_RATIO,
-)
-from gflow_cli.image_batch import (
-    DEFAULT_COUNT as _DEFAULT_COUNT,
-)
-from gflow_cli.image_batch import (
-    DEFAULT_MODEL as _DEFAULT_MODEL,
-)
-from gflow_cli.image_batch import (
-    MAX_COUNT as _MAX_COUNT,
-)
-from gflow_cli.image_batch import (
-    MAX_PROMPTS as _MAX_PROMPTS,
-)
-from gflow_cli.image_batch import (
-    MAX_TEXT_LEN as _MAX_TEXT_LEN,
-)
-from gflow_cli.image_batch import (
-    MIN_COUNT as _MIN_COUNT,
-)
-from gflow_cli.image_batch import (
-    MIN_PROMPTS as _MIN_PROMPTS,
-)
-from gflow_cli.image_batch import (
-    MIN_TEXT_LEN as _MIN_TEXT_LEN,
-)
-from gflow_cli.image_batch import (
+    MAX_PROMPTS,
+    MIN_PROMPTS,
     BatchOutcome,
     BatchPromptItem,
+    parse_batch_item_dict,
     render_image_batch_summary,
     resolve_exit_code,
     run_image_batch,
 )
+from gflow_cli.paths import resolve_batch_output_dir
 
 console = Console()
 
 
 _ALLOWED_TOP_LEVEL_KEYS: frozenset[str] = frozenset(
     {"profile", "transport", "output_dir", "prompts"}
-)
-_ALLOWED_PROMPT_KEYS: frozenset[str] = frozenset(
-    {"text", "aspect_ratio", "model", "count", "output_filename"}
 )
 # ---------------------------------------------------------------------------
 # Dataclasses — validated config + per-prompt outcome.
@@ -129,14 +96,17 @@ class BatchConfig:
         if not isinstance(prompts_raw_obj, list):
             raise ConfigurationError("'prompts' must be a JSON array.")
         prompts_raw = cast("list[Any]", prompts_raw_obj)
-        if not (_MIN_PROMPTS <= len(prompts_raw) <= _MAX_PROMPTS):
+
+        if not (MIN_PROMPTS <= len(prompts_raw) <= MAX_PROMPTS):
             raise ConfigurationError(
-                f"'prompts' must have between {_MIN_PROMPTS} and "
-                f"{_MAX_PROMPTS} entries (got {len(prompts_raw)})."
+                f"'prompts' must have between {MIN_PROMPTS} and "
+                f"{MAX_PROMPTS} entries (got {len(prompts_raw)})."
             )
         prompts: list[BatchPromptItem] = []
         for idx, p in enumerate(prompts_raw):
-            prompts.append(cls._parse_prompt(p, idx))
+            if not isinstance(p, dict):
+                raise ConfigurationError(f"prompts[{idx}] must be a JSON object.")
+            prompts.append(parse_batch_item_dict(cast("dict[str, Any]", p), idx))
 
         profile = data.get("profile")
         if profile is not None and (not isinstance(profile, str) or not profile):
@@ -155,71 +125,10 @@ class BatchConfig:
             output_dir=output_dir,
         )
 
-    @staticmethod
-    def _parse_prompt(p: object, idx: int) -> BatchPromptItem:
-        if not isinstance(p, dict):
-            raise ConfigurationError(f"prompts[{idx}] must be a JSON object.")
-        item = cast("dict[str, Any]", p)
-        unknown = set(item) - _ALLOWED_PROMPT_KEYS
-        if unknown:
-            raise ConfigurationError(
-                f"prompts[{idx}] has unknown key(s) {sorted(unknown)!r}. "
-                f"Valid: {sorted(_ALLOWED_PROMPT_KEYS)!r}."
-            )
-        text_raw = item.get("text")
-        if not isinstance(text_raw, str):
-            raise ConfigurationError(f"prompts[{idx}].text must be a string.")
-        if not (_MIN_TEXT_LEN <= len(text_raw) <= _MAX_TEXT_LEN):
-            raise ConfigurationError(
-                f"prompts[{idx}].text length must be between {_MIN_TEXT_LEN} "
-                f"and {_MAX_TEXT_LEN} (got {len(text_raw)})."
-            )
-        aspect_ratio = item.get("aspect_ratio", _DEFAULT_ASPECT_RATIO)
-        if aspect_ratio not in _ALLOWED_ASPECT_RATIOS:
-            raise ConfigurationError(
-                f"prompts[{idx}].aspect_ratio {aspect_ratio!r} is invalid. "
-                f"Valid: {list(_ALLOWED_ASPECT_RATIOS)!r}."
-            )
-        model = item.get("model", _DEFAULT_MODEL)
-        if model not in _ALLOWED_MODELS:
-            raise ConfigurationError(
-                f"prompts[{idx}].model {model!r} is invalid. Valid: {list(_ALLOWED_MODELS)!r}."
-            )
-        count = item.get("count", _DEFAULT_COUNT)
-        if not isinstance(count, int) or isinstance(count, bool):
-            raise ConfigurationError(f"prompts[{idx}].count must be an integer.")
-        if not (_MIN_COUNT <= count <= _MAX_COUNT):
-            raise ConfigurationError(
-                f"prompts[{idx}].count must be between {_MIN_COUNT} and {_MAX_COUNT} (got {count})."
-            )
-        output_filename = item.get("output_filename")
-        if output_filename is not None and (
-            not isinstance(output_filename, str) or not output_filename
-        ):
-            raise ConfigurationError(f"prompts[{idx}].output_filename must be a non-empty string.")
-        return BatchPromptItem(
-            text=text_raw,
-            aspect_ratio=aspect_ratio,
-            model=model,
-            count=count,
-            output_filename=output_filename,
-            index=idx,
-        )
-
 
 # ---------------------------------------------------------------------------
-# Helpers — output dir resolution + experimental-transport gating.
+# Helpers — experimental-transport gating.
 # ---------------------------------------------------------------------------
-
-
-def _resolve_output_dir(*, cli_override: Path | None, config_value: str | None) -> Path:
-    """CLI flag > config value > default (``out/<UTC-timestamp>/``)."""
-    if cli_override is not None:
-        return cli_override
-    if config_value is not None:
-        return Path(config_value)
-    stamp = time.strftime("%Y%m%dT%H%M%SZ", time.gmtime())
-    return Path("out") / stamp
 
 
 def _check_transport_gated(transport: str | None) -> None:
@@ -325,7 +234,11 @@ def run(
     profile_name = _resolve_profile(profile or cfg.profile)
     provider_dir = _make_provider_dir(profile_name)
     settings = get_settings()
-    output_dir = _resolve_output_dir(cli_override=output_dir_override, config_value=cfg.output_dir)
+    output_dir = resolve_batch_output_dir(
+        cli_override=output_dir_override,
+        config_value=cfg.output_dir,
+        output_root=settings.output_dir,
+    )
 
     console.print(
         f"\n[bold]gflow run[/bold] · profile=[bold]{profile_name}[/bold] "

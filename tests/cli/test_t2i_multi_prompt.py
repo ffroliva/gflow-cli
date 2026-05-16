@@ -184,7 +184,7 @@ def test_t2i_rejects_51_positional_prompts_before_profile_and_output_dir() -> No
 
     with (
         patch("gflow_cli.cli_image._resolve_profile") as resolve_profile,
-        patch("gflow_cli.cli_image.resolve_t2i_batch_output_dir") as resolve_output,
+        patch("gflow_cli.cli_image.resolve_batch_output_dir") as resolve_output,
     ):
         result = CliRunner().invoke(
             main,
@@ -203,7 +203,7 @@ def test_t2i_rejects_long_positional_prompt_before_profile_and_output_dir() -> N
 
     with (
         patch("gflow_cli.cli_image._resolve_profile") as resolve_profile,
-        patch("gflow_cli.cli_image.resolve_t2i_batch_output_dir") as resolve_output,
+        patch("gflow_cli.cli_image.resolve_batch_output_dir") as resolve_output,
     ):
         result = CliRunner().invoke(
             main,
@@ -235,7 +235,7 @@ def test_t2i_rejects_invalid_prompt_files_before_profile_and_output_dir(
     path.write_bytes(content)
     with (
         patch("gflow_cli.cli_image._resolve_profile") as resolve_profile,
-        patch("gflow_cli.cli_image.resolve_t2i_batch_output_dir") as resolve_output,
+        patch("gflow_cli.cli_image.resolve_batch_output_dir") as resolve_output,
     ):
         result = CliRunner().invoke(
             main,
@@ -255,7 +255,7 @@ def test_t2i_rejects_missing_prompt_file_before_profile_and_output_dir(tmp_path:
     missing = tmp_path / "missing.txt"
     with (
         patch("gflow_cli.cli_image._resolve_profile") as resolve_profile,
-        patch("gflow_cli.cli_image.resolve_t2i_batch_output_dir") as resolve_output,
+        patch("gflow_cli.cli_image.resolve_batch_output_dir") as resolve_output,
     ):
         result = CliRunner().invoke(
             main,
@@ -279,7 +279,7 @@ def test_t2i_rejects_prompt_file_directory_before_profile_and_output_dir(
     directory.mkdir()
     with (
         patch("gflow_cli.cli_image._resolve_profile") as resolve_profile,
-        patch("gflow_cli.cli_image.resolve_t2i_batch_output_dir") as resolve_output,
+        patch("gflow_cli.cli_image.resolve_batch_output_dir") as resolve_output,
     ):
         result = CliRunner().invoke(
             main,
