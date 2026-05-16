@@ -44,9 +44,13 @@ def _build_verify_pw_mock(
 
 
 def _build_mock_proc() -> MagicMock:
-    """Return a mock subprocess.Popen instance that exits cleanly."""
+    """Return a mock asyncio subprocess Process that exits cleanly.
+
+    ``wait`` is async (awaited by the strategy); ``terminate`` / ``kill`` are
+    synchronous on :class:`asyncio.subprocess.Process`.
+    """
     mock_proc = MagicMock(name="proc")
-    mock_proc.wait = MagicMock(return_value=0)
+    mock_proc.wait = AsyncMock(return_value=0)
     mock_proc.terminate = MagicMock()
     mock_proc.kill = MagicMock()
     return mock_proc
@@ -68,18 +72,20 @@ class TestRealChromeStrategy:
 
         mock_ap, _, _ = _build_verify_pw_mock()
         mock_proc = _build_mock_proc()
+        mock_create = AsyncMock(return_value=mock_proc)
         fake_chrome = r"C:\fake\chrome.exe"
 
         with (
             patch("gflow_cli.auth.real_chrome.get_settings") as mock_settings,
             patch("gflow_cli.auth.real_chrome.find_chrome_executable", return_value=fake_chrome),
-            patch("subprocess.Popen", return_value=mock_proc) as mock_popen,
+            patch("gflow_cli.auth.real_chrome.asyncio.create_subprocess_exec", mock_create),
             patch("playwright.async_api.async_playwright", mock_ap),
         ):
             mock_settings.return_value.home = gflow_home
             await strategy.login(profile_dir, headless=False)
 
-        args_list = mock_popen.call_args[0][0]
+        # create_subprocess_exec(*chrome_args, ...) — Chrome args are positional.
+        args_list = mock_create.call_args.args
         assert args_list[0] == fake_chrome
         assert f"--user-data-dir={profile_dir}" in args_list
         assert "--enable-automation" not in args_list
@@ -102,7 +108,10 @@ class TestRealChromeStrategy:
                 "gflow_cli.auth.real_chrome.find_chrome_executable",
                 return_value=r"C:\fake\chrome.exe",
             ),
-            patch("subprocess.Popen", return_value=mock_proc),
+            patch(
+                "gflow_cli.auth.real_chrome.asyncio.create_subprocess_exec",
+                AsyncMock(return_value=mock_proc),
+            ),
             patch("playwright.async_api.async_playwright", mock_ap),
         ):
             mock_settings.return_value.home = gflow_home
@@ -141,7 +150,12 @@ class TestRealChromeStrategy:
 
         mock_proc = _build_mock_proc()
 
-        async def _raise_timeout(*_a: object, **_kw: object) -> None:
+        async def _raise_timeout(awaitable: object, *_a: object, **_kw: object) -> None:
+            # wait_for normally consumes the awaitable; close the un-awaited
+            # proc.wait() coroutine so it doesn't emit a RuntimeWarning.
+            close = getattr(awaitable, "close", None)
+            if callable(close):
+                close()
             raise TimeoutError
 
         with (
@@ -150,7 +164,10 @@ class TestRealChromeStrategy:
                 "gflow_cli.auth.real_chrome.find_chrome_executable",
                 return_value=r"C:\fake\chrome.exe",
             ),
-            patch("subprocess.Popen", return_value=mock_proc),
+            patch(
+                "gflow_cli.auth.real_chrome.asyncio.create_subprocess_exec",
+                AsyncMock(return_value=mock_proc),
+            ),
             patch("gflow_cli.auth.real_chrome.asyncio.wait_for", side_effect=_raise_timeout),
         ):
             mock_settings.return_value.home = gflow_home
