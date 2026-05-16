@@ -208,22 +208,13 @@ class UiAutomationTransport:
         pw_cm = async_playwright()
         pw = await pw_cm.__aenter__()
         try:
-            # Mirror FlowApiClient channel-detection: if the profile was created
-            # by RealChromeStrategy, use channel="chrome" to match the Chrome
-            # version that wrote it (older bundled Chromium triggers a downgrade
-            # exit-33 / access-denied when opening a Chrome 130+ profile).
-            _strategy_file = profile_dir / ".gflow_browser_strategy"
-            _channel: str | None = None
-            if _strategy_file.exists() and _strategy_file.read_text(encoding="utf-8").strip() == "chrome":
-                from gflow_cli.browser_manager import is_chrome_available  # noqa: PLC0415
-                if is_chrome_available():
-                    _channel = "chrome"
+            from gflow_cli.browser_manager import channel_for_profile  # noqa: PLC0415
             ctx = await pw.chromium.launch_persistent_context(
                 str(profile_dir),
                 headless=False,
                 viewport=cast("ViewportSize", _VIEWPORT),
                 locale="en-US",
-                channel=_channel,
+                channel=channel_for_profile(profile_dir),
             )
             self._pw_cm = pw_cm
             self._ctx = ctx
