@@ -7,7 +7,8 @@ from typing import TYPE_CHECKING
 import structlog
 from rich.console import Console
 
-from gflow_cli.errors import AuthLoginTimeoutError
+from gflow_cli.config import get_settings
+from gflow_cli.errors import AuthLoginTimeoutError, SecurityError
 
 from .base import AuthStrategy
 
@@ -34,6 +35,15 @@ class InternalChromiumStrategy(AuthStrategy):
 
     async def login(self, profile_dir: Path, headless: bool) -> None:
         """Execute the login flow using internal Chromium."""
+        settings = get_settings()
+        try:
+            profile_dir.resolve(strict=False).relative_to(settings.home.resolve())
+        except ValueError:
+            raise SecurityError(
+                f"Profile directory {profile_dir} is outside of GFLOW_CLI_HOME "
+                f"({settings.home}) boundaries."
+            ) from None
+
         # Deferred import to avoid circular dependency and support test patching
         from .strategies import async_playwright
 
@@ -60,6 +70,7 @@ class InternalChromiumStrategy(AuthStrategy):
 
                 # Polling for success (SAPISID cookie + UI signal).
                 timeout_at = asyncio.get_running_loop().time() + self._timeout_seconds
+                success = False
 
                 while asyncio.get_running_loop().time() < timeout_at:
                     try:
@@ -73,9 +84,10 @@ class InternalChromiumStrategy(AuthStrategy):
                                 or await page.get_by_text("Your projects").is_visible()
                             ):
                                 logger.info("auth_login_success_detected", strategy=self.name)
+                                success = True
                                 break
                     except Exception:
-                        # If browser is closed or context is gone, exit loop
+                        # Browser or context is gone — exit loop without success
                         break
 
                     await asyncio.sleep(1)
@@ -84,8 +96,17 @@ class InternalChromiumStrategy(AuthStrategy):
                         f"Sign-in not completed within {self._timeout_seconds}s.",
                         remediation_hint=(
                             "Run `gflow auth login` again and complete sign-in promptly. "
-                            f"Set GFLOW_CLI_AUTH_TIMEOUT to a higher value if needed "
+                            f"Set GFLOW_CLI_AUTH_LOGIN_TIMEOUT to a higher value if needed "
                             f"(current: {self._timeout_seconds}s)."
+                        ),
+                    )
+
+                if not success:
+                    raise AuthLoginTimeoutError(
+                        "Browser closed before authentication was verified.",
+                        remediation_hint=(
+                            "Complete the full sign-in flow before closing the browser. "
+                            "Run `gflow auth login` to try again."
                         ),
                     )
 

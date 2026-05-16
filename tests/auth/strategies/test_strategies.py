@@ -171,7 +171,9 @@ class TestInternalChromiumStrategy:
     async def test_internal_chromium_standard_behavior(self, tmp_path: Path) -> None:
         """Verify Internal Chromium uses standard Playwright (no stealth flags)."""
         strategy = InternalChromiumStrategy()
-        profile_dir = tmp_path / "profile_internal"
+        gflow_home = tmp_path / "gflow_home"
+        gflow_home.mkdir()
+        profile_dir = gflow_home / "profile_internal"
 
         mock_success_loc = MagicMock()
         mock_success_loc.is_visible = AsyncMock(return_value=True)
@@ -196,9 +198,11 @@ class TestInternalChromiumStrategy:
         mock_ap = MagicMock(name="async_playwright", return_value=mock_cm)
 
         with (
+            patch("gflow_cli.auth.internal_chromium.get_settings") as mock_settings,
             patch("gflow_cli.auth.strategies.async_playwright", mock_ap),
             patch("asyncio.sleep", AsyncMock()),
         ):
+            mock_settings.return_value.home = gflow_home
             await strategy.login(profile_dir, headless=False)
 
         _, kwargs = mock_launch_pctx.call_args
@@ -209,7 +213,9 @@ class TestInternalChromiumStrategy:
     async def test_internal_chromium_timeout_raises(self, tmp_path: Path) -> None:
         """Verify AuthLoginTimeoutError is raised when polling loop exceeds deadline."""
         strategy = InternalChromiumStrategy(timeout_seconds=0)
-        profile_dir = tmp_path / "profile_internal"
+        gflow_home = tmp_path / "gflow_home"
+        gflow_home.mkdir()
+        profile_dir = gflow_home / "profile_internal"
 
         mock_success_loc = MagicMock()
         mock_success_loc.is_visible = AsyncMock(return_value=False)
@@ -233,9 +239,11 @@ class TestInternalChromiumStrategy:
         mock_ap = MagicMock(name="async_playwright", return_value=mock_cm)
 
         with (
+            patch("gflow_cli.auth.internal_chromium.get_settings") as mock_settings,
             patch("gflow_cli.auth.strategies.async_playwright", mock_ap),
             patch("asyncio.sleep", AsyncMock()),
         ):
+            mock_settings.return_value.home = gflow_home
             with pytest.raises(AuthLoginTimeoutError) as excinfo:
                 await strategy.login(profile_dir, headless=False)
 

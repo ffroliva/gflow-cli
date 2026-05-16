@@ -129,6 +129,16 @@ class Settings(BaseSettings):
 
     # --- runtime ----------------------------------------------------------
     timeout_seconds: int = Field(default=600, ge=1, le=3600)
+    auth_login_timeout: int = Field(
+        default=600,
+        ge=1,
+        le=86400,
+        description=(
+            "Seconds to wait for the user to complete interactive sign-in. "
+            "Applies to both Real Chrome (Passive Capture) and Internal Chromium strategies. "
+            "Override via GFLOW_CLI_AUTH_LOGIN_TIMEOUT."
+        ),
+    )
     concurrency: int = Field(default=1, ge=1, le=16)
     headless: bool = Field(
         default=True,

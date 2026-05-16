@@ -270,7 +270,7 @@ class AuthLoginTimeoutError(GFlowError):
     _default_remediation = (
         "The sign-in was not completed within the allowed time. "
         "Run `gflow auth login` again and complete sign-in promptly. "
-        "Increase GFLOW_CLI_AUTH_TIMEOUT (seconds) if you need more time."
+        "Increase GFLOW_CLI_AUTH_LOGIN_TIMEOUT (seconds) if you need more time."
     )
 
 
