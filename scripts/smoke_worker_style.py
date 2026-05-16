@@ -40,7 +40,6 @@ from __future__ import annotations
 
 import argparse
 import asyncio
-import json
 import time
 from pathlib import Path
 
@@ -494,7 +493,7 @@ async def run(profile_dir: Path, prompt_text: str, out_dir: Path, expected_count
     async with async_playwright() as pw:
         from gflow_cli.browser_manager import channel_for_profile
         channel = channel_for_profile(profile_dir)
-        
+
         context = await pw.chromium.launch_persistent_context(
             str(profile_dir),
             headless=False,
@@ -504,7 +503,7 @@ async def run(profile_dir: Path, prompt_text: str, out_dir: Path, expected_count
             ignore_default_args=["--enable-automation", "--no-sandbox"],
             args=["--disable-blink-features=AutomationControlled"],
         )
-        
+
         # Stealth init script
         await context.add_init_script("""
             Object.defineProperty(navigator, 'webdriver', { get: () => undefined });

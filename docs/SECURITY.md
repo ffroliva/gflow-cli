@@ -41,7 +41,43 @@ Not used by v0.4.0a2's reverse-engineered Flow provider. Documented here in adva
 - **Location:** stdout/stderr by default. No log file unless you redirect.
 - **Content scrubbing:** Prompts, asset UUIDs, job IDs, profile names. No cookies, no tokens, no API keys.
 
-## Hardening checklist
+## CI / Repository security controls (v0.6.0a5+)
+
+The following controls are active on this repository to prevent accidental leakage of personal data, session artefacts, or credentials:
+
+| Control | Where | What it catches |
+|---|---|---|
+| **GitHub Secret Scanning + Push Protection** | GitHub Settings → Code security | OAuth tokens, API keys, Google credentials — blocked server-side before the commit lands |
+| **`gitleaks` secret scan** | CI job `secrets-scan` (runs first, never skippable) | Entropy-based + regex detection of secrets across the full diff |
+| **`detect-secrets` baseline** | `.pre-commit-config.yaml` + `.secrets.baseline` | Catches high-entropy strings and keyword patterns at commit time |
+| **Repo hygiene script** | CI step + pre-commit | Blocks tracked images (`*.jpg/jpeg`), CDP lock files, test_assets output dirs, hardcoded Windows paths in any `.py` file |
+| **`.gitignore` hardening** | `.gitignore` | Last-resort catch-all for untracked files |
+| **CODEOWNERS** | `.github/CODEOWNERS` | Ensures security-sensitive files (auth, CI, hygiene gate) always request maintainer review |
+| **Dependabot** | `.github/dependabot.yml` | Weekly alerts + PRs for outdated Python and Actions deps |
+
+### Known residual risk: git history
+
+Commit `369fd1e` (2026-05-16) pushed artefacts that have since been removed from HEAD via `git rm --cached`. The data exposed was:
+
+- Windows username (`ffrol`) and Google profile name (`denon82`) in script source files
+- A CDP browser lock file (contained browser PID and port — no auth tokens)
+- AI-generated JPG images (no PII)
+- Flow UI element dumps in JSON (no auth tokens, UI text only)
+
+**These commits remain in git history.** Any existing clone of the repo contains them. A `git filter-repo` history rewrite was decided against (fix-forward, see ADR #3 in `PLAN.md`) to avoid breaking forks and existing clones. The exposed data is PII (name, profile name) but not credentials — no Google tokens, passwords, or API keys were committed.
+
+**To fully purge the history** (if your risk posture requires it):
+```bash
+# Install: pip install git-filter-repo
+git filter-repo --path denon82/ --invert-paths --force
+git filter-repo --path-glob 'test_assets/smoke_*/' --invert-paths --force
+git filter-repo --path-glob 'test_assets/debug_*/' --invert-paths --force
+git push --force --all
+# Notify all forks and ask them to re-clone.
+```
+Note: GitHub's fork network means forks created before this date may still hold the original objects. History rewrite does not remove data from existing forks.
+
+
 
 For users on shared / multi-user / production-adjacent machines:
 

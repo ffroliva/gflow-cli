@@ -67,16 +67,24 @@ Dependency rule: **`domain/` depends on nothing**. `application/` depends on `do
 
 ## How to verify your work
 
-Run all four BEFORE asking to commit:
+Run all five BEFORE asking to commit:
 
 ```bash
+uv run python scripts/ci/check_repo_hygiene.py  # hygiene gate (run first)
 uv run ruff check src tests          # lint
 uv run ruff format --check src tests # formatting
 uv run pyright src                   # types
 uv run pytest -q --cov=gflow_cli      # tests + coverage
 ```
 
-CI runs the same four on every push (see `.github/workflows/ci.yml`).
+CI runs the same five on every push (see `.github/workflows/ci.yml`).
+
+## Output path rule — MANDATORY
+
+**All script and test runtime output goes to `tmp/`.** Never to `test_assets/`
+or the repo root. `test_assets/` is for committed test *fixtures* (static
+input files checked into git). The CI hygiene gate (`check_repo_hygiene.py`)
+actively blocks commits that violate this rule.
 
 ## Where to look
 

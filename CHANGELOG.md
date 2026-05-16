@@ -7,6 +7,39 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+### Security / Compliance
+
+- **Removed accidentally tracked artefacts** — 7 files were untracked from git:
+  `denon82/.gflow-cdp.lock`, `test_assets/debug_editor/buttons.json`,
+  `test_assets/debug_settings/settings_panel.json`, and 4 AI-generated JPGs
+  in `test_assets/smoke_e2e_*/`. None contained credentials or API tokens, but
+  the CDP lock file exposed a profile name and browser PID and the debug JSON
+  files contained Flow UI text. Files were removed from HEAD forward (no history
+  rewrite — see decision rationale in `PLAN.md` ADR #3).
+
+- **`.gitignore` hardened** — added `*.jpg`, `*.jpeg`, `**/.gflow-cdp.lock`,
+  `test_assets/smoke_*/`, `test_assets/debug_*/`, and `gflow-output/` to
+  prevent recurrence. Fixture allowlist added (`!test_assets/fixtures/**/*.jpg`).
+
+- **Hygiene gate added to CI** — `scripts/ci/check_repo_hygiene.py` runs on
+  every push and PR before lint. Fails if tracked files match the denylist or
+  if any `scripts/**/*.py` contains a hardcoded Windows absolute path or writes
+  output to `test_assets/`.
+
+- **`.pre-commit-config.yaml` added** — ships ruff (lint + format) and the
+  hygiene gate as pre-commit hooks. Install with:
+  `pip install pre-commit && pre-commit install`.
+
+- **Debug scripts de-hardcoded** — `scripts/debug_editor.py`,
+  `scripts/debug_gen_settings.py`, `scripts/debug_settings.py` previously
+  contained `PROFILE = r"C:\Users\ffrol\..."` (Windows username + Google
+  profile name) and wrote output to `test_assets/`. Replaced with argparse
+  `--profile` flag + `auth.profile_dir(args.profile)` and output redirected to
+  `tmp/debug/<name>/`.
+
+- **CI workflow scrubbed** — removed a hardcoded profile name (`denon82`) from
+  a comment in `.github/workflows/ci.yml`.
+
 ## [0.6.0a5] — 2026-05-16
 
 > **CLI transport proven end-to-end.** The `ui_automation` transport now

@@ -54,7 +54,7 @@ Read the full [DISCLAIMER](DISCLAIMER.md) before deploying this in any productio
 
 ## Project status
 
-**v0.5.0a1 — alpha.** Video (T2V/I2V/batch), image (T2I/I2I/upload), the new **`gflow run` JSON-batch command**, and the **`ui_automation` default transport** are functional end-to-end against a live Google AI Pro/Ultra Flow account. Three earlier HTTP transport strategies (`evaluate_fetch` / `bearer` / `sapisidhash`) move to an `experimental/` subpackage in this release; the production path is `ui_automation`.
+**v0.6.0a5 — alpha.** Video (T2V/I2V/batch), image (T2I/I2I/upload), the new **`gflow run` JSON-batch command**, and the **`ui_automation` default transport** are functional end-to-end against a live Google AI Pro/Ultra Flow account. Three earlier HTTP transport strategies (`evaluate_fetch` / `bearer` / `sapisidhash`) move to an `experimental/` subpackage in this release; the production path is `ui_automation`.
 
 | Milestone | Status |
 |---|---|
@@ -74,7 +74,7 @@ Read the full [DISCLAIMER](DISCLAIMER.md) before deploying this in any productio
 | Shell multi-prompt `gflow image t2i` (`PROMPT...`, `--prompts-file`, `--stdin`) | ✅ done (v0.6.0a1) |
 | Provider abstraction for official Veo 3.1 API | ⏳ planned (v0.6+) |
 
-### What's new in v0.5.0a1
+### What's new in v0.6.0a5
 
 - `UiAutomationTransport` is now the default image-generation strategy — Playwright-driven UI mimicry against the Flow editor on a logged-in Pro/Ultra profile (no externally-exposed CDP debug port).
 - New top-level `gflow run --config <file>` command for JSON-described sequential batches (1–50 prompts per file, `--continue-on-error` / `--fail-fast` modes). See [`docs/USAGE.md`](docs/USAGE.md#gflow-run) for the schema.
