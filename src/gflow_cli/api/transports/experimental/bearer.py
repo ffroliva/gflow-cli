@@ -169,6 +169,7 @@ class BearerTransport:
 
     async def teardown(self) -> None:
         """Drop in-memory Bearer. Idempotent. Disk cache is preserved."""
+        await asyncio.sleep(0)  # yield to event loop — Protocol-required async signature
         self._cached = None
 
     # ------------------------------------------------------------------

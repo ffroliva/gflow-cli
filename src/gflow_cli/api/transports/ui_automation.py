@@ -812,6 +812,7 @@ class UiAutomationTransport:
         Kept on the Protocol surface for consistency with the HTTP
         strategies (S1/S2/S3) where refresh_auth has real work to do.
         """
+        await asyncio.sleep(0)  # yield to event loop — Protocol-required async signature
         log.debug("ui_automation.refresh_auth_noop")
 
     async def teardown(self) -> None:
