@@ -141,10 +141,12 @@ class Settings(BaseSettings):
     )
     concurrency: int = Field(default=1, ge=1, le=16)
     headless: bool = Field(
-        default=True,
+        default=False,
         description=(
-            "Run the Playwright Chromium headless. Set to False if reCAPTCHA "
-            "fails to mint tokens (Google sometimes detects headless)."
+            "Run the Playwright Chromium headless. The ui_automation transport "
+            "requires headed Chrome — reCAPTCHA Enterprise rejects headless "
+            "browsers with an immediate 403. Only set True in CI/CD environments "
+            "that use a different transport (e.g. bearer/sapisidhash)."
         ),
     )
 

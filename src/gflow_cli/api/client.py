@@ -105,7 +105,7 @@ class FlowApiClient:
         self,
         profile_dir: Path,
         *,
-        headless: bool = True,
+        headless: bool = False,
         settings: Settings | None = None,
         transport: FlowTransportStrategy | str | None = None,
     ) -> None:
@@ -156,6 +156,14 @@ class FlowApiClient:
             locale="en-US",
             extra_http_headers={"Accept-Language": "en-US,en;q=0.9"},
             channel=channel_for_profile(self.profile_dir),
+            ignore_default_args=["--enable-automation", "--no-sandbox"],
+            args=["--disable-blink-features=AutomationControlled"],
+        )
+        # Hide the automation flag so reCAPTCHA Enterprise doesn't score
+        # the session as a bot — navigator.webdriver=true causes low-score
+        # tokens and HTTP 403 on batchGenerateImages.
+        await self._context.add_init_script(
+            "Object.defineProperty(navigator,'webdriver',{get:()=>undefined})"
         )
         # Open ``Settings.concurrency`` Pages inside the one persistent
         # BrowserContext. ``launch_persistent_context`` opens one Page by

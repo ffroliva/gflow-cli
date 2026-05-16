@@ -40,6 +40,7 @@ def fake_context() -> MagicMock:
 
     ctx.new_page = AsyncMock(side_effect=_new_page)
     ctx.close = AsyncMock()
+    ctx.add_init_script = AsyncMock()
     return ctx
 
 

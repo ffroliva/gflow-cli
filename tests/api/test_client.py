@@ -28,9 +28,10 @@ class TestConstruction:
         assert c.profile_dir == tmp_path / "prof"
         assert c.headless is False
 
-    def test_default_headless_true(self, tmp_path: Path) -> None:
+    def test_default_headless_false(self, tmp_path: Path) -> None:
+        # ui_automation transport requires headed Chrome — reCAPTCHA rejects headless
         c = FlowApiClient(profile_dir=tmp_path / "prof")
-        assert c.headless is True
+        assert c.headless is False
 
     def test_page_property_raises_before_enter(self, tmp_path: Path) -> None:
         c = FlowApiClient(profile_dir=tmp_path / "prof")
@@ -218,6 +219,7 @@ def _patch_playwright(monkeypatch: pytest.MonkeyPatch) -> None:
     fake_context.pages = [fake_page]
     fake_context.close = AsyncMock()
     fake_context.new_page = AsyncMock(return_value=fake_page)
+    fake_context.add_init_script = AsyncMock()
 
     fake_pw = MagicMock()
     fake_pw.stop = AsyncMock()
