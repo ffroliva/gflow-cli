@@ -327,30 +327,8 @@ def t2i(
     transport: str | None,
 ) -> None:
     """Generate image(s) from one or more text prompts."""
-    # Validate flag combinations BEFORE any I/O. Click's IntRange already
-    # bounds count to [1, 4]; here we enforce the cross-flag rule that --seed
-    # is only meaningful when generating a single image (multi-image fan-out
-    # uses N independent random seeds and a shared batch_id).
-    source_count = _count_t2i_sources(prompts, prompts_file, read_stdin)
-    if source_count == 0:
-        raise click.UsageError("Provide a prompt, multiple prompts, --prompts-file, or --stdin.")
-    if source_count > 1:
-        raise click.UsageError(
-            "Prompt sources are mutually exclusive: use positional prompts, "
-            "--prompts-file, or --stdin."
-        )
     is_multi_prompt = len(prompts) > 1 or prompts_file is not None or read_stdin
-    if seed is not None and count != 1:
-        raise click.UsageError(
-            "--seed is only valid when generating a single image (-n 1). "
-            "For multi-image runs, omit --seed and let each shot get its own."
-        )
-    if seed is not None and is_multi_prompt:
-        raise click.UsageError(
-            "--seed is not supported for multi-prompt `gflow image t2i`. "
-            "Use one single-prompt command per seed today; per-prompt seeds belong "
-            "to a future `gflow run --config` schema update."
-        )
+    _validate_t2i_input(prompts, prompts_file, read_stdin, seed, count, is_multi_prompt)
 
     if not is_multi_prompt:
         if not prompts:
@@ -450,6 +428,41 @@ def _count_t2i_sources(
     prompts: tuple[str, ...], prompts_file: Path | None, read_stdin: bool
 ) -> int:
     return int(bool(prompts)) + int(prompts_file is not None) + int(read_stdin)
+
+
+def _validate_t2i_input(
+    prompts: tuple[str, ...],
+    prompts_file: Path | None,
+    read_stdin: bool,
+    seed: int | None,
+    count: int,
+    is_multi_prompt: bool,
+) -> None:
+    """Raise click.UsageError for invalid t2i flag combinations.
+
+    Click's IntRange already bounds count to [1, 4]; this enforces the
+    cross-flag rules — exactly one prompt source, and --seed only with
+    a single image and a single prompt.
+    """
+    source_count = _count_t2i_sources(prompts, prompts_file, read_stdin)
+    if source_count == 0:
+        raise click.UsageError("Provide a prompt, multiple prompts, --prompts-file, or --stdin.")
+    if source_count > 1:
+        raise click.UsageError(
+            "Prompt sources are mutually exclusive: use positional prompts, "
+            "--prompts-file, or --stdin."
+        )
+    if seed is not None and count != 1:
+        raise click.UsageError(
+            "--seed is only valid when generating a single image (-n 1). "
+            "For multi-image runs, omit --seed and let each shot get its own."
+        )
+    if seed is not None and is_multi_prompt:
+        raise click.UsageError(
+            "--seed is not supported for multi-prompt `gflow image t2i`. "
+            "Use one single-prompt command per seed today; per-prompt seeds belong "
+            "to a future `gflow run --config` schema update."
+        )
 
 
 def _as_usage_error(exc: ConfigurationError) -> click.UsageError:

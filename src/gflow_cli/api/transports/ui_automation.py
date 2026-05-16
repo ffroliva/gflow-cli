@@ -22,7 +22,7 @@ from urllib.parse import urlparse
 import structlog
 
 from gflow_cli.api.dto import GeneratedImage
-from gflow_cli.api.image import GenerateImageRequest
+from gflow_cli.api.image import Aspect, GenerateImageRequest
 from gflow_cli.errors import (
     AuthExpiredError,
     ContentPolicyError,
@@ -174,6 +174,93 @@ _ASPECT_TAB: dict[str, str] = {
 
 # Count → Flow count tab text.
 _COUNT_TAB: dict[int, str] = {1: "1x", 2: "x2", 3: "x3", 4: "x4"}
+
+# Reverse map: domain Aspect enum → CLI string accepted by the settings panel.
+_CLI_FROM_ASPECT: dict[Aspect, str] = {
+    Aspect.PORTRAIT: "9:16",
+    Aspect.LANDSCAPE: "16:9",
+    Aspect.SQUARE: "1:1",
+    Aspect.LANDSCAPE_FOUR_THREE: "4:3",
+    Aspect.PORTRAIT_THREE_FOUR: "3:4",
+}
+
+
+def _aspect_cli_from_enum(aspect: Aspect) -> str | None:
+    """Map the domain Aspect enum to the CLI string the settings panel expects."""
+    return _CLI_FROM_ASPECT.get(aspect)
+
+
+def _extract_project_id(url: str) -> str | None:
+    """Pull the project UUID out of a Flow editor URL, or None if absent."""
+    if _PROJECT_URL_FRAGMENT not in url:
+        return None
+    try:
+        return url.split(_PROJECT_URL_FRAGMENT)[1].split("?")[0]
+    except (IndexError, ValueError):
+        return None
+
+
+def _collect_images_from_body(body: dict[str, Any], images: list[GeneratedImage]) -> None:
+    """Append parseable GeneratedImage entries from one batchGenerateImages body."""
+    media_list_raw = body.get("media", [])
+    if not isinstance(media_list_raw, list):
+        return
+    for item_raw in cast("list[Any]", media_list_raw):
+        if not isinstance(item_raw, dict):
+            continue
+        item: dict[str, Any] = cast("dict[str, Any]", item_raw)
+        try:
+            images.append(GeneratedImage.from_response_item(item))
+        except ValueError as e:
+            log.warning("ui_automation.parse_media_item_failed", error=str(e))
+
+
+def _images_from_responses(
+    responses: list[dict[str, Any]],
+) -> tuple[list[GeneratedImage], int | None, str]:
+    """Process captured batchGenerateImages responses.
+
+    Returns ``(images, first_error_status, first_error_route)``. Raises
+    :class:`AuthExpiredError` on 401 and :class:`WafRejectionError` on 403,
+    which the caller must surface — these are not first-error candidates.
+    """
+    images: list[GeneratedImage] = []
+    first_error_status: int | None = None
+    first_error_route: str = ""
+
+    for response in responses:
+        status = response.get("status")
+        body: dict[str, Any] = cast("dict[str, Any]", response.get("body") or {})
+        route_str: str = str(response.get("url", ""))
+
+        if status == 401:
+            raise AuthExpiredError(
+                detail="batchGenerateImages returned HTTP 401 — session expired",
+                status=401,
+                route=route_str,
+            )
+        if status == 403:
+            log.warning(
+                "ui_automation.batch_403_body",
+                body_prefix=str(body)[:200],
+                route=route_str,
+            )
+            raise WafRejectionError(
+                detail=(
+                    "batchGenerateImages HTTP 403 — reCAPTCHA score too low or WAF "
+                    "fingerprint mismatch. Re-authenticate and retry."
+                ),
+                status=403,
+                route=route_str,
+            )
+        if status != 200:
+            first_error_status = first_error_status or status
+            first_error_route = first_error_route or route_str
+            continue
+
+        _collect_images_from_body(body, images)
+
+    return images, first_error_status, first_error_route
 
 
 class UiAutomationTransport:
@@ -437,6 +524,25 @@ class UiAutomationTransport:
     # ------------------------------------------------------------------
 
     @staticmethod
+    async def _open_gen_settings_panel(page: Page) -> bool:
+        """Try selectors in order to open the per-generation settings panel.
+
+        Returns True on success, False if no selector matched (non-fatal —
+        caller falls back to Flow's current defaults).
+        """
+        for sel in GEN_SETTINGS_BUTTON_SELECTORS:
+            try:
+                btn = page.locator(sel).first
+                await btn.wait_for(state="visible", timeout=3_000)
+                await btn.click()
+                await page.wait_for_timeout(600)
+                log.info("ui_automation.gen_settings_opened", via=sel)
+                return True
+            except Exception:  # noqa: BLE001
+                continue
+        return False
+
+    @staticmethod
     async def _configure_generation_settings(
         page: Page,
         aspect_cli: str | None,
@@ -447,25 +553,11 @@ class UiAutomationTransport:
         Skips gracefully if the panel trigger cannot be found (non-fatal —
         generation will proceed with Flow's current default settings).
         """
-        if aspect_cli is None and (count is None or count == 1):
-            # count=1 is the default we set; skip unless aspect also differs.
-            if count is None:
-                return
+        if aspect_cli is None and count is None:
+            # Nothing to apply.
+            return
 
-        opened = False
-        for sel in GEN_SETTINGS_BUTTON_SELECTORS:
-            try:
-                btn = page.locator(sel).first
-                await btn.wait_for(state="visible", timeout=3_000)
-                await btn.click()
-                await page.wait_for_timeout(600)
-                opened = True
-                log.info("ui_automation.gen_settings_opened", via=sel)
-                break
-            except Exception:  # noqa: BLE001
-                continue
-
-        if not opened:
+        if not await UiAutomationTransport._open_gen_settings_panel(page):
             log.warning("ui_automation.gen_settings_panel_not_found", skipping=True)
             return
 
@@ -702,26 +794,8 @@ class UiAutomationTransport:
         await self._enter_editor(page)
 
         # Resolve the project_id from the URL now that we're in the editor.
-        current_url = page.url
-        nav_project_id: str | None = None
-        if _PROJECT_URL_FRAGMENT in current_url:
-            try:
-                nav_project_id = current_url.split(_PROJECT_URL_FRAGMENT)[1].split("?")[0]
-            except (IndexError, ValueError):
-                pass
-
-        # Map aspect enum back to CLI string for _configure_generation_settings.
-        # Build the reverse map inline to avoid using the private _ASPECT_FROM_CLI.
-        from gflow_cli.api.image import Aspect as _Aspect  # noqa: PLC0415
-
-        _cli_from_aspect: dict[_Aspect, str] = {
-            _Aspect.PORTRAIT: "9:16",
-            _Aspect.LANDSCAPE: "16:9",
-            _Aspect.SQUARE: "1:1",
-            _Aspect.LANDSCAPE_FOUR_THREE: "4:3",
-            _Aspect.PORTRAIT_THREE_FOUR: "3:4",
-        }
-        aspect_cli: str | None = _cli_from_aspect.get(request.aspect)
+        nav_project_id = _extract_project_id(page.url)
+        aspect_cli = _aspect_cli_from_enum(request.aspect)
 
         # Configure generation settings (aspect ratio + count) BEFORE attaching
         # the response listener so settings clicks don't interfere with capture.
@@ -739,51 +813,7 @@ class UiAutomationTransport:
 
         # Collect images from ALL captured responses (Flow makes one API call
         # per image when count > 1).
-        images: list[GeneratedImage] = []
-        first_error_status: int | None = None
-        first_error_route: str = ""
-
-        for response in responses:
-            status = response.get("status")
-            body: dict[str, Any] = cast("dict[str, Any]", response.get("body") or {})
-            route_str: str = str(response.get("url", ""))
-
-            if status == 401:
-                raise AuthExpiredError(
-                    detail="batchGenerateImages returned HTTP 401 — session expired",
-                    status=401,
-                    route=route_str,
-                )
-            if status == 403:
-                log.warning(
-                    "ui_automation.batch_403_body",
-                    body_prefix=str(body)[:200],
-                    route=route_str,
-                )
-                raise WafRejectionError(
-                    detail=(
-                        "batchGenerateImages HTTP 403 — reCAPTCHA score too low or WAF "
-                        "fingerprint mismatch. Re-authenticate and retry."
-                    ),
-                    status=403,
-                    route=route_str,
-                )
-            if status != 200:
-                first_error_status = first_error_status or status
-                first_error_route = first_error_route or route_str
-                continue
-
-            media_list_raw = body.get("media", [])
-            if not isinstance(media_list_raw, list):
-                continue
-            for item_raw in cast("list[Any]", media_list_raw):
-                if not isinstance(item_raw, dict):
-                    continue
-                item: dict[str, Any] = cast("dict[str, Any]", item_raw)
-                try:
-                    images.append(GeneratedImage.from_response_item(item))
-                except ValueError as e:
-                    log.warning("ui_automation.parse_media_item_failed", error=str(e))
+        images, first_error_status, first_error_route = _images_from_responses(responses)
 
         if first_error_status is not None and not images:
             raise WireFormatError(
