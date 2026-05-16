@@ -68,7 +68,30 @@ SUBMIT_BUTTON_SELECTORS = [
     "button:has-text('arrow_forward')",
 ]
 
-# Selectors for the "new project" gallery CTA. From the live DOM dump
+# Selectors that open the per-generation settings panel (aspect ratio + count).
+# The trigger button shows the CURRENT ratio icon (e.g. crop_16_9) + count (e.g. x2).
+# We enumerate all possible ratio icon names so the selector is ratio-invariant.
+GEN_SETTINGS_BUTTON_SELECTORS = [
+    "button:has(i.google-symbols:text('crop_16_9'))",
+    "button:has(i.google-symbols:text('crop_9_16'))",
+    "button:has(i.google-symbols:text('crop_square'))",
+    "button:has(i.google-symbols:text('crop_portrait'))",
+    "button:has(i.google-symbols:text('crop_landscape'))",
+]
+
+# Map CLI --aspect-ratio values to Flow tab button text (locale-invariant number format).
+ASPECT_RATIO_MAP: dict[str, str] = {
+    "16:9": "16:9",
+    "9:16": "9:16",
+    "1:1":  "1:1",
+    "4:3":  "4:3",
+    "3:4":  "3:4",
+}
+
+# Map --count to the Flow tab button text.
+COUNT_TAB_MAP: dict[int, str] = {1: "1x", 2: "x2", 3: "x3", 4: "x4"}
+
+
 # (2026-05-12): the button wraps a Material Symbols icon (text "add_2",
 # rendered as "+") followed by localized label text "New project" /
 # "Novo projeto" / etc. The most robust match is the icon class, which is
@@ -341,7 +364,66 @@ async def _download(urls: list[str], out_dir: Path, cookies: dict) -> list[Path]
     return paths
 
 
-async def _drive(context: BrowserContext, prompt_text: str, out_dir: Path, expected_count: int = 2) -> None:
+async def _configure_generation_settings(
+    page: Page, aspect_ratio: str | None, count: int | None
+) -> None:
+    """Open the per-generation settings panel and set aspect ratio and/or count.
+
+    The trigger button shows the current ratio icon (e.g. crop_16_9) + count (e.g. x2).
+    DOM confirmed 2026-05-16: aspect ratio tabs are role=tab inside a tablist,
+    count tabs are role=tab with text 1x / x2 / x3 / x4.
+    """
+    if aspect_ratio is None and count is None:
+        return
+
+    # Open the settings panel
+    opened = False
+    for sel in GEN_SETTINGS_BUTTON_SELECTORS:
+        try:
+            btn = page.locator(sel).first
+            await btn.wait_for(state="visible", timeout=3_000)
+            await btn.click()
+            await page.wait_for_timeout(600)
+            opened = True
+            log.info("gen_settings_opened", via=sel)
+            break
+        except Exception:
+            continue
+    if not opened:
+        log.warning("gen_settings_panel_not_found", skipping=True)
+        return
+
+    # Set aspect ratio
+    if aspect_ratio:
+        ratio_text = ASPECT_RATIO_MAP.get(aspect_ratio, aspect_ratio)
+        try:
+            tab = page.locator(f'[role="tab"]:has-text("{ratio_text}")').first
+            await tab.wait_for(state="visible", timeout=3_000)
+            await tab.click()
+            log.info("aspect_ratio_set", value=aspect_ratio)
+        except Exception as e:
+            log.warning("aspect_ratio_set_failed", value=aspect_ratio, error=str(e))
+
+    # Set count
+    if count is not None:
+        count_text = COUNT_TAB_MAP.get(count)
+        if count_text is None:
+            log.warning("unsupported_count", value=count, supported=list(COUNT_TAB_MAP))
+        else:
+            try:
+                tab = page.locator(f'[role="tab"]:text-is("{count_text}")').first
+                await tab.wait_for(state="visible", timeout=3_000)
+                await tab.click()
+                log.info("count_set", value=count, tab_text=count_text)
+            except Exception as e:
+                log.warning("count_set_failed", value=count, error=str(e))
+
+    # Close the panel by pressing Escape
+    await page.keyboard.press("Escape")
+    await page.wait_for_timeout(400)
+
+
+async def _drive(context: BrowserContext, prompt_text: str, out_dir: Path, expected_count: int = 2, aspect_ratio: str | None = None) -> None:
     page = context.pages[0] if context.pages else await context.new_page()
 
     await _ensure_logged_in_to_flow(page, out_dir)
@@ -376,6 +458,7 @@ async def _drive(context: BrowserContext, prompt_text: str, out_dir: Path, expec
             log.warning("batch_response_parse_failed", error=str(e))
 
     page.on("response", on_response)
+    await _configure_generation_settings(page, aspect_ratio, expected_count)
     await _send_prompt(page, prompt_text, out_dir)
 
     # Wait up to 180s for all expected images to arrive.
@@ -405,15 +488,10 @@ async def _drive(context: BrowserContext, prompt_text: str, out_dir: Path, expec
         print(f"   - {p}")
 
 
-async def run(profile_dir: Path, prompt_text: str, out_dir: Path, expected_count: int = 2) -> None:
+async def run(profile_dir: Path, prompt_text: str, out_dir: Path, expected_count: int = 1, aspect_ratio: str | None = None) -> None:
     """Drive the smoke using Playwright's persistent context (Worker pattern)."""
     log.info("launching_persistent_context", profile_dir=str(profile_dir))
     async with async_playwright() as pw:
-        # MUST be headed — reCAPTCHA Enterprise + Flow JS rely on a real
-        # rendering pipeline.
-        
-        # New in v0.6.0a3/a4: use real Chrome channel if requested/available
-        # to avoid ShaderCache access-denied errors (exit 33).
         from gflow_cli.browser_manager import channel_for_profile
         channel = channel_for_profile(profile_dir)
         
@@ -436,9 +514,10 @@ async def run(profile_dir: Path, prompt_text: str, out_dir: Path, expected_count
         """)
 
         try:
-            await _drive(context, prompt_text, out_dir, expected_count=expected_count)
+            await _drive(context, prompt_text, out_dir, expected_count=expected_count, aspect_ratio=aspect_ratio)
         finally:
             await context.close()
+
 
 
 def main() -> None:
@@ -464,8 +543,15 @@ def main() -> None:
     parser.add_argument(
         "--count", "-n",
         type=int,
-        default=2,
-        help="Number of images to wait for (default: 2, Flow's default per generation)",
+        default=1,
+        help="Number of images to generate and wait for (default: 1)",
+    )
+    parser.add_argument(
+        "--aspect-ratio", "-a",
+        dest="aspect_ratio",
+        choices=list(ASPECT_RATIO_MAP),
+        default=None,
+        help="Aspect ratio (default: Flow's current setting). Options: 16:9, 9:16, 1:1, 4:3, 3:4",
     )
     args = parser.parse_args()
 
@@ -473,7 +559,7 @@ def main() -> None:
         Path("tmp") / "smoke" / time.strftime("%Y%m%dT%H%M%SZ", time.gmtime())
     )
     args.profile_dir.mkdir(parents=True, exist_ok=True)
-    asyncio.run(run(args.profile_dir, args.prompt, out_dir, expected_count=args.count))
+    asyncio.run(run(args.profile_dir, args.prompt, out_dir, expected_count=args.count, aspect_ratio=args.aspect_ratio))
 
 
 if __name__ == "__main__":
