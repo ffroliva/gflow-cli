@@ -289,7 +289,7 @@ async def test_e2e_30s_timeout_budget(
         from gflow_cli.api.transports.experimental.bearer import _CachedAuth
 
         transport._cached = _CachedAuth(  # type: ignore[attr-defined]
-            token="fake-bearer-for-timeout-test",
+            token="fake-bearer-for-timeout-test",  # NOSONAR
             expires_at=time.time() + 3600,
             fingerprint=BrowserFingerprint(),
         )

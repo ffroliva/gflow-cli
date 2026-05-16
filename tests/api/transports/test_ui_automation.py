@@ -162,21 +162,21 @@ class TestSetup:
     """setup() launches persistent context OR reuses caller-provided page."""
 
     @pytest.mark.asyncio
-    async def test_shared_page_path_does_not_launch_playwright(self) -> None:
+    async def test_shared_page_path_does_not_launch_playwright(self, tmp_path: Path) -> None:
         """When page= is provided, the strategy stores it and does NOT
         launch its own Playwright context. _owns_playwright stays False."""
         t = UiAutomationTransport()
         fake_page = MagicMock()
         # Patch async_playwright to confirm it is NOT called on the shared path.
         with patch("gflow_cli.api.transports.ui_automation.async_playwright") as mock_pw:
-            await t.setup(Path("/tmp/prof"), page=fake_page)
+            await t.setup(tmp_path, page=fake_page)
         mock_pw.assert_not_called()
         assert t._page is fake_page  # type: ignore[attr-defined]
         assert t._owns_playwright is False  # type: ignore[attr-defined]
         assert t._setup_done is True  # type: ignore[attr-defined]
 
     @pytest.mark.asyncio
-    async def test_own_context_path_launches_persistent_context(self) -> None:
+    async def test_own_context_path_launches_persistent_context(self, tmp_path: Path) -> None:
         """When page=None, strategy launches Playwright with the same args
         the validated smoke uses (headless=False, viewport, locale)."""
         t = UiAutomationTransport()
@@ -186,12 +186,12 @@ class TestSetup:
             "gflow_cli.api.transports.ui_automation.async_playwright",
             return_value=pw_cm,
         ):
-            await t.setup(Path("/tmp/prof"))
+            await t.setup(tmp_path)
         # launch_persistent_context called once with the expected kwargs.
         fake_pw.chromium.launch_persistent_context.assert_called_once()
         call_kwargs = fake_pw.chromium.launch_persistent_context.call_args.kwargs
         call_args = fake_pw.chromium.launch_persistent_context.call_args.args
-        assert call_args[0] == str(Path("/tmp/prof"))
+        assert call_args[0] == str(tmp_path)
         assert call_kwargs.get("headless") is False
         assert call_kwargs.get("viewport") == {"width": 1280, "height": 800}
         assert call_kwargs.get("locale") == "en-US"
@@ -199,7 +199,7 @@ class TestSetup:
         assert t._setup_done is True  # type: ignore[attr-defined]
 
     @pytest.mark.asyncio
-    async def test_own_context_uses_existing_page_if_present(self) -> None:
+    async def test_own_context_uses_existing_page_if_present(self, tmp_path: Path) -> None:
         """If context.pages is non-empty, strategy reuses pages[0]."""
         t = UiAutomationTransport()
         existing_page = MagicMock()
@@ -210,12 +210,12 @@ class TestSetup:
             "gflow_cli.api.transports.ui_automation.async_playwright",
             return_value=pw_cm,
         ):
-            await t.setup(Path("/tmp/prof"))
+            await t.setup(tmp_path)
         assert t._page is existing_page  # type: ignore[attr-defined]
         ctx.new_page.assert_not_called()
 
     @pytest.mark.asyncio
-    async def test_own_context_creates_new_page_if_none(self) -> None:
+    async def test_own_context_creates_new_page_if_none(self, tmp_path: Path) -> None:
         """If context.pages is empty, strategy calls new_page()."""
         t = UiAutomationTransport()
         ctx = _make_fake_context(pages=[])
@@ -224,11 +224,11 @@ class TestSetup:
             "gflow_cli.api.transports.ui_automation.async_playwright",
             return_value=pw_cm,
         ):
-            await t.setup(Path("/tmp/prof"))
+            await t.setup(tmp_path)
         ctx.new_page.assert_called_once()
 
     @pytest.mark.asyncio
-    async def test_setup_navigates_to_flow_url(self) -> None:
+    async def test_setup_navigates_to_flow_url(self, tmp_path: Path) -> None:
         """After acquiring a page, strategy navigates to FLOW_URL."""
         t = UiAutomationTransport()
         page = MagicMock()
@@ -239,12 +239,12 @@ class TestSetup:
             "gflow_cli.api.transports.ui_automation.async_playwright",
             return_value=pw_cm,
         ):
-            await t.setup(Path("/tmp/prof"))
+            await t.setup(tmp_path)
         page.goto.assert_called_once()
         assert page.goto.call_args.args[0] == FLOW_URL
 
     @pytest.mark.asyncio
-    async def test_setup_is_idempotent(self) -> None:
+    async def test_setup_is_idempotent(self, tmp_path: Path) -> None:
         """Second setup() call is a no-op (no second launch)."""
         t = UiAutomationTransport()
         ctx = _make_fake_context(pages=[])
@@ -253,13 +253,13 @@ class TestSetup:
             "gflow_cli.api.transports.ui_automation.async_playwright",
             return_value=pw_cm,
         ):
-            await t.setup(Path("/tmp/prof"))
-            await t.setup(Path("/tmp/prof"))
+            await t.setup(tmp_path)
+            await t.setup(tmp_path)
         # Launched exactly once across the two calls.
         assert fake_pw.chromium.launch_persistent_context.call_count == 1
 
     @pytest.mark.asyncio
-    async def test_setup_swallows_initial_goto_failure(self) -> None:
+    async def test_setup_swallows_initial_goto_failure(self, tmp_path: Path) -> None:
         """page.goto() failure during initial navigation logs but does not
         crash setup — auth/UI flow runs in generate_images and can recover."""
         t = UiAutomationTransport()
@@ -272,7 +272,7 @@ class TestSetup:
             return_value=pw_cm,
         ):
             # Should NOT raise.
-            await t.setup(Path("/tmp/prof"))
+            await t.setup(tmp_path)
         assert t._setup_done is True  # type: ignore[attr-defined]
 
 
