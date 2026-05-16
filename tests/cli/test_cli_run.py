@@ -22,8 +22,8 @@ from gflow_cli.cli_run import (
     BatchConfig,
     _check_transport_gated,
 )
-from gflow_cli.paths import resolve_batch_output_dir
 from gflow_cli.errors import ConfigurationError, WafRejectionError
+from gflow_cli.paths import resolve_batch_output_dir
 
 # ---------------------------------------------------------------------------
 # Helpers

@@ -1,0 +1,146 @@
+[
+  {
+    "tag": "button",
+    "text": "Agree",
+    "aria": null,
+    "cls": "glue-cookie-notification-bar__accept",
+    "type": null,
+    "disabled": false
+  },
+  {
+    "tag": "button",
+    "text": "No thanks",
+    "aria": null,
+    "cls": "glue-cookie-notification-bar__reject",
+    "type": null,
+    "disabled": false
+  },
+  {
+    "tag": "button",
+    "text": "arrow_back\nVoltar",
+    "aria": null,
+    "cls": "sc-e8425ea6-0 gLXNUV sc-d3791a4f-0 sc-d3791a4f-4 sc-c3284d88-2 ewQKQI eaSocK kUH",
+    "type": null,
+    "disabled": false
+  },
+  {
+    "tag": "button",
+    "text": "more_vert\nMais op\u00e7\u00f5es",
+    "aria": null,
+    "cls": "sc-e8425ea6-0 gLXNUV sc-d3791a4f-0 sc-d3791a4f-4 sc-490069c7-2 ewQKQI eaSocK fTL",
+    "type": "button",
+    "disabled": false
+  },
+  {
+    "tag": "button",
+    "text": "search\nPesquisar",
+    "aria": null,
+    "cls": "sc-e8425ea6-0 gLXNUV sc-d3791a4f-0 sc-d3791a4f-4 sc-b8db37da-2 ewQKQI eaSocK zqC",
+    "type": null,
+    "disabled": false
+  },
+  {
+    "tag": "button",
+    "text": "filter_list\nOrdenar e filtrar",
+    "aria": null,
+    "cls": "sc-16c4830a-1 hxjMEo sc-e7a64add-0 sc-e7a64add-2 gdoOJp fUilPO sc-8ba7105a-8 fnJ",
+    "type": "button",
+    "disabled": false
+  },
+  {
+    "tag": "button",
+    "text": "add\nAdicionar m\u00eddia",
+    "aria": null,
+    "cls": "sc-e8425ea6-0 gLXNUV sc-d3791a4f-0 sc-d3791a4f-4 sc-547bccfd-1 ewQKQI eaSocK kFm",
+    "type": "button",
+    "disabled": false
+  },
+  {
+    "tag": "button",
+    "text": "play_movies\nCria\u00e7\u00e3o de cenas",
+    "aria": null,
+    "cls": "sc-e8425ea6-0 gLXNUV sc-d3791a4f-0 sc-d3791a4f-4 sc-b0a422cc-2 ewQKQI eaSocK bNk",
+    "type": null,
+    "disabled": false
+  },
+  {
+    "tag": "button",
+    "text": "settings_2\nVer configura\u00e7\u00f5es da grade de blocos",
+    "aria": null,
+    "cls": "sc-e8425ea6-0 gLXNUV sc-d3791a4f-0 sc-d3791a4f-4 sc-750cb59c-6 ewQKQI eaSocK cYN",
+    "type": "button",
+    "disabled": false
+  },
+  {
+    "tag": "button",
+    "text": "help\nAjuda do produto",
+    "aria": null,
+    "cls": "sc-e8425ea6-0 gLXNUV sc-d3791a4f-0 sc-d3791a4f-4 sc-b0a422cc-3 ewQKQI eaSocK gKV",
+    "type": null,
+    "disabled": false
+  },
+  {
+    "tag": "button",
+    "text": "more_vert\nMais",
+    "aria": null,
+    "cls": "sc-e8425ea6-0 gLXNUV sc-d3791a4f-0 sc-d3791a4f-4 sc-e7dabd3c-1 ewQKQI eaSocK hSA",
+    "type": "button",
+    "disabled": false
+  },
+  {
+    "tag": "button",
+    "text": "PRO",
+    "aria": null,
+    "cls": "sc-9b98db5b-0 hheugv",
+    "type": null,
+    "disabled": false
+  },
+  {
+    "tag": "button",
+    "text": "dashboard\nnav_rail_all_media",
+    "aria": null,
+    "cls": "sc-e8425ea6-0 gLXNUV sc-d3791a4f-0 sc-d3791a4f-5 sc-e503ddc8-0 sc-42cb6142-0 ewQ",
+    "type": null,
+    "disabled": false
+  },
+  {
+    "tag": "button",
+    "text": "archive\nVer arquivo",
+    "aria": null,
+    "cls": "sc-e8425ea6-0 gLXNUV sc-d3791a4f-0 sc-d3791a4f-5 sc-e503ddc8-0 ewQKQI joeWtb bxU",
+    "type": null,
+    "disabled": false
+  },
+  {
+    "tag": "button",
+    "text": "add_2\nCriar",
+    "aria": null,
+    "cls": "sc-e8425ea6-0 gLXNUV sc-d3791a4f-0 sc-d3791a4f-4 sc-3bb56e4a-0 ewQKQI eaSocK cRB",
+    "type": "button",
+    "disabled": false
+  },
+  {
+    "tag": "button",
+    "text": "\ud83c\udf4c Nano Banana 2\ncrop_16_9\nx2",
+    "aria": null,
+    "cls": "sc-16c4830a-1 hxjMEo sc-e7a64add-0 sc-e7a64add-1 gdoOJp cqfBcP sc-67b77035-1 bgi",
+    "type": "button",
+    "disabled": false
+  },
+  {
+    "tag": "button",
+    "text": "arrow_forward\nCriar",
+    "aria": null,
+    "cls": "sc-e8425ea6-0 gLXNUV sc-d3791a4f-0 sc-d3791a4f-4 sc-e5032833-5 ewQKQI eaSocK ghP",
+    "type": null,
+    "disabled": false
+  },
+  {
+    "tag": "button",
+    "text": "close\nApagar comando",
+    "aria": null,
+    "cls": "sc-e8425ea6-0 gLXNUV sc-d3791a4f-0 sc-d3791a4f-4 sc-e5032833-11 ewQKQI eaSocK kn",
+    "type": null,
+    "disabled": false
+  }
+]

@@ -23,7 +23,12 @@ import structlog
 
 from gflow_cli.api.dto import GeneratedImage
 from gflow_cli.api.image import GenerateImageRequest
-from gflow_cli.errors import AuthExpiredError, ContentPolicyError, WafRejectionError, WireFormatError
+from gflow_cli.errors import (
+    AuthExpiredError,
+    ContentPolicyError,
+    WafRejectionError,
+    WireFormatError,
+)
 
 if TYPE_CHECKING:
     from playwright.async_api import Page, ViewportSize
@@ -158,7 +163,11 @@ GEN_SETTINGS_BUTTON_SELECTORS = (
 
 # CLI string → Flow aspect ratio tab text (locale-invariant number format).
 _ASPECT_TAB: dict[str, str] = {
-    "16:9": "16:9", "9:16": "9:16", "1:1": "1:1", "4:3": "4:3", "3:4": "3:4",
+    "16:9": "16:9",
+    "9:16": "9:16",
+    "1:1": "1:1",
+    "4:3": "4:3",
+    "3:4": "3:4",
 }
 
 # Count → Flow count tab text.
@@ -229,6 +238,7 @@ class UiAutomationTransport:
         pw = await pw_cm.__aenter__()
         try:
             from gflow_cli.browser_manager import channel_for_profile  # noqa: PLC0415
+
             ctx = await pw.chromium.launch_persistent_context(
                 str(profile_dir),
                 headless=False,
@@ -666,6 +676,7 @@ class UiAutomationTransport:
         # Map aspect enum back to CLI string for _configure_generation_settings.
         # Build the reverse map inline to avoid using the private _ASPECT_FROM_CLI.
         from gflow_cli.api.image import Aspect as _Aspect  # noqa: PLC0415
+
         _cli_from_aspect: dict[_Aspect, str] = {
             _Aspect.PORTRAIT: "9:16",
             _Aspect.LANDSCAPE: "16:9",
