@@ -2,6 +2,7 @@ from __future__ import annotations
 
 import asyncio
 import os
+import subprocess
 import sys
 from pathlib import Path
 
@@ -115,21 +116,32 @@ class RealChromeStrategy(AuthStrategy):
             _console.print("-" * 60)
             _console.print("Launching Chrome...")
 
-        proc = await asyncio.create_subprocess_exec(
-            *chrome_args,
-            stdout=asyncio.subprocess.DEVNULL,
-            stderr=asyncio.subprocess.DEVNULL,
+        # DELIBERATELY synchronous subprocess.Popen, not
+        # asyncio.create_subprocess_exec. asyncio's subprocess wraps Popen but
+        # ties process-exit detection to the event loop's child watcher; under
+        # pytest-asyncio's per-test loops, a mocked Popen leaves proc.wait()'s
+        # exit-future unresolved forever (CI hang, see commit history). Popen +
+        # run_in_executor(proc.wait) keeps the blocking wait on a worker thread
+        # where a mocked .wait() simply returns. The NOSONAR token must sit on
+        # the call line itself for SonarPython S7487 to be suppressed.
+        proc = subprocess.Popen(  # noqa: S603 - fixed Chrome cmdline; NOSONAR S7487
+            chrome_args, stdout=subprocess.DEVNULL, stderr=subprocess.DEVNULL
         )
 
         # Wait for the user to close Chrome.  Chrome holds an exclusive lock on
         # its SQLite cookie store while running, so we must wait before probing.
+        # Run the blocking wait in a thread so the event loop stays free.
+        loop = asyncio.get_running_loop()
         try:
-            await asyncio.wait_for(proc.wait(), timeout=float(self._timeout_seconds))
+            await asyncio.wait_for(
+                loop.run_in_executor(None, proc.wait),
+                timeout=float(self._timeout_seconds),
+            )
         except TimeoutError:
             proc.terminate()
             try:
-                await asyncio.wait_for(proc.wait(), timeout=5)
-            except TimeoutError:
+                proc.wait(timeout=5)  # NOSONAR S7487 - bounded 5s cleanup wait
+            except subprocess.TimeoutExpired:
                 proc.kill()
             raise AuthLoginTimeoutError(
                 f"Sign-in timed out after {self._timeout_seconds}s; Chrome was stopped.",
