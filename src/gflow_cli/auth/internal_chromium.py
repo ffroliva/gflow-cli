@@ -2,7 +2,6 @@ from __future__ import annotations
 
 import asyncio
 from pathlib import Path
-from typing import TYPE_CHECKING
 
 import structlog
 from rich.console import Console
@@ -11,9 +10,6 @@ from gflow_cli.config import get_settings
 from gflow_cli.errors import AuthLoginTimeoutError, SecurityError
 
 from .base import AuthStrategy
-
-if TYPE_CHECKING:
-    pass
 
 logger = structlog.get_logger(__name__)
 _console = Console()

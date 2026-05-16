@@ -41,9 +41,8 @@ def _migrate_legacy_env() -> None:
     promoted keys. Removed in v0.5.0.
     """
     promoted: list[str] = []
-    for key in list(os.environ):
-        if not key.startswith(_LEGACY_ENV_PREFIX):
-            continue
+    legacy_keys = [k for k in os.environ if k.startswith(_LEGACY_ENV_PREFIX)]
+    for key in legacy_keys:
         new_key = _NEW_ENV_PREFIX + key[len(_LEGACY_ENV_PREFIX) :]
         if new_key not in os.environ:
             os.environ[new_key] = os.environ[key]

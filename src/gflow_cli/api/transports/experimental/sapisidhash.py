@@ -149,6 +149,7 @@ class SapisidhashTransport:
         reads SAPISID from the SQLite cookie DB and has its own Playwright
         fingerprint-capture step.
         """
+        del page  # accepted for Protocol conformance — see docstring
         self._profile_dir = profile_dir
         self._sapisid = self._read_sapisid(profile_dir)
         self._fingerprint = await self._capture_fingerprint_via_playwright(profile_dir)

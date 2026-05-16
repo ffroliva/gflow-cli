@@ -61,6 +61,8 @@ from gflow_cli.errors import AuthMissingError, ConfigurationError
 
 log = structlog.get_logger(__name__)
 
+_FLOW_HOME_URL = "https://labs.google/fx/tools/flow"
+
 # Port range for CDP auto-increment (9222 … 9229 inclusive — 8 ports)
 _CDP_PORT_START = 9222
 _CDP_PORT_END = 9229
@@ -448,16 +450,13 @@ def _find_available_cdp_port(profile_dir: Path, start_port: int = _CDP_PORT_STAR
     """
     lock_path = profile_dir / _LOCK_FILENAME
     our_lock = _read_lock(lock_path)
+    our_port = our_lock.get("port") if our_lock else None
 
     for port in range(start_port, _CDP_PORT_END + 1):
-        if not is_browser_running(port=port):
-            # Port is free — we can use it
+        port_is_free = not is_browser_running(port=port)
+        port_is_ours = port == our_port
+        if port_is_free or port_is_ours:
             return port
-
-        # Port is responding — is it ours?
-        if our_lock is not None and our_lock.get("port") == port:
-            return port
-
         log.warning(
             "cdp_port_busy_non_gflow",
             port=port,
@@ -561,7 +560,7 @@ async def get_or_launch_browser(
                     context = await _connect_cdp(endpoint)
                     page = await context.new_page()
                     await page.goto(
-                        "https://labs.google/fx/tools/flow",
+                        _FLOW_HOME_URL,
                         wait_until="domcontentloaded",
                     )
                     if not await _is_logged_in_to_flow(page):
@@ -590,7 +589,7 @@ async def get_or_launch_browser(
             context = await _connect_cdp(endpoint)
             page = await context.new_page()
             await page.goto(
-                "https://labs.google/fx/tools/flow",
+                _FLOW_HOME_URL,
                 wait_until="domcontentloaded",
             )
             if not await _is_logged_in_to_flow(page):
@@ -645,7 +644,7 @@ async def get_or_launch_browser(
         context = await _connect_cdp(endpoint)
         page = await context.new_page()
         await page.goto(
-            "https://labs.google/fx/tools/flow",
+            _FLOW_HOME_URL,
             wait_until="domcontentloaded",
         )
         if not await _is_logged_in_to_flow(page):
@@ -663,14 +662,10 @@ async def close_browser(profile_dir: Path, port: int = 9222) -> None:
     unmanaged. Use ``gflow chrome stop`` (D.2.3d) for full lifecycle control.
     """
     lock_path = profile_dir / _LOCK_FILENAME
-    existing = _read_lock(lock_path)
-    if existing and existing.get("port") == port:
-        _remove_lock(lock_path)
-        log.info("chrome_lock_released", port=port)
-    elif not lock_path.exists():
-        # No-op
-        pass
-    else:
-        # Lock exists but for a different port — remove it anyway (port may vary)
-        _remove_lock(lock_path)
-        log.info("chrome_lock_released", port=port)
+    if not lock_path.exists():
+        return  # nothing to release
+    # Remove regardless of whether the lock matches `port` — the recorded port
+    # may have changed since the lock was written, and either way the user is
+    # explicitly asking to drop the lock.
+    _remove_lock(lock_path)
+    log.info("chrome_lock_released", port=port)

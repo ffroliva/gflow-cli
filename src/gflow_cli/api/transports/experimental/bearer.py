@@ -118,7 +118,7 @@ class _BearerCache:
                 expires_at=float(data["expires_at"]),
                 fingerprint=fingerprint,
             )
-        except (json.JSONDecodeError, KeyError, TypeError, ValueError):
+        except (KeyError, TypeError, ValueError):  # JSONDecodeError is a ValueError
             log.warning("bearer.cache_corrupt_ignored", path=str(self.path))
             return None
 
@@ -152,6 +152,7 @@ class BearerTransport:
         Loads cached Bearer from disk if present and not expired; otherwise
         launches Playwright to capture a fresh Bearer + fingerprint.
         """
+        del page  # accepted for Protocol conformance — see docstring
         self._profile_dir = profile_dir
         self._cache = _BearerCache(profile_dir / "transport_bearer.json")
 
@@ -325,7 +326,7 @@ class BearerTransport:
         *,
         headers: dict[str, str],
         content: bytes,
-        timeout: float,
+        timeout: float,  # NOSONAR S7483 — httpx.AsyncClient(timeout=...) is the canonical API
     ) -> Any:
         """Injectable seam: real httpx POST.  Tests replace this with a fake."""
         import httpx  # lazy import
