@@ -21,6 +21,7 @@ import pytest
 
 from gflow_cli.api.image import Aspect, GenerateImageRequest, Model
 from gflow_cli.api.transports.ui_automation import FLOW_URL, UiAutomationTransport
+from gflow_cli.errors import ContentPolicyError, WafRejectionError
 
 # ---------------------------------------------------------------------------
 # Async helpers shared across units
@@ -57,6 +58,7 @@ def _make_fake_context(*, pages: list[MagicMock] | None = None) -> MagicMock:
     new_page.goto = AsyncMock()
     ctx.new_page = AsyncMock(return_value=new_page)
     ctx.close = AsyncMock()
+    ctx.add_init_script = AsyncMock()
     return ctx
 
 
@@ -527,6 +529,7 @@ def _make_prompt_page(
     page.keyboard = MagicMock()
     page.keyboard.press = AsyncMock()
     page.keyboard.type = AsyncMock()
+    page.keyboard.insert_text = AsyncMock()
 
     input_loc = MagicMock()
     input_loc.wait_for = (
@@ -568,11 +571,11 @@ class TestSendPrompt:
         page = _make_prompt_page(input_visible=True, submit_visible=True)
         await t._send_prompt(page, "hello world")  # type: ignore[attr-defined]
         page._input_loc.click.assert_called_once()  # type: ignore[attr-defined]
-        # Clear (Ctrl+A + Delete) then type.
+        # Clear (Ctrl+A + Delete) then insert_text (single beforeinput event — near-instant).
         press_calls = [c.args[0] for c in page.keyboard.press.call_args_list]
         assert "Control+A" in press_calls
         assert "Delete" in press_calls
-        page.keyboard.type.assert_called_once_with("hello world")
+        page.keyboard.insert_text.assert_called_once_with("hello world")
         page._submit_loc.click.assert_called_once()  # type: ignore[attr-defined]
 
     @pytest.mark.asyncio
@@ -647,7 +650,7 @@ class TestCaptureBatchResponse:
     async def test_returns_first_batch_response(self) -> None:
         page, handlers = _make_listener_page()
 
-        async def _runner() -> dict:
+        async def _runner() -> list[dict]:
             return await UiAutomationTransport._capture_batch_response(
                 page, timeout_s=2.0, poll_interval_s=0.05
             )
@@ -658,9 +661,9 @@ class TestCaptureBatchResponse:
         assert handlers and handlers[0][0] == "response"
         await handlers[0][1](_make_response())
         result = await task
-        assert result["status"] == 200
-        assert "batchGenerateImages" in result["url"]
-        assert result["body"]["media"][0]["image"]["generatedImage"]["fifeUrl"]
+        assert result[0]["status"] == 200
+        assert "batchGenerateImages" in result[0]["url"]
+        assert result[0]["body"]["media"][0]["image"]["generatedImage"]["fifeUrl"]
 
     @pytest.mark.asyncio
     async def test_ignores_non_batch_responses(self) -> None:
@@ -710,9 +713,10 @@ class TestCaptureBatchResponse:
 
 
 class _FakeHttpxResponse:
-    def __init__(self, content: bytes, status: int = 200) -> None:
+    def __init__(self, content: bytes, status: int = 200, content_type: str = "image/png") -> None:
         self.content = content
         self.status_code = status
+        self.headers = {"content-type": content_type}
 
     def raise_for_status(self) -> None:
         if self.status_code >= 400:
@@ -871,7 +875,7 @@ class TestGenerateImages:
             patch.object(
                 t,
                 "_await_captured",
-                new=AsyncMock(return_value=_flow_200_capture()),
+                new=AsyncMock(return_value=[_flow_200_capture()]),
             ),
         ):
             images = await t.generate_images(project_id="ignored", request=_req())
@@ -893,14 +897,14 @@ class TestGenerateImages:
                 t,
                 "_await_captured",
                 new=AsyncMock(
-                    return_value={
+                    return_value=[{
                         "status": 403,
                         "url": "https://aisandbox-pa.googleapis.com/x",
                         "body": {},
-                    }
+                    }]
                 ),
             ),
-            pytest.raises(RuntimeError, match="HTTP 403"),
+            pytest.raises(WafRejectionError),
         ):
             await t.generate_images(project_id="x", request=_req())
 
@@ -916,9 +920,9 @@ class TestGenerateImages:
             patch.object(
                 t,
                 "_await_captured",
-                new=AsyncMock(return_value=_flow_200_capture(body={"media": []})),
+                new=AsyncMock(return_value=[_flow_200_capture(body={"media": []})]),
             ),
-            pytest.raises(RuntimeError, match="no parseable image URLs"),
+            pytest.raises(ContentPolicyError),
         ):
             await t.generate_images(project_id="x", request=_req())
 
