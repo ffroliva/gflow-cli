@@ -7,6 +7,30 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+## [0.6.0a5] — 2026-05-16
+
+> **CLI transport proven end-to-end.** The `ui_automation` transport now
+> generates images correctly from the `gflow image t2i` command — count,
+> aspect ratio, and file download all work. Root cause of the persistent 403
+> was `headless=True`; reCAPTCHA Enterprise immediately rejects headless
+> Chromium.
+
+### Fixed
+
+- **`headless` default changed `True` → `False`** in `config.py` and
+  `FlowApiClient.__init__` — the `ui_automation` transport requires a headed
+  (visible) Chrome window; reCAPTCHA Enterprise scores headless browsers as
+  bots and returns an immediate 403 on `batchGenerateImages`.
+- **13 unit test mock regressions** fixed after the v0.6.0a4 transport rewrite:
+  - `add_init_script = AsyncMock()` added to `_patch_playwright` and
+    `fake_context` fixtures (`test_client.py`, `test_concurrency.py`).
+  - `keyboard.insert_text = AsyncMock()` added to `_make_prompt_page`
+    (transport now uses `insert_text` instead of `type`).
+  - `_FakeHttpxResponse.headers` added (download auto-detects `.jpg`/`.png`
+    from `Content-Type`).
+  - `_capture_batch_response` / `_await_captured` return `list[dict]` —
+    test assertions updated throughout `test_ui_automation.py`.
+
 ## [0.6.0a4] — 2026-05-17
 
 > **Unified output resolution + batch orchestration refactor.** This release
@@ -538,7 +562,8 @@ shell-script template that branches on these codes.
 
 First skeleton. Not functional end-to-end yet.
 
-[Unreleased]: https://github.com/ffroliva/gflow-cli/compare/v0.6.0a1...HEAD
+[Unreleased]: https://github.com/ffroliva/gflow-cli/compare/v0.6.0a5...HEAD
+[0.6.0a5]: https://github.com/ffroliva/gflow-cli/compare/v0.6.0a4...v0.6.0a5
 [0.6.0a1]: https://github.com/ffroliva/gflow-cli/compare/v0.5.0a1...v0.6.0a1
 [0.5.0a1]: https://github.com/ffroliva/gflow-cli/compare/v0.4.0a2...v0.5.0a1
 [0.3.0a1]: https://github.com/ffroliva/gflow-cli/releases/tag/v0.3.0a1
