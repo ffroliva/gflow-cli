@@ -7,6 +7,33 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+## [0.6.0a4] — 2026-05-17
+
+> **Unified output resolution + batch orchestration refactor.** This release
+> aligns the CLI output structure across all commands and refactors the batch
+> runner to be more generic, preparing the codebase for Phase 6.
+
+### Added
+
+- **`resolve_batch_output_dir` helper** in `paths.py` — centralizes the
+  date-partitioned output directory logic used by all generation commands.
+- **`parse_batch_item_dict` helper** in `image_batch.py` — deduplicates JSON
+  prompt validation between `gflow run` and other batch sources.
+
+### Changed
+
+- **`gflow run` output directory** — now defaults to date-partitioned
+  `$GFLOW_CLI_OUTPUT_DIR/images/<YYYY-MM-DD>/` instead of the legacy
+  `out/<UTC-timestamp>/`, matching the `gflow image` convention.
+- **Refactored `run_image_batch`** into a generic `run_sequential_batch`
+  orchestrator — now accepts a swappable worker callback, allowing for uniform
+  video and image batch handling in the future.
+
+### Fixed
+
+- Removed ~80 lines of duplicate validation logic from `cli_run.py`.
+- Corrected test imports and expectations for unified output resolution.
+
 ## [0.6.0a3] — 2026-05-17
 
 > **Deterministic timeouts + agent-friendly exit codes.** This release hardens
