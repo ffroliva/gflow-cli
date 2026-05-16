@@ -661,6 +661,7 @@ async def close_browser(profile_dir: Path, port: int = 9222) -> None:
     open). This just clears the lock so the next CLI call treats Chrome as
     unmanaged. Use ``gflow chrome stop`` (D.2.3d) for full lifecycle control.
     """
+    await asyncio.sleep(0)  # yield to event loop — keep async signature on public API
     lock_path = profile_dir / _LOCK_FILENAME
     if not lock_path.exists():
         return  # nothing to release

@@ -2,7 +2,6 @@ from __future__ import annotations
 
 import asyncio
 import os
-import subprocess
 import sys
 from pathlib import Path
 
@@ -116,22 +115,21 @@ class RealChromeStrategy(AuthStrategy):
             _console.print("-" * 60)
             _console.print("Launching Chrome...")
 
-        proc = subprocess.Popen(chrome_args, stdout=subprocess.DEVNULL, stderr=subprocess.DEVNULL)
+        proc = await asyncio.create_subprocess_exec(
+            *chrome_args,
+            stdout=asyncio.subprocess.DEVNULL,
+            stderr=asyncio.subprocess.DEVNULL,
+        )
 
         # Wait for the user to close Chrome.  Chrome holds an exclusive lock on
         # its SQLite cookie store while running, so we must wait before probing.
-        # Run in a thread to avoid blocking the event loop.
-        loop = asyncio.get_running_loop()
         try:
-            await asyncio.wait_for(
-                loop.run_in_executor(None, proc.wait),
-                timeout=float(self._timeout_seconds),
-            )
+            await asyncio.wait_for(proc.wait(), timeout=float(self._timeout_seconds))
         except TimeoutError:
             proc.terminate()
             try:
-                proc.wait(timeout=5)
-            except subprocess.TimeoutExpired:
+                await asyncio.wait_for(proc.wait(), timeout=5)
+            except TimeoutError:
                 proc.kill()
             raise AuthLoginTimeoutError(
                 f"Sign-in timed out after {self._timeout_seconds}s; Chrome was stopped.",

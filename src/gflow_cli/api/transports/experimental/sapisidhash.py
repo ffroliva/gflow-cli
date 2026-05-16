@@ -157,6 +157,7 @@ class SapisidhashTransport:
 
     async def teardown(self) -> None:
         """Drop in-memory state. Idempotent."""
+        await asyncio.sleep(0)  # yield to event loop — Protocol-required async signature
         self._sapisid = None
         self._fingerprint = BrowserFingerprint()
 
@@ -172,6 +173,7 @@ class SapisidhashTransport:
         Raises:
             AuthExpiredError: if setup() was never called, or the cookie is now missing.
         """
+        await asyncio.sleep(0)  # yield to event loop — Protocol-required async signature
         if self._profile_dir is None:
             raise AuthExpiredError("sapisidhash: cannot refresh — setup() was never called")
         try:

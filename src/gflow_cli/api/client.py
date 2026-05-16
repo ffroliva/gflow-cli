@@ -435,11 +435,18 @@ class FlowApiClient:
                 f"Image too large: {size / 1_048_576:.1f} MB exceeds "
                 f"{MAX_IMAGE_BYTES // 1_048_576} MB limit"
             )
-        with image_path.open("rb") as fh:
-            header = fh.read(12)
+
+        # Staged read: validate magic bytes first (12 B) before loading the full
+        # file. Run both reads in a worker thread to keep the event loop free.
+        def _read_header(p: Path) -> bytes:
+            with p.open("rb") as fh:
+                return fh.read(12)
+
+        header = await asyncio.to_thread(_read_header, image_path)
         if not _is_supported_image_header(header):
             raise ValueError(f"Not a supported image format: {image_path.name}")
-        b64 = base64.b64encode(image_path.read_bytes()).decode()
+        full_bytes = await asyncio.to_thread(image_path.read_bytes)
+        b64 = base64.b64encode(full_bytes).decode()
         body = {
             "clientContext": {"projectId": project_id, "tool": "PINHOLE"},
             "imageBytes": b64,
