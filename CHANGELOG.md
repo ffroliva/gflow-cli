@@ -7,47 +7,66 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+## [0.6.0a3] — 2026-05-17
+
+> **Deterministic timeouts + agent-friendly exit codes.** This release hardens
+> the auth login flow for unattended / agentic use: timeouts now raise distinct
+> errors with dedicated exit codes instead of silently swallowing failures.
+
+### Added
+
+- **`AuthLoginTimeoutError`** (exit code **12**) — raised by both strategies
+  when the user/agent does not complete sign-in within `timeout_seconds`.
+  Distinct from `ConfigurationError` (11) and `SecurityError` (13) so agents
+  can branch on failure type without parsing stderr.
+- **`SecurityError`** exit code **13** — now registered in `EXIT_CODE_MAP`.
+- **`timeout_seconds=600` parameter** on both `RealChromeStrategy` and
+  `InternalChromiumStrategy` — configurable upper bound for the login window.
+- **Broad `GFlowError` catch** in `auth_login` CLI command — previously only
+  caught `ConfigurationError`; now looks up any `GFlowError` subclass in
+  `EXIT_CODE_MAP` and exits with the correct code plus a `remediation_hint`.
+
+### Fixed
+
+- `InternalChromiumStrategy` had an infinite `while True:` polling loop that
+  never timed out; replaced with a bounded loop that raises
+  `AuthLoginTimeoutError` on expiry.
+- `auth login --browser chrome` when Chrome is missing now exits with code
+  **11** (ConfigurationError) instead of 1.
+
 ## [0.6.0a2] — 2026-05-16
 
 > **Real Chrome auth strategy — G12 block resolved.** This release restores
-> `gflow auth login` reliability by routing logins through the system's real
-> Google Chrome instead of Playwright's bundled Chromium. A carefully ordered
-> stealth configuration prevents Google's bot-detection from blocking the sign-in
-> flow.
+> `gflow auth login` reliability by implementing a new **Passive Capture**
+> strategy. This method providing a 100% clean browser environment by launching
+> your system's real Google Chrome as a standard process, completely bypassing
+> Google's bot-detection.
 
 ### Added
 
 - **`--browser [auto|chrome|internal]` flag** on `gflow auth login` — selects
-  the browser strategy. `chrome` uses real system Chrome (stealth). `internal`
-  falls back to bundled Chromium. `auto` (default) probes for real Chrome and
-  falls back gracefully.
+  the browser strategy. `chrome` uses real system Chrome (**Passive Capture**).
+  `internal` falls back to bundled Chromium. `auto` (default) probes for real
+  Chrome and falls back gracefully.
 - **`GFLOW_CLI_AUTH_BROWSER` env var** — overrides the browser strategy without
   a CLI flag.
-- **`RealChromeStrategy`** (`src/gflow_cli/auth/real_chrome.py`) — stealth
-  persistent context via `channel="chrome"` with
-  `--disable-blink-features=AutomationControlled` and a JS init-script to mask
-  `navigator.webdriver`.
+- **`RealChromeStrategy`** (`src/gflow_cli/auth/real_chrome.py`) — zero-automation
+  login flow: launches clean Chrome, waits for user to close window, then extracts
+  the session.
 - **`InternalChromiumStrategy`** — extracted from the previous `auth.py` monolith
   as an explicit fallback strategy.
 - **`AuthStrategyFactory`** — routes `auto`/`chrome`/`internal` to the
   appropriate strategy based on system state.
-- **`is_chrome_available()`** in `browser_manager.py` — non-raising probe for
-  system Chrome presence.
-- **4 new BDD scenarios** in `tests/features/auth_login.feature` covering all
-  `--browser` modes.
 
 ### Fixed
 
 - **G12 bot-detection block** — Google's "browser not secure" rejection (`/v3/signin/rejected`)
-  is bypassed by the stealth Chrome launch configuration. Root cause: without
-  `--disable-blink-features=AutomationControlled`, Blink's C++ engine sets
-  `navigator.webdriver = true` as a non-configurable native property before any
-  JS init script can run, making `Object.defineProperty` overrides silently fail.
-- **`add_init_script` timing** — registration now occurs before any page is
-  accessed, ensuring the stealth script fires on every navigation including the
-  first `goto()`.
+  is bypassed by the Passive Capture workflow. By removing all automation signals
+  (CDP, WebDriver flags) during login, the browser is indistinguishable from a
+  regular user session.
 - **Privacy Guard** — `RealChromeStrategy` validates that `profile_dir` is inside
   `GFLOW_CLI_HOME` and raises `SecurityError` if it is not, preventing accidental
+  interference with your primary personal Chrome profile.
   use of the user's primary system Chrome profile.
 - **`ConfigurationError` on missing Chrome** — clear "Chrome binary not found"
   message with install guidance when `--browser chrome` is requested but Chrome
