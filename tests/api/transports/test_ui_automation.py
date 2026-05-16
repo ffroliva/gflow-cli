@@ -420,15 +420,22 @@ class TestEnterEditor:
     """_enter_editor clicks '+ New project' and waits for /project/ navigation."""
 
     @pytest.mark.asyncio
-    async def test_noop_when_already_in_editor(self) -> None:
+    async def test_navigates_to_gallery_when_restored_project_url(self) -> None:
+        """Flow's PWA restores the last project URL on browser launch. The
+        transport must navigate back to the gallery and create a fresh
+        project rather than reusing the restored one (which would
+        accumulate images across CLI invocations)."""
         t = UiAutomationTransport()
         page = _make_editor_page(
             initial_url="https://labs.google/fx/tools/flow/project/zzz",
         )
+        page.goto = AsyncMock()
         await t._enter_editor(page)  # type: ignore[attr-defined]
-        # No timeout, no locator, no click.
-        page.wait_for_timeout.assert_not_called()
-        page.locator.assert_not_called()
+        # Gallery navigation happened, then "+ New project" flow ran.
+        page.goto.assert_awaited_once()
+        assert "tools/flow" in page.goto.call_args.args[0]
+        page.wait_for_timeout.assert_called()
+        page.locator.assert_called()
 
     @pytest.mark.asyncio
     async def test_first_selector_works(self) -> None:
