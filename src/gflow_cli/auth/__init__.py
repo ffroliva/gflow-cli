@@ -61,7 +61,11 @@ def status(name: str = "default") -> dict[str, object]:
     """Lightweight check — does the profile dir exist and have cookies file?"""
     pdir = profile_dir(name)
     cookies_file: Path | None = None
-    for candidate in (pdir / "Default" / "Cookies", pdir / "Cookies"):
+    for candidate in (
+        pdir / "Default" / "Network" / "Cookies",  # Chrome 130+ (new location)
+        pdir / "Default" / "Cookies",               # Chrome < 130 / legacy
+        pdir / "Cookies",                           # Playwright bundled Chromium
+    ):
         if candidate.exists():
             cookies_file = candidate
             break

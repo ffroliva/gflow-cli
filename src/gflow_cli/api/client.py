@@ -148,12 +148,24 @@ class FlowApiClient:
         # opening a second Playwright process against the same profile dir
         # (which would conflict on the Chromium lockfile — spec § 5.4.4).
         self._pw = await async_playwright().start()
+        # If the profile was captured with RealChromeStrategy, the marker file
+        # ".gflow_browser_strategy" contains "chrome". Use channel="chrome" so
+        # Playwright launches the same Chrome version that wrote the profile —
+        # opening a profile created by Chrome 130+ with an older bundled Chromium
+        # triggers a downgrade-cleanup that exits with code 33 (Access denied).
+        _strategy_file = self.profile_dir / ".gflow_browser_strategy"
+        _channel: str | None = None
+        if _strategy_file.exists() and _strategy_file.read_text(encoding="utf-8").strip() == "chrome":
+            from gflow_cli.browser_manager import is_chrome_available
+            if is_chrome_available():
+                _channel = "chrome"
         self._context = await self._pw.chromium.launch_persistent_context(
             user_data_dir=str(self.profile_dir),
             headless=self.headless,
             viewport={"width": 1280, "height": 720},
             locale="en-US",
             extra_http_headers={"Accept-Language": "en-US,en;q=0.9"},
+            channel=_channel,
         )
         # Open ``Settings.concurrency`` Pages inside the one persistent
         # BrowserContext. ``launch_persistent_context`` opens one Page by

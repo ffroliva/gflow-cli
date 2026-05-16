@@ -161,7 +161,13 @@ class RealChromeStrategy(AuthStrategy):
 
                 if has_sapisid:
                     logger.info("auth_login_success_verified", strategy=self.name)
-                    _console.print("[green]✓ Session captured and verified.[/green]")
+                    # Write strategy marker before any output that might fail on
+                    # narrow Windows codepages — FlowApiClient reads this to select
+                    # the matching Chrome channel for launch_persistent_context.
+                    (profile_dir / ".gflow_browser_strategy").write_text(
+                        "chrome", encoding="utf-8"
+                    )
+                    _console.print("[green][OK] Session captured and verified.[/green]")
                 else:
                     logger.warning("auth_login_no_cookies", strategy=self.name)
                     raise RuntimeError(
