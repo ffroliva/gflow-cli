@@ -28,14 +28,15 @@ Goal: Feature-complete implementation via atomic commits.
 - [ ] **T2.2: InternalChromiumStrategy** (`src/gflow_cli/auth/internal_chromium.py`)
   - Migrate legacy logic from `auth.py`.
 - [ ] **T2.3: RealChromeStrategy** (`src/gflow_cli/auth/real_chrome.py`)
-  - Implement with `channel="chrome"`.
-  - Apply stealth patches: ignore `--enable-automation`, disable `AutomationControlled`, inject `navigator.webdriver = undefined`.
+  - Implement with **Passive Capture**: launch via `subprocess.Popen` without any debugging flags.
+  - Logic: Block on `proc.wait()`, prompting user to log in and CLOSE the browser.
   - Implement Privacy Guard (validate `user_data_dir`).
+  - Add post-close verification: headless probe for `SAPISID` cookie.
 - [ ] **T2.4: Factory & CLI Integration** (`src/gflow_cli/auth/factory.py` + `src/gflow_cli/cli.py`)
   - Implement lazy registry and `get_strategy`.
   - Update `gflow auth login` to parse `--browser` flag and `GFLOW_CLI_AUTH_BROWSER` env var, and dispatch via factory.
-- [ ] **T2.5: Optimistic Orchestration**
-  - Implement fast-polling for `SAPISID` cookie + `New project` UI element in `RealChromeStrategy`.
+- [ ] **T2.5: Session Verification**
+  - Implement the headless verification probe in `RealChromeStrategy`.
 
 ## Phase 3: Documentation & Knowledge Base (First-Class Citizen)
 Goal: Ensure all documentation, architecture specs, and agent memory reflect the new strategy.

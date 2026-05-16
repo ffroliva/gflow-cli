@@ -8,26 +8,22 @@ Google currently identifies and blocks Playwright's bundled Chromium during the 
 ## 2. Surfaces
 - **Auth Strategies**: Refactor `src/gflow_cli/auth.py` (module) into a package `src/gflow_cli/auth/` containing:
   - `base.py`: Defines the `AuthStrategy` `typing.Protocol`.
-  - `real_chrome.py`: Uses Playwright's `channel="chrome"` with stealth patches.
+  - `real_chrome.py`: Uses a **Passive Capture** strategy. It launches the system's real Chrome without any automation flags/ports, waits for the user to sign in and close the window, and then verifies the resulting session.
   - `internal_chromium.py`: Legacy behavior (formerly "bundled"), kept as a fallback.
-- **CLI Flag**: `--browser [auto|chrome|internal]` added to `gflow auth login`.
-- **Environment Variable**: `GFLOW_CLI_AUTH_BROWSER` for operator-level defaults.
-- **Factory**: `AuthStrategyFactory` mirroring the `api/transports` registry pattern.
 
 ## 3. Locked Decisions
-1. **Stealth is Mandatory**: Must ignore `--enable-automation`, use `--disable-blink-features=AutomationControlled`, and inject a script to set `navigator.webdriver = undefined`.
+1. **Passive Capture is Mandatory**: Any active automation (CDP, WebDriver flags) during the login flow is currently detected by Google. Login MUST happen in a 100% standard process.
 2. **Strategy Pattern**: Auth logic must mirror the `UiAutomationTransport` factory pattern (lazy registry) for consistency.
 3. **Smart Defaults**: `auto` mode probes for Real Chrome; falls back to `internal` if missing.
 4. **No Breaking Changes**: Existing `profile_<name>` directories must remain compatible.
 5. **TDD Workflow**: Failing tests for all strategies and the factory must be written before implementation.
-6. **Privacy Guard**: `RealChromeStrategy` must validate that the provided `user_data_dir` is NOT the user's primary system Chrome profile to prevent data corruption/leaks.
+6. **Privacy Guard**: `RealChromeStrategy` must validate that the provided `user_data_dir` is NOT the user's primary system Chrome profile.
+7. **Clean Exit**: The CLI will wait for the browser process to terminate before proceeding to verify the capture.
 
-## 4. Hypothesis: Optimistic Orchestration (Performance Optimization)
-Current automation often relies on conservative `wait_for_url` or static sleeps. To reduce "dead time" in the CLI:
-
-- **Auth Success**: Shift from 5s polling to a 1s loop checking for the `SAPISID` cookie. Reaching the `New project` or `Your projects` text in the DOM serves as the final confirmation.
-- **Generation Tracking**: Monitor for specific DOM mutations (e.g., overlay appearance) to signal "Generation Started" rather than waiting for full page stability.
-- **Fast-Path Action**: Use Playwright's `wait_for_selector(..., state="attached")` for non-visual interactions.
+## 4. Performance & UX
+- **No More Stalls**: By removing automated click-throughs (which Google detects), we eliminate the hangs and timeouts seen in previous attempts.
+- **Clear Instructions**: The CLI will provide a prominent "LOG IN THEN CLOSE BROWSER" instruction.
+- **Session Verification**: After the window closes, the CLI will perform a fast, headless check for `SAPISID` to confirm success.
 
 ## 5. Acceptance Criteria
 1. **AC-1**: `gflow auth login --browser chrome` opens a stealth-hardened Real Chrome window.

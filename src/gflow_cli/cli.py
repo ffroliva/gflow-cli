@@ -114,7 +114,7 @@ def auth(ctx: click.Context) -> None:
 def auth_login(profile: str | None, browser: str | None) -> None:
     """One-time interactive sign-in. Opens a browser window."""
     from gflow_cli.browser_manager import is_chrome_available
-    from gflow_cli.errors import ConfigurationError
+    from gflow_cli.errors import EXIT_CODE_MAP, GFlowError
 
     name = profile or _resolve_or_prompt(default_for_first_run="default")
     # Resolve browser strategy: CLI > Env > auto
@@ -134,8 +134,17 @@ def auth_login(profile: str | None, browser: str | None) -> None:
 
     try:
         pdir = asyncio.run(auth_mod.login(name, browser=selected_browser))
-    except ConfigurationError as e:
+    except GFlowError as e:
         console.print(f"[red]{e}[/red]")
+        if e.remediation_hint:
+            console.print(f"[dim]{e.remediation_hint}[/dim]")
+        exit_code = next(
+            (code for cls, code in EXIT_CODE_MAP.items() if isinstance(e, cls)),
+            1,
+        )
+        sys.exit(exit_code)
+    except Exception as e:
+        console.print(f"[red]Unexpected error during login: {e}[/red]")
         sys.exit(1)
     console.print(f"[green]Session saved.[/green] Profile dir: {pdir}")
     # If this was the very first profile, set it as default automatically so

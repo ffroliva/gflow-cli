@@ -86,11 +86,11 @@ class AuthStrategy(Protocol):
 - `mode="internal"` — explicit `InternalChromiumStrategy`.
 
 **RealChromeStrategy stealth design** (`real_chrome.py`):
-- Uses `playwright.chromium.launch_persistent_context(executable_path=chrome_path, args=["--disable-blink-features=AutomationControlled", ...])`.
-- Registers `add_init_script` **before** accessing `ctx.pages[0]`. Chrome opens a blank tab on launch; the init script must be in place before any navigation so Blink never exposes `navigator.webdriver = true`.
-- C++-level flag disables the Blink feature at startup; the JS override is belt-and-suspenders.
+- Uses a **Passive Capture** pattern: launches system Chrome via `subprocess.Popen` without any automation flags or remote-debugging ports.
+- Provides a 100% clean browser process that Google's G12 block cannot detect.
+- The CLI blocks on `proc.wait()`, prompting the user to complete the sign-in and **close the browser completely**.
+- Post-close: performs a fast, headless `launch_persistent_context` probe to verify the `SAPISID` cookie was successfully captured.
 - Privacy guard: raises `SecurityError` if the resolved `profile_dir` is outside `GFLOW_CLI_HOME` — protects the user's primary system Chrome profile from being used as a session store.
-- Cosmetic trade-off: `--disable-blink-features=AutomationControlled` triggers an info bar ("you're using an unsupported flag") inside Chrome. This is dismissed by the user and cannot be suppressed further without re-triggering the G12 block.
 
 **CLI surface:** `gflow auth login [--browser auto|chrome|internal]` (env: `GFLOW_CLI_AUTH_BROWSER`).
 

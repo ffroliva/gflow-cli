@@ -7,6 +7,8 @@ from typing import TYPE_CHECKING
 import structlog
 from rich.console import Console
 
+from gflow_cli.errors import AuthLoginTimeoutError
+
 from .base import AuthStrategy
 
 if TYPE_CHECKING:
@@ -26,6 +28,9 @@ class InternalChromiumStrategy(AuthStrategy):
     """
 
     name = "internal"
+
+    def __init__(self, *, timeout_seconds: int = 600) -> None:
+        self._timeout_seconds = timeout_seconds
 
     async def login(self, profile_dir: Path, headless: bool) -> None:
         """Execute the login flow using internal Chromium."""
@@ -53,9 +58,10 @@ class InternalChromiumStrategy(AuthStrategy):
                         "success and exit.\n"
                     )
 
-                # Polling for success (SAPISID cookie + UI signal)
-                # This matches AC-3 in the design spec.
-                while True:
+                # Polling for success (SAPISID cookie + UI signal).
+                timeout_at = asyncio.get_running_loop().time() + self._timeout_seconds
+
+                while asyncio.get_running_loop().time() < timeout_at:
                     try:
                         cookies = await ctx.cookies()
                         has_sapisid = any(c.get("name") == "SAPISID" for c in cookies)
@@ -73,6 +79,15 @@ class InternalChromiumStrategy(AuthStrategy):
                         break
 
                     await asyncio.sleep(1)
+                else:
+                    raise AuthLoginTimeoutError(
+                        f"Sign-in not completed within {self._timeout_seconds}s.",
+                        remediation_hint=(
+                            "Run `gflow auth login` again and complete sign-in promptly. "
+                            f"Set GFLOW_CLI_AUTH_TIMEOUT to a higher value if needed "
+                            f"(current: {self._timeout_seconds}s)."
+                        ),
+                    )
 
                 # Small delay to ensure state is flushed to disk
                 await asyncio.sleep(1)

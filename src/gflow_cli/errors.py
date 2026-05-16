@@ -256,10 +256,30 @@ class AuthMissingError(GFlowError):
     )
 
 
+class AuthLoginTimeoutError(GFlowError):
+    """Raised when the interactive login polling loop exceeds its deadline.
+
+    Distinct from TransportTimeoutError (which covers API call timeouts).
+    This error means the user/agent did not complete the sign-in flow within
+    the allowed window.  Exit code 12 lets agents branch on timeout vs
+    config vs security failures without parsing stderr.
+    """
+
+    problem_type = "https://gflow-cli.dev/errors/auth-login-timeout"
+    title = "Login timed out"
+    _default_remediation = (
+        "The sign-in was not completed within the allowed time. "
+        "Run `gflow auth login` again and complete sign-in promptly. "
+        "Increase GFLOW_CLI_AUTH_TIMEOUT (seconds) if you need more time."
+    )
+
+
 # EXIT_CODE_MAP — most-specific class FIRST per isinstance walk semantics.
 # Subclasses inherit their parent's exit code if they don't have their own
 # entry. New entries MUST go BEFORE their parent class in this dict.
 EXIT_CODE_MAP: dict[type[GFlowError], int] = {
+    AuthLoginTimeoutError: 12,
+    SecurityError: 13,
     AuthMissingError: 8,
     TransportTimeoutError: 9,
     WafRejectionError: 10,
