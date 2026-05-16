@@ -27,5 +27,5 @@ Feature: Auth Login via Real Chrome
     Given Chrome is NOT installed on the system
     And the profile root is empty
     When I run "gflow auth login --browser chrome"
-    Then the exit code is 1
+    Then the exit code is 11
     And the output contains "Chrome binary not found"
