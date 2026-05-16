@@ -182,10 +182,13 @@ class GenerateImageRequest:
     model: Model = Model.NARWHAL
     refs: tuple[ImageRef, ...] = ()
     recaptcha_token: str = ""  # populated by caller right before send; "" means unminted
+    count: int = 1  # number of images to generate (1–4); UI transport uses this to set Flow's count tab
 
     def __post_init__(self) -> None:
         if not self.prompt or not self.prompt.strip():
             raise ValueError("GenerateImageRequest.prompt must be non-empty")
+        if not 1 <= self.count <= 4:
+            raise ValueError(f"GenerateImageRequest.count must be 1–4, got {self.count}")
 
 
 def _client_context(*, project_id: str, recaptcha_token: str, session_id: str) -> dict[str, Any]:

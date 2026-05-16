@@ -23,6 +23,7 @@ import structlog
 
 from gflow_cli.api.dto import GeneratedImage
 from gflow_cli.api.image import GenerateImageRequest
+from gflow_cli.errors import AuthExpiredError, ContentPolicyError, WafRejectionError, WireFormatError
 
 if TYPE_CHECKING:
     from playwright.async_api import Page, ViewportSize
@@ -118,11 +119,12 @@ PROMPT_INPUT_SELECTORS = (
     '[aria-label*="prompt"]',
 )
 
-# Submit button selectors — the canonical button wraps an
-# ``arrow_forward`` Material Symbols icon. Localized labels follow.
+# Submit button selectors — arrow_forward icon is locale-stable.
+# Use :text() inside :has() (not :has-text() which is invalid inside :has()).
 SUBMIT_BUTTON_SELECTORS = (
-    'button:has(i.google-symbols:has-text("arrow_forward"))',
-    'button:has-text("arrow_forward"):has-text("Create")',
+    "button:has(i.google-symbols:text('arrow_forward'))",
+    "button:has(i:text('arrow_forward'))",
+    "button:has-text('arrow_forward')",
     'button[aria-label*="Create"]',
 )
 
@@ -143,6 +145,24 @@ NEW_PROJECT_SELECTORS = (
     "[aria-label*='New project' i]",
     "[aria-label*='Project' i]",
 )
+
+# Generation settings trigger — the button shows the current ratio icon.
+# All 5 ratio icon names are enumerated so the selector is ratio-invariant.
+GEN_SETTINGS_BUTTON_SELECTORS = (
+    "button:has(i.google-symbols:text('crop_16_9'))",
+    "button:has(i.google-symbols:text('crop_9_16'))",
+    "button:has(i.google-symbols:text('crop_square'))",
+    "button:has(i.google-symbols:text('crop_portrait'))",
+    "button:has(i.google-symbols:text('crop_landscape'))",
+)
+
+# CLI string → Flow aspect ratio tab text (locale-invariant number format).
+_ASPECT_TAB: dict[str, str] = {
+    "16:9": "16:9", "9:16": "9:16", "1:1": "1:1", "4:3": "4:3", "3:4": "3:4",
+}
+
+# Count → Flow count tab text.
+_COUNT_TAB: dict[int, str] = {1: "1x", 2: "x2", 3: "x3", 4: "x4"}
 
 
 class UiAutomationTransport:
@@ -215,6 +235,13 @@ class UiAutomationTransport:
                 viewport=cast("ViewportSize", _VIEWPORT),
                 locale="en-US",
                 channel=channel_for_profile(profile_dir),
+                args=["--disable-blink-features=AutomationControlled"],
+            )
+            # Hide the automation flag so reCAPTCHA Enterprise doesn't score
+            # the session as a bot — navigator.webdriver=true causes low-score
+            # tokens and HTTP 403 on batchGenerateImages.
+            await ctx.add_init_script(
+                "Object.defineProperty(navigator,'webdriver',{get:()=>undefined})"
             )
             self._pw_cm = pw_cm
             self._ctx = ctx
@@ -352,8 +379,9 @@ class UiAutomationTransport:
         await input_box.click()
         await page.keyboard.press("Control+A")
         await page.keyboard.press("Delete")
-        # Slate.js requires real keyboard events; .fill() bypasses onChange.
-        await page.keyboard.type(prompt_text)
+        # insert_text fires a single beforeinput event that Slate.js handles
+        # natively — near-instant vs keyboard.type() which is ~1.5s/char.
+        await page.keyboard.insert_text(prompt_text)
         await page.wait_for_timeout(500)
 
         for sel in SUBMIT_BUTTON_SELECTORS:
@@ -370,13 +398,82 @@ class UiAutomationTransport:
         await page.keyboard.press("Enter")
 
     # ------------------------------------------------------------------
+    # Internal helpers — generation settings (aspect ratio + count)
+    # ------------------------------------------------------------------
+
+    @staticmethod
+    async def _configure_generation_settings(
+        page: Page,
+        aspect_cli: str | None,
+        count: int | None,
+    ) -> None:
+        """Open the per-generation settings panel and apply aspect ratio and count.
+
+        Skips gracefully if the panel trigger cannot be found (non-fatal —
+        generation will proceed with Flow's current default settings).
+        """
+        if aspect_cli is None and (count is None or count == 1):
+            # count=1 is the default we set; skip unless aspect also differs.
+            if count is None:
+                return
+
+        opened = False
+        for sel in GEN_SETTINGS_BUTTON_SELECTORS:
+            try:
+                btn = page.locator(sel).first
+                await btn.wait_for(state="visible", timeout=3_000)
+                await btn.click()
+                await page.wait_for_timeout(600)
+                opened = True
+                log.info("ui_automation.gen_settings_opened", via=sel)
+                break
+            except Exception:  # noqa: BLE001
+                continue
+
+        if not opened:
+            log.warning("ui_automation.gen_settings_panel_not_found", skipping=True)
+            return
+
+        if aspect_cli:
+            tab_text = _ASPECT_TAB.get(aspect_cli, aspect_cli)
+            try:
+                tab = page.locator(f'[role="tab"]:has-text("{tab_text}")').first
+                await tab.wait_for(state="visible", timeout=3_000)
+                await tab.click()
+                log.info("ui_automation.aspect_ratio_set", value=aspect_cli)
+            except Exception as e:  # noqa: BLE001
+                log.warning("ui_automation.aspect_ratio_set_failed", value=aspect_cli, error=str(e))
+
+        if count is not None:
+            count_text = _COUNT_TAB.get(count)
+            if count_text is None:
+                log.warning("ui_automation.unsupported_count", value=count)
+            else:
+                try:
+                    tab = page.locator(f'[role="tab"]:text-is("{count_text}")').first
+                    await tab.wait_for(state="visible", timeout=3_000)
+                    await tab.click()
+                    log.info("ui_automation.count_set", value=count, tab_text=count_text)
+                except Exception as e:  # noqa: BLE001
+                    log.warning("ui_automation.count_set_failed", value=count, error=str(e))
+
+        await page.keyboard.press("Escape")
+        await page.wait_for_timeout(400)
+
+    # ------------------------------------------------------------------
     # Internal helpers — batchGenerateImages capture (unit 3.6)
     # ------------------------------------------------------------------
 
     @staticmethod
-    def _attach_batch_response_listener(page: Page) -> list[dict[str, Any]]:
+    def _attach_batch_response_listener(
+        page: Page, *, project_id: str | None = None
+    ) -> list[dict[str, Any]]:
         """Synchronously register a ``page.on('response', ...)`` listener
         that records ``batchGenerateImages`` responses into a shared list.
+
+        When ``project_id`` is provided, only responses whose URL contains
+        ``/projects/{project_id}/`` are captured — this prevents stale
+        responses from previously-visited projects accumulating in the list.
 
         Returns the shared list — the caller submits the prompt next, then
         polls / awaits that list via :meth:`_await_captured`. Registering
@@ -388,6 +485,8 @@ class UiAutomationTransport:
 
         async def on_response(response: Any) -> None:
             if "batchGenerateImages" not in response.url:
+                return
+            if project_id and f"/projects/{project_id}/" not in response.url:
                 return
             try:
                 body = await response.json()
@@ -411,21 +510,32 @@ class UiAutomationTransport:
     @staticmethod
     async def _await_captured(
         captured: list[dict[str, Any]],
-        timeout_s: float = 120.0,
+        timeout_s: float = 180.0,
         *,
+        expected_count: int = 1,
         poll_interval_s: float = 0.5,
-    ) -> dict[str, Any]:
-        """Wait for the shared ``captured`` list to receive its first
-        ``batchGenerateImages`` response, polling every ``poll_interval_s``.
+    ) -> list[dict[str, Any]]:
+        """Wait for ``expected_count`` batchGenerateImages responses.
 
-        Raises ``TimeoutError`` if no response arrives within ``timeout_s``.
+        Flow generates N images via N separate API calls (not one call with
+        N URLs). We poll until we have enough responses or the timeout expires.
+
+        Raises ``TimeoutError`` if no responses arrive within ``timeout_s``.
+        Returns all captured responses (may be fewer than expected_count if
+        timeout fires after at least one response).
         """
         deadline = time.monotonic() + timeout_s
-        while time.monotonic() < deadline and not captured:
+        while time.monotonic() < deadline and len(captured) < expected_count:
             await asyncio.sleep(poll_interval_s)
         if not captured:
             raise TimeoutError(f"No batchGenerateImages response within {timeout_s:.1f}s.")
-        return captured[0]
+        if len(captured) < expected_count:
+            log.warning(
+                "ui_automation.fewer_responses_than_expected",
+                got=len(captured),
+                expected=expected_count,
+            )
+        return list(captured)
 
     @staticmethod
     async def _capture_batch_response(
@@ -433,7 +543,7 @@ class UiAutomationTransport:
         timeout_s: float = 120.0,
         *,
         poll_interval_s: float = 0.5,
-    ) -> dict[str, Any]:
+    ) -> list[dict[str, Any]]:
         """Convenience wrapper: attach + await in one call.
 
         Useful when the caller has no work to interleave between attach
@@ -489,13 +599,20 @@ class UiAutomationTransport:
                 try:
                     resp = await client.get(url)
                     resp.raise_for_status()
-                    p = out_dir / f"image_{i:02d}.png"
+                    # Auto-detect extension from Content-Type / magic bytes.
+                    ct = resp.headers.get("content-type", "")
+                    if "jpeg" in ct or "jpg" in ct or resp.content[:3] == b"\xff\xd8\xff":
+                        ext = ".jpg"
+                    else:
+                        ext = ".png"
+                    p = out_dir / f"image_{i:02d}{ext}"
                     p.write_bytes(resp.content)
                     paths.append(p)
                     log.info(
-                        "ui_automation.png_saved",
+                        "ui_automation.image_saved",
                         path=str(p),
                         bytes=len(resp.content),
+                        format=ext,
                     )
                 except Exception as e:  # noqa: BLE001 — log and skip
                     log.error(
@@ -537,39 +654,101 @@ class UiAutomationTransport:
 
         await self._enter_editor(page)
 
+        # Resolve the project_id from the URL now that we're in the editor.
+        current_url = page.url
+        nav_project_id: str | None = None
+        if "/project/" in current_url:
+            try:
+                nav_project_id = current_url.split("/project/")[1].split("?")[0]
+            except (IndexError, ValueError):
+                pass
+
+        # Map aspect enum back to CLI string for _configure_generation_settings.
+        # Build the reverse map inline to avoid using the private _ASPECT_FROM_CLI.
+        from gflow_cli.api.image import Aspect as _Aspect  # noqa: PLC0415
+        _cli_from_aspect: dict[_Aspect, str] = {
+            _Aspect.PORTRAIT: "9:16",
+            _Aspect.LANDSCAPE: "16:9",
+            _Aspect.SQUARE: "1:1",
+            _Aspect.LANDSCAPE_FOUR_THREE: "4:3",
+            _Aspect.PORTRAIT_THREE_FOUR: "3:4",
+        }
+        aspect_cli: str | None = _cli_from_aspect.get(request.aspect)
+
+        # Configure generation settings (aspect ratio + count) BEFORE attaching
+        # the response listener so settings clicks don't interfere with capture.
+        await self._configure_generation_settings(page, aspect_cli, request.count)
+
         # Attach the response listener SYNCHRONOUSLY before any prompt
         # action. asyncio.create_task is unsafe here: it defers the listener
         # registration until the new task gets event-loop scheduling, which
         # could happen AFTER _send_prompt's click on a busy loop. Splitting
-        # attach/await eliminates that race.
-        captured = self._attach_batch_response_listener(page)
+        # attach/await eliminates that race. Project-ID filter prevents stale
+        # responses from previously-visited projects accumulating in the list.
+        captured = self._attach_batch_response_listener(page, project_id=nav_project_id)
         await self._send_prompt(page, request.prompt)
-        response = await self._await_captured(captured)
+        responses = await self._await_captured(captured, expected_count=request.count)
 
-        status = response.get("status")
-        if status != 200:
-            raise RuntimeError(
-                f"batchGenerateImages returned HTTP {status} "
-                f"(expected 200). Response URL: {response.get('url')}"
+        # Collect images from ALL captured responses (Flow makes one API call
+        # per image when count > 1).
+        images: list[GeneratedImage] = []
+        first_error_status: int | None = None
+        first_error_route: str = ""
+
+        for response in responses:
+            status = response.get("status")
+            body: dict[str, Any] = cast("dict[str, Any]", response.get("body") or {})
+            route_str: str = str(response.get("url", ""))
+
+            if status == 401:
+                raise AuthExpiredError(
+                    detail="batchGenerateImages returned HTTP 401 — session expired",
+                    status=401,
+                    route=route_str,
+                )
+            if status == 403:
+                log.warning(
+                    "ui_automation.batch_403_body",
+                    body_prefix=str(body)[:200],
+                    route=route_str,
+                )
+                raise WafRejectionError(
+                    detail=(
+                        "batchGenerateImages HTTP 403 — reCAPTCHA score too low or WAF "
+                        "fingerprint mismatch. Re-authenticate and retry."
+                    ),
+                    status=403,
+                    route=route_str,
+                )
+            if status != 200:
+                first_error_status = first_error_status or status
+                first_error_route = first_error_route or route_str
+                continue
+
+            media_list_raw = body.get("media", [])
+            if not isinstance(media_list_raw, list):
+                continue
+            for item_raw in cast("list[Any]", media_list_raw):
+                if not isinstance(item_raw, dict):
+                    continue
+                item: dict[str, Any] = cast("dict[str, Any]", item_raw)
+                try:
+                    images.append(GeneratedImage.from_response_item(item))
+                except ValueError as e:
+                    log.warning("ui_automation.parse_media_item_failed", error=str(e))
+
+        if first_error_status is not None and not images:
+            raise WireFormatError(
+                detail=f"batchGenerateImages returned HTTP {first_error_status}",
+                status=first_error_status,
+                route=first_error_route,
             )
 
-        body: dict[str, Any] = cast("dict[str, Any]", response.get("body") or {})
-        media_list_raw = body.get("media", [])
-        if not isinstance(media_list_raw, list):
-            raise RuntimeError("batchGenerateImages returned 200 but body.media is not a list.")
-
-        images: list[GeneratedImage] = []
-        for item_raw in cast("list[Any]", media_list_raw):
-            if not isinstance(item_raw, dict):
-                continue
-            item: dict[str, Any] = cast("dict[str, Any]", item_raw)
-            try:
-                images.append(GeneratedImage.from_response_item(item))
-            except ValueError as e:
-                log.warning("ui_automation.parse_media_item_failed", error=str(e))
-
         if not images:
-            raise RuntimeError("batchGenerateImages returned 200 but no parseable image URLs.")
+            raise ContentPolicyError(
+                detail="batchGenerateImages returned 200 but no parseable media items",
+                route=first_error_route or "",
+            )
         return images
 
     # ------------------------------------------------------------------
