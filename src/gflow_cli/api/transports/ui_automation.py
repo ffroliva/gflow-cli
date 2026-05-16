@@ -198,6 +198,12 @@ class UiAutomationTransport:
         self._page: Page | None = None
         self._setup_done: bool = False
         self._owns_playwright: bool = False
+        # Serialize concurrent generate_images calls — a single Playwright Page
+        # cannot be safely shared across parallel asyncio tasks (each call
+        # navigates, opens panels, and types into the same DOM). The lock
+        # converts the N-parallel fan-out from generate_images_batch into N
+        # sequential Page interactions, eliminating all race conditions.
+        self._generate_lock: asyncio.Lock = asyncio.Lock()
 
     # ------------------------------------------------------------------
     # Lifecycle
@@ -310,17 +316,32 @@ class UiAutomationTransport:
     # ------------------------------------------------------------------
 
     async def _enter_editor(self, page: Page, out_dir: Path | None = None) -> None:
-        """Click "+ New project" on the gallery and wait for /project/ nav.
+        """Always create a fresh project — click "+ New project" on the gallery
+        and wait for ``/project/`` navigation.
 
-        No-op when the URL already contains ``/project/``. Tries each
-        selector in :data:`NEW_PROJECT_SELECTORS` in order — locale-stable
-        icon-class first, localized text fallbacks after. On total failure
-        a debug screenshot is written to ``out_dir`` (if provided) and
-        ``RuntimeError`` is raised with the captured URL + path.
+        When the URL already contains ``/project/`` (Flow's PWA restored the
+        previous project on browser launch), this navigates back to the
+        gallery first, then falls through to the "+ New project" click —
+        the alternative (returning early) would reuse the restored project
+        and accumulate images across CLI invocations.
+
+        Tries each selector in :data:`NEW_PROJECT_SELECTORS` in order —
+        locale-stable icon-class first, localized text fallbacks after. On
+        total failure a debug screenshot is written to ``out_dir`` (if
+        provided) and ``RuntimeError`` is raised with the captured URL +
+        path.
         """
         if "/project/" in page.url:
-            log.info("ui_automation.editor_already_open", url=page.url)
-            return
+            # Flow's PWA restores the last-visited project URL on next browser
+            # launch (persistent context). Returning early here would reuse the
+            # old project, accumulating images across CLI invocations instead of
+            # starting fresh. Navigate back to the gallery first, then fall
+            # through to the "+ New project" click below.
+            # Do NOT use wait_until="networkidle" — PWAs re-render incrementally
+            # and networkidle is flaky. The selector wait_for below is the real
+            # readiness gate.
+            log.info("ui_automation.navigating_to_gallery", restored_url=page.url)
+            await page.goto(FLOW_URL, timeout=45_000)
 
         await page.wait_for_timeout(3000)
         for selector in NEW_PROJECT_SELECTORS:
@@ -660,7 +681,19 @@ class UiAutomationTransport:
             raise RuntimeError(
                 "UiAutomationTransport.setup() must be called before generate_images()"
             )
-        page: Page = self._page
+        async with self._generate_lock:
+            return await self._generate_images_locked(request)
+
+    async def _generate_images_locked(
+        self,
+        request: GenerateImageRequest,
+    ) -> list[GeneratedImage]:
+        """Serialized body of generate_images — called under self._generate_lock.
+
+        Extracts into a private method so the lock wrapper in generate_images
+        stays a single line, keeping the public method's intent clear.
+        """
+        page: Page = self._page  # type: ignore[assignment]  # guard in caller
 
         await self._enter_editor(page)
 
