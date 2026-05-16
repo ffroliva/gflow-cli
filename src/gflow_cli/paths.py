@@ -59,6 +59,21 @@ def _validate_job_id(job_id: str) -> str:
     return job_id
 
 
+def resolve_batch_output_dir(
+    *,
+    cli_override: Path | None,
+    config_value: str | None = None,
+    output_root: Path,
+    kind: str = "images",
+) -> Path:
+    """CLI flag > config value > default (``<output_root>/<kind>/<YYYY-MM-DD>/``)."""
+    if cli_override is not None:
+        return cli_override
+    if config_value is not None:
+        return Path(config_value)
+    return output_root / kind / date.today().isoformat()
+
+
 def video_output_path(
     output_dir: Path,
     *,

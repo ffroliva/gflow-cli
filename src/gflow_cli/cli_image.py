@@ -60,13 +60,12 @@ from gflow_cli.image_batch import (
     prompt_items_from_texts,
     read_prompt_file,
     render_image_batch_summary,
-    resolve_t2i_batch_output_dir,
     run_image_batch,
 )
 from gflow_cli.image_batch import (
     MIN_COUNT as _MIN_COUNT,
 )
-from gflow_cli.paths import image_output_path
+from gflow_cli.paths import image_output_path, resolve_batch_output_dir
 
 # Case-insensitive 8-4-4-4-12 hex with hyphens — Flow's media UUIDs.
 # When a `--ref` value matches this regex it's treated as an already-uploaded
@@ -417,7 +416,9 @@ def t2i(
     profile_name = _resolve_profile(profile)
     provider_dir = _make_provider_dir(profile_name)
     settings = get_settings()
-    output_dir = resolve_t2i_batch_output_dir(out=out, output_root=settings.output_dir)
+    output_dir = resolve_batch_output_dir(
+        cli_override=out, output_root=settings.output_dir, kind="images"
+    )
     console.print(
         f"\n[bold]gflow image t2i[/bold] · profile=[bold]{profile_name}[/bold] "
         f"· {len(batch_prompts)} prompt(s) · up to {len(batch_prompts) * count} image(s)"
