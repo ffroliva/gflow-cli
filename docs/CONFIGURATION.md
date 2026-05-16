@@ -68,6 +68,18 @@ A profile maps to a directory `$GFLOW_CLI_HOME/profile_<name>/`. Profiles are is
 **Default:** unset
 **Get one:** <https://aistudio.google.com/apikey>
 
+### `GFLOW_CLI_AUTH_LOGIN_TIMEOUT`
+
+**What:** Maximum time (seconds) that `gflow auth login` waits for the user to complete the Google sign-in flow in the browser.
+**Default:** `600` (10 minutes)
+**Range:** 1–86400
+**Exit code on expiry:** 12 (`AuthLoginTimeoutError`)
+**Note:** Useful for CI/CD or agent pipelines where a hung login should surface as a definite failure rather than blocking indefinitely. Set to a large value (e.g. `3600`) for interactive sessions over slow connections.
+
+```bash
+GFLOW_CLI_AUTH_LOGIN_TIMEOUT=120 gflow auth login   # abort after 2 minutes
+```
+
 ### `GFLOW_CLI_TIMEOUT_SECONDS`
 
 **What:** Per-request HTTP timeout. Veo videos can take 60–180 s each.

@@ -10,7 +10,7 @@ import structlog
 from rich.console import Console
 
 from gflow_cli.config import get_settings
-from gflow_cli.errors import AuthLoginTimeoutError, SecurityError
+from gflow_cli.errors import AuthLoginTimeoutError, AuthMissingError, SecurityError
 
 from .base import AuthStrategy
 
@@ -68,7 +68,7 @@ class RealChromeStrategy(AuthStrategy):
         """Execute the login flow using Passive Capture on Real Chrome."""
         settings = get_settings()
         try:
-            profile_dir.relative_to(settings.home)
+            profile_dir.resolve(strict=False).relative_to(settings.home.resolve())
         except ValueError:
             raise SecurityError(
                 f"Profile directory {profile_dir} is outside of GFLOW_CLI_HOME "
@@ -134,10 +134,10 @@ class RealChromeStrategy(AuthStrategy):
             except subprocess.TimeoutExpired:
                 proc.kill()
             raise AuthLoginTimeoutError(
-                f"Sign-in not completed within {self._timeout_seconds}s; Chrome was closed.",
+                f"Sign-in timed out after {self._timeout_seconds}s; Chrome was stopped.",
                 remediation_hint=(
                     "Run `gflow auth login` again and complete sign-in before the time limit. "
-                    f"Set GFLOW_CLI_AUTH_TIMEOUT to raise the limit "
+                    f"Set GFLOW_CLI_AUTH_LOGIN_TIMEOUT to raise the limit "
                     f"(current: {self._timeout_seconds}s)."
                 ),
             ) from None
@@ -161,10 +161,14 @@ class RealChromeStrategy(AuthStrategy):
 
                 if has_sapisid:
                     logger.info("auth_login_success_verified", strategy=self.name)
-                    _console.print("[green]✓ Session captured and verified.[/green]")
+                    # Write strategy marker before any output that might fail on
+                    # narrow Windows codepages — FlowApiClient reads this to select
+                    # the matching Chrome channel for launch_persistent_context.
+                    (profile_dir / ".gflow_browser_strategy").write_text("chrome", encoding="utf-8")
+                    _console.print("[green][OK] Session captured and verified.[/green]")
                 else:
                     logger.warning("auth_login_no_cookies", strategy=self.name)
-                    raise RuntimeError(
+                    raise AuthMissingError(
                         "No session cookies found after sign-in. "
                         "Did you complete the sign-in before closing Chrome?"
                     )

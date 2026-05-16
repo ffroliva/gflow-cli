@@ -109,6 +109,12 @@ def _check_exit_1(cli_result_holder: dict[str, Any]) -> None:
     assert result.exit_code == 1, result.output
 
 
+@then("the exit code is 11")
+def _check_exit_11(cli_result_holder: dict[str, Any]) -> None:
+    result = cli_result_holder["result"]
+    assert result.exit_code == 11, result.output
+
+
 @then('the output contains "Launching real Chrome"')
 def _check_launching_chrome(cli_result_holder: dict[str, Any]) -> None:
     result = cli_result_holder["result"]

@@ -172,6 +172,40 @@ def is_chrome_available() -> bool:
         return False
 
 
+def channel_for_profile(profile_dir: Path) -> str | None:
+    """Return the Playwright channel to use for ``profile_dir``, or None.
+
+    Reads the ``.gflow_browser_strategy`` marker written by
+    :class:`~gflow_cli.auth.real_chrome.RealChromeStrategy`. When the marker
+    is ``"chrome"`` and system Chrome is available, returns ``"chrome"`` so
+    callers can pass it to ``launch_persistent_context(channel=...)`` —
+    avoiding the downgrade-cleanup exit-33 that occurs when Playwright's
+    bundled Chromium opens a profile created by Chrome 130+.
+
+    Logs a warning when the marker requests Chrome but Chrome is no longer
+    available, as the resulting launch against bundled Chromium will likely
+    fail with the same exit-33 error.
+    """
+    import structlog as _structlog
+
+    _log = _structlog.get_logger(__name__)
+    marker = profile_dir / ".gflow_browser_strategy"
+    if not marker.exists():
+        return None
+    strategy = marker.read_text(encoding="utf-8").strip()
+    if strategy != "chrome":
+        return None
+    if is_chrome_available():
+        return "chrome"
+    _log.warning(
+        "browser_manager.chrome_marker_but_unavailable",
+        profile_dir=str(profile_dir),
+        hint="Profile was captured with system Chrome but Chrome is not found. "
+        "Re-run `gflow auth login --browser chrome` after installing Chrome.",
+    )
+    return None
+
+
 # ---------------------------------------------------------------------------
 # Health check
 # ---------------------------------------------------------------------------

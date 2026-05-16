@@ -148,12 +148,14 @@ class FlowApiClient:
         # opening a second Playwright process against the same profile dir
         # (which would conflict on the Chromium lockfile — spec § 5.4.4).
         self._pw = await async_playwright().start()
+        from gflow_cli.browser_manager import channel_for_profile
         self._context = await self._pw.chromium.launch_persistent_context(
             user_data_dir=str(self.profile_dir),
             headless=self.headless,
             viewport={"width": 1280, "height": 720},
             locale="en-US",
             extra_http_headers={"Accept-Language": "en-US,en;q=0.9"},
+            channel=channel_for_profile(self.profile_dir),
         )
         # Open ``Settings.concurrency`` Pages inside the one persistent
         # BrowserContext. ``launch_persistent_context`` opens one Page by

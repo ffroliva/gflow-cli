@@ -208,11 +208,13 @@ class UiAutomationTransport:
         pw_cm = async_playwright()
         pw = await pw_cm.__aenter__()
         try:
+            from gflow_cli.browser_manager import channel_for_profile  # noqa: PLC0415
             ctx = await pw.chromium.launch_persistent_context(
                 str(profile_dir),
                 headless=False,
                 viewport=cast("ViewportSize", _VIEWPORT),
                 locale="en-US",
+                channel=channel_for_profile(profile_dir),
             )
             self._pw_cm = pw_cm
             self._ctx = ctx
