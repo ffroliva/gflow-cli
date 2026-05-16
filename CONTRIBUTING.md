@@ -59,23 +59,28 @@ CI runs `unit` + `integration` on every push. `live` tests run only on the maint
 ## Quality gates (run before commit)
 
 ```bash
+uv run python scripts/ci/check_repo_hygiene.py  # artefact + path hygiene
 uv run ruff check src tests          # lint
 uv run ruff format src tests         # auto-format
 uv run pyright src                   # type-check (strict on src/gflow_cli/)
 uv run pytest -q --cov=gflow_cli      # tests + coverage
 ```
 
-CI runs all four on every push. Local pre-commit hook recommended:
+CI runs all five on every push. Install local pre-commit hooks (recommended):
 
-```yaml
-# .pre-commit-config.yaml — install with `pip install pre-commit && pre-commit install`
-repos:
-  - repo: https://github.com/astral-sh/ruff-pre-commit
-    rev: v0.6.9
-    hooks:
-      - id: ruff
-      - id: ruff-format
+```bash
+pip install pre-commit && pre-commit install
 ```
+
+The `.pre-commit-config.yaml` already ships ruff and the hygiene gate.
+
+### Script output convention
+
+All runtime output — smoke runs, debug dumps, generated images — **must** go
+to `tmp/` (already gitignored). `test_assets/` is for committed test
+*fixtures* only (static input files for unit tests). Never write to
+`test_assets/smoke_*/` or `test_assets/debug_*/` from scripts; the hygiene
+gate blocks this.
 
 ## Adding a new API route
 

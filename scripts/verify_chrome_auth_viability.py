@@ -31,7 +31,7 @@ log = structlog.get_logger()
 async def verify_viability() -> bool:
     """Run the empirical auth viability check."""
     configure_logging()
-    
+
     tmp_dir = Path(tempfile.mkdtemp(prefix="gflow-auth-verify-"))
     log.info("verification_start", tmp_dir=str(tmp_dir))
 
@@ -94,7 +94,7 @@ async def verify_viability() -> bool:
                 current_url = page.url
                 cookies = await context.cookies()
                 cookie_names = [c["name"] for c in cookies]
-                
+
                 # 1. Check for Landing Page and click through
                 if not clicked_landing:
                     create_btn = page.locator('text="Create with Flow"').first
@@ -119,19 +119,19 @@ async def verify_viability() -> bool:
                        await page.locator('text="Your projects"').count() > 0:
                         success = True
                         break
-                
+
                 await asyncio.sleep(5)
 
             if success:
                 print("\n[SUCCESS] Authentication verified! Session is active.")
                 log.info("verification_result", status="PASSED", cookie_count=len(cookies))
-                
+
                 print("\n" + "=" * 60)
                 print("TEST: GENERATE BATCH OF IMAGES?")
                 print("=" * 60)
                 print("Would you like to verify the session by generating")
                 print("2 test images in the SAME browser window? [y/n]")
-                
+
                 while True:
                     response = input("> ").lower().strip()
                     if response in ["y", "yes"]:
@@ -156,7 +156,7 @@ async def verify_viability() -> bool:
             except Exception:
                 # Target already closed or unresponsive — safe to ignore
                 pass
-        
+
         log.info("cleaning_up", tmp_dir=str(tmp_dir))
         # Keep window open a bit longer if failed so user can see why
         await asyncio.sleep(2)
@@ -171,7 +171,7 @@ async def _run_test_generation_in_context(context, tmp_dir: Path) -> bool:
     print("\nStarting test generation...")
     # We create a client that uses the existing playwright context
     client = FlowApiClient(context=context)
-    
+
     try:
         log.info("finding_or_creating_project")
         project = await client.get_or_create_project("Auth Verification Test")
@@ -180,13 +180,13 @@ async def _run_test_generation_in_context(context, tmp_dir: Path) -> bool:
         for i in range(1, 3):
             prompt = "A high-tech terminal with a green glowing screen" if i == 1 else "A futuristic city skyline"
             print(f"  Generating Image {i}/2: '{prompt}'...")
-            
+
             req = GenerateImageRequest(
                 prompt=prompt,
                 model=Model.NANO2,
                 aspect=Aspect.SQUARE
             )
-            
+
             images = await client.generate_images(project.project_id, req)
             if images:
                 out_path = tmp_dir / f"test_image_{i}.png"

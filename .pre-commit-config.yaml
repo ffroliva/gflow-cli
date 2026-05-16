@@ -1,0 +1,38 @@
+# Pre-commit hooks for gflow-cli
+# Install: pip install pre-commit && pre-commit install
+# Run manually: pre-commit run --all-files
+#
+# Gates enforced:
+#   1. ruff lint + format (fast, catches import order / style / unused imports)
+#   2. repo-hygiene (blocks tracked images, CDP lock files, hardcoded Windows paths)
+#
+# The hygiene hook is the primary defence against accidental leakage of:
+#   - generated output artefacts (*.jpg, *.jpeg, test_assets/smoke_*/, test_assets/debug_*/)
+#   - CDP lock files (.gflow-cdp.lock) that contain browser session metadata
+#   - hardcoded machine-specific paths in scripts/ (C:\Users\<name>\...)
+
+repos:
+  - repo: https://github.com/astral-sh/ruff-pre-commit
+    rev: v0.11.10
+    hooks:
+      - id: ruff
+        args: [--fix]
+      - id: ruff-format
+
+  - repo: local
+    hooks:
+      - id: repo-hygiene
+        name: Repo hygiene (no artefacts, no hardcoded paths)
+        language: python
+        entry: python scripts/ci/check_repo_hygiene.py
+        pass_filenames: false
+        always_run: true
+        additional_dependencies: []
+
+  - repo: https://github.com/Yelp/detect-secrets
+    rev: v1.5.0
+    hooks:
+      - id: detect-secrets
+        name: Detect secrets
+        args: ["--baseline", ".secrets.baseline"]
+        exclude: "\.secrets\.baseline$"

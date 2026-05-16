@@ -1,15 +1,27 @@
-import asyncio, json
+import argparse
+import asyncio
 from pathlib import Path
+
 from playwright.async_api import async_playwright
 
-PROFILE = r"C:\Users\ffrol\AppData\Local\ffroliva\gflow-cli\profile_denon82"
-OUT = Path("test_assets/debug_gen_settings")
-OUT.mkdir(parents=True, exist_ok=True)
+from gflow_cli.auth import profile_dir as resolve_profile_dir
 
-async def main():
+
+def _parse_args() -> argparse.Namespace:
+    p = argparse.ArgumentParser(description="Debug: inspect Flow generation settings panel")
+    p.add_argument("--profile", default="default", help="gflow profile name (default: default)")
+    return p.parse_args()
+
+
+async def main() -> None:
+    args = _parse_args()
+    profile_path = resolve_profile_dir(args.profile)
+    out = Path("tmp") / "debug" / "gen_settings"
+    out.mkdir(parents=True, exist_ok=True)
+
     async with async_playwright() as pw:
         ctx = await pw.chromium.launch_persistent_context(
-            PROFILE, channel="chrome", headless=False,
+            str(profile_path), channel="chrome", headless=False,
             ignore_default_args=["--enable-automation", "--no-sandbox"],
             args=["--disable-blink-features=AutomationControlled"],
         )
@@ -28,7 +40,7 @@ async def main():
         await editor.click()
         await page.keyboard.insert_text("test")
         await page.wait_for_timeout(1000)
-        await page.screenshot(path=str(OUT / "01_with_text.png"))
+        await page.screenshot(path=str(out / "01_with_text.png"))
 
         # Find the crop/aspect ratio + count button (shows crop_16_9 and x2)
         all_btns = await page.evaluate("""
@@ -49,7 +61,7 @@ async def main():
         if count:
             await crop_btn.click()
             await page.wait_for_timeout(1500)
-            await page.screenshot(path=str(OUT / "02_gen_settings_panel.png"))
+            await page.screenshot(path=str(out / "02_gen_settings_panel.png"))
 
             panel = await page.evaluate("""
                 () => Array.from(document.querySelectorAll(

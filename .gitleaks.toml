@@ -1,0 +1,33 @@
+# gitleaks configuration for gflow-cli
+# Docs: https://github.com/gitleaks/gitleaks#configuration
+#
+# This file tells gitleaks which patterns to IGNORE (allowlist) so that
+# legitimate test fixtures and documentation snippets don't trigger false
+# positives. The default ruleset catches: Google API keys, OAuth tokens,
+# GitHub tokens, generic secrets, private keys, and more.
+
+title = "gflow-cli gitleaks config"
+
+[allowlist]
+  description = "Known-safe patterns in this repo"
+
+  # Sample/fixture files contain placeholder UUIDs and sanitised JSON — not real tokens.
+  paths = [
+    "samples/",
+    "tests/fixtures/",
+    "docs/",
+    "CHANGELOG.md",
+    "README.md",
+  ]
+
+  # Regex patterns that are safe to ignore across the whole repo.
+  # Format: list of Go regex strings matched against the secret value.
+  regexes = [
+    # Placeholder project/asset UUIDs in test fixtures (all-hex, fixed length,
+    # committed deliberately as sample data with no auth value).
+    "^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$",
+  ]
+
+  # Specific commit SHAs that were already reviewed and cleared.
+  # Add a SHA here only after manually verifying no live credentials exist.
+  commits = []
