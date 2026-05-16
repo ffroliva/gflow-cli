@@ -897,11 +897,13 @@ class TestGenerateImages:
                 t,
                 "_await_captured",
                 new=AsyncMock(
-                    return_value=[{
-                        "status": 403,
-                        "url": "https://aisandbox-pa.googleapis.com/x",
-                        "body": {},
-                    }]
+                    return_value=[
+                        {
+                            "status": 403,
+                            "url": "https://aisandbox-pa.googleapis.com/x",
+                            "body": {},
+                        }
+                    ]
                 ),
             ),
             pytest.raises(WafRejectionError),

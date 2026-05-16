@@ -182,7 +182,8 @@ class GenerateImageRequest:
     model: Model = Model.NARWHAL
     refs: tuple[ImageRef, ...] = ()
     recaptcha_token: str = ""  # populated by caller right before send; "" means unminted
-    count: int = 1  # number of images to generate (1–4); UI transport uses this to set Flow's count tab
+    # number of images to generate (1–4); UI transport uses this to set Flow's count tab
+    count: int = 1
 
     def __post_init__(self) -> None:
         if not self.prompt or not self.prompt.strip():

@@ -18,7 +18,6 @@ from gflow_cli._cli_helpers import (
 from gflow_cli.api.client import FlowApiClient
 from gflow_cli.api.image import Aspect, GenerateImageRequest, Model
 from gflow_cli.errors import EXIT_CODE_MAP, ConfigurationError, GFlowError
-from gflow_cli.paths import resolve_batch_output_dir
 
 if TYPE_CHECKING:
     from gflow_cli.api.dto import GeneratedImage

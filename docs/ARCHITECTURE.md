@@ -92,6 +92,10 @@ class AuthStrategy(Protocol):
 - Post-close: performs a fast, headless `launch_persistent_context` probe to verify the `SAPISID` cookie was successfully captured.
 - Privacy guard: raises `SecurityError` if the resolved `profile_dir` is outside `GFLOW_CLI_HOME` — protects the user's primary system Chrome profile from being used as a session store.
 
+**UiAutomationTransport (UI Mimicry)**:
+- Drives the Flow editor via real DOM interactions (clicks, keyboard events).
+- **Project Setup Evolution:** Due to REST 401 blockers, this transport is moving toward "UI-First" setup, where it handles its own project creation by clicking the "+ New Project" CTA in the browser instead of relying on the `FlowApiClient.create_project` REST call.
+
 **CLI surface:** `gflow auth login [--browser auto|chrome|internal]` (env: `GFLOW_CLI_AUTH_BROWSER`).
 
 When the project converges on the hexagonal target above, modules graduate to layers: e.g., today's `gflow_cli.api` becomes `gflow_cli.infrastructure.flow_api`, `gflow_cli.cli` becomes `gflow_cli.interfaces.cli`, and so on. The modular-monolith shape is the staging area, not the destination.

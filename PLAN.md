@@ -362,6 +362,27 @@ Foundation laid by Phase 4's structured `error_raised` events + Problem Details.
 - Privacy: prompts are user-generated content; persist locally only, never transmit
 - Out of scope until Phase 6 ships: cloud sync, multi-user history
 
+### CDP Attach Transport — BACKLOG (deferred)
+
+**Background:** During Phase 5 E2E testing, `batchGenerateImages` returned 403 because `navigator.webdriver=true` in the Playwright-launched context allowed reCAPTCHA Enterprise to detect automation. An alternative approach was proposed: connect to an already-running, user-visible Chrome instance via CDP instead of launching a new context. Since the user's real Chrome is already logged in and looks like a human browser, reCAPTCHA would see a genuine session.
+
+**What to investigate first:**
+- Whether Chrome launched with `--remote-debugging-port=9222` is treated differently by Google's reCAPTCHA Enterprise (`navigator.webdriver` is `undefined` in real Chrome without Playwright injection, so the score may be higher than with the current stealth flags).
+- Use `playwright.chromium.connect_over_cdp("http://localhost:9222")` to attach.
+- Confirm that cookies are shared between the CDP-attached session and the existing browser tabs (they should be — same Chrome profile).
+
+**Design constraints:**
+- Must be a new, opt-in transport: `--transport cdp_attach` (or `GFLOW_CLI_TRANSPORT=cdp_attach`).
+- Must NOT interfere with the default `ui_automation` or HTTP transports.
+- The user is responsible for launching Chrome with `--remote-debugging-port`; the CLI only attaches.
+- If the CDP port is unreachable, fail with a clear `TransportError` pointing to the setup instructions.
+
+**Open question:** Does attaching via CDP set `navigator.webdriver=true` on the attached page? If yes, the same reCAPTCHA detection still applies and the approach has no advantage over the current stealth fix. **This must be verified before implementing anything.**
+
+**Status:** NOT implemented. Parked until the stealth-flag fix (`--disable-blink-features=AutomationControlled` + init script) is confirmed insufficient, or until a contributor picks it up.
+
+---
+
 ### Phase 7 — Pluggable storage backend — BACKLOG
 
 Today the CLI writes media to `$GFLOW_CLI_OUTPUT_DIR` on the local filesystem. Phase 7 makes the storage backend pluggable so generated assets can stream directly to S3 / GCS / Azure Blob without an intermediate local copy.
@@ -393,6 +414,7 @@ Today the CLI writes media to `$GFLOW_CLI_OUTPUT_DIR` on the local filesystem. P
 | 10 | Both `gflow` and `flow` binary names installed | `flow` is friendlier; `gflow` avoids conflicts with Facebook Flow / MS Power Automate |
 | 11 | LF-only line endings via `.gitattributes` | Single repo source of truth; cross-platform contributors don't think about it |
 | 12 | `Provider` indirection (legacy `providers/`) removed | Superseded by `api.FlowApiClient`. Re-introduce when we add `OfficialVeoProvider` (planned v0.5+) |
+| 13 | CDP attach transport deferred | Must first confirm whether CDP-attached Chrome still sets `navigator.webdriver=true` (which would negate any reCAPTCHA advantage over the current stealth fix). See CDP Attach backlog entry. |
 
 ---
 

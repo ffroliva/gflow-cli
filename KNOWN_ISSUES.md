@@ -111,6 +111,20 @@ gflow video batch manifest.remaining.tsv
 
 ---
 
+### REST API 401 unauthorized on project creation
+
+- **Status:** Open (Mitigated) · **Severity:** High · **Affects:** v0.2.0a1+ · **Fixed in:** v0.6.0a5 (planned)
+
+Even with a valid browser session (cookies present), calling Flow's REST API directly via `fetch` or `page.request` (e.g., `project.createProject`) may return HTTP 401. This blocks the CLI's standard "pre-flight" sequence for generations.
+
+**Root cause:** Google's backend has tightened security on its private trpc/REST endpoints, likely requiring specific headers (`Origin`, `Referer`) or a more complete browser fingerprint that raw script-driven requests lack.
+
+**Workaround:** Use the **UI Mimicry** approach (used by the `scripts/smoke_worker_style.py` diagnostic). This strategy performs actions by clicking real buttons in the Flow editor instead of making raw REST calls.
+
+**Roadmap:** v0.6.0a5 will refactor the `ui_automation` transport to handle its own project creation via the UI, bypassing the REST-based `create_project` blocker entirely for image generation.
+
+---
+
 ### Output dir is not tidied automatically
 
 - **Status:** Open · **Severity:** Low · **By design**
