@@ -7,6 +7,38 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+## [0.6.0a6] — 2026-05-17
+
+> **Stability & code-quality release.** Fixes a concurrency bug in image
+> generation, restores a green CI pipeline (the test job had been hanging
+> indefinitely), and clears every open SonarCloud issue so the project's
+> Quality Gate passes.
+
+### Fixed
+
+- **Concurrent `generate_images` calls are now serialized**, and every batch
+  creates a fresh Flow project — prevents project-reuse races when multiple
+  image generations overlap.
+- **CI test job no longer hangs.** `RealChromeStrategy` launches Chrome with
+  `asyncio.create_subprocess_exec`, but its tests patched `subprocess.Popen`;
+  asyncio's POSIX subprocess transport uses `Popen` internally, so the mock
+  left the event loop's child watcher unresolved forever — the test job ran
+  until cancelled and never wrote a coverage report. Tests now patch
+  `asyncio.create_subprocess_exec` directly.
+- **structlog log-capture test isolation** — a `browser_manager` test asserted
+  on a log event that an earlier test had already cached onto the production
+  logger chain (`cache_logger_on_first_use=True`). It now patches in a fresh
+  logger proxy and passes regardless of suite order.
+
+### Changed
+
+- **All open SonarCloud issues resolved** and the Quality Gate now passes:
+  the S6418 BLOCKER and 10× S5443 CRITICAL test findings, 16 mechanical
+  issues, async-hygiene rules (S7503 / S7487 / S7493), and 5
+  cognitive-complexity (S3776) extractions. The two remaining Security
+  Hotspots — `random`-based retry jitter and protocol-mandated SHA-1 in
+  `sapisidhash` — were reviewed and marked Safe.
+
 ### Security / Compliance
 
 - **Removed accidentally tracked artefacts** — 7 files were untracked from git:
@@ -39,6 +71,12 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 - **CI workflow scrubbed** — removed a hardcoded profile name (`denon82`) from
   a comment in `.github/workflows/ci.yml`.
+
+### CI / Tooling
+
+- **GitHub Actions migrated to Node.js 24** ahead of the June 2026 forced
+  migration (`FORCE_JAVASCRIPT_ACTIONS_TO_NODE24`).
+- **SonarCloud Quality Gate badge** added to the README.
 
 ## [0.6.0a5] — 2026-05-16
 
@@ -595,7 +633,8 @@ shell-script template that branches on these codes.
 
 First skeleton. Not functional end-to-end yet.
 
-[Unreleased]: https://github.com/ffroliva/gflow-cli/compare/v0.6.0a5...HEAD
+[Unreleased]: https://github.com/ffroliva/gflow-cli/compare/v0.6.0a6...HEAD
+[0.6.0a6]: https://github.com/ffroliva/gflow-cli/compare/v0.6.0a5...v0.6.0a6
 [0.6.0a5]: https://github.com/ffroliva/gflow-cli/compare/v0.6.0a4...v0.6.0a5
 [0.6.0a1]: https://github.com/ffroliva/gflow-cli/compare/v0.5.0a1...v0.6.0a1
 [0.5.0a1]: https://github.com/ffroliva/gflow-cli/compare/v0.4.0a2...v0.5.0a1
