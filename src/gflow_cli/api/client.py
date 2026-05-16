@@ -64,6 +64,9 @@ logger = structlog.get_logger(__name__)
 # protects this process from OOM and the remote endpoint from DoS-shaped traffic.
 MAX_IMAGE_BYTES = 20 * 1024 * 1024  # 20 MB
 
+# aisandbox-pa rejects application/json — see samples/captured/*.json.
+_AISANDBOX_CONTENT_TYPE = "text/plain;charset=UTF-8"
+
 
 def _is_supported_image_header(header: bytes) -> bool:
     """Return True if ``header`` (first 12 bytes of a file) matches a known image
@@ -292,7 +295,7 @@ class FlowApiClient:
         url: str,
         body: dict[str, Any],
         *,
-        content_type: str = "text/plain;charset=UTF-8",
+        content_type: str = _AISANDBOX_CONTENT_TYPE,
         route_name: str | None = None,
     ) -> Any:
         """POST a JSON body with retry + typed-error classification.
@@ -351,7 +354,7 @@ class FlowApiClient:
                 return await page.request.patch(
                     url,
                     data=body_str,
-                    headers={"content-type": "text/plain;charset=UTF-8"},
+                    headers={"content-type": _AISANDBOX_CONTENT_TYPE},
                 )
             finally:
                 self._checkin_page(page)
@@ -590,7 +593,7 @@ class FlowApiClient:
                 return await page.request.post(
                     routes.GENERATE_VIDEO,
                     data=json.dumps(body),
-                    headers={"content-type": "text/plain;charset=UTF-8"},
+                    headers={"content-type": _AISANDBOX_CONTENT_TYPE},
                 )
             finally:
                 self._checkin_page(page)
@@ -859,7 +862,7 @@ def _build_wire_format_discovery(resp: Any, body_text: str, route: str) -> dict[
         parsed = json.loads(body_text) if content_type.startswith("application/json") else None
         if isinstance(parsed, dict):
             top_keys = sorted(cast(dict[str, Any], parsed).keys())
-    except (json.JSONDecodeError, ValueError):
+    except ValueError:  # json.JSONDecodeError is a ValueError subclass
         top_keys = []
     # SECURITY: redact BEFORE truncating to 200 chars. If we truncated first,
     # a body slightly over 200 chars could carry an intact reCAPTCHA token in
@@ -921,7 +924,7 @@ def _redact_for_log(body_str: str) -> str:
     """
     try:
         parsed = json.loads(body_str)
-    except (json.JSONDecodeError, ValueError):
+    except ValueError:  # json.JSONDecodeError is a ValueError subclass
         return "<unparseable body redacted>"
 
     if not isinstance(parsed, dict):

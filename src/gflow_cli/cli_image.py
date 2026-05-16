@@ -76,6 +76,9 @@ _UUID_RE = re.compile(
     re.IGNORECASE,
 )
 
+_CREATING_PROJECT_MSG = "  Creating project..."
+_T2I_PROJECT_TITLE = "gflow-cli t2i"
+
 console = Console()
 
 
@@ -195,7 +198,7 @@ async def _run_upload(
     async with FlowApiClient(
         profile_dir=profile_dir, headless=headless, transport=transport
     ) as client:
-        console.print("  Creating project...")
+        console.print(_CREATING_PROJECT_MSG)
         project = await client.create_project(title="gflow-cli upload")
         console.print(f"  Project: [dim]{project.project_id}[/dim]")
         console.print(f"  Uploading {image_path.name}...")
@@ -435,10 +438,10 @@ def t2i(
             prompts=batch_prompts,
             output_dir=output_dir,
             continue_on_error=continue_on_error,
-            project_title="gflow-cli t2i",
+            project_title=_T2I_PROJECT_TITLE,
         )
     )
-    exit_code = render_image_batch_summary(outcomes, title="gflow-cli t2i")
+    exit_code = render_image_batch_summary(outcomes, title=_T2I_PROJECT_TITLE)
     if exit_code != 0:
         sys.exit(exit_code)
 
@@ -467,10 +470,10 @@ async def _run_t2i(
     async with FlowApiClient(
         profile_dir=profile_dir, headless=headless, transport=transport
     ) as client:
-        console.print("  Creating project...")
+        console.print(_CREATING_PROJECT_MSG)
         # Title is a `gflow-cli ...` prefix per project convention (post-rename a02684f).
         # cli_video.py's _run_t2v / _run_i2v don't currently set a title — tracked separately.
-        project = await client.create_project(title="gflow-cli t2i")
+        project = await client.create_project(title=_T2I_PROJECT_TITLE)
         console.print(f"  Project: [dim]{project.project_id}[/dim]")
         console.print(f"  Generating {count} image(s) ({req.model.value}, {req.aspect.value})...")
         if count == 1:
@@ -496,7 +499,7 @@ async def _run_t2i(
 
 def _print_t2i_summary(images: list[GeneratedImage], saved_paths: list[Path]) -> None:
     """Render a Rich table of generated images and where they landed."""
-    table = Table(title="gflow-cli t2i")
+    table = Table(title=_T2I_PROJECT_TITLE)
     table.add_column("media_name", overflow="fold")
     table.add_column("seed", justify="right")
     table.add_column("dimensions")
@@ -688,7 +691,7 @@ async def _run_i2i(
     async with FlowApiClient(
         profile_dir=profile_dir, headless=headless, transport=transport
     ) as client:
-        console.print("  Creating project...")
+        console.print(_CREATING_PROJECT_MSG)
         # Title is a `gflow-cli ...` prefix per project convention (post-rename a02684f).
         # cli_video.py's _run_t2v / _run_i2v don't currently set a title — tracked separately.
         project = await client.create_project(title="gflow-cli i2i")

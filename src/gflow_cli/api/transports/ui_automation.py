@@ -44,6 +44,8 @@ log = structlog.get_logger(__name__)
 
 # Flow editor entrypoint — ``?hl=en`` locks locale for selector stability.
 FLOW_URL = "https://labs.google/fx/tools/flow?hl=en"
+# URL fragment that distinguishes the project editor from the gallery.
+_PROJECT_URL_FRAGMENT = "/project/"
 
 # Browser viewport — matches the validated smoke (also matches the CG Worker).
 _VIEWPORT = {"width": 1280, "height": 800}
@@ -301,7 +303,7 @@ class UiAutomationTransport:
         on_flow = "labs.google" in page.url and "/flow" in page.url
         if not on_flow:
             return False
-        if "/project/" in page.url:
+        if _PROJECT_URL_FRAGMENT in page.url:
             return True
         try:
             signin_button = await page.locator(
@@ -331,7 +333,7 @@ class UiAutomationTransport:
         provided) and ``RuntimeError`` is raised with the captured URL +
         path.
         """
-        if "/project/" in page.url:
+        if _PROJECT_URL_FRAGMENT in page.url:
             # Flow's PWA restores the last-visited project URL on next browser
             # launch (persistent context). Returning early here would reuse the
             # old project, accumulating images across CLI invocations instead of
@@ -351,7 +353,9 @@ class UiAutomationTransport:
                 log.info("ui_automation.clicking_new_project", selector=selector)
                 await loc.click()
                 try:
-                    await page.wait_for_url(lambda url: "/project/" in url, timeout=15_000)
+                    await page.wait_for_url(
+                        lambda url: _PROJECT_URL_FRAGMENT in url, timeout=15_000
+                    )
                     log.info("ui_automation.entered_editor", url=page.url)
                     return
                 except Exception:  # noqa: BLE001 — try next selector
@@ -700,9 +704,9 @@ class UiAutomationTransport:
         # Resolve the project_id from the URL now that we're in the editor.
         current_url = page.url
         nav_project_id: str | None = None
-        if "/project/" in current_url:
+        if _PROJECT_URL_FRAGMENT in current_url:
             try:
-                nav_project_id = current_url.split("/project/")[1].split("?")[0]
+                nav_project_id = current_url.split(_PROJECT_URL_FRAGMENT)[1].split("?")[0]
             except (IndexError, ValueError):
                 pass
 
