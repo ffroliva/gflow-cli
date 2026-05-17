@@ -694,7 +694,7 @@ class FlowApiClient:
     async def generate_image(
         self,
         *,
-        project_id: str,
+        project_id: str | None = None,
         req: GenerateImageRequest,
         seed: int | None = None,
         recaptcha_action: str = "imageGeneration",
@@ -708,12 +708,22 @@ class FlowApiClient:
         (see ``generate_images_batch``); this method always returns the FIRST
         media item.
 
+        When ``project_id`` is ``None``, a new Flow project is created
+        automatically via :meth:`create_project`.  Existing callers that supply
+        an explicit ``project_id`` are unaffected.
+
         Idempotency: calling twice with the same ``seed`` and ``batch_id``
         yields identical bodies modulo the per-call reCAPTCHA token AND the
         per-attempt session-id timestamp.
         """
+        resolved_project_id: str
+        if project_id is None:
+            project = await self.create_project()
+            resolved_project_id = project.project_id
+        else:
+            resolved_project_id = project_id
         return await self._drive_image_generation(
-            project_id=project_id,
+            project_id=resolved_project_id,
             req=req,
             seed=seed if seed is not None else secrets.randbelow(2**31),
             batch_id=batch_id or _new_batch_id(),
@@ -723,7 +733,7 @@ class FlowApiClient:
     async def generate_images_batch(
         self,
         *,
-        project_id: str,
+        project_id: str | None = None,
         req: GenerateImageRequest,
         count: int = 1,
         seeds: Sequence[int] | None = None,
@@ -739,7 +749,8 @@ class FlowApiClient:
         concurrently — one per Page.
 
         Args:
-            project_id: Flow project ID.
+            project_id: Flow project ID.  When ``None``, a new project is
+                created automatically via :meth:`create_project`.
             req: Shared request (prompt, aspect, reference image, ...).
             count: How many images to generate. Must be 1..4 (Flow UI cap).
             seeds: Optional explicit seeds. Defaults to ``count`` random
@@ -768,6 +779,14 @@ class FlowApiClient:
         else:
             seeds_list = list(seeds)
 
+        # Resolve project_id once — do NOT create N projects for N parallel shots.
+        resolved_project_id: str
+        if project_id is None:
+            project = await self.create_project()
+            resolved_project_id = project.project_id
+        else:
+            resolved_project_id = project_id
+
         shared_batch_id = _new_batch_id()
 
         # asyncio.gather preserves input order in its result list, so the
@@ -776,7 +795,7 @@ class FlowApiClient:
         return await asyncio.gather(
             *(
                 self._drive_image_generation(
-                    project_id=project_id,
+                    project_id=resolved_project_id,
                     req=req,
                     seed=s,
                     batch_id=shared_batch_id,
@@ -786,6 +805,26 @@ class FlowApiClient:
             ),
             return_exceptions=False,
         )
+
+    async def health_check(self) -> bool:
+        """Return True if the browser context is alive and on a Google domain.
+
+        Safe to call from long-lived workers. Returns False (never raises) on
+        TargetClosedError or any other exception so callers can branch without
+        try/except.
+        """
+        if self._page_queue is None:
+            return False
+        try:
+            page = await self._checkout_page()
+            try:
+                hostname: str = await page.evaluate("() => document.location.hostname")
+                return hostname.endswith(".google") or hostname == "google.com"
+            finally:
+                self._checkin_page(page)
+        except Exception:
+            logger.debug("health_check_failed", exc_info=True)
+            return False
 
 
 def _default_project_title() -> str:

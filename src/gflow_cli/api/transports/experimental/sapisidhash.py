@@ -214,7 +214,7 @@ class SapisidhashTransport:
     async def generate_images(
         self,
         *,
-        project_id: str,
+        project_id: str | None,
         request: GenerateImageRequest,
     ) -> list[GeneratedImage]:
         """Generate images via pure httpx, replaying SAPISID + fingerprint.
@@ -222,6 +222,8 @@ class SapisidhashTransport:
         Single-retry on 401 (SAPISID rotation); raises TransportTimeoutError
         if the call hangs beyond PER_CALL_TIMEOUT_S.
         """
+        if project_id is None:
+            raise ValueError("SapisidhashTransport requires an explicit project_id")
         if self._sapisid is None or self._profile_dir is None:
             raise AuthMissingError("sapisidhash: setup() was not called before generate_images()")
 

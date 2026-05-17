@@ -302,3 +302,25 @@ def test_configuration_error_exit_code():
 def test_auth_missing_error_exit_code():
     err = AuthMissingError("SAPISID cookie missing in profile")
     assert _exit_code_for(err) == 8
+
+
+# ---------- gflow_cli.exceptions alias ----------
+
+
+def test_exceptions_module_is_alias_for_errors() -> None:
+    """gflow_cli.exceptions must re-export the same objects as gflow_cli.errors.
+
+    Both module names must resolve to identical class objects — ``is`` check
+    ensures no accidental duplicate-class creation (which would break
+    ``except GFlowError`` clauses imported from one module while the raise
+    site uses the other).
+    """
+    import gflow_cli.errors as _errors
+    import gflow_cli.exceptions as _exceptions
+
+    assert _exceptions.GFlowError is _errors.GFlowError
+    assert _exceptions.FlowApiError is _errors.FlowApiError
+    assert _exceptions.AuthExpiredError is _errors.AuthExpiredError
+    assert _exceptions.ContentPolicyError is _errors.ContentPolicyError
+    assert _exceptions.EXIT_CODE_MAP is _errors.EXIT_CODE_MAP
+    assert _exceptions.ProblemDetails is _errors.ProblemDetails

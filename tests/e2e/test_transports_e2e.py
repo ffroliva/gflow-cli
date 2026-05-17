@@ -311,3 +311,45 @@ async def test_e2e_30s_timeout_budget(
         )
     elapsed = time.monotonic() - start
     assert elapsed < 35.0, f"TransportTimeoutError must fire within 35 s; took {elapsed:.1f} s"
+
+
+# ---------------------------------------------------------------------------
+# Auto-create project_id (Issue #16 — optional project_id)
+# ---------------------------------------------------------------------------
+
+
+@pytest.mark.parametrize("strategy", STRATEGIES)
+@pytest.mark.asyncio
+async def test_e2e_generate_image_without_project_id(strategy: str) -> None:
+    """generate_image(req=req) without project_id auto-creates a project.
+
+    Confirms the auto-create path works end-to-end against the real Flow API.
+    """
+    profile = _profile_dir()
+    req = GenerateImageRequest(prompt=_PROMPT, model=Model.NARWHAL)
+
+    async with _make_client(strategy, profile) as client:
+        # Intentionally omit project_id — the client must create one internally.
+        image = await client.generate_image(req=req)
+
+    assert image.media_name, "media_name must be non-empty"
+    assert image.fife_url.startswith("https://"), (
+        f"fife_url must be an https:// URL, got: {image.fife_url!r}"
+    )
+
+
+# ---------------------------------------------------------------------------
+# health_check() (Issue #16 — new method)
+# ---------------------------------------------------------------------------
+
+
+@pytest.mark.parametrize("strategy", STRATEGIES)
+@pytest.mark.asyncio
+async def test_e2e_health_check_returns_true_when_active(strategy: str) -> None:
+    """health_check() returns True for a live browser context on a Google domain."""
+    profile = _profile_dir()
+
+    async with _make_client(strategy, profile) as client:
+        result = await client.health_check()
+
+    assert result is True, "health_check() must return True for an active Google-domain page"

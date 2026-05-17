@@ -39,6 +39,8 @@ Welcome to the `gflow-cli` documentation. This index is the routing layer: it te
 **"How does the layered structure work?"** → [ARCHITECTURE § Layers](ARCHITECTURE.md#layers)
 **"What env var should I set for X?"** → [CONFIGURATION § Reference](CONFIGURATION.md#reference)
 **"How do I report a security issue?"** → [SECURITY § Reporting](SECURITY.md#reporting)
+**"How do I embed FlowApiClient in a long-lived worker / service?"** → [USER_GUIDE § Journey 14](USER_GUIDE.md#journey-14--embedding-flowapiclient-in-a-long-lived-worker)
+**"What's the standard way to import gflow errors in my code?"** → [USAGE § Programmatic use](USAGE.md#programmatic-use)
 
 ## Documentation governance
 
