@@ -196,3 +196,18 @@ If you hit something not listed here:
    - Exact command that failed + full error output
    - What you expected vs. what happened
 3. For **security issues**, see [docs/SECURITY.md § Reporting](docs/SECURITY.md#reporting) — email instead of public issue.
+
+---
+
+### Auth verification depends on Google's NextAuth session endpoint
+
+`gflow auth login` verifies a real Flow sign-in by calling
+`https://labs.google/fx/api/auth/session` (see `src/gflow_cli/auth/verification.py`)
+and by checking for the Google `SAPISID` cookie. These are **external Google
+surfaces** — if Google changes the endpoint path, the response shape, or the
+cookie names, verification degrades **fail-closed**: it reports
+`VERIFICATION_ERROR` (an honest "could not verify") rather than a false
+success. The expected authenticated response shape is pinned by the
+`AUTHENTICATED_BODY` fixture in `tests/auth/test_verification.py` — a Google
+change surfaces there as a failing test. Start any investigation of a sudden
+`gflow auth login` verification failure at that fixture and `verification.py`.
