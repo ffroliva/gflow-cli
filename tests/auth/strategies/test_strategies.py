@@ -209,22 +209,23 @@ class TestRealChromeStrategy:
 class TestInternalChromiumStrategy:
     @pytest.mark.asyncio
     async def test_internal_chromium_standard_behavior(self, tmp_path: Path) -> None:
-        """Verify Internal Chromium uses standard Playwright (no stealth flags)."""
+        """Internal Chromium detects success via the /api/auth/session probe."""
         strategy = InternalChromiumStrategy()
         gflow_home = tmp_path / "gflow_home"
         gflow_home.mkdir()
         profile_dir = gflow_home / "profile_internal"
 
-        mock_success_loc = MagicMock()
-        mock_success_loc.is_visible = AsyncMock(return_value=True)
+        mock_resp = MagicMock(name="resp")
+        mock_resp.status = 200
+        mock_resp.text = AsyncMock(return_value='{"user": {"email": "test@example.com"}}')
 
         mock_page = MagicMock(name="page")
         mock_page.goto = AsyncMock()
-        mock_page.get_by_text.return_value = mock_success_loc
+        mock_page.request.get = AsyncMock(return_value=mock_resp)
 
         mock_ctx = MagicMock(name="ctx")
         mock_ctx.pages = [mock_page]
-        mock_ctx.cookies = AsyncMock(return_value=[{"name": "SAPISID", "value": "dummy"}])
+        mock_ctx.cookies = AsyncMock(return_value=[{"name": "SAPISID", "value": "x"}])
         mock_ctx.close = AsyncMock()
         mock_ctx.new_page = AsyncMock(return_value=mock_page)
 
@@ -248,21 +249,23 @@ class TestInternalChromiumStrategy:
         _, kwargs = mock_launch_pctx.call_args
         assert "channel" not in kwargs or kwargs["channel"] != "chrome"
         assert "--disable-blink-features=AutomationControlled" not in kwargs.get("args", [])
+        mock_page.request.get.assert_awaited()
 
     @pytest.mark.asyncio
     async def test_internal_chromium_timeout_raises(self, tmp_path: Path) -> None:
-        """Verify AuthLoginTimeoutError is raised when polling loop exceeds deadline."""
+        """AuthLoginTimeoutError is raised when the session never authenticates."""
         strategy = InternalChromiumStrategy(timeout_seconds=0)
         gflow_home = tmp_path / "gflow_home"
         gflow_home.mkdir()
         profile_dir = gflow_home / "profile_internal"
 
-        mock_success_loc = MagicMock()
-        mock_success_loc.is_visible = AsyncMock(return_value=False)
+        mock_resp = MagicMock(name="resp")
+        mock_resp.status = 200
+        mock_resp.text = AsyncMock(return_value="{}")
 
         mock_page = MagicMock(name="page")
         mock_page.goto = AsyncMock()
-        mock_page.get_by_text.return_value = mock_success_loc
+        mock_page.request.get = AsyncMock(return_value=mock_resp)
 
         mock_ctx = MagicMock(name="ctx")
         mock_ctx.pages = [mock_page]
