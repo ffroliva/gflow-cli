@@ -26,7 +26,7 @@ uv run pyright src
 **3. Tests + coverage** (report only)
 
 ```bash
-uv run pytest -q --cov=flow_cli --cov-fail-under=80
+uv run pytest -q --cov=gflow_cli --cov-fail-under=80
 ```
 
 ## Output

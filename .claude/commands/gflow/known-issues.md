@@ -14,7 +14,7 @@ Read KNOWN_ISSUES.md and return items that are still open or mitigated (not reso
 
 ## When to call
 
-- Before touching `src/flow_cli/auth.py`
-- Before touching `src/flow_cli/api/recaptcha.py`
+- Before touching `src/gflow_cli/auth.py`
+- Before touching `src/gflow_cli/api/recaptcha.py`
 - Before any work the user flags as "this felt flaky before"
 - When a test or behaviour feels unexpectedly broken
