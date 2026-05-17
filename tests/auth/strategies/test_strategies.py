@@ -5,42 +5,15 @@ from unittest.mock import AsyncMock, MagicMock, patch
 
 import pytest
 
+from gflow_cli.auth.real_chrome import GEMINI_URL
 from gflow_cli.auth.strategies import InternalChromiumStrategy, RealChromeStrategy
-from gflow_cli.errors import AuthLoginTimeoutError, SecurityError
-
-# ---------------------------------------------------------------------------
-# Shared Playwright mock factory — verification-probe (launch_persistent_context)
-# ---------------------------------------------------------------------------
+from gflow_cli.auth.verification import FlowSessionOutcome, FlowSessionStatus
+from gflow_cli.errors import AuthLoginTimeoutError, AuthMissingError, SecurityError
 
 
-def _build_verify_pw_mock(
-    cookies: list[dict] | None = None,
-) -> tuple[MagicMock, MagicMock, MagicMock]:
-    """Return (mock_async_playwright, mock_ctx, mock_page) for the headless verification probe.
-
-    RealChromeStrategy (Passive Capture) uses launch_persistent_context(channel="chrome")
-    after the user closes Chrome to verify the persisted cookies.
-    """
-    if cookies is None:
-        cookies = [{"name": "SAPISID", "value": "dummy"}]
-
-    mock_page = MagicMock(name="page")
-    mock_page.goto = AsyncMock()
-
-    mock_ctx = MagicMock(name="ctx")
-    mock_ctx.pages = [mock_page]
-    mock_ctx.cookies = AsyncMock(return_value=cookies)
-    mock_ctx.close = AsyncMock()
-
-    mock_pw_obj = MagicMock(name="pw")
-    mock_pw_obj.chromium.launch_persistent_context = AsyncMock(return_value=mock_ctx)
-
-    mock_cm = MagicMock(name="cm")
-    mock_cm.__aenter__ = AsyncMock(return_value=mock_pw_obj)
-    mock_cm.__aexit__ = AsyncMock(return_value=False)
-
-    mock_ap = MagicMock(name="async_playwright", return_value=mock_cm)
-    return mock_ap, mock_ctx, mock_page
+def _status(outcome: FlowSessionOutcome, email: str | None = None) -> FlowSessionStatus:
+    """Build a FlowSessionStatus for mocking verify_flow_session."""
+    return FlowSessionStatus(outcome=outcome, user_email=email, source="chrome")
 
 
 def _build_mock_proc() -> MagicMock:
@@ -70,36 +43,81 @@ class TestRealChromeStrategy:
         profile_dir = gflow_home / "profile_default"
         gflow_home.mkdir()
 
-        mock_ap, _, _ = _build_verify_pw_mock()
         mock_proc = _build_mock_proc()
         mock_create = AsyncMock(return_value=mock_proc)
         fake_chrome = r"C:\fake\chrome.exe"
+        verified = _status(FlowSessionOutcome.AUTHENTICATED, "test@example.com")
 
         with (
             patch("gflow_cli.auth.real_chrome.get_settings") as mock_settings,
             patch("gflow_cli.auth.real_chrome.find_chrome_executable", return_value=fake_chrome),
             patch("gflow_cli.auth.real_chrome.asyncio.create_subprocess_exec", mock_create),
-            patch("playwright.async_api.async_playwright", mock_ap),
+            patch(
+                "gflow_cli.auth.real_chrome.verify_flow_session",
+                AsyncMock(return_value=verified),
+            ),
         ):
             mock_settings.return_value.home = gflow_home
             await strategy.login(profile_dir, headless=False)
 
-        # create_subprocess_exec(*chrome_args, ...) — Chrome args are positional.
         args_list = mock_create.call_args.args
         assert args_list[0] == fake_chrome
         assert f"--user-data-dir={profile_dir}" in args_list
         assert "--enable-automation" not in args_list
         assert not any("--remote-debugging-port" in a for a in args_list)
+        assert GEMINI_URL in args_list  # Chrome opens directly on the Flow page
 
     @pytest.mark.asyncio
-    async def test_real_chrome_success_verified_via_sapisid(self, tmp_path: Path) -> None:
-        """After proc.wait(), verify headless probe detects SAPISID and exits cleanly."""
+    async def test_real_chrome_success_writes_marker(self, tmp_path: Path) -> None:
+        """On an authenticated Flow session, login writes the .gflow_browser_strategy marker."""
         strategy = RealChromeStrategy()
         gflow_home = tmp_path / "gflow_home"
         profile_dir = gflow_home / "profile_default"
         gflow_home.mkdir()
 
-        mock_ap, mock_ctx, _ = _build_verify_pw_mock(cookies=[{"name": "SAPISID", "value": "abc"}])
+        mock_proc = _build_mock_proc()
+        verified = _status(FlowSessionOutcome.AUTHENTICATED, "test@example.com")
+
+        with (
+            patch("gflow_cli.auth.real_chrome.get_settings") as mock_settings,
+            patch(
+                "gflow_cli.auth.real_chrome.find_chrome_executable",
+                return_value=r"C:\fake\chrome.exe",
+            ),
+            patch(
+                "gflow_cli.auth.real_chrome.asyncio.create_subprocess_exec",
+                AsyncMock(return_value=mock_proc),
+            ),
+            patch(
+                "gflow_cli.auth.real_chrome.verify_flow_session",
+                AsyncMock(return_value=verified),
+            ),
+        ):
+            mock_settings.return_value.home = gflow_home
+            await strategy.login(profile_dir, headless=False)
+
+        marker = profile_dir / ".gflow_browser_strategy"
+        assert marker.exists()
+        assert marker.read_text(encoding="utf-8") == "chrome"
+
+    @pytest.mark.asyncio
+    @pytest.mark.parametrize(
+        "outcome",
+        [
+            FlowSessionOutcome.GOOGLE_SESSION_ONLY,
+            FlowSessionOutcome.NO_SESSION,
+            FlowSessionOutcome.VERIFICATION_ERROR,
+        ],
+    )
+    async def test_real_chrome_unverified_raises_auth_missing(
+        self, tmp_path: Path, outcome: FlowSessionOutcome
+    ) -> None:
+        """A non-authenticated outcome fails the login with AuthMissingError."""
+        strategy = RealChromeStrategy()
+        gflow_home = tmp_path / "gflow_home"
+        profile_dir = gflow_home / "profile_default"
+        gflow_home.mkdir()
+
         mock_proc = _build_mock_proc()
 
         with (
@@ -112,13 +130,16 @@ class TestRealChromeStrategy:
                 "gflow_cli.auth.real_chrome.asyncio.create_subprocess_exec",
                 AsyncMock(return_value=mock_proc),
             ),
-            patch("playwright.async_api.async_playwright", mock_ap),
+            patch(
+                "gflow_cli.auth.real_chrome.verify_flow_session",
+                AsyncMock(return_value=_status(outcome)),
+            ),
         ):
             mock_settings.return_value.home = gflow_home
-            await strategy.login(profile_dir, headless=False)
+            with pytest.raises(AuthMissingError):
+                await strategy.login(profile_dir, headless=False)
 
-        mock_ctx.cookies.assert_called_once()
-        mock_ctx.close.assert_called_once()
+        assert not (profile_dir / ".gflow_browser_strategy").exists()
 
     @pytest.mark.asyncio
     async def test_real_chrome_privacy_guard(self, tmp_path: Path) -> None:
