@@ -98,7 +98,8 @@ class InternalChromiumStrategy(AuthStrategy):
                     except PlaywrightError:
                         # Browser / page / context closed — stop polling.
                         break
-                    except Exception as exc:  # noqa: BLE001 - unexpected; log and stop
+                    # Unexpected error — log it and stop polling.
+                    except Exception as exc:  # noqa: BLE001
                         logger.warning(
                             "auth_flow_session_poll_error",
                             strategy=self.name,

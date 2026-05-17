@@ -108,7 +108,8 @@ def evaluate_session_response(
 
     try:
         parsed: Any = json.loads(body)
-    except (json.JSONDecodeError, ValueError):
+    except ValueError:
+        # json.JSONDecodeError is a subclass of ValueError, so this catches both.
         return _result(FlowSessionOutcome.VERIFICATION_ERROR)
 
     if not isinstance(parsed, dict):
@@ -151,7 +152,8 @@ async def _fetch_session(ctx: BrowserContext) -> tuple[int, str]:
         try:
             resp = await ctx.request.get(SESSION_API_URL, timeout=_REQUEST_TIMEOUT_MS)
             body = await resp.text()
-        except Exception as exc:  # noqa: BLE001 - retried below, or re-raised
+        # A network/timeout error is retried below, or re-raised on the final attempt.
+        except Exception as exc:  # noqa: BLE001
             last_exc = exc
             if attempt == _MAX_ATTEMPTS:
                 raise
@@ -207,7 +209,8 @@ async def verify_flow_session(
                 status_code, body = await _fetch_session(ctx)
             finally:
                 await ctx.close()
-    except Exception as exc:  # noqa: BLE001 - fail-closed: any failure -> VERIFICATION_ERROR
+    # Fail-closed: any failure here yields VERIFICATION_ERROR, never AUTHENTICATED.
+    except Exception as exc:  # noqa: BLE001
         logger.warning("auth_flow_session_probe_error", source=source, error=type(exc).__name__)
         return FlowSessionStatus(
             outcome=FlowSessionOutcome.VERIFICATION_ERROR, user_email=None, source=source
