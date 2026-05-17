@@ -823,6 +823,7 @@ class FlowApiClient:
             finally:
                 self._checkin_page(page)
         except Exception:
+            logger.debug("health_check_failed", exc_info=True)
             return False
 
 
