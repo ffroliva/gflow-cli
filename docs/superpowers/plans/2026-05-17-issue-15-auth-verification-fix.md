@@ -442,7 +442,9 @@ class TestVerifyFlowSession:
         assert mock_ctx.request.get.await_count == 3
 
     @pytest.mark.asyncio
-    async def test_retryable_status_retried_then_returned(self, gflow_home: Path) -> None:
+    async def test_retryable_status_retried_then_verification_error(
+        self, gflow_home: Path
+    ) -> None:
         profile = gflow_home / "profile_default"
         profile.mkdir()
         # HTTP 503 every time -> retried 3x, then evaluated as VERIFICATION_ERROR.
@@ -742,6 +744,7 @@ from gflow_cli.errors import AuthLoginTimeoutError, SecurityError
 with:
 
 ```python
+from gflow_cli.auth.real_chrome import GEMINI_URL
 from gflow_cli.auth.strategies import InternalChromiumStrategy, RealChromeStrategy
 from gflow_cli.auth.verification import FlowSessionOutcome, FlowSessionStatus
 from gflow_cli.errors import AuthLoginTimeoutError, AuthMissingError, SecurityError
@@ -791,6 +794,7 @@ def _status(outcome: FlowSessionOutcome, email: str | None = None) -> FlowSessio
         assert f"--user-data-dir={profile_dir}" in args_list
         assert "--enable-automation" not in args_list
         assert not any("--remote-debugging-port" in a for a in args_list)
+        assert GEMINI_URL in args_list  # Chrome opens directly on the Flow page
 ```
 
 (e) Replace `test_real_chrome_success_verified_via_sapisid` with:
@@ -1131,6 +1135,7 @@ In `tests/auth/strategies/test_strategies.py`, replace `test_internal_chromium_s
 
         _, kwargs = mock_launch_pctx.call_args
         assert "channel" not in kwargs or kwargs["channel"] != "chrome"
+        assert "--disable-blink-features=AutomationControlled" not in kwargs.get("args", [])
         mock_page.request.get.assert_awaited()
 
     @pytest.mark.asyncio
@@ -1315,6 +1320,11 @@ with:
                         ),
                     )
 ```
+
+> **Note:** the replacement above ends at the `if not success:` raise. The two
+> lines that follow it in the current file — the `# Small delay to ensure state
+> is flushed to disk` comment and `await asyncio.sleep(1)` — are intentionally
+> left untouched (a harmless pre-close flush).
 
 - [ ] **Step 4: Run the tests to verify they pass**
 
