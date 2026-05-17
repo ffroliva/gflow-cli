@@ -238,6 +238,30 @@ class TestVerifyFlowSession:
         assert mock_ctx.request.get.await_count == 3
 
     @pytest.mark.asyncio
+    async def test_mixed_transient_failures_exhaust_to_verification_error(
+        self, gflow_home: Path
+    ) -> None:
+        profile = gflow_home / "profile_default"
+        profile.mkdir()
+        # Sequence: exception -> retryable 503 -> exception.
+        # All three retry branches are exercised in one pass.
+        resp_503 = MagicMock(name="resp_503")
+        resp_503.status = 503
+        resp_503.text = AsyncMock(return_value="{}")
+        mock_ap, mock_ctx = _build_verify_mock(
+            get_side_effect=[RuntimeError("net::ERR"), resp_503, RuntimeError("net::ERR")]
+        )
+        with (
+            patch("gflow_cli.auth.verification.get_settings") as mock_settings,
+            patch("gflow_cli.auth.strategies.async_playwright", mock_ap),
+            patch("asyncio.sleep", AsyncMock()),
+        ):
+            mock_settings.return_value.home = gflow_home
+            status = await verify_flow_session(profile, source="chrome")
+        assert status.outcome is FlowSessionOutcome.VERIFICATION_ERROR
+        assert mock_ctx.request.get.await_count == 3
+
+    @pytest.mark.asyncio
     async def test_non_retryable_status_not_retried(self, gflow_home: Path) -> None:
         profile = gflow_home / "profile_default"
         profile.mkdir()
