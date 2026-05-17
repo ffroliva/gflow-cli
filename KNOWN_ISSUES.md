@@ -20,7 +20,7 @@ Living list of behaviour that's broken, surprising, or limited by design — alo
 
 Image **generation** calls fail with HTTP 401 even on a profile that holds a
 fully verified Flow session. Discovered 2026-05-17 while building the e2e test
-suite, probing `profile_denon82` immediately after a successful
+suite, against a profile probed immediately after a successful
 `gflow auth login` (`auth_flow_session_verified`, `[OK] Flow session verified`).
 
 **What works vs. what fails — on the same freshly verified profile:**
