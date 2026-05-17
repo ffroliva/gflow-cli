@@ -12,10 +12,22 @@ See docs/superpowers/specs/2026-05-17-issue-15-auth-verification-fix-design.md
 
 from __future__ import annotations
 
+import asyncio
 import json
 from dataclasses import dataclass
 from enum import StrEnum
-from typing import Any, cast
+from pathlib import Path
+from typing import TYPE_CHECKING, Any, cast
+
+import structlog
+
+from gflow_cli.config import get_settings
+from gflow_cli.errors import SecurityError
+
+if TYPE_CHECKING:
+    from playwright.async_api import BrowserContext
+
+logger = structlog.get_logger(__name__)
 
 # The NextAuth session endpoint. Expected authenticated 200 body shape:
 #   {"user": {"name": ..., "email": ..., "image": ...}, "expires": "..."}
@@ -23,6 +35,13 @@ from typing import Any, cast
 # AUTHENTICATED_BODY fixture in tests/auth/test_verification.py — if Google
 # changes the shape, that test fails rather than the change going silent.
 SESSION_API_URL = "https://labs.google/fx/api/auth/session"
+
+# Per-request timeout for the session probe (milliseconds).
+_REQUEST_TIMEOUT_MS = 15_000
+# Total fetch attempts (initial + retries) before giving up.
+_MAX_ATTEMPTS = 3
+# HTTP statuses worth retrying — transient server-side conditions only.
+_RETRYABLE_STATUSES = frozenset({429, 503, 504})
 
 
 class FlowSessionOutcome(StrEnum):
@@ -113,3 +132,94 @@ def evaluate_session_response(
 
     # `user` present but no usable email — unexpected shape (see spec §10).
     return _result(FlowSessionOutcome.VERIFICATION_ERROR)
+
+
+async def _fetch_session(ctx: BrowserContext) -> tuple[int, str]:
+    """Fetch /api/auth/session, retrying transient failures.
+
+    Returns the final (status_code, body). Makes up to `_MAX_ATTEMPTS`
+    attempts; an attempt is retried only on a network/timeout error or an
+    HTTP status in `_RETRYABLE_STATUSES`, with exponential backoff (1s, 2s;
+    capped at 8s). Re-raises the last error if no attempt produced a response.
+
+    An explicit loop (rather than a `tenacity` decorator) is used so the final
+    `(status_code, body)` survives — the caller logs the real status code as a
+    durability signal (spec §10). The spec (§4.1) sanctions either form.
+    """
+    last_exc: Exception | None = None
+    for attempt in range(1, _MAX_ATTEMPTS + 1):
+        try:
+            resp = await ctx.request.get(SESSION_API_URL, timeout=_REQUEST_TIMEOUT_MS)
+            body = await resp.text()
+        except Exception as exc:  # noqa: BLE001 - retried below, or re-raised
+            last_exc = exc
+            if attempt == _MAX_ATTEMPTS:
+                raise
+        else:
+            if resp.status not in _RETRYABLE_STATUSES or attempt == _MAX_ATTEMPTS:
+                return resp.status, body
+        await asyncio.sleep(float(min(2 ** (attempt - 1), 8)))
+    # Unreachable — the loop always returns or raises by the final attempt.
+    raise last_exc or RuntimeError("session probe produced no response")
+
+
+async def verify_flow_session(
+    profile_dir: Path,
+    *,
+    channel: str = "chrome",
+    source: str = "chrome",
+) -> FlowSessionStatus:
+    """Headlessly probe `profile_dir` for a usable Flow app session.
+
+    Launches a headless persistent context on the profile, reads cookies, and
+    calls the NextAuth session endpoint. Fail-closed: any failure — boundary
+    violation aside — yields VERIFICATION_ERROR, never AUTHENTICATED.
+
+    Precondition: `profile_dir` must resolve inside GFLOW_CLI_HOME. The check
+    uses `strict=True` (the directory exists by the time verification runs);
+    `RealChromeStrategy.login`'s own pre-`mkdir` check deliberately stays
+    `strict=False` — see the design spec §4.2.
+    """
+    home = get_settings().home.resolve()
+    try:
+        profile_dir.resolve(strict=True).relative_to(home)
+    except (ValueError, OSError):
+        raise SecurityError(
+            f"Profile directory {profile_dir} is outside of GFLOW_CLI_HOME ({home})."
+        ) from None
+
+    # Lazy import — a top-level `from .strategies import ...` would create the
+    # cycle strategies -> real_chrome -> verification -> strategies.
+    from .strategies import async_playwright
+
+    status_code: int
+    body: str
+    try:
+        async with async_playwright() as pw:
+            ctx = await pw.chromium.launch_persistent_context(
+                user_data_dir=str(profile_dir),
+                channel=channel,
+                headless=True,
+            )
+            try:
+                cookies = await ctx.cookies()
+                google_session = any(c.get("name") == "SAPISID" for c in cookies)
+                status_code, body = await _fetch_session(ctx)
+            finally:
+                await ctx.close()
+    except Exception as exc:  # noqa: BLE001 - fail-closed: any failure -> VERIFICATION_ERROR
+        logger.warning("auth_flow_session_probe_error", source=source, error=type(exc).__name__)
+        return FlowSessionStatus(
+            outcome=FlowSessionOutcome.VERIFICATION_ERROR, user_email=None, source=source
+        )
+
+    result = evaluate_session_response(
+        status_code, body, google_session=google_session, source=source
+    )
+    if result.outcome is FlowSessionOutcome.VERIFICATION_ERROR:
+        # Observable durability signal — distinguishes a moved/changed endpoint
+        # from a flaky link. The status code is safe to log; the body is not.
+        logger.warning(
+            "auth_flow_session_unexpected_response", source=source, status_code=status_code
+        )
+    return result
