@@ -5,7 +5,7 @@ from unittest.mock import AsyncMock, MagicMock, patch
 
 import pytest
 
-from gflow_cli.auth.real_chrome import GEMINI_URL
+from gflow_cli.auth.real_chrome import _UNVERIFIED_HINT, _UNVERIFIED_MESSAGE, GEMINI_URL
 from gflow_cli.auth.strategies import InternalChromiumStrategy, RealChromeStrategy
 from gflow_cli.auth.verification import FlowSessionOutcome, FlowSessionStatus
 from gflow_cli.errors import AuthLoginTimeoutError, AuthMissingError, SecurityError
@@ -136,9 +136,11 @@ class TestRealChromeStrategy:
             ),
         ):
             mock_settings.return_value.home = gflow_home
-            with pytest.raises(AuthMissingError):
+            with pytest.raises(AuthMissingError) as exc_info:
                 await strategy.login(profile_dir, headless=False)
 
+        assert exc_info.value.detail == _UNVERIFIED_MESSAGE[outcome]
+        assert exc_info.value.remediation_hint == _UNVERIFIED_HINT[outcome]
         assert not (profile_dir / ".gflow_browser_strategy").exists()
 
     @pytest.mark.asyncio
