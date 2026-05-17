@@ -38,14 +38,18 @@ def test_parse_uuid_from_url(): ...
 @pytest.mark.integration       # Mocked HTTP, real Provider plumbing.
 async def test_upload_returns_asset(): ...
 
-@pytest.mark.live              # Hits the real Flow API. Requires GFLOW_LIVE=1 env var.
-# Note: the live-test gate is GFLOW_LIVE (deliberately short — not GFLOW_CLI_LIVE) so
-# you can opt in with a single export. Runtime config still uses the GFLOW_CLI_* prefix.
-@pytest.mark.skipif(not os.getenv("GFLOW_LIVE"), reason="live tests opt-in")
+@pytest.mark.e2e               # Hits the real Flow API. Requires GFLOW_CLI_E2E_PROFILE env var.
 async def test_full_i2v_roundtrip(): ...
 ```
 
-CI runs `unit` + `integration` on every push. `live` tests run only on the maintainer's machine, against the maintainer's own account, before tagging a release.
+CI runs `unit` + `integration` on every push. `e2e` tests require a live authenticated profile and are opt-in:
+
+```bash
+export GFLOW_CLI_E2E_PROFILE=<profile-name>   # name of a logged-in profile
+uv run pytest -m e2e -v
+```
+
+E2e tests spend real Veo/Imagen credits — run them on `develop` before opening a release PR to `main`. See [docs/DEVELOPMENT.md § E2e gate](docs/DEVELOPMENT.md#e2e-gate-before-merging-develop--main).
 
 ### Coverage targets
 
