@@ -756,7 +756,7 @@ class UiAutomationTransport:
     async def generate_images(
         self,
         *,
-        project_id: str,
+        project_id: str | None,
         request: GenerateImageRequest,
     ) -> list[GeneratedImage]:
         """Submit ``request.prompt`` through Flow's editor and return the

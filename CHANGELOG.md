@@ -7,6 +7,15 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+### Added
+
+- `gflow_cli.exceptions` module as a standard alias for `gflow_cli.errors` — both module names resolve identically.
+- `FlowApiClient.health_check()` async method — returns `True` if browser context is alive and on a Google domain; safe to call from long-lived workers without try/except.
+
+### Changed
+
+- `FlowApiClient.generate_image()` and `generate_images_batch()`: `project_id` is now optional (`str | None = None`). When omitted, a new Flow project is created automatically. Existing callers passing an explicit `project_id` are unaffected.
+
 ## [0.6.0a6] — 2026-05-17
 
 > **Stability & code-quality release.** Fixes a concurrency bug in image
