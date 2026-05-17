@@ -90,7 +90,7 @@ class _FakeTransport:
     async def generate_images(
         self,
         *,
-        project_id: str,
+        project_id: str | None,
         request: GenerateImageRequest,
     ) -> list[GeneratedImage]:
         self.calls.append({"project_id": project_id, "request": request})
@@ -171,7 +171,7 @@ class TestGenerateImage:
 
         class _EmptyTransport(_FakeTransport):
             async def generate_images(  # type: ignore[override]
-                self, *, project_id: str, request: GenerateImageRequest
+                self, *, project_id: str | None, request: GenerateImageRequest
             ) -> list[GeneratedImage]:
                 return []
 
@@ -223,7 +223,7 @@ class TestGenerateImage:
 
         class _ErrorTransport(_FakeTransport):
             async def generate_images(  # type: ignore[override]
-                self, *, project_id: str, request: GenerateImageRequest
+                self, *, project_id: str | None, request: GenerateImageRequest
             ) -> list[GeneratedImage]:
                 raise FlowApiError(
                     400,
@@ -288,7 +288,7 @@ class TestGenerateImagesBatch:
 
         class _CountingTransport(_FakeTransport):
             async def generate_images(  # type: ignore[override]
-                self, *, project_id: str, request: GenerateImageRequest
+                self, *, project_id: str | None, request: GenerateImageRequest
             ) -> list[GeneratedImage]:
                 nonlocal call_count
                 call_count += 1
@@ -305,7 +305,7 @@ class TestGenerateImagesBatch:
 
         class _CountingTransport(_FakeTransport):
             async def generate_images(  # type: ignore[override]
-                self, *, project_id: str, request: GenerateImageRequest
+                self, *, project_id: str | None, request: GenerateImageRequest
             ) -> list[GeneratedImage]:
                 nonlocal call_count
                 call_count += 1
@@ -327,7 +327,7 @@ class TestGenerateImagesBatch:
 
         class _CountingTransport(_FakeTransport):
             async def generate_images(  # type: ignore[override]
-                self, *, project_id: str, request: GenerateImageRequest
+                self, *, project_id: str | None, request: GenerateImageRequest
             ) -> list[GeneratedImage]:
                 nonlocal call_count
                 call_count += 1
@@ -354,7 +354,7 @@ class TestGenerateImagesBatch:
 
         class _DelayedTransport(_FakeTransport):
             async def generate_images(  # type: ignore[override]
-                self, *, project_id: str, request: GenerateImageRequest
+                self, *, project_id: str | None, request: GenerateImageRequest
             ) -> list[GeneratedImage]:
                 nonlocal call_index
                 idx = call_index
@@ -392,7 +392,7 @@ class TestGenerateImagesBatch:
 
         class _FailingTransport(_FakeTransport):
             async def generate_images(  # type: ignore[override]
-                self, *, project_id: str, request: GenerateImageRequest
+                self, *, project_id: str | None, request: GenerateImageRequest
             ) -> list[GeneratedImage]:
                 nonlocal call_count
                 call_count += 1
@@ -736,7 +736,7 @@ class TestWireFormatDiscoveryAndRedaction:
 
         class _WireErrorTransport(_FakeTransport):
             async def generate_images(  # type: ignore[override]
-                self, *, project_id: str, request: GenerateImageRequest
+                self, *, project_id: str | None, request: GenerateImageRequest
             ) -> list[GeneratedImage]:
                 raise WireFormatError(
                     detail="non-JSON response",
@@ -778,7 +778,7 @@ class TestWireFormatDiscoveryAndRedaction:
 
         class _RedactedWireErrorTransport(_FakeTransport):
             async def generate_images(  # type: ignore[override]
-                self, *, project_id: str, request: GenerateImageRequest
+                self, *, project_id: str | None, request: GenerateImageRequest
             ) -> list[GeneratedImage]:
                 raise WireFormatError(
                     detail="non-JSON response",
@@ -807,3 +807,109 @@ class TestWireFormatDiscoveryAndRedaction:
         assert "SECRET-TOKEN-XYZ" not in body_prefix
         # And the redacted marker should be present.
         assert "<redacted>" in body_prefix
+
+
+class TestGenerateImageAutoCreateProject:
+    """When project_id is None, generate_image / generate_images_batch must
+    call create_project() once and use its project_id."""
+
+    async def test_generate_image_without_project_id_auto_creates_project(
+        self, tmp_path: Path
+    ) -> None:
+        """generate_image(req=...) with no project_id calls create_project once
+        and delegates to the transport with the resolved id."""
+        from gflow_cli.api.dto import ProjectInfo
+
+        fake_project = ProjectInfo(project_id="auto-proj-42", title="auto")
+        transport = _FakeTransport(images=[_FAKE_IMAGE])
+        client = _client_with_transport(tmp_path, transport)
+        client.create_project = AsyncMock(return_value=fake_project)  # type: ignore[method-assign]
+
+        result = await client.generate_image(req=_make_req())
+
+        client.create_project.assert_awaited_once()  # type: ignore[attr-defined]
+        assert result.fife_url == _FAKE_FIFE_URL
+        assert transport.calls[0]["project_id"] == "auto-proj-42"
+
+    async def test_generate_images_batch_without_project_id_auto_creates_project(
+        self, tmp_path: Path
+    ) -> None:
+        """generate_images_batch(req=..., count=2) with no project_id calls
+        create_project exactly once (not once per parallel shot)."""
+        from gflow_cli.api.dto import ProjectInfo
+
+        fake_project = ProjectInfo(project_id="auto-batch-proj", title="auto")
+        call_count = 0
+
+        class _CountingTransport(_FakeTransport):
+            async def generate_images(  # type: ignore[override]
+                self, *, project_id: str | None, request: GenerateImageRequest
+            ) -> list[GeneratedImage]:
+                nonlocal call_count
+                call_count += 1
+                return [_make_image_for_seed(call_count)]
+
+        transport = _CountingTransport()
+        client = _client_with_transport(tmp_path, transport)
+        client.create_project = AsyncMock(return_value=fake_project)  # type: ignore[method-assign]
+
+        results = await client.generate_images_batch(req=_make_req(), count=2)
+
+        # create_project called ONCE — not once per parallel shot.
+        client.create_project.assert_awaited_once()  # type: ignore[attr-defined]
+        assert len(results) == 2
+        for call in transport.calls:
+            assert call["project_id"] == "auto-batch-proj"
+
+
+class TestHealthCheck:
+    """FlowApiClient.health_check() contract tests."""
+
+    async def test_health_check_returns_false_when_not_entered(self, tmp_path: Path) -> None:
+        """Before entering the async context, _page_queue is None → False."""
+        client = FlowApiClient(profile_dir=tmp_path / "prof")
+        result = await client.health_check()
+        assert result is False
+
+    async def test_health_check_returns_true_on_google_domain(self, tmp_path: Path) -> None:
+        """A page whose document.location.hostname is a Google domain → True."""
+        transport = _FakeTransport()
+        client = _client_with_transport(tmp_path, transport)
+
+        # Simulate an open page queue with a fake page returning a Google hostname.
+        fake_page = MagicMock()
+        fake_page.evaluate = AsyncMock(return_value="labs.google")
+        client._page_queue = asyncio.Queue(maxsize=1)
+        client._page_queue.put_nowait(fake_page)
+
+        result = await client.health_check()
+
+        assert result is True
+
+    async def test_health_check_returns_false_on_non_google_domain(self, tmp_path: Path) -> None:
+        """A page whose hostname is not on google → False."""
+        transport = _FakeTransport()
+        client = _client_with_transport(tmp_path, transport)
+
+        fake_page = MagicMock()
+        fake_page.evaluate = AsyncMock(return_value="example.com")
+        client._page_queue = asyncio.Queue(maxsize=1)
+        client._page_queue.put_nowait(fake_page)
+
+        result = await client.health_check()
+
+        assert result is False
+
+    async def test_health_check_returns_false_on_evaluate_exception(self, tmp_path: Path) -> None:
+        """If page.evaluate raises (e.g. TargetClosedError) → False, never raises."""
+        transport = _FakeTransport()
+        client = _client_with_transport(tmp_path, transport)
+
+        fake_page = MagicMock()
+        fake_page.evaluate = AsyncMock(side_effect=RuntimeError("target closed"))
+        client._page_queue = asyncio.Queue(maxsize=1)
+        client._page_queue.put_nowait(fake_page)
+
+        result = await client.health_check()
+
+        assert result is False

@@ -182,14 +182,20 @@ class EvaluateFetchTransport:
     async def generate_images(
         self,
         *,
-        project_id: str,
+        project_id: str | None,
         request: GenerateImageRequest,
     ) -> list[GeneratedImage]:
         """Generate images via page.evaluate fetch.
 
         Enforces a 30 s wall-clock budget. On HTTP 401, calls refresh_auth()
         and retries exactly once; a second 401 raises AuthExpiredError.
+
+        ``project_id`` is required by this transport (used in the REST URL).
+        Pass ``None`` only via :class:`UiAutomationTransport`, which creates
+        its own project internally.
         """
+        if project_id is None:
+            raise ValueError("EvaluateFetchTransport requires an explicit project_id")
         return await self._generate_images_inner(
             project_id=project_id, request=request, is_retry=False
         )
