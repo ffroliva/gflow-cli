@@ -51,6 +51,12 @@ class TestEvaluateSessionResponse:
         )
         assert status.outcome is FlowSessionOutcome.NO_SESSION
 
+    def test_null_user_with_google_cookie(self) -> None:
+        status = evaluate_session_response(
+            200, '{"user": null}', google_session=True, source="chrome"
+        )
+        assert status.outcome is FlowSessionOutcome.GOOGLE_SESSION_ONLY
+
     @pytest.mark.parametrize(
         "body",
         [

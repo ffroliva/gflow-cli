@@ -54,7 +54,7 @@ class FlowSessionStatus:
 
     outcome: FlowSessionOutcome
     user_email: str | None
-    source: str
+    source: str  # caller-supplied log label ("chrome"/"internal"); never from response/cookie data
 
     @property
     def detail(self) -> str:
