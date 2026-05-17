@@ -14,6 +14,87 @@ Living list of behaviour that's broken, surprising, or limited by design — alo
 
 ## Open
 
+### Image generation returns HTTP 401 — `aisandbox-pa` generation endpoint
+
+- **Status:** Open · **Severity:** High (blocks image generation in the e2e path; production-CLI impact unconfirmed) · **Affects:** v0.6.0a6 · **Tracked:** N/A — needs a dedicated issue
+
+Image **generation** calls fail with HTTP 401 even on a profile that holds a
+fully verified Flow session. Discovered 2026-05-17 while building the e2e test
+suite, probing `profile_denon82` immediately after a successful
+`gflow auth login` (`auth_flow_session_verified`, `[OK] Flow session verified`).
+
+**What works vs. what fails — on the same freshly verified profile:**
+
+| Operation | Endpoint | Result |
+|---|---|---|
+| `verify_flow_session` | `labs.google/fx/api/auth/session` | ✅ `AUTHENTICATED` |
+| `FlowApiClient.health_check()` | Flow page context | ✅ `True` |
+| `create_project` | `labs.google/fx/api/trpc/project.createProject` | ✅ 200 |
+| **image generation** | `aisandbox-pa.googleapis.com` (private API) | ❌ **HTTP 401** |
+
+The `evaluate_fetch` transport receives a 401 on the generation request, runs
+its refresh path (`refresh_auth()` re-navigates to the Flow URL), retries once,
+gets 401 again, and raises:
+
+```
+AuthExpiredError: evaluate_fetch: HTTP 401 persisted after refresh — session expired
+```
+
+from `src/gflow_cli/api/transports/experimental/evaluate_fetch.py`
+(`_handle_response`). Call chain: `FlowApiClient.generate_image` /
+`generate_images_batch` → `_drive_image_generation` → `transport.generate_images`
+→ `_generate_images_inner` → `_handle_response`.
+
+**Distinct from issue #15.** Issue #15 was a 401 on `create_project` caused by
+the *profile* being signed in to Google but not the Flow app — fixed on the
+`fix/issue-15-i2v-bearer-auth` branch by verifying the real Flow session at
+login. That fix is confirmed working: `create_project` now succeeds. **This is
+a different 401** — it occurs on a profile that *is* verified and *can* create
+projects, specifically on the `aisandbox-pa.googleapis.com` generation
+endpoint, a different surface from the `labs.google` tRPC API.
+
+**Scope.** The 401 affects every image-generation path uniformly on the
+`evaluate_fetch` transport (the live one): `test_e2e_single_image_gen` (C2,
+pre-existing), `test_e2e_generate_image_without_project_id` (PR #20,
+pre-existing), and the dropped `test_e2e_generate_images_batch_without_project_id`.
+It is **not** caused by recent test changes — `test_transports_e2e.py` is
+self-described scaffold ("Task D.1 scaffold; Task D.2 drives the real
+execution") that was never run green, and PR #20's e2e tests were merged
+without live execution. Whether the production CLI (`gflow image t2i` /
+`gflow video i2v`) is equally affected is **unconfirmed** — it uses the same
+`FlowApiClient` + transport, so it very likely is, but that has not been
+observed directly and should be checked first thing.
+
+**Experimental transports also broken.** The `bearer` and `sapisidhash`
+transports (`api/transports/experimental/`) fail before generation is even
+reached: `bearer` cannot intercept an OAuth token (`AuthExpiredError: bearer:
+failed to intercept Bearer token from Flow page`); `sapisidhash` cascades off
+the resulting profile-lock contention. These are obsolete — only
+`evaluate_fetch` is viable. Issue-#15 investigation notes had already
+disproven the "bearer header" hypothesis for `create_project`.
+
+**Where to investigate.**
+
+- The login OAuth flow *does* request the
+  `https://www.googleapis.com/auth/aisandbox` scope (visible in the sign-in
+  URL), so the account is authorized — the 401 points at how the credential is
+  *presented* to `aisandbox-pa`, not at missing authorization.
+- Capture a real generation request from `evaluate_fetch` — the exact URL,
+  headers, and credential it sends — and compare with what the Flow web UI
+  sends for the same action (browser DevTools network capture).
+- The `aisandbox-pa.googleapis.com` host may require a Bearer token: the
+  issue-#15 "bearer header" hypothesis was disproven for the `labs.google`
+  tRPC `create_project` route, but may hold for this *different* Google API
+  host.
+- Files: `src/gflow_cli/api/transports/experimental/evaluate_fetch.py`
+  (`generate_images`, `_generate_images_inner`, `_handle_response`,
+  `refresh_auth`) and `src/gflow_cli/api/client.py` (`_drive_image_generation`).
+
+**Workaround:** none known. Image generation against the live API does not
+currently succeed via the e2e transport path.
+
+---
+
 ### Browser session expires periodically — manual re-login required
 
 - **Status:** Open · **Severity:** Medium · **Affects:** all versions · **Tracked:** N/A (architectural)
