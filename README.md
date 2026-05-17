@@ -55,7 +55,7 @@ Read the full [DISCLAIMER](DISCLAIMER.md) before deploying this in any productio
 
 ## Project status
 
-**v0.6.0a5 — alpha.** Video (T2V/I2V/batch), image (T2I/I2I/upload), the new **`gflow run` JSON-batch command**, and the **`ui_automation` default transport** are functional end-to-end against a live Google AI Pro/Ultra Flow account. Three earlier HTTP transport strategies (`evaluate_fetch` / `bearer` / `sapisidhash`) move to an `experimental/` subpackage in this release; the production path is `ui_automation`.
+**v0.6.0a6 — alpha.** Video (T2V/I2V/batch), image (T2I/I2I/upload), the **`gflow run` JSON-batch command**, and the **`ui_automation` default transport** are functional end-to-end against a live Google AI Pro/Ultra Flow account. Three earlier HTTP transport strategies (`evaluate_fetch` / `bearer` / `sapisidhash`) now live in an `experimental/` subpackage; the production path is `ui_automation`.
 
 | Milestone | Status |
 |---|---|
@@ -73,14 +73,15 @@ Read the full [DISCLAIMER](DISCLAIMER.md) before deploying this in any productio
 | `gflow run --config <file>` sequential JSON batches | ✅ done (v0.5.0a1) |
 | `examples/` directory with runnable single-image + batch scripts | ✅ done (v0.5.0a1) |
 | Shell multi-prompt `gflow image t2i` (`PROMPT...`, `--prompts-file`, `--stdin`) | ✅ done (v0.6.0a1) |
-| Provider abstraction for official Veo 3.1 API | ⏳ planned (v0.6+) |
+| Provider abstraction for official Veo 3.1 API | ⏳ planned |
 
-### What's new in v0.6.0a5
+### What's new in v0.6.0a6
 
-- `UiAutomationTransport` is now the default image-generation strategy — Playwright-driven UI mimicry against the Flow editor on a logged-in Pro/Ultra profile (no externally-exposed CDP debug port).
-- New top-level `gflow run --config <file>` command for JSON-described sequential batches (1–50 prompts per file, `--continue-on-error` / `--fail-fast` modes). See [`docs/USAGE.md`](docs/USAGE.md#gflow-run) for the schema.
-- Three runnable example scripts shipped under [`examples/`](examples/README.md) — copy and edit for your own pipelines.
-- See the full [CHANGELOG](CHANGELOG.md#0501) for the security follow-ups (download host allow-list, viewport-only debug screenshots) and the listener-attach race fix.
+- **Image-generation concurrency fix** — concurrent `generate_images` calls are now serialized, and every batch creates a fresh Flow project, eliminating project-reuse races when multiple generations overlap.
+- **Green CI pipeline restored** — fixed a test-job hang (mismatched subprocess mocking in the Real Chrome auth tests) and a `structlog` test-isolation bug.
+- **SonarCloud Quality Gate passing** — every open issue resolved (BLOCKER + CRITICAL test findings, async-hygiene and cognitive-complexity rules); the two remaining Security Hotspots were reviewed and marked Safe.
+- **Repository hardening** — accidentally tracked artefacts removed, `.gitignore` tightened, a CI hygiene gate + pre-commit hooks added, and GitHub Actions migrated to Node.js 24.
+- See the full [CHANGELOG](CHANGELOG.md) for details.
 
 ---
 
@@ -261,7 +262,7 @@ No FastAPI, no Django, no SQLAlchemy. This is a CLI + library — keeping the ru
 │Flow │    │Official│       │ Mock  │
 │(now)│    │ Veo    │       │(tests)│
 │     │    │(planned│       │       │
-│     │    │ v0.5+) │       │       │
+│     │    │ later) │       │       │
 │     │    │        │       │       │
 └──┬──┘    └────────┘       └───────┘
    │
@@ -273,7 +274,7 @@ No FastAPI, no Django, no SQLAlchemy. This is a CLI + library — keeping the ru
 aisandbox-pa.googleapis.com  (Google's private Flow API)
 ```
 
-The `Provider` interface keeps backends interchangeable. v0.1 ships `FlowProvider`. A future release (planned v0.5+) may add `OfficialVeoProvider` (uses [`googleapis/python-genai`](https://github.com/googleapis/python-genai) against `generativelanguage.googleapis.com`) — same code path, swap with `GFLOW_CLI_PROVIDER=official`.
+The `Provider` interface keeps backends interchangeable. v0.1 ships `FlowProvider`. A future release may add `OfficialVeoProvider` (uses [`googleapis/python-genai`](https://github.com/googleapis/python-genai) against `generativelanguage.googleapis.com`) — same code path, swap with `GFLOW_CLI_PROVIDER=official`.
 
 ### Auth strategy
 
@@ -357,7 +358,7 @@ Each `Provider` method has a corresponding test file under `tests/`. New routes 
 3. Bump `__version__` in `src/gflow_cli/__init__.py`.
 4. Tag the commit:
    ```bash
-   git tag v<version>          # for example, v0.4.0 or v0.4.0a3
+   git tag v<version>          # for example, v0.6.0 or v0.6.0a6
    git push origin v<version>
    ```
 5. The [`release.yml`](.github/workflows/release.yml) GitHub Action runs:
@@ -365,9 +366,9 @@ Each `Provider` method has a corresponding test file under `tests/`. New routes 
    - Publishes to PyPI via [Trusted Publishing](https://docs.pypi.org/trusted-publishers/) — no API tokens stored
    - Creates a GitHub Release with the changelog excerpt + built artifacts attached
 
-PEP 440 prerelease tags (`vX.Y.ZaN`, `vX.Y.ZbN`, `vX.Y.ZrcN`) and hyphenated prerelease tags (`vX.Y.Z-alphaN`, `vX.Y.Z-betaN`, `vX.Y.Z-rcN`) auto-flag as prereleases on GitHub. Stable tags such as `v0.4.0` become full GitHub Releases. See [RELEASE.md](RELEASE.md) for the checklist and the prerelease/full-release policy.
+PEP 440 prerelease tags (`vX.Y.ZaN`, `vX.Y.ZbN`, `vX.Y.ZrcN`) and hyphenated prerelease tags (`vX.Y.Z-alphaN`, `vX.Y.Z-betaN`, `vX.Y.Z-rcN`) auto-flag as prereleases on GitHub. Stable tags such as `v0.6.0` become full GitHub Releases. See [RELEASE.md](RELEASE.md) for the checklist and the prerelease/full-release policy.
 
-Install prereleases explicitly with `pip install --pre gflow-cli` or `uvx --from "gflow-cli==0.4.0a2" gflow`.
+Install prereleases explicitly with `pip install --pre gflow-cli` or `uvx --from "gflow-cli==0.6.0a6" gflow`.
 
 ---
 
@@ -388,7 +389,7 @@ Note that the **Google service** this tool talks to has its own terms (Google La
 ## Acknowledgements
 
 - [`edge-tts`](https://github.com/rany2/edge-tts) — design inspiration for community SDKs over private cloud APIs.
-- [`googleapis/python-genai`](https://github.com/googleapis/python-genai) — the official Veo SDK that a future release (v0.5+) may alias.
+- [`googleapis/python-genai`](https://github.com/googleapis/python-genai) — the official Veo SDK that a future release may alias.
 - [Keysight Technologies — *Google Labs – Flow AI with Veo3: A Network Traffic Analysis*](https://www.keysight.com/blogs/en/tech/nwvs/2025/08/04/google-flow-ai-har-analysis) — independent traffic capture that helped validate the captured route patterns.
 
 ---
