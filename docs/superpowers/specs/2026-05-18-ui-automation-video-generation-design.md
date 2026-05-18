@@ -587,3 +587,14 @@ A planning task confirms no other live caller of the retired symbols remains
   the §6 catalog selectors and the §5.3 mechanism choice come from the spike.
 
 Each phase gets its own `PLAN.md` entry (CLAUDE.md: no feature without one).
+
+### 10.4 Phase 0 partial findings (2026-05-18 — spike run vs live Flow)
+
+The first `scripts/smoke_video_editor.py` runs reached the editor (`spike_editor_ready`) and surfaced two findings that **invalidate §6 assumptions**:
+
+- **The Flow UI renders in the account's language, not `?hl=en`.** The test account's Flow is **Portuguese** (`Vídeo`, `Imagem`, `Inicial`, `Final`, `Criar`, "O que você quer criar?") despite `locale="en-US"` + `?hl=en`. §6's decision to drop the Portuguese selector variants is **wrong** — selectors must carry pt-BR text (and en, for other accounts).
+- **Mode switching is a dropdown menu, not a visible tab bar.** A trigger `button[aria-haspopup="menu"]` (shows the current mode — e.g. `Vídeo` + crop icon + `1x`) opens a `role="menu"` containing a `role="tablist"` with `button[role="tab"]` for Imagem/Vídeo (`id="radix-…-trigger-VIDEO"`, `aria-controls="…-content-VIDEO"`, child `<i>play_circle</i>`). Switching mode is a **two-step interaction** (open dropdown → click the tab), not a single click — which is why `VIDEO_MODE_TAB_SELECTORS` missed (the tabs aren't in the DOM until the menu opens). The editor defaults to Video mode. Frames sub-tab slots are `<div type="button" aria-haspopup="dialog">Inicial</div>` / `Final` (a third element pattern).
+
+**Action for §6 + Phase A planning:** rewrite the spike's mode-switch (`_drive_spike` Task-2 block) as a 2-step dropdown interaction; restore Portuguese selector variants in §6; re-derive the Frames/Elementos sub-tab, aspect, and catalog selectors against the live pt-BR DOM. Suggested: `MODE_SWITCH_TRIGGER = button[aria-haspopup='menu']`; video tab = `[role='menu'] [role='tab'][aria-controls*='VIDEO']` / `[role='tab']:has(i:text('play_circle'))`. §10.2 Q5/Q6/Q7 remain **unanswered** — the spike did not reach them.
+
+**Auth (resolved):** the spike requires a profile authenticated via `gflow auth login --browser chrome`; `main()` fails fast otherwise. The `?hl=en` URL does not override account language.
