@@ -17,7 +17,7 @@
 - Requires a **live, authenticated Google AI Ultra/Pro Flow account**. The script opens a headed Chromium against `--profile-dir`; the operator signs in once, manually, in that window (the script polls until detected — no stdin).
 - The spike fires **two real generations** that **spend Veo credits**: one T2V (Task 4) and one I2V (Task 6). Do not run repeatedly without reason.
 - **Re-running cheaply:** Task 4 writes `t2v_generate_response.json` and Task 6 writes `i2v_startonly_response.json` into `--out`. Re-run with `--out <the same dir>` to reuse **both** captured generations and skip the paid steps — useful after a crash. A fresh `--out` always re-spends.
-- **Profile:** `--profile-dir` defaults to a *fresh* dir (`$HOME/gflow-video-spike`), so the first run requires a manual Flow sign-in in the Chromium window — the script polls up to 600s for it.
+- **Profile — real-Chrome auth is MANDATORY.** The spike drives Google's Flow UI; automated / bundled-Chromium browsers are rejected by Google sign-in (the "G12 block"). `--profile-dir` MUST point at a profile authenticated via **real Chrome** — run `gflow auth login --profile <name> --browser chrome` first (it writes the `.gflow_browser_strategy` marker + a complete session). The spike **fails fast** if the profile lacks that marker; you cannot sign in inside the spike's browser. In every command below, replace `$HOME/gflow-video-spike` with your authenticated `gflow` profile dir (e.g. `…/ffroliva/gflow-cli/profile_<name>`).
 - This spike **cannot run in CI** (needs a real session). It is operator-run.
 - All runtime output (screenshots, captured JSON, the findings file) goes under `tmp/` per the repo output-path rule.
 

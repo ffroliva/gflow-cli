@@ -684,6 +684,20 @@ def main() -> None:
     out_dir = args.out or (
         Path("tmp") / "video-spike" / time.strftime("%Y%m%dT%H%M%SZ", time.gmtime())
     )
+    # HARDENING — real-Chrome auth is mandatory. The spike drives Google's Flow
+    # UI; automated / bundled-Chromium browsers are rejected by Google sign-in
+    # (the "G12 block"). channel_for_profile() returns "chrome" only for a
+    # profile authenticated via `gflow auth login --browser chrome`.
+    from gflow_cli.browser_manager import channel_for_profile
+
+    if channel_for_profile(args.profile_dir) != "chrome":
+        raise SystemExit(
+            f"ERROR: profile is not Chrome-strategy authenticated: {args.profile_dir}\n"
+            "The spike drives Google's Flow UI and is rejected by Google sign-in\n"
+            "unless it runs in real Chrome with a complete session. Authenticate first:\n"
+            "  uv run gflow auth login --profile <name> --browser chrome\n"
+            "then pass that profile's dir to --profile-dir."
+        )
     args.profile_dir.mkdir(parents=True, exist_ok=True)
     asyncio.run(run(args.profile_dir, args.prompt, out_dir))
 
