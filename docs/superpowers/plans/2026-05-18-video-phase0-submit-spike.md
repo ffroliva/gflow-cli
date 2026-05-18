@@ -582,7 +582,7 @@ async def _probe_image_attachment(page: Page, out_dir: Path) -> str | None:
         return None
     await frames.click()
     await page.wait_for_timeout(1200)
-    trigger, sel = await _probe(page, "start_frame_trigger", START_FRAME_SELECTORS)
+    trigger, _ = await _probe(page, "start_frame_trigger", START_FRAME_SELECTORS)
     if trigger is None:
         await page.screenshot(path=str(out_dir / "frames_mode.png"), full_page=True)
         _record(out_dir, "- Q1: start-frame trigger NOT FOUND — see frames_mode.png")
