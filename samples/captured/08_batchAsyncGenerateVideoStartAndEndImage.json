@@ -1,0 +1,144 @@
+{
+  "route_name": "08_batchAsyncGenerateVideoStartAndEndImage",
+  "method": "POST",
+  "url": "https://aisandbox-pa.googleapis.com/v1/video:batchAsyncGenerateVideoStartAndEndImage",
+  "request_headers": {
+    "authorization": "Bearer <REDACTED_BEARER>",
+    "content-type": "text/plain;charset=UTF-8"
+  },
+  "request_body": "<see request_body_parsed>",
+  "request_body_parsed": {
+    "mediaGenerationContext": {
+      "batchId": "<BATCH_ID>",
+      "audioFailurePreference": "BLOCK_SILENCED_VIDEOS"
+    },
+    "clientContext": {
+      "projectId": "<PROJECT_ID>",
+      "tool": "PINHOLE",
+      "userPaygateTier": "PAYGATE_TIER_ONE",
+      "sessionId": "<SESSION_ID>",
+      "recaptchaContext": {
+        "token": "<REDACTED_RECAPTCHA_TOKEN>",
+        "applicationType": "RECAPTCHA_APPLICATION_TYPE_WEB"
+      }
+    },
+    "requests": [
+      {
+        "aspectRatio": "VIDEO_ASPECT_RATIO_LANDSCAPE",
+        "textInput": {
+          "structuredPrompt": {
+            "parts": [
+              {
+                "text": "a kitten jumping into a cliff and landing on the top of an eagle "
+              }
+            ]
+          }
+        },
+        "videoModelKey": "veo_3_1_interpolation_lite",
+        "metadata": {},
+        "seed": 3830,
+        "startImage": {
+          "mediaId": "<START_FRAME_MEDIA_ID>",
+          "cropCoordinates": {
+            "top": 0.34244791666666674,
+            "left": 0,
+            "bottom": 0.6575520833333335,
+            "right": 1
+          }
+        },
+        "endImage": {
+          "mediaId": "<END_FRAME_MEDIA_ID>",
+          "cropCoordinates": {
+            "top": 0.009987113402061855,
+            "left": 0,
+            "bottom": 0.9900128865979381,
+            "right": 1
+          }
+        }
+      }
+    ],
+    "useV2ModelConfig": true
+  },
+  "response_status": 200,
+  "response_body_parsed": {
+    "remainingCredits": 650,
+    "workflows": [
+      {
+        "name": "<WORKFLOW_ID>",
+        "metadata": {
+          "displayName": "Kitten jumping into cliff landing",
+          "createTime": "2026-05-18T14:15:27.428293Z",
+          "primaryMediaId": "<GENERATED_MEDIA_ID>",
+          "batchId": "<BATCH_ID>",
+          "updateTime": "2026-05-18T14:15:29.238869Z"
+        },
+        "projectId": "<PROJECT_ID>"
+      }
+    ],
+    "media": [
+      {
+        "name": "<GENERATED_MEDIA_ID>",
+        "projectId": "<PROJECT_ID>",
+        "workflowId": "<WORKFLOW_ID>",
+        "workflowStepId": "CAE",
+        "mediaMetadata": {
+          "createTime": "2026-05-18T14:15:27.428293Z",
+          "mediaTitle": "a kitten jumping into a cliff and landing on the top of an eagle ",
+          "requestData": {
+            "videoGenerationRequestData": {
+              "videoModelControlInput": {
+                "videoModelName": "veo_3_1_interpolation_lite",
+                "videoGenerationMode": "VIDEO_GENERATION_MODE_IMAGE_TO_VIDEO",
+                "videoModelCapabilities": [
+                  "VIDEO_MODEL_CAPABILITY_START_AND_END_IMAGE"
+                ],
+                "videoAspectRatio": "VIDEO_ASPECT_RATIO_LANDSCAPE"
+              },
+              "videoGenerationImageInputs": [
+                {
+                  "mediaGenerationId": "<START_FRAME_MEDIA_ID>",
+                  "imageUsageType": "IMAGE_USAGE_TYPE_START_IMAGE",
+                  "mediaId": "<START_FRAME_MEDIA_ID>"
+                },
+                {
+                  "mediaGenerationId": "<END_FRAME_MEDIA_ID>",
+                  "imageUsageType": "IMAGE_USAGE_TYPE_END_IMAGE",
+                  "mediaId": "<END_FRAME_MEDIA_ID>"
+                }
+              ]
+            },
+            "promptInputs": [
+              {
+                "structuredPrompt": {
+                  "parts": [
+                    {
+                      "text": "a kitten jumping into a cliff and landing on the top of an eagle "
+                    }
+                  ]
+                }
+              }
+            ],
+            "clientPlatform": "CLIENT_PLATFORM_WEB"
+          },
+          "mediaStatus": {
+            "mediaGenerationStatus": "MEDIA_GENERATION_STATUS_SCHEDULED"
+          },
+          "visibility": "PRIVATE"
+        },
+        "video": {
+          "generatedVideo": {
+            "seed": 3830,
+            "prompt": "<root>\n  <context>\n  </context>\n  <instruction>\n    <prompt>a kitten jumping into a cliff and landing on the top of an eagle </prompt>\n  </instruction>\n</root>",
+            "model": "veo_3_1_interpolation_lite",
+            "baseImageMediaGenerationId": "<START_FRAME_MEDIA_ID>",
+            "isLooped": false,
+            "aspectRatio": "VIDEO_ASPECT_RATIO_LANDSCAPE"
+          },
+          "dimensions": {
+            "length": "8s"
+          }
+        }
+      }
+    ]
+  }
+}
