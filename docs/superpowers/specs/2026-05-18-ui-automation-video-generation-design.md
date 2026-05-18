@@ -1,24 +1,44 @@
 # Design: Video Generation via UiAutomationTransport
 
 **Date:** 2026-05-18
-**Status:** Revised post-council — wire format verified against committed captures
-**Branch:** `feat/ui-automation-onboarding-bypass` (captures + this revision on `chore/video-wire-captures`)
+**Status:** Revised (rev 2) — verified against the committed captures *and* the existing image-generation transport
+**Branch:** `feat/ui-automation-onboarding-bypass` (captures + revisions on `chore/video-wire-captures`)
 
 ---
 
-## 0. Revision note (2026-05-18)
+## 0. Revision history
 
-This spec was revised after a 5-dimension council review and after capturing and
-verifying the real wire format. The original draft made two foundational errors:
+**Rev 0 (original draft).** Awaiting council review.
 
-1. It assumed all three video modes shared one `batchAsyncGenerateVideoText`
-   endpoint. **Wrong** — each mode has its own endpoint (§2.1).
-2. It proposed sending images via a `videoGenerationImageInputs` request array.
-   **Wrong** — that array is a response-only echo; requests carry mode-specific
-   `startImage`/`endImage`/`referenceImages` fields (§2.3).
+**Rev 1 (post council review 1).** Corrected the wire format against captured
+HARs: three mode-specific endpoints (not one), `videoGenerationImageInputs` is a
+response-only echo, real status enum, `failureReasons`-based error mapping.
 
-The status enum, error shape, and upload wire were also corrected. Every wire
-claim below is now backed by a sanitized capture committed under
+**Rev 2 (post council review 2) — this revision.** Council re-review found the
+rev-1 §4/§5 code did not match the real `video.py`, and that the phase split
+treated Phase A as independent of an unresolved submit mechanism. Reading
+`src/gflow_cli/api/transports/ui_automation.py` resolved it:
+
+> `UiAutomationTransport` **drives the browser UI**. Flow's own JavaScript
+> builds the generate request, sends it, and mints the reCAPTCHA token on every
+> prompt submission — `UiAutomationTransport.refresh_auth()` is a documented
+> no-op for exactly this reason (`ui_automation.py:865-875`). The transport
+> never constructs or POSTs a generate body.
+
+Consequences folded into this revision:
+
+- `video.py:build_generate_body()` / `model_key()` are **HTTP-transport
+  machinery** (the `bearer`/`sapisidhash`/`evaluate_fetch` strategies, all
+  401-dead for generation). The video feature on `UiAutomationTransport` does
+  **not** use them — so they are out of scope here (§3). This dissolves the
+  rev-1 defects around `Aspect.wire`, the `model_key` signature, body field
+  ownership, and `dict[str, Any]` typing — there is no body to build.
+- The submit-path open questions are **resolved**: video generation mirrors
+  `generate_images` — drive the UI, capture the response (§5, §10.1).
+- `video.py`'s role for this feature narrows to **value objects + response
+  parsers** (§4).
+
+Every wire claim is backed by a sanitized capture committed under
 `samples/captured/`:
 
 | Capture | Mode / purpose |
@@ -30,121 +50,82 @@ claim below is now backed by a sanitized capture committed under
 | `11_batchCheckAsyncVideoGenerationStatus_failed.json` | terminal FAILED |
 | `01_upload_image.json` | image upload |
 
-Design decisions surfaced by the council are tracked in §10.
-
 ---
 
 ## 1. Problem Statement
 
-All `aisandbox-pa.googleapis.com` generation endpoints return HTTP 401 when
-called from the existing HTTP transports (evaluate_fetch, bearer, sapisidhash).
-This was confirmed e2e on 2026-05-18 for both image generation
-(`batchGenerateImages`) and video generation. The `UiAutomationTransport` is the
-sole working path for generation — it drives the real browser so requests carry
-correct auth context. Currently it only handles image generation; video
-generation is unimplemented.
+All `aisandbox-pa.googleapis.com` generation endpoints return HTTP 401 from the
+HTTP transports (evaluate_fetch, bearer, sapisidhash). Confirmed e2e on
+2026-05-18 for both image and video generation. `UiAutomationTransport` — which
+drives a real Chromium browser via Playwright — is the only working generation
+path. It currently handles image generation only; video generation is
+unimplemented.
 
 ---
 
-## 2. Wire Format (verified)
+## 2. Wire Format (verified — for reference)
+
+This section documents the *observed* wire so the response parsers (§4.4) and
+e2e assertions are grounded. **The transport does not build these request
+bodies** — Flow's JavaScript does (§0). The request shapes are documented for
+understanding and for e2e verification; the **response/status shapes are what
+this feature actually parses.**
 
 ### 2.1 Three mode-specific endpoints
 
-The three modes do **not** share one endpoint. Each has its own route under
-`https://aisandbox-pa.googleapis.com/v1/`:
+Each mode has its own route under `https://aisandbox-pa.googleapis.com/v1/`:
 
-| Mode | Endpoint | `videoModelKey` | Capture |
+| Mode | Generate endpoint (fired by Flow's UI) | `videoModelKey` | Capture |
 |---|---|---|---|
 | T2V | `video:batchAsyncGenerateVideoText` | `veo_3_1_t2v_{tier}_{aspect}` | `02` |
 | I2V (Frames) | `video:batchAsyncGenerateVideoStartAndEndImage` | `veo_3_1_interpolation_lite` | `08` |
 | R2V (Elementos) | `video:batchAsyncGenerateVideoReferenceImages` | `veo_3_1_r2v_lite` | `09` |
 
 Status polling: `video:batchCheckAsyncVideoGenerationStatus` (all modes).
-Image upload: `v1/flow/uploadImage`.
+Image upload (when Flow's catalog uploads a local file): `v1/flow/uploadImage`.
 
-### 2.2 Shared request envelope
+### 2.2 Generate request shape (produced by Flow's UI)
 
-All three generate endpoints take the same envelope; only `requests[0]` differs.
-Content-type is `text/plain;charset=UTF-8` (not `application/json`) — same quirk
-as the image transports.
-
-```jsonc
-{
-  "mediaGenerationContext": {
-    "batchId": "<uuid>",
-    "audioFailurePreference": "BLOCK_SILENCED_VIDEOS"
-  },
-  "clientContext": {
-    "projectId": "<uuid>",
-    "tool": "PINHOLE",
-    "userPaygateTier": "PAYGATE_TIER_ONE",
-    "sessionId": "<session marker>",
-    "recaptchaContext": { "token": "<recaptcha>", "applicationType": "RECAPTCHA_APPLICATION_TYPE_WEB" }
-  },
-  "requests": [ { /* see 2.3 */ } ],
-  "useV2ModelConfig": true
-}
-```
-
-### 2.3 Per-request image fields — sent, not echoed
-
-`requests[0]` always carries `aspectRatio`
-(`VIDEO_ASPECT_RATIO_PORTRAIT|LANDSCAPE`), `textInput.structuredPrompt.parts[].text`,
-`videoModelKey`, `metadata: {}`, and `seed` (int). The image inputs are
-**mode-specific** — there is no `videoGenerationImageInputs` array in a request:
+For reference only. All three share an envelope
+(`mediaGenerationContext`, `clientContext` with `recaptchaContext.token`,
+`useV2ModelConfig: true`); only `requests[0]` differs by mode:
 
 ```jsonc
-// T2V — no image field
-
-// I2V  (capture 08)
+// I2V  (capture 08) — startImage required, endImage optional
 "startImage": { "mediaId": "<uuid>", "cropCoordinates": { "top": 0.0, "left": 0.0, "bottom": 1.0, "right": 1.0 } },
-"endImage":   { "mediaId": "<uuid>", "cropCoordinates": { ... } }   // optional; start-only validity is unconfirmed (§10 Q5)
-
+"endImage":   { "mediaId": "<uuid>", "cropCoordinates": { ... } }
 // R2V  (capture 09)
 "referenceImages": [ { "mediaId": "<uuid>", "imageUsageType": "IMAGE_USAGE_TYPE_ASSET" } ]
 ```
 
-`cropCoordinates` are normalized floats (0.0–1.0). A programmatic caller that
-does not crop must still send full-frame `{top:0,left:0,bottom:1,right:1}`.
+`cropCoordinates` are normalized floats the Flow UI sets when a human drags the
+crop box; driven without dragging, the UI applies a default frame. **The CLI
+does not model crop** (§10.2). `videoGenerationImageInputs` appears only in
+*responses* as a normalized server echo — never in a request.
 
-**`videoGenerationImageInputs` is a response-only artifact.** It appears under
-`media[].mediaMetadata.requestData.videoGenerationRequestData` as the server's
-normalized echo — never in a request. Note the request enum
-`IMAGE_USAGE_TYPE_ASSET` is echoed back normalized to `IMAGE_USAGE_TYPE_ASSET_IMAGE`.
+### 2.3 Status request/response
 
-### 2.4 uploadImage
+`video:batchCheckAsyncVideoGenerationStatus` — request body is **just**
+`{ "media": [{ "name": "<mediaUuid>", "projectId": "<uuid>" }] }`, with **no**
+`clientContext` and **no** `recaptchaContext` (captures 10/11). This matters:
+the status endpoint needs no reCAPTCHA token, so it can be polled directly via
+`page.request.post` (§5.5).
 
-`POST v1/flow/uploadImage`, content-type `text/plain;charset=UTF-8`:
-
-```jsonc
-// request
-{ "clientContext": { "projectId": "<uuid>", "tool": "PINHOLE" },
-  "imageBytes": "<base64>", "isUserUploaded": true, "isHidden": false,
-  "mimeType": "image/png", "fileName": "<name>" }
-// response → the asset id to reference downstream is response.media.name
-```
-
-`page.request.post` from the Playwright browser context returns 200 — session
-cookies are attached automatically. One observed upload was ~1.5 MB of base64
-(see §5.2 for the size-limit requirement).
-
-### 2.5 Status lifecycle
-
-`video:batchCheckAsyncVideoGenerationStatus`, request
-`{ "media": [{ "name": "<mediaUuid>", "projectId": "<uuid>" }] }`.
-
-Observed `mediaMetadata.mediaStatus.mediaGenerationStatus` values:
+Observed `mediaMetadata.mediaStatus.mediaGenerationStatus` wire values (all
+carry the `MEDIA_GENERATION_STATUS_` prefix):
 
 ```
-PENDING | SCHEDULED  ->  ACTIVE  ->  SUCCESSFUL | FAILED
+MEDIA_GENERATION_STATUS_PENDING | MEDIA_GENERATION_STATUS_SCHEDULED
+   ->  MEDIA_GENERATION_STATUS_ACTIVE
+   ->  MEDIA_GENERATION_STATUS_SUCCESSFUL | MEDIA_GENERATION_STATUS_FAILED
 ```
 
-`PENDING` was seen for T2V right after submit, `SCHEDULED` for I2V/R2V — treat
-both as "not yet running". The original draft's `QUEUED` and `COMPLETED` do
-**not** exist on the wire; the terminal success value is `SUCCESSFUL`.
+`PENDING` was seen for T2V right after submit, `SCHEDULED` for I2V/R2V — both
+mean "not yet running". `QUEUED` and `COMPLETED` do **not** exist on the wire;
+the terminal success value is `SUCCESSFUL`.
 
-A `FAILED` media carries a structured reason, and its `visibility` flips from
-`PRIVATE` to `FILTERED`:
+A `FAILED` media carries a structured reason; its `visibility` flips
+`PRIVATE → FILTERED`:
 
 ```jsonc
 "mediaStatus": {
@@ -154,35 +135,52 @@ A `FAILED` media carries a structured reason, and its `visibility` flips from
 }
 ```
 
-### 2.6 Generate response & the poll handle
+(`error.code` is an unexplained integer — captured but not consumed by this
+design; error mapping keys on `failureReasons`/`error.message`, §7.)
 
-The generate response returns `media[0].name` — the UUID to poll. T2V responses
-also include a top-level `operations[]` array; I2V/R2V responses do not (just
-`workflows[]` + `media[]`). In all modes **`media[0].name` is the poll handle**.
-`remainingCredits` is returned in both generate and status responses.
+### 2.4 The poll handle
 
-Generated video bytes are **not** inlined in the status response; download is a
-separate `media.getMediaUrlRedirect` call (out of scope — see §3).
+Both generate and status responses carry `media[0].name` — the UUID to poll.
+T2V generate responses also carry a top-level `operations[]` array; I2V/R2V do
+not. Status responses additionally carry `media[].video.operation.name`. In all
+cases `media[0].name` is the handle. `remainingCredits` is returned in generate
+and status responses. Generated video bytes are not inlined — download is a
+separate `media.getMediaUrlRedirect` call (out of scope, §3).
 
 ---
 
 ## 3. Scope
 
-**In:** T2V, I2V (start + optional end), R2V (multiple reference images). All via
-`UiAutomationTransport`. Polling blocks until terminal status.
+**In:** T2V, I2V (start + optional end image), R2V (one or more reference
+images) on `UiAutomationTransport` — by driving the Flow video editor UI and
+capturing the response, mirroring `generate_images`. Polling blocks until
+terminal status.
 
-**Out of scope:** voice elements (experimental, different domain model); video
-download (a separate `media.getMediaUrlRedirect` call — note this is *not* the
-image `fife_url` pattern; the status response carries no video URL); Veo
-tier/quality selection beyond Fast/Lite.
+**Out of scope:**
+- `video.py:build_generate_body()` / `model_key()` — HTTP-transport machinery
+  for the 401-dead `bearer`/`sapisidhash`/`evaluate_fetch` strategies. The
+  committed captures document the correct multi-endpoint shape if that path is
+  ever revived, but this feature does not touch it.
+- Video download (separate `media.getMediaUrlRedirect` call — note this is
+  *not* the image `fife_url` pattern; the status response carries no video URL).
+- Crop control (the UI default frame is used — §10.2).
+- Reusing pre-existing project assets by UUID (v1 attaches local files only;
+  asset reuse is a future extension).
+- Voice elements; Veo tier/quality beyond Fast/Lite.
 
-Implementation is split into phases — see §10.4.
+Implementation is split into a spike + two phases — see §10.3.
 
 ---
 
 ## 4. Domain Changes — `src/gflow_cli/api/video.py`
 
-### 4.1 Mode enum
+For this feature `video.py` provides **value objects and pure response
+parsers** — no body building. The existing `build_generate_body()`,
+`model_key()` and the module wire constants are left untouched (§3).
+
+### 4.1 `Mode` — add `R2V`
+
+The existing enum has `T2V`/`I2V`; add `R2V`:
 
 ```python
 class Mode(StrEnum):
@@ -191,117 +189,62 @@ class Mode(StrEnum):
     R2V = "r2v"   # Elementos / Reference-to-Video
 ```
 
-### 4.2 `GenerateVideoRequest`
+### 4.2 `GenerateVideoRequest` — explicit mode, image inputs, validation
 
-The original draft *derived* `mode` from which fields were populated, which lets
-a frozen value object represent contradictory state (e.g. both reference images
-and a start frame). Make `mode` explicit and validate in `__post_init__`:
+The existing class derives `mode` from `start_asset_uuid` and is T2V/I2V-only.
+Replace it with an explicit-`mode`, validated value object. Image inputs are
+**local file paths** — the transport attaches them through Flow's catalog UI:
 
 ```python
-@dataclass(frozen=True)
-class CropBox:
-    top: float = 0.0
-    left: float = 0.0
-    bottom: float = 1.0
-    right: float = 1.0
-
-@dataclass(frozen=True)
-class ImageRef:
-    media_id: str            # an uploaded asset UUID (uploadImage -> media.name)
-    crop: CropBox = CropBox()
-
 @dataclass(frozen=True)
 class GenerateVideoRequest:
     prompt: str
     mode: Mode = Mode.T2V
     aspect: Aspect = Aspect.PORTRAIT
-    tier: Tier = Tier.FAST
+    tier: Tier = Tier.FAST            # applies to T2V only — see 4.3
     seed: int | None = None
-    # I2V
-    start_image: ImageRef | None = None
-    end_image: ImageRef | None = None
-    # R2V
-    reference_images: tuple[ImageRef, ...] = ()
+    start_image: Path | None = None        # I2V
+    end_image: Path | None = None          # I2V (optional)
+    reference_images: tuple[Path, ...] = ()  # R2V
 
     def __post_init__(self) -> None:
+        if not self.prompt.strip():
+            raise ValueError("prompt must not be empty")
         if self.mode is Mode.T2V and (self.start_image or self.end_image or self.reference_images):
             raise ValueError("T2V request must not carry image inputs")
-        if self.mode is Mode.I2V and self.start_image is None:
-            raise ValueError("I2V request requires a start_image")
-        if self.mode is Mode.I2V and self.reference_images:
-            raise ValueError("I2V request must not carry reference_images")
-        if self.mode is Mode.R2V and not self.reference_images:
-            raise ValueError("R2V request requires at least one reference image")
+        if self.mode is Mode.I2V:
+            if self.start_image is None:
+                raise ValueError("I2V request requires start_image")
+            if self.reference_images:
+                raise ValueError("I2V request must not carry reference_images")
+        if self.mode is Mode.R2V:
+            if not self.reference_images:
+                raise ValueError("R2V request requires at least one reference image")
+            if self.start_image or self.end_image:
+                raise ValueError("R2V request must not carry start/end images")
+        if len(self.reference_images) > MAX_REFERENCE_IMAGES:
+            raise ValueError(f"at most {MAX_REFERENCE_IMAGES} reference images")
+        if self.seed is not None and not (0 <= self.seed <= 2**31 - 1):
+            raise ValueError("seed out of range")
 ```
 
-The legacy `start_asset_uuid` field from the original draft is **dropped** — the
-HTTP transports are 401-dead, so "HTTP transport parity" is moot (§10 Q3).
+`MAX_REFERENCE_IMAGES` — a conservative cap (e.g. 3; confirm against Flow's UI
+during the §10.3 spike). The legacy `start_asset_uuid` field and the derived
+`mode` property are removed. `tier` is retained but only meaningful for T2V
+(I2V/R2V keys are fixed `_lite` — §2.1); document this on the field.
 
-### 4.3 Endpoint + model-key selection
+> `Tier` currently has `FAST`/`QUALITY`; "Lite" in §2.1 is a *model-key* segment,
+> not a tier the caller picks. No `Tier` change needed.
 
-```python
-_ENDPOINT = {
-    Mode.T2V: "video:batchAsyncGenerateVideoText",
-    Mode.I2V: "video:batchAsyncGenerateVideoStartAndEndImage",
-    Mode.R2V: "video:batchAsyncGenerateVideoReferenceImages",
-}
-# captured wire constants — see samples/captured/08, 09
-_I2V_MODEL_KEY = "veo_3_1_interpolation_lite"
-_R2V_MODEL_KEY = "veo_3_1_r2v_lite"
+### 4.3 Aspect note
 
-def model_key(req: GenerateVideoRequest) -> str:
-    if req.mode is Mode.I2V:
-        return _I2V_MODEL_KEY
-    if req.mode is Mode.R2V:
-        return _R2V_MODEL_KEY
-    return f"veo_3_1_t2v_{req.tier.value}_{req.aspect.value}"
-```
+`Aspect` (`PORTRAIT`/`LANDSCAPE`/`SQUARE`) is reused as-is. The transport uses it
+to drive the editor's aspect-ratio control (as `generate_images` does via
+`_configure_generation_settings`) — not to build a wire string. **`SQUARE` is
+unverified for video** (captures show only `PORTRAIT`/`LANDSCAPE`); the §10.3
+spike should confirm whether the video editor offers it.
 
-The I2V/R2V model keys carry no tier/aspect segment, but `aspect` is still sent
-as the separate `aspectRatio` request field and is honored by the server.
-
-### 4.4 `build_generate_body()`
-
-Builds the §2.2 envelope plus the §2.3 mode-specific `requests[0]`:
-
-```python
-def _image(ref: ImageRef) -> dict:
-    return {
-        "mediaId": ref.media_id,
-        "cropCoordinates": {
-            "top": ref.crop.top, "left": ref.crop.left,
-            "bottom": ref.crop.bottom, "right": ref.crop.right,
-        },
-    }
-
-def _request_entry(req: GenerateVideoRequest) -> dict:
-    entry: dict = {
-        "aspectRatio": req.aspect.wire,                 # VIDEO_ASPECT_RATIO_*
-        "textInput": {"structuredPrompt": {"parts": [{"text": req.prompt}]}},
-        "videoModelKey": model_key(req),
-        "metadata": {},
-    }
-    if req.seed is not None:
-        entry["seed"] = req.seed
-    if req.mode is Mode.I2V:
-        entry["startImage"] = _image(req.start_image)
-        if req.end_image is not None:
-            entry["endImage"] = _image(req.end_image)
-    elif req.mode is Mode.R2V:
-        entry["referenceImages"] = [
-            {"mediaId": r.media_id, "imageUsageType": "IMAGE_USAGE_TYPE_ASSET"}
-            for r in req.reference_images
-        ]
-    return entry
-```
-
-`clientContext` (projectId, sessionId, recaptcha token) and
-`mediaGenerationContext.batchId` are injected by the transport, which owns the
-browser/session — `video.py` stays pure (no I/O, no frameworks).
-
-### 4.5 `VideoStatus` value object
-
-The poll result. A frozen VO mirroring §2.5:
+### 4.4 `VideoStatus` value object + status parser
 
 ```python
 @dataclass(frozen=True)
@@ -313,18 +256,40 @@ class VideoStatus:
 
     @property
     def is_terminal(self) -> bool:
-        return self.status in {"MEDIA_GENERATION_STATUS_SUCCESSFUL",
-                               "MEDIA_GENERATION_STATUS_FAILED"}
+        return self.status in {
+            "MEDIA_GENERATION_STATUS_SUCCESSFUL",
+            "MEDIA_GENERATION_STATUS_FAILED",
+        }
+
     @property
     def succeeded(self) -> bool:
         return self.status == "MEDIA_GENERATION_STATUS_SUCCESSFUL"
+
+
+def parse_video_status(response_json: dict, *, media_id: str) -> VideoStatus:
+    """Pure parser over a batchCheckAsyncVideoGenerationStatus response body.
+    Shapes: samples/captured/10 (SUCCESSFUL), 11 (FAILED)."""
 ```
+
+A second pure helper extracts the poll handle from a generate response:
+
+```python
+def media_name_from_generate_response(response_json: dict) -> str:
+    """Return media[0].name. Shapes: samples/captured/02, 08, 09."""
+```
+
+Both are pure (no I/O) and tested directly against the captured JSON.
 
 ---
 
-## 5. Transport Changes — `UiAutomationTransport`
+## 5. Transport Changes
 
-### 5.1 New public method
+The video methods live in a **new module** `src/gflow_cli/api/transports/ui_automation_video.py`
+mixed into `UiAutomationTransport` — `ui_automation.py` is already ~900 lines,
+over the 800-line cap, so video logic must not be added inline. The mixin
+shares `self._page` and `self._generate_lock` with the host class.
+
+### 5.1 `generate_video`
 
 ```python
 async def generate_video(
@@ -337,116 +302,95 @@ async def generate_video(
 ```
 
 Raises `RuntimeError` if `setup()` was not called. Acquires `_generate_lock`
-(shared with `generate_images` — same Page, and image/video calls must serialize
-against each other since they drive the same DOM). Returns a terminal
-`VideoStatus`, or raises per §7.
+(shared with `generate_images` — same Page, same DOM; image and video calls must
+serialize against each other). Mirrors `_generate_images_locked`:
 
-### 5.2 Upload helper — `_upload_asset`
-
-```python
-@staticmethod
-async def _upload_asset(page: Page, project_id: str, image_path: Path) -> str:
-    """Upload a local image into the project. Returns the asset UUID (media.name)."""
+```
+_enter_editor(page)
+  -> switch to Video mode + Frames/Elementos sub-mode for request.mode   (§5.2)
+  -> configure aspect ratio
+  -> for I2V/R2V: attach image(s) via the catalog UI                     (§5.3)
+  -> _attach_video_response_listener(page, project_id)                   (§5.4)
+  -> _send_prompt(page, request.prompt)        # Flow's JS builds+sends+mints reCAPTCHA
+  -> _await_captured(...) -> media_name_from_generate_response(...)
+  -> _poll_video_status(page, media_name, project_id, ...)               (§5.5)
 ```
 
-Builds the §2.4 body and POSTs to `v1/flow/uploadImage` via `page.request.post`
-with content-type `text/plain;charset=UTF-8`. Returns `response["media"]["name"]`.
+### 5.2 Mode switching
 
-**Input validation is mandatory** (council security finding): reuse the bar set
-by `client.py:upload_image` — reject non-existent paths, enforce
-`MAX_IMAGE_BYTES`, run the magic-byte header check *before* reading the whole
-file, and `resolve()` the path. Without this, `_upload_asset` would base64 and
-POST any local file under the user's Google session.
+Switch the editor into the video mode before submit: click the Video tab, then
+the Frames (I2V) or Elementos (R2V) sub-tab. Selectors in §6.
 
-### 5.3 Submit path
+### 5.3 Image attachment (I2V / R2V)
 
-With the wire verified, the flow is:
+For I2V/R2V the local image files must be attached through Flow's catalog UI so
+that Flow's JS includes them in the generate request it builds. The transport
+drives the catalog's file picker (Playwright `file_chooser`) to upload each
+`Path`, then confirms selection.
 
-1. For I2V/R2V, upload each local image via `_upload_asset` (§5.2) → asset UUIDs.
-   (Callers may also pass already-uploaded asset UUIDs directly.)
-2. Build the mode-specific generate body (§4.4).
-3. Switch the Flow UI into the correct mode (Video tab → Frames/Elementos
-   sub-tab) — see §6.
-4. Submit, and capture the `batchAsyncGenerateVideo*` response (§5.4).
-
-**Open decision (§10 Q1):** whether step 4 drives the UI's own submit button (and
-listens for the response) or POSTs the generate endpoint directly via
-`page.request.post`. The original draft's "Strategy B" (direct POST) is no longer
-blocked by the disproven DOM-chip theory, but it requires minting a fresh
-reCAPTCHA token outside the UI. The council recommends **mirroring the existing
-image-generation transport**, which drives the UI and attaches a response
-listener — adopt that path unless a planning spike shows the direct POST is
-simpler and reliable. The two-strategies-then-delete-one plan is dropped: pick
-one path in planning.
+> **Decision deferred to the §10.3 spike:** whether driving the catalog file
+> picker is sufficient, or whether a pre-upload via `page.request.post` to
+> `v1/flow/uploadImage` (capture `01`) followed by selecting the now-existing
+> asset in the catalog is more robust. Both end with the UI referencing the
+> asset; the spike picks one. Either way the **submit** is UI-driven (§0).
 
 ### 5.4 Response capture
 
 ```python
 @staticmethod
 def _attach_video_response_listener(page: Page, *, project_id: str | None = None) -> list[dict]:
-    """Register page.on('response') for the batchAsyncGenerateVideo* routes.
-    Mirrors _attach_batch_response_listener for images. Returns the capture list."""
+    """Register page.on('response') for all three batchAsyncGenerateVideo* routes
+    (§2.1), filtered by project_id. Mirrors _attach_batch_response_listener."""
 ```
 
-The listener must match all three generate routes (§2.1), filtered by
-`project_id` to avoid cross-project capture.
+Attached synchronously before `_send_prompt`, for the race reason documented at
+`ui_automation.py:833-838`.
 
 ### 5.5 Polling — `_poll_video_status`
 
 ```python
 @staticmethod
 async def _poll_video_status(
-    page: Page,
-    media_name: str,
-    project_id: str,
-    *,
-    timeout_s: float = 600.0,
-    poll_interval_s: float = 5.0,
+    page: Page, media_name: str, project_id: str, *,
+    timeout_s: float = 600.0, poll_interval_s: float = 5.0,
 ) -> VideoStatus:
 ```
 
-**Active polling** is the primary mechanism (council finding): call
-`video:batchCheckAsyncVideoGenerationStatus` via `page.request.post` on a fixed
-interval. This is deterministic and independent of whether the Flow SPA keeps
-firing its own status requests (Chromium throttles timers in backgrounded tabs,
-so passive interception cannot be the sole path).
+**Active polling:** call `video:batchCheckAsyncVideoGenerationStatus` via
+`page.request.post` on a fixed interval. This is sound because the status
+request needs no reCAPTCHA token (§2.3) and is deterministic regardless of
+whether Flow's SPA keeps polling (Chromium throttles background-tab timers, so
+passive interception cannot be the sole mechanism). Parse each response with
+`parse_video_status` (§4.4).
 
-Terminal handling per §2.5: `SUCCESSFUL` → return `VideoStatus`; `FAILED` →
-return a `VideoStatus` carrying `failure_reasons`/`error_message` so the caller
-(§7) can map it; timeout → raise `TimeoutError` with `media_name`, last observed
-status, and elapsed time, plus a debug screenshot.
-
-Default timeout is 600 s (Veo generations can exceed 5 minutes);
+Terminal handling: `SUCCESSFUL` → return `VideoStatus`; `FAILED` → return a
+`VideoStatus` carrying `failure_reasons`/`error_message` (the caller maps it,
+§7); timeout → raise `TimeoutError` with `media_name`, last status, elapsed
+time, and a debug screenshot. Default timeout 600 s (Veo can exceed 5 min);
 env-configurable via `GFLOW_CLI_VIDEO_POLL_TIMEOUT`.
 
 ---
 
 ## 6. UI Selectors
 
-Mode-switch selectors are needed regardless of the §5.3 decision (the UI must be
-in the right mode before submit). Icon-first cascades are preferred (locale-stable):
+Mode-switch selectors (needed for every mode):
 
 ```python
 VIDEO_MODE_TAB_SELECTORS = (
     "button:has(i:text('play_circle'))",
     "[role='tab']:has-text('Video')",
 )
-FRAMES_SUBTAB_SELECTORS   = ("[role='tab']:has-text('Frames')", "button:has-text('Frames')")
+FRAMES_SUBTAB_SELECTORS    = ("[role='tab']:has-text('Frames')", "button:has-text('Frames')")
 ELEMENTOS_SUBTAB_SELECTORS = ("[role='tab']:has-text('Elements')", "button:has-text('Elements')")
 ```
 
 `setup()` already forces `locale="en-US"` and `?hl=en`, so Portuguese selector
-variants from the original draft are dropped as dead weight.
+variants are dropped. Catalog/file-picker selectors for §5.3 depend on the spike
+outcome and are specified during Phase B planning.
 
-The catalog/frame-attachment selectors (`Inicial`/`Final`/`+`/upload) are only
-needed if images are attached through the UI. If the §5.3 decision is to attach
-via the `uploadImage` API + request body, those selectors are unnecessary —
-defer them to whichever submit path planning selects.
-
-Selectors in §6 are unverified guesses against the live Flow DOM. Planning must
-include a selector-validation smoke script (analogous to
-`scripts/smoke_worker_style.py`) run against live Flow before the transport unit
-tests are written.
+**All §6 selectors are unverified guesses against the live Flow DOM.** The
+§10.3 spike must include a selector-validation pass (analogous to
+`scripts/smoke_worker_style.py`) before transport unit tests are written.
 
 ---
 
@@ -455,59 +399,54 @@ tests are written.
 | Condition | Raised error |
 |---|---|
 | `setup()` not called | `RuntimeError` |
-| generate/upload/status → 401 | `AuthExpiredError` |
-| generate/upload/status → 403 | `WafRejectionError` |
-| Upload non-200 | `WireFormatError` |
-| Mode tab not found | `RuntimeError` (debug screenshot to `out_dir`) |
-| No terminal status within timeout | `TimeoutError` |
-| Status `FAILED` | mapped by `failureReasons` — see below |
+| generate / status / upload → HTTP 401 | `AuthExpiredError` |
+| generate / status / upload → HTTP 403 | `WafRejectionError` |
+| catalog upload non-200 | `WireFormatError` |
+| Video mode tab not found | `RuntimeError` (debug screenshot to `out_dir`) |
+| no terminal status within `poll_timeout_s` | `TimeoutError` |
+| status `MEDIA_GENERATION_STATUS_FAILED` | mapped by `failureReasons` — below |
 
-A `FAILED` status must **not** be blanket-mapped to `ContentPolicyError`. The
-status carries `failureReasons[]` and `error.message` (§2.5); map by reason:
+A `FAILED` status must **not** be blanket-mapped to `ContentPolicyError`. It
+carries `failureReasons[]` + `error.message` (§2.3); map by reason:
 
 | `failureReasons` value | Raised error | Rationale |
 |---|---|---|
-| `IP_PROHIBITED` (intellectual-property block on an input image) | `ContentPolicyError` *or* a dedicated `InputImageRejectedError` | Not fixable by softening the prompt — distinct remediation |
+| `IP_PROHIBITED` (IP block on an input image) | `ContentPolicyError` | Observed (capture `11`); not fixable by softening the prompt — message should name the input image |
 | content / safety rejections | `ContentPolicyError` | Prompt-softening remediation applies |
 | quota / rate signals | `RateLimitError` | Retry-able (exit 4) |
-| anything else / unknown reason | `WireFormatError` with the raw reason in `discovery=` | Don't guess |
+| anything else / unknown | `WireFormatError`, raw `error`/`failureReasons` in `discovery=` | Don't guess |
 
-Only `IP_PROHIBITED` is observed so far (capture `11`). The full reason
-vocabulary is unknown — planning should treat unrecognised reasons as
-`WireFormatError` and log the raw `error`/`failureReasons` via structlog so the
-taxonomy can be extended from real data.
+Only `IP_PROHIBITED` is observed so far; the full reason vocabulary is unknown
+(§10.2 Q4). Unrecognised reasons are logged via structlog with the raw payload
+so the taxonomy can grow from real data.
 
 ---
 
 ## 8. Testing Strategy
 
-TDD, decomposed into Red→Green→Commit increments (not a big-bang):
+TDD, decomposed into Red→Green→Commit increments:
 
-1. **`video.py` domain** — `Mode`, `CropBox`, `ImageRef`, `GenerateVideoRequest`
-   + `__post_init__` validation, `model_key`, `build_generate_body`,
-   `VideoStatus`. Pure, no I/O — must hit the 90% `api/` coverage floor. Assert
-   bodies byte-match the captured request shapes in `samples/captured/02,08,09`.
-2. **`_upload_asset`** — mock `page.request.post`; verify base64 encoding,
-   headers, the §5.2 validation guards, and `media.name` extraction.
+1. **`video.py` value objects** — `Mode.R2V`, the rewritten
+   `GenerateVideoRequest` + `__post_init__` validation, `VideoStatus`. Pure, no
+   I/O — must hit the 90% `api/` coverage floor.
+2. **Response parsers** — `parse_video_status`, `media_name_from_generate_response`,
+   driven directly by the captured JSON (`samples/captured/02,08,09,10,11`):
+   SUCCESSFUL, FAILED-with-`failureReasons`, and each generate-response shape.
 3. **`_attach_video_response_listener`** — mirrors
    `test_attach_batch_response_listener`.
-4. **`_poll_video_status`** — drive it with the captured status JSON
-   (`samples/captured/10`, `11`): SCHEDULED→ACTIVE→SUCCESSFUL happy path,
-   FAILED-with-`failureReasons` path, timeout path.
-5. **mode switching** — selector-cascade fallback (decompose into
-   individually-mockable helpers so unit coverage is reachable).
+4. **`_poll_video_status`** — fed the captured status JSON: SCHEDULED→ACTIVE→
+   SUCCESSFUL happy path, FAILED path, timeout path.
+5. **Mode switching** — selector-cascade fallback; decompose into individually
+   mockable helpers so unit coverage is reachable.
 6. **`generate_video`** — orchestration, pre-`setup()` guard, `_generate_lock`.
 
 **E2E** (`tests/e2e/test_video_ui_automation_e2e.py`, opt-in via
-`GFLOW_CLI_E2E_PROFILE`): T2V, I2V (start+end), R2V (≥2 references). E2E
-fixtures: a second `test_assets/` image is needed for R2V.
+`GFLOW_CLI_E2E_PROFILE`): T2V, I2V (start+end), R2V (≥2 references). Committing
+the e2e image fixtures (`test_assets/` currently holds only `image_00.png`) is
+an explicit Phase B deliverable.
 
-Mark the existing HTTP-transport I2V e2e tests (`tests/e2e/test_video_i2v_e2e.py`)
-`xfail` — 401 is confirmed.
-
-> The original "implement both strategies and delete the weaker" plan is
-> dropped: a strategy choice that no automated test enforces is not TDD. Pick
-> one submit path in planning (§5.3) and test only that.
+Mark the existing HTTP-transport I2V e2e tests
+(`tests/e2e/test_video_i2v_e2e.py`) `xfail` — 401 is confirmed.
 
 ---
 
@@ -515,64 +454,66 @@ Mark the existing HTTP-transport I2V e2e tests (`tests/e2e/test_video_i2v_e2e.py
 
 | File | Change |
 |---|---|
-| `src/gflow_cli/api/video.py` | `Mode`, `CropBox`, `ImageRef`, rewritten `GenerateVideoRequest` + validation, `_ENDPOINT`, `model_key()`, `build_generate_body()`, `VideoStatus` |
-| `src/gflow_cli/api/transports/ui_automation.py` *(or a new `ui_automation_video.py` — see council architecture note: this file is already over the 800-line cap)* | `generate_video()`, `_upload_asset()`, mode switching, `_attach_video_response_listener()`, `_poll_video_status()` |
-| `src/gflow_cli/cli_video.py` | R2V/Elementos + end-frame flags, or an explicit follow-up phase (§10.4) |
-| `tests/api/test_video.py` | domain unit tests vs captured bodies |
-| `tests/api/transports/test_ui_automation.py` | transport unit tests |
-| `tests/e2e/test_video_ui_automation_e2e.py` | new e2e file |
+| `src/gflow_cli/api/video.py` | add `Mode.R2V`; replace `GenerateVideoRequest`; add `VideoStatus`, `parse_video_status`, `media_name_from_generate_response`, `MAX_REFERENCE_IMAGES`. `build_generate_body`/`model_key` **unchanged** (§3) |
+| `src/gflow_cli/api/transports/ui_automation_video.py` | **new** — `generate_video()`, mode switching, image attachment, `_attach_video_response_listener()`, `_poll_video_status()` (mixin into `UiAutomationTransport`) |
+| `src/gflow_cli/api/transports/ui_automation.py` | small — mix in the video module; new selector constants if not in the new module |
+| `src/gflow_cli/cli_video.py` | I2V/R2V/end-frame flags — **Phase B** (§10.3) |
+| `tests/api/test_video.py` | value-object + parser unit tests vs captured JSON |
+| `tests/api/transports/test_ui_automation*.py` | transport unit tests |
+| `tests/e2e/test_video_ui_automation_e2e.py` | **new** e2e file |
 | `tests/e2e/test_video_i2v_e2e.py` | mark HTTP-transport tests `xfail` |
-| `samples/captured/0[89]_*, 1[01]_*` | committed (this branch) |
-| `PLAN.md` | phase entries (§10.4) |
+| `test_assets/` | add e2e image fixtures — **Phase B** |
+| `samples/captured/0[12]_*, 0[89]_*, 1[01]_*` | committed (this branch) |
+| `PLAN.md` | phase entries (§10.3) |
 | `KNOWN_ISSUES.md` | already updated (2026-05-18) |
 
 ---
 
 ## 10. Decisions & Open Questions
 
-### 10.1 Resolved by the captures
+### 10.1 Resolved
 
-- **Endpoints / wire shape** — settled (§2). Each mode has its own endpoint;
-  requests carry `startImage`/`endImage`/`referenceImages`, not
-  `videoGenerationImageInputs`.
-- **Status enum** — `PENDING|SCHEDULED → ACTIVE → SUCCESSFUL|FAILED` (§2.5).
-- **`FAILED` reason** — `failureReasons[]` + `error.message` exist; error mapping
-  is reason-based (§7).
+- **Wire format** — three mode-specific endpoints; requests carry
+  `startImage`/`endImage`/`referenceImages`; `videoGenerationImageInputs` is a
+  response-only echo; status enum is `PENDING|SCHEDULED → ACTIVE →
+  SUCCESSFUL|FAILED`; `FAILED` carries `failureReasons[]` (§2).
+- **Submit path** — video generation mirrors `generate_images`: drive the UI,
+  capture the response. Flow's JS builds+sends the body and mints reCAPTCHA
+  (`ui_automation.py:865-875`). The transport never POSTs a generate body; the
+  rev-0 "Strategy A vs B" framing is gone.
+- **reCAPTCHA token** — not handled by the transport; Flow's JS mints it on UI
+  submit. The status endpoint needs no token (§2.3), so active polling via
+  `page.request.post` is sound.
+- **Domain shape** — explicit validated `mode`; `build_generate_body`/`model_key`
+  out of scope; `video.py`'s role is value objects + response parsers (§4).
+- **Crop** — not modelled; the UI default frame is used.
 
-### 10.2 Council recommendations adopted in this revision
+### 10.2 Open — answer during planning
 
-- **Drop "Strategy B as a parallel implementation"** — pick one submit path in
-  planning (§5.3), do not ship two.
-- **Active polling** is primary, not passive interception (§5.5).
-- **Drop `start_asset_uuid`** legacy field (§4.2).
-- **`mode` is explicit + validated**, not derived (§4.2).
-
-### 10.3 Open — must be answered before/within planning
-
-1. **Submit path (§5.3):** drive the UI submit + response listener, or direct
-   `page.request.post` of the generate endpoint? Hinges on reCAPTCHA-token
-   minting outside the UI. Recommendation: mirror the image transport; confirm
-   with a spike.
-2. **reCAPTCHA token source:** how the image transport obtains/refreshes its
-   token, and whether the same path is reusable for the video submit.
-3. **Credit-cost guard:** I2V is ~10 credits/video; T2V/R2V costs are
-   unconfirmed. Recommendation: echo a one-line Rich cost estimate before submit
-   with a `--yes` skip — not a hard block.
-4. **`end_image`-only / start-only I2V:** is a start-only I2V request valid, or
-   is `endImage` effectively required? Capture `08` had both; needs e2e
-   confirmation.
-5. **`FAILED` reason vocabulary:** only `IP_PROHIBITED` is observed; the rest of
+1. **Image attachment mechanism (§5.3)** — drive the catalog file picker only,
+   or pre-upload via `uploadImage` then select. Decide in the §10.3 spike.
+2. **Credit-cost guard** — I2V is ~10 credits/video; T2V/R2V costs unconfirmed.
+   Recommendation: echo a one-line Rich cost estimate before submit with a
+   `--yes` skip — not a hard block.
+3. **Start-only I2V** — is an I2V request with `start_image` but no `end_image`
+   accepted? Capture `08` had both. Confirm during the spike; if `end_image` is
+   required, tighten `__post_init__`.
+4. **`FAILED` reason vocabulary** — only `IP_PROHIBITED` observed; the rest of
    the enum is unknown (§7).
+5. **`SQUARE` aspect** — confirm the video editor offers it (§4.3).
+6. **`MAX_REFERENCE_IMAGES`** — confirm Flow's R2V upper bound (§4.2).
 
-### 10.4 Recommended phase split
+### 10.3 Phase split
 
-The council flagged the original single-phase scope as too large. Suggested
-split (each gets a `PLAN.md` entry):
+- **Phase 0 — submit-mechanism spike.** Drive the video editor to fire one T2V
+  `batchAsyncGenerateVideoText` and capture the response, confirming the
+  mechanism mirrors `generate_images`. Validate the §6 selectors against live
+  Flow and answer §10.2 Q1/Q3/Q5/Q6. Small, but it de-risks every later phase —
+  no transport code past the pure-domain layer should be planned until it lands.
+- **Phase A — T2V.** `video.py` value objects + parsers (§4), `generate_video`
+  for T2V, mode switching, active polling. No image inputs. Builds on Phase 0.
+- **Phase B — I2V + R2V.** Catalog image attachment (§5.3), Frames/Elementos
+  handling, `cli_video.py` flags, a BDD feature file, and committed e2e image
+  fixtures.
 
-- **Phase A — T2V.** `video.py` domain changes + active polling + mode switch +
-  `generate_video` for T2V. No uploads, no image inputs. Smallest shippable
-  slice.
-- **Phase B — I2V + R2V.** `_upload_asset` (with validation), image-input bodies,
-  Frames/Elementos UI handling, `cli_video.py` flags + a BDD feature file.
-- **Phase C — spike (optional).** Direct-`page.request.post` submit path, only if
-  Phase A/B planning shows it is worthwhile.
+Each phase gets its own `PLAN.md` entry (CLAUDE.md: no feature without one).
