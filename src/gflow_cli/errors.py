@@ -263,14 +263,18 @@ class SecurityError(GFlowError):
 
 
 class AuthMissingError(GFlowError):
-    """Raised when a strategy lacks a required prerequisite credential
-    (e.g. SAPISID cookie missing from profile dir for SapisidhashTransport)."""
+    """Raised when a profile lacks a usable session for the requested action.
+
+    Covers both a wholly absent session and the issue-#15 case: a profile
+    signed in to Google but not to the Flow app (no NextAuth session). The
+    raising site supplies a message and `remediation_hint` describing which.
+    """
 
     problem_type = "https://gflow-cli.dev/errors/auth-missing"
     title = "Authentication credential missing"
     _default_remediation = (
-        "A required credential (e.g. SAPISID cookie) is absent from the profile. "
-        "Run `gflow auth login --profile <name>` to capture a fresh session."
+        "No usable Flow session was found in the profile. "
+        "Run `gflow auth login --profile <name>` and complete the Flow sign-in."
     )
 
 

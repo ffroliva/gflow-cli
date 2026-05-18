@@ -4,12 +4,14 @@ import asyncio
 from pathlib import Path
 
 import structlog
+from playwright.async_api import Error as PlaywrightError
 from rich.console import Console
 
 from gflow_cli.config import get_settings
 from gflow_cli.errors import AuthLoginTimeoutError, SecurityError
 
 from .base import AuthStrategy
+from .verification import SESSION_API_URL, FlowSessionOutcome, evaluate_session_response
 
 logger = structlog.get_logger(__name__)
 _console = Console()
@@ -64,45 +66,64 @@ class InternalChromiumStrategy(AuthStrategy):
                         "success and exit.\n"
                     )
 
-                # Polling for success (SAPISID cookie + UI signal).
+                # Poll the NextAuth session endpoint live until the Flow app
+                # sign-in completes. Non-AUTHENTICATED outcomes (including a
+                # transient VERIFICATION_ERROR) just mean "keep waiting" — the
+                # user may still be signing in.
                 timeout_at = asyncio.get_running_loop().time() + self._timeout_seconds
                 success = False
 
                 while asyncio.get_running_loop().time() < timeout_at:
                     try:
                         cookies = await ctx.cookies()
-                        has_sapisid = any(c.get("name") == "SAPISID" for c in cookies)
-
-                        if has_sapisid:
-                            # Final confirmation via UI signal
-                            if (
-                                await page.get_by_text("New project").is_visible()
-                                or await page.get_by_text("Your projects").is_visible()
-                            ):
-                                logger.info("auth_login_success_detected", strategy=self.name)
-                                success = True
-                                break
-                    except Exception:
-                        # Browser or context is gone — exit loop without success
+                        google_session = any(c.get("name") == "SAPISID" for c in cookies)
+                        resp = await page.request.get(SESSION_API_URL, timeout=15_000)
+                        status = evaluate_session_response(
+                            resp.status,
+                            await resp.text(),
+                            google_session=google_session,
+                            source=self.name,
+                        )
+                        if status.outcome is FlowSessionOutcome.AUTHENTICATED:
+                            logger.info(
+                                "auth_flow_session_verified",
+                                strategy=self.name,
+                                source=status.source,
+                                user_email=status.user_email,
+                            )
+                            success = True
+                            break
+                    except asyncio.CancelledError:
+                        raise
+                    except PlaywrightError:
+                        # Browser / page / context closed — stop polling.
+                        break
+                    # Unexpected error — log it and stop polling.
+                    except Exception as exc:  # noqa: BLE001
+                        logger.warning(
+                            "auth_flow_session_poll_error",
+                            strategy=self.name,
+                            error=type(exc).__name__,
+                        )
                         break
 
-                    await asyncio.sleep(1)
+                    await asyncio.sleep(3)
                 else:
                     raise AuthLoginTimeoutError(
-                        f"Sign-in not completed within {self._timeout_seconds}s.",
+                        f"Flow sign-in not completed within {self._timeout_seconds}s.",
                         remediation_hint=(
-                            "Run `gflow auth login` again and complete sign-in promptly. "
-                            f"Set GFLOW_CLI_AUTH_LOGIN_TIMEOUT to a higher value if needed "
-                            f"(current: {self._timeout_seconds}s)."
+                            "Run `gflow auth login` again and continue until the Flow "
+                            "editor loads. Set GFLOW_CLI_AUTH_LOGIN_TIMEOUT higher if "
+                            f"needed (current: {self._timeout_seconds}s)."
                         ),
                     )
 
                 if not success:
                     raise AuthLoginTimeoutError(
-                        "Browser closed before authentication was verified.",
+                        "Browser closed before the Flow editor sign-in was verified.",
                         remediation_hint=(
-                            "Complete the full sign-in flow before closing the browser. "
-                            "Run `gflow auth login` to try again."
+                            "Complete the Flow sign-in — until the editor loads — "
+                            "before closing the browser. Run `gflow auth login` to retry."
                         ),
                     )
 
