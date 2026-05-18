@@ -111,17 +111,25 @@ gflow video batch manifest.remaining.tsv
 
 ---
 
-### REST API 401 unauthorized on project creation
+### REST API 401 — all `aisandbox-pa.googleapis.com` generation endpoints blocked
 
 - **Status:** Open (Mitigated) · **Severity:** High · **Affects:** v0.2.0a1+ · **Fixed in:** v0.6.0a5 (planned)
 
-Even with a valid browser session (cookies present), calling Flow's REST API directly via `fetch` or `page.request` (e.g., `project.createProject`) may return HTTP 401. This blocks the CLI's standard "pre-flight" sequence for generations.
+Even with a valid browser session (cookies present), calling Flow's REST API directly via `fetch` or `page.request` against `aisandbox-pa.googleapis.com` returns HTTP 401. This blocks **all** generation routes:
 
-**Root cause:** Google's backend has tightened security on its private trpc/REST endpoints, likely requiring specific headers (`Origin`, `Referer`) or a more complete browser fingerprint that raw script-driven requests lack.
+| Endpoint | Status |
+|---|---|
+| `flowMedia:batchGenerateImages` (image gen) | ❌ 401 |
+| `video:batchAsyncGenerateVideoText` (T2V + I2V) | ❌ 401 (confirmed 2026-05-18 e2e run) |
+| `flow/uploadImage` (image upload for I2V) | ❓ untested (blocked before reaching this step) |
 
-**Workaround:** Use the **UI Mimicry** approach (used by the `scripts/smoke_worker_style.py` diagnostic). This strategy performs actions by clicking real buttons in the Flow editor instead of making raw REST calls.
+`project.createProject` (on `labs.google/fx/api/trpc`) **does** work — it uses a different domain and auth model.
 
-**Roadmap:** v0.6.0a5 will refactor the `ui_automation` transport to handle its own project creation via the UI, bypassing the REST-based `create_project` blocker entirely for image generation.
+**Root cause:** Google's backend has tightened security on `aisandbox-pa.googleapis.com`, requiring a browser fingerprint, `Origin`/`Referer` headers, and reCAPTCHA token that raw script-driven requests cannot provide.
+
+**Workaround:** Use the **UI Mimicry** approach — drive the Flow editor by clicking real buttons so the browser itself issues the generation requests with full auth context.
+
+**Roadmap:** v0.6.0a5 will add video generation (T2V + I2V) to the `UiAutomationTransport`, making it the single transport that covers both image and video generation. I2V requires driving the Flow UI's image-upload button so the browser calls `uploadImage` with its own session cookies.
 
 ---
 
