@@ -1,7 +1,7 @@
 # Design: Video Generation via UiAutomationTransport
 
 **Date:** 2026-05-18
-**Status:** Revised (rev 3) — verified against the committed captures and the existing transport/CLI code
+**Status:** Revised (rev 4) — council consensus reached (review round 4); ready to plan
 **Branch:** `feat/ui-automation-onboarding-bypass` (captures + revisions on `chore/video-wire-captures`)
 
 ---
@@ -33,6 +33,12 @@ body.
 
 Also: the new transport module's mixin typing, the full blast radius of the
 type replacement, and several wording fixes are addressed below.
+
+**Rev 4 (post council review 4) — this revision.** Round 4 reached consensus —
+all four reviewers approve, no blockers or majors. Applied the residual minor
+fixes: §9 now lists `api/dto.py` and `api/__init__.py` in the blast radius, the
+mode-switch test seams are estimated (§8), and the §10.2 questions are tagged by
+how each is resolved (Phase 0 spike vs planning).
 
 Every wire claim is backed by a sanitized capture committed under
 `samples/captured/`:
@@ -481,8 +487,9 @@ TDD, decomposed into Red→Green→Commit increments. Markers per
    SCHEDULED→ACTIVE→SUCCESSFUL happy path, FAILED path, timeout path (full
    `MEDIA_GENERATION_STATUS_*` wire values).
 6. **Mode switching** [`unit`] — selector-cascade fallback; decompose into
-   individually mockable helpers (the seams are named in the Phase A plan) so
-   the 90% `api/` floor on `ui_automation_video.py` is reachable.
+   individually mockable helpers (expect ≥3 seams — video-tab click, sub-tab
+   click, generic selector-cascade — named precisely in the Phase A plan) so the
+   90% `api/` floor on `ui_automation_video.py` is reachable.
 7. **`generate_video`** [`unit`] — orchestration, pre-`setup()` guard,
    `_generate_lock`.
 
@@ -501,11 +508,13 @@ Mark the existing HTTP-transport I2V e2e tests
 | File | Change |
 |---|---|
 | `src/gflow_cli/api/video.py` | add `Mode.R2V`; replace `GenerateVideoRequest`; add `VideoStatus`, `parse_video_status`, `media_name_from_generate_response`, `MAX_REFERENCE_IMAGES`; **remove** `build_generate_body`, `model_key`, wire constants |
-| `src/gflow_cli/api/client.py` | remove `FlowApiClient.generate_video()` (HTTP video path, `client.py:587`) and `VideoOperation` if unused elsewhere |
+| `src/gflow_cli/api/client.py` | remove `FlowApiClient.generate_video()` (HTTP video path, `client.py:587`) |
+| `src/gflow_cli/api/dto.py` | remove the `VideoOperation` dataclass (and its `from_generate_response`) — orphaned once the HTTP path is retired |
+| `src/gflow_cli/api/__init__.py` | drop the `VideoOperation` import + `__all__` entry; the `GenerateVideoRequest` re-export stays (the class survives, §4.2) |
 | `src/gflow_cli/api/transports/ui_automation_video.py` | **new** — `_VideoHost` Protocol, `generate_video()`, mode switching, image attachment, `_attach_video_response_listener()`, `_poll_video_status()` |
 | `src/gflow_cli/api/transports/ui_automation.py` | small — mix in the video module |
 | `src/gflow_cli/cli_video.py` | increment 1: stub video commands; **Phase B**: rewire `t2v`/`i2v`/`batch` to the UI transport, add R2V/end-frame flags (image inputs become file paths, not asset UUIDs — §3) |
-| `scripts/smoke_e2e.py` | update — drops the removed HTTP `generate_video` (`smoke_e2e.py:49`) |
+| `scripts/smoke_e2e.py` | remove the video block (`smoke_e2e.py:49-50`) — the retired HTTP path |
 | `README.md` | update the video-usage section (`README.md:192` references the old flow) |
 | `tests/api/test_video.py` | replace HTTP-body tests with value-object + parser tests vs captured JSON |
 | `tests/api/test_client_generate_video.py` | remove (HTTP video path retired) |
@@ -554,7 +563,8 @@ A planning task confirms no other live caller of the retired symbols remains
 3. **Start-only I2V** — is an I2V request with `start_image` but no `end_image`
    accepted? Capture `08` had both. Phase 0 spike; affects increment 2
    validation (§8).
-4. **`FAILED` reason vocabulary** — only `IP_PROHIBITED` observed (§7).
+4. **`FAILED` reason vocabulary** — only `IP_PROHIBITED` observed (§7). Not
+   spike-blocking — the taxonomy grows from production data (planning).
 5. **`SQUARE` aspect** — confirm the video editor offers it (§4.3). Phase 0 spike.
 6. **`MAX_REFERENCE_IMAGES`** — confirm Flow's R2V upper bound (§4.2). Phase 0 spike.
 7. **T2V poll handle** — confirm `media[0].name` (not `operations[0].operation.name`
