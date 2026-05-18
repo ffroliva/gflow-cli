@@ -1,43 +1,62 @@
 # Video Phase 0: Submit-Mechanism Spike — Implementation Plan
 
 > **For agentic workers:** REQUIRED SUB-SKILL: Use superpowers:subagent-driven-development (recommended) or superpowers:executing-plans to implement this plan task-by-task. Steps use checkbox (`- [ ]`) syntax for tracking.
+>
+> **Rev 2** — revised after a 4-dimension council review (code executability / spike methodology / plan format / risk & cost). Fixes a Task 1 signature crash, makes the Q7 poll-handle test conclusive, attaches the response listener before submit, guards rejected generations, and makes findings durable.
 
 **Goal:** Verify against live Flow that video generation can be driven through the editor UI the way `generate_images` already is, and answer the open questions (spec §10.2 Q1, Q3, Q5, Q6, Q7) that gate Phase A and Phase B.
 
-**Architecture:** A standalone diagnostic script `scripts/smoke_video_editor.py`, modeled on the existing `scripts/smoke_worker_style.py`. It drives a real authenticated Flow session, probes the video-editor selectors, fires one T2V generation, captures the `batchAsyncGenerateVideoText` response, and polls its status. This is a **spike** — the script is diagnostic tooling like the other `scripts/smoke_*.py` / `scripts/debug_*.py`, so (consistent with those files) it carries **no unit tests**. There are **no `src/` changes** in Phase 0. Verification is operator observation of structured logs against live Flow.
+**Architecture:** A standalone diagnostic script `scripts/smoke_video_editor.py`, modeled on the existing `scripts/smoke_worker_style.py`. It drives a real authenticated Flow session, probes the video-editor selectors, fires one T2V generation, verifies the status poll handle, and probes image attachment. This is a **spike** — the script is diagnostic tooling like the other `scripts/smoke_*.py` / `scripts/debug_*.py`, so (consistent with those files) it carries **no unit tests**. There are **no `src/` changes** in Phase 0. Verification is operator observation of structured logs against live Flow; observations are appended to a durable findings file as each task runs.
 
-**Tech Stack:** Python 3.11+, Playwright (async), structlog, `uv`. The harness is reused verbatim from `scripts/smoke_worker_style.py`.
+**Tech Stack:** Python 3.11+, Playwright (async), structlog, `uv`. The login/editor harness is reused verbatim from `scripts/smoke_worker_style.py`.
 
 ---
 
 ## Prerequisites & cost — READ FIRST
 
 - Requires a **live, authenticated Google AI Ultra/Pro Flow account**. The script opens a headed Chromium against `--profile-dir`; the operator signs in once, manually, in that window (the script polls until detected — no stdin).
-- Task 4 fires **one real T2V generation — this spends Veo credits**. Task 6's optional I2V run spends more. Do not run repeatedly without reason.
+- The spike fires **two real generations** that **spend Veo credits**: one T2V (Task 4) and one I2V (Task 6). Do not run repeatedly without reason.
+- **Re-running cheaply:** Task 4 writes `t2v_generate_response.json` into `--out`. Re-run with `--out <the same dir>` to reuse that captured generation and **skip the paid T2V step** — useful after a crash in Task 5/6.
 - This spike **cannot run in CI** (needs a real session). It is operator-run.
-- All runtime output (screenshots, captured JSON) goes under `tmp/` per the repo output-path rule.
+- All runtime output (screenshots, captured JSON, the findings file) goes under `tmp/` per the repo output-path rule.
 
 ## File Structure
 
 | File | Responsibility |
 |---|---|
-| `scripts/smoke_video_editor.py` | **New.** Diagnostic spike script — drives the Flow video editor, probes selectors, fires + polls one T2V generation. Built incrementally across Tasks 1-6. |
-| `docs/superpowers/specs/2026-05-18-ui-automation-video-generation-design.md` | **Modified** in Task 6 — §10.2 questions Q1/Q3/Q5/Q6/Q7 marked resolved with the spike's answers. |
+| `scripts/smoke_video_editor.py` | **New.** Diagnostic spike script — drives the Flow video editor, probes selectors, fires + verifies one T2V generation, probes image attachment + one I2V generation. Built incrementally across Tasks 1-6. |
+| `tmp/video-spike/<utc>/phase0_findings.md` | **Generated at runtime.** Durable findings log — each task appends to it so observations survive a mid-run crash. |
+| `docs/superpowers/specs/2026-05-18-ui-automation-video-generation-design.md` | **Modified** in Task 6 — §10.2 questions Q1/Q3/Q5/Q6/Q7 marked resolved with the spike's answers; §6 selectors updated to verified values. |
 
 The harness functions are reused verbatim from `scripts/smoke_worker_style.py`; only the video-specific drive logic is new.
 
 ---
 
-## Task 1: Scaffold the diagnostic script harness
+## Task 1: Scaffold the diagnostic script
 
 **Files:**
 - Create: `scripts/smoke_video_editor.py`
 
-- [ ] **Step 1: Create the file with the reused harness**
+- [ ] **Step 1: Create the file — reused harness**
 
-Create `scripts/smoke_video_editor.py`. Copy these symbols **verbatim** from `scripts/smoke_worker_style.py` (they are unchanged): the imports block (`argparse`, `asyncio`, `time`, `pathlib.Path`, `httpx`→drop, `structlog`, `playwright.async_api` — keep `BrowserContext, Page, Response, async_playwright`), `log`, `FLOW_URL`, `PROMPT_INPUT_SELECTORS`, `SUBMIT_BUTTON_SELECTORS`, `_check_logged_in`, `_ensure_logged_in_to_flow`, `_enter_editor`, `_send_prompt`, `run`, and `main`. Add `import json` to the imports. In `run`, replace the `_drive(...)` call with `_drive_spike(...)`.
+Create `scripts/smoke_video_editor.py`. Copy these symbols **verbatim** from `scripts/smoke_worker_style.py` (unchanged): `log`, `FLOW_URL`, `PROMPT_INPUT_SELECTORS`, `SUBMIT_BUTTON_SELECTORS`, `_check_logged_in`, `_ensure_logged_in_to_flow`, `_enter_editor`, `_send_prompt`. Do **not** copy `_drive`, `run`, `main`, `_download`, `_extract_image_urls`, `_capture_batch_response`, `_configure_generation_settings`, `GEN_SETTINGS_BUTTON_SELECTORS`, `ASPECT_RATIO_MAP`, `COUNT_TAB_MAP`, `NEW_PROJECT_SELECTORS` (— `_enter_editor` already carries `NEW_PROJECT_SELECTORS`'s use; copy `NEW_PROJECT_SELECTORS` too since `_enter_editor` references it).
 
-Then add the new module docstring at the top and a stub drive function:
+Use exactly this imports block (note: `httpx` is **not** imported — nothing copied uses it; `json` **is**):
+
+```python
+from __future__ import annotations
+
+import argparse
+import asyncio
+import json
+import time
+from pathlib import Path
+
+import structlog
+from playwright.async_api import BrowserContext, Page, Response, async_playwright
+```
+
+Add this module docstring at the very top of the file:
 
 ```python
 """Spike — drive the Flow VIDEO editor and answer the Phase 0 open questions.
@@ -45,9 +64,11 @@ Then add the new module docstring at the top and a stub drive function:
 Diagnostic tooling (like scripts/smoke_worker_style.py) for the video-generation
 spike. Modeled on smoke_worker_style.py: launch_persistent_context, manual
 sign-in poll, gallery -> editor. Then probes the video-mode selectors, fires one
-T2V generation, captures batchAsyncGenerateVideoText, and polls the result.
+T2V generation, verifies the status poll handle, and probes image attachment.
 
-SPENDS CREDITS (one T2V generation). Requires a live Flow account.
+SPENDS CREDITS — one T2V generation (Task 4) and one I2V generation (Task 6).
+Re-run with --out <prior dir> to reuse a captured generation and skip the paid
+T2V step. Requires a live Flow account.
 
 Usage::
 
@@ -55,6 +76,18 @@ Usage::
         --profile-dir ~/gflow-video-spike \\
         --prompt "a calm forest at dawn, cinematic"
 """
+```
+
+- [ ] **Step 2: Add the durable findings recorder and the drive stub**
+
+Append to `scripts/smoke_video_editor.py`:
+
+```python
+def _record(out_dir: Path, line: str) -> None:
+    """Append a line to the durable findings file so observations survive a crash."""
+    out_dir.mkdir(parents=True, exist_ok=True)
+    with (out_dir / "phase0_findings.md").open("a", encoding="utf-8") as f:
+        f.write(line + "\n")
 
 
 async def _drive_spike(context: BrowserContext, prompt_text: str, out_dir: Path) -> None:
@@ -62,16 +95,76 @@ async def _drive_spike(context: BrowserContext, prompt_text: str, out_dir: Path)
     await _ensure_logged_in_to_flow(page, out_dir)
     await _enter_editor(page, out_dir)
     project_id = page.url.split("/project/")[1].split("?")[0]
+    _record(out_dir, f"# Phase 0 spike findings\n\nproject_id: {project_id}\n")
     log.info("spike_editor_ready", project_id=project_id, url=page.url)
 ```
 
-- [ ] **Step 2: Run it against live Flow**
+- [ ] **Step 3: Add the trimmed `run` and `main`**
+
+Append to `scripts/smoke_video_editor.py`. These are **new** (not copied) — trimmed for the spike: no `expected_count`/`aspect_ratio`, no `--count`/`--aspect-ratio`:
+
+```python
+async def run(profile_dir: Path, prompt_text: str, out_dir: Path) -> None:
+    """Drive the spike using Playwright's persistent context (Worker pattern)."""
+    log.info("launching_persistent_context", profile_dir=str(profile_dir))
+    async with async_playwright() as pw:
+        from gflow_cli.browser_manager import channel_for_profile
+        channel = channel_for_profile(profile_dir)
+        context = await pw.chromium.launch_persistent_context(
+            str(profile_dir),
+            headless=False,
+            viewport={"width": 1280, "height": 800},
+            locale="en-US",
+            channel=channel,
+            ignore_default_args=["--enable-automation", "--no-sandbox"],
+            args=["--disable-blink-features=AutomationControlled"],
+        )
+        await context.add_init_script("""
+            Object.defineProperty(navigator, 'webdriver', { get: () => undefined });
+            window.chrome = { runtime: {} };
+            Object.defineProperty(navigator, 'plugins', { get: () => [1, 2, 3, 4, 5] });
+            Object.defineProperty(navigator, 'languages', { get: () => ['en-US', 'en'] });
+        """)
+        try:
+            await _drive_spike(context, prompt_text, out_dir)
+        finally:
+            await context.close()
+
+
+def main() -> None:
+    parser = argparse.ArgumentParser(description=__doc__)
+    parser.add_argument(
+        "--profile-dir", type=Path, default=Path.home() / "gflow-video-spike",
+        help="Playwright Chromium user-data-dir (default: $HOME/gflow-video-spike)",
+    )
+    parser.add_argument(
+        "--prompt", default="a calm forest at dawn, cinematic",
+        help="T2V prompt to generate",
+    )
+    parser.add_argument(
+        "--out", type=Path, default=None,
+        help="Output dir (default: tmp/video-spike/<utc>). Re-pass a prior dir "
+        "to reuse its captured T2V generation and skip the paid generate step.",
+    )
+    args = parser.parse_args()
+    out_dir = args.out or (
+        Path("tmp") / "video-spike" / time.strftime("%Y%m%dT%H%M%SZ", time.gmtime())
+    )
+    args.profile_dir.mkdir(parents=True, exist_ok=True)
+    asyncio.run(run(args.profile_dir, args.prompt, out_dir))
+
+
+if __name__ == "__main__":
+    main()
+```
+
+- [ ] **Step 4: Run it against live Flow**
 
 Run: `uv run python scripts/smoke_video_editor.py --profile-dir $HOME/gflow-video-spike`
 Sign in inside the Chromium window when prompted.
-Expected: log line `spike_editor_ready` with a `project_id` and a `/project/<uuid>` URL.
+Expected: log line `spike_editor_ready` with a `project_id` and a `/project/<uuid>` URL; `tmp/video-spike/<utc>/phase0_findings.md` created.
 
-- [ ] **Step 3: Commit**
+- [ ] **Step 5: Commit**
 
 ```bash
 git add scripts/smoke_video_editor.py
@@ -87,7 +180,7 @@ git commit -m "chore(spike): scaffold video-editor diagnostic script"
 
 - [ ] **Step 1: Add the selector-probe helper and video selectors**
 
-Add to `scripts/smoke_video_editor.py`:
+Append to `scripts/smoke_video_editor.py`:
 
 ```python
 # Spec §6 — unverified guesses; this spike confirms which (if any) match.
@@ -120,30 +213,31 @@ async def _probe(page: Page, label: str, candidates: tuple[str, ...], timeout_ms
     return None, None
 ```
 
-- [ ] **Step 2: Extend `_drive_spike` to probe and switch to video mode**
+- [ ] **Step 2: Extend `_drive_spike` to switch to video mode and probe sub-tabs**
 
-Append to `_drive_spike` after `log.info("spike_editor_ready", ...)`:
+Append to `_drive_spike`, after `log.info("spike_editor_ready", ...)`:
 
 ```python
-    video_tab, _ = await _probe(page, "video_mode_tab", VIDEO_MODE_TAB_SELECTORS)
+    video_tab, video_sel = await _probe(page, "video_mode_tab", VIDEO_MODE_TAB_SELECTORS)
     if video_tab is None:
         await page.screenshot(path=str(out_dir / "no_video_tab.png"), full_page=True)
+        _record(out_dir, "- video_mode_tab: NOT FOUND — see no_video_tab.png; update §6")
         raise RuntimeError("Video mode tab not found — see screenshot, update §6 selectors")
     await video_tab.click()
     await page.wait_for_timeout(1500)
     log.info("video_mode_entered")
 
-    frames, _ = await _probe(page, "frames_subtab", FRAMES_SUBTAB_SELECTORS)
-    elementos, _ = await _probe(page, "elementos_subtab", ELEMENTOS_SUBTAB_SELECTORS)
-    log.info("subtab_probe_done", frames_found=frames is not None,
-             elementos_found=elementos is not None)
+    _, frames_sel = await _probe(page, "frames_subtab", FRAMES_SUBTAB_SELECTORS)
+    _, elementos_sel = await _probe(page, "elementos_subtab", ELEMENTOS_SUBTAB_SELECTORS)
+    _record(out_dir, f"- §6 video_mode_tab selector: {video_sel}")
+    _record(out_dir, f"- §6 frames_subtab selector: {frames_sel}")
+    _record(out_dir, f"- §6 elementos_subtab selector: {elementos_sel}")
 ```
 
-- [ ] **Step 3: Run and record**
+- [ ] **Step 3: Run and verify**
 
 Run: `uv run python scripts/smoke_video_editor.py --profile-dir $HOME/gflow-video-spike`
-Expected: `selector_matched` for `video_mode_tab`; `subtab_probe_done` shows whether Frames/Elementos were found.
-Record the winning selectors (or "none — DOM differs") in a scratch note for Task 6's findings write-up. If a probe fails, inspect `tmp/.../no_video_tab.png` and the live DOM and note the correct selector.
+Expected: `selector_matched` for `video_mode_tab`; `video_mode_entered`; the three `§6 ... selector:` lines appended to `phase0_findings.md`. If a probe fails (`selector_probe_failed`), inspect `no_video_tab.png` and the live DOM, note the correct selector, and update `VIDEO_MODE_TAB_SELECTORS` / `FRAMES_SUBTAB_SELECTORS` / `ELEMENTOS_SUBTAB_SELECTORS` before continuing.
 
 - [ ] **Step 4: Commit**
 
@@ -159,47 +253,60 @@ git commit -m "chore(spike): probe video-mode tab and Frames/Elementos sub-tabs"
 **Files:**
 - Modify: `scripts/smoke_video_editor.py`
 
-- [ ] **Step 1: Add the aspect-ratio probe**
+- [ ] **Step 1: Add a multi-shape aspect probe**
 
-Add to `scripts/smoke_video_editor.py`:
+The video editor may render aspect ratio as tabs, menu items, or plain buttons — probing only `[role="tab"]` risks a false negative. Append to `scripts/smoke_video_editor.py`:
 
 ```python
-# Reuse the image-editor settings trigger; confirm it exists for video too.
-GEN_SETTINGS_BUTTON_SELECTORS = (
+# The settings trigger shows the current ratio icon; enumerate the icon names.
+ASPECT_SETTINGS_TRIGGER_SELECTORS = (
     "button:has(i.google-symbols:text('crop_16_9'))",
     "button:has(i.google-symbols:text('crop_9_16'))",
     "button:has(i.google-symbols:text('crop_square'))",
+    "button:has(i.google-symbols:text('aspect_ratio'))",
 )
-ASPECT_TAB_CANDIDATES = {"portrait": "9:16", "landscape": "16:9", "square": "1:1"}
+ASPECT_OPTIONS = {"portrait": "9:16", "landscape": "16:9", "square": "1:1"}
 
 
-async def _probe_aspect_options(page: Page) -> None:
-    """Open the settings panel and log which aspect-ratio tabs the video editor offers."""
-    btn, _ = await _probe(page, "gen_settings_button", GEN_SETTINGS_BUTTON_SELECTORS)
+async def _probe_aspect_options(page: Page, out_dir: Path) -> None:
+    """Open the settings panel; report which aspect ratios the video editor offers
+    and the control shape (tab / menuitem / button)."""
+    btn, _ = await _probe(page, "aspect_settings_trigger", ASPECT_SETTINGS_TRIGGER_SELECTORS)
     if btn is None:
-        log.warning("aspect_probe_skipped", reason="settings button not found in video mode")
+        log.warning("aspect_probe_skipped", reason="settings trigger not found in video mode")
+        _record(out_dir, "- Q5 aspect: settings trigger NOT FOUND — probe inconclusive")
         return
     await btn.click()
-    await page.wait_for_timeout(600)
-    for name, text in ASPECT_TAB_CANDIDATES.items():
-        count = await page.locator(f'[role="tab"]:has-text("{text}")').count()
-        log.info("aspect_option_probe", aspect=name, tab_text=text, present=count > 0)
+    await page.wait_for_timeout(700)
+    await page.screenshot(path=str(out_dir / "aspect_panel.png"), full_page=True)
+    for name, text in ASPECT_OPTIONS.items():
+        shapes = {
+            "tab": f'[role="tab"]:has-text("{text}")',
+            "menuitem": f'[role="menuitem"]:has-text("{text}")',
+            "button": f'button:has-text("{text}")',
+        }
+        found_as = []
+        for shape, sel in shapes.items():
+            if await page.locator(sel).count() > 0:
+                found_as.append(shape)
+        log.info("aspect_option_probe", aspect=name, tab_text=text, found_as=found_as)
+        _record(out_dir, f"- Q5 aspect {name} ({text}): present as {found_as or 'NOT FOUND'}")
     await page.keyboard.press("Escape")
     await page.wait_for_timeout(400)
 ```
 
 - [ ] **Step 2: Call it from `_drive_spike`**
 
-Append to `_drive_spike` after the sub-tab probe:
+Append to `_drive_spike`:
 
 ```python
-    await _probe_aspect_options(page)
+    await _probe_aspect_options(page, out_dir)
 ```
 
-- [ ] **Step 3: Run and record**
+- [ ] **Step 3: Run and verify**
 
 Run: `uv run python scripts/smoke_video_editor.py --profile-dir $HOME/gflow-video-spike`
-Expected: three `aspect_option_probe` lines. Record `present` for each — especially `square`. **This answers §10.2 Q5.**
+Expected: three `aspect_option_probe` lines + `Q5 aspect ...` findings lines; `aspect_panel.png` written. **This answers §10.2 Q5** — `square` present (as any shape) → SQUARE is offered for video; absent everywhere → it is not. Cross-check against `aspect_panel.png` before trusting a negative.
 
 - [ ] **Step 4: Commit**
 
@@ -215,9 +322,9 @@ git commit -m "chore(spike): probe video aspect-ratio options"
 **Files:**
 - Modify: `scripts/smoke_video_editor.py`
 
-- [ ] **Step 1: Add the generate-response listener**
+- [ ] **Step 1: Add the response listener (attached BEFORE submit)**
 
-Add to `scripts/smoke_video_editor.py`:
+The listener must be registered before the prompt is submitted, or a fast response is missed (mirrors `ui_automation.py:833-838`). Append to `scripts/smoke_video_editor.py`:
 
 ```python
 VIDEO_GENERATE_ROUTES = (
@@ -227,9 +334,9 @@ VIDEO_GENERATE_ROUTES = (
 )
 
 
-async def _capture_video_generate(page: Page, timeout_s: int = 150) -> dict:
-    """Capture the first batchAsyncGenerateVideo* response. Mirrors the
-    _capture_batch_response pattern in smoke_worker_style.py."""
+def _attach_video_listener(page: Page):
+    """Register a page response listener for the batchAsyncGenerateVideo* routes
+    BEFORE the prompt is submitted. Returns (captured_list, handler)."""
     captured: list[dict] = []
 
     async def on_response(response: Response) -> None:
@@ -243,10 +350,15 @@ async def _capture_video_generate(page: Page, timeout_s: int = 150) -> dict:
             log.warning("video_generate_parse_failed", error=str(e))
 
     page.on("response", on_response)
+    return captured, on_response
+
+
+async def _await_capture(page: Page, captured: list[dict], handler, timeout_s: int = 150) -> dict:
+    """Wait for the first captured video-generate response, then detach the listener."""
     deadline = time.monotonic() + timeout_s
     while time.monotonic() < deadline and not captured:
         await asyncio.sleep(0.5)
-    page.remove_listener("response", on_response)
+    page.remove_listener("response", handler)
     if not captured:
         raise TimeoutError(
             f"No batchAsyncGenerateVideo* response within {timeout_s}s — "
@@ -255,148 +367,253 @@ async def _capture_video_generate(page: Page, timeout_s: int = 150) -> dict:
     return captured[0]
 ```
 
-- [ ] **Step 2: Fire T2V in `_drive_spike` and save the response**
+- [ ] **Step 2: Fire T2V in `_drive_spike` (or reuse a prior capture); guard a rejected response**
 
-Append to `_drive_spike` (the editor is already in video mode from Task 2; T2V is the default sub-mode — no image inputs):
+Append to `_drive_spike`. The editor is already in video mode (Task 2); T2V is the default sub-mode (no image inputs). A non-200 / no-`media` response is **recorded data, not a crash**:
 
 ```python
-    # T2V: video mode is active; send the prompt and capture the response.
-    await _send_prompt(page, prompt_text, out_dir)
-    generate_resp = await _capture_video_generate(page)
-    out_dir.mkdir(parents=True, exist_ok=True)
-    (out_dir / "t2v_generate_response.json").write_text(
-        json.dumps(generate_resp, indent=2), encoding="utf-8")
-    body = generate_resp["body"]
-    media_name = body["media"][0]["name"]
-    log.info("t2v_generated", status=generate_resp["status"], media_name=media_name,
-             remaining_credits=body.get("remainingCredits"),
-             route=generate_resp["url"].split("?")[0].rsplit("/", 1)[-1])
+    resp_path = out_dir / "t2v_generate_response.json"
+    if resp_path.exists():
+        log.info("t2v_generate_reused", path=str(resp_path))
+        generate_resp = json.loads(resp_path.read_text(encoding="utf-8"))
+    else:
+        captured, handler = _attach_video_listener(page)
+        await _send_prompt(page, prompt_text, out_dir)
+        generate_resp = await _await_capture(page, captured, handler)
+        resp_path.write_text(json.dumps(generate_resp, indent=2), encoding="utf-8")
+
+    body = generate_resp.get("body", {})
+    http_status = generate_resp.get("status")
+    media = body.get("media") or []
+    media_name = media[0].get("name") if media else None
+    route = generate_resp.get("url", "").split("?")[0].rsplit("/", 1)[-1]
+
+    if http_status != 200 or not media_name:
+        failure_reasons: list[str] = []
+        for m in media:
+            ms = (m.get("mediaMetadata") or {}).get("mediaStatus") or {}
+            failure_reasons += ms.get("failureReasons") or []
+        log.warning("t2v_generate_rejected", http_status=http_status,
+                     error=body.get("error"), failure_reasons=failure_reasons)
+        _record(out_dir, f"- T2V generate REJECTED: http={http_status} "
+                         f"reasons={failure_reasons} error={body.get('error')}")
+    else:
+        log.info("t2v_generated", http_status=http_status, route=route,
+                 media_name=media_name, remaining_credits=body.get("remainingCredits"))
+        _record(out_dir, f"- T2V generate OK: route={route} media_name={media_name} "
+                         f"credits_left={body.get('remainingCredits')}")
 ```
 
 - [ ] **Step 3: Run (SPENDS CREDITS) and verify**
 
 Run: `uv run python scripts/smoke_video_editor.py --profile-dir $HOME/gflow-video-spike --prompt "a calm forest at dawn, cinematic"`
-Expected: `video_generate_captured` with `status=200`; `t2v_generated` logs a `media_name` and the route ends in `batchAsyncGenerateVideoText`. Confirms the UI-drive mechanism works for video. If the route differs, record it.
+Expected: `video_generate_captured` (`status=200`); `t2v_generated` with a `media_name` and `route=batchAsyncGenerateVideoText`. This confirms the UI-drive mechanism works for video. If `t2v_generate_rejected` fires instead, that is still a valid Phase 0 finding — record the `failure_reasons` and continue (Task 5 will skip cleanly).
 
 - [ ] **Step 4: Commit**
 
 ```bash
 git add scripts/smoke_video_editor.py
-git commit -m "chore(spike): fire one T2V generation and capture the response"
+git commit -m "chore(spike): fire one T2V generation with listener attached before submit"
 ```
 
 ---
 
-## Task 5: Verify the T2V poll handle (answers Q7)
+## Task 5: Verify the T2V poll handle — test all three candidates (answers Q7)
 
 **Files:**
 - Modify: `scripts/smoke_video_editor.py`
 
-- [ ] **Step 1: Add the status poll**
+A bare 200 from the status endpoint only proves an id is *valid*, not that it is *the* poll handle. Spec §2.4 names three candidates; the spike POSTs each and reports which returns a populated status.
 
-Add to `scripts/smoke_video_editor.py`:
+- [ ] **Step 1: Add the status-poll helper**
+
+Append to `scripts/smoke_video_editor.py`:
 
 ```python
 STATUS_URL = ("https://aisandbox-pa.googleapis.com/v1/"
               "video:batchCheckAsyncVideoGenerationStatus")
 
 
-async def _check_status(page: Page, media_name: str, project_id: str) -> dict:
+async def _check_status(page: Page, candidate_id: str, project_id: str) -> dict:
     """POST batchCheckAsyncVideoGenerationStatus via the browser context
-    (no reCAPTCHA token needed — spec §2.3) and return the parsed body."""
+    (no reCAPTCHA token needed — spec §2.3). Returns {http_status, body}."""
     resp = await page.request.post(
         STATUS_URL,
-        data=json.dumps({"media": [{"name": media_name, "projectId": project_id}]}),
+        data=json.dumps({"media": [{"name": candidate_id, "projectId": project_id}]}),
         headers={"content-type": "text/plain;charset=UTF-8"},
     )
-    body = await resp.json()
-    log.info("status_checked", http_status=resp.status, media_name=media_name)
-    return {"http_status": resp.status, "body": body}
+    try:
+        parsed = await resp.json()
+    except Exception:  # noqa: BLE001
+        parsed = {}
+    return {"http_status": resp.status, "body": parsed}
 ```
 
-- [ ] **Step 2: Call it from `_drive_spike`**
+- [ ] **Step 2: Probe all three candidate handles in `_drive_spike`**
 
-Append to `_drive_spike`:
+Append to `_drive_spike`. This is a single poll per candidate — handle *identification* only, not a polling loop (terminal-status observation is Phase A):
 
 ```python
-    status = await _check_status(page, media_name, project_id)
-    (out_dir / "t2v_status_response.json").write_text(
-        json.dumps(status, indent=2), encoding="utf-8")
-    media = status["body"].get("media", [])
-    matched = bool(media) and media[0].get("name") == media_name
-    gen_status = (media[0].get("mediaMetadata", {}).get("mediaStatus", {})
-                  .get("mediaGenerationStatus") if media else None)
-    log.info("poll_handle_verified", http_status=status["http_status"],
-             media_name_matched=matched, media_generation_status=gen_status)
+    if media_name is None:
+        log.warning("poll_handle_check_skipped", reason="generate returned no media")
+        _record(out_dir, "- Q7 poll handle: SKIPPED (T2V generate was rejected)")
+    else:
+        operations = body.get("operations") or []
+        workflows = body.get("workflows") or []
+        candidates: dict[str, str | None] = {"media[0].name": media_name}
+        if operations:
+            candidates["operations[0].operation.name"] = (
+                operations[0].get("operation") or {}).get("name")
+        if workflows:
+            candidates["workflows[0].metadata.primaryMediaId"] = (
+                workflows[0].get("metadata") or {}).get("primaryMediaId")
+        results: dict[str, dict] = {}
+        for label, cand in candidates.items():
+            if not cand:
+                continue
+            res = await _check_status(page, cand, project_id)
+            res_media = res["body"].get("media") or []
+            gen_status = None
+            if res_media:
+                gen_status = ((res_media[0].get("mediaMetadata") or {})
+                              .get("mediaStatus") or {}).get("mediaGenerationStatus")
+            results[label] = {"value": cand, "http_status": res["http_status"],
+                              "media_generation_status": gen_status}
+            log.info("poll_candidate_probed", candidate=label,
+                     same_uuid_as_media0=(cand == media_name),
+                     http_status=res["http_status"], media_generation_status=gen_status)
+            _record(out_dir, f"- Q7 candidate {label} (={cand}): "
+                             f"http={res['http_status']} status={gen_status}")
+        (out_dir / "t2v_status_probe.json").write_text(
+            json.dumps(results, indent=2), encoding="utf-8")
 ```
 
-- [ ] **Step 3: Run and record**
+- [ ] **Step 3: Run and verify**
 
-Run: `uv run python scripts/smoke_video_editor.py --profile-dir $HOME/gflow-video-spike`
-Expected: `poll_handle_verified` with `http_status=200`, `media_name_matched=true`, and a `media_generation_status` (e.g. `MEDIA_GENERATION_STATUS_PENDING`/`SCHEDULED`/`ACTIVE`). A `true` + a real status **confirms `media[0].name` is the T2V poll handle — §10.2 Q7.** If `matched=false`, inspect `t2v_generate_response.json` for the alternative id (`operations[0].operation.name`, `workflows[0].metadata.primaryMediaId`) and record which one the status endpoint accepts.
+Run: `uv run python scripts/smoke_video_editor.py --profile-dir $HOME/gflow-video-spike --out tmp/video-spike/<the-Task-4-dir>`
+(Re-passing the Task 4 `--out` dir reuses the captured generation — no new credit spend.)
+Expected: one `poll_candidate_probed` line per distinct candidate. **The candidate whose response carries a real `media_generation_status` (e.g. `MEDIA_GENERATION_STATUS_PENDING`) is the T2V poll handle — §10.2 Q7.** If two candidates are the same UUID (`same_uuid_as_media0=true`), note it — the distinction is then moot and `media[0].name` is confirmed.
 
 - [ ] **Step 4: Commit**
 
 ```bash
 git add scripts/smoke_video_editor.py
-git commit -m "chore(spike): verify the T2V status poll handle"
+git commit -m "chore(spike): verify the T2V poll handle across all three candidates"
 ```
 
 ---
 
-## Task 6: Probe image-mode attachment and record findings (Q1, Q3, Q6)
+## Task 6: Probe image attachment + record findings (answers Q1, Q3, Q6)
 
 **Files:**
 - Modify: `scripts/smoke_video_editor.py`
 - Modify: `docs/superpowers/specs/2026-05-18-ui-automation-video-generation-design.md`
 
-- [ ] **Step 1: Add the Frames/Elementos attachment probe**
+Uses the committed fixture `test_assets/image_00.png`.
 
-Add to `scripts/smoke_video_editor.py`:
+- [ ] **Step 1: Add the image-attachment probe**
+
+`page.expect_file_chooser()` directly answers Q1 (a `filechooser` event = a real file picker; no event = an in-page catalog dialog). Append to `scripts/smoke_video_editor.py`:
 
 ```python
-CATALOG_TRIGGER_SELECTORS = (
-    "button:has-text('Inicial')", "button:has-text('Initial')",
-    "button:has-text('Start')", "button:has(i:text('add'))",
-    "button[aria-label*='Add' i]",
+START_FRAME_SELECTORS = (
+    "button:has-text('Start')", "button:has-text('Initial')",
+    "button:has-text('Inicial')", "button:has(i:text('add'))",
 )
+ADD_ELEMENT_SELECTORS = (
+    "button[aria-label*='Add' i]", "button:has(i:text('add'))",
+)
+TEST_IMAGE = Path("test_assets/image_00.png")
 
 
-async def _probe_image_attachment(page: Page, out_dir: Path) -> None:
-    """Frames mode: probe the catalog/file-picker trigger (Q1). Elementos mode:
-    probe the add-reference control and how many references are allowed (Q6)."""
+async def _probe_image_attachment(page: Page, out_dir: Path) -> str | None:
+    """Frames mode: open the start-frame attach control with expect_file_chooser
+    (answers Q1) and upload TEST_IMAGE. Elementos mode: count reference slots (Q6).
+    Returns the uploaded start-frame asset path used, or None if attach failed."""
     frames, _ = await _probe(page, "frames_subtab", FRAMES_SUBTAB_SELECTORS)
-    if frames is not None:
-        await frames.click()
-        await page.wait_for_timeout(1200)
-        trigger, sel = await _probe(page, "frames_catalog_trigger", CATALOG_TRIGGER_SELECTORS)
-        log.info("frames_attachment_probe", catalog_trigger=sel)
+    if frames is None:
+        _record(out_dir, "- Q1/Q3: Frames sub-tab not found — image probes skipped")
+        return None
+    await frames.click()
+    await page.wait_for_timeout(1200)
+    trigger, sel = await _probe(page, "start_frame_trigger", START_FRAME_SELECTORS)
+    if trigger is None:
         await page.screenshot(path=str(out_dir / "frames_mode.png"), full_page=True)
+        _record(out_dir, "- Q1: start-frame trigger NOT FOUND — see frames_mode.png")
+        return None
+    chooser_fired = True
+    try:
+        async with page.expect_file_chooser(timeout=5000) as fc_info:
+            await trigger.click()
+        fc = await fc_info.value
+        await fc.set_files(str(TEST_IMAGE))
+        log.info("frames_file_chooser", fired=True, uploaded=str(TEST_IMAGE))
+    except Exception:  # noqa: BLE001
+        chooser_fired = False
+        await page.screenshot(path=str(out_dir / "frames_catalog.png"), full_page=True)
+        log.info("frames_file_chooser", fired=False)
+    _record(out_dir, f"- Q1 attachment mechanism: "
+                     f"{'native file_chooser' if chooser_fired else 'in-page catalog dialog (see frames_catalog.png)'}")
+    await page.wait_for_timeout(1500)
 
     elementos, _ = await _probe(page, "elementos_subtab", ELEMENTOS_SUBTAB_SELECTORS)
     if elementos is not None:
         await elementos.click()
         await page.wait_for_timeout(1200)
-        add, sel = await _probe(page, "elementos_add_reference", CATALOG_TRIGGER_SELECTORS)
-        log.info("elementos_attachment_probe", add_trigger=sel)
+        slots = await page.locator(", ".join(ADD_ELEMENT_SELECTORS)).count()
         await page.screenshot(path=str(out_dir / "elementos_mode.png"), full_page=True)
+        log.info("elementos_reference_slots", add_controls=slots)
+        _record(out_dir, f"- Q6 reference slots: {slots} add-control(s) "
+                         f"visible (cross-check elementos_mode.png)")
+    return str(TEST_IMAGE) if chooser_fired else None
 ```
 
-- [ ] **Step 2: Call it, run, and record**
+- [ ] **Step 2: Run a mandatory start-only I2V generation (answers Q3)**
 
-Append `await _probe_image_attachment(page, out_dir)` to `_drive_spike`.
-Run: `uv run python scripts/smoke_video_editor.py --profile-dir $HOME/gflow-video-spike`
-From the logs + the `frames_mode.png` / `elementos_mode.png` screenshots, record: the catalog/file-picker mechanism (does clicking the trigger open a Playwright `file_chooser`, or an in-page catalog dialog?) — **§10.2 Q1**; and how many reference slots Elementos exposes — **§10.2 Q6**. For **Q3** (start-only I2V), optionally attach one image to the Frames "Start" slot, leave "End" empty, submit, and observe whether the generate is accepted (spends credits — operator's call).
+Q3 (is start-only I2V valid?) gates `__post_init__` validation, so it must be answered definitively — not left optional. Append to `_drive_spike`:
 
-- [ ] **Step 3: Write the findings into the spec**
+```python
+    uploaded = await _probe_image_attachment(page, out_dir)
+    if uploaded is not None:
+        # Q3: start frame attached, NO end frame — does the generate succeed?
+        frames2, _ = await _probe(page, "frames_subtab", FRAMES_SUBTAB_SELECTORS)
+        if frames2 is not None:
+            await frames2.click()
+            await page.wait_for_timeout(1000)
+        captured2, handler2 = _attach_video_listener(page)
+        await _send_prompt(page, prompt_text, out_dir)
+        try:
+            i2v_resp = await _await_capture(page, captured2, handler2, timeout_s=150)
+            i2v_body = i2v_resp.get("body", {})
+            i2v_media = i2v_body.get("media") or []
+            accepted = i2v_resp.get("status") == 200 and bool(i2v_media)
+            (out_dir / "i2v_startonly_response.json").write_text(
+                json.dumps(i2v_resp, indent=2), encoding="utf-8")
+            log.info("i2v_startonly_result", accepted=accepted,
+                     http_status=i2v_resp.get("status"))
+            _record(out_dir, f"- Q3 start-only I2V: "
+                             f"{'ACCEPTED' if accepted else 'REJECTED'} "
+                             f"(http={i2v_resp.get('status')})")
+        except TimeoutError:
+            _record(out_dir, "- Q3 start-only I2V: NO RESPONSE captured (timeout) — "
+                             "submit may be disabled without an end frame")
+            log.warning("i2v_startonly_no_response")
+```
 
-In `docs/superpowers/specs/2026-05-18-ui-automation-video-generation-design.md`, edit §10.2: for each of Q1, Q3, Q5, Q6, Q7, append a `**Resolved (Phase 0):** <answer>` line stating the observed result. Move any fully-answered question's substance into §10.1 if appropriate. Update §6 with the selector(s) the spike confirmed (replace the "unverified guesses" note with the verified selectors).
+- [ ] **Step 3: Run (SPENDS CREDITS — one I2V) and verify**
 
-- [ ] **Step 4: Commit**
+Run: `uv run python scripts/smoke_video_editor.py --profile-dir $HOME/gflow-video-spike --out tmp/video-spike/<the-Task-4-dir>`
+Expected: `frames_file_chooser` (`fired` true/false), `elementos_reference_slots`, and `i2v_startonly_result` (or `i2v_startonly_no_response`). All findings appended to `phase0_findings.md`.
+
+- [ ] **Step 4: Write the findings into the spec**
+
+Read `tmp/video-spike/<dir>/phase0_findings.md`. In `docs/superpowers/specs/2026-05-18-ui-automation-video-generation-design.md` §10.2, append a `**Resolved (Phase 0):** <answer>` line under each of Q1, Q3, Q5, Q6, Q7 stating the observed result. Update §6 with the selector(s) the spike confirmed (replace the "unverified guesses" note with the verified selectors). **Describe observations in prose — do NOT paste the raw `*.png` screenshots into the committed spec; they show the authenticated account (email, project thumbnails).**
+
+- [ ] **Step 5: Commit**
 
 ```bash
 git add scripts/smoke_video_editor.py docs/superpowers/specs/2026-05-18-ui-automation-video-generation-design.md
-git commit -m "chore(spike): probe image attachment; record Phase 0 findings in the spec"
+git commit -m "chore(spike): probe image attachment + start-only I2V; record Phase 0 findings"
 ```
 
 ---
@@ -404,10 +621,12 @@ git commit -m "chore(spike): probe image attachment; record Phase 0 findings in 
 ## Done criteria
 
 Phase 0 is complete when:
-- `scripts/smoke_video_editor.py` runs end-to-end against live Flow: enters the editor, switches to video mode, fires a T2V generation, and polls its status.
+- `scripts/smoke_video_editor.py` runs end-to-end against live Flow: enters the editor, switches to video mode, fires a T2V generation, verifies the poll handle, and probes image attachment + a start-only I2V generation.
 - §10.2 Q1, Q3, Q5, Q6, Q7 each have a `**Resolved (Phase 0):**` answer in the spec.
 - §6 selectors are updated to the spike-verified values.
-- The core finding is confirmed: video generation **can** be driven through the UI exactly like `generate_images` (or, if not, the deviation is documented and the spec/Phase A plan is revised before Phase A starts).
+- The core finding is confirmed: video generation **can** be driven through the UI like `generate_images` (or, if not, the deviation is documented and the spec/Phase A plan is revised before Phase A starts).
+
+**Known Phase-0 non-goals** (deferred to Phase A, not blockers): observing a *terminal* T2V status (`SUCCESSFUL`/`FAILED`) — Task 5 polls once for handle identification only; and confirming the FAILED-T2V wire shape — capture `11` (an I2V FAILED) remains the only `failureReasons` sample.
 
 If the spike disproves the UI-drive assumption, **stop** — re-open the spec design before planning Phase A.
 
@@ -415,6 +634,6 @@ If the spike disproves the UI-drive assumption, **stop** — re-open the spec de
 
 ## Self-Review
 
-- **Spec coverage:** Phase 0 per spec §10.3 = "drive the editor, fire one T2V `batchAsyncGenerateVideoText`, capture the response; validate §6 selectors; answer Q1/Q3/Q5/Q6/Q7." Mapped: T2V fire+capture → Task 4; §6 selector validation → Tasks 2-3, 6; Q5 → Task 3; Q7 → Task 5; Q1/Q6/Q3 → Task 6. Covered.
-- **Placeholder scan:** none — every step has runnable code or an exact command.
-- **Type/name consistency:** `_drive_spike`, `_probe`, `_capture_video_generate`, `_check_status`, `_probe_image_attachment`, `media_name`, `project_id` used consistently across tasks; `out_dir` threaded from `run` (reused from `smoke_worker_style.py`).
+- **Spec coverage:** Phase 0 per spec §10.3 = "drive the editor, fire one T2V `batchAsyncGenerateVideoText`, capture the response; validate §6 selectors; answer Q1/Q3/Q5/Q6/Q7." Mapped: T2V fire+capture → Task 4; §6 selector validation → Tasks 2, 3, 6; Q5 → Task 3; Q7 → Task 5; Q1/Q6 → Task 6 Step 1; Q3 → Task 6 Step 2. Covered.
+- **Placeholder scan:** none — every code step is complete; the harness reuse names exact symbols and `run`/`main` are given in full (no "copy then trim").
+- **Type/name consistency:** `_drive_spike`, `_record`, `_probe`, `_attach_video_listener`, `_await_capture`, `_check_status`, `_probe_aspect_options`, `_probe_image_attachment` defined before use; `media_name`, `body`, `project_id`, `out_dir` threaded consistently; `_send_prompt` called as `(page, prompt_text, out_dir)`; `run`/`main` signatures match (`profile_dir, prompt_text, out_dir` — no `expected_count`/`aspect_ratio`).
