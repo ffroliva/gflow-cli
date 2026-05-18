@@ -2,7 +2,7 @@
 
 > **For agentic workers:** REQUIRED SUB-SKILL: Use superpowers:subagent-driven-development (recommended) or superpowers:executing-plans to implement this plan task-by-task. Steps use checkbox (`- [ ]`) syntax for tracking.
 >
-> **Rev 2** — revised after a 4-dimension council review (code executability / spike methodology / plan format / risk & cost). Fixes a Task 1 signature crash, makes the Q7 poll-handle test conclusive, attaches the response listener before submit, guards rejected generations, and makes findings durable.
+> **Rev 3** — revised twice after 4-dimension council review. Rev 2 fixed the round-1 blockers (Task 1 signature crash; attach-listener-before-submit) and majors. Rev 3 makes the Q7 conclusion deterministic (UUID-collapse aware), adds an I2V reuse guard so re-runs don't re-spend credits, and folds in the round-2 minors.
 
 **Goal:** Verify against live Flow that video generation can be driven through the editor UI the way `generate_images` already is, and answer the open questions (spec §10.2 Q1, Q3, Q5, Q6, Q7) that gate Phase A and Phase B.
 
@@ -16,7 +16,8 @@
 
 - Requires a **live, authenticated Google AI Ultra/Pro Flow account**. The script opens a headed Chromium against `--profile-dir`; the operator signs in once, manually, in that window (the script polls until detected — no stdin).
 - The spike fires **two real generations** that **spend Veo credits**: one T2V (Task 4) and one I2V (Task 6). Do not run repeatedly without reason.
-- **Re-running cheaply:** Task 4 writes `t2v_generate_response.json` into `--out`. Re-run with `--out <the same dir>` to reuse that captured generation and **skip the paid T2V step** — useful after a crash in Task 5/6.
+- **Re-running cheaply:** Task 4 writes `t2v_generate_response.json` and Task 6 writes `i2v_startonly_response.json` into `--out`. Re-run with `--out <the same dir>` to reuse **both** captured generations and skip the paid steps — useful after a crash. A fresh `--out` always re-spends.
+- **Profile:** `--profile-dir` defaults to a *fresh* dir (`$HOME/gflow-video-spike`), so the first run requires a manual Flow sign-in in the Chromium window — the script polls up to 600s for it.
 - This spike **cannot run in CI** (needs a real session). It is operator-run.
 - All runtime output (screenshots, captured JSON, the findings file) goes under `tmp/` per the repo output-path rule.
 
@@ -53,7 +54,7 @@ import time
 from pathlib import Path
 
 import structlog
-from playwright.async_api import BrowserContext, Page, Response, async_playwright
+from playwright.async_api import BrowserContext, Locator, Page, Response, async_playwright
 ```
 
 Add this module docstring at the very top of the file:
@@ -77,6 +78,8 @@ Usage::
         --prompt "a calm forest at dawn, cinematic"
 """
 ```
+
+> Note: the script is assembled across Steps 1-3; several imports are unused until later steps land their code. Run lint only after Step 3 — the Task 1 commit (Step 5) is clean.
 
 - [ ] **Step 2: Add the durable findings recorder and the drive stub**
 
@@ -198,7 +201,8 @@ ELEMENTOS_SUBTAB_SELECTORS = (
 )
 
 
-async def _probe(page: Page, label: str, candidates: tuple[str, ...], timeout_ms: int = 4000):
+async def _probe(page: Page, label: str, candidates: tuple[str, ...],
+                 timeout_ms: int = 4000) -> tuple[Locator | None, str | None]:
     """Try each selector; return (locator, selector) for the first visible match,
     else (None, None). Logs every attempt so the operator sees which won."""
     for sel in candidates:
@@ -407,7 +411,7 @@ Append to `_drive_spike`. The editor is already in video mode (Task 2); T2V is t
 - [ ] **Step 3: Run (SPENDS CREDITS) and verify**
 
 Run: `uv run python scripts/smoke_video_editor.py --profile-dir $HOME/gflow-video-spike --prompt "a calm forest at dawn, cinematic"`
-Expected: `video_generate_captured` (`status=200`); `t2v_generated` with a `media_name` and `route=batchAsyncGenerateVideoText`. This confirms the UI-drive mechanism works for video. If `t2v_generate_rejected` fires instead, that is still a valid Phase 0 finding — record the `failure_reasons` and continue (Task 5 will skip cleanly).
+Expected: `video_generate_captured` (`status=200`); `t2v_generated` with a `media_name` and `route=batchAsyncGenerateVideoText`. This confirms the UI-drive mechanism works for video. If `t2v_generate_rejected` fires instead, that is still a valid Phase 0 finding — record the `failure_reasons` and continue (Task 5 will skip cleanly). **Note the `tmp/video-spike/<utc>/` directory printed in the log** — re-pass it as `--out` to Tasks 5-6 to reuse this generation without re-spending credits.
 
 - [ ] **Step 4: Commit**
 
@@ -460,6 +464,7 @@ Append to `_drive_spike`. This is a single poll per candidate — handle *identi
     else:
         operations = body.get("operations") or []
         workflows = body.get("workflows") or []
+        # Every candidate id spec §2.4 names, by source label.
         candidates: dict[str, str | None] = {"media[0].name": media_name}
         if operations:
             candidates["operations[0].operation.name"] = (
@@ -467,32 +472,53 @@ Append to `_drive_spike`. This is a single poll per candidate — handle *identi
         if workflows:
             candidates["workflows[0].metadata.primaryMediaId"] = (
                 workflows[0].get("metadata") or {}).get("primaryMediaId")
+        present = {lbl: v for lbl, v in candidates.items() if v}
+        log.info("poll_candidate_uuids", candidates=present)
+        _record(out_dir, "- Q7 candidate UUIDs by source:")
+        for lbl, v in present.items():
+            _record(out_dir, f"    - {lbl} = {v}")
+        # Group source labels by UUID — the candidates often collapse to one UUID.
+        by_uuid: dict[str, list[str]] = {}
+        for lbl, v in present.items():
+            by_uuid.setdefault(v, []).append(lbl)
+        # Probe each DISTINCT UUID exactly once.
         results: dict[str, dict] = {}
-        for label, cand in candidates.items():
-            if not cand:
-                continue
-            res = await _check_status(page, cand, project_id)
+        for uuid, labels in by_uuid.items():
+            res = await _check_status(page, uuid, project_id)
             res_media = res["body"].get("media") or []
             gen_status = None
             if res_media:
                 gen_status = ((res_media[0].get("mediaMetadata") or {})
                               .get("mediaStatus") or {}).get("mediaGenerationStatus")
-            results[label] = {"value": cand, "http_status": res["http_status"],
-                              "media_generation_status": gen_status}
-            log.info("poll_candidate_probed", candidate=label,
-                     same_uuid_as_media0=(cand == media_name),
-                     http_status=res["http_status"], media_generation_status=gen_status)
-            _record(out_dir, f"- Q7 candidate {label} (={cand}): "
-                             f"http={res['http_status']} status={gen_status}")
+            empty_200 = res["http_status"] == 200 and not gen_status
+            results[uuid] = {"source_labels": labels, "http_status": res["http_status"],
+                             "media_generation_status": gen_status, "empty_body_200": empty_200}
+            log.info("poll_uuid_probed", uuid=uuid, source_labels=labels,
+                     http_status=res["http_status"], media_generation_status=gen_status,
+                     empty_body_200=empty_200)
+            _record(out_dir, f"- Q7 uuid {uuid} (sources: {', '.join(labels)}): "
+                             f"http={res['http_status']} status={gen_status}"
+                             f"{'  [empty-body 200]' if empty_200 else ''}")
         (out_dir / "t2v_status_probe.json").write_text(
             json.dumps(results, indent=2), encoding="utf-8")
+        # Deterministic conclusion — handle confirmed only if exactly one distinct
+        # UUID polls successfully (collapsed candidates count as that one UUID).
+        polled = [u for u, r in results.items() if r["media_generation_status"]]
+        if len(polled) == 1:
+            srcs = ", ".join(results[polled[0]]["source_labels"])
+            _record(out_dir, f"- Q7 RESOLVED: poll handle = {srcs} "
+                             f"(the only candidate UUID that returns a status)")
+        else:
+            _record(out_dir, f"- Q7 INCONCLUSIVE: {len(polled)} distinct UUID(s) returned a "
+                             f"status — inspect t2v_status_probe.json and decide manually")
+        log.info("poll_handle_conclusion", distinct_uuids=len(by_uuid), distinct_polling=len(polled))
 ```
 
 - [ ] **Step 3: Run and verify**
 
 Run: `uv run python scripts/smoke_video_editor.py --profile-dir $HOME/gflow-video-spike --out tmp/video-spike/<the-Task-4-dir>`
 (Re-passing the Task 4 `--out` dir reuses the captured generation — no new credit spend.)
-Expected: one `poll_candidate_probed` line per distinct candidate. **The candidate whose response carries a real `media_generation_status` (e.g. `MEDIA_GENERATION_STATUS_PENDING`) is the T2V poll handle — §10.2 Q7.** If two candidates are the same UUID (`same_uuid_as_media0=true`), note it — the distinction is then moot and `media[0].name` is confirmed.
+Expected: a `poll_candidate_uuids` line listing each candidate UUID by source, one `poll_uuid_probed` line per *distinct* UUID, and a `poll_handle_conclusion`. **§10.2 Q7 is resolved when exactly one distinct UUID returns a real `media_generation_status`** — its source-label set is the poll handle (if all candidates collapse to one UUID, that one is the handle and the distinction is moot). If two *distinct* UUIDs both poll OK, the run records `Q7 INCONCLUSIVE` — inspect `t2v_status_probe.json` and decide manually.
 
 - [ ] **Step 4: Commit**
 
@@ -574,8 +600,23 @@ Q3 (is start-only I2V valid?) gates `__post_init__` validation, so it must be an
 
 ```python
     uploaded = await _probe_image_attachment(page, out_dir)
-    if uploaded is not None:
+    i2v_path = out_dir / "i2v_startonly_response.json"
+    i2v_resp: dict | None = None
+    if i2v_path.exists():
+        # Re-run with the same --out: reuse the paid I2V, don't re-spend.
+        i2v_resp = json.loads(i2v_path.read_text(encoding="utf-8"))
+        log.info("i2v_startonly_reused", path=str(i2v_path))
+    elif media_name is None:
+        # A rejected T2V predicts a rejected I2V — don't burn the credit unprompted.
+        log.warning("i2v_startonly_skipped", reason="T2V was rejected")
+        _record(out_dir, "- Q3 start-only I2V: SKIPPED (T2V was rejected — re-run "
+                         "deliberately against a fresh --out to force the I2V test)")
+    elif uploaded is None:
+        log.warning("i2v_startonly_skipped", reason="start-frame attach failed")
+        _record(out_dir, "- Q3 start-only I2V: SKIPPED (could not attach a start frame)")
+    else:
         # Q3: start frame attached, NO end frame — does the generate succeed?
+        # SPENDS CREDITS.
         frames2, _ = await _probe(page, "frames_subtab", FRAMES_SUBTAB_SELECTORS)
         if frames2 is not None:
             await frames2.click()
@@ -584,20 +625,18 @@ Q3 (is start-only I2V valid?) gates `__post_init__` validation, so it must be an
         await _send_prompt(page, prompt_text, out_dir)
         try:
             i2v_resp = await _await_capture(page, captured2, handler2, timeout_s=150)
-            i2v_body = i2v_resp.get("body", {})
-            i2v_media = i2v_body.get("media") or []
-            accepted = i2v_resp.get("status") == 200 and bool(i2v_media)
-            (out_dir / "i2v_startonly_response.json").write_text(
-                json.dumps(i2v_resp, indent=2), encoding="utf-8")
-            log.info("i2v_startonly_result", accepted=accepted,
-                     http_status=i2v_resp.get("status"))
-            _record(out_dir, f"- Q3 start-only I2V: "
-                             f"{'ACCEPTED' if accepted else 'REJECTED'} "
-                             f"(http={i2v_resp.get('status')})")
+            i2v_path.write_text(json.dumps(i2v_resp, indent=2), encoding="utf-8")
         except TimeoutError:
             _record(out_dir, "- Q3 start-only I2V: NO RESPONSE captured (timeout) — "
                              "submit may be disabled without an end frame")
             log.warning("i2v_startonly_no_response")
+
+    if i2v_resp is not None:
+        i2v_media = i2v_resp.get("body", {}).get("media") or []
+        accepted = i2v_resp.get("status") == 200 and bool(i2v_media)
+        log.info("i2v_startonly_result", accepted=accepted, http_status=i2v_resp.get("status"))
+        _record(out_dir, f"- Q3 start-only I2V: {'ACCEPTED' if accepted else 'REJECTED'} "
+                         f"(http={i2v_resp.get('status')})")
 ```
 
 - [ ] **Step 3: Run (SPENDS CREDITS — one I2V) and verify**
@@ -622,7 +661,7 @@ git commit -m "chore(spike): probe image attachment + start-only I2V; record Pha
 
 Phase 0 is complete when:
 - `scripts/smoke_video_editor.py` runs end-to-end against live Flow: enters the editor, switches to video mode, fires a T2V generation, verifies the poll handle, and probes image attachment + a start-only I2V generation.
-- §10.2 Q1, Q3, Q5, Q6, Q7 each have a `**Resolved (Phase 0):**` answer in the spec.
+- §10.2 Q1, Q3, Q5, Q7 each have a `**Resolved (Phase 0):**` answer in the spec. Q6 (`MAX_REFERENCE_IMAGES`) gets an answer too, but it may be an *estimate* tagged "confirm in Phase B" — Task 6 counts add-controls, a proxy for the slot cap, not the cap itself.
 - §6 selectors are updated to the spike-verified values.
 - The core finding is confirmed: video generation **can** be driven through the UI like `generate_images` (or, if not, the deviation is documented and the spec/Phase A plan is revised before Phase A starts).
 
