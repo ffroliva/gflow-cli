@@ -2,7 +2,7 @@
 
 > **For agentic workers:** REQUIRED SUB-SKILL: Use superpowers:subagent-driven-development (recommended) or superpowers:executing-plans to implement this plan task-by-task. Steps use checkbox (`- [ ]`) syntax for tracking.
 >
-> **Rev 3** — revised twice after 4-dimension council review. Rev 2 fixed the round-1 blockers (Task 1 signature crash; attach-listener-before-submit) and majors. Rev 3 makes the Q7 conclusion deterministic (UUID-collapse aware), adds an I2V reuse guard so re-runs don't re-spend credits, and folds in the round-2 minors.
+> **Rev 3 (+ hardening)** — revised across 3 council-review rounds; round 3 reached consensus (4× APPROVE). Rev 2 fixed the round-1 blockers (Task 1 signature crash; listener-before-submit); rev 3 made the Q7 conclusion deterministic (UUID-collapse aware) and added an I2V reuse guard. The one residual round-3 minor is folded in: the reuse-guard capture files are written atomically (`*.tmp` + rename) and read defensively, so a crash mid-write cannot break re-run recovery.
 
 **Goal:** Verify against live Flow that video generation can be driven through the editor UI the way `generate_images` already is, and answer the open questions (spec §10.2 Q1, Q3, Q5, Q6, Q7) that gate Phase A and Phase B.
 
@@ -369,6 +369,26 @@ async def _await_capture(page: Page, captured: list[dict], handler, timeout_s: i
             "did the submit fire? did reCAPTCHA fail silently?"
         )
     return captured[0]
+
+
+def _save_capture(path: Path, obj: dict) -> None:
+    """Write a captured response atomically — a crash mid-write cannot leave a
+    corrupt reuse file (write to *.tmp, then atomic rename)."""
+    tmp = path.with_suffix(path.suffix + ".tmp")
+    tmp.write_text(json.dumps(obj, indent=2), encoding="utf-8")
+    tmp.replace(path)
+
+
+def _load_reuse(path: Path) -> dict | None:
+    """Load a prior captured response for re-run reuse. Returns None if the file
+    is absent or corrupt (e.g. a crash mid-write) — the caller then re-fires."""
+    if not path.exists():
+        return None
+    try:
+        return json.loads(path.read_text(encoding="utf-8"))
+    except (json.JSONDecodeError, OSError) as e:
+        log.warning("reuse_file_corrupt", path=str(path), error=str(e))
+        return None
 ```
 
 - [ ] **Step 2: Fire T2V in `_drive_spike` (or reuse a prior capture); guard a rejected response**
@@ -377,14 +397,14 @@ Append to `_drive_spike`. The editor is already in video mode (Task 2); T2V is t
 
 ```python
     resp_path = out_dir / "t2v_generate_response.json"
-    if resp_path.exists():
+    generate_resp = _load_reuse(resp_path)
+    if generate_resp is not None:
         log.info("t2v_generate_reused", path=str(resp_path))
-        generate_resp = json.loads(resp_path.read_text(encoding="utf-8"))
     else:
         captured, handler = _attach_video_listener(page)
         await _send_prompt(page, prompt_text, out_dir)
         generate_resp = await _await_capture(page, captured, handler)
-        resp_path.write_text(json.dumps(generate_resp, indent=2), encoding="utf-8")
+        _save_capture(resp_path, generate_resp)
 
     body = generate_resp.get("body", {})
     http_status = generate_resp.get("status")
@@ -601,10 +621,9 @@ Q3 (is start-only I2V valid?) gates `__post_init__` validation, so it must be an
 ```python
     uploaded = await _probe_image_attachment(page, out_dir)
     i2v_path = out_dir / "i2v_startonly_response.json"
-    i2v_resp: dict | None = None
-    if i2v_path.exists():
+    i2v_resp: dict | None = _load_reuse(i2v_path)
+    if i2v_resp is not None:
         # Re-run with the same --out: reuse the paid I2V, don't re-spend.
-        i2v_resp = json.loads(i2v_path.read_text(encoding="utf-8"))
         log.info("i2v_startonly_reused", path=str(i2v_path))
     elif media_name is None:
         # A rejected T2V predicts a rejected I2V — don't burn the credit unprompted.
@@ -625,7 +644,7 @@ Q3 (is start-only I2V valid?) gates `__post_init__` validation, so it must be an
         await _send_prompt(page, prompt_text, out_dir)
         try:
             i2v_resp = await _await_capture(page, captured2, handler2, timeout_s=150)
-            i2v_path.write_text(json.dumps(i2v_resp, indent=2), encoding="utf-8")
+            _save_capture(i2v_path, i2v_resp)
         except TimeoutError:
             _record(out_dir, "- Q3 start-only I2V: NO RESPONSE captured (timeout) — "
                              "submit may be disabled without an end frame")
@@ -675,4 +694,4 @@ If the spike disproves the UI-drive assumption, **stop** — re-open the spec de
 
 - **Spec coverage:** Phase 0 per spec §10.3 = "drive the editor, fire one T2V `batchAsyncGenerateVideoText`, capture the response; validate §6 selectors; answer Q1/Q3/Q5/Q6/Q7." Mapped: T2V fire+capture → Task 4; §6 selector validation → Tasks 2, 3, 6; Q5 → Task 3; Q7 → Task 5; Q1/Q6 → Task 6 Step 1; Q3 → Task 6 Step 2. Covered.
 - **Placeholder scan:** none — every code step is complete; the harness reuse names exact symbols and `run`/`main` are given in full (no "copy then trim").
-- **Type/name consistency:** `_drive_spike`, `_record`, `_probe`, `_attach_video_listener`, `_await_capture`, `_check_status`, `_probe_aspect_options`, `_probe_image_attachment` defined before use; `media_name`, `body`, `project_id`, `out_dir` threaded consistently; `_send_prompt` called as `(page, prompt_text, out_dir)`; `run`/`main` signatures match (`profile_dir, prompt_text, out_dir` — no `expected_count`/`aspect_ratio`).
+- **Type/name consistency:** `_drive_spike`, `_record`, `_probe`, `_attach_video_listener`, `_await_capture`, `_save_capture`, `_load_reuse`, `_check_status`, `_probe_aspect_options`, `_probe_image_attachment` defined before use; `media_name`, `body`, `project_id`, `out_dir` threaded consistently; `_send_prompt` called as `(page, prompt_text, out_dir)`; `run`/`main` signatures match (`profile_dir, prompt_text, out_dir` — no `expected_count`/`aspect_ratio`).
