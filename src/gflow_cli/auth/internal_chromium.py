@@ -8,7 +8,7 @@ from playwright.async_api import Error as PlaywrightError
 from rich.console import Console
 
 from gflow_cli.config import get_settings
-from gflow_cli.errors import AuthLoginTimeoutError, SecurityError
+from gflow_cli.errors import AuthBrowserRejectedError, AuthLoginTimeoutError, SecurityError
 
 from .base import AuthStrategy
 from .verification import SESSION_API_URL, FlowSessionOutcome, evaluate_session_response
@@ -17,6 +17,13 @@ logger = structlog.get_logger(__name__)
 _console = Console()
 
 GEMINI_URL = "https://labs.google/fx/tools/flow?hl=en"
+GOOGLE_REJECTED_BROWSER_ROUTE = "accounts.google.com/v3/signin/rejected"
+
+
+def _is_google_rejected_browser_page(page: object) -> bool:
+    """Return True when Google has already routed login to its rejection page."""
+    url = getattr(page, "url", "")
+    return isinstance(url, str) and GOOGLE_REJECTED_BROWSER_ROUTE in url
 
 
 class InternalChromiumStrategy(AuthStrategy):
@@ -75,6 +82,9 @@ class InternalChromiumStrategy(AuthStrategy):
 
                 while asyncio.get_running_loop().time() < timeout_at:
                     try:
+                        if _is_google_rejected_browser_page(page):
+                            raise AuthBrowserRejectedError()
+
                         cookies = await ctx.cookies()
                         google_session = any(c.get("name") == "SAPISID" for c in cookies)
                         resp = await page.request.get(SESSION_API_URL, timeout=15_000)
@@ -94,6 +104,8 @@ class InternalChromiumStrategy(AuthStrategy):
                             success = True
                             break
                     except asyncio.CancelledError:
+                        raise
+                    except AuthBrowserRejectedError:
                         raise
                     except PlaywrightError:
                         # Browser / page / context closed — stop polling.
