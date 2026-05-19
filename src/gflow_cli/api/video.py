@@ -85,3 +85,24 @@ class GenerateVideoRequest:
             raise ValueError(f"at most {MAX_REFERENCE_IMAGES} reference images")
         if self.seed is not None and not (0 <= self.seed <= 2**31 - 1):
             raise ValueError("seed out of range")
+
+
+@dataclass(frozen=True)
+class VideoStatus:
+    """Terminal-or-not status of one in-flight video generation."""
+
+    media_id: str
+    status: str  # a MEDIA_GENERATION_STATUS_* wire value
+    failure_reasons: tuple[str, ...] = ()
+    error_message: str | None = None
+
+    @property
+    def is_terminal(self) -> bool:
+        return self.status in {
+            "MEDIA_GENERATION_STATUS_SUCCESSFUL",
+            "MEDIA_GENERATION_STATUS_FAILED",
+        }
+
+    @property
+    def succeeded(self) -> bool:
+        return self.status == "MEDIA_GENERATION_STATUS_SUCCESSFUL"

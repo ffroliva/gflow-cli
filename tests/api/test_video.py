@@ -12,6 +12,7 @@ from gflow_cli.api.video import (
     GenerateVideoRequest,
     Mode,
     Tier,
+    VideoStatus,
 )
 
 
@@ -107,3 +108,31 @@ class TestGenerateVideoRequest:
     def test_post_init_does_not_touch_the_filesystem(self) -> None:
         # Structural validation only — a non-existent path must NOT raise.
         GenerateVideoRequest(prompt="x", mode=Mode.I2V, start_image=Path("does/not/exist.png"))
+
+
+class TestVideoStatus:
+    def test_pending_is_not_terminal(self) -> None:
+        s = VideoStatus(media_id="m", status="MEDIA_GENERATION_STATUS_PENDING")
+        assert s.is_terminal is False
+        assert s.succeeded is False
+
+    def test_active_is_not_terminal(self) -> None:
+        s = VideoStatus(media_id="m", status="MEDIA_GENERATION_STATUS_ACTIVE")
+        assert s.is_terminal is False
+
+    def test_successful_is_terminal_and_succeeded(self) -> None:
+        s = VideoStatus(media_id="m", status="MEDIA_GENERATION_STATUS_SUCCESSFUL")
+        assert s.is_terminal is True
+        assert s.succeeded is True
+
+    def test_failed_is_terminal_not_succeeded(self) -> None:
+        s = VideoStatus(
+            media_id="m",
+            status="MEDIA_GENERATION_STATUS_FAILED",
+            failure_reasons=("IP_PROHIBITED",),
+            error_message="PUBLIC_ERROR_IP_INPUT_IMAGE",
+        )
+        assert s.is_terminal is True
+        assert s.succeeded is False
+        assert s.failure_reasons == ("IP_PROHIBITED",)
+        assert s.error_message == "PUBLIC_ERROR_IP_INPUT_IMAGE"
