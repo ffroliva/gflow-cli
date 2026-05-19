@@ -74,7 +74,8 @@ class _JitteredExponentialWait(wait_base):
             return min(last_exc.retry_after, RETRY_AFTER_CAP_SECONDS)
         attempt = retry_state.attempt_number  # 1-indexed
         base = 2 ** (attempt - 1)  # 1, 2, 4
-        jitter = base * 0.25 * (2 * random.random() - 1)  # noqa: S311 — jitter, not crypto
+        # Backoff jitter only — not a security primitive; S311 is acceptable here.
+        jitter = base * 0.25 * (2 * random.random() - 1)  # noqa: S311
         return max(0.0, base + jitter)
 
 

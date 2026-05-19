@@ -118,7 +118,7 @@ class _BearerCache:
                 expires_at=float(data["expires_at"]),
                 fingerprint=fingerprint,
             )
-        except (json.JSONDecodeError, KeyError, TypeError, ValueError):
+        except (KeyError, TypeError, ValueError):  # JSONDecodeError is a ValueError
             log.warning("bearer.cache_corrupt_ignored", path=str(self.path))
             return None
 
@@ -152,6 +152,7 @@ class BearerTransport:
         Loads cached Bearer from disk if present and not expired; otherwise
         launches Playwright to capture a fresh Bearer + fingerprint.
         """
+        del page  # accepted for Protocol conformance — see docstring
         self._profile_dir = profile_dir
         self._cache = _BearerCache(profile_dir / "transport_bearer.json")
 
@@ -168,6 +169,7 @@ class BearerTransport:
 
     async def teardown(self) -> None:
         """Drop in-memory Bearer. Idempotent. Disk cache is preserved."""
+        await asyncio.sleep(0)  # yield to event loop — Protocol-required async signature
         self._cached = None
 
     # ------------------------------------------------------------------
@@ -256,7 +258,7 @@ class BearerTransport:
     async def generate_images(
         self,
         *,
-        project_id: str,
+        project_id: str | None,
         request: GenerateImageRequest,
     ) -> list[GeneratedImage]:
         """Generate images via pure httpx, replaying the captured fingerprint.
@@ -264,6 +266,8 @@ class BearerTransport:
         Proactive refresh if token is near expiry; single-retry on 401.
         Raises ``TransportTimeoutError`` if the call hangs > PER_CALL_TIMEOUT_S.
         """
+        if project_id is None:
+            raise ValueError("BearerTransport requires an explicit project_id")
         if self._cached is None:
             raise AuthMissingError("bearer: setup() was not called before generate_images()")
 
@@ -325,7 +329,7 @@ class BearerTransport:
         *,
         headers: dict[str, str],
         content: bytes,
-        timeout: float,
+        timeout: float,  # NOSONAR S7483 — httpx.AsyncClient(timeout=...) is the canonical API
     ) -> Any:
         """Injectable seam: real httpx POST.  Tests replace this with a fake."""
         import httpx  # lazy import
