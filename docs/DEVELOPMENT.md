@@ -2,6 +2,8 @@
 
 > For _contributing_ (TDD, quality gates, commit style, how to add a route) see [CONTRIBUTING.md](../CONTRIBUTING.md).
 > This document covers the **internal development process**: branching model, PR protocol, e2e gate, and release pipeline.
+> For scenario-based GitHub PR triage, external fork handling, and SonarCloud
+> decisions, see [docs/GITHUB.md](GITHUB.md).
 
 ---
 
@@ -117,6 +119,7 @@ This repo is actively developed with Claude Code (see [CLAUDE.md](../CLAUDE.md))
 ## See also
 
 - [CONTRIBUTING.md](../CONTRIBUTING.md) — TDD, quality gates, how to add a route, commit style
+- [docs/GITHUB.md](GITHUB.md) — GitHub PR triage, external fork handling, SonarCloud scenarios
 - [RELEASE.md](../RELEASE.md) — release checklist, PyPI/GitHub publishing, tag protocol
 - [CHANGELOG.md](../CHANGELOG.md) — version history
 - [CLAUDE.md](../CLAUDE.md) — project memory hub for AI agents
