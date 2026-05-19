@@ -185,6 +185,7 @@ src/gflow_cli/
 
 - **Target DDD names** (not yet implemented): `RateLimitExceededError`, `QuotaExhaustedError`, `InvalidPromptError`, `ProjectNotFoundError`, `JobNotFoundError`, `ProviderUnavailableError`.
 - **Current Phase 4 classes** (shipped in v0.4.0a2, see `gflow_cli.errors`): `AuthExpiredError`, `RateLimitError`, `ContentPolicyError`, `NetworkError`, `WireFormatError`. All inherit from `FlowApiError → GFlowError`; `EXIT_CODE_MAP` walks them in subclass-first order so `except FlowApiError` still catches every typed leaf. Per-class exit codes: 3 (auth), 4 (rate-limit), 5 (content-policy), 6 (network), 7 (wire-format).
+- **Module alias:** `gflow_cli.exceptions` is a complete re-export of `gflow_cli.errors`. Both module paths resolve to identical class objects. The alias exists so downstream integrators can use the conventional `exceptions` name without a special import path.
 
 ## CQRS
 

@@ -1489,8 +1489,17 @@ class TestGetOrLaunchBrowserNoLockAttach:
         cap = structlog.testing.LogCapture()
         structlog.configure(processors=[cap])
 
+        # observability.configure_logging() runs with cache_logger_on_first_use=
+        # True, so an earlier test can leave the module-level browser_manager.log
+        # cached on the production (JSON-to-stdout) chain — which makes the
+        # structlog.configure() above a no-op for it. Patch in a fresh lazy proxy
+        # that binds to the capture processor on first use.
         try:
             with (
+                patch(
+                    "gflow_cli.browser_manager.log",
+                    structlog.get_logger("gflow_cli.browser_manager"),
+                ),
                 patch("gflow_cli.browser_manager.httpx.get", return_value=mock_resp),
                 patch("gflow_cli.browser_manager._connect_cdp", side_effect=mock_connect),
                 patch("gflow_cli.browser_manager._is_logged_in_to_flow", return_value=True),

@@ -149,6 +149,7 @@ class SapisidhashTransport:
         reads SAPISID from the SQLite cookie DB and has its own Playwright
         fingerprint-capture step.
         """
+        del page  # accepted for Protocol conformance — see docstring
         self._profile_dir = profile_dir
         self._sapisid = self._read_sapisid(profile_dir)
         self._fingerprint = await self._capture_fingerprint_via_playwright(profile_dir)
@@ -156,6 +157,7 @@ class SapisidhashTransport:
 
     async def teardown(self) -> None:
         """Drop in-memory state. Idempotent."""
+        await asyncio.sleep(0)  # yield to event loop — Protocol-required async signature
         self._sapisid = None
         self._fingerprint = BrowserFingerprint()
 
@@ -171,6 +173,7 @@ class SapisidhashTransport:
         Raises:
             AuthExpiredError: if setup() was never called, or the cookie is now missing.
         """
+        await asyncio.sleep(0)  # yield to event loop — Protocol-required async signature
         if self._profile_dir is None:
             raise AuthExpiredError("sapisidhash: cannot refresh — setup() was never called")
         try:
@@ -211,7 +214,7 @@ class SapisidhashTransport:
     async def generate_images(
         self,
         *,
-        project_id: str,
+        project_id: str | None,
         request: GenerateImageRequest,
     ) -> list[GeneratedImage]:
         """Generate images via pure httpx, replaying SAPISID + fingerprint.
@@ -219,6 +222,8 @@ class SapisidhashTransport:
         Single-retry on 401 (SAPISID rotation); raises TransportTimeoutError
         if the call hangs beyond PER_CALL_TIMEOUT_S.
         """
+        if project_id is None:
+            raise ValueError("SapisidhashTransport requires an explicit project_id")
         if self._sapisid is None or self._profile_dir is None:
             raise AuthMissingError("sapisidhash: setup() was not called before generate_images()")
 
