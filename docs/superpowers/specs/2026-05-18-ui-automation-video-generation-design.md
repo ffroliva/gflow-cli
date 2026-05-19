@@ -410,24 +410,64 @@ screenshot. Default timeout 600 s (Veo can exceed 5 min); env-configurable via
 
 ## 6. UI Selectors
 
-Mode-switch selectors (needed for every mode):
+> **Corrected by the Phase 0 spike (§10.4).** The mode switch is a **2-step
+> dropdown**, not a visible tab bar, and Flow renders in the **account's
+> language** (the test account is pt-BR) regardless of `locale="en-US"` /
+> `?hl=en`. Text selectors therefore carry both en and pt-BR variants;
+> structural selectors (icon ligature, `aria-controls`) are locale-invariant
+> and preferred.
+
+**Mode switching is a two-step interaction.** A `button[aria-haspopup='menu']`
+trigger — it shows the current mode (`Vídeo`/`Imagem` + crop icon) — opens a
+`role='menu'` whose `role='tablist'` holds the Imagem/Vídeo `role='tab'`s. The
+tabs are **not in the DOM until the menu opens**, so the transport must click
+the trigger first, then the tab:
 
 ```python
-VIDEO_MODE_TAB_SELECTORS = (
-    "button:has(i:text('play_circle'))",
-    "[role='tab']:has-text('Video')",
+MODE_SWITCH_TRIGGER_SELECTORS = (
+    "button[aria-haspopup='menu']:has-text('Vídeo')",
+    "button[aria-haspopup='menu']:has-text('Video')",
+    "button[aria-haspopup='menu']:has-text('Imagem')",
+    "button[aria-haspopup='menu']:has-text('Image')",
+    "button[aria-haspopup='menu']",                       # last-resort fallback
 )
-FRAMES_SUBTAB_SELECTORS    = ("[role='tab']:has-text('Frames')", "button:has-text('Frames')")
-ELEMENTOS_SUBTAB_SELECTORS = ("[role='tab']:has-text('Elements')", "button:has-text('Elements')")
+VIDEO_TAB_IN_MENU_SELECTORS = (
+    "[role='menu'] [role='tab'][aria-controls*='VIDEO']",
+    "[role='menu'] [role='tab']:has(i:text('play_circle'))",
+    "[role='tab'][aria-controls*='VIDEO']",
+    "[role='menu'] [role='tab']:has-text('Vídeo')",
+    "[role='menu'] [role='tab']:has-text('Video')",
+)
 ```
 
-`setup()` already forces `locale="en-US"` and `?hl=en`, so Portuguese selector
-variants are dropped. Catalog/file-picker selectors for §5.3 depend on the spike
-outcome and are specified during Phase B planning.
+Frames/Elementos sub-mode tabs and the Frames start/end slots. §10.4 found the
+slots are `<div type="button" aria-haspopup="dialog">Inicial</div>` / `Final` —
+`<div>`, not `<button>`, and `aria-haspopup="dialog"` means clicking one opens
+an **in-page catalog dialog** (relevant to §5.3 / Q1):
 
-**All §6 selectors are unverified guesses against the live Flow DOM.** The
-§10.3 Phase 0 spike must include a selector-validation pass (analogous to
-`scripts/smoke_worker_style.py`) before transport unit tests are written.
+```python
+FRAMES_SUBTAB_SELECTORS = (
+    "[role='tab']:has-text('Frames')",    "[role='tab']:has-text('Quadros')",
+    "button:has-text('Frames')",          "button:has-text('Quadros')",
+)
+ELEMENTOS_SUBTAB_SELECTORS = (
+    "[role='tab']:has-text('Elementos')", "[role='tab']:has-text('Elements')",
+    "button:has-text('Elementos')",       "button:has-text('Elements')",
+)
+START_FRAME_SELECTORS = (
+    "div[type='button'][aria-haspopup='dialog']:has-text('Inicial')",
+    "div[type='button'][aria-haspopup='dialog']:has-text('Start')",
+)
+```
+
+Catalog/file-picker selectors for §5.3 depend on the spike outcome and are
+specified during Phase B planning.
+
+**§6 status:** the 2-step-dropdown *pattern* is spike-confirmed (§10.4); the
+exact mode-switch selector strings are confirmed once a spike run passes the
+mode switch. The sub-tab, aspect, and catalog selectors remain unverified
+guesses pending the next spike runs. The §10.3 Phase 0 spike completes the
+selector-validation pass before transport unit tests are written.
 
 ---
 
