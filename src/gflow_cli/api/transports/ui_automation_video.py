@@ -46,6 +46,55 @@ VIDEO_GENERATE_ROUTES = (
 # Status-poll route — Flow's SPA polls this itself while a generation runs.
 VIDEO_STATUS_ROUTE = "batchCheckAsyncVideoGenerationStatus"
 
+# Mode switching is a 2-step dropdown (spec §6, §10.5). The trigger is the
+# unified generation-settings button — the only button[aria-haspopup='menu']
+# carrying an aspect-ratio crop_* icon; clicking it opens a role='menu' with
+# the Imagem/Vídeo role='tablist' (the tabs are not in the DOM until it opens).
+MODE_SWITCH_TRIGGER_SELECTORS = (
+    "button[aria-haspopup='menu']:has(i.google-symbols:text('crop_16_9'))",
+    "button[aria-haspopup='menu']:has(i.google-symbols:text('crop_9_16'))",
+    "button[aria-haspopup='menu']:has(i.google-symbols:text('crop_square'))",
+    "button[aria-haspopup='menu']:has(i.google-symbols:text('crop_portrait'))",
+    "button[aria-haspopup='menu']:has(i.google-symbols:text('crop_landscape'))",
+    "button[aria-haspopup='menu']:has(i.google-symbols:text('crop_original'))",
+)
+VIDEO_TAB_IN_MENU_SELECTORS = (
+    "[role='menu'] [role='tab'][aria-controls*='VIDEO']",
+    "[role='menu'] [role='tab']:has(i:text('play_circle'))",
+    "[role='tab'][aria-controls*='VIDEO']",
+    "[role='menu'] [role='tab']:has-text('Vídeo')",
+    "[role='menu'] [role='tab']:has-text('Video')",
+)
+# Output-count tabs in the same dropdown. Flow defaults output count to x2
+# (two videos = double credits — spec §10.5); generate_video forces count=1.
+COUNT_ONE_SELECTORS = (
+    "[role='menu'] [role='tab'][aria-controls*='-content-1']",
+    "[role='menu'] [role='tab'][id*='-trigger-1']",
+    "[role='menu'] [role='tab']:text-is('1x')",
+)
+# Aspect tabs inside the open menu. §6 best-effort — the Phase 0 spike confirmed
+# video offers 9:16 / 16:9 only but did not lock an exact aspect-set selector;
+# Phase B e2e hardens these. A miss is non-fatal (Flow's default applies).
+VIDEO_ASPECT_TAB_SELECTORS: dict[Aspect, tuple[str, ...]] = {
+    Aspect.PORTRAIT: (
+        "[role='menu'] [role='tab'][aria-controls*='9_16']",
+        "[role='menu'] [role='tab']:text-is('9:16')",
+        "[role='tab']:has-text('9:16')",
+    ),
+    Aspect.LANDSCAPE: (
+        "[role='menu'] [role='tab'][aria-controls*='16_9']",
+        "[role='menu'] [role='tab']:text-is('16:9')",
+        "[role='tab']:has-text('16:9')",
+    ),
+}
+
+# The editor SPA's ready anchor — the Slate prompt textbox. The /project/ URL
+# nav fires before the UI mounts; this is the readiness gate (used by
+# _wait_video_editor_ready and asserted in its test).
+_EDITOR_READY_ANCHOR = (
+    "div[role='textbox'][data-slate-editor='true'], div[contenteditable='true']"
+)
+
 
 async def _capture_debug_screenshot(page: Any, out_dir: Path | None, filename: str) -> Path | None:
     """Best-effort viewport screenshot for debugging. Duplicated from
@@ -223,3 +272,67 @@ class VideoGenerationMixin:
             f"no terminal status for {media_name!r} within {timeout_s:.0f}s — "
             f"{seen_count} status response(s) seen, last status: {last_status}. {cause}."
         )
+
+    @staticmethod
+    async def _probe_selector_cascade(
+        page: Page,
+        label: str,
+        candidates: tuple[str, ...],
+        *,
+        timeout_ms: int = 4000,
+    ) -> Locator | None:
+        """Try each selector in order; return the first visible match or None.
+        Logs every attempt so a failed probe is diagnosable from the structured
+        log alone."""
+        for selector in candidates:
+            try:
+                loc = page.locator(selector).first
+                await loc.wait_for(state="visible", timeout=timeout_ms)
+                log.info("ui_automation_video.selector_matched", probe=label, selector=selector)
+                return loc
+            except Exception:  # noqa: BLE001 — selector miss; try the next
+                log.debug("ui_automation_video.selector_miss", probe=label, selector=selector)
+        log.warning("ui_automation_video.selector_probe_failed", probe=label)
+        return None
+
+    @staticmethod
+    async def _switch_to_video_mode(page: Page, *, out_dir: Path | None) -> None:
+        """Open the 2-step mode dropdown and switch to Video mode. The menu
+        stays open afterward so the caller can also set aspect + count."""
+        trigger = await VideoGenerationMixin._probe_selector_cascade(
+            page, "mode_switch_trigger", MODE_SWITCH_TRIGGER_SELECTORS
+        )
+        if trigger is None:
+            shot = await _capture_debug_screenshot(page, out_dir, "debug_no_mode_trigger.png")
+            raise RuntimeError(
+                f"mode-switch dropdown trigger not found on the Flow editor. Screenshot: {shot}"
+            )
+        await trigger.click()
+        await page.wait_for_timeout(800)
+        video_tab = await VideoGenerationMixin._probe_selector_cascade(
+            page, "video_mode_tab", VIDEO_TAB_IN_MENU_SELECTORS
+        )
+        if video_tab is None:
+            shot = await _capture_debug_screenshot(page, out_dir, "debug_no_video_tab.png")
+            raise RuntimeError(
+                f"Video tab not found in the mode dropdown. Screenshot: {shot}"
+            )
+        await video_tab.click()
+        await page.wait_for_timeout(1200)
+        log.info("ui_automation_video.video_mode_entered")
+
+    @staticmethod
+    async def _wait_video_editor_ready(page: Page) -> None:
+        """Wait for the editor SPA to mount before probing video controls. The
+        /project/ URL nav fires before the UI renders — the Phase 0 spike found
+        probes taken right after it see only the page shell. The prompt textbox
+        is the ready anchor. Non-fatal on timeout (the cascade probes still
+        have their own per-selector waits)."""
+        try:
+            await page.locator(_EDITOR_READY_ANCHOR).first.wait_for(
+                state="visible", timeout=20_000
+            )
+            await page.wait_for_timeout(1000)
+            log.info("ui_automation_video.editor_ready")
+        except Exception as e:  # noqa: BLE001 — non-fatal readiness gate
+            log.warning("ui_automation_video.editor_ready_timeout", error=str(e))

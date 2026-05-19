@@ -132,3 +132,82 @@ class TestPollVideoStatus:
             await VideoGenerationMixin._poll_video_status(
                 page, [], "m", timeout_s=0.2, poll_interval_s=0.05
             )
+
+
+def _cascade_page(visible: set[str]) -> MagicMock:
+    """A fake page whose locator(sel) is 'visible' only for sel in `visible`."""
+    page = MagicMock()
+
+    def _locator(sel: str) -> MagicMock:
+        loc = MagicMock()
+        loc.first = loc
+        if sel in visible:
+            loc.wait_for = AsyncMock()
+        else:
+            loc.wait_for = AsyncMock(side_effect=Exception("not visible"))
+        loc.click = AsyncMock()
+        return loc
+
+    page.locator = MagicMock(side_effect=_locator)
+    page.wait_for_timeout = AsyncMock()
+    page.screenshot = AsyncMock()
+    return page
+
+
+class TestProbeSelectorCascade:
+    @pytest.mark.asyncio
+    async def test_returns_first_visible_match(self) -> None:
+        page = _cascade_page({"b"})
+        loc = await VideoGenerationMixin._probe_selector_cascade(
+            page, "x", ("a", "b", "c"), timeout_ms=10
+        )
+        assert loc is not None
+
+    @pytest.mark.asyncio
+    async def test_returns_none_when_all_miss(self) -> None:
+        page = _cascade_page(set())
+        loc = await VideoGenerationMixin._probe_selector_cascade(
+            page, "x", ("a", "b"), timeout_ms=10
+        )
+        assert loc is None
+
+
+class TestSwitchToVideoMode:
+    @pytest.mark.asyncio
+    async def test_opens_dropdown_then_clicks_video_tab(self) -> None:
+        from gflow_cli.api.transports import ui_automation_video as mod
+
+        trigger = mod.MODE_SWITCH_TRIGGER_SELECTORS[0]
+        video_tab = mod.VIDEO_TAB_IN_MENU_SELECTORS[0]
+        page = _cascade_page({trigger, video_tab})
+        await VideoGenerationMixin._switch_to_video_mode(page, out_dir=None)
+        # both the trigger and the in-menu video tab were located
+        assert page.locator.call_count >= 2
+
+    @pytest.mark.asyncio
+    async def test_raises_when_trigger_missing(self) -> None:
+        page = _cascade_page(set())
+        with pytest.raises(RuntimeError, match="mode-switch"):
+            await VideoGenerationMixin._switch_to_video_mode(page, out_dir=None)
+
+    @pytest.mark.asyncio
+    async def test_raises_when_video_tab_missing(self) -> None:
+        from gflow_cli.api.transports import ui_automation_video as mod
+
+        page = _cascade_page({mod.MODE_SWITCH_TRIGGER_SELECTORS[0]})
+        with pytest.raises(RuntimeError, match="Video tab"):
+            await VideoGenerationMixin._switch_to_video_mode(page, out_dir=None)
+
+
+class TestWaitVideoEditorReady:
+    @pytest.mark.asyncio
+    async def test_returns_when_anchor_visible(self) -> None:
+        from gflow_cli.api.transports import ui_automation_video as mod
+
+        page = _cascade_page({mod._EDITOR_READY_ANCHOR})
+        await VideoGenerationMixin._wait_video_editor_ready(page)  # must not raise
+
+    @pytest.mark.asyncio
+    async def test_timeout_is_non_fatal(self) -> None:
+        page = _cascade_page(set())
+        await VideoGenerationMixin._wait_video_editor_ready(page)  # logs, must not raise
