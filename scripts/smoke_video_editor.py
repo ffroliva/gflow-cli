@@ -43,6 +43,9 @@ SUBMIT_BUTTON_SELECTORS = [
     # Universal: icon-based selector (locale-invariant, same pattern as NEW_PROJECT_SELECTORS)
     "button:has(i.google-symbols:text('arrow_forward'))",
     "button:has(i:text('arrow_forward'))",
+    # Localized text fallbacks — Flow renders in the account's language (§10.4)
+    "button:has-text('Criar')",
+    "button:has-text('Create')",
     # Fallback: button whose visible text includes the icon ligature text
     "button:has-text('arrow_forward')",
 ]
@@ -69,18 +72,50 @@ NEW_PROJECT_SELECTORS = [
 ]
 
 
-# Spec §6 — unverified guesses; this spike confirms which (if any) match.
-VIDEO_MODE_TAB_SELECTORS = (
-    "button:has(i:text('play_circle'))",
-    "[role='tab']:has-text('Video')",
+# Spec §6 — corrected by the Phase 0 spike (discovery-2 dom_editor.json). Mode
+# switching is a 2-step dropdown. The trigger is the unified generation-settings
+# button: the ONLY button[aria-haspopup='menu'] that carries an aspect-ratio
+# crop_* icon (the others are more_vert / filter_list / add / settings_2). It
+# shows the current model + crop icon + count; clicking it opens a role='menu'
+# with the Imagem/Vídeo role='tablist'. Tabs are not in the DOM until it opens.
+MODE_SWITCH_TRIGGER_SELECTORS = (
+    "button[aria-haspopup='menu']:has(i.google-symbols:text('crop_16_9'))",
+    "button[aria-haspopup='menu']:has(i.google-symbols:text('crop_9_16'))",
+    "button[aria-haspopup='menu']:has(i.google-symbols:text('crop_square'))",
+    "button[aria-haspopup='menu']:has(i.google-symbols:text('crop_portrait'))",
+    "button[aria-haspopup='menu']:has(i.google-symbols:text('crop_landscape'))",
+    "button[aria-haspopup='menu']:has(i.google-symbols:text('crop_original'))",
 )
+VIDEO_TAB_IN_MENU_SELECTORS = (
+    "[role='menu'] [role='tab'][aria-controls*='VIDEO']",
+    "[role='menu'] [role='tab']:has(i:text('play_circle'))",
+    "[role='tab'][aria-controls*='VIDEO']",
+    "[role='menu'] [role='tab']:has-text('Vídeo')",
+    "[role='menu'] [role='tab']:has-text('Video')",
+)
+# Frames (I2V) / Elementos (R2V) sub-mode tabs — Radix tabs inside the open
+# mode menu. Structural anchors (discovery-3 dom_mode_menu_video.json): the
+# aria-controls / id tokens VIDEO_FRAMES / VIDEO_REFERENCES and the icon
+# ligatures are language-invariant; the text variant is a last-resort fallback.
 FRAMES_SUBTAB_SELECTORS = (
+    "[role='menu'] [role='tab'][aria-controls*='VIDEO_FRAMES']",
+    "[role='menu'] [role='tab'][id*='trigger-VIDEO_FRAMES']",
+    "[role='menu'] [role='tab']:has(i:text('crop_free'))",
     "[role='tab']:has-text('Frames')",
-    "button:has-text('Frames')",
 )
 ELEMENTOS_SUBTAB_SELECTORS = (
-    "[role='tab']:has-text('Elements')",
-    "button:has-text('Elements')",
+    "[role='menu'] [role='tab'][aria-controls*='VIDEO_REFERENCES']",
+    "[role='menu'] [role='tab'][id*='trigger-VIDEO_REFERENCES']",
+    "[role='menu'] [role='tab']:has(i:text('chrome_extension'))",
+    "[role='tab']:has-text('Elementos')",
+)
+# Output-count tabs live in the same dropdown — a radix tablist whose tabs
+# carry aria-controls '...-content-{1,2,3,4}'. The spike forces count=1 so
+# each paid generation spends one video's credits, not Flow's default x2.
+COUNT_ONE_SELECTORS = (
+    "[role='menu'] [role='tab'][aria-controls*='-content-1']",
+    "[role='menu'] [role='tab'][id*='-trigger-1']",
+    "[role='menu'] [role='tab']:text-is('1x')",
 )
 
 # The settings trigger shows the current ratio icon; enumerate the icon names.
@@ -100,11 +135,16 @@ VIDEO_GENERATE_ROUTES = (
 
 STATUS_URL = "https://aisandbox-pa.googleapis.com/v1/video:batchCheckAsyncVideoGenerationStatus"
 
+# §10.4: the Frames start/end slots are <div type="button" aria-haspopup="dialog">
+# Inicial</div> / Final — NOT <button>; aria-haspopup='dialog' = in-page catalog.
 START_FRAME_SELECTORS = (
+    "div[type='button'][aria-haspopup='dialog']:has-text('Inicial')",
+    "div[type='button'][aria-haspopup='dialog']:has-text('Start')",
+    "div[type='button']:has-text('Inicial')",
+    "[aria-haspopup='dialog']:has-text('Inicial')",
+    "button:has-text('Inicial')",
     "button:has-text('Start')",
     "button:has-text('Initial')",
-    "button:has-text('Inicial')",
-    "button:has(i:text('add'))",
 )
 ADD_ELEMENT_SELECTORS = (
     "button[aria-label*='Add' i]",
@@ -289,6 +329,93 @@ async def _probe(
     return None, None
 
 
+_DOM_FINGERPRINT_JS = """
+(rootSel) => {
+  const root = rootSel ? document.querySelector(rootSel) : document.body;
+  if (!root) return { error: 'root not found: ' + rootSel };
+  const sel = [
+    'button', 'a', '[role]', '[aria-haspopup]',
+    "[contenteditable='true']", '[data-slate-editor]', 'i.google-symbols',
+  ].join(', ');
+  const out = [];
+  for (const el of root.querySelectorAll(sel)) {
+    const st = getComputedStyle(el);
+    if (st.display === 'none' || st.visibility === 'hidden') continue;
+    const attrs = {};
+    for (const a of el.getAttributeNames()) {
+      if (a === 'role' || a === 'type' || a === 'id' ||
+          a.startsWith('aria-') || a.startsWith('data-')) {
+        attrs[a] = el.getAttribute(a);
+      }
+    }
+    const icons = [...el.querySelectorAll("i.google-symbols, i[class*='symbols']")]
+      .map((i) => (i.textContent || '').trim())
+      .filter(Boolean);
+    out.push({
+      tag: el.tagName.toLowerCase(),
+      attrs: attrs,
+      icons: icons,
+      text: (el.textContent || '').replace(/\\s+/g, ' ').trim().slice(0, 60),
+    });
+  }
+  return { root: rootSel || 'body', count: out.length, elements: out };
+}
+"""
+
+
+async def _dump_region(
+    page: Page, label: str, out_dir: Path, root_selector: str | None = None
+) -> None:
+    """Dump the structural fingerprint of every interactive element under
+    root_selector — tag, role, aria-*, data-*, id and Material Symbols icon
+    ligatures. Those are developer strings (Radix tokens, icon names), not
+    localized UI text, so a discovery run reads dom_<label>.json to lock
+    language-agnostic selectors instead of guessing per-locale text."""
+    try:
+        result = await page.evaluate(_DOM_FINGERPRINT_JS, root_selector)
+    except Exception as e:  # noqa: BLE001
+        log.warning("dom_dump_failed", region=label, error=str(e))
+        return
+    (out_dir / f"dom_{label}.json").write_text(
+        json.dumps(result, indent=2, ensure_ascii=False), encoding="utf-8"
+    )
+    log.info("dom_dumped", region=label, count=result.get("count"))
+
+
+async def _dismiss_cookie_banner(page: Page) -> None:
+    """Dismiss Google's 'glue' cookie-consent banner if present — it renders
+    over the page and can intercept clicks or hide bottom controls."""
+    for sel in (
+        "#glue-cookie-notification-bar-1 button",
+        "div[id*='cookie' i] button",
+        "div[class*='cookie' i] button",
+    ):
+        try:
+            btn = page.locator(sel).first
+            await btn.wait_for(state="visible", timeout=2500)
+            await btn.click()
+            log.info("cookie_banner_dismissed", selector=sel)
+            await page.wait_for_timeout(500)
+            return
+        except Exception:  # noqa: BLE001
+            continue
+    log.info("cookie_banner_absent")
+
+
+async def _wait_editor_ready(page: Page, out_dir: Path) -> None:
+    """Wait for the Flow editor SPA to mount. The /project/ URL nav fires
+    before the editor UI renders, so dumps and probes taken right after it
+    see only the page shell — the Slate prompt box is the ready anchor."""
+    anchor = ", ".join(PROMPT_INPUT_SELECTORS)
+    try:
+        await page.locator(anchor).first.wait_for(state="visible", timeout=20_000)
+        await page.wait_for_timeout(1200)
+        log.info("editor_ui_ready")
+    except Exception:  # noqa: BLE001
+        await page.screenshot(path=str(out_dir / "editor_not_ready.png"), full_page=True)
+        log.warning("editor_ui_ready_timeout")
+
+
 async def _probe_aspect_options(page: Page, out_dir: Path) -> None:
     """Open the settings panel; report which aspect ratios the video editor offers
     and the control shape (tab / menuitem / button)."""
@@ -300,6 +427,7 @@ async def _probe_aspect_options(page: Page, out_dir: Path) -> None:
     await btn.click()
     await page.wait_for_timeout(700)
     await page.screenshot(path=str(out_dir / "aspect_panel.png"), full_page=True)
+    await _dump_region(page, "aspect_panel", out_dir)
     for name, text in ASPECT_OPTIONS.items():
         shapes = {
             "tab": f'[role="tab"]:has-text("{text}")',
@@ -395,6 +523,7 @@ async def _probe_image_attachment(page: Page, out_dir: Path) -> str | None:
         return None
     await frames.click()
     await page.wait_for_timeout(1200)
+    await _dump_region(page, "frames_mode", out_dir)
     trigger, _ = await _probe(page, "start_frame_trigger", START_FRAME_SELECTORS)
     if trigger is None:
         await page.screenshot(path=str(out_dir / "frames_mode.png"), full_page=True)
@@ -423,6 +552,7 @@ async def _probe_image_attachment(page: Page, out_dir: Path) -> str | None:
     if elementos is not None:
         await elementos.click()
         await page.wait_for_timeout(1200)
+        await _dump_region(page, "elementos_mode", out_dir)
         slots = await page.locator(", ".join(ADD_ELEMENT_SELECTORS)).count()
         await page.screenshot(path=str(out_dir / "elementos_mode.png"), full_page=True)
         log.info("elementos_reference_slots", add_controls=slots)
@@ -441,18 +571,56 @@ async def _drive_spike(context: BrowserContext, prompt_text: str, out_dir: Path)
     project_id = page.url.split("/project/")[1].split("?")[0]
     _record(out_dir, f"# Phase 0 spike findings\n\nproject_id: {project_id}\n")
     log.info("spike_editor_ready", project_id=project_id, url=page.url)
+    await _dismiss_cookie_banner(page)
+    await _wait_editor_ready(page, out_dir)
+    await _dump_region(page, "editor", out_dir)
 
-    video_tab, video_sel = await _probe(page, "video_mode_tab", VIDEO_MODE_TAB_SELECTORS)
+    # Mode switching is a 2-step dropdown (spec §10.4): no visible tab bar — a
+    # button[aria-haspopup='menu'] trigger opens a role='menu' holding the
+    # Imagem/Vídeo role='tab' list. The tabs are not in the DOM until it opens.
+    trigger, trigger_sel = await _probe(page, "mode_switch_trigger", MODE_SWITCH_TRIGGER_SELECTORS)
+    if trigger is None:
+        await page.screenshot(path=str(out_dir / "no_mode_trigger.png"), full_page=True)
+        _record(out_dir, "- mode_switch_trigger: NOT FOUND — see no_mode_trigger.png; update §6")
+        raise RuntimeError("Mode-switch dropdown trigger not found — see screenshot, update §6")
+    await trigger.click()
+    await page.wait_for_timeout(800)
+    await page.screenshot(path=str(out_dir / "mode_menu_open.png"), full_page=True)
+    await _dump_region(page, "mode_menu", out_dir, "[role='menu']")
+
+    video_tab, video_sel = await _probe(page, "video_mode_tab", VIDEO_TAB_IN_MENU_SELECTORS)
     if video_tab is None:
-        await page.screenshot(path=str(out_dir / "no_video_tab.png"), full_page=True)
-        _record(out_dir, "- video_mode_tab: NOT FOUND — see no_video_tab.png; update §6")
-        raise RuntimeError("Video mode tab not found — see screenshot, update §6 selectors")
+        _record(out_dir, "- video_mode_tab: NOT FOUND in open menu — see mode_menu_open.png")
+        raise RuntimeError("Video tab not in mode dropdown — see mode_menu_open.png")
     await video_tab.click()
-    await page.wait_for_timeout(1500)
-    log.info("video_mode_entered")
+    await page.wait_for_timeout(1200)
+    log.info("video_mode_entered", trigger=trigger_sel, tab=video_sel)
+    # The menu STAYS open after the tab switch and now shows the video-mode
+    # controls — Frames/Elementos sub-tabs, aspect, output-count, model. Dump
+    # it here; the earlier mode_menu dump was image-mode and missed these.
+    await page.screenshot(path=str(out_dir / "mode_menu_video.png"), full_page=True)
+    await _dump_region(page, "mode_menu_video", out_dir, "[role='menu']")
 
     _, frames_sel = await _probe(page, "frames_subtab", FRAMES_SUBTAB_SELECTORS)
     _, elementos_sel = await _probe(page, "elementos_subtab", ELEMENTOS_SUBTAB_SELECTORS)
+
+    # Force output count = 1. Flow defaults to x2 (two videos), which doubles
+    # the credit spend of every paid probe. Must be set before the prompt is
+    # submitted; the count tab lives in this same still-open dropdown.
+    count_tab, count_sel = await _probe(page, "count_one_tab", COUNT_ONE_SELECTORS)
+    if count_tab is not None:
+        await count_tab.click()
+        await page.wait_for_timeout(400)
+        log.info("video_count_set", count=1, selector=count_sel)
+    else:
+        log.warning("video_count_not_set", reason="count=1 tab not found; Flow default applies")
+    _record(out_dir, f"- §6 count=1 selector: {count_sel}")
+
+    # Done configuring; dismiss the menu so later probes see a clean editor.
+    await page.keyboard.press("Escape")
+    await page.wait_for_timeout(600)
+    await _dump_region(page, "video_editor", out_dir)
+    _record(out_dir, f"- §6 mode_switch_trigger selector: {trigger_sel}")
     _record(out_dir, f"- §6 video_mode_tab selector: {video_sel}")
     _record(out_dir, f"- §6 frames_subtab selector: {frames_sel}")
     _record(out_dir, f"- §6 elementos_subtab selector: {elementos_sel}")
