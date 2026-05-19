@@ -8,7 +8,12 @@ import pytest
 from gflow_cli.auth.real_chrome import _UNVERIFIED_HINT, _UNVERIFIED_MESSAGE, GEMINI_URL
 from gflow_cli.auth.strategies import InternalChromiumStrategy, RealChromeStrategy
 from gflow_cli.auth.verification import FlowSessionOutcome, FlowSessionStatus
-from gflow_cli.errors import AuthLoginTimeoutError, AuthMissingError, SecurityError
+from gflow_cli.errors import (
+    AuthBrowserRejectedError,
+    AuthLoginTimeoutError,
+    AuthMissingError,
+    SecurityError,
+)
 
 
 def _status(outcome: FlowSessionOutcome, email: str | None = None) -> FlowSessionStatus:
@@ -291,4 +296,50 @@ class TestInternalChromiumStrategy:
                 await strategy.login(profile_dir, headless=False)
 
         assert "0s" in str(excinfo.value)
+        mock_ctx.close.assert_called_once()
+
+    @pytest.mark.asyncio
+    async def test_internal_chromium_rejected_browser_raises_guidance(
+        self,
+        tmp_path: Path,
+    ) -> None:
+        """Google's rejected-browser page should fail fast with Chrome guidance."""
+        strategy = InternalChromiumStrategy(timeout_seconds=600)
+        gflow_home = tmp_path / "gflow_home"
+        gflow_home.mkdir()
+        profile_dir = gflow_home / "profile_internal"
+
+        mock_success_loc = MagicMock()
+        mock_success_loc.is_visible = AsyncMock(return_value=False)
+
+        mock_page = MagicMock(name="page")
+        mock_page.url = "https://accounts.google.com/v3/signin/rejected?continue=flow"
+        mock_page.goto = AsyncMock()
+        mock_page.get_by_text.return_value = mock_success_loc
+
+        mock_ctx = MagicMock(name="ctx")
+        mock_ctx.pages = [mock_page]
+        mock_ctx.cookies = AsyncMock(return_value=[])
+        mock_ctx.close = AsyncMock()
+        mock_ctx.new_page = AsyncMock(return_value=mock_page)
+
+        mock_pw_obj = MagicMock(name="pw")
+        mock_pw_obj.chromium.launch_persistent_context = AsyncMock(return_value=mock_ctx)
+
+        mock_cm = MagicMock(name="cm")
+        mock_cm.__aenter__ = AsyncMock(return_value=mock_pw_obj)
+        mock_cm.__aexit__ = AsyncMock(return_value=False)
+        mock_ap = MagicMock(name="async_playwright", return_value=mock_cm)
+
+        with (
+            patch("gflow_cli.auth.internal_chromium.get_settings") as mock_settings,
+            patch("gflow_cli.auth.strategies.async_playwright", mock_ap),
+            patch("asyncio.sleep", AsyncMock()),
+        ):
+            mock_settings.return_value.home = gflow_home
+            with pytest.raises(AuthBrowserRejectedError) as excinfo:
+                await strategy.login(profile_dir, headless=False)
+
+        assert "--browser chrome" in excinfo.value.remediation_hint
+        assert "GFLOW_CLI_AUTH_BROWSER=chrome" in excinfo.value.remediation_hint
         mock_ctx.close.assert_called_once()
