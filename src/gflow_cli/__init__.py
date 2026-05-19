@@ -1,3 +1,3 @@
 """gflow-cli — unofficial CLI for Google Flow."""
 
-__version__ = "0.6.0a5"
+__version__ = "0.6.0a6"

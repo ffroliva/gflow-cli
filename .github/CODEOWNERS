@@ -20,3 +20,4 @@
 
 # Auth handling — sensitive, never bypass review
 /src/gflow_cli/auth.py  @ffroliva
+/src/gflow_cli/auth/    @ffroliva

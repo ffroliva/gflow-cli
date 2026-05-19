@@ -1,0 +1,120 @@
+name: External PR Triage
+
+on:
+  pull_request_target:
+    types: [opened, reopened, synchronize, ready_for_review, edited]
+
+permissions:
+  contents: read
+  issues: write
+  pull-requests: write
+
+jobs:
+  triage:
+    name: Label and route external PRs
+    runs-on: ubuntu-latest
+    steps:
+      - name: Triage external pull request
+        uses: actions/github-script@v7
+        with:
+          script: |
+            const pr = context.payload.pull_request;
+            if (!pr) {
+              core.info("No pull request payload; nothing to do.");
+              return;
+            }
+
+            const owner = context.repo.owner;
+            const repo = context.repo.repo;
+            const issue_number = pr.number;
+            const trustedAssociations = new Set(["OWNER", "MEMBER", "COLLABORATOR"]);
+            const isFork = pr.head.repo.full_name !== pr.base.repo.full_name;
+            const isExternal = isFork || !trustedAssociations.has(pr.author_association);
+
+            if (!isExternal) {
+              core.info("PR is not external; skipping external triage.");
+              return;
+            }
+
+            const labels = [
+              {
+                name: "external-contribution",
+                color: "0e8a16",
+                description: "Pull request from a non-maintainer or fork",
+              },
+              {
+                name: "needs-maintainer-review",
+                color: "fbca04",
+                description: "Requires maintainer review before merge",
+              },
+              {
+                name: "needs-copilot-review",
+                color: "5319e7",
+                description: "Ask GitHub Copilot for advisory code review",
+              },
+            ];
+
+            for (const label of labels) {
+              try {
+                await github.rest.issues.createLabel({ owner, repo, ...label });
+              } catch (error) {
+                if (error.status !== 422) {
+                  throw error;
+                }
+              }
+            }
+
+            await github.rest.issues.addLabels({
+              owner,
+              repo,
+              issue_number,
+              labels: labels.map((label) => label.name),
+            });
+
+            try {
+              await github.rest.pulls.requestReviewers({
+                owner,
+                repo,
+                pull_number: issue_number,
+                reviewers: ["ffroliva"],
+              });
+            } catch (error) {
+              core.warning(`Could not request maintainer review: ${error.message}`);
+            }
+
+            const marker = "<!-- gflow-cli-external-pr-triage -->";
+            const body = `${marker}
+            Thanks for the contribution. This PR has been marked as an external contribution and routed for maintainer review.
+
+            Before merge, please make sure:
+
+            - The PR targets \`develop\`.
+            - Commits use a real Git identity or GitHub noreply email.
+            - External commits include a DCO sign-off: \`git commit -s\`.
+            - The PR does not include secrets, cookies, account tokens, signed URLs, or private captured data.
+            - Focused tests/docs are included for behavior changes.
+
+            GitHub Copilot code review may be requested as an advisory first pass, but maintainer approval is still required.`;
+
+            const comments = await github.paginate(github.rest.issues.listComments, {
+              owner,
+              repo,
+              issue_number,
+              per_page: 100,
+            });
+            const existing = comments.find((comment) => comment.body?.includes(marker));
+            if (existing) {
+              await github.rest.issues.updateComment({
+                owner,
+                repo,
+                comment_id: existing.id,
+                body,
+              });
+            } else {
+              await github.rest.issues.createComment({
+                owner,
+                repo,
+                issue_number,
+                body,
+              });
+            }
