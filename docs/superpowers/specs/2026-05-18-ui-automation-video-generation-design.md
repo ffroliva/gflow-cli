@@ -40,6 +40,13 @@ fixes: §9 now lists `api/dto.py` and `api/__init__.py` in the blast radius, the
 mode-switch test seams are estimated (§8), and the §10.2 questions are tagged by
 how each is resolved (Phase 0 spike vs planning).
 
+**Rev 5 (post Phase 0 spike, 2026-05-19).** The Phase 0 spike ran against live
+Flow (results in §10.5). It confirmed the UI-drive mechanism but disproved a
+rev-3 assumption: the status endpoint is **not** pollable via
+`page.request.post` — it returns 401. §2.3 and §5.5 are corrected; polling now
+captures Flow's own status traffic. §10.2 carries the per-question resolutions;
+the §10.4 partial notes are superseded by §10.5.
+
 Every wire claim is backed by a sanitized capture committed under
 `samples/captured/`:
 
@@ -110,9 +117,11 @@ does not model crop** (§10.2). `videoGenerationImageInputs` appears only in
 
 `video:batchCheckAsyncVideoGenerationStatus` — request body is **just**
 `{ "media": [{ "name": "<mediaUuid>", "projectId": "<uuid>" }] }`, with **no**
-`clientContext` and **no** `recaptchaContext` (captures 10/11). This is
-load-bearing: the status endpoint needs no reCAPTCHA token, so it can be polled
-directly via `page.request.post` (§5.5).
+`clientContext` and **no** `recaptchaContext` (captures 10/11). The request
+body needs no reCAPTCHA token — but Phase 0 found the endpoint still returns
+**HTTP 401** to a `page.request.post` (it needs Google auth headers only Flow's
+own page JS attaches). Polling therefore captures Flow's own status traffic
+instead of issuing the POST — see §5.5 and §10.2 Q7.
 
 The response status lives at `media[i].mediaMetadata.mediaStatus` — note the
 `mediaMetadata` wrapper:
@@ -389,22 +398,39 @@ Attached synchronously before `_send_prompt`, for the race reason documented at
 @staticmethod
 async def _poll_video_status(
     page: Page, media_name: str, project_id: str, *,
-    timeout_s: float = 600.0, poll_interval_s: float = 5.0,
+    timeout_s: float = 600.0,
 ) -> VideoStatus:
 ```
 
-**Active polling:** call `video:batchCheckAsyncVideoGenerationStatus` via
-`page.request.post` on a fixed interval — sound because the status request needs
-no reCAPTCHA token (§2.3) and is deterministic regardless of whether Flow's SPA
-keeps polling (Chromium throttles background-tab timers). Parse each response
-with `parse_video_status` (§4.4).
+> **Redesigned after the Phase 0 spike (§10.5).** The rev-3/4 design polled
+> `video:batchCheckAsyncVideoGenerationStatus` via `page.request.post` on a
+> fixed interval. Phase 0 proved that returns **HTTP 401** — the status
+> endpoint needs Google auth headers only Flow's own page JS attaches (§2.3,
+> §10.2 Q7). The transport cannot issue the status request itself.
 
-Terminal handling: `MEDIA_GENERATION_STATUS_SUCCESSFUL` → return `VideoStatus`;
+**Capture Flow's own status polling.** While a generation runs, Flow's SPA
+polls `batchCheckAsyncVideoGenerationStatus` itself to drive its progress UI,
+and those requests carry full auth. `_poll_video_status` registers a
+`page.on("response")` listener on the status route (mirroring §5.4, attached
+**before** `_send_prompt` so no early poll is missed), filters by `media_name`,
+and reads the terminal status from Flow's traffic — it never issues the POST.
+
+This works because the transport's page is the **foreground, active** tab:
+Flow keeps polling until the media reaches a terminal state — it needs that
+status itself to render the result — so the rev-3 "background-tab timer
+throttle" concern does not apply. **Phase A increment 5 must confirm
+empirically** (extend the Phase 0 spike with a status-route listener) that Flow
+polls through to `SUCCESSFUL`/`FAILED` before production relies on it; if Flow
+stalls early, `_poll_video_status` calls `page.bring_to_front()` and keeps
+waiting.
+
+Parse each captured response with `parse_video_status` (§4.4). Terminal
+handling: `MEDIA_GENERATION_STATUS_SUCCESSFUL` → return `VideoStatus`;
 `MEDIA_GENERATION_STATUS_FAILED` → return a `VideoStatus` carrying
-`failure_reasons`/`error_message` (the caller maps it, §7); timeout → raise
-`TimeoutError` with `media_name`, last status, elapsed time, and a debug
-screenshot. Default timeout 600 s (Veo can exceed 5 min); env-configurable via
-`GFLOW_CLI_VIDEO_POLL_TIMEOUT`.
+`failure_reasons`/`error_message` (the caller maps it, §7); no terminal status
+within `timeout_s` → raise `TimeoutError` with `media_name`, the last status
+seen, elapsed time, and a debug screenshot. Default timeout 600 s (Veo can
+exceed 5 min); env-configurable via `GFLOW_CLI_VIDEO_POLL_TIMEOUT`.
 
 ---
 
