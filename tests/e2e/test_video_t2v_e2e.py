@@ -7,8 +7,9 @@ Hits the **real Google Flow API** and therefore:
   - Burns one Flow credit per run — do not run in CI without gating.
 
 Criterion covered:
-  T2V-1 — generate_video(T2V, LANDSCAPE) returns a terminal SUCCESSFUL
-           VideoStatus with a non-empty media_id.
+  T2V-1 — generate_video(T2V) returns a terminal SUCCESSFUL VideoStatus
+           with a non-empty media_id. Aspect is selected from the
+           ``GFLOW_CLI_E2E_VIDEO_ASPECT`` env var (default: ``landscape``).
 """
 
 from __future__ import annotations
@@ -33,13 +34,11 @@ pytestmark = pytest.mark.e2e
 # ---------------------------------------------------------------------------
 
 _E2E_PROFILE_ENV = "GFLOW_CLI_E2E_PROFILE"
+_E2E_ASPECT_ENV = "GFLOW_CLI_E2E_VIDEO_ASPECT"
 
 # Short, safe prompt — generic enough to pass content-policy, visual enough
 # to confirm T2V is actually generating footage.
 _PROMPT = "a calm forest at dawn, cinematic"
-
-# T2V with landscape ratio is the canonical first smoke target (spec §2.1).
-_ASPECT = Aspect.LANDSCAPE
 
 # Poll timeout generous for real Flow T2V latency (typically 60-180 s,
 # up to 600 s in the worst case).
@@ -78,25 +77,43 @@ def _profile_dir() -> Path:
     return candidate
 
 
+def _aspect() -> Aspect:
+    """Resolve the requested aspect from the environment variable.
+
+    Defaults to LANDSCAPE. Skips on unrecognised values so a typo doesn't
+    silently fall back to the default and burn a credit on the wrong ratio.
+    """
+    raw = os.environ.get(_E2E_ASPECT_ENV, "landscape").strip().lower()
+    if raw == "landscape":
+        return Aspect.LANDSCAPE
+    if raw == "portrait":
+        return Aspect.PORTRAIT
+    pytest.skip(
+        f"Unsupported {_E2E_ASPECT_ENV}={raw!r} — set to 'landscape' or 'portrait'"
+    )
+
+
 # ---------------------------------------------------------------------------
-# Criterion T2V-1 — landscape T2V generation returns SUCCESSFUL VideoStatus
+# Criterion T2V-1 — T2V generation returns SUCCESSFUL VideoStatus
 # ---------------------------------------------------------------------------
 
 
 @pytest.mark.asyncio
-async def test_t2v_landscape_generates_video(tmp_path: Path) -> None:
-    """T2V-1: generate_video() with T2V + LANDSCAPE returns a terminal
-    SUCCESSFUL VideoStatus with a non-empty media_id.
+async def test_t2v_generates_video(tmp_path: Path) -> None:
+    """T2V-1: generate_video() with T2V returns a terminal SUCCESSFUL
+    VideoStatus with a non-empty media_id.
 
-    ``tmp_path`` is used as ``out_dir`` so any debug screenshots land in
-    pytest's temp directory (never in test_assets/ or the repo root).
+    Aspect is selected via ``$GFLOW_CLI_E2E_VIDEO_ASPECT`` (default
+    ``landscape``). ``tmp_path`` is used as ``out_dir`` so any debug
+    screenshots land in pytest's temp directory.
     """
     profile = _profile_dir()
+    aspect = _aspect()
 
     req = GenerateVideoRequest(
         prompt=_PROMPT,
         mode=Mode.T2V,
-        aspect=_ASPECT,
+        aspect=aspect,
     )
 
     transport = UiAutomationTransport()
