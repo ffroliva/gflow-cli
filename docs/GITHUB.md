@@ -22,6 +22,38 @@ when deciding what to do with an external or internal PR.
 5. Read GitHub checks and comments. Treat bot output as advisory unless it is a
    required project gate or has concrete evidence.
 
+## Automated External PR Triage
+
+External PR routing is handled by
+`.github/workflows/external-pr-triage.yml`. It uses `pull_request_target`, but
+only for repository metadata operations:
+
+- label external PRs as `external-contribution`
+- label them as `needs-maintainer-review`
+- label them as `needs-copilot-review`
+- request `@ffroliva` as reviewer
+- post or update the external-contribution checklist comment
+
+This workflow must not checkout the PR branch, install dependencies, run tests,
+or execute contributor code. Keep all code execution in the normal `pull_request`
+CI workflow, where forked PRs do not receive repository secrets.
+
+## GitHub Copilot Code Review
+
+Copilot code review is the first AI review layer for this project. It is
+advisory only: Copilot leaves a comment review, does not approve or request
+changes, and does not replace maintainer review.
+
+Repository-specific Copilot guidance lives in
+`.github/copilot-instructions.md`. Keep those instructions focused on this
+project's review risks: auth, browser automation, CI, release, secret handling,
+provenance, and focused tests.
+
+Enable automatic Copilot code review in GitHub repository settings/rulesets if
+available for the account. If automatic review is unavailable, request Copilot
+manually from the PR reviewers menu for PRs carrying the `needs-copilot-review`
+label.
+
 ## Scenario Matrix
 
 | Scenario | Action |
