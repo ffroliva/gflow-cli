@@ -8,6 +8,7 @@ import pytest
 
 from gflow_cli.errors import (
     EXIT_CODE_MAP,
+    AuthBrowserRejectedError,
     AuthExpiredError,
     AuthMissingError,
     ConfigurationError,
@@ -106,6 +107,10 @@ def test_to_problem_details_table(exc_cls, kwargs, expect_keys, expect_absent, e
 
 def test_problem_type_uris_stable():
     """Lock the URIs — they're greppable identifiers in production logs."""
+    assert (
+        AuthBrowserRejectedError.problem_type
+        == "https://gflow-cli.dev/errors/auth-browser-rejected"
+    )
     assert AuthExpiredError.problem_type == "https://gflow-cli.dev/errors/auth-expired"
     assert RateLimitError.problem_type == "https://gflow-cli.dev/errors/rate-limit"
     assert ContentPolicyError.problem_type == "https://gflow-cli.dev/errors/content-policy"
@@ -138,6 +143,7 @@ def test_exit_code_map_synthetic_subclass_inherits_parent_code():
     "exc_cls, expected_code",
     [
         (AuthExpiredError, 3),
+        (AuthBrowserRejectedError, 14),
         (RateLimitError, 4),
         (ContentPolicyError, 5),
         (NetworkError, 6),

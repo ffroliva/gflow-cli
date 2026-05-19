@@ -296,10 +296,23 @@ class AuthLoginTimeoutError(GFlowError):
     )
 
 
+class AuthBrowserRejectedError(GFlowError):
+    """Raised when Google rejects the login browser before sign-in can complete."""
+
+    problem_type = "https://gflow-cli.dev/errors/auth-browser-rejected"
+    title = "Login browser rejected"
+    _default_remediation = (
+        "Google rejected Playwright's bundled Chromium as an insecure browser. "
+        "Install Google Chrome and rerun `gflow auth login --browser chrome`, "
+        "or set GFLOW_CLI_AUTH_BROWSER=chrome so future logins use real Chrome."
+    )
+
+
 # EXIT_CODE_MAP — most-specific class FIRST per isinstance walk semantics.
 # Subclasses inherit their parent's exit code if they don't have their own
 # entry. New entries MUST go BEFORE their parent class in this dict.
 EXIT_CODE_MAP: dict[type[GFlowError], int] = {
+    AuthBrowserRejectedError: 14,
     AuthLoginTimeoutError: 12,
     SecurityError: 13,
     AuthMissingError: 8,
