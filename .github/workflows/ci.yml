@@ -77,7 +77,15 @@ jobs:
     name: SonarCloud analysis
     runs-on: ubuntu-latest
     needs: test   # wait for tests + coverage report
-    if: always()  # run even if test matrix has failures — Sonar should see the state
+    # Forked pull_request runs do not receive repository secrets, so SONAR_TOKEN
+    # is empty there and the scanner fails before analysis. Keep SonarCloud on
+    # trusted pushes/internal PRs where the token is available.
+    if: >
+      always() &&
+      (
+        github.event_name != 'pull_request' ||
+        github.event.pull_request.head.repo.full_name == github.repository
+      )
     steps:
       - uses: actions/checkout@v4
         with:
