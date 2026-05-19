@@ -326,6 +326,23 @@ Page creation averaged **44.7–48.1 ms per page** across N=2/4/8/16 inside one 
 
 ---
 
+### Video generation rework (UiAutomationTransport) — Phase 0 spike ✅ DONE (2026-05-19)
+
+The video-generation feature has its own sub-phase plan (spike → Phase A → Phase B), tracked in `docs/superpowers/specs/2026-05-18-ui-automation-video-generation-design.md`. Targets v0.6.0a5 (see KNOWN_ISSUES "REST API 401").
+
+**Phase 0 — submit-mechanism spike — ✅ DONE.** `scripts/smoke_video_editor.py` drove live Flow and proved video generation can be UI-driven like `generate_images`: a T2V `batchAsyncGenerateVideoText` fired and returned HTTP 200. Full results in the spec §10.5; open-question resolutions in §10.2.
+
+- ✅ Core finding confirmed — UI-drive video works.
+- ✅ Q5 — video offers 9:16 / 16:9 only (no SQUARE).
+- ✅ Mode switch is a 2-step dropdown; selectors locked to language-agnostic structural anchors (Radix `aria-controls` tokens, icon ligatures).
+- ✅ Output count defaults to x2 — the transport must set count explicitly (verified count=1 → 1 video / 20 credits).
+- ⚠️ Q7 — status poll `page.request.post` → 401; the spec §5.5 polling design must be reworked in Phase A (capture Flow's own status responses).
+- ⏭️ Q1 / Q3 / Q6 — image attachment is an in-page catalog dialog; driving it, the start-only-I2V check, and the R2V slot cap are deferred to Phase B.
+
+**Next:** Phase A (T2V transport), once §5.5 is revised for the Q7 401. GitHub issue #24 tracks making the transport selectors language-agnostic.
+
+---
+
 ### Phase 5 — Public alpha soak + first non-alpha release
 
 `v0.2.0a1` through `v0.6.0a1` are already on PyPI under Trusted Publishing.

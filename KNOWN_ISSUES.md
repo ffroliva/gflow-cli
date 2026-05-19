@@ -122,6 +122,13 @@ Even with a valid browser session (cookies present), calling Flow's REST API dir
 | `flowMedia:batchGenerateImages` (image gen) | ❌ 401 |
 | `video:batchAsyncGenerateVideoText` (T2V + I2V) | ❌ 401 (confirmed 2026-05-18 e2e run) |
 | `flow/uploadImage` (image upload for I2V) | ❓ untested (blocked before reaching this step) |
+| `video:batchCheckAsyncVideoGenerationStatus` (status poll) | ❌ 401 (confirmed 2026-05-19 — even via `page.request.post` from the authenticated browser context) |
+
+The Phase 0 video spike (2026-05-19) confirmed the **generation** routes *do*
+succeed when driven through the UI (Flow's own JS issues them) — but the
+**status-poll** route 401s even from `page.request.post` inside the authed
+page. Polling must therefore capture Flow's own status responses, not issue
+the request directly. See the video-generation design spec §10.5.
 
 `project.createProject` (on `labs.google/fx/api/trpc`) **does** work — it uses a different domain and auth model.
 

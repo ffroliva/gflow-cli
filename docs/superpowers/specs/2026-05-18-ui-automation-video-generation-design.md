@@ -584,8 +584,11 @@ A planning task confirms no other live caller of the retired symbols remains
 - **Submit path** — video generation mirrors `generate_images`: drive the UI,
   capture the response. Flow's JS builds+sends the body and mints reCAPTCHA.
   The rev-0 "Strategy A vs B" framing is gone.
-- **reCAPTCHA token** — not handled by the transport. The status endpoint needs
-  no token (§2.3), so active polling via `page.request.post` is sound.
+- **reCAPTCHA token** — not handled by the transport. Flow's JS mints it on
+  prompt submit; the UI-drive path inherits a valid token (Phase 0 confirmed —
+  a T2V generate returns HTTP 200). *Correction:* the rev-3 claim that the
+  status endpoint is pollable via `page.request.post` is **wrong** — Phase 0
+  found it returns 401 (see §10.2 Q7 and §10.5).
 - **HTTP video path retired** — replacing `GenerateVideoRequest` cannot leave
   `build_generate_body`/`model_key`/`client.generate_video`/`VideoOperation`
   dangling; they are 401-dead (§1) and removed (§3, §9).
@@ -595,21 +598,50 @@ A planning task confirms no other live caller of the retired symbols remains
 
 ### 10.2 Open — answer during the Phase 0 spike or planning
 
+The Phase 0 spike (`scripts/smoke_video_editor.py`, runs 2026-05-19) resolved
+or advanced each; the consolidated results are in §10.5.
+
 1. **Image attachment mechanism (§5.3)** — drive the catalog file picker only,
    or pre-upload via `v1/flow/uploadImage` then select. Phase 0 spike.
+   **Resolved (Phase 0):** the start-frame slot ("Inicial") is a
+   `<div type="button" aria-haspopup="dialog">` — clicking it opens an
+   **in-page catalog dialog**, not an OS file picker. Driving that dialog
+   (upload vs. select-existing) is Phase B; "catalog file picker" in §5.3
+   means this in-page dialog.
 2. **Credit-cost guard** — I2V is ~10 credits/video; T2V/R2V costs unconfirmed.
    Recommendation: echo a one-line Rich cost estimate before submit with a
    `--yes` skip — not a hard block. Planning decision.
+   **Resolved (Phase 0):** the settings dropdown shows a live credit cost
+   ("40 créditos" for Veo 3.1 Fast / 16:9 / x2). A T2V at **count=1 cost 20
+   credits**; Flow **defaults the output count to x2** (→ 40). The transport
+   must set the count explicitly and may read this label for the estimate.
 3. **Start-only I2V** — is an I2V request with `start_image` but no `end_image`
    accepted? Capture `08` had both. Phase 0 spike; affects increment 2
    validation (§8).
+   **Resolved (Phase 0):** NOT answered — the spike could not attach a start
+   frame (the catalog dialog needs driving, Phase B). The `end_image`-optional
+   rule stays provisional; confirm in Phase B before tightening §4.2.
 4. **`FAILED` reason vocabulary** — only `IP_PROHIBITED` observed (§7). Not
    spike-blocking — the taxonomy grows from production data (planning).
 5. **`SQUARE` aspect** — confirm the video editor offers it (§4.3). Phase 0 spike.
+   **Resolved (Phase 0):** video mode offers **9:16 and 16:9 only — no
+   SQUARE**. (Image mode still offers 9:16/16:9/1:1/4:3/3:4.) `generate_video`
+   must reject `Aspect.SQUARE`.
 6. **`MAX_REFERENCE_IMAGES`** — confirm Flow's R2V upper bound (§4.2). Phase 0 spike.
+   **Resolved (Phase 0):** NOT answered — the Elementos (R2V) sub-tab exists
+   (`[role='tab'][aria-controls*='VIDEO_REFERENCES']`) but the spike did not
+   enter it to count slots. Phase B; treat the cap as an estimate until then.
 7. **T2V poll handle** — confirm `media[0].name` (not `operations[0].operation.name`
    or `primaryMediaId`) is the value `batchCheckAsyncVideoGenerationStatus`
    accepts for T2V (§2.4). Phase 0 spike.
+   **Resolved (Phase 0):** the candidates **collapse** — the T2V response has
+   `media[0].name` == `workflows[0].metadata.primaryMediaId` (one uuid) and no
+   `operations[]`, so disambiguation is moot. **But** a `page.request.post` to
+   `batchCheckAsyncVideoGenerationStatus` returns **HTTP 401** — the status
+   endpoint needs Google auth headers only Flow's JS attaches. §2.3/§5.5's
+   "pollable via `page.request.post`" assumption is **wrong**; Phase A must
+   poll by capturing Flow's own status responses (a `page.on("response")`
+   listener on the status route), not by issuing the POST itself.
 
 ### 10.3 Phase split
 
@@ -638,3 +670,44 @@ The first `scripts/smoke_video_editor.py` runs reached the editor (`spike_editor
 **Action for §6 + Phase A planning:** rewrite the spike's mode-switch (`_drive_spike` Task-2 block) as a 2-step dropdown interaction; restore Portuguese selector variants in §6; re-derive the Frames/Elementos sub-tab, aspect, and catalog selectors against the live pt-BR DOM. Suggested: `MODE_SWITCH_TRIGGER = button[aria-haspopup='menu']`; video tab = `[role='menu'] [role='tab'][aria-controls*='VIDEO']` / `[role='tab']:has(i:text('play_circle'))`. §10.2 Q5/Q6/Q7 remain **unanswered** — the spike did not reach them.
 
 **Auth (resolved):** the spike requires a profile authenticated via `gflow auth login --browser chrome`; `main()` fails fast otherwise. The `?hl=en` URL does not override account language.
+
+### 10.5 Phase 0 spike results (2026-05-19 — complete)
+
+`scripts/smoke_video_editor.py` drove a live Flow session end-to-end. These
+results supersede the §10.4 partial notes.
+
+**Core finding — CONFIRMED.** Video generation can be driven through the
+editor UI exactly like `generate_images`: the spike switched to video mode,
+submitted a prompt, and Flow fired `video:batchAsyncGenerateVideoText` →
+**HTTP 200** with a `media[0].name` handle. Phase A may proceed on the
+UI-drive design.
+
+**Mode switching — 2-step dropdown.** One `button[aria-haspopup='menu']`
+carrying an aspect-ratio `crop_*` icon is the unified generation-settings
+trigger. Opening it reveals a `role='menu'` of Radix tablists:
+- Imagem / Vídeo — mode (`aria-controls` token `IMAGE` / `VIDEO`).
+- Frames / Elementos — video sub-mode = I2V / R2V (`VIDEO_FRAMES` /
+  `VIDEO_REFERENCES`).
+- Aspect — `9:16` / `16:9` in video mode (no square — Q5).
+- Output count — `1x`/`x2`/`x3`/`x4` (`aria-controls` `-content-{1..4}`).
+- Model — `Veo 3.1 - Fast` etc.
+
+Tabs are not in the DOM until the menu opens. All selectors match on Radix
+`aria-controls` tokens and Material Symbols icon ligatures — language-
+invariant; see GitHub issue #24 and the verified selectors in
+`scripts/smoke_video_editor.py`.
+
+**Output count defaults to x2.** Flow generates **two** videos unless told
+otherwise — double the credits. The transport MUST set the count. Verified:
+count=1 spent 20 credits / 1 video; the x2 label was 40.
+
+**Frames (I2V).** In Frames sub-mode the editor shows start/end frame slots
+directly — `<div type="button" aria-haspopup="dialog">Inicial</div>` /
+`Final`. Attaching an image opens an in-page catalog dialog (Q1).
+
+**Status polling is broken (Q7).** `page.request.post` to
+`batchCheckAsyncVideoGenerationStatus` → 401. §5.5 must be redesigned to
+capture Flow's own status responses rather than issuing the POST.
+
+**Not reached:** Q3 (start-only I2V) and Q6 (R2V slot cap) — both need the
+catalog dialog driven; deferred to Phase B.
