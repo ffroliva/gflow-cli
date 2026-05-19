@@ -123,3 +123,103 @@ class VideoGenerationMixin:
 
         page.on("response", on_response)
         return captured, on_response
+
+    @staticmethod
+    def _attach_status_response_listener(page: Page) -> tuple[list[dict[str, Any]], Any]:
+        """Register a `page.on('response')` listener for the status route. Flow's
+        SPA polls `batchCheckAsyncVideoGenerationStatus` itself while a
+        generation runs; this captures that traffic. Returns `(captured, handler)`
+        — the caller MUST `page.remove_listener('response', handler)` in a
+        `finally`. Attached BEFORE `_send_prompt` so no early status response is
+        missed (spec §5.5)."""
+        captured: list[dict[str, Any]] = []
+
+        async def on_response(response: Any) -> None:
+            if VIDEO_STATUS_ROUTE not in response.url:
+                return
+            try:
+                body = await response.json()
+            except Exception as e:  # noqa: BLE001 — parse failures are non-fatal
+                log.warning("ui_automation_video.status_parse_failed", error=str(e))
+                return
+            captured.append({"status": response.status, "url": response.url, "body": body})
+
+        page.on("response", on_response)
+        return captured, on_response
+
+    @staticmethod
+    async def _poll_video_status(
+        page: Page,
+        captured_status: list[dict[str, Any]],
+        media_name: str,
+        *,
+        timeout_s: float = 600.0,
+        poll_interval_s: float = 2.0,
+        stall_nudge_s: float = 120.0,
+    ) -> VideoStatus:
+        """Read terminal status from Flow's own captured status traffic.
+
+        `captured_status` is the list filled by `_attach_status_response_listener`.
+        Each tick scans the WHOLE list for a terminal status of `media_name`
+        (Flow appends chronologically; a terminal status is the last it emits) —
+        no early `break`, so a terminal entry is never skipped. Returns the
+        `VideoStatus` once terminal; the caller maps a FAILED status to a typed
+        error (spec §7).
+
+        If Flow stops polling (a backgrounded tab can throttle its timers) the
+        captured list stops growing; after `stall_nudge_s` with no new capture
+        this brings the page to the foreground ONCE and keeps waiting (spec
+        §5.5). Raises `TimeoutError` only at the hard `timeout_s` deadline.
+        """
+        deadline = time.monotonic() + timeout_s
+        last_status: str | None = None
+        seen_count = len(captured_status)
+        last_progress = time.monotonic()
+        nudged = False
+        while time.monotonic() < deadline:
+            terminal: VideoStatus | None = None
+            for response in captured_status:
+                try:
+                    status = parse_video_status(response.get("body") or {}, media_id=media_name)
+                except ValueError:
+                    continue  # this response is for other media — skip
+                last_status = status.status
+                if status.is_terminal:
+                    terminal = status
+            if terminal is not None:
+                log.info(
+                    "ui_automation_video.poll_terminal",
+                    media_name=media_name,
+                    status=terminal.status,
+                )
+                return terminal
+            # Stall detection: nudge the tab to the foreground ONCE if Flow's
+            # own polling has stopped — or never started — appending responses.
+            if len(captured_status) != seen_count:
+                seen_count = len(captured_status)
+                last_progress = time.monotonic()
+            elif not nudged and time.monotonic() - last_progress > stall_nudge_s:
+                nudged = True
+                # Distinguish "Flow never polled the status route at all" from
+                # "Flow stalled mid-run" — the former is the single most likely
+                # production failure (spec §5.5 flags it as unconfirmed).
+                event = (
+                    "ui_automation_video.poll_no_status_traffic"
+                    if seen_count == 0
+                    else "ui_automation_video.poll_stall_nudge"
+                )
+                log.warning(event, media_name=media_name, status_responses_seen=seen_count)
+                try:
+                    await page.bring_to_front()
+                except Exception as e:  # noqa: BLE001 — best-effort
+                    log.debug("ui_automation_video.bring_to_front_failed", error=str(e))
+            await asyncio.sleep(poll_interval_s)
+        cause = (
+            "Flow never polled the status route"
+            if seen_count == 0
+            else "Flow stopped polling before a terminal status"
+        )
+        raise TimeoutError(
+            f"no terminal status for {media_name!r} within {timeout_s:.0f}s — "
+            f"{seen_count} status response(s) seen, last status: {last_status}. {cause}."
+        )
