@@ -16,7 +16,7 @@ from __future__ import annotations
 import asyncio
 import time
 from pathlib import Path
-from typing import TYPE_CHECKING, Any
+from typing import TYPE_CHECKING, Any, cast
 
 import structlog
 
@@ -91,9 +91,7 @@ VIDEO_ASPECT_TAB_SELECTORS: dict[Aspect, tuple[str, ...]] = {
 # The editor SPA's ready anchor — the Slate prompt textbox. The /project/ URL
 # nav fires before the UI mounts; this is the readiness gate (used by
 # _wait_video_editor_ready and asserted in its test).
-_EDITOR_READY_ANCHOR = (
-    "div[role='textbox'][data-slate-editor='true'], div[contenteditable='true']"
-)
+_EDITOR_READY_ANCHOR = "div[role='textbox'][data-slate-editor='true'], div[contenteditable='true']"
 
 
 async def _capture_debug_screenshot(page: Any, out_dir: Path | None, filename: str) -> Path | None:
@@ -314,9 +312,7 @@ class VideoGenerationMixin:
         )
         if video_tab is None:
             shot = await _capture_debug_screenshot(page, out_dir, "debug_no_video_tab.png")
-            raise RuntimeError(
-                f"Video tab not found in the mode dropdown. Screenshot: {shot}"
-            )
+            raise RuntimeError(f"Video tab not found in the mode dropdown. Screenshot: {shot}")
         await video_tab.click()
         await page.wait_for_timeout(1200)
         log.info("ui_automation_video.video_mode_entered")
@@ -329,9 +325,7 @@ class VideoGenerationMixin:
         is the ready anchor. Non-fatal on timeout (the cascade probes still
         have their own per-selector waits)."""
         try:
-            await page.locator(_EDITOR_READY_ANCHOR).first.wait_for(
-                state="visible", timeout=20_000
-            )
+            await page.locator(_EDITOR_READY_ANCHOR).first.wait_for(state="visible", timeout=20_000)
             await page.wait_for_timeout(1000)
             log.info("ui_automation_video.editor_ready")
         except Exception as e:  # noqa: BLE001 — non-fatal readiness gate
@@ -368,3 +362,131 @@ class VideoGenerationMixin:
         await tab.click()
         await page.wait_for_timeout(400)
         log.info("ui_automation_video.aspect_set", aspect=aspect.value)
+
+    @staticmethod
+    async def _await_generate_response(
+        captured: list[dict[str, Any]],
+        *,
+        timeout_s: float = 180.0,
+        poll_interval_s: float = 0.5,
+    ) -> dict[str, Any]:
+        """Wait for the first captured batchAsyncGenerateVideo* response."""
+        deadline = time.monotonic() + timeout_s
+        while time.monotonic() < deadline and not captured:
+            await asyncio.sleep(poll_interval_s)
+        if not captured:
+            raise TimeoutError(
+                f"no batchAsyncGenerateVideo* response within {timeout_s:.0f}s — "
+                "did the submit fire? did reCAPTCHA fail silently?"
+            )
+        return captured[0]
+
+    async def generate_video(
+        self,
+        *,
+        request: GenerateVideoRequest,
+        out_dir: Path | None = None,
+        poll_timeout_s: float = 600.0,
+    ) -> VideoStatus:
+        """Generate ONE video by driving the Flow editor UI (Phase A: T2V only).
+
+        Returns a `VideoStatus` for both SUCCESSFUL and FAILED terminal states;
+        the caller maps a FAILED status to a typed error (spec §7). Raises
+        `RuntimeError` (no setup / editor control missing), `NotImplementedError`
+        (non-T2V), `ValueError` (SQUARE aspect), `AuthExpiredError` (401),
+        `WafRejectionError` (403), `WireFormatError` (other non-200 / no media),
+        or `TimeoutError`.
+        """
+        if not self._setup_done or self._page is None:
+            raise RuntimeError(
+                "UiAutomationTransport.setup() must be called before generate_video()"
+            )
+        if request.mode is not Mode.T2V:
+            raise NotImplementedError("Phase A supports T2V only; I2V and R2V land in Phase B")
+        if request.aspect is Aspect.SQUARE:
+            raise ValueError(
+                "video generation does not support the SQUARE aspect; "
+                "use PORTRAIT (9:16) or LANDSCAPE (16:9)"
+            )
+        async with self._generate_lock:
+            return await self._generate_video_locked(request, out_dir, poll_timeout_s)
+
+    async def _generate_video_locked(
+        self,
+        request: GenerateVideoRequest,
+        out_dir: Path | None,
+        poll_timeout_s: float,
+    ) -> VideoStatus:
+        """Serialized body of `generate_video` — runs under `self._generate_lock`
+        (shared with `generate_images`: one Page, one DOM)."""
+        page: Page = self._page  # type: ignore[assignment]  # guarded in generate_video
+
+        await self._enter_editor(page, out_dir)
+        await VideoGenerationMixin._wait_video_editor_ready(page)
+        await VideoGenerationMixin._switch_to_video_mode(page, out_dir=out_dir)
+        await VideoGenerationMixin._select_video_aspect(page, request.aspect)
+        await VideoGenerationMixin._set_output_count_one(page)
+        await page.keyboard.press("Escape")  # close the mode dropdown
+        await page.wait_for_timeout(400)
+
+        # Attach BOTH listeners synchronously BEFORE the prompt is submitted so
+        # neither the generate response nor an early status poll is missed.
+        generate_captured, generate_handler = VideoGenerationMixin._attach_video_response_listener(
+            page
+        )
+        status_captured, status_handler = VideoGenerationMixin._attach_status_response_listener(
+            page
+        )
+        try:
+            await self._send_prompt(page, request.prompt, out_dir)
+
+            generate_resp = await VideoGenerationMixin._await_generate_response(generate_captured)
+            http_status = generate_resp.get("status")
+            url = str(generate_resp.get("url", ""))
+            # errors.py documents `route` as a sanitized route NAME, not a URL.
+            route = next((r for r in VIDEO_GENERATE_ROUTES if r in url), "video:generate")
+            if http_status == 401:
+                raise AuthExpiredError(
+                    detail="batchAsyncGenerateVideo* returned HTTP 401 — session expired",
+                    status=401,
+                    route=route,
+                )
+            if http_status == 403:
+                raise WafRejectionError(
+                    detail=(
+                        "batchAsyncGenerateVideo* returned HTTP 403 — WAF / reCAPTCHA rejection"
+                    ),
+                    status=403,
+                    route=route,
+                )
+            if http_status != 200:
+                raise WireFormatError(
+                    detail=f"batchAsyncGenerateVideo* returned HTTP {http_status}",
+                    status=http_status if isinstance(http_status, int) else None,
+                    route=route,
+                )
+            # A video 200 ALWAYS carries media[0] (the asset slot — capture 02);
+            # content rejection surfaces later as a FAILED *status*, not empty
+            # media. So a missing media[0] here is a genuine wire anomaly —
+            # WireFormatError, NOT ContentPolicyError (the image-flow pattern).
+            try:
+                media_name = media_name_from_generate_response(generate_resp.get("body") or {})
+            except ValueError as e:
+                # discovery carries only the route + the body's top-level KEY
+                # NAMES (not values) — enough to diagnose the anomaly without
+                # logging `remainingCredits`, media UUIDs, or any token.
+                anomaly_body = cast("dict[str, Any]", generate_resp.get("body") or {})
+                raise WireFormatError(
+                    detail=f"video generate response carries no media id: {e}",
+                    route=route,
+                    discovery={"route": route, "top_level_keys": sorted(anomaly_body)},
+                ) from e
+
+            return await VideoGenerationMixin._poll_video_status(
+                page, status_captured, media_name, timeout_s=poll_timeout_s
+            )
+        finally:
+            # The Page is pooled and persistent — remove both listeners so they
+            # never leak across calls.
+            page.remove_listener("response", generate_handler)
+            page.remove_listener("response", status_handler)

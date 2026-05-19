@@ -3,11 +3,14 @@
 from __future__ import annotations
 
 import asyncio
-
-import pytest
+from pathlib import Path
 from unittest.mock import AsyncMock, MagicMock
 
+import pytest
+
+from gflow_cli.api.transports.ui_automation import UiAutomationTransport
 from gflow_cli.api.transports.ui_automation_video import VideoGenerationMixin
+from gflow_cli.api.video import Aspect, GenerateVideoRequest, Mode, VideoStatus
 
 
 def _make_listener_page() -> tuple[MagicMock, list]:
@@ -58,9 +61,7 @@ class TestAttachVideoResponseListener:
         assert captured == []
 
 
-_STATUS_URL = (
-    "https://aisandbox-pa.googleapis.com/v1/video:batchCheckAsyncVideoGenerationStatus"
-)
+_STATUS_URL = "https://aisandbox-pa.googleapis.com/v1/video:batchCheckAsyncVideoGenerationStatus"
 
 
 def _status_resp(media_id: str, status: str, *, failure_reasons: list | None = None) -> dict:
@@ -246,3 +247,146 @@ class TestSelectVideoAspect:
 
         page = _cascade_page(set())
         await VideoGenerationMixin._select_video_aspect(page, Aspect.PORTRAIT)  # must not raise
+
+
+def _mock_async_page() -> MagicMock:
+    """A MagicMock page whose AWAITED methods are AsyncMock (so `await page.x()`
+    works) and whose `remove_listener` is a plain MagicMock."""
+    page = MagicMock()
+    page.keyboard.press = AsyncMock()
+    page.wait_for_timeout = AsyncMock()
+    page.bring_to_front = AsyncMock()
+    page.remove_listener = MagicMock()
+    return page
+
+
+def _stub_video_helpers(monkeypatch: pytest.MonkeyPatch, *, generate_resp: dict) -> None:
+    """Stub every VideoGenerationMixin helper `generate_video` drives, so the
+    orchestration is testable without a browser. The listener stubs return
+    `(captured, handler)` tuples to match the real signatures."""
+    monkeypatch.setattr(VideoGenerationMixin, "_wait_video_editor_ready", AsyncMock())
+    monkeypatch.setattr(VideoGenerationMixin, "_switch_to_video_mode", AsyncMock())
+    monkeypatch.setattr(VideoGenerationMixin, "_set_output_count_one", AsyncMock())
+    monkeypatch.setattr(VideoGenerationMixin, "_select_video_aspect", AsyncMock())
+    monkeypatch.setattr(
+        VideoGenerationMixin,
+        "_attach_video_response_listener",
+        staticmethod(lambda page: ([generate_resp], object())),
+    )
+    monkeypatch.setattr(
+        VideoGenerationMixin,
+        "_attach_status_response_listener",
+        staticmethod(lambda page: ([], object())),
+    )
+
+
+class TestGenerateVideoGuards:
+    @pytest.mark.asyncio
+    async def test_requires_setup(self) -> None:
+        transport = UiAutomationTransport()
+        with pytest.raises(RuntimeError, match="setup"):
+            await transport.generate_video(request=GenerateVideoRequest(prompt="x"))
+
+    @pytest.mark.asyncio
+    async def test_rejects_non_t2v(self) -> None:
+        transport = UiAutomationTransport()
+        transport._page = MagicMock()
+        transport._setup_done = True
+        req = GenerateVideoRequest(prompt="x", mode=Mode.I2V, start_image=Path("a.png"))
+        with pytest.raises(NotImplementedError, match="T2V"):
+            await transport.generate_video(request=req)
+
+    @pytest.mark.asyncio
+    async def test_rejects_square_aspect(self) -> None:
+        transport = UiAutomationTransport()
+        transport._page = MagicMock()
+        transport._setup_done = True
+        req = GenerateVideoRequest(prompt="x", aspect=Aspect.SQUARE)
+        with pytest.raises(ValueError, match="SQUARE"):
+            await transport.generate_video(request=req)
+
+
+class TestGenerateVideoOrchestration:
+    @pytest.mark.asyncio
+    async def test_t2v_happy_path_returns_status(self, monkeypatch: pytest.MonkeyPatch) -> None:
+        transport = UiAutomationTransport()
+        transport._page = _mock_async_page()
+        transport._setup_done = True
+        monkeypatch.setattr(transport, "_enter_editor", AsyncMock())
+        monkeypatch.setattr(transport, "_send_prompt", AsyncMock())
+        _stub_video_helpers(
+            monkeypatch,
+            generate_resp={
+                "status": 200,
+                "url": _T2V_URL,
+                "body": {"media": [{"name": "vid-1"}]},
+            },
+        )
+
+        async def _fake_poll(page, captured, media_name, **_k):  # type: ignore[no-untyped-def]
+            assert media_name == "vid-1"
+            return VideoStatus(media_id="vid-1", status="MEDIA_GENERATION_STATUS_SUCCESSFUL")
+
+        monkeypatch.setattr(VideoGenerationMixin, "_poll_video_status", staticmethod(_fake_poll))
+        result = await transport.generate_video(request=GenerateVideoRequest(prompt="a forest"))
+        assert result.succeeded is True
+        # both response listeners were detached in the finally block
+        assert transport._page.remove_listener.call_count == 2
+
+    @pytest.mark.asyncio
+    async def test_t2v_401_raises_auth_expired(self, monkeypatch: pytest.MonkeyPatch) -> None:
+        transport = UiAutomationTransport()
+        transport._page = _mock_async_page()
+        transport._setup_done = True
+        monkeypatch.setattr(transport, "_enter_editor", AsyncMock())
+        monkeypatch.setattr(transport, "_send_prompt", AsyncMock())
+        _stub_video_helpers(monkeypatch, generate_resp={"status": 401, "url": _T2V_URL, "body": {}})
+        from gflow_cli.errors import AuthExpiredError
+
+        with pytest.raises(AuthExpiredError):
+            await transport.generate_video(request=GenerateVideoRequest(prompt="x"))
+        assert transport._page.remove_listener.call_count == 2  # detached on the error path too
+
+    @pytest.mark.asyncio
+    async def test_t2v_403_raises_waf_rejection(self, monkeypatch: pytest.MonkeyPatch) -> None:
+        transport = UiAutomationTransport()
+        transport._page = _mock_async_page()
+        transport._setup_done = True
+        monkeypatch.setattr(transport, "_enter_editor", AsyncMock())
+        monkeypatch.setattr(transport, "_send_prompt", AsyncMock())
+        _stub_video_helpers(monkeypatch, generate_resp={"status": 403, "url": _T2V_URL, "body": {}})
+        from gflow_cli.errors import WafRejectionError
+
+        with pytest.raises(WafRejectionError):
+            await transport.generate_video(request=GenerateVideoRequest(prompt="x"))
+
+    @pytest.mark.asyncio
+    async def test_t2v_500_raises_wire_format(self, monkeypatch: pytest.MonkeyPatch) -> None:
+        transport = UiAutomationTransport()
+        transport._page = _mock_async_page()
+        transport._setup_done = True
+        monkeypatch.setattr(transport, "_enter_editor", AsyncMock())
+        monkeypatch.setattr(transport, "_send_prompt", AsyncMock())
+        _stub_video_helpers(monkeypatch, generate_resp={"status": 500, "url": _T2V_URL, "body": {}})
+        from gflow_cli.errors import WireFormatError
+
+        with pytest.raises(WireFormatError):
+            await transport.generate_video(request=GenerateVideoRequest(prompt="x"))
+
+    @pytest.mark.asyncio
+    async def test_t2v_200_empty_media_raises_wire_format(
+        self, monkeypatch: pytest.MonkeyPatch
+    ) -> None:
+        transport = UiAutomationTransport()
+        transport._page = _mock_async_page()
+        transport._setup_done = True
+        monkeypatch.setattr(transport, "_enter_editor", AsyncMock())
+        monkeypatch.setattr(transport, "_send_prompt", AsyncMock())
+        _stub_video_helpers(
+            monkeypatch,
+            generate_resp={"status": 200, "url": _T2V_URL, "body": {"media": []}},
+        )
+        from gflow_cli.errors import WireFormatError
+
+        with pytest.raises(WireFormatError):
+            await transport.generate_video(request=GenerateVideoRequest(prompt="x"))
