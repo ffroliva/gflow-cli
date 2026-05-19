@@ -268,7 +268,7 @@ async def test_generate_images_30s_timeout_raises_transport_timeout() -> None:
 # ---------------------------------------------------------------------------
 
 
-async def test_teardown_is_idempotent() -> None:
+async def test_teardown_is_idempotent(tmp_path: Path) -> None:
     """teardown() called multiple times must not raise."""
     transport = EvaluateFetchTransport()
 
@@ -287,7 +287,7 @@ async def test_teardown_is_idempotent() -> None:
         "playwright.async_api.async_playwright",
         return_value=_AsyncCtxManager(fake_pw),
     ):
-        await transport.setup(Path("/tmp/profile"))
+        await transport.setup(tmp_path)
 
     # Manually set _pw_cm so teardown can close it
     transport._pw_cm = fake_pw_cm  # type: ignore[attr-defined]

@@ -48,7 +48,7 @@ class FlowTransportStrategy(Protocol):
     async def generate_images(
         self,
         *,
-        project_id: str,
+        project_id: str | None,
         request: GenerateImageRequest,
     ) -> list[GeneratedImage]:
         """Send batchGenerateImages. recaptcha_token lives on `request` —

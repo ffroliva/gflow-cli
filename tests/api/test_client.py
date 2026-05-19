@@ -200,7 +200,7 @@ class _FakeTransport:
     async def refresh_auth(self) -> None:
         pass
 
-    async def generate_images(self, *, project_id: str, request: object) -> list[object]:
+    async def generate_images(self, *, project_id: str | None, request: object) -> list[object]:
         return []
 
     async def teardown(self) -> None:
@@ -291,7 +291,7 @@ async def test_client_delegates_image_gen_to_transport(
         dimensions=(512, 512),
     )
 
-    async def fake_gen(*, project_id: str, request: object) -> list[GeneratedImage]:
+    async def fake_gen(*, project_id: str | None, request: object) -> list[GeneratedImage]:
         assert project_id == "test-proj-xyz"
         assert isinstance(request, GenerateImageRequest)
         assert request.prompt == "delegated"

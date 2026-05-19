@@ -774,6 +774,93 @@ Full exit-code table with shell-script branching examples: [USAGE § Exit codes]
 
 ---
 
+## Journey 14 — Embedding `FlowApiClient` in a long-lived worker
+
+**Goal:** run `FlowApiClient` inside a service or background worker that handles many jobs over its lifetime without restarting the browser between calls.
+
+### 14.1 The minimal worker loop
+
+```python
+import asyncio
+from pathlib import Path
+from gflow_cli.api.client import FlowApiClient
+from gflow_cli.api.image import GenerateImageRequest, Model
+from gflow_cli.exceptions import GFlowError   # standard alias for gflow_cli.errors
+from gflow_cli.config import get_settings
+
+async def worker(job_queue: asyncio.Queue) -> None:
+    settings = get_settings()
+    profile_dir = settings.profile_subdir("default")
+
+    async with FlowApiClient(profile_dir=profile_dir, headless=True) as client:
+        while True:
+            job = await job_queue.get()
+            if job is None:
+                break  # poison pill — graceful shutdown
+
+            if not await client.health_check():
+                # Browser context died (OS killed the process, GPU crash, etc.)
+                # Re-raise so the supervisor can restart this worker.
+                raise RuntimeError("FlowApiClient health check failed — browser context dead")
+
+            try:
+                image = await client.generate_image(req=job.req)
+                # project_id omitted → a new Flow project is created automatically
+                await client.download_image(image, job.out_path)
+                job.result_queue.put_nowait(image)
+            except GFlowError as exc:
+                job.result_queue.put_nowait(exc)
+```
+
+Key points:
+- `health_check()` is a cheap liveness probe. Call it before every dispatch — it returns `False` (never raises) so you can branch without try/except.
+- `project_id` is omitted from `generate_image()`. Each job gets its own auto-created Flow project, which matches Flow's one-project-per-generation model.
+- Import from `gflow_cli.exceptions` or `gflow_cli.errors` — both resolve to identical classes.
+
+### 14.2 Catching typed errors in a worker
+
+All gflow errors inherit from `GFlowError`. Use `EXIT_CODE_MAP` to get the canonical exit code for any error class — useful for reporting or retry decisions:
+
+```python
+from gflow_cli.exceptions import GFlowError, AuthExpiredError, RateLimitError
+from gflow_cli.errors import EXIT_CODE_MAP
+
+try:
+    image = await client.generate_image(req=req)
+except AuthExpiredError:
+    # Exit code 3 — session expired; re-authenticate and retry
+    await re_login(profile_dir)
+except RateLimitError as exc:
+    # Exit code 4 — back off by exc.retry_after seconds (or a safe default)
+    await asyncio.sleep(exc.retry_after or 60)
+except GFlowError as exc:
+    code = EXIT_CODE_MAP.get(type(exc), 1)
+    logger.error("generation_failed", error_class=type(exc).__name__, exit_code=code)
+```
+
+### 14.3 Checking health after a long idle period
+
+A browser context that was idle for several minutes may have its page navigated away by a background Flow JS update. `health_check()` confirms the page is still on a Google domain before trusting the session:
+
+```python
+IDLE_THRESHOLD = 300  # seconds
+
+last_used = time.monotonic()
+
+async def dispatch(client: FlowApiClient, req: GenerateImageRequest) -> ...:
+    if time.monotonic() - last_used > IDLE_THRESHOLD:
+        if not await client.health_check():
+            raise RuntimeError("session lost after idle — restart worker")
+    ...
+```
+
+### 14.4 What `health_check()` does NOT cover
+
+- It does **not** verify that the Google session (cookies) is still valid. A page can be alive and on `labs.google` with an expired session cookie — the next API call will raise `AuthExpiredError` (exit 3).
+- It does **not** refresh the session. On `False`, restart the worker and re-enter `async with FlowApiClient(...)`.
+
+---
+
 ## See also
 
 - [USAGE.md](USAGE.md) — every flag, every output path, every command in alphabetical order.
