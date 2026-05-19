@@ -22,6 +22,7 @@ from __future__ import annotations
 import asyncio
 import base64
 import json
+import os
 import secrets
 import time
 import uuid
@@ -63,6 +64,9 @@ logger = structlog.get_logger(__name__)
 # by `upload_image` to reject oversize files BEFORE reading them into memory —
 # protects this process from OOM and the remote endpoint from DoS-shaped traffic.
 MAX_IMAGE_BYTES = 20 * 1024 * 1024  # 20 MB
+
+# aisandbox-pa rejects application/json — see samples/captured/*.json.
+_AISANDBOX_CONTENT_TYPE = "text/plain;charset=UTF-8"
 
 
 def _is_supported_image_header(header: bytes) -> bool:
@@ -292,7 +296,7 @@ class FlowApiClient:
         url: str,
         body: dict[str, Any],
         *,
-        content_type: str = "text/plain;charset=UTF-8",
+        content_type: str = _AISANDBOX_CONTENT_TYPE,
         route_name: str | None = None,
     ) -> Any:
         """POST a JSON body with retry + typed-error classification.
@@ -316,6 +320,12 @@ class FlowApiClient:
         async def attempt() -> Any:
             page = await self._checkout_page()
             try:
+                if os.environ.get("GFLOW_CLI_LOG_REQUEST_HEADERS") == "1":
+                    logger.info(
+                        "request_headers",
+                        url=url,
+                        headers=_redact_headers_for_log({"content-type": content_type}),
+                    )
                 return await page.request.post(
                     url,
                     data=body_str,
@@ -348,10 +358,16 @@ class FlowApiClient:
         async def attempt() -> Any:
             page = await self._checkout_page()
             try:
+                if os.environ.get("GFLOW_CLI_LOG_REQUEST_HEADERS") == "1":
+                    logger.info(
+                        "request_headers",
+                        url=url,
+                        headers=_redact_headers_for_log({"content-type": _AISANDBOX_CONTENT_TYPE}),
+                    )
                 return await page.request.patch(
                     url,
                     data=body_str,
-                    headers={"content-type": "text/plain;charset=UTF-8"},
+                    headers={"content-type": _AISANDBOX_CONTENT_TYPE},
                 )
             finally:
                 self._checkin_page(page)
@@ -432,11 +448,18 @@ class FlowApiClient:
                 f"Image too large: {size / 1_048_576:.1f} MB exceeds "
                 f"{MAX_IMAGE_BYTES // 1_048_576} MB limit"
             )
-        with image_path.open("rb") as fh:
-            header = fh.read(12)
+
+        # Staged read: validate magic bytes first (12 B) before loading the full
+        # file. Run both reads in a worker thread to keep the event loop free.
+        def _read_header(p: Path) -> bytes:
+            with p.open("rb") as fh:
+                return fh.read(12)
+
+        header = await asyncio.to_thread(_read_header, image_path)
         if not _is_supported_image_header(header):
             raise ValueError(f"Not a supported image format: {image_path.name}")
-        b64 = base64.b64encode(image_path.read_bytes()).decode()
+        full_bytes = await asyncio.to_thread(image_path.read_bytes)
+        b64 = base64.b64encode(full_bytes).decode()
         body = {
             "clientContext": {"projectId": project_id, "tool": "PINHOLE"},
             "imageBytes": b64,
@@ -587,10 +610,16 @@ class FlowApiClient:
                     url=routes.GENERATE_VIDEO,
                     body=_redact_for_log(json.dumps(body))[:300],
                 )
+                if os.environ.get("GFLOW_CLI_LOG_REQUEST_HEADERS") == "1":
+                    logger.info(
+                        "request_headers",
+                        url=routes.GENERATE_VIDEO,
+                        headers=_redact_headers_for_log({"content-type": _AISANDBOX_CONTENT_TYPE}),
+                    )
                 return await page.request.post(
                     routes.GENERATE_VIDEO,
                     data=json.dumps(body),
-                    headers={"content-type": "text/plain;charset=UTF-8"},
+                    headers={"content-type": _AISANDBOX_CONTENT_TYPE},
                 )
             finally:
                 self._checkin_page(page)
@@ -684,7 +713,7 @@ class FlowApiClient:
     async def generate_image(
         self,
         *,
-        project_id: str,
+        project_id: str | None = None,
         req: GenerateImageRequest,
         seed: int | None = None,
         recaptcha_action: str = "imageGeneration",
@@ -698,12 +727,22 @@ class FlowApiClient:
         (see ``generate_images_batch``); this method always returns the FIRST
         media item.
 
+        When ``project_id`` is ``None``, a new Flow project is created
+        automatically via :meth:`create_project`.  Existing callers that supply
+        an explicit ``project_id`` are unaffected.
+
         Idempotency: calling twice with the same ``seed`` and ``batch_id``
         yields identical bodies modulo the per-call reCAPTCHA token AND the
         per-attempt session-id timestamp.
         """
+        resolved_project_id: str
+        if project_id is None:
+            project = await self.create_project()
+            resolved_project_id = project.project_id
+        else:
+            resolved_project_id = project_id
         return await self._drive_image_generation(
-            project_id=project_id,
+            project_id=resolved_project_id,
             req=req,
             seed=seed if seed is not None else secrets.randbelow(2**31),
             batch_id=batch_id or _new_batch_id(),
@@ -713,7 +752,7 @@ class FlowApiClient:
     async def generate_images_batch(
         self,
         *,
-        project_id: str,
+        project_id: str | None = None,
         req: GenerateImageRequest,
         count: int = 1,
         seeds: Sequence[int] | None = None,
@@ -729,7 +768,8 @@ class FlowApiClient:
         concurrently — one per Page.
 
         Args:
-            project_id: Flow project ID.
+            project_id: Flow project ID.  When ``None``, a new project is
+                created automatically via :meth:`create_project`.
             req: Shared request (prompt, aspect, reference image, ...).
             count: How many images to generate. Must be 1..4 (Flow UI cap).
             seeds: Optional explicit seeds. Defaults to ``count`` random
@@ -758,6 +798,14 @@ class FlowApiClient:
         else:
             seeds_list = list(seeds)
 
+        # Resolve project_id once — do NOT create N projects for N parallel shots.
+        resolved_project_id: str
+        if project_id is None:
+            project = await self.create_project()
+            resolved_project_id = project.project_id
+        else:
+            resolved_project_id = project_id
+
         shared_batch_id = _new_batch_id()
 
         # asyncio.gather preserves input order in its result list, so the
@@ -766,7 +814,7 @@ class FlowApiClient:
         return await asyncio.gather(
             *(
                 self._drive_image_generation(
-                    project_id=project_id,
+                    project_id=resolved_project_id,
                     req=req,
                     seed=s,
                     batch_id=shared_batch_id,
@@ -776,6 +824,26 @@ class FlowApiClient:
             ),
             return_exceptions=False,
         )
+
+    async def health_check(self) -> bool:
+        """Return True if the browser context is alive and on a Google domain.
+
+        Safe to call from long-lived workers. Returns False (never raises) on
+        TargetClosedError or any other exception so callers can branch without
+        try/except.
+        """
+        if self._page_queue is None:
+            return False
+        try:
+            page = await self._checkout_page()
+            try:
+                hostname: str = await page.evaluate("() => document.location.hostname")
+                return hostname.endswith(".google") or hostname == "google.com"
+            finally:
+                self._checkin_page(page)
+        except Exception:
+            logger.debug("health_check_failed", exc_info=True)
+            return False
 
 
 def _default_project_title() -> str:
@@ -859,7 +927,7 @@ def _build_wire_format_discovery(resp: Any, body_text: str, route: str) -> dict[
         parsed = json.loads(body_text) if content_type.startswith("application/json") else None
         if isinstance(parsed, dict):
             top_keys = sorted(cast(dict[str, Any], parsed).keys())
-    except (json.JSONDecodeError, ValueError):
+    except ValueError:  # json.JSONDecodeError is a ValueError subclass
         top_keys = []
     # SECURITY: redact BEFORE truncating to 200 chars. If we truncated first,
     # a body slightly over 200 chars could carry an intact reCAPTCHA token in
@@ -921,7 +989,7 @@ def _redact_for_log(body_str: str) -> str:
     """
     try:
         parsed = json.loads(body_str)
-    except (json.JSONDecodeError, ValueError):
+    except ValueError:  # json.JSONDecodeError is a ValueError subclass
         return "<unparseable body redacted>"
 
     if not isinstance(parsed, dict):
@@ -936,6 +1004,19 @@ def _redact_for_log(body_str: str) -> str:
                 _redact_in_client_context(cast(dict[str, Any], item).get("clientContext"))
 
     return json.dumps(parsed_dict)
+
+
+def _redact_headers_for_log(headers: dict[str, str]) -> dict[str, str]:
+    """Return a copy of `headers` with any `authorization` value masked.
+
+    The SOLE permitted way to log a headers dict — `_redact_for_log` covers
+    request bodies only, not headers. Spec §4.5.
+    """
+    redacted = dict(headers)
+    auth = redacted.get("authorization")
+    if auth is not None:
+        redacted["authorization"] = f"Bearer <len={len(auth)}>"
+    return redacted
 
 
 def _redact_in_client_context(client_context: Any) -> None:

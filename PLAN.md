@@ -2,7 +2,7 @@
 
 > **Status:** Living document. Updated as phases complete.
 > **Owner:** [@ffroliva](https://github.com/ffroliva)
-> **Last revised:** 2026-05-15 (Phase 6 / v0.6.0a2 — Real Chrome auth)
+> **Last revised:** 2026-05-16 (v0.6.0a5 — Bug A/B transport fixes + issue-tracked work)
 
 This plan turns the v0.1 scaffold into a production-grade CLI for Google AI Ultra/Pro subscribers who want to spend their Flow credits via batch automation. The plan is opinionated, treating this repo as a portfolio-grade benchmark.
 
@@ -347,6 +347,158 @@ Identified during v0.6.0a1 Council Review. To be addressed before or during Phas
 - **Deduplicate JSON Validation**: `cli_run.py` duplicates model/aspect validation logic. Consolidate into `image_batch.py` helpers.
 - **Generic Batch Orchestrator**: Refactor `run_image_batch` to accept a worker callback. This will allow the same sequential/fail-fast orchestration to support `video` batches in the future.
 - **Playwright Thread Safety**: Investigate why `unittest.mock.patch` plus multi-threaded `asyncio` hangs in `tests/test_browser_manager.py`. The test is currently skipped.
+
+---
+
+### Issue #5 — Auth: detect Google "browser may not be secure" guard — BACKLOG
+
+External report ([issue #5](https://github.com/ffroliva/gflow-cli/issues/5)): user on
+Ubuntu 24.04 installed via `uv tool install gflow-cli`, ran `gflow auth login`,
+hit Google's anti-automation guard ("This browser or app may not be secure")
+because the bundled internal Chromium is flagged. The workaround
+(`--browser chrome` or installing system Chrome so `--browser auto` picks it)
+exists but is undiscoverable from the failure mode — the user just sees
+Google's error page.
+
+**Fix:**
+
+- In `auth/internal_chromium.py`, after navigating to the Google sign-in URL,
+  detect the rejection page (URL match `accounts.google.com/v3/signin/rejected`
+  or page text matching `browser .* may not be secure`).
+- On detection, raise a new `AuthBrowserBlockedError` (new Problem Details
+  class `https://gflow-cli.dev/errors/auth-browser-blocked`, distinct from the
+  existing `AuthExpiredError`) with remediation hint:
+  *"Install Google Chrome and re-run with `--browser chrome` (or set
+  `GFLOW_CLI_AUTH_BROWSER=chrome`). See docs/AUTHENTICATION.md."*
+- Register the new class in `errors.py` exit-code map (reuse the auth
+  exit-code class).
+
+**Files:** `src/gflow_cli/auth/internal_chromium.py`, `src/gflow_cli/errors.py`,
+`tests/auth/test_internal_chromium.py`.
+
+**Tests (TDD):**
+
+- Unit: mock a `Page` whose `goto` resolves to the rejection URL → assert
+  `AuthBrowserBlockedError` raised, hint mentions `--browser chrome`.
+- Unit: existing success path still passes (no false positives).
+
+**Acceptance:** Ubuntu user repro from issue #5 surfaces the workaround in the
+CLI error itself; docs lookup no longer required.
+
+**Scope guardrails:** Do not change the default strategy auto-detection.
+Do not add fingerprint-evasion code — Google may block it anyway and the
+real-Chrome path already works.
+
+---
+
+### Issue #14 — Batch redesign: native count selector + --same-project — BACKLOG
+
+[Issue #14](https://github.com/ffroliva/gflow-cli/issues/14) — two parts.
+
+**Part 1 (bug fix):** `gflow image t2i -n N` should use Flow's native `x{N}`
+UI count selector (visible in the t2i menu, max `x4`), submitting once and
+returning N images from one project. Today (post-`1621748d`) the CLI fans out
+N×(count=1) submissions across N projects, serialised by `_generate_lock` —
+correct but wasteful.
+
+- Refactor `generate_images_batch` in `api/client.py` to delegate to
+  `generate_images(count=N)` when given a single prompt with `N>1`.
+- Extend `UiAutomationTransport._configure_generation_settings` to click
+  the `x{N}` count tab (`1x` / `x2` / `x3` / `x4`).
+- CLI validation in `cli_image.py`: reject `-n` outside `[1, 4]` with a clear
+  error citing Flow's UI cap.
+- Investigate whether `_generate_lock` is still needed for the cross-profile
+  concurrency case (`GFLOW_CLI_CONCURRENCY`); keep if so, remove if not.
+
+**Part 2 (feature, deferred):** `--same-project` flag for multi-prompt
+batches — stay in one project, submit prompts sequentially with 3–7s
+random jitter, log-and-continue on per-item failure. **Blocked** until a
+multi-prompt CLI command exists to attach the flag to (no `gflow image
+batch <manifest>` today).
+
+**Files:** `src/gflow_cli/api/client.py`,
+`src/gflow_cli/api/transports/ui_automation.py`, `src/gflow_cli/cli_image.py`,
+`tests/api/transports/test_ui_automation.py`,
+`tests/api/test_client.py`.
+
+**Tests (TDD):**
+
+- Unit: `-n 4` single prompt → transport called once with `count=4`, opens
+  editor once, downloads 4 images.
+- Unit: `-n 5` → CLI exits with validation error pointing to the `1-4` range.
+- Unit: count-tab selector mock asserts the correct `x{N}` element clicked.
+- E2E (`@pytest.mark.live`, manual): 4 images appear in one project from one
+  submission.
+
+**Acceptance:** Part 1 ships in `v0.6.0a6` (or later) reducing 4-image batch
+time by ~3-4× and consolidating into one project. Part 2 stays open until
+the multi-prompt CLI lands.
+
+**Risk:** This touches the file we just fixed in `1621748d` — must keep both
+Bug A (lock for cross-profile) and Bug B (gallery navigation when restored)
+working. Re-run E2E #1 and #2 from `tmp/` after refactor.
+
+---
+
+### Issue #15 — i2v upload 401: hybrid-transport auth mismatch — INVESTIGATION REQUIRED
+
+[Issue #15](https://github.com/ffroliva/gflow-cli/issues/15) — `POST /v1/flow/uploadImage`
+returns HTTP 401 even with a freshly verified session.
+t2i (UI-driven) works on the same session; i2v's REST upload path does not.
+Strongly suspect missing `SAPISIDHASH Authorization` header — the project
+already has `src/gflow_cli/api/transports/experimental/sapisidhash.py`.
+
+**Investigation gates (must complete before coding):**
+
+1. Read `transports/experimental/sapisidhash.py` end-to-end. Does it
+   implement `SAPISIDHASH = SHA-1(timestamp + " " + SAPISID + " " + origin)`
+   per Google's convention? Is it wired up anywhere?
+2. Read `FlowApiClient._post_json` in `api/client.py`. What headers does
+   it attach today? Is `Authorization` set at all?
+3. Capture a working browser session's request to `/v1/flow/uploadImage`
+   via DevTools → Network → copy as cURL. Diff the production CLI's outgoing
+   headers against the working browser's.
+
+Only after these three gates produce a clear picture, write the fix plan.
+Speculative coding here will burn a session.
+
+**Likely fix:**
+
+- Compute SAPISIDHASH from the persistent profile's `SAPISID` cookie + a
+  Unix timestamp + the Flow origin.
+- Attach `Authorization: SAPISIDHASH {ts}_{hash}` header in `_post_json`
+  for routes that need it (likely all `aisandbox-pa.googleapis.com` POSTs,
+  not just uploadImage — verify).
+- Refresh the timestamp/hash per request (the timestamp is a freshness
+  signal; SAPISID is long-lived).
+
+**Secondary fix (independent of root cause):**
+
+- Classify 401 from `/v1/flow/uploadImage` as `UploadAuthError` (or similar),
+  distinct from `AuthExpiredError`, with a remediation hint that doesn't
+  send the user into a `gflow auth login` loop — *the login is fine; the
+  upload auth header is the problem*.
+
+**Files:** `src/gflow_cli/api/client.py`, possibly promote
+`api/transports/experimental/sapisidhash.py` into the production tree,
+`src/gflow_cli/errors.py`, `tests/api/test_client.py`,
+`tests/api/test_sapisidhash.py`.
+
+**Tests (TDD):**
+
+- Unit: `SAPISIDHASH` calculation produces the exact value for known inputs
+  (test vector lifted from a captured working request).
+- Unit: `_post_json` attaches `Authorization` header on routes that require it.
+- E2E (`@pytest.mark.live`): `gflow video i2v` runs end-to-end on a fresh
+  session without 401.
+
+**Acceptance:** i2v completes to a downloaded `.mp4`; correlation IDs in
+the structured log trace through `upload_image` → video generation → poll →
+download with no error events.
+
+**Out of scope:** rewriting i2v upload to use UI drag-and-drop. The
+SAPISIDHASH fix, if proven, also benefits any future REST endpoint that
+gates on the same header.
 
 ---
 
