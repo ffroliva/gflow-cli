@@ -15,6 +15,11 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 ### Changed
 
 - `FlowApiClient.generate_image()` and `generate_images_batch()`: `project_id` is now optional (`str | None = None`). When omitted, a new Flow project is created automatically. Existing callers passing an explicit `project_id` are unaffected.
+- `gflow video t2v/i2v/batch` now report "temporarily unavailable" — video generation is being rebuilt on the UI-automation transport (Phase A ships the T2V transport; CLI commands return in Phase B).
+
+### Removed
+
+- The 401-dead HTTP video API path (`FlowApiClient.generate_video`, `get_video_status`) — retired in favour of the new UI-automation transport (`VideoGenerationMixin` in `api/transports/ui_automation_video.py`).
 
 ## [0.6.0a6] — 2026-05-17
 
