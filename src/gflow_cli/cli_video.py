@@ -36,19 +36,19 @@ _UNAVAILABLE = (
 
 
 async def _run_t2v(**kwargs: Any) -> None:  # pragma: no cover
-    """Placeholder — real implementation arrives in Phase A Task 13."""
+    """Placeholder — the real implementation lands in Phase B (the cli_video rewire)."""
     console.print(_UNAVAILABLE)
     raise SystemExit(1)
 
 
 async def _run_i2v(**kwargs: Any) -> None:  # pragma: no cover
-    """Placeholder — real implementation arrives in Phase A Task 13."""
+    """Placeholder — the real implementation lands in Phase B (the cli_video rewire)."""
     console.print(_UNAVAILABLE)
     raise SystemExit(1)
 
 
 async def _run_batch(**kwargs: Any) -> None:  # pragma: no cover
-    """Placeholder — real implementation arrives in Phase A Task 13."""
+    """Placeholder — the real implementation lands in Phase B (the cli_video rewire)."""
     console.print(_UNAVAILABLE)
     raise SystemExit(1)
 
