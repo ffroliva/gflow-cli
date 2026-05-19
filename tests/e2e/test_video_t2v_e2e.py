@@ -1,0 +1,127 @@
+"""E2E smoke test for video T2V (text-to-video) via UiAutomationTransport.
+
+Hits the **real Google Flow API** and therefore:
+  - Is NOT collected by default ``pytest`` runs.
+  - Opt-in: ``GFLOW_CLI_E2E_PROFILE=<profile_name> pytest -m e2e``
+  - Requires a logged-in Chrome profile (Pro/Ultra account).
+  - Burns one Flow credit per run — do not run in CI without gating.
+
+Criterion covered:
+  T2V-1 — generate_video(T2V, LANDSCAPE) returns a terminal SUCCESSFUL
+           VideoStatus with a non-empty media_id.
+"""
+
+from __future__ import annotations
+
+import os
+from pathlib import Path
+
+import pytest
+import pytest_asyncio  # noqa: F401 — ensures asyncio mode is registered
+
+from gflow_cli.api.transports.ui_automation import UiAutomationTransport
+from gflow_cli.api.video import Aspect, GenerateVideoRequest, Mode, VideoStatus
+
+# ---------------------------------------------------------------------------
+# Module-level marker — every test in this file is e2e (opt-in only)
+# ---------------------------------------------------------------------------
+
+pytestmark = pytest.mark.e2e
+
+# ---------------------------------------------------------------------------
+# Constants
+# ---------------------------------------------------------------------------
+
+_E2E_PROFILE_ENV = "GFLOW_CLI_E2E_PROFILE"
+
+# Short, safe prompt — generic enough to pass content-policy, visual enough
+# to confirm T2V is actually generating footage.
+_PROMPT = "a calm forest at dawn, cinematic"
+
+# T2V with landscape ratio is the canonical first smoke target (spec §2.1).
+_ASPECT = Aspect.LANDSCAPE
+
+# Poll timeout generous for real Flow T2V latency (typically 60-180 s,
+# up to 600 s in the worst case).
+_POLL_TIMEOUT_S = 600.0
+
+
+# ---------------------------------------------------------------------------
+# Helpers
+# ---------------------------------------------------------------------------
+
+
+def _profile_dir() -> Path:
+    """Resolve the Chromium profile directory from the environment variable.
+
+    Uses gflow-cli's real profile-dir resolver (``gflow_cli.auth.profile_dir``)
+    which is ``platformdirs``-based — on Windows this is
+    ``%LOCALAPPDATA%\\<author>\\gflow-cli\\profile_<name>``.
+
+    Raises ``pytest.skip`` when the env var is absent or the profile dir
+    does not exist (e.g. the user has not yet run ``gflow auth login --profile``).
+    """
+    name = os.environ.get(_E2E_PROFILE_ENV, "")
+    if not name:
+        pytest.skip(
+            f"E2E tests require {_E2E_PROFILE_ENV} env var — "
+            "set it to a logged-in Chromium profile name and re-run with -m e2e"
+        )
+    from gflow_cli.auth import profile_dir as _resolve_profile_dir
+
+    candidate = _resolve_profile_dir(name)
+    if not candidate.exists():
+        pytest.skip(
+            f"Profile directory not found: {candidate}. "
+            f"Run `gflow auth login --profile {name}` to create it."
+        )
+    return candidate
+
+
+# ---------------------------------------------------------------------------
+# Criterion T2V-1 — landscape T2V generation returns SUCCESSFUL VideoStatus
+# ---------------------------------------------------------------------------
+
+
+@pytest.mark.asyncio
+async def test_t2v_landscape_generates_video(tmp_path: Path) -> None:
+    """T2V-1: generate_video() with T2V + LANDSCAPE returns a terminal
+    SUCCESSFUL VideoStatus with a non-empty media_id.
+
+    ``tmp_path`` is used as ``out_dir`` so any debug screenshots land in
+    pytest's temp directory (never in test_assets/ or the repo root).
+    """
+    profile = _profile_dir()
+
+    req = GenerateVideoRequest(
+        prompt=_PROMPT,
+        mode=Mode.T2V,
+        aspect=_ASPECT,
+    )
+
+    transport = UiAutomationTransport()
+    try:
+        await transport.setup(profile)
+        result: VideoStatus = await transport.generate_video(
+            request=req,
+            out_dir=tmp_path,
+            poll_timeout_s=_POLL_TIMEOUT_S,
+        )
+    finally:
+        await transport.teardown()
+
+    assert isinstance(result, VideoStatus), (
+        f"generate_video() must return a VideoStatus, got {type(result)!r}"
+    )
+    assert result.is_terminal, (
+        f"VideoStatus must be terminal after generate_video() returns; "
+        f"status={result.status!r}"
+    )
+    assert result.succeeded, (
+        f"Expected SUCCESSFUL terminal status, got {result.status!r}. "
+        f"failure_reasons={result.failure_reasons!r}, "
+        f"error_message={result.error_message!r}"
+    )
+    assert result.media_id, (
+        "VideoStatus.media_id must be non-empty for a successful generation"
+    )
