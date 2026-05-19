@@ -2,7 +2,7 @@
 
 The site key is discovered from the page source (loaded by the persistent
 context's bootstrap navigation in `FlowApiClient.__aenter__`). Tokens are
-single-use, ~2 min expiry — minted per `generate_video()` call.
+single-use, ~2 min expiry — minted per `generate_image()` call.
 
 `TokenMinter` caches the discovered site key for the lifetime of one
 FlowApiClient session.
