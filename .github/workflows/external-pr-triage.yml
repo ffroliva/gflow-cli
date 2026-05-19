@@ -27,9 +27,15 @@ jobs:
             const owner = context.repo.owner;
             const repo = context.repo.repo;
             const issue_number = pr.number;
+            const isBot = pr.user?.type === "Bot";
             const trustedAssociations = new Set(["OWNER", "MEMBER", "COLLABORATOR"]);
             const isFork = pr.head.repo.full_name !== pr.base.repo.full_name;
             const isExternal = isFork || !trustedAssociations.has(pr.author_association);
+
+            if (isBot) {
+              core.info("Bot PR; skipping human external-contribution triage.");
+              return;
+            }
 
             if (!isExternal) {
               core.info("PR is not external; skipping external triage.");
