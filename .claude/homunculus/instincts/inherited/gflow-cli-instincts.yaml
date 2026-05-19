@@ -1,0 +1,516 @@
+# Instincts generated from https://github.com/ffroliva/gflow-cli
+# Generated: 2026-05-19T13:08:07.636Z
+# Version: 2.0
+# NOTE: This file supplements (does not replace) any existing curated instincts.
+# High-confidence manually curated instincts should be preserved alongside these.
+
+---
+id: gflow-cli-commit-conventional
+trigger: "when writing a commit message"
+confidence: 0.85
+domain: git
+source: repo-analysis
+source_repo: https://github.com/ffroliva/gflow-cli
+---
+
+# Gflow Cli Commit Conventional
+
+## Action
+
+Use conventional commit format with prefixes: docs, fix, feat
+
+## Evidence
+
+- 5 commits analyzed
+- Detected conventional commit pattern
+- Examples: feat(api): downstream integration ergonomics (issue #16), docs: add DEVELOPMENT.md and fix stale test markers in CONTRIBUTING (#21)
+
+---
+id: gflow-cli-commit-length
+trigger: "when writing a commit message"
+confidence: 0.6
+domain: git
+source: repo-analysis
+source_repo: https://github.com/ffroliva/gflow-cli
+---
+
+# Gflow Cli Commit Length
+
+## Action
+
+Write moderate-length commit messages (~55 characters)
+
+## Evidence
+
+- Average commit message length: 55 chars
+- Based on 5 commits
+
+---
+id: gflow-cli-naming-files
+trigger: "when creating a new file"
+confidence: 0.8
+domain: code-style
+source: repo-analysis
+source_repo: https://github.com/ffroliva/gflow-cli
+---
+
+# Gflow Cli Naming Files
+
+## Action
+
+Use snake_case naming convention
+
+## Evidence
+
+- Analyzed file naming patterns in repository
+- Dominant pattern: snake_case
+
+---
+id: gflow-cli-import-relative
+trigger: "when importing modules"
+confidence: 0.75
+domain: code-style
+source: repo-analysis
+source_repo: https://github.com/ffroliva/gflow-cli
+---
+
+# Gflow Cli Import Relative
+
+## Action
+
+Use relative imports for project files
+
+## Evidence
+
+- Import analysis shows relative import pattern
+- Example: import { x } from '../lib/x'
+
+---
+id: gflow-cli-export-style
+trigger: "when exporting from a module"
+confidence: 0.7
+domain: code-style
+source: repo-analysis
+source_repo: https://github.com/ffroliva/gflow-cli
+---
+
+# Gflow Cli Export Style
+
+## Action
+
+Prefer named exports
+
+## Evidence
+
+- Export pattern analysis
+- Dominant style: named
+
+---
+id: gflow-cli-test-separate
+trigger: "when writing tests"
+confidence: 0.8
+domain: testing
+source: repo-analysis
+source_repo: https://github.com/ffroliva/gflow-cli
+---
+
+# Gflow Cli Test Separate
+
+## Action
+
+Place tests in the tests/ or __tests__/ directory, mirroring src structure
+
+## Evidence
+
+- Separate test directory pattern detected
+- Tests live in dedicated test folders
+
+---
+id: gflow-cli-test-naming
+trigger: "when creating a test file"
+confidence: 0.85
+domain: testing
+source: repo-analysis
+source_repo: https://github.com/ffroliva/gflow-cli
+---
+
+# Gflow Cli Test Naming
+
+## Action
+
+Name test files using the pattern: *.test.ts
+
+## Evidence
+
+- File pattern: *.test.ts
+- Consistent across test files
+
+---
+id: gflow-cli-test-types
+trigger: "when planning tests for a feature"
+confidence: 0.7
+domain: testing
+source: repo-analysis
+source_repo: https://github.com/ffroliva/gflow-cli
+---
+
+# Gflow Cli Test Types
+
+## Action
+
+Write unit, e2e tests to match project standards
+
+## Evidence
+
+- Test types detected: unit, e2e
+- Coverage config: yes
+
+---
+id: gflow-cli-workflow-feature-development-with-spec-plan-and-tests
+trigger: "when doing feature development with spec plan and tests"
+confidence: 0.55
+domain: workflow
+source: repo-analysis
+source_repo: https://github.com/ffroliva/gflow-cli
+---
+
+# Gflow Cli Workflow Feature Development With Spec Plan And Tests
+
+## Action
+
+Follow the feature-development-with-spec-plan-and-tests workflow:
+1. Write design spec(s) and implementation plan in docs/superpowers/specs/ and docs/superpowers/plans/
+2. Update or add implementation code in src/gflow_cli/ (often multiple modules)
+3. Add or update tests in tests/ (unit and e2e as needed)
+4. Update documentation (docs/USAGE.md, docs/USER_GUIDE.md, docs/ARCHITECTURE.md, CHANGELOG.md, KNOWN_ISSUES.md, etc.)
+
+## Evidence
+
+- Workflow detected from commit patterns
+- Frequency: ~1x per month
+- Files: docs/superpowers/specs/*.md, docs/superpowers/plans/*.md, src/gflow_cli/**/*.py
+
+---
+id: gflow-cli-workflow-documentation-and-process-update
+trigger: "when doing documentation and process update"
+confidence: 0.55
+domain: workflow
+source: repo-analysis
+source_repo: https://github.com/ffroliva/gflow-cli
+---
+
+# Gflow Cli Workflow Documentation And Process Update
+
+## Action
+
+Follow the documentation-and-process-update workflow:
+1. Edit or add documentation files (docs/DEVELOPMENT.md, CONTRIBUTING.md, docs/INDEX.md, .github/PULL_REQUEST_TEMPLATE.md)
+2. Update references or cross-links between docs
+3. Clarify or correct test/process instructions
+
+## Evidence
+
+- Workflow detected from commit patterns
+- Frequency: ~1x per month
+- Files: docs/DEVELOPMENT.md, CONTRIBUTING.md, docs/INDEX.md
+
+---
+id: gflow-cli-workflow-bugfix-with-tests-and-docs
+trigger: "when doing bugfix with tests and docs"
+confidence: 0.6
+domain: workflow
+source: repo-analysis
+source_repo: https://github.com/ffroliva/gflow-cli
+---
+
+# Gflow Cli Workflow Bugfix With Tests And Docs
+
+## Action
+
+Follow the bugfix-with-tests-and-docs workflow:
+1. Fix implementation in src/gflow_cli/
+2. Update or add relevant tests in tests/
+3. Update documentation (docs/USAGE.md, CHANGELOG.md, etc.)
+
+## Evidence
+
+- Workflow detected from commit patterns
+- Frequency: ~2x per month
+- Files: src/gflow_cli/**/*.py, tests/**/*.py, CHANGELOG.md
+
+---
+id: gflow-cli-instinct-naming-files
+trigger: "When creating or renaming a file in the codebase"
+confidence: 0.9
+domain: code-style
+source: repo-analysis
+source_repo: ffroliva/gflow-cli
+---
+
+# Gflow Cli Instinct Naming Files
+
+## Action
+
+Use snake_case for file names
+
+## Evidence
+
+- Pattern in src/gflow_cli/
+- Pattern in tests/
+- Naming conventions section
+
+---
+id: gflow-cli-instinct-naming-functions
+trigger: "When defining a new function"
+confidence: 0.8
+domain: code-style
+source: repo-analysis
+source_repo: ffroliva/gflow-cli
+---
+
+# Gflow Cli Instinct Naming Functions
+
+## Action
+
+Use camelCase for function names
+
+## Evidence
+
+- Naming conventions section
+
+---
+id: gflow-cli-instinct-naming-classes
+trigger: "When defining a new class"
+confidence: 0.8
+domain: code-style
+source: repo-analysis
+source_repo: ffroliva/gflow-cli
+---
+
+# Gflow Cli Instinct Naming Classes
+
+## Action
+
+Use PascalCase for class names
+
+## Evidence
+
+- Naming conventions section
+
+---
+id: gflow-cli-instinct-naming-constants
+trigger: "When defining a constant"
+confidence: 0.8
+domain: code-style
+source: repo-analysis
+source_repo: ffroliva/gflow-cli
+---
+
+# Gflow Cli Instinct Naming Constants
+
+## Action
+
+Use SCREAMING_SNAKE_CASE for constant names
+
+## Evidence
+
+- Naming conventions section
+
+---
+id: gflow-cli-instinct-import-style
+trigger: "When importing modules in Python files"
+confidence: 0.9
+domain: code-style
+source: repo-analysis
+source_repo: ffroliva/gflow-cli
+---
+
+# Gflow Cli Instinct Import Style
+
+## Action
+
+Use relative imports
+
+## Evidence
+
+- importStyle: relative
+- Pattern in src/gflow_cli/
+
+---
+id: gflow-cli-instinct-export-style
+trigger: "When exporting functions or classes from a module"
+confidence: 0.8
+domain: code-style
+source: repo-analysis
+source_repo: ffroliva/gflow-cli
+---
+
+# Gflow Cli Instinct Export Style
+
+## Action
+
+Use named exports
+
+## Evidence
+
+- exportStyle: named
+
+---
+id: gflow-cli-instinct-test-file-location
+trigger: "When adding new tests"
+confidence: 0.9
+domain: testing
+source: repo-analysis
+source_repo: ffroliva/gflow-cli
+---
+
+# Gflow Cli Instinct Test File Location
+
+## Action
+
+Place test files in the tests/ directory, separate from src/
+
+## Evidence
+
+- Pattern in tests/
+- architecture.testLocation: separate
+
+---
+id: gflow-cli-instinct-test-types
+trigger: "When writing tests"
+confidence: 0.8
+domain: testing
+source: repo-analysis
+source_repo: ffroliva/gflow-cli
+---
+
+# Gflow Cli Instinct Test Types
+
+## Action
+
+Include both unit and e2e tests as appropriate
+
+## Evidence
+
+- testing.testTypes: [unit, e2e]
+- Pattern in tests/
+
+---
+id: gflow-cli-instinct-test-coverage-config
+trigger: "When configuring or updating tests"
+confidence: 0.7
+domain: testing
+source: repo-analysis
+source_repo: ffroliva/gflow-cli
+---
+
+# Gflow Cli Instinct Test Coverage Config
+
+## Action
+
+Ensure test coverage configuration is present and up to date
+
+## Evidence
+
+- testing.coverageConfig: true
+
+---
+id: gflow-cli-instinct-git-commit-format
+trigger: "When writing a commit message"
+confidence: 0.9
+domain: git
+source: repo-analysis
+source_repo: ffroliva/gflow-cli
+---
+
+# Gflow Cli Instinct Git Commit Format
+
+## Action
+
+Use conventional commit prefixes (docs, fix, feat) and include a short, descriptive message
+
+## Evidence
+
+- feat(api): downstream integration ergonomics (issue #16)
+- docs: add DEVELOPMENT.md and fix stale test markers in CONTRIBUTING (#21)
+- fix(auth): verify a real Flow app session on login (issue #15) (#22)
+
+---
+id: gflow-cli-instinct-git-commit-length
+trigger: "When composing a commit message"
+confidence: 0.8
+domain: git
+source: repo-analysis
+source_repo: ffroliva/gflow-cli
+---
+
+# Gflow Cli Instinct Git Commit Length
+
+## Action
+
+Keep commit messages concise (average ~55 characters)
+
+## Evidence
+
+- commits.averageLength: 55
+
+---
+id: gflow-cli-instinct-workflow-feature-dev
+trigger: "When adding a significant new feature or fixing a complex bug (especially auth or API), following a spec/plan/test-driven process"
+confidence: 0.95
+domain: workflow
+source: repo-analysis
+source_repo: ffroliva/gflow-cli
+---
+
+# Gflow Cli Instinct Workflow Feature Dev
+
+## Action
+
+Write spec and plan docs, implement code, add/update tests, and update documentation
+
+## Evidence
+
+- feature-development-with-spec-plan-and-tests workflow
+- Example commit sequences and files
+
+---
+id: gflow-cli-instinct-workflow-docs-update
+trigger: "When clarifying or updating development process, contribution guidelines, or documentation routing"
+confidence: 0.9
+domain: workflow
+source: repo-analysis
+source_repo: ffroliva/gflow-cli
+---
+
+# Gflow Cli Instinct Workflow Docs Update
+
+## Action
+
+Edit or add process documentation, update cross-references, and clarify instructions
+
+## Evidence
+
+- documentation-and-process-update workflow
+- Example commit sequences and files
+
+---
+id: gflow-cli-instinct-workflow-bugfix
+trigger: "When fixing a bug and ensuring it is tested and documented"
+confidence: 0.9
+domain: workflow
+source: repo-analysis
+source_repo: ffroliva/gflow-cli
+---
+
+# Gflow Cli Instinct Workflow Bugfix
+
+## Action
+
+Fix implementation, update/add tests, and update documentation and changelog
+
+## Evidence
+
+- bugfix-with-tests-and-docs workflow
+- Example commit sequences and files
+
