@@ -1,7 +1,5 @@
 """generate_image() — body assembly + reCAPTCHA + response parsing.
 
-Mirrors the mocking style of `tests/api/test_client_generate_video.py`.
-
 Phase C.1 rewrite note: generate_image() now delegates entirely to
 self.transport.generate_images() (see client._drive_image_generation).
 Tests that previously patched page.request.post have been rewritten to
@@ -646,8 +644,6 @@ class TestSpecC2TokenReMint:
     delegates to transport.generate_images() once per call on the happy path.
     Full re-mint-per-retry coverage lives in tests/api/transports/.
 
-    The video route (generate_video) still uses page.request.post directly and
-    its Spec C2 contract is verified below.
     """
 
     async def test_recaptcha_token_re_minted_every_attempt(self, tmp_path: Path) -> None:
@@ -664,56 +660,6 @@ class TestSpecC2TokenReMint:
         await client.generate_image(project_id="proj-1", req=_make_req(), seed=42)
 
         assert len(transport.calls) == 1
-
-    async def test_generate_video_recaptcha_token_re_minted_every_attempt(
-        self, client: FlowApiClient
-    ) -> None:
-        """Spec C2 for the video route too — symmetric to the image test above."""
-        from gflow_cli.api.video import Aspect as VAspect
-        from gflow_cli.api.video import GenerateVideoRequest
-
-        captured_bodies: list[dict] = []
-        fake_video_response = {
-            "operations": [{"operation": {"name": "op-1"}, "status": "PENDING"}],
-            "media": [{"name": "m1", "projectId": "proj-1", "workflowId": "w1"}],
-            "workflows": [{"name": "w1", "projectId": "proj-1"}],
-        }
-        responses_iter = iter(
-            [
-                (503, "down"),
-                (503, "still down"),
-                (200, json.dumps(fake_video_response)),
-            ]
-        )
-
-        async def fake_request_post(url, *, data, headers):
-            captured_bodies.append(json.loads(data))
-            status, text = next(responses_iter)
-            resp = MagicMock()
-            resp.status = status
-            resp.text = AsyncMock(return_value=text)
-            resp.headers = {"content-type": "application/json"}
-            return resp
-
-        client._page.request.post = AsyncMock(side_effect=fake_request_post)
-
-        with (
-            patch("gflow_cli.api.client.TokenMinter") as minter_cls,
-            patch("gflow_cli.api.client.post_with_retry") as patched_retry,
-        ):
-            from gflow_cli.api._retry import _make_retrying
-
-            patched_retry.side_effect = lambda **_kw: _make_retrying(
-                wait_seconds=lambda _: 0
-            ).__aiter__()
-            mint_mock = AsyncMock(side_effect=["V1", "V2", "V3"])
-            minter_cls.return_value.mint = mint_mock
-            req = GenerateVideoRequest(prompt="cat", aspect=VAspect.PORTRAIT)
-            await client.generate_video(project_id="proj-1", req=req, seed=1)
-
-        assert mint_mock.await_count == 3
-        tokens = [b["clientContext"]["recaptchaContext"]["token"] for b in captured_bodies]
-        assert tokens == ["V1", "V2", "V3"]
 
 
 class TestWireFormatDiscoveryAndRedaction:
