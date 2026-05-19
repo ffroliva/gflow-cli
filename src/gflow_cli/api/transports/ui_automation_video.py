@@ -336,3 +336,35 @@ class VideoGenerationMixin:
             log.info("ui_automation_video.editor_ready")
         except Exception as e:  # noqa: BLE001 — non-fatal readiness gate
             log.warning("ui_automation_video.editor_ready_timeout", error=str(e))
+
+    @staticmethod
+    async def _set_output_count_one(page: Page) -> None:
+        """Force the output count to 1. Flow defaults to x2 (two videos =
+        double credits — spec §10.5). Non-fatal on miss."""
+        tab = await VideoGenerationMixin._probe_selector_cascade(
+            page, "count_one_tab", COUNT_ONE_SELECTORS
+        )
+        if tab is None:
+            log.warning("ui_automation_video.count_not_set", note="Flow default (x2) applies")
+            return
+        await tab.click()
+        await page.wait_for_timeout(400)
+        log.info("ui_automation_video.output_count_set", count=1)
+
+    @staticmethod
+    async def _select_video_aspect(page: Page, aspect: Aspect) -> None:
+        """Click the aspect-ratio tab for `aspect` in the open mode dropdown.
+        Non-fatal on miss — generation proceeds with Flow's default ratio."""
+        candidates = VIDEO_ASPECT_TAB_SELECTORS.get(aspect)
+        if candidates is None:
+            log.warning("ui_automation_video.aspect_unsupported", aspect=aspect.value)
+            return
+        tab = await VideoGenerationMixin._probe_selector_cascade(
+            page, "video_aspect_tab", candidates
+        )
+        if tab is None:
+            log.warning("ui_automation_video.aspect_not_set", aspect=aspect.value)
+            return
+        await tab.click()
+        await page.wait_for_timeout(400)
+        log.info("ui_automation_video.aspect_set", aspect=aspect.value)

@@ -211,3 +211,38 @@ class TestWaitVideoEditorReady:
     async def test_timeout_is_non_fatal(self) -> None:
         page = _cascade_page(set())
         await VideoGenerationMixin._wait_video_editor_ready(page)  # logs, must not raise
+
+
+class TestSetOutputCountOne:
+    @pytest.mark.asyncio
+    async def test_clicks_the_count_one_tab(self) -> None:
+        from gflow_cli.api.transports import ui_automation_video as mod
+
+        sel = mod.COUNT_ONE_SELECTORS[0]
+        page = _cascade_page({sel})
+        await VideoGenerationMixin._set_output_count_one(page)
+        page.locator.assert_any_call(sel)
+
+    @pytest.mark.asyncio
+    async def test_missing_count_tab_is_non_fatal(self) -> None:
+        page = _cascade_page(set())
+        await VideoGenerationMixin._set_output_count_one(page)  # must not raise
+
+
+class TestSelectVideoAspect:
+    @pytest.mark.asyncio
+    async def test_clicks_the_landscape_tab(self) -> None:
+        from gflow_cli.api.transports import ui_automation_video as mod
+        from gflow_cli.api.video import Aspect
+
+        sel = mod.VIDEO_ASPECT_TAB_SELECTORS[Aspect.LANDSCAPE][0]
+        page = _cascade_page({sel})
+        await VideoGenerationMixin._select_video_aspect(page, Aspect.LANDSCAPE)
+        page.locator.assert_any_call(sel)
+
+    @pytest.mark.asyncio
+    async def test_missing_aspect_tab_is_non_fatal(self) -> None:
+        from gflow_cli.api.video import Aspect
+
+        page = _cascade_page(set())
+        await VideoGenerationMixin._select_video_aspect(page, Aspect.PORTRAIT)  # must not raise
