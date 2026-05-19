@@ -34,6 +34,9 @@ only for repository metadata operations:
 - request `@ffroliva` as reviewer
 - post or update the external-contribution checklist comment
 
+Bot PRs such as Dependabot updates are skipped by this human-contributor
+triage. They still run normal CI and remain subject to branch protection.
+
 This workflow must not checkout the PR branch, install dependencies, run tests,
 or execute contributor code. Keep all code execution in the normal `pull_request`
 CI workflow, where forked PRs do not receive repository secrets.
