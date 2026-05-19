@@ -2,6 +2,7 @@
 
 from __future__ import annotations
 
+import json
 from pathlib import Path
 
 import pytest
@@ -13,6 +14,8 @@ from gflow_cli.api.video import (
     Mode,
     Tier,
     VideoStatus,
+    media_name_from_generate_response,
+    parse_video_status,
 )
 
 
@@ -136,3 +139,75 @@ class TestVideoStatus:
         assert s.succeeded is False
         assert s.failure_reasons == ("IP_PROHIBITED",)
         assert s.error_message == "PUBLIC_ERROR_IP_INPUT_IMAGE"
+
+
+_CAPTURES = Path(__file__).parent.parent.parent / "samples" / "captured"
+
+
+def _body(filename: str) -> dict:
+    """Load the response body the parsers consume from a committed capture.
+
+    NOTE: the capture sanitizer redacts media ids inconsistently — capture 02
+    uses `<UUID>`, captures 08/09/10/11 use `<GENERATED_MEDIA_ID>`. The
+    assertions below match each file's actual token; a re-sanitization that
+    unifies them would require updating these expected values.
+    """
+    raw = json.loads((_CAPTURES / filename).read_text(encoding="utf-8"))
+    return raw["response_body_parsed"]
+
+
+class TestMediaNameFromGenerateResponse:
+    def test_t2v_capture(self) -> None:
+        name = media_name_from_generate_response(_body("02_batchAsyncGenerateVideoText.json"))
+        assert name == "<UUID>"
+
+    def test_i2v_capture(self) -> None:
+        name = media_name_from_generate_response(
+            _body("08_batchAsyncGenerateVideoStartAndEndImage.json")
+        )
+        assert name == "<GENERATED_MEDIA_ID>"
+
+    def test_r2v_capture(self) -> None:
+        name = media_name_from_generate_response(
+            _body("09_batchAsyncGenerateVideoReferenceImages.json")
+        )
+        assert name == "<GENERATED_MEDIA_ID>"
+
+    def test_missing_media_raises(self) -> None:
+        with pytest.raises(ValueError, match="no media"):
+            media_name_from_generate_response({"workflows": []})
+
+
+class TestParseVideoStatus:
+    def test_successful_capture(self) -> None:
+        s = parse_video_status(
+            _body("10_batchCheckAsyncVideoGenerationStatus_successful.json"),
+            media_id="<GENERATED_MEDIA_ID>",
+        )
+        assert s.status == "MEDIA_GENERATION_STATUS_SUCCESSFUL"
+        assert s.is_terminal is True
+        assert s.succeeded is True
+        assert s.failure_reasons == ()
+        assert s.error_message is None
+
+    def test_failed_capture(self) -> None:
+        s = parse_video_status(
+            _body("11_batchCheckAsyncVideoGenerationStatus_failed.json"),
+            media_id="<GENERATED_MEDIA_ID>",
+        )
+        assert s.status == "MEDIA_GENERATION_STATUS_FAILED"
+        assert s.is_terminal is True
+        assert s.succeeded is False
+        assert s.failure_reasons == ("IP_PROHIBITED",)
+        assert s.error_message == "PUBLIC_ERROR_IP_INPUT_IMAGE"
+
+    def test_media_id_not_in_response_raises(self) -> None:
+        with pytest.raises(ValueError, match="not found"):
+            parse_video_status(
+                _body("10_batchCheckAsyncVideoGenerationStatus_successful.json"),
+                media_id="no-such-id",
+            )
+
+    def test_malformed_status_raises(self) -> None:
+        with pytest.raises(ValueError, match="mediaGenerationStatus"):
+            parse_video_status({"media": [{"name": "m", "mediaMetadata": {}}]}, media_id="m")

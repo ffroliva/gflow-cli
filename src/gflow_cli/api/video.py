@@ -11,6 +11,7 @@ from __future__ import annotations
 from dataclasses import dataclass
 from enum import StrEnum
 from pathlib import Path
+from typing import Any, cast
 
 
 class Mode(StrEnum):
@@ -106,3 +107,50 @@ class VideoStatus:
     @property
     def succeeded(self) -> bool:
         return self.status == "MEDIA_GENERATION_STATUS_SUCCESSFUL"
+
+
+def media_name_from_generate_response(response_json: dict[str, Any]) -> str:
+    """Return `media[0].name` from a batchAsyncGenerateVideo* response.
+
+    Shapes: captures 02 (T2V), 08 (I2V), 09 (R2V). The T2V response also
+    carries a top-level `operations[]`; this parser deliberately reads
+    `media[0].name` (spec §2.4 — the candidate ids collapse to one uuid).
+    """
+    try:
+        media = response_json["media"]
+        return str(media[0]["name"])
+    except (KeyError, IndexError, TypeError) as e:
+        raise ValueError(f"generate response carries no media[0].name: {e}") from e
+
+
+def parse_video_status(response_json: dict[str, Any], *, media_id: str) -> VideoStatus:
+    """Parse one batchCheckAsyncVideoGenerationStatus response into a VideoStatus.
+
+    Selects the `media[]` entry whose `name == media_id`, then reads
+    `mediaMetadata.mediaStatus.{mediaGenerationStatus, failureReasons,
+    error.message}`. Shapes: captures 10 (SUCCESSFUL), 11 (FAILED).
+    Raises ValueError if `media_id` is absent or the status is malformed.
+    """
+    _media = response_json.get("media")
+    if not isinstance(_media, list):
+        raise ValueError("status response has no media[] array")
+    media: list[dict[str, Any]] = cast(list[dict[str, Any]], _media)
+    for item in media:
+        if item.get("name") != media_id:
+            continue
+        meta = cast(dict[str, Any], item.get("mediaMetadata") or {})
+        media_status = cast(dict[str, Any], meta.get("mediaStatus") or {})
+        status = media_status.get("mediaGenerationStatus")
+        if not isinstance(status, str):
+            raise ValueError(f"status entry for {media_id} has no mediaGenerationStatus")
+        reasons = tuple(cast(list[str], media_status.get("failureReasons") or []))
+        error_entry = cast(dict[str, Any], media_status.get("error") or {})
+        raw_msg = error_entry.get("message")
+        error_message: str | None = str(raw_msg) if raw_msg is not None else None
+        return VideoStatus(
+            media_id=media_id,
+            status=status,
+            failure_reasons=reasons,
+            error_message=error_message,
+        )
+    raise ValueError(f"media_id {media_id!r} not found in status response")
