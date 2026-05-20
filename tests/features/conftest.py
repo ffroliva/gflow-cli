@@ -34,8 +34,6 @@ def mock_flow_client() -> MagicMock:
     )
     client.generate_image = AsyncMock()
     client.generate_images_batch = AsyncMock()
-    client.generate_video = AsyncMock()
-    client.get_video_status = AsyncMock()
     client.download = AsyncMock()
     client.download_image = AsyncMock()
     return client

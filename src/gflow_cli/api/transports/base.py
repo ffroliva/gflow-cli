@@ -48,11 +48,11 @@ class FlowTransportStrategy(Protocol):
     async def generate_images(
         self,
         *,
-        project_id: str,
+        project_id: str | None,
         request: GenerateImageRequest,
     ) -> list[GeneratedImage]:
         """Send batchGenerateImages. recaptcha_token lives on `request` —
-        keeping the Protocol media-agnostic for future generate_video()."""
+        keeping the Protocol media-agnostic across image and video generation."""
         ...
 
     async def teardown(self) -> None:

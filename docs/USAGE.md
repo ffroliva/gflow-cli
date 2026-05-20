@@ -421,6 +421,13 @@ shell scripts can branch on the failure mode without parsing stderr.
 | `5`  | `ContentPolicyError`  | Flow rejected the prompt (200 + empty `media[]`) | Soften prompt wording                                      |
 | `6`  | `NetworkError`        | Network failure persisted across 3 attempts      | Check connectivity                                         |
 | `7`  | `WireFormatError`     | Unexpected response shape — Flow API changed     | File a bug (do NOT include captured tokens or signed URLs) |
+| `8`  | `AuthMissingError`    | Required auth credential is absent from profile   | `gflow auth login --profile <name>`                        |
+| `9`  | `TransportTimeoutError` | Browser/API operation exceeded its timeout      | Retry; raise the relevant timeout if needed                |
+| `10` | `WafRejectionError`   | Flow security layer rejected the request          | Change prompt/request and retry                            |
+| `11` | `ConfigurationError`  | Local configuration or browser mode is invalid    | Fix the option/env var shown in the error                  |
+| `12` | `AuthLoginTimeoutError` | Browser sign-in was not completed in time       | Re-run login or raise `GFLOW_CLI_AUTH_LOGIN_TIMEOUT`       |
+| `13` | `SecurityError`       | Unsafe local profile or secret handling blocked   | Follow the error's safety guidance                         |
+| `14` | `AuthBrowserRejectedError` | Google rejected the login browser             | `gflow auth login --browser chrome`                        |
 | `130`| SIGINT                | User-interrupted (Ctrl-C)                        | —                                                          |
 
 All errors emit a structured `error_raised` event (or `error_unhandled` for
@@ -445,6 +452,12 @@ if [ "$rc" -ne 0 ]; then
     4|6) echo "Transient infra issue (rate limit / network) — try again later"; exit 1 ;;
     5)   echo "Content policy rejected the prompt — rewrite and retry"; exit 1 ;;
     7)   echo "Flow API shape changed — upgrade gflow-cli or file a bug"; exit 1 ;;
+    8)   echo "Auth profile is missing a required credential — run: gflow auth login"; exit 1 ;;
+    9|12) echo "Operation timed out — retry with a larger timeout if needed"; exit 1 ;;
+    10)  echo "Flow rejected the request — adjust the prompt/request and retry"; exit 1 ;;
+    11)  echo "Configuration error — fix the option or env var shown above"; exit 1 ;;
+    13)  echo "Security guard blocked unsafe local state — follow the error guidance"; exit 1 ;;
+    14)  echo "Google rejected the login browser — run: gflow auth login --browser chrome"; exit 1 ;;
     130) echo "Cancelled with Ctrl-C"; exit 130 ;;
     *)   echo "Unknown failure (exit $rc)"; exit 1 ;;
   esac
@@ -455,32 +468,73 @@ fi
 
 ## Programmatic use
 
-The CLI is a thin shell over `gflow_cli.api.client.FlowApiClient`. All public methods used by the commands above are also available directly:
+The CLI is a thin shell over `gflow_cli.api.client.FlowApiClient`. All public methods used by the commands above are also available directly.
+
+### Importing errors
+
+Two module paths resolve to the same error classes. Use whichever feels natural for your codebase:
+
+```python
+from gflow_cli.errors import GFlowError, AuthExpiredError   # canonical
+from gflow_cli.exceptions import GFlowError, AuthExpiredError  # standard alias
+```
+
+Both are identical objects — `gflow_cli.exceptions` is a re-export of `gflow_cli.errors`. The alias exists because many developers and tools expect the conventional `exceptions` name.
+
+### Single-shot generation
 
 ```python
 import asyncio
 from pathlib import Path
 from gflow_cli.api.client import FlowApiClient
+from gflow_cli.api.image import GenerateImageRequest, Model, Aspect
 from gflow_cli.config import get_settings
 
 async def main() -> None:
     settings = get_settings()
     profile_dir = settings.profile_subdir("default")
     async with FlowApiClient(profile_dir=profile_dir, headless=settings.headless) as client:
-        project = await client.create_project(title="archive demo")
-        asset = await client.upload_image(project.project_id, Path("hero.png"))
-        # ... do work with project.project_id and asset.name ...
-        # Each uploaded asset and each generated media item has its own
-        # workflow_id — pass that to archive_workflow when you're done:
-        await client.archive_workflow(
-            workflow_id=asset.workflow_id,
-            project_id=project.project_id,
-        )
+        req = GenerateImageRequest(prompt="a peaceful lake at dawn", model=Model.IMAGE4)
+        # project_id is optional — omit it and a new project is created automatically.
+        image = await client.generate_image(req=req)
+        await client.download_image(image, Path("lake.png"))
 
 asyncio.run(main())
 ```
 
+`project_id` defaults to `None`. When omitted, `generate_image()` (and `generate_images_batch()`) call `create_project()` internally. Pass an explicit `project_id` when you want multiple generations to land in the same Flow project.
+
+### Archive / cleanup
+
+```python
+async with FlowApiClient(profile_dir=profile_dir) as client:
+    project = await client.create_project(title="archive demo")
+    asset = await client.upload_image(project.project_id, Path("hero.png"))
+    # Each uploaded asset and each generated media item has its own workflow_id.
+    await client.archive_workflow(
+        workflow_id=asset.workflow_id,
+        project_id=project.project_id,
+    )
+```
+
 `FlowApiClient.archive_workflow(workflow_id, project_id)` issues `PATCH /v1/flowWorkflows/{id}` to soft-delete a workflow. Useful in batch scripts that spin up a project per call and want to clean up afterwards. `workflow_id` comes from any `AssetInfo` (`upload_image` return) or `VideoOperation` / `VideoStatus` / `ImageResult` (generation returns) — `ProjectInfo` itself only carries `project_id` and `title`.
+
+### Health check (long-lived workers)
+
+For worker processes that hold a `FlowApiClient` open across many requests, call `health_check()` before dispatching to detect a dead browser context without catching exceptions yourself:
+
+```python
+async with FlowApiClient(profile_dir=profile_dir) as client:
+    while True:
+        job = await queue.get()
+        if not await client.health_check():
+            # browser context is dead — re-enter or restart the worker
+            break
+        image = await client.generate_image(req=job.req)
+        await handle_result(image)
+```
+
+`health_check()` returns `True` if the underlying Playwright page is alive and the current URL is on a Google domain. It returns `False` (never raises) on `TargetClosedError` or any other exception.
 
 ## See also
 

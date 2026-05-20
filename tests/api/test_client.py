@@ -17,9 +17,11 @@ from gflow_cli.api.client import (
     FlowApiError,
     _default_project_title,
     _is_supported_image_header,
+    _is_target_closed,
 )
 from gflow_cli.api.dto import GeneratedImage
 from gflow_cli.api.image import Aspect, GenerateImageRequest, Model
+from gflow_cli.errors import BrowserSessionClosedError
 
 
 class TestConstruction:
@@ -200,7 +202,7 @@ class _FakeTransport:
     async def refresh_auth(self) -> None:
         pass
 
-    async def generate_images(self, *, project_id: str, request: object) -> list[object]:
+    async def generate_images(self, *, project_id: str | None, request: object) -> list[object]:
         return []
 
     async def teardown(self) -> None:
@@ -291,7 +293,7 @@ async def test_client_delegates_image_gen_to_transport(
         dimensions=(512, 512),
     )
 
-    async def fake_gen(*, project_id: str, request: object) -> list[GeneratedImage]:
+    async def fake_gen(*, project_id: str | None, request: object) -> list[GeneratedImage]:
         assert project_id == "test-proj-xyz"
         assert isinstance(request, GenerateImageRequest)
         assert request.prompt == "delegated"
@@ -311,3 +313,85 @@ async def test_client_delegates_image_gen_to_transport(
             ),
         )
     assert result is sentinel
+
+
+# ---------------------------------------------------------------------------
+# Issue #18 — out_dir plumbing + TargetClosedError translation
+# ---------------------------------------------------------------------------
+
+
+class _OutDirAwareTransport(_FakeTransport):
+    """Like _FakeTransport but exposes an `_out_dir` attribute the client can set."""
+
+    def __init__(self) -> None:
+        super().__init__()
+        self._out_dir: Path | None = None
+
+
+@pytest.mark.asyncio
+async def test_client_plumbs_out_dir_to_transport(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    """#18 — FlowApiClient.out_dir must propagate to transport._out_dir."""
+    monkeypatch.delenv("GFLOW_CLI_TRANSPORT", raising=False)
+    _patch_playwright(monkeypatch)
+    fake = _OutDirAwareTransport()
+    out = tmp_path / "shots"
+    async with FlowApiClient(profile_dir=tmp_path, transport=fake, out_dir=out) as client:
+        assert client._out_dir == out
+        assert fake._out_dir == out
+
+
+@pytest.mark.asyncio
+async def test_client_omits_out_dir_when_transport_lacks_attribute(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    """Transports without an `_out_dir` slot are left untouched (hasattr-guarded)."""
+    monkeypatch.delenv("GFLOW_CLI_TRANSPORT", raising=False)
+    _patch_playwright(monkeypatch)
+    fake = _FakeTransport()  # NOTE: no _out_dir attribute
+    async with FlowApiClient(profile_dir=tmp_path, transport=fake, out_dir=tmp_path / "shots"):
+        assert not hasattr(fake, "_out_dir")
+
+
+def test_is_target_closed_recognises_marker() -> None:
+    err = RuntimeError("Target page, context or browser has been closed")
+    assert _is_target_closed(err) is True
+
+
+def test_is_target_closed_recognises_class_name() -> None:
+    class TargetClosedError(Exception):  # noqa: N818 — mimic Playwright class name
+        pass
+
+    assert _is_target_closed(TargetClosedError("anything")) is True
+
+
+def test_is_target_closed_returns_false_for_other_errors() -> None:
+    assert _is_target_closed(ValueError("nope")) is False
+
+
+@pytest.mark.asyncio
+async def test_generate_image_translates_target_closed_to_browser_session_closed(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    """Playwright TargetClosedError raised by the transport must surface as
+    gflow_cli.errors.BrowserSessionClosedError so long-lived workers can catch
+    a stable library-owned class without importing playwright._impl._errors."""
+    monkeypatch.delenv("GFLOW_CLI_TRANSPORT", raising=False)
+    _patch_playwright(monkeypatch)
+    fake = _FakeTransport()
+
+    async def boom(*, project_id: str | None, request: object) -> list[GeneratedImage]:
+        _ = project_id
+        _ = request
+        raise RuntimeError("Target page, context or browser has been closed")
+
+    fake.generate_images = boom  # type: ignore[method-assign]
+
+    async with FlowApiClient(profile_dir=tmp_path, transport=fake) as client:
+        client._mint_recaptcha_token = AsyncMock(return_value="tok")  # type: ignore[method-assign]
+        with pytest.raises(BrowserSessionClosedError):
+            await client.generate_image(
+                project_id="p",
+                req=GenerateImageRequest(prompt="x", model=Model.NARWHAL, aspect=Aspect.PORTRAIT),
+            )

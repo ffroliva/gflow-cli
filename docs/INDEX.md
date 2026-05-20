@@ -13,6 +13,8 @@ Welcome to the `gflow-cli` documentation. This index is the routing layer: it te
 | [DISCLAIMER](../DISCLAIMER.md) | Legal scope, takedown policy, prohibited uses | Before deploying anywhere non-trivial |
 | [LICENSE](../LICENSE) | MIT license text | Always |
 | [CONTRIBUTING](../CONTRIBUTING.md) | TDD workflow, test categories, coverage targets | Before opening a PR |
+| **[docs/DEVELOPMENT.md](DEVELOPMENT.md)** | Branching model, PR protocol, e2e gate, version bump protocol, AI-assisted workflow | Understanding the end-to-end dev process |
+| **[docs/GITHUB.md](GITHUB.md)** | Maintainer PR triage protocol, forked PR handling, SonarCloud scenarios | Reviewing or merging a GitHub PR |
 | [.env.template](../.env.template) | All environment variables with defaults | Setting up a new shell or container |
 | **[docs/AUTHENTICATION.md](AUTHENTICATION.md)** | Full auth flow, session storage, multi-account, refresh | First `gflow auth login`, or auth errors |
 | **[docs/CONFIGURATION.md](CONFIGURATION.md)** | All env vars, precedence chain, default paths per OS | Tuning behaviour, picking output paths |
@@ -21,6 +23,20 @@ Welcome to the `gflow-cli` documentation. This index is the routing layer: it te
 | **[docs/ARCHITECTURE.md](ARCHITECTURE.md)** | Modular monolith, per-worker Page pool, RFC 9457 Problem Details, retry layer | Adding a feature or a new provider |
 | **[docs/SECURITY.md](SECURITY.md)** | What secrets are stored where, threat model, hardening | Audit, code review, multi-user machines |
 | **[tasks/lessons.md](../tasks/lessons.md)** | Running notebook of patterns + reviewer findings, dated and traced to commits | Starting a new phase; debugging "why did the council flag this?" |
+
+## Agent commands
+
+Slash commands for Claude Code, stored in `.claude/commands/gflow/`. All prefixed `/gflow:` to signal project scope and avoid colliding with Claude Code built-ins or user-global commands.
+
+| Command | Purpose | Call when… |
+|---|---|---|
+| `/gflow:check` | Hygiene + auto-fix lint/format + type/test report | Before every commit |
+| `/gflow:plan` | Show current phase scope, sequence, and definition of done | Starting a feature or unsure what's in scope |
+| `/gflow:known-issues` | Surface open and mitigated issues | Before touching auth, reCAPTCHA, or previously-flagged code |
+| `/gflow:changelog` | Show `[Unreleased]` entries + last tagged release | Need a quick picture of recent work |
+| `/gflow:release` | Full release flow (calls `/gflow:changelog` + `/gflow:check`) | Cutting a new version |
+
+**Governance:** commands are executable docs — they decay like any doc. When a phase advances or a file path changes, update the relevant command in the same commit. `/gflow:release` includes a staleness review step.
 
 ## Topic shortcuts
 
@@ -39,6 +55,19 @@ Welcome to the `gflow-cli` documentation. This index is the routing layer: it te
 **"How does the layered structure work?"** → [ARCHITECTURE § Layers](ARCHITECTURE.md#layers)
 **"What env var should I set for X?"** → [CONFIGURATION § Reference](CONFIGURATION.md#reference)
 **"How do I report a security issue?"** → [SECURITY § Reporting](SECURITY.md#reporting)
+**"What branch do I work on? How do I name it?"** → [DEVELOPMENT § Branching model](DEVELOPMENT.md#branching-model)
+**"How do I handle an external GitHub PR?"** → [GITHUB § Scenario Matrix](GITHUB.md#scenario-matrix)
+**"What automation runs on external PRs?"** → [GITHUB § Automated External PR Triage](GITHUB.md#automated-external-pr-triage)
+**"How do we use Copilot review on PRs?"** → [GITHUB § GitHub Copilot Code Review](GITHUB.md#github-copilot-code-review)
+**"Why did SonarCloud skip or fail on a forked PR?"** → [GITHUB § Forked PRs And SonarCloud](GITHUB.md#forked-prs-and-sonarcloud)
+**"How do I run e2e tests before a release?"** → [DEVELOPMENT § E2e gate](DEVELOPMENT.md#e2e-gate-before-merging-develop--main)
+**"When does the version get bumped?"** → [DEVELOPMENT § Version bump protocol](DEVELOPMENT.md#version-bump-protocol)
+**"How do I embed FlowApiClient in a long-lived worker / service?"** → [USER_GUIDE § Journey 14](USER_GUIDE.md#journey-14--embedding-flowapiclient-in-a-long-lived-worker)
+**"What's the standard way to import gflow errors in my code?"** → [USAGE § Programmatic use](USAGE.md#programmatic-use)
+**"A gflow command hangs / fails — where do I start?"** → [DEBUGGING § Quick reference](DEBUGGING.md#quick-reference)
+**"Flow's UI broke a selector — how do I diagnose it?"** → [DEBUGGING § Inspecting Flow's live UI](DEBUGGING.md#inspecting-flows-live-ui)
+**"What does each `ui_automation.*` log event mean?"** → [DEBUGGING § Listener & HTTP-layer debugging](DEBUGGING.md#listener--http-layer-debugging)
+**"What was actually live-verified for the latest release?"** → [LIVE_VERIFICATION_v0.7.0](LIVE_VERIFICATION_v0.7.0.md)
 
 ## Documentation governance
 

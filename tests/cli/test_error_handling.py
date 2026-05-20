@@ -11,6 +11,7 @@ from click.testing import CliRunner
 
 from gflow_cli.cli import main
 from gflow_cli.errors import (
+    AuthBrowserRejectedError,
     AuthExpiredError,
     AuthLoginTimeoutError,
     ContentPolicyError,
@@ -341,8 +342,14 @@ class TestAuthLoginErrors:
         """Invoke `gflow auth login` with asyncio.run mocked to raise *error*."""
         from unittest.mock import patch
 
+        def _raise_and_close(awaitable: object) -> None:
+            close = getattr(awaitable, "close", None)
+            if callable(close):
+                close()
+            raise error
+
         runner = CliRunner()
-        with patch("gflow_cli.cli.asyncio.run", side_effect=error):
+        with patch("gflow_cli.cli.asyncio.run", side_effect=_raise_and_close):
             return runner.invoke(
                 main, ["auth", "login", "--browser", "internal", "--profile", "test"]
             )
@@ -379,4 +386,13 @@ class TestAuthLoginErrors:
 
         result = self._invoke_auth_login(ConfigurationError("unknown browser mode"))
         assert result.exit_code == 11, result.output
+        assert "Session saved" not in result.output
+
+    def test_browser_rejected_exits_14_with_chrome_guidance(self) -> None:
+        """AuthBrowserRejectedError points users at real Chrome instead of another retry."""
+        result = self._invoke_auth_login(AuthBrowserRejectedError())
+        assert result.exit_code == 14, result.output
+        assert "Login browser rejected" in result.output
+        assert "--browser chrome" in result.output
+        assert "GFLOW_CLI_AUTH_BROWSER=chrome" in result.output
         assert "Session saved" not in result.output
