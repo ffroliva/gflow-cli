@@ -16,7 +16,19 @@ Living list of behaviour that's broken, surprising, or limited by design — alo
 
 ### Image generation returns HTTP 401 — `aisandbox-pa` generation endpoint
 
-- **Status:** Open · **Severity:** High (blocks image generation in the e2e path; production-CLI impact unconfirmed) · **Affects:** v0.6.0a6 · **Tracked:** N/A — needs a dedicated issue
+- **Status:** **RESOLVED in v0.7.0** — moved to [Resolved](#resolved) section
+- **Severity:** ~~High~~ · **Was-affecting:** v0.6.0a6 and earlier
+
+> **Resolution (2026-05-20, v0.7.0):** the production `ui_automation` transport
+> drives the Flow web UI so Flow's own JS issues `batchGenerateImages` with
+> full auth context — bypassing the 401 on the `aisandbox-pa` HTTP path
+> entirely. Live-verified end-to-end on the `ffroliva` profile across four
+> aspect ratios (`9:16`, `16:9`, `1:1`, `4:3`); see
+> [`docs/LIVE_VERIFICATION_v0.7.0.md`](docs/LIVE_VERIFICATION_v0.7.0.md). The
+> 401 still hits the experimental HTTP transports
+> (`evaluate_fetch` / `bearer` / `sapisidhash`) under
+> `src/gflow_cli/api/transports/experimental/` — those are not the
+> production path. Historical detail preserved below for searchability.
 
 Image **generation** calls fail with HTTP 401 even on a profile that holds a
 fully verified Flow session. Discovered 2026-05-17 while building the e2e test
@@ -213,7 +225,17 @@ gflow video batch manifest.remaining.tsv
 
 ### REST API 401 — all `aisandbox-pa.googleapis.com` generation endpoints blocked
 
-- **Status:** Open (Mitigated) · **Severity:** High · **Affects:** v0.2.0a1+ · **Fixed in:** v0.6.0a5 (planned)
+- **Status:** **RESOLVED in v0.7.0** — image generation live-verified end-to-end
+- **Severity:** ~~High~~ · **Was-affecting:** v0.2.0a1 through v0.6.0a6
+
+> **Resolution (2026-05-20, v0.7.0):** `UiAutomationTransport` drives the Flow
+> editor so Flow's own JS issues every generation request with full auth
+> context — image generation now succeeds end-to-end (see
+> [`docs/LIVE_VERIFICATION_v0.7.0.md`](docs/LIVE_VERIFICATION_v0.7.0.md)). Video
+> T2V works at the library level via the same transport (Phase A, PR #23);
+> CLI wiring (`gflow video t2v/i2v/batch`) is queued for Phase B. The HTTP
+> transports under `experimental/` remain blocked by this 401 by design —
+> they are not on the production path.
 
 Even with a valid browser session (cookies present), calling Flow's REST API directly via `fetch` or `page.request` against `aisandbox-pa.googleapis.com` returns HTTP 401. This blocks **all** generation routes:
 
@@ -274,6 +296,16 @@ change surfaces there as a failing test. Start any investigation of a sudden
 ---
 
 ## Resolved
+
+### aisandbox-pa generation 401 — bypassed by the `ui_automation` transport
+
+- **Status:** Resolved · **Severity:** Was-High (blocked image gen via HTTP transports) · **Fixed in:** v0.7.0
+
+The two long Open-section entries above (*Image generation returns HTTP 401* and *REST API 401 — all `aisandbox-pa.googleapis.com` generation endpoints blocked*) were closed by the same architectural change: `UiAutomationTransport` drives the Flow web UI so Flow's own JavaScript issues every generation request with the full browser auth context (cookies, reCAPTCHA, `Origin`/`Referer` headers). The 401 had affected every direct HTTP call from `evaluate_fetch` / `bearer` / `sapisidhash`; those transports now live under `src/gflow_cli/api/transports/experimental/` and are not on the production path.
+
+End-to-end live-verified on the `ffroliva` profile across `9:16`, `16:9`, `1:1`, and `4:3` aspect ratios; see [`docs/LIVE_VERIFICATION_v0.7.0.md`](docs/LIVE_VERIFICATION_v0.7.0.md) for timing, file sizes, and exact filenames. Video T2V uses the same approach (Phase A — PR #23 — merged 2026-05-19).
+
+---
 
 ### G12 "browser not secure" block — Google rejects automated sign-in
 
