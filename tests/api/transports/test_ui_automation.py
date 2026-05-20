@@ -20,7 +20,11 @@ from unittest.mock import AsyncMock, MagicMock, patch
 import pytest
 
 from gflow_cli.api.image import Aspect, GenerateImageRequest, Model
-from gflow_cli.api.transports.ui_automation import FLOW_URL, UiAutomationTransport
+from gflow_cli.api.transports.ui_automation import (
+    FLOW_URL,
+    ONBOARDING_SELECTORS,
+    UiAutomationTransport,
+)
 from gflow_cli.errors import ContentPolicyError, WafRejectionError
 
 # ---------------------------------------------------------------------------
@@ -442,9 +446,14 @@ class TestEnterEditor:
         t = UiAutomationTransport()
         page = _make_editor_page()
         await t._enter_editor(page)  # type: ignore[attr-defined]
-        # locator called at least once with the first (icon-class) selector.
-        first_call_sel = page.locator.call_args_list[0].args[0]
-        assert "google-symbols" in first_call_sel
+        # The icon-class (google-symbols) selector — the editor's first
+        # declared candidate — must be probed. `_bypass_onboarding` runs
+        # first and tries its own selectors, so we check presence anywhere
+        # in the call list rather than at index 0.
+        all_selectors = [c.args[0] for c in page.locator.call_args_list]
+        assert any("google-symbols" in s for s in all_selectors), (
+            f"Expected icon-class selector probed; saw {all_selectors}"
+        )
         assert "/project/" in page.url
 
     @pytest.mark.asyncio
@@ -510,6 +519,103 @@ class TestEnterEditor:
         with pytest.raises(RuntimeError):
             await t._enter_editor(page)  # type: ignore[attr-defined]
         page.screenshot.assert_not_called()
+
+
+# ---------------------------------------------------------------------------
+# Unit 3.4b — _bypass_onboarding(page)
+# ---------------------------------------------------------------------------
+
+
+def _make_onboarding_page(
+    *,
+    visible_selectors: set[str] | None = None,
+    is_visible_raises: bool = False,
+    click_raises: bool = False,
+) -> tuple[MagicMock, list[tuple[str, dict[str, object]]]]:
+    """Build a fake page for _bypass_onboarding tests.
+
+    Returns ``(page, clicked)`` where ``clicked`` accumulates
+    ``(selector, click_kwargs)`` for every locator that received a click.
+    A selector reports visible iff it is in ``visible_selectors``.
+    """
+    visible = visible_selectors or set()
+    clicked: list[tuple[str, dict[str, object]]] = []
+    page = MagicMock()
+    page.wait_for_timeout = AsyncMock()
+
+    def _locator(sel: str) -> MagicMock:
+        loc = MagicMock()
+        if is_visible_raises:
+            loc.is_visible = AsyncMock(side_effect=RuntimeError("probe boom"))
+        else:
+            loc.is_visible = AsyncMock(return_value=sel in visible)
+
+        async def _click(*_args: object, **kwargs: object) -> None:
+            if click_raises:
+                raise RuntimeError("click boom")
+            clicked.append((sel, dict(kwargs)))
+
+        loc.click = AsyncMock(side_effect=_click)
+        wrapper = MagicMock()
+        wrapper.first = loc
+        return wrapper
+
+    page.locator = MagicMock(side_effect=_locator)
+    return page, clicked
+
+
+class TestBypassOnboarding:
+    """_bypass_onboarding force-clicks visible cookie/onboarding CTAs and
+    tolerates every miss — the gallery often loads with no interstitial."""
+
+    @pytest.mark.asyncio
+    async def test_clicks_visible_onboarding_cta_with_force(self) -> None:
+        """A visible onboarding CTA is force-clicked (overlays intercept
+        pointer events, so force=True is required) and a settle delay runs."""
+        target = ONBOARDING_SELECTORS[0]
+        t = UiAutomationTransport()
+        page, clicked = _make_onboarding_page(visible_selectors={target})
+        await t._bypass_onboarding(page)  # type: ignore[attr-defined]
+        assert [sel for sel, _ in clicked] == [target]
+        assert clicked[0][1].get("force") is True
+        page.wait_for_timeout.assert_awaited()
+
+    @pytest.mark.asyncio
+    async def test_no_interstitial_is_a_noop(self) -> None:
+        """When nothing matches, _bypass_onboarding clicks nothing and does
+        not raise — the common case where the gallery loads clean."""
+        t = UiAutomationTransport()
+        page, clicked = _make_onboarding_page(visible_selectors=set())
+        await t._bypass_onboarding(page)  # type: ignore[attr-defined]
+        assert clicked == []
+
+    @pytest.mark.asyncio
+    async def test_clicks_every_visible_selector(self) -> None:
+        """The loop does not stop at the first hit — a page stacking a
+        cookie banner and a 'Get Started' CTA has both dismissed."""
+        targets = {ONBOARDING_SELECTORS[0], ONBOARDING_SELECTORS[-1]}
+        t = UiAutomationTransport()
+        page, clicked = _make_onboarding_page(visible_selectors=targets)
+        await t._bypass_onboarding(page)  # type: ignore[attr-defined]
+        assert {sel for sel, _ in clicked} == targets
+
+    @pytest.mark.asyncio
+    async def test_is_visible_failure_is_swallowed(self) -> None:
+        """A transient DOM error from is_visible() must not abort the sweep
+        — the selector is skipped and no exception escapes."""
+        t = UiAutomationTransport()
+        page, clicked = _make_onboarding_page(is_visible_raises=True)
+        await t._bypass_onboarding(page)  # type: ignore[attr-defined]  # must not raise
+        assert clicked == []
+
+    @pytest.mark.asyncio
+    async def test_click_failure_is_swallowed(self) -> None:
+        """A click that raises (overlay vanished mid-sweep) is swallowed —
+        onboarding bypass is best-effort, never fatal."""
+        target = ONBOARDING_SELECTORS[0]
+        t = UiAutomationTransport()
+        page, _ = _make_onboarding_page(visible_selectors={target}, click_raises=True)
+        await t._bypass_onboarding(page)  # type: ignore[attr-defined]  # must not raise
 
 
 # ---------------------------------------------------------------------------
