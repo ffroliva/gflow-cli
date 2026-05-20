@@ -1113,3 +1113,135 @@ class TestTeardown:
         t._pw_cm = pw_cm  # type: ignore[attr-defined]
         # Should NOT raise.
         await t.teardown()
+
+
+# ---------------------------------------------------------------------------
+# Unit 3.12 — _dismiss_blocking_overlays(page, out_dir)
+# ---------------------------------------------------------------------------
+
+
+def _make_overlay_page(
+    *,
+    iframe_visible: bool = False,
+    close_button_visible: bool = False,
+    keyboard_press_raises: bool = False,
+) -> MagicMock:
+    """Build a fake page for _dismiss_blocking_overlays tests.
+
+    When ``iframe_visible=True`` a changelog iframe selector is visible.
+    When ``close_button_visible=True`` a close-button locator is also visible.
+    """
+    page = MagicMock()
+    page.wait_for_timeout = AsyncMock()
+    page.screenshot = AsyncMock()
+
+    if keyboard_press_raises:
+        page.keyboard = MagicMock()
+        page.keyboard.press = AsyncMock(side_effect=RuntimeError("keyboard boom"))
+    else:
+        page.keyboard = MagicMock()
+        page.keyboard.press = AsyncMock()
+
+    # Track click calls per selector for assertions.
+    clicked: list[str] = []
+
+    def _locator(sel: str) -> MagicMock:
+        loc = MagicMock()
+        # Changelog iframe selectors
+        is_iframe = "changelogs" in sel
+        # Close-button selectors: aria-label close / role=button with close icon
+        is_close = any(
+            k in sel.lower() for k in ("aria-label", "close", "dialog", "dismiss", "cancel")
+        )
+
+        if is_iframe and iframe_visible:
+            loc.is_visible = AsyncMock(return_value=True)
+        elif is_close and close_button_visible:
+            loc.is_visible = AsyncMock(return_value=True)
+        else:
+            loc.is_visible = AsyncMock(return_value=False)
+
+        async def _click(**kwargs: object) -> None:
+            clicked.append(sel)
+
+        loc.click = AsyncMock(side_effect=_click)
+        wrapper = MagicMock()
+        wrapper.first = loc
+        return wrapper
+
+    page.locator = MagicMock(side_effect=_locator)
+    page._clicked = clicked  # type: ignore[attr-defined]
+    return page
+
+
+class TestDismissBlockingOverlays:
+    """_dismiss_blocking_overlays handles changelog iframes and close buttons.
+
+    Acceptance criteria from issue #26:
+    - No overlay → returns False, no clicks, no log noise.
+    - Iframe + visible close button → clicked (force=True), returns True.
+    - Iframe + NO close button → Escape pressed, returns True (regression test).
+    - Iframe + close cascade + Escape both fail → returns False, debug screenshot.
+    - Non-changelog iframes are ignored.
+    """
+
+    @pytest.mark.asyncio
+    async def test_no_overlay_returns_false_and_no_clicks(self) -> None:
+        """When no changelog iframe is visible, returns False and makes no clicks."""
+        t = UiAutomationTransport()
+        page = _make_overlay_page(iframe_visible=False)
+        result = await t._dismiss_blocking_overlays(page)  # type: ignore[attr-defined]
+        assert result is False
+        assert page._clicked == []  # type: ignore[attr-defined]
+        page.keyboard.press.assert_not_called()
+
+    @pytest.mark.asyncio
+    async def test_iframe_with_close_button_clicks_and_returns_true(self) -> None:
+        """A changelog iframe + visible close button → close button clicked
+        (force=True) and True returned."""
+        t = UiAutomationTransport()
+        page = _make_overlay_page(iframe_visible=True, close_button_visible=True)
+        result = await t._dismiss_blocking_overlays(page)  # type: ignore[attr-defined]
+        assert result is True
+        # A close-related selector was clicked.
+        assert len(page._clicked) >= 1  # type: ignore[attr-defined]
+        page.keyboard.press.assert_not_called()
+
+    @pytest.mark.asyncio
+    async def test_iframe_no_close_button_uses_escape_fallback(self) -> None:
+        """Regression test (issue #26 AC): iframe present, no close button →
+        Escape is pressed as fallback and True is returned."""
+        t = UiAutomationTransport()
+        page = _make_overlay_page(iframe_visible=True, close_button_visible=False)
+        result = await t._dismiss_blocking_overlays(page)  # type: ignore[attr-defined]
+        assert result is True
+        page.keyboard.press.assert_called_once_with("Escape")
+        # No close button was clicked.
+        assert page._clicked == []  # type: ignore[attr-defined]
+
+    @pytest.mark.asyncio
+    async def test_escape_failure_captures_screenshot_and_returns_false(
+        self, tmp_path: Path
+    ) -> None:
+        """If the close cascade AND Escape both fail, a debug screenshot is
+        captured and False is returned — diagnostic output is preserved."""
+        t = UiAutomationTransport()
+        page = _make_overlay_page(
+            iframe_visible=True,
+            close_button_visible=False,
+            keyboard_press_raises=True,
+        )
+        result = await t._dismiss_blocking_overlays(  # type: ignore[attr-defined]
+            page, out_dir=tmp_path
+        )
+        assert result is False
+        page.screenshot.assert_called_once()
+
+    @pytest.mark.asyncio
+    async def test_non_changelog_iframes_are_ignored(self) -> None:
+        """Selectors that do NOT match changelog iframes produce no dismissal."""
+        t = UiAutomationTransport()
+        # Page where no changelog iframe is visible but other elements might be.
+        page = _make_overlay_page(iframe_visible=False)
+        result = await t._dismiss_blocking_overlays(page)  # type: ignore[attr-defined]
+        assert result is False
