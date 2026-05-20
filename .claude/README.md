@@ -10,7 +10,12 @@ This directory holds **internal maintainer workflows** that are bundled with the
 .claude/
 ├── README.md              ← this file
 └── commands/              ← repo-local slash commands
-    └── release.md         ← `/release` — automates the version-bump + tag + push flow
+    └── gflow/             ← `/gflow:*` namespace (avoids collision with built-ins)
+        ├── check.md       ← `/gflow:check` — hygiene + ruff + pyright + pytest
+        ├── plan.md        ← `/gflow:plan` — show active phase / superpowers plan
+        ├── known-issues.md← `/gflow:known-issues` — open/mitigated items
+        ├── changelog.md   ← `/gflow:changelog` — [Unreleased] + last tagged
+        └── release.md     ← `/gflow:release` — full release flow (signed tags)
 ```
 
 Optional additions when needed:
@@ -25,9 +30,9 @@ Optional additions when needed:
 
 ## Adding a slash command
 
-Drop a Markdown file into `commands/`. Filename (without `.md`) becomes the command name. The first paragraph is the description Claude shows in `/help`. The rest is the prompt the agent executes.
+Drop a Markdown file into `commands/gflow/` to add a `/gflow:<name>` command. Filename (without `.md`) becomes the command name. The first paragraph is the description Claude shows in `/help`. The rest is the prompt the agent executes. **Use the `gflow/` subdirectory** so commands stay namespaced and don't collide with Claude Code built-ins or user-global commands.
 
-Example: `commands/foo.md` → invoked as `/foo`.
+Example: `commands/gflow/foo.md` → invoked as `/gflow:foo`.
 
 ## Adding an internal skill
 
