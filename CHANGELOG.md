@@ -7,7 +7,229 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
-## [0.6.0a1] — 2026-05-14
+### Added
+
+- `gflow_cli.exceptions` module as a standard alias for `gflow_cli.errors` — both module names resolve identically.
+- `FlowApiClient.health_check()` async method — returns `True` if browser context is alive and on a Google domain; safe to call from long-lived workers without try/except.
+- `UiAutomationTransport._dismiss_blocking_overlays(page)` — generic overlay-dismiss helper that detects Flow changelog ("What's new") iframes and dismisses them via a close-button selector cascade with an Escape-key fallback. Invoked after editor entry on both image and video flows so first-run profiles no longer fail on the next click. Closes [#26](https://github.com/ffroliva/gflow-cli/issues/26).
+
+### Changed
+
+- `FlowApiClient.generate_image()` and `generate_images_batch()`: `project_id` is now optional (`str | None = None`). When omitted, a new Flow project is created automatically. Existing callers passing an explicit `project_id` are unaffected.
+- `gflow video t2v/i2v/batch` now report "temporarily unavailable" — video generation is being rebuilt on the UI-automation transport (Phase A ships the T2V transport; CLI commands return in Phase B).
+
+### Removed
+
+- The 401-dead HTTP video API path (`FlowApiClient.generate_video`, `get_video_status`) — retired in favour of the new UI-automation transport (`VideoGenerationMixin` in `api/transports/ui_automation_video.py`).
+
+### Fixed
+
+- `gflow auth login` now verifies a real Flow app session before reporting
+  success — fixes issue #15, where a Google-only sign-in was wrongly accepted
+  and later failed with HTTP 401.
+- **`gflow auth login --browser internal` now fails fast when Google rejects
+  Playwright's bundled Chromium**, returning `AuthBrowserRejectedError` exit
+  code 14 with guidance to rerun using real Chrome
+  (`gflow auth login --browser chrome`) or set
+  `GFLOW_CLI_AUTH_BROWSER=chrome`.
+
+## [0.6.0a6] — 2026-05-17
+
+> **Stability & code-quality release.** Fixes a concurrency bug in image
+> generation, restores a green CI pipeline (the test job had been hanging
+> indefinitely), and clears every open SonarCloud issue so the project's
+> Quality Gate passes.
+
+### Fixed
+
+- **Concurrent `generate_images` calls are now serialized**, and every batch
+  creates a fresh Flow project — prevents project-reuse races when multiple
+  image generations overlap.
+- **CI test job no longer hangs.** `RealChromeStrategy` launches Chrome with
+  `asyncio.create_subprocess_exec`, but its tests patched `subprocess.Popen`;
+  asyncio's POSIX subprocess transport uses `Popen` internally, so the mock
+  left the event loop's child watcher unresolved forever — the test job ran
+  until cancelled and never wrote a coverage report. Tests now patch
+  `asyncio.create_subprocess_exec` directly.
+- **structlog log-capture test isolation** — a `browser_manager` test asserted
+  on a log event that an earlier test had already cached onto the production
+  logger chain (`cache_logger_on_first_use=True`). It now patches in a fresh
+  logger proxy and passes regardless of suite order.
+
+### Changed
+
+- **All open SonarCloud issues resolved** and the Quality Gate now passes:
+  the S6418 BLOCKER and 10× S5443 CRITICAL test findings, 16 mechanical
+  issues, async-hygiene rules (S7503 / S7487 / S7493), and 5
+  cognitive-complexity (S3776) extractions. The two remaining Security
+  Hotspots — `random`-based retry jitter and protocol-mandated SHA-1 in
+  `sapisidhash` — were reviewed and marked Safe.
+
+### Security / Compliance
+
+- **Removed accidentally tracked artefacts** — 7 files were untracked from git:
+  `denon82/.gflow-cdp.lock`, `test_assets/debug_editor/buttons.json`,
+  `test_assets/debug_settings/settings_panel.json`, and 4 AI-generated JPGs
+  in `test_assets/smoke_e2e_*/`. None contained credentials or API tokens, but
+  the CDP lock file exposed a profile name and browser PID and the debug JSON
+  files contained Flow UI text. Files were removed from HEAD forward (no history
+  rewrite — see decision rationale in `PLAN.md` ADR #3).
+
+- **`.gitignore` hardened** — added `*.jpg`, `*.jpeg`, `**/.gflow-cdp.lock`,
+  `test_assets/smoke_*/`, `test_assets/debug_*/`, and `gflow-output/` to
+  prevent recurrence. Fixture allowlist added (`!test_assets/fixtures/**/*.jpg`).
+
+- **Hygiene gate added to CI** — `scripts/ci/check_repo_hygiene.py` runs on
+  every push and PR before lint. Fails if tracked files match the denylist or
+  if any `scripts/**/*.py` contains a hardcoded Windows absolute path or writes
+  output to `test_assets/`.
+
+- **`.pre-commit-config.yaml` added** — ships ruff (lint + format) and the
+  hygiene gate as pre-commit hooks. Install with:
+  `pip install pre-commit && pre-commit install`.
+
+- **Debug scripts de-hardcoded** — `scripts/debug_editor.py`,
+  `scripts/debug_gen_settings.py`, `scripts/debug_settings.py` previously
+  contained `PROFILE = r"C:\Users\ffrol\..."` (Windows username + Google
+  profile name) and wrote output to `test_assets/`. Replaced with argparse
+  `--profile` flag + `auth.profile_dir(args.profile)` and output redirected to
+  `tmp/debug/<name>/`.
+
+- **CI workflow scrubbed** — removed a hardcoded profile name (`denon82`) from
+  a comment in `.github/workflows/ci.yml`.
+
+### CI / Tooling
+
+- **GitHub Actions migrated to Node.js 24** ahead of the June 2026 forced
+  migration (`FORCE_JAVASCRIPT_ACTIONS_TO_NODE24`).
+- **SonarCloud Quality Gate badge** added to the README.
+
+## [0.6.0a5] — 2026-05-16
+
+> **CLI transport proven end-to-end.** The `ui_automation` transport now
+> generates images correctly from the `gflow image t2i` command — count,
+> aspect ratio, and file download all work. Root cause of the persistent 403
+> was `headless=True`; reCAPTCHA Enterprise immediately rejects headless
+> Chromium.
+
+### Fixed
+
+- **`headless` default changed `True` → `False`** in `config.py` and
+  `FlowApiClient.__init__` — the `ui_automation` transport requires a headed
+  (visible) Chrome window; reCAPTCHA Enterprise scores headless browsers as
+  bots and returns an immediate 403 on `batchGenerateImages`.
+- **13 unit test mock regressions** fixed after the v0.6.0a4 transport rewrite:
+  - `add_init_script = AsyncMock()` added to `_patch_playwright` and
+    `fake_context` fixtures (`test_client.py`, `test_concurrency.py`).
+  - `keyboard.insert_text = AsyncMock()` added to `_make_prompt_page`
+    (transport now uses `insert_text` instead of `type`).
+  - `_FakeHttpxResponse.headers` added (download auto-detects `.jpg`/`.png`
+    from `Content-Type`).
+  - `_capture_batch_response` / `_await_captured` return `list[dict]` —
+    test assertions updated throughout `test_ui_automation.py`.
+
+## [0.6.0a4] — 2026-05-17
+
+> **Unified output resolution + batch orchestration refactor.** This release
+> aligns the CLI output structure across all commands and refactors the batch
+> runner to be more generic, preparing the codebase for Phase 6.
+
+### Added
+
+- **`resolve_batch_output_dir` helper** in `paths.py` — centralizes the
+  date-partitioned output directory logic used by all generation commands.
+- **`parse_batch_item_dict` helper** in `image_batch.py` — deduplicates JSON
+  prompt validation between `gflow run` and other batch sources.
+
+### Changed
+
+- **`gflow run` output directory** — now defaults to date-partitioned
+  `$GFLOW_CLI_OUTPUT_DIR/images/<YYYY-MM-DD>/` instead of the legacy
+  `out/<UTC-timestamp>/`, matching the `gflow image` convention.
+- **Refactored `run_image_batch`** into a generic `run_sequential_batch`
+  orchestrator — now accepts a swappable worker callback, allowing for uniform
+  video and image batch handling in the future.
+
+### Fixed
+
+- Removed ~80 lines of duplicate validation logic from `cli_run.py`.
+- Corrected test imports and expectations for unified output resolution.
+
+## [0.6.0a3] — 2026-05-17
+
+> **Deterministic timeouts + agent-friendly exit codes.** This release hardens
+> the auth login flow for unattended / agentic use: timeouts now raise distinct
+> errors with dedicated exit codes instead of silently swallowing failures.
+
+### Added
+
+- **`AuthLoginTimeoutError`** (exit code **12**) — raised by both strategies
+  when the user/agent does not complete sign-in within `timeout_seconds`.
+  Distinct from `ConfigurationError` (11) and `SecurityError` (13) so agents
+  can branch on failure type without parsing stderr.
+- **`SecurityError`** exit code **13** — now registered in `EXIT_CODE_MAP`.
+- **`timeout_seconds=600` parameter** on both `RealChromeStrategy` and
+  `InternalChromiumStrategy` — configurable upper bound for the login window.
+- **Broad `GFlowError` catch** in `auth_login` CLI command — previously only
+  caught `ConfigurationError`; now looks up any `GFlowError` subclass in
+  `EXIT_CODE_MAP` and exits with the correct code plus a `remediation_hint`.
+
+### Fixed
+
+- `InternalChromiumStrategy` had an infinite `while True:` polling loop that
+  never timed out; replaced with a bounded loop that raises
+  `AuthLoginTimeoutError` on expiry.
+- `auth login --browser chrome` when Chrome is missing now exits with code
+  **11** (ConfigurationError) instead of 1.
+
+## [0.6.0a2] — 2026-05-16
+
+> **Real Chrome auth strategy — G12 block resolved.** This release restores
+> `gflow auth login` reliability by implementing a new **Passive Capture**
+> strategy. This method providing a 100% clean browser environment by launching
+> your system's real Google Chrome as a standard process, completely bypassing
+> Google's bot-detection.
+
+### Added
+
+- **`--browser [auto|chrome|internal]` flag** on `gflow auth login` — selects
+  the browser strategy. `chrome` uses real system Chrome (**Passive Capture**).
+  `internal` falls back to bundled Chromium. `auto` (default) probes for real
+  Chrome and falls back gracefully.
+- **`GFLOW_CLI_AUTH_BROWSER` env var** — overrides the browser strategy without
+  a CLI flag.
+- **`RealChromeStrategy`** (`src/gflow_cli/auth/real_chrome.py`) — zero-automation
+  login flow: launches clean Chrome, waits for user to close window, then extracts
+  the session.
+- **`InternalChromiumStrategy`** — extracted from the previous `auth.py` monolith
+  as an explicit fallback strategy.
+- **`AuthStrategyFactory`** — routes `auto`/`chrome`/`internal` to the
+  appropriate strategy based on system state.
+
+### Fixed
+
+- **G12 bot-detection block** — Google's "browser not secure" rejection (`/v3/signin/rejected`)
+  is bypassed by the Passive Capture workflow. By removing all automation signals
+  (CDP, WebDriver flags) during login, the browser is indistinguishable from a
+  regular user session.
+- **Privacy Guard** — `RealChromeStrategy` validates that `profile_dir` is inside
+  `GFLOW_CLI_HOME` and raises `SecurityError` if it is not, preventing accidental
+  interference with your primary personal Chrome profile.
+  use of the user's primary system Chrome profile.
+- **`ConfigurationError` on missing Chrome** — clear "Chrome binary not found"
+  message with install guidance when `--browser chrome` is requested but Chrome
+  is not on the system.
+- **Two pyright `TypedDict` errors** in cookie access (`c["name"]` → `c.get("name")`).
+
+### Changed
+
+- `src/gflow_cli/auth.py` promoted to `src/gflow_cli/auth/` package with
+  `__init__.py`, `base.py`, `factory.py`, `internal_chromium.py`,
+  `real_chrome.py`, `strategies.py`.
+- `gflow auth login` now prints the launch strategy announcement before opening
+  any browser window.
+
+
 
 > **Shell-friendly multi-prompt `t2i` + performance hardening.** This release 
 > promotes `gflow image t2i` to a variadic command that can consume multiple 
@@ -437,7 +659,9 @@ shell-script template that branches on these codes.
 
 First skeleton. Not functional end-to-end yet.
 
-[Unreleased]: https://github.com/ffroliva/gflow-cli/compare/v0.6.0a1...HEAD
+[Unreleased]: https://github.com/ffroliva/gflow-cli/compare/v0.6.0a6...HEAD
+[0.6.0a6]: https://github.com/ffroliva/gflow-cli/compare/v0.6.0a5...v0.6.0a6
+[0.6.0a5]: https://github.com/ffroliva/gflow-cli/compare/v0.6.0a4...v0.6.0a5
 [0.6.0a1]: https://github.com/ffroliva/gflow-cli/compare/v0.5.0a1...v0.6.0a1
 [0.5.0a1]: https://github.com/ffroliva/gflow-cli/compare/v0.4.0a2...v0.5.0a1
 [0.3.0a1]: https://github.com/ffroliva/gflow-cli/releases/tag/v0.3.0a1

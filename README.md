@@ -12,6 +12,7 @@
 [![Code style: ruff](https://img.shields.io/badge/code%20style-ruff-000000.svg)](https://github.com/astral-sh/ruff)
 [![Type checked: pyright](https://img.shields.io/badge/type%20checked-pyright-blue.svg)](https://github.com/microsoft/pyright)
 [![Tests: TDD](https://img.shields.io/badge/tests-TDD-brightgreen.svg)](#development--tdd-workflow)
+[![Quality Gate Status](https://sonarcloud.io/api/project_badges/measure?project=ffroliva_gflow-cli&metric=alert_status)](https://sonarcloud.io/summary/new_code?id=ffroliva_gflow-cli)
 
 > ⚠️ **Not affiliated with Google.** Reverse-engineered from public Flow web traffic. Endpoints can change at any time. See full [DISCLAIMER](DISCLAIMER.md) before use.
 
@@ -54,7 +55,7 @@ Read the full [DISCLAIMER](DISCLAIMER.md) before deploying this in any productio
 
 ## Project status
 
-**v0.5.0a1 — alpha.** Video (T2V/I2V/batch), image (T2I/I2I/upload), the new **`gflow run` JSON-batch command**, and the **`ui_automation` default transport** are functional end-to-end against a live Google AI Pro/Ultra Flow account. Three earlier HTTP transport strategies (`evaluate_fetch` / `bearer` / `sapisidhash`) move to an `experimental/` subpackage in this release; the production path is `ui_automation`.
+**v0.6.0a6 — alpha.** Video (T2V/I2V/batch), image (T2I/I2I/upload), the **`gflow run` JSON-batch command**, and the **`ui_automation` default transport** are functional end-to-end against a live Google AI Pro/Ultra Flow account. Three earlier HTTP transport strategies (`evaluate_fetch` / `bearer` / `sapisidhash`) now live in an `experimental/` subpackage; the production path is `ui_automation`.
 
 | Milestone | Status |
 |---|---|
@@ -72,14 +73,15 @@ Read the full [DISCLAIMER](DISCLAIMER.md) before deploying this in any productio
 | `gflow run --config <file>` sequential JSON batches | ✅ done (v0.5.0a1) |
 | `examples/` directory with runnable single-image + batch scripts | ✅ done (v0.5.0a1) |
 | Shell multi-prompt `gflow image t2i` (`PROMPT...`, `--prompts-file`, `--stdin`) | ✅ done (v0.6.0a1) |
-| Provider abstraction for official Veo 3.1 API | ⏳ planned (v0.6+) |
+| Provider abstraction for official Veo 3.1 API | ⏳ planned |
 
-### What's new in v0.5.0a1
+### What's new in v0.6.0a6
 
-- `UiAutomationTransport` is now the default image-generation strategy — Playwright-driven UI mimicry against the Flow editor on a logged-in Pro/Ultra profile (no externally-exposed CDP debug port).
-- New top-level `gflow run --config <file>` command for JSON-described sequential batches (1–50 prompts per file, `--continue-on-error` / `--fail-fast` modes). See [`docs/USAGE.md`](docs/USAGE.md#gflow-run) for the schema.
-- Three runnable example scripts shipped under [`examples/`](examples/README.md) — copy and edit for your own pipelines.
-- See the full [CHANGELOG](CHANGELOG.md#0501) for the security follow-ups (download host allow-list, viewport-only debug screenshots) and the listener-attach race fix.
+- **Image-generation concurrency fix** — concurrent `generate_images` calls are now serialized, and every batch creates a fresh Flow project, eliminating project-reuse races when multiple generations overlap.
+- **Green CI pipeline restored** — fixed a test-job hang (mismatched subprocess mocking in the Real Chrome auth tests) and a `structlog` test-isolation bug.
+- **SonarCloud Quality Gate passing** — every open issue resolved (BLOCKER + CRITICAL test findings, async-hygiene and cognitive-complexity rules); the two remaining Security Hotspots were reviewed and marked Safe.
+- **Repository hardening** — accidentally tracked artefacts removed, `.gitignore` tightened, a CI hygiene gate + pre-commit hooks added, and GitHub Actions migrated to Node.js 24.
+- See the full [CHANGELOG](CHANGELOG.md) for details.
 
 ---
 
@@ -172,32 +174,11 @@ gflow video i2v ./input.png "Slow cinematic push-in, soft golden light" -o out.m
 
 The image lands at `$GFLOW_CLI_OUTPUT_DIR/images/<YYYY-MM-DD>/<media_name>_1.png` (defaults to `./out/` when the env var is unset). See [docs/USAGE.md § `gflow image t2i`](docs/USAGE.md#gflow-image-t2i) for `--model`, `--aspect`, `-n/--count`, `--seed`, and `--out` flags.
 
-Same call from Python:
-
-```python
-import asyncio
-from pathlib import Path
-from gflow_cli.api.client import FlowApiClient
-from gflow_cli.api.video import Aspect, GenerateVideoRequest
-from gflow_cli.config import get_settings
-
-async def make_clip() -> None:
-    settings = get_settings()
-    profile_dir = settings.profile_subdir("default")
-    async with FlowApiClient(profile_dir=profile_dir, headless=True) as client:
-        project = await client.create_project(title="gflow-cli demo")
-        asset = await client.upload_image(project.project_id, Path("input.png"))
-        req = GenerateVideoRequest(
-            prompt="Slow cinematic push-in, soft golden light",
-            aspect=Aspect.PORTRAIT,
-            start_asset_uuid=asset.name,
-        )
-        op = await client.generate_video(project_id=project.project_id, req=req)
-        # Poll with client.get_video_status(project.project_id, [op.media_name])
-        # until VideoStatus.is_terminal, then download via the returned URL.
-
-asyncio.run(make_clip())
-```
+> **Video generation is being rebuilt.** The HTTP video path returned HTTP 401
+> and was retired. Video generation now runs on the UI-automation transport:
+> Phase A ships the text-to-video transport; the `gflow video` CLI commands
+> return in a later release (Phase B). See
+> `docs/superpowers/specs/2026-05-18-ui-automation-video-generation-design.md`.
 
 ---
 
@@ -213,9 +194,9 @@ gflow image t2i --prompts-file prompts.txt               # text-file multi-promp
 gflow image t2i --stdin                                  # stdin multi-prompt batch
 gflow image i2i "<prompt>" --ref PATH_OR_UUID [...]      # image-to-image (1–4 per call)
 
-gflow video t2v "<prompt>" -o out.mp4                    # text-to-video (Veo 3.1)
-gflow video i2v <image> "<prompt>" -o out.mp4            # image-to-video (Veo 3.1)
-gflow video batch <manifest.tsv>                         # TSV-driven batch
+gflow video t2v "<prompt>" -o out.mp4                    # text-to-video — returns in Phase B
+gflow video i2v <image> "<prompt>" -o out.mp4            # image-to-video — returns in Phase B
+gflow video batch <manifest.tsv>                         # TSV-driven batch — returns in Phase B
 ```
 
 Each command supports `--profile <name>` for managing multiple Google accounts side-by-side.
@@ -260,7 +241,7 @@ No FastAPI, no Django, no SQLAlchemy. This is a CLI + library — keeping the ru
 │Flow │    │Official│       │ Mock  │
 │(now)│    │ Veo    │       │(tests)│
 │     │    │(planned│       │       │
-│     │    │ v0.5+) │       │       │
+│     │    │ later) │       │       │
 │     │    │        │       │       │
 └──┬──┘    └────────┘       └───────┘
    │
@@ -272,7 +253,7 @@ No FastAPI, no Django, no SQLAlchemy. This is a CLI + library — keeping the ru
 aisandbox-pa.googleapis.com  (Google's private Flow API)
 ```
 
-The `Provider` interface keeps backends interchangeable. v0.1 ships `FlowProvider`. A future release (planned v0.5+) may add `OfficialVeoProvider` (uses [`googleapis/python-genai`](https://github.com/googleapis/python-genai) against `generativelanguage.googleapis.com`) — same code path, swap with `GFLOW_CLI_PROVIDER=official`.
+The `Provider` interface keeps backends interchangeable. v0.1 ships `FlowProvider`. A future release may add `OfficialVeoProvider` (uses [`googleapis/python-genai`](https://github.com/googleapis/python-genai) against `generativelanguage.googleapis.com`) — same code path, swap with `GFLOW_CLI_PROVIDER=official`.
 
 ### Auth strategy
 
@@ -356,7 +337,7 @@ Each `Provider` method has a corresponding test file under `tests/`. New routes 
 3. Bump `__version__` in `src/gflow_cli/__init__.py`.
 4. Tag the commit:
    ```bash
-   git tag v<version>          # for example, v0.4.0 or v0.4.0a3
+   git tag v<version>          # for example, v0.6.0 or v0.6.0a6
    git push origin v<version>
    ```
 5. The [`release.yml`](.github/workflows/release.yml) GitHub Action runs:
@@ -364,9 +345,9 @@ Each `Provider` method has a corresponding test file under `tests/`. New routes 
    - Publishes to PyPI via [Trusted Publishing](https://docs.pypi.org/trusted-publishers/) — no API tokens stored
    - Creates a GitHub Release with the changelog excerpt + built artifacts attached
 
-PEP 440 prerelease tags (`vX.Y.ZaN`, `vX.Y.ZbN`, `vX.Y.ZrcN`) and hyphenated prerelease tags (`vX.Y.Z-alphaN`, `vX.Y.Z-betaN`, `vX.Y.Z-rcN`) auto-flag as prereleases on GitHub. Stable tags such as `v0.4.0` become full GitHub Releases. See [RELEASE.md](RELEASE.md) for the checklist and the prerelease/full-release policy.
+PEP 440 prerelease tags (`vX.Y.ZaN`, `vX.Y.ZbN`, `vX.Y.ZrcN`) and hyphenated prerelease tags (`vX.Y.Z-alphaN`, `vX.Y.Z-betaN`, `vX.Y.Z-rcN`) auto-flag as prereleases on GitHub. Stable tags such as `v0.6.0` become full GitHub Releases. See [RELEASE.md](RELEASE.md) for the checklist and the prerelease/full-release policy.
 
-Install prereleases explicitly with `pip install --pre gflow-cli` or `uvx --from "gflow-cli==0.4.0a2" gflow`.
+Install prereleases explicitly with `pip install --pre gflow-cli` or `uvx --from "gflow-cli==0.6.0a6" gflow`.
 
 ---
 
@@ -387,7 +368,7 @@ Note that the **Google service** this tool talks to has its own terms (Google La
 ## Acknowledgements
 
 - [`edge-tts`](https://github.com/rany2/edge-tts) — design inspiration for community SDKs over private cloud APIs.
-- [`googleapis/python-genai`](https://github.com/googleapis/python-genai) — the official Veo SDK that a future release (v0.5+) may alias.
+- [`googleapis/python-genai`](https://github.com/googleapis/python-genai) — the official Veo SDK that a future release may alias.
 - [Keysight Technologies — *Google Labs – Flow AI with Veo3: A Network Traffic Analysis*](https://www.keysight.com/blogs/en/tech/nwvs/2025/08/04/google-flow-ai-har-analysis) — independent traffic capture that helped validate the captured route patterns.
 
 ---

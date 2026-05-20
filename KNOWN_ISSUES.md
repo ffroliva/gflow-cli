@@ -14,6 +14,87 @@ Living list of behaviour that's broken, surprising, or limited by design — alo
 
 ## Open
 
+### Image generation returns HTTP 401 — `aisandbox-pa` generation endpoint
+
+- **Status:** Open · **Severity:** High (blocks image generation in the e2e path; production-CLI impact unconfirmed) · **Affects:** v0.6.0a6 · **Tracked:** N/A — needs a dedicated issue
+
+Image **generation** calls fail with HTTP 401 even on a profile that holds a
+fully verified Flow session. Discovered 2026-05-17 while building the e2e test
+suite, against a profile probed immediately after a successful
+`gflow auth login` (`auth_flow_session_verified`, `[OK] Flow session verified`).
+
+**What works vs. what fails — on the same freshly verified profile:**
+
+| Operation | Endpoint | Result |
+|---|---|---|
+| `verify_flow_session` | `labs.google/fx/api/auth/session` | ✅ `AUTHENTICATED` |
+| `FlowApiClient.health_check()` | Flow page context | ✅ `True` |
+| `create_project` | `labs.google/fx/api/trpc/project.createProject` | ✅ 200 |
+| **image generation** | `aisandbox-pa.googleapis.com` (private API) | ❌ **HTTP 401** |
+
+The `evaluate_fetch` transport receives a 401 on the generation request, runs
+its refresh path (`refresh_auth()` re-navigates to the Flow URL), retries once,
+gets 401 again, and raises:
+
+```
+AuthExpiredError: evaluate_fetch: HTTP 401 persisted after refresh — session expired
+```
+
+from `src/gflow_cli/api/transports/experimental/evaluate_fetch.py`
+(`_handle_response`). Call chain: `FlowApiClient.generate_image` /
+`generate_images_batch` → `_drive_image_generation` → `transport.generate_images`
+→ `_generate_images_inner` → `_handle_response`.
+
+**Distinct from issue #15.** Issue #15 was a 401 on `create_project` caused by
+the *profile* being signed in to Google but not the Flow app — fixed on the
+`fix/issue-15-i2v-bearer-auth` branch by verifying the real Flow session at
+login. That fix is confirmed working: `create_project` now succeeds. **This is
+a different 401** — it occurs on a profile that *is* verified and *can* create
+projects, specifically on the `aisandbox-pa.googleapis.com` generation
+endpoint, a different surface from the `labs.google` tRPC API.
+
+**Scope.** The 401 affects every image-generation path uniformly on the
+`evaluate_fetch` transport (the live one): `test_e2e_single_image_gen` (C2,
+pre-existing), `test_e2e_generate_image_without_project_id` (PR #20,
+pre-existing), and the dropped `test_e2e_generate_images_batch_without_project_id`.
+It is **not** caused by recent test changes — `test_transports_e2e.py` is
+self-described scaffold ("Task D.1 scaffold; Task D.2 drives the real
+execution") that was never run green, and PR #20's e2e tests were merged
+without live execution. Whether the production CLI (`gflow image t2i` /
+`gflow video i2v`) is equally affected is **unconfirmed** — it uses the same
+`FlowApiClient` + transport, so it very likely is, but that has not been
+observed directly and should be checked first thing.
+
+**Experimental transports also broken.** The `bearer` and `sapisidhash`
+transports (`api/transports/experimental/`) fail before generation is even
+reached: `bearer` cannot intercept an OAuth token (`AuthExpiredError: bearer:
+failed to intercept Bearer token from Flow page`); `sapisidhash` cascades off
+the resulting profile-lock contention. These are obsolete — only
+`evaluate_fetch` is viable. Issue-#15 investigation notes had already
+disproven the "bearer header" hypothesis for `create_project`.
+
+**Where to investigate.**
+
+- The login OAuth flow *does* request the
+  `https://www.googleapis.com/auth/aisandbox` scope (visible in the sign-in
+  URL), so the account is authorized — the 401 points at how the credential is
+  *presented* to `aisandbox-pa`, not at missing authorization.
+- Capture a real generation request from `evaluate_fetch` — the exact URL,
+  headers, and credential it sends — and compare with what the Flow web UI
+  sends for the same action (browser DevTools network capture).
+- The `aisandbox-pa.googleapis.com` host may require a Bearer token: the
+  issue-#15 "bearer header" hypothesis was disproven for the `labs.google`
+  tRPC `create_project` route, but may hold for this *different* Google API
+  host.
+- Files: `src/gflow_cli/api/transports/experimental/evaluate_fetch.py`
+  (`generate_images`, `_generate_images_inner`, `_handle_response`,
+  `refresh_auth`) and `src/gflow_cli/api/client.py` (`_drive_image_generation`).
+
+**Workaround:** none known. Image generation against the live API does not
+currently succeed via the e2e transport path.
+
+---
+
 ### Browser session expires periodically — manual re-login required
 
 - **Status:** Open · **Severity:** Medium · **Affects:** all versions · **Tracked:** N/A (architectural)
@@ -71,6 +152,25 @@ Flow shows a one-time "Aviso" / "Notice" terms-of-use confirmation on the first 
 
 ---
 
+### Flow's release-notes ("What's new") changelog popup blocks first-run UI automation
+
+- **Status:** Mitigated · **Severity:** Medium · **Tracked:** [#26](https://github.com/ffroliva/gflow-cli/issues/26)
+
+Google Flow ships a release-notes / "What's new" iframe (`changelogs/YYYY-MM-DD-...html`) the first time a logged-in profile visits the page after a Flow deployment. The iframe sits on top of the editor and intercepts pointer events on Flow's own controls — Playwright finds the right selector but cannot click it because the changelog is in the way. Issue [#26](https://github.com/ffroliva/gflow-cli/issues/26) confirmed the same iframe also blocks the settings menu after project navigation.
+
+**Symptom:**
+```
+playwright._impl._errors.TimeoutError: Locator.click: Timeout 30000ms exceeded.
+  - <iframe ... src="https://www.gstatic.com/.../changelogs/...html"></iframe> ... intercepts pointer events
+  - retrying click action (57 retries, then timeout)
+```
+
+**Mitigation:** `UiAutomationTransport._dismiss_blocking_overlays(page)` detects Flow changelog iframes (`iframe[src*='/flow/changelogs/']`, `iframe[src*='/changelogs/']`) and dismisses them via a close-button selector cascade with an Escape-key fallback. Invoked after `_enter_editor` (image flow) and after `_wait_video_editor_ready` (video flow) so downstream clicks aren't intercepted. Structured logs identify what was dismissed; a debug screenshot is captured if dismissal cannot be confirmed.
+
+**Legacy workaround (no longer required):** open Flow in Chrome with the same profile once, click the `X` on the "What's new" popup, then close Chrome cleanly.
+
+---
+
 ### No in-CLI quota visibility
 
 - **Status:** Open · **Severity:** Low · **Roadmap:** v0.5
@@ -111,6 +211,35 @@ gflow video batch manifest.remaining.tsv
 
 ---
 
+### REST API 401 — all `aisandbox-pa.googleapis.com` generation endpoints blocked
+
+- **Status:** Open (Mitigated) · **Severity:** High · **Affects:** v0.2.0a1+ · **Fixed in:** v0.6.0a5 (planned)
+
+Even with a valid browser session (cookies present), calling Flow's REST API directly via `fetch` or `page.request` against `aisandbox-pa.googleapis.com` returns HTTP 401. This blocks **all** generation routes:
+
+| Endpoint | Status |
+|---|---|
+| `flowMedia:batchGenerateImages` (image gen) | ❌ 401 |
+| `video:batchAsyncGenerateVideoText` (T2V + I2V) | ❌ 401 (confirmed 2026-05-18 e2e run) |
+| `flow/uploadImage` (image upload for I2V) | ❓ untested (blocked before reaching this step) |
+| `video:batchCheckAsyncVideoGenerationStatus` (status poll) | ❌ 401 (confirmed 2026-05-19 — even via `page.request.post` from the authenticated browser context) |
+
+The Phase 0 video spike (2026-05-19) confirmed the **generation** routes *do*
+succeed when driven through the UI (Flow's own JS issues them) — but the
+**status-poll** route 401s even from `page.request.post` inside the authed
+page. Polling must therefore capture Flow's own status responses, not issue
+the request directly. See the video-generation design spec §10.5.
+
+`project.createProject` (on `labs.google/fx/api/trpc`) **does** work — it uses a different domain and auth model.
+
+**Root cause:** Google's backend has tightened security on `aisandbox-pa.googleapis.com`, requiring a browser fingerprint, `Origin`/`Referer` headers, and reCAPTCHA token that raw script-driven requests cannot provide.
+
+**Workaround:** Use the **UI Mimicry** approach — drive the Flow editor by clicking real buttons so the browser itself issues the generation requests with full auth context.
+
+**Roadmap:** v0.6.0a5 will add video generation (T2V + I2V) to the `UiAutomationTransport`, making it the single transport that covers both image and video generation. I2V requires driving the Flow UI's image-upload button so the browser calls `uploadImage` with its own session cookies.
+
+---
+
 ### Output dir is not tidied automatically
 
 - **Status:** Open · **Severity:** Low · **By design**
@@ -127,11 +256,53 @@ find "$HOME/Downloads/gflow-cli" -type f -mtime +30 -delete
 
 ## Mitigated
 
-_(none yet)_
+### Auth verification depends on Google's NextAuth session endpoint
+
+- **Status:** Mitigated · **Severity:** Low (degrades fail-closed) · **Affects:** issue #15 fix onward · **Tracked:** issue #15
+
+`gflow auth login` verifies a real Flow sign-in by calling
+`https://labs.google/fx/api/auth/session` (see `src/gflow_cli/auth/verification.py`)
+and by checking for the Google `SAPISID` cookie. These are **external Google
+surfaces** — if Google changes the endpoint path, the response shape, or the
+cookie names, verification degrades **fail-closed**: it reports
+`VERIFICATION_ERROR` (an honest "could not verify") rather than a false
+success. The expected authenticated response shape is pinned by the
+`AUTHENTICATED_BODY` fixture in `tests/auth/test_verification.py` — a Google
+change surfaces there as a failing test. Start any investigation of a sudden
+`gflow auth login` verification failure at that fixture and `verification.py`.
 
 ---
 
 ## Resolved
+
+### G12 "browser not secure" block — Google rejects automated sign-in
+
+- **Status:** Resolved · **Severity:** Critical (blocked `gflow auth login`) · **Fixed in:** v0.6.0a2
+
+Google's sign-in flow (`accounts.google.com/v3/signin/rejected`) detected Playwright's bundled Chromium as an automated browser and refused the login with no user-facing error.
+
+**Root cause (timing race):** Without `--disable-blink-features=AutomationControlled`,
+Blink's C++ engine sets `navigator.webdriver = true` as a non-configurable, non-writable
+native property at Chrome startup — before any JavaScript (including `add_init_script`)
+can run. The `Object.defineProperty` override silently fails. With the flag, the property
+is never set; the JS override then works as belt-and-suspenders.
+
+**Resolution:** `v0.6.0a2` adds `RealChromeStrategy` — a new auth strategy that launches
+the system's real Google Chrome via Playwright's `channel="chrome"` with stealth flags.
+
+```bash
+# Bypass G12 block explicitly:
+gflow auth login --browser chrome
+
+# Or rely on auto-detection (default behaviour; picks real Chrome if installed):
+gflow auth login
+```
+
+A cosmetic "You are using an unsupported command-line flag" notice may appear briefly in
+the Chrome window — this is harmless and can be dismissed. It is the accepted trade-off
+for bypassing G12.
+
+---
 
 ### v0.1 — provider methods are stubs
 

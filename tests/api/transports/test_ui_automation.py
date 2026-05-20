@@ -20,7 +20,12 @@ from unittest.mock import AsyncMock, MagicMock, patch
 import pytest
 
 from gflow_cli.api.image import Aspect, GenerateImageRequest, Model
-from gflow_cli.api.transports.ui_automation import FLOW_URL, UiAutomationTransport
+from gflow_cli.api.transports.ui_automation import (
+    FLOW_URL,
+    ONBOARDING_SELECTORS,
+    UiAutomationTransport,
+)
+from gflow_cli.errors import ContentPolicyError, WafRejectionError
 
 # ---------------------------------------------------------------------------
 # Async helpers shared across units
@@ -57,6 +62,7 @@ def _make_fake_context(*, pages: list[MagicMock] | None = None) -> MagicMock:
     new_page.goto = AsyncMock()
     ctx.new_page = AsyncMock(return_value=new_page)
     ctx.close = AsyncMock()
+    ctx.add_init_script = AsyncMock()
     return ctx
 
 
@@ -160,21 +166,21 @@ class TestSetup:
     """setup() launches persistent context OR reuses caller-provided page."""
 
     @pytest.mark.asyncio
-    async def test_shared_page_path_does_not_launch_playwright(self) -> None:
+    async def test_shared_page_path_does_not_launch_playwright(self, tmp_path: Path) -> None:
         """When page= is provided, the strategy stores it and does NOT
         launch its own Playwright context. _owns_playwright stays False."""
         t = UiAutomationTransport()
         fake_page = MagicMock()
         # Patch async_playwright to confirm it is NOT called on the shared path.
         with patch("gflow_cli.api.transports.ui_automation.async_playwright") as mock_pw:
-            await t.setup(Path("/tmp/prof"), page=fake_page)
+            await t.setup(tmp_path, page=fake_page)
         mock_pw.assert_not_called()
         assert t._page is fake_page  # type: ignore[attr-defined]
         assert t._owns_playwright is False  # type: ignore[attr-defined]
         assert t._setup_done is True  # type: ignore[attr-defined]
 
     @pytest.mark.asyncio
-    async def test_own_context_path_launches_persistent_context(self) -> None:
+    async def test_own_context_path_launches_persistent_context(self, tmp_path: Path) -> None:
         """When page=None, strategy launches Playwright with the same args
         the validated smoke uses (headless=False, viewport, locale)."""
         t = UiAutomationTransport()
@@ -184,12 +190,12 @@ class TestSetup:
             "gflow_cli.api.transports.ui_automation.async_playwright",
             return_value=pw_cm,
         ):
-            await t.setup(Path("/tmp/prof"))
+            await t.setup(tmp_path)
         # launch_persistent_context called once with the expected kwargs.
         fake_pw.chromium.launch_persistent_context.assert_called_once()
         call_kwargs = fake_pw.chromium.launch_persistent_context.call_args.kwargs
         call_args = fake_pw.chromium.launch_persistent_context.call_args.args
-        assert call_args[0] == str(Path("/tmp/prof"))
+        assert call_args[0] == str(tmp_path)
         assert call_kwargs.get("headless") is False
         assert call_kwargs.get("viewport") == {"width": 1280, "height": 800}
         assert call_kwargs.get("locale") == "en-US"
@@ -197,7 +203,7 @@ class TestSetup:
         assert t._setup_done is True  # type: ignore[attr-defined]
 
     @pytest.mark.asyncio
-    async def test_own_context_uses_existing_page_if_present(self) -> None:
+    async def test_own_context_uses_existing_page_if_present(self, tmp_path: Path) -> None:
         """If context.pages is non-empty, strategy reuses pages[0]."""
         t = UiAutomationTransport()
         existing_page = MagicMock()
@@ -208,12 +214,12 @@ class TestSetup:
             "gflow_cli.api.transports.ui_automation.async_playwright",
             return_value=pw_cm,
         ):
-            await t.setup(Path("/tmp/prof"))
+            await t.setup(tmp_path)
         assert t._page is existing_page  # type: ignore[attr-defined]
         ctx.new_page.assert_not_called()
 
     @pytest.mark.asyncio
-    async def test_own_context_creates_new_page_if_none(self) -> None:
+    async def test_own_context_creates_new_page_if_none(self, tmp_path: Path) -> None:
         """If context.pages is empty, strategy calls new_page()."""
         t = UiAutomationTransport()
         ctx = _make_fake_context(pages=[])
@@ -222,11 +228,11 @@ class TestSetup:
             "gflow_cli.api.transports.ui_automation.async_playwright",
             return_value=pw_cm,
         ):
-            await t.setup(Path("/tmp/prof"))
+            await t.setup(tmp_path)
         ctx.new_page.assert_called_once()
 
     @pytest.mark.asyncio
-    async def test_setup_navigates_to_flow_url(self) -> None:
+    async def test_setup_navigates_to_flow_url(self, tmp_path: Path) -> None:
         """After acquiring a page, strategy navigates to FLOW_URL."""
         t = UiAutomationTransport()
         page = MagicMock()
@@ -237,12 +243,12 @@ class TestSetup:
             "gflow_cli.api.transports.ui_automation.async_playwright",
             return_value=pw_cm,
         ):
-            await t.setup(Path("/tmp/prof"))
+            await t.setup(tmp_path)
         page.goto.assert_called_once()
         assert page.goto.call_args.args[0] == FLOW_URL
 
     @pytest.mark.asyncio
-    async def test_setup_is_idempotent(self) -> None:
+    async def test_setup_is_idempotent(self, tmp_path: Path) -> None:
         """Second setup() call is a no-op (no second launch)."""
         t = UiAutomationTransport()
         ctx = _make_fake_context(pages=[])
@@ -251,13 +257,13 @@ class TestSetup:
             "gflow_cli.api.transports.ui_automation.async_playwright",
             return_value=pw_cm,
         ):
-            await t.setup(Path("/tmp/prof"))
-            await t.setup(Path("/tmp/prof"))
+            await t.setup(tmp_path)
+            await t.setup(tmp_path)
         # Launched exactly once across the two calls.
         assert fake_pw.chromium.launch_persistent_context.call_count == 1
 
     @pytest.mark.asyncio
-    async def test_setup_swallows_initial_goto_failure(self) -> None:
+    async def test_setup_swallows_initial_goto_failure(self, tmp_path: Path) -> None:
         """page.goto() failure during initial navigation logs but does not
         crash setup — auth/UI flow runs in generate_images and can recover."""
         t = UiAutomationTransport()
@@ -270,7 +276,7 @@ class TestSetup:
             return_value=pw_cm,
         ):
             # Should NOT raise.
-            await t.setup(Path("/tmp/prof"))
+            await t.setup(tmp_path)
         assert t._setup_done is True  # type: ignore[attr-defined]
 
 
@@ -418,24 +424,36 @@ class TestEnterEditor:
     """_enter_editor clicks '+ New project' and waits for /project/ navigation."""
 
     @pytest.mark.asyncio
-    async def test_noop_when_already_in_editor(self) -> None:
+    async def test_navigates_to_gallery_when_restored_project_url(self) -> None:
+        """Flow's PWA restores the last project URL on browser launch. The
+        transport must navigate back to the gallery and create a fresh
+        project rather than reusing the restored one (which would
+        accumulate images across CLI invocations)."""
         t = UiAutomationTransport()
         page = _make_editor_page(
             initial_url="https://labs.google/fx/tools/flow/project/zzz",
         )
+        page.goto = AsyncMock()
         await t._enter_editor(page)  # type: ignore[attr-defined]
-        # No timeout, no locator, no click.
-        page.wait_for_timeout.assert_not_called()
-        page.locator.assert_not_called()
+        # Gallery navigation happened, then "+ New project" flow ran.
+        page.goto.assert_awaited_once()
+        assert "tools/flow" in page.goto.call_args.args[0]
+        page.wait_for_timeout.assert_called()
+        page.locator.assert_called()
 
     @pytest.mark.asyncio
     async def test_first_selector_works(self) -> None:
         t = UiAutomationTransport()
         page = _make_editor_page()
         await t._enter_editor(page)  # type: ignore[attr-defined]
-        # locator called at least once with the first (icon-class) selector.
-        first_call_sel = page.locator.call_args_list[0].args[0]
-        assert "google-symbols" in first_call_sel
+        # The icon-class (google-symbols) selector — the editor's first
+        # declared candidate — must be probed. `_bypass_onboarding` runs
+        # first and tries its own selectors, so we check presence anywhere
+        # in the call list rather than at index 0.
+        all_selectors = [c.args[0] for c in page.locator.call_args_list]
+        assert any("google-symbols" in s for s in all_selectors), (
+            f"Expected icon-class selector probed; saw {all_selectors}"
+        )
         assert "/project/" in page.url
 
     @pytest.mark.asyncio
@@ -504,6 +522,103 @@ class TestEnterEditor:
 
 
 # ---------------------------------------------------------------------------
+# Unit 3.4b — _bypass_onboarding(page)
+# ---------------------------------------------------------------------------
+
+
+def _make_onboarding_page(
+    *,
+    visible_selectors: set[str] | None = None,
+    is_visible_raises: bool = False,
+    click_raises: bool = False,
+) -> tuple[MagicMock, list[tuple[str, dict[str, object]]]]:
+    """Build a fake page for _bypass_onboarding tests.
+
+    Returns ``(page, clicked)`` where ``clicked`` accumulates
+    ``(selector, click_kwargs)`` for every locator that received a click.
+    A selector reports visible iff it is in ``visible_selectors``.
+    """
+    visible = visible_selectors or set()
+    clicked: list[tuple[str, dict[str, object]]] = []
+    page = MagicMock()
+    page.wait_for_timeout = AsyncMock()
+
+    def _locator(sel: str) -> MagicMock:
+        loc = MagicMock()
+        if is_visible_raises:
+            loc.is_visible = AsyncMock(side_effect=RuntimeError("probe boom"))
+        else:
+            loc.is_visible = AsyncMock(return_value=sel in visible)
+
+        async def _click(*_args: object, **kwargs: object) -> None:
+            if click_raises:
+                raise RuntimeError("click boom")
+            clicked.append((sel, dict(kwargs)))
+
+        loc.click = AsyncMock(side_effect=_click)
+        wrapper = MagicMock()
+        wrapper.first = loc
+        return wrapper
+
+    page.locator = MagicMock(side_effect=_locator)
+    return page, clicked
+
+
+class TestBypassOnboarding:
+    """_bypass_onboarding force-clicks visible cookie/onboarding CTAs and
+    tolerates every miss — the gallery often loads with no interstitial."""
+
+    @pytest.mark.asyncio
+    async def test_clicks_visible_onboarding_cta_with_force(self) -> None:
+        """A visible onboarding CTA is force-clicked (overlays intercept
+        pointer events, so force=True is required) and a settle delay runs."""
+        target = ONBOARDING_SELECTORS[0]
+        t = UiAutomationTransport()
+        page, clicked = _make_onboarding_page(visible_selectors={target})
+        await t._bypass_onboarding(page)  # type: ignore[attr-defined]
+        assert [sel for sel, _ in clicked] == [target]
+        assert clicked[0][1].get("force") is True
+        page.wait_for_timeout.assert_awaited()
+
+    @pytest.mark.asyncio
+    async def test_no_interstitial_is_a_noop(self) -> None:
+        """When nothing matches, _bypass_onboarding clicks nothing and does
+        not raise — the common case where the gallery loads clean."""
+        t = UiAutomationTransport()
+        page, clicked = _make_onboarding_page(visible_selectors=set())
+        await t._bypass_onboarding(page)  # type: ignore[attr-defined]
+        assert clicked == []
+
+    @pytest.mark.asyncio
+    async def test_clicks_every_visible_selector(self) -> None:
+        """The loop does not stop at the first hit — a page stacking a
+        cookie banner and a 'Get Started' CTA has both dismissed."""
+        targets = {ONBOARDING_SELECTORS[0], ONBOARDING_SELECTORS[-1]}
+        t = UiAutomationTransport()
+        page, clicked = _make_onboarding_page(visible_selectors=targets)
+        await t._bypass_onboarding(page)  # type: ignore[attr-defined]
+        assert {sel for sel, _ in clicked} == targets
+
+    @pytest.mark.asyncio
+    async def test_is_visible_failure_is_swallowed(self) -> None:
+        """A transient DOM error from is_visible() must not abort the sweep
+        — the selector is skipped and no exception escapes."""
+        t = UiAutomationTransport()
+        page, clicked = _make_onboarding_page(is_visible_raises=True)
+        await t._bypass_onboarding(page)  # type: ignore[attr-defined]  # must not raise
+        assert clicked == []
+
+    @pytest.mark.asyncio
+    async def test_click_failure_is_swallowed(self) -> None:
+        """A click that raises (overlay vanished mid-sweep) is swallowed —
+        onboarding bypass is best-effort, never fatal."""
+        target = ONBOARDING_SELECTORS[0]
+        t = UiAutomationTransport()
+        page, _ = _make_onboarding_page(visible_selectors={target}, click_raises=True)
+        await t._bypass_onboarding(page)  # type: ignore[attr-defined]  # must not raise
+
+
+# ---------------------------------------------------------------------------
 # Unit 3.5 — _send_prompt(page, prompt_text, out_dir)
 # ---------------------------------------------------------------------------
 
@@ -527,6 +642,7 @@ def _make_prompt_page(
     page.keyboard = MagicMock()
     page.keyboard.press = AsyncMock()
     page.keyboard.type = AsyncMock()
+    page.keyboard.insert_text = AsyncMock()
 
     input_loc = MagicMock()
     input_loc.wait_for = (
@@ -568,11 +684,11 @@ class TestSendPrompt:
         page = _make_prompt_page(input_visible=True, submit_visible=True)
         await t._send_prompt(page, "hello world")  # type: ignore[attr-defined]
         page._input_loc.click.assert_called_once()  # type: ignore[attr-defined]
-        # Clear (Ctrl+A + Delete) then type.
+        # Clear (Ctrl+A + Delete) then insert_text (single beforeinput event — near-instant).
         press_calls = [c.args[0] for c in page.keyboard.press.call_args_list]
         assert "Control+A" in press_calls
         assert "Delete" in press_calls
-        page.keyboard.type.assert_called_once_with("hello world")
+        page.keyboard.insert_text.assert_called_once_with("hello world")
         page._submit_loc.click.assert_called_once()  # type: ignore[attr-defined]
 
     @pytest.mark.asyncio
@@ -647,7 +763,7 @@ class TestCaptureBatchResponse:
     async def test_returns_first_batch_response(self) -> None:
         page, handlers = _make_listener_page()
 
-        async def _runner() -> dict:
+        async def _runner() -> list[dict]:
             return await UiAutomationTransport._capture_batch_response(
                 page, timeout_s=2.0, poll_interval_s=0.05
             )
@@ -658,9 +774,9 @@ class TestCaptureBatchResponse:
         assert handlers and handlers[0][0] == "response"
         await handlers[0][1](_make_response())
         result = await task
-        assert result["status"] == 200
-        assert "batchGenerateImages" in result["url"]
-        assert result["body"]["media"][0]["image"]["generatedImage"]["fifeUrl"]
+        assert result[0]["status"] == 200
+        assert "batchGenerateImages" in result[0]["url"]
+        assert result[0]["body"]["media"][0]["image"]["generatedImage"]["fifeUrl"]
 
     @pytest.mark.asyncio
     async def test_ignores_non_batch_responses(self) -> None:
@@ -710,9 +826,10 @@ class TestCaptureBatchResponse:
 
 
 class _FakeHttpxResponse:
-    def __init__(self, content: bytes, status: int = 200) -> None:
+    def __init__(self, content: bytes, status: int = 200, content_type: str = "image/png") -> None:
         self.content = content
         self.status_code = status
+        self.headers = {"content-type": content_type}
 
     def raise_for_status(self) -> None:
         if self.status_code >= 400:
@@ -871,7 +988,7 @@ class TestGenerateImages:
             patch.object(
                 t,
                 "_await_captured",
-                new=AsyncMock(return_value=_flow_200_capture()),
+                new=AsyncMock(return_value=[_flow_200_capture()]),
             ),
         ):
             images = await t.generate_images(project_id="ignored", request=_req())
@@ -893,14 +1010,16 @@ class TestGenerateImages:
                 t,
                 "_await_captured",
                 new=AsyncMock(
-                    return_value={
-                        "status": 403,
-                        "url": "https://aisandbox-pa.googleapis.com/x",
-                        "body": {},
-                    }
+                    return_value=[
+                        {
+                            "status": 403,
+                            "url": "https://aisandbox-pa.googleapis.com/x",
+                            "body": {},
+                        }
+                    ]
                 ),
             ),
-            pytest.raises(RuntimeError, match="HTTP 403"),
+            pytest.raises(WafRejectionError),
         ):
             await t.generate_images(project_id="x", request=_req())
 
@@ -916,9 +1035,9 @@ class TestGenerateImages:
             patch.object(
                 t,
                 "_await_captured",
-                new=AsyncMock(return_value=_flow_200_capture(body={"media": []})),
+                new=AsyncMock(return_value=[_flow_200_capture(body={"media": []})]),
             ),
-            pytest.raises(RuntimeError, match="no parseable image URLs"),
+            pytest.raises(ContentPolicyError),
         ):
             await t.generate_images(project_id="x", request=_req())
 
@@ -994,3 +1113,135 @@ class TestTeardown:
         t._pw_cm = pw_cm  # type: ignore[attr-defined]
         # Should NOT raise.
         await t.teardown()
+
+
+# ---------------------------------------------------------------------------
+# Unit 3.12 — _dismiss_blocking_overlays(page, out_dir)
+# ---------------------------------------------------------------------------
+
+
+def _make_overlay_page(
+    *,
+    iframe_visible: bool = False,
+    close_button_visible: bool = False,
+    keyboard_press_raises: bool = False,
+) -> MagicMock:
+    """Build a fake page for _dismiss_blocking_overlays tests.
+
+    When ``iframe_visible=True`` a changelog iframe selector is visible.
+    When ``close_button_visible=True`` a close-button locator is also visible.
+    """
+    page = MagicMock()
+    page.wait_for_timeout = AsyncMock()
+    page.screenshot = AsyncMock()
+
+    if keyboard_press_raises:
+        page.keyboard = MagicMock()
+        page.keyboard.press = AsyncMock(side_effect=RuntimeError("keyboard boom"))
+    else:
+        page.keyboard = MagicMock()
+        page.keyboard.press = AsyncMock()
+
+    # Track click calls per selector for assertions.
+    clicked: list[str] = []
+
+    def _locator(sel: str) -> MagicMock:
+        loc = MagicMock()
+        # Changelog iframe selectors
+        is_iframe = "changelogs" in sel
+        # Close-button selectors: aria-label close / role=button with close icon
+        is_close = any(
+            k in sel.lower() for k in ("aria-label", "close", "dialog", "dismiss", "cancel")
+        )
+
+        if is_iframe and iframe_visible:
+            loc.is_visible = AsyncMock(return_value=True)
+        elif is_close and close_button_visible:
+            loc.is_visible = AsyncMock(return_value=True)
+        else:
+            loc.is_visible = AsyncMock(return_value=False)
+
+        async def _click(**kwargs: object) -> None:
+            clicked.append(sel)
+
+        loc.click = AsyncMock(side_effect=_click)
+        wrapper = MagicMock()
+        wrapper.first = loc
+        return wrapper
+
+    page.locator = MagicMock(side_effect=_locator)
+    page._clicked = clicked  # type: ignore[attr-defined]
+    return page
+
+
+class TestDismissBlockingOverlays:
+    """_dismiss_blocking_overlays handles changelog iframes and close buttons.
+
+    Acceptance criteria from issue #26:
+    - No overlay → returns False, no clicks, no log noise.
+    - Iframe + visible close button → clicked (force=True), returns True.
+    - Iframe + NO close button → Escape pressed, returns True (regression test).
+    - Iframe + close cascade + Escape both fail → returns False, debug screenshot.
+    - Non-changelog iframes are ignored.
+    """
+
+    @pytest.mark.asyncio
+    async def test_no_overlay_returns_false_and_no_clicks(self) -> None:
+        """When no changelog iframe is visible, returns False and makes no clicks."""
+        t = UiAutomationTransport()
+        page = _make_overlay_page(iframe_visible=False)
+        result = await t._dismiss_blocking_overlays(page)  # type: ignore[attr-defined]
+        assert result is False
+        assert page._clicked == []  # type: ignore[attr-defined]
+        page.keyboard.press.assert_not_called()
+
+    @pytest.mark.asyncio
+    async def test_iframe_with_close_button_clicks_and_returns_true(self) -> None:
+        """A changelog iframe + visible close button → close button clicked
+        (force=True) and True returned."""
+        t = UiAutomationTransport()
+        page = _make_overlay_page(iframe_visible=True, close_button_visible=True)
+        result = await t._dismiss_blocking_overlays(page)  # type: ignore[attr-defined]
+        assert result is True
+        # A close-related selector was clicked.
+        assert len(page._clicked) >= 1  # type: ignore[attr-defined]
+        page.keyboard.press.assert_not_called()
+
+    @pytest.mark.asyncio
+    async def test_iframe_no_close_button_uses_escape_fallback(self) -> None:
+        """Regression test (issue #26 AC): iframe present, no close button →
+        Escape is pressed as fallback and True is returned."""
+        t = UiAutomationTransport()
+        page = _make_overlay_page(iframe_visible=True, close_button_visible=False)
+        result = await t._dismiss_blocking_overlays(page)  # type: ignore[attr-defined]
+        assert result is True
+        page.keyboard.press.assert_called_once_with("Escape")
+        # No close button was clicked.
+        assert page._clicked == []  # type: ignore[attr-defined]
+
+    @pytest.mark.asyncio
+    async def test_escape_failure_captures_screenshot_and_returns_false(
+        self, tmp_path: Path
+    ) -> None:
+        """If the close cascade AND Escape both fail, a debug screenshot is
+        captured and False is returned — diagnostic output is preserved."""
+        t = UiAutomationTransport()
+        page = _make_overlay_page(
+            iframe_visible=True,
+            close_button_visible=False,
+            keyboard_press_raises=True,
+        )
+        result = await t._dismiss_blocking_overlays(  # type: ignore[attr-defined]
+            page, out_dir=tmp_path
+        )
+        assert result is False
+        page.screenshot.assert_called_once()
+
+    @pytest.mark.asyncio
+    async def test_non_changelog_iframes_are_ignored(self) -> None:
+        """Selectors that do NOT match changelog iframes produce no dismissal."""
+        t = UiAutomationTransport()
+        # Page where no changelog iframe is visible but other elements might be.
+        page = _make_overlay_page(iframe_visible=False)
+        result = await t._dismiss_blocking_overlays(page)  # type: ignore[attr-defined]
+        assert result is False

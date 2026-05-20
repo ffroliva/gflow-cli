@@ -2,6 +2,24 @@ from __future__ import annotations
 
 from typing import Any, TypedDict
 
+__all__ = [
+    "ProblemDetails",
+    "GFlowError",
+    "FlowApiError",
+    "AuthExpiredError",
+    "RateLimitError",
+    "ContentPolicyError",
+    "NetworkError",
+    "WireFormatError",
+    "TransportTimeoutError",
+    "WafRejectionError",
+    "ConfigurationError",
+    "SecurityError",
+    "AuthMissingError",
+    "AuthLoginTimeoutError",
+    "EXIT_CODE_MAP",
+]
+
 
 class ProblemDetails(TypedDict, total=False):
     """RFC 9457 Problem Details JSON shape (https://datatracker.ietf.org/doc/html/rfc9457).
@@ -236,15 +254,57 @@ class ConfigurationError(GFlowError):
     )
 
 
+class SecurityError(GFlowError):
+    """Raised when a security boundary is violated (e.g. profile_dir outside HOME)."""
+
+    problem_type = "https://gflow-cli.dev/errors/security"
+    title = "Security violation"
+    _default_remediation = "Ensure all file paths are within the allowed GFLOW_CLI_HOME directory."
+
+
 class AuthMissingError(GFlowError):
-    """Raised when a strategy lacks a required prerequisite credential
-    (e.g. SAPISID cookie missing from profile dir for SapisidhashTransport)."""
+    """Raised when a profile lacks a usable session for the requested action.
+
+    Covers both a wholly absent session and the issue-#15 case: a profile
+    signed in to Google but not to the Flow app (no NextAuth session). The
+    raising site supplies a message and `remediation_hint` describing which.
+    """
 
     problem_type = "https://gflow-cli.dev/errors/auth-missing"
     title = "Authentication credential missing"
     _default_remediation = (
-        "A required credential (e.g. SAPISID cookie) is absent from the profile. "
-        "Run `gflow auth login --profile <name>` to capture a fresh session."
+        "No usable Flow session was found in the profile. "
+        "Run `gflow auth login --profile <name>` and complete the Flow sign-in."
+    )
+
+
+class AuthLoginTimeoutError(GFlowError):
+    """Raised when the interactive login polling loop exceeds its deadline.
+
+    Distinct from TransportTimeoutError (which covers API call timeouts).
+    This error means the user/agent did not complete the sign-in flow within
+    the allowed window.  Exit code 12 lets agents branch on timeout vs
+    config vs security failures without parsing stderr.
+    """
+
+    problem_type = "https://gflow-cli.dev/errors/auth-login-timeout"
+    title = "Login timed out"
+    _default_remediation = (
+        "The sign-in was not completed within the allowed time. "
+        "Run `gflow auth login` again and complete sign-in promptly. "
+        "Increase GFLOW_CLI_AUTH_LOGIN_TIMEOUT (seconds) if you need more time."
+    )
+
+
+class AuthBrowserRejectedError(GFlowError):
+    """Raised when Google rejects the login browser before sign-in can complete."""
+
+    problem_type = "https://gflow-cli.dev/errors/auth-browser-rejected"
+    title = "Login browser rejected"
+    _default_remediation = (
+        "Google rejected Playwright's bundled Chromium as an insecure browser. "
+        "Install Google Chrome and rerun `gflow auth login --browser chrome`, "
+        "or set GFLOW_CLI_AUTH_BROWSER=chrome so future logins use real Chrome."
     )
 
 
@@ -252,6 +312,9 @@ class AuthMissingError(GFlowError):
 # Subclasses inherit their parent's exit code if they don't have their own
 # entry. New entries MUST go BEFORE their parent class in this dict.
 EXIT_CODE_MAP: dict[type[GFlowError], int] = {
+    AuthBrowserRejectedError: 14,
+    AuthLoginTimeoutError: 12,
+    SecurityError: 13,
     AuthMissingError: 8,
     TransportTimeoutError: 9,
     WafRejectionError: 10,

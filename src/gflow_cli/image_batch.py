@@ -3,7 +3,7 @@
 from __future__ import annotations
 
 import re
-from collections.abc import Callable
+from collections.abc import Callable, Coroutine
 from dataclasses import dataclass, field
 from pathlib import Path
 from typing import TYPE_CHECKING, Any
@@ -157,6 +157,63 @@ def read_prompt_file(path: Path) -> tuple[ParsedPromptLine, ...]:
     return parse_prompt_lines(text, source_label=label)
 
 
+_ALLOWED_PROMPT_KEYS: frozenset[str] = frozenset(
+    {"text", "aspect_ratio", "model", "count", "output_filename"}
+)
+
+
+def parse_batch_item_dict(p: dict[str, Any], idx: int) -> BatchPromptItem:
+    """Parse and validate a dictionary (e.g. from JSON) into a BatchPromptItem.
+
+    Used by `gflow run` to centralize validation logic.
+    """
+    unknown = set(p) - _ALLOWED_PROMPT_KEYS
+    if unknown:
+        raise ConfigurationError(
+            f"prompts[{idx}] has unknown key(s) {sorted(unknown)!r}. "
+            f"Valid: {sorted(_ALLOWED_PROMPT_KEYS)!r}."
+        )
+    text_raw = p.get("text")
+    if not isinstance(text_raw, str):
+        raise ConfigurationError(f"prompts[{idx}].text must be a string.")
+    if not (MIN_TEXT_LEN <= len(text_raw) <= MAX_TEXT_LEN):
+        raise ConfigurationError(
+            f"prompts[{idx}].text length must be between {MIN_TEXT_LEN} "
+            f"and {MAX_TEXT_LEN} (got {len(text_raw)})."
+        )
+    aspect_ratio = p.get("aspect_ratio", DEFAULT_ASPECT_RATIO)
+    if aspect_ratio not in ALLOWED_ASPECT_RATIOS:
+        raise ConfigurationError(
+            f"prompts[{idx}].aspect_ratio {aspect_ratio!r} is invalid. "
+            f"Valid: {list(ALLOWED_ASPECT_RATIOS)!r}."
+        )
+    model = p.get("model", DEFAULT_MODEL)
+    if model not in ALLOWED_MODELS:
+        raise ConfigurationError(
+            f"prompts[{idx}].model {model!r} is invalid. Valid: {list(ALLOWED_MODELS)!r}."
+        )
+    count = p.get("count", DEFAULT_COUNT)
+    if not isinstance(count, int) or isinstance(count, bool):
+        raise ConfigurationError(f"prompts[{idx}].count must be an integer.")
+    if not (MIN_COUNT <= count <= MAX_COUNT):
+        raise ConfigurationError(
+            f"prompts[{idx}].count must be between {MIN_COUNT} and {MAX_COUNT} (got {count})."
+        )
+    output_filename = p.get("output_filename")
+    if output_filename is not None and (
+        not isinstance(output_filename, str) or not output_filename
+    ):
+        raise ConfigurationError(f"prompts[{idx}].output_filename must be a non-empty string.")
+    return BatchPromptItem(
+        text=text_raw,
+        aspect_ratio=aspect_ratio,
+        model=model,
+        count=count,
+        output_filename=output_filename,
+        index=idx,
+    )
+
+
 def _validate_item_values(
     *,
     aspect_ratio: str,
@@ -238,15 +295,6 @@ def prompt_items_from_texts(
     return tuple(items)
 
 
-def resolve_t2i_batch_output_dir(*, out: Path | None, output_root: Path) -> Path:
-    if out is not None:
-        return out
-    from datetime import date
-
-    today = date.today().isoformat()
-    return output_root / "images" / today
-
-
 async def run_one_image_prompt(
     *,
     client: Any,
@@ -298,26 +346,60 @@ async def run_image_batch(
     client_factory: Callable[..., Any] | None = None,
 ) -> list[BatchOutcome]:
     """Run prompts sequentially through one FlowApiClient session."""
-    output_dir.mkdir(parents=True, exist_ok=True)
+
+    async def image_worker(
+        client: Any, project_id: str, idx: int, item: BatchPromptItem
+    ) -> BatchOutcome:
+        return await run_one_image_prompt(
+            client=client,
+            project_id=project_id,
+            idx=idx,
+            item=item,
+            output_dir=output_dir,
+        )
+
+    return await run_sequential_batch(
+        profile_dir=profile_dir,
+        headless=headless,
+        transport=transport,
+        items=prompts,
+        continue_on_error=continue_on_error,
+        project_title=project_title,
+        worker=image_worker,
+        client_factory=client_factory,
+        output_dir=output_dir,
+    )
+
+
+async def run_sequential_batch(
+    *,
+    profile_dir: Path,
+    headless: bool,
+    transport: str | None,
+    items: tuple[Any, ...],
+    continue_on_error: bool,
+    project_title: str,
+    worker: Callable[[Any, str, int, Any], Coroutine[Any, Any, BatchOutcome]],
+    output_dir: Path | None = None,
+    client_factory: Callable[..., Any] | None = None,
+) -> list[BatchOutcome]:
+    """Generic sequential orchestrator for Flow API batches."""
+    if output_dir:
+        output_dir.mkdir(parents=True, exist_ok=True)
+
     outcomes: list[BatchOutcome] = []
     factory = client_factory or FlowApiClient
     async with factory(profile_dir=profile_dir, headless=headless, transport=transport) as client:
         project = await client.create_project(title=project_title)
-        for idx, item in enumerate(prompts):
-            outcome = await run_one_image_prompt(
-                client=client,
-                project_id=project.project_id,
-                idx=idx,
-                item=item,
-                output_dir=output_dir,
-            )
+        for idx, item in enumerate(items):
+            outcome = await worker(client, project.project_id, idx, item)
             outcomes.append(outcome)
             if outcome.status == "fail" and not continue_on_error:
-                for skip_idx in range(idx + 1, len(prompts)):
+                for skip_idx in range(idx + 1, len(items)):
                     outcomes.append(
                         BatchOutcome(
                             index=skip_idx,
-                            prompt=prompts[skip_idx],
+                            prompt=items[skip_idx],
                             status="skipped",
                         )
                     )

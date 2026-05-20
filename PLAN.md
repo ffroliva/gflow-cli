@@ -2,7 +2,7 @@
 
 > **Status:** Living document. Updated as phases complete.
 > **Owner:** [@ffroliva](https://github.com/ffroliva)
-> **Last revised:** 2026-05-11 (Phase 4 Hardening shipped, v0.4.0a2)
+> **Last revised:** 2026-05-16 (v0.6.0a5 — Bug A/B transport fixes + issue-tracked work)
 
 This plan turns the v0.1 scaffold into a production-grade CLI for Google AI Ultra/Pro subscribers who want to spend their Flow credits via batch automation. The plan is opinionated, treating this repo as a portfolio-grade benchmark.
 
@@ -76,7 +76,12 @@ Current package layout (post-Phase 4):
 src/gflow_cli/
 ├── __init__.py
 ├── __main__.py
-├── auth.py             ← login + status (Playwright headed for login)
+├── auth/               ← v0.6.0a2: strategy pattern (real Chrome + internal Chromium)
+│   ├── __init__.py     ← login(), AuthStatus, get_status(), list_profiles()
+│   ├── base.py         ← AuthStrategy Protocol
+│   ├── factory.py      ← AuthStrategyFactory (auto/chrome/internal routing)
+│   ├── internal_chromium.py  ← bundled Chromium (legacy fallback)
+│   └── real_chrome.py  ← system Chrome with G12 stealth flags
 ├── cli.py              ← Click app, top-level + auth subgroup
 ├── cli_image.py        ← gflow image upload/t2i/i2i (Click subgroup)
 ├── cli_video.py        ← gflow video t2v/i2v/batch (Click subgroup)
@@ -321,6 +326,45 @@ Page creation averaged **44.7–48.1 ms per page** across N=2/4/8/16 inside one 
 
 ---
 
+### Video generation rework (UiAutomationTransport) — Phase 0 spike ✅ DONE (2026-05-19)
+
+The video-generation feature has its own sub-phase plan (spike → Phase A → Phase B), tracked in `docs/superpowers/specs/2026-05-18-ui-automation-video-generation-design.md`. Targets v0.6.0a5 (see KNOWN_ISSUES "REST API 401").
+
+**Phase 0 — submit-mechanism spike — ✅ DONE.** `scripts/smoke_video_editor.py` drove live Flow and proved video generation can be UI-driven like `generate_images`: a T2V `batchAsyncGenerateVideoText` fired and returned HTTP 200. Full results in the spec §10.5; open-question resolutions in §10.2.
+
+- ✅ Core finding confirmed — UI-drive video works.
+- ✅ Q5 — video offers 9:16 / 16:9 only (no SQUARE).
+- ✅ Mode switch is a 2-step dropdown; selectors locked to language-agnostic structural anchors (Radix `aria-controls` tokens, icon ligatures).
+- ✅ Output count defaults to x2 — the transport must set count explicitly (verified count=1 → 1 video / 20 credits).
+- ⚠️ Q7 — status poll `page.request.post` → 401; the spec §5.5 polling design must be reworked in Phase A (capture Flow's own status responses).
+- ⏭️ Q1 / Q3 / Q6 — image attachment is an in-page catalog dialog; driving it, the start-only-I2V check, and the R2V slot cap are deferred to Phase B.
+
+**Next:** Phase A (T2V transport), once §5.5 is revised for the Q7 401. GitHub issue #24 tracks making the transport selectors language-agnostic.
+
+---
+
+### Video generation rework — Phase A (T2V transport) ✅ DONE (2026-05-19)
+
+Retired the 401-dead HTTP video path (`FlowApiClient.generate_video` / `get_video_status`, `build_generate_body` / `model_key`, `VideoOperation` / `VideoStatus` DTOs in `api/dto.py`). Added pure `api/video.py` value objects + parsers and a `ui_automation_video.py` mixin (`VideoGenerationMixin`) delivering `generate_video` for T2V via the Flow editor UI, with status polling that captures Flow's own traffic. `gflow video` CLI commands are stubbed pending Phase B (I2V + R2V + CLI rewire).
+
+Tasks shipped:
+- T1–T5: groundwork — constants, routes, error mapping, smoke-test and test-suite cleanup of dead HTTP video path
+- T6: `GenerateVideoRequest` value object (frozen dataclass with validation); `Mode.R2V` added
+- T7: `VideoStatus` value object (pure domain, replaces DTO)
+- T8: pure response parsers — `parse_video_status`, `media_name_from_generate_response`
+- T9: `_attach_generate_response_listener` — captures Flow's own generate response via network interception
+- T10: `_attach_status_response_listener` + `_poll_video_status` — status polling via captured traffic
+- T11: video editor selectors + mode switching — `_probe_selector_cascade`, `_switch_to_video_mode`, `_wait_video_editor_ready`
+- T12: output-count and aspect-ratio controls — `_set_output_count_one`, `_select_video_aspect`
+- T13: `generate_video` orchestration + `VideoGenerationMixin` wired into `UiAutomationTransport`
+- T14: docs update (this entry)
+
+I2V and R2V explicitly deferred — the orchestration raises `NotImplementedError("Phase A supports T2V only…")` for non-T2V modes.
+
+**Next:** Phase B — I2V + R2V + CLI rewire (`gflow video t2v/i2v` commands re-enabled).
+
+---
+
 ### Phase 5 — Public alpha soak + first non-alpha release
 
 `v0.2.0a1` through `v0.6.0a1` are already on PyPI under Trusted Publishing.
@@ -345,6 +389,158 @@ Identified during v0.6.0a1 Council Review. To be addressed before or during Phas
 
 ---
 
+### Issue #5 — Auth: detect Google "browser may not be secure" guard — BACKLOG
+
+External report ([issue #5](https://github.com/ffroliva/gflow-cli/issues/5)): user on
+Ubuntu 24.04 installed via `uv tool install gflow-cli`, ran `gflow auth login`,
+hit Google's anti-automation guard ("This browser or app may not be secure")
+because the bundled internal Chromium is flagged. The workaround
+(`--browser chrome` or installing system Chrome so `--browser auto` picks it)
+exists but is undiscoverable from the failure mode — the user just sees
+Google's error page.
+
+**Fix:**
+
+- In `auth/internal_chromium.py`, after navigating to the Google sign-in URL,
+  detect the rejection page (URL match `accounts.google.com/v3/signin/rejected`
+  or page text matching `browser .* may not be secure`).
+- On detection, raise a new `AuthBrowserBlockedError` (new Problem Details
+  class `https://gflow-cli.dev/errors/auth-browser-blocked`, distinct from the
+  existing `AuthExpiredError`) with remediation hint:
+  *"Install Google Chrome and re-run with `--browser chrome` (or set
+  `GFLOW_CLI_AUTH_BROWSER=chrome`). See docs/AUTHENTICATION.md."*
+- Register the new class in `errors.py` exit-code map (reuse the auth
+  exit-code class).
+
+**Files:** `src/gflow_cli/auth/internal_chromium.py`, `src/gflow_cli/errors.py`,
+`tests/auth/test_internal_chromium.py`.
+
+**Tests (TDD):**
+
+- Unit: mock a `Page` whose `goto` resolves to the rejection URL → assert
+  `AuthBrowserBlockedError` raised, hint mentions `--browser chrome`.
+- Unit: existing success path still passes (no false positives).
+
+**Acceptance:** Ubuntu user repro from issue #5 surfaces the workaround in the
+CLI error itself; docs lookup no longer required.
+
+**Scope guardrails:** Do not change the default strategy auto-detection.
+Do not add fingerprint-evasion code — Google may block it anyway and the
+real-Chrome path already works.
+
+---
+
+### Issue #14 — Batch redesign: native count selector + --same-project — BACKLOG
+
+[Issue #14](https://github.com/ffroliva/gflow-cli/issues/14) — two parts.
+
+**Part 1 (bug fix):** `gflow image t2i -n N` should use Flow's native `x{N}`
+UI count selector (visible in the t2i menu, max `x4`), submitting once and
+returning N images from one project. Today (post-`1621748d`) the CLI fans out
+N×(count=1) submissions across N projects, serialised by `_generate_lock` —
+correct but wasteful.
+
+- Refactor `generate_images_batch` in `api/client.py` to delegate to
+  `generate_images(count=N)` when given a single prompt with `N>1`.
+- Extend `UiAutomationTransport._configure_generation_settings` to click
+  the `x{N}` count tab (`1x` / `x2` / `x3` / `x4`).
+- CLI validation in `cli_image.py`: reject `-n` outside `[1, 4]` with a clear
+  error citing Flow's UI cap.
+- Investigate whether `_generate_lock` is still needed for the cross-profile
+  concurrency case (`GFLOW_CLI_CONCURRENCY`); keep if so, remove if not.
+
+**Part 2 (feature, deferred):** `--same-project` flag for multi-prompt
+batches — stay in one project, submit prompts sequentially with 3–7s
+random jitter, log-and-continue on per-item failure. **Blocked** until a
+multi-prompt CLI command exists to attach the flag to (no `gflow image
+batch <manifest>` today).
+
+**Files:** `src/gflow_cli/api/client.py`,
+`src/gflow_cli/api/transports/ui_automation.py`, `src/gflow_cli/cli_image.py`,
+`tests/api/transports/test_ui_automation.py`,
+`tests/api/test_client.py`.
+
+**Tests (TDD):**
+
+- Unit: `-n 4` single prompt → transport called once with `count=4`, opens
+  editor once, downloads 4 images.
+- Unit: `-n 5` → CLI exits with validation error pointing to the `1-4` range.
+- Unit: count-tab selector mock asserts the correct `x{N}` element clicked.
+- E2E (`@pytest.mark.live`, manual): 4 images appear in one project from one
+  submission.
+
+**Acceptance:** Part 1 ships in `v0.6.0a6` (or later) reducing 4-image batch
+time by ~3-4× and consolidating into one project. Part 2 stays open until
+the multi-prompt CLI lands.
+
+**Risk:** This touches the file we just fixed in `1621748d` — must keep both
+Bug A (lock for cross-profile) and Bug B (gallery navigation when restored)
+working. Re-run E2E #1 and #2 from `tmp/` after refactor.
+
+---
+
+### Issue #15 — i2v upload 401: hybrid-transport auth mismatch — INVESTIGATION REQUIRED
+
+[Issue #15](https://github.com/ffroliva/gflow-cli/issues/15) — `POST /v1/flow/uploadImage`
+returns HTTP 401 even with a freshly verified session.
+t2i (UI-driven) works on the same session; i2v's REST upload path does not.
+Strongly suspect missing `SAPISIDHASH Authorization` header — the project
+already has `src/gflow_cli/api/transports/experimental/sapisidhash.py`.
+
+**Investigation gates (must complete before coding):**
+
+1. Read `transports/experimental/sapisidhash.py` end-to-end. Does it
+   implement `SAPISIDHASH = SHA-1(timestamp + " " + SAPISID + " " + origin)`
+   per Google's convention? Is it wired up anywhere?
+2. Read `FlowApiClient._post_json` in `api/client.py`. What headers does
+   it attach today? Is `Authorization` set at all?
+3. Capture a working browser session's request to `/v1/flow/uploadImage`
+   via DevTools → Network → copy as cURL. Diff the production CLI's outgoing
+   headers against the working browser's.
+
+Only after these three gates produce a clear picture, write the fix plan.
+Speculative coding here will burn a session.
+
+**Likely fix:**
+
+- Compute SAPISIDHASH from the persistent profile's `SAPISID` cookie + a
+  Unix timestamp + the Flow origin.
+- Attach `Authorization: SAPISIDHASH {ts}_{hash}` header in `_post_json`
+  for routes that need it (likely all `aisandbox-pa.googleapis.com` POSTs,
+  not just uploadImage — verify).
+- Refresh the timestamp/hash per request (the timestamp is a freshness
+  signal; SAPISID is long-lived).
+
+**Secondary fix (independent of root cause):**
+
+- Classify 401 from `/v1/flow/uploadImage` as `UploadAuthError` (or similar),
+  distinct from `AuthExpiredError`, with a remediation hint that doesn't
+  send the user into a `gflow auth login` loop — *the login is fine; the
+  upload auth header is the problem*.
+
+**Files:** `src/gflow_cli/api/client.py`, possibly promote
+`api/transports/experimental/sapisidhash.py` into the production tree,
+`src/gflow_cli/errors.py`, `tests/api/test_client.py`,
+`tests/api/test_sapisidhash.py`.
+
+**Tests (TDD):**
+
+- Unit: `SAPISIDHASH` calculation produces the exact value for known inputs
+  (test vector lifted from a captured working request).
+- Unit: `_post_json` attaches `Authorization` header on routes that require it.
+- E2E (`@pytest.mark.live`): `gflow video i2v` runs end-to-end on a fresh
+  session without 401.
+
+**Acceptance:** i2v completes to a downloaded `.mp4`; correlation IDs in
+the structured log trace through `upload_image` → video generation → poll →
+download with no error events.
+
+**Out of scope:** rewriting i2v upload to use UI drag-and-drop. The
+SAPISIDHASH fix, if proven, also benefits any future REST endpoint that
+gates on the same header.
+
+---
+
 ### Phase 6 — Operations history & cost tracking — BACKLOG
 
 Foundation laid by Phase 4's structured `error_raised` events + Problem Details. Phase 6 adds a local persistence layer so users can answer "what did I generate last week and what did it cost?".
@@ -356,6 +552,27 @@ Foundation laid by Phase 4's structured `error_raised` events + Problem Details.
 - Cost tracking: best-effort credit estimation per call (Veo 3.1 ≈ X credits/sec, Imagen ≈ Y credits/image — tabulate from observation)
 - Privacy: prompts are user-generated content; persist locally only, never transmit
 - Out of scope until Phase 6 ships: cloud sync, multi-user history
+
+### CDP Attach Transport — BACKLOG (deferred)
+
+**Background:** During Phase 5 E2E testing, `batchGenerateImages` returned 403 because `navigator.webdriver=true` in the Playwright-launched context allowed reCAPTCHA Enterprise to detect automation. An alternative approach was proposed: connect to an already-running, user-visible Chrome instance via CDP instead of launching a new context. Since the user's real Chrome is already logged in and looks like a human browser, reCAPTCHA would see a genuine session.
+
+**What to investigate first:**
+- Whether Chrome launched with `--remote-debugging-port=9222` is treated differently by Google's reCAPTCHA Enterprise (`navigator.webdriver` is `undefined` in real Chrome without Playwright injection, so the score may be higher than with the current stealth flags).
+- Use `playwright.chromium.connect_over_cdp("http://localhost:9222")` to attach.
+- Confirm that cookies are shared between the CDP-attached session and the existing browser tabs (they should be — same Chrome profile).
+
+**Design constraints:**
+- Must be a new, opt-in transport: `--transport cdp_attach` (or `GFLOW_CLI_TRANSPORT=cdp_attach`).
+- Must NOT interfere with the default `ui_automation` or HTTP transports.
+- The user is responsible for launching Chrome with `--remote-debugging-port`; the CLI only attaches.
+- If the CDP port is unreachable, fail with a clear `TransportError` pointing to the setup instructions.
+
+**Open question:** Does attaching via CDP set `navigator.webdriver=true` on the attached page? If yes, the same reCAPTCHA detection still applies and the approach has no advantage over the current stealth fix. **This must be verified before implementing anything.**
+
+**Status:** NOT implemented. Parked until the stealth-flag fix (`--disable-blink-features=AutomationControlled` + init script) is confirmed insufficient, or until a contributor picks it up.
+
+---
 
 ### Phase 7 — Pluggable storage backend — BACKLOG
 
@@ -388,6 +605,8 @@ Today the CLI writes media to `$GFLOW_CLI_OUTPUT_DIR` on the local filesystem. P
 | 10 | Both `gflow` and `flow` binary names installed | `flow` is friendlier; `gflow` avoids conflicts with Facebook Flow / MS Power Automate |
 | 11 | LF-only line endings via `.gitattributes` | Single repo source of truth; cross-platform contributors don't think about it |
 | 12 | `Provider` indirection (legacy `providers/`) removed | Superseded by `api.FlowApiClient`. Re-introduce when we add `OfficialVeoProvider` (planned v0.5+) |
+| 13 | CDP attach transport deferred | Must first confirm whether CDP-attached Chrome still sets `navigator.webdriver=true` (which would negate any reCAPTCHA advantage over the current stealth fix). See CDP Attach backlog entry. |
+| 14 | HTTP status path (`get_video_status`) retired alongside `generate_video` | It is the same 401-dead path and would collide with the new `api/video.py:VideoStatus` value object — retiring both together keeps the domain clean. |
 
 ---
 

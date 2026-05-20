@@ -57,6 +57,47 @@ The hexagonal target above is the steady state. The **current** package — and 
 - Restructure existing modules beyond minimal dedup (shared CLI helpers were promoted to `gflow_cli._cli_helpers` at the package top level — kept flat to avoid a `cli.py` file / `cli/` package collision).
 - Introduce dependency-injection containers, command/query buses, or any DDD/CQRS scaffolding (deferred per [PLAN ADR #2](../PLAN.md#5-decision-log-adrs-in-miniature)).
 
+**v0.6.0a2 module additions — auth strategy package:**
+
+`auth.py` was promoted to a sub-package `gflow_cli.auth/` with the strategy pattern to support multiple browser backends for the `gflow auth login` command:
+
+```text
+src/gflow_cli/auth/
+├── __init__.py          # public: login(), AuthStatus, get_status(), list_profiles()
+├── base.py              # AuthStrategy Protocol — the shared contract
+├── factory.py           # AuthStrategyFactory — routes auto/chrome/internal modes
+├── internal_chromium.py # InternalChromiumStrategy — Playwright bundled Chromium (legacy)
+├── real_chrome.py       # RealChromeStrategy — system Google Chrome with stealth flags
+└── strategies.py        # (internal) shared Playwright helpers
+```
+
+**Why:** Google's bot-detection ("G12 block") rejects Playwright's bundled Chromium during `gflow auth login`. Launching the user's installed Google Chrome with `--disable-blink-features=AutomationControlled` plus a JS `add_init_script` that overrides `navigator.webdriver` bypasses detection. Two strategies are needed because the setup (persistent-context flags, Chrome binary path, stealth init) differs fundamentally between them.
+
+**AuthStrategy Protocol** (`base.py`):
+```python
+class AuthStrategy(Protocol):
+    name: str
+    async def login(self, profile_dir: Path, headless: bool) -> None: ...
+```
+
+**AuthStrategyFactory** (`factory.py`):
+- `mode="auto"` — probes `is_chrome_available()` → `RealChromeStrategy` if found, else `InternalChromiumStrategy` with a warning.
+- `mode="chrome"` — explicit `RealChromeStrategy`; raises `ConfigurationError` if Chrome binary missing.
+- `mode="internal"` — explicit `InternalChromiumStrategy`.
+
+**RealChromeStrategy stealth design** (`real_chrome.py`):
+- Uses a **Passive Capture** pattern: launches system Chrome via `subprocess.Popen` without any automation flags or remote-debugging ports.
+- Provides a 100% clean browser process that Google's G12 block cannot detect.
+- The CLI blocks on `proc.wait()`, prompting the user to complete the sign-in and **close the browser completely**.
+- Post-close: performs a fast, headless `launch_persistent_context` probe to verify the `SAPISID` cookie was successfully captured.
+- Privacy guard: raises `SecurityError` if the resolved `profile_dir` is outside `GFLOW_CLI_HOME` — protects the user's primary system Chrome profile from being used as a session store.
+
+**UiAutomationTransport (UI Mimicry)**:
+- Drives the Flow editor via real DOM interactions (clicks, keyboard events).
+- **Project Setup Evolution:** Due to REST 401 blockers, this transport is moving toward "UI-First" setup, where it handles its own project creation by clicking the "+ New Project" CTA in the browser instead of relying on the `FlowApiClient.create_project` REST call.
+
+**CLI surface:** `gflow auth login [--browser auto|chrome|internal]` (env: `GFLOW_CLI_AUTH_BROWSER`).
+
 When the project converges on the hexagonal target above, modules graduate to layers: e.g., today's `gflow_cli.api` becomes `gflow_cli.infrastructure.flow_api`, `gflow_cli.cli` becomes `gflow_cli.interfaces.cli`, and so on. The modular-monolith shape is the staging area, not the destination.
 
 ## Folder layout
@@ -64,7 +105,7 @@ When the project converges on the hexagonal target above, modules graduate to la
 > **Note: this document describes the TARGET architecture, not the current
 > package layout.** The current shape (per [PLAN.md § 2](../PLAN.md#2-architecture-steady-state)
 > and [ADR #2](../PLAN.md#5-decision-log-adrs-in-miniature)) is the simpler
-> `src/gflow_cli/{api/, cli.py, cli_image.py, cli_video.py, auth.py,
+> `src/gflow_cli/{api/, auth/, cli.py, cli_image.py, cli_video.py,
 > config.py, paths.py, profile_store.py}`. The DDD layout below was deferred
 > indefinitely; converge toward it incrementally if/when a second `Provider`
 > or a `gflow serve` HTTP front-end justifies the split.
@@ -144,6 +185,7 @@ src/gflow_cli/
 
 - **Target DDD names** (not yet implemented): `RateLimitExceededError`, `QuotaExhaustedError`, `InvalidPromptError`, `ProjectNotFoundError`, `JobNotFoundError`, `ProviderUnavailableError`.
 - **Current Phase 4 classes** (shipped in v0.4.0a2, see `gflow_cli.errors`): `AuthExpiredError`, `RateLimitError`, `ContentPolicyError`, `NetworkError`, `WireFormatError`. All inherit from `FlowApiError → GFlowError`; `EXIT_CODE_MAP` walks them in subclass-first order so `except FlowApiError` still catches every typed leaf. Per-class exit codes: 3 (auth), 4 (rate-limit), 5 (content-policy), 6 (network), 7 (wire-format).
+- **Module alias:** `gflow_cli.exceptions` is a complete re-export of `gflow_cli.errors`. Both module paths resolve to identical class objects. The alias exists so downstream integrators can use the conventional `exceptions` name without a special import path.
 
 ## CQRS
 

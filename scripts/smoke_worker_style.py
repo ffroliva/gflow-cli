@@ -40,7 +40,6 @@ from __future__ import annotations
 
 import argparse
 import asyncio
-import json
 import time
 from pathlib import Path
 
@@ -61,12 +60,37 @@ PROMPT_INPUT_SELECTORS = [
 ]
 
 SUBMIT_BUTTON_SELECTORS = [
-    'button:has(i.google-symbols:has-text("arrow_forward"))',
-    'button:has-text("arrow_forward"):has-text("Create")',
-    'button[aria-label*="Create"]',
+    # Universal: icon-based selector (locale-invariant, same pattern as NEW_PROJECT_SELECTORS)
+    "button:has(i.google-symbols:text('arrow_forward'))",
+    "button:has(i:text('arrow_forward'))",
+    # Fallback: button whose visible text includes the icon ligature text
+    "button:has-text('arrow_forward')",
 ]
 
-# Selectors for the "new project" gallery CTA. From the live DOM dump
+# Selectors that open the per-generation settings panel (aspect ratio + count).
+# The trigger button shows the CURRENT ratio icon (e.g. crop_16_9) + count (e.g. x2).
+# We enumerate all possible ratio icon names so the selector is ratio-invariant.
+GEN_SETTINGS_BUTTON_SELECTORS = [
+    "button:has(i.google-symbols:text('crop_16_9'))",
+    "button:has(i.google-symbols:text('crop_9_16'))",
+    "button:has(i.google-symbols:text('crop_square'))",
+    "button:has(i.google-symbols:text('crop_portrait'))",
+    "button:has(i.google-symbols:text('crop_landscape'))",
+]
+
+# Map CLI --aspect-ratio values to Flow tab button text (locale-invariant number format).
+ASPECT_RATIO_MAP: dict[str, str] = {
+    "16:9": "16:9",
+    "9:16": "9:16",
+    "1:1":  "1:1",
+    "4:3":  "4:3",
+    "3:4":  "3:4",
+}
+
+# Map --count to the Flow tab button text.
+COUNT_TAB_MAP: dict[int, str] = {1: "1x", 2: "x2", 3: "x3", 4: "x4"}
+
+
 # (2026-05-12): the button wraps a Material Symbols icon (text "add_2",
 # rendered as "+") followed by localized label text "New project" /
 # "Novo projeto" / etc. The most robust match is the icon class, which is
@@ -231,14 +255,15 @@ async def _send_prompt(page: Page, prompt_text: str, out_dir: Path) -> None:
     await input_box.click()
     await page.keyboard.press("Control+A")
     await page.keyboard.press("Delete")
-    # Slate.js requires real keyboard events; .fill() bypasses onChange.
-    await page.keyboard.type(prompt_text)
-    await page.wait_for_timeout(500)
+    # insertText fires a single 'beforeinput' event that Slate.js handles
+    # natively — much faster than per-keystroke type() (~1.5s/char in headed Chrome).
+    await page.keyboard.insert_text(prompt_text)
+    await page.wait_for_timeout(600)
 
     for sel in SUBMIT_BUTTON_SELECTORS:
         try:
             btn = page.locator(sel).first
-            await btn.wait_for(state="visible", timeout=2_000)
+            await btn.wait_for(state="visible", timeout=3_000)
             await btn.click()
             log.info("prompt_submitted", via=sel)
             return
@@ -248,12 +273,25 @@ async def _send_prompt(page: Page, prompt_text: str, out_dir: Path) -> None:
     await page.keyboard.press("Enter")
 
 
-async def _capture_batch_response(page: Page, timeout_s: int = 120) -> dict:
-    """Wait for the next ``batchGenerateImages`` response and return its parsed body."""
+async def _capture_batch_response(page: Page, project_id: str, timeout_s: int = 120) -> dict:
+    """Wait for a ``batchGenerateImages`` response scoped to *project_id*.
+
+    Filters by project_id in the URL to avoid capturing stale responses from
+    previously-visited projects still pending in the browser context.
+    Removes the listener after capture or timeout to prevent accumulation.
+    """
     captured: list[dict] = []
+    url_marker = f"/projects/{project_id}/"
 
     async def on_response(response: Response) -> None:
         if "batchGenerateImages" not in response.url:
+            return
+        if url_marker not in response.url:
+            log.debug(
+                "batch_response_skipped_wrong_project",
+                url=response.url,
+                expected_project=project_id,
+            )
             return
         try:
             body = await response.json()
@@ -266,9 +304,10 @@ async def _capture_batch_response(page: Page, timeout_s: int = 120) -> dict:
     deadline = time.monotonic() + timeout_s
     while time.monotonic() < deadline and not captured:
         await asyncio.sleep(0.5)
+    page.remove_listener("response", on_response)  # prevent listener accumulation
     if not captured:
         raise TimeoutError(
-            f"No batchGenerateImages response within {timeout_s}s. "
+            f"No batchGenerateImages response for project {project_id} within {timeout_s}s. "
             "Did the Create click fire? Did reCAPTCHA fail silently?"
         )
     return captured[0]
@@ -312,16 +351,78 @@ async def _download(urls: list[str], out_dir: Path, cookies: dict) -> list[Path]
             try:
                 resp = await client.get(url)
                 resp.raise_for_status()
-                p = out_dir / f"image_{i:02d}.png"
+                # Detect actual format from Content-Type or magic bytes
+                ct = resp.headers.get("content-type", "")
+                ext = ".jpg" if ("jpeg" in ct or resp.content[:2] == b"\xff\xd8") else ".png"
+                p = out_dir / f"image_{i:02d}{ext}"
                 p.write_bytes(resp.content)
                 paths.append(p)
-                log.info("png_saved", path=str(p), bytes=len(resp.content))
+                log.info("image_saved", path=str(p), bytes=len(resp.content), format=ext)
             except Exception as e:  # noqa: BLE001
                 log.error("download_failed", url=url, error=str(e))
     return paths
 
 
-async def _drive(context: BrowserContext, prompt_text: str, out_dir: Path) -> None:
+async def _configure_generation_settings(
+    page: Page, aspect_ratio: str | None, count: int | None
+) -> None:
+    """Open the per-generation settings panel and set aspect ratio and/or count.
+
+    The trigger button shows the current ratio icon (e.g. crop_16_9) + count (e.g. x2).
+    DOM confirmed 2026-05-16: aspect ratio tabs are role=tab inside a tablist,
+    count tabs are role=tab with text 1x / x2 / x3 / x4.
+    """
+    if aspect_ratio is None and count is None:
+        return
+
+    # Open the settings panel
+    opened = False
+    for sel in GEN_SETTINGS_BUTTON_SELECTORS:
+        try:
+            btn = page.locator(sel).first
+            await btn.wait_for(state="visible", timeout=3_000)
+            await btn.click()
+            await page.wait_for_timeout(600)
+            opened = True
+            log.info("gen_settings_opened", via=sel)
+            break
+        except Exception:
+            continue
+    if not opened:
+        log.warning("gen_settings_panel_not_found", skipping=True)
+        return
+
+    # Set aspect ratio
+    if aspect_ratio:
+        ratio_text = ASPECT_RATIO_MAP.get(aspect_ratio, aspect_ratio)
+        try:
+            tab = page.locator(f'[role="tab"]:has-text("{ratio_text}")').first
+            await tab.wait_for(state="visible", timeout=3_000)
+            await tab.click()
+            log.info("aspect_ratio_set", value=aspect_ratio)
+        except Exception as e:
+            log.warning("aspect_ratio_set_failed", value=aspect_ratio, error=str(e))
+
+    # Set count
+    if count is not None:
+        count_text = COUNT_TAB_MAP.get(count)
+        if count_text is None:
+            log.warning("unsupported_count", value=count, supported=list(COUNT_TAB_MAP))
+        else:
+            try:
+                tab = page.locator(f'[role="tab"]:text-is("{count_text}")').first
+                await tab.wait_for(state="visible", timeout=3_000)
+                await tab.click()
+                log.info("count_set", value=count, tab_text=count_text)
+            except Exception as e:
+                log.warning("count_set_failed", value=count, error=str(e))
+
+    # Close the panel by pressing Escape
+    await page.keyboard.press("Escape")
+    await page.wait_for_timeout(400)
+
+
+async def _drive(context: BrowserContext, prompt_text: str, out_dir: Path, expected_count: int = 2, aspect_ratio: str | None = None) -> None:
     page = context.pages[0] if context.pages else await context.new_page()
 
     await _ensure_logged_in_to_flow(page, out_dir)
@@ -335,51 +436,87 @@ async def _drive(context: BrowserContext, prompt_text: str, out_dir: Path) -> No
         except Exception:
             continue
 
-    listener_task = asyncio.create_task(_capture_batch_response(page, timeout_s=120))
+    project_id = page.url.split("/project/")[1].split("?")[0]
+    # Collect responses until expected_count reached or timeout.
+    responses: list[dict] = []
+    all_urls: list[str] = []
+
+    async def on_response(response: Response) -> None:
+        if "batchGenerateImages" not in response.url:
+            return
+        if f"/projects/{project_id}/" not in response.url:
+            return
+        try:
+            body = await response.json()
+            entry = {"status": response.status, "url": response.url, "body": body}
+            responses.append(entry)
+            urls = _extract_image_urls(entry)
+            all_urls.extend(urls)
+            log.info("batch_response_captured", status=response.status, total_so_far=len(all_urls))
+        except Exception as e:  # noqa: BLE001
+            log.warning("batch_response_parse_failed", error=str(e))
+
+    page.on("response", on_response)
+    await _configure_generation_settings(page, aspect_ratio, expected_count)
     await _send_prompt(page, prompt_text, out_dir)
-    response = await listener_task
 
-    if response["status"] != 200:
-        body_str = json.dumps(response["body"], indent=2)[:500]
-        log.error(
-            "batch_request_failed",
-            status=response["status"],
-            body_preview=body_str,
+    # Wait up to 180s for all expected images to arrive.
+    deadline = time.monotonic() + 180
+    while time.monotonic() < deadline:
+        if len(all_urls) >= expected_count:
+            break
+        await asyncio.sleep(0.5)
+    page.remove_listener("response", on_response)
+
+    if not all_urls:
+        raise RuntimeError(
+            f"No image URLs captured for project {project_id} within 180s. "
+            "Did generation fire? Check the browser window."
         )
-        raise RuntimeError(f"batchGenerateImages returned {response['status']}")
 
-    urls = _extract_image_urls(response)
-    if not urls:
-        body_str = json.dumps(response["body"], indent=2)[:1000]
-        log.error("no_image_urls_in_response", body_preview=body_str)
-        raise RuntimeError("batchGenerateImages returned 200 but no image URLs found.")
+    log.info("urls_extracted", count=len(all_urls), expected=expected_count)
+    if len(all_urls) < expected_count:
+        log.warning("fewer_images_than_expected", got=len(all_urls), expected=expected_count)
 
-    log.info("urls_extracted", count=len(urls))
     cookie_list = await context.cookies("https://labs.google")
     cookies = {c.get("name", ""): c.get("value", "") for c in cookie_list if c.get("name")}
-    paths = await _download(urls, out_dir, cookies)
+    paths = await _download(all_urls, out_dir, cookies)
 
-    print(f"\n>> Smoke complete. {len(paths)} PNG(s) saved to {out_dir}")
+    print(f"\n>> Smoke complete. {len(paths)} image(s) saved to {out_dir}")
     for p in paths:
         print(f"   - {p}")
 
 
-async def run(profile_dir: Path, prompt_text: str, out_dir: Path) -> None:
+async def run(profile_dir: Path, prompt_text: str, out_dir: Path, expected_count: int = 1, aspect_ratio: str | None = None) -> None:
     """Drive the smoke using Playwright's persistent context (Worker pattern)."""
     log.info("launching_persistent_context", profile_dir=str(profile_dir))
     async with async_playwright() as pw:
-        # MUST be headed — reCAPTCHA Enterprise + Flow JS rely on a real
-        # rendering pipeline. Same flag the Worker uses.
+        from gflow_cli.browser_manager import channel_for_profile
+        channel = channel_for_profile(profile_dir)
+
         context = await pw.chromium.launch_persistent_context(
             str(profile_dir),
             headless=False,
             viewport={"width": 1280, "height": 800},
             locale="en-US",
+            channel=channel,
+            ignore_default_args=["--enable-automation", "--no-sandbox"],
+            args=["--disable-blink-features=AutomationControlled"],
         )
+
+        # Stealth init script
+        await context.add_init_script("""
+            Object.defineProperty(navigator, 'webdriver', { get: () => undefined });
+            window.chrome = { runtime: {} };
+            Object.defineProperty(navigator, 'plugins', { get: () => [1, 2, 3, 4, 5] });
+            Object.defineProperty(navigator, 'languages', { get: () => ['en-US', 'en'] });
+        """)
+
         try:
-            await _drive(context, prompt_text, out_dir)
+            await _drive(context, prompt_text, out_dir, expected_count=expected_count, aspect_ratio=aspect_ratio)
         finally:
             await context.close()
+
 
 
 def main() -> None:
@@ -402,13 +539,26 @@ def main() -> None:
         default=None,
         help="Output dir (default: tmp/smoke/<utc>)",
     )
+    parser.add_argument(
+        "--count", "-n",
+        type=int,
+        default=1,
+        help="Number of images to generate and wait for (default: 1)",
+    )
+    parser.add_argument(
+        "--aspect-ratio", "-a",
+        dest="aspect_ratio",
+        choices=list(ASPECT_RATIO_MAP),
+        default=None,
+        help="Aspect ratio (default: Flow's current setting). Options: 16:9, 9:16, 1:1, 4:3, 3:4",
+    )
     args = parser.parse_args()
 
     out_dir = args.out or (
         Path("tmp") / "smoke" / time.strftime("%Y%m%dT%H%M%SZ", time.gmtime())
     )
     args.profile_dir.mkdir(parents=True, exist_ok=True)
-    asyncio.run(run(args.profile_dir, args.prompt, out_dir))
+    asyncio.run(run(args.profile_dir, args.prompt, out_dir, expected_count=args.count, aspect_ratio=args.aspect_ratio))
 
 
 if __name__ == "__main__":

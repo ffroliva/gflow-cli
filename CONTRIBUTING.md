@@ -38,14 +38,18 @@ def test_parse_uuid_from_url(): ...
 @pytest.mark.integration       # Mocked HTTP, real Provider plumbing.
 async def test_upload_returns_asset(): ...
 
-@pytest.mark.live              # Hits the real Flow API. Requires GFLOW_LIVE=1 env var.
-# Note: the live-test gate is GFLOW_LIVE (deliberately short — not GFLOW_CLI_LIVE) so
-# you can opt in with a single export. Runtime config still uses the GFLOW_CLI_* prefix.
-@pytest.mark.skipif(not os.getenv("GFLOW_LIVE"), reason="live tests opt-in")
+@pytest.mark.e2e               # Hits the real Flow API. Requires GFLOW_CLI_E2E_PROFILE env var.
 async def test_full_i2v_roundtrip(): ...
 ```
 
-CI runs `unit` + `integration` on every push. `live` tests run only on the maintainer's machine, against the maintainer's own account, before tagging a release.
+CI runs `unit` + `integration` on every push. `e2e` tests require a live authenticated profile and are opt-in:
+
+```bash
+export GFLOW_CLI_E2E_PROFILE=<profile-name>   # name of a logged-in profile
+uv run pytest -m e2e -v
+```
+
+E2e tests spend real Veo/Imagen credits — run them on `develop` before opening a release PR to `main`. See [docs/DEVELOPMENT.md § E2e gate](docs/DEVELOPMENT.md#e2e-gate-before-merging-develop--main).
 
 ### Coverage targets
 
@@ -59,23 +63,28 @@ CI runs `unit` + `integration` on every push. `live` tests run only on the maint
 ## Quality gates (run before commit)
 
 ```bash
+uv run python scripts/ci/check_repo_hygiene.py  # artefact + path hygiene
 uv run ruff check src tests          # lint
 uv run ruff format src tests         # auto-format
 uv run pyright src                   # type-check (strict on src/gflow_cli/)
 uv run pytest -q --cov=gflow_cli      # tests + coverage
 ```
 
-CI runs all four on every push. Local pre-commit hook recommended:
+CI runs all five on every push. Install local pre-commit hooks (recommended):
 
-```yaml
-# .pre-commit-config.yaml — install with `pip install pre-commit && pre-commit install`
-repos:
-  - repo: https://github.com/astral-sh/ruff-pre-commit
-    rev: v0.6.9
-    hooks:
-      - id: ruff
-      - id: ruff-format
+```bash
+pip install pre-commit && pre-commit install
 ```
+
+The `.pre-commit-config.yaml` already ships ruff and the hygiene gate.
+
+### Script output convention
+
+All runtime output — smoke runs, debug dumps, generated images — **must** go
+to `tmp/` (already gitignored). `test_assets/` is for committed test
+*fixtures* only (static input files for unit tests). Never write to
+`test_assets/smoke_*/` or `test_assets/debug_*/` from scripts; the hygiene
+gate blocks this.
 
 ## Adding a new API route
 
@@ -104,6 +113,30 @@ Follow [Conventional Commits 1.0](https://www.conventionalcommits.org/):
 ```
 
 `type`: `feat`, `fix`, `refactor`, `docs`, `test`, `chore`, `perf`, `ci`, `build`.
+
+## Contribution provenance
+
+External contributions must have clear provenance. By opening a pull request,
+you agree that your contribution is submitted under this project's MIT license
+and that you have the right to contribute it.
+
+For external contributors, commits should include a Developer Certificate of
+Origin sign-off:
+
+```bash
+git commit -s -m "fix(auth): handle rejected browser login"
+```
+
+This adds a `Signed-off-by:` trailer using your configured Git name and email.
+If you already committed, use `git commit --amend -s` and force-push the branch.
+
+Please use a real Git identity or a GitHub noreply email. Avoid placeholder or
+machine-local author addresses such as `user@hostname.local`; maintainers may
+ask you to amend those before merging.
+
+AI-assisted contributions are welcome when reviewed by the contributor, but do
+not submit copied proprietary code, private Google/Flow internals, account
+tokens, cookies, signed URLs, or other secrets.
 
 ## Releasing (maintainer only)
 

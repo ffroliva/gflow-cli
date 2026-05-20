@@ -43,11 +43,24 @@ secrets.json           # generic secrets file
 # Generated outputs
 out/
 tmp/
+gflow-output/
 *.mp4
 *.png
+*.jpg
+*.jpeg
 !docs/**/*.png         # docs images are OK
 !tests/fixtures/**/*.png
+!test_assets/fixtures/**/*.jpg
+!test_assets/fixtures/**/*.jpeg
 samples/*.captured.json # sandbox-recorded API exchanges may contain PII
+
+# CDP browser session lock files (contain PID, port, profile name)
+.gflow-cdp.lock
+**/.gflow-cdp.lock
+
+# Runtime artefact dirs written by smoke/debug scripts — belong under tmp/ only
+test_assets/smoke_*/
+test_assets/debug_*/
 
 # Live Flow traffic captures — NEVER commit (contain real Bearer tokens / API keys).
 # Diagnostic scripts MUST default-write here, NOT to samples/captured/.

@@ -1,30 +1,22 @@
-"""Pure tests for video value objects + body builders."""
+"""Pure tests for video value objects."""
 
 from __future__ import annotations
+
+import json
+from pathlib import Path
 
 import pytest
 
 from gflow_cli.api.video import (
+    MAX_REFERENCE_IMAGES,
     Aspect,
     GenerateVideoRequest,
     Mode,
     Tier,
-    build_generate_body,
-    model_key,
+    VideoStatus,
+    media_name_from_generate_response,
+    parse_video_status,
 )
-
-
-class TestModelKey:
-    def test_t2v_fast_portrait(self) -> None:
-        assert model_key(Mode.T2V, Tier.FAST, Aspect.PORTRAIT) == "veo_3_1_t2v_fast_portrait"
-
-    def test_i2v_quality_landscape(self) -> None:
-        assert (
-            model_key(Mode.I2V, Tier.QUALITY, Aspect.LANDSCAPE) == "veo_3_1_i2v_quality_landscape"
-        )
-
-    def test_t2v_fast_square(self) -> None:
-        assert model_key(Mode.T2V, Tier.FAST, Aspect.SQUARE) == "veo_3_1_t2v_fast_square"
 
 
 class TestAspectEnum:
@@ -47,37 +39,175 @@ class TestAspectEnum:
             Aspect.from_cli("3:2")
 
 
-class TestBuildGenerateBody:
-    def test_t2v_minimal(self) -> None:
-        req = GenerateVideoRequest(prompt="a cat in a hat", aspect=Aspect.PORTRAIT)
-        body = build_generate_body(
-            req,
-            project_id="proj-1",
-            recaptcha_token="TOKEN",
-            batch_id="batch-1",
-            seed=42,
-            session_id=";1700000000000",
-        )
-        assert body["mediaGenerationContext"]["batchId"] == "batch-1"
-        assert body["clientContext"]["projectId"] == "proj-1"
-        assert body["clientContext"]["recaptchaContext"]["token"] == "TOKEN"
-        assert body["requests"][0]["videoModelKey"] == "veo_3_1_t2v_fast_portrait"
-        assert body["requests"][0]["aspectRatio"] == "VIDEO_ASPECT_RATIO_PORTRAIT"
-        assert body["requests"][0]["seed"] == 42
-        assert body["requests"][0]["textInput"]["structuredPrompt"]["parts"][0]["text"] == (
-            "a cat in a hat"
-        )
-        assert "imageInput" not in body["requests"][0]
-        assert body["useV2ModelConfig"] is True
+class TestMode:
+    def test_has_r2v(self) -> None:
+        assert Mode.R2V == "r2v"
 
-    def test_i2v_includes_image_input(self) -> None:
+    def test_three_modes(self) -> None:
+        assert {m.value for m in Mode} == {"t2v", "i2v", "r2v"}
+
+
+class TestGenerateVideoRequest:
+    def test_t2v_defaults(self) -> None:
+        req = GenerateVideoRequest(prompt="a calm forest at dawn")
+        assert req.mode is Mode.T2V
+        assert req.aspect is Aspect.PORTRAIT
+        assert req.tier is Tier.FAST
+        assert req.start_image is None
+        assert req.reference_images == ()
+
+    def test_empty_prompt_rejected(self) -> None:
+        with pytest.raises(ValueError, match="prompt must not be empty"):
+            GenerateVideoRequest(prompt="   ")
+
+    def test_t2v_must_not_carry_image_inputs(self) -> None:
+        with pytest.raises(ValueError, match="T2V request must not carry image inputs"):
+            GenerateVideoRequest(prompt="x", mode=Mode.T2V, start_image=Path("a.png"))
+
+    def test_i2v_requires_start_image(self) -> None:
+        with pytest.raises(ValueError, match="I2V request requires start_image"):
+            GenerateVideoRequest(prompt="x", mode=Mode.I2V)
+
+    def test_i2v_accepts_start_and_optional_end(self) -> None:
         req = GenerateVideoRequest(
-            prompt="push in",
-            aspect=Aspect.PORTRAIT,
-            start_asset_uuid="asset-uuid-123",
+            prompt="x", mode=Mode.I2V, start_image=Path("a.png"), end_image=Path("b.png")
         )
-        body = build_generate_body(
-            req, project_id="proj-1", recaptcha_token="T", batch_id="b", seed=1, session_id=";1"
+        assert req.start_image == Path("a.png")
+        assert req.end_image == Path("b.png")
+
+    def test_i2v_must_not_carry_reference_images(self) -> None:
+        with pytest.raises(ValueError, match="must not carry reference_images"):
+            GenerateVideoRequest(
+                prompt="x",
+                mode=Mode.I2V,
+                start_image=Path("a.png"),
+                reference_images=(Path("r.png"),),
+            )
+
+    def test_r2v_requires_a_reference_image(self) -> None:
+        with pytest.raises(ValueError, match="R2V request requires at least one"):
+            GenerateVideoRequest(prompt="x", mode=Mode.R2V)
+
+    def test_r2v_must_not_carry_start_end(self) -> None:
+        with pytest.raises(ValueError, match="must not carry start/end"):
+            GenerateVideoRequest(
+                prompt="x",
+                mode=Mode.R2V,
+                reference_images=(Path("r.png"),),
+                start_image=Path("a.png"),
+            )
+
+    def test_too_many_reference_images_rejected(self) -> None:
+        too_many = tuple(Path(f"r{i}.png") for i in range(MAX_REFERENCE_IMAGES + 1))
+        with pytest.raises(ValueError, match="at most"):
+            GenerateVideoRequest(prompt="x", mode=Mode.R2V, reference_images=too_many)
+
+    def test_seed_range_enforced(self) -> None:
+        with pytest.raises(ValueError, match="seed out of range"):
+            GenerateVideoRequest(prompt="x", seed=-1)
+        GenerateVideoRequest(prompt="x", seed=0)  # boundary OK
+        GenerateVideoRequest(prompt="x", seed=2**31 - 1)  # boundary OK
+
+    def test_post_init_does_not_touch_the_filesystem(self) -> None:
+        # Structural validation only — a non-existent path must NOT raise.
+        GenerateVideoRequest(prompt="x", mode=Mode.I2V, start_image=Path("does/not/exist.png"))
+
+
+class TestVideoStatus:
+    def test_pending_is_not_terminal(self) -> None:
+        s = VideoStatus(media_id="m", status="MEDIA_GENERATION_STATUS_PENDING")
+        assert s.is_terminal is False
+        assert s.succeeded is False
+
+    def test_active_is_not_terminal(self) -> None:
+        s = VideoStatus(media_id="m", status="MEDIA_GENERATION_STATUS_ACTIVE")
+        assert s.is_terminal is False
+
+    def test_successful_is_terminal_and_succeeded(self) -> None:
+        s = VideoStatus(media_id="m", status="MEDIA_GENERATION_STATUS_SUCCESSFUL")
+        assert s.is_terminal is True
+        assert s.succeeded is True
+
+    def test_failed_is_terminal_not_succeeded(self) -> None:
+        s = VideoStatus(
+            media_id="m",
+            status="MEDIA_GENERATION_STATUS_FAILED",
+            failure_reasons=("IP_PROHIBITED",),
+            error_message="PUBLIC_ERROR_IP_INPUT_IMAGE",
         )
-        assert body["requests"][0]["videoModelKey"] == "veo_3_1_i2v_fast_portrait"
-        assert body["requests"][0]["imageInput"]["mediaId"] == "asset-uuid-123"
+        assert s.is_terminal is True
+        assert s.succeeded is False
+        assert s.failure_reasons == ("IP_PROHIBITED",)
+        assert s.error_message == "PUBLIC_ERROR_IP_INPUT_IMAGE"
+
+
+_CAPTURES = Path(__file__).parent.parent.parent / "samples" / "captured"
+
+
+def _body(filename: str) -> dict:
+    """Load the response body the parsers consume from a committed capture.
+
+    NOTE: the capture sanitizer redacts media ids inconsistently — capture 02
+    uses `<UUID>`, captures 08/09/10/11 use `<GENERATED_MEDIA_ID>`. The
+    assertions below match each file's actual token; a re-sanitization that
+    unifies them would require updating these expected values.
+    """
+    raw = json.loads((_CAPTURES / filename).read_text(encoding="utf-8"))
+    return raw["response_body_parsed"]
+
+
+class TestMediaNameFromGenerateResponse:
+    def test_t2v_capture(self) -> None:
+        name = media_name_from_generate_response(_body("02_batchAsyncGenerateVideoText.json"))
+        assert name == "<UUID>"
+
+    def test_i2v_capture(self) -> None:
+        name = media_name_from_generate_response(
+            _body("08_batchAsyncGenerateVideoStartAndEndImage.json")
+        )
+        assert name == "<GENERATED_MEDIA_ID>"
+
+    def test_r2v_capture(self) -> None:
+        name = media_name_from_generate_response(
+            _body("09_batchAsyncGenerateVideoReferenceImages.json")
+        )
+        assert name == "<GENERATED_MEDIA_ID>"
+
+    def test_missing_media_raises(self) -> None:
+        with pytest.raises(ValueError, match="no media"):
+            media_name_from_generate_response({"workflows": []})
+
+
+class TestParseVideoStatus:
+    def test_successful_capture(self) -> None:
+        s = parse_video_status(
+            _body("10_batchCheckAsyncVideoGenerationStatus_successful.json"),
+            media_id="<GENERATED_MEDIA_ID>",
+        )
+        assert s.status == "MEDIA_GENERATION_STATUS_SUCCESSFUL"
+        assert s.is_terminal is True
+        assert s.succeeded is True
+        assert s.failure_reasons == ()
+        assert s.error_message is None
+
+    def test_failed_capture(self) -> None:
+        s = parse_video_status(
+            _body("11_batchCheckAsyncVideoGenerationStatus_failed.json"),
+            media_id="<GENERATED_MEDIA_ID>",
+        )
+        assert s.status == "MEDIA_GENERATION_STATUS_FAILED"
+        assert s.is_terminal is True
+        assert s.succeeded is False
+        assert s.failure_reasons == ("IP_PROHIBITED",)
+        assert s.error_message == "PUBLIC_ERROR_IP_INPUT_IMAGE"
+
+    def test_media_id_not_in_response_raises(self) -> None:
+        with pytest.raises(ValueError, match="not found"):
+            parse_video_status(
+                _body("10_batchCheckAsyncVideoGenerationStatus_successful.json"),
+                media_id="no-such-id",
+            )
+
+    def test_malformed_status_raises(self) -> None:
+        with pytest.raises(ValueError, match="mediaGenerationStatus"):
+            parse_video_status({"media": [{"name": "m", "mediaMetadata": {}}]}, media_id="m")

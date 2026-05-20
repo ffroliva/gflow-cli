@@ -4,6 +4,7 @@ from __future__ import annotations
 
 import subprocess
 import sys
+from importlib.metadata import version as _pkg_version
 
 
 def test_help_exits_zero() -> None:
@@ -25,4 +26,4 @@ def test_imports_succeed() -> None:
     import gflow_cli.api.client  # noqa
     import gflow_cli.api.dto  # noqa
 
-    assert gflow_cli.__version__ == "0.5.0a1"
+    assert gflow_cli.__version__ == _pkg_version("gflow-cli")

@@ -84,12 +84,13 @@ class TestEnvOverrides:
         with pytest.raises(ValidationError):
             Settings()
 
-    def test_headless_defaults_true(self, clean_env: None) -> None:
-        assert Settings().headless is True
-
-    def test_headless_override_false(self, monkeypatch: pytest.MonkeyPatch) -> None:
-        monkeypatch.setenv("GFLOW_CLI_HEADLESS", "false")
+    def test_headless_defaults_false(self, clean_env: None) -> None:
+        # ui_automation transport requires headed Chrome — reCAPTCHA rejects headless
         assert Settings().headless is False
+
+    def test_headless_override_true(self, monkeypatch: pytest.MonkeyPatch) -> None:
+        monkeypatch.setenv("GFLOW_CLI_HEADLESS", "true")
+        assert Settings().headless is True
 
 
 class TestDerivedPaths:

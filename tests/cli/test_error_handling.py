@@ -11,11 +11,14 @@ from click.testing import CliRunner
 
 from gflow_cli.cli import main
 from gflow_cli.errors import (
+    AuthBrowserRejectedError,
     AuthExpiredError,
+    AuthLoginTimeoutError,
     ContentPolicyError,
     GFlowError,
     NetworkError,
     RateLimitError,
+    SecurityError,
     WireFormatError,
 )
 
@@ -321,3 +324,75 @@ def _make_raiser(exc: BaseException):
         raise exc
 
     return _raise
+
+
+# ---------------------------------------------------------------------------
+# auth login — error handling (exit codes for timeout + security violation)
+# ---------------------------------------------------------------------------
+
+
+class TestAuthLoginErrors:
+    """Verify `gflow auth login` exits with the right code for each GFlowError subclass.
+
+    The CLI must NEVER print "Session saved" on error — agents rely on the
+    exit code to distinguish success (0) from failure (non-zero).
+    """
+
+    def _invoke_auth_login(self, error: GFlowError) -> Any:
+        """Invoke `gflow auth login` with asyncio.run mocked to raise *error*."""
+        from unittest.mock import patch
+
+        def _raise_and_close(awaitable: object) -> None:
+            close = getattr(awaitable, "close", None)
+            if callable(close):
+                close()
+            raise error
+
+        runner = CliRunner()
+        with patch("gflow_cli.cli.asyncio.run", side_effect=_raise_and_close):
+            return runner.invoke(
+                main, ["auth", "login", "--browser", "internal", "--profile", "test"]
+            )
+
+    def test_timeout_exits_12(self) -> None:
+        """AuthLoginTimeoutError → exit code 12 (distinct from all other errors)."""
+        result = self._invoke_auth_login(AuthLoginTimeoutError("timed out after 0s"))
+        assert result.exit_code == 12, result.output
+        # Error class title must appear
+        assert "Login timed out" in result.output
+        # Must NOT claim success
+        assert "Session saved" not in result.output
+
+    def test_timeout_prints_remediation_hint(self) -> None:
+        """Remediation hint is printed to help agents and users know what to do."""
+        err = AuthLoginTimeoutError(
+            "timed out",
+            remediation_hint="Run `gflow auth login` again.",
+        )
+        result = self._invoke_auth_login(err)
+        assert result.exit_code == 12
+        assert "Run `gflow auth login` again." in result.output
+
+    def test_security_error_exits_13(self) -> None:
+        """SecurityError → exit code 13; never claims success."""
+        result = self._invoke_auth_login(SecurityError("outside of GFLOW_CLI_HOME"))
+        assert result.exit_code == 13, result.output
+        assert "Security violation" in result.output
+        assert "Session saved" not in result.output
+
+    def test_configuration_error_exits_11(self) -> None:
+        """ConfigurationError keeps its exit code 11 under the new broad catch."""
+        from gflow_cli.errors import ConfigurationError
+
+        result = self._invoke_auth_login(ConfigurationError("unknown browser mode"))
+        assert result.exit_code == 11, result.output
+        assert "Session saved" not in result.output
+
+    def test_browser_rejected_exits_14_with_chrome_guidance(self) -> None:
+        """AuthBrowserRejectedError points users at real Chrome instead of another retry."""
+        result = self._invoke_auth_login(AuthBrowserRejectedError())
+        assert result.exit_code == 14, result.output
+        assert "Login browser rejected" in result.output
+        assert "--browser chrome" in result.output
+        assert "GFLOW_CLI_AUTH_BROWSER=chrome" in result.output
+        assert "Session saved" not in result.output

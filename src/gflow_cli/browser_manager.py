@@ -61,6 +61,8 @@ from gflow_cli.errors import AuthMissingError, ConfigurationError
 
 log = structlog.get_logger(__name__)
 
+_FLOW_HOME_URL = "https://labs.google/fx/tools/flow"
+
 # Port range for CDP auto-increment (9222 … 9229 inclusive — 8 ports)
 _CDP_PORT_START = 9222
 _CDP_PORT_END = 9229
@@ -161,6 +163,49 @@ def _find_chrome_binary() -> str:
         "Chrome not found. Install from https://www.google.com/chrome/"
         " or set CHROME_BINARY env var."
     )
+
+
+def is_chrome_available() -> bool:
+    """Return True if a Google Chrome binary can be found on this system."""
+    try:
+        _find_chrome_binary()
+        return True
+    except ConfigurationError:
+        return False
+
+
+def channel_for_profile(profile_dir: Path) -> str | None:
+    """Return the Playwright channel to use for ``profile_dir``, or None.
+
+    Reads the ``.gflow_browser_strategy`` marker written by
+    :class:`~gflow_cli.auth.real_chrome.RealChromeStrategy`. When the marker
+    is ``"chrome"`` and system Chrome is available, returns ``"chrome"`` so
+    callers can pass it to ``launch_persistent_context(channel=...)`` —
+    avoiding the downgrade-cleanup exit-33 that occurs when Playwright's
+    bundled Chromium opens a profile created by Chrome 130+.
+
+    Logs a warning when the marker requests Chrome but Chrome is no longer
+    available, as the resulting launch against bundled Chromium will likely
+    fail with the same exit-33 error.
+    """
+    import structlog as _structlog
+
+    _log = _structlog.get_logger(__name__)
+    marker = profile_dir / ".gflow_browser_strategy"
+    if not marker.exists():
+        return None
+    strategy = marker.read_text(encoding="utf-8").strip()
+    if strategy != "chrome":
+        return None
+    if is_chrome_available():
+        return "chrome"
+    _log.warning(
+        "browser_manager.chrome_marker_but_unavailable",
+        profile_dir=str(profile_dir),
+        hint="Profile was captured with system Chrome but Chrome is not found. "
+        "Re-run `gflow auth login --browser chrome` after installing Chrome.",
+    )
+    return None
 
 
 # ---------------------------------------------------------------------------
@@ -405,16 +450,13 @@ def _find_available_cdp_port(profile_dir: Path, start_port: int = _CDP_PORT_STAR
     """
     lock_path = profile_dir / _LOCK_FILENAME
     our_lock = _read_lock(lock_path)
+    our_port = our_lock.get("port") if our_lock else None
 
     for port in range(start_port, _CDP_PORT_END + 1):
-        if not is_browser_running(port=port):
-            # Port is free — we can use it
+        port_is_free = not is_browser_running(port=port)
+        port_is_ours = port == our_port
+        if port_is_free or port_is_ours:
             return port
-
-        # Port is responding — is it ours?
-        if our_lock is not None and our_lock.get("port") == port:
-            return port
-
         log.warning(
             "cdp_port_busy_non_gflow",
             port=port,
@@ -468,6 +510,74 @@ async def _is_logged_in_to_flow(page: Any) -> bool:
 _spawn_lock = asyncio.Lock()
 
 
+def _sanitize_existing_lock(
+    lock_path: Path,
+    existing_lock: dict[str, Any] | None,
+    port: int,
+) -> tuple[dict[str, Any] | None, int, int]:
+    """Validate an existing lockfile's pid (SEC-M1) and return normalized fields.
+
+    Returns ``(lock_or_None, locked_pid, locked_port)``. If the lockfile's pid
+    is not a positive int, the lock is removed and ``(None, 0, port)`` is
+    returned — treat as "no lock".
+    """
+    if existing_lock is None:
+        return None, 0, port
+    locked_pid_raw = existing_lock.get("pid", 0)
+    locked_port = existing_lock.get("port", port)
+    if not isinstance(locked_pid_raw, int) or locked_pid_raw <= 0:
+        log.warning(
+            "lockfile_corrupted_or_tampered",
+            removing=True,
+            raw_pid=str(locked_pid_raw),
+        )
+        _remove_lock(lock_path)
+        return None, 0, port
+    return existing_lock, locked_pid_raw, locked_port
+
+
+async def _attach_and_verify_login(port: int, profile_name: str) -> Any:
+    """Connect to CDP on ``port``, open Flow, raise AuthMissingError if not logged in."""
+    endpoint = f"http://localhost:{port}"
+    context = await _connect_cdp(endpoint)
+    page = await context.new_page()
+    await page.goto(_FLOW_HOME_URL, wait_until="domcontentloaded")
+    if not await _is_logged_in_to_flow(page):
+        raise AuthMissingError(
+            f"Profile not logged in to Flow. Run: gflow auth login --profile {profile_name}"
+        )
+    return context
+
+
+async def _wait_chrome_ready(port: int) -> None:
+    """Poll the CDP port until it responds or the spawn-wait budget is exhausted."""
+    for _ in range(int(_SPAWN_WAIT_SECONDS / 0.5)):
+        if is_browser_running(port=port):
+            return
+        await asyncio.sleep(0.5)
+
+
+async def _resolve_race_loss(lock_path: Path, actual_port: int) -> int:
+    """Handle the FileExistsError race: read the winner's lock and wait for them.
+
+    Returns the winner's port. Raises ConfigurationError if the winner's
+    Chrome never comes up — that means the lock is stale and the user must
+    clean it up.
+    """
+    log.warning("lock_race_lost", port=actual_port)
+    existing_lock = _read_lock(lock_path)
+    winner_pid = existing_lock.get("pid", 0) if existing_lock else 0
+    if existing_lock:
+        actual_port = existing_lock.get("port", actual_port)
+    await _wait_chrome_ready(actual_port)
+    if not is_browser_running(port=actual_port):
+        raise ConfigurationError(
+            f"Lockfile exists (PID {winner_pid}, port {actual_port}) but "
+            "Chrome is not responsive. Run `gflow chrome stop` to clean up."
+        ) from None
+    return actual_port
+
+
 async def get_or_launch_browser(
     profile_dir: Path,
     port: int = 9222,
@@ -482,53 +592,18 @@ async def get_or_launch_browser(
     """
     lock_path = profile_dir / _LOCK_FILENAME
     profile_name = profile_dir.name
-    # Defaults so locked_pid / locked_port are always bound for pyright even
-    # when no lockfile exists (the second `if existing_lock is not None` block
-    # below is guarded, but the type checker can't correlate across blocks).
-    locked_pid: int = 0
-    locked_port: int = port
 
     async with _spawn_lock:
-        existing_lock = _read_lock(lock_path)
-        if existing_lock is not None:
-            locked_pid_raw = existing_lock.get("pid", 0)
-            locked_port = existing_lock.get("port", port)
-
-            # SEC-M1: lockfile is JSON on disk — anyone with write access can
-            # plant a non-int pid (e.g. "evil; rm -rf /") that would later be
-            # passed to tasklist/os.kill. Guard the type strictly.
-            if not isinstance(locked_pid_raw, int) or locked_pid_raw <= 0:
-                log.warning(
-                    "lockfile_corrupted_or_tampered",
-                    removing=True,
-                    raw_pid=str(locked_pid_raw),
-                )
-                _remove_lock(lock_path)
-                existing_lock = None
-                locked_pid = 0
-            else:
-                locked_pid = locked_pid_raw
+        existing_lock, locked_pid, locked_port = _sanitize_existing_lock(
+            lock_path, _read_lock(lock_path), port
+        )
 
         if existing_lock is not None:
             if _pid_alive(locked_pid):
-                # Our Chrome is alive — try to attach
                 if is_browser_running(port=locked_port):
                     log.info("chrome_attach", port=locked_port, pid=locked_pid)
-                    endpoint = f"http://localhost:{locked_port}"
-                    context = await _connect_cdp(endpoint)
-                    page = await context.new_page()
-                    await page.goto(
-                        "https://labs.google/fx/tools/flow",
-                        wait_until="domcontentloaded",
-                    )
-                    if not await _is_logged_in_to_flow(page):
-                        raise AuthMissingError(
-                            "Profile not logged in to Flow."
-                            f" Run: gflow auth login --profile {profile_name}"
-                        )
-                    return context
+                    return await _attach_and_verify_login(locked_port, profile_name)
             else:
-                # Stale lock — PID dead
                 log.warning("stale_lock_removed", pid=locked_pid, lock_path=str(lock_path))
                 _remove_lock(lock_path)
 
@@ -543,73 +618,26 @@ async def get_or_launch_browser(
                 attached_to_unmanaged_chrome=True,
                 hint="Verify localhost CDP trust on shared machines",
             )
-            endpoint = f"http://localhost:{port}"
-            context = await _connect_cdp(endpoint)
-            page = await context.new_page()
-            await page.goto(
-                "https://labs.google/fx/tools/flow",
-                wait_until="domcontentloaded",
-            )
-            if not await _is_logged_in_to_flow(page):
-                raise AuthMissingError(
-                    f"Profile not logged in to Flow. Run: gflow auth login --profile {profile_name}"
-                )
-            return context
+            return await _attach_and_verify_login(port, profile_name)
 
-        # Chrome not running — need to spawn
+        # Chrome not running — need to spawn.
         _check_chrome_singleton_lock(profile_dir)
         binary = _find_chrome_binary()
         actual_port = _find_available_cdp_port(profile_dir, start_port=port)
-
         proc = _spawn_chrome(binary, profile_dir, actual_port)
 
-        # Write atomic lockfile
         race_lost = False
         try:
             _write_lock(lock_path, proc.pid, actual_port, profile_name)
         except FileExistsError:
-            # Another process won the race — read their lock and attach
             race_lost = True
-            log.warning("lock_race_lost", port=actual_port)
-            existing_lock = _read_lock(lock_path)
-            winner_pid = existing_lock.get("pid", 0) if existing_lock else 0
-            if existing_lock:
-                actual_port = existing_lock.get("port", actual_port)
+            actual_port = await _resolve_race_loss(lock_path, actual_port)
 
-            # Verify the winner's Chrome is actually responsive before we
-            # try to connect — otherwise Playwright raises an opaque error.
-            winner_alive = False
-            for _ in range(int(_SPAWN_WAIT_SECONDS / 0.5)):
-                if is_browser_running(port=actual_port):
-                    winner_alive = True
-                    break
-                await asyncio.sleep(0.5)
-            if not winner_alive:
-                raise ConfigurationError(
-                    f"Lockfile exists (PID {winner_pid}, port {actual_port}) but "
-                    "Chrome is not responsive. Run `gflow chrome stop` to clean up."
-                ) from None
-
-        # Wait for Chrome to be ready (skip if we already waited in race-loss branch)
         log.info("chrome_spawned", pid=proc.pid, port=actual_port)
         if not race_lost:
-            for _ in range(int(_SPAWN_WAIT_SECONDS / 0.5)):
-                if is_browser_running(port=actual_port):
-                    break
-                await asyncio.sleep(0.5)
+            await _wait_chrome_ready(actual_port)
 
-        endpoint = f"http://localhost:{actual_port}"
-        context = await _connect_cdp(endpoint)
-        page = await context.new_page()
-        await page.goto(
-            "https://labs.google/fx/tools/flow",
-            wait_until="domcontentloaded",
-        )
-        if not await _is_logged_in_to_flow(page):
-            raise AuthMissingError(
-                f"Profile not logged in to Flow. Run: gflow auth login --profile {profile_name}"
-            )
-        return context
+        return await _attach_and_verify_login(actual_port, profile_name)
 
 
 async def close_browser(profile_dir: Path, port: int = 9222) -> None:
@@ -619,15 +647,12 @@ async def close_browser(profile_dir: Path, port: int = 9222) -> None:
     open). This just clears the lock so the next CLI call treats Chrome as
     unmanaged. Use ``gflow chrome stop`` (D.2.3d) for full lifecycle control.
     """
+    await asyncio.sleep(0)  # yield to event loop — keep async signature on public API
     lock_path = profile_dir / _LOCK_FILENAME
-    existing = _read_lock(lock_path)
-    if existing and existing.get("port") == port:
-        _remove_lock(lock_path)
-        log.info("chrome_lock_released", port=port)
-    elif not lock_path.exists():
-        # No-op
-        pass
-    else:
-        # Lock exists but for a different port — remove it anyway (port may vary)
-        _remove_lock(lock_path)
-        log.info("chrome_lock_released", port=port)
+    if not lock_path.exists():
+        return  # nothing to release
+    # Remove regardless of whether the lock matches `port` — the recorded port
+    # may have changed since the lock was written, and either way the user is
+    # explicitly asking to drop the lock.
+    _remove_lock(lock_path)
+    log.info("chrome_lock_released", port=port)

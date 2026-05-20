@@ -28,9 +28,10 @@ class TestConstruction:
         assert c.profile_dir == tmp_path / "prof"
         assert c.headless is False
 
-    def test_default_headless_true(self, tmp_path: Path) -> None:
+    def test_default_headless_false(self, tmp_path: Path) -> None:
+        # ui_automation transport requires headed Chrome — reCAPTCHA rejects headless
         c = FlowApiClient(profile_dir=tmp_path / "prof")
-        assert c.headless is True
+        assert c.headless is False
 
     def test_page_property_raises_before_enter(self, tmp_path: Path) -> None:
         c = FlowApiClient(profile_dir=tmp_path / "prof")
@@ -199,7 +200,7 @@ class _FakeTransport:
     async def refresh_auth(self) -> None:
         pass
 
-    async def generate_images(self, *, project_id: str, request: object) -> list[object]:
+    async def generate_images(self, *, project_id: str | None, request: object) -> list[object]:
         return []
 
     async def teardown(self) -> None:
@@ -218,6 +219,7 @@ def _patch_playwright(monkeypatch: pytest.MonkeyPatch) -> None:
     fake_context.pages = [fake_page]
     fake_context.close = AsyncMock()
     fake_context.new_page = AsyncMock(return_value=fake_page)
+    fake_context.add_init_script = AsyncMock()
 
     fake_pw = MagicMock()
     fake_pw.stop = AsyncMock()
@@ -289,7 +291,7 @@ async def test_client_delegates_image_gen_to_transport(
         dimensions=(512, 512),
     )
 
-    async def fake_gen(*, project_id: str, request: object) -> list[GeneratedImage]:
+    async def fake_gen(*, project_id: str | None, request: object) -> list[GeneratedImage]:
         assert project_id == "test-proj-xyz"
         assert isinstance(request, GenerateImageRequest)
         assert request.prompt == "delegated"

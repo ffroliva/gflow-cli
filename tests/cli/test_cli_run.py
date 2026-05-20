@@ -21,9 +21,9 @@ from gflow_cli.cli import main as cli_main
 from gflow_cli.cli_run import (
     BatchConfig,
     _check_transport_gated,
-    _resolve_output_dir,
 )
 from gflow_cli.errors import ConfigurationError, WafRejectionError
+from gflow_cli.paths import resolve_batch_output_dir
 
 # ---------------------------------------------------------------------------
 # Helpers
@@ -179,18 +179,26 @@ class TestBatchConfigValidation:
 
 class TestResolveOutputDir:
     def test_cli_override_wins(self) -> None:
-        result = _resolve_output_dir(cli_override=Path("/cli"), config_value="config")
+        result = resolve_batch_output_dir(
+            cli_override=Path("/cli"), config_value="config", output_root=Path("/root")
+        )
         assert result == Path("/cli")
 
     def test_config_value_used_when_no_cli(self) -> None:
-        result = _resolve_output_dir(cli_override=None, config_value="cfg")
+        result = resolve_batch_output_dir(
+            cli_override=None, config_value="cfg", output_root=Path("/root")
+        )
         assert result == Path("cfg")
 
     def test_default_when_neither_set(self) -> None:
-        result = _resolve_output_dir(cli_override=None, config_value=None)
-        # Format: out/<timestamp>
-        assert result.parts[0] == "out"
-        assert len(result.parts) == 2
+        from datetime import date
+
+        today = date.today().isoformat()
+        result = resolve_batch_output_dir(
+            cli_override=None, config_value=None, output_root=Path("/root")
+        )
+        # Unified format: <root>/images/<YYYY-MM-DD>
+        assert result == Path("/root/images") / today
 
 
 class TestCheckTransportGated:

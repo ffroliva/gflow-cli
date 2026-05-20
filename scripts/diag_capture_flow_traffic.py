@@ -63,7 +63,7 @@ async def run(profile_name: str, wait_seconds: int, out_path: Path) -> None:
 
         async def on_request(req: Request) -> None:
             url = req.url
-            if "aisandbox-pa.googleapis.com" not in url:
+            if "aisandbox-pa.googleapis.com" not in url and "labs.google" not in url:
                 return
             post_data = ""
             try:

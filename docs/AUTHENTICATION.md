@@ -127,14 +127,38 @@ Use `gflow auth login --profile <name>` to add or refresh a profile.
 
 ### `gflow auth login`
 
-Opens a headed Chromium, navigates to `https://labs.google/fx/tools/flow?hl=en`, and waits for you to sign in. The browser window must be closed within **10 minutes total** (the underlying `wait_for_event("close", timeout=600_000)`); after that the command times out. When the window is closed, the captured session is persisted to disk.
+Opens a headed browser, navigates to `https://labs.google/fx/tools/flow?hl=en`, and waits
+for you to sign in. The CLI automatically detects success and persists the session to disk.
 
 ```bash
-gflow auth login                  # default profile
-gflow auth login --profile work   # named profile (creates if missing)
+gflow auth login                   # default profile, auto browser
+gflow auth login --profile work    # named profile (creates if missing)
+gflow auth login --browser chrome  # force real Chrome (bypasses G12 block)
 ```
 
-Re-running this command refreshes an expired session: it reuses the existing profile dir, so you typically just have to click "Continue as <you>" on the Google account chooser.
+Re-running this command refreshes an expired session: it reuses the existing profile dir,
+so you typically just have to click "Continue as <you>" on the Google account chooser.
+
+#### `--browser [auto|chrome|internal]`
+
+| Value | Browser used | When to use |
+|---|---|---|
+| `auto` (default) | Real Chrome if installed; falls back to internal | First choice for most users |
+| `chrome` | System Google Chrome (**Passive Capture**) | Required to bypass "G12" blocks |
+| `internal` | Playwright's bundled Chromium | Fallback when Chrome isn't installed |
+
+Override with the env var: `GFLOW_CLI_AUTH_BROWSER=chrome gflow auth login`
+
+**Why `chrome` bypasses bot detection:** Playwright's default automation mode exposes
+`navigator.webdriver = true` as a non-configurable native property. Google detects this
+and redirects to `/v3/signin/rejected` (the "G12 block"). The `chrome` strategy
+implements **Passive Capture**: it launches your real system Chrome as a 100% standard
+process without any automation flags or debugging ports. You log in manually, close
+the window, and `gflow` extracts the verified session from the profile.
+
+**Privacy guard:** The `chrome` strategy strictly refuses to use any profile directory
+outside `GFLOW_CLI_HOME`. This protects your primary system Chrome profile from
+accidental interference or data corruption.
 
 ### `gflow auth status`
 

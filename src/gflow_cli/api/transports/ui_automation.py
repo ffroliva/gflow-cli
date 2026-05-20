@@ -22,7 +22,14 @@ from urllib.parse import urlparse
 import structlog
 
 from gflow_cli.api.dto import GeneratedImage
-from gflow_cli.api.image import GenerateImageRequest
+from gflow_cli.api.image import Aspect, GenerateImageRequest
+from gflow_cli.api.transports.ui_automation_video import VideoGenerationMixin
+from gflow_cli.errors import (
+    AuthExpiredError,
+    ContentPolicyError,
+    WafRejectionError,
+    WireFormatError,
+)
 
 if TYPE_CHECKING:
     from playwright.async_api import Page, ViewportSize
@@ -38,6 +45,8 @@ log = structlog.get_logger(__name__)
 
 # Flow editor entrypoint — ``?hl=en`` locks locale for selector stability.
 FLOW_URL = "https://labs.google/fx/tools/flow?hl=en"
+# URL fragment that distinguishes the project editor from the gallery.
+_PROJECT_URL_FRAGMENT = "/project/"
 
 # Browser viewport — matches the validated smoke (also matches the CG Worker).
 _VIEWPORT = {"width": 1280, "height": 800}
@@ -118,11 +127,12 @@ PROMPT_INPUT_SELECTORS = (
     '[aria-label*="prompt"]',
 )
 
-# Submit button selectors — the canonical button wraps an
-# ``arrow_forward`` Material Symbols icon. Localized labels follow.
+# Submit button selectors — arrow_forward icon is locale-stable.
+# Use :text() inside :has() (not :has-text() which is invalid inside :has()).
 SUBMIT_BUTTON_SELECTORS = (
-    'button:has(i.google-symbols:has-text("arrow_forward"))',
-    'button:has-text("arrow_forward"):has-text("Create")',
+    "button:has(i.google-symbols:text('arrow_forward'))",
+    "button:has(i:text('arrow_forward'))",
+    "button:has-text('arrow_forward')",
     'button[aria-label*="Create"]',
 )
 
@@ -144,8 +154,156 @@ NEW_PROJECT_SELECTORS = (
     "[aria-label*='Project' i]",
 )
 
+# Onboarding bypass selectors — cookie banners, terms, landing pages.
+# Handled gracefully if not found; localized variants included.
+ONBOARDING_SELECTORS = (
+    "button:has-text('Agree')",
+    "button:has-text('Aceitar')",
+    "button:has-text('I agree')",
+    "button:has-text('Concordo')",
+    "button:has-text('Accept')",
+    "button:has-text('Create with Flow')",
+    "button:has-text('Criar com o Flow')",
+    "button:has-text('Get Started')",
+    "button:has-text('Começar')",
+)
 
-class UiAutomationTransport:
+# Changelog / "What's new" iframe selectors — these src patterns match the
+# gstatic CDN paths Flow uses for its release-note overlays. Two patterns are
+# included: the /flow/ prefix form and the bare /changelogs/ form.
+CHANGELOG_IFRAME_SELECTORS = (
+    "iframe[src*='/flow/changelogs/']",
+    "iframe[src*='/changelogs/']",
+)
+
+# Close-button selectors tried after a changelog iframe is detected.
+# Ordered from most-specific to most-generic so a precise match wins first.
+# All are tried before the Escape fallback.
+OVERLAY_CLOSE_BUTTON_SELECTORS = (
+    "[aria-label='Close']",
+    "[aria-label='close']",
+    "[aria-label='Dismiss']",
+    "[aria-label='dismiss']",
+    "[aria-label='Cancel']",
+    "button:has(i.google-symbols:text('close'))",
+    "button:has(i:text('close'))",
+    "[role='dialog'] button:has(i:text('close'))",
+    "[role='dialog'] button[aria-label*='close' i]",
+    "button[data-dismiss]",
+)
+
+
+# Generation settings trigger — the button shows the current ratio icon.
+# All 5 ratio icon names are enumerated so the selector is ratio-invariant.
+GEN_SETTINGS_BUTTON_SELECTORS = (
+    "button:has(i.google-symbols:text('crop_16_9'))",
+    "button:has(i.google-symbols:text('crop_9_16'))",
+    "button:has(i.google-symbols:text('crop_square'))",
+    "button:has(i.google-symbols:text('crop_portrait'))",
+    "button:has(i.google-symbols:text('crop_landscape'))",
+)
+
+# CLI string → Flow aspect ratio tab text (locale-invariant number format).
+_ASPECT_TAB: dict[str, str] = {
+    "16:9": "16:9",
+    "9:16": "9:16",
+    "1:1": "1:1",
+    "4:3": "4:3",
+    "3:4": "3:4",
+}
+
+# Count → Flow count tab text.
+_COUNT_TAB: dict[int, str] = {1: "1x", 2: "x2", 3: "x3", 4: "x4"}
+
+# Reverse map: domain Aspect enum → CLI string accepted by the settings panel.
+_CLI_FROM_ASPECT: dict[Aspect, str] = {
+    Aspect.PORTRAIT: "9:16",
+    Aspect.LANDSCAPE: "16:9",
+    Aspect.SQUARE: "1:1",
+    Aspect.LANDSCAPE_FOUR_THREE: "4:3",
+    Aspect.PORTRAIT_THREE_FOUR: "3:4",
+}
+
+
+def _aspect_cli_from_enum(aspect: Aspect) -> str | None:
+    """Map the domain Aspect enum to the CLI string the settings panel expects."""
+    return _CLI_FROM_ASPECT.get(aspect)
+
+
+def _extract_project_id(url: str) -> str | None:
+    """Pull the project UUID out of a Flow editor URL, or None if absent."""
+    if _PROJECT_URL_FRAGMENT not in url:
+        return None
+    try:
+        return url.split(_PROJECT_URL_FRAGMENT)[1].split("?")[0]
+    except (IndexError, ValueError):
+        return None
+
+
+def _collect_images_from_body(body: dict[str, Any], images: list[GeneratedImage]) -> None:
+    """Append parseable GeneratedImage entries from one batchGenerateImages body."""
+    media_list_raw = body.get("media", [])
+    if not isinstance(media_list_raw, list):
+        return
+    for item_raw in cast("list[Any]", media_list_raw):
+        if not isinstance(item_raw, dict):
+            continue
+        item: dict[str, Any] = cast("dict[str, Any]", item_raw)
+        try:
+            images.append(GeneratedImage.from_response_item(item))
+        except ValueError as e:
+            log.warning("ui_automation.parse_media_item_failed", error=str(e))
+
+
+def _images_from_responses(
+    responses: list[dict[str, Any]],
+) -> tuple[list[GeneratedImage], int | None, str]:
+    """Process captured batchGenerateImages responses.
+
+    Returns ``(images, first_error_status, first_error_route)``. Raises
+    :class:`AuthExpiredError` on 401 and :class:`WafRejectionError` on 403,
+    which the caller must surface — these are not first-error candidates.
+    """
+    images: list[GeneratedImage] = []
+    first_error_status: int | None = None
+    first_error_route: str = ""
+
+    for response in responses:
+        status = response.get("status")
+        body: dict[str, Any] = cast("dict[str, Any]", response.get("body") or {})
+        route_str: str = str(response.get("url", ""))
+
+        if status == 401:
+            raise AuthExpiredError(
+                detail="batchGenerateImages returned HTTP 401 — session expired",
+                status=401,
+                route=route_str,
+            )
+        if status == 403:
+            log.warning(
+                "ui_automation.batch_403_body",
+                body_prefix=str(body)[:200],
+                route=route_str,
+            )
+            raise WafRejectionError(
+                detail=(
+                    "batchGenerateImages HTTP 403 — reCAPTCHA score too low or WAF "
+                    "fingerprint mismatch. Re-authenticate and retry."
+                ),
+                status=403,
+                route=route_str,
+            )
+        if status != 200:
+            first_error_status = first_error_status or status
+            first_error_route = first_error_route or route_str
+            continue
+
+        _collect_images_from_body(body, images)
+
+    return images, first_error_status, first_error_route
+
+
+class UiAutomationTransport(VideoGenerationMixin):
     """D.2.4 — Playwright UI mimicry strategy.
 
     Drives the Flow editor on a logged-in Pro/Ultra profile through a
@@ -169,6 +327,12 @@ class UiAutomationTransport:
         self._page: Page | None = None
         self._setup_done: bool = False
         self._owns_playwright: bool = False
+        # Serialize concurrent generate_images calls — a single Playwright Page
+        # cannot be safely shared across parallel asyncio tasks (each call
+        # navigates, opens panels, and types into the same DOM). The lock
+        # converts the N-parallel fan-out from generate_images_batch into N
+        # sequential Page interactions, eliminating all race conditions.
+        self._generate_lock: asyncio.Lock = asyncio.Lock()
 
     # ------------------------------------------------------------------
     # Lifecycle
@@ -208,11 +372,21 @@ class UiAutomationTransport:
         pw_cm = async_playwright()
         pw = await pw_cm.__aenter__()
         try:
+            from gflow_cli.browser_manager import channel_for_profile  # noqa: PLC0415
+
             ctx = await pw.chromium.launch_persistent_context(
                 str(profile_dir),
                 headless=False,
                 viewport=cast("ViewportSize", _VIEWPORT),
                 locale="en-US",
+                channel=channel_for_profile(profile_dir),
+                args=["--disable-blink-features=AutomationControlled"],
+            )
+            # Hide the automation flag so reCAPTCHA Enterprise doesn't score
+            # the session as a bot — navigator.webdriver=true causes low-score
+            # tokens and HTTP 403 on batchGenerateImages.
+            await ctx.add_init_script(
+                "Object.defineProperty(navigator,'webdriver',{get:()=>undefined})"
             )
             self._pw_cm = pw_cm
             self._ctx = ctx
@@ -256,7 +430,7 @@ class UiAutomationTransport:
         on_flow = "labs.google" in page.url and "/flow" in page.url
         if not on_flow:
             return False
-        if "/project/" in page.url:
+        if _PROJECT_URL_FRAGMENT in page.url:
             return True
         try:
             signin_button = await page.locator(
@@ -270,20 +444,130 @@ class UiAutomationTransport:
     # Internal helpers — gallery → editor navigation (unit 3.4)
     # ------------------------------------------------------------------
 
-    async def _enter_editor(self, page: Page, out_dir: Path | None = None) -> None:
-        """Click "+ New project" on the gallery and wait for /project/ nav.
+    async def _bypass_onboarding(self, page: Page) -> None:
+        """Click through cookie banners and 'Get Started' pages if they appear."""
+        for selector in ONBOARDING_SELECTORS:
+            try:
+                loc = page.locator(selector).first
+                if await loc.is_visible(timeout=1000):
+                    await loc.click(force=True)
+                    log.info("ui_automation.onboarding_bypassed", selector=selector)
+                    await page.wait_for_timeout(1000)
+            except Exception:
+                continue
 
-        No-op when the URL already contains ``/project/``. Tries each
-        selector in :data:`NEW_PROJECT_SELECTORS` in order — locale-stable
-        icon-class first, localized text fallbacks after. On total failure
-        a debug screenshot is written to ``out_dir`` (if provided) and
-        ``RuntimeError`` is raised with the captured URL + path.
+    async def _dismiss_blocking_overlays(
+        self,
+        page: Page,
+        out_dir: Path | None = None,
+    ) -> bool:
+        """Dismiss Flow changelog / "What's new" iframes and any blocking overlays.
+
+        Called at stable interaction boundaries (after editor navigation, before
+        UI interactions that could be intercepted by a changelog popup).
+
+        Strategy:
+        1. Check whether any changelog iframe is currently visible.
+        2. If none found, return False immediately (cheap; no log noise).
+        3. If found, try each close-button selector in OVERLAY_CLOSE_BUTTON_SELECTORS.
+           On first visible match: force-click it, log the selector used, return True.
+        4. If no close button is discoverable, press Escape as a fallback and return True.
+        5. If Escape raises (extremely rare — keyboard unavailable), capture a debug
+           screenshot (if out_dir provided) and return False so the caller can decide
+           how to proceed. The structured warning carries enough info to identify the
+           blocking element.
+
+        Returns True if a dismissal action was taken, False if the page was
+        clear (no overlay) or if dismissal could not be confirmed.
         """
-        if "/project/" in page.url:
-            log.info("ui_automation.editor_already_open", url=page.url)
-            return
+        # Step 1 — detect whether a changelog iframe is blocking the UI.
+        iframe_found = False
+        for sel in CHANGELOG_IFRAME_SELECTORS:
+            try:
+                if await page.locator(sel).first.is_visible(timeout=1500):
+                    iframe_found = True
+                    log.info("ui_automation.overlay_detected", selector=sel)
+                    break
+            except Exception:  # noqa: BLE001 — probe failure means no match
+                continue
+
+        if not iframe_found:
+            return False
+
+        # Step 2 — try explicit close buttons first.
+        for close_sel in OVERLAY_CLOSE_BUTTON_SELECTORS:
+            try:
+                loc = page.locator(close_sel).first
+                if await loc.is_visible(timeout=500):
+                    await loc.click(force=True)
+                    await page.wait_for_timeout(500)
+                    log.info(
+                        "ui_automation.overlay_dismissed",
+                        selector=close_sel,
+                        method="close_button",
+                    )
+                    return True
+            except Exception:  # noqa: BLE001 — selector miss or stale element
+                continue
+
+        # Step 3 — Escape fallback (regression test case: iframe present, no close button).
+        try:
+            await page.keyboard.press("Escape")
+            await page.wait_for_timeout(500)
+            log.info(
+                "ui_automation.overlay_dismissed",
+                selector="<none>",
+                method="escape",
+            )
+            return True
+        except Exception as exc:  # noqa: BLE001 — keyboard unavailable in some sandboxes
+            shot_path = await _capture_debug_screenshot(
+                page, out_dir, "debug_overlay_dismiss_failed.png"
+            )
+            log.warning(
+                "ui_automation.overlay_dismiss_failed",
+                error=str(exc),
+                screenshot=str(shot_path),
+                note=(
+                    "A changelog iframe was detected but could not be dismissed — "
+                    "no close button found and Escape raised. Manual intervention "
+                    "may be needed (open Flow in Chrome, dismiss the 'What's new' "
+                    "popup, close Chrome cleanly)."
+                ),
+            )
+            return False
+
+    async def _enter_editor(self, page: Page, out_dir: Path | None = None) -> None:
+        """Always create a fresh project — click "+ New project" on the gallery
+        and wait for ``/project/`` navigation.
+
+        When the URL already contains ``/project/`` (Flow's PWA restored the
+        previous project on browser launch), this navigates back to the
+        gallery first, then falls through to the "+ New project" click —
+        the alternative (returning early) would reuse the restored project
+        and accumulate images across CLI invocations.
+
+        Tries each selector in :data:`NEW_PROJECT_SELECTORS` in order —
+        locale-stable icon-class first, localized text fallbacks after. On
+        total failure a debug screenshot is written to ``out_dir`` (if
+        provided) and ``RuntimeError`` is raised with the captured URL +
+        path.
+        """
+        if _PROJECT_URL_FRAGMENT in page.url:
+            # Flow's PWA restores the last-visited project URL on next browser
+            # launch (persistent context). Returning early here would reuse the
+            # old project, accumulating images across CLI invocations instead of
+            # starting fresh. Navigate back to the gallery first, then fall
+            # through to the "+ New project" click below.
+            # Do NOT use wait_until="networkidle" — PWAs re-render incrementally
+            # and networkidle is flaky. The selector wait_for below is the real
+            # readiness gate.
+            log.info("ui_automation.navigating_to_gallery", restored_url=page.url)
+            await page.goto(FLOW_URL, timeout=45_000)
+            await self._bypass_onboarding(page)
 
         await page.wait_for_timeout(3000)
+        await self._bypass_onboarding(page)
         for selector in NEW_PROJECT_SELECTORS:
             try:
                 loc = page.locator(selector).first
@@ -291,7 +575,9 @@ class UiAutomationTransport:
                 log.info("ui_automation.clicking_new_project", selector=selector)
                 await loc.click()
                 try:
-                    await page.wait_for_url(lambda url: "/project/" in url, timeout=15_000)
+                    await page.wait_for_url(
+                        lambda url: _PROJECT_URL_FRAGMENT in url, timeout=15_000
+                    )
                     log.info("ui_automation.entered_editor", url=page.url)
                     return
                 except Exception:  # noqa: BLE001 — try next selector
@@ -350,8 +636,9 @@ class UiAutomationTransport:
         await input_box.click()
         await page.keyboard.press("Control+A")
         await page.keyboard.press("Delete")
-        # Slate.js requires real keyboard events; .fill() bypasses onChange.
-        await page.keyboard.type(prompt_text)
+        # insert_text fires a single beforeinput event that Slate.js handles
+        # natively — near-instant vs keyboard.type() which is ~1.5s/char.
+        await page.keyboard.insert_text(prompt_text)
         await page.wait_for_timeout(500)
 
         for sel in SUBMIT_BUTTON_SELECTORS:
@@ -368,13 +655,87 @@ class UiAutomationTransport:
         await page.keyboard.press("Enter")
 
     # ------------------------------------------------------------------
+    # Internal helpers — generation settings (aspect ratio + count)
+    # ------------------------------------------------------------------
+
+    @staticmethod
+    async def _open_gen_settings_panel(page: Page) -> bool:
+        """Try selectors in order to open the per-generation settings panel.
+
+        Returns True on success, False if no selector matched (non-fatal —
+        caller falls back to Flow's current defaults).
+        """
+        for sel in GEN_SETTINGS_BUTTON_SELECTORS:
+            try:
+                btn = page.locator(sel).first
+                await btn.wait_for(state="visible", timeout=3_000)
+                await btn.click()
+                await page.wait_for_timeout(600)
+                log.info("ui_automation.gen_settings_opened", via=sel)
+                return True
+            except Exception:  # noqa: BLE001
+                continue
+        return False
+
+    @staticmethod
+    async def _configure_generation_settings(
+        page: Page,
+        aspect_cli: str | None,
+        count: int | None,
+    ) -> None:
+        """Open the per-generation settings panel and apply aspect ratio and count.
+
+        Skips gracefully if the panel trigger cannot be found (non-fatal —
+        generation will proceed with Flow's current default settings).
+        """
+        if aspect_cli is None and count is None:
+            # Nothing to apply.
+            return
+
+        if not await UiAutomationTransport._open_gen_settings_panel(page):
+            log.warning("ui_automation.gen_settings_panel_not_found", skipping=True)
+            return
+
+        if aspect_cli:
+            tab_text = _ASPECT_TAB.get(aspect_cli, aspect_cli)
+            try:
+                tab = page.locator(f'[role="tab"]:has-text("{tab_text}")').first
+                await tab.wait_for(state="visible", timeout=3_000)
+                await tab.click()
+                log.info("ui_automation.aspect_ratio_set", value=aspect_cli)
+            except Exception as e:  # noqa: BLE001
+                log.warning("ui_automation.aspect_ratio_set_failed", value=aspect_cli, error=str(e))
+
+        if count is not None:
+            count_text = _COUNT_TAB.get(count)
+            if count_text is None:
+                log.warning("ui_automation.unsupported_count", value=count)
+            else:
+                try:
+                    tab = page.locator(f'[role="tab"]:text-is("{count_text}")').first
+                    await tab.wait_for(state="visible", timeout=3_000)
+                    await tab.click()
+                    log.info("ui_automation.count_set", value=count, tab_text=count_text)
+                except Exception as e:  # noqa: BLE001
+                    log.warning("ui_automation.count_set_failed", value=count, error=str(e))
+
+        await page.keyboard.press("Escape")
+        await page.wait_for_timeout(400)
+
+    # ------------------------------------------------------------------
     # Internal helpers — batchGenerateImages capture (unit 3.6)
     # ------------------------------------------------------------------
 
     @staticmethod
-    def _attach_batch_response_listener(page: Page) -> list[dict[str, Any]]:
+    def _attach_batch_response_listener(
+        page: Page, *, project_id: str | None = None
+    ) -> list[dict[str, Any]]:
         """Synchronously register a ``page.on('response', ...)`` listener
         that records ``batchGenerateImages`` responses into a shared list.
+
+        When ``project_id`` is provided, only responses whose URL contains
+        ``/projects/{project_id}/`` are captured — this prevents stale
+        responses from previously-visited projects accumulating in the list.
 
         Returns the shared list — the caller submits the prompt next, then
         polls / awaits that list via :meth:`_await_captured`. Registering
@@ -386,6 +747,8 @@ class UiAutomationTransport:
 
         async def on_response(response: Any) -> None:
             if "batchGenerateImages" not in response.url:
+                return
+            if project_id and f"/projects/{project_id}/" not in response.url:
                 return
             try:
                 body = await response.json()
@@ -409,21 +772,32 @@ class UiAutomationTransport:
     @staticmethod
     async def _await_captured(
         captured: list[dict[str, Any]],
-        timeout_s: float = 120.0,
+        timeout_s: float = 180.0,
         *,
+        expected_count: int = 1,
         poll_interval_s: float = 0.5,
-    ) -> dict[str, Any]:
-        """Wait for the shared ``captured`` list to receive its first
-        ``batchGenerateImages`` response, polling every ``poll_interval_s``.
+    ) -> list[dict[str, Any]]:
+        """Wait for ``expected_count`` batchGenerateImages responses.
 
-        Raises ``TimeoutError`` if no response arrives within ``timeout_s``.
+        Flow generates N images via N separate API calls (not one call with
+        N URLs). We poll until we have enough responses or the timeout expires.
+
+        Raises ``TimeoutError`` if no responses arrive within ``timeout_s``.
+        Returns all captured responses (may be fewer than expected_count if
+        timeout fires after at least one response).
         """
         deadline = time.monotonic() + timeout_s
-        while time.monotonic() < deadline and not captured:
+        while time.monotonic() < deadline and len(captured) < expected_count:
             await asyncio.sleep(poll_interval_s)
         if not captured:
             raise TimeoutError(f"No batchGenerateImages response within {timeout_s:.1f}s.")
-        return captured[0]
+        if len(captured) < expected_count:
+            log.warning(
+                "ui_automation.fewer_responses_than_expected",
+                got=len(captured),
+                expected=expected_count,
+            )
+        return list(captured)
 
     @staticmethod
     async def _capture_batch_response(
@@ -431,7 +805,7 @@ class UiAutomationTransport:
         timeout_s: float = 120.0,
         *,
         poll_interval_s: float = 0.5,
-    ) -> dict[str, Any]:
+    ) -> list[dict[str, Any]]:
         """Convenience wrapper: attach + await in one call.
 
         Useful when the caller has no work to interleave between attach
@@ -487,13 +861,20 @@ class UiAutomationTransport:
                 try:
                     resp = await client.get(url)
                     resp.raise_for_status()
-                    p = out_dir / f"image_{i:02d}.png"
+                    # Auto-detect extension from Content-Type / magic bytes.
+                    ct = resp.headers.get("content-type", "")
+                    if "jpeg" in ct or "jpg" in ct or resp.content[:3] == b"\xff\xd8\xff":
+                        ext = ".jpg"
+                    else:
+                        ext = ".png"
+                    p = out_dir / f"image_{i:02d}{ext}"
                     p.write_bytes(resp.content)
                     paths.append(p)
                     log.info(
-                        "ui_automation.png_saved",
+                        "ui_automation.image_saved",
                         path=str(p),
                         bytes=len(resp.content),
+                        format=ext,
                     )
                 except Exception as e:  # noqa: BLE001 — log and skip
                     log.error(
@@ -510,7 +891,7 @@ class UiAutomationTransport:
     async def generate_images(
         self,
         *,
-        project_id: str,
+        project_id: str | None,
         request: GenerateImageRequest,
     ) -> list[GeneratedImage]:
         """Submit ``request.prompt`` through Flow's editor and return the
@@ -531,43 +912,59 @@ class UiAutomationTransport:
             raise RuntimeError(
                 "UiAutomationTransport.setup() must be called before generate_images()"
             )
-        page: Page = self._page
+        async with self._generate_lock:
+            return await self._generate_images_locked(request)
+
+    async def _generate_images_locked(
+        self,
+        request: GenerateImageRequest,
+    ) -> list[GeneratedImage]:
+        """Serialized body of generate_images — called under self._generate_lock.
+
+        Extracts into a private method so the lock wrapper in generate_images
+        stays a single line, keeping the public method's intent clear.
+        """
+        page: Page = self._page  # type: ignore[assignment]  # guard in caller
 
         await self._enter_editor(page)
+        # Dismiss any Flow changelog / "What's new" overlay that may be on top
+        # of the editor before we click into settings / submit (#26).
+        await self._dismiss_blocking_overlays(page)
+
+        # Resolve the project_id from the URL now that we're in the editor.
+        nav_project_id = _extract_project_id(page.url)
+        aspect_cli = _aspect_cli_from_enum(request.aspect)
+
+        # Configure generation settings (aspect ratio + count) BEFORE attaching
+        # the response listener so settings clicks don't interfere with capture.
+        await self._configure_generation_settings(page, aspect_cli, request.count)
 
         # Attach the response listener SYNCHRONOUSLY before any prompt
         # action. asyncio.create_task is unsafe here: it defers the listener
         # registration until the new task gets event-loop scheduling, which
         # could happen AFTER _send_prompt's click on a busy loop. Splitting
-        # attach/await eliminates that race.
-        captured = self._attach_batch_response_listener(page)
+        # attach/await eliminates that race. Project-ID filter prevents stale
+        # responses from previously-visited projects accumulating in the list.
+        captured = self._attach_batch_response_listener(page, project_id=nav_project_id)
         await self._send_prompt(page, request.prompt)
-        response = await self._await_captured(captured)
+        responses = await self._await_captured(captured, expected_count=request.count)
 
-        status = response.get("status")
-        if status != 200:
-            raise RuntimeError(
-                f"batchGenerateImages returned HTTP {status} "
-                f"(expected 200). Response URL: {response.get('url')}"
+        # Collect images from ALL captured responses (Flow makes one API call
+        # per image when count > 1).
+        images, first_error_status, first_error_route = _images_from_responses(responses)
+
+        if first_error_status is not None and not images:
+            raise WireFormatError(
+                detail=f"batchGenerateImages returned HTTP {first_error_status}",
+                status=first_error_status,
+                route=first_error_route,
             )
 
-        body: dict[str, Any] = cast("dict[str, Any]", response.get("body") or {})
-        media_list_raw = body.get("media", [])
-        if not isinstance(media_list_raw, list):
-            raise RuntimeError("batchGenerateImages returned 200 but body.media is not a list.")
-
-        images: list[GeneratedImage] = []
-        for item_raw in cast("list[Any]", media_list_raw):
-            if not isinstance(item_raw, dict):
-                continue
-            item: dict[str, Any] = cast("dict[str, Any]", item_raw)
-            try:
-                images.append(GeneratedImage.from_response_item(item))
-            except ValueError as e:
-                log.warning("ui_automation.parse_media_item_failed", error=str(e))
-
         if not images:
-            raise RuntimeError("batchGenerateImages returned 200 but no parseable image URLs.")
+            raise ContentPolicyError(
+                detail="batchGenerateImages returned 200 but no parseable media items",
+                route=first_error_route or "",
+            )
         return images
 
     # ------------------------------------------------------------------
@@ -583,6 +980,7 @@ class UiAutomationTransport:
         Kept on the Protocol surface for consistency with the HTTP
         strategies (S1/S2/S3) where refresh_auth has real work to do.
         """
+        await asyncio.sleep(0)  # yield to event loop — Protocol-required async signature
         log.debug("ui_automation.refresh_auth_noop")
 
     async def teardown(self) -> None:

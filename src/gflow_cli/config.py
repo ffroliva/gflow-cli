@@ -41,9 +41,8 @@ def _migrate_legacy_env() -> None:
     promoted keys. Removed in v0.5.0.
     """
     promoted: list[str] = []
-    for key in list(os.environ):
-        if not key.startswith(_LEGACY_ENV_PREFIX):
-            continue
+    legacy_keys = [k for k in os.environ if k.startswith(_LEGACY_ENV_PREFIX)]
+    for key in legacy_keys:
         new_key = _NEW_ENV_PREFIX + key[len(_LEGACY_ENV_PREFIX) :]
         if new_key not in os.environ:
             os.environ[new_key] = os.environ[key]
@@ -129,12 +128,24 @@ class Settings(BaseSettings):
 
     # --- runtime ----------------------------------------------------------
     timeout_seconds: int = Field(default=600, ge=1, le=3600)
+    auth_login_timeout: int = Field(
+        default=600,
+        ge=1,
+        le=86400,
+        description=(
+            "Seconds to wait for the user to complete interactive sign-in. "
+            "Applies to both Real Chrome (Passive Capture) and Internal Chromium strategies. "
+            "Override via GFLOW_CLI_AUTH_LOGIN_TIMEOUT."
+        ),
+    )
     concurrency: int = Field(default=1, ge=1, le=16)
     headless: bool = Field(
-        default=True,
+        default=False,
         description=(
-            "Run the Playwright Chromium headless. Set to False if reCAPTCHA "
-            "fails to mint tokens (Google sometimes detects headless)."
+            "Run the Playwright Chromium headless. The ui_automation transport "
+            "requires headed Chrome — reCAPTCHA Enterprise rejects headless "
+            "browsers with an immediate 403. Only set True in CI/CD environments "
+            "that use a different transport (e.g. bearer/sapisidhash)."
         ),
     )
 

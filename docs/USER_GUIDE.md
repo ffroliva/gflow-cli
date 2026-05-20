@@ -25,6 +25,7 @@
 - [Journey 10 — Budgeting credits before a batch run](#journey-10--budgeting-credits-before-a-batch-run)
 - [Journey 11 — Wiring gflow outputs into a downstream pipeline](#journey-11--wiring-gflow-outputs-into-a-downstream-pipeline)
 - [Journey 12 — Recovering from `ContentPolicyError` or `RateLimitError`](#journey-12--recovering-from-contentpolicyerror-or-ratelimiterror)
+- [Journey 13 — Diagnosing a persistent `AuthExpiredError` after a successful re-login](#journey-13--diagnosing-a-persistent-authexpirederror-after-a-successful-re-login)
 - [Common errors quick-reference](#common-errors-quick-reference)
 
 ---
@@ -597,6 +598,166 @@ If exit 4 or 5 keeps firing on a prompt that looks tame:
 
 ---
 
+## Journey 13 — Diagnosing a persistent `AuthExpiredError` after a successful re-login
+
+**Symptom:** `gflow image t2i` (or any other command) exits with code 3 and the message
+`Authentication expired: HTTP 401` on route `project.createProject`, even though
+`gflow auth login` reported **`[OK] Session captured and verified.`** moments before.
+`gflow auth list` shows `Session: present` for the profile. Nothing seems wrong — yet
+every API call dies immediately.
+
+This is a distinct failure mode from the ordinary session-expiry case (Journey 7). The
+cause is a mismatch between the browser that *created* the profile cookies and the browser
+that the API client later uses to *read* them.
+
+---
+
+### 13.1 Background: why two browsers matter on Windows
+
+Chrome 130 + on Windows encrypts its cookie store with **app-bound AES-256** on top of
+DPAPI. Only a Chrome binary launched with the matching `user-data-dir` can decrypt those
+bytes. Playwright's bundled Chromium does not share Chrome's encryption key; if it opens
+a profile written by Chrome it reads zero auth cookies and therefore sends no `Cookie:`
+header, causing every authenticated API call to return HTTP 401.
+
+`gflow-cli` avoids this by writing a `.gflow_browser_strategy` marker file into each
+profile directory when `RealChromeStrategy` creates the session. `FlowApiClient` reads the
+marker at startup and passes `channel="chrome"` to `launch_persistent_context`, ensuring
+the same Chrome binary opens the profile for API calls.
+
+If the marker is absent (profile created before v0.6.0a2, marker manually deleted, or the
+profile directory was seeded from a Chrome user-data-dir by hand), the API client falls
+back to bundled Playwright Chromium and cannot decrypt the cookies.
+
+---
+
+### 13.2 Confirm the diagnosis
+
+**Step 1 — check the marker:**
+
+```bash
+# Linux / macOS
+cat ~/.local/share/gflow-cli/profile_<name>/.gflow_browser_strategy
+# → "chrome" means OK; no file or "internal" means the client will use bundled Chromium
+
+# Windows PowerShell
+type $env:LOCALAPPDATA\ffroliva\gflow-cli\profile_<name>\.gflow_browser_strategy
+```
+
+If the file is missing or its content is not `chrome`, the marker is the problem.
+
+**Step 2 — count the auth cookies the API client actually sees:**
+
+```python
+# uv run python  (or python3 in your venv)
+import asyncio
+from playwright.async_api import async_playwright
+
+async def probe(profile_dir: str, channel: str | None = None):
+    async with async_playwright() as pw:
+        ctx = await pw.chromium.launch_persistent_context(
+            user_data_dir=profile_dir, channel=channel, headless=True
+        )
+        cookies = await ctx.cookies(["https://labs.google"])
+        auth = [c for c in await ctx.cookies() if c["name"] in
+                {"SAPISID", "SID", "SSID", "__Secure-1PSID",
+                 "__Secure-next-auth.session-token"}]
+        print(f"labs.google cookies: {len(cookies)}, auth cookies: {len(auth)}")
+        for c in auth:
+            print(f"  {c['name']:40} domain={c['domain']}")
+        await ctx.close()
+
+asyncio.run(probe(r"C:\Users\<you>\AppData\Local\ffroliva\gflow-cli\profile_<name>"))
+```
+
+- **`auth cookies: 0` with `channel=None`** → Playwright cannot decrypt; this is the bug.
+- **`auth cookies: N` with `channel="chrome"`** → cookies are valid, just unreadable
+  without the marker.
+- **`auth cookies: 0` with both** → the session is genuinely not authenticated; skip
+  straight to step 13.3.
+
+**Step 3 — inspect the raw SQLite database (quick sanity check):**
+
+```bash
+# Windows PowerShell
+$db = "$env:LOCALAPPDATA\ffroliva\gflow-cli\profile_<name>\Default\Network\Cookies"
+# (fallback path: profile_<name>\Default\Cookies  or  profile_<name>\Cookies)
+uv run python -c "
+import sqlite3, sys
+conn = sqlite3.connect(sys.argv[1])
+rows = conn.execute('SELECT name, host_key FROM cookies').fetchall()
+print(f'{len(rows)} cookies total')
+for name, host in rows: print(f'  {name:35} {host}')
+" "$db"
+```
+
+Four or fewer rows — all `__Secure-next-auth.csrf-token`, `__Host-next-auth.csrf-token`,
+`NID`, or `_GRECAPTCHA` — means only pre-authentication cookies were saved. The sign-in
+was never completed, or the cookies were never written/have been cleared.
+
+---
+
+### 13.3 Fix: re-authenticate with `--browser chrome`
+
+```bash
+gflow auth login --profile <name>
+# "auto" mode picks real Chrome when it's installed — the usual case.
+# Explicit form if you want to be certain:
+gflow auth login --profile <name> --browser chrome
+```
+
+1. Chrome opens to `https://labs.google/fx/tools/flow?hl=en`.
+2. Sign in to your Google account with the AI Ultra / Pro subscription.
+3. When the Flow editor loads, **close Chrome**.
+4. `gflow auth login` probes the profile with `channel="chrome"`, verifies SAPISID is
+   present, and writes `.gflow_browser_strategy = "chrome"` to the profile directory.
+5. Subsequent `gflow image` / `gflow video` calls will use Chrome to open the profile and
+   can decrypt the cookies.
+
+Verify recovery:
+
+```bash
+gflow auth list
+# Session column should say "present"
+
+gflow image t2i "a single red apple on a white table" -n 1 --out /tmp/smoke
+# Should complete without AuthExpiredError
+```
+
+---
+
+### 13.4 Manual marker repair (when the session IS valid but the marker is missing)
+
+If step 2 confirmed auth cookies are present with `channel="chrome"` (N > 0), you can
+skip re-login and just write the marker:
+
+```bash
+# Linux / macOS
+echo -n "chrome" > ~/.local/share/gflow-cli/profile_<name>/.gflow_browser_strategy
+
+# Windows PowerShell
+"chrome" | Set-Content `
+    "$env:LOCALAPPDATA\ffroliva\gflow-cli\profile_<name>\.gflow_browser_strategy" `
+    -Encoding utf8 -NoNewline
+```
+
+Verify with a smoke test as above.
+
+---
+
+### 13.5 Prevent recurrence
+
+- **Always use `gflow auth login` (not raw Chrome) to create or refresh profiles.** The
+  CLI handles marker creation; manual browser runs do not.
+- **After upgrading from pre-v0.6.0a2:** run `gflow auth login --profile <name>` once per
+  existing profile; the marker will be written and stays current.
+- **On shared / CI machines:** store the profile directory in a version-controlled
+  secrets store and avoid letting any other Chrome process touch it — Chrome
+  re-encrypts cookies on first open, which silently breaks profiles accessed by other
+  tools.
+
+---
+
 ## Common errors quick-reference
 
 | You see… | Exit | Likely cause | Fix |
@@ -610,6 +771,93 @@ If exit 4 or 5 keeps firing on a prompt that looks tame:
 | `SIGINT (Ctrl-C)` | 130 | You interrupted | — |
 
 Full exit-code table with shell-script branching examples: [USAGE § Exit codes](USAGE.md#exit-codes).
+
+---
+
+## Journey 14 — Embedding `FlowApiClient` in a long-lived worker
+
+**Goal:** run `FlowApiClient` inside a service or background worker that handles many jobs over its lifetime without restarting the browser between calls.
+
+### 14.1 The minimal worker loop
+
+```python
+import asyncio
+from pathlib import Path
+from gflow_cli.api.client import FlowApiClient
+from gflow_cli.api.image import GenerateImageRequest, Model
+from gflow_cli.exceptions import GFlowError   # standard alias for gflow_cli.errors
+from gflow_cli.config import get_settings
+
+async def worker(job_queue: asyncio.Queue) -> None:
+    settings = get_settings()
+    profile_dir = settings.profile_subdir("default")
+
+    async with FlowApiClient(profile_dir=profile_dir, headless=True) as client:
+        while True:
+            job = await job_queue.get()
+            if job is None:
+                break  # poison pill — graceful shutdown
+
+            if not await client.health_check():
+                # Browser context died (OS killed the process, GPU crash, etc.)
+                # Re-raise so the supervisor can restart this worker.
+                raise RuntimeError("FlowApiClient health check failed — browser context dead")
+
+            try:
+                image = await client.generate_image(req=job.req)
+                # project_id omitted → a new Flow project is created automatically
+                await client.download_image(image, job.out_path)
+                job.result_queue.put_nowait(image)
+            except GFlowError as exc:
+                job.result_queue.put_nowait(exc)
+```
+
+Key points:
+- `health_check()` is a cheap liveness probe. Call it before every dispatch — it returns `False` (never raises) so you can branch without try/except.
+- `project_id` is omitted from `generate_image()`. Each job gets its own auto-created Flow project, which matches Flow's one-project-per-generation model.
+- Import from `gflow_cli.exceptions` or `gflow_cli.errors` — both resolve to identical classes.
+
+### 14.2 Catching typed errors in a worker
+
+All gflow errors inherit from `GFlowError`. Use `EXIT_CODE_MAP` to get the canonical exit code for any error class — useful for reporting or retry decisions:
+
+```python
+from gflow_cli.exceptions import GFlowError, AuthExpiredError, RateLimitError
+from gflow_cli.errors import EXIT_CODE_MAP
+
+try:
+    image = await client.generate_image(req=req)
+except AuthExpiredError:
+    # Exit code 3 — session expired; re-authenticate and retry
+    await re_login(profile_dir)
+except RateLimitError as exc:
+    # Exit code 4 — back off by exc.retry_after seconds (or a safe default)
+    await asyncio.sleep(exc.retry_after or 60)
+except GFlowError as exc:
+    code = EXIT_CODE_MAP.get(type(exc), 1)
+    logger.error("generation_failed", error_class=type(exc).__name__, exit_code=code)
+```
+
+### 14.3 Checking health after a long idle period
+
+A browser context that was idle for several minutes may have its page navigated away by a background Flow JS update. `health_check()` confirms the page is still on a Google domain before trusting the session:
+
+```python
+IDLE_THRESHOLD = 300  # seconds
+
+last_used = time.monotonic()
+
+async def dispatch(client: FlowApiClient, req: GenerateImageRequest) -> ...:
+    if time.monotonic() - last_used > IDLE_THRESHOLD:
+        if not await client.health_check():
+            raise RuntimeError("session lost after idle — restart worker")
+    ...
+```
+
+### 14.4 What `health_check()` does NOT cover
+
+- It does **not** verify that the Google session (cookies) is still valid. A page can be alive and on `labs.google` with an expired session cookie — the next API call will raise `AuthExpiredError` (exit 3).
+- It does **not** refresh the session. On `False`, restart the worker and re-enter `async with FlowApiClient(...)`.
 
 ---
 

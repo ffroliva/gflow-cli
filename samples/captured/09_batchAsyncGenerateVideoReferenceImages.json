@@ -1,0 +1,136 @@
+{
+  "route_name": "09_batchAsyncGenerateVideoReferenceImages",
+  "method": "POST",
+  "url": "https://aisandbox-pa.googleapis.com/v1/video:batchAsyncGenerateVideoReferenceImages",
+  "request_headers": {
+    "authorization": "Bearer <REDACTED_BEARER>",
+    "content-type": "text/plain;charset=UTF-8"
+  },
+  "request_body": "<see request_body_parsed>",
+  "request_body_parsed": {
+    "mediaGenerationContext": {
+      "batchId": "<BATCH_ID>",
+      "audioFailurePreference": "BLOCK_SILENCED_VIDEOS"
+    },
+    "clientContext": {
+      "projectId": "<PROJECT_ID>",
+      "tool": "PINHOLE",
+      "userPaygateTier": "PAYGATE_TIER_ONE",
+      "sessionId": "<SESSION_ID>",
+      "recaptchaContext": {
+        "token": "<REDACTED_RECAPTCHA_TOKEN>",
+        "applicationType": "RECAPTCHA_APPLICATION_TYPE_WEB"
+      }
+    },
+    "requests": [
+      {
+        "aspectRatio": "VIDEO_ASPECT_RATIO_PORTRAIT",
+        "textInput": {
+          "structuredPrompt": {
+            "parts": [
+              {
+                "text": "a kitten telling a joke. the joke should be about eagle and both images should be linked. the igle picgure at the top and the kitten images bellow dividing the video in 2 half frames."
+              }
+            ]
+          }
+        },
+        "videoModelKey": "veo_3_1_r2v_lite",
+        "metadata": {},
+        "seed": 25369,
+        "referenceImages": [
+          {
+            "mediaId": "<REFERENCE_IMAGE_MEDIA_ID_1>",
+            "imageUsageType": "IMAGE_USAGE_TYPE_ASSET"
+          },
+          {
+            "mediaId": "<REFERENCE_IMAGE_MEDIA_ID_2>",
+            "imageUsageType": "IMAGE_USAGE_TYPE_ASSET"
+          }
+        ]
+      }
+    ],
+    "useV2ModelConfig": true
+  },
+  "response_status": 200,
+  "response_body_parsed": {
+    "remainingCredits": 670,
+    "workflows": [
+      {
+        "name": "<WORKFLOW_ID>",
+        "metadata": {
+          "displayName": "Kitten telling eagle joke",
+          "createTime": "2026-05-18T13:55:05.760711Z",
+          "primaryMediaId": "<GENERATED_MEDIA_ID>",
+          "batchId": "<BATCH_ID>",
+          "updateTime": "2026-05-18T13:55:07.634011Z"
+        },
+        "projectId": "<PROJECT_ID>"
+      }
+    ],
+    "media": [
+      {
+        "name": "<GENERATED_MEDIA_ID>",
+        "projectId": "<PROJECT_ID>",
+        "workflowId": "<WORKFLOW_ID>",
+        "workflowStepId": "CAE",
+        "mediaMetadata": {
+          "createTime": "2026-05-18T13:55:05.760711Z",
+          "mediaTitle": "a kitten telling a joke. the joke should be about eagle and both images should be linked. the igle picgure at the top and the kitten images bellow dividing the video in 2 half frames.",
+          "requestData": {
+            "videoGenerationRequestData": {
+              "videoModelControlInput": {
+                "videoModelName": "veo_3_1_r2v_lite",
+                "videoGenerationMode": "VIDEO_GENERATION_MODE_REFERENCE_TO_VIDEO",
+                "videoModelCapabilities": [
+                  "VIDEO_MODEL_CAPABILITY_MULTI_REFERENCE"
+                ],
+                "videoAspectRatio": "VIDEO_ASPECT_RATIO_PORTRAIT"
+              },
+              "videoGenerationImageInputs": [
+                {
+                  "mediaGenerationId": "<REFERENCE_IMAGE_MEDIA_ID_1>",
+                  "imageUsageType": "IMAGE_USAGE_TYPE_ASSET_IMAGE",
+                  "mediaId": "<REFERENCE_IMAGE_MEDIA_ID_1>"
+                },
+                {
+                  "mediaGenerationId": "<REFERENCE_IMAGE_MEDIA_ID_2>",
+                  "imageUsageType": "IMAGE_USAGE_TYPE_ASSET_IMAGE",
+                  "mediaId": "<REFERENCE_IMAGE_MEDIA_ID_2>"
+                }
+              ]
+            },
+            "promptInputs": [
+              {
+                "structuredPrompt": {
+                  "parts": [
+                    {
+                      "text": "a kitten telling a joke. the joke should be about eagle and both images should be linked. the igle picgure at the top and the kitten images bellow dividing the video in 2 half frames."
+                    }
+                  ]
+                }
+              }
+            ],
+            "clientPlatform": "CLIENT_PLATFORM_WEB"
+          },
+          "mediaStatus": {
+            "mediaGenerationStatus": "MEDIA_GENERATION_STATUS_SCHEDULED"
+          },
+          "visibility": "PRIVATE"
+        },
+        "video": {
+          "generatedVideo": {
+            "seed": 25369,
+            "prompt": "<root>\n  <context>\n  </context>\n  <instruction>\n    <prompt>a kitten telling a joke. the joke should be about eagle and both images should be linked. the igle picgure at the top and the kitten images bellow dividing the video in 2 half frames.</prompt>\n  </instruction>\n</root>",
+            "model": "veo_3_1_r2v_lite",
+            "baseImageMediaGenerationId": "",
+            "isLooped": false,
+            "aspectRatio": "VIDEO_ASPECT_RATIO_PORTRAIT"
+          },
+          "dimensions": {
+            "length": "8s"
+          }
+        }
+      }
+    ]
+  }
+}

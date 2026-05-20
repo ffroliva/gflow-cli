@@ -60,13 +60,12 @@ from gflow_cli.image_batch import (
     prompt_items_from_texts,
     read_prompt_file,
     render_image_batch_summary,
-    resolve_t2i_batch_output_dir,
     run_image_batch,
 )
 from gflow_cli.image_batch import (
     MIN_COUNT as _MIN_COUNT,
 )
-from gflow_cli.paths import image_output_path
+from gflow_cli.paths import image_output_path, resolve_batch_output_dir
 
 # Case-insensitive 8-4-4-4-12 hex with hyphens — Flow's media UUIDs.
 # When a `--ref` value matches this regex it's treated as an already-uploaded
@@ -76,6 +75,9 @@ _UUID_RE = re.compile(
     r"^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$",
     re.IGNORECASE,
 )
+
+_CREATING_PROJECT_MSG = "  Creating project..."
+_T2I_PROJECT_TITLE = "gflow-cli t2i"
 
 console = Console()
 
@@ -196,7 +198,7 @@ async def _run_upload(
     async with FlowApiClient(
         profile_dir=profile_dir, headless=headless, transport=transport
     ) as client:
-        console.print("  Creating project...")
+        console.print(_CREATING_PROJECT_MSG)
         project = await client.create_project(title="gflow-cli upload")
         console.print(f"  Project: [dim]{project.project_id}[/dim]")
         console.print(f"  Uploading {image_path.name}...")
@@ -325,30 +327,8 @@ def t2i(
     transport: str | None,
 ) -> None:
     """Generate image(s) from one or more text prompts."""
-    # Validate flag combinations BEFORE any I/O. Click's IntRange already
-    # bounds count to [1, 4]; here we enforce the cross-flag rule that --seed
-    # is only meaningful when generating a single image (multi-image fan-out
-    # uses N independent random seeds and a shared batch_id).
-    source_count = _count_t2i_sources(prompts, prompts_file, read_stdin)
-    if source_count == 0:
-        raise click.UsageError("Provide a prompt, multiple prompts, --prompts-file, or --stdin.")
-    if source_count > 1:
-        raise click.UsageError(
-            "Prompt sources are mutually exclusive: use positional prompts, "
-            "--prompts-file, or --stdin."
-        )
     is_multi_prompt = len(prompts) > 1 or prompts_file is not None or read_stdin
-    if seed is not None and count != 1:
-        raise click.UsageError(
-            "--seed is only valid when generating a single image (-n 1). "
-            "For multi-image runs, omit --seed and let each shot get its own."
-        )
-    if seed is not None and is_multi_prompt:
-        raise click.UsageError(
-            "--seed is not supported for multi-prompt `gflow image t2i`. "
-            "Use one single-prompt command per seed today; per-prompt seeds belong "
-            "to a future `gflow run --config` schema update."
-        )
+    _validate_t2i_input(prompts, prompts_file, read_stdin, seed, count, is_multi_prompt)
 
     if not is_multi_prompt:
         if not prompts:
@@ -417,7 +397,9 @@ def t2i(
     profile_name = _resolve_profile(profile)
     provider_dir = _make_provider_dir(profile_name)
     settings = get_settings()
-    output_dir = resolve_t2i_batch_output_dir(out=out, output_root=settings.output_dir)
+    output_dir = resolve_batch_output_dir(
+        cli_override=out, output_root=settings.output_dir, kind="images"
+    )
     console.print(
         f"\n[bold]gflow image t2i[/bold] · profile=[bold]{profile_name}[/bold] "
         f"· {len(batch_prompts)} prompt(s) · up to {len(batch_prompts) * count} image(s)"
@@ -434,10 +416,10 @@ def t2i(
             prompts=batch_prompts,
             output_dir=output_dir,
             continue_on_error=continue_on_error,
-            project_title="gflow-cli t2i",
+            project_title=_T2I_PROJECT_TITLE,
         )
     )
-    exit_code = render_image_batch_summary(outcomes, title="gflow-cli t2i")
+    exit_code = render_image_batch_summary(outcomes, title=_T2I_PROJECT_TITLE)
     if exit_code != 0:
         sys.exit(exit_code)
 
@@ -446,6 +428,41 @@ def _count_t2i_sources(
     prompts: tuple[str, ...], prompts_file: Path | None, read_stdin: bool
 ) -> int:
     return int(bool(prompts)) + int(prompts_file is not None) + int(read_stdin)
+
+
+def _validate_t2i_input(
+    prompts: tuple[str, ...],
+    prompts_file: Path | None,
+    read_stdin: bool,
+    seed: int | None,
+    count: int,
+    is_multi_prompt: bool,
+) -> None:
+    """Raise click.UsageError for invalid t2i flag combinations.
+
+    Click's IntRange already bounds count to [1, 4]; this enforces the
+    cross-flag rules — exactly one prompt source, and --seed only with
+    a single image and a single prompt.
+    """
+    source_count = _count_t2i_sources(prompts, prompts_file, read_stdin)
+    if source_count == 0:
+        raise click.UsageError("Provide a prompt, multiple prompts, --prompts-file, or --stdin.")
+    if source_count > 1:
+        raise click.UsageError(
+            "Prompt sources are mutually exclusive: use positional prompts, "
+            "--prompts-file, or --stdin."
+        )
+    if seed is not None and count != 1:
+        raise click.UsageError(
+            "--seed is only valid when generating a single image (-n 1). "
+            "For multi-image runs, omit --seed and let each shot get its own."
+        )
+    if seed is not None and is_multi_prompt:
+        raise click.UsageError(
+            "--seed is not supported for multi-prompt `gflow image t2i`. "
+            "Use one single-prompt command per seed today; per-prompt seeds belong "
+            "to a future `gflow run --config` schema update."
+        )
 
 
 def _as_usage_error(exc: ConfigurationError) -> click.UsageError:
@@ -466,10 +483,10 @@ async def _run_t2i(
     async with FlowApiClient(
         profile_dir=profile_dir, headless=headless, transport=transport
     ) as client:
-        console.print("  Creating project...")
+        console.print(_CREATING_PROJECT_MSG)
         # Title is a `gflow-cli ...` prefix per project convention (post-rename a02684f).
         # cli_video.py's _run_t2v / _run_i2v don't currently set a title — tracked separately.
-        project = await client.create_project(title="gflow-cli t2i")
+        project = await client.create_project(title=_T2I_PROJECT_TITLE)
         console.print(f"  Project: [dim]{project.project_id}[/dim]")
         console.print(f"  Generating {count} image(s) ({req.model.value}, {req.aspect.value})...")
         if count == 1:
@@ -495,7 +512,7 @@ async def _run_t2i(
 
 def _print_t2i_summary(images: list[GeneratedImage], saved_paths: list[Path]) -> None:
     """Render a Rich table of generated images and where they landed."""
-    table = Table(title="gflow-cli t2i")
+    table = Table(title=_T2I_PROJECT_TITLE)
     table.add_column("media_name", overflow="fold")
     table.add_column("seed", justify="right")
     table.add_column("dimensions")
@@ -687,7 +704,7 @@ async def _run_i2i(
     async with FlowApiClient(
         profile_dir=profile_dir, headless=headless, transport=transport
     ) as client:
-        console.print("  Creating project...")
+        console.print(_CREATING_PROJECT_MSG)
         # Title is a `gflow-cli ...` prefix per project convention (post-rename a02684f).
         # cli_video.py's _run_t2v / _run_i2v don't currently set a title — tracked separately.
         project = await client.create_project(title="gflow-cli i2i")

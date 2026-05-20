@@ -30,6 +30,23 @@ class ManifestEntry:
     output_path: Path | None = None
 
 
+def _parse_manifest_row(lineno: int, cols: list[str]) -> ManifestEntry:
+    """Build a ManifestEntry from a TSV row's columns. Raises ValueError."""
+    # Pad to 5 columns so unpacking is always safe.
+    while len(cols) < 5:
+        cols.append("")
+    start_image_s, prompt, end_image_s, aspect_s, output_s = (c.strip() for c in cols[:5])
+    if not prompt:
+        raise ValueError(f"line {lineno}: prompt is required (got empty)")
+    return ManifestEntry(
+        prompt=prompt,
+        start_image=Path(start_image_s) if start_image_s else None,
+        end_image=Path(end_image_s) if end_image_s else None,
+        aspect=Aspect.from_cli(aspect_s) if aspect_s else Aspect.PORTRAIT,
+        output_path=Path(output_s) if output_s else None,
+    )
+
+
 def parse_manifest(path: Path) -> list[ManifestEntry]:
     """Parse a TSV manifest file. Raises ValueError on bad rows."""
     entries: list[ManifestEntry] = []
@@ -38,21 +55,5 @@ def parse_manifest(path: Path) -> list[ManifestEntry]:
         stripped = raw.strip()
         if not stripped or stripped.startswith("#"):
             continue
-        cols = raw.split("\t")
-        # Pad to 5 columns so unpacking is always safe.
-        while len(cols) < 5:
-            cols.append("")
-        start_image_s, prompt, end_image_s, aspect_s, output_s = (c.strip() for c in cols[:5])
-        if not prompt:
-            raise ValueError(f"line {lineno}: prompt is required (got empty)")
-        aspect = Aspect.from_cli(aspect_s) if aspect_s else Aspect.PORTRAIT
-        entries.append(
-            ManifestEntry(
-                prompt=prompt,
-                start_image=Path(start_image_s) if start_image_s else None,
-                end_image=Path(end_image_s) if end_image_s else None,
-                aspect=aspect,
-                output_path=Path(output_s) if output_s else None,
-            )
-        )
+        entries.append(_parse_manifest_row(lineno, raw.split("\t")))
     return entries
