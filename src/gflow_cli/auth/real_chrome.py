@@ -12,11 +12,33 @@ from gflow_cli.config import get_settings
 from gflow_cli.errors import AuthLoginTimeoutError, AuthMissingError, SecurityError
 
 from .base import AuthStrategy
+from .verification import FlowSessionOutcome, verify_flow_session
 
 logger = structlog.get_logger(__name__)
 _console = Console()
 
 GEMINI_URL = "https://labs.google/fx/tools/flow?hl=en"
+
+# User-facing guidance per non-authenticated verification outcome (issue #15).
+_UNVERIFIED_MESSAGE: dict[FlowSessionOutcome, str] = {
+    FlowSessionOutcome.GOOGLE_SESSION_ONLY: (
+        "Signed in to your Google account, but the Flow app sign-in wasn't completed."
+    ),
+    FlowSessionOutcome.NO_SESSION: "No sign-in detected.",
+    FlowSessionOutcome.VERIFICATION_ERROR: (
+        "Could not verify the Flow session — this is often a network problem."
+    ),
+}
+_UNVERIFIED_HINT: dict[FlowSessionOutcome, str] = {
+    FlowSessionOutcome.GOOGLE_SESSION_ONLY: (
+        "Re-run `gflow auth login` and continue until the Flow editor "
+        "(the prompt box / your projects) loads before closing Chrome."
+    ),
+    FlowSessionOutcome.NO_SESSION: (
+        "Re-run `gflow auth login`, sign in to Google, and continue until the Flow editor loads."
+    ),
+    FlowSessionOutcome.VERIFICATION_ERROR: ("Check your connection and re-run `gflow auth login`."),
+}
 
 
 def find_chrome_executable() -> str | None:
@@ -90,6 +112,7 @@ class RealChromeStrategy(AuthStrategy):
             "--no-default-browser-check",
             "--window-size=1280,800",
             # No --remote-debugging-port: zero automation surface.
+            GEMINI_URL,  # open straight on the Flow sign-in page
         ]
 
         if headless:
@@ -109,12 +132,18 @@ class RealChromeStrategy(AuthStrategy):
             _console.print("\n" + "=" * 60)
             _console.print("[bold cyan]PASSIVE AUTHENTICATION[/bold cyan]")
             _console.print("=" * 60)
-            _console.print("1. A Google Chrome window will open.")
-            _console.print(f"2. Sign in at: [bold]{GEMINI_URL}[/bold]")
-            _console.print("3. Complete sign-in until you reach the Flow editor.")
+            _console.print("1. A Google Chrome window opens at the Flow sign-in page.")
+            _console.print("2. Sign in with your Google account.")
             _console.print(
-                "4. [bold yellow]CLOSE THE BROWSER[/bold yellow] when done — "
-                "gflow will verify your session automatically."
+                "3. [bold yellow]Keep going until the Flow editor itself loads[/bold yellow] "
+                "— the prompt box and your projects."
+            )
+            _console.print(
+                "   Signing in to Google is NOT enough; gflow needs a completed Flow app sign-in."
+            )
+            _console.print(
+                "4. Then [bold yellow]CLOSE THE BROWSER[/bold yellow] — gflow verifies "
+                "the Flow session automatically."
             )
             _console.print("-" * 60)
             _console.print("Launching Chrome...")
@@ -147,35 +176,29 @@ class RealChromeStrategy(AuthStrategy):
                 ),
             ) from None
 
-        _console.print("\n[bold green]Browser closed.[/bold green] Verifying session...")
+        _console.print("\n[bold green]Browser closed.[/bold green] Verifying Flow session...")
 
-        # Headless probe: read persisted cookies from the isolated profile dir.
-        # channel="chrome" uses the system Chrome binary so verification avoids
-        # Playwright's own automation flags (belt-and-suspenders stealth).
-        from playwright.async_api import async_playwright
+        # Verify the real Flow app session — not just the Google SSO cookie.
+        status = await verify_flow_session(profile_dir, channel="chrome", source=self.name)
 
-        async with async_playwright() as pw:
-            ctx = await pw.chromium.launch_persistent_context(
-                user_data_dir=str(profile_dir),
-                channel="chrome",
-                headless=True,
+        if status.authenticated:
+            logger.info(
+                "auth_flow_session_verified",
+                strategy=self.name,
+                source=status.source,
+                user_email=status.user_email,
             )
-            try:
-                cookies = await ctx.cookies()
-                has_sapisid = any(c.get("name") == "SAPISID" for c in cookies)
-
-                if has_sapisid:
-                    logger.info("auth_login_success_verified", strategy=self.name)
-                    # Write strategy marker before any output that might fail on
-                    # narrow Windows codepages — FlowApiClient reads this to select
-                    # the matching Chrome channel for launch_persistent_context.
-                    (profile_dir / ".gflow_browser_strategy").write_text("chrome", encoding="utf-8")
-                    _console.print("[green][OK] Session captured and verified.[/green]")
-                else:
-                    logger.warning("auth_login_no_cookies", strategy=self.name)
-                    raise AuthMissingError(
-                        "No session cookies found after sign-in. "
-                        "Did you complete the sign-in before closing Chrome?"
-                    )
-            finally:
-                await ctx.close()
+            # Marker read by browser_manager.channel_for_profile so FlowApiClient
+            # selects the system Chrome channel. Load-bearing — must persist here.
+            (profile_dir / ".gflow_browser_strategy").write_text("chrome", encoding="utf-8")
+            _console.print(f"[green][OK] Flow session verified ({status.user_email}).[/green]")
+        else:
+            logger.warning(
+                "auth_flow_session_unverified",
+                strategy=self.name,
+                outcome=status.outcome.value,
+            )
+            raise AuthMissingError(
+                _UNVERIFIED_MESSAGE[status.outcome],
+                remediation_hint=_UNVERIFIED_HINT[status.outcome],
+            )

@@ -16,6 +16,7 @@ from __future__ import annotations
 import asyncio
 import base64
 import json
+import os
 import secrets
 import uuid
 from collections.abc import Sequence
@@ -311,6 +312,12 @@ class FlowApiClient:
         async def attempt() -> Any:
             page = await self._checkout_page()
             try:
+                if os.environ.get("GFLOW_CLI_LOG_REQUEST_HEADERS") == "1":
+                    logger.info(
+                        "request_headers",
+                        url=url,
+                        headers=_redact_headers_for_log({"content-type": content_type}),
+                    )
                 return await page.request.post(
                     url,
                     data=body_str,
@@ -343,6 +350,12 @@ class FlowApiClient:
         async def attempt() -> Any:
             page = await self._checkout_page()
             try:
+                if os.environ.get("GFLOW_CLI_LOG_REQUEST_HEADERS") == "1":
+                    logger.info(
+                        "request_headers",
+                        url=url,
+                        headers=_redact_headers_for_log({"content-type": _AISANDBOX_CONTENT_TYPE}),
+                    )
                 return await page.request.patch(
                     url,
                     data=body_str,
@@ -906,6 +919,19 @@ def _redact_for_log(body_str: str) -> str:
                 _redact_in_client_context(cast(dict[str, Any], item).get("clientContext"))
 
     return json.dumps(parsed_dict)
+
+
+def _redact_headers_for_log(headers: dict[str, str]) -> dict[str, str]:
+    """Return a copy of `headers` with any `authorization` value masked.
+
+    The SOLE permitted way to log a headers dict — `_redact_for_log` covers
+    request bodies only, not headers. Spec §4.5.
+    """
+    redacted = dict(headers)
+    auth = redacted.get("authorization")
+    if auth is not None:
+        redacted["authorization"] = f"Bearer <len={len(auth)}>"
+    return redacted
 
 
 def _redact_in_client_context(client_context: Any) -> None:

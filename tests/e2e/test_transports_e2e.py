@@ -353,3 +353,33 @@ async def test_e2e_health_check_returns_true_when_active(strategy: str) -> None:
         result = await client.health_check()
 
     assert result is True, "health_check() must return True for an active Google-domain page"
+
+
+# ---------------------------------------------------------------------------
+# health_check() false path (Issue #16 — new method)
+# ---------------------------------------------------------------------------
+
+
+@pytest.mark.asyncio
+async def test_e2e_health_check_false_after_close() -> None:
+    """health_check() returns False (never raises) once the client is closed.
+
+    A long-lived worker holding a client whose context has been torn down must
+    get a clean False, not an exception. Zero credits — no image generation.
+
+    Not parametrized over STRATEGIES: health_check is transport-agnostic, and
+    the bearer / sapisidhash experimental transports fail at setup() (obsolete —
+    see KNOWN_ISSUES.md). evaluate_fetch is the live transport.
+    """
+    profile = _profile_dir()
+    client = _make_client("evaluate_fetch", profile)
+
+    async with client:
+        assert await client.health_check() is True, (
+            "health_check() must be True while the context is live"
+        )
+
+    # Context is now closed.
+    assert await client.health_check() is False, (
+        "health_check() must return False (not raise) on a closed client"
+    )

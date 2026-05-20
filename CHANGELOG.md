@@ -21,6 +21,17 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 - The 401-dead HTTP video API path (`FlowApiClient.generate_video`, `get_video_status`) — retired in favour of the new UI-automation transport (`VideoGenerationMixin` in `api/transports/ui_automation_video.py`).
 
+### Fixed
+
+- `gflow auth login` now verifies a real Flow app session before reporting
+  success — fixes issue #15, where a Google-only sign-in was wrongly accepted
+  and later failed with HTTP 401.
+- **`gflow auth login --browser internal` now fails fast when Google rejects
+  Playwright's bundled Chromium**, returning `AuthBrowserRejectedError` exit
+  code 14 with guidance to rerun using real Chrome
+  (`gflow auth login --browser chrome`) or set
+  `GFLOW_CLI_AUTH_BROWSER=chrome`.
+
 ## [0.6.0a6] — 2026-05-17
 
 > **Stability & code-quality release.** Fixes a concurrency bug in image
