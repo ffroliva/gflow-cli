@@ -51,16 +51,21 @@ from gflow_cli.image_batch import (
     DEFAULT_MODEL as _DEFAULT_MODEL,
 )
 from gflow_cli.image_batch import (
+    MAX_BATCH_PROMPTS as _MAX_BATCH_PROMPTS,
+)
+from gflow_cli.image_batch import (
     MAX_COUNT as _MAX_COUNT,
 )
 from gflow_cli.image_batch import (
     MAX_PROMPT_FILE_BYTES,
+    parse_manifest_file,
     parse_prompt_lines,
     prompt_items_from_parsed,
     prompt_items_from_texts,
     read_prompt_file,
     render_image_batch_summary,
     run_image_batch,
+    run_manifest_image_batch,
 )
 from gflow_cli.image_batch import (
     MIN_COUNT as _MIN_COUNT,
@@ -754,3 +759,150 @@ def _print_i2i_summary(images: list[GeneratedImage], saved_paths: list[Path]) ->
         w, h = img.dimensions
         table.add_row(img.media_name, str(img.seed), f"{w}x{h}", safe_path_text(path))
     console.print(table)
+
+
+# ---------------------------------------------------------------------------
+# batch subcommand
+# ---------------------------------------------------------------------------
+
+_BATCH_TITLE = "gflow-cli image batch"
+
+
+@image.command(
+    "batch",
+    short_help=f"Run a JSON or TSV manifest of image prompts (max {_MAX_BATCH_PROMPTS}).",
+    help=(
+        "Generate images from a JSON or TSV manifest file "
+        f"(up to {_MAX_BATCH_PROMPTS} prompts).\n\n"
+        "\b\n"
+        "TSV format (tab-separated): prompt[\\tcount[\\taspect_ratio[\\tmodel]]]\n"
+        "  Lines starting with # or blank lines are skipped.\n\n"
+        'JSON format: [{"text": "...", "count": 2, "aspect_ratio": "16:9", '
+        '"model": "nano2"}, ...]\n\n'
+        "\b\n"
+        "Examples:\n"
+        "  gflow image batch prompts.tsv\n"
+        "  gflow image batch prompts.json --same-project\n"
+        "  gflow image batch prompts.tsv -n 4 --aspect 16:9 --out ./output\n\n"
+        "With --same-project all prompts share one Flow project and a 3-7s\n"
+        "jitter is applied between submissions."
+    ),
+)
+@click.argument(
+    "manifest",
+    type=click.Path(exists=True, dir_okay=False, readable=True, path_type=Path),
+)
+@click.option(
+    "-n",
+    "--count",
+    "count",
+    default=_DEFAULT_COUNT,
+    show_default=True,
+    type=click.IntRange(_MIN_COUNT, _MAX_COUNT),
+    help=(
+        "Default image count for manifest rows that do not specify one "
+        f"({_MIN_COUNT}-{_MAX_COUNT})."
+    ),
+)
+@click.option(
+    "--aspect",
+    default=_DEFAULT_ASPECT_RATIO,
+    show_default=True,
+    type=click.Choice(_ALLOWED_ASPECT_RATIOS),
+    help="Default aspect ratio for rows that do not specify one.",
+)
+@click.option(
+    "--model",
+    default=_DEFAULT_MODEL,
+    show_default=True,
+    type=click.Choice(_ALLOWED_MODELS),
+    help="Default model for rows that do not specify one.",
+)
+@click.option(
+    "--same-project",
+    "same_project",
+    is_flag=True,
+    default=False,
+    help=(
+        "Run all prompts inside one shared Flow project with 3-7s jitter between "
+        "submissions. Without this flag each prompt creates its own project."
+    ),
+)
+@click.option(
+    "--continue-on-error/--fail-fast",
+    default=True,
+    show_default=True,
+    help="Continue after per-prompt failures (default) or stop at the first failure.",
+)
+@click.option(
+    "--out",
+    "out",
+    default=None,
+    type=click.Path(file_okay=False, path_type=Path),
+    help=(
+        "Directory to write generated PNGs. When omitted, files land under "
+        "<output_dir>/images/<YYYY-MM-DD>/."
+    ),
+)
+@click.option("--profile", default=None, help="Profile name (overrides default).")
+@click.option(
+    "--transport",
+    type=click.Choice(transport_choices(), case_sensitive=False),
+    default=None,
+    help="Override transport strategy.",
+)
+def batch(
+    manifest: Path,
+    count: int,
+    aspect: str,
+    model: str,
+    same_project: bool,
+    continue_on_error: bool,
+    out: Path | None,
+    profile: str | None,
+    transport: str | None,
+) -> None:
+    """Run MANIFEST (JSON or TSV) through Flow's image generator."""
+    try:
+        prompts = parse_manifest_file(
+            manifest,
+            default_count=count,
+            default_aspect_ratio=aspect,
+            default_model=model,
+        )
+    except ConfigurationError as exc:
+        raise _as_usage_error(exc) from exc
+
+    profile_name = _resolve_profile(profile)
+    provider_dir = _make_provider_dir(profile_name)
+    settings = get_settings()
+    output_dir = resolve_batch_output_dir(
+        cli_override=out, output_root=settings.output_dir, kind="images"
+    )
+
+    total_images = sum(p.count for p in prompts)
+    console.print(
+        f"\n[bold]{_BATCH_TITLE}[/bold] · profile=[bold]{profile_name}[/bold] "
+        f"· {len(prompts)} prompt(s) · up to {total_images} image(s)"
+    )
+    if same_project:
+        console.print("  mode: [cyan]same-project[/cyan] (3-7s jitter between prompts)")
+    console.print(f"  output_dir: [dim]{safe_path_text(output_dir)}[/dim]")
+    if not continue_on_error:
+        console.print("  mode: [yellow]fail-fast[/yellow]")
+
+    outcomes = asyncio.run(
+        run_manifest_image_batch(
+            profile_dir=provider_dir,
+            headless=settings.headless,
+            transport=transport,
+            prompts=prompts,
+            output_dir=output_dir,
+            continue_on_error=continue_on_error,
+            project_title=_BATCH_TITLE,
+            same_project=same_project,
+        )
+    )
+    exit_code = render_image_batch_summary(outcomes, title=_BATCH_TITLE)
+    if exit_code != 0:
+        sys.exit(exit_code)

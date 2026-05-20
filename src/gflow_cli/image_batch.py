@@ -2,6 +2,9 @@
 
 from __future__ import annotations
 
+import asyncio
+import json
+import random
 import re
 from collections.abc import Callable, Coroutine
 from dataclasses import dataclass, field
@@ -28,11 +31,17 @@ ALLOWED_ASPECT_RATIOS: tuple[str, ...] = ("9:16", "16:9", "1:1", "4:3", "3:4")
 ALLOWED_MODELS: tuple[str, ...] = ("nano2", "nano-pro", "image4", "imagen4")
 MIN_PROMPTS = 1
 MAX_PROMPTS = 50
+# Maximum prompts allowed in a manifest batch. Intentionally small to keep
+# batch runs predictable; change here or override via config if needed.
+MAX_BATCH_PROMPTS: int = 5
 MIN_TEXT_LEN = 1
 MAX_TEXT_LEN = 2000
 MIN_COUNT = 1
 MAX_COUNT = 4
 DEFAULT_ASPECT_RATIO = "9:16"
+# Jitter range (seconds) between prompts when --same-project is used.
+JITTER_MIN_SECONDS: float = 3.0
+JITTER_MAX_SECONDS: float = 7.0
 DEFAULT_MODEL = "nano2"
 DEFAULT_COUNT = 1
 MAX_PROMPT_FILE_BYTES = 512 * 1024
@@ -298,12 +307,16 @@ def prompt_items_from_texts(
 async def run_one_image_prompt(
     *,
     client: Any,
-    project_id: str,
+    project_id: str | None,
     idx: int,
     item: BatchPromptItem,
     output_dir: Path,
 ) -> BatchOutcome:
-    """Generate images for one prompt and download them."""
+    """Generate images for one prompt and download them.
+
+    When ``project_id`` is ``None``, the client creates a new Flow project for
+    this prompt (isolation mode). Pass an explicit ID to reuse a shared project.
+    """
     req = GenerateImageRequest(
         prompt=item.text,
         aspect=Aspect.from_cli(item.aspect_ratio),
@@ -404,6 +417,227 @@ async def run_sequential_batch(
                         )
                     )
                 break
+    return outcomes
+
+
+# ---------------------------------------------------------------------------
+# Manifest parsing — TSV and JSON formats for `gflow image batch`
+# ---------------------------------------------------------------------------
+
+
+def _validate_batch_prompt_count(count: int) -> None:
+    if not (1 <= count <= MAX_BATCH_PROMPTS):
+        raise ConfigurationError(
+            f"Manifest must contain between 1 and {MAX_BATCH_PROMPTS} prompts (got {count})."
+        )
+
+
+def parse_tsv_manifest(
+    text: str,
+    *,
+    default_count: int = DEFAULT_COUNT,
+    default_aspect_ratio: str = DEFAULT_ASPECT_RATIO,
+    default_model: str = DEFAULT_MODEL,
+    source_label: str = "manifest.tsv",
+) -> tuple[BatchPromptItem, ...]:
+    """Parse an image batch TSV manifest.
+
+    Columns (tab-separated): ``prompt``, ``count`` (optional), ``aspect_ratio``
+    (optional), ``model`` (optional). Lines starting with ``#`` and blank lines
+    are skipped. Missing or empty optional columns fall back to their defaults.
+    """
+    items: list[BatchPromptItem] = []
+    for line_number, raw in enumerate(text.splitlines(), start=1):
+        if line_number == 1:
+            raw = raw.removeprefix("﻿")
+        # Blank/comment detection uses stripped form; column split uses raw
+        # so that a leading tab (empty prompt column) is preserved.
+        stripped = raw.strip()
+        if not stripped or stripped.startswith("#"):
+            continue
+        cols = raw.split("\t")
+        prompt = cols[0].strip()
+        if not prompt:
+            raise ConfigurationError(
+                f"{source_label} line {line_number}: prompt column is required."
+            )
+        _validate_prompt_text(prompt, source_label=source_label, line_number=line_number)
+
+        raw_count = cols[1].strip() if len(cols) > 1 else ""
+        if raw_count:
+            try:
+                count = int(raw_count)
+            except ValueError as exc:
+                raise ConfigurationError(
+                    f"{source_label} line {line_number}: count {raw_count!r} is not an integer."
+                ) from exc
+            if not (MIN_COUNT <= count <= MAX_COUNT):
+                raise ConfigurationError(
+                    f"{source_label} line {line_number}: count must be {MIN_COUNT}–{MAX_COUNT} "
+                    f"(got {count})."
+                )
+        else:
+            count = default_count
+
+        raw_aspect = cols[2].strip() if len(cols) > 2 else ""
+        aspect_ratio = raw_aspect if raw_aspect else default_aspect_ratio
+        if aspect_ratio not in ALLOWED_ASPECT_RATIOS:
+            raise ConfigurationError(
+                f"{source_label} line {line_number}: aspect_ratio {aspect_ratio!r} invalid. "
+                f"Valid: {list(ALLOWED_ASPECT_RATIOS)!r}."
+            )
+
+        raw_model = cols[3].strip() if len(cols) > 3 else ""
+        model = raw_model if raw_model else default_model
+        if model not in ALLOWED_MODELS:
+            raise ConfigurationError(
+                f"{source_label} line {line_number}: model {model!r} invalid. "
+                f"Valid: {list(ALLOWED_MODELS)!r}."
+            )
+
+        items.append(
+            BatchPromptItem(
+                text=prompt,
+                aspect_ratio=aspect_ratio,
+                model=model,
+                count=count,
+                output_filename=f"prompt_{len(items)}",
+                index=len(items),
+            )
+        )
+
+    _validate_batch_prompt_count(len(items))
+    return tuple(items)
+
+
+def parse_json_manifest(
+    data: Any,
+    *,
+    default_count: int = DEFAULT_COUNT,
+    default_aspect_ratio: str = DEFAULT_ASPECT_RATIO,
+    default_model: str = DEFAULT_MODEL,
+) -> tuple[BatchPromptItem, ...]:
+    """Parse a JSON manifest (already decoded) into BatchPromptItems.
+
+    Each entry may specify: ``text`` (required), ``count``, ``aspect_ratio``,
+    ``model``, ``output_filename``. Missing optional fields fall back to
+    defaults before validation.
+    """
+    if not isinstance(data, list):
+        raise ConfigurationError("JSON manifest must be a top-level array.")
+    items: list[BatchPromptItem] = []
+    for idx, raw_entry in enumerate(data):  # type: ignore[union-attr]
+        if not isinstance(raw_entry, dict):
+            raise ConfigurationError(f"prompts[{idx}] must be an object.")
+        entry: dict[str, Any] = raw_entry  # type: ignore[assignment]
+        # Inject defaults for missing optional keys before delegating validation.
+        entry_with_defaults: dict[str, Any] = {
+            "count": default_count,
+            "aspect_ratio": default_aspect_ratio,
+            "model": default_model,
+            **entry,
+        }
+        items.append(parse_batch_item_dict(entry_with_defaults, idx))
+    _validate_batch_prompt_count(len(items))
+    return tuple(items)
+
+
+def parse_manifest_file(
+    path: Path,
+    *,
+    default_count: int = DEFAULT_COUNT,
+    default_aspect_ratio: str = DEFAULT_ASPECT_RATIO,
+    default_model: str = DEFAULT_MODEL,
+) -> tuple[BatchPromptItem, ...]:
+    """Read and parse a manifest file, dispatching on ``.json`` / ``.tsv`` extension."""
+    if not path.is_file():
+        raise ConfigurationError(f"Manifest file not found: {path}")
+    suffix = path.suffix.lower()
+    try:
+        text = path.read_text(encoding="utf-8")
+    except OSError as exc:
+        raise ConfigurationError(f"Cannot read manifest {path.name}: {exc}") from exc
+    if suffix == ".json":
+        try:
+            data = json.loads(text)
+        except json.JSONDecodeError as exc:
+            raise ConfigurationError(f"Manifest {path.name} is not valid JSON: {exc}") from exc
+        return parse_json_manifest(
+            data,
+            default_count=default_count,
+            default_aspect_ratio=default_aspect_ratio,
+            default_model=default_model,
+        )
+    if suffix == ".tsv":
+        return parse_tsv_manifest(
+            text,
+            default_count=default_count,
+            default_aspect_ratio=default_aspect_ratio,
+            default_model=default_model,
+            source_label=path.name,
+        )
+    raise ConfigurationError(f"Unsupported manifest format {suffix!r}. Use .json or .tsv.")
+
+
+# ---------------------------------------------------------------------------
+# Manifest batch runner — used by `gflow image batch`
+# ---------------------------------------------------------------------------
+
+
+async def run_manifest_image_batch(
+    *,
+    profile_dir: Path,
+    headless: bool,
+    transport: str | None,
+    prompts: tuple[BatchPromptItem, ...],
+    output_dir: Path,
+    continue_on_error: bool,
+    project_title: str,
+    same_project: bool,
+    jitter_range: tuple[float, float] = (JITTER_MIN_SECONDS, JITTER_MAX_SECONDS),
+    client_factory: Callable[..., Any] | None = None,
+) -> list[BatchOutcome]:
+    """Run a manifest batch with optional shared-project mode and per-prompt jitter.
+
+    When ``same_project=True``: one Flow project is created up front; all
+    prompts run against it with random jitter between submissions. When
+    ``same_project=False`` (default): each prompt uses a fresh project created
+    by the client.
+    """
+    output_dir.mkdir(parents=True, exist_ok=True)
+    outcomes: list[BatchOutcome] = []
+    factory = client_factory or FlowApiClient
+    async with factory(profile_dir=profile_dir, headless=headless, transport=transport) as client:
+        shared_project_id: str | None = None
+        if same_project:
+            project = await client.create_project(title=project_title)
+            shared_project_id = project.project_id
+
+        for idx, item in enumerate(prompts):
+            if same_project and idx > 0:
+                delay = random.uniform(*jitter_range)
+                await asyncio.sleep(delay)
+
+            outcome = await run_one_image_prompt(
+                client=client,
+                project_id=shared_project_id,
+                idx=idx,
+                item=item,
+                output_dir=output_dir,
+            )
+            outcomes.append(outcome)
+
+            if outcome.status == "fail" and not continue_on_error:
+                for skip_idx in range(idx + 1, len(prompts)):
+                    outcomes.append(
+                        BatchOutcome(
+                            index=skip_idx,
+                            prompt=prompts[skip_idx],
+                            status="skipped",
+                        )
+                    )
+                break
+
     return outcomes
 
 
