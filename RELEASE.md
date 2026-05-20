@@ -78,9 +78,9 @@ python -m pip install --pre gflow-cli
    git add pyproject.toml src/gflow_cli/__init__.py CHANGELOG.md tests
    git commit -m "chore(release): vX.Y.Z"
    ```
-7. Tag and push:
+7. Tag and push. **Must be a signed annotated tag** (`-s`) — `.github/workflows/release.yml` rejects unsigned or lightweight tags. Requires a GPG or SSH signing key registered with your GitHub account.
    ```bash
-   git tag -a vX.Y.Z -m "vX.Y.Z"
+   git tag -s vX.Y.Z -m "vX.Y.Z"
    git push origin main
    git push origin vX.Y.Z
    ```

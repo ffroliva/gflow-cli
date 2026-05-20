@@ -335,9 +335,9 @@ Each `Provider` method has a corresponding test file under `tests/`. New routes 
 1. Update [`CHANGELOG.md`](CHANGELOG.md) with the version's changes (Keep-a-Changelog format).
 2. Bump `version` in `pyproject.toml`.
 3. Bump `__version__` in `src/gflow_cli/__init__.py`.
-4. Tag the commit:
+4. Tag the commit with a **signed annotated tag** (`-s`; CI rejects unsigned/lightweight tags):
    ```bash
-   git tag v<version>          # for example, v0.6.0 or v0.6.0a6
+   git tag -s v<version> -m "v<version>"  # for example, v0.6.0 or v0.6.0a6
    git push origin v<version>
    ```
 5. The [`release.yml`](.github/workflows/release.yml) GitHub Action runs:

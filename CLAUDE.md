@@ -21,7 +21,7 @@
 
 **Phase A — Video T2V DONE (PR #23, merged 2026-05-20 to `develop`).** `UiAutomationTransport.generate_video(T2V)` orchestrates the Flow video editor end-to-end via Playwright UI mimicry — the underlying HTTP video path returns 401 from `aisandbox-pa` and was retired. I2V and R2V raise `NotImplementedError` (deferred to Phase B). Companion PRs landed the onboarding-bypass (#27), changelog-overlay dismiss (#28), and signed-tag release verification (#30).
 
-**Active backlog → Phase B.** See [phase-b-followups](.) memory and these GitHub issues:
+**Active backlog → Phase B.** See the Phase B follow-ups (project memory, run `/gflow:plan` for current detail) and these GitHub issues:
 - [#29](https://github.com/ffroliva/gflow-cli/issues/29) first-class video download (mirror the image-side `download_image` pattern)
 - Image-gen 401 live validation (was the bypass branch's whole reason — never confirmed e2e)
 - CLI restoration: `gflow video t2v/i2v/batch` are currently stubbed
@@ -83,6 +83,13 @@ uv run pytest -q --cov=gflow_cli                             # tests + coverage
 
 CI runs the same five on every push (see `.github/workflows/ci.yml`).
 
+## Output path rule — MANDATORY
+
+**All script and test runtime output goes to `tmp/`.** Never to `test_assets/`
+or the repo root. `test_assets/` is for committed test *fixtures* (static
+input files checked into git). The CI hygiene gate (`check_repo_hygiene.py`)
+actively blocks commits that violate this rule.
+
 ## Where to look
 
 | I need to… | Read this |
@@ -93,7 +100,7 @@ CI runs the same five on every push (see `.github/workflows/ci.yml`).
 | Touch auth | [docs/AUTHENTICATION.md](docs/AUTHENTICATION.md) |
 | Add a config knob | [docs/CONFIGURATION.md](docs/CONFIGURATION.md) + `.env.template` + (later) `src/gflow_cli/shared/config.py` |
 | Write a test | [CONTRIBUTING.md § TDD](CONTRIBUTING.md#test-driven-development-mandatory) + existing patterns in `tests/` |
-| Cut a release | [README § Releases](README.md#releases) — bump version in `pyproject.toml`, update CHANGELOG, `git tag vX.Y.Z`, push |
+| Cut a release | `/gflow:release` (authoritative runbook). Tag MUST be signed: `git tag -s vX.Y.Z -m "vX.Y.Z"` — CI rejects unsigned tags. |
 | Track a known issue | [KNOWN_ISSUES.md](KNOWN_ISSUES.md) |
 | Understand security posture | [docs/SECURITY.md](docs/SECURITY.md) |
 

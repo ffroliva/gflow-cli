@@ -3,9 +3,13 @@
 Print a compact summary of the currently active plan.
 
 Priority chain:
-  1. --feature <name>  match against docs/superpowers/plans/
-  2. most-recent file  under docs/superpowers/plans/ (by mtime, skipping orchestration files)
-  3. PLAN.md           root roadmap — first phase without DONE/COMPLETE/BACKLOG marker
+  1. --feature <name>  match against docs/superpowers/plans/ (errors out if no match)
+  2. PLAN.md           root roadmap — first phase without DONE/COMPLETE/BACKLOG marker
+
+Superpowers plans are NOT auto-picked by mtime: `git checkout` resets all
+file timestamps to the checkout moment, so mtime is not a reliable
+"active plan" signal. Pass --feature when you want a specific superpowers
+plan; otherwise the root PLAN.md is the source of truth for the current phase.
 
 Output is intentionally compact: only the relevant chunk enters the agent's context.
 Run directly or via the /gflow:plan slash command.
@@ -26,7 +30,6 @@ _CHECKED = re.compile(r"^\s*-\s*\[[xX]\]")
 _TASK_HEADING = re.compile(r"^###\s+Task\s+\d+")
 _PHASE_HEADING = re.compile(r"^##\s+Phase\s+\d+")
 _SECTION_H2 = re.compile(r"^##\s+")
-_SECTION_H3 = re.compile(r"^###\s+")
 
 
 # ---------------------------------------------------------------------------
@@ -49,15 +52,22 @@ def _superpowers_candidates() -> list[Path]:
 
 
 def _find_plan(feature: str | None) -> Path | None:
+    """Find a superpowers plan by --feature name.
+
+    Returns None unless --feature is passed AND a matching plan exists.
+    Default behaviour (no --feature) falls through to the root PLAN.md so the
+    output is grounded in the maintained roadmap rather than mtime-luck.
+    """
+    if not feature:
+        return None
     candidates = _superpowers_candidates()
     if not candidates:
         return None
-    if feature:
-        slug = feature.lower().replace(" ", "-").replace("_", "-")
-        matches = [p for p in candidates if slug in str(p).lower()]
-        if matches:
-            return matches[0]  # already sorted newest-first
-    return candidates[0]
+    slug = feature.lower().replace(" ", "-").replace("_", "-")
+    matches = [p for p in candidates if slug in str(p).lower()]
+    if not matches:
+        return None
+    return matches[0]
 
 
 # ---------------------------------------------------------------------------
@@ -162,11 +172,16 @@ def main() -> None:
     )
     args = parser.parse_args()
 
-    plan_path = _find_plan(args.feature)
-    if plan_path:
-        print(_summarise_superpowers(plan_path))
-    else:
-        print(_summarise_root_plan())
+    if args.feature:
+        plan_path = _find_plan(args.feature)
+        if plan_path:
+            print(_summarise_superpowers(plan_path))
+            return
+        print(
+            f"No superpowers plan matches --feature {args.feature!r}; "
+            "falling back to PLAN.md.\n"
+        )
+    print(_summarise_root_plan())
 
 
 if __name__ == "__main__":
