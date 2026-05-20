@@ -494,6 +494,7 @@ def _tsv_parse_model(
     return model
 
 
+
 def parse_tsv_manifest(
     text: str,
     *,
@@ -703,6 +704,7 @@ async def _download_results(
             )
         )
     return outcomes
+
 
 
 async def run_manifest_image_batch(
