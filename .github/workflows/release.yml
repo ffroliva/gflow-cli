@@ -28,6 +28,21 @@ jobs:
       - name: Set up Python
         run: uv python install 3.12
 
+      - name: Verify tag is signed
+        run: |
+          TAG=${GITHUB_REF_NAME}
+          # Lightweight tags resolve directly to a commit, not a tag object.
+          TYPE=$(git cat-file -t "$TAG")
+          if [ "$TYPE" != "tag" ]; then
+            echo "::error::$TAG is a lightweight tag. Use 'git tag -s' to create a signed annotated tag."
+            exit 1
+          fi
+          # Annotated but unsigned tags have no signature header in the object.
+          if ! git cat-file -p "$TAG" | grep -qE "BEGIN (PGP|SSH) SIGNATURE"; then
+            echo "::error::$TAG is not signed. Use 'git tag -s' when cutting releases."
+            exit 1
+          fi
+
       - name: Verify tag matches pyproject version
         run: |
           TAG=${GITHUB_REF_NAME#v}
