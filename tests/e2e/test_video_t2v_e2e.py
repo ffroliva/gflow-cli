@@ -88,9 +88,7 @@ def _aspect() -> Aspect:
         return Aspect.LANDSCAPE
     if raw == "portrait":
         return Aspect.PORTRAIT
-    pytest.skip(
-        f"Unsupported {_E2E_ASPECT_ENV}={raw!r} — set to 'landscape' or 'portrait'"
-    )
+    pytest.skip(f"Unsupported {_E2E_ASPECT_ENV}={raw!r} — set to 'landscape' or 'portrait'")
 
 
 # ---------------------------------------------------------------------------
@@ -131,14 +129,11 @@ async def test_t2v_generates_video(tmp_path: Path) -> None:
         f"generate_video() must return a VideoStatus, got {type(result)!r}"
     )
     assert result.is_terminal, (
-        f"VideoStatus must be terminal after generate_video() returns; "
-        f"status={result.status!r}"
+        f"VideoStatus must be terminal after generate_video() returns; status={result.status!r}"
     )
     assert result.succeeded, (
         f"Expected SUCCESSFUL terminal status, got {result.status!r}. "
         f"failure_reasons={result.failure_reasons!r}, "
         f"error_message={result.error_message!r}"
     )
-    assert result.media_id, (
-        "VideoStatus.media_id must be non-empty for a successful generation"
-    )
+    assert result.media_id, "VideoStatus.media_id must be non-empty for a successful generation"
