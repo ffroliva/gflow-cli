@@ -153,6 +153,21 @@ NEW_PROJECT_SELECTORS = (
     "[aria-label*='Project' i]",
 )
 
+# Onboarding bypass selectors — cookie banners, terms, landing pages.
+# Handled gracefully if not found; localized variants included.
+ONBOARDING_SELECTORS = (
+    "button:has-text('Agree')",
+    "button:has-text('Aceitar')",
+    "button:has-text('I agree')",
+    "button:has-text('Concordo')",
+    "button:has-text('Accept')",
+    "button:has-text('Create with Flow')",
+    "button:has-text('Criar com o Flow')",
+    "button:has-text('Get Started')",
+    "button:has-text('Começar')",
+)
+
+
 # Generation settings trigger — the button shows the current ratio icon.
 # All 5 ratio icon names are enumerated so the selector is ratio-invariant.
 GEN_SETTINGS_BUTTON_SELECTORS = (
@@ -404,6 +419,18 @@ class UiAutomationTransport:
     # Internal helpers — gallery → editor navigation (unit 3.4)
     # ------------------------------------------------------------------
 
+    async def _bypass_onboarding(self, page: Page) -> None:
+        """Click through cookie banners and 'Get Started' pages if they appear."""
+        for selector in ONBOARDING_SELECTORS:
+            try:
+                loc = page.locator(selector).first
+                if await loc.is_visible(timeout=1000):
+                    await loc.click(force=True)
+                    log.info("ui_automation.onboarding_bypassed", selector=selector)
+                    await page.wait_for_timeout(1000)
+            except Exception:
+                continue
+
     async def _enter_editor(self, page: Page, out_dir: Path | None = None) -> None:
         """Always create a fresh project — click "+ New project" on the gallery
         and wait for ``/project/`` navigation.
@@ -431,8 +458,10 @@ class UiAutomationTransport:
             # readiness gate.
             log.info("ui_automation.navigating_to_gallery", restored_url=page.url)
             await page.goto(FLOW_URL, timeout=45_000)
+            await self._bypass_onboarding(page)
 
         await page.wait_for_timeout(3000)
+        await self._bypass_onboarding(page)
         for selector in NEW_PROJECT_SELECTORS:
             try:
                 loc = page.locator(selector).first
