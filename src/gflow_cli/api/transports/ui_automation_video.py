@@ -137,6 +137,9 @@ class VideoGenerationMixin:
         async def _send_prompt(
             self, page: Page, prompt_text: str, out_dir: Path | None = None
         ) -> None: ...
+        async def _dismiss_blocking_overlays(
+            self, page: Page, out_dir: Path | None = None
+        ) -> bool: ...
 
     @staticmethod
     def _attach_video_response_listener(page: Page) -> tuple[list[dict[str, Any]], Any]:
@@ -423,6 +426,9 @@ class VideoGenerationMixin:
 
         await self._enter_editor(page, out_dir)
         await VideoGenerationMixin._wait_video_editor_ready(page)
+        # Dismiss any Flow changelog / "What's new" overlay that may be on top
+        # of the editor before we click into mode-switch / settings / submit (#26).
+        await self._dismiss_blocking_overlays(page, out_dir)
         await VideoGenerationMixin._switch_to_video_mode(page, out_dir=out_dir)
         await VideoGenerationMixin._select_video_aspect(page, request.aspect)
         await VideoGenerationMixin._set_output_count_one(page)

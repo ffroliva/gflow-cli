@@ -154,9 +154,9 @@ Flow shows a one-time "Aviso" / "Notice" terms-of-use confirmation on the first 
 
 ### Flow's release-notes ("What's new") changelog popup blocks first-run UI automation
 
-- **Status:** Open · **Severity:** Medium · **Affects:** v0.6.0a5+ (Phase A T2V on `UiAutomationTransport`) · **Tracked:** Phase B
+- **Status:** Mitigated · **Severity:** Medium · **Tracked:** [#26](https://github.com/ffroliva/gflow-cli/issues/26)
 
-Google Flow ships a release-notes / "What's new" iframe (`changelogs/YYYY-MM-DD-...html`) the first time a logged-in profile visits the page after a Flow deployment. The iframe sits on top of the editor and intercepts pointer events on Flow's own controls — Playwright finds the right selector but cannot click it because the changelog is in the way. `_switch_to_video_mode` then times out at 30 s.
+Google Flow ships a release-notes / "What's new" iframe (`changelogs/YYYY-MM-DD-...html`) the first time a logged-in profile visits the page after a Flow deployment. The iframe sits on top of the editor and intercepts pointer events on Flow's own controls — Playwright finds the right selector but cannot click it because the changelog is in the way. Issue [#26](https://github.com/ffroliva/gflow-cli/issues/26) confirmed the same iframe also blocks the settings menu after project navigation.
 
 **Symptom:**
 ```
@@ -165,9 +165,9 @@ playwright._impl._errors.TimeoutError: Locator.click: Timeout 30000ms exceeded.
   - retrying click action (57 retries, then timeout)
 ```
 
-**Workaround:** open Flow in Chrome with the same profile once, click the `X` on the "What's new" popup, then close Chrome cleanly. The dismissal persists in the profile until Google deploys the next changelog.
+**Mitigation:** `UiAutomationTransport._dismiss_blocking_overlays(page)` detects Flow changelog iframes (`iframe[src*='/flow/changelogs/']`, `iframe[src*='/changelogs/']`) and dismisses them via a close-button selector cascade with an Escape-key fallback. Invoked after `_enter_editor` (image flow) and after `_wait_video_editor_ready` (video flow) so downstream clicks aren't intercepted. Structured logs identify what was dismissed; a debug screenshot is captured if dismissal cannot be confirmed.
 
-**Roadmap:** Phase B will add a generic overlay-dismiss helper to `UiAutomationTransport` so the orchestration handles changelog popups, A/B-test banners, and consent dialogs without manual intervention.
+**Legacy workaround (no longer required):** open Flow in Chrome with the same profile once, click the `X` on the "What's new" popup, then close Chrome cleanly.
 
 ---
 

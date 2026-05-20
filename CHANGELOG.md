@@ -11,6 +11,7 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 - `gflow_cli.exceptions` module as a standard alias for `gflow_cli.errors` — both module names resolve identically.
 - `FlowApiClient.health_check()` async method — returns `True` if browser context is alive and on a Google domain; safe to call from long-lived workers without try/except.
+- `UiAutomationTransport._dismiss_blocking_overlays(page)` — generic overlay-dismiss helper that detects Flow changelog ("What's new") iframes and dismisses them via a close-button selector cascade with an Escape-key fallback. Invoked after editor entry on both image and video flows so first-run profiles no longer fail on the next click. Closes [#26](https://github.com/ffroliva/gflow-cli/issues/26).
 
 ### Changed
 

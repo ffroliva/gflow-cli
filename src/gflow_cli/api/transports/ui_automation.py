@@ -168,6 +168,30 @@ ONBOARDING_SELECTORS = (
     "button:has-text('Começar')",
 )
 
+# Changelog / "What's new" iframe selectors — these src patterns match the
+# gstatic CDN paths Flow uses for its release-note overlays. Two patterns are
+# included: the /flow/ prefix form and the bare /changelogs/ form.
+CHANGELOG_IFRAME_SELECTORS = (
+    "iframe[src*='/flow/changelogs/']",
+    "iframe[src*='/changelogs/']",
+)
+
+# Close-button selectors tried after a changelog iframe is detected.
+# Ordered from most-specific to most-generic so a precise match wins first.
+# All are tried before the Escape fallback.
+OVERLAY_CLOSE_BUTTON_SELECTORS = (
+    "[aria-label='Close']",
+    "[aria-label='close']",
+    "[aria-label='Dismiss']",
+    "[aria-label='dismiss']",
+    "[aria-label='Cancel']",
+    "button:has(i.google-symbols:text('close'))",
+    "button:has(i:text('close'))",
+    "[role='dialog'] button:has(i:text('close'))",
+    "[role='dialog'] button[aria-label*='close' i]",
+    "button[data-dismiss]",
+)
+
 
 # Generation settings trigger — the button shows the current ratio icon.
 # All 5 ratio icon names are enumerated so the selector is ratio-invariant.
@@ -431,6 +455,87 @@ class UiAutomationTransport(VideoGenerationMixin):
                     await page.wait_for_timeout(1000)
             except Exception:
                 continue
+
+    async def _dismiss_blocking_overlays(
+        self,
+        page: Page,
+        out_dir: Path | None = None,
+    ) -> bool:
+        """Dismiss Flow changelog / "What's new" iframes and any blocking overlays.
+
+        Called at stable interaction boundaries (after editor navigation, before
+        UI interactions that could be intercepted by a changelog popup).
+
+        Strategy:
+        1. Check whether any changelog iframe is currently visible.
+        2. If none found, return False immediately (cheap; no log noise).
+        3. If found, try each close-button selector in OVERLAY_CLOSE_BUTTON_SELECTORS.
+           On first visible match: force-click it, log the selector used, return True.
+        4. If no close button is discoverable, press Escape as a fallback and return True.
+        5. If Escape raises (extremely rare — keyboard unavailable), capture a debug
+           screenshot (if out_dir provided) and return False so the caller can decide
+           how to proceed. The structured warning carries enough info to identify the
+           blocking element.
+
+        Returns True if a dismissal action was taken, False if the page was
+        clear (no overlay) or if dismissal could not be confirmed.
+        """
+        # Step 1 — detect whether a changelog iframe is blocking the UI.
+        iframe_found = False
+        for sel in CHANGELOG_IFRAME_SELECTORS:
+            try:
+                if await page.locator(sel).first.is_visible(timeout=1500):
+                    iframe_found = True
+                    log.info("ui_automation.overlay_detected", selector=sel)
+                    break
+            except Exception:  # noqa: BLE001 — probe failure means no match
+                continue
+
+        if not iframe_found:
+            return False
+
+        # Step 2 — try explicit close buttons first.
+        for close_sel in OVERLAY_CLOSE_BUTTON_SELECTORS:
+            try:
+                loc = page.locator(close_sel).first
+                if await loc.is_visible(timeout=500):
+                    await loc.click(force=True)
+                    await page.wait_for_timeout(500)
+                    log.info(
+                        "ui_automation.overlay_dismissed",
+                        selector=close_sel,
+                        method="close_button",
+                    )
+                    return True
+            except Exception:  # noqa: BLE001 — selector miss or stale element
+                continue
+
+        # Step 3 — Escape fallback (regression test case: iframe present, no close button).
+        try:
+            await page.keyboard.press("Escape")
+            await page.wait_for_timeout(500)
+            log.info(
+                "ui_automation.overlay_dismissed",
+                selector="<none>",
+                method="escape",
+            )
+            return True
+        except Exception as exc:  # noqa: BLE001 — keyboard unavailable in some sandboxes
+            shot_path = await _capture_debug_screenshot(
+                page, out_dir, "debug_overlay_dismiss_failed.png"
+            )
+            log.warning(
+                "ui_automation.overlay_dismiss_failed",
+                error=str(exc),
+                screenshot=str(shot_path),
+                note=(
+                    "A changelog iframe was detected but could not be dismissed — "
+                    "no close button found and Escape raised. Manual intervention "
+                    "may be needed (open Flow in Chrome, dismiss the 'What's new' "
+                    "popup, close Chrome cleanly)."
+                ),
+            )
+            return False
 
     async def _enter_editor(self, page: Page, out_dir: Path | None = None) -> None:
         """Always create a fresh project — click "+ New project" on the gallery
@@ -822,6 +927,9 @@ class UiAutomationTransport(VideoGenerationMixin):
         page: Page = self._page  # type: ignore[assignment]  # guard in caller
 
         await self._enter_editor(page)
+        # Dismiss any Flow changelog / "What's new" overlay that may be on top
+        # of the editor before we click into settings / submit (#26).
+        await self._dismiss_blocking_overlays(page)
 
         # Resolve the project_id from the URL now that we're in the editor.
         nav_project_id = _extract_project_id(page.url)
