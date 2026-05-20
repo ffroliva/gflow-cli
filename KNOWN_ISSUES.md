@@ -152,6 +152,25 @@ Flow shows a one-time "Aviso" / "Notice" terms-of-use confirmation on the first 
 
 ---
 
+### Flow's release-notes ("What's new") changelog popup blocks first-run UI automation
+
+- **Status:** Open · **Severity:** Medium · **Affects:** v0.6.0a5+ (Phase A T2V on `UiAutomationTransport`) · **Tracked:** Phase B
+
+Google Flow ships a release-notes / "What's new" iframe (`changelogs/YYYY-MM-DD-...html`) the first time a logged-in profile visits the page after a Flow deployment. The iframe sits on top of the editor and intercepts pointer events on Flow's own controls — Playwright finds the right selector but cannot click it because the changelog is in the way. `_switch_to_video_mode` then times out at 30 s.
+
+**Symptom:**
+```
+playwright._impl._errors.TimeoutError: Locator.click: Timeout 30000ms exceeded.
+  - <iframe ... src="https://www.gstatic.com/.../changelogs/...html"></iframe> ... intercepts pointer events
+  - retrying click action (57 retries, then timeout)
+```
+
+**Workaround:** open Flow in Chrome with the same profile once, click the `X` on the "What's new" popup, then close Chrome cleanly. The dismissal persists in the profile until Google deploys the next changelog.
+
+**Roadmap:** Phase B will add a generic overlay-dismiss helper to `UiAutomationTransport` so the orchestration handles changelog popups, A/B-test banners, and consent dialogs without manual intervention.
+
+---
+
 ### No in-CLI quota visibility
 
 - **Status:** Open · **Severity:** Low · **Roadmap:** v0.5
@@ -203,6 +222,13 @@ Even with a valid browser session (cookies present), calling Flow's REST API dir
 | `flowMedia:batchGenerateImages` (image gen) | ❌ 401 |
 | `video:batchAsyncGenerateVideoText` (T2V + I2V) | ❌ 401 (confirmed 2026-05-18 e2e run) |
 | `flow/uploadImage` (image upload for I2V) | ❓ untested (blocked before reaching this step) |
+| `video:batchCheckAsyncVideoGenerationStatus` (status poll) | ❌ 401 (confirmed 2026-05-19 — even via `page.request.post` from the authenticated browser context) |
+
+The Phase 0 video spike (2026-05-19) confirmed the **generation** routes *do*
+succeed when driven through the UI (Flow's own JS issues them) — but the
+**status-poll** route 401s even from `page.request.post` inside the authed
+page. Polling must therefore capture Flow's own status responses, not issue
+the request directly. See the video-generation design spec §10.5.
 
 `project.createProject` (on `labs.google/fx/api/trpc`) **does** work — it uses a different domain and auth model.
 

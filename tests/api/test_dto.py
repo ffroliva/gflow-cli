@@ -7,7 +7,7 @@ from pathlib import Path
 
 import pytest
 
-from gflow_cli.api.dto import AssetInfo, ProjectInfo, VideoStatus
+from gflow_cli.api.dto import AssetInfo, ProjectInfo
 
 CAPTURED = Path(__file__).parent.parent.parent / "samples" / "captured"
 
@@ -52,40 +52,3 @@ class TestAssetInfo:
     def test_missing_media_raises(self) -> None:
         with pytest.raises(ValueError, match="uploadImage"):
             AssetInfo.from_upload_response({"workflow": {}})
-
-
-class TestVideoStatus:
-    def test_parse_real_check_status_item(self) -> None:
-        sample = _load("03_batchCheckAsyncVideoGenerationStatus.json")
-        items = sample["response_body_parsed"]["media"]
-        statuses = [VideoStatus.from_check_status_item(it) for it in items]
-        assert len(statuses) == 1
-        s = statuses[0]
-        assert s.media_name == "<UUID>"
-        assert s.project_id == "<UUID>"
-        assert s.status == "MEDIA_GENERATION_STATUS_PENDING"
-        assert s.operation_name == "<UUID>"
-        assert s.is_terminal is False
-        assert s.succeeded is False
-
-    def test_terminal_completed(self) -> None:
-        s = VideoStatus(
-            media_name="m",
-            project_id="p",
-            status="MEDIA_GENERATION_STATUS_COMPLETED",
-            operation_name=None,
-            workflow_id=None,
-        )
-        assert s.is_terminal is True
-        assert s.succeeded is True
-
-    def test_terminal_failed(self) -> None:
-        s = VideoStatus(
-            media_name="m",
-            project_id="p",
-            status="MEDIA_GENERATION_STATUS_FAILED",
-            operation_name=None,
-            workflow_id=None,
-        )
-        assert s.is_terminal is True
-        assert s.succeeded is False

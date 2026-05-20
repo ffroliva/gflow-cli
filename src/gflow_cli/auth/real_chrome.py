@@ -118,6 +118,10 @@ class RealChromeStrategy(AuthStrategy):
         if headless:
             chrome_args.append("--headless=new")
 
+        # Open Flow directly so the user lands on the sign-in / app surface
+        # instead of a blank new-tab page.
+        chrome_args.append(GEMINI_URL)
+
         logger.info(
             "auth_passive_capture_started",
             profile_dir=str(profile_dir),

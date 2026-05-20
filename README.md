@@ -174,32 +174,11 @@ gflow video i2v ./input.png "Slow cinematic push-in, soft golden light" -o out.m
 
 The image lands at `$GFLOW_CLI_OUTPUT_DIR/images/<YYYY-MM-DD>/<media_name>_1.png` (defaults to `./out/` when the env var is unset). See [docs/USAGE.md § `gflow image t2i`](docs/USAGE.md#gflow-image-t2i) for `--model`, `--aspect`, `-n/--count`, `--seed`, and `--out` flags.
 
-Same call from Python:
-
-```python
-import asyncio
-from pathlib import Path
-from gflow_cli.api.client import FlowApiClient
-from gflow_cli.api.video import Aspect, GenerateVideoRequest
-from gflow_cli.config import get_settings
-
-async def make_clip() -> None:
-    settings = get_settings()
-    profile_dir = settings.profile_subdir("default")
-    async with FlowApiClient(profile_dir=profile_dir, headless=True) as client:
-        project = await client.create_project(title="gflow-cli demo")
-        asset = await client.upload_image(project.project_id, Path("input.png"))
-        req = GenerateVideoRequest(
-            prompt="Slow cinematic push-in, soft golden light",
-            aspect=Aspect.PORTRAIT,
-            start_asset_uuid=asset.name,
-        )
-        op = await client.generate_video(project_id=project.project_id, req=req)
-        # Poll with client.get_video_status(project.project_id, [op.media_name])
-        # until VideoStatus.is_terminal, then download via the returned URL.
-
-asyncio.run(make_clip())
-```
+> **Video generation is being rebuilt.** The HTTP video path returned HTTP 401
+> and was retired. Video generation now runs on the UI-automation transport:
+> Phase A ships the text-to-video transport; the `gflow video` CLI commands
+> return in a later release (Phase B). See
+> `docs/superpowers/specs/2026-05-18-ui-automation-video-generation-design.md`.
 
 ---
 
@@ -215,9 +194,9 @@ gflow image t2i --prompts-file prompts.txt               # text-file multi-promp
 gflow image t2i --stdin                                  # stdin multi-prompt batch
 gflow image i2i "<prompt>" --ref PATH_OR_UUID [...]      # image-to-image (1–4 per call)
 
-gflow video t2v "<prompt>" -o out.mp4                    # text-to-video (Veo 3.1)
-gflow video i2v <image> "<prompt>" -o out.mp4            # image-to-video (Veo 3.1)
-gflow video batch <manifest.tsv>                         # TSV-driven batch
+gflow video t2v "<prompt>" -o out.mp4                    # text-to-video — returns in Phase B
+gflow video i2v <image> "<prompt>" -o out.mp4            # image-to-video — returns in Phase B
+gflow video batch <manifest.tsv>                         # TSV-driven batch — returns in Phase B
 ```
 
 Each command supports `--profile <name>` for managing multiple Google accounts side-by-side.

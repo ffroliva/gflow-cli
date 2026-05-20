@@ -23,6 +23,7 @@ import structlog
 
 from gflow_cli.api.dto import GeneratedImage
 from gflow_cli.api.image import Aspect, GenerateImageRequest
+from gflow_cli.api.transports.ui_automation_video import VideoGenerationMixin
 from gflow_cli.errors import (
     AuthExpiredError,
     ContentPolicyError,
@@ -278,7 +279,7 @@ def _images_from_responses(
     return images, first_error_status, first_error_route
 
 
-class UiAutomationTransport:
+class UiAutomationTransport(VideoGenerationMixin):
     """D.2.4 — Playwright UI mimicry strategy.
 
     Drives the Flow editor on a logged-in Pro/Ultra profile through a

@@ -1,23 +1,23 @@
-"""Pure value objects and body builders for video generation.
+"""Value objects for video generation.
 
-No I/O lives in this module — `FlowApiClient.generate_video()` calls
-`build_generate_body()` and POSTs the result.
-
-`model_key()` encodes Flow's wire format for the `videoModelKey` field
-(e.g. `veo_3_1_t2v_fast_portrait`) — discovered from sample
-`samples/captured/02_batchAsyncGenerateVideoText.json`.
+This module is pure — no I/O. The video transport drives Flow's editor UI;
+Flow's own JavaScript builds and sends the generate request, so this module
+no longer carries HTTP body builders (the 401-dead HTTP video path was
+retired — see the Phase A plan).
 """
 
 from __future__ import annotations
 
 from dataclasses import dataclass
 from enum import StrEnum
-from typing import Any
+from pathlib import Path
+from typing import Any, cast
 
 
 class Mode(StrEnum):
     T2V = "t2v"
     I2V = "i2v"
+    R2V = "r2v"
 
 
 class Tier(StrEnum):
@@ -41,72 +41,116 @@ class Aspect(StrEnum):
         return mapping[value]
 
 
+# Flow's R2V ("Elementos") reference-image slot cap. ESTIMATE — spec §10.2 Q6
+# was NOT resolved by the Phase 0 spike (§10.5); Phase B confirms the real
+# upper bound. R2V is not wired in Phase A, so this value is never exercised
+# in production yet.
+MAX_REFERENCE_IMAGES = 3
+
+
 @dataclass(frozen=True)
 class GenerateVideoRequest:
-    """Inputs for ONE video generation. T2V if start_asset_uuid is None, else I2V."""
+    """Inputs for ONE video generation. Mode is explicit; image inputs are
+    local file paths the transport attaches through Flow's catalog UI.
+
+    `__post_init__` validates STRUCTURE only — it does not check that image
+    paths exist on disk (that is I/O; this module is pure). Path existence is
+    validated by the transport at the boundary.
+    """
 
     prompt: str
+    mode: Mode = Mode.T2V
     aspect: Aspect = Aspect.PORTRAIT
-    tier: Tier = Tier.FAST
-    start_asset_uuid: str | None = None
+    tier: Tier = Tier.FAST  # meaningful for T2V only — I2V/R2V model keys are fixed
+    seed: int | None = None
+    start_image: Path | None = None  # I2V
+    end_image: Path | None = None  # I2V (optional)
+    reference_images: tuple[Path, ...] = ()  # R2V
+
+    def __post_init__(self) -> None:
+        if not self.prompt.strip():
+            raise ValueError("prompt must not be empty")
+        if self.mode is Mode.T2V and (self.start_image or self.end_image or self.reference_images):
+            raise ValueError("T2V request must not carry image inputs")
+        if self.mode is Mode.I2V:
+            if self.start_image is None:
+                raise ValueError("I2V request requires start_image")
+            if self.reference_images:
+                raise ValueError("I2V request must not carry reference_images")
+        if self.mode is Mode.R2V:
+            if not self.reference_images:
+                raise ValueError("R2V request requires at least one reference image")
+            if self.start_image or self.end_image:
+                raise ValueError("R2V request must not carry start/end images")
+        if len(self.reference_images) > MAX_REFERENCE_IMAGES:
+            raise ValueError(f"at most {MAX_REFERENCE_IMAGES} reference images")
+        if self.seed is not None and not (0 <= self.seed <= 2**31 - 1):
+            raise ValueError("seed out of range")
+
+
+@dataclass(frozen=True)
+class VideoStatus:
+    """Terminal-or-not status of one in-flight video generation."""
+
+    media_id: str
+    status: str  # a MEDIA_GENERATION_STATUS_* wire value
+    failure_reasons: tuple[str, ...] = ()
+    error_message: str | None = None
 
     @property
-    def mode(self) -> Mode:
-        return Mode.I2V if self.start_asset_uuid else Mode.T2V
+    def is_terminal(self) -> bool:
+        return self.status in {
+            "MEDIA_GENERATION_STATUS_SUCCESSFUL",
+            "MEDIA_GENERATION_STATUS_FAILED",
+        }
+
+    @property
+    def succeeded(self) -> bool:
+        return self.status == "MEDIA_GENERATION_STATUS_SUCCESSFUL"
 
 
-# Wire-format constants discovered from samples/captured/02_batchAsyncGenerateVideoText.json
-_AUDIO_FAILURE_PREF = "BLOCK_SILENCED_VIDEOS"
-_CLIENT_TOOL = "PINHOLE"
-_PAYGATE_TIER = "PAYGATE_TIER_ONE"
-_RECAPTCHA_APP_TYPE = "RECAPTCHA_APPLICATION_TYPE_WEB"
+def media_name_from_generate_response(response_json: dict[str, Any]) -> str:
+    """Return `media[0].name` from a batchAsyncGenerateVideo* response.
 
-
-def model_key(mode: Mode, tier: Tier, aspect: Aspect) -> str:
-    """Compose Flow's `videoModelKey` wire string."""
-    return f"veo_3_1_{mode.value}_{tier.value}_{aspect.value}"
-
-
-def build_generate_body(
-    req: GenerateVideoRequest,
-    *,
-    project_id: str,
-    recaptcha_token: str,
-    batch_id: str,
-    seed: int,
-    session_id: str,
-) -> dict[str, Any]:
-    """Build the JSON body for `POST /v1/video:batchAsyncGenerateVideoText`.
-
-    Shape mirrors `samples/captured/02_batchAsyncGenerateVideoText.json` —
-    every field there is required by the server.
+    Shapes: captures 02 (T2V), 08 (I2V), 09 (R2V). The T2V response also
+    carries a top-level `operations[]`; this parser deliberately reads
+    `media[0].name` (spec §2.4 — the candidate ids collapse to one uuid).
     """
-    image_input: dict[str, Any] = (
-        {"imageInput": {"mediaId": req.start_asset_uuid}} if req.start_asset_uuid else {}
-    )
-    request: dict[str, Any] = {
-        "aspectRatio": req.aspect.wire(),
-        "textInput": {"structuredPrompt": {"parts": [{"text": req.prompt}]}},
-        "videoModelKey": model_key(req.mode, req.tier, req.aspect),
-        "metadata": {},
-        "seed": seed,
-        **image_input,
-    }
-    return {
-        "mediaGenerationContext": {
-            "batchId": batch_id,
-            "audioFailurePreference": _AUDIO_FAILURE_PREF,
-        },
-        "clientContext": {
-            "projectId": project_id,
-            "tool": _CLIENT_TOOL,
-            "userPaygateTier": _PAYGATE_TIER,
-            "sessionId": session_id,
-            "recaptchaContext": {
-                "token": recaptcha_token,
-                "applicationType": _RECAPTCHA_APP_TYPE,
-            },
-        },
-        "requests": [request],
-        "useV2ModelConfig": True,
-    }
+    try:
+        media = response_json["media"]
+        return str(media[0]["name"])
+    except (KeyError, IndexError, TypeError) as e:
+        raise ValueError(f"generate response carries no media[0].name: {e}") from e
+
+
+def parse_video_status(response_json: dict[str, Any], *, media_id: str) -> VideoStatus:
+    """Parse one batchCheckAsyncVideoGenerationStatus response into a VideoStatus.
+
+    Selects the `media[]` entry whose `name == media_id`, then reads
+    `mediaMetadata.mediaStatus.{mediaGenerationStatus, failureReasons,
+    error.message}`. Shapes: captures 10 (SUCCESSFUL), 11 (FAILED).
+    Raises ValueError if `media_id` is absent or the status is malformed.
+    """
+    _media = response_json.get("media")
+    if not isinstance(_media, list):
+        raise ValueError("status response has no media[] array")
+    media: list[dict[str, Any]] = cast(list[dict[str, Any]], _media)
+    for item in media:
+        if item.get("name") != media_id:
+            continue
+        meta = cast(dict[str, Any], item.get("mediaMetadata") or {})
+        media_status = cast(dict[str, Any], meta.get("mediaStatus") or {})
+        status = media_status.get("mediaGenerationStatus")
+        if not isinstance(status, str):
+            raise ValueError(f"status entry for {media_id} has no mediaGenerationStatus")
+        reasons = tuple(cast(list[str], media_status.get("failureReasons") or []))
+        error_entry = cast(dict[str, Any], media_status.get("error") or {})
+        raw_msg = error_entry.get("message")
+        error_message: str | None = str(raw_msg) if raw_msg is not None else None
+        return VideoStatus(
+            media_id=media_id,
+            status=status,
+            failure_reasons=reasons,
+            error_message=error_message,
+        )
+    raise ValueError(f"media_id {media_id!r} not found in status response")
