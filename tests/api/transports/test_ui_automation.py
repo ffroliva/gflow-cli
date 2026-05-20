@@ -446,9 +446,14 @@ class TestEnterEditor:
         t = UiAutomationTransport()
         page = _make_editor_page()
         await t._enter_editor(page)  # type: ignore[attr-defined]
-        # locator called at least once with the first (icon-class) selector.
-        first_call_sel = page.locator.call_args_list[0].args[0]
-        assert "google-symbols" in first_call_sel
+        # The icon-class (google-symbols) selector — the editor's first
+        # declared candidate — must be probed. `_bypass_onboarding` runs
+        # first and tries its own selectors, so we check presence anywhere
+        # in the call list rather than at index 0.
+        all_selectors = [c.args[0] for c in page.locator.call_args_list]
+        assert any("google-symbols" in s for s in all_selectors), (
+            f"Expected icon-class selector probed; saw {all_selectors}"
+        )
         assert "/project/" in page.url
 
     @pytest.mark.asyncio
