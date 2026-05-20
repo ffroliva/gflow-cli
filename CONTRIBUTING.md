@@ -114,6 +114,30 @@ Follow [Conventional Commits 1.0](https://www.conventionalcommits.org/):
 
 `type`: `feat`, `fix`, `refactor`, `docs`, `test`, `chore`, `perf`, `ci`, `build`.
 
+## Contribution provenance
+
+External contributions must have clear provenance. By opening a pull request,
+you agree that your contribution is submitted under this project's MIT license
+and that you have the right to contribute it.
+
+For external contributors, commits should include a Developer Certificate of
+Origin sign-off:
+
+```bash
+git commit -s -m "fix(auth): handle rejected browser login"
+```
+
+This adds a `Signed-off-by:` trailer using your configured Git name and email.
+If you already committed, use `git commit --amend -s` and force-push the branch.
+
+Please use a real Git identity or a GitHub noreply email. Avoid placeholder or
+machine-local author addresses such as `user@hostname.local`; maintainers may
+ask you to amend those before merging.
+
+AI-assisted contributions are welcome when reviewed by the contributor, but do
+not submit copied proprietary code, private Google/Flow internals, account
+tokens, cookies, signed URLs, or other secrets.
+
 ## Releasing (maintainer only)
 
 See the [Releases section in README](README.md#releases).

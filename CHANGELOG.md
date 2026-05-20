@@ -16,6 +16,17 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 - `FlowApiClient.generate_image()` and `generate_images_batch()`: `project_id` is now optional (`str | None = None`). When omitted, a new Flow project is created automatically. Existing callers passing an explicit `project_id` are unaffected.
 
+### Fixed
+
+- `gflow auth login` now verifies a real Flow app session before reporting
+  success — fixes issue #15, where a Google-only sign-in was wrongly accepted
+  and later failed with HTTP 401.
+- **`gflow auth login --browser internal` now fails fast when Google rejects
+  Playwright's bundled Chromium**, returning `AuthBrowserRejectedError` exit
+  code 14 with guidance to rerun using real Chrome
+  (`gflow auth login --browser chrome`) or set
+  `GFLOW_CLI_AUTH_BROWSER=chrome`.
+
 ## [0.6.0a6] — 2026-05-17
 
 > **Stability & code-quality release.** Fixes a concurrency bug in image
