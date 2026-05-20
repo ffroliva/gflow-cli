@@ -23,6 +23,7 @@ import structlog
 
 from gflow_cli.api.dto import GeneratedImage
 from gflow_cli.api.image import Aspect, GenerateImageRequest
+from gflow_cli.api.transports.ui_automation_video import VideoGenerationMixin
 from gflow_cli.errors import (
     AuthExpiredError,
     ContentPolicyError,
@@ -153,6 +154,45 @@ NEW_PROJECT_SELECTORS = (
     "[aria-label*='Project' i]",
 )
 
+# Onboarding bypass selectors — cookie banners, terms, landing pages.
+# Handled gracefully if not found; localized variants included.
+ONBOARDING_SELECTORS = (
+    "button:has-text('Agree')",
+    "button:has-text('Aceitar')",
+    "button:has-text('I agree')",
+    "button:has-text('Concordo')",
+    "button:has-text('Accept')",
+    "button:has-text('Create with Flow')",
+    "button:has-text('Criar com o Flow')",
+    "button:has-text('Get Started')",
+    "button:has-text('Começar')",
+)
+
+# Changelog / "What's new" iframe selectors — these src patterns match the
+# gstatic CDN paths Flow uses for its release-note overlays. Two patterns are
+# included: the /flow/ prefix form and the bare /changelogs/ form.
+CHANGELOG_IFRAME_SELECTORS = (
+    "iframe[src*='/flow/changelogs/']",
+    "iframe[src*='/changelogs/']",
+)
+
+# Close-button selectors tried after a changelog iframe is detected.
+# Ordered from most-specific to most-generic so a precise match wins first.
+# All are tried before the Escape fallback.
+OVERLAY_CLOSE_BUTTON_SELECTORS = (
+    "[aria-label='Close']",
+    "[aria-label='close']",
+    "[aria-label='Dismiss']",
+    "[aria-label='dismiss']",
+    "[aria-label='Cancel']",
+    "button:has(i.google-symbols:text('close'))",
+    "button:has(i:text('close'))",
+    "[role='dialog'] button:has(i:text('close'))",
+    "[role='dialog'] button[aria-label*='close' i]",
+    "button[data-dismiss]",
+)
+
+
 # Generation settings trigger — the button shows the current ratio icon.
 # All 5 ratio icon names are enumerated so the selector is ratio-invariant.
 GEN_SETTINGS_BUTTON_SELECTORS = (
@@ -163,13 +203,17 @@ GEN_SETTINGS_BUTTON_SELECTORS = (
     "button:has(i.google-symbols:text('crop_landscape'))",
 )
 
-# CLI string → Flow aspect ratio tab text (locale-invariant number format).
-_ASPECT_TAB: dict[str, str] = {
-    "16:9": "16:9",
-    "9:16": "9:16",
-    "1:1": "1:1",
-    "4:3": "4:3",
-    "3:4": "3:4",
+# CLI string → ordered list of candidate tab labels to try in the Flow gen
+# settings panel. Most ratios are labelled with their colon-numeric form
+# ("16:9"), but the "1:1" tab is sometimes rendered as "Square" or "1×1"
+# (multiplication sign U+00D7) — we try a small cascade and the first
+# locator that becomes visible wins.
+_ASPECT_TAB_CANDIDATES: dict[str, tuple[str, ...]] = {
+    "16:9": ("16:9",),
+    "9:16": ("9:16",),
+    "1:1": ("1:1", "Square", "1×1", "1x1"),
+    "4:3": ("4:3",),
+    "3:4": ("3:4",),
 }
 
 # Count → Flow count tab text.
@@ -263,7 +307,7 @@ def _images_from_responses(
     return images, first_error_status, first_error_route
 
 
-class UiAutomationTransport:
+class UiAutomationTransport(VideoGenerationMixin):
     """D.2.4 — Playwright UI mimicry strategy.
 
     Drives the Flow editor on a logged-in Pro/Ultra profile through a
@@ -287,6 +331,10 @@ class UiAutomationTransport:
         self._page: Page | None = None
         self._setup_done: bool = False
         self._owns_playwright: bool = False
+        # Optional directory for debug screenshots — set by FlowApiClient
+        # from its `out_dir` constructor arg (#18). When None, the internal
+        # _capture_debug_screenshot helper is a no-op.
+        self._out_dir: Path | None = None
         # Serialize concurrent generate_images calls — a single Playwright Page
         # cannot be safely shared across parallel asyncio tasks (each call
         # navigates, opens panels, and types into the same DOM). The lock
@@ -404,6 +452,99 @@ class UiAutomationTransport:
     # Internal helpers — gallery → editor navigation (unit 3.4)
     # ------------------------------------------------------------------
 
+    async def _bypass_onboarding(self, page: Page) -> None:
+        """Click through cookie banners and 'Get Started' pages if they appear."""
+        for selector in ONBOARDING_SELECTORS:
+            try:
+                loc = page.locator(selector).first
+                if await loc.is_visible(timeout=1000):
+                    await loc.click(force=True)
+                    log.info("ui_automation.onboarding_bypassed", selector=selector)
+                    await page.wait_for_timeout(1000)
+            except Exception:
+                continue
+
+    async def _dismiss_blocking_overlays(
+        self,
+        page: Page,
+        out_dir: Path | None = None,
+    ) -> bool:
+        """Dismiss Flow changelog / "What's new" iframes and any blocking overlays.
+
+        Called at stable interaction boundaries (after editor navigation, before
+        UI interactions that could be intercepted by a changelog popup).
+
+        Strategy:
+        1. Check whether any changelog iframe is currently visible.
+        2. If none found, return False immediately (cheap; no log noise).
+        3. If found, try each close-button selector in OVERLAY_CLOSE_BUTTON_SELECTORS.
+           On first visible match: force-click it, log the selector used, return True.
+        4. If no close button is discoverable, press Escape as a fallback and return True.
+        5. If Escape raises (extremely rare — keyboard unavailable), capture a debug
+           screenshot (if out_dir provided) and return False so the caller can decide
+           how to proceed. The structured warning carries enough info to identify the
+           blocking element.
+
+        Returns True if a dismissal action was taken, False if the page was
+        clear (no overlay) or if dismissal could not be confirmed.
+        """
+        # Step 1 — detect whether a changelog iframe is blocking the UI.
+        iframe_found = False
+        for sel in CHANGELOG_IFRAME_SELECTORS:
+            try:
+                if await page.locator(sel).first.is_visible(timeout=1500):
+                    iframe_found = True
+                    log.info("ui_automation.overlay_detected", selector=sel)
+                    break
+            except Exception:  # noqa: BLE001 — probe failure means no match
+                continue
+
+        if not iframe_found:
+            return False
+
+        # Step 2 — try explicit close buttons first.
+        for close_sel in OVERLAY_CLOSE_BUTTON_SELECTORS:
+            try:
+                loc = page.locator(close_sel).first
+                if await loc.is_visible(timeout=500):
+                    await loc.click(force=True)
+                    await page.wait_for_timeout(500)
+                    log.info(
+                        "ui_automation.overlay_dismissed",
+                        selector=close_sel,
+                        method="close_button",
+                    )
+                    return True
+            except Exception:  # noqa: BLE001 — selector miss or stale element
+                continue
+
+        # Step 3 — Escape fallback (regression test case: iframe present, no close button).
+        try:
+            await page.keyboard.press("Escape")
+            await page.wait_for_timeout(500)
+            log.info(
+                "ui_automation.overlay_dismissed",
+                selector="<none>",
+                method="escape",
+            )
+            return True
+        except Exception as exc:  # noqa: BLE001 — keyboard unavailable in some sandboxes
+            shot_path = await _capture_debug_screenshot(
+                page, out_dir, "debug_overlay_dismiss_failed.png"
+            )
+            log.warning(
+                "ui_automation.overlay_dismiss_failed",
+                error=str(exc),
+                screenshot=str(shot_path),
+                note=(
+                    "A changelog iframe was detected but could not be dismissed — "
+                    "no close button found and Escape raised. Manual intervention "
+                    "may be needed (open Flow in Chrome, dismiss the 'What's new' "
+                    "popup, close Chrome cleanly)."
+                ),
+            )
+            return False
+
     async def _enter_editor(self, page: Page, out_dir: Path | None = None) -> None:
         """Always create a fresh project — click "+ New project" on the gallery
         and wait for ``/project/`` navigation.
@@ -431,8 +572,10 @@ class UiAutomationTransport:
             # readiness gate.
             log.info("ui_automation.navigating_to_gallery", restored_url=page.url)
             await page.goto(FLOW_URL, timeout=45_000)
+            await self._bypass_onboarding(page)
 
         await page.wait_for_timeout(3000)
+        await self._bypass_onboarding(page)
         for selector in NEW_PROJECT_SELECTORS:
             try:
                 loc = page.locator(selector).first
@@ -562,14 +705,34 @@ class UiAutomationTransport:
             return
 
         if aspect_cli:
-            tab_text = _ASPECT_TAB.get(aspect_cli, aspect_cli)
-            try:
-                tab = page.locator(f'[role="tab"]:has-text("{tab_text}")').first
-                await tab.wait_for(state="visible", timeout=3_000)
-                await tab.click()
-                log.info("ui_automation.aspect_ratio_set", value=aspect_cli)
-            except Exception as e:  # noqa: BLE001
-                log.warning("ui_automation.aspect_ratio_set_failed", value=aspect_cli, error=str(e))
+            candidates = _ASPECT_TAB_CANDIDATES.get(aspect_cli, (aspect_cli,))
+            clicked = False
+            last_err: str | None = None
+            for tab_text in candidates:
+                # `:text-is(...)` is exact-match — preferred for short labels
+                # like "1:1" because `:has-text(...)` substring-matches and
+                # would clash with longer tabs that include the label.
+                try:
+                    tab = page.locator(f'[role="tab"]:text-is("{tab_text}")').first
+                    await tab.wait_for(state="visible", timeout=2_000)
+                    await tab.click()
+                    clicked = True
+                    log.info(
+                        "ui_automation.aspect_ratio_set",
+                        value=aspect_cli,
+                        matched_label=tab_text,
+                    )
+                    break
+                except Exception as e:  # noqa: BLE001
+                    last_err = str(e)
+                    continue
+            if not clicked:
+                log.warning(
+                    "ui_automation.aspect_ratio_set_failed",
+                    value=aspect_cli,
+                    candidates_tried=list(candidates),
+                    error=last_err,
+                )
 
         if count is not None:
             count_text = _COUNT_TAB.get(count)
@@ -613,7 +776,21 @@ class UiAutomationTransport:
         async def on_response(response: Any) -> None:
             if "batchGenerateImages" not in response.url:
                 return
+            # Log EVERY batchGenerateImages response BEFORE the project_id
+            # filter so live verification can diagnose listener-miss bugs
+            # (e.g., URL contains a different project_id than the editor URL).
+            log.info(
+                "ui_automation.batch_response_seen",
+                url=response.url,
+                status=response.status,
+                filter_project_id=project_id,
+            )
             if project_id and f"/projects/{project_id}/" not in response.url:
+                log.warning(
+                    "ui_automation.batch_response_dropped_project_id_mismatch",
+                    url=response.url,
+                    filter_project_id=project_id,
+                )
                 return
             try:
                 body = await response.json()
@@ -756,7 +933,7 @@ class UiAutomationTransport:
     async def generate_images(
         self,
         *,
-        project_id: str,
+        project_id: str | None,
         request: GenerateImageRequest,
     ) -> list[GeneratedImage]:
         """Submit ``request.prompt`` through Flow's editor and return the
@@ -790,8 +967,12 @@ class UiAutomationTransport:
         stays a single line, keeping the public method's intent clear.
         """
         page: Page = self._page  # type: ignore[assignment]  # guard in caller
+        out_dir = self._out_dir
 
-        await self._enter_editor(page)
+        await self._enter_editor(page, out_dir)
+        # Dismiss any Flow changelog / "What's new" overlay that may be on top
+        # of the editor before we click into settings / submit (#26).
+        await self._dismiss_blocking_overlays(page, out_dir)
 
         # Resolve the project_id from the URL now that we're in the editor.
         nav_project_id = _extract_project_id(page.url)
@@ -808,7 +989,7 @@ class UiAutomationTransport:
         # attach/await eliminates that race. Project-ID filter prevents stale
         # responses from previously-visited projects accumulating in the list.
         captured = self._attach_batch_response_listener(page, project_id=nav_project_id)
-        await self._send_prompt(page, request.prompt)
+        await self._send_prompt(page, request.prompt, out_dir)
         responses = await self._await_captured(captured, expected_count=request.count)
 
         # Collect images from ALL captured responses (Flow makes one API call

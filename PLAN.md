@@ -326,6 +326,45 @@ Page creation averaged **44.7–48.1 ms per page** across N=2/4/8/16 inside one 
 
 ---
 
+### Video generation rework (UiAutomationTransport) — Phase 0 spike ✅ DONE (2026-05-19)
+
+The video-generation feature has its own sub-phase plan (spike → Phase A → Phase B), tracked in `docs/superpowers/specs/2026-05-18-ui-automation-video-generation-design.md`. Targets v0.6.0a5 (see KNOWN_ISSUES "REST API 401").
+
+**Phase 0 — submit-mechanism spike — ✅ DONE.** `scripts/smoke_video_editor.py` drove live Flow and proved video generation can be UI-driven like `generate_images`: a T2V `batchAsyncGenerateVideoText` fired and returned HTTP 200. Full results in the spec §10.5; open-question resolutions in §10.2.
+
+- ✅ Core finding confirmed — UI-drive video works.
+- ✅ Q5 — video offers 9:16 / 16:9 only (no SQUARE).
+- ✅ Mode switch is a 2-step dropdown; selectors locked to language-agnostic structural anchors (Radix `aria-controls` tokens, icon ligatures).
+- ✅ Output count defaults to x2 — the transport must set count explicitly (verified count=1 → 1 video / 20 credits).
+- ⚠️ Q7 — status poll `page.request.post` → 401; the spec §5.5 polling design must be reworked in Phase A (capture Flow's own status responses).
+- ⏭️ Q1 / Q3 / Q6 — image attachment is an in-page catalog dialog; driving it, the start-only-I2V check, and the R2V slot cap are deferred to Phase B.
+
+**Next:** Phase A (T2V transport), once §5.5 is revised for the Q7 401. GitHub issue #24 tracks making the transport selectors language-agnostic.
+
+---
+
+### Video generation rework — Phase A (T2V transport) ✅ DONE (2026-05-19)
+
+Retired the 401-dead HTTP video path (`FlowApiClient.generate_video` / `get_video_status`, `build_generate_body` / `model_key`, `VideoOperation` / `VideoStatus` DTOs in `api/dto.py`). Added pure `api/video.py` value objects + parsers and a `ui_automation_video.py` mixin (`VideoGenerationMixin`) delivering `generate_video` for T2V via the Flow editor UI, with status polling that captures Flow's own traffic. `gflow video` CLI commands are stubbed pending Phase B (I2V + R2V + CLI rewire).
+
+Tasks shipped:
+- T1–T5: groundwork — constants, routes, error mapping, smoke-test and test-suite cleanup of dead HTTP video path
+- T6: `GenerateVideoRequest` value object (frozen dataclass with validation); `Mode.R2V` added
+- T7: `VideoStatus` value object (pure domain, replaces DTO)
+- T8: pure response parsers — `parse_video_status`, `media_name_from_generate_response`
+- T9: `_attach_generate_response_listener` — captures Flow's own generate response via network interception
+- T10: `_attach_status_response_listener` + `_poll_video_status` — status polling via captured traffic
+- T11: video editor selectors + mode switching — `_probe_selector_cascade`, `_switch_to_video_mode`, `_wait_video_editor_ready`
+- T12: output-count and aspect-ratio controls — `_set_output_count_one`, `_select_video_aspect`
+- T13: `generate_video` orchestration + `VideoGenerationMixin` wired into `UiAutomationTransport`
+- T14: docs update (this entry)
+
+I2V and R2V explicitly deferred — the orchestration raises `NotImplementedError("Phase A supports T2V only…")` for non-T2V modes.
+
+**Next:** Phase B — I2V + R2V + CLI rewire (`gflow video t2v/i2v` commands re-enabled).
+
+---
+
 ### Phase 5 — Public alpha soak + first non-alpha release
 
 `v0.2.0a1` through `v0.6.0a1` are already on PyPI under Trusted Publishing.
@@ -567,6 +606,7 @@ Today the CLI writes media to `$GFLOW_CLI_OUTPUT_DIR` on the local filesystem. P
 | 11 | LF-only line endings via `.gitattributes` | Single repo source of truth; cross-platform contributors don't think about it |
 | 12 | `Provider` indirection (legacy `providers/`) removed | Superseded by `api.FlowApiClient`. Re-introduce when we add `OfficialVeoProvider` (planned v0.5+) |
 | 13 | CDP attach transport deferred | Must first confirm whether CDP-attached Chrome still sets `navigator.webdriver=true` (which would negate any reCAPTCHA advantage over the current stealth fix). See CDP Attach backlog entry. |
+| 14 | HTTP status path (`get_video_status`) retired alongside `generate_video` | It is the same 401-dead path and would collide with the new `api/video.py:VideoStatus` value object — retiring both together keeps the domain clean. |
 
 ---
 

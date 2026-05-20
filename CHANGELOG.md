@@ -7,6 +7,58 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+## [0.7.0] — 2026-05-20
+
+> **Downstream-worker ergonomics release.** Hardens `FlowApiClient` for
+> long-lived integrations: standard exception module name, optional
+> `project_id`, `health_check()` for liveness probes, `out_dir` for
+> debug-screenshot plumbing, and a stable library-owned error when the
+> underlying browser session dies. Plus auth-flow fixes from issues #15 and
+> #17 and overlay-dismiss for first-run profiles (#26).
+
+### Added
+
+- `gflow_cli.exceptions` module as a standard alias for `gflow_cli.errors` — both module names resolve identically. Closes [#16](https://github.com/ffroliva/gflow-cli/issues/16).
+- `FlowApiClient.health_check()` async method — returns `True` if browser context is alive and on a Google domain; safe to call from long-lived workers without try/except. Closes [#16](https://github.com/ffroliva/gflow-cli/issues/16).
+- `FlowApiClient(out_dir=...)` constructor argument — when set, the resolved transport stores it as `_out_dir` so internal `_capture_debug_screenshot` calls inside `UiAutomationTransport._generate_images_locked` (entering the editor, dismissing overlays, sending prompts) save artifacts to that directory. Long-lived workers can now diagnose selector failures without restructuring their call sites. Closes [#18](https://github.com/ffroliva/gflow-cli/issues/18).
+- `BrowserSessionClosedError` (`gflow_cli.errors`, exit code 15) — raised from `FlowApiClient.generate_image()` / `generate_images_batch()` when the underlying Playwright page/context is closed mid-call (Playwright `TargetClosedError`). Callers can now catch a stable library-owned class and recreate the client via `async with FlowApiClient(...)` instead of importing from `playwright._impl._errors`. Closes [#18](https://github.com/ffroliva/gflow-cli/issues/18).
+- `UiAutomationTransport._dismiss_blocking_overlays(page)` — generic overlay-dismiss helper that detects Flow changelog ("What's new") iframes and dismisses them via a close-button selector cascade with an Escape-key fallback. Invoked after editor entry on both image and video flows so first-run profiles no longer fail on the next click. Closes [#26](https://github.com/ffroliva/gflow-cli/issues/26).
+- Release tags must now be **signed annotated tags** (`git tag -s vX.Y.Z`). CI's release job rejects unsigned tags so the GitHub release surfaces as Verified ([#30](https://github.com/ffroliva/gflow-cli/issues/30)).
+- New documentation: [`docs/DEBUGGING.md`](docs/DEBUGGING.md) — evergreen reference for debugging, testing, and troubleshooting (listener log keys, selector-cascade discipline, lifecycle errors, Windows console encoding, test-suite memory). [`docs/LIVE_VERIFICATION_v0.7.0.md`](docs/LIVE_VERIFICATION_v0.7.0.md) — per-release end-to-end evidence (every CLI aspect ratio live-tested).
+
+### Changed
+
+- `FlowApiClient.generate_image()` and `generate_images_batch()`: `project_id` is now optional (`str | None = None`). When omitted, a new Flow project is created automatically. Existing callers passing an explicit `project_id` are unaffected. Closes [#16](https://github.com/ffroliva/gflow-cli/issues/16).
+- `gflow video t2v/i2v/batch` now report "temporarily unavailable" — video generation is being rebuilt on the UI-automation transport (Phase A ships the T2V transport; CLI commands return in Phase B).
+
+### Removed
+
+- The 401-dead HTTP video API path (`FlowApiClient.generate_video`, `get_video_status`) — retired in favour of the new UI-automation transport (`VideoGenerationMixin` in `api/transports/ui_automation_video.py`).
+
+### Fixed
+
+- `gflow auth login` now verifies a real Flow app session before reporting
+  success — fixes issue [#15](https://github.com/ffroliva/gflow-cli/issues/15), where a Google-only sign-in was wrongly accepted
+  and later failed with HTTP 401.
+- **`gflow auth login --browser internal` now fails fast when Google rejects
+  Playwright's bundled Chromium**, returning `AuthBrowserRejectedError` exit
+  code 14 with guidance to rerun using real Chrome
+  (`gflow auth login --browser chrome`) or set
+  `GFLOW_CLI_AUTH_BROWSER=chrome` ([#17](https://github.com/ffroliva/gflow-cli/issues/17)).
+- **`gflow image t2i --aspect 1:1` aspect-ratio tab regression** — Flow's
+  `1:1` tab is now selected via an exact-match (`:text-is`) cascade against
+  the labels `1:1`, `Square`, `1×1`, `1x1` instead of the prior
+  `:has-text("1:1")` substring match. The substring selector was matching an
+  invisible parent on some Flow UI variants, causing a 3 s timeout and a
+  silent fallback to Flow's default aspect. All five CLI aspect ratios
+  (`16:9`, `9:16`, `1:1`, `4:3`, `3:4`) are now live-verified.
+- `UiAutomationTransport._attach_batch_response_listener` now emits a
+  `ui_automation.batch_response_seen` log for every `batchGenerateImages`
+  URL observed (BEFORE the per-project filter) and a
+  `ui_automation.batch_response_dropped_project_id_mismatch` log when the
+  filter rejects a response. Eliminates the silent black-hole that hid
+  listener-miss bugs during live verification.
+
 ## [0.6.0a6] — 2026-05-17
 
 > **Stability & code-quality release.** Fixes a concurrency bug in image

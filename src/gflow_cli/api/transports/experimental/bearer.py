@@ -258,7 +258,7 @@ class BearerTransport:
     async def generate_images(
         self,
         *,
-        project_id: str,
+        project_id: str | None,
         request: GenerateImageRequest,
     ) -> list[GeneratedImage]:
         """Generate images via pure httpx, replaying the captured fingerprint.
@@ -266,6 +266,8 @@ class BearerTransport:
         Proactive refresh if token is near expiry; single-retry on 401.
         Raises ``TransportTimeoutError`` if the call hangs > PER_CALL_TIMEOUT_S.
         """
+        if project_id is None:
+            raise ValueError("BearerTransport requires an explicit project_id")
         if self._cached is None:
             raise AuthMissingError("bearer: setup() was not called before generate_images()")
 
