@@ -308,10 +308,29 @@ class AuthBrowserRejectedError(GFlowError):
     )
 
 
+class BrowserSessionClosedError(GFlowError):
+    """Raised when the underlying Playwright page/context/browser is closed.
+
+    Translated from Playwright's TargetClosedError at the FlowApiClient
+    boundary so long-lived workers can catch a stable, library-owned class
+    and decide to recreate the client (via its async context manager)
+    instead of importing from ``playwright._impl._errors``.
+    """
+
+    problem_type = "https://gflow-cli.dev/errors/browser-session-closed"
+    title = "Browser session closed"
+    _default_remediation = (
+        "The Playwright browser/page used by this FlowApiClient is no longer "
+        "alive. Recreate the client via `async with FlowApiClient(...)` and "
+        "retry the operation."
+    )
+
+
 # EXIT_CODE_MAP — most-specific class FIRST per isinstance walk semantics.
 # Subclasses inherit their parent's exit code if they don't have their own
 # entry. New entries MUST go BEFORE their parent class in this dict.
 EXIT_CODE_MAP: dict[type[GFlowError], int] = {
+    BrowserSessionClosedError: 15,
     AuthBrowserRejectedError: 14,
     AuthLoginTimeoutError: 12,
     SecurityError: 13,

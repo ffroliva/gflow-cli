@@ -39,12 +39,31 @@ from gflow_cli.api.transports.base import FlowTransportStrategy
 from gflow_cli.config import Settings
 from gflow_cli.errors import (
     AuthExpiredError,
+    BrowserSessionClosedError,
     ContentPolicyError,
     FlowApiError,  # re-exported via gflow_cli.api.__init__
     NetworkError,
     RateLimitError,
     WireFormatError,
 )
+
+# Marker substring used by Playwright when a Page/Context/Browser is closed.
+# Stable across recent Playwright versions; we match on message text to avoid
+# importing from ``playwright._impl._errors`` (private API).
+_TARGET_CLOSED_MARKERS = (
+    "Target page, context or browser has been closed",
+    "Target closed",
+)
+
+
+def _is_target_closed(exc: BaseException) -> bool:
+    """Heuristic — True if ``exc`` is Playwright's TargetClosedError or wraps it."""
+    name = type(exc).__name__
+    if name == "TargetClosedError":
+        return True
+    msg = str(exc)
+    return any(marker in msg for marker in _TARGET_CLOSED_MARKERS)
+
 
 # Silence "imported but unused" — FlowApiError is re-exported from this module
 # via ``gflow_cli.api.__init__`` for back-compat with Phase 3 call sites.
@@ -104,9 +123,15 @@ class FlowApiClient:
         headless: bool = False,
         settings: Settings | None = None,
         transport: FlowTransportStrategy | str | None = None,
+        out_dir: Path | None = None,
     ) -> None:
         self.profile_dir = profile_dir
         self.headless = headless
+        # Optional directory for debug screenshots when a generation step
+        # fails on a selector. Propagated to the transport (see __aenter__)
+        # so long-lived workers can diagnose a "Could not find ... CTA"
+        # error without restructuring their call sites (#18).
+        self._out_dir = out_dir
         # NOTE: A bare ``Settings()`` here would resolve env vars / .env at
         # construction time, which is fine for production but lets tests
         # opt out by supplying a fully built settings object.
@@ -205,6 +230,11 @@ class FlowApiClient:
             # Pass self._page so S1 can reuse the already-open context.
             # S2 and S3 accept and ignore the page= kwarg.
             self.transport = make_transport(inp)
+            # Plumb the client's out_dir to the transport so debug screenshots
+            # taken inside `_generate_images_locked` land somewhere the caller
+            # can inspect (#18). Guarded by hasattr so transports without an
+            # `_out_dir` slot are unaffected.
+            self._plumb_out_dir(self.transport)
             await self.transport.setup(self.profile_dir, page=self._page)
             self._owns_transport = True
         else:
@@ -212,8 +242,22 @@ class FlowApiClient:
             # Do NOT call setup() — the caller already did that.
             self.transport = inp
             self._owns_transport = False
+            self._plumb_out_dir(self.transport)
 
         return self
+
+    def _plumb_out_dir(self, transport: FlowTransportStrategy) -> None:
+        """Forward ``self._out_dir`` onto a transport that exposes the slot.
+
+        No-op when ``self._out_dir`` is None or the transport doesn't carry an
+        ``_out_dir`` attribute (Protocol-level — the field is transport-private,
+        not part of the FlowTransportStrategy contract).
+        """
+        if self._out_dir is None:
+            return
+        if not hasattr(transport, "_out_dir"):
+            return
+        transport._out_dir = self._out_dir  # type: ignore[attr-defined]
 
     async def __aexit__(self, *exc: object) -> None:
         try:
@@ -650,19 +694,24 @@ class FlowApiClient:
         yields identical bodies modulo the per-call reCAPTCHA token AND the
         per-attempt session-id timestamp.
         """
-        resolved_project_id: str
-        if project_id is None:
-            project = await self.create_project()
-            resolved_project_id = project.project_id
-        else:
-            resolved_project_id = project_id
-        return await self._drive_image_generation(
-            project_id=resolved_project_id,
-            req=req,
-            seed=seed if seed is not None else secrets.randbelow(2**31),
-            batch_id=batch_id or _new_batch_id(),
-            recaptcha_action=recaptcha_action,
-        )
+        try:
+            resolved_project_id: str
+            if project_id is None:
+                project = await self.create_project()
+                resolved_project_id = project.project_id
+            else:
+                resolved_project_id = project_id
+            return await self._drive_image_generation(
+                project_id=resolved_project_id,
+                req=req,
+                seed=seed if seed is not None else secrets.randbelow(2**31),
+                batch_id=batch_id or _new_batch_id(),
+                recaptcha_action=recaptcha_action,
+            )
+        except Exception as e:
+            if _is_target_closed(e):
+                raise BrowserSessionClosedError() from e
+            raise
 
     async def generate_images_batch(
         self,
@@ -713,32 +762,37 @@ class FlowApiClient:
         else:
             seeds_list = list(seeds)
 
-        # Resolve project_id once — do NOT create N projects for N parallel shots.
-        resolved_project_id: str
-        if project_id is None:
-            project = await self.create_project()
-            resolved_project_id = project.project_id
-        else:
-            resolved_project_id = project_id
+        try:
+            # Resolve project_id once — do NOT create N projects for N parallel shots.
+            resolved_project_id: str
+            if project_id is None:
+                project = await self.create_project()
+                resolved_project_id = project.project_id
+            else:
+                resolved_project_id = project_id
 
-        shared_batch_id = _new_batch_id()
+            shared_batch_id = _new_batch_id()
 
-        # asyncio.gather preserves input order in its result list, so the
-        # caller sees results in the same order as `seeds` even though the
-        # network calls (and per-shot retry loops) may complete out of order.
-        return await asyncio.gather(
-            *(
-                self._drive_image_generation(
-                    project_id=resolved_project_id,
-                    req=req,
-                    seed=s,
-                    batch_id=shared_batch_id,
-                    recaptcha_action=recaptcha_action,
-                )
-                for s in seeds_list
-            ),
-            return_exceptions=False,
-        )
+            # asyncio.gather preserves input order in its result list, so the
+            # caller sees results in the same order as `seeds` even though the
+            # network calls (and per-shot retry loops) may complete out of order.
+            return await asyncio.gather(
+                *(
+                    self._drive_image_generation(
+                        project_id=resolved_project_id,
+                        req=req,
+                        seed=s,
+                        batch_id=shared_batch_id,
+                        recaptcha_action=recaptcha_action,
+                    )
+                    for s in seeds_list
+                ),
+                return_exceptions=False,
+            )
+        except Exception as e:
+            if _is_target_closed(e):
+                raise BrowserSessionClosedError() from e
+            raise
 
     async def health_check(self) -> bool:
         """Return True if the browser context is alive and on a Google domain.

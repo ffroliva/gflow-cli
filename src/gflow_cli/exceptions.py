@@ -11,6 +11,7 @@ from gflow_cli.errors import EXIT_CODE_MAP as EXIT_CODE_MAP
 from gflow_cli.errors import AuthExpiredError as AuthExpiredError
 from gflow_cli.errors import AuthLoginTimeoutError as AuthLoginTimeoutError
 from gflow_cli.errors import AuthMissingError as AuthMissingError
+from gflow_cli.errors import BrowserSessionClosedError as BrowserSessionClosedError
 from gflow_cli.errors import ConfigurationError as ConfigurationError
 from gflow_cli.errors import ContentPolicyError as ContentPolicyError
 from gflow_cli.errors import FlowApiError as FlowApiError

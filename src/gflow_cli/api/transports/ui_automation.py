@@ -203,13 +203,17 @@ GEN_SETTINGS_BUTTON_SELECTORS = (
     "button:has(i.google-symbols:text('crop_landscape'))",
 )
 
-# CLI string → Flow aspect ratio tab text (locale-invariant number format).
-_ASPECT_TAB: dict[str, str] = {
-    "16:9": "16:9",
-    "9:16": "9:16",
-    "1:1": "1:1",
-    "4:3": "4:3",
-    "3:4": "3:4",
+# CLI string → ordered list of candidate tab labels to try in the Flow gen
+# settings panel. Most ratios are labelled with their colon-numeric form
+# ("16:9"), but the "1:1" tab is sometimes rendered as "Square" or "1×1"
+# (multiplication sign U+00D7) — we try a small cascade and the first
+# locator that becomes visible wins.
+_ASPECT_TAB_CANDIDATES: dict[str, tuple[str, ...]] = {
+    "16:9": ("16:9",),
+    "9:16": ("9:16",),
+    "1:1": ("1:1", "Square", "1×1", "1x1"),
+    "4:3": ("4:3",),
+    "3:4": ("3:4",),
 }
 
 # Count → Flow count tab text.
@@ -327,6 +331,10 @@ class UiAutomationTransport(VideoGenerationMixin):
         self._page: Page | None = None
         self._setup_done: bool = False
         self._owns_playwright: bool = False
+        # Optional directory for debug screenshots — set by FlowApiClient
+        # from its `out_dir` constructor arg (#18). When None, the internal
+        # _capture_debug_screenshot helper is a no-op.
+        self._out_dir: Path | None = None
         # Serialize concurrent generate_images calls — a single Playwright Page
         # cannot be safely shared across parallel asyncio tasks (each call
         # navigates, opens panels, and types into the same DOM). The lock
@@ -697,14 +705,34 @@ class UiAutomationTransport(VideoGenerationMixin):
             return
 
         if aspect_cli:
-            tab_text = _ASPECT_TAB.get(aspect_cli, aspect_cli)
-            try:
-                tab = page.locator(f'[role="tab"]:has-text("{tab_text}")').first
-                await tab.wait_for(state="visible", timeout=3_000)
-                await tab.click()
-                log.info("ui_automation.aspect_ratio_set", value=aspect_cli)
-            except Exception as e:  # noqa: BLE001
-                log.warning("ui_automation.aspect_ratio_set_failed", value=aspect_cli, error=str(e))
+            candidates = _ASPECT_TAB_CANDIDATES.get(aspect_cli, (aspect_cli,))
+            clicked = False
+            last_err: str | None = None
+            for tab_text in candidates:
+                # `:text-is(...)` is exact-match — preferred for short labels
+                # like "1:1" because `:has-text(...)` substring-matches and
+                # would clash with longer tabs that include the label.
+                try:
+                    tab = page.locator(f'[role="tab"]:text-is("{tab_text}")').first
+                    await tab.wait_for(state="visible", timeout=2_000)
+                    await tab.click()
+                    clicked = True
+                    log.info(
+                        "ui_automation.aspect_ratio_set",
+                        value=aspect_cli,
+                        matched_label=tab_text,
+                    )
+                    break
+                except Exception as e:  # noqa: BLE001
+                    last_err = str(e)
+                    continue
+            if not clicked:
+                log.warning(
+                    "ui_automation.aspect_ratio_set_failed",
+                    value=aspect_cli,
+                    candidates_tried=list(candidates),
+                    error=last_err,
+                )
 
         if count is not None:
             count_text = _COUNT_TAB.get(count)
@@ -748,7 +776,21 @@ class UiAutomationTransport(VideoGenerationMixin):
         async def on_response(response: Any) -> None:
             if "batchGenerateImages" not in response.url:
                 return
+            # Log EVERY batchGenerateImages response BEFORE the project_id
+            # filter so live verification can diagnose listener-miss bugs
+            # (e.g., URL contains a different project_id than the editor URL).
+            log.info(
+                "ui_automation.batch_response_seen",
+                url=response.url,
+                status=response.status,
+                filter_project_id=project_id,
+            )
             if project_id and f"/projects/{project_id}/" not in response.url:
+                log.warning(
+                    "ui_automation.batch_response_dropped_project_id_mismatch",
+                    url=response.url,
+                    filter_project_id=project_id,
+                )
                 return
             try:
                 body = await response.json()
@@ -925,11 +967,12 @@ class UiAutomationTransport(VideoGenerationMixin):
         stays a single line, keeping the public method's intent clear.
         """
         page: Page = self._page  # type: ignore[assignment]  # guard in caller
+        out_dir = self._out_dir
 
-        await self._enter_editor(page)
+        await self._enter_editor(page, out_dir)
         # Dismiss any Flow changelog / "What's new" overlay that may be on top
         # of the editor before we click into settings / submit (#26).
-        await self._dismiss_blocking_overlays(page)
+        await self._dismiss_blocking_overlays(page, out_dir)
 
         # Resolve the project_id from the URL now that we're in the editor.
         nav_project_id = _extract_project_id(page.url)
@@ -946,7 +989,7 @@ class UiAutomationTransport(VideoGenerationMixin):
         # attach/await eliminates that race. Project-ID filter prevents stale
         # responses from previously-visited projects accumulating in the list.
         captured = self._attach_batch_response_listener(page, project_id=nav_project_id)
-        await self._send_prompt(page, request.prompt)
+        await self._send_prompt(page, request.prompt, out_dir)
         responses = await self._await_captured(captured, expected_count=request.count)
 
         # Collect images from ALL captured responses (Flow makes one API call
