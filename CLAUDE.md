@@ -10,20 +10,24 @@
 
 ## On every session start
 
-1. Read **[docs/INDEX.md](docs/INDEX.md)** — routing layer for all project docs.
-2. Read **[PLAN.md](PLAN.md)** — current phase, next concrete tasks, ADRs.
-3. Read **[KNOWN_ISSUES.md](KNOWN_ISSUES.md)** — open issues to avoid re-discovering.
-4. Check **[CHANGELOG.md](CHANGELOG.md) `[Unreleased]`** — what's recently shipped.
+1. Read **[docs/INDEX.md](docs/INDEX.md)** — routing layer for all project docs and commands.
+2. Pull deeper context on demand — do not read these upfront:
+   - Starting a feature or task → `/gflow:plan`
+   - Touching auth or reCAPTCHA → `/gflow:known-issues`
+   - Cutting a release → `/gflow:release` (calls `/gflow:changelog` automatically)
+   - Before any commit → `/gflow:check`
 
 ## Active phase
 
-**Phase 4 — Hardening DONE (v0.4.0a2).** Per-worker Page pool, tenacity
-retry/backoff with reCAPTCHA re-mint, RFC 9457 Problem Details error
-taxonomy with per-class exit codes 3–7, structlog observability with
-`error_raised` / `error_unhandled` events, and 12 pytest-bdd scenarios all
-shipped. Documentation polish landed in v0.4.0a2. Next phase TBD — likely
-Phase 5 public alpha on PyPI followed by Phase 6 operations history
-(see `PLAN.md`).
+**Phase A — Video T2V DONE (PR #23, merged 2026-05-20 to `develop`).** `UiAutomationTransport.generate_video(T2V)` orchestrates the Flow video editor end-to-end via Playwright UI mimicry — the underlying HTTP video path returns 401 from `aisandbox-pa` and was retired. I2V and R2V raise `NotImplementedError` (deferred to Phase B). Companion PRs landed the onboarding-bypass (#27), changelog-overlay dismiss (#28), and signed-tag release verification (#30).
+
+**Active backlog → Phase B.** See [phase-b-followups](.) memory and these GitHub issues:
+- [#29](https://github.com/ffroliva/gflow-cli/issues/29) first-class video download (mirror the image-side `download_image` pattern)
+- Image-gen 401 live validation (was the bypass branch's whole reason — never confirmed e2e)
+- CLI restoration: `gflow video t2v/i2v/batch` are currently stubbed
+- I2V then R2V on `UiAutomationTransport`
+
+Run `/gflow:plan` for the current detailed plan if a superpowers plan is active.
 
 ## Architecture (skim)
 
@@ -67,24 +71,17 @@ Dependency rule: **`domain/` depends on nothing**. `application/` depends on `do
 
 ## How to verify your work
 
-Run all five BEFORE asking to commit:
+Run all five BEFORE asking to commit (or run `/gflow:check` which does the same):
 
 ```bash
-uv run python scripts/ci/check_repo_hygiene.py  # hygiene gate (run first)
-uv run ruff check src tests          # lint
-uv run ruff format --check src tests # formatting
-uv run pyright src                   # types
-uv run pytest -q --cov=gflow_cli      # tests + coverage
+PYTHONUTF8=1 uv run python scripts/ci/check_repo_hygiene.py  # hygiene (tmp/ rule, secrets)
+uv run ruff check src tests                                  # lint
+uv run ruff format --check src tests                         # formatting
+uv run pyright src                                           # types
+uv run pytest -q --cov=gflow_cli                             # tests + coverage
 ```
 
 CI runs the same five on every push (see `.github/workflows/ci.yml`).
-
-## Output path rule — MANDATORY
-
-**All script and test runtime output goes to `tmp/`.** Never to `test_assets/`
-or the repo root. `test_assets/` is for committed test *fixtures* (static
-input files checked into git). The CI hygiene gate (`check_repo_hygiene.py`)
-actively blocks commits that violate this rule.
 
 ## Where to look
 
