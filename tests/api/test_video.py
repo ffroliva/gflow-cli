@@ -228,7 +228,9 @@ class TestVideoResult:
         assert not result.status.succeeded
 
     def test_video_result_is_frozen(self) -> None:
+        from dataclasses import FrozenInstanceError
+
         status = VideoStatus(media_id="x", status="MEDIA_GENERATION_STATUS_SUCCESSFUL")
         result = VideoResult(status=status, local_path=None)
-        with pytest.raises(Exception):  # FrozenInstanceError
+        with pytest.raises(FrozenInstanceError):
             result.local_path = Path("/tmp/other.mp4")  # type: ignore[misc]

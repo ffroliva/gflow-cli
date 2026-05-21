@@ -328,8 +328,11 @@ class TestGenerateVideoOrchestration:
             return VideoStatus(media_id="vid-1", status="MEDIA_GENERATION_STATUS_SUCCESSFUL")
 
         monkeypatch.setattr(VideoGenerationMixin, "_poll_video_status", staticmethod(_fake_poll))
+        fake_path = Path("/tmp/vid-1.mp4")
+        monkeypatch.setattr(transport, "_download_video", AsyncMock(return_value=fake_path))
         result = await transport.generate_video(request=GenerateVideoRequest(prompt="a forest"))
-        assert result.succeeded is True
+        assert result.status.succeeded is True
+        assert result.local_path == fake_path
         # both response listeners were detached in the finally block
         assert transport._page.remove_listener.call_count == 2
 
@@ -427,3 +430,23 @@ class TestDownloadVideo:
 
         with pytest.raises(WireFormatError):
             await transport._download_video("test-uuid-456", tmp_path, fake_page)
+
+
+class TestGenerateVideoReturnType:
+    @pytest.mark.asyncio
+    async def test_generate_video_returns_video_result_type(self) -> None:
+        """generate_video must declare VideoResult as return type."""
+        import typing
+
+        from gflow_cli.api.video import VideoResult
+
+        transport = UiAutomationTransport()
+        try:
+            hints = typing.get_type_hints(transport.generate_video)
+        except Exception:
+            hints = {}
+
+        ret = hints.get("return")
+        assert ret is VideoResult or str(ret) == "VideoResult", (
+            f"generate_video must return VideoResult, got {ret!r}"
+        )
