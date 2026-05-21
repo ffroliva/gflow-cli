@@ -66,12 +66,11 @@ git checkout e8f932a -- `
   src/gflow_cli/api/client.py `
   src/gflow_cli/cli_image.py `
   src/gflow_cli/image_batch.py `
-  src/gflow_cli/api/image.py `
   tests/api/test_client_image.py `
   tests/image_batch/
 ```
 
-Expected: no errors. The v0.7.0 release hunks (`pyproject.toml`, `CHANGELOG.md` footer) are intentionally excluded — they're already on `develop`.
+Expected: no errors. The v0.7.0 release hunks (`pyproject.toml`, `CHANGELOG.md` footer, `uv.lock`, `src/gflow_cli/__init__.py`) and unrelated files are intentionally excluded — they're already on `develop` or out of this PR's scope. Verified PR #35 file list: `client.py`, `cli_image.py`, `image_batch.py`, `tests/api/test_client_image.py`, `tests/image_batch/__init__.py`, `tests/image_batch/test_image_manifest.py` (plus release-only files we skip). **`src/gflow_cli/api/image.py` is NOT modified by PR #35** — do not include it.
 
 - [ ] **Step 2: Un-stage everything so we can re-stage per commit**
 
@@ -108,17 +107,20 @@ git diff HEAD -- src/gflow_cli/api/client.py | Select-String -Pattern "_drive_im
 
 Expected: shows the PR #35 refactor introducing `_drive_images_generation` (plural), `generate_images_batch` calling it with `count=N` baked into `req`, no `asyncio.gather` fan-out.
 
-- [ ] **Step 2: Stage only the count-selector hunks in client.py**
+- [ ] **Step 2: Build commit #1's content of `client.py` by hand-edit (primary path)**
 
-Use `git add -p src/gflow_cli/api/client.py` and accept hunks that touch:
-- `_drive_images_generation` (new method, returns `list[GeneratedImage]`)
-- `generate_images_batch` (now calls `_drive_images_generation` once with `count` baked into `req`)
+**Note:** PR #35's refactor of `_drive_image_generation` interleaves the count-selector change (rename + signature/return-type change) with the `seed`/`batch_id` removal in the same hunk. `git add -p` cannot separate them cleanly. The atomic-commit split is achieved by **editing `client.py` directly to land just the count-selector portion** for this commit, then in commit #1b removing the seed/batch_id surface area.
 
-**Skip** hunks that remove `seed`/`batch_id` parameters from `_drive_image_generation` (singular), or that change `generate_image`'s signature, or that touch the `seeds_list = [...]` mint. Those belong to commit #1b.
+Concrete edits to `src/gflow_cli/api/client.py` for commit #1:
+1. **Rename** `_drive_image_generation` → introduce a new `_drive_images_generation` (plural) returning `list[GeneratedImage]`. **Keep the original `_drive_image_generation` (singular)** as a thin delegator that calls `_drive_images_generation` and returns `images[0]`. The singular method still has `seed`/`batch_id` kwargs and the `_ = seed, batch_id` shim — those are commit #1b's territory.
+2. **Rewrite `generate_images_batch`** to call `_drive_images_generation` **once** with `count` baked into the request via `_dc_replace(req, count=count)`, instead of the previous `asyncio.gather` fan-out. **Important:** removing the gather necessarily removes `seeds_list = [secrets.randbelow(...) for _ in range(count)]` and `shared_batch_id = _new_batch_id()` from this function — those were inputs to the gather, no longer needed. **This means commit #1 does touch seed-related code at one site**, but only to delete the inputs to a control-flow that no longer exists. The public `seeds=` parameter on `generate_images_batch` stays in commit #1; it gets removed in #1b. Update the commit-message body to acknowledge this nuance.
+3. Validate `count` is in `[1, 4]` before the single call (preserve the existing range check or move it to the new function).
 
-If the PR #35 refactor is intertwined and you cannot cleanly separate hunks, instead:
-  - Edit `src/gflow_cli/api/client.py` directly with the spec §5 commit #1 changes only (count-selector refactor; preserve `seed`/`batch_id` everywhere they currently appear).
-  - The diff between this commit and #1b will then be the seed-cleanup deltas.
+If you prefer, copy `client.py` from `git show e8f932a:src/gflow_cli/api/client.py` and then re-add the `seed`/`batch_id` parameters everywhere they exist on `develop` but were removed in PR #35. This is mechanically equivalent and may be easier to verify.
+
+- [ ] **Step 2b (optional shortcut): tentatively try `git add -p`**
+
+If you want, you can attempt `git add -p src/gflow_cli/api/client.py` first. Accept any hunks that touch ONLY the `_drive_images_generation` symbol and the rewrite of `generate_images_batch` body. **Reject anything that drops `seed`/`batch_id` from `_drive_image_generation`'s signature or removes the `secrets.randbelow` mint inside `generate_image`.** If the hunks come bundled, abandon `-p` and use Step 2's hand-edit path.
 
 - [ ] **Step 3: Stage the count-selector test deltas**
 
@@ -182,6 +184,84 @@ Expected: commit succeeds. `git log --oneline -1` shows the new SHA + the title.
 ## Phase 2 — Commit #1b: remove dead `--seed` flag and `seed`/`batch_id` params
 
 **This commit is a BREAKING CHANGE.** Library users passing `seed=` / `batch_id=` to `FlowApiClient.generate_image` will get a `TypeError`. CLI users using `--seed` will get an "unknown option" error. See spec §1 and §3 for the justification (no real regression: the flag was a no-op under the UI transport).
+
+### Task 2.0: Write failing tests pinning the removal (TDD red phase)
+
+**Files:**
+- Create or extend: `tests/api/test_client_image.py` (add a `test_seed_removal.py` style block)
+- Create or extend: `tests/cli/test_cli_image_seed_removed.py`
+
+These tests assert the cleanup is complete. They MUST fail before Task 2.1-2.4's edits and MUST pass after.
+
+- [ ] **Step 1: Write the public-API signature test**
+
+Append to `tests/api/test_client_image.py` (or create new module if cleaner):
+
+```python
+import inspect
+
+from gflow_cli.api.client import FlowApiClient
+
+
+def test_generate_image_has_no_seed_kwarg() -> None:
+    """seed/batch_id removed in commit #1b — see design spec §1, D8."""
+    params = inspect.signature(FlowApiClient.generate_image).parameters
+    assert "seed" not in params, f"generate_image still accepts seed: {list(params)}"
+    assert "batch_id" not in params, f"generate_image still accepts batch_id: {list(params)}"
+
+
+def test_generate_images_batch_has_no_seeds_kwarg() -> None:
+    """seeds= removed in commit #1b — see design spec §1, D8."""
+    params = inspect.signature(FlowApiClient.generate_images_batch).parameters
+    assert "seeds" not in params, f"generate_images_batch still accepts seeds: {list(params)}"
+
+
+def test_drive_image_generation_private_has_no_seed_kwarg() -> None:
+    """_drive_image_generation kwargs shrunk in commit #1b."""
+    params = inspect.signature(FlowApiClient._drive_image_generation).parameters
+    assert "seed" not in params
+    assert "batch_id" not in params
+```
+
+- [ ] **Step 2: Write the CLI flag-removal test**
+
+Create `tests/cli/test_cli_image_seed_removed.py`:
+
+```python
+from __future__ import annotations
+
+from click.testing import CliRunner
+
+from gflow_cli.cli import cli
+
+
+def test_t2i_rejects_seed_flag() -> None:
+    """--seed removed from gflow image t2i in commit #1b — spec §1, D8."""
+    runner = CliRunner()
+    result = runner.invoke(cli, ["image", "t2i", "--seed", "42", "dummy prompt"])
+    assert result.exit_code != 0
+    assert "no such option" in result.output.lower() or "--seed" in result.output
+
+
+def test_i2i_rejects_seed_flag() -> None:
+    """--seed removed from gflow image i2i in commit #1b."""
+    runner = CliRunner()
+    result = runner.invoke(
+        cli, ["image", "i2i", "--seed", "42", "--ref", "x.png", "dummy prompt"]
+    )
+    assert result.exit_code != 0
+    assert "no such option" in result.output.lower() or "--seed" in result.output
+```
+
+- [ ] **Step 3: Run the new tests — expect ALL FAIL**
+
+```powershell
+uv run pytest -q tests/api/test_client_image.py::test_generate_image_has_no_seed_kwarg tests/api/test_client_image.py::test_generate_images_batch_has_no_seeds_kwarg tests/api/test_client_image.py::test_drive_image_generation_private_has_no_seed_kwarg tests/cli/test_cli_image_seed_removed.py
+```
+
+Expected: 5 FAIL. (The signatures still contain `seed`/`batch_id`/`seeds`; the CLI still accepts `--seed`.) If any test PASSES at this stage, you've misread the current state — investigate before proceeding.
+
+**Note:** these tests stay in the working tree but uncommitted across Phases 2.1-2.3. Commit them as part of Task 2.4 once they go green.
 
 ### Task 2.1: Remove `--seed` from the CLI
 
@@ -511,42 +591,64 @@ uv run gflow image t2i --help
 
 Expected: the help output does NOT contain `--seed` anywhere. (Visual check.)
 
-- [ ] **Step 3: Stage and commit**
+- [ ] **Step 3: Verify Task 2.0's red tests now pass**
+
+```powershell
+uv run pytest -q tests/api/test_client_image.py::test_generate_image_has_no_seed_kwarg tests/api/test_client_image.py::test_generate_images_batch_has_no_seeds_kwarg tests/api/test_client_image.py::test_drive_image_generation_private_has_no_seed_kwarg tests/cli/test_cli_image_seed_removed.py
+```
+
+Expected: 5 PASS. If any FAILs, the removal in 2.1-2.3 is incomplete; locate and fix.
+
+- [ ] **Step 4: Stage and commit (Conventional Commits with `!` BREAKING marker)**
 
 ```powershell
 git add src/gflow_cli/cli_image.py src/gflow_cli/api/client.py tests/api/test_client_image.py tests/cli/
 git status -sb
 git commit -m @'
-refactor(image,cli): remove no-op --seed flag and dead seed/batch_id params
+refactor(image)!: remove no-op --seed flag and dead seed/batch_id params
 
-BREAKING CHANGE: `--seed` flag removed from `gflow image t2i` and
-`gflow image i2i`. `seed=` and `batch_id=` kwargs removed from
-`FlowApiClient.generate_image`. `seeds=` parameter removed from
-`FlowApiClient.generate_images_batch`. Callers passing these will get
-a TypeError.
+Empirically verified dead under the active UI transport since v0.7.0.
+The user-supplied seed was discarded by the `_ = seed, batch_id` shim
+in `_drive_image_generation` before reaching any transport. The active
+UI transport clicks buttons and never reads the seed; the experimental
+HTTP transports mint locally and never received the user's seed either.
 
-Justification: empirically verified dead under the active UI transport
-since v0.7.0. The user-supplied seed was discarded by the
-`_ = seed, batch_id` shim in `_drive_image_generation` before reaching
-any transport. The active UI transport clicks buttons and never reads
-the seed; the experimental HTTP transports mint locally and never
-received the user's seed either. The CLI's `--seed` example and
-`UsageError` cross-flag validation are removed accordingly.
+Cleanup:
+- `gflow image t2i` and `gflow image i2i` no longer accept `--seed`.
+- `FlowApiClient.generate_image` no longer accepts `seed=` / `batch_id=`.
+- `FlowApiClient.generate_images_batch` no longer accepts `seeds=`.
+- `_drive_image_generation` private kwargs and `_ = seed, batch_id`
+  shim deleted.
+- 9 test call sites updated; CLI `--seed` UsageError tests deleted;
+  new `inspect.signature` + CliRunner red tests pin the removal.
 
 The body builder `_build_batch_generate_images_body(seed, batch_id, ...)`
 in `src/gflow_cli/api/image.py` is UNCHANGED — those parameters live at
 the wire-protocol layer used by the experimental HTTP transports'
 internal mint.
 
-If reproducibility via user-controlled seed becomes possible again
-(Flow UI change or HTTP transport revival), it will be re-introduced
-at that layer.
-
 Refs: design spec §1, §3, §5 commit #1b, §10 AC16, §12 D8.
+
+BREAKING CHANGE: --seed flag removed from `gflow image t2i` and
+`gflow image i2i`. `FlowApiClient.generate_image` no longer accepts
+`seed=` or `batch_id=` kwargs; `FlowApiClient.generate_images_batch`
+no longer accepts `seeds=`. Callers passing these will get a TypeError
+(library) or "no such option" (CLI). If reproducibility via
+user-controlled seed becomes possible again (Flow UI change or HTTP
+transport revival), it will be re-introduced at that layer.
 '@
 ```
 
 Expected: commit succeeds. `git log --oneline -2` shows #1b on top, #1 below.
+
+- [ ] **Step 5: Stale-test grep (per spec §11 risk register, run after #1b not only at end)**
+
+```powershell
+Select-String -Path tests/ -Pattern '--seed|seed=42|seed=1\b' -SimpleMatch -Recurse
+Select-String -Path tests/ -Pattern 'not yet available|temporarily unavailable|5-prompt cap' -SimpleMatch -Recurse
+```
+
+Expected: zero hits in `tests/api/test_client_image.py` and `tests/cli/`. Allowed hits: `tests/api/test_image_body.py` if it exists (body-builder tests still take `seed=`).
 
 ---
 
@@ -619,10 +721,16 @@ from gflow_cli.image_batch import (
 
 
 @pytest.fixture
-def log_capture() -> LogCapture:
+def log_capture():
+    """Capture structlog events. Resets the global config on teardown so
+    test ordering does not bleed events between tests (council finding R2).
+    """
     capture = LogCapture()
     structlog.configure(processors=[capture])
-    return capture
+    try:
+        yield capture
+    finally:
+        structlog.reset_defaults()
 
 
 @pytest.fixture
@@ -672,8 +780,14 @@ async def test_emits_submission_attempt_per_row(
     assert len(attempts) == 2
     assert attempts[0]["row_idx"] == 0
     assert attempts[1]["row_idx"] == 1
-    assert "prompt_hash" in attempts[0]
-    assert "same_project" in attempts[0]
+    # Council finding R2: assert exact derivation, not just key presence.
+    import hashlib
+    expected_hash = hashlib.sha256(b"cat").hexdigest()[:12]
+    assert attempts[0]["prompt_hash"] == expected_hash
+    assert attempts[0]["same_project"] is False
+    # Council finding R2: project_id must be on the event so the e2e
+    # can assert isolation/sharing semantics (spec §7 assertions 7-8).
+    assert "project_id" in attempts[0], f"missing project_id key: {attempts[0]}"
 
 
 @pytest.mark.asyncio
@@ -762,8 +876,11 @@ Expected: 4 FAIL. The image_batch.py module from PR #35 does not yet emit these 
 
 - [ ] **Step 3: Edit `src/gflow_cli/image_batch.py` to emit the events**
 
-Find the top of the file and ensure `structlog` is imported:
+Find the top of the file and ensure these imports are at module top (NOT inside the loop — council finding R3):
 ```python
+import hashlib
+import time
+
 import structlog
 ```
 
@@ -794,20 +911,17 @@ Wrap each iteration with the four events. Add a logger at module-top:
 logger = structlog.get_logger(__name__)
 ```
 
-Add a helper for hashing prompts (deterministic, non-PII):
+Add a module-level helper for hashing prompts (deterministic, non-PII):
 
 ```python
 def _prompt_hash(text: str) -> str:
     """Short, deterministic, non-reversible hash for observability."""
-    import hashlib
     return hashlib.sha256(text.encode("utf-8")).hexdigest()[:12]
 ```
 
-Modify the loop:
+Modify the loop in `run_manifest_image_batch` (around `image_batch.py:616`):
 
 ```python
-import time
-
 last_submit_ts: float | None = None
 
 for idx, item in enumerate(prompts):
@@ -832,6 +946,9 @@ for idx, item in enumerate(prompts):
         same_project=same_project,
         jitter_enabled=jitter_range != (0.0, 0.0),
         t_since_prev_submit_ms=t_since_prev,
+        # Council R2: project_id MUST be on this event so the e2e can
+        # assert --same-project semantics (single ID vs N distinct IDs).
+        project_id=shared_project_id if same_project else "<per-prompt>",
     )
 
     start = time.monotonic()
@@ -852,8 +969,10 @@ for idx, item in enumerate(prompts):
         latency_ms=latency_ms,
     )
     if outcome.status == "ok":
-        import hashlib
-        # outcome.file_paths is expected to be list[Path]; if it's a single path, adapt.
+        # outcome.file_paths is expected to be list[Path]; if BatchOutcome
+        # exposes a different field name (e.g., outcome.file_path), adapt.
+        # Read the dataclass definition near the top of image_batch.py
+        # before writing this loop and match.
         for fp in (outcome.file_paths if hasattr(outcome, "file_paths") else [outcome.file_path]):
             try:
                 sha = hashlib.sha256(Path(fp).read_bytes()).hexdigest()[:16]
@@ -869,8 +988,10 @@ for idx, item in enumerate(prompts):
     outcomes.append(outcome)
 
     if outcome.status == "fail" and not continue_on_error:
-        ...  # unchanged
+        ...  # unchanged from PR #35
 ```
+
+**Note on `BatchOutcome` shape:** if PR #35's `BatchOutcome` doesn't expose `file_paths` or `file_path`, **add the field** as part of this commit so Task 4.1 assertion #4 (Pillow dimensions) and assertion #2 (file cardinality) can be expressed without scanning the filesystem. Council finding R4 flags this as a major coupling between Task 3.2 and Task 4.1.
 
 **If the actual `BatchOutcome` shape from PR #35 uses different field names**, adapt the `outcome.file_paths`/`outcome.file_path` access accordingly. Read the dataclass definition near the top of `image_batch.py` and match.
 
@@ -906,27 +1027,44 @@ prompt with bad aspect	1	9999:9999
 prompt with unknown model	1	16:9	imaginary-model
 ```
 
-- [ ] **Step 2: Append a unit test to `tests/image_batch/test_image_manifest.py`**
+- [ ] **Step 2: Append a parametrized unit test to `tests/image_batch/test_image_manifest.py`**
 
-Add:
+Each row in `sample_batch_invalid.tsv` exercises a distinct parse failure. Parametrize the assertion over each row so the test pinpoints which check fails (council finding R2):
+
 ```python
-def test_manifest_invalid_rows_raise_configuration_error(tmp_path: Path) -> None:
-    """Each row in sample_batch_invalid.tsv exercises a distinct parse failure."""
-    from gflow_cli.errors import ConfigurationError
-    from gflow_cli.image_batch import read_manifest_file
+import pytest
 
+from gflow_cli.errors import ConfigurationError
+from gflow_cli.image_batch import parse_manifest_file, parse_tsv_manifest
+
+
+@pytest.mark.parametrize(
+    "row, expected_substring",
+    [
+        ("prompt with bad count\tnot-a-number", "count"),
+        ("prompt with bad aspect\t1\t9999:9999", "aspect"),
+        ("prompt with unknown model\t1\t16:9\timaginary-model", "model"),
+    ],
+)
+def test_manifest_invalid_row_pins_specific_error(
+    row: str, expected_substring: str
+) -> None:
+    """Each malformed row must surface the field name in the error message."""
+    with pytest.raises(ConfigurationError) as exc_info:
+        parse_tsv_manifest(row + "\n", default_count=1, default_aspect_ratio="16:9",
+                          default_model="nano2", source_label="<test>")
+    assert expected_substring in str(exc_info.value).lower(), exc_info.value
+
+
+def test_manifest_dispatcher_raises_on_invalid_fixture(tmp_path: Path) -> None:
+    """End-to-end: the committed sample_batch_invalid.tsv must raise."""
     fixture = Path("test_assets/sample_batch_invalid.tsv")
     assert fixture.is_file(), "fixture must be committed"
-    with pytest.raises(ConfigurationError) as exc_info:
-        read_manifest_file(fixture)
-    # The specific row that fails first depends on parse order; assert that
-    # the message mentions either 'count', 'aspect', or 'model' to confirm
-    # the error message is informative.
-    msg = str(exc_info.value).lower()
-    assert any(k in msg for k in ("count", "aspect", "model")), msg
+    with pytest.raises(ConfigurationError):
+        parse_manifest_file(fixture)
 ```
 
-(Adapt `read_manifest_file` to whatever function name `image_batch.py` actually exposes as the dispatcher — likely `read_manifest_file` per the PR #35 implementation. Check the actual name.)
+(Adapt parameter names of `parse_tsv_manifest` to whatever PR #35's signature actually uses — check by grepping `def parse_tsv_manifest` in the carried-forward file.)
 
 - [ ] **Step 3: Run the new test**
 
@@ -967,7 +1105,7 @@ Write `test_assets/sample_batch.json`:
 - [ ] **Step 3: Verify the parsers can read both**
 
 ```powershell
-uv run python -c "from pathlib import Path; from gflow_cli.image_batch import read_manifest_file; print(read_manifest_file(Path('test_assets/sample_batch.tsv'))); print(read_manifest_file(Path('test_assets/sample_batch.json')))"
+uv run python -c "from pathlib import Path; from gflow_cli.image_batch import parse_manifest_file; print(parse_manifest_file(Path('test_assets/sample_batch.tsv'))); print(parse_manifest_file(Path('test_assets/sample_batch.json')))"
 ```
 
 Expected: prints two tuples of `BatchPromptItem` rows, no exceptions.
@@ -1030,15 +1168,27 @@ Expected: commit succeeds.
 ### Task 4.1: Create `tests/e2e/test_image_batch_e2e.py`
 
 **Files:**
+- Modify: `pyproject.toml` (add Pillow dev dependency)
 - Create: `tests/e2e/test_image_batch_e2e.py`
+
+- [ ] **Step 0: Add Pillow as a dev dependency**
+
+The e2e uses `PIL.Image` for the aspect-dimension assertion. Pillow is not currently in `pyproject.toml`.
+
+```powershell
+uv add --dev pillow
+```
+
+Expected: `pyproject.toml` shows `pillow` under `[dependency-groups.dev]` or `[project.optional-dependencies].dev`; `uv.lock` updated.
 
 - [ ] **Step 1: Read the existing pattern**
 
 ```powershell
 Get-Content tests/e2e/test_video_t2v_e2e.py -TotalCount 120
+Get-Content tests/e2e/conftest.py -TotalCount 80
 ```
 
-Note: env-var naming, profile resolution, `pytestmark`, skip-by-presence pattern.
+Note: the canonical e2e uses a **pytest fixture** named `e2e_profile_dir` (defined at `tests/e2e/conftest.py:25`), not a function. The test signature is `def test_xxx(e2e_profile_dir: Path, tmp_path: Path) -> None:`.
 
 - [ ] **Step 2: Write the new e2e file**
 
@@ -1046,22 +1196,22 @@ Create `tests/e2e/test_image_batch_e2e.py`:
 
 ```python
 """Live e2e for `gflow image batch`. Spends Flow credits. Skipped by
-default; opt in by setting GFLOW_CLI_E2E_PROFILE.
+default; opt in by setting GFLOW_CLI_E2E_PROFILE (the canonical e2e gate).
 
 Spec: docs/superpowers/specs/2026-05-21-multi-image-prompt-design.md §7.
 
 Env vars (all GFLOW_CLI_E2E_BATCH_*):
-  - GFLOW_CLI_E2E_PROFILE        master gate; Chrome-strategy profile name
-  - GFLOW_CLI_E2E_BATCH_MANIFEST default: test_assets/sample_batch.tsv
+  - GFLOW_CLI_E2E_PROFILE             master gate; Chrome-strategy profile name
+  - GFLOW_CLI_E2E_BATCH_MANIFEST      default: test_assets/sample_batch.tsv
   - GFLOW_CLI_E2E_BATCH_SAME_PROJECT  "0" or "1"; default "0"
-  - GFLOW_CLI_E2E_BATCH_JITTER   "0" or "1"; default "1". When "0",
-                                  passes jitter_range=(0,0) via DI.
+  - GFLOW_CLI_E2E_BATCH_JITTER        "0" or "1"; default "1". When "0",
+                                       passes jitter_range=(0,0) via DI.
 
 Output: pytest's tmp_path (auto-cleaned). No hand-rolled timestamp dir.
 """
 from __future__ import annotations
 
-import asyncio
+import json
 import os
 from pathlib import Path
 
@@ -1072,7 +1222,7 @@ from structlog.testing import LogCapture
 from gflow_cli.image_batch import (
     JITTER_MAX_SECONDS,
     JITTER_MIN_SECONDS,
-    read_manifest_file,
+    parse_manifest_file,
     run_manifest_image_batch,
 )
 
@@ -1083,11 +1233,16 @@ _E2E_MANIFEST_ENV = "GFLOW_CLI_E2E_BATCH_MANIFEST"
 _E2E_SAME_PROJECT_ENV = "GFLOW_CLI_E2E_BATCH_SAME_PROJECT"
 _E2E_JITTER_ENV = "GFLOW_CLI_E2E_BATCH_JITTER"
 
+# Council R2: relax to ±2% to tolerate Flow's H.264-aligned dimensions
+# (e.g., 1920x1088 for 16:9 = 0.74% but other ratios may sit closer to 1.5%).
+_ASPECT_TOLERANCE = 0.02
 
-def _skip_if_no_profile() -> None:
-    name = os.environ.get(_E2E_PROFILE_ENV, "").strip()
-    if not name:
-        pytest.skip(f"{_E2E_PROFILE_ENV} not set — skipping live e2e")
+# Council R2: accept PNG, JPEG, and WebP. Fail loud on anything else.
+_KNOWN_MAGIC = (
+    (b"\x89PNG", "png"),
+    (b"\xff\xd8\xff", "jpeg"),
+    (b"RIFF", "webp"),  # WebP additionally starts with WEBP at byte 8
+)
 
 
 def _resolve_jitter_range() -> tuple[float, float]:
@@ -1103,23 +1258,38 @@ def _resolve_same_project() -> bool:
 
 def _resolve_manifest_path() -> Path:
     raw = os.environ.get(_E2E_MANIFEST_ENV, "test_assets/sample_batch.tsv").strip()
-    return Path(raw)
+    path = Path(raw)
+    # Council R4: guard against `_invalid` fixture — never burn credits on it.
+    assert "_invalid" not in path.stem, (
+        f"live e2e refuses malformed-row fixture: {path}"
+    )
+    return path
 
 
 @pytest.fixture
-def log_capture() -> LogCapture:
+def log_capture():
+    """Capture structlog events; reset config on teardown to avoid bleed."""
     capture = LogCapture()
     structlog.configure(processors=[capture])
-    return capture
+    try:
+        yield capture
+    finally:
+        structlog.reset_defaults()
 
 
-def _png_or_jpeg(path: Path) -> bool:
+def _image_kind(path: Path) -> str | None:
     with path.open("rb") as f:
-        head = f.read(4)
-    return head.startswith(b"\x89PNG") or head.startswith(b"\xff\xd8\xff")
+        head = f.read(12)
+    if head.startswith(b"\x89PNG"):
+        return "png"
+    if head.startswith(b"\xff\xd8\xff"):
+        return "jpeg"
+    if head.startswith(b"RIFF") and head[8:12] == b"WEBP":
+        return "webp"
+    return None
 
 
-def _aspect_within(ratio_str: str, actual: tuple[int, int], tol: float = 0.01) -> bool:
+def _aspect_within(ratio_str: str, actual: tuple[int, int], tol: float = _ASPECT_TOLERANCE) -> bool:
     a, b = (int(x) for x in ratio_str.split(":"))
     expected = a / b
     observed = actual[0] / actual[1]
@@ -1128,37 +1298,41 @@ def _aspect_within(ratio_str: str, actual: tuple[int, int], tol: float = 0.01) -
 
 @pytest.mark.asyncio
 async def test_image_batch_e2e(
+    e2e_profile_dir: Path,   # council R1: pytest fixture, not a function call
     tmp_path: Path,
     log_capture: LogCapture,
 ) -> None:
-    _skip_if_no_profile()
-
-    profile_name = os.environ[_E2E_PROFILE_ENV].strip()
-    # Resolve the profile dir via the existing e2e helper.
-    from tests.e2e.conftest import resolve_e2e_profile_dir
-    profile_dir = resolve_e2e_profile_dir(profile_name)
-
+    """Live image-batch e2e. e2e_profile_dir comes from tests/e2e/conftest.py."""
     manifest_path = _resolve_manifest_path()
     assert manifest_path.is_file(), f"manifest not found: {manifest_path}"
 
-    prompts = read_manifest_file(manifest_path)
+    prompts = parse_manifest_file(manifest_path)
     same_project = _resolve_same_project()
     jitter_range = _resolve_jitter_range()
 
     out = tmp_path / "out"
     out.mkdir()
 
-    outcomes = await run_manifest_image_batch(
-        profile_dir=profile_dir,
-        headless=False,  # UI automation transport needs a real Chromium window
-        transport=None,   # default (UI automation)
-        prompts=prompts,
-        output_dir=out,
-        continue_on_error=False,
-        project_title="gflow-cli e2e",
-        same_project=same_project,
-        jitter_range=jitter_range,
-    )
+    # Council R4: capture last 10 events on failure so the matrix evidence
+    # file has triage data even when an exception aborts the run.
+    try:
+        outcomes = await run_manifest_image_batch(
+            profile_dir=e2e_profile_dir,
+            headless=False,  # UI transport needs a real Chromium window
+            transport=None,   # default (UI automation)
+            prompts=prompts,
+            output_dir=out,
+            continue_on_error=False,
+            project_title="gflow-cli e2e",
+            same_project=same_project,
+            jitter_range=jitter_range,
+        )
+    except Exception:
+        (tmp_path / "last_events.json").write_text(
+            json.dumps(log_capture.entries[-10:], default=str, indent=2),
+            encoding="utf-8",
+        )
+        raise
 
     # 1. Exit-code analogue: all outcomes are ok
     assert all(o.status == "ok" for o in outcomes), [o.status for o in outcomes]
@@ -1166,143 +1340,142 @@ async def test_image_batch_e2e(
     # 2. File cardinality: sum of row counts
     expected_files = sum(p.count for p in prompts)
     actual_files = sorted(out.rglob("*"))
-    image_files = [f for f in actual_files if f.is_file() and f.suffix.lower() in (".png", ".jpg", ".jpeg")]
-    assert len(image_files) == expected_files, f"expected {expected_files} got {len(image_files)}"
+    image_files = [
+        f for f in actual_files
+        if f.is_file() and f.suffix.lower() in (".png", ".jpg", ".jpeg", ".webp")
+    ]
+    assert len(image_files) == expected_files, (
+        f"expected {expected_files} got {len(image_files)}: {[f.name for f in image_files]}"
+    )
 
-    # 3. Magic bytes
+    # 3. Magic bytes: PNG / JPEG / WebP only. Anything else fails loud.
     for f in image_files:
-        assert _png_or_jpeg(f), f"bad magic bytes: {f}"
+        kind = _image_kind(f)
+        assert kind is not None, f"unsupported magic bytes in {f}: {f.read_bytes()[:12]!r}"
 
-    # 4. Dimensions per row (Pillow)
+    # 4. Dimensions per row (Pillow). Tolerance ±2%.
     from PIL import Image
-    files_by_row = {p.text: [] for p in prompts}
-    # If outcomes carry per-row file paths, map them; otherwise fall back
-    # to order-by-creation-time.
+    files_by_row: dict[str, list[Path]] = {p.text: [] for p in prompts}
     for outcome in outcomes:
         if hasattr(outcome, "file_paths"):
             files_by_row[outcome.prompt.text] = list(outcome.file_paths)
+        elif hasattr(outcome, "file_path"):
+            files_by_row[outcome.prompt.text] = [outcome.file_path]
     for p in prompts:
-        for f in files_by_row.get(p.text, []):
+        row_files = files_by_row.get(p.text, [])
+        assert len(row_files) == p.count, (
+            f"row {p.text!r} expected {p.count} files, got {len(row_files)}"
+        )
+        for f in row_files:
             with Image.open(f) as im:
                 assert _aspect_within(p.aspect_ratio, im.size), (
                     f"aspect mismatch on {f.name}: expected {p.aspect_ratio}, got {im.size}"
                 )
 
-    # 5. Listener event count
+    # 5. Listener event count — one per row (per submission), not per image.
+    # Spec §7 assertion 5. Verified semantics: UI transport fires this once
+    # per `batchGenerateImages` POST, which maps 1:1 to manifest rows even
+    # when count > 1.
     seen = [e for e in log_capture.entries if e["event"] == "ui_automation.batch_response_seen"]
     assert len(seen) == len(prompts), f"expected {len(prompts)} batch_response_seen, got {len(seen)}"
 
-    # 6. New application event count
+    # 6. New application event count — one per image (because row_completed
+    # fires per file, not per row; see Task 3.2 implementation).
     completed = [e for e in log_capture.entries if e["event"] == "image_batch.row_completed"]
     assert len(completed) == sum(p.count for p in prompts)
 
-    # 7 / 8. Project ID isolation/sharing
-    result_events = [e for e in log_capture.entries if e["event"] == "image_batch.submission_result"]
-    project_ids = {
-        e.get("project_id") for e in log_capture.entries
-        if e["event"] == "image_batch.submission_attempt" and "project_id" in e
-    }
+    # 7 / 8. Project ID isolation/sharing — relies on Task 3.2 adding
+    # `project_id` to the submission_attempt event.
+    attempt_events = [
+        e for e in log_capture.entries
+        if e["event"] == "image_batch.submission_attempt"
+    ]
+    assert len(attempt_events) == len(prompts), "missing submission_attempt events"
+    project_ids = {e.get("project_id") for e in attempt_events}
+    project_ids.discard("<per-prompt>")  # sentinel for the non-same-project mode
     if same_project:
-        assert len(project_ids) <= 1, f"--same-project=1 should share one project_id, got {project_ids}"
+        assert len(project_ids) <= 1, (
+            f"--same-project=1 should share one project_id, got {project_ids}"
+        )
     else:
-        assert len(project_ids) == len(prompts), (
-            f"--same-project=0 should have one project_id per row, got {project_ids}"
+        # In --same-project=0 mode the event records "<per-prompt>" as a sentinel
+        # and the real per-row project_id lives on the submission_result event.
+        result_events = [
+            e for e in log_capture.entries
+            if e["event"] == "image_batch.submission_result"
+        ]
+        result_ids = {e.get("project_id") for e in result_events if "project_id" in e}
+        assert len(result_ids) >= len(prompts) - 1, (
+            f"--same-project=0 should have N distinct project_ids, got {result_ids}"
         )
 ```
 
-> **NOTE:** the `submission_attempt` event needs to also carry `project_id` — re-check Task 3.2's event emission. If it does not yet emit `project_id`, add it there before this test passes:
+> **NOTE:** the `submission_attempt` event must carry `project_id` (Task 3.2 step 3 already wires this). If `--same-project=0`, the per-prompt project ID is created inside `run_one_image_prompt` and is therefore best surfaced on the `submission_result` event instead of `submission_attempt`. Either:
 >
+> (a) emit a follow-up `submission_attempt_2` event after the real project ID is known, OR
+> (b) emit the per-prompt project_id on `submission_result` and have the e2e read it from there.
+>
+> The plan goes with (b) above for assertion 7/8 in the `--same-project=0` branch. **Action item for Task 3.2:** ensure `submission_result` includes a `project_id` field — update the emit call to:
 > ```python
 > logger.info(
->     "image_batch.submission_attempt",
+>     "image_batch.submission_result",
 >     row_idx=idx,
->     ...
->     project_id=shared_project_id or "<per-prompt>",
+>     outcome=outcome.status,
+>     latency_ms=latency_ms,
+>     project_id=getattr(outcome, "project_id", shared_project_id),
 > )
 > ```
-> Then re-run unit tests from Phase 3.2.
+> (assumes `BatchOutcome.project_id` exists; add the field in commit #2 if absent).
 
-- [ ] **Step 3: If `tests/e2e/conftest.py` does not expose `resolve_e2e_profile_dir`, find the actual helper name and adjust the import.**
+### Task 4.2: Static checks only (no live run yet)
 
-```powershell
-Select-String -Path tests/e2e/conftest.py -Pattern '^def ' | Format-Table LineNumber, Line
-```
+**Council finding R2: do not spend Flow credits BEFORE the e2e is committed.** If the e2e has a bug, we waste credits AND the changes aren't preserved. The smoke-run moves to Phase 6 as the **first matrix data point** (R3 cell, rep 1).
 
-Adjust the import accordingly.
-
-### Task 4.2: Smoke-run the e2e once with default settings
-
-This verifies the e2e itself works before adding it as a permanent commit.
-
-- [ ] **Step 1: Set up the env**
-
-```powershell
-$env:GFLOW_CLI_E2E_PROFILE = "ui_automation"
-# Defaults: GFLOW_CLI_E2E_BATCH_MANIFEST = test_assets/sample_batch.tsv
-# Defaults: GFLOW_CLI_E2E_BATCH_SAME_PROJECT = 0
-# Defaults: GFLOW_CLI_E2E_BATCH_JITTER = 1
-```
-
-- [ ] **Step 2: Run the e2e**
-
-```powershell
-uv run pytest -q tests/e2e/test_image_batch_e2e.py -v
-```
-
-Expected: PASS. (Spends ~4 image credits.) If FAIL, debug — likely candidates:
-- listener event name mismatch
-- `BatchOutcome` field naming
-- Pillow dimensions tolerance too tight
-- Profile resolution helper name
-
-- [ ] **Step 3: Clear the env so subsequent steps don't run live**
-
-```powershell
-$env:GFLOW_CLI_E2E_PROFILE = $null
-```
-
-### Task 4.3: Commit
-
-- [ ] **Step 1: Run `/gflow:check` scoped**
+- [ ] **Step 1: Run static gates only**
 
 ```powershell
 uv run ruff check tests/e2e/test_image_batch_e2e.py
 uv run ruff format --check tests/e2e/test_image_batch_e2e.py
 uv run pyright tests/e2e/test_image_batch_e2e.py
-# Don't run pytest -m e2e in CI; the marker will keep it skipped by default
+# Don't run pytest -m e2e here; the marker will keep it skipped without GFLOW_CLI_E2E_PROFILE.
 uv run pytest -q tests/e2e/test_image_batch_e2e.py --collect-only
 ```
 
-Expected: all PASS. Collect-only shows the test was discovered.
+Expected: all PASS. Collect-only confirms the test is discovered. **No Flow credits spent.**
 
-- [ ] **Step 2: Commit**
+### Task 4.3: Commit (no smoke-run yet — that happens in Phase 6)
+
+- [ ] **Step 1: Commit**
 
 ```powershell
-git add tests/e2e/test_image_batch_e2e.py
+git add tests/e2e/test_image_batch_e2e.py pyproject.toml uv.lock
 git commit -m @'
 test(e2e): live image batch e2e parameterized by same-project + DI jitter
 
 Spec §7. Mirrors tests/e2e/test_video_t2v_e2e.py conventions:
 - pytestmark = pytest.mark.e2e
-- Skipped unless GFLOW_CLI_E2E_PROFILE is set (Chrome-strategy profile)
+- Skipped unless GFLOW_CLI_E2E_PROFILE is set (canonical e2e gate)
 - Env-var parameterization for manifest, same-project, jitter
 - pytest tmp_path for output dir (auto-cleanup, no Windows `:` issues)
+- e2e_profile_dir pytest fixture (from tests/e2e/conftest.py:25)
 
 Assertions:
 - Exit code 0 (via outcome status)
 - File cardinality matches sum of row counts
-- PNG or JPEG magic bytes
-- Pillow dimensions match aspect ratio ±1%
+- PNG / JPEG / WebP magic bytes (fail loud on anything else)
+- Pillow dimensions match aspect ratio ±2%
 - ui_automation.batch_response_seen count == manifest row count
 - image_batch.row_completed count == total image count
 - --same-project=1: single project ID across rows
-- --same-project=0: one project ID per row
+- --same-project=0: distinct project ID per row (from submission_result events)
 
-Jitter override uses DI (jitter_range=(0,0)), not monkeypatch and not
-production-code env-var branch.
+Jitter override uses DI (jitter_range=(0,0) via run_manifest_image_batch
+parameter), not monkeypatch and not production-code env-var branch.
 
-Smoke-run locally on profile ui_automation with default settings:
-PASS (one CLI credit-spending run; receipt not committed).
+Adds Pillow as dev dependency for the dimension assertion.
+
+This commit does NOT run the e2e live; the first credit-spending run
+happens in Phase 6 (jitter matrix) as R3 cell, rep 1.
 '@
 ```
 
@@ -1572,6 +1745,19 @@ uv run pytest -q tests/e2e/test_image_batch_e2e.py
 
 ### Task 6.2: Session 1 — run cells R1, R2, R3 (back-to-back)
 
+**Prompt-variance per rep:** to defeat any Flow-side caching of identical inputs (council finding R2), set `GFLOW_CLI_E2E_BATCH_MANIFEST` to a per-rep variant. Create three throwaway manifests under `tmp/` before running:
+
+```powershell
+Copy-Item test_assets/sample_batch.tsv tmp/sample_batch_rep1.tsv
+Copy-Item test_assets/sample_batch.tsv tmp/sample_batch_rep2.tsv
+Copy-Item test_assets/sample_batch.tsv tmp/sample_batch_rep3.tsv
+(Get-Content tmp/sample_batch_rep1.tsv) -replace 'kitten', 'kitten #r1' | Set-Content tmp/sample_batch_rep1.tsv
+(Get-Content tmp/sample_batch_rep2.tsv) -replace 'kitten', 'kitten #r2' | Set-Content tmp/sample_batch_rep2.tsv
+(Get-Content tmp/sample_batch_rep3.tsv) -replace 'kitten', 'kitten #r3' | Set-Content tmp/sample_batch_rep3.tsv
+```
+
+Then point `GFLOW_CLI_E2E_BATCH_MANIFEST` at the rep-specific path on each run below.
+
 - [ ] **Step 1: Capture session metadata**
 
 ```powershell
@@ -1586,17 +1772,19 @@ Update `docs/LIVE_VERIFICATION_image_batch.md` Environment block with these valu
 
 ```powershell
 $env:GFLOW_CLI_E2E_PROFILE = "ui_automation"
-$env:GFLOW_CLI_E2E_BATCH_MANIFEST = "test_assets/sample_batch.tsv"
 $env:GFLOW_CLI_E2E_BATCH_SAME_PROJECT = "1"
 $env:GFLOW_CLI_E2E_BATCH_JITTER = "0"
 
 # Rep 1
+$env:GFLOW_CLI_E2E_BATCH_MANIFEST = "tmp/sample_batch_rep1.tsv"
 uv run pytest -q tests/e2e/test_image_batch_e2e.py 2>&1 | Tee-Object -FilePath tmp/r1_session1_rep1.log
 
 # Rep 2
+$env:GFLOW_CLI_E2E_BATCH_MANIFEST = "tmp/sample_batch_rep2.tsv"
 uv run pytest -q tests/e2e/test_image_batch_e2e.py 2>&1 | Tee-Object -FilePath tmp/r1_session1_rep2.log
 
 # Rep 3
+$env:GFLOW_CLI_E2E_BATCH_MANIFEST = "tmp/sample_batch_rep3.tsv"
 uv run pytest -q tests/e2e/test_image_batch_e2e.py 2>&1 | Tee-Object -FilePath tmp/r1_session1_rep3.log
 ```
 
@@ -1607,13 +1795,21 @@ For each rep, record into the evidence file's matrix table:
 - `overlay_dismiss_failed` count
 - Notes (e.g., listener-miss flake suspected → mark INCONCLUSIVE per §8)
 
+- [ ] **Step 2.5: Abort gate (per spec §8 / council finding R4)**
+
+If R1 session-1 has **any** non-listener-miss failure (a real timeout, real `overlay_dismiss_failed`, real `dropped_project_id_mismatch > 0`, or HTTP error), **abort the matrix**. Skip Steps 3-4 of this task and skip Task 6.3 entirely. Jump to Task 6.4 with verdict = **KEEP jitter**. Record the abort reason in the evidence file under "Verdict".
+
+This honours the credit-budget cap (~72 worst-case → ~12 if we abort after R1 cell session 1) and is consistent with §11 risk register's mid-matrix-abort mitigation.
+
 - [ ] **Step 3: Run R2 (same_project=1, jitter=1) — three reps**
 
-Same as Step 2 but with `$env:GFLOW_CLI_E2E_BATCH_JITTER = "1"`. Logs → `tmp/r2_session1_repN.log`.
+Same as Step 2 but with `$env:GFLOW_CLI_E2E_BATCH_JITTER = "1"`. Logs → `tmp/r2_session1_repN.log`. Reuse the per-rep manifests `tmp/sample_batch_repN.tsv`.
 
 - [ ] **Step 4: Run R3 (same_project=0, jitter=0) — three reps**
 
 Same with `$env:GFLOW_CLI_E2E_BATCH_SAME_PROJECT = "0"` and `$env:GFLOW_CLI_E2E_BATCH_JITTER = "0"`. Logs → `tmp/r3_session1_repN.log`.
+
+**Note:** R3 rep 1 doubles as the e2e smoke verification (we did not pre-run the e2e in Phase 4). If it fails for any reason — including the e2e itself having a bug — fix the e2e and **start the matrix over**. Mark the aborted partial-matrix in the evidence file under a section labelled "Aborted runs (e2e bug)".
 
 - [ ] **Step 5: Update the evidence file's session-1 rows**
 
@@ -1793,7 +1989,40 @@ Refs: design spec §8, evidence file docs/LIVE_VERIFICATION_image_batch.md.
 
 ---
 
-## Phase 7 — Push, open PR, close PR #35
+## Phase 7 — Push, open PR
+
+### Task 7.0: Rebase on develop (council finding R3)
+
+The matrix in Phase 6 spans ≥2 hours. `origin/develop` may have moved during that window. Rebase to keep the feature branch current before push.
+
+- [ ] **Step 1: Fetch and check for movement**
+
+```powershell
+git fetch origin develop
+$ahead = git rev-list --count origin/develop..HEAD
+$behind = git rev-list --count HEAD..origin/develop
+"Ahead: $ahead   Behind: $behind"
+```
+
+If `Behind: 0` → no rebase needed, skip to Task 7.1.
+
+- [ ] **Step 2: Rebase (only if behind > 0)**
+
+```powershell
+git rebase origin/develop
+```
+
+If conflicts surface (very unlikely given the scope), resolve them, `git add` the resolved files, then `git rebase --continue`. Do NOT use `--no-verify` or interactive rebase.
+
+- [ ] **Step 3: Re-run the static gates after rebase**
+
+```powershell
+uv run python scripts/ci/check_repo_hygiene.py
+uv run ruff check src tests
+uv run pyright src
+```
+
+Expected: PASS. If any commit broke from the rebase, fix in place and `git rebase --continue`.
 
 ### Task 7.1: Final sweep
 
@@ -1817,16 +2046,24 @@ Select-String -Path tests/ -Pattern 'not yet available|temporarily unavailable|5
 
 Expected: zero hits. If any, investigate (likely stale `gflow image batch` stub assertions left over from when the command was stubbed).
 
-- [ ] **Step 3: Acceptance criterion AC16 — seed cleanup completeness**
+- [ ] **Step 3: Acceptance criterion AC16 — seed cleanup completeness (tightened per council R1)**
 
 ```powershell
-Select-String -Path src/gflow_cli/cli_image.py -Pattern '--seed|seed=seed' -SimpleMatch
-Select-String -Path src/gflow_cli/api/client.py -Pattern 'seed\s*[:=]' | Where-Object { $_.Line -notmatch '_build_batch_generate_images_body' }
-Select-String -Path tests/api/test_client_image.py -Pattern 'seed=' -SimpleMatch
+# Exclude comment lines (^\s*#) and docstring lines to avoid false positives.
+Select-String -Path src/gflow_cli/cli_image.py -Pattern '--seed|seed=seed' -SimpleMatch |
+    Where-Object { $_.Line -notmatch '^\s*#' }
+Select-String -Path src/gflow_cli/api/client.py -Pattern '^\s*seed\s*[:=]|^\s*batch_id\s*[:=]' |
+    Where-Object {
+        ($_.Line -notmatch '^\s*#') -and
+        ($_.Line -notmatch '_build_batch_generate_images_body')
+    }
+Select-String -Path tests/api/test_client_image.py -Pattern '\bseed=' -SimpleMatch |
+    Where-Object { $_.Line -notmatch '^\s*#' }
 uv run gflow image t2i --help | Select-String -Pattern '--seed'
+uv run gflow image i2i --help | Select-String -Pattern '--seed'
 ```
 
-Expected: all return zero matches. The `--help` smoke check confirms the user-facing surface is clean.
+Expected: all five commands return zero matches. The two `--help` checks confirm the user-facing surface is clean for both subcommands.
 
 - [ ] **Step 4: `pre-commit run --all-files` clean**
 
@@ -1842,13 +2079,49 @@ Expected: PASS. Fix any complaint (no `--no-verify`).
 git log --oneline origin/develop..HEAD
 ```
 
-Expected: 7 commits in this order (newest at top): #5b, #5a, #4 docs, #3 e2e, #2 image batch, #1b --seed removal, #1 count selector. **All authored by Flavio Oliva.** Verify:
+Expected: 7 commits in this order (newest at top): #5b, #5a, #4 docs, #3 e2e, #2 image batch, #1b --seed removal, #1 count selector. **All authored by Flavio Oliva.**
 
 ```powershell
 git log --format='%an %ae' origin/develop..HEAD | Sort-Object -Unique
 ```
 
-Expected: one line — `Flavio Oliva <your-email>`. If `Claude <noreply@anthropic.com>` appears, the tree-replay carried the original author across (it shouldn't have); fix with `git rebase origin/develop --exec "git commit --amend --reset-author --no-edit"` (this is the ONLY exception to the "never `git rebase -i`" rule because `--exec` is non-interactive).
+Expected: one line — `Flavio Oliva <your-email>`. Tree-replay via `git checkout <sha> -- <paths>` does **not** carry authorship — new commits use your `user.email` config. If `Claude <noreply@anthropic.com>` appears, **the tree-replay process is broken**. Do not paper over with `--amend --reset-author` (spec §6.B / D6 forbids mechanism 6.B). Instead:
+
+```powershell
+# Hard-reset to develop and redo Phase 0 + each Phase commit. Tree-replay
+# must not preserve original authorship; if it does, your shell or git
+# config has a bug worth investigating.
+git reset --hard origin/develop
+# ...then re-execute Phase 0 onward.
+```
+
+- [ ] **Step 6: AC6 verdict-driven e2e re-run (council R4)**
+
+Spec §10 AC6 ties acceptance to the e2e passing under the verdict's chosen cell config. Phase 6 already ran the matrix; this step re-confirms the **final** behaviour post-#5b is clean.
+
+If §8 verdict was **DROP**:
+```powershell
+$env:GFLOW_CLI_E2E_PROFILE = "ui_automation"
+$env:GFLOW_CLI_E2E_BATCH_SAME_PROJECT = "1"
+$env:GFLOW_CLI_E2E_BATCH_JITTER = "0"
+$env:GFLOW_CLI_E2E_BATCH_MANIFEST = "test_assets/sample_batch.tsv"
+uv run pytest -q tests/e2e/test_image_batch_e2e.py
+```
+
+If §8 verdict was **KEEP**:
+```powershell
+$env:GFLOW_CLI_E2E_PROFILE = "ui_automation"
+$env:GFLOW_CLI_E2E_BATCH_SAME_PROJECT = "0"
+$env:GFLOW_CLI_E2E_BATCH_JITTER = "1"
+$env:GFLOW_CLI_E2E_BATCH_MANIFEST = "test_assets/sample_batch.tsv"
+uv run pytest -q tests/e2e/test_image_batch_e2e.py
+```
+
+Expected: PASS. (Spends ~4 image credits.) Record the receipt in `docs/LIVE_VERIFICATION_image_batch.md` under a new "Post-#5b verification" section. Then clear the env:
+
+```powershell
+$env:GFLOW_CLI_E2E_PROFILE = $null
+```
 
 ### Task 7.2: Push and create PR
 
@@ -1858,10 +2131,12 @@ Expected: one line — `Flavio Oliva <your-email>`. If `Claude <noreply@anthropi
 git push -u origin feature/multi-image-prompt
 ```
 
-- [ ] **Step 2: Create the new PR**
+- [ ] **Step 2: Create the new PR (via --body-file to avoid PowerShell here-string mangling)**
+
+Write the PR body to a temp file first (council finding R1: `gh pr create --body @'...'@` from PowerShell can lose newlines and choke on backticks in the body):
 
 ```powershell
-gh pr create --base develop --title "feat(image): native count selector + gflow image batch (closes #14)" --body @'
+$body = @'
 Supersedes #35.
 
 ## Summary
@@ -1879,33 +2154,40 @@ Plus three cleanup items uncovered while preparing the production-ready landing 
 
 ## What changed since PR #35
 
-- Branch renamed `claude/plan-next-issue-Stegy` → `feature/multi-image-prompt` (project convention).
+- Branch renamed `claude/plan-next-issue-Stegy` -> `feature/multi-image-prompt` (project convention).
 - Commit history re-authored (human-only attribution per CLAUDE.md).
 - Atomic split: 7 commits (count-selector fix, --seed cleanup, feature + observability + fixtures, live e2e, docs, evidence, code/docstring per verdict).
-- Live e2e (`tests/e2e/test_image_batch_e2e.py`) — parameterized by `GFLOW_CLI_E2E_BATCH_*` env vars, gated by `GFLOW_CLI_E2E_PROFILE`.
-- Sample manifests committed under `test_assets/` (`sample_batch.tsv`, `sample_batch.json`, `sample_batch_invalid.tsv`).
-- `--seed` deleted; CLI + public client kwargs removed (BREAKING).
+- Live e2e (tests/e2e/test_image_batch_e2e.py) — parameterized by GFLOW_CLI_E2E_BATCH_* env vars, gated by GFLOW_CLI_E2E_PROFILE.
+- Sample manifests committed under test_assets/ (sample_batch.tsv, sample_batch.json, sample_batch_invalid.tsv).
+- --seed deleted; CLI + public client kwargs removed (BREAKING).
 - Application-layer structlog events added.
 
 ## Test plan
 
-- [x] `/gflow:check` clean.
-- [x] `pre-commit run --all-files` clean.
+- [x] /gflow:check clean.
+- [x] pre-commit run --all-files clean.
 - [x] Scoped pytest (changed dirs) PASS — full sweep on CI.
-- [x] Live e2e PASS on `ui_automation` profile (default settings, one credit-spending run).
-- [x] Jitter matrix complete (R1/R2/R3 × N=3 × 2 sessions) → verdict in `docs/LIVE_VERIFICATION_image_batch.md`.
+- [x] Live e2e PASS on ui_automation profile (default + verdict-driven cell).
+- [x] Jitter matrix complete (R1/R2/R3 x N=3 x 2 sessions) -> verdict in docs/LIVE_VERIFICATION_image_batch.md.
 - [x] Stale-test grep clean.
-- [x] Acceptance criteria 1–16 satisfied (spec §10).
+- [x] Acceptance criteria 1-16 satisfied (spec §10).
 
 ## Design doc
 
-[`docs/superpowers/specs/2026-05-21-multi-image-prompt-design.md`](docs/superpowers/specs/2026-05-21-multi-image-prompt-design.md) (v3).
+docs/superpowers/specs/2026-05-21-multi-image-prompt-design.md (v3).
+
+## Implementation plan
+
+docs/superpowers/plans/2026-05-21-multi-image-prompt.md (v2).
 
 Refs: #14, #35.
 '@
+$body | Out-File -FilePath tmp/pr-body.md -Encoding UTF8
+
+gh pr create --base develop --title "feat(image): native count selector + gflow image batch (closes #14)" --body-file tmp/pr-body.md
 ```
 
-Expected: prints the new PR URL.
+Expected: prints the new PR URL. The body file uses ASCII arrows (`->`) and no triple-backticks inside the here-string to avoid PowerShell parsing surprises.
 
 - [ ] **Step 3: Capture the new PR number**
 
@@ -1916,25 +2198,60 @@ $NEW_PR = gh pr view --json number -q .number
 
 ### Task 7.3: Close PR #35 with a back-pointer
 
-- [ ] **Step 1: Close**
+- [ ] **Step 1: Write the close comment via a temp file (avoids PowerShell backtick parsing)**
 
 ```powershell
-gh pr close 35 --comment "Superseded by #$NEW_PR. Branch renamed to ``feature/multi-image-prompt`` per branch-naming convention; commit history re-authored to remove AI attribution; --seed cleanup, application-layer observability, live e2e, and jitter matrix added."
+@"
+Superseded by #$NEW_PR. Branch renamed to feature/multi-image-prompt per branch-naming convention; commit history re-authored to remove AI attribution; --seed cleanup, application-layer observability, live e2e, and jitter matrix added.
+"@ | Out-File -FilePath tmp/pr-35-close-comment.md -Encoding UTF8
+
+gh pr close 35 --comment-file tmp/pr-35-close-comment.md
 ```
 
 Expected: closes PR #35.
 
-### Task 7.4: Delete the lingering `claude/*` branch
+> **Note:** if your `gh` version does not support `--comment-file`, fall back to `gh pr close 35 --comment (Get-Content tmp/pr-35-close-comment.md -Raw)` — but check `gh --version` first; recent versions support the flag.
+
+- [ ] **Step 2: Verify new PR is healthy**
+
+```powershell
+gh pr view $NEW_PR --json state,baseRefName,headRefName,mergeable,mergeStateStatus
+```
+
+Expected: `state=OPEN`, `baseRefName=develop`, `headRefName=feature/multi-image-prompt`, `mergeable=MERGEABLE`, `mergeStateStatus=CLEAN`.
+
+> **Do NOT delete `origin/claude/plan-next-issue-Stegy` yet.** Council finding R3: deletion happens **after** the new PR merges, not after it opens, so we preserve a recovery path if review demands a do-over. See Phase 8.
+
+---
+
+## Phase 8 — Post-merge cleanup (only after the new PR merges)
+
+**Pre-condition:** the new PR has been reviewed, approved, and merged into `develop`. Do NOT execute this phase before merge.
+
+### Task 8.1: Verify the merge landed
+
+- [ ] **Step 1: Check merge status**
+
+```powershell
+gh pr view $NEW_PR --json state,mergedAt,mergeCommit
+```
+
+Expected: `state=MERGED`, `mergedAt` is a timestamp, `mergeCommit` has a SHA. If not merged, abort Phase 8.
+
+### Task 8.2: Delete the lingering `claude/*` branch
+
+Now safe to delete because the new PR's commits are on `develop`.
 
 - [ ] **Step 1: Delete remote branch**
 
 ```powershell
+git fetch --all --prune
 git push origin --delete claude/plan-next-issue-Stegy
 ```
 
-Expected: `deleted` confirmation.
+Expected: `deleted` confirmation. If the remote branch is already gone (auto-cleanup), step succeeds as no-op.
 
-- [ ] **Step 2: Delete local branch if it exists**
+- [ ] **Step 2: Delete local branch if any contributor still has it checked out**
 
 ```powershell
 $exists = git branch --list 'claude/plan-next-issue-Stegy'
@@ -1943,17 +2260,32 @@ if ($exists) { git branch -D claude/plan-next-issue-Stegy }
 
 Expected: deletes if present, no-op otherwise.
 
-- [ ] **Step 3: Final verification**
+- [ ] **Step 3: Delete the feature branch (local + remote) too — it's merged**
 
 ```powershell
-gh pr view $NEW_PR --json state,baseRefName,headRefName,mergeable,mergeStateStatus
+git checkout develop
+git pull --ff-only origin develop
+git branch -d feature/multi-image-prompt
+git push origin --delete feature/multi-image-prompt
 ```
 
-Expected: `state=OPEN`, `baseRefName=develop`, `headRefName=feature/multi-image-prompt`, `mergeable=MERGEABLE`, `mergeStateStatus=CLEAN`.
+Expected: clean deletion. (GitHub's "Delete branch on merge" setting often handles the remote half automatically; the local half is yours.)
+
+### Task 8.3: Update memory entries (per spec §13)
+
+- [ ] **Step 1: Append to `~/.claude/projects/.../memory/stale-test-discovery.md`**
+
+Add the `gflow image batch` restoration as a concrete example (grep targets: `not yet available`, `temporarily unavailable`, `5-prompt`).
+
+- [ ] **Step 2: Append to `~/.claude/projects/.../memory/branch-naming-convention.md`**
+
+Add: "PR #35 (closed 2026-05-21) is the canonical example of why `claude/*` is rejected; superseded by `feature/multi-image-prompt`."
+
+(This task may be skipped if memory updates are batched separately.)
 
 ---
 
-## Self-review against spec
+## Self-review against spec (v2 after council hardening)
 
 Run through the spec's §10 acceptance criteria 1–16 and confirm each maps to a task above:
 
@@ -1963,20 +2295,52 @@ Run through the spec's §10 acceptance criteria 1–16 and confirm each maps to 
 | 2 | `ruff check` clean | 7.1 step 1 |
 | 3 | `ruff format --check` clean | 7.1 step 1 |
 | 4 | `pyright` 0 errors | 7.1 step 1 |
-| 5 | Scoped pytest PASS | 1.1 step 5, 2.4 step 1, 3.5 step 1, 4.3 step 1, 7.1 step 1 |
-| 6 | Live e2e PASS per verdict | 4.2 step 2 + 6.2/6.3 |
+| 5 | Scoped pytest PASS | 1.1 step 5, 2.0 step 3, 2.4 step 3, 3.5 step 1, 4.3 step 1, 7.1 step 1 |
+| 6 | Live e2e PASS per verdict | 6.2/6.3 + **7.1 step 6 (final verdict-driven run)** |
 | 7 | Evidence file present + INDEX-linked | 6.1, 6.5, 5.3 |
 | 8 | CHANGELOG entries | 5.2 |
 | 9 | USAGE.md updated | 5.1 |
 | 10 | Human-only authorship | 7.1 step 5 |
 | 11 | PR body "Supersedes #35" | 7.2 step 2 |
-| 12 | PR #35 closed + `claude/*` deleted | 7.3, 7.4 |
-| 13 | Stale-test grep clean | 7.1 step 2 |
+| 12 | PR #35 closed + `claude/*` deleted | 7.3 + **8.2 (post-merge)** |
+| 13 | Stale-test grep clean | 2.4 step 5 + 7.1 step 2 |
 | 14 | `pre-commit run --all-files` clean | 7.1 step 4 |
-| 15 | New observability events unit-tested | 3.2 (four tests) |
-| 16 | Seed cleanup grep clean + `--help` clean | 7.1 step 3 |
+| 15 | New observability events unit-tested | 3.2 (four tests, all assert exact derivation + cleanup fixture) |
+| 16 | Seed cleanup grep clean + `--help` clean | 7.1 step 3 (tightened to exclude comment lines) |
 
-All 16 covered. No placeholders introduced. Type/method names consistent across tasks (e.g., `BatchPromptItem`, `BatchOutcome`, `read_manifest_file`, `run_manifest_image_batch` all match the PR #35 vocabulary). Spec §6.B's "do not use `git rebase -i`" honoured; the one exception (`git rebase --exec`) in Task 7.1 step 5 is non-interactive and explicitly permitted because it's the only way to mass-reset-author if the tree-replay accidentally carried Claude as author.
+All 16 covered.
+
+### v2 council compliance summary
+
+| Council finding | Resolution |
+|---|---|
+| BLOCKER: `api/image.py` not in PR #35 | Removed from Task 0.2 path list |
+| BLOCKER: `parse_manifest_file` (not `read_manifest_file`) | Replace-all applied throughout plan |
+| BLOCKER: `e2e_profile_dir` is a fixture, not function | Task 4.1 e2e uses fixture parameter |
+| BLOCKER: Pillow missing | Task 4.1 Step 0 adds `uv add --dev pillow` |
+| BLOCKER: `git add -p` can't separate hunks | Task 1.1 Step 2 promotes "edit directly" as primary |
+| BLOCKER: `git rebase --exec --reset-author` violates §6.B | Removed; replaced with hard-reset + redo Phase 0 |
+| MAJOR: gh pr create body via --body-file | Task 7.2 writes body to tmp/pr-body.md |
+| MAJOR: AC16 grep false-positives on comments | Task 7.1 step 3 tightened with `^\s*#` exclusion |
+| MAJOR: Smoke-run before commit wastes credits | Task 4.2 reduced to static-only; smoke is R3 rep 1 in Phase 6 |
+| MAJOR: Conventional Commits `refactor(image)!:` + BREAKING CHANGE footer | Task 2.4 step 4 commit message updated |
+| MAJOR: Rebase on develop before push | New Task 7.0 |
+| MAJOR: Branch deletion post-merge | Moved to Phase 8 |
+| MAJOR: TDD red tests for #1b | New Task 2.0 with 5 tests |
+| MAJOR: `project_id` on submission_attempt | Task 3.2 step 3 + test 1 assertion |
+| MAJOR: log_capture fixture cleanup | Task 3.2 step 1 fixture uses yield + reset_defaults |
+| MAJOR: WebP magic bytes accepted | Task 4.1 e2e `_image_kind` helper |
+| MAJOR: Aspect tolerance ±2% | Task 4.1 `_ASPECT_TOLERANCE = 0.02` |
+| MAJOR: Abort gate in Phase 6 | Task 6.2 Step 2.5 |
+| Lower-priority: AsyncMock wiring | Task 3.2 fixture has explicit AsyncMock |
+| Lower-priority: `_invalid` fixture guard | Task 4.1 `_resolve_manifest_path` assert |
+| Lower-priority: try/finally event dump on failure | Task 4.1 try/except block |
+| Lower-priority: Vary prompts per rep | Task 6.2 prologue creates per-rep manifests |
+| Lower-priority: Module-top imports | Task 3.2 step 3 imports at top |
+| Lower-priority: Stale-test grep after #1b | Task 2.4 step 5 |
+| Lower-priority: Parametrized malformed-row test | Task 3.3 step 2 |
+
+All 25 findings addressed.
 
 ---
 
