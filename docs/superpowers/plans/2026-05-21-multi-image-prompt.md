@@ -36,7 +36,7 @@ git fetch --all --prune
 
 Expected: lists `origin/develop`, `origin/claude/plan-next-issue-Stegy`, etc., with no errors.
 
-- [ ] **Step 2: Verify we are starting from clean `develop`**
+- [ ] **Step 2: Verify `develop` is clean**
 
 ```powershell
 git checkout develop
@@ -44,16 +44,19 @@ git pull --ff-only origin develop
 git status -sb
 ```
 
-Expected: `## develop...origin/develop` with no local changes (the design spec commits should already be on `origin/develop` after push; if not, this PR is built on top of them — that's fine).
+Expected: `## develop...origin/develop` with no local changes.
 
-- [ ] **Step 3: Create the feature branch**
+- [ ] **Step 3: Check out the feature branch (already created during planning)**
+
+> **Note:** `feature/multi-image-prompt` was created during planning. 5 commits sit on it (spec v1/v2/v3, plan v1/v2). Use `checkout`, not `checkout -b`.
 
 ```powershell
-git checkout -b feature/multi-image-prompt origin/develop
+git checkout feature/multi-image-prompt
 git branch --show-current
+git log --oneline origin/develop..HEAD
 ```
 
-Expected: prints `feature/multi-image-prompt`.
+Expected: prints `feature/multi-image-prompt` and a 5-commit log of `docs(spec): ...` / `docs(plan): ...` commits ahead of `origin/develop`. If the branch is missing locally, recover with `git fetch origin feature/multi-image-prompt && git checkout feature/multi-image-prompt`. If the planning commits are missing, abort and have the user re-create them.
 
 ### Task 0.2: Stage the PR #35 tree onto the new branch (no commit yet)
 
