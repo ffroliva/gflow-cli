@@ -633,45 +633,25 @@ class FlowApiClient:
         finally:
             self._checkin_page(page)
 
-    async def _drive_image_generation(
+    async def _drive_images_generation(
         self,
         *,
         project_id: str,
         req: GenerateImageRequest,
-        seed: int,
-        batch_id: str,
         recaptcha_action: str,
-    ) -> GeneratedImage:
-        """Per-shot drive of one ``flowMedia:batchGenerateImages`` request.
+    ) -> list[GeneratedImage]:
+        """Mint a token, call the transport once, and return all images.
 
-        Flow requires a freshly-minted reCAPTCHA Enterprise token on every
-        ``batchGenerateImages`` request (single-use, ~2 min TTL). Minting
-        requires a real Page context — Google's reCAPTCHA JS runs in the
-        browser, not in httpx. So the **client** owns minting (it holds the
-        persistent Chromium context) and the **strategy** owns sending.
-
-        A.7 + Phase B: the strategy receives the request with the freshly
-        minted ``recaptcha_token`` attached, builds the body via the shared
-        ``_build_batch_generate_images_body`` (which reads
-        ``request.recaptcha_token``), and sends via its transport mechanism.
-
-        ``seed`` and ``batch_id`` are currently consumed inside the body
-        builder via the request object after Phase A.2 moved
-        ``recaptcha_token`` there. They are kept in the signature for caller
-        APIs; the strategy receives ``req`` enriched with the live token.
+        ``req.count`` controls how many images Flow generates (1–4). The UI
+        transport clicks the matching x{N} tab so one submission produces N
+        images; other transports may fan-out internally, but that is their
+        concern. This method is the single place reCAPTCHA minting happens.
         """
         if self.transport is None:
             raise RuntimeError(
                 "FlowApiClient.transport is None — call generate_image inside 'async with client'"
             )
-        # Mint a single-use reCAPTCHA token via the client's Page (extracted to
-        # a method so unit tests can monkeypatch it without standing up a real
-        # Playwright Page + reCAPTCHA Enterprise script).
         token = await self._mint_recaptcha_token(recaptcha_action)
-
-        # `seed` + `batch_id` are reserved here for future extension; the
-        # strategy uses what's already on the request.
-        _ = seed, batch_id  # suppress unused-variable warnings
         req_with_token = _dc_replace(req, recaptcha_token=token)
         images = await self.transport.generate_images(
             project_id=project_id,
@@ -683,6 +663,36 @@ class FlowApiClient:
                 instance=_make_instance(),
                 route=routes.batch_generate_images_url(project_id),
             )
+        return images
+
+    async def _drive_image_generation(
+        self,
+        *,
+        project_id: str,
+        req: GenerateImageRequest,
+        seed: int,
+        batch_id: str,
+        recaptcha_action: str,
+    ) -> GeneratedImage:
+        """Single-image shortcut — delegates to ``_drive_images_generation`` with count=1.
+
+        Forces ``count=1`` on the request before delegating so that callers
+        constructing a :class:`GenerateImageRequest` with ``count>1`` and then
+        invoking the single-image API still receive exactly one image (no
+        silent discard).
+        """
+        # `seed` / `batch_id` are accepted for back-compat but currently no-op:
+        # the active UI transport ignores them and the wire-body builder is only
+        # reached by the experimental HTTP transports which mint locally.
+        # These parameters will be removed in commit #1b together with the rest
+        # of the dead `--seed` surface.
+        _ = seed, batch_id
+        req_one = _dc_replace(req, count=1)
+        images = await self._drive_images_generation(
+            project_id=project_id,
+            req=req_one,
+            recaptcha_action=recaptcha_action,
+        )
         return images[0]
 
     async def generate_image(
@@ -738,48 +748,34 @@ class FlowApiClient:
         seeds: Sequence[int] | None = None,
         recaptcha_action: str = "imageGeneration",
     ) -> list[GeneratedImage]:
-        """Fan out N parallel image generations sharing one ``batchId``.
+        """Generate ``count`` images using Flow's native count selector (1–4).
 
-        Spec C2: each of the N parallel tasks runs ITS OWN retry+mint loop
-        (see :meth:`_drive_image_generation`) on its OWN checked-out Page.
-        This sidesteps the previous shared-Page bottleneck where N tokens had
-        to be minted sequentially (because ``page.evaluate`` is not re-entrant)
-        before any POST could fire. With the per-worker pool, mints happen
-        concurrently — one per Page.
+        One transport call, one submission round-trip — the UI transport clicks
+        the x{count} tab so Flow produces N images in one shot.
 
         Args:
             project_id: Flow project ID.  When ``None``, a new project is
                 created automatically via :meth:`create_project`.
             req: Shared request (prompt, aspect, reference image, ...).
-            count: How many images to generate. Must be 1..4 (Flow UI cap).
-            seeds: Optional explicit seeds. Defaults to ``count`` random
-                31-bit ints. If provided, ``len(seeds)`` must equal ``count``.
-
-        Returns:
-            ``list[GeneratedImage]`` in the same order as ``seeds`` (or the
-            order of internally generated seeds if ``seeds`` is None).
+            count: How many images to generate (1–4, Flow's UI cap).
+            seeds: Deprecated, retained for back-compat. The active UI transport
+                ignores per-shot seeds; this parameter is currently a no-op and
+                will be removed in a subsequent commit (see follow-up cleanup).
+                If provided, ``len(seeds)`` must equal ``count``.
 
         Raises:
             ValueError: if ``count`` is outside ``[1, 4]`` or ``seeds``
                 length disagrees with ``count``.
-            FlowApiError: if any of the parallel calls fail. The first failure
-                propagates immediately via asyncio.gather(return_exceptions=False);
-                remaining in-flight requests are not cancelled and may complete
-                (or fail) in the background. With count <= 4 the leakage is
-                time-bounded and the tokens expire harmlessly.
         """
         if not 1 <= count <= 4:
             raise ValueError(f"count must be between 1 and 4, got {count}")
-        seeds_list: list[int]
-        if seeds is None:
-            seeds_list = [secrets.randbelow(2**31) for _ in range(count)]
-        elif len(seeds) != count:
+        if seeds is not None and len(seeds) != count:
             raise ValueError(f"len(seeds)={len(seeds)} does not match count={count}")
-        else:
-            seeds_list = list(seeds)
+        # seeds is accepted for back-compat but ignored by the UI transport;
+        # the native xN selector produces ``count`` images in one submission.
+        _ = seeds
 
         try:
-            # Resolve project_id once — do NOT create N projects for N parallel shots.
             resolved_project_id: str
             if project_id is None:
                 project = await self.create_project()
@@ -787,23 +783,11 @@ class FlowApiClient:
             else:
                 resolved_project_id = project_id
 
-            shared_batch_id = _new_batch_id()
-
-            # asyncio.gather preserves input order in its result list, so the
-            # caller sees results in the same order as `seeds` even though the
-            # network calls (and per-shot retry loops) may complete out of order.
-            return await asyncio.gather(
-                *(
-                    self._drive_image_generation(
-                        project_id=resolved_project_id,
-                        req=req,
-                        seed=s,
-                        batch_id=shared_batch_id,
-                        recaptcha_action=recaptcha_action,
-                    )
-                    for s in seeds_list
-                ),
-                return_exceptions=False,
+            req_with_count = _dc_replace(req, count=count)
+            return await self._drive_images_generation(
+                project_id=resolved_project_id,
+                req=req_with_count,
+                recaptcha_action=recaptcha_action,
             )
         except Exception as e:
             if _is_target_closed(e):
