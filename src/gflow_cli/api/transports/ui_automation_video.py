@@ -20,10 +20,12 @@ from typing import TYPE_CHECKING, Any, cast
 
 import structlog
 
+from gflow_cli.api import routes
 from gflow_cli.api.video import (
     Aspect,
     GenerateVideoRequest,
     Mode,
+    VideoResult,
     VideoStatus,
     media_name_from_generate_response,
     parse_video_status,
@@ -130,6 +132,7 @@ class VideoGenerationMixin:
     _page: Page | None
     _setup_done: bool
     _generate_lock: asyncio.Lock
+    _out_dir: Path | None
 
     if TYPE_CHECKING:
 
@@ -274,6 +277,41 @@ class VideoGenerationMixin:
             f"{seen_count} status response(s) seen, last status: {last_status}. {cause}."
         )
 
+    async def _download_video(
+        self,
+        media_id: str,
+        out_dir: Path | None,
+        page: Any,
+    ) -> Path:
+        """Download a generated video to disk using the authenticated page.
+
+        Calls ``media.getMediaUrlRedirect?name=<media_id>`` which 302s to a
+        signed GCS URL; Playwright follows the redirect automatically.
+        """
+        url = routes.media_download_url(media_id)
+        effective_dir = out_dir or self._out_dir or Path("tmp")
+        effective_dir.mkdir(parents=True, exist_ok=True)
+        out_path = effective_dir / f"{media_id}.mp4"
+        resp = await page.request.get(url, max_redirects=5, timeout=180_000)
+        if resp.status >= 400:
+            raise WireFormatError(
+                detail=(
+                    f"video download returned HTTP {resp.status} for {media_id!r} "
+                    f"via media.getMediaUrlRedirect"
+                ),
+                status=resp.status,
+                route="media.getMediaUrlRedirect",
+            )
+        body = await resp.body()
+        out_path.write_bytes(body)
+        log.info(
+            "ui_automation_video.video_saved",
+            path=str(out_path),
+            bytes=len(body),
+            media_id=media_id,
+        )
+        return out_path
+
     @staticmethod
     async def _probe_selector_cascade(
         page: Page,
@@ -390,11 +428,13 @@ class VideoGenerationMixin:
         request: GenerateVideoRequest,
         out_dir: Path | None = None,
         poll_timeout_s: float = 600.0,
-    ) -> VideoStatus:
+        download: bool = True,
+    ) -> VideoResult:
         """Generate ONE video by driving the Flow editor UI (Phase A: T2V only).
 
-        Returns a `VideoStatus` for both SUCCESSFUL and FAILED terminal states;
-        the caller maps a FAILED status to a typed error (spec §7). Raises
+        Returns a `VideoResult` carrying both the terminal `VideoStatus` and the
+        on-disk `local_path` (``None`` when ``download=False`` or the generation
+        failed — callers should check ``result.status.succeeded`` first). Raises
         `RuntimeError` (no setup / editor control missing), `NotImplementedError`
         (non-T2V), `ValueError` (SQUARE aspect), `AuthExpiredError` (401),
         `WafRejectionError` (403), `WireFormatError` (other non-200 / no media),
@@ -412,14 +452,15 @@ class VideoGenerationMixin:
                 "use PORTRAIT (9:16) or LANDSCAPE (16:9)"
             )
         async with self._generate_lock:
-            return await self._generate_video_locked(request, out_dir, poll_timeout_s)
+            return await self._generate_video_locked(request, out_dir, poll_timeout_s, download)
 
     async def _generate_video_locked(
         self,
         request: GenerateVideoRequest,
         out_dir: Path | None,
         poll_timeout_s: float,
-    ) -> VideoStatus:
+        download: bool,
+    ) -> VideoResult:
         """Serialized body of `generate_video` — runs under `self._generate_lock`
         (shared with `generate_images`: one Page, one DOM)."""
         page: Page = self._page  # type: ignore[assignment]  # guarded in generate_video
@@ -488,9 +529,13 @@ class VideoGenerationMixin:
                     discovery={"route": route, "top_level_keys": sorted(anomaly_body)},
                 ) from e
 
-            return await VideoGenerationMixin._poll_video_status(
+            status = await VideoGenerationMixin._poll_video_status(
                 page, status_captured, media_name, timeout_s=poll_timeout_s
             )
+            if download and status.succeeded:
+                local_path = await self._download_video(status.media_id, out_dir, page)
+                return VideoResult(status=status, local_path=local_path)
+            return VideoResult(status=status, local_path=None)
         finally:
             # The Page is pooled and persistent — remove both listeners so they
             # never leak across calls.
