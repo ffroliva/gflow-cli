@@ -12,6 +12,19 @@
 
 **Branch:** `feature/multi-image-prompt` (already created; carries the 5 planning commits 85d43e8..9b63b19).
 
+## 0. Model availability — verified 2026-05-21
+
+Probed at orchestration-plan commit time. Update §1 and §4 dispatch commands if these change:
+
+| CLI | Default model | Other usable models | Verified | Notes |
+|---|---|---|---|---|
+| `codex` (v0.131.0) | **GPT-5 Codex** | per `~/.codex/config.toml` overrides | ✅ headless `codex exec` works | Auth: completed (logged in). |
+| `gemini` (v0.42.0) | `gemini-3.1-flash-lite` (auto-fallback) | `gemini-2.5-pro` (preferred, 429 intermittently) | ⚠️ **rate-limited** on OAuth-personal tier | `gemini-3-pro` / `gemini-3-flash` return 404 (not exposed to this account). API endpoint: `cloudcode-pa.googleapis.com`. |
+
+**Practical consequence:** every dispatch that *must* run on Gemini has a **Claude-subagent fallback**. The orchestration tolerates Gemini unavailability gracefully — see §4.7 Fallback policy. If Gemini quota resets and capacity is available, the Coordinator routes to Gemini for the long-context tasks (Phase 4 e2e draft, cross-model spec reviews); otherwise it routes to a Claude Opus subagent.
+
+**Optional user mitigation:** switch Gemini auth from OAuth-personal to a paid API key (`gemini auth --api-key`) to get reliable headless quota. The orchestration plan does not require this — it works either way.
+
 ---
 
 ## 1. Roles
@@ -405,6 +418,23 @@ Stay under 500 words.
 )
 ```
 
+### 4.7 Fallback policy — Gemini unavailable
+
+Verified at orchestration time (see §0): the `gemini` CLI is rate-limited on OAuth-personal auth. Every dispatch that prefers Gemini has a fallback path.
+
+**Fallback rules:**
+
+| Original assignment | If Gemini returns 429 / 404 / capacity error | If Gemini still failing after retry |
+|---|---|---|
+| Phase 4 e2e draft (Gemini implementer) | Retry once after 60s with `-m gemini-2.5-pro` | Route to Claude Opus subagent via `Agent(subagent_type=general-purpose)` with the same prompt template. **Document the fallback in commit #3's message body** ("e2e drafted by Claude Opus fallback — Gemini unavailable at 2026-05-21T<HH:MM>Z, status=429"). |
+| G1 council Gemini reviewer | Retry once after 60s | Skip Gemini; G1 reduces to 2 reviewers (Codex + Claude). Coordinator notes in the consolidation report. |
+| G2 council Gemini reviewer | Retry once after 60s | Skip Gemini; G2 verdict relies on Claude subagent only. Coordinator surfaces the verdict to the user with reduced confidence. |
+| G3 council Gemini reviewer | Retry once after 60s | Skip Gemini; G3 reduces to 2 reviewers (Codex + Claude). Coordinator notes in PR description. |
+
+**Detection:** if `gemini -p` output contains `status: 429`, `code: 404`, or `An unexpected critical error occurred`, treat as failure for the fallback decision.
+
+**Quota-conscious dispatch order:** when Gemini IS available, run Gemini dispatches first in a given wave so we know early whether to fall back. Codex/Claude run in parallel as backup.
+
 ---
 
 ## 5. Council Gates
@@ -588,13 +618,15 @@ If at any point the Coordinator detects diminishing returns (e.g., a council fin
 
 ---
 
-## 12. Open invocation questions for the user
+## 12. Setup confirmations — user-answered 2026-05-21
 
-The orchestration plan assumes the following about your Codex/Gemini setup. **Please confirm or correct before Wave 1 starts:**
+| Item | Confirmed | Note |
+|---|---|---|
+| Codex auth | ✅ logged in, GPT-5 Codex default | Coordinator invokes `codex exec` / `codex review` directly. |
+| Gemini model | ⚠️ inspected first; `gemini-2.5-pro` is the target but the OAuth-personal tier is rate-limited; `gemini-3.x` family returns 404 on this account | §0 + §4.7 fallback policy applies. |
+| Working directory | `C:\development\github\gflow-cli` | Set per invocation. |
+| Network egress | assumed allow-listed for `cloudcode-pa.googleapis.com` (Gemini) and OpenAI endpoints (Codex) | If failures look network-shaped, retry once then escalate. |
+| Council parallelism | acceptable | G1/G3 each fan out 3 reviewers; Wave 2/3/5 fan out Codex 3×. |
+| Phase 6 live-credit budget | ✅ full matrix (~72 generations) approved | Mid-matrix abort caps to ~12 if R1 session-1 fails non-listener-miss. |
 
-1. **Codex auth.** `codex login` has been completed for the account you want to use. Coordinator will invoke `codex exec` and `codex review` without re-auth. (If you use the Azure/OpenAI Enterprise endpoint, set `OPENAI_API_KEY` or `AZURE_OPENAI_KEY` accordingly.)
-2. **Gemini auth.** `gemini` has been authenticated. Coordinator will invoke `gemini -p`. (Confirm the model: default is `gemini-2.5-pro`; override with `-m`.)
-3. **Working directory.** Both CLIs default to the current working directory. Coordinator will set CWD to `C:\development\github\gflow-cli` before each invocation.
-4. **Network.** Both CLIs need network access. If your network has egress restrictions, ensure both are allow-listed.
-5. **Budget.** Council gates G1 and G3 each dispatch 3 reviewers in parallel; Wave 2 dispatches Codex 3× in parallel. If you have rate limits on either provider, increase concurrency carefully.
-6. **Live credit budget for Phase 6 matrix.** Worst case ~72 image generations across the 3-cell × 3-rep × 2-session matrix (per plan §11 risk register). Mid-matrix abort caps to ~12 if R1 fails session 1. Confirm Flow credits are available.
+**Optional user mitigation worth noting:** the Gemini OAuth-personal tier exhausts quickly. If the user later switches to a paid Gemini API key (set `GEMINI_API_KEY` env var and re-auth), §4.7 fallbacks would fire less often and Gemini would handle Phase 4 (its strongest role). Not required.
