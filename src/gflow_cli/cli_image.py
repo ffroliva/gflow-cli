@@ -5,7 +5,7 @@ Subcommands:
 * ``upload PATH`` — uploads a local image into a Flow project's library and
   prints the resulting media UUID and inferred dimensions.
 * ``t2i PROMPT`` — text-to-image generation (1-4 images per call).
-* ``i2i PROMPT --ref PATH_OR_UUID`` — image-to-image with seed references.
+* ``i2i PROMPT --ref PATH_OR_UUID`` — image-to-image with reference images.
 
 The profile/auth helpers ``_resolve_profile`` and ``_make_provider_dir`` live
 in :mod:`gflow_cli._cli_helpers` since T4b — a negative AST-based test in
@@ -233,10 +233,7 @@ async def _run_upload(
         "  gflow image t2i --prompts-file prompts.txt\n"
         "  cat prompts.txt | gflow image t2i --stdin\n"
         '  gflow image t2i "neon cyberpunk alley" --model nano-pro --aspect 16:9\n'
-        '  gflow image t2i "variations of a logo" -n 4 --aspect 1:1\n'
-        '  gflow image t2i "reproducible shot" --seed 42\n\n'
-        "Note: --seed is only valid when generating a single image (-n 1) "
-        "and is not supported in multi-prompt mode."
+        '  gflow image t2i "variations of a logo" -n 4 --aspect 1:1'
     ),
 )
 @click.argument("prompts", nargs=-1, required=False)
@@ -286,12 +283,6 @@ async def _run_upload(
     help=f"How many images to generate ({_MIN_COUNT}-{_MAX_COUNT}).",
 )
 @click.option(
-    "--seed",
-    default=None,
-    type=int,
-    help="RNG seed for reproducibility (only valid when -n 1).",
-)
-@click.option(
     "--out",
     "out",
     default=None,
@@ -321,14 +312,13 @@ def t2i(
     model: str,
     aspect: str,
     count: int,
-    seed: int | None,
     out: Path | None,
     profile: str | None,
     transport: str | None,
 ) -> None:
     """Generate image(s) from one or more text prompts."""
     is_multi_prompt = len(prompts) > 1 or prompts_file is not None or read_stdin
-    _validate_t2i_input(prompts, prompts_file, read_stdin, seed, count, is_multi_prompt)
+    _validate_t2i_input(prompts, prompts_file, read_stdin)
 
     if not is_multi_prompt:
         if not prompts:
@@ -349,7 +339,6 @@ def t2i(
                     model=Model.from_cli(model),
                 ),
                 count=count,
-                seed=seed,
                 out=out,
                 output_root=settings.output_dir,
                 transport=transport,
@@ -434,15 +423,11 @@ def _validate_t2i_input(
     prompts: tuple[str, ...],
     prompts_file: Path | None,
     read_stdin: bool,
-    seed: int | None,
-    count: int,
-    is_multi_prompt: bool,
 ) -> None:
     """Raise click.UsageError for invalid t2i flag combinations.
 
-    Click's IntRange already bounds count to [1, 4]; this enforces the
-    cross-flag rules — exactly one prompt source, and --seed only with
-    a single image and a single prompt.
+    Click's IntRange already bounds count to [1, 4]; this enforces that
+    exactly one prompt source is used.
     """
     source_count = _count_t2i_sources(prompts, prompts_file, read_stdin)
     if source_count == 0:
@@ -451,17 +436,6 @@ def _validate_t2i_input(
         raise click.UsageError(
             "Prompt sources are mutually exclusive: use positional prompts, "
             "--prompts-file, or --stdin."
-        )
-    if seed is not None and count != 1:
-        raise click.UsageError(
-            "--seed is only valid when generating a single image (-n 1). "
-            "For multi-image runs, omit --seed and let each shot get its own."
-        )
-    if seed is not None and is_multi_prompt:
-        raise click.UsageError(
-            "--seed is not supported for multi-prompt `gflow image t2i`. "
-            "Use one single-prompt command per seed today; per-prompt seeds belong "
-            "to a future `gflow run --config` schema update."
         )
 
 
@@ -475,7 +449,6 @@ async def _run_t2i(
     headless: bool,
     req: GenerateImageRequest,
     count: int,
-    seed: int | None,
     out: Path | None,
     output_root: Path,
     transport: str | None = None,
@@ -490,7 +463,7 @@ async def _run_t2i(
         console.print(f"  Project: [dim]{project.project_id}[/dim]")
         console.print(f"  Generating {count} image(s) ({req.model.value}, {req.aspect.value})...")
         if count == 1:
-            img = await client.generate_image(project_id=project.project_id, req=req, seed=seed)
+            img = await client.generate_image(project_id=project.project_id, req=req)
             images: list[GeneratedImage] = [img]
         else:
             images = await client.generate_images_batch(
@@ -541,8 +514,7 @@ def _print_t2i_summary(images: list[GeneratedImage], saved_paths: list[Path]) ->
         '  gflow image i2i "blend these" --ref a.png --ref b.png\n'
         '  gflow image i2i "stylize" --ref ddb6ef97-262d-49f4-8269-4a28c0fae6a2\n'
         '  gflow image i2i "mix" --ref hero.png --ref ddb6ef97-262d-49f4-8269-4a28c0fae6a2\n\n'
-        "For text-only generation, use `gflow image t2i` instead.\n"
-        "Note: --seed is only valid when generating a single image (-n 1)."
+        "For text-only generation, use `gflow image t2i` instead."
     ),
 )
 @click.argument("prompt")
@@ -581,12 +553,6 @@ def _print_t2i_summary(images: list[GeneratedImage], saved_paths: list[Path]) ->
     help="How many images to generate (1-4).",
 )
 @click.option(
-    "--seed",
-    default=None,
-    type=int,
-    help="RNG seed for reproducibility (only valid when -n 1).",
-)
-@click.option(
     "--out",
     "out",
     default=None,
@@ -614,19 +580,11 @@ def i2i(
     model: str,
     aspect: str,
     count: int,
-    seed: int | None,
     out: Path | None,
     profile: str | None,
     transport: str | None,
 ) -> None:
     """Generate image(s) from PROMPT + reference image(s) (image-to-image)."""
-    # Mirror t2i's seed/count cross-flag rule — see _run_t2i for the rationale.
-    if seed is not None and count != 1:
-        raise click.UsageError(
-            "--seed is only valid when generating a single image (-n 1). "
-            "For multi-image runs, omit --seed and let each shot get its own."
-        )
-
     # Classify each --ref upfront: UUIDs become ImageRef, path-likes become
     # canonical Paths (with symlinks resolved). _classify_ref raises
     # click.UsageError on missing/broken paths, which Click maps to exit 2.
@@ -646,7 +604,6 @@ def i2i(
             aspect=Aspect.from_cli(aspect),
             model=Model.from_cli(model),
             count=count,
-            seed=seed,
             out=out,
             output_root=settings.output_dir,
             transport=transport,
@@ -696,7 +653,6 @@ async def _run_i2i(
     aspect: Aspect,
     model: Model,
     count: int,
-    seed: int | None,
     out: Path | None,
     output_root: Path,
     transport: str | None = None,
@@ -723,7 +679,7 @@ async def _run_i2i(
             f"({req.model.value}, {req.aspect.value})..."
         )
         if count == 1:
-            img = await client.generate_image(project_id=project.project_id, req=req, seed=seed)
+            img = await client.generate_image(project_id=project.project_id, req=req)
             images: list[GeneratedImage] = [img]
         else:
             images = await client.generate_images_batch(

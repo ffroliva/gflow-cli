@@ -17,9 +17,6 @@ import asyncio
 import base64
 import json
 import os
-import secrets
-import uuid
-from collections.abc import Sequence
 from dataclasses import replace as _dc_replace
 from datetime import datetime
 from pathlib import Path
@@ -670,8 +667,6 @@ class FlowApiClient:
         *,
         project_id: str,
         req: GenerateImageRequest,
-        seed: int,
-        batch_id: str,
         recaptcha_action: str,
     ) -> GeneratedImage:
         """Single-image shortcut — delegates to ``_drive_images_generation`` with count=1.
@@ -681,12 +676,6 @@ class FlowApiClient:
         invoking the single-image API still receive exactly one image (no
         silent discard).
         """
-        # `seed` / `batch_id` are accepted for back-compat but currently no-op:
-        # the active UI transport ignores them and the wire-body builder is only
-        # reached by the experimental HTTP transports which mint locally.
-        # These parameters will be removed in commit #1b together with the rest
-        # of the dead `--seed` surface.
-        _ = seed, batch_id
         req_one = _dc_replace(req, count=1)
         images = await self._drive_images_generation(
             project_id=project_id,
@@ -700,9 +689,7 @@ class FlowApiClient:
         *,
         project_id: str | None = None,
         req: GenerateImageRequest,
-        seed: int | None = None,
         recaptcha_action: str = "imageGeneration",
-        batch_id: str | None = None,
     ) -> GeneratedImage:
         """Single-shot Imagen/Narwhal image generation.
 
@@ -716,9 +703,6 @@ class FlowApiClient:
         automatically via :meth:`create_project`.  Existing callers that supply
         an explicit ``project_id`` are unaffected.
 
-        Idempotency: calling twice with the same ``seed`` and ``batch_id``
-        yields identical bodies modulo the per-call reCAPTCHA token AND the
-        per-attempt session-id timestamp.
         """
         try:
             resolved_project_id: str
@@ -730,8 +714,6 @@ class FlowApiClient:
             return await self._drive_image_generation(
                 project_id=resolved_project_id,
                 req=req,
-                seed=seed if seed is not None else secrets.randbelow(2**31),
-                batch_id=batch_id or _new_batch_id(),
                 recaptcha_action=recaptcha_action,
             )
         except Exception as e:
@@ -745,7 +727,6 @@ class FlowApiClient:
         project_id: str | None = None,
         req: GenerateImageRequest,
         count: int = 1,
-        seeds: Sequence[int] | None = None,
         recaptcha_action: str = "imageGeneration",
     ) -> list[GeneratedImage]:
         """Generate ``count`` images using Flow's native count selector (1–4).
@@ -758,22 +739,12 @@ class FlowApiClient:
                 created automatically via :meth:`create_project`.
             req: Shared request (prompt, aspect, reference image, ...).
             count: How many images to generate (1–4, Flow's UI cap).
-            seeds: Deprecated, retained for back-compat. The active UI transport
-                ignores per-shot seeds; this parameter is currently a no-op and
-                will be removed in a subsequent commit (see follow-up cleanup).
-                If provided, ``len(seeds)`` must equal ``count``.
 
         Raises:
-            ValueError: if ``count`` is outside ``[1, 4]`` or ``seeds``
-                length disagrees with ``count``.
+            ValueError: if ``count`` is outside ``[1, 4]``.
         """
         if not 1 <= count <= 4:
             raise ValueError(f"count must be between 1 and 4, got {count}")
-        if seeds is not None and len(seeds) != count:
-            raise ValueError(f"len(seeds)={len(seeds)} does not match count={count}")
-        # seeds is accepted for back-compat but ignored by the UI transport;
-        # the native xN selector produces ``count`` images in one submission.
-        _ = seeds
 
         try:
             resolved_project_id: str
@@ -817,11 +788,6 @@ class FlowApiClient:
 
 def _default_project_title() -> str:
     return datetime.now().strftime("gflow-cli %b %d, %I:%M %p")
-
-
-def _new_batch_id() -> str:
-    """Generate a fresh batch ID for the mediaGenerationContext."""
-    return str(uuid.uuid4())
 
 
 def _strip_query(url: str) -> str:

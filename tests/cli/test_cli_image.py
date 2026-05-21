@@ -211,19 +211,6 @@ class TestImageT2I:
         written = sorted(p.name for p in out_dir.rglob("*.png"))
         assert written == ["m1_1.png", "m2_2.png", "m3_3.png"], written
 
-    def test_t2i_seed_with_n_gt_1_errors(self, runner: CliRunner, tmp_path: Path) -> None:
-        from gflow_cli.cli import main
-
-        # No mocks — should fail Click validation BEFORE any I/O.
-        result = runner.invoke(
-            main,
-            ["image", "t2i", "a cat", "--seed", "42", "-n", "2"],
-            catch_exceptions=False,
-        )
-
-        assert result.exit_code == 2, result.output
-        assert "seed" in result.output.lower()
-
     def test_t2i_invalid_aspect_errors(self, runner: CliRunner) -> None:
         from gflow_cli.cli import main
 

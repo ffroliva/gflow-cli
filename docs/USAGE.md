@@ -105,7 +105,6 @@ Options:
   --aspect [9:16|16:9|1:1|4:3|3:4]
                             Aspect ratio.                     [default: 9:16]
   -n, --count INTEGER       How many images to generate (1-4).  [default: 1]
-  --seed INTEGER            RNG seed (only valid when -n 1).
   --out PATH                Output directory (see "Output paths" below).
   --profile NAME            Profile name (overrides default).
 ```
@@ -131,8 +130,6 @@ Options:
 - `--continue-on-error` is default; `--fail-fast` stops after the first failed
   prompt.
 
-**Seed-requires-count==1 invariant.** `--seed` is only valid when generating a single image (`-n 1`). For multi-image runs the CLI rejects the combination upfront — multi-image fan-out uses N independent random seeds (one per shot) wired to a shared `batch_id`, which gives you variation. `--seed` is not supported in multi-prompt mode; use separate single-prompt commands for seeded work today.
-
 **Output paths.**
 
 - **Default (`--out` omitted).** Files land under `$GFLOW_CLI_OUTPUT_DIR/images/<YYYY-MM-DD>/<media_name>_<n>.png`. The date partition keeps long-running batches navigable.
@@ -150,9 +147,6 @@ gflow image t2i "neon cyberpunk alley" --model nano-pro --aspect 16:9
 
 # 4 variations of a logo at 1:1, written flat into ./logos/
 gflow image t2i "variations of a minimalist fox logo" -n 4 --aspect 1:1 --out ./logos
-
-# Reproducible single shot
-gflow image t2i "reproducible reference shot" --seed 42
 
 # Three prompts in one warm Flow session/project
 gflow image t2i "p1" "p2" "p3" --aspect 16:9 --model image4
@@ -192,7 +186,6 @@ Options:
   --aspect [9:16|16:9|1:1|4:3|3:4]
                             Aspect ratio.                     [default: 9:16]
   -n, --count INTEGER       How many images to generate (1-4).  [default: 1]
-  --seed INTEGER            RNG seed (only valid when -n 1).
   --out PATH                Output directory (same semantics as t2i).
   --profile NAME            Profile name (overrides default).
 ```
