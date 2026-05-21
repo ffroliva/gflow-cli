@@ -20,6 +20,7 @@ from typing import TYPE_CHECKING, Any, cast
 
 import structlog
 
+from gflow_cli.api import routes
 from gflow_cli.api.video import (
     Aspect,
     GenerateVideoRequest,
@@ -130,6 +131,7 @@ class VideoGenerationMixin:
     _page: Page | None
     _setup_done: bool
     _generate_lock: asyncio.Lock
+    _out_dir: Path | None
 
     if TYPE_CHECKING:
 
@@ -273,6 +275,41 @@ class VideoGenerationMixin:
             f"no terminal status for {media_name!r} within {timeout_s:.0f}s — "
             f"{seen_count} status response(s) seen, last status: {last_status}. {cause}."
         )
+
+    async def _download_video(
+        self,
+        media_id: str,
+        out_dir: Path | None,
+        page: Any,
+    ) -> Path:
+        """Download a generated video to disk using the authenticated page.
+
+        Calls ``media.getMediaUrlRedirect?name=<media_id>`` which 302s to a
+        signed GCS URL; Playwright follows the redirect automatically.
+        """
+        url = routes.media_download_url(media_id)
+        effective_dir = out_dir or self._out_dir or Path("tmp")
+        effective_dir.mkdir(parents=True, exist_ok=True)
+        out_path = effective_dir / f"{media_id}.mp4"
+        resp = await page.request.get(url, max_redirects=5, timeout=180_000)
+        if resp.status >= 400:
+            raise WireFormatError(
+                detail=(
+                    f"video download returned HTTP {resp.status} for {media_id!r} "
+                    f"via media.getMediaUrlRedirect"
+                ),
+                status=resp.status,
+                route="media.getMediaUrlRedirect",
+            )
+        body = await resp.body()
+        out_path.write_bytes(body)
+        log.info(
+            "ui_automation_video.video_saved",
+            path=str(out_path),
+            bytes=len(body),
+            media_id=media_id,
+        )
+        return out_path
 
     @staticmethod
     async def _probe_selector_cascade(
