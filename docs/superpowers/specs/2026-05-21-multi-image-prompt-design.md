@@ -6,7 +6,7 @@
 **Closes:** [#14](https://github.com/ffroliva/gflow-cli/issues/14)
 **Supersedes:** [PR #35](https://github.com/ffroliva/gflow-cli/pull/35) (`claude/plan-next-issue-Stegy`)
 **Target branch:** `feature/multi-image-prompt` → `develop`
-**Revision:** v2 — hardened after parallel council review (Python craft / SOLID, e2e test design, jitter-investigation methodology, project conventions)
+**Revision:** v3 — full seed/batch_id removal after code verification revealed `--seed` is a documented no-op under the active UI transport (v2 was too conservative; user authorised Option A)
 
 ## 1. Problem
 
@@ -17,16 +17,18 @@ PR #35 already contains a working bugfix + feature for issue #14, but it is a *s
 - No end-to-end test exists for `gflow image batch` or for the `-n N` native count selector — only unit tests.
 - `--same-project` ships with a hard-coded 3–7s random jitter whose rationale (anti-bot-detection) is **plausible but unverified**. The project's standard is to *verify systematically, not guess*.
 - The batch path emits no observability events at the application layer (only the UI transport emits `batch_response_seen` / `batch_response_dropped_project_id_mismatch`). A future throttling regression would have no telemetry breadcrumb.
+- **`--seed` is a documented user-facing flag on `gflow image t2i` and `gflow image i2i`, but it has been a silent no-op since v0.7.0** — the user's seed is discarded by the `_ = seed, batch_id` shim in `_drive_image_generation` before reaching any transport. The active UI transport doesn't use seeds. Misleading API surface.
 - Docs (`docs/USAGE.md`, `CHANGELOG.md [Unreleased]`, `docs/INDEX.md`) are not updated.
 - Sample manifests for users to copy-paste are missing from `test_assets/`.
 
-> **Note on the "dead-code shim" in `_drive_image_generation`.** The earlier v1 of this spec called for removing the `seed`/`batch_id` parameters from `_drive_image_generation` (singular). On verification, these parameters are still received from the public `generate_image(seed=..., batch_id=...)` API at `src/gflow_cli/api/client.py` (~line 720). Removing them from the private method would either break the public API or push the `_ = seed, batch_id` shim *up* to the public method's body — net-zero readability. **Decision:** leave the shim as-is and document why in a one-line docstring comment (commit #1 below). No public-API change.
+> **Note on the dead `--seed` user-facing feature.** Verification revealed `--seed` is advertised in `gflow image t2i --help` (see `src/gflow_cli/cli_image.py:288-291` and example at line 237) **but is a no-op under the active UI transport since v0.7.0**. Full trace: CLI passes `seed=42` to `client.generate_image` (`cli_image.py:493,726`) → mints/forwards at `client.py:723` → calls `_drive_image_generation(seed=42, batch_id=..., ...)` → private helper does `_ = seed, batch_id` (the shim) and discards them → delegates to `_drive_images_generation(req=...)` with no seed → UI transport ignores it (clicks buttons, no body builder). The `seed` field on the wire body is only populated by the experimental HTTP transports (bearer/evaluate_fetch/sapisidhash) which **mint locally** (`seed=0` hardcoded in two of them); they never receive the user's seed either. **Decision (v3):** delete `--seed` from the CLI, remove `seed`/`batch_id` from public `generate_image`, private `_drive_image_generation`, and `generate_images_batch`'s `seeds=` parameter. Keep `seed`/`batch_id` parameters on the body builder (wire format, internal to experimental transports). Honest API surface. CHANGELOG `### Removed`.
 
 ## 2. Goal
 
 Land a **production-ready, complete, correct, e2e-tested** multi-image prompt feature on `develop` via a clean PR from `feature/multi-image-prompt`, with:
 
 - the bugfix and the new subcommand functionally unchanged where they're already correct;
+- **honest API surface** — no documented features that are silently no-ops (current `--seed` is misleading);
 - the jitter question **resolved empirically**, not by guesswork, against an experimental matrix that isolates jitter from confounders;
 - application-layer observability so a future regression in throttling behaviour is detectable without re-instrumentation;
 - a parameterized live e2e in the existing `tests/e2e/` family using the project's canonical `GFLOW_CLI_E2E_*` env-var convention and DI-based jitter override;
@@ -40,7 +42,14 @@ Land a **production-ready, complete, correct, e2e-tested** multi-image prompt fe
 
 - New branch `feature/multi-image-prompt`, cut from current `origin/develop` (which is ahead of PR #35 by 5+ commits — #36 video-download merge, t2v docs, stale-stub removal, plan updates).
 - Re-author and re-message the PR #35 work as human-authored commits, split atomically.
-- Document the `_ = seed, batch_id` shim with a one-line comment citing this design (no functional change).
+- **Remove `--seed` from `gflow image t2i` and `gflow image i2i` CLI commands** (`src/gflow_cli/cli_image.py:237-239,288-291,456-465,544-546`). Drop the help-text examples and the `UsageError` cross-flag validations.
+- **Remove `seed: int | None = None` and `batch_id: str | None = None` from `client.generate_image`** (`src/gflow_cli/api/client.py:688-696`). Remove the internal `secrets.randbelow(2**31)` mint and `_new_batch_id()` fallback at lines 723-724. Update docstring (remove the "idempotency by seed" paragraph at lines 709-711 — it's been false since v0.7.0).
+- **Remove `seed`/`batch_id` kwargs from `_drive_image_generation`** (the private helper) and the `_ = seed, batch_id` shim. Method becomes a thin delegator to `_drive_images_generation` with count=1.
+- **Remove `seeds: Sequence[int] | None = None` parameter from `generate_images_batch`** and the `seeds_list = [secrets.randbelow(...) for _ in range(count)]` mint at line 775. Update docstring (no more "per-shot seeds" — they were never threaded through).
+- **Update test_client_image.py** — replace all 9 `seed=...` kwarg occurrences (lines 134, 149, 178, 196, 206, 234, 659, 703, 747) with no-seed calls. Delete any tests whose entire purpose was asserting seed plumbing (none functional under UI transport).
+- **Update USAGE.md** — remove any `--seed` mentions.
+- Keep `seed`/`batch_id` parameters on `_build_batch_generate_images_body` (`src/gflow_cli/api/image.py:208-213`) — wire-format level, internal to the experimental HTTP transports which mint locally. The body builder is **not** "leftover"; it is the documented wire schema mirror of `samples/captured/06_batchGenerateImages.json` and `07_batchGenerateImages_seeded.json`.
+- If `_new_batch_id()` becomes unreferenced after the cleanup, delete it (don't leave orphan helpers).
 - New application-layer observability events emitted from `image_batch.py` (see §8):
   - `image_batch.submission_attempt`
   - `image_batch.submission_result`
@@ -57,7 +66,7 @@ Land a **production-ready, complete, correct, e2e-tested** multi-image prompt fe
 
 ### Out of scope (deferred)
 
-- **Removing the `seed`/`batch_id` shim** — would require a public-API change to `generate_image`. Not justified by this PR's value. File a follow-up if it ever matters.
+- **Restoring seed-controlled reproducibility under the UI transport.** Flow's UI may not expose a seed surface at all — research blocked on Flow's behaviour, not on us. If/when the experimental HTTP transports go live again, the seed plumbing rejoins via the body builder (which still takes `seed`/`batch_id`); no public API needs to change.
 - **Cosmetic rename** `_drive_image_generation` → `_drive_one_image` and `_drive_images_generation` → `_drive_image_batch`. Real readability win (one-letter footgun) but atomicity-breaking when mixed with the bugfix. Filed as follow-up issue, not landed here.
 - Reworking `--same-project` into a general `--jitter MIN MAX` configurable knob — only on the table if the investigation specifically shows tunability is needed.
 - Touching `gflow video` or any other unrelated CLI.
@@ -108,12 +117,24 @@ git branch -D claude/plan-next-issue-Stegy   # only if present locally
 One commit per logical change. Each commit must pass `/gflow:check`.
 
 1. **`fix(image): use native xN count selector for -n N (#14 part 1)`**
-   - `_drive_image_generation` → `_drive_images_generation` (returns list).
+   - `_drive_image_generation` (singular) now delegates to a new `_drive_images_generation` (plural, returns list).
    - `generate_images_batch` single-call refactor (one transport call with `count` baked into `req`, no `asyncio.gather` fan-out).
-   - Add a one-line comment in `_drive_image_generation` documenting the `seed`/`batch_id` shim (preserved per §1 note and D8 in §12).
    - Body builder confirmation: `_build_batch_generate_images_body` at `src/gflow_cli/api/image.py:208` already reads `count` from the request via the `GenerateImageRequest.count` field (PR #35 added the validation at line 191). No further change needed there.
-   - Carry forward the `tests/api/test_client_image.py` deltas (≈180 lines changed, mostly removals of the old fan-out tests + new single-call assertions).
-   - **Independence claim:** commit #1 has zero dependency on `src/gflow_cli/image_batch.py` or `src/gflow_cli/cli_image.py` batch-wiring, so it can be cherry-picked to a `release/*` branch independently of the feature.
+   - Carry forward the count-selector deltas in `tests/api/test_client_image.py` (≈180 lines changed in PR #35, mostly removals of the old fan-out tests + new single-call assertions). **Seed-related test deletions belong to commit #1b, not here.**
+   - **Independence claim:** commit #1 has zero dependency on `src/gflow_cli/image_batch.py` or `src/gflow_cli/cli_image.py` batch-wiring AND zero dependency on the seed-cleanup in #1b, so it can be cherry-picked to a `release/*` branch independently of the feature and of the cleanup.
+
+1b. **`refactor(image,cli): remove no-op --seed flag and dead seed/batch_id params`** (BREAKING CHANGE)
+   - **CLI (`src/gflow_cli/cli_image.py`):** delete `--seed` click option from `t2i` (lines ~288-291) and from `i2i`. Delete the help-text examples at lines 237-239 and 544-546. Delete the cross-flag `UsageError` validations at lines 456-465 (no longer relevant once the flag is gone). Drop `seed=seed` from the two `generate_image` call sites (lines 493, 726).
+   - **Public client (`src/gflow_cli/api/client.py`):** delete `seed: int | None = None` and `batch_id: str | None = None` from `generate_image`'s signature (lines 693, 695). Delete the `secrets.randbelow` mint and `_new_batch_id()` fallback at lines 723-724. Update the docstring — drop the false "idempotency by seed" paragraph (lines 709-711).
+   - **Private path (`src/gflow_cli/api/client.py`):** delete `seed: int` and `batch_id: str` kwargs from `_drive_image_generation`. Delete the `_ = seed, batch_id` shim and its comment. Method becomes a thin `count=1` delegator to `_drive_images_generation`.
+   - **Batch (`src/gflow_cli/api/client.py`):** delete `seeds: Sequence[int] | None = None` from `generate_images_batch`. Delete the `seeds_list` mint (line ~775) and `shared_batch_id = _new_batch_id()` (line ~790). Update docstring.
+   - **`_new_batch_id()`:** delete the helper if it has no remaining callers after the cleanup. Otherwise leave it (`/gflow:check` will surface ruff-unused-function if dead).
+   - **Tests (`tests/api/test_client_image.py`):** delete `seed=...` from all 9 call sites (lines 134, 149, 178, 196, 206, 234, 659, 703, 747). Delete or repurpose any tests whose entire assertion was "seed flows to the body" — none functional under the active UI transport.
+   - **Tests (CLI):** if `tests/cli/test_cli_image.py` (or equivalent) has tests for the `--seed` validation rules, delete them.
+   - **Docs (`docs/USAGE.md`):** remove `--seed` references.
+   - **Wire-format body builder is UNCHANGED.** `_build_batch_generate_images_body(seed, batch_id)` keeps both params — they live at the wire-protocol layer, internal to the experimental HTTP transports which mint locally.
+   - `CHANGELOG.md` entry for this commit goes into the docs commit (#5 below) under `### Removed` per the project's batched-changelog style.
+   - **Independence claim:** #1b can be reverted without touching #1, #2, or any other commit. It is a self-contained dead-feature deletion.
 
 2. **`feat(image): add gflow image batch subcommand with --same-project (#14 part 2)`**
    - `image_batch.py` additions: `MAX_BATCH_PROMPTS = 5`, `JITTER_MIN_SECONDS`, `JITTER_MAX_SECONDS`, manifest dispatcher, JSON/TSV parsers, `run_manifest_image_batch` (with `jitter_range` parameter for DI).
@@ -305,6 +326,8 @@ Under `[Unreleased]`:
 - `### Fixed` — `gflow image t2i -n N` now makes a single transport call using Flow's native `xN` count selector (was fanning out N parallel single-image submissions). Closes #14 part 1.
 - `### Added` — `gflow image batch <manifest>` subcommand with JSON and TSV manifests, `MAX_BATCH_PROMPTS=5`, `--same-project` flag, and live-verified jitter behaviour. Closes #14 part 2.
 - `### Added` — application-layer structlog events for image batch submission, useful for throttling-regression debugging (`image_batch.submission_attempt`, `image_batch.submission_result`, `image_batch.row_completed`, `image_batch.inter_submission_latency_ms`).
+- `### Removed` — `--seed` flag from `gflow image t2i` and `gflow image i2i`. The flag was a no-op under the active UI transport since v0.7.0 (silently discarded inside the client before reaching the transport). The `seed` field on the wire body is still populated by the experimental HTTP transports' internal mint; no functional change for any user who was actually getting images. If reproducibility via user-controlled seed becomes possible (Flow UI change or HTTP transport revival), it will be re-introduced at that layer.
+- `### Removed` — public-API parameters `seed`/`batch_id` from `FlowApiClient.generate_image` and `seeds` from `FlowApiClient.generate_images_batch`. **Library callers passing these as kwargs will get a `TypeError`.** Justification: they were never propagated to the active UI transport. The body-builder retains `seed`/`batch_id` for the experimental HTTP transports' internal use.
 
 ### `docs/INDEX.md`
 
@@ -335,6 +358,11 @@ The PR is mergeable when **all** of these are true:
 13. **Stale-test grep clean:** `rg -n 'not yet available|temporarily unavailable|5-prompt cap' tests/` returns no hits (per `stale-test-discovery` memory).
 14. `pre-commit run --all-files` clean (no `--no-verify`).
 15. New observability events (`image_batch.submission_attempt`, `..._result`, `..._row_completed`, `..._inter_submission_latency_ms`) have at least one passing unit test each.
+16. **Seed cleanup is complete with no leftovers:**
+    - `rg -n '--seed|seed=' src/gflow_cli/cli_image.py` returns zero hits.
+    - `rg -n 'seed\\s*[:=]' src/gflow_cli/api/client.py` returns zero hits (only the body-builder helper at `api/image.py` retains seed parameters).
+    - `rg -n 'seed=' tests/` returns zero hits in production-path tests (only in body-builder unit tests under `tests/api/test_image_body.py` or equivalent, if any).
+    - `gflow image t2i --help` output contains no mention of `--seed`.
 
 ## 11. Risk register
 
@@ -348,17 +376,20 @@ The PR is mergeable when **all** of these are true:
 | New PR misses the v0.7.x release window | Low | Targets `develop`. No release coupling in this PR. No signed-tag work triggered (CI gate #30 untouched). |
 | Partial e2e leaves images in `tmp/` after failure | Low | `tmp/` is gitignored. Mitigation: on failure, the e2e fixture captures the last observability event into the evidence file before propagating the exception. No auto-retry. |
 | Cosmetic rename deferred → footgun lingers | Low | Filed as a follow-up issue; the one-letter difference is acceptable for the duration of this PR. |
+| `--seed` removal breaks a downstream script using the (broken) flag | Low | The flag was a no-op since v0.7.0; any script "using" it was already not getting seed-controlled images. Mitigation: CHANGELOG `### Removed` entry with the verified-no-op explanation; the next release notes call it out explicitly. |
+| Library caller passes `seed=` / `batch_id=` to `FlowApiClient.generate_image` after the cleanup | Low | `TypeError` at call site — loud failure, not silent. The same justification applies: it was never functional. CHANGELOG `### Removed` lists the public-API removals so downstream library users have a clear migration note. |
+| `tests/cli/` tests for `--seed` validation rules silently kept and broken | Medium | Part of #1b: grep `tests/cli/` for `--seed` and remove. CI's `pyright` and `ruff` will fail loudly if anything is missed. |
 
 ## 12. Decision log
 
 - **D1.** Use Strategy A (close + reopen). Rationale: only path that satisfies branch-naming convention without raw API gymnastics.
-- **D2.** Atomic commit split into 6 commits (5a + 5b counted separately). Rationale: CLAUDE.md "small, atomic commits"; lets the bugfix be cherry-picked into a release branch independently of the feature; separates evidence capture from code change for revert isolation.
+- **D2.** Atomic commit split into 7 commits (1, 1b, 2, 3, 4, 5a, 5b). Rationale: CLAUDE.md "small, atomic commits"; lets the bugfix (#1) be cherry-picked into a release branch independently of the seed cleanup (#1b) and the feature (#2+); separates evidence capture (#5a) from code change (#5b) for revert isolation.
 - **D3.** Jitter decision deferred to evidence. Rationale: project mandate to verify systematically, not guess.
 - **D4.** Land application-layer observability for image batch in commit #2. Rationale: post-drop regression detection (R3 council concern); the events are useful regardless of the verdict.
 - **D5.** Sample manifests committed as fixtures (not generated in-test). Rationale: doubles as user-facing copy-paste examples; the live e2e becomes hermetic. Hygiene gate allows non-`smoke_`/`debug_`-prefixed `test_assets/`.
 - **D6.** Use Mechanism 6.A (tree-replay + staged commits), not interactive rebase. Rationale: CLAUDE.md forbids `git rebase -i` in the agent loop. 6.B is documented only as a human-pairing fallback.
 - **D7.** Mandate branch deletion (local + remote) for `claude/plan-next-issue-Stegy` after PR close. Rationale: no `claude/*` ref may linger; supports the branch-naming convention.
-- **D8.** **Do not** remove the `seed`/`batch_id` shim from `_drive_image_generation`. Rationale: removing them from the private method would force a public-API change to `generate_image(seed=..., batch_id=...)`, which is out of scope and net-zero readability (the shim just moves up one level). Documented inline with a one-line comment citing this decision.
+- **D8.** **Remove** `seed`/`batch_id` from the public API (`generate_image`), the private path (`_drive_image_generation`), the batch method (`generate_images_batch.seeds`), the CLI (`--seed` on `gflow image t2i` and `i2i`), and all 9 test call sites. Rationale: code-verified empirically dead under the active UI transport (`v0.7.0`): user-passed `seed=42` never reaches any transport — `_drive_image_generation` discards it via `_ = seed, batch_id` (`client.py` shim). The body builder retains `seed`/`batch_id` as wire-format parameters used internally by the experimental HTTP transports (which mint locally). User authorised Option A (full removal) over Option B (DTO-thread plumbing for transports nobody uses). Per CLAUDE.md "delete completely, no backwards-compat hacks." CHANGELOG `### Removed` documents the breaking change; commit #1b's title prefix is `refactor` plus a BREAKING CHANGE footer.
 - **D9.** **Defer** the `_drive_image_generation` ↔ `_drive_images_generation` rename. Rationale: real readability win but atomicity-breaking when mixed with the bugfix. Filed as a follow-up issue.
 - **D10.** Use `tmp_path` pytest fixture for the e2e output dir, not a hand-rolled timestamped path. Rationale: avoids Windows path issues with `:` in ISO-8601 timestamps; pytest cleans up automatically.
 - **D11.** Use dependency injection (`jitter_range=(0.0, 0.0)`) for the e2e jitter override, not monkeypatch and not env-var conditional in production code. Rationale: the parameter already exists in PR #35 (`src/gflow_cli/image_batch.py:597`) — using it keeps the test boundary clean.
