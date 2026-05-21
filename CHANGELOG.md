@@ -13,10 +13,21 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 - `UiAutomationTransport._download_video` — downloads a generated mp4 via `media.getMediaUrlRedirect` using the authenticated page; falls back to `self._out_dir` then `tmp/` when no `out_dir` is supplied ([#29](https://github.com/ffroliva/gflow-cli/issues/29)).
 - `FlowApiClient.download_video(media_id, out_path)` — public API, mirrors `download_image` ([#29](https://github.com/ffroliva/gflow-cli/issues/29)).
 - `gflow video t2v PROMPT` restored — generates and downloads a video end-to-end on `UiAutomationTransport`; supports `--aspect` (`9:16` / `16:9`), `--profile`, and `--out-dir` ([#29](https://github.com/ffroliva/gflow-cli/issues/29)).
+- `gflow image batch <manifest>` subcommand for batch image generation from JSON or TSV manifests, with `--same-project` and `--continue-on-error` flags. `MAX_BATCH_PROMPTS = 5`. Closes [#14](https://github.com/ffroliva/gflow-cli/issues/14) part 2.
+- Application-layer structlog events for image batch submission: `image_batch.submission_attempt`, `image_batch.submission_result`, `image_batch.row_completed`, `image_batch.inter_submission_latency_ms`. Use these to debug Flow throttling regressions without re-instrumenting.
 
 ### Changed
 
 - `UiAutomationTransport.generate_video` now accepts `download: bool = True` and returns `VideoResult` instead of `VideoStatus` — **breaking change for direct transport callers** (the `FlowApiClient` boundary is unaffected). Pass `download=False` to skip the auto-download step.
+
+### Fixed
+
+- `gflow image t2i -n N` now makes one transport call using Flow's native xN count selector instead of fanning out N parallel single-image submissions. Closes [#14](https://github.com/ffroliva/gflow-cli/issues/14) part 1.
+
+### Removed
+
+- **BREAKING:** `--seed` flag from `gflow image t2i` and `gflow image i2i`. The flag was a no-op under the active UI transport since v0.7.0 (silently discarded inside the client before reaching the transport). If reproducibility via user-controlled seed becomes possible again — either through Flow UI exposing a seed control or via HTTP transport revival — the surface will be re-introduced at that layer. The wire-format body builder retains its `seed` / `batch_id` parameters for the experimental HTTP transports' internal use.
+- **BREAKING (library):** `FlowApiClient.generate_image` no longer accepts `seed=` or `batch_id=` kwargs. `FlowApiClient.generate_images_batch` no longer accepts `seeds=`. Callers passing these will get a `TypeError`. Same justification as the CLI removal.
 
 ## [0.7.0] — 2026-05-20
 

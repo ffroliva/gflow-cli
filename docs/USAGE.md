@@ -223,6 +223,62 @@ A 2-image run produces files numbered `_1.png`, `_2.png`:
 ./variants/<media_name_b>_2.png
 ```
 
+## `gflow image batch`
+
+Generate multiple images from a single manifest file. The format is dispatched by file extension (`.json` or `.tsv`).
+
+### TSV manifest
+
+Tab-separated columns. Only `prompt` is required; remaining columns fall back to the CLI defaults.
+
+```
+prompt<TAB>count<TAB>aspect_ratio<TAB>model
+```
+
+Lines starting with `#` and blank lines are skipped. Example: [`test_assets/sample_batch.tsv`](../test_assets/sample_batch.tsv).
+
+```tsv
+a small calico kitten sitting on a windowsill
+a watercolor sunset over rolling hills	2	16:9
+an isometric pixel-art bakery	1	1:1	nano2
+```
+
+### JSON manifest
+
+```json
+[
+  {"text": "a small calico kitten sitting on a windowsill"},
+  {"text": "a watercolor sunset over rolling hills", "count": 2, "aspect_ratio": "16:9"},
+  {"text": "an isometric pixel-art bakery", "count": 1, "aspect_ratio": "1:1", "model": "nano2"}
+]
+```
+
+Example: [`test_assets/sample_batch.json`](../test_assets/sample_batch.json).
+
+### Flags
+
+- `--same-project` — all prompts share one Flow project. Inserts a 3–7s random delay between submissions as an anti-bot-detection measure (this delay is **live-verified** via the Phase 6 matrix once `LIVE_VERIFICATION_image_batch.md` lands; see that evidence file for the verdict and any code change).
+- `--continue-on-error` / `--fail-fast` — keep going past row failures or stop at the first one.
+
+### Limits
+
+- `MAX_BATCH_PROMPTS = 5` (defined in `src/gflow_cli/image_batch.py`). To raise, edit the constant.
+
+### Exit codes
+
+- `0` — all rows succeeded.
+- `1` — invalid manifest (file not found, parse error, unknown aspect/model).
+- non-zero (other) — transport-level failure.
+
+### Observability
+
+`gflow image batch` emits four structlog events per run, useful for debugging throttling regressions:
+
+- `image_batch.submission_attempt {row_idx, prompt_hash, aspect, model, same_project, jitter_enabled, t_since_prev_submit_ms, project_id}`
+- `image_batch.submission_result {row_idx, outcome, latency_ms, ...}`
+- `image_batch.row_completed {row_idx, file_path, sha256_prefix}` (per image)
+- `image_batch.inter_submission_latency_ms {row_idx, latency_ms}` (fires from row 1 onward)
+
 ## `gflow video t2v`
 
 Generate a video from a text prompt only.

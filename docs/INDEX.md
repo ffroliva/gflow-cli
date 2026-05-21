@@ -69,6 +69,7 @@ Slash commands for Claude Code, stored in `.claude/commands/gflow/`. All prefixe
 **"What does each `ui_automation.*` log event mean?"** → [DEBUGGING § Listener & HTTP-layer debugging](DEBUGGING.md#listener--http-layer-debugging)
 **"What was actually live-verified for the latest release?"** → [LIVE_VERIFICATION_v0.7.0](LIVE_VERIFICATION_v0.7.0.md)
 **"What was live-verified for the video-download feature (#29)?"** → [LIVE_VERIFICATION_video_download](LIVE_VERIFICATION_video_download.md)
+**"What was the jitter matrix verdict for `gflow image batch --same-project`?"** → [`LIVE_VERIFICATION_image_batch.md`](LIVE_VERIFICATION_image_batch.md) — jitter matrix evidence for `gflow image batch --same-project`
 
 ## Documentation governance
 
