@@ -328,8 +328,11 @@ class TestGenerateVideoOrchestration:
             return VideoStatus(media_id="vid-1", status="MEDIA_GENERATION_STATUS_SUCCESSFUL")
 
         monkeypatch.setattr(VideoGenerationMixin, "_poll_video_status", staticmethod(_fake_poll))
+        fake_path = Path("/tmp/vid-1.mp4")
+        monkeypatch.setattr(transport, "_download_video", AsyncMock(return_value=fake_path))
         result = await transport.generate_video(request=GenerateVideoRequest(prompt="a forest"))
-        assert result.succeeded is True
+        assert result.status.succeeded is True
+        assert result.local_path == fake_path
         # both response listeners were detached in the finally block
         assert transport._page.remove_listener.call_count == 2
 
@@ -390,3 +393,60 @@ class TestGenerateVideoOrchestration:
 
         with pytest.raises(WireFormatError):
             await transport.generate_video(request=GenerateVideoRequest(prompt="x"))
+
+
+class TestDownloadVideo:
+    @pytest.mark.asyncio
+    async def test_download_video_saves_mp4(self, tmp_path: Path) -> None:
+        """_download_video writes response bytes to <out_dir>/<media_id>.mp4."""
+        transport = UiAutomationTransport()
+
+        fake_page = MagicMock()
+        fake_resp = AsyncMock()
+        fake_resp.status = 200
+        fake_resp.body = AsyncMock(return_value=b"fake-mp4-content")
+        fake_page.request.get = AsyncMock(return_value=fake_resp)
+
+        out_path = await transport._download_video("test-uuid-123", tmp_path, fake_page)
+
+        assert out_path == tmp_path / "test-uuid-123.mp4"
+        assert out_path.read_bytes() == b"fake-mp4-content"
+        fake_page.request.get.assert_awaited_once()
+        call_url = fake_page.request.get.call_args[0][0]
+        assert "test-uuid-123" in call_url
+        assert "getMediaUrlRedirect" in call_url
+
+    @pytest.mark.asyncio
+    async def test_download_video_raises_on_http_error(self, tmp_path: Path) -> None:
+        """_download_video raises WireFormatError on non-2xx response."""
+        from gflow_cli.errors import WireFormatError
+
+        transport = UiAutomationTransport()
+
+        fake_page = MagicMock()
+        fake_resp = AsyncMock()
+        fake_resp.status = 403
+        fake_page.request.get = AsyncMock(return_value=fake_resp)
+
+        with pytest.raises(WireFormatError):
+            await transport._download_video("test-uuid-456", tmp_path, fake_page)
+
+
+class TestGenerateVideoReturnType:
+    @pytest.mark.asyncio
+    async def test_generate_video_returns_video_result_type(self) -> None:
+        """generate_video must declare VideoResult as return type."""
+        import typing
+
+        from gflow_cli.api.video import VideoResult
+
+        transport = UiAutomationTransport()
+        try:
+            hints = typing.get_type_hints(transport.generate_video)
+        except Exception:
+            hints = {}
+
+        ret = hints.get("return")
+        assert ret is VideoResult or str(ret) == "VideoResult", (
+            f"generate_video must return VideoResult, got {ret!r}"
+        )

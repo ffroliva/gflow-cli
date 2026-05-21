@@ -75,7 +75,8 @@ Read the full [DISCLAIMER](DISCLAIMER.md) before deploying this in any productio
 | Shell multi-prompt `gflow image t2i` (`PROMPT...`, `--prompts-file`, `--stdin`) | ✅ done (v0.6.0a1) |
 | Downstream-worker ergonomics (`out_dir`, `health_check()`, optional `project_id`, `BrowserSessionClosedError`) | ✅ done (v0.7.0) |
 | Signed-tag release verification + first stable (`v0.7.0`) | ✅ done (v0.7.0) |
-| Video CLI on `ui_automation` (`gflow video t2v/i2v/batch`) | ⏳ Phase B |
+| `gflow video t2v` restored on `ui_automation` with first-class video download (#29) | ✅ done (Unreleased) |
+| `gflow video i2v` + `gflow video batch` on `ui_automation` | ⏳ Phase B |
 | Provider abstraction for official Veo 3.1 API | ⏳ planned |
 
 ### What's new in v0.7.0
@@ -175,17 +176,19 @@ gflow auth status
 # 3a. Generate an image from a text prompt (lands at $GFLOW_CLI_OUTPUT_DIR/images/<date>/)
 gflow image t2i "a hot air balloon over Tokyo at sunrise"
 
-# 3b. Generate a clip end-to-end
-gflow video i2v ./input.png "Slow cinematic push-in, soft golden light" -o out.mp4
+# 3b. Generate a video clip end-to-end (text-to-video, auto-downloads the mp4)
+gflow video t2v "Slow cinematic push-in on a sunlit forest clearing" --aspect 16:9 --out-dir out/
 ```
 
-The image lands at `$GFLOW_CLI_OUTPUT_DIR/images/<YYYY-MM-DD>/<media_name>_1.png` (defaults to `./out/` when the env var is unset). See [docs/USAGE.md § `gflow image t2i`](docs/USAGE.md#gflow-image-t2i) for `--model`, `--aspect`, `-n/--count`, `--seed`, and `--out` flags.
+The image lands at `$GFLOW_CLI_OUTPUT_DIR/images/<YYYY-MM-DD>/<media_name>_1.png` (defaults to `./out/` when the env var is unset). See [docs/USAGE.md § `gflow image t2i`](docs/USAGE.md#gflow-image-t2i) for `--model`, `--aspect`, `-n/--count`, `--seed`, and `--out` flags. The video lands at `<out-dir>/<media_id>.mp4`.
 
-> **Video generation is being rebuilt.** The HTTP video path returned HTTP 401
-> and was retired. Video generation now runs on the UI-automation transport:
-> Phase A ships the text-to-video transport; the `gflow video` CLI commands
-> return in a later release (Phase B). See
-> `docs/superpowers/specs/2026-05-18-ui-automation-video-generation-design.md`.
+> **Video generation runs on the UI-automation transport.** The legacy HTTP
+> video path returned HTTP 401 and was retired. `gflow video t2v` is shipped
+> on the new transport (auto-downloads the mp4 via `media.getMediaUrlRedirect`);
+> `gflow video i2v` and `gflow video batch` follow in a later Phase B release.
+> See [`docs/LIVE_VERIFICATION_video_download.md`](docs/LIVE_VERIFICATION_video_download.md) for the live evidence and
+> `docs/superpowers/specs/2026-05-18-ui-automation-video-generation-design.md`
+> for the design.
 
 ---
 
@@ -201,9 +204,9 @@ gflow image t2i --prompts-file prompts.txt               # text-file multi-promp
 gflow image t2i --stdin                                  # stdin multi-prompt batch
 gflow image i2i "<prompt>" --ref PATH_OR_UUID [...]      # image-to-image (1–4 per call)
 
-gflow video t2v "<prompt>" -o out.mp4                    # text-to-video — returns in Phase B
-gflow video i2v <image> "<prompt>" -o out.mp4            # image-to-video — returns in Phase B
-gflow video batch <manifest.tsv>                         # TSV-driven batch — returns in Phase B
+gflow video t2v "<prompt>" [--aspect 9:16|16:9] [--out-dir DIR]   # text-to-video, auto-downloads mp4
+gflow video i2v <image> "<prompt>" -o out.mp4                    # image-to-video — returns in Phase B
+gflow video batch <manifest.tsv>                                 # TSV-driven batch — returns in Phase B
 ```
 
 Each command supports `--profile <name>` for managing multiple Google accounts side-by-side.
