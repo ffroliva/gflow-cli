@@ -25,6 +25,7 @@ from gflow_cli.api.video import (
     Aspect,
     GenerateVideoRequest,
     Mode,
+    VideoResult,
     VideoStatus,
     media_name_from_generate_response,
     parse_video_status,
@@ -427,11 +428,13 @@ class VideoGenerationMixin:
         request: GenerateVideoRequest,
         out_dir: Path | None = None,
         poll_timeout_s: float = 600.0,
-    ) -> VideoStatus:
+        download: bool = True,
+    ) -> VideoResult:
         """Generate ONE video by driving the Flow editor UI (Phase A: T2V only).
 
-        Returns a `VideoStatus` for both SUCCESSFUL and FAILED terminal states;
-        the caller maps a FAILED status to a typed error (spec §7). Raises
+        Returns a `VideoResult` carrying both the terminal `VideoStatus` and the
+        on-disk `local_path` (``None`` when ``download=False`` or the generation
+        failed — callers should check ``result.status.succeeded`` first). Raises
         `RuntimeError` (no setup / editor control missing), `NotImplementedError`
         (non-T2V), `ValueError` (SQUARE aspect), `AuthExpiredError` (401),
         `WafRejectionError` (403), `WireFormatError` (other non-200 / no media),
@@ -449,14 +452,15 @@ class VideoGenerationMixin:
                 "use PORTRAIT (9:16) or LANDSCAPE (16:9)"
             )
         async with self._generate_lock:
-            return await self._generate_video_locked(request, out_dir, poll_timeout_s)
+            return await self._generate_video_locked(request, out_dir, poll_timeout_s, download)
 
     async def _generate_video_locked(
         self,
         request: GenerateVideoRequest,
         out_dir: Path | None,
         poll_timeout_s: float,
-    ) -> VideoStatus:
+        download: bool,
+    ) -> VideoResult:
         """Serialized body of `generate_video` — runs under `self._generate_lock`
         (shared with `generate_images`: one Page, one DOM)."""
         page: Page = self._page  # type: ignore[assignment]  # guarded in generate_video
@@ -525,9 +529,13 @@ class VideoGenerationMixin:
                     discovery={"route": route, "top_level_keys": sorted(anomaly_body)},
                 ) from e
 
-            return await VideoGenerationMixin._poll_video_status(
+            status = await VideoGenerationMixin._poll_video_status(
                 page, status_captured, media_name, timeout_s=poll_timeout_s
             )
+            if download and status.succeeded:
+                local_path = await self._download_video(status.media_id, out_dir, page)
+                return VideoResult(status=status, local_path=local_path)
+            return VideoResult(status=status, local_path=None)
         finally:
             # The Page is pooled and persistent — remove both listeners so they
             # never leak across calls.
