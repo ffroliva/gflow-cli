@@ -21,11 +21,11 @@
 
 **v0.7.0 SHIPPED on PyPI (2026-05-20).** First stable (non-`aN`) release. Downstream-worker ergonomics release: `out_dir` plumbing, `health_check()`, optional `project_id`, `BrowserSessionClosedError` (#16 + #18); auth hardening (#15 + #17); overlay-dismiss (#26); 1:1 aspect-ratio cascade; signed-tag CI gate (#30); listener instrumentation. Image generation end-to-end live-verified on `ui_automation` across four aspect ratios (`9:16`, `16:9`, `1:1`, `4:3`) — see [`docs/LIVE_VERIFICATION_v0.7.0.md`](docs/LIVE_VERIFICATION_v0.7.0.md). The historical `aisandbox-pa` 401 is RESOLVED in v0.7.0 (KNOWN_ISSUES `## Resolved`).
 
-**Active backlog → Phase B (video CLI).** Phase A (T2V transport, PR #23) shipped with v0.7.0; Phase B wires the CLI and adds the remaining modes. See the Phase B follow-ups (project memory, run `/gflow:plan` for current detail) and these GitHub issues:
-- [#29](https://github.com/ffroliva/gflow-cli/issues/29) first-class video download (mirror the image-side `download_image` pattern)
-- CLI restoration: `gflow video t2v/i2v/batch` are currently stubbed
-- I2V then R2V on `UiAutomationTransport`
-- Address the v0.7.0 follow-ups: first-attempt listener-miss flake, signed-tag CI auto-signing (sigstore `gitsign`), and the `/gflow:release` doc bridge for the develop→main flow
+**Active backlog → Phase B (video CLI).** Phase A (T2V transport, PR #23) shipped with v0.7.0. PR #36 (merged 2026-05-21) restored `gflow video t2v` with first-class video download ([#29](https://github.com/ffroliva/gflow-cli/issues/29) — CLOSED), `VideoResult`, and `FlowApiClient.download_video`; both `9:16` and `16:9` live-verified on profile `ffroliva` (see [`docs/LIVE_VERIFICATION_video_download.md`](docs/LIVE_VERIFICATION_video_download.md)). Remaining Phase B work:
+- I2V (image-to-video) on `UiAutomationTransport` (`Mode.I2V` still raises `NotImplementedError`); then R2V
+- Restore `gflow video i2v` and `gflow video batch` (currently stubbed with "not yet available")
+- Parameterized live e2e under `tests/e2e/test_video_t2v_e2e.py` mirroring the image-side e2e
+- v0.7.0 follow-ups still open: first-attempt listener-miss flake, signed-tag CI auto-signing (sigstore `gitsign`), and the `/gflow:release` doc bridge for the develop→main flow
 
 Run `/gflow:plan` for the current detailed plan if a superpowers plan is active.
 

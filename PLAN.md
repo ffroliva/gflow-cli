@@ -401,15 +401,17 @@ uvx --from "gflow-cli==0.7.0" gflow --version    # → gflow, version 0.7.0
 
 ### Phase B — Video CLI restoration on `UiAutomationTransport` — IN PROGRESS
 
-Phase A (T2V library transport) shipped with v0.7.0 via PR #23. Phase B
-wires the CLI and adds the remaining video modes:
+Phase A (T2V library transport) shipped with v0.7.0 via PR #23. PR #36
+(merged 2026-05-21) closed the T2V CLI gap on Phase B:
 
-- Restore `gflow video t2v` CLI (replaces the current "temporarily unavailable" stub)
-- Add first-class video download mirroring the image side ([#29](https://github.com/ffroliva/gflow-cli/issues/29))
-- I2V (image-to-video) on `UiAutomationTransport` (`Mode.I2V` currently raises `NotImplementedError`)
-- R2V (reference-to-video) on `UiAutomationTransport` (`Mode.R2V` currently raises `NotImplementedError`)
-- Live-verify T2V portrait aspect (Phase A only verified landscape)
-- Address the first-attempt listener-miss flake observed during v0.7.0 live verification
+- [x] Restore `gflow video t2v` CLI — shipped via PR #36 (`gflow video t2v PROMPT [--aspect 9:16|16:9] [--profile] [--out-dir]`)
+- [x] Add first-class video download mirroring the image side ([#29](https://github.com/ffroliva/gflow-cli/issues/29)) — shipped via PR #36 (`VideoResult`, `_download_video`, `FlowApiClient.download_video`)
+- [x] Live-verify T2V portrait aspect — shipped 2026-05-21 on profile `ffroliva` (both `9:16` and `16:9`); evidence in [`docs/LIVE_VERIFICATION_video_download.md`](docs/LIVE_VERIFICATION_video_download.md)
+- [ ] I2V (image-to-video) on `UiAutomationTransport` (`Mode.I2V` currently raises `NotImplementedError`); CLI still stubbed
+- [ ] R2V (reference-to-video) on `UiAutomationTransport` (`Mode.R2V` currently raises `NotImplementedError`); CLI still stubbed
+- [ ] Restore `gflow video batch` CLI (TSV-manifest fan-out — currently stubbed)
+- [ ] Parameterized live e2e under `tests/e2e/test_video_t2v_e2e.py` mirroring the image-side e2e
+- [ ] Address the first-attempt listener-miss flake observed during v0.7.0 live verification
 
 ---
 
