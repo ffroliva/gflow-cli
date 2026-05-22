@@ -93,7 +93,7 @@ def _pid_alive(pid: int) -> bool:
                 timeout=5,
             )
             return str(pid) in result.stdout
-        except Exception:
+        except (subprocess.SubprocessError, OSError, ValueError):
             return False
     else:
         # POSIX: os.kill(pid, 0) raises if PID doesn't exist / no permission
@@ -105,7 +105,7 @@ def _pid_alive(pid: int) -> bool:
         except PermissionError:
             # Process exists but we don't own it — still alive
             return True
-        except Exception:
+        except OSError:
             return False
 
 
@@ -233,7 +233,7 @@ def is_browser_running(port: int = 9222) -> bool:
             return True
         except httpx.TimeoutException:
             raise  # re-raise so caller can retry
-        except Exception:
+        except (httpx.HTTPError, ValueError, OSError):
             return False
 
     try:
@@ -242,7 +242,7 @@ def is_browser_running(port: int = 9222) -> bool:
         # ONE retry on timeout
         try:
             return _attempt()
-        except Exception:
+        except (httpx.HTTPError, httpx.TimeoutException, ValueError, OSError):
             return False
 
 
@@ -402,19 +402,12 @@ def _write_lock(lock_path: Path, pid: int, port: int, profile_name: str) -> None
     # path while keeping the write itself crash-safe.
     try:
         os.link(str(tmp_path), str(lock_path))
-    except BaseException:
-        # Race lost (or hardlink unsupported) — clean up tmp and propagate
-        try:
-            tmp_path.unlink()
-        except FileNotFoundError:
-            pass
+    except OSError:
+        # Race lost (or hardlink unsupported) — clean up tmp and propagate.
+        tmp_path.unlink(missing_ok=True)
         raise
-    else:
-        # Success: drop the tmp hardlink; the lockfile now stands alone
-        try:
-            tmp_path.unlink()
-        except FileNotFoundError:
-            pass
+    # Success: drop the tmp hardlink; the lockfile now stands alone.
+    tmp_path.unlink(missing_ok=True)
 
 
 def _read_lock(lock_path: Path) -> dict[str, Any] | None:
@@ -494,9 +487,7 @@ async def _is_logged_in_to_flow(page: Any) -> bool:
         sign_in_count = await page.locator('button:has-text("Sign in")').count()
         if sign_in_count and sign_in_count > 0:
             return False
-    except Exception:
-        # If the locator call fails for any reason, assume logged in
-        # (fail-open is safer than blocking every session on a DOM race)
+    except Exception:  # noqa: BLE001 — fail-open: DOM race must not block every session
         pass
 
     return True

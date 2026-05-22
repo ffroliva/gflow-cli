@@ -1389,7 +1389,7 @@ class UiAutomationTransport(VideoGenerationMixin):
     async def generate_images(
         self,
         *,
-        project_id: str | None,
+        project_id: str | None,  # noqa: ARG002
         request: GenerateImageRequest,
     ) -> list[GeneratedImage]:
         """Submit ``request.prompt`` through Flow's editor and return the
@@ -1405,7 +1405,8 @@ class UiAutomationTransport(VideoGenerationMixin):
         ``batchGenerateImages`` response is non-200, or the response is
         200 but contains no image URLs.
         """
-        _ = project_id  # accepted for Protocol parity; UI creates its own project
+        # project_id is accepted for Protocol parity; the UI transport creates
+        # its own Flow project on each call rather than reusing a supplied one.
         if not self._setup_done or self._page is None:
             raise RuntimeError(
                 "UiAutomationTransport.setup() must be called before generate_images()"
