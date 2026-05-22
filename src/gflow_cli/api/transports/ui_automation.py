@@ -714,12 +714,74 @@ class UiAutomationTransport(VideoGenerationMixin):
         return False
 
     @staticmethod
+    async def _read_displayed_count(page: Page) -> str | None:
+        """Read the currently-displayed image count from the settings panel or trigger.
+
+        Tries two sources in order:
+        1. A visible ``[role="tab"][aria-selected="true"]`` inside the panel —
+           the most precise signal when the panel is open.
+        2. The settings-trigger button's text content — Flow renders the current
+           count inside the trigger button alongside the aspect-ratio icon; this
+           works even when the panel is closed.
+
+        Returns the stripped text of the first match, or ``None`` when nothing
+        is readable (panel closed and trigger text unreadable).
+        """
+        # Source 1 — selected tab inside the open panel (most precise).
+        try:
+            selected = page.locator('[role="tab"][aria-selected="true"]').first
+            if await selected.is_visible(timeout=500):
+                text = await selected.text_content(timeout=500)
+                if text:
+                    return text.strip()
+        except Exception:  # noqa: BLE001 — probe failure is non-fatal
+            pass
+
+        # Source 2 — settings trigger button text (works panel-open or closed).
+        for sel in GEN_SETTINGS_BUTTON_SELECTORS:
+            try:
+                btn = page.locator(sel).first
+                if await btn.is_visible(timeout=500):
+                    text = await btn.text_content(timeout=500)
+                    if text:
+                        return text.strip()
+            except Exception:  # noqa: BLE001 — try next selector
+                continue
+
+        return None
+
+    @staticmethod
+    async def _is_settings_panel_open(page: Page) -> bool:
+        """True if the generation-settings panel count tabs are currently visible.
+
+        Uses the count tabs themselves as the panel-open indicator — they are
+        panel-only elements and become visible exactly when the panel is open.
+        """
+        for n in (1, 2):
+            for label in _count_tab_candidates(n):
+                try:
+                    tab = page.locator(f'[role="tab"]:text-is("{label}")').first
+                    if await tab.is_visible(timeout=400):
+                        return True
+                except Exception:  # noqa: BLE001
+                    continue
+        return False
+
+    @staticmethod
     async def _configure_generation_settings(
         page: Page,
         aspect_cli: str | None,
         count: int | None,
+        *,
+        out_dir: Path | None = None,
+        prompt_idx: int | None = None,
     ) -> None:
         """Open the per-generation settings panel and apply aspect ratio and count.
+
+        When ``out_dir`` and ``prompt_idx`` are both provided, diagnostic
+        screenshots are saved as ``count_before_prompt_{idx}.png`` and
+        ``count_after_prompt_{idx}.png`` so future count-drift can be
+        diagnosed without re-instrumenting the code.
 
         Skips gracefully if the panel trigger cannot be found (non-fatal —
         generation will proceed with Flow's current default settings).
@@ -727,6 +789,10 @@ class UiAutomationTransport(VideoGenerationMixin):
         if aspect_cli is None and count is None:
             # Nothing to apply.
             return
+
+        # Phase 3 — before screenshot (diagnostic, best-effort).
+        if out_dir is not None and prompt_idx is not None:
+            await _capture_debug_screenshot(page, out_dir, f"count_before_prompt_{prompt_idx}.png")
 
         if not await UiAutomationTransport._open_gen_settings_panel(page):
             log.warning("ui_automation.gen_settings_panel_not_found", skipping=True)
@@ -768,53 +834,143 @@ class UiAutomationTransport(VideoGenerationMixin):
             else:
                 await UiAutomationTransport._set_count(page, count)
 
+        # Phase 3 — after screenshot (diagnostic, best-effort).
+        if out_dir is not None and prompt_idx is not None:
+            await _capture_debug_screenshot(page, out_dir, f"count_after_prompt_{prompt_idx}.png")
+
         await page.keyboard.press("Escape")
         await page.wait_for_timeout(400)
 
     @staticmethod
     async def _set_count(page: Page, count: int) -> None:
-        """Click the xN count tab in the open generation-settings panel.
+        """Click the xN count tab — read-back verify with retry.
 
-        Uses Pattern A (force-reset): always clicks x1 first, then clicks
-        the target xN if count > 1.  This prevents the stay-mounted batch
-        editor from carrying over a prior prompt's count selection — if
-        prompt N set x2 and prompt N+1 wants x1, a plain "click x1" may be
-        a no-op when the tab already appears selected in Flow's DOM but the
-        internal state disagrees (the selection is sticky across stay-mounted
-        submissions).  Clicking x1 unconditionally forces Flow's onChange to
-        fire, then clicking xN (when N > 1) lands the desired value.
+        Algorithm (replaces Pattern A from 401aaf5):
+        1. Ensure the settings panel is open without toggling it closed
+           (stay-mounted batch: panel may already be open from the prior prompt).
+        2. Read the currently-displayed count.
+        3. If it already matches ``count``, return early (no click needed).
+        4. Click the desired tab (both ``x{N}`` and ``{N}x`` variants).
+        5. Read back and confirm the change.
+        6. Retry up to 3 attempts total; raise ``RuntimeError`` on non-convergence.
 
-        Both label variants are tried for each step — ``x{N}`` is the current
-        Flow label; ``{N}x`` is a fallback observed in older / localised
-        builds (mirrors the CG Worker pattern in
-        ``flow_logic._quantity_option_texts``).
+        Four structlog events are emitted for diagnosability:
+        - ``ui_automation.count_setter_entered``
+        - ``ui_automation.count_click_attempted``
+        - ``ui_automation.count_click_result``
+        - ``ui_automation.count_setter_completed``
         """
+        panel_open = await UiAutomationTransport._is_settings_panel_open(page)
+        initial_displayed = await UiAutomationTransport._read_displayed_count(page)
 
-        async def _click_count_tab(n: int) -> bool:
-            """Click the first visible tab matching any candidate label for N."""
-            for label in _count_tab_candidates(n):
+        log.info(
+            "ui_automation.count_setter_entered",
+            desired_count=count,
+            panel_currently_visible=panel_open,
+        )
+
+        # Ensure the panel is open — open it only if it's currently closed
+        # (avoid toggling a stay-mounted open panel closed).
+        if not panel_open:
+            opened = await UiAutomationTransport._open_gen_settings_panel(page)
+            if not opened:
+                log.warning(
+                    "ui_automation.count_setter_panel_open_failed",
+                    desired_count=count,
+                )
+                # Non-fatal: best-effort click below; completed event records failure.
+                log.info(
+                    "ui_automation.count_setter_completed",
+                    desired_count=count,
+                    final_displayed_count=initial_displayed,
+                    success=False,
+                    attempts=0,
+                )
+                return
+
+        _max_attempts = 3
+        displayed: str | None = await UiAutomationTransport._read_displayed_count(page)
+
+        for attempt in range(1, _max_attempts + 1):
+            # If current display already matches desired, we're done.
+            if displayed is not None:
+                # Check whether the displayed text contains the count label.
+                # Flow uses labels like "x1", "x2", "1x", "2x" etc.
+                desired_labels = set(_count_tab_candidates(count))
+                if any(lbl in displayed for lbl in desired_labels):
+                    log.info(
+                        "ui_automation.count_setter_completed",
+                        desired_count=count,
+                        final_displayed_count=displayed,
+                        success=True,
+                        attempts=attempt - 1,
+                    )
+                    return
+
+            # Attempt to click the desired count tab.
+            clicked = False
+            click_error: str | None = None
+            panel_visible_before = await UiAutomationTransport._is_settings_panel_open(page)
+
+            for label in _count_tab_candidates(count):
+                selector = f'[role="tab"]:text-is("{label}")'
+                log.info(
+                    "ui_automation.count_click_attempted",
+                    target=f"x{count}",
+                    selector=selector,
+                    panel_visible=panel_visible_before,
+                    current_displayed_count=displayed,
+                )
                 try:
-                    tab = page.locator(f'[role="tab"]:text-is("{label}")').first
+                    tab = page.locator(selector).first
                     await tab.wait_for(state="visible", timeout=3_000)
                     await tab.click()
-                    log.info("ui_automation.count_tab_clicked", n=n, label=label)
                     await page.wait_for_timeout(300)
-                    return True
-                except Exception:  # noqa: BLE001 — try next label variant
+                    clicked = True
+                    break
+                except Exception as e:  # noqa: BLE001
+                    click_error = str(e)
                     continue
-            return False
 
-        # Step 1 — always reset to x1 first (clears any sticky prior selection).
-        if not await _click_count_tab(1):
-            log.warning("ui_automation.count_reset_to_1_failed")
-            # Non-fatal: still attempt the target click below.
+            # Read back to verify.
+            displayed = await UiAutomationTransport._read_displayed_count(page)
+            log.info(
+                "ui_automation.count_click_result",
+                target=f"x{count}",
+                success=clicked,
+                current_displayed_count_after=displayed,
+                error=click_error,
+            )
 
-        # Step 2 — if target is x1 we're done; otherwise click the target.
-        if count > 1:
-            if not await _click_count_tab(count):
-                log.warning("ui_automation.count_set_failed", value=count)
-            else:
-                log.info("ui_automation.count_set", value=count)
+            if clicked:
+                # Check read-back match.
+                desired_labels = set(_count_tab_candidates(count))
+                if displayed is not None and any(lbl in displayed for lbl in desired_labels):
+                    log.info(
+                        "ui_automation.count_setter_completed",
+                        desired_count=count,
+                        final_displayed_count=displayed,
+                        success=True,
+                        attempts=attempt,
+                    )
+                    return
+
+            # Brief pause before retry to allow React re-render.
+            if attempt < _max_attempts:
+                await page.wait_for_timeout(500)
+
+        # All attempts exhausted without convergence.
+        log.info(
+            "ui_automation.count_setter_completed",
+            desired_count=count,
+            final_displayed_count=displayed,
+            success=False,
+            attempts=_max_attempts,
+        )
+        raise RuntimeError(
+            f"_set_count({count}) failed to update Flow UI; "
+            f"still showing {displayed!r} after {_max_attempts} attempts"
+        )
 
     # ------------------------------------------------------------------
     # Internal helpers — batchGenerateImages capture (unit 3.6)
@@ -1181,7 +1337,13 @@ class UiAutomationTransport(VideoGenerationMixin):
             detach: Callable[[], None] = _noop_detach  # overwritten below on success
 
             try:
-                await self._configure_generation_settings(page, aspect_cli, req.count)
+                await self._configure_generation_settings(
+                    page,
+                    aspect_cli,
+                    req.count,
+                    out_dir=out_dir,
+                    prompt_idx=idx,
+                )
                 captured, detach = self._attach_batch_response_listener(page, project_id=project_id)
                 try:
                     await self._send_prompt(page, req.prompt, out_dir)

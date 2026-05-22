@@ -7,7 +7,7 @@ Page, each captures into its own list, and we assert no cross-contamination.
 
 from __future__ import annotations
 
-from unittest.mock import AsyncMock, MagicMock
+from unittest.mock import AsyncMock, MagicMock, patch
 
 import pytest
 
@@ -515,8 +515,8 @@ async def test_settings_fail_after_attach_calls_detach_before_continue(
 
     cfg_call = [0]
 
-    async def cfg_raises_on_idx1(page, aspect_cli, count):  # type: ignore[no-untyped-def]
-        # Matches real signature: (page, aspect_cli: str|None, count: int|None)
+    async def cfg_raises_on_idx1(page, aspect_cli, count, **kwargs):  # type: ignore[no-untyped-def]
+        # Matches real signature: (page, aspect_cli, count, *, out_dir, prompt_idx)
         call = cfg_call[0]
         cfg_call[0] += 1
         if call == 1:
@@ -873,11 +873,19 @@ async def test_generate_images_batch_project_id_identical_across_results(
 
 class _LocatorRecorder:
     """Records which labels were targeted by _set_count so tests can verify
-    that the x1 reset + xN click sequence happens in the right order."""
+    the click sequence under the read-back-verify algorithm.
+
+    ``is_visible`` returns True for labels in ``visible_labels`` so that
+    ``_is_settings_panel_open`` and ``_read_displayed_count`` work correctly.
+    After each click the recorder updates ``_last_clicked`` so
+    ``_read_displayed_count`` (via ``aria-selected="true"``) returns the
+    just-clicked label — simulating Flow's UI updating in response to the click.
+    """
 
     def __init__(self, visible_labels: set[str]) -> None:
         self._visible = visible_labels
         self.clicked: list[str] = []  # labels clicked, in call order
+        self._last_clicked: str | None = None  # tracks current selected tab
 
     def locator(self, selector: str) -> _LocatorRecorder._Loc:
         # Extract the label from ':text-is("label")' selectors.
@@ -885,7 +893,13 @@ class _LocatorRecorder:
 
         m = re.search(r':text-is\("([^"]+)"\)', selector)
         label = m.group(1) if m else selector
-        return _LocatorRecorder._Loc(label, self._visible, self.clicked)
+        # aria-selected="true" → returns the last-clicked label as a readable loc
+        if 'aria-selected="true"' in selector:
+            return _LocatorRecorder._Loc("__selected__", self._visible, self.clicked, recorder=self)
+        # crop_ selectors (GEN_SETTINGS_BUTTON) → never visible in this recorder
+        if "crop_" in selector:
+            return _LocatorRecorder._Loc("__btn__", set(), self.clicked, recorder=self)
+        return _LocatorRecorder._Loc(label, self._visible, self.clicked, recorder=self)
 
     async def wait_for_timeout(self, _ms: int) -> None:
         pass
@@ -897,10 +911,17 @@ class _LocatorRecorder:
     keyboard = _Keyboard()
 
     class _Loc:
-        def __init__(self, label: str, visible: set[str], clicked: list[str]) -> None:
+        def __init__(
+            self,
+            label: str,
+            visible: set[str],
+            clicked: list[str],
+            recorder: _LocatorRecorder,
+        ) -> None:
             self._label = label
             self._visible = visible
             self._clicked = clicked
+            self._recorder = recorder
 
         @property
         def first(self) -> _LocatorRecorder._Loc:
@@ -910,26 +931,41 @@ class _LocatorRecorder:
             if self._label not in self._visible:
                 raise TimeoutError(f"'{self._label}' not visible")
 
+        async def is_visible(self, timeout: int = 500) -> bool:
+            if self._label == "__selected__":
+                return self._recorder._last_clicked is not None
+            return self._label in self._visible
+
+        async def text_content(self, timeout: int = 500) -> str | None:
+            if self._label == "__selected__":
+                return self._recorder._last_clicked
+            return None
+
         async def click(self) -> None:
             self._clicked.append(self._label)
+            self._recorder._last_clicked = self._label
 
 
 @pytest.mark.asyncio
-async def test_set_count_clicks_x1_then_x2_for_count_2() -> None:
-    """For count=2: _set_count must click x1 first (reset), then x2."""
+async def test_set_count_clicks_x2_for_count_2() -> None:
+    """For count=2 with no prior selection: _set_count clicks x2 (read-back verifies)."""
     page = _LocatorRecorder(visible_labels={"x1", "x2", "x3", "x4"})
-    await UiAutomationTransport._set_count(page, 2)  # type: ignore[arg-type]
-    assert page.clicked == ["x1", "x2"], (
-        f"Expected ['x1', 'x2'] (reset then target), got {page.clicked}"
-    )
+    with patch.object(
+        UiAutomationTransport, "_open_gen_settings_panel", new=AsyncMock(return_value=True)
+    ):
+        await UiAutomationTransport._set_count(page, 2)  # type: ignore[arg-type]
+    assert "x2" in page.clicked, f"Expected x2 to be clicked, got {page.clicked}"
 
 
 @pytest.mark.asyncio
-async def test_set_count_clicks_only_x1_for_count_1() -> None:
-    """For count=1: _set_count clicks x1 once and stops — no second click."""
+async def test_set_count_clicks_x1_for_count_1() -> None:
+    """For count=1 with no prior selection: _set_count clicks x1."""
     page = _LocatorRecorder(visible_labels={"x1", "x2", "x3", "x4"})
-    await UiAutomationTransport._set_count(page, 1)  # type: ignore[arg-type]
-    assert page.clicked == ["x1"], f"Expected ['x1'] only (target IS the reset), got {page.clicked}"
+    with patch.object(
+        UiAutomationTransport, "_open_gen_settings_panel", new=AsyncMock(return_value=True)
+    ):
+        await UiAutomationTransport._set_count(page, 1)  # type: ignore[arg-type]
+    assert "x1" in page.clicked, f"Expected x1 to be clicked, got {page.clicked}"
 
 
 @pytest.mark.asyncio
@@ -941,36 +977,34 @@ async def test_set_count_fallback_label_nx_used_when_xn_absent() -> None:
     """
     # Only '1x' and '2x' are visible (old-style label convention).
     page = _LocatorRecorder(visible_labels={"1x", "2x"})
-    await UiAutomationTransport._set_count(page, 2)  # type: ignore[arg-type]
-    # x1 absent → 1x used for reset; x2 absent → 2x used for target.
-    assert "1x" in page.clicked
-    assert "2x" in page.clicked
-    assert page.clicked.index("1x") < page.clicked.index("2x"), (
-        "reset (1x) must come before target (2x)"
-    )
+    with patch.object(
+        UiAutomationTransport, "_open_gen_settings_panel", new=AsyncMock(return_value=True)
+    ):
+        await UiAutomationTransport._set_count(page, 2)  # type: ignore[arg-type]
+    # x2 absent → 2x fallback used for target.
+    assert "2x" in page.clicked, f"Expected 2x fallback click, got {page.clicked}"
 
 
 @pytest.mark.asyncio
 async def test_configure_generation_settings_resets_count_between_prompts() -> None:
     """Two sequential _configure_generation_settings calls with different counts.
 
-    Prompt 0 → count=2: must click x1 (reset), then x2 (target).
-    Prompt 1 → count=1: must click x1 again (reset = target), NOT leave x2 sticky.
+    Prompt 0 → count=2: must click x2 (read-back confirms x2 selected).
+    Prompt 1 → count=1: must click x1 (read-back confirms x1 selected, NOT x2 sticky).
 
     This is the exact scenario that produced the Phase 7 regression:
     5 files for 3 prompts (expected 4) because the bakery prompt inherited
     the sunset prompt's x2 selection.
+
+    The read-back-verify algorithm fixes this: after prompt 0 sets count=2,
+    _last_clicked == "x2". Prompt 1 reads back "x2" (mismatch for desired=1),
+    clicks x1, and reads back "x1" (match).
     """
     page = _LocatorRecorder(visible_labels={"x1", "x2", "x3", "x4"})
 
-    # Simulate the settings panel being openable (no-op open).
-    original_open = UiAutomationTransport._open_gen_settings_panel
-
-    async def _instant_open(_page: object) -> bool:  # noqa: RUF029
-        return True
-
-    UiAutomationTransport._open_gen_settings_panel = staticmethod(_instant_open)  # type: ignore[assignment]
-    try:
+    with patch.object(
+        UiAutomationTransport, "_open_gen_settings_panel", new=AsyncMock(return_value=True)
+    ):
         # Prompt 0 — sunset, count=2.
         await UiAutomationTransport._configure_generation_settings(
             page,  # type: ignore[arg-type]
@@ -986,22 +1020,18 @@ async def test_configure_generation_settings_resets_count_between_prompts() -> N
             count=1,
         )
         clicks_after_prompt1 = list(page.clicked)
-    finally:
-        UiAutomationTransport._open_gen_settings_panel = staticmethod(original_open)  # type: ignore[assignment]
 
-    # Prompt 0 must have reset to x1 then advanced to x2.
-    assert clicks_after_prompt0 == ["x1", "x2"], (
-        f"Prompt 0 (count=2): expected ['x1','x2'], got {clicks_after_prompt0}"
+    # Prompt 0 must have clicked x2 (desired count).
+    assert "x2" in clicks_after_prompt0, (
+        f"Prompt 0 (count=2): expected x2 click, got {clicks_after_prompt0}"
     )
 
-    # Prompt 1 must click x1 (even though prompt 0 already clicked x1 earlier).
-    # If the fix is absent, the 'x1' click for prompt 1 would be missing here.
-    x1_clicks = [c for c in clicks_after_prompt1 if c == "x1"]
-    assert len(x1_clicks) >= 2, (
-        f"Expected x1 to be clicked at least twice (once per prompt), "
-        f"but full click log is {clicks_after_prompt1}"
-    )
-    # Final click sequence for prompt 1 must not end with x2.
-    assert clicks_after_prompt1[-1] == "x1", (
-        f"Last click for count=1 prompt must be 'x1', got {clicks_after_prompt1[-1]}"
+    # Prompt 1 must have clicked x1 to override the x2 left by prompt 0.
+    # clicks_after_prompt1 is the full accumulated log; the x1 click must appear
+    # AFTER the last x2 click (i.e., prompt 1 corrected the state).
+    last_x2 = max((i for i, c in enumerate(clicks_after_prompt1) if c == "x2"), default=-1)
+    x1_after_x2 = [c for i, c in enumerate(clicks_after_prompt1) if c == "x1" and i > last_x2]
+    assert x1_after_x2, (
+        f"Prompt 1 (count=1) must click x1 after prompt 0's x2. "
+        f"Full click log: {clicks_after_prompt1}"
     )

@@ -1245,3 +1245,314 @@ class TestDismissBlockingOverlays:
         page = _make_overlay_page(iframe_visible=False)
         result = await t._dismiss_blocking_overlays(page)  # type: ignore[attr-defined]
         assert result is False
+
+
+# ---------------------------------------------------------------------------
+# Unit 3.13 — _read_displayed_count + _set_count retry logic
+# ---------------------------------------------------------------------------
+
+
+def _make_count_page(
+    *,
+    selected_tab_text: str | None = None,
+    selected_tab_visible: bool = True,
+    settings_btn_text: str | None = None,
+    count_tabs_visible: bool = True,
+) -> MagicMock:
+    """Build a fake page for _read_displayed_count and _set_count tests.
+
+    ``selected_tab_text`` — text returned by the ``[aria-selected="true"]`` locator.
+    ``settings_btn_text`` — text returned by a GEN_SETTINGS_BUTTON selector.
+    ``count_tabs_visible`` — whether count tabs (``x1``/``x2``) are visible
+      (controls _is_settings_panel_open).
+    """
+    page = MagicMock()
+    page.wait_for_timeout = AsyncMock()
+    page.keyboard = MagicMock()
+    page.keyboard.press = AsyncMock()
+
+    # Track which tab labels were clicked.
+    clicked_labels: list[str] = []
+
+    def _locator(sel: str) -> MagicMock:
+        loc = MagicMock()
+        wrapper = MagicMock()
+        wrapper.first = loc
+
+        if 'aria-selected="true"' in sel:
+            tab_is_vis = selected_tab_text is not None and selected_tab_visible
+            loc.is_visible = AsyncMock(return_value=tab_is_vis)
+            loc.text_content = AsyncMock(return_value=selected_tab_text)
+            loc.wait_for = AsyncMock()
+            loc.click = AsyncMock()
+        elif "crop_" in sel:
+            # GEN_SETTINGS_BUTTON selector
+            loc.is_visible = AsyncMock(return_value=(settings_btn_text is not None))
+            loc.text_content = AsyncMock(return_value=settings_btn_text)
+            loc.wait_for = AsyncMock()
+            loc.click = AsyncMock()
+        elif ":text-is(" in sel:
+            # Count tab or aspect ratio tab
+            # Extract the label from the selector string like [role="tab"]:text-is("x1")
+            import re
+
+            m = re.search(r':text-is\("([^"]+)"\)', sel)
+            label = m.group(1) if m else ""
+            is_count_tab = label in ("x1", "x2", "x3", "x4", "1x", "2x", "3x", "4x")
+            if is_count_tab and count_tabs_visible:
+                loc.is_visible = AsyncMock(return_value=True)
+                loc.wait_for = AsyncMock()
+
+                async def _click_tab(label: str = label, **kwargs: object) -> None:
+                    clicked_labels.append(label)
+
+                loc.click = AsyncMock(side_effect=_click_tab)
+            else:
+                loc.is_visible = AsyncMock(return_value=False)
+                loc.wait_for = AsyncMock(side_effect=RuntimeError("not visible"))
+                loc.click = AsyncMock()
+        else:
+            loc.is_visible = AsyncMock(return_value=False)
+            loc.wait_for = AsyncMock(side_effect=RuntimeError("not visible"))
+            loc.click = AsyncMock()
+
+        return wrapper
+
+    page.locator = MagicMock(side_effect=_locator)
+    page._clicked_labels = clicked_labels  # type: ignore[attr-defined]
+    return page
+
+
+class TestReadDisplayedCount:
+    """_read_displayed_count returns text from the selected tab or trigger button."""
+
+    @pytest.mark.asyncio
+    async def test_returns_selected_tab_text_when_panel_open(self) -> None:
+        """Source 1 — selected tab text returned when panel is open."""
+        page = _make_count_page(selected_tab_text="x2", selected_tab_visible=True)
+        result = await UiAutomationTransport._read_displayed_count(page)  # type: ignore[attr-defined]
+        assert result == "x2"
+
+    @pytest.mark.asyncio
+    async def test_falls_back_to_settings_button_text(self) -> None:
+        """Source 2 — settings button text used when selected tab not visible."""
+        page = _make_count_page(
+            selected_tab_text=None,
+            settings_btn_text="crop_9_16x1",
+        )
+        result = await UiAutomationTransport._read_displayed_count(page)  # type: ignore[attr-defined]
+        assert result == "crop_9_16x1"
+
+    @pytest.mark.asyncio
+    async def test_returns_none_when_nothing_readable(self) -> None:
+        """Returns None when neither source yields text."""
+        page = _make_count_page(selected_tab_text=None, settings_btn_text=None)
+        result = await UiAutomationTransport._read_displayed_count(page)  # type: ignore[attr-defined]
+        assert result is None
+
+
+class TestSetCountRetry:
+    """_set_count uses read-back verify with retry; raises after 3 failed attempts."""
+
+    @pytest.mark.asyncio
+    async def test_returns_early_when_count_already_matches(self) -> None:
+        """If the displayed count already matches desired, no tab click is made."""
+        # Panel open, selected tab shows "x2", we want count=2.
+        page = _make_count_page(
+            selected_tab_text="x2",
+            selected_tab_visible=True,
+            count_tabs_visible=True,
+        )
+        # No RuntimeError should be raised.
+        await UiAutomationTransport._set_count(page, 2)  # type: ignore[attr-defined]
+        # No count tab should have been clicked since it already matched.
+        assert page._clicked_labels == []  # type: ignore[attr-defined]
+
+    @pytest.mark.asyncio
+    async def test_clicks_tab_and_succeeds_on_first_attempt(self) -> None:
+        """Happy path: displayed=None (unknown), click x1, read-back shows x1."""
+        # Simulate: displayed count is unknown at start, click succeeds,
+        # after click _read_displayed_count returns "x1".
+        page = MagicMock()
+        page.wait_for_timeout = AsyncMock()
+        page.keyboard = MagicMock()
+        page.keyboard.press = AsyncMock()
+
+        clicked: list[str] = []
+
+        def _locator(sel: str) -> MagicMock:
+            import re
+
+            loc = MagicMock()
+            wrapper = MagicMock()
+            wrapper.first = loc
+
+            if 'aria-selected="true"' in sel:
+                # After a click has happened, return "x1".
+                async def _is_vis(timeout: int = 500) -> bool:
+                    return len(clicked) > 0
+
+                async def _text(timeout: int = 500) -> str | None:
+                    return "x1" if clicked else None
+
+                loc.is_visible = AsyncMock(side_effect=_is_vis)
+                loc.text_content = AsyncMock(side_effect=_text)
+            elif "crop_" in sel:
+                # Panel-open check — count tabs visible so we use that path.
+                loc.is_visible = AsyncMock(return_value=False)
+                loc.text_content = AsyncMock(return_value=None)
+            elif ":text-is(" in sel:
+                m = re.search(r':text-is\("([^"]+)"\)', sel)
+                label = m.group(1) if m else ""
+                is_count = label in ("x1", "x2", "x3", "x4", "1x", "2x", "3x", "4x")
+                if is_count:
+                    loc.is_visible = AsyncMock(return_value=True)
+                    loc.wait_for = AsyncMock()
+
+                    async def _click(label: str = label, **kw: object) -> None:
+                        clicked.append(label)
+
+                    loc.click = AsyncMock(side_effect=_click)
+                else:
+                    loc.is_visible = AsyncMock(return_value=False)
+                    loc.wait_for = AsyncMock(side_effect=RuntimeError("not visible"))
+                    loc.click = AsyncMock()
+            else:
+                loc.is_visible = AsyncMock(return_value=False)
+                loc.wait_for = AsyncMock(side_effect=RuntimeError("not visible"))
+                loc.click = AsyncMock()
+
+            return wrapper
+
+        page.locator = MagicMock(side_effect=_locator)
+
+        with patch.object(
+            UiAutomationTransport,
+            "_open_gen_settings_panel",
+            new=AsyncMock(return_value=True),
+        ):
+            await UiAutomationTransport._set_count(page, 1)  # type: ignore[attr-defined]
+
+        assert "x1" in clicked or "1x" in clicked
+
+    @pytest.mark.asyncio
+    async def test_raises_after_three_failed_attempts(self) -> None:
+        """If read-back never converges after 3 attempts, RuntimeError is raised."""
+        page = MagicMock()
+        page.wait_for_timeout = AsyncMock()
+        page.keyboard = MagicMock()
+        page.keyboard.press = AsyncMock()
+
+        def _locator(sel: str) -> MagicMock:
+            import re
+
+            loc = MagicMock()
+            wrapper = MagicMock()
+            wrapper.first = loc
+
+            if 'aria-selected="true"' in sel:
+                # Always returns "x2" — mismatch when we want x1.
+                loc.is_visible = AsyncMock(return_value=True)
+                loc.text_content = AsyncMock(return_value="x2")
+            elif "crop_" in sel:
+                loc.is_visible = AsyncMock(return_value=False)
+                loc.text_content = AsyncMock(return_value=None)
+            elif ":text-is(" in sel:
+                m = re.search(r':text-is\("([^"]+)"\)', sel)
+                label = m.group(1) if m else ""
+                is_count = label in ("x1", "x2", "x3", "x4", "1x", "2x", "3x", "4x")
+                if is_count:
+                    loc.is_visible = AsyncMock(return_value=True)
+                    loc.wait_for = AsyncMock()
+                    loc.click = AsyncMock()
+                else:
+                    loc.is_visible = AsyncMock(return_value=False)
+                    loc.wait_for = AsyncMock(side_effect=RuntimeError("not visible"))
+                    loc.click = AsyncMock()
+            else:
+                loc.is_visible = AsyncMock(return_value=False)
+                loc.wait_for = AsyncMock(side_effect=RuntimeError("not visible"))
+                loc.click = AsyncMock()
+
+            return wrapper
+
+        page.locator = MagicMock(side_effect=_locator)
+
+        with (
+            patch.object(
+                UiAutomationTransport,
+                "_open_gen_settings_panel",
+                new=AsyncMock(return_value=True),
+            ),
+            pytest.raises(RuntimeError, match="_set_count\\(1\\) failed to update Flow UI"),
+        ):
+            await UiAutomationTransport._set_count(page, 1)  # type: ignore[attr-defined]
+
+    @pytest.mark.asyncio
+    async def test_retry_succeeds_on_second_attempt(self) -> None:
+        """If read-back returns wrong value on attempt 1, then correct on attempt 2,
+        _set_count succeeds without raising."""
+        page = MagicMock()
+        page.wait_for_timeout = AsyncMock()
+        page.keyboard = MagicMock()
+        page.keyboard.press = AsyncMock()
+
+        click_count = 0
+
+        def _locator(sel: str) -> MagicMock:
+            import re
+
+            nonlocal click_count
+            loc = MagicMock()
+            wrapper = MagicMock()
+            wrapper.first = loc
+
+            if 'aria-selected="true"' in sel:
+                # First read returns wrong value; after first click returns correct.
+                async def _is_vis(timeout: int = 500) -> bool:
+                    return True
+
+                async def _text(timeout: int = 500) -> str:
+                    # Returns wrong value until after the first click.
+                    return "x1" if click_count >= 1 else "x2"
+
+                loc.is_visible = AsyncMock(side_effect=_is_vis)
+                loc.text_content = AsyncMock(side_effect=_text)
+            elif "crop_" in sel:
+                loc.is_visible = AsyncMock(return_value=False)
+                loc.text_content = AsyncMock(return_value=None)
+            elif ":text-is(" in sel:
+                m = re.search(r':text-is\("([^"]+)"\)', sel)
+                label = m.group(1) if m else ""
+                is_count = label in ("x1", "x2", "x3", "x4", "1x", "2x", "3x", "4x")
+                if is_count:
+                    loc.is_visible = AsyncMock(return_value=True)
+                    loc.wait_for = AsyncMock()
+
+                    async def _click(**kw: object) -> None:
+                        nonlocal click_count
+                        click_count += 1
+
+                    loc.click = AsyncMock(side_effect=_click)
+                else:
+                    loc.is_visible = AsyncMock(return_value=False)
+                    loc.wait_for = AsyncMock(side_effect=RuntimeError("not visible"))
+                    loc.click = AsyncMock()
+            else:
+                loc.is_visible = AsyncMock(return_value=False)
+                loc.wait_for = AsyncMock(side_effect=RuntimeError("not visible"))
+                loc.click = AsyncMock()
+
+            return wrapper
+
+        page.locator = MagicMock(side_effect=_locator)
+
+        with patch.object(
+            UiAutomationTransport,
+            "_open_gen_settings_panel",
+            new=AsyncMock(return_value=True),
+        ):
+            # Should succeed (not raise) because second attempt's read-back matches.
+            await UiAutomationTransport._set_count(page, 1)  # type: ignore[attr-defined]
+
+        assert click_count >= 1
