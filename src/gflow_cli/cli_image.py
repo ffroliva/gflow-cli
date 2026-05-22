@@ -57,6 +57,7 @@ from gflow_cli.image_batch import (
     MAX_COUNT as _MAX_COUNT,
 )
 from gflow_cli.image_batch import (
+    BatchPromptItem,
     MAX_PROMPT_FILE_BYTES,
     parse_manifest_file,
     parse_prompt_lines,
@@ -220,10 +221,6 @@ async def _run_upload(
 # t2i subcommand
 # ---------------------------------------------------------------------------
 
-# ---------------------------------------------------------------------------
-# t2i subcommand
-# ---------------------------------------------------------------------------
-
 
 @image.command(
     "t2i",
@@ -352,18 +349,29 @@ def t2i(
         )
         return
 
+    batch_prompts = _build_t2i_batch_prompts(
+        prompts, prompts_file, read_stdin, aspect, model, count
+    )
+    _execute_t2i_batch(batch_prompts, count, continue_on_error, profile, out, transport)
+
+
+def _build_t2i_batch_prompts(
+    prompts: tuple[str, ...],
+    prompts_file: Path | None,
+    read_stdin: bool,
+    aspect: str,
+    model: str,
+    count: int,
+) -> tuple[BatchPromptItem, ...]:
+    """Build batch prompt items from whichever input source was given.
+
+    Raises click.UsageError on stdin size overflow or malformed file content.
+    """
     try:
         if prompts_file is not None:
             parsed = read_prompt_file(prompts_file)
-            batch_prompts = prompt_items_from_parsed(
-                parsed,
-                aspect_ratio=aspect,
-                model=model,
-                count=count,
-            )
-        elif read_stdin:
-            # Security: implement a bounded read for standard input to prevent OOM
-            # crashes if a massive stream is piped to the CLI.
+            return prompt_items_from_parsed(parsed, aspect_ratio=aspect, model=model, count=count)
+        if read_stdin:
             raw_stdin = sys.stdin.read(MAX_PROMPT_FILE_BYTES + 1)
             if len(raw_stdin) > MAX_PROMPT_FILE_BYTES:
                 raise click.UsageError(
@@ -371,23 +379,27 @@ def t2i(
                     f"{MAX_PROMPT_FILE_BYTES // 1024} KiB."
                 )
             parsed = parse_prompt_lines(raw_stdin, source_label="--stdin")
-            batch_prompts = prompt_items_from_parsed(
-                parsed,
-                aspect_ratio=aspect,
-                model=model,
-                count=count,
-            )
-        else:
-            batch_prompts = prompt_items_from_texts(
-                prompts,
-                aspect_ratio=aspect,
-                model=model,
-                count=count,
-                source_label="positional",
-            )
+            return prompt_items_from_parsed(parsed, aspect_ratio=aspect, model=model, count=count)
+        return prompt_items_from_texts(
+            prompts,
+            aspect_ratio=aspect,
+            model=model,
+            count=count,
+            source_label="positional",
+        )
     except ConfigurationError as exc:
         raise _as_usage_error(exc) from exc
 
+
+def _execute_t2i_batch(
+    batch_prompts: tuple[BatchPromptItem, ...],
+    count: int,
+    continue_on_error: bool,
+    profile: str | None,
+    out: Path | None,
+    transport: str | None,
+) -> None:
+    """Run a multi-prompt t2i batch and print the summary table."""
     profile_name = _resolve_profile(profile)
     provider_dir = _make_provider_dir(profile_name)
     settings = get_settings()
@@ -401,7 +413,6 @@ def t2i(
     console.print(f"  output_dir: [dim]{safe_path_text(output_dir)}[/dim]")
     if not continue_on_error:
         console.print("  mode: [yellow]fail-fast[/yellow]")
-
     outcomes = asyncio.run(
         run_image_batch(
             profile_dir=provider_dir,
