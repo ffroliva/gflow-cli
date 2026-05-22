@@ -179,10 +179,15 @@ async def test_image_batch_e2e(
                     f"expected {outcome.prompt.aspect_ratio}, got {im.size}"
                 )
 
-    # 5. Listener event count — one ui_automation.batch_response_seen per row.
+    # 5. Listener event count — Playwright's response handler fires for every
+    # matching HTTP response from Flow (initial submit, progress polls, final
+    # result), so the floor is "at least one response per generated image".
+    # We assert a lower bound, not equality, because count>1 rows and
+    # same-project multiplexing produce multiple listener hits per row.
     seen = [e for e in log_capture.entries if e["event"] == "ui_automation.batch_response_seen"]
-    assert len(seen) == len(prompts), (
-        f"expected {len(prompts)} batch_response_seen, got {len(seen)}"
+    expected_min = sum(p.count for p in prompts)
+    assert len(seen) >= expected_min, (
+        f"expected >= {expected_min} batch_response_seen, got {len(seen)}"
     )
 
     # 6. New application event count — one image_batch.row_completed per image.
