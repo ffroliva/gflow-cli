@@ -640,7 +640,6 @@ def batch(
             output_dir=output_dir,
             continue_on_error=continue_on_error,
             project_title=_BATCH_TITLE,
-            same_project=same_project,
         )
     )
     exit_code = render_image_batch_summary(outcomes, title=_BATCH_TITLE)

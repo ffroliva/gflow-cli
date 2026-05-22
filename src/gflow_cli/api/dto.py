@@ -9,7 +9,10 @@ KeyErrors leak.
 from __future__ import annotations
 
 from dataclasses import dataclass
-from typing import Any, cast
+from typing import TYPE_CHECKING, Any, Literal, cast
+
+if TYPE_CHECKING:
+    from gflow_cli.errors import GFlowError
 
 
 @dataclass(frozen=True)
@@ -163,3 +166,21 @@ class GeneratedImage:
             raise ValueError("unexpected batchGenerateImages response shape: media is not a list")
         items = cast(list[dict[str, Any]], media)
         return [cls.from_response_item(item) for item in items]
+
+
+@dataclass(frozen=True)
+class BatchSubmissionResult:
+    """Per-prompt outcome from `UiAutomationTransport.generate_images_batch`.
+
+    `project_id` is identical across all results of a single batch (the
+    shared Flow project the editor stayed mounted on). `prompt_idx` is the
+    0-based submission position. `prompt_hash` is the SHA-256 prefix used
+    consistently across image_batch's structlog events.
+    """
+
+    status: Literal["ok", "fail"]
+    project_id: str
+    prompt_idx: int
+    prompt_hash: str
+    images: tuple[GeneratedImage, ...] = ()
+    error: GFlowError | None = None

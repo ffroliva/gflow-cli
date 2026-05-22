@@ -17,6 +17,8 @@ __all__ = [
     "SecurityError",
     "AuthMissingError",
     "AuthLoginTimeoutError",
+    "BatchPartialError",
+    "BatchIntegrityError",
     "EXIT_CODE_MAP",
 ]
 
@@ -324,6 +326,69 @@ class BrowserSessionClosedError(GFlowError):
         "alive. Recreate the client via `async with FlowApiClient(...)` and "
         "retry the operation."
     )
+
+
+class BatchPartialError(GFlowError):
+    """Raised by `generate_images_batch` under fail-fast when one prompt failed
+    after others already produced ready-to-download results.
+
+    Carries `partial_results` (tuple of completed `BatchSubmissionResult`)
+    so the orchestrator can still download the user's already-paid-for
+    images before surfacing the underlying error.
+    """
+
+    problem_type = "https://gflow-cli.dev/errors/batch-partial"
+    title = "Batch partially failed"
+
+    def __init__(
+        self,
+        detail: str = "",
+        *,
+        status: int | None = None,
+        instance: str | None = None,
+        route: str = "",
+        remediation_hint: str | None = None,
+        partial_results: tuple[Any, ...] = (),
+        cause: Exception | None = None,
+    ) -> None:
+        super().__init__(
+            detail,
+            status=status,
+            instance=instance,
+            route=route,
+            remediation_hint=remediation_hint,
+        )
+        self.partial_results = partial_results
+        self.cause = cause
+
+
+class BatchIntegrityError(GFlowError):
+    """Raised by the orchestrator after a batch returns when the on-disk file
+    count does not match the expected count. Catches silent mis-delivery
+    even when transport-layer status is reported as 'ok'.
+    """
+
+    problem_type = "https://gflow-cli.dev/errors/batch-integrity"
+    title = "Batch integrity check failed"
+
+    def __init__(
+        self,
+        detail: str = "",
+        *,
+        status: int | None = None,
+        instance: str | None = None,
+        route: str = "",
+        remediation_hint: str | None = None,
+        prompt_indices: tuple[int, ...] = (),
+    ) -> None:
+        super().__init__(
+            detail,
+            status=status,
+            instance=instance,
+            route=route,
+            remediation_hint=remediation_hint,
+        )
+        self.prompt_indices = prompt_indices
 
 
 # EXIT_CODE_MAP — most-specific class FIRST per isinstance walk semantics.

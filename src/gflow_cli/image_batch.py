@@ -2,12 +2,9 @@
 
 from __future__ import annotations
 
-import asyncio
 import hashlib
 import json
-import random
 import re
-import time
 from collections.abc import Callable, Coroutine
 from dataclasses import dataclass, field
 from pathlib import Path
@@ -22,8 +19,16 @@ from gflow_cli._cli_helpers import (
     safe_path_text,
 )
 from gflow_cli.api.client import FlowApiClient
+from gflow_cli.api.dto import BatchSubmissionResult
 from gflow_cli.api.image import Aspect, GenerateImageRequest, Model
-from gflow_cli.errors import EXIT_CODE_MAP, ConfigurationError, GFlowError
+from gflow_cli.api.transports.ui_automation import UiAutomationTransport
+from gflow_cli.errors import (
+    EXIT_CODE_MAP,
+    BatchIntegrityError,
+    BatchPartialError,
+    ConfigurationError,
+    GFlowError,
+)
 
 if TYPE_CHECKING:
     from gflow_cli.api.dto import GeneratedImage
@@ -594,6 +599,78 @@ def parse_manifest_file(
 # ---------------------------------------------------------------------------
 
 
+def _to_request(item: BatchPromptItem) -> GenerateImageRequest:
+    """Convert a BatchPromptItem to a GenerateImageRequest for the transport."""
+    return GenerateImageRequest(
+        prompt=item.text,
+        aspect=Aspect.from_cli(item.aspect_ratio),
+        model=Model.from_cli(item.model),
+        count=item.count,
+    )
+
+
+async def _download_results(
+    *,
+    client: Any,
+    prompts: tuple[BatchPromptItem, ...],
+    results: list[BatchSubmissionResult],
+    output_dir: Path,
+) -> list[BatchOutcome]:
+    """Download images from ok BatchSubmissionResults and build BatchOutcome list."""
+    outcomes: list[BatchOutcome] = []
+    for item, result in zip(prompts, results, strict=False):
+        if result.status != "ok":
+            outcomes.append(
+                BatchOutcome(
+                    index=item.index,
+                    prompt=item,
+                    status="fail",
+                    error=(
+                        f"{type(result.error).__name__}: {result.error}"
+                        if result.error
+                        else "unknown"
+                    ),
+                )
+            )
+            logger.info(
+                "image_batch.row_completed",
+                row_idx=item.index,
+                prompt_hash=result.prompt_hash,
+                project_id=result.project_id,
+                outcome="fail",
+            )
+            continue
+
+        stem = item.output_filename or f"prompt_{item.index}"
+        saved: list[Path] = []
+        for img_idx, img in enumerate(result.images):
+            target = output_dir / f"{stem}_{img_idx}.png"
+            path = await client.download_image(img, target)
+            saved.append(path)
+            try:
+                sha = hashlib.sha256(Path(path).read_bytes()).hexdigest()[:16]
+            except (OSError, TypeError):
+                sha = "unreadable"
+            logger.info(
+                "image_batch.row_completed",
+                row_idx=item.index,
+                output_idx=img_idx,
+                prompt_hash=result.prompt_hash,
+                project_id=result.project_id,
+                sha256_prefix=sha,
+                outcome="ok",
+            )
+        outcomes.append(
+            BatchOutcome(
+                index=item.index,
+                prompt=item,
+                status="ok",
+                saved_paths=saved,
+            )
+        )
+    return outcomes
+
+
 async def run_manifest_image_batch(
     *,
     profile_dir: Path,
@@ -603,98 +680,103 @@ async def run_manifest_image_batch(
     output_dir: Path,
     continue_on_error: bool,
     project_title: str,
-    same_project: bool,
     jitter_range: tuple[float, float] = (JITTER_MIN_SECONDS, JITTER_MAX_SECONDS),
     client_factory: Callable[..., Any] | None = None,
 ) -> list[BatchOutcome]:
-    """Run a manifest batch with optional shared-project mode and per-prompt jitter.
+    """Run a manifest batch via the transport's stay-mounted batch method.
 
-    When ``same_project=True``: one Flow project is created up front; all
-    prompts run against it with random jitter between submissions. When
-    ``same_project=False`` (default): each prompt uses a fresh project created
-    by the client.
+    All prompts share one Flow project (always-same-project semantics). The
+    transport opens the editor once, submits all prompts with jitter between
+    submissions (anti-bot submission cadence), awaits responses in submission
+    order, and returns per-prompt BatchSubmissionResult records.
+
+    Jitter is the *submission-cadence* anti-bot control — it spaces out the
+    submission clicks, not the generation wait. All generations run in parallel
+    inside Flow; only the click timing is jittered.
+
+    Raises:
+        RuntimeError: if the resolved transport does not implement
+            ``generate_images_batch`` (only UiAutomationTransport does).
+        BatchPartialError: on fail-fast when some prompts already produced
+            downloadable images before the failing prompt. The orchestrator
+            downloads the partial results before re-raising.
+        BatchIntegrityError: when the post-download file count does not match
+            the expected count (silent mis-delivery guard).
     """
     output_dir.mkdir(parents=True, exist_ok=True)
-    outcomes: list[BatchOutcome] = []
     factory = client_factory or FlowApiClient
     async with factory(profile_dir=profile_dir, headless=headless, transport=transport) as client:
-        shared_project_id: str | None = None
-        if same_project:
-            project = await client.create_project(title=project_title)
-            shared_project_id = project.project_id
+        # Capability check: only UiAutomationTransport implements generate_images_batch.
+        if not isinstance(client.transport, UiAutomationTransport):
+            raise RuntimeError(
+                f"gflow image batch requires the ui_automation transport; "
+                f"got {type(client.transport).__name__}"
+            )
 
-        last_submit_ts: float | None = None
+        # Build per-prompt requests.
+        requests = [_to_request(item) for item in prompts]
 
+        # Emit submission_attempt events before delegating to the transport
+        # so structlog observers can correlate log entries with prompts.
         for idx, item in enumerate(prompts):
-            if same_project and idx > 0:
-                delay = random.uniform(*jitter_range)
-                await asyncio.sleep(delay)
-
-            now = time.monotonic()
-            t_since_prev = None if last_submit_ts is None else int((now - last_submit_ts) * 1000)
-            if t_since_prev is not None:
-                logger.info(
-                    "image_batch.inter_submission_latency_ms",
-                    row_idx=idx,
-                    latency_ms=t_since_prev,
-                )
             logger.info(
                 "image_batch.submission_attempt",
                 row_idx=idx,
                 prompt_hash=_prompt_hash(item.text),
                 aspect=item.aspect_ratio,
                 model=item.model,
-                same_project=same_project,
-                jitter_enabled=jitter_range != (0.0, 0.0),
-                t_since_prev_submit_ms=t_since_prev,
-                project_id=shared_project_id if same_project else "<per-prompt>",
+                project_id="<pending-transport>",
             )
 
-            start = time.monotonic()
-            outcome = await run_one_image_prompt(
+        # Single delegation — transport handles editor/listener/jitter logic.
+        try:
+            results = await client.transport.generate_images_batch(
+                prompts=requests,
+                jitter_range=jitter_range,
+                continue_on_error=continue_on_error,
+            )
+        except BatchPartialError as exc:
+            # Fail-fast salvage: download partial results before re-raising.
+            partial_outcomes = await _download_results(
                 client=client,
-                project_id=shared_project_id,
-                idx=idx,
-                item=item,
+                prompts=prompts,
+                results=list(exc.partial_results),
                 output_dir=output_dir,
             )
-            latency_ms = int((time.monotonic() - start) * 1000)
-            last_submit_ts = time.monotonic()
+            raise BatchPartialError(
+                detail=exc.detail,
+                route=exc.route,
+                partial_results=tuple(partial_outcomes),
+                cause=exc.cause,
+            ) from exc.cause
 
-            logger.info(
-                "image_batch.submission_result",
-                row_idx=idx,
-                outcome=outcome.status,
-                latency_ms=latency_ms,
+        # Happy path: download every ok result.
+        outcomes = await _download_results(
+            client=client,
+            prompts=prompts,
+            results=results,
+            output_dir=output_dir,
+        )
+
+        # Post-download integrity check.
+        ok_outcomes = [o for o in outcomes if o.status == "ok"]
+        expected_files = sum(
+            p.count for p, o in zip(prompts, outcomes, strict=False) if o.status == "ok"
+        )
+        actual_files = sum(len(o.saved_paths) for o in ok_outcomes)
+        if actual_files != expected_files:
+            missing_indices = tuple(
+                p.index
+                for p, o in zip(prompts, outcomes, strict=False)
+                if o.status == "ok" and len(o.saved_paths) < p.count
+            )
+            raise BatchIntegrityError(
+                detail=f"expected {expected_files} files, got {actual_files}",
+                route="run_manifest_image_batch",
+                prompt_indices=missing_indices,
             )
 
-            if outcome.status == "ok":
-                for fp in outcome.saved_paths:
-                    try:
-                        sha = hashlib.sha256(Path(fp).read_bytes()).hexdigest()[:16]
-                    except (OSError, TypeError):
-                        sha = "unreadable"
-                    logger.info(
-                        "image_batch.row_completed",
-                        row_idx=idx,
-                        file_path=str(fp),
-                        sha256_prefix=sha,
-                    )
-
-            outcomes.append(outcome)
-
-            if outcome.status == "fail" and not continue_on_error:
-                for skip_idx in range(idx + 1, len(prompts)):
-                    outcomes.append(
-                        BatchOutcome(
-                            index=skip_idx,
-                            prompt=prompts[skip_idx],
-                            status="skipped",
-                        )
-                    )
-                break
-
-    return outcomes
+        return outcomes
 
 
 def render_image_batch_summary(outcomes: list[BatchOutcome], *, title: str) -> int:

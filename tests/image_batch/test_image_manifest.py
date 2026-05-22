@@ -189,9 +189,25 @@ class TestParseManifestFile:
 # ---------------------------------------------------------------------------
 
 
-def _make_fake_client(*, project_ids_seen: list[str | None]) -> type:
-    """Build a minimal FlowApiClient stub that records the project_id each call receives."""
-    from gflow_cli.api.dto import GeneratedImage, ProjectInfo
+def _make_items(n: int = 2) -> tuple[BatchPromptItem, ...]:
+    return tuple(
+        BatchPromptItem(text=f"prompt {i}", count=1, index=i, output_filename=f"p{i}")
+        for i in range(n)
+    )
+
+
+def _make_batch_factory(
+    *,
+    project_id: str = "shared-proj",
+    fail_on_idx: int | None = None,
+) -> type:
+    """Build a client factory stub whose transport implements generate_images_batch.
+
+    ``fail_on_idx``: if set, the BatchSubmissionResult at that index will have
+    status='fail'. This exercises the _download_results fail-row path.
+    """
+    from gflow_cli.api.dto import BatchSubmissionResult, GeneratedImage
+    from gflow_cli.api.transports.ui_automation import UiAutomationTransport
 
     fake_image = GeneratedImage(
         media_name="m1",
@@ -204,28 +220,53 @@ def _make_fake_client(*, project_ids_seen: list[str | None]) -> type:
         dimensions=(64, 64),
     )
 
+    class _FakeTransport(UiAutomationTransport):
+        def __init__(self) -> None:  # skip super().__init__ to avoid Playwright
+            pass
+
     class _FakeClient:
         def __init__(self, **_: object) -> None:
-            pass
+            transport_instance = _FakeTransport()
 
-        async def __aenter__(self):
+            def make_results(prompts, **__):  # type: ignore[no-untyped-def]
+                results = []
+                for idx, req in enumerate(prompts):
+                    if fail_on_idx is not None and idx == fail_on_idx:
+                        results.append(
+                            BatchSubmissionResult(
+                                status="fail",
+                                project_id=project_id,
+                                prompt_idx=idx,
+                                prompt_hash="deadbeef",
+                                images=(),
+                                error=None,
+                            )
+                        )
+                    else:
+                        results.append(
+                            BatchSubmissionResult(
+                                status="ok",
+                                project_id=project_id,
+                                prompt_idx=idx,
+                                prompt_hash="aabbccdd",
+                                images=(fake_image,) * req.count,
+                            )
+                        )
+                return results
+
+            async def _batch_impl(prompts, jitter_range, continue_on_error=False):  # type: ignore[no-untyped-def]
+                return make_results(prompts)
+
+            transport_instance.generate_images_batch = _batch_impl  # type: ignore[method-assign]
+            self.transport = transport_instance
+
+        async def __aenter__(self) -> _FakeClient:
             return self
 
-        async def __aexit__(self, *_):
+        async def __aexit__(self, *_: object) -> None:
             pass
 
-        async def create_project(self, *, title: str = ""):
-            return ProjectInfo(project_id="shared-proj", title=title)
-
-        async def generate_image(self, *, project_id, req, seed=None, **_):
-            project_ids_seen.append(project_id)
-            return fake_image
-
-        async def generate_images_batch(self, *, project_id, req, count, **_):
-            project_ids_seen.append(project_id)
-            return [fake_image] * count
-
-        async def download_image(self, img, target: Path):
+        async def download_image(self, img: object, target: Path) -> Path:
             target.parent.mkdir(parents=True, exist_ok=True)
             target.write_bytes(b"PNG")
             return target
@@ -233,19 +274,13 @@ def _make_fake_client(*, project_ids_seen: list[str | None]) -> type:
     return _FakeClient
 
 
-def _make_items(n: int = 2) -> tuple[BatchPromptItem, ...]:
-    return tuple(
-        BatchPromptItem(text=f"prompt {i}", count=1, index=i, output_filename=f"p{i}")
-        for i in range(n)
-    )
-
-
 class TestRunManifestImageBatch:
     """Smoke-level tests using stub client factories."""
 
-    async def test_same_project_all_calls_share_id(self, tmp_path: Path) -> None:
-        project_ids: list[str | None] = []
-        factory = _make_fake_client(project_ids_seen=project_ids)
+    async def test_calls_transport_once_and_downloads(self, tmp_path: Path) -> None:
+        """Orchestrator calls transport.generate_images_batch exactly once, then
+        downloads each ok-result's images via client.download_image."""
+        factory = _make_batch_factory(project_id="proj-abc")
 
         outcomes = await run_manifest_image_batch(
             profile_dir=tmp_path,
@@ -253,70 +288,22 @@ class TestRunManifestImageBatch:
             transport=None,
             prompts=_make_items(2),
             output_dir=tmp_path / "out",
-            continue_on_error=True,
+            continue_on_error=False,
             project_title="test",
-            same_project=True,
-            jitter_range=(0.0, 0.0),  # zero jitter to keep test fast
+            jitter_range=(0.0, 0.0),
             client_factory=factory,
         )
 
         assert len(outcomes) == 2
         assert all(o.status == "ok" for o in outcomes)
-        assert all(pid == "shared-proj" for pid in project_ids)
+        # Each outcome must have a saved file
+        for o in outcomes:
+            assert len(o.saved_paths) == 1
+            assert o.saved_paths[0].exists()
 
-    async def test_no_same_project_passes_none_as_project_id(self, tmp_path: Path) -> None:
-        project_ids: list[str | None] = []
-        factory = _make_fake_client(project_ids_seen=project_ids)
-
-        outcomes = await run_manifest_image_batch(
-            profile_dir=tmp_path,
-            headless=True,
-            transport=None,
-            prompts=_make_items(2),
-            output_dir=tmp_path / "out",
-            continue_on_error=True,
-            project_title="test",
-            same_project=False,
-            client_factory=factory,
-        )
-
-        assert len(outcomes) == 2
-        assert all(o.status == "ok" for o in outcomes)
-        # None signals each call should create its own project.
-        assert all(pid is None for pid in project_ids)
-
-    async def test_fail_fast_stops_on_first_failure(self, tmp_path: Path) -> None:
-        from gflow_cli.errors import ContentPolicyError
-
-        call_count = 0
-
-        class _FailingClient:
-            def __init__(self, **_: object) -> None:
-                pass
-
-            async def __aenter__(self):
-                return self
-
-            async def __aexit__(self, *_):
-                pass
-
-            async def create_project(self, *, title: str = ""):
-                from gflow_cli.api.dto import ProjectInfo
-
-                return ProjectInfo(project_id="proj", title=title)
-
-            async def generate_image(self, *, project_id, req, seed=None, **_):
-                nonlocal call_count
-                call_count += 1
-                raise ContentPolicyError(detail="blocked", instance="", route="/")
-
-            async def generate_images_batch(self, *, project_id, req, count, **_):
-                nonlocal call_count
-                call_count += 1
-                raise ContentPolicyError(detail="blocked", instance="", route="/")
-
-            async def download_image(self, img, target):
-                return target
+    async def test_fail_row_produces_fail_outcome(self, tmp_path: Path) -> None:
+        """A BatchSubmissionResult with status='fail' at idx=1 produces a fail outcome."""
+        factory = _make_batch_factory(project_id="proj-abc", fail_on_idx=1)
 
         outcomes = await run_manifest_image_batch(
             profile_dir=tmp_path,
@@ -324,16 +311,46 @@ class TestRunManifestImageBatch:
             transport=None,
             prompts=_make_items(3),
             output_dir=tmp_path / "out",
-            continue_on_error=False,
+            continue_on_error=True,
             project_title="test",
-            same_project=False,
-            client_factory=_FailingClient,
+            jitter_range=(0.0, 0.0),
+            client_factory=factory,
         )
 
-        assert call_count == 1
-        assert outcomes[0].status == "fail"
-        assert outcomes[1].status == "skipped"
-        assert outcomes[2].status == "skipped"
+        assert len(outcomes) == 3
+        assert outcomes[0].status == "ok"
+        assert outcomes[1].status == "fail"
+        assert outcomes[2].status == "ok"
+
+    async def test_wrong_transport_raises(self, tmp_path: Path) -> None:
+        """A non-UiAutomation transport raises RuntimeError."""
+
+        class _WrongTransport:
+            pass
+
+        class _WrongClient:
+            def __init__(self, **_: object) -> None:
+                self.transport = _WrongTransport()
+
+            async def __aenter__(self) -> _WrongClient:
+                return self
+
+            async def __aexit__(self, *_: object) -> None:
+                pass
+
+        import pytest
+
+        with pytest.raises(RuntimeError, match="ui_automation"):
+            await run_manifest_image_batch(
+                profile_dir=tmp_path,
+                headless=True,
+                transport=None,
+                prompts=_make_items(1),
+                output_dir=tmp_path / "out",
+                continue_on_error=False,
+                project_title="test",
+                client_factory=_WrongClient,
+            )
 
 
 # ---------------------------------------------------------------------------
