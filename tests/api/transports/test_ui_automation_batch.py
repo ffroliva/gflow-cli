@@ -717,6 +717,86 @@ async def test_batch_setup_failure_propagates_no_listener_attached(
 
 
 @pytest.mark.asyncio
+async def test_await_loop_does_not_short_circuit_on_in_flight_submission(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    """Regression: await loop must NOT short-circuit a successfully-submitted prompt
+    whose captured list is still empty at the start of the await phase (responses
+    in-flight). The sentinel `detach is _noop_detach` must be used, not
+    `not captured and submit_error is None`.
+
+    Setup: 1 prompt, submits successfully (real lambda detach, NOT _noop_detach).
+    At the start of the await loop, captured is EMPTY (simulates race / in-flight).
+    _await_captured is mocked to populate and return the expected 1 response.
+
+    Assertions:
+    - _await_captured IS called (not short-circuited).
+    - result.status == "ok".
+    """
+    import gflow_cli.api.transports.ui_automation as uia_mod
+    from gflow_cli.api.image import Aspect, GenerateImageRequest, Model
+
+    transport = UiAutomationTransport.__new__(UiAutomationTransport)
+    transport._setup_done = True  # type: ignore[attr-defined]
+    transport._page = MagicMock()  # type: ignore[attr-defined]
+    transport._page.url = "https://labs.google/fx/tools/flow/project/PROJ-RACE"
+    transport._out_dir = None  # type: ignore[attr-defined]
+    transport._generate_lock = __import__("asyncio").Lock()  # type: ignore[attr-defined]
+    transport._enter_editor = AsyncMock()  # type: ignore[attr-defined]
+    transport._dismiss_blocking_overlays = AsyncMock()  # type: ignore[attr-defined]
+    transport._configure_generation_settings = AsyncMock()  # type: ignore[attr-defined]
+    transport._send_prompt = AsyncMock()  # type: ignore[attr-defined]
+
+    # captured starts EMPTY — simulates in-flight responses not yet arrived.
+    in_flight_captured: list = []
+    # Use a plain lambda as the "real" detach; identity-distinct from _noop_detach.
+    real_detach = MagicMock()
+
+    def fake_listener(page, *, project_id=None):  # type: ignore[no-untyped-def]
+        return in_flight_captured, real_detach
+
+    monkeypatch.setattr(
+        UiAutomationTransport, "_attach_batch_response_listener", staticmethod(fake_listener)
+    )
+
+    # Track whether _await_captured was invoked.
+    await_captured_called: list[bool] = []
+
+    async def fake_await(captured, expected_count=1, **_kwargs):  # type: ignore[no-untyped-def]
+        await_captured_called.append(True)
+        # Simulate responses arriving during the await: return 1 response.
+        return [{"status": 200, "url": "https://x/batchGenerateImages", "body": {}}]
+
+    monkeypatch.setattr(UiAutomationTransport, "_await_captured", staticmethod(fake_await))
+
+    fake_img = MagicMock()
+    monkeypatch.setattr(
+        uia_mod, "_images_from_responses", lambda r: ([fake_img] * len(r), None, "")
+    )
+    monkeypatch.setattr(uia_mod, "_extract_project_id", lambda url: "PROJ-RACE")
+    monkeypatch.setattr(uia_mod.asyncio, "sleep", AsyncMock())
+    monkeypatch.setattr(uia_mod.random, "uniform", lambda a, b: 0.0)
+
+    prompts = [
+        GenerateImageRequest(prompt="p0", aspect=Aspect.PORTRAIT, model=Model.NARWHAL, count=1),
+    ]
+
+    results = await transport.generate_images_batch(
+        prompts=prompts, jitter_range=(0.0, 0.0), continue_on_error=False
+    )
+
+    # _await_captured must have been called — not short-circuited by the old race condition.
+    assert await_captured_called, (
+        "_await_captured was never called: the await loop short-circuited an in-flight submission"
+    )
+    assert len(results) == 1
+    assert results[0].status == "ok", (
+        f"Expected status='ok' for in-flight submission, got status='{results[0].status}'"
+    )
+    real_detach.assert_called()
+
+
+@pytest.mark.asyncio
 async def test_generate_images_batch_project_id_identical_across_results(
     monkeypatch: pytest.MonkeyPatch,
 ) -> None:

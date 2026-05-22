@@ -1120,12 +1120,12 @@ class UiAutomationTransport(VideoGenerationMixin):
         pending: list[tuple[int, str, str, list[dict[str, Any]], Callable[[], None], int]] = []
         submit_error: GFlowError | None = None
 
+        def _noop_detach() -> None:
+            pass
+
         for idx, req in enumerate(prompts):
             aspect_cli = _aspect_cli_from_enum(req.aspect)
             captured: list[dict[str, Any]] = []
-
-            def _noop_detach() -> None:
-                pass
 
             detach: Callable[[], None] = _noop_detach  # overwritten below on success
 
@@ -1178,8 +1178,9 @@ class UiAutomationTransport(VideoGenerationMixin):
             for idx, pid, prompt_hash, captured, detach, expected_count in pending:
                 # If empty captured due to a send failure recorded above,
                 # treat as a fail result directly.
-                if not captured and submit_error is None:
-                    # This entry was recorded from continue_on_error send-fail path.
+                if detach is _noop_detach:
+                    # Send-fail entry recorded with noop detach —
+                    # no responses to await, fail directly.
                     results.append(
                         BatchSubmissionResult(
                             status="fail",
