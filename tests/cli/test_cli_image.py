@@ -447,6 +447,63 @@ class TestImageI2I:
 
 
 # ---------------------------------------------------------------------------
+# batch subcommand — flag contract
+# ---------------------------------------------------------------------------
+
+
+class TestImageBatch:
+    """CLI contract tests for `gflow image batch`."""
+
+    def test_batch_help_does_not_mention_same_project(
+        self, runner: CliRunner, monkeypatch: pytest.MonkeyPatch
+    ) -> None:
+        """--same-project must NOT appear in --help output after Phase 4 removal."""
+        monkeypatch.delenv("GFLOW_CLI_TRANSPORT", raising=False)
+        from gflow_cli.cli import main
+
+        result = runner.invoke(main, ["image", "batch", "--help"])
+
+        assert result.exit_code == 0, f"--help should succeed:\n{result.output}"
+        assert "--same-project" not in result.output
+
+    def test_batch_help_describes_always_same_project(
+        self, runner: CliRunner, monkeypatch: pytest.MonkeyPatch
+    ) -> None:
+        """--help must explain that all prompts share one project and mention jitter."""
+        monkeypatch.delenv("GFLOW_CLI_TRANSPORT", raising=False)
+        from gflow_cli.cli import main
+
+        result = runner.invoke(main, ["image", "batch", "--help"])
+
+        assert result.exit_code == 0, f"--help should succeed:\n{result.output}"
+        lower = result.output.lower()
+        # Always-same-project semantics must be described.
+        assert (
+            "same project" in lower
+            or "one project" in lower
+            or "shared project" in lower
+            or "flow project" in lower
+        )
+        # Anti-bot jitter rationale must be visible.
+        assert "jitter" in lower
+
+    def test_batch_rejects_same_project_flag(
+        self, runner: CliRunner, monkeypatch: pytest.MonkeyPatch, tmp_path: Path
+    ) -> None:
+        """Passing --same-project must produce exit 2 (unknown option) after removal."""
+        monkeypatch.delenv("GFLOW_CLI_TRANSPORT", raising=False)
+        manifest = tmp_path / "prompts.tsv"
+        manifest.write_text("a cat\n")
+        from gflow_cli.cli import main
+
+        result = runner.invoke(main, ["image", "batch", str(manifest), "--same-project"])
+
+        assert result.exit_code == 2, (
+            f"--same-project should be rejected as unknown option, got:\n{result.output}"
+        )
+
+
+# ---------------------------------------------------------------------------
 # --transport flag (A.6)
 # ---------------------------------------------------------------------------
 

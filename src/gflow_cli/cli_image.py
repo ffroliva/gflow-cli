@@ -510,10 +510,13 @@ _BATCH_TITLE = "gflow-cli image batch"
 
 @image.command(
     "batch",
-    short_help=f"Run a JSON or TSV manifest of image prompts (max {_MAX_BATCH_PROMPTS}).",
+    short_help=f"Batch-generate images from a manifest (max {_MAX_BATCH_PROMPTS}, shared project).",
     help=(
         "Generate images from a JSON or TSV manifest file "
         f"(up to {_MAX_BATCH_PROMPTS} prompts).\n\n"
+        "All prompts share one Flow project (stay-mounted editor). A 3-7s\n"
+        "jitter is applied between submissions as an anti-bot courtesy.\n\n"
+        "To generate each prompt in its own project, loop `gflow image t2i` instead.\n\n"
         "\b\n"
         "TSV format (tab-separated): prompt[\\tcount[\\taspect_ratio[\\tmodel]]]\n"
         "  Lines starting with # or blank lines are skipped.\n\n"
@@ -522,10 +525,8 @@ _BATCH_TITLE = "gflow-cli image batch"
         "\b\n"
         "Examples:\n"
         "  gflow image batch prompts.tsv\n"
-        "  gflow image batch prompts.json --same-project\n"
-        "  gflow image batch prompts.tsv -n 4 --aspect 16:9 --out ./output\n\n"
-        "With --same-project all prompts share one Flow project and a 3-7s\n"
-        "jitter is applied between submissions."
+        "  gflow image batch prompts.json\n"
+        "  gflow image batch prompts.tsv -n 4 --aspect 16:9 --out ./output\n"
     ),
 )
 @click.argument(
@@ -559,16 +560,6 @@ _BATCH_TITLE = "gflow-cli image batch"
     help="Default model for rows that do not specify one.",
 )
 @click.option(
-    "--same-project",
-    "same_project",
-    is_flag=True,
-    default=False,
-    help=(
-        "Run all prompts inside one shared Flow project with 3-7s jitter between "
-        "submissions. Without this flag each prompt creates its own project."
-    ),
-)
-@click.option(
     "--continue-on-error/--fail-fast",
     default=True,
     show_default=True,
@@ -596,7 +587,6 @@ def batch(
     count: int,
     aspect: str,
     model: str,
-    same_project: bool,
     continue_on_error: bool,
     out: Path | None,
     profile: str | None,
@@ -625,8 +615,6 @@ def batch(
         f"\n[bold]{_BATCH_TITLE}[/bold] · profile=[bold]{profile_name}[/bold] "
         f"· {len(prompts)} prompt(s) · up to {total_images} image(s)"
     )
-    if same_project:
-        console.print("  mode: [cyan]same-project[/cyan] (3-7s jitter between prompts)")
     console.print(f"  output_dir: [dim]{safe_path_text(output_dir)}[/dim]")
     if not continue_on_error:
         console.print("  mode: [yellow]fail-fast[/yellow]")
