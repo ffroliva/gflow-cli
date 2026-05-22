@@ -111,16 +111,13 @@ class RealChromeStrategy(AuthStrategy):
             "--no-first-run",
             "--no-default-browser-check",
             "--window-size=1280,800",
+            "--password-store=basic",
             # No --remote-debugging-port: zero automation surface.
             GEMINI_URL,  # open straight on the Flow sign-in page
         ]
 
         if headless:
             chrome_args.append("--headless=new")
-
-        # Open Flow directly so the user lands on the sign-in / app surface
-        # instead of a blank new-tab page.
-        chrome_args.append(GEMINI_URL)
 
         logger.info(
             "auth_passive_capture_started",
