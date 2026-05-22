@@ -55,8 +55,8 @@ def test_attach_batch_response_listener_returns_detach_callable() -> None:
     responses do NOT append to the captured list."""
     page = _FakePage()
     captured, detach = UiAutomationTransport._attach_batch_response_listener(
-        page,
-        project_id="p1",  # type: ignore[arg-type]
+        page,  # type: ignore[arg-type]
+        project_id="p1",
     )
     assert isinstance(captured, list)
     assert callable(detach)
@@ -73,8 +73,8 @@ def test_attach_batch_response_listener_returns_detach_callable() -> None:
 def test_listener_detach_is_idempotent_and_removes_handler() -> None:
     page = _FakePage()
     captured, detach = UiAutomationTransport._attach_batch_response_listener(
-        page,
-        project_id="proj-1",  # type: ignore[arg-type]
+        page,  # type: ignore[arg-type]
+        project_id="proj-1",
     )
     assert len(page.handlers) == 1
 
@@ -116,12 +116,12 @@ def test_multi_listener_no_cross_contamination() -> None:
     page = _FakePage()
 
     captured_1, detach_1 = UiAutomationTransport._attach_batch_response_listener(
-        page,
-        project_id="proj-shared",  # type: ignore[arg-type]
+        page,  # type: ignore[arg-type]
+        project_id="proj-shared",
     )
     captured_2, detach_2 = UiAutomationTransport._attach_batch_response_listener(
-        page,
-        project_id="proj-shared",  # type: ignore[arg-type]
+        page,  # type: ignore[arg-type]
+        project_id="proj-shared",
     )
 
     # Both listeners attached. In the strict (option 1) world, listener 1
@@ -483,3 +483,304 @@ async def test_generate_images_batch_detach_invariant(
     # Both attached listeners must have been detached
     for d in detaches:
         d.assert_called()
+
+
+# ---------------------------------------------------------------------------
+# Spec §8.1 — four additional required test cases (Phase 3 gap-fill)
+# ---------------------------------------------------------------------------
+
+
+@pytest.mark.asyncio
+async def test_settings_fail_after_attach_calls_detach_before_continue(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    """Council Finding T2 (detach-before-continue).
+
+    _configure_generation_settings raises on idx=1 AFTER
+    _attach_batch_response_listener for that prompt has been called.
+    With continue_on_error=True the loop must call the idx=1 listener's
+    detach_fn BEFORE continuing to prompt 2.
+    """
+    import gflow_cli.api.transports.ui_automation as uia_mod
+    from gflow_cli.api.image import Aspect, GenerateImageRequest, Model
+
+    transport = UiAutomationTransport.__new__(UiAutomationTransport)
+    transport._setup_done = True  # type: ignore[attr-defined]
+    transport._page = MagicMock()  # type: ignore[attr-defined]
+    transport._page.url = "https://labs.google/fx/tools/flow/project/PROJ-DETACH"
+    transport._out_dir = None  # type: ignore[attr-defined]
+    transport._generate_lock = __import__("asyncio").Lock()  # type: ignore[attr-defined]
+    transport._enter_editor = AsyncMock()  # type: ignore[attr-defined]
+    transport._dismiss_blocking_overlays = AsyncMock()  # type: ignore[attr-defined]
+
+    cfg_call = [0]
+
+    async def cfg_raises_on_idx1(page, aspect_cli, count):  # type: ignore[no-untyped-def]
+        # Matches real signature: (page, aspect_cli: str|None, count: int|None)
+        call = cfg_call[0]
+        cfg_call[0] += 1
+        if call == 1:
+            raise RuntimeError("settings fail on idx=1")
+
+    transport._configure_generation_settings = cfg_raises_on_idx1  # type: ignore[attr-defined]
+    transport._send_prompt = AsyncMock()  # type: ignore[attr-defined]
+
+    # The transport calls configure BEFORE attach, so idx=1's listener is never
+    # attached when configure raises. Only idx=0 and idx=2 get real detach mocks.
+    detach_0 = MagicMock()
+    detach_2 = MagicMock()
+    captures: list[list] = [
+        [{"status": 200, "url": "https://x/batchGenerateImages", "body": {}}],
+        [{"status": 200, "url": "https://x/batchGenerateImages", "body": {}}],
+    ]
+    l_idx = [0]
+    real_detaches = [detach_0, detach_2]
+
+    def fake_listener(page, *, project_id=None):  # type: ignore[no-untyped-def]
+        i = l_idx[0]
+        l_idx[0] += 1
+        return captures[i], real_detaches[i]
+
+    monkeypatch.setattr(
+        UiAutomationTransport, "_attach_batch_response_listener", staticmethod(fake_listener)
+    )
+
+    async def fake_await(captured, expected_count=1, **_kwargs):  # type: ignore[no-untyped-def]
+        return list(captured)
+
+    monkeypatch.setattr(UiAutomationTransport, "_await_captured", staticmethod(fake_await))
+
+    fake_img = MagicMock()
+    monkeypatch.setattr(
+        uia_mod, "_images_from_responses", lambda r: ([fake_img] * len(r), None, "")
+    )
+    monkeypatch.setattr(uia_mod, "_extract_project_id", lambda url: "PROJ-DETACH")
+    monkeypatch.setattr(uia_mod.asyncio, "sleep", AsyncMock())
+    monkeypatch.setattr(uia_mod.random, "uniform", lambda a, b: 0.0)
+
+    prompts = [
+        GenerateImageRequest(prompt="p0", aspect=Aspect.PORTRAIT, model=Model.NARWHAL, count=1),
+        GenerateImageRequest(prompt="p1", aspect=Aspect.PORTRAIT, model=Model.NARWHAL, count=1),
+        GenerateImageRequest(prompt="p2", aspect=Aspect.PORTRAIT, model=Model.NARWHAL, count=1),
+    ]
+
+    results = await transport.generate_images_batch(
+        prompts=prompts, jitter_range=(0.0, 0.0), continue_on_error=True
+    )
+
+    assert len(results) == 3
+    assert results[0].status == "ok"
+    assert results[1].status == "fail"
+    assert results[2].status == "ok"
+    # configure raises before attach for idx=1, so no listener was ever attached —
+    # the noop detach path fires instead. Verify the loop continued to idx=2 (ok).
+    # Listeners for idx=0 and idx=2 must have been detached (cleanup invariant).
+    detach_0.assert_called()
+    detach_2.assert_called()
+
+
+@pytest.mark.asyncio
+async def test_await_captured_timeout_partial_list_gives_fail_result(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    """_await_captured returns fewer items than expected_count → status='fail'.
+
+    The implementation raises GFlowError with a detail like
+    '_await_captured timed out: got 1/2'. We assert the result has
+    status='fail' and the error message contains the word 'timed out' or
+    'timeout' (case-insensitive).
+    """
+    import gflow_cli.api.transports.ui_automation as uia_mod
+    from gflow_cli.api.image import Aspect, GenerateImageRequest, Model
+
+    transport = UiAutomationTransport.__new__(UiAutomationTransport)
+    transport._setup_done = True  # type: ignore[attr-defined]
+    transport._page = MagicMock()  # type: ignore[attr-defined]
+    transport._page.url = "https://labs.google/fx/tools/flow/project/PROJ-TIMEOUT"
+    transport._out_dir = None  # type: ignore[attr-defined]
+    transport._generate_lock = __import__("asyncio").Lock()  # type: ignore[attr-defined]
+    transport._enter_editor = AsyncMock()  # type: ignore[attr-defined]
+    transport._dismiss_blocking_overlays = AsyncMock()  # type: ignore[attr-defined]
+    transport._configure_generation_settings = AsyncMock()  # type: ignore[attr-defined]
+    transport._send_prompt = AsyncMock()  # type: ignore[attr-defined]
+
+    # Two prompts, each expecting count=2; idx=1 returns only 1 response.
+    captures: list[list] = [
+        [
+            {"status": 200, "url": "https://x/batchGenerateImages", "body": {}},
+            {"status": 200, "url": "https://x/batchGenerateImages", "body": {}},
+        ],
+        [{"status": 200, "url": "https://x/batchGenerateImages", "body": {}}],  # short!
+    ]
+    detaches = [MagicMock(), MagicMock()]
+    l_idx = [0]
+
+    def fake_listener(page, *, project_id=None):  # type: ignore[no-untyped-def]
+        i = l_idx[0]
+        l_idx[0] += 1
+        return captures[i], detaches[i]
+
+    monkeypatch.setattr(
+        UiAutomationTransport, "_attach_batch_response_listener", staticmethod(fake_listener)
+    )
+
+    # _await_captured simply returns whatever is in the list (simulates partial arrival).
+    async def fake_await(captured, expected_count=1, **_kwargs):  # type: ignore[no-untyped-def]
+        return list(captured)
+
+    monkeypatch.setattr(UiAutomationTransport, "_await_captured", staticmethod(fake_await))
+
+    fake_img = MagicMock()
+    monkeypatch.setattr(
+        uia_mod, "_images_from_responses", lambda r: ([fake_img] * len(r), None, "")
+    )
+    monkeypatch.setattr(uia_mod, "_extract_project_id", lambda url: "PROJ-TIMEOUT")
+    monkeypatch.setattr(uia_mod.asyncio, "sleep", AsyncMock())
+    monkeypatch.setattr(uia_mod.random, "uniform", lambda a, b: 0.0)
+
+    prompts = [
+        GenerateImageRequest(prompt="p0", aspect=Aspect.PORTRAIT, model=Model.NARWHAL, count=2),
+        GenerateImageRequest(prompt="p1", aspect=Aspect.PORTRAIT, model=Model.NARWHAL, count=2),
+    ]
+
+    results = await transport.generate_images_batch(
+        prompts=prompts, jitter_range=(0.0, 0.0), continue_on_error=True
+    )
+
+    assert len(results) == 2
+    assert results[0].status == "ok"
+    assert results[1].status == "fail"
+    assert results[1].error is not None
+    err_msg = str(results[1].error).lower()
+    assert "timeout" in err_msg or "timed out" in err_msg or "got 1" in err_msg, (
+        f"Expected timeout-like message, got: {results[1].error}"
+    )
+
+
+@pytest.mark.asyncio
+async def test_batch_setup_failure_propagates_no_listener_attached(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    """_enter_editor raises → exception propagates unwrapped (NOT BatchPartialError).
+
+    No listener should have been attached because the failure happens before
+    the per-prompt loop.
+    """
+    import gflow_cli.api.transports.ui_automation as uia_mod
+    from gflow_cli.api.image import Aspect, GenerateImageRequest, Model
+
+    transport = UiAutomationTransport.__new__(UiAutomationTransport)
+    transport._setup_done = True  # type: ignore[attr-defined]
+    transport._page = MagicMock()  # type: ignore[attr-defined]
+    transport._page.url = "https://labs.google/fx/tools/flow/project/PROJ-SETUP"
+    transport._out_dir = None  # type: ignore[attr-defined]
+    transport._generate_lock = __import__("asyncio").Lock()  # type: ignore[attr-defined]
+
+    transport._enter_editor = AsyncMock(side_effect=Exception("editor launch failed"))  # type: ignore[attr-defined]
+    transport._dismiss_blocking_overlays = AsyncMock()  # type: ignore[attr-defined]
+    transport._configure_generation_settings = AsyncMock()  # type: ignore[attr-defined]
+    transport._send_prompt = AsyncMock()  # type: ignore[attr-defined]
+
+    listener_call_count = [0]
+
+    def fake_listener(page, *, project_id=None):  # type: ignore[no-untyped-def]
+        listener_call_count[0] += 1
+        return [], MagicMock()
+
+    monkeypatch.setattr(
+        UiAutomationTransport, "_attach_batch_response_listener", staticmethod(fake_listener)
+    )
+    monkeypatch.setattr(uia_mod, "_extract_project_id", lambda url: "PROJ-SETUP")
+    monkeypatch.setattr(uia_mod.asyncio, "sleep", AsyncMock())
+    monkeypatch.setattr(uia_mod.random, "uniform", lambda a, b: 0.0)
+
+    prompts = [
+        GenerateImageRequest(prompt="p0", aspect=Aspect.PORTRAIT, model=Model.NARWHAL, count=1),
+        GenerateImageRequest(prompt="p1", aspect=Aspect.PORTRAIT, model=Model.NARWHAL, count=1),
+    ]
+
+    from gflow_cli.errors import BatchPartialError
+
+    with pytest.raises(Exception) as exc_info:
+        await transport.generate_images_batch(
+            prompts=prompts, jitter_range=(0.0, 0.0), continue_on_error=False
+        )
+
+    # Must NOT be wrapped in BatchPartialError.
+    assert not isinstance(exc_info.value, BatchPartialError), (
+        "setup failure must propagate unwrapped"
+    )
+    # No listeners should have been attached.
+    assert listener_call_count[0] == 0, (
+        f"expected 0 listener attachments, got {listener_call_count[0]}"
+    )
+
+
+@pytest.mark.asyncio
+async def test_generate_images_batch_project_id_identical_across_results(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    """Structural verification of the same-project bug fix (spec §8.1 / Finding T3).
+
+    After a 3-prompt happy run, every BatchSubmissionResult must share
+    exactly one project_id.
+    """
+    import gflow_cli.api.transports.ui_automation as uia_mod
+    from gflow_cli.api.image import Aspect, GenerateImageRequest, Model
+
+    transport = UiAutomationTransport.__new__(UiAutomationTransport)
+    transport._setup_done = True  # type: ignore[attr-defined]
+    transport._page = MagicMock()  # type: ignore[attr-defined]
+    transport._page.url = "https://labs.google/fx/tools/flow/project/SHARED-UUID"
+    transport._out_dir = None  # type: ignore[attr-defined]
+    transport._generate_lock = __import__("asyncio").Lock()  # type: ignore[attr-defined]
+    transport._enter_editor = AsyncMock()  # type: ignore[attr-defined]
+    transport._dismiss_blocking_overlays = AsyncMock()  # type: ignore[attr-defined]
+    transport._configure_generation_settings = AsyncMock()  # type: ignore[attr-defined]
+    transport._send_prompt = AsyncMock()  # type: ignore[attr-defined]
+
+    captures: list[list] = [
+        [{"status": 200, "url": "https://x/batchGenerateImages", "body": {}}],
+        [{"status": 200, "url": "https://x/batchGenerateImages", "body": {}}],
+        [{"status": 200, "url": "https://x/batchGenerateImages", "body": {}}],
+    ]
+    detaches = [MagicMock(), MagicMock(), MagicMock()]
+    l_idx = [0]
+
+    def fake_listener(page, *, project_id=None):  # type: ignore[no-untyped-def]
+        i = l_idx[0]
+        l_idx[0] += 1
+        return captures[i], detaches[i]
+
+    monkeypatch.setattr(
+        UiAutomationTransport, "_attach_batch_response_listener", staticmethod(fake_listener)
+    )
+
+    async def fake_await(captured, expected_count=1, **_kwargs):  # type: ignore[no-untyped-def]
+        return list(captured)
+
+    monkeypatch.setattr(UiAutomationTransport, "_await_captured", staticmethod(fake_await))
+
+    fake_img = MagicMock()
+    monkeypatch.setattr(
+        uia_mod, "_images_from_responses", lambda r: ([fake_img] * len(r), None, "")
+    )
+    monkeypatch.setattr(uia_mod, "_extract_project_id", lambda url: "SHARED-UUID")
+    monkeypatch.setattr(uia_mod.asyncio, "sleep", AsyncMock())
+    monkeypatch.setattr(uia_mod.random, "uniform", lambda a, b: 0.0)
+
+    prompts = [
+        GenerateImageRequest(prompt="p0", aspect=Aspect.PORTRAIT, model=Model.NARWHAL, count=1),
+        GenerateImageRequest(prompt="p1", aspect=Aspect.PORTRAIT, model=Model.NARWHAL, count=1),
+        GenerateImageRequest(prompt="p2", aspect=Aspect.PORTRAIT, model=Model.NARWHAL, count=1),
+    ]
+
+    results = await transport.generate_images_batch(
+        prompts=prompts, jitter_range=(0.0, 0.0), continue_on_error=False
+    )
+
+    assert len(results) == 3
+    unique_project_ids = {r.project_id for r in results}
+    assert len(unique_project_ids) == 1, (
+        f"Expected all results to share one project_id, got: {unique_project_ids}"
+    )

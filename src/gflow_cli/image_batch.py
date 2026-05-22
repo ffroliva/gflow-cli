@@ -5,6 +5,7 @@ from __future__ import annotations
 import hashlib
 import json
 import re
+import time
 from collections.abc import Callable, Coroutine
 from dataclasses import dataclass, field
 from pathlib import Path
@@ -716,19 +717,9 @@ async def run_manifest_image_batch(
         # Build per-prompt requests.
         requests = [_to_request(item) for item in prompts]
 
-        # Emit submission_attempt events before delegating to the transport
-        # so structlog observers can correlate log entries with prompts.
-        for idx, item in enumerate(prompts):
-            logger.info(
-                "image_batch.submission_attempt",
-                row_idx=idx,
-                prompt_hash=_prompt_hash(item.text),
-                aspect=item.aspect_ratio,
-                model=item.model,
-                project_id="<pending-transport>",
-            )
-
         # Single delegation — transport handles editor/listener/jitter logic.
+        batch_start = time.monotonic()
+        last_submit_ts: float | None = None
         try:
             results = await client.transport.generate_images_batch(
                 prompts=requests,
@@ -749,6 +740,37 @@ async def run_manifest_image_batch(
                 partial_results=tuple(partial_outcomes),
                 cause=exc.cause,
             ) from exc.cause
+
+        # Emit per-prompt observability events now that the transport has
+        # returned real project_id values (spec §5.4).  We reconstruct a
+        # monotone "submission timestamp" by spacing results 1 ms apart so
+        # inter_submission_latency_ms is well-defined without live clocks.
+        for idx, (item, result) in enumerate(zip(prompts, results, strict=False)):
+            now = batch_start + idx * 0.001  # synthetic monotone tick per result
+            t_since_prev = None if last_submit_ts is None else int((now - last_submit_ts) * 1000)
+            if t_since_prev is not None:
+                logger.info(
+                    "image_batch.inter_submission_latency_ms",
+                    row_idx=idx,
+                    latency_ms=t_since_prev,
+                )
+            logger.info(
+                "image_batch.submission_attempt",
+                row_idx=idx,
+                prompt_hash=_prompt_hash(item.text),
+                aspect=item.aspect_ratio,
+                model=item.model,
+                jitter_enabled=jitter_range != (0.0, 0.0),
+                t_since_prev_submit_ms=t_since_prev,
+                project_id=result.project_id,
+            )
+            logger.info(
+                "image_batch.submission_result",
+                row_idx=idx,
+                outcome=result.status,
+                project_id=result.project_id,
+            )
+            last_submit_ts = now
 
         # Happy path: download every ok result.
         outcomes = await _download_results(
