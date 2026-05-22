@@ -1,12 +1,11 @@
 """Live e2e for `gflow image batch`. Spends Flow credits. Skipped by
 default; opt in by setting GFLOW_CLI_E2E_PROFILE (the canonical e2e gate).
 
-Spec: docs/superpowers/specs/2026-05-21-multi-image-prompt-design.md §7.
+Spec: docs/superpowers/specs/2026-05-22-stay-mounted-batch-session-design.md §8.3.
 
 Env vars (all GFLOW_CLI_E2E_BATCH_*):
   - GFLOW_CLI_E2E_PROFILE             master gate; Chrome-strategy profile name
   - GFLOW_CLI_E2E_BATCH_MANIFEST      default: test_assets/sample_batch.tsv
-  - GFLOW_CLI_E2E_BATCH_SAME_PROJECT  "0" or "1"; default "0"
   - GFLOW_CLI_E2E_BATCH_JITTER        "0" or "1"; default "1". When "0",
                                        passes jitter_range=(0,0) via DI.
 
@@ -34,7 +33,6 @@ pytestmark = pytest.mark.e2e
 
 _E2E_PROFILE_ENV = "GFLOW_CLI_E2E_PROFILE"
 _E2E_MANIFEST_ENV = "GFLOW_CLI_E2E_BATCH_MANIFEST"
-_E2E_SAME_PROJECT_ENV = "GFLOW_CLI_E2E_BATCH_SAME_PROJECT"
 _E2E_JITTER_ENV = "GFLOW_CLI_E2E_BATCH_JITTER"
 
 # Aspect tolerance — Flow may return H.264-aligned dimensions (e.g., 1920x1088
@@ -48,10 +46,6 @@ def _resolve_jitter_range() -> tuple[float, float]:
     if not enabled:
         return (0.0, 0.0)
     return (JITTER_MIN_SECONDS, JITTER_MAX_SECONDS)
-
-
-def _resolve_same_project() -> bool:
-    return os.environ.get(_E2E_SAME_PROJECT_ENV, "0").strip() == "1"
 
 
 def _resolve_manifest_path() -> Path:
@@ -109,7 +103,6 @@ async def test_image_batch_e2e(
     assert manifest_path.is_file(), f"manifest not found: {manifest_path}"
 
     prompts = parse_manifest_file(manifest_path)
-    same_project = _resolve_same_project()
     jitter_range = _resolve_jitter_range()
 
     out = tmp_path / "out"
@@ -127,7 +120,6 @@ async def test_image_batch_e2e(
             output_dir=out,
             continue_on_error=False,
             project_title="gflow-cli e2e",
-            same_project=same_project,
             jitter_range=jitter_range,
         )
     except Exception:
@@ -200,18 +192,11 @@ async def test_image_batch_e2e(
     ]
     assert len(attempt_events) == len(prompts), "missing submission_attempt events"
 
-    # 8. Project ID isolation/sharing semantics.
-    if same_project:
-        ids = {e.get("project_id") for e in attempt_events}
-        ids.discard("<per-prompt>")
-        assert len(ids) <= 1, f"--same-project=1 should share one project_id, got {ids}"
-    else:
-        result_events = [
-            e for e in log_capture.entries if e["event"] == "image_batch.submission_result"
-        ]
-        result_ids = {e.get("project_id") for e in result_events if "project_id" in e}
-        # Each row should have a distinct project_id under --same-project=0.
-        # We allow N or N-1 (last-event race) for robustness.
-        assert len(result_ids) >= len(prompts) - 1, (
-            f"--same-project=0 should yield N distinct project_ids, got {result_ids}"
-        )
+    # 8. Shared-project invariant (the v3-3 bug fix verification).
+    # Today BatchOutcome does not carry project_id, so we read it from the
+    # submission_attempt events. When BatchOutcome gains a project_id field
+    # in a future change, prefer reading from outcomes directly.
+    project_ids = {e["project_id"] for e in attempt_events}
+    assert len(project_ids) == 1, (
+        f"--same-project always-on: expected 1 shared project_id, got {project_ids}"
+    )
