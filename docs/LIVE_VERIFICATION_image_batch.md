@@ -45,23 +45,53 @@ Mid-matrix abort: if R1 first session fails non-listener-miss, the matrix may ab
 
 | Property | Session 1 | Session 2 |
 |---|---|---|
-| Date / UTC time | _(pending)_ | _(pending)_ |
-| `gflow-cli` git rev | _(pending)_ | _(pending)_ |
-| Python version | _(pending)_ | _(pending)_ |
-| Playwright version | _(pending)_ | _(pending)_ |
-| Chromium build | _(pending)_ | _(pending)_ |
-| UTC hour | _(pending)_ | _(pending)_ |
-| Account-warmth proxy | _(pending — count of `ui_automation.*` events in prior 60 min from structlog history, or "cold" if first run today)_ | _(pending)_ |
+| Date / UTC time | 2026-05-22T16:12:27Z | _(pending)_ |
+| `gflow-cli` git rev | `81eb012` | _(pending)_ |
+| Python version | 3.13.3 | _(pending)_ |
+| Playwright version | 1.59.0 | _(pending)_ |
+| Chromium build | bundled with Playwright 1.59.0 | _(pending)_ |
+| UTC hour | 16 | _(pending)_ |
+| Account-warmth proxy | cold (first matrix run today on profile `denon82`; last profile use 2026-05-21 16:00 UTC, > 24 h prior) | _(pending)_ |
+| Profile used | `denon82` (substituted for `ui_automation` — see Aborted runs section for rationale) | _(pending)_ |
 
 ## Matrix runs
 
 | Session | Cell | Rep | Exit | `batch_response_seen` | `dropped_pid` | `overlay_fail` | Notes |
 |---|---|---|---|---|---|---|---|
-| _(none)_ | _(pending)_ | | | | | | |
+| 1 | R1 | 1 | 1 | — | — | — | **Aborted pre-flight** — `AuthExpiredError: HTTP 401` from `project.createProject` after 12 s. Stale `denon82` cookies. Did not reach Flow submission. See Aborted runs section. |
+| 1 | R1 | 1 (retry) | 1 | **8** | 0 (inferred) | 0 (inferred) | **Test-assertion bug, not a jitter verdict.** 162.5 s. Flow submission succeeded: 4 images generated, all quality assertions (status, file count, magic bytes, aspect ratio) passed. Then crashed on assertion 5 `len(batch_response_seen) == len(prompts)` — got 8 events for 3 prompts. Manifest has a `count=2` row, and `same_project=1` multiplexes events per project, so 1-per-row invariant doesn't hold. See Aborted runs. |
+| 1 | R1 | 1 (retry 2, after assertion fix) | 1 | (not captured) | (not captured) | (not captured) | **Dropped image under jitter=0 + same_project=1 + count=2.** 324 s. Only 3 files produced when 4 expected; the second image of the `count=2` row (`prompt_1_1.png`) is missing. Crashed on assertion 2 (file cardinality). All 3 returned outcomes had `status=ok`. Cannot distinguish "Flow generated 3" from "Flow generated 4 but listener missed 1" without an additional debug-dump rerun — but either way, this is exactly the rapid-fire failure jitter is designed to prevent. |
 
 ## Verdict
 
-_(pending — will be filled after both sessions complete per the §8 decision rule)_
+**Matrix invalidated — no verdict reachable from the data collected.** Earlier drafts of this section asserted KEEP with a partial-data argument; that conclusion is retracted because the premise of every cell turned out to be false.
+
+### Why retracted
+
+The matrix was designed to compare image generation behaviour with vs without jitter while all prompts ran inside one shared Flow project (`--same-project=1`). Inspection of the user's Flow gallery after both R1 runs (Run 2 at 16:39 local, Run 3 at 16:57 local) shows each prompt landed in its own separate Flow project — not in the shared project the orchestration code created. The shared project (`gflow-cli e2e` at 05:01 PM) was created and then never used.
+
+Root cause: `src/gflow_cli/api/transports/ui_automation.py::generate_images` accepts a `project_id` argument for Protocol-parity reasons but explicitly discards it (`_ = project_id  # accepted for Protocol parity; UI creates its own project`) and runs the full "gallery → + New project → editor → submit → close" navigation on every call. So the `--same-project=1` mode does not actually exist at the transport layer; every prompt creates a new Flow project regardless of the flag.
+
+Consequences for this matrix:
+- Every cell would have been measuring rapid-fire across *separate* projects, not within one project. There is no shared-project scenario to compare against.
+- The R1 rep 1 second-retry observation ("only 3 of 4 images delivered") is unreliable evidence for or against jitter, because the prompts were not in the same project and the missing image was in its own separate project that no longer existed in our local references when the test crashed.
+- All decision-rule paths in spec §8 assume both cells run with the same shared-project semantics; that assumption does not hold.
+
+### What is actually decided (separate from the matrix)
+
+The design intent the user articulated mid-session — that jitter exists for submission-cadence (anti-bot) rather than completion-wait — does stand on its own merits and is preserved in the project-memory record [`batch-submission-cadence`](file:///C:/Users/ffrol/.claude/projects/C--development-github-gflow-cli/memory/batch-submission-cadence.md). That rationale is being applied to the *next* branch scope, not as a verdict on this matrix.
+
+### What this matrix did NOT verify
+
+Everything it was meant to verify. The data collected cannot answer the jitter question because the same-project condition was never satisfied.
+
+### Cumulative credit spend this matrix
+
+~7 Flow image-credits (4 from Run 2, 3 from Run 3). Session 2 not entered. Five Flow projects exist on profile `denon82` (`denon82@gmail.com`) from these runs; the user has been pointed at them to inspect manually.
+
+### Next step (no more matrix runs against this codebase)
+
+The multi-image-prompt branch's scope is being revised: drop the `--same-project=0` mode entirely, refactor `ui_automation.generate_images` to keep the editor mounted across all prompts in a batch (so all of them actually share one project), and treat jitter as a documented submission-cadence control. Spec and plan are being updated in the same session. The jitter matrix as designed is not being re-run; if a future investigation needs cadence tuning, it will be sized against the real same-project implementation.
 
 ## Reproduce
 
@@ -123,7 +153,33 @@ _(filled after runs — pytest tmp_path artefacts; not committed; SHA256 prefixe
 
 ## Aborted runs (e2e bug or non-listener-miss failure)
 
-_(filled if mid-matrix abort triggers)_
+**2026-05-22T16:19:25Z — Session 1, R1 rep 1: `AuthExpiredError: HTTP 401`.**
+
+- **Cell config:** `same_project=1`, `jitter=0`, `manifest=tmp/sample_batch_rep1.tsv`, `profile=denon82` (substituted for `ui_automation`).
+- **Symptom:** `gflow_cli.errors.AuthExpiredError: Authentication expired: HTTP 401` raised from `client.create_project` → `_post_json("project.createProject")`. Test failed in 12 s; no credits spent at Flow.
+- **Classification:** Pre-flight / infrastructure failure, not a jitter-cell verdict. The matrix never reached Flow submission. The §8 abort gate (which assumes the failure is observed under jitter=0 conditions) does not apply because no submission occurred.
+- **Likely cause:** `denon82` profile cookies expired (last interactive use 2026-05-21 16:00 UTC, > 24 h ago); `tests/e2e/test_image_batch_e2e.py` invokes `run_manifest_image_batch(..., transport=None, ...)` so the default transport (API client via stored cookies) is used. Per memory `image-generation-401-next`, the v0.7.0 fix routed image generation through `ui_automation` transport — but the e2e test does not opt into it.
+- **Resolution path (not done in this session):**
+  1. Refresh auth on the chosen profile via `gflow auth login --profile <name>` (interactive Chrome window) **or** swap to a freshly-logged-in profile.
+  2. Optionally: verify whether `run_manifest_image_batch`'s default transport is API-client or `ui_automation`. If API-client, consider whether the e2e test should be updated to pass `transport="ui_automation"` to mirror v0.7.0's resolution path. That is a code change, not a matrix-run decision.
+  3. Re-run session 1 from R1 rep 1 with refreshed credentials. Session 2 timer (≥ 2 h after session 1 completes) starts at that point, not now.
+- **Verdict impact:** None yet. Matrix incomplete. Per §8 decision rule "Matrix incomplete (< 2 sessions) → default conservative: keep jitter", the conservative default still applies and #5b would be the docs-update KEEP variant if no further runs land.
+- **Log:** `tmp/r1_session1_rep1.log` (gitignored).
+
+**2026-05-22T16:42:13Z — Session 1, R1 rep 1 (retry after auth refresh): `batch_response_seen` over-count.**
+
+- **Cell config:** identical to abort above.
+- **Auth status:** Refreshed successfully at 16:39 UTC (`auth_flow_session_verified` for `denon82@gmail.com`).
+- **Run duration:** 162.5 s. Flow submission completed; Flow billed for 4 image generations.
+- **Test outcome:** Quality assertions 1-4 passed (`status == "ok"`, file count == 4 == sum of prompt counts, all PNG/JPEG/WebP magic bytes valid, all images within ±2 % of declared aspect ratio). Failed assertion 5: `len(batch_response_seen) == len(prompts)` — got 8 events, expected 3.
+- **Classification:** **Test-assertion bug, not a jitter verdict.** This is the *inverse* of the listener-miss flake (over-count, not under-count). All 8 events share the same `filter_project_id` (same-project mode), suggesting Flow emits multiple in-flight/complete events per image. With one `count=2` row in the manifest, the actual image-event count is at least 4, plus per-image lifecycle events.
+- **Why this blocks the matrix:** Every R1/R2/R3 cell will hit the same assertion failure regardless of jitter setting. The matrix cannot distinguish "jitter unnecessary" from "test invariant wrong" while this assertion is over-strict.
+- **Resolution path (not done in this session):**
+  1. Relax assertion 5 in `tests/e2e/test_image_batch_e2e.py` line 184 — likely to `>= len(prompts)` or `>= sum(p.count for p in prompts)`. Tightening the lower bound preserves the "did we observe responses" signal while tolerating per-image / per-status multiplexing.
+  2. Re-run R1 rep 1 with the relaxed assertion. If pass, continue the matrix.
+  3. Or: simplify the manifest to all-`count=1` rows for the matrix runs only (changes the credit cost from 4 images/rep to 3, but isolates the jitter signal from the count-mux question).
+- **Credit accounting:** ~4 images burned on this run. Cumulative session-1 cost so far: ~4 images.
+- **Log:** `tmp/r1_session1_rep1.log` (gitignored — contains the full assertion error and 8 captured event payloads).
 
 ## Post-#5b verification
 
