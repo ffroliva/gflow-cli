@@ -2,13 +2,63 @@
 
 > **For agentic workers:** REQUIRED SUB-SKILL: Use `superpowers:subagent-driven-development` (recommended) or `superpowers:executing-plans` to implement this plan task-by-task. Steps use checkbox (`- [ ]`) syntax for tracking.
 
-**Goal:** Land PR #35's bugfix + new `gflow image batch` feature as a production-ready, e2e-tested PR on `feature/multi-image-prompt` → `develop`, removing the dead `--seed` flag, adding application-layer observability, and resolving the `--same-project` jitter question empirically via a 3-cell × 2-session matrix.
+**Revision:** v3 (2026-05-22) — see "v3 revision" banner below. v2 (2026-05-21) — applied all 25 council findings. v1 — initial plan.
 
-**Architecture:** Tree-replay of PR #35 commit `e8f932a` onto fresh branch cut from `origin/develop`, split into 7 atomic commits (#1 count-selector fix, #1b --seed removal, #2 image batch + observability, #3 live e2e, #4 docs, #5a evidence file, #5b code/docstring per verdict). New PR supersedes #35; original branch deleted local + remote.
+**Goal (v3):** Land `gflow image batch` on `feature/multi-image-prompt` → `develop` with the `--same-project` transport defect *actually fixed* (stay-mounted editor session in `ui_automation.generate_images`), and with the `--same-project` CLI flag removed in favour of always-same-project semantics. The v2 goal of "resolve the jitter question empirically via a 3-cell × 2-session matrix" is dropped — the matrix was invalidated mid-run (see spec v4 banner).
+
+**Architecture (v3):** Five of the seven atomic commits from v2 are landed already (Waves 1-5 on the branch). The remaining commits are a new chain that replaces v2's commits #5a + #5b: rather than evidence-file + verdict-driven docs/code, v3 lands the stay-mounted refactor in `ui_automation.py`, the CLI flag removal in `cli_image.py`, the orchestration simplification in `image_batch.py`, the e2e assertion update in `tests/e2e/test_image_batch_e2e.py`, the doc updates in `USAGE.md` / `CHANGELOG.md`, and one credit-spending e2e verification at the end. The matrix evidence file (`docs/LIVE_VERIFICATION_image_batch.md`) is preserved with its v3-era retraction record.
 
 **Tech Stack:** Python 3.11+, Click, Rich, Playwright (UI transport), structlog, pytest + pytest-bdd, ruff, pyright --strict, uv, gh CLI.
 
-**Spec:** [`docs/superpowers/specs/2026-05-21-multi-image-prompt-design.md`](../specs/2026-05-21-multi-image-prompt-design.md) (v3).
+**Spec:** [`docs/superpowers/specs/2026-05-21-multi-image-prompt-design.md`](../specs/2026-05-21-multi-image-prompt-design.md) **v4**.
+
+---
+
+## v3 revision — what changed and why (2026-05-22)
+
+The v2 plan executed Waves 1-5 successfully on the branch (PR #35 work re-authored, count-selector fix, `--seed` removal, `image batch` subcommand + observability, parameterized e2e, docs). Wave 6 began the live jitter matrix and immediately discovered that `--same-project=1` does not work at the transport layer: `ui_automation.generate_images` accepts a `project_id` but discards it via `_ = project_id  # accepted for Protocol parity; UI creates its own project`. Every prompt was landing in its own Flow project regardless of the flag (verified live on profile `denon82`).
+
+That invalidates the entire Wave 6 + 7 design as written. v3 replaces them with a focused stay-mounted-editor refactor and an honest CLI surface.
+
+### v2 commits that landed (kept as-is on the branch)
+
+| Wave | SHA | Subject | Status |
+|---|---|---|---|
+| 1 | `ea4e769` | `fix(image): use native xN count selector for -n N (#14 part 1)` | LANDED |
+| 2 | `e83c609` | `refactor(image)!: remove no-op --seed flag and dead seed/batch_id params` (BREAKING) | LANDED |
+| 3 | `32134a8` | `feat(image): add gflow image batch subcommand with --same-project (#14 part 2)` | LANDED but needs v3 amendment (flag removal) |
+| 4 | `e7d01bc` | `test(e2e): live image batch e2e parameterized by same-project + DI jitter` | LANDED but needs v3 amendment (drop same_project parameterization) |
+| 5 | `e6589e0` | `docs: gflow image batch in USAGE, CHANGELOG, INDEX` | LANDED but needs v3 amendment (rewrite the same-project section) |
+| 6a | `81eb012` | `docs(image): jitter live-verification skeleton — matrix pending` | LANDED; will receive a retraction amendment under v3 |
+
+The branch is at `81eb012` now with two uncommitted working-tree changes from the v3 session (the test assertion relaxation and the evidence-file verdict retraction).
+
+### v3 commit chain (replaces v2's #5b + Wave 7)
+
+| Order | Subject (proposed) | Files |
+|---|---|---|
+| v3-1 | `test(image): retract assertion-equality on batch_response_seen — Playwright listener fires per HTTP response, not per row` | `tests/e2e/test_image_batch_e2e.py` |
+| v3-2 | `docs(image): retract jitter-matrix verdict — superseded by --same-project transport defect (v4 spec)` | `docs/LIVE_VERIFICATION_image_batch.md` |
+| v3-3 | `refactor(image)!: stay-mounted editor session in ui_automation.generate_images so --same-project actually shares one Flow project` (BREAKING for direct transport callers) | `src/gflow_cli/api/transports/ui_automation.py`, possibly a new helper file |
+| v3-4 | `refactor(image)!: drop --same-project flag from gflow image batch (always same-project now)` (BREAKING CLI) | `src/gflow_cli/cli_image.py`, `src/gflow_cli/image_batch.py` |
+| v3-5 | `test(image): update batch e2e to assert all prompts share one project_id, drop GFLOW_CLI_E2E_BATCH_SAME_PROJECT env var` | `tests/e2e/test_image_batch_e2e.py`, unit tests as needed |
+| v3-6 | `docs(image): always-same-project semantics in USAGE.md, CHANGELOG.md [Unreleased], help text` | `docs/USAGE.md`, `CHANGELOG.md`, possibly `docs/INDEX.md` |
+| v3-7 | `docs(spec,plan): record v3 plan + v4 spec amendments and the live verification of the stay-mounted refactor` | `docs/superpowers/...` + `docs/LIVE_VERIFICATION_image_batch.md` (post-refactor verification record) |
+
+Each commit independently passes `/gflow:check`. The credit-spending e2e is the gate for v3-5 → v3-6; verification record lands in v3-7.
+
+### Out of scope for v3 (deferred)
+
+- **Persistent asset layer** — `(profile, project_id, generation_id, output_idx) → file` registry. Item #10 in [`phase-b-followups`](file:///C:/Users/ffrol/.claude/projects/C--development-github-gflow-cli/memory/phase-b-followups.md). User-confirmed deferred 2026-05-22.
+- **Per-project Chrome-session multiplexing** for any future "different-project batch" feature. The user-confirmed model is: batch = same-project; different-project = loop `gflow image t2i`. No multiplexing needed.
+- **Re-running the jitter matrix.** Once the stay-mounted refactor lands and behaves, jitter is documented as a submission-cadence control; cadence tuning is not on this branch's table.
+- **`chore/sync-develop-v0.7.0`** — the back-merge of `main`'s v0.7.0 bump commits to `develop`. Separate branch, separate chore. See [`phase-b-followups`](file:///C:/Users/ffrol/.claude/projects/C--development-github-gflow-cli/memory/phase-b-followups.md) item D for context.
+
+### Task-by-task plan for v3
+
+> The v2 task body below (Phases 0-7) is preserved as historical record. The v3 work is *not* a re-execution of those phases; it is the seven-commit chain in the table above, executed sequentially. A detailed task-by-task expansion of v3-3 (stay-mounted refactor) and v3-4 (flag removal) will be written when work starts — likely after a brief `superpowers:brainstorming` pass on the session abstraction.
+
+---
 
 ---
 

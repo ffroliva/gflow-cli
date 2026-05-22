@@ -1,12 +1,59 @@
 # Multi-image prompt — production-ready landing of PR #35
 
-**Status:** Design (council-hardened), awaiting user review
+**Status:** Design (council-hardened), **v4 revision in effect — see banner below**
 **Author:** Flavio Oliva
-**Date:** 2026-05-21
+**Date:** 2026-05-21 (v3) · 2026-05-22 (v4 revision)
 **Closes:** [#14](https://github.com/ffroliva/gflow-cli/issues/14)
 **Supersedes:** [PR #35](https://github.com/ffroliva/gflow-cli/pull/35) (`claude/plan-next-issue-Stegy`)
 **Target branch:** `feature/multi-image-prompt` → `develop`
-**Revision:** v3 — full seed/batch_id removal after code verification revealed `--seed` is a documented no-op under the active UI transport (v2 was too conservative; user authorised Option A)
+**Revision:** v4 — `--same-project` transport defect discovered mid-matrix; scope reshaped (see § "v4 revision" below). v3 — full seed/batch_id removal after code verification revealed `--seed` is a documented no-op under the active UI transport (v2 was too conservative; user authorised Option A).
+
+---
+
+## v4 revision — scope reshape (2026-05-22)
+
+The jitter matrix in §8 was run against the codebase and immediately surfaced a structural defect that invalidates the matrix's premise. This v4 amendment records what changed; the v3 text below is preserved as a historical record except where explicitly marked superseded.
+
+### What was discovered
+
+`src/gflow_cli/api/transports/ui_automation.py::generate_images` accepts a `project_id` argument for Protocol parity but discards it (`_ = project_id  # accepted for Protocol parity; UI creates its own project`) and runs a full `gallery → "+ New project" → editor → submit → close` cycle on every call. The orchestrating code in `image_batch.run_manifest_image_batch` correctly creates a shared project under `--same-project=1` and threads its ID into the transport, but the transport drops it on the floor. Live verification on profile `denon82` confirmed each prompt lands in its own separate Flow project regardless of the flag.
+
+Therefore the matrix was never measuring rapid-fire submissions *inside* a shared project — there is no such submission cadence in the current code. The matrix is invalidated. See `docs/LIVE_VERIFICATION_image_batch.md` § Verdict for the retraction record.
+
+### What the v4 scope is
+
+Driven by user clarification 2026-05-22 (project-memory record [`batch-submission-cadence`](file:///C:/Users/ffrol/.claude/projects/C--development-github-gflow-cli/memory/batch-submission-cadence.md)):
+
+1. **`gflow image batch` is always same-project.** All prompts in one batch share one Flow project, by design. There is no "different-project batch" mode. If a user wants different projects, they loop `gflow image t2i` externally.
+2. **The `--same-project` CLI flag is removed entirely.** It collapses from a toggle to the only behaviour; documentation and `--help` should describe always-same-project semantics.
+3. **`run_manifest_image_batch` drops its `same_project: bool` parameter and the entire `same_project=False` branch.** The `transport=None` plumbing remains.
+4. **`ui_automation.generate_images` is refactored to a stay-mounted shape.** The editor page is opened once for the batch, then each prompt is submitted via the in-editor prompt input with jitter between submissions, generation_ids are captured at submission time (in memory), completions are awaited after all submissions are sent, and the page is closed only at the very end of the batch.
+5. **Jitter is documented as a submission-cadence (anti-bot) control**, not a completion-poll setting. CLI help, `docs/USAGE.md`, and the public docstring on `run_manifest_image_batch` carry this rationale.
+6. **No persistence layer in this branch.** Generation_ids stay in memory just long enough to download. Persistent (profile, project_id, generation_id, file) records are a separate phase — see [`phase-b-followups`](file:///C:/Users/ffrol/.claude/projects/C--development-github-gflow-cli/memory/phase-b-followups.md) item #10.
+7. **No second jitter matrix.** The matrix as designed cannot answer the original question without the stay-mounted refactor in hand; if cadence tuning is needed later, it will be sized against the real implementation, not the broken one.
+
+### What v4 supersedes in the v3 body
+
+- **§3 In scope** — `--same-project` flag stays in CLI surface. **Superseded:** the flag is removed.
+- **§4 Strategy / commit chain** — commit #5b's verdict-driven content was either drop-jitter (code) or document-jitter (docs). **Superseded:** #5b becomes the stay-mounted refactor + flag removal; new commit chain will be defined in the plan v3.
+- **§8 Live verification matrix** — 3-cell × 2-session × N=3 matrix. **Superseded:** not run, not re-run; this section is historical only.
+- **§9 Decision rule (if §8 was numbered there)** — KEEP/DROP/INCONCLUSIVE-KEEP table. **Superseded:** verdict is "matrix invalidated, scope reshaped" — see this banner.
+- **§11 Risk register** entries that depended on the matrix outcome are now moot. The defect itself becomes the headline risk for the new scope; mitigations are unit + e2e tests on the stay-mounted code path.
+
+### What v4 leaves untouched in the v3 body
+
+- `--seed` removal (already shipped on the branch).
+- The native xN count-selector bugfix (already shipped).
+- TSV/JSON manifest parser, max-prompts cap, malformed-manifest negative fixture.
+- Application-layer observability events (`image_batch.submission_attempt`, `image_batch.row_completed`).
+- Docs commits (`USAGE.md`, `CHANGELOG.md`, `INDEX.md`) — they will be amended for the always-same-project surface, not torn up.
+- The PR-supersedes-#35 plan.
+
+### Implementation cost (rough)
+
+The stay-mounted refactor in `ui_automation.py` is the substantive piece. It needs a session abstraction (`_BatchEditorSession` or similar) that opens once, holds the editor page, submits N prompts via the existing prompt-input helpers, captures generation_ids, awaits completions, downloads, and closes. Unit tests can mock the page; one credit-spending e2e at the end verifies all-prompts-one-project. Persistence and per-project Chrome-session multiplexing remain explicitly out of scope.
+
+---
 
 ## 1. Problem
 
