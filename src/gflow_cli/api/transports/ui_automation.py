@@ -221,8 +221,21 @@ _ASPECT_TAB_CANDIDATES: dict[str, tuple[str, ...]] = {
     "3:4": ("3:4",),
 }
 
-# Count → Flow count tab text.
-_COUNT_TAB: dict[int, str] = {1: "1x", 2: "x2", 3: "x3", 4: "x4"}
+# Supported image-count values for the xN selector.
+_SUPPORTED_COUNTS: frozenset[int] = frozenset({1, 2, 3, 4})
+
+
+def _count_tab_candidates(n: int) -> tuple[str, ...]:
+    """Return both label variants Flow uses for count-N tabs.
+
+    Flow's tab label for count=N follows the ``x{N}`` pattern (e.g. ``x1``,
+    ``x2``).  Older or localised builds have been observed using ``{N}x``
+    instead.  Trying both variants — same as the proven CG Worker pattern in
+    ``flow_logic._quantity_option_texts`` — ensures the click lands regardless
+    of the label form currently rendered.
+    """
+    return (f"x{n}", f"{n}x")
+
 
 # Reverse map: domain Aspect enum → CLI string accepted by the settings panel.
 _CLI_FROM_ASPECT: dict[Aspect, str] = {
@@ -750,20 +763,58 @@ class UiAutomationTransport(VideoGenerationMixin):
                 )
 
         if count is not None:
-            count_text = _COUNT_TAB.get(count)
-            if count_text is None:
+            if count not in _SUPPORTED_COUNTS:
                 log.warning("ui_automation.unsupported_count", value=count)
             else:
-                try:
-                    tab = page.locator(f'[role="tab"]:text-is("{count_text}")').first
-                    await tab.wait_for(state="visible", timeout=3_000)
-                    await tab.click()
-                    log.info("ui_automation.count_set", value=count, tab_text=count_text)
-                except Exception as e:  # noqa: BLE001
-                    log.warning("ui_automation.count_set_failed", value=count, error=str(e))
+                await UiAutomationTransport._set_count(page, count)
 
         await page.keyboard.press("Escape")
         await page.wait_for_timeout(400)
+
+    @staticmethod
+    async def _set_count(page: Page, count: int) -> None:
+        """Click the xN count tab in the open generation-settings panel.
+
+        Uses Pattern A (force-reset): always clicks x1 first, then clicks
+        the target xN if count > 1.  This prevents the stay-mounted batch
+        editor from carrying over a prior prompt's count selection — if
+        prompt N set x2 and prompt N+1 wants x1, a plain "click x1" may be
+        a no-op when the tab already appears selected in Flow's DOM but the
+        internal state disagrees (the selection is sticky across stay-mounted
+        submissions).  Clicking x1 unconditionally forces Flow's onChange to
+        fire, then clicking xN (when N > 1) lands the desired value.
+
+        Both label variants are tried for each step — ``x{N}`` is the current
+        Flow label; ``{N}x`` is a fallback observed in older / localised
+        builds (mirrors the CG Worker pattern in
+        ``flow_logic._quantity_option_texts``).
+        """
+
+        async def _click_count_tab(n: int) -> bool:
+            """Click the first visible tab matching any candidate label for N."""
+            for label in _count_tab_candidates(n):
+                try:
+                    tab = page.locator(f'[role="tab"]:text-is("{label}")').first
+                    await tab.wait_for(state="visible", timeout=3_000)
+                    await tab.click()
+                    log.info("ui_automation.count_tab_clicked", n=n, label=label)
+                    await page.wait_for_timeout(300)
+                    return True
+                except Exception:  # noqa: BLE001 — try next label variant
+                    continue
+            return False
+
+        # Step 1 — always reset to x1 first (clears any sticky prior selection).
+        if not await _click_count_tab(1):
+            log.warning("ui_automation.count_reset_to_1_failed")
+            # Non-fatal: still attempt the target click below.
+
+        # Step 2 — if target is x1 we're done; otherwise click the target.
+        if count > 1:
+            if not await _click_count_tab(count):
+                log.warning("ui_automation.count_set_failed", value=count)
+            else:
+                log.info("ui_automation.count_set", value=count)
 
     # ------------------------------------------------------------------
     # Internal helpers — batchGenerateImages capture (unit 3.6)
