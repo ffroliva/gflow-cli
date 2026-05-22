@@ -7,8 +7,41 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+### Fixed
+
+- `gflow image batch` now actually shares one Flow project across all prompts
+  in a batch. Previously the `--same-project=1` flag was a no-op at the
+  `ui_automation` transport layer; each prompt landed in its own Flow
+  project. ([spec](docs/superpowers/specs/2026-05-22-stay-mounted-batch-session-design.md))
+
+### Removed
+
+- `--same-project` flag on `gflow image batch`. The flag collapsed to a
+  single behaviour (always-same-project) — no toggle remains. For
+  different-project results, loop `gflow image t2i` externally.
+
+### Changed
+
+- `gflow image batch` editor session is now persistent across all prompts in
+  a batch. Jitter (3–7 s default) is documented as the submission-cadence
+  anti-bot control, not a completion-wait setting.
+- `BatchSubmissionResult` is the new transport-layer per-prompt outcome
+  (with `project_id`, `prompt_idx`, `prompt_hash` fields). Public
+  `list[BatchOutcome]` orchestrator return is unchanged.
+- `_attach_batch_response_listener` now returns `(captured, detach_fn)`;
+  callers that used the single-list return need to unpack accordingly.
+
 ### Added
 
+- `BatchPartialError` (in `errors`) — raised by fail-fast batch when
+  earlier prompts produced downloadable images before the failing one;
+  carries `partial_results` so the orchestrator can salvage them.
+- `BatchIntegrityError` (in `errors`) — raised by the orchestrator when
+  post-download file count does not match the expected count.
+- `ui_automation.orphaned_project_warning` structlog event — emitted when
+  `_enter_editor` succeeded but a later setup step (e.g.,
+  `_dismiss_blocking_overlays`) raises, so the user can find their
+  server-side project record.
 - `VideoResult` dataclass — return type of `generate_video`, carries `status` and `local_path` ([#29](https://github.com/ffroliva/gflow-cli/issues/29)).
 - `UiAutomationTransport._download_video` — downloads a generated mp4 via `media.getMediaUrlRedirect` using the authenticated page; falls back to `self._out_dir` then `tmp/` when no `out_dir` is supplied ([#29](https://github.com/ffroliva/gflow-cli/issues/29)).
 - `FlowApiClient.download_video(media_id, out_path)` — public API, mirrors `download_image` ([#29](https://github.com/ffroliva/gflow-cli/issues/29)).

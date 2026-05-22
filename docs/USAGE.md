@@ -255,10 +255,13 @@ an isometric pixel-art bakery	1	1:1	nano2
 
 Example: [`test_assets/sample_batch.json`](../test_assets/sample_batch.json).
 
+### Session behaviour
+
+All prompts in a batch share one Flow project. The editor is opened once; each prompt is submitted in turn with a random 3–7 second pause between submissions. This jitter is a **submission-cadence anti-bot-detection measure** — it spaces out the submission clicks, not the generation wait. All generations run in parallel inside Flow; only the click timing is jittered. The command returns once every submitted generation has resolved (success or failure), not after the last click.
+
 ### Flags
 
-- `--same-project` — all prompts share one Flow project. Inserts a 3–7s random delay between submissions as an anti-bot-detection measure (this delay is **live-verified** via the Phase 6 matrix once `LIVE_VERIFICATION_image_batch.md` lands; see that evidence file for the verdict and any code change).
-- `--continue-on-error` / `--fail-fast` — keep going past row failures or stop at the first one.
+- `--continue-on-error` / `--fail-fast` — keep going past row failures or stop at the first one (default: `--fail-fast`). On fail-fast, already-completed images are downloaded before the error is surfaced.
 
 ### Limits
 
@@ -274,7 +277,7 @@ Example: [`test_assets/sample_batch.json`](../test_assets/sample_batch.json).
 
 `gflow image batch` emits four structlog events per run, useful for debugging throttling regressions:
 
-- `image_batch.submission_attempt {row_idx, prompt_hash, aspect, model, same_project, jitter_enabled, t_since_prev_submit_ms, project_id}`
+- `image_batch.submission_attempt {row_idx, prompt_hash, aspect, model, jitter_enabled, t_since_prev_submit_ms, project_id}`
 - `image_batch.submission_result {row_idx, outcome, latency_ms, ...}`
 - `image_batch.row_completed {row_idx, file_path, sha256_prefix}` (per image)
 - `image_batch.inter_submission_latency_ms {row_idx, latency_ms}` (fires from row 1 onward)

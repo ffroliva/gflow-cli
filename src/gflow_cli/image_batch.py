@@ -686,21 +686,25 @@ async def run_manifest_image_batch(
 ) -> list[BatchOutcome]:
     """Run a manifest batch via the transport's stay-mounted batch method.
 
-    All prompts share one Flow project (always-same-project semantics). The
-    transport opens the editor once, submits all prompts with jitter between
-    submissions (anti-bot submission cadence), awaits responses in submission
-    order, and returns per-prompt BatchSubmissionResult records.
+    All prompts share one Flow project (always-same-project semantics; there
+    is no per-prompt project toggle). The transport opens the editor once,
+    submits all prompts sequentially with a random 3–7 s pause between each
+    submission, awaits every generation in submission order, and returns
+    per-prompt ``BatchSubmissionResult`` records.
 
     Jitter is the *submission-cadence* anti-bot control — it spaces out the
     submission clicks, not the generation wait. All generations run in parallel
-    inside Flow; only the click timing is jittered.
+    inside Flow; only the click timing is jittered. The function returns once
+    every submitted generation has resolved (success or failure).
 
     Raises:
-        RuntimeError: if the resolved transport does not implement
-            ``generate_images_batch`` (only UiAutomationTransport does).
+        RuntimeError: if the resolved transport is not
+            ``UiAutomationTransport`` (the only transport that implements
+            ``generate_images_batch``).
         BatchPartialError: on fail-fast when some prompts already produced
             downloadable images before the failing prompt. The orchestrator
-            downloads the partial results before re-raising.
+            downloads the partial results before re-raising so no paid credits
+            are lost.
         BatchIntegrityError: when the post-download file count does not match
             the expected count (silent mis-delivery guard).
     """
