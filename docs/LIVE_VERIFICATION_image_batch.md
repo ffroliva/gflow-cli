@@ -184,3 +184,73 @@ _(filled after runs — pytest tmp_path artefacts; not committed; SHA256 prefixe
 ## Post-#5b verification
 
 _(filled in commit #5b's amend OR a follow-up edit — the e2e re-run under the verdict's chosen cell config per AC6)_
+
+## Post-refactor live verification — Phase 7 (PARTIAL PASS, 2026-05-22)
+
+**Status:** PARTIAL — race-condition fix verified; count-tab selector
+verification blocked by [Issue #24](https://github.com/ffroliva/gflow-cli/issues/24)
+(locale-agnostic selectors).
+
+### What was verified ✅
+
+- **Race-condition fix in `c759c90`** ("fix(image): batch-transport race in
+  await loop short-circuit"). The Phase 3 await loop's
+  `if not captured and submit_error is None` short-circuit incorrectly
+  caught in-flight successful submissions. The fix changes the sentinel to
+  `detach is _noop_detach`. Live e2e on profile `denon82`:
+  - First attempt (with the bug): 30s wall time, 3 fail outcomes returned
+    without raising, all-fail with no actual response-await. Visible at
+    `tmp/v3_7_live_verification.log` and `pytest-790`.
+  - After race fix: 49s wall time, submissions actually waited for
+    responses, count=2 row generated 2 images correctly, count=1 rows
+    generated 1+1 images each (1 expected + 1 from count drift — see
+    blocked items below). Visible at `tmp/v3_7_live_verification_retry.log`
+    and `pytest-793`.
+
+- **Stay-mounted editor session works structurally.** A single Flow project
+  (`gflow-cli e2e`) was created once and reused for all prompts, with the
+  editor page staying mounted across all submissions. Confirmed visually
+  via the user's Flow gallery and via the `image_batch.submission_attempt`
+  structlog events sharing one `project_id` per batch.
+
+### What's blocked by [#24](https://github.com/ffroliva/gflow-cli/issues/24) ⏸️
+
+- **Count selector read-back fails on non-English locales.** The user's
+  browser runs Flow in Portuguese (`labs.google/fx/pt/tools/flow`). Count
+  tab labels render as "1 imagem", "2 imagens", etc. — not the `x1`/`x2`
+  English patterns the current selectors match. The instrumented
+  `_set_count` in `18d184b` returned `'imageImagem'` (icon ligature `image`
+  + Portuguese label `Imagem`) and exhausted its 3-attempt retry loop on
+  the very first prompt, raising `RuntimeError` and triggering the
+  orchestrator's `BatchPartialError` salvage path. Visible at
+  `tmp/v3_7_live_verification_retry3.log`.
+
+  Two earlier attempts to fix the count stickiness without
+  locale-invariance also failed in different ways: `401aaf5`
+  (force-reset by clicking x1 first) silently no-op'd and produced 5
+  files for 3 prompts (`pytest-793`); `18d184b` (read-back verify with
+  retry) raised the clear error above. Both are kept as commits — the
+  read-back instrumentation in `18d184b` was load-bearing in diagnosing
+  the locale root cause and stays.
+
+- **Final all-green e2e** awaits #24 closing. The deliverable for #24 is
+  locale-agnostic count-tab selectors (e.g., position-in-tablist,
+  leading-digit regex, or aria attribute). Once #24 ships, a Phase 7b
+  rerun on profile `denon82` should pass cleanly.
+
+### Cumulative credit spend across Phase 7 attempts
+
+~15-18 Flow image generations on profile `denon82` (`denon82@gmail.com`),
+across the three e2e iterations referenced above. No production credits
+spent beyond what was already authorised in the matrix and Phase 7 budgets.
+
+### Conclusion
+
+The v3-3 stay-mounted refactor lands the **core bug fix** for the
+`--same-project=1` no-op: all prompts of a batch now actually share one
+Flow project, the editor page stays mounted, and per-prompt responses are
+captured correctly with race-immune detach semantics. The remaining
+gap is a pre-existing locale-portability issue ([#24](https://github.com/ffroliva/gflow-cli/issues/24))
+that was previously unobserved because earlier verification ran on
+English-locale profiles. The branch is ready for review; a Phase 7b
+follow-up will close the loop once #24 lands.
