@@ -68,6 +68,7 @@ class TestRealChromeStrategy:
         args_list = mock_create.call_args.args
         assert args_list[0] == fake_chrome
         assert f"--user-data-dir={profile_dir}" in args_list
+        assert "--password-store=basic" in args_list
         assert "--enable-automation" not in args_list
         assert not any("--remote-debugging-port" in a for a in args_list)
         assert GEMINI_URL in args_list  # Chrome opens directly on the Flow page

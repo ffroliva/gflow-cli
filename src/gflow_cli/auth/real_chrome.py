@@ -111,6 +111,7 @@ class RealChromeStrategy(AuthStrategy):
             "--no-first-run",
             "--no-default-browser-check",
             "--window-size=1280,800",
+            "--password-store=basic",
             # No --remote-debugging-port: zero automation surface.
             GEMINI_URL,  # open straight on the Flow sign-in page
         ]
