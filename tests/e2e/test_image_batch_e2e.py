@@ -132,12 +132,16 @@ async def test_image_batch_e2e(
     # 1. All rows succeeded
     assert all(o.status == "ok" for o in outcomes), [o.status for o in outcomes]
 
-    # 2. File cardinality: sum of row counts
+    # 2. File cardinality: sum of row counts. The transport writes count-setter
+    # diagnostic screenshots into ``out/_diagnostics/`` per commit c5c8d4a;
+    # exclude that subdir so we count only real Flow outputs.
     expected_files = sum(p.count for p in prompts)
     image_files = [
         f
         for f in sorted(out.rglob("*"))
-        if f.is_file() and f.suffix.lower() in (".png", ".jpg", ".jpeg", ".webp")
+        if f.is_file()
+        and f.suffix.lower() in (".png", ".jpg", ".jpeg", ".webp")
+        and "_diagnostics" not in f.parts
     ]
     assert len(image_files) == expected_files, (
         f"expected {expected_files} got {len(image_files)}: {[f.name for f in image_files]}"
