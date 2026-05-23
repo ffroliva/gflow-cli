@@ -27,7 +27,7 @@ from urllib.parse import urlparse
 import structlog
 
 from gflow_cli.api.dto import BatchSubmissionResult, GeneratedImage
-from gflow_cli.api.image import Aspect, GenerateImageRequest
+from gflow_cli.api.image import Aspect, GenerateImageRequest, Model
 from gflow_cli.api.transports.ui_automation_video import (
     MODE_SWITCH_TRIGGER_SELECTORS,
     VideoGenerationMixin,
@@ -57,6 +57,19 @@ log = structlog.get_logger(__name__)
 FLOW_URL = "https://labs.google/fx/tools/flow?hl=en"
 # URL fragment that distinguishes the project editor from the gallery.
 _PROJECT_URL_FRAGMENT = "/project/"
+
+# Image model picker (SOT flow-editor-map.json). Same arrow_drop_down trigger as
+# video; options matched by product name (NOT localized — but the editor must be
+# in English, forced via the --lang=en-US launch arg). 'Nano Banana 2' is not a
+# substring of 'Nano Banana Pro', so has-text is unambiguous across the three.
+IMAGE_MODEL_PICKER_TRIGGER = (
+    "button[aria-haspopup='menu']:has(i.google-symbols:text-is('arrow_drop_down'))"
+)
+IMAGE_MODEL_OPTION_SELECTORS: dict[Model, str] = {
+    Model.NARWHAL: "[role='menuitem']:has-text('Nano Banana 2')",
+    Model.GEM_PIX_2: "[role='menuitem']:has-text('Nano Banana Pro')",
+    Model.IMAGEN_3_5: "[role='menuitem']:has-text('Imagen 4')",
+}
 
 # Image-mode tab inside the mode-switch dropdown.  Selectors are tried in
 # order; the leading ``aria-controls`` matches are language-independent
@@ -460,6 +473,12 @@ class UiAutomationTransport(VideoGenerationMixin):
                 args=[
                     "--disable-blink-features=AutomationControlled",
                     "--password-store=basic",
+                    # locale="en-US" only sets Accept-Language; Chrome still picks
+                    # its UI language from the profile/system and Flow then serves
+                    # /fx/<locale>/ with a localized editor (breaking text-based
+                    # selectors like the I2V frame slots). --lang forces the UI to
+                    # English so Flow stays on /fx/tools/flow for ANY profile.
+                    "--lang=en-US",
                 ],
             )
             # Hide the automation flag so reCAPTCHA Enterprise doesn't score
@@ -831,15 +850,47 @@ class UiAutomationTransport(VideoGenerationMixin):
             return False
 
     @staticmethod
+    async def _select_image_model(page: Page, model: Model) -> None:
+        """Click the image model picker and select `model` (Nano Banana 2 / Nano
+        Banana Pro / Imagen 4). Must run with the gen-settings panel open. Without
+        this the generation uses Flow's UI-default model and ``--model`` is a
+        no-op. Non-fatal on miss (logged at WARNING — the wrong model has a real
+        cost/quality impact, so a miss is a genuine signal)."""
+        option_sel = IMAGE_MODEL_OPTION_SELECTORS.get(model)
+        if option_sel is None:
+            log.warning("ui_automation.image_model_unknown", model=model.value)
+            return
+        try:
+            trigger = page.locator(IMAGE_MODEL_PICKER_TRIGGER).first
+            await trigger.wait_for(state="visible", timeout=4000)
+            await trigger.click()
+            await page.wait_for_timeout(500)
+            option = page.locator(option_sel).first
+            await option.wait_for(state="visible", timeout=4000)
+            await option.click()
+            await page.wait_for_timeout(500)
+            log.info("ui_automation.image_model_selected", model=model.value)
+        except Exception as e:  # noqa: BLE001 — non-fatal; Flow default applies
+            log.warning(
+                "ui_automation.image_model_not_set",
+                model=model.value,
+                error=str(e)[:80],
+                note="Flow default model applies",
+            )
+            await page.keyboard.press("Escape")  # close a stray model menu
+
+    @staticmethod
     async def _configure_generation_settings(
         page: Page,
         aspect_cli: str | None,
         count: int | None,
         *,
+        model: Model | None = None,
         out_dir: Path | None = None,
         prompt_idx: int | None = None,
     ) -> None:
-        """Open the per-generation settings panel and apply aspect ratio and count.
+        """Open the per-generation settings panel and apply model, aspect ratio,
+        and count.
 
         When ``out_dir`` and ``prompt_idx`` are both provided, diagnostic
         screenshots are saved as ``count_before_prompt_{idx}.png`` and
@@ -849,7 +900,7 @@ class UiAutomationTransport(VideoGenerationMixin):
         Skips gracefully if the panel trigger cannot be found (non-fatal —
         generation will proceed with Flow's current default settings).
         """
-        if aspect_cli is None and count is None:
+        if aspect_cli is None and count is None and model is None:
             # Nothing to apply.
             return
 
@@ -862,6 +913,9 @@ class UiAutomationTransport(VideoGenerationMixin):
         if not await UiAutomationTransport._open_gen_settings_panel(page):
             log.warning("ui_automation.gen_settings_panel_not_found", skipping=True)
             return
+
+        if model is not None:
+            await UiAutomationTransport._select_image_model(page, model)
 
         if aspect_cli:
             candidates = _ASPECT_TAB_CANDIDATES.get(aspect_cli, (aspect_cli,))
@@ -1440,7 +1494,9 @@ class UiAutomationTransport(VideoGenerationMixin):
 
         # Configure generation settings (aspect ratio + count) BEFORE attaching
         # the response listener so settings clicks don't interfere with capture.
-        await self._configure_generation_settings(page, aspect_cli, request.count)
+        await self._configure_generation_settings(
+            page, aspect_cli, request.count, model=request.model
+        )
 
         # Attach the response listener SYNCHRONOUSLY before any prompt
         # action. asyncio.create_task is unsafe here: it defers the listener
@@ -1558,7 +1614,7 @@ class UiAutomationTransport(VideoGenerationMixin):
         # Step 1 — configure settings (aspect + count) for this prompt.
         try:
             await self._configure_generation_settings(
-                page, aspect_cli, req.count, out_dir=out_dir, prompt_idx=idx
+                page, aspect_cli, req.count, model=req.model, out_dir=out_dir, prompt_idx=idx
             )
         except Exception as exc:  # noqa: BLE001 — broad on purpose; wrap into GFlowError
             return _fail(exc)
