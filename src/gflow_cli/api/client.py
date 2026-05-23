@@ -676,10 +676,11 @@ class FlowApiClient:
         invoking the single-image API still receive exactly one image (no
         silent discard).
         """
-        # Explicit annotation pins the type for SonarCloud (S5655):
-        # `dataclasses.replace`'s typing makes the result hard for analysers
-        # to narrow back to GenerateImageRequest.
-        req_one: GenerateImageRequest = _dc_replace(req, count=1)
+        # Pyright narrows `dataclasses.replace` back to GenerateImageRequest,
+        # but SonarCloud (S5655/S5890) does not — so we cast and pin the
+        # type explicitly.  The `pyright: ignore` silences the otherwise-
+        # accurate `reportUnnecessaryCast` so both analysers are happy.
+        req_one = cast("GenerateImageRequest", _dc_replace(req, count=1))  # pyright: ignore[reportUnnecessaryCast]
         images = await self._drive_images_generation(
             project_id=project_id,
             req=req_one,
@@ -757,10 +758,11 @@ class FlowApiClient:
             else:
                 resolved_project_id = project_id
 
-            # Explicit annotation pins the type for SonarCloud (S5655):
-            # `dataclasses.replace`'s typing makes the result hard for analysers
-            # to narrow back to GenerateImageRequest.
-            req_with_count: GenerateImageRequest = _dc_replace(req, count=count)
+            # Pyright narrows `dataclasses.replace` back to GenerateImageRequest,
+            # but SonarCloud (S5655/S5890) does not — so we cast and pin the
+            # type explicitly.  The `pyright: ignore` silences the otherwise-
+            # accurate `reportUnnecessaryCast` so both analysers are happy.
+            req_with_count = cast("GenerateImageRequest", _dc_replace(req, count=count))  # pyright: ignore[reportUnnecessaryCast]
             return await self._drive_images_generation(
                 project_id=resolved_project_id,
                 req=req_with_count,

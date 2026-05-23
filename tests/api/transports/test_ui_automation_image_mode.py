@@ -81,7 +81,9 @@ class TestModeSwitchCallSite:
         page = MagicMock()
         # Stable Flow project URL so _extract_project_id returns a real string
         # after _enter_editor — both the single t2i and batch paths read it.
-        page.url = "https://labs.google/fx/tools/flow/project/11111111-2222-3333-4444-555555555555?hl=en"
+        page.url = (
+            "https://labs.google/fx/tools/flow/project/11111111-2222-3333-4444-555555555555?hl=en"
+        )
         t._page = page  # type: ignore[attr-defined]
         order: list[str] = []
 
@@ -131,9 +133,7 @@ class TestModeSwitchCallSite:
         with pytest.raises(t._stop_sentinel):  # type: ignore[attr-defined]
             await t.generate_images(project_id=None, request=req)
 
-        assert "switch_to_image_mode" in order, (
-            f"_switch_to_image_mode never called; order={order}"
-        )
+        assert "switch_to_image_mode" in order, f"_switch_to_image_mode never called; order={order}"
         switch_idx = order.index("switch_to_image_mode")
         send_idx = order.index("send_prompt")
         assert switch_idx < send_idx, (
