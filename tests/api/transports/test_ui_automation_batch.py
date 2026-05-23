@@ -97,23 +97,19 @@ def test_listener_detach_is_idempotent_and_removes_handler() -> None:
 # ---------------------------------------------------------------------------
 
 
-@pytest.mark.xfail(
-    reason=(
-        "v3-3 ships with submission-order-arrival assumption (spec §5.6 "
-        "option 2). Promote this test to strict-pass when option 1 (explicit "
-        "post-attach-time filter) is implemented per spec §10 follow-up."
-    ),
-    strict=False,
-)
 def test_multi_listener_no_cross_contamination() -> None:
     """Two listeners attached on the same page, both filtered by the same
-    project_id (because we're in same-project mode). Responses arrive
-    interleaved. Each listener's captured list must contain only its own
-    prompt's responses.
+    project_id (same-project mode). Verify each captured list starts empty —
+    no entries appear before any responses are fired.
 
-    NOTE: on_response is async, so firing it synchronously via _FakePage.fire_response
-    only schedules the coroutine — captured lists will remain empty in the sync test
-    context. This test is xfailed until option 1 (post-attach-time filter) lands.
+    The cross-contamination fix (Defense A: post-submit-time filter) operates
+    inside _await_captured, not inside the listener itself. Both listeners
+    still accumulate ALL matching responses into their lists — the timestamp
+    filter in _await_captured is what ensures each prompt only counts entries
+    that arrived AFTER its own submit click.
+
+    This test verifies the listener isolation invariant: at attach time both
+    lists are empty, and the detach path cleans up correctly.
     """
     page = _FakePage()
 
@@ -126,19 +122,75 @@ def test_multi_listener_no_cross_contamination() -> None:
         project_id="proj-shared",
     )
 
-    # Both listeners attached. In the strict (option 1) world, listener 1
-    # must not see responses that arrive after listener 2 was attached.
-    # In the current (option 2) world, both listeners see all post-attach
-    # responses (project_id filter only prevents cross-PROJECT contamination).
-    # Assert the strict invariant — this will fail until option 1 lands.
+    # At attach time, both lists must be empty.
     assert len(captured_1) == 0, "captured_1 saw responses before any were fired"
     assert len(captured_2) == 0, "captured_2 saw responses before any were fired"
-    # Strict assertion: after option 1 lands, captured_1 must see ONLY
-    # responses fired before listener 2 was attached.
-    assert len(captured_1) < len(captured_2), "option 1 not yet implemented"
 
     detach_1()
     detach_2()
+
+
+@pytest.mark.asyncio
+async def test_await_captured_post_submit_time_filter_rejects_stale() -> None:
+    """Defense A regression test: _await_captured must ignore stale entries
+    (ts < submit_time) and only count fresh entries (ts >= submit_time).
+
+    Scenario mirrors the Phase 7c cross-contamination bug on profile denon82:
+    - 2 stale entries pre-fill the captured list (ts = 0.001, before attach)
+    - submit_time = 1.0 (simulates the moment the submit click fires)
+    - 1 fresh entry appended after submit (ts = 2.0)
+
+    With expected_count=1, _await_captured must return ONLY the 1 fresh entry,
+    not the 2 stale ones. straggler_window_s=0 for fast test.
+    """
+    captured: list = [
+        {"status": 200, "url": "https://x/batchGenerateImages", "body": {"media": []}, "ts": 0.001},
+        {"status": 200, "url": "https://x/batchGenerateImages", "body": {"media": []}, "ts": 0.002},
+        {"status": 200, "url": "https://x/batchGenerateImages", "body": {"fresh": True}, "ts": 2.0},
+    ]
+    submit_time = 1.0
+
+    result = await UiAutomationTransport._await_captured(
+        captured,
+        timeout_s=5.0,
+        expected_count=1,
+        submit_time=submit_time,
+        poll_interval_s=0.01,
+        straggler_window_s=0.0,
+    )
+
+    # Must return only the 1 fresh entry (ts=2.0 >= submit_time=1.0).
+    assert len(result) == 1, f"Expected 1 fresh entry, got {len(result)}: {result}"
+    # The returned dict must not contain the internal 'ts' key.
+    assert "ts" not in result[0], "ts key must be stripped from returned entries"
+    # Verify it is the fresh entry (body has "fresh": True).
+    assert result[0].get("body", {}).get("fresh") is True, (
+        f"Expected the fresh entry body, got: {result[0]}"
+    )
+
+
+@pytest.mark.asyncio
+async def test_await_captured_all_entries_pass_when_submit_time_zero() -> None:
+    """Backwards-compat: submit_time=0.0 (default) passes all entries through
+    the filter (0.0 >= 0.0 for entries without a ts key, or any ts >= 0.0).
+    Used by _capture_batch_response and legacy call sites.
+    """
+    captured: list = [
+        {"status": 200, "url": "https://x/batchGenerateImages", "body": {}, "ts": 0.001},
+        {"status": 200, "url": "https://x/batchGenerateImages", "body": {}, "ts": 0.5},
+    ]
+
+    result = await UiAutomationTransport._await_captured(
+        captured,
+        timeout_s=5.0,
+        expected_count=2,
+        submit_time=0.0,
+        poll_interval_s=0.01,
+        straggler_window_s=0.0,
+    )
+
+    assert len(result) == 2, f"Expected both entries to pass, got {len(result)}"
+    assert all("ts" not in e for e in result), "ts key must be stripped"
 
 
 # ---------------------------------------------------------------------------

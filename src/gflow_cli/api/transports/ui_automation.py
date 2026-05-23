@@ -1131,7 +1131,14 @@ class UiAutomationTransport(VideoGenerationMixin):
                     url=response.url,
                 )
                 return
-            captured.append({"status": response.status, "url": response.url, "body": body})
+            captured.append(
+                {
+                    "status": response.status,
+                    "url": response.url,
+                    "body": body,
+                    "ts": time.monotonic(),
+                }
+            )
             log.info(
                 "ui_automation.batch_response_captured",
                 status=response.status,
@@ -1160,29 +1167,65 @@ class UiAutomationTransport(VideoGenerationMixin):
         timeout_s: float = 180.0,
         *,
         expected_count: int = 1,
+        submit_time: float = 0.0,
         poll_interval_s: float = 0.5,
+        straggler_window_s: float = 2.5,
     ) -> list[dict[str, Any]]:
         """Wait for ``expected_count`` batchGenerateImages responses.
 
         Flow generates N images via N separate API calls (not one call with
-        N URLs). We poll until we have enough responses or the timeout expires.
+        N URLs). We poll until we have enough fresh responses (those whose
+        ``ts >= submit_time``) or the timeout expires.
 
-        Raises ``TimeoutError`` if no responses arrive within ``timeout_s``.
-        Returns all captured responses (may be fewer than expected_count if
-        timeout fires after at least one response).
+        **Defense A — post-submit-time filter (primary correctness fix):**
+        Each captured entry carries a ``ts`` field written by the handler at
+        append time (``time.monotonic()``). Only entries with
+        ``entry["ts"] >= submit_time`` count toward ``expected_count``.  This
+        eliminates the cross-contamination bug where a listener attached
+        *before* the submit click inherits stale responses from prior prompts
+        that arrived in the window between attach and click.
+
+        When ``submit_time`` is 0.0 (the default, used by
+        ``_capture_batch_response`` and legacy callers), all entries pass the
+        filter, preserving backwards compatibility.
+
+        **Straggler window:** after the count threshold is first reached the
+        method waits an additional ``straggler_window_s`` seconds so that any
+        slower same-submission responses (e.g. the last of a 2-image batch)
+        can arrive before the list is snapshotted. This mirrors the Worker
+        pattern (``_wait_for_n_new_images`` in the compile-growth monorepo).
+
+        Raises ``TimeoutError`` if no fresh responses arrive within
+        ``timeout_s``.  Returns the underlying response dicts (entries without
+        the ``ts`` wrapper key) for entries with ``ts >= submit_time``.
         """
         deadline = time.monotonic() + timeout_s
-        while time.monotonic() < deadline and len(captured) < expected_count:
+
+        def _fresh() -> list[dict[str, Any]]:
+            return [e for e in captured if e.get("ts", 0.0) >= submit_time]
+
+        # Poll until we have enough fresh responses or the deadline passes.
+        while time.monotonic() < deadline and len(_fresh()) < expected_count:
             await asyncio.sleep(poll_interval_s)
-        if not captured:
+
+        fresh = _fresh()
+        if not fresh:
             raise TimeoutError(f"No batchGenerateImages response within {timeout_s:.1f}s.")
-        if len(captured) < expected_count:
+        if len(fresh) < expected_count:
             log.warning(
                 "ui_automation.fewer_responses_than_expected",
-                got=len(captured),
+                got=len(fresh),
                 expected=expected_count,
             )
-        return list(captured)
+        else:
+            # Threshold reached — wait for any slow stragglers from this same
+            # submission before snapshotting the list.
+            await asyncio.sleep(straggler_window_s)
+            fresh = _fresh()
+
+        # Return entries stripped of the internal `ts` bookkeeping key so
+        # callers (_images_from_responses, tests) receive plain response dicts.
+        return [{k: v for k, v in e.items() if k != "ts"} for e in fresh]
 
     @staticmethod
     async def _capture_batch_response(
@@ -1332,8 +1375,14 @@ class UiAutomationTransport(VideoGenerationMixin):
         # attach/await eliminates that race. Project-ID filter prevents stale
         # responses from previously-visited projects accumulating in the list.
         captured, _detach = self._attach_batch_response_listener(page, project_id=nav_project_id)
+        # Record submit_time BEFORE the click so the post-submit-time filter
+        # in _await_captured can distinguish this prompt's responses from any
+        # stale entries that arrived between listener attach and the click.
+        submit_time = time.monotonic()
         await self._send_prompt(page, request.prompt, out_dir)
-        responses = await self._await_captured(captured, expected_count=request.count)
+        responses = await self._await_captured(
+            captured, expected_count=request.count, submit_time=submit_time
+        )
 
         # Collect images from ALL captured responses (Flow makes one API call
         # per image when count > 1).
@@ -1427,8 +1476,10 @@ class UiAutomationTransport(VideoGenerationMixin):
             raise
 
         # ---- Per-prompt submission phase ----
-        # pending: list of (idx, project_id, prompt_hash, captured, detach, expected_count)
-        pending: list[tuple[int, str, str, list[dict[str, Any]], Callable[[], None], int]] = []
+        # Tuple: (idx, project_id, prompt_hash, captured, detach, expected_count, submit_time)
+        pending: list[
+            tuple[int, str, str, list[dict[str, Any]], Callable[[], None], int, float]
+        ] = []
         submit_error: GFlowError | None = None
 
         def _noop_detach() -> None:
@@ -1449,6 +1500,10 @@ class UiAutomationTransport(VideoGenerationMixin):
                     prompt_idx=idx,
                 )
                 captured, detach = self._attach_batch_response_listener(page, project_id=project_id)
+                # Record submit_time BEFORE the click so _await_captured's
+                # post-submit-time filter can reject stale entries that arrived
+                # between listener attach and this click (cross-contamination fix).
+                submit_time = time.monotonic()
                 try:
                     await self._send_prompt(page, req.prompt, out_dir)
                 except Exception as exc:
@@ -1463,14 +1518,22 @@ class UiAutomationTransport(VideoGenerationMixin):
                         break
                     # continue_on_error: record a fail entry with empty captured list
                     ph = _prompt_hash_stable(req.prompt)
-                    pending.append((idx, project_id, ph, [], _noop_detach, req.count))
+                    pending.append((idx, project_id, ph, [], _noop_detach, req.count, submit_time))
                     # Still apply jitter before next prompt
                     if idx < len(prompts) - 1:
                         delay = random.uniform(*jitter_range)
                         await asyncio.sleep(delay)
                     continue
                 pending.append(
-                    (idx, project_id, _prompt_hash_stable(req.prompt), captured, detach, req.count)
+                    (
+                        idx,
+                        project_id,
+                        _prompt_hash_stable(req.prompt),
+                        captured,
+                        detach,
+                        req.count,
+                        submit_time,
+                    )
                 )
             except Exception as exc:
                 g_exc = (
@@ -1482,7 +1545,9 @@ class UiAutomationTransport(VideoGenerationMixin):
                     submit_error = g_exc
                     break
                 ph = _prompt_hash_stable(req.prompt)
-                pending.append((idx, project_id, ph, [], _noop_detach, req.count))
+                # submit_time may not be set if configure raised before attach;
+                # use 0.0 so the filter passes all entries (empty list anyway).
+                pending.append((idx, project_id, ph, [], _noop_detach, req.count, 0.0))
 
             # Jitter between prompts (not after the last).
             if idx < len(prompts) - 1:
@@ -1492,7 +1557,15 @@ class UiAutomationTransport(VideoGenerationMixin):
         # ---- Per-prompt await phase (in submission order) + cleanup invariant ----
         results: list[BatchSubmissionResult] = []
         try:
-            for idx, pid, prompt_hash, captured, detach, expected_count in pending:
+            for (  # noqa: E501 — destructure 7-tuple
+                idx,
+                pid,
+                prompt_hash,
+                captured,
+                detach,
+                expected_count,
+                prompt_submit_time,
+            ) in pending:
                 # If empty captured due to a send failure recorded above,
                 # treat as a fail result directly.
                 if detach is _noop_detach:
@@ -1514,7 +1587,11 @@ class UiAutomationTransport(VideoGenerationMixin):
                     continue
 
                 try:
-                    responses = await self._await_captured(captured, expected_count=expected_count)
+                    responses = await self._await_captured(
+                        captured,
+                        expected_count=expected_count,
+                        submit_time=prompt_submit_time,
+                    )
                     detach()
                     if len(responses) < expected_count:
                         fail_result = BatchSubmissionResult(
@@ -1588,7 +1665,8 @@ class UiAutomationTransport(VideoGenerationMixin):
                         break
         finally:
             # Cleanup invariant: every pending listener gets detached exactly once.
-            for *_, detach_fn, _ in pending:  # type: ignore[assignment]
+            # Tuple layout: (idx, pid, ph, captured, detach_fn, expected_count, submit_time)
+            for _idx, _pid, _ph, _cap, detach_fn, _ec, _st in pending:  # type: ignore[assignment]
                 try:
                     detach_fn()
                 except Exception:  # noqa: BLE001 — idempotent on already-removed
