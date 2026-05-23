@@ -11,22 +11,10 @@ import hashlib
 from pathlib import Path
 
 import pytest
-import structlog
 from structlog.testing import LogCapture
 
 from gflow_cli.api.transports.ui_automation import UiAutomationTransport
 from gflow_cli.image_batch import BatchPromptItem, run_manifest_image_batch
-
-
-@pytest.fixture
-def log_capture():
-    """Capture structlog events; reset config on teardown to avoid test bleed."""
-    capture = LogCapture()
-    structlog.configure(processors=[capture])
-    try:
-        yield capture
-    finally:
-        structlog.reset_defaults()
 
 
 def _make_fake_image() -> object:
@@ -96,7 +84,7 @@ def _make_client_factory(
 @pytest.mark.asyncio
 async def test_emits_submission_attempt_per_row(
     tmp_path: Path,
-    log_capture: LogCapture,
+    install_log_capture: LogCapture,
 ) -> None:
     prompts = (
         BatchPromptItem(text="cat", count=1, aspect_ratio="1:1", model="nano2"),
@@ -113,7 +101,9 @@ async def test_emits_submission_attempt_per_row(
         jitter_range=(0.0, 0.0),
         client_factory=_make_client_factory(),
     )
-    attempts = [e for e in log_capture.entries if e["event"] == "image_batch.submission_attempt"]
+    attempts = [
+        e for e in install_log_capture.entries if e["event"] == "image_batch.submission_attempt"
+    ]  # noqa: E501
     assert len(attempts) == 2
     assert attempts[0]["row_idx"] == 0
     assert attempts[1]["row_idx"] == 1
@@ -124,7 +114,7 @@ async def test_emits_submission_attempt_per_row(
 @pytest.mark.asyncio
 async def test_emits_row_completed_per_row(
     tmp_path: Path,
-    log_capture: LogCapture,
+    install_log_capture: LogCapture,
 ) -> None:
     """Each ok result produces an image_batch.row_completed event with
     the new schema (prompt_hash, project_id, outcome fields)."""
@@ -187,7 +177,9 @@ async def test_emits_row_completed_per_row(
         jitter_range=(0.0, 0.0),
         client_factory=_ClientWithImage,
     )
-    completed = [e for e in log_capture.entries if e["event"] == "image_batch.row_completed"]
+    completed = [
+        e for e in install_log_capture.entries if e["event"] == "image_batch.row_completed"
+    ]  # noqa: E501
     assert len(completed) >= 1
     assert completed[0]["outcome"] == "ok"
     assert "sha256_prefix" in completed[0]

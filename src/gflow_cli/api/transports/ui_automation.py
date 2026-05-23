@@ -1449,7 +1449,18 @@ class UiAutomationTransport(VideoGenerationMixin):
         jitter_range: tuple[float, float],
         continue_on_error: bool,
     ) -> list[BatchSubmissionResult]:
-        """Serialized body of generate_images_batch — called under self._generate_lock."""
+        """Serialized body of generate_images_batch — called under self._generate_lock.
+
+        Strictly serial submission (Worker pattern): each prompt's full
+        lifecycle (configure → attach → submit → await → detach → parse)
+        completes before the next prompt's listener is attached.  Only one
+        listener is active at a time, making cross-contamination structurally
+        impossible even when Flow's response payload carries no per-submission
+        identifier.
+
+        The editor stays mounted for the full batch (same-project invariant
+        intact) — only the submit/await cycle is serial.
+        """
         page: Any = self._page  # type: ignore[assignment]
         out_dir = self._out_dir
 
@@ -1475,22 +1486,15 @@ class UiAutomationTransport(VideoGenerationMixin):
             )
             raise
 
-        # ---- Per-prompt submission phase ----
-        # Tuple: (idx, project_id, prompt_hash, captured, detach, expected_count, submit_time)
-        pending: list[
-            tuple[int, str, str, list[dict[str, Any]], Callable[[], None], int, float]
-        ] = []
+        # ---- Serial per-prompt cycle: configure → attach → submit → await → detach ----
+        results: list[BatchSubmissionResult] = []
         submit_error: GFlowError | None = None
-
-        def _noop_detach() -> None:
-            pass
 
         for idx, req in enumerate(prompts):
             aspect_cli = _aspect_cli_from_enum(req.aspect)
-            captured: list[dict[str, Any]] = []
+            prompt_hash = _prompt_hash_stable(req.prompt)
 
-            detach: Callable[[], None] = _noop_detach  # overwritten below on success
-
+            # Step 1 — configure settings (aspect + count) for this prompt.
             try:
                 await self._configure_generation_settings(
                     page,
@@ -1499,178 +1503,152 @@ class UiAutomationTransport(VideoGenerationMixin):
                     out_dir=out_dir,
                     prompt_idx=idx,
                 )
-                captured, detach = self._attach_batch_response_listener(page, project_id=project_id)
-                # Record submit_time BEFORE the click so _await_captured's
-                # post-submit-time filter can reject stale entries that arrived
-                # between listener attach and this click (cross-contamination fix).
-                submit_time = time.monotonic()
-                try:
-                    await self._send_prompt(page, req.prompt, out_dir)
-                except Exception as exc:
-                    detach()
-                    g_exc = (
-                        exc
-                        if isinstance(exc, GFlowError)
-                        else GFlowError(detail=str(exc), route="generate_images_batch")
-                    )
-                    if not continue_on_error:
-                        submit_error = g_exc
-                        break
-                    # continue_on_error: record a fail entry with empty captured list
-                    ph = _prompt_hash_stable(req.prompt)
-                    pending.append((idx, project_id, ph, [], _noop_detach, req.count, submit_time))
-                    # Still apply jitter before next prompt
-                    if idx < len(prompts) - 1:
-                        delay = random.uniform(*jitter_range)
-                        await asyncio.sleep(delay)
-                    continue
-                pending.append(
-                    (
-                        idx,
-                        project_id,
-                        _prompt_hash_stable(req.prompt),
-                        captured,
-                        detach,
-                        req.count,
-                        submit_time,
-                    )
-                )
             except Exception as exc:
                 g_exc = (
                     exc
                     if isinstance(exc, GFlowError)
                     else GFlowError(detail=str(exc), route="generate_images_batch")
                 )
+                results.append(
+                    BatchSubmissionResult(
+                        status="fail",
+                        project_id=project_id,
+                        prompt_idx=idx,
+                        prompt_hash=prompt_hash,
+                        images=(),
+                        error=g_exc,
+                    )
+                )
                 if not continue_on_error:
                     submit_error = g_exc
                     break
-                ph = _prompt_hash_stable(req.prompt)
-                # submit_time may not be set if configure raised before attach;
-                # use 0.0 so the filter passes all entries (empty list anyway).
-                pending.append((idx, project_id, ph, [], _noop_detach, req.count, 0.0))
+                if idx < len(prompts) - 1:
+                    await asyncio.sleep(random.uniform(*jitter_range))
+                continue
 
-            # Jitter between prompts (not after the last).
-            if idx < len(prompts) - 1:
-                delay = random.uniform(*jitter_range)
-                await asyncio.sleep(delay)
+            # Step 2 — attach a fresh listener JUST for this prompt.
+            # Attaching after configure ensures settings-panel clicks never
+            # land in the listener window. Detach happens immediately after
+            # _await_captured returns so no two listeners are ever live at once.
+            captured, detach = self._attach_batch_response_listener(page, project_id=project_id)
+            # Record submit_time BEFORE the click — defense-in-depth: the
+            # post-submit-time filter in _await_captured rejects any stale
+            # entries that slipped into the freshly-attached listener before
+            # the click fired (e.g. a prior-prompt straggler arriving in the
+            # same asyncio tick as attach).
+            submit_time = time.monotonic()
 
-        # ---- Per-prompt await phase (in submission order) + cleanup invariant ----
-        results: list[BatchSubmissionResult] = []
-        try:
-            for (  # noqa: E501 — destructure 7-tuple
-                idx,
-                pid,
-                prompt_hash,
-                captured,
-                detach,
-                expected_count,
-                prompt_submit_time,
-            ) in pending:
-                # If empty captured due to a send failure recorded above,
-                # treat as a fail result directly.
-                if detach is _noop_detach:
-                    # Send-fail entry recorded with noop detach —
-                    # no responses to await, fail directly.
-                    results.append(
-                        BatchSubmissionResult(
-                            status="fail",
-                            project_id=pid,
-                            prompt_idx=idx,
-                            prompt_hash=prompt_hash,
-                            images=(),
-                            error=GFlowError(
-                                detail="prompt submission failed",
-                                route="generate_images_batch",
-                            ),
-                        )
+            # Step 3 — submit the prompt.
+            try:
+                await self._send_prompt(page, req.prompt, out_dir)
+            except Exception as exc:
+                detach()
+                g_exc = (
+                    exc
+                    if isinstance(exc, GFlowError)
+                    else GFlowError(detail=str(exc), route="generate_images_batch")
+                )
+                results.append(
+                    BatchSubmissionResult(
+                        status="fail",
+                        project_id=project_id,
+                        prompt_idx=idx,
+                        prompt_hash=prompt_hash,
+                        images=(),
+                        error=g_exc,
                     )
-                    continue
+                )
+                if not continue_on_error:
+                    submit_error = g_exc
+                    break
+                if idx < len(prompts) - 1:
+                    await asyncio.sleep(random.uniform(*jitter_range))
+                continue
 
-                try:
-                    responses = await self._await_captured(
-                        captured,
-                        expected_count=expected_count,
-                        submit_time=prompt_submit_time,
+            # Step 4 — await THIS prompt's responses, then detach immediately.
+            try:
+                responses = await self._await_captured(
+                    captured,
+                    expected_count=req.count,
+                    submit_time=submit_time,
+                )
+            except Exception as exc:
+                detach()
+                g_exc = (
+                    exc
+                    if isinstance(exc, GFlowError)
+                    else GFlowError(detail=str(exc), route="generate_images_batch")
+                )
+                results.append(
+                    BatchSubmissionResult(
+                        status="fail",
+                        project_id=project_id,
+                        prompt_idx=idx,
+                        prompt_hash=prompt_hash,
+                        images=(),
+                        error=g_exc,
                     )
-                    detach()
-                    if len(responses) < expected_count:
-                        fail_result = BatchSubmissionResult(
-                            status="fail",
-                            project_id=pid,
-                            prompt_idx=idx,
-                            prompt_hash=prompt_hash,
-                            images=(),
-                            error=GFlowError(
-                                detail=(
-                                    f"_await_captured timed out: "
-                                    f"got {len(responses)}/{expected_count}"
-                                ),
-                                route="generate_images_batch",
-                            ),
-                        )
-                        results.append(fail_result)
-                        if not continue_on_error:
-                            submit_error = fail_result.error
-                            break
-                        continue
-                    images, first_error_status, _ = _images_from_responses(responses)
-                    if not images:
-                        fail_result = BatchSubmissionResult(
-                            status="fail",
-                            project_id=pid,
-                            prompt_idx=idx,
-                            prompt_hash=prompt_hash,
-                            images=(),
-                            error=GFlowError(
-                                detail=(
-                                    f"no parseable images (first_error_status={first_error_status})"
-                                ),
-                                route="generate_images_batch",
-                            ),
-                        )
-                        results.append(fail_result)
-                        if not continue_on_error:
-                            submit_error = fail_result.error
-                            break
-                        continue
+                )
+                if not continue_on_error:
+                    submit_error = g_exc
+                    break
+                if idx < len(prompts) - 1:
+                    await asyncio.sleep(random.uniform(*jitter_range))
+                continue
+
+            # Detach immediately — next prompt gets its own fresh listener.
+            detach()
+
+            # Step 5 — parse responses.
+            if len(responses) < req.count:
+                fail_result = BatchSubmissionResult(
+                    status="fail",
+                    project_id=project_id,
+                    prompt_idx=idx,
+                    prompt_hash=prompt_hash,
+                    images=(),
+                    error=GFlowError(
+                        detail=f"_await_captured timed out: got {len(responses)}/{req.count}",
+                        route="generate_images_batch",
+                    ),
+                )
+                results.append(fail_result)
+                if not continue_on_error:
+                    submit_error = fail_result.error
+                    break
+            else:
+                images, first_error_status, _ = _images_from_responses(responses)
+                if not images:
+                    fail_result = BatchSubmissionResult(
+                        status="fail",
+                        project_id=project_id,
+                        prompt_idx=idx,
+                        prompt_hash=prompt_hash,
+                        images=(),
+                        error=GFlowError(
+                            detail=f"no parseable images (first_error_status={first_error_status})",
+                            route="generate_images_batch",
+                        ),
+                    )
+                    results.append(fail_result)
+                    if not continue_on_error:
+                        submit_error = fail_result.error
+                        break
+                else:
                     results.append(
                         BatchSubmissionResult(
                             status="ok",
-                            project_id=pid,
+                            project_id=project_id,
                             prompt_idx=idx,
                             prompt_hash=prompt_hash,
                             images=tuple(images),
                             error=None,
                         )
                     )
-                except Exception as exc:
-                    detach()
-                    g_exc = (
-                        exc
-                        if isinstance(exc, GFlowError)
-                        else GFlowError(detail=str(exc), route="generate_images_batch")
-                    )
-                    results.append(
-                        BatchSubmissionResult(
-                            status="fail",
-                            project_id=pid,
-                            prompt_idx=idx,
-                            prompt_hash=prompt_hash,
-                            images=(),
-                            error=g_exc,
-                        )
-                    )
-                    if not continue_on_error:
-                        submit_error = g_exc
-                        break
-        finally:
-            # Cleanup invariant: every pending listener gets detached exactly once.
-            # Tuple layout: (idx, pid, ph, captured, detach_fn, expected_count, submit_time)
-            for _idx, _pid, _ph, _cap, detach_fn, _ec, _st in pending:  # type: ignore[assignment]
-                try:
-                    detach_fn()
-                except Exception:  # noqa: BLE001 — idempotent on already-removed
-                    pass
+
+            # Jitter between iterations (anti-bot cadence) — not after the last.
+            if idx < len(prompts) - 1:
+                await asyncio.sleep(random.uniform(*jitter_range))
 
         # Fail-fast: surface partial-results salvage so orchestrator can download
         # already-paid-for images before re-raising.

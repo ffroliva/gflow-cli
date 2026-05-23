@@ -1,8 +1,15 @@
 """Unit tests for UiAutomationTransport.generate_images_batch.
 
-The highest-stakes test is the multi-listener concurrency invariant —
-council Finding T1. With N listeners active simultaneously on the same
-Page, each captures into its own list, and we assert no cross-contamination.
+The serial-submission pattern (Worker pattern) ensures only one listener is
+active at a time, making cross-contamination structurally impossible.  Key
+invariants tested:
+
+- Each prompt's detach_fn is called BEFORE the next prompt's
+  _attach_batch_response_listener (no two listeners ever simultaneously active).
+- _enter_editor and _dismiss_blocking_overlays are called exactly ONCE per batch.
+- Jitter sleep is called N-1 times for N prompts.
+- continue_on_error semantics are preserved.
+- BatchPartialError carries salvageable ok results on fail-fast path.
 """
 
 from __future__ import annotations
@@ -93,41 +100,39 @@ def test_listener_detach_is_idempotent_and_removes_handler() -> None:
 
 
 # ---------------------------------------------------------------------------
-# Task 3.5 — multi-listener concurrency invariant (xfail per plan)
+# Task 3.5 — serial submission: no two listeners ever simultaneously active
 # ---------------------------------------------------------------------------
 
 
-def test_multi_listener_no_cross_contamination() -> None:
-    """Two listeners attached on the same page, both filtered by the same
-    project_id (same-project mode). Verify each captured list starts empty —
-    no entries appear before any responses are fired.
-
-    The cross-contamination fix (Defense A: post-submit-time filter) operates
-    inside _await_captured, not inside the listener itself. Both listeners
-    still accumulate ALL matching responses into their lists — the timestamp
-    filter in _await_captured is what ensures each prompt only counts entries
-    that arrived AFTER its own submit click.
-
-    This test verifies the listener isolation invariant: at attach time both
-    lists are empty, and the detach path cleans up correctly.
+def test_no_two_listeners_simultaneously_active() -> None:
+    """Serial pattern: attach → detach → attach.  After detach_1(), zero handlers
+    remain on the page; only then does attach_2 register a new handler.
+    This is the structural guarantee that prevents cross-contamination —
+    at no point are two listeners mounted at the same time.
     """
     page = _FakePage()
 
     captured_1, detach_1 = UiAutomationTransport._attach_batch_response_listener(
         page,  # type: ignore[arg-type]
-        project_id="proj-shared",
+        project_id="proj-serial",
     )
+    assert len(page.handlers) == 1, "exactly one handler after first attach"
+
+    # Detach first listener — simulates end of prompt-0 cycle.
+    detach_1()
+    assert len(page.handlers) == 0, "zero handlers after detach_1 (serial invariant)"
+
+    # Now attach second listener — simulates start of prompt-1 cycle.
     captured_2, detach_2 = UiAutomationTransport._attach_batch_response_listener(
         page,  # type: ignore[arg-type]
-        project_id="proj-shared",
+        project_id="proj-serial",
     )
+    assert len(page.handlers) == 1, "exactly one handler after second attach"
+    assert len(captured_1) == 0, "captured_1 must be empty (no responses fired)"
+    assert len(captured_2) == 0, "captured_2 must be empty (no responses fired)"
 
-    # At attach time, both lists must be empty.
-    assert len(captured_1) == 0, "captured_1 saw responses before any were fired"
-    assert len(captured_2) == 0, "captured_2 saw responses before any were fired"
-
-    detach_1()
     detach_2()
+    assert len(page.handlers) == 0
 
 
 @pytest.mark.asyncio
@@ -209,6 +214,8 @@ async def test_generate_images_batch_happy_path(monkeypatch: pytest.MonkeyPatch)
     - results returned in submission order
     - every result carries the same project_id
     - every result has the correct prompt_idx (0, 1, 2)
+    - serial invariant: each prompt's detach_fn is called BEFORE the next
+      prompt's _attach_batch_response_listener (no two listeners ever active)
     """
     import gflow_cli.api.transports.ui_automation as uia_mod
     from gflow_cli.api.image import Aspect, GenerateImageRequest, Model
@@ -226,15 +233,19 @@ async def test_generate_images_batch_happy_path(monkeypatch: pytest.MonkeyPatch)
     transport._configure_generation_settings = AsyncMock()  # type: ignore[attr-defined]
     transport._send_prompt = AsyncMock()  # type: ignore[attr-defined]
 
-    # Mock the listener to return 3 distinct (captured, detach) pairs.
+    # event_log records attach/detach events in call order so we can verify
+    # the serial invariant: detach(N) always precedes attach(N+1).
+    event_log: list[str] = []
+
     captures: list[list] = [[], [], []]
-    detaches = [MagicMock(), MagicMock(), MagicMock()]
     listener_calls = [0]
 
     def fake_listener(page, *, project_id=None):  # type: ignore[no-untyped-def]
         idx = listener_calls[0]
         listener_calls[0] += 1
-        return captures[idx], detaches[idx]
+        event_log.append(f"attach_{idx}")
+        detach_mock = MagicMock(side_effect=lambda: event_log.append(f"detach_{idx}"))
+        return captures[idx], detach_mock
 
     monkeypatch.setattr(
         UiAutomationTransport,
@@ -302,9 +313,16 @@ async def test_generate_images_batch_happy_path(monkeypatch: pytest.MonkeyPatch)
     assert [r.prompt_idx for r in results] == [0, 1, 2]
     assert all(r.status == "ok" for r in results)
 
-    # Detach was called for every listener:
-    for d in detaches:
-        d.assert_called()
+    # Serial invariant: detach(N) must appear in event_log BEFORE attach(N+1).
+    # Expected sequence: attach_0, detach_0, attach_1, detach_1, attach_2, detach_2
+    assert event_log == [
+        "attach_0",
+        "detach_0",
+        "attach_1",
+        "detach_1",
+        "attach_2",
+        "detach_2",
+    ], f"Serial attach/detach order violated: {event_log}"
 
 
 # ---------------------------------------------------------------------------
@@ -771,21 +789,15 @@ async def test_batch_setup_failure_propagates_no_listener_attached(
 
 
 @pytest.mark.asyncio
-async def test_await_loop_does_not_short_circuit_on_in_flight_submission(
+async def test_serial_pattern_await_captured_always_called(
     monkeypatch: pytest.MonkeyPatch,
 ) -> None:
-    """Regression: await loop must NOT short-circuit a successfully-submitted prompt
-    whose captured list is still empty at the start of the await phase (responses
-    in-flight). The sentinel `detach is _noop_detach` must be used, not
-    `not captured and submit_error is None`.
-
-    Setup: 1 prompt, submits successfully (real lambda detach, NOT _noop_detach).
-    At the start of the await loop, captured is EMPTY (simulates race / in-flight).
-    _await_captured is mocked to populate and return the expected 1 response.
-
-    Assertions:
-    - _await_captured IS called (not short-circuited).
-    - result.status == "ok".
+    """Serial pattern regression: _await_captured must be called for every
+    successfully-submitted prompt, including when captured is still empty at
+    call time (responses in-flight).  In the serial pattern there is no
+    'await phase' separate from the submit phase — _await_captured is called
+    inline immediately after _send_prompt, so there is no short-circuit risk.
+    This test verifies the call is made and the result is ok.
     """
     import gflow_cli.api.transports.ui_automation as uia_mod
     from gflow_cli.api.image import Aspect, GenerateImageRequest, Model
@@ -793,7 +805,7 @@ async def test_await_loop_does_not_short_circuit_on_in_flight_submission(
     transport = UiAutomationTransport.__new__(UiAutomationTransport)
     transport._setup_done = True  # type: ignore[attr-defined]
     transport._page = MagicMock()  # type: ignore[attr-defined]
-    transport._page.url = "https://labs.google/fx/tools/flow/project/PROJ-RACE"
+    transport._page.url = "https://labs.google/fx/tools/flow/project/PROJ-SERIAL"
     transport._out_dir = None  # type: ignore[attr-defined]
     transport._generate_lock = __import__("asyncio").Lock()  # type: ignore[attr-defined]
     transport._enter_editor = AsyncMock()  # type: ignore[attr-defined]
@@ -803,7 +815,6 @@ async def test_await_loop_does_not_short_circuit_on_in_flight_submission(
 
     # captured starts EMPTY — simulates in-flight responses not yet arrived.
     in_flight_captured: list = []
-    # Use a plain lambda as the "real" detach; identity-distinct from _noop_detach.
     real_detach = MagicMock()
 
     def fake_listener(page, *, project_id=None):  # type: ignore[no-untyped-def]
@@ -818,7 +829,7 @@ async def test_await_loop_does_not_short_circuit_on_in_flight_submission(
 
     async def fake_await(captured, expected_count=1, **_kwargs):  # type: ignore[no-untyped-def]
         await_captured_called.append(True)
-        # Simulate responses arriving during the await: return 1 response.
+        # Simulate responses arriving during the await.
         return [{"status": 200, "url": "https://x/batchGenerateImages", "body": {}}]
 
     monkeypatch.setattr(UiAutomationTransport, "_await_captured", staticmethod(fake_await))
@@ -827,7 +838,7 @@ async def test_await_loop_does_not_short_circuit_on_in_flight_submission(
     monkeypatch.setattr(
         uia_mod, "_images_from_responses", lambda r: ([fake_img] * len(r), None, "")
     )
-    monkeypatch.setattr(uia_mod, "_extract_project_id", lambda url: "PROJ-RACE")
+    monkeypatch.setattr(uia_mod, "_extract_project_id", lambda url: "PROJ-SERIAL")
     monkeypatch.setattr(uia_mod.asyncio, "sleep", AsyncMock())
     monkeypatch.setattr(uia_mod.random, "uniform", lambda a, b: 0.0)
 
@@ -839,14 +850,9 @@ async def test_await_loop_does_not_short_circuit_on_in_flight_submission(
         prompts=prompts, jitter_range=(0.0, 0.0), continue_on_error=False
     )
 
-    # _await_captured must have been called — not short-circuited by the old race condition.
-    assert await_captured_called, (
-        "_await_captured was never called: the await loop short-circuited an in-flight submission"
-    )
+    assert await_captured_called, "_await_captured was never called"
     assert len(results) == 1
-    assert results[0].status == "ok", (
-        f"Expected status='ok' for in-flight submission, got status='{results[0].status}'"
-    )
+    assert results[0].status == "ok", f"Expected ok, got {results[0].status}"
     real_detach.assert_called()
 
 
