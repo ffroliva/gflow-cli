@@ -1252,237 +1252,299 @@ class TestDismissBlockingOverlays:
 # ---------------------------------------------------------------------------
 
 
-def _make_count_page(
+def _make_selected_tab_page(
+    selected_text: str | None,
     *,
-    selected_tab_text: str | None = None,
-    selected_tab_visible: bool = True,
-    settings_btn_text: str | None = None,
-    count_tabs_visible: bool = True,
+    visible: bool = True,
 ) -> MagicMock:
-    """Build a fake page for _read_displayed_count and _set_count tests.
+    """Minimal fake page wiring [aria-selected="true"] to ``selected_text``."""
+    page = MagicMock()
+    page.wait_for_timeout = AsyncMock()
+    page.keyboard = MagicMock()
+    page.keyboard.press = AsyncMock()
 
-    ``selected_tab_text`` — text returned by the ``[aria-selected="true"]`` locator.
-    ``settings_btn_text`` — text returned by a GEN_SETTINGS_BUTTON selector.
-    ``count_tabs_visible`` — whether count tabs (``x1``/``x2``) are visible
-      (controls _is_settings_panel_open).
+    def _locator(sel: str) -> MagicMock:
+        loc = MagicMock()
+        wrapper = MagicMock()
+        wrapper.first = loc
+        tab_vis = selected_text is not None and visible
+        loc.is_visible = AsyncMock(return_value=tab_vis)
+        loc.text_content = AsyncMock(return_value=selected_text)
+        loc.wait_for = AsyncMock()
+        loc.click = AsyncMock()
+        return wrapper
+
+    page.locator = MagicMock(side_effect=_locator)
+    return page
+
+
+def _make_tablist_page(
+    *,
+    tab_count: int = 4,
+    selected_idx: int = 0,
+    selected_text: str = "1",
+    readback_after_click: str | None = None,
+) -> tuple[MagicMock, list[int]]:
+    """Build a fake page with a ``[role="tablist"] [role="tab"]`` locator chain.
+
+    Returns ``(page, clicked_indices)`` where ``clicked_indices`` accumulates
+    the nth-index of every ``click()`` call.
+
+    ``selected_text`` is returned by ``[aria-selected="true"]`` before any click.
+    ``readback_after_click`` is returned after the first click (simulates DOM update).
     """
     page = MagicMock()
     page.wait_for_timeout = AsyncMock()
     page.keyboard = MagicMock()
     page.keyboard.press = AsyncMock()
 
-    # Track which tab labels were clicked.
-    clicked_labels: list[str] = []
+    clicked_indices: list[int] = []
+    click_count_store: list[int] = [0]
+
+    # Build per-tab mocks (0-indexed).
+    tab_mocks: list[MagicMock] = []
+    for i in range(tab_count):
+        t = MagicMock()
+        t.is_visible = AsyncMock(return_value=True)
+        t.wait_for = AsyncMock()
+        tab_idx = i  # capture
+
+        async def _click_tab(idx: int = tab_idx, **kw: object) -> None:
+            clicked_indices.append(idx)
+            click_count_store[0] += 1
+
+        t.click = AsyncMock(side_effect=_click_tab)
+        tab_mocks.append(t)
 
     def _locator(sel: str) -> MagicMock:
-        loc = MagicMock()
         wrapper = MagicMock()
-        wrapper.first = loc
+
+        if '[role="tablist"]' in sel:
+            # Return a locator whose .count() == tab_count and .nth(i) == tab_mocks[i].
+            tab_list_loc = MagicMock()
+            tab_list_loc.count = AsyncMock(return_value=tab_count)
+            tab_list_loc.first = tab_mocks[0]
+
+            def _nth(i: int) -> MagicMock:
+                return tab_mocks[i] if 0 <= i < tab_count else MagicMock()
+
+            tab_list_loc.nth = MagicMock(side_effect=_nth)
+            return tab_list_loc  # NOTE: returned directly (not wrapper.first) for locator chains
 
         if 'aria-selected="true"' in sel:
-            tab_is_vis = selected_tab_text is not None and selected_tab_visible
-            loc.is_visible = AsyncMock(return_value=tab_is_vis)
-            loc.text_content = AsyncMock(return_value=selected_tab_text)
-            loc.wait_for = AsyncMock()
-            loc.click = AsyncMock()
-        elif "crop_" in sel:
-            # GEN_SETTINGS_BUTTON selector
-            loc.is_visible = AsyncMock(return_value=(settings_btn_text is not None))
-            loc.text_content = AsyncMock(return_value=settings_btn_text)
-            loc.wait_for = AsyncMock()
-            loc.click = AsyncMock()
-        elif ":text-is(" in sel:
-            # Count tab or aspect ratio tab
-            # Extract the label from the selector string like [role="tab"]:text-is("x1")
-            import re
+            loc = MagicMock()
+            wrapper.first = loc
+            loc.is_visible = AsyncMock(return_value=True)
 
-            m = re.search(r':text-is\("([^"]+)"\)', sel)
-            label = m.group(1) if m else ""
-            is_count_tab = label in ("x1", "x2", "x3", "x4", "1x", "2x", "3x", "4x")
-            if is_count_tab and count_tabs_visible:
-                loc.is_visible = AsyncMock(return_value=True)
-                loc.wait_for = AsyncMock()
+            async def _text(timeout: int = 500) -> str | None:
+                if readback_after_click is not None and click_count_store[0] > 0:
+                    return readback_after_click
+                return selected_text
 
-                async def _click_tab(label: str = label, **kwargs: object) -> None:
-                    clicked_labels.append(label)
+            loc.text_content = AsyncMock(side_effect=_text)
+            return wrapper
 
-                loc.click = AsyncMock(side_effect=_click_tab)
-            else:
-                loc.is_visible = AsyncMock(return_value=False)
-                loc.wait_for = AsyncMock(side_effect=RuntimeError("not visible"))
-                loc.click = AsyncMock()
-        else:
-            loc.is_visible = AsyncMock(return_value=False)
-            loc.wait_for = AsyncMock(side_effect=RuntimeError("not visible"))
-            loc.click = AsyncMock()
+        if "button[aria-selected]" in sel:
+            loc = MagicMock()
+            wrapper.first = loc
+            loc.is_visible = AsyncMock(return_value=True)
+            return wrapper
 
+        # Default — invisible/unmatched.
+        loc = MagicMock()
+        wrapper.first = loc
+        loc.is_visible = AsyncMock(return_value=False)
+        loc.count = AsyncMock(return_value=0)
         return wrapper
 
     page.locator = MagicMock(side_effect=_locator)
-    page._clicked_labels = clicked_labels  # type: ignore[attr-defined]
-    return page
+    page._clicked_indices = clicked_indices  # type: ignore[attr-defined]
+    return page, clicked_indices
+
+
+# ---------------------------------------------------------------------------
+# _extract_count_digit — locale-agnostic digit extraction
+# ---------------------------------------------------------------------------
+
+
+class TestExtractCountDigit:
+    """_extract_count_digit parses count from any locale rendering."""
+
+    @pytest.mark.parametrize(
+        ("text", "expected"),
+        [
+            # English variants
+            ("1", 1),
+            ("x1", 1),
+            ("1x", 1),
+            ("1 image", 1),
+            ("2 images", 2),
+            ("x3", 3),
+            ("4x", 4),
+            # Portuguese variants (live-observed on denon82)
+            ("1 imagem", 1),
+            ("2 imagens", 2),
+            # No digit — icon-ligature artefact
+            ("imageImagem", None),
+            ("", None),
+        ],
+    )
+    def test_extract(self, text: str, expected: int | None) -> None:
+        from gflow_cli.api.transports.ui_automation import _extract_count_digit
+
+        assert _extract_count_digit(text) == expected
+
+
+# ---------------------------------------------------------------------------
+# Unit 3.13 — _read_displayed_count + _set_count retry logic
+# ---------------------------------------------------------------------------
 
 
 class TestReadDisplayedCount:
-    """_read_displayed_count returns text from the selected tab or trigger button."""
+    """_read_displayed_count returns digit from aria-selected tab, locale-agnostically."""
 
     @pytest.mark.asyncio
-    async def test_returns_selected_tab_text_when_panel_open(self) -> None:
-        """Source 1 — selected tab text returned when panel is open."""
-        page = _make_count_page(selected_tab_text="x2", selected_tab_visible=True)
+    async def test_english_x1_returns_1(self) -> None:
+        """'x1' → 1 (English locale)."""
+        page = _make_selected_tab_page("x1")
         result = await UiAutomationTransport._read_displayed_count(page)  # type: ignore[attr-defined]
-        assert result == "x2"
+        assert result == 1
 
     @pytest.mark.asyncio
-    async def test_falls_back_to_settings_button_text(self) -> None:
-        """Source 2 — settings button text used when selected tab not visible."""
-        page = _make_count_page(
-            selected_tab_text=None,
-            settings_btn_text="crop_9_16x1",
-        )
+    async def test_english_1x_returns_1(self) -> None:
+        """'1x' → 1 (alternate English rendering)."""
+        page = _make_selected_tab_page("1x")
         result = await UiAutomationTransport._read_displayed_count(page)  # type: ignore[attr-defined]
-        assert result == "crop_9_16x1"
+        assert result == 1
 
     @pytest.mark.asyncio
-    async def test_returns_none_when_nothing_readable(self) -> None:
-        """Returns None when neither source yields text."""
-        page = _make_count_page(selected_tab_text=None, settings_btn_text=None)
+    async def test_english_1_image_returns_1(self) -> None:
+        """'1 image' → 1."""
+        page = _make_selected_tab_page("1 image")
+        result = await UiAutomationTransport._read_displayed_count(page)  # type: ignore[attr-defined]
+        assert result == 1
+
+    @pytest.mark.asyncio
+    async def test_portuguese_1_imagem_returns_1(self) -> None:
+        """'1 imagem' → 1 (Portuguese locale)."""
+        page = _make_selected_tab_page("1 imagem")
+        result = await UiAutomationTransport._read_displayed_count(page)  # type: ignore[attr-defined]
+        assert result == 1
+
+    @pytest.mark.asyncio
+    async def test_portuguese_2_imagens_returns_2(self) -> None:
+        """'2 imagens' → 2 (Portuguese locale)."""
+        page = _make_selected_tab_page("2 imagens")
+        result = await UiAutomationTransport._read_displayed_count(page)  # type: ignore[attr-defined]
+        assert result == 2
+
+    @pytest.mark.asyncio
+    async def test_icon_ligature_artefact_returns_none(self) -> None:
+        """'imageImagem' (icon ligature + pt-BR label) → None, not a crash."""
+        page = _make_selected_tab_page("imageImagem")
+        result = await UiAutomationTransport._read_displayed_count(page)  # type: ignore[attr-defined]
+        assert result is None
+
+    @pytest.mark.asyncio
+    async def test_returns_none_when_tab_not_visible(self) -> None:
+        """Returns None when aria-selected tab is invisible and button fallback also absent."""
+        page = _make_selected_tab_page(None)
         result = await UiAutomationTransport._read_displayed_count(page)  # type: ignore[attr-defined]
         assert result is None
 
 
 class TestSetCountRetry:
-    """_set_count uses read-back verify with retry; raises after 3 failed attempts."""
+    """_set_count uses position-based click with digit read-back; raises after 3 failed attempts."""
 
     @pytest.mark.asyncio
     async def test_returns_early_when_count_already_matches(self) -> None:
         """If the displayed count already matches desired, no tab click is made."""
-        # Panel open, selected tab shows "x2", we want count=2.
-        page = _make_count_page(
-            selected_tab_text="x2",
-            selected_tab_visible=True,
-            count_tabs_visible=True,
-        )
-        # No RuntimeError should be raised.
-        await UiAutomationTransport._set_count(page, 2)  # type: ignore[attr-defined]
-        # No count tab should have been clicked since it already matched.
-        assert page._clicked_labels == []  # type: ignore[attr-defined]
+        # Panel open, selected tab shows "2" → count=2 already, no click.
+        page, clicked = _make_tablist_page(selected_text="2")
+        with patch.object(
+            UiAutomationTransport,
+            "_is_settings_panel_open",
+            new=AsyncMock(return_value=True),
+        ):
+            await UiAutomationTransport._set_count(page, 2)  # type: ignore[attr-defined]
+        assert clicked == []
+
+    @pytest.mark.asyncio
+    async def test_position_click_nth_index(self) -> None:
+        """_set_count(3) must call nth(2).click() — 0-indexed position."""
+        # Readback returns "3" after click so the method completes normally.
+        page, clicked = _make_tablist_page(selected_text="1", readback_after_click="3")
+        with (
+            patch.object(
+                UiAutomationTransport,
+                "_is_settings_panel_open",
+                new=AsyncMock(return_value=True),
+            ),
+            patch.object(
+                UiAutomationTransport,
+                "_read_displayed_count",
+                new=AsyncMock(side_effect=[1, 3]),  # before=1, after=3
+            ),
+        ):
+            await UiAutomationTransport._set_count(page, 3)  # type: ignore[attr-defined]
+        # nth(2) was clicked (count=3 → index 2).
+        assert 2 in clicked
+
+    @pytest.mark.asyncio
+    async def test_succeeds_when_readback_returns_none(self) -> None:
+        """When read-back is None (unrecognised locale text), position click is trusted."""
+        page, clicked = _make_tablist_page(selected_text="imageImagem", readback_after_click=None)
+        with (
+            patch.object(
+                UiAutomationTransport,
+                "_is_settings_panel_open",
+                new=AsyncMock(return_value=True),
+            ),
+            patch.object(
+                UiAutomationTransport,
+                "_read_displayed_count",
+                # before: None (can't parse); after click: None (still can't parse)
+                new=AsyncMock(return_value=None),
+            ),
+        ):
+            # Should NOT raise — deterministic position click is trusted when readback=None.
+            await UiAutomationTransport._set_count(page, 1)  # type: ignore[attr-defined]
+        assert 0 in clicked  # nth(0) was clicked for count=1
 
     @pytest.mark.asyncio
     async def test_clicks_tab_and_succeeds_on_first_attempt(self) -> None:
-        """Happy path: displayed=None (unknown), click x1, read-back shows x1."""
-        # Simulate: displayed count is unknown at start, click succeeds,
-        # after click _read_displayed_count returns "x1".
-        page = MagicMock()
-        page.wait_for_timeout = AsyncMock()
-        page.keyboard = MagicMock()
-        page.keyboard.press = AsyncMock()
-
-        clicked: list[str] = []
-
-        def _locator(sel: str) -> MagicMock:
-            import re
-
-            loc = MagicMock()
-            wrapper = MagicMock()
-            wrapper.first = loc
-
-            if 'aria-selected="true"' in sel:
-                # After a click has happened, return "x1".
-                async def _is_vis(timeout: int = 500) -> bool:
-                    return len(clicked) > 0
-
-                async def _text(timeout: int = 500) -> str | None:
-                    return "x1" if clicked else None
-
-                loc.is_visible = AsyncMock(side_effect=_is_vis)
-                loc.text_content = AsyncMock(side_effect=_text)
-            elif "crop_" in sel:
-                # Panel-open check — count tabs visible so we use that path.
-                loc.is_visible = AsyncMock(return_value=False)
-                loc.text_content = AsyncMock(return_value=None)
-            elif ":text-is(" in sel:
-                m = re.search(r':text-is\("([^"]+)"\)', sel)
-                label = m.group(1) if m else ""
-                is_count = label in ("x1", "x2", "x3", "x4", "1x", "2x", "3x", "4x")
-                if is_count:
-                    loc.is_visible = AsyncMock(return_value=True)
-                    loc.wait_for = AsyncMock()
-
-                    async def _click(label: str = label, **kw: object) -> None:
-                        clicked.append(label)
-
-                    loc.click = AsyncMock(side_effect=_click)
-                else:
-                    loc.is_visible = AsyncMock(return_value=False)
-                    loc.wait_for = AsyncMock(side_effect=RuntimeError("not visible"))
-                    loc.click = AsyncMock()
-            else:
-                loc.is_visible = AsyncMock(return_value=False)
-                loc.wait_for = AsyncMock(side_effect=RuntimeError("not visible"))
-                loc.click = AsyncMock()
-
-            return wrapper
-
-        page.locator = MagicMock(side_effect=_locator)
-
-        with patch.object(
-            UiAutomationTransport,
-            "_open_gen_settings_panel",
-            new=AsyncMock(return_value=True),
+        """Happy path: displayed=None, click succeeds, read-back matches."""
+        page, clicked = _make_tablist_page(selected_text="1", readback_after_click="1")
+        with (
+            patch.object(
+                UiAutomationTransport,
+                "_is_settings_panel_open",
+                new=AsyncMock(return_value=True),
+            ),
+            patch.object(
+                UiAutomationTransport,
+                "_read_displayed_count",
+                new=AsyncMock(side_effect=[None, 1]),  # before=None, after=1
+            ),
         ):
             await UiAutomationTransport._set_count(page, 1)  # type: ignore[attr-defined]
-
-        assert "x1" in clicked or "1x" in clicked
+        assert 0 in clicked  # nth(0) for count=1
 
     @pytest.mark.asyncio
     async def test_raises_after_three_failed_attempts(self) -> None:
         """If read-back never converges after 3 attempts, RuntimeError is raised."""
-        page = MagicMock()
-        page.wait_for_timeout = AsyncMock()
-        page.keyboard = MagicMock()
-        page.keyboard.press = AsyncMock()
-
-        def _locator(sel: str) -> MagicMock:
-            import re
-
-            loc = MagicMock()
-            wrapper = MagicMock()
-            wrapper.first = loc
-
-            if 'aria-selected="true"' in sel:
-                # Always returns "x2" — mismatch when we want x1.
-                loc.is_visible = AsyncMock(return_value=True)
-                loc.text_content = AsyncMock(return_value="x2")
-            elif "crop_" in sel:
-                loc.is_visible = AsyncMock(return_value=False)
-                loc.text_content = AsyncMock(return_value=None)
-            elif ":text-is(" in sel:
-                m = re.search(r':text-is\("([^"]+)"\)', sel)
-                label = m.group(1) if m else ""
-                is_count = label in ("x1", "x2", "x3", "x4", "1x", "2x", "3x", "4x")
-                if is_count:
-                    loc.is_visible = AsyncMock(return_value=True)
-                    loc.wait_for = AsyncMock()
-                    loc.click = AsyncMock()
-                else:
-                    loc.is_visible = AsyncMock(return_value=False)
-                    loc.wait_for = AsyncMock(side_effect=RuntimeError("not visible"))
-                    loc.click = AsyncMock()
-            else:
-                loc.is_visible = AsyncMock(return_value=False)
-                loc.wait_for = AsyncMock(side_effect=RuntimeError("not visible"))
-                loc.click = AsyncMock()
-
-            return wrapper
-
-        page.locator = MagicMock(side_effect=_locator)
-
+        page, clicked = _make_tablist_page(selected_text="2", readback_after_click="2")
         with (
             patch.object(
                 UiAutomationTransport,
-                "_open_gen_settings_panel",
+                "_is_settings_panel_open",
                 new=AsyncMock(return_value=True),
+            ),
+            patch.object(
+                UiAutomationTransport,
+                "_read_displayed_count",
+                # Always returns 2 — mismatch when we want 1.
+                new=AsyncMock(return_value=2),
             ),
             pytest.raises(RuntimeError, match="_set_count\\(1\\) failed to update Flow UI"),
         ):
@@ -1492,67 +1554,19 @@ class TestSetCountRetry:
     async def test_retry_succeeds_on_second_attempt(self) -> None:
         """If read-back returns wrong value on attempt 1, then correct on attempt 2,
         _set_count succeeds without raising."""
-        page = MagicMock()
-        page.wait_for_timeout = AsyncMock()
-        page.keyboard = MagicMock()
-        page.keyboard.press = AsyncMock()
-
-        click_count = 0
-
-        def _locator(sel: str) -> MagicMock:
-            import re
-
-            nonlocal click_count
-            loc = MagicMock()
-            wrapper = MagicMock()
-            wrapper.first = loc
-
-            if 'aria-selected="true"' in sel:
-                # First read returns wrong value; after first click returns correct.
-                async def _is_vis(timeout: int = 500) -> bool:
-                    return True
-
-                async def _text(timeout: int = 500) -> str:
-                    # Returns wrong value until after the first click.
-                    return "x1" if click_count >= 1 else "x2"
-
-                loc.is_visible = AsyncMock(side_effect=_is_vis)
-                loc.text_content = AsyncMock(side_effect=_text)
-            elif "crop_" in sel:
-                loc.is_visible = AsyncMock(return_value=False)
-                loc.text_content = AsyncMock(return_value=None)
-            elif ":text-is(" in sel:
-                m = re.search(r':text-is\("([^"]+)"\)', sel)
-                label = m.group(1) if m else ""
-                is_count = label in ("x1", "x2", "x3", "x4", "1x", "2x", "3x", "4x")
-                if is_count:
-                    loc.is_visible = AsyncMock(return_value=True)
-                    loc.wait_for = AsyncMock()
-
-                    async def _click(**kw: object) -> None:
-                        nonlocal click_count
-                        click_count += 1
-
-                    loc.click = AsyncMock(side_effect=_click)
-                else:
-                    loc.is_visible = AsyncMock(return_value=False)
-                    loc.wait_for = AsyncMock(side_effect=RuntimeError("not visible"))
-                    loc.click = AsyncMock()
-            else:
-                loc.is_visible = AsyncMock(return_value=False)
-                loc.wait_for = AsyncMock(side_effect=RuntimeError("not visible"))
-                loc.click = AsyncMock()
-
-            return wrapper
-
-        page.locator = MagicMock(side_effect=_locator)
-
-        with patch.object(
-            UiAutomationTransport,
-            "_open_gen_settings_panel",
-            new=AsyncMock(return_value=True),
+        page, clicked = _make_tablist_page(selected_text="2", readback_after_click="1")
+        with (
+            patch.object(
+                UiAutomationTransport,
+                "_is_settings_panel_open",
+                new=AsyncMock(return_value=True),
+            ),
+            patch.object(
+                UiAutomationTransport,
+                "_read_displayed_count",
+                # Sequence: initial=2, after-click-1=2 (mismatch), after-click-2=1 (match).
+                new=AsyncMock(side_effect=[2, 2, 1]),
+            ),
         ):
-            # Should succeed (not raise) because second attempt's read-back matches.
             await UiAutomationTransport._set_count(page, 1)  # type: ignore[attr-defined]
-
-        assert click_count >= 1
+        assert len(clicked) >= 1

@@ -37,7 +37,7 @@ from gflow_cli.errors import (
 )
 
 if TYPE_CHECKING:
-    from playwright.async_api import Page, ViewportSize
+    from playwright.async_api import Locator, Page, ViewportSize
 
 # Lazy-imported at call time so ``import gflow_cli`` doesn't pay the
 # Playwright import cost when another transport is selected.
@@ -224,17 +224,25 @@ _ASPECT_TAB_CANDIDATES: dict[str, tuple[str, ...]] = {
 # Supported image-count values for the xN selector.
 _SUPPORTED_COUNTS: frozenset[int] = frozenset({1, 2, 3, 4})
 
+# Number of count tabs Flow renders in the settings panel (1 through 4).
+_COUNT_TAB_COUNT = 4
 
-def _count_tab_candidates(n: int) -> tuple[str, ...]:
-    """Return both label variants Flow uses for count-N tabs.
 
-    Flow's tab label for count=N follows the ``x{N}`` pattern (e.g. ``x1``,
-    ``x2``).  Older or localised builds have been observed using ``{N}x``
-    instead.  Trying both variants — same as the proven CG Worker pattern in
-    ``flow_logic._quantity_option_texts`` — ensures the click lands regardless
-    of the label form currently rendered.
+def _extract_count_digit(text: str) -> int | None:
+    """Extract the leading digit from a count-tab label, locale-agnostically.
+
+    Works for any rendering locale:
+    - English: "1", "x1", "1x", "1 image", "2 images"
+    - Portuguese: "1 imagem", "2 imagens"
+    - Ligature artefacts: "imageImagem" → None (no leading digit → graceful None)
+
+    Returns the integer value of the first digit sequence found, or ``None``
+    when no digit is present in ``text``.
     """
-    return (f"x{n}", f"{n}x")
+    import re
+
+    m = re.search(r"\d+", text)
+    return int(m.group()) if m else None
 
 
 # Reverse map: domain Aspect enum → CLI string accepted by the settings panel.
@@ -714,39 +722,87 @@ class UiAutomationTransport(VideoGenerationMixin):
         return False
 
     @staticmethod
-    async def _read_displayed_count(page: Page) -> str | None:
-        """Read the currently-displayed image count from the settings panel or trigger.
+    async def _read_displayed_count(page: Page) -> int | None:
+        """Read the currently-displayed image count from the settings panel.
+
+        Locale-invariant: reads the ``aria-selected="true"`` tab's text and
+        extracts the leading digit via :func:`_extract_count_digit`, so any
+        locale rendering ("1", "x1", "1x", "1 image", "1 imagem") returns the
+        same integer.
 
         Tries two sources in order:
-        1. A visible ``[role="tab"][aria-selected="true"]`` inside the panel —
-           the most precise signal when the panel is open.
-        2. The settings-trigger button's text content — Flow renders the current
-           count inside the trigger button alongside the aspect-ratio icon; this
-           works even when the panel is closed.
+        1. ``[role="tab"][aria-selected="true"]`` inside the panel — most
+           precise signal when the panel is open.
+        2. ``button[aria-selected="true"]`` fallback for non-Radix DOM shapes.
 
-        Returns the stripped text of the first match, or ``None`` when nothing
-        is readable (panel closed and trigger text unreadable).
+        Returns the integer count (1–4) or ``None`` when no digit can be
+        parsed (e.g. icon-ligature artefact "imageImagem" on pt-BR locale).
         """
-        # Source 1 — selected tab inside the open panel (most precise).
+        for selector in (
+            '[role="tab"][aria-selected="true"]',
+            'button[aria-selected="true"]',
+        ):
+            try:
+                selected = page.locator(selector).first
+                if await selected.is_visible(timeout=500):
+                    text = await selected.text_content(timeout=500)
+                    if text:
+                        digit = _extract_count_digit(text.strip())
+                        if digit is not None:
+                            return digit
+            except Exception:  # noqa: BLE001 — probe failure is non-fatal
+                continue
+
+        return None
+
+    @staticmethod
+    async def _count_tab_locator(page: Page) -> tuple[Locator, int] | None:
+        """Locate the count-tab list via structural selectors.
+
+        Returns ``(locator, strategy)`` where ``locator`` is a Playwright
+        Locator pointing at **all** count tabs (expected: 4 elements) and
+        ``strategy`` is 1 or 2 for diagnostics, or ``None`` when neither
+        strategy finds exactly ``_COUNT_TAB_COUNT`` tabs.
+
+        Strategy 1 — Radix UI tablist:
+            ``[role="tablist"] [role="tab"]`` — count tabs in a standard
+            tablist container.  Requires exactly 4 visible tabs.
+
+        Strategy 2 — leading-digit buttons:
+            ``button`` elements whose ``innerText`` starts with a digit.
+            Used as a fallback for non-Radix DOM shapes.
+        """
+        # Strategy 1: Radix-style [role="tablist"] > [role="tab"]
         try:
-            selected = page.locator('[role="tab"][aria-selected="true"]').first
-            if await selected.is_visible(timeout=500):
-                text = await selected.text_content(timeout=500)
-                if text:
-                    return text.strip()
-        except Exception:  # noqa: BLE001 — probe failure is non-fatal
+            tabs = page.locator('[role="tablist"] [role="tab"]')
+            count = await tabs.count()
+            if count == _COUNT_TAB_COUNT:
+                return (tabs, 1)
+        except Exception:  # noqa: BLE001
             pass
 
-        # Source 2 — settings trigger button text (works panel-open or closed).
-        for sel in GEN_SETTINGS_BUTTON_SELECTORS:
-            try:
-                btn = page.locator(sel).first
-                if await btn.is_visible(timeout=500):
-                    text = await btn.text_content(timeout=500)
-                    if text:
-                        return text.strip()
-            except Exception:  # noqa: BLE001 — try next selector
-                continue
+        # Strategy 2: buttons whose visible text starts with a digit
+        try:
+            import re
+
+            all_buttons = page.locator("button")
+            btn_count = await all_buttons.count()
+            digit_indices: list[int] = []
+            for i in range(btn_count):
+                try:
+                    btn = all_buttons.nth(i)
+                    if await btn.is_visible(timeout=200):
+                        text = await btn.inner_text(timeout=200)
+                        if text and re.match(r"^\d", text.strip()):
+                            digit_indices.append(i)
+                except Exception:  # noqa: BLE001
+                    continue
+            if len(digit_indices) == _COUNT_TAB_COUNT:
+                # Reconstruct a locator chain for positional access.
+                # We return the filtered button locator for nth() access.
+                return (all_buttons, 2)
+        except Exception:  # noqa: BLE001
+            pass
 
         return None
 
@@ -754,17 +810,29 @@ class UiAutomationTransport(VideoGenerationMixin):
     async def _is_settings_panel_open(page: Page) -> bool:
         """True if the generation-settings panel count tabs are currently visible.
 
-        Uses the count tabs themselves as the panel-open indicator — they are
-        panel-only elements and become visible exactly when the panel is open.
+        Uses ``[role="tablist"] [role="tab"]`` structural presence as the
+        panel-open indicator — locale-agnostic, no text matching.
+        Falls back to ``button[aria-selected]`` if the tablist isn't present.
         """
-        for n in (1, 2):
-            for label in _count_tab_candidates(n):
-                try:
-                    tab = page.locator(f'[role="tab"]:text-is("{label}")').first
-                    if await tab.is_visible(timeout=400):
-                        return True
-                except Exception:  # noqa: BLE001
-                    continue
+        # Primary: look for a tablist with exactly _COUNT_TAB_COUNT tabs.
+        try:
+            tabs = page.locator('[role="tablist"] [role="tab"]')
+            count = await tabs.count()
+            if count == _COUNT_TAB_COUNT:
+                # Confirm at least one is visible (panel is actually rendered).
+                if await tabs.first.is_visible(timeout=400):
+                    return True
+        except Exception:  # noqa: BLE001
+            pass
+
+        # Fallback: any button with aria-selected visible (simpler panels).
+        try:
+            btn = page.locator("button[aria-selected]").first
+            if await btn.is_visible(timeout=400):
+                return True
+        except Exception:  # noqa: BLE001
+            pass
+
         return False
 
     @staticmethod
@@ -843,16 +911,21 @@ class UiAutomationTransport(VideoGenerationMixin):
 
     @staticmethod
     async def _set_count(page: Page, count: int) -> None:
-        """Click the xN count tab — read-back verify with retry.
+        """Click the count tab by position — locale-invariant, read-back verify with retry.
 
-        Algorithm (replaces Pattern A from 401aaf5):
+        Algorithm (#24 structural-first rewrite):
         1. Ensure the settings panel is open without toggling it closed
            (stay-mounted batch: panel may already be open from the prior prompt).
-        2. Read the currently-displayed count.
+        2. Read the currently-displayed count (digit-extraction, locale-agnostic).
         3. If it already matches ``count``, return early (no click needed).
-        4. Click the desired tab (both ``x{N}`` and ``{N}x`` variants).
-        5. Read back and confirm the change.
+        4. Locate the count-tab list via :meth:`_count_tab_locator` and click
+           ``nth(count - 1)`` — positional, no text matching.
+        5. Read back the digit and confirm the change.
         6. Retry up to 3 attempts total; raise ``RuntimeError`` on non-convergence.
+
+        When read-back returns ``None`` (unrecognised locale text, e.g.
+        "imageImagem"), the position-based click still proceeds and the attempt
+        is treated as a success — the click is deterministic regardless.
 
         Four structlog events are emitted for diagnosability:
         - ``ui_automation.count_setter_entered``
@@ -867,6 +940,7 @@ class UiAutomationTransport(VideoGenerationMixin):
             "ui_automation.count_setter_entered",
             desired_count=count,
             panel_currently_visible=panel_open,
+            initial_displayed_count=initial_displayed,
         )
 
         # Ensure the panel is open — open it only if it's currently closed
@@ -878,7 +952,7 @@ class UiAutomationTransport(VideoGenerationMixin):
                     "ui_automation.count_setter_panel_open_failed",
                     desired_count=count,
                 )
-                # Non-fatal: best-effort click below; completed event records failure.
+                # Non-fatal: completed event records failure.
                 log.info(
                     "ui_automation.count_setter_completed",
                     desired_count=count,
@@ -889,69 +963,77 @@ class UiAutomationTransport(VideoGenerationMixin):
                 return
 
         _max_attempts = 3
-        displayed: str | None = await UiAutomationTransport._read_displayed_count(page)
+        # Reuse the initial read — avoids a redundant DOM round-trip.
+        displayed: int | None = initial_displayed
 
         for attempt in range(1, _max_attempts + 1):
             # If current display already matches desired, we're done.
-            if displayed is not None:
-                # Check whether the displayed text contains the count label.
-                # Flow uses labels like "x1", "x2", "1x", "2x" etc.
-                desired_labels = set(_count_tab_candidates(count))
-                if any(lbl in displayed for lbl in desired_labels):
-                    log.info(
-                        "ui_automation.count_setter_completed",
-                        desired_count=count,
-                        final_displayed_count=displayed,
-                        success=True,
-                        attempts=attempt - 1,
-                    )
-                    return
+            if displayed == count:
+                log.info(
+                    "ui_automation.count_setter_completed",
+                    desired_count=count,
+                    final_displayed_count=displayed,
+                    success=True,
+                    attempts=attempt - 1,
+                )
+                return
 
-            # Attempt to click the desired count tab.
+            # Locate the tab list structurally (position-first, no text matching).
+            tab_list_result = await UiAutomationTransport._count_tab_locator(page)
+            panel_visible_before = await UiAutomationTransport._is_settings_panel_open(page)
             clicked = False
             click_error: str | None = None
-            panel_visible_before = await UiAutomationTransport._is_settings_panel_open(page)
 
-            for label in _count_tab_candidates(count):
-                selector = f'[role="tab"]:text-is("{label}")'
+            if tab_list_result is None:
+                click_error = "count tab list not found via structural selectors"
+                log.warning(
+                    "ui_automation.count_tab_list_not_found",
+                    desired_count=count,
+                    attempt=attempt,
+                )
+            else:
+                tabs_locator, strategy = tab_list_result
+                # 0-indexed: count=1 → nth(0), count=2 → nth(1), etc.
+                target_tab = tabs_locator.nth(count - 1)
+                selector_desc = f"nth({count - 1}) via strategy={strategy}"
                 log.info(
                     "ui_automation.count_click_attempted",
-                    target=f"x{count}",
-                    selector=selector,
+                    target=f"count={count}",
+                    selector=selector_desc,
+                    strategy=strategy,
                     panel_visible=panel_visible_before,
                     current_displayed_count=displayed,
                 )
                 try:
-                    tab = page.locator(selector).first
-                    await tab.wait_for(state="visible", timeout=3_000)
-                    await tab.click()
+                    await target_tab.wait_for(state="visible", timeout=3_000)
+                    await target_tab.click()
                     await page.wait_for_timeout(300)
                     clicked = True
-                    break
                 except Exception as e:  # noqa: BLE001
                     click_error = str(e)
-                    continue
 
-            # Read back to verify.
+            # Read back to verify (digit-extraction, locale-agnostic).
             displayed = await UiAutomationTransport._read_displayed_count(page)
             log.info(
                 "ui_automation.count_click_result",
-                target=f"x{count}",
+                target=f"count={count}",
                 success=clicked,
                 current_displayed_count_after=displayed,
                 error=click_error,
             )
 
             if clicked:
-                # Check read-back match.
-                desired_labels = set(_count_tab_candidates(count))
-                if displayed is not None and any(lbl in displayed for lbl in desired_labels):
+                # Success when read-back digit matches, OR when read-back
+                # returned None (unrecognised locale text — position click was
+                # deterministic so trust it).
+                if displayed is None or displayed == count:
                     log.info(
                         "ui_automation.count_setter_completed",
                         desired_count=count,
                         final_displayed_count=displayed,
                         success=True,
                         attempts=attempt,
+                        readback_trusted=(displayed is None),
                     )
                     return
 

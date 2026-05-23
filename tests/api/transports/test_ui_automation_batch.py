@@ -872,34 +872,31 @@ async def test_generate_images_batch_project_id_identical_across_results(
 
 
 class _LocatorRecorder:
-    """Records which labels were targeted by _set_count so tests can verify
-    the click sequence under the read-back-verify algorithm.
+    """Records which nth-index tabs were clicked by _set_count.
 
-    ``is_visible`` returns True for labels in ``visible_labels`` so that
-    ``_is_settings_panel_open`` and ``_read_displayed_count`` work correctly.
-    After each click the recorder updates ``_last_clicked`` so
-    ``_read_displayed_count`` (via ``aria-selected="true"``) returns the
-    just-clicked label — simulating Flow's UI updating in response to the click.
+    Models a ``[role="tablist"] [role="tab"]`` DOM with ``tab_count`` tabs.
+    Simulates aria-selected state by tracking ``_selected_idx`` and returning
+    the corresponding digit from ``text_content`` on the selected tab.
+
+    After each ``nth(i).click()`` call, ``_selected_idx`` is updated to ``i``
+    so ``_read_displayed_count`` returns the new digit on the next read-back.
     """
 
-    def __init__(self, visible_labels: set[str]) -> None:
-        self._visible = visible_labels
-        self.clicked: list[str] = []  # labels clicked, in call order
-        self._last_clicked: str | None = None  # tracks current selected tab
+    def __init__(self, tab_count: int = 4, initial_selected: int = 0) -> None:
+        self._tab_count = tab_count
+        self._selected_idx: int = initial_selected
+        # clicked_indices: records the nth-index of every click, in call order.
+        self.clicked_indices: list[int] = []
 
-    def locator(self, selector: str) -> _LocatorRecorder._Loc:
-        # Extract the label from ':text-is("label")' selectors.
-        import re
-
-        m = re.search(r':text-is\("([^"]+)"\)', selector)
-        label = m.group(1) if m else selector
-        # aria-selected="true" → returns the last-clicked label as a readable loc
+    def locator(
+        self, selector: str
+    ) -> _LocatorRecorder._TabListLoc | _LocatorRecorder._SelectedLoc | _LocatorRecorder._NullLoc:
+        if '[role="tablist"]' in selector:
+            return _LocatorRecorder._TabListLoc(self)
         if 'aria-selected="true"' in selector:
-            return _LocatorRecorder._Loc("__selected__", self._visible, self.clicked, recorder=self)
-        # crop_ selectors (GEN_SETTINGS_BUTTON) → never visible in this recorder
-        if "crop_" in selector:
-            return _LocatorRecorder._Loc("__btn__", set(), self.clicked, recorder=self)
-        return _LocatorRecorder._Loc(label, self._visible, self.clicked, recorder=self)
+            return _LocatorRecorder._SelectedLoc(self)
+        # All other selectors (GEN_SETTINGS_BUTTON, button[aria-selected], etc.)
+        return _LocatorRecorder._NullLoc()
 
     async def wait_for_timeout(self, _ms: int) -> None:
         pass
@@ -910,97 +907,139 @@ class _LocatorRecorder:
 
     keyboard = _Keyboard()
 
-    class _Loc:
-        def __init__(
-            self,
-            label: str,
-            visible: set[str],
-            clicked: list[str],
-            recorder: _LocatorRecorder,
-        ) -> None:
-            self._label = label
-            self._visible = visible
-            self._clicked = clicked
+    class _TabListLoc:
+        """Represents ``page.locator('[role="tablist"] [role="tab"]')``."""
+
+        def __init__(self, recorder: _LocatorRecorder) -> None:
+            self._recorder = recorder
+
+        async def count(self) -> int:
+            return self._recorder._tab_count
+
+        @property
+        def first(self) -> _LocatorRecorder._TabLoc:
+            return _LocatorRecorder._TabLoc(0, self._recorder)
+
+        def nth(self, i: int) -> _LocatorRecorder._TabLoc:
+            return _LocatorRecorder._TabLoc(i, self._recorder)
+
+    class _TabLoc:
+        """Represents a single count tab at position ``idx``."""
+
+        def __init__(self, idx: int, recorder: _LocatorRecorder) -> None:
+            self._idx = idx
+            self._recorder = recorder
+
+        async def is_visible(self, timeout: int = 400) -> bool:
+            return True
+
+        async def wait_for(self, *, state: str, timeout: int) -> None:
+            pass  # always visible
+
+        async def click(self) -> None:
+            self._recorder.clicked_indices.append(self._idx)
+            self._recorder._selected_idx = self._idx
+
+    class _SelectedLoc:
+        """Represents ``page.locator('[role="tab"][aria-selected="true"]')``."""
+
+        def __init__(self, recorder: _LocatorRecorder) -> None:
             self._recorder = recorder
 
         @property
-        def first(self) -> _LocatorRecorder._Loc:
+        def first(self) -> _LocatorRecorder._SelectedLoc:
             return self
 
-        async def wait_for(self, *, state: str, timeout: int) -> None:
-            if self._label not in self._visible:
-                raise TimeoutError(f"'{self._label}' not visible")
+        async def is_visible(self, timeout: int = 500) -> bool:
+            return True
+
+        async def text_content(self, timeout: int = 500) -> str:
+            # Return the digit string for the currently-selected tab (1-indexed).
+            return str(self._recorder._selected_idx + 1)
+
+    class _NullLoc:
+        """Matches nothing — used for selectors the recorder doesn't handle."""
+
+        @property
+        def first(self) -> _LocatorRecorder._NullLoc:
+            return self
 
         async def is_visible(self, timeout: int = 500) -> bool:
-            if self._label == "__selected__":
-                return self._recorder._last_clicked is not None
-            return self._label in self._visible
+            return False
+
+        async def count(self) -> int:
+            return 0
 
         async def text_content(self, timeout: int = 500) -> str | None:
-            if self._label == "__selected__":
-                return self._recorder._last_clicked
             return None
 
+        async def wait_for(self, *, state: str, timeout: int) -> None:
+            raise TimeoutError("null loc")
+
         async def click(self) -> None:
-            self._clicked.append(self._label)
-            self._recorder._last_clicked = self._label
+            pass
 
 
 @pytest.mark.asyncio
 async def test_set_count_clicks_x2_for_count_2() -> None:
-    """For count=2 with no prior selection: _set_count clicks x2 (read-back verifies)."""
-    page = _LocatorRecorder(visible_labels={"x1", "x2", "x3", "x4"})
+    """For count=2 with no prior selection (idx 0 = count 1): _set_count clicks nth(1)."""
+    page = _LocatorRecorder(tab_count=4, initial_selected=0)  # current=1, want=2
     with patch.object(
         UiAutomationTransport, "_open_gen_settings_panel", new=AsyncMock(return_value=True)
     ):
         await UiAutomationTransport._set_count(page, 2)  # type: ignore[arg-type]
-    assert "x2" in page.clicked, f"Expected x2 to be clicked, got {page.clicked}"
+    assert 1 in page.clicked_indices, (
+        f"Expected nth(1) (count=2) to be clicked, got indices {page.clicked_indices}"
+    )
 
 
 @pytest.mark.asyncio
 async def test_set_count_clicks_x1_for_count_1() -> None:
-    """For count=1 with no prior selection: _set_count clicks x1."""
-    page = _LocatorRecorder(visible_labels={"x1", "x2", "x3", "x4"})
+    """For count=1 when current is count=2 (idx 1): _set_count clicks nth(0)."""
+    page = _LocatorRecorder(tab_count=4, initial_selected=1)  # current=2, want=1
     with patch.object(
         UiAutomationTransport, "_open_gen_settings_panel", new=AsyncMock(return_value=True)
     ):
         await UiAutomationTransport._set_count(page, 1)  # type: ignore[arg-type]
-    assert "x1" in page.clicked, f"Expected x1 to be clicked, got {page.clicked}"
+    assert 0 in page.clicked_indices, (
+        f"Expected nth(0) (count=1) to be clicked, got indices {page.clicked_indices}"
+    )
 
 
 @pytest.mark.asyncio
-async def test_set_count_fallback_label_nx_used_when_xn_absent() -> None:
-    """When the x{N} label is absent, the {N}x fallback must be tried.
+async def test_set_count_position_based_no_text_matching() -> None:
+    """Position-based click: count=3 maps to nth(2) regardless of label text.
 
-    Mirrors the CG Worker's _quantity_option_texts which returns both
-    variants to handle older / localised Flow builds.
+    This replaces the old test_set_count_fallback_label_nx_used_when_xn_absent.
+    The new implementation never matches on label text — it uses nth() position
+    exclusively, so locale or label-format differences are irrelevant.
     """
-    # Only '1x' and '2x' are visible (old-style label convention).
-    page = _LocatorRecorder(visible_labels={"1x", "2x"})
+    page = _LocatorRecorder(tab_count=4, initial_selected=0)  # current=1, want=3
     with patch.object(
         UiAutomationTransport, "_open_gen_settings_panel", new=AsyncMock(return_value=True)
     ):
-        await UiAutomationTransport._set_count(page, 2)  # type: ignore[arg-type]
-    # x2 absent → 2x fallback used for target.
-    assert "2x" in page.clicked, f"Expected 2x fallback click, got {page.clicked}"
+        await UiAutomationTransport._set_count(page, 3)  # type: ignore[arg-type]
+    assert 2 in page.clicked_indices, (
+        f"Expected nth(2) (count=3) to be clicked, got indices {page.clicked_indices}"
+    )
 
 
 @pytest.mark.asyncio
 async def test_configure_generation_settings_resets_count_between_prompts() -> None:
     """Two sequential _configure_generation_settings calls with different counts.
 
-    Prompt 0 → count=2: must click x2 (read-back confirms x2 selected).
-    Prompt 1 → count=1: must click x1 (read-back confirms x1 selected, NOT x2 sticky).
+    Prompt 0 → count=2: must click nth(1).
+    Prompt 1 → count=1: must click nth(0) to override the count=2 state.
 
     This is the exact scenario that produced the Phase 7 regression:
     5 files for 3 prompts (expected 4) because the bakery prompt inherited
     the sunset prompt's x2 selection.
 
     The read-back-verify algorithm fixes this: after prompt 0 sets count=2,
-    _last_clicked == "x2". Prompt 1 reads back "x2" (mismatch for desired=1),
-    clicks x1, and reads back "x1" (match).
+    _selected_idx==1. Prompt 1 reads back count=2 (mismatch for desired=1),
+    clicks nth(0), and reads back count=1 (match).
     """
-    page = _LocatorRecorder(visible_labels={"x1", "x2", "x3", "x4"})
+    page = _LocatorRecorder(tab_count=4, initial_selected=0)
 
     with patch.object(
         UiAutomationTransport, "_open_gen_settings_panel", new=AsyncMock(return_value=True)
@@ -1011,7 +1050,7 @@ async def test_configure_generation_settings_resets_count_between_prompts() -> N
             aspect_cli=None,
             count=2,
         )
-        clicks_after_prompt0 = list(page.clicked)
+        clicks_after_prompt0 = list(page.clicked_indices)
 
         # Prompt 1 — bakery, count=1.
         await UiAutomationTransport._configure_generation_settings(
@@ -1019,19 +1058,17 @@ async def test_configure_generation_settings_resets_count_between_prompts() -> N
             aspect_cli=None,
             count=1,
         )
-        clicks_after_prompt1 = list(page.clicked)
+        clicks_after_prompt1 = list(page.clicked_indices)
 
-    # Prompt 0 must have clicked x2 (desired count).
-    assert "x2" in clicks_after_prompt0, (
-        f"Prompt 0 (count=2): expected x2 click, got {clicks_after_prompt0}"
+    # Prompt 0 must have clicked nth(1) (count=2).
+    assert 1 in clicks_after_prompt0, (
+        f"Prompt 0 (count=2): expected nth(1) click, got {clicks_after_prompt0}"
     )
 
-    # Prompt 1 must have clicked x1 to override the x2 left by prompt 0.
-    # clicks_after_prompt1 is the full accumulated log; the x1 click must appear
-    # AFTER the last x2 click (i.e., prompt 1 corrected the state).
-    last_x2 = max((i for i, c in enumerate(clicks_after_prompt1) if c == "x2"), default=-1)
-    x1_after_x2 = [c for i, c in enumerate(clicks_after_prompt1) if c == "x1" and i > last_x2]
-    assert x1_after_x2, (
-        f"Prompt 1 (count=1) must click x1 after prompt 0's x2. "
+    # Prompt 1 must have clicked nth(0) AFTER prompt 0's nth(1).
+    last_idx1 = max((i for i, c in enumerate(clicks_after_prompt1) if c == 1), default=-1)
+    idx0_after_idx1 = [c for i, c in enumerate(clicks_after_prompt1) if c == 0 and i > last_idx1]
+    assert idx0_after_idx1, (
+        f"Prompt 1 (count=1) must click nth(0) after prompt 0's nth(1). "
         f"Full click log: {clicks_after_prompt1}"
     )
