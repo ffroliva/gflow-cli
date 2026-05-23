@@ -106,15 +106,15 @@ class TestModeSwitchCallSite:
         # _await_captured raises a sentinel so the test stops cleanly after
         # _send_prompt was reached — we do not want to mock the full
         # parse + download chain (that is exercised by other tests).
-        class _StopHere(RuntimeError):
+        class _StopHereError(RuntimeError):
             pass
 
         def _await(*_a: object, **_kw: object) -> None:
             order.append("await_captured")
-            raise _StopHere("stop after _send_prompt — call-order recorded")
+            raise _StopHereError("stop after _send_prompt — call-order recorded")
 
         t._await_captured = AsyncMock(side_effect=_await)  # type: ignore[attr-defined]
-        t._stop_sentinel = _StopHere  # type: ignore[attr-defined]
+        t._stop_sentinel = _StopHereError  # type: ignore[attr-defined]
         return t, order
 
     @pytest.mark.asyncio
