@@ -8,7 +8,7 @@ from pathlib import Path
 import structlog
 from rich.console import Console
 
-from gflow_cli.config import get_settings
+from gflow_cli.config import Settings, get_settings
 from gflow_cli.errors import AuthLoginTimeoutError, AuthMissingError, SecurityError
 
 from .base import AuthStrategy
@@ -65,6 +65,79 @@ def find_chrome_executable() -> str | None:
     return None
 
 
+def _validate_profile_dir(profile_dir: Path, settings: Settings) -> None:
+    """Raise SecurityError if profile_dir is outside GFLOW_CLI_HOME."""
+    try:
+        profile_dir.resolve(strict=False).relative_to(settings.home.resolve())
+    except ValueError:
+        raise SecurityError(
+            f"Profile directory {profile_dir} is outside of GFLOW_CLI_HOME "
+            f"({settings.home}) boundaries."
+        ) from None
+
+
+def _build_chrome_args(chrome_exe: str, profile_dir: Path, headless: bool) -> list[str]:
+    """Build the Chrome subprocess argument list."""
+    args = [
+        chrome_exe,
+        f"--user-data-dir={profile_dir}",
+        "--no-first-run",
+        "--no-default-browser-check",
+        "--window-size=1280,800",
+        "--password-store=basic",
+        # No --remote-debugging-port: zero automation surface.
+        GEMINI_URL,  # open straight on the Flow sign-in page
+    ]
+    if headless:
+        args.append("--headless=new")
+    # Open Flow directly so the user lands on the sign-in / app surface
+    # instead of a blank new-tab page.
+    args.append(GEMINI_URL)
+    return args
+
+
+def _print_login_instructions() -> None:
+    """Print passive-capture login instructions to the console."""
+    _console.print("\n" + "=" * 60)
+    _console.print("[bold cyan]PASSIVE AUTHENTICATION[/bold cyan]")
+    _console.print("=" * 60)
+    _console.print("1. A Google Chrome window opens at the Flow sign-in page.")
+    _console.print("2. Sign in with your Google account.")
+    _console.print(
+        "3. [bold yellow]Keep going until the Flow editor itself loads[/bold yellow] "
+        "— the prompt box and your projects."
+    )
+    _console.print(
+        "   Signing in to Google is NOT enough; gflow needs a completed Flow app sign-in."
+    )
+    _console.print(
+        "4. Then [bold yellow]CLOSE THE BROWSER[/bold yellow] — gflow verifies "
+        "the Flow session automatically."
+    )
+    _console.print("-" * 60)
+    _console.print("Launching Chrome...")
+
+
+async def _await_chrome_close(proc: asyncio.subprocess.Process, timeout_seconds: int) -> None:
+    """Wait for Chrome to close; terminate/kill on timeout and raise AuthLoginTimeoutError."""
+    try:
+        await asyncio.wait_for(proc.wait(), timeout=float(timeout_seconds))
+    except TimeoutError:
+        proc.terminate()
+        try:
+            await asyncio.wait_for(proc.wait(), timeout=5)
+        except TimeoutError:
+            proc.kill()
+        raise AuthLoginTimeoutError(
+            f"Sign-in timed out after {timeout_seconds}s; Chrome was stopped.",
+            remediation_hint=(
+                "Run `gflow auth login` again and complete sign-in before the time limit. "
+                f"Set GFLOW_CLI_AUTH_LOGIN_TIMEOUT to raise the limit "
+                f"(current: {timeout_seconds}s)."
+            ),
+        ) from None
+
+
 class RealChromeStrategy(AuthStrategy):
     """Bypass strategy using system Chrome with 'Passive Capture' pattern.
 
@@ -88,13 +161,7 @@ class RealChromeStrategy(AuthStrategy):
     async def login(self, profile_dir: Path, headless: bool) -> None:
         """Execute the login flow using Passive Capture on Real Chrome."""
         settings = get_settings()
-        try:
-            profile_dir.resolve(strict=False).relative_to(settings.home.resolve())
-        except ValueError:
-            raise SecurityError(
-                f"Profile directory {profile_dir} is outside of GFLOW_CLI_HOME "
-                f"({settings.home}) boundaries."
-            ) from None
+        _validate_profile_dir(profile_dir, settings)
 
         profile_dir.mkdir(parents=True, exist_ok=True)
 
@@ -105,23 +172,7 @@ class RealChromeStrategy(AuthStrategy):
                 "Please install Chrome or use '--browser internal'."
             )
 
-        chrome_args = [
-            chrome_exe,
-            f"--user-data-dir={profile_dir}",
-            "--no-first-run",
-            "--no-default-browser-check",
-            "--window-size=1280,800",
-            "--password-store=basic",
-            # No --remote-debugging-port: zero automation surface.
-            GEMINI_URL,  # open straight on the Flow sign-in page
-        ]
-
-        if headless:
-            chrome_args.append("--headless=new")
-
-        # Open Flow directly so the user lands on the sign-in / app surface
-        # instead of a blank new-tab page.
-        chrome_args.append(GEMINI_URL)
+        chrome_args = _build_chrome_args(chrome_exe, profile_dir, headless)
 
         logger.info(
             "auth_passive_capture_started",
@@ -130,24 +181,7 @@ class RealChromeStrategy(AuthStrategy):
         )
 
         if not headless:
-            _console.print("\n" + "=" * 60)
-            _console.print("[bold cyan]PASSIVE AUTHENTICATION[/bold cyan]")
-            _console.print("=" * 60)
-            _console.print("1. A Google Chrome window opens at the Flow sign-in page.")
-            _console.print("2. Sign in with your Google account.")
-            _console.print(
-                "3. [bold yellow]Keep going until the Flow editor itself loads[/bold yellow] "
-                "— the prompt box and your projects."
-            )
-            _console.print(
-                "   Signing in to Google is NOT enough; gflow needs a completed Flow app sign-in."
-            )
-            _console.print(
-                "4. Then [bold yellow]CLOSE THE BROWSER[/bold yellow] — gflow verifies "
-                "the Flow session automatically."
-            )
-            _console.print("-" * 60)
-            _console.print("Launching Chrome...")
+            _print_login_instructions()
 
         # Tests MUST patch asyncio.create_subprocess_exec itself — patching
         # subprocess.Popen instead lets the real asyncio transport run against a
@@ -160,22 +194,7 @@ class RealChromeStrategy(AuthStrategy):
 
         # Wait for the user to close Chrome.  Chrome holds an exclusive lock on
         # its SQLite cookie store while running, so we must wait before probing.
-        try:
-            await asyncio.wait_for(proc.wait(), timeout=float(self._timeout_seconds))
-        except TimeoutError:
-            proc.terminate()
-            try:
-                await asyncio.wait_for(proc.wait(), timeout=5)
-            except TimeoutError:
-                proc.kill()
-            raise AuthLoginTimeoutError(
-                f"Sign-in timed out after {self._timeout_seconds}s; Chrome was stopped.",
-                remediation_hint=(
-                    "Run `gflow auth login` again and complete sign-in before the time limit. "
-                    f"Set GFLOW_CLI_AUTH_LOGIN_TIMEOUT to raise the limit "
-                    f"(current: {self._timeout_seconds}s)."
-                ),
-            ) from None
+        await _await_chrome_close(proc, self._timeout_seconds)
 
         _console.print("\n[bold green]Browser closed.[/bold green] Verifying Flow session...")
 

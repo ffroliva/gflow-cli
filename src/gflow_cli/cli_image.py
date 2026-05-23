@@ -55,6 +55,7 @@ from gflow_cli.image_batch import (
 )
 from gflow_cli.image_batch import (
     MAX_PROMPT_FILE_BYTES,
+    BatchPromptItem,
     parse_prompt_lines,
     prompt_items_from_parsed,
     prompt_items_from_texts,
@@ -358,16 +359,31 @@ def t2i(
         )
         return
 
+    batch_prompts = _build_t2i_batch_prompts(
+        prompts, prompts_file, read_stdin, aspect, model, count
+    )
+    _execute_t2i_batch(batch_prompts, count, continue_on_error, profile, out, transport)
+
+
+def _build_t2i_batch_prompts(
+    prompts: tuple[str, ...],
+    prompts_file: Path | None,
+    read_stdin: bool,
+    aspect: str,
+    model: str,
+    count: int,
+) -> tuple[BatchPromptItem, ...]:
+    """Build the batch prompt list from whichever source the caller supplied."""
     try:
         if prompts_file is not None:
             parsed = read_prompt_file(prompts_file)
-            batch_prompts = prompt_items_from_parsed(
+            return prompt_items_from_parsed(
                 parsed,
                 aspect_ratio=aspect,
                 model=model,
                 count=count,
             )
-        elif read_stdin:
+        if read_stdin:
             # Security: implement a bounded read for standard input to prevent OOM
             # crashes if a massive stream is piped to the CLI.
             raw_stdin = sys.stdin.read(MAX_PROMPT_FILE_BYTES + 1)
@@ -377,23 +393,32 @@ def t2i(
                     f"{MAX_PROMPT_FILE_BYTES // 1024} KiB."
                 )
             parsed = parse_prompt_lines(raw_stdin, source_label="--stdin")
-            batch_prompts = prompt_items_from_parsed(
+            return prompt_items_from_parsed(
                 parsed,
                 aspect_ratio=aspect,
                 model=model,
                 count=count,
             )
-        else:
-            batch_prompts = prompt_items_from_texts(
-                prompts,
-                aspect_ratio=aspect,
-                model=model,
-                count=count,
-                source_label="positional",
-            )
+        return prompt_items_from_texts(
+            prompts,
+            aspect_ratio=aspect,
+            model=model,
+            count=count,
+            source_label="positional",
+        )
     except ConfigurationError as exc:
         raise _as_usage_error(exc) from exc
 
+
+def _execute_t2i_batch(
+    batch_prompts: tuple[BatchPromptItem, ...],
+    count: int,
+    continue_on_error: bool,
+    profile: str | None,
+    out: Path | None,
+    transport: str | None,
+) -> None:
+    """Resolve profile/output-dir, print header, and run the image batch."""
     profile_name = _resolve_profile(profile)
     provider_dir = _make_provider_dir(profile_name)
     settings = get_settings()
