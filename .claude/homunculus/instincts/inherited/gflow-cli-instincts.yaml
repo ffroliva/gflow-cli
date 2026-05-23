@@ -1,0 +1,267 @@
+# Instincts generated from https://github.com/ffroliva/gflow-cli
+# Generated: 2026-05-23T21:25:02.280Z
+# Version: 2.0
+# NOTE: This file supplements (does not replace) any existing curated instincts.
+# High-confidence manually curated instincts should be preserved alongside these.
+
+---
+id: gflow-cli-commit-length
+trigger: "when writing a commit message"
+confidence: 0.6
+domain: git
+source: repo-analysis
+source_repo: https://github.com/ffroliva/gflow-cli
+---
+
+# Gflow Cli Commit Length
+
+## Action
+
+Write moderate-length commit messages (~66 characters)
+
+## Evidence
+
+- Average commit message length: 66 chars
+- Based on 5 commits
+
+---
+id: gflow-cli-naming-files
+trigger: "when creating a new file"
+confidence: 0.8
+domain: code-style
+source: repo-analysis
+source_repo: https://github.com/ffroliva/gflow-cli
+---
+
+# Gflow Cli Naming Files
+
+## Action
+
+Use snake_case naming convention
+
+## Evidence
+
+- Analyzed file naming patterns in repository
+- Dominant pattern: snake_case
+
+---
+id: gflow-cli-import-relative
+trigger: "when importing modules"
+confidence: 0.75
+domain: code-style
+source: repo-analysis
+source_repo: https://github.com/ffroliva/gflow-cli
+---
+
+# Gflow Cli Import Relative
+
+## Action
+
+Use relative imports for project files
+
+## Evidence
+
+- Import analysis shows relative import pattern
+- Example: import { x } from '../lib/x'
+
+---
+id: gflow-cli-export-style
+trigger: "when exporting from a module"
+confidence: 0.7
+domain: code-style
+source: repo-analysis
+source_repo: https://github.com/ffroliva/gflow-cli
+---
+
+# Gflow Cli Export Style
+
+## Action
+
+Prefer named exports
+
+## Evidence
+
+- Export pattern analysis
+- Dominant style: named
+
+---
+id: gflow-cli-test-separate
+trigger: "when writing tests"
+confidence: 0.8
+domain: testing
+source: repo-analysis
+source_repo: https://github.com/ffroliva/gflow-cli
+---
+
+# Gflow Cli Test Separate
+
+## Action
+
+Place tests in the tests/ or __tests__/ directory, mirroring src structure
+
+## Evidence
+
+- Separate test directory pattern detected
+- Tests live in dedicated test folders
+
+---
+id: gflow-cli-workflow-back-merge-release-into-develop
+trigger: "when doing back merge release into develop"
+confidence: 0.6
+domain: workflow
+source: repo-analysis
+source_repo: https://github.com/ffroliva/gflow-cli
+---
+
+# Gflow Cli Workflow Back Merge Release Into Develop
+
+## Action
+
+Follow the back-merge-release-into-develop workflow:
+1. Merge main into develop after a release.
+2. Resolve any merge conflicts.
+3. Update versioned files (CHANGELOG.md, pyproject.toml, uv.lock, __init__.py).
+4. Update or add documentation files as needed (README.md, AGENTS.md, docs/*, etc).
+
+## Evidence
+
+- Workflow detected from commit patterns
+- Frequency: ~2x per month
+- Files: CHANGELOG.md, pyproject.toml, src/gflow_cli/__init__.py
+
+---
+id: gflow-cli-instinct-naming-conventions
+trigger: "When creating new files, functions, classes, or constants in Python code"
+confidence: 0.85
+domain: code-style
+source: repo-analysis
+source_repo: ffroliva/gflow-cli
+---
+
+# Gflow Cli Instinct Naming Conventions
+
+## Action
+
+Name files in snake_case, functions in camelCase, classes in PascalCase, and constants in SCREAMING_SNAKE_CASE
+
+## Evidence
+
+- Pattern in codeStyle.namingConventions
+- Consistent with src/gflow_cli/*
+
+---
+id: gflow-cli-instinct-import-style
+trigger: "When importing modules within the package"
+confidence: 0.8
+domain: code-style
+source: repo-analysis
+source_repo: ffroliva/gflow-cli
+---
+
+# Gflow Cli Instinct Import Style
+
+## Action
+
+Use relative imports
+
+## Evidence
+
+- Pattern in codeStyle.importStyle
+
+---
+id: gflow-cli-instinct-export-style
+trigger: "When exporting functions, classes, or constants from a module"
+confidence: 0.7
+domain: code-style
+source: repo-analysis
+source_repo: ffroliva/gflow-cli
+---
+
+# Gflow Cli Instinct Export Style
+
+## Action
+
+Use named exports (explicitly define __all__ in modules if needed)
+
+## Evidence
+
+- Pattern in codeStyle.exportStyle
+
+---
+id: gflow-cli-instinct-test-location
+trigger: "When adding or updating tests"
+confidence: 0.8
+domain: testing
+source: repo-analysis
+source_repo: ffroliva/gflow-cli
+---
+
+# Gflow Cli Instinct Test Location
+
+## Action
+
+Place test files in a separate directory from source code
+
+## Evidence
+
+- Pattern in architecture.folderStructure.testLocation
+
+---
+id: gflow-cli-instinct-commit-prefix
+trigger: "When making a commit"
+confidence: 0.9
+domain: git
+source: repo-analysis
+source_repo: ffroliva/gflow-cli
+---
+
+# Gflow Cli Instinct Commit Prefix
+
+## Action
+
+Prefix commit messages with type (e.g., docs, refactor) followed by a colon and a short description
+
+## Evidence
+
+- Seen in commit: docs(spec): design for v0.8.1 README + AGENTS.md + llms.txt refresh
+- Seen in commit: refactor: fix SonarCloud issues — function length, exception types, unused params
+
+---
+id: gflow-cli-instinct-commit-length
+trigger: "When writing a commit message"
+confidence: 0.7
+domain: git
+source: repo-analysis
+source_repo: ffroliva/gflow-cli
+---
+
+# Gflow Cli Instinct Commit Length
+
+## Action
+
+Keep commit messages concise, averaging around 66 characters
+
+## Evidence
+
+- Pattern in commits.averageLength
+
+---
+id: gflow-cli-instinct-back-merge-release
+trigger: "When a new release is made on main and develop needs to be updated with those changes"
+confidence: 0.95
+domain: workflow
+source: repo-analysis
+source_repo: ffroliva/gflow-cli
+---
+
+# Gflow Cli Instinct Back Merge Release
+
+## Action
+
+Merge main into develop, resolve conflicts, update versioned files (CHANGELOG.md, pyproject.toml, uv.lock, __init__.py), and update documentation files (README.md, AGENTS.md, docs/*)
+
+## Evidence
+
+- Workflow: back-merge-release-into-develop
+- Seen in commits: Merge main into develop — back-merge v0.8.1 release
+
