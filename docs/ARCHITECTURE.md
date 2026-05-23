@@ -105,10 +105,11 @@ When the project converges on the hexagonal target above, modules graduate to la
 > **Note: this document describes the TARGET architecture, not the current
 > package layout.** The current shape (per [PLAN.md § 2](../PLAN.md#2-architecture-steady-state)
 > and [ADR #2](../PLAN.md#5-decision-log-adrs-in-miniature)) is the simpler
-> `src/gflow_cli/{api/, auth/, cli.py, cli_image.py, cli_video.py,
-> config.py, paths.py, profile_store.py}`. The DDD layout below was deferred
-> indefinitely; converge toward it incrementally if/when a second `Provider`
-> or a `gflow serve` HTTP front-end justifies the split.
+> `src/gflow_cli/{api/, auth/, browser_manager.py, cli.py, _cli_helpers.py,
+> cli_image.py, cli_run.py, cli_video.py, config.py, errors.py, exceptions.py,
+> image_batch.py, manifest.py, observability.py, paths.py, profile_store.py}`.
+> The DDD layout below was deferred indefinitely; converge toward it incrementally
+> if/when a second `Provider` or a `gflow serve` HTTP front-end justifies the split.
 
 ```text
 src/gflow_cli/
@@ -320,3 +321,86 @@ The dependency direction is inviolate. Everything else is preference, not religi
 - [PLAN.md](../PLAN.md) — phasing, exit criteria, ADRs
 - [CONTRIBUTING.md](../CONTRIBUTING.md) — TDD discipline, test categories
 - [AUTHENTICATION.md](AUTHENTICATION.md) — full auth flow lifecycle
+
+---
+
+## System overview
+
+```text
+┌─────────────────┐
+│  gflow CLI      │ ← Click + Rich
+└────────┬────────┘
+         │
+┌────────▼────────┐
+│  Provider       │ ← protocol (Provider in gflow_cli/providers/base.py)
+│  abstraction    │
+└────────┬────────┘
+         │
+   ┌─────┴─────┬───────────────┐
+   │           │               │
+┌──▼──┐    ┌────────┐       ┌───────┐
+│Flow │    │Official│       │ Mock  │
+│(now)│    │ Veo    │       │(tests)│
+│     │    │(planned│       │       │
+│     │    │ later) │       │       │
+└──┬──┘    └────────┘       └───────┘
+   │
+   │   POST /v1/flow/uploadImage
+   │   POST /v1/video:batchAsyncGenerateVideoText
+   │   POST /v1/video:batchCheckAsyncVideoGenerationStatus
+   │   PATCH /v1/flowWorkflows/{id}
+   ▼
+aisandbox-pa.googleapis.com  (Google's private Flow API)
+```
+
+The `Provider` interface keeps backends interchangeable. v0.1 shipped `FlowProvider`. A future release may add `OfficialVeoProvider` (via [`googleapis/python-genai`](https://github.com/googleapis/python-genai) against `generativelanguage.googleapis.com`) — same code path, swap with `GFLOW_CLI_PROVIDER=official`.
+
+## Auth strategy
+
+`gflow-cli` does **not** reverse-engineer Google's OAuth flow. Instead it piggybacks on Playwright's persistent context: `gflow auth login --browser chrome` opens a real Chrome window, the user signs in normally, and the resulting cookie jar is saved to a per-OS user-data dir via [`platformdirs`](https://github.com/platformdirs/platformdirs):
+
+- Windows: `%LOCALAPPDATA%\gflow-cli\profile_default\`
+- macOS: `~/Library/Application Support/gflow-cli/profile_default/`
+- Linux: `~/.local/share/gflow-cli/profile_default/`
+
+Subsequent commands launch a Playwright context using that profile and call REST endpoints via Playwright's HTTP client — which auto-attaches the cookies. No tokens to refresh manually, no SSO scraping. Auth is the only browser interaction users see, and it is a one-time event.
+
+See [docs/AUTHENTICATION.md](AUTHENTICATION.md) for the full lifecycle, multi-account workflows, and recovery paths.
+
+## Headed-browser dependency — current limitation
+
+This is the project's defining trade-off and the most valuable place an external contributor could move the needle.
+
+### Why headed
+
+Google's auth + reCAPTCHA stack on `aisandbox-pa.googleapis.com` rejects:
+
+1. **Playwright's bundled Chromium** — flagged by Google's bot detection on first request. The CLI fails fast with `AuthBrowserRejectedError` (exit code 14) when this happens.
+2. **Headless browsers** — same fingerprinting trips during the OAuth-consent flow.
+3. **Bare HTTP clients** without the cookies + tokens minted by a real Chrome session — most endpoints return HTTP 401 or a reCAPTCHA challenge that can only be solved interactively.
+
+We attempted three pure-HTTP transport strategies before settling on `ui_automation`:
+
+- **`evaluate_fetch`** — call `fetch()` from inside the Page context to inherit cookies. Worked for some endpoints, failed on video upload (HTTP 401 with no actionable message).
+- **`bearer`** — extract bearer tokens from the live page and replay them via `httpx`. Tokens rotate too aggressively; rate-limited within minutes.
+- **`sapisidhash`** — compute Google's SAPISIDHASH header from session cookies and replay. Works for read endpoints; rejected for any mutation endpoint (including all generation calls).
+
+All three are named in the codebase history; the `src/gflow_cli/experimental/` subpackage has not yet been extracted from `api/` — the strategies live in commit history and PR descriptions rather than as standalone modules. Surfacing them as a real subpackage is a backlog item. The production path is `ui_automation`.
+
+### What this costs users
+
+- A **persistent Chrome profile** on disk (~150 MB after `playwright install chromium`).
+- A **display server** for the one-time `gflow auth login --browser chrome` (Linux/WSL need X or Wayland; profile transplants freely between machines after).
+- **Per-account horizontal concurrency** is capped by what one warm Page pool can drive — `GFLOW_CLI_CONCURRENCY=N` fans out N Playwright Pages on the same profile, but cannot scale infinitely.
+- **No native serverless deployment.** Running on Lambda / Cloud Run / Fly requires a transplanted profile + a desktop-like environment.
+
+### How contributors can help
+
+The biggest single improvement to gflow-cli's scalability would be a **working pure-HTTP transport for video generation** that survives Google's anti-bot stack. Specific contributions we welcome:
+
+- Network traffic captures from a successful headed video generation (with personally-identifying data scrubbed) — the [Keysight HAR analysis](https://www.keysight.com/blogs/en/tech/nwvs/2025/08/04/google-flow-ai-har-analysis) is the public reference; we want our own.
+- A working pure-HTTP transport (you can land it in a new `experimental/` subpackage) that produces a video against the live API without a browser.
+- Insight into Google's reCAPTCHA-mint flow for `aisandbox-pa.googleapis.com` (especially how `Authorization: SAPISIDHASH ...` interacts with `X-Goog-Visitor-Id`).
+- An adapter to the **official** Veo API (`googleapis/python-genai`) as a parallel provider — that bypasses the headed-browser dependency entirely for users who have direct API access.
+
+If you ship any of the above, open an issue or a PR — this is the most strategic contribution any new collaborator can make to the project.
