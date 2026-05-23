@@ -53,6 +53,7 @@ Dependency rule: **`domain/` depends on nothing**. `application/` depends on `do
 
 - **Never commit secrets.** `.gitignore` excludes `auth/`, `profile_*/`, `*.cookies.json`, `storage_state.json`, `secrets.json`, `.env`, `.env.local`, `.env.*.local`. If you see one of these staged, abort and tell the user.
 - **Never add `Co-Authored-By: Claude` (or any AI co-author) to commit messages.** Author attribution is the human user's only.
+- **Branch names must not use a `claude/` prefix.** Use descriptive names like `feat/topic`, `fix/topic`, or `chore/topic` following Conventional Commits style.
 - **Sessions belong outside the repo.** Default location is `$LOCALAPPDATA/gflow-cli/profile_*` (Windows) or `~/.local/share/gflow-cli/profile_*` (POSIX) via [`platformdirs`](https://github.com/platformdirs/platformdirs). Never store sessions in `/tmp`, `%TEMP%`, or anywhere the OS auto-reaps.
 - **No raw `print()` and no `import logging` in `src/`** — use `structlog` for structured events, or Rich `console.print(...)` for user-facing output.
 - **Domain layer is pure** — `src/gflow_cli/domain/*` must not import `application/`, `infrastructure/`, or `interfaces/`. No I/O, no frameworks.
