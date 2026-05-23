@@ -5,7 +5,7 @@ Subcommands:
 * ``upload PATH`` — uploads a local image into a Flow project's library and
   prints the resulting media UUID and inferred dimensions.
 * ``t2i PROMPT`` — text-to-image generation (1-4 images per call).
-* ``i2i PROMPT --ref PATH_OR_UUID`` — image-to-image with seed references.
+* ``i2i PROMPT --ref PATH_OR_UUID`` — image-to-image with reference images.
 
 The profile/auth helpers ``_resolve_profile`` and ``_make_provider_dir`` live
 in :mod:`gflow_cli._cli_helpers` since T4b — a negative AST-based test in
@@ -51,16 +51,21 @@ from gflow_cli.image_batch import (
     DEFAULT_MODEL as _DEFAULT_MODEL,
 )
 from gflow_cli.image_batch import (
+    MAX_BATCH_PROMPTS as _MAX_BATCH_PROMPTS,
+)
+from gflow_cli.image_batch import (
     MAX_COUNT as _MAX_COUNT,
 )
 from gflow_cli.image_batch import (
     MAX_PROMPT_FILE_BYTES,
+    parse_manifest_file,
     parse_prompt_lines,
     prompt_items_from_parsed,
     prompt_items_from_texts,
     read_prompt_file,
     render_image_batch_summary,
     run_image_batch,
+    run_manifest_image_batch,
 )
 from gflow_cli.image_batch import (
     MIN_COUNT as _MIN_COUNT,
@@ -233,10 +238,7 @@ async def _run_upload(
         "  gflow image t2i --prompts-file prompts.txt\n"
         "  cat prompts.txt | gflow image t2i --stdin\n"
         '  gflow image t2i "neon cyberpunk alley" --model nano-pro --aspect 16:9\n'
-        '  gflow image t2i "variations of a logo" -n 4 --aspect 1:1\n'
-        '  gflow image t2i "reproducible shot" --seed 42\n\n'
-        "Note: --seed is only valid when generating a single image (-n 1) "
-        "and is not supported in multi-prompt mode."
+        '  gflow image t2i "variations of a logo" -n 4 --aspect 1:1'
     ),
 )
 @click.argument("prompts", nargs=-1, required=False)
@@ -286,12 +288,6 @@ async def _run_upload(
     help=f"How many images to generate ({_MIN_COUNT}-{_MAX_COUNT}).",
 )
 @click.option(
-    "--seed",
-    default=None,
-    type=int,
-    help="RNG seed for reproducibility (only valid when -n 1).",
-)
-@click.option(
     "--out",
     "out",
     default=None,
@@ -321,14 +317,13 @@ def t2i(
     model: str,
     aspect: str,
     count: int,
-    seed: int | None,
     out: Path | None,
     profile: str | None,
     transport: str | None,
 ) -> None:
     """Generate image(s) from one or more text prompts."""
     is_multi_prompt = len(prompts) > 1 or prompts_file is not None or read_stdin
-    _validate_t2i_input(prompts, prompts_file, read_stdin, seed, count, is_multi_prompt)
+    _validate_t2i_input(prompts, prompts_file, read_stdin)
 
     if not is_multi_prompt:
         if not prompts:
@@ -349,7 +344,6 @@ def t2i(
                     model=Model.from_cli(model),
                 ),
                 count=count,
-                seed=seed,
                 out=out,
                 output_root=settings.output_dir,
                 transport=transport,
@@ -434,15 +428,11 @@ def _validate_t2i_input(
     prompts: tuple[str, ...],
     prompts_file: Path | None,
     read_stdin: bool,
-    seed: int | None,
-    count: int,
-    is_multi_prompt: bool,
 ) -> None:
     """Raise click.UsageError for invalid t2i flag combinations.
 
-    Click's IntRange already bounds count to [1, 4]; this enforces the
-    cross-flag rules — exactly one prompt source, and --seed only with
-    a single image and a single prompt.
+    Click's IntRange already bounds count to [1, 4]; this enforces that
+    exactly one prompt source is used.
     """
     source_count = _count_t2i_sources(prompts, prompts_file, read_stdin)
     if source_count == 0:
@@ -451,17 +441,6 @@ def _validate_t2i_input(
         raise click.UsageError(
             "Prompt sources are mutually exclusive: use positional prompts, "
             "--prompts-file, or --stdin."
-        )
-    if seed is not None and count != 1:
-        raise click.UsageError(
-            "--seed is only valid when generating a single image (-n 1). "
-            "For multi-image runs, omit --seed and let each shot get its own."
-        )
-    if seed is not None and is_multi_prompt:
-        raise click.UsageError(
-            "--seed is not supported for multi-prompt `gflow image t2i`. "
-            "Use one single-prompt command per seed today; per-prompt seeds belong "
-            "to a future `gflow run --config` schema update."
         )
 
 
@@ -475,7 +454,6 @@ async def _run_t2i(
     headless: bool,
     req: GenerateImageRequest,
     count: int,
-    seed: int | None,
     out: Path | None,
     output_root: Path,
     transport: str | None = None,
@@ -490,7 +468,7 @@ async def _run_t2i(
         console.print(f"  Project: [dim]{project.project_id}[/dim]")
         console.print(f"  Generating {count} image(s) ({req.model.value}, {req.aspect.value})...")
         if count == 1:
-            img = await client.generate_image(project_id=project.project_id, req=req, seed=seed)
+            img = await client.generate_image(project_id=project.project_id, req=req)
             images: list[GeneratedImage] = [img]
         else:
             images = await client.generate_images_batch(
@@ -524,6 +502,139 @@ def _print_t2i_summary(images: list[GeneratedImage], saved_paths: list[Path]) ->
 
 
 # ---------------------------------------------------------------------------
+# batch subcommand
+# ---------------------------------------------------------------------------
+
+_BATCH_TITLE = "gflow-cli image batch"
+
+
+@image.command(
+    "batch",
+    short_help=f"Batch-generate images from a manifest (max {_MAX_BATCH_PROMPTS}, shared project).",
+    help=(
+        "Generate images from a JSON or TSV manifest file "
+        f"(up to {_MAX_BATCH_PROMPTS} prompts).\n\n"
+        "All prompts share one Flow project (stay-mounted editor). A 3-7s\n"
+        "jitter is applied between submissions as an anti-bot courtesy.\n\n"
+        "To generate each prompt in its own project, loop `gflow image t2i` instead.\n\n"
+        "\b\n"
+        "TSV format (tab-separated): prompt[\\tcount[\\taspect_ratio[\\tmodel]]]\n"
+        "  Lines starting with # or blank lines are skipped.\n\n"
+        'JSON format: [{"text": "...", "count": 2, "aspect_ratio": "16:9", '
+        '"model": "nano2"}, ...]\n\n'
+        "\b\n"
+        "Examples:\n"
+        "  gflow image batch prompts.tsv\n"
+        "  gflow image batch prompts.json\n"
+        "  gflow image batch prompts.tsv -n 4 --aspect 16:9 --out ./output\n"
+    ),
+)
+@click.argument(
+    "manifest",
+    type=click.Path(exists=True, dir_okay=False, readable=True, path_type=Path),
+)
+@click.option(
+    "-n",
+    "--count",
+    "count",
+    default=_DEFAULT_COUNT,
+    show_default=True,
+    type=click.IntRange(_MIN_COUNT, _MAX_COUNT),
+    help=(
+        "Default image count for manifest rows that do not specify one "
+        f"({_MIN_COUNT}-{_MAX_COUNT})."
+    ),
+)
+@click.option(
+    "--aspect",
+    default=_DEFAULT_ASPECT_RATIO,
+    show_default=True,
+    type=click.Choice(_ALLOWED_ASPECT_RATIOS),
+    help="Default aspect ratio for rows that do not specify one.",
+)
+@click.option(
+    "--model",
+    default=_DEFAULT_MODEL,
+    show_default=True,
+    type=click.Choice(_ALLOWED_MODELS),
+    help="Default model for rows that do not specify one.",
+)
+@click.option(
+    "--continue-on-error/--fail-fast",
+    default=True,
+    show_default=True,
+    help="Continue after per-prompt failures (default) or stop at the first failure.",
+)
+@click.option(
+    "--out",
+    "out",
+    default=None,
+    type=click.Path(file_okay=False, path_type=Path),
+    help=(
+        "Directory to write generated PNGs. When omitted, files land under "
+        "<output_dir>/images/<YYYY-MM-DD>/."
+    ),
+)
+@click.option("--profile", default=None, help="Profile name (overrides default).")
+@click.option(
+    "--transport",
+    type=click.Choice(transport_choices(), case_sensitive=False),
+    default=None,
+    help="Override transport strategy.",
+)
+def batch(
+    manifest: Path,
+    count: int,
+    aspect: str,
+    model: str,
+    continue_on_error: bool,
+    out: Path | None,
+    profile: str | None,
+    transport: str | None,
+) -> None:
+    """Run MANIFEST (JSON or TSV) through Flow's image generator."""
+    try:
+        prompts = parse_manifest_file(
+            manifest,
+            default_count=count,
+            default_aspect_ratio=aspect,
+            default_model=model,
+        )
+    except ConfigurationError as exc:
+        raise _as_usage_error(exc) from exc
+
+    profile_name = _resolve_profile(profile)
+    provider_dir = _make_provider_dir(profile_name)
+    settings = get_settings()
+    output_dir = resolve_batch_output_dir(
+        cli_override=out, output_root=settings.output_dir, kind="images"
+    )
+
+    total_images = sum(p.count for p in prompts)
+    console.print(
+        f"\n[bold]{_BATCH_TITLE}[/bold] · profile=[bold]{profile_name}[/bold] "
+        f"· {len(prompts)} prompt(s) · up to {total_images} image(s)"
+    )
+    console.print(f"  output_dir: [dim]{safe_path_text(output_dir)}[/dim]")
+    if not continue_on_error:
+        console.print("  mode: [yellow]fail-fast[/yellow]")
+
+    outcomes = asyncio.run(
+        run_manifest_image_batch(
+            profile_dir=provider_dir,
+            headless=settings.headless,
+            transport=transport,
+            prompts=prompts,
+            output_dir=output_dir,
+            continue_on_error=continue_on_error,
+        )
+    )
+    exit_code = render_image_batch_summary(outcomes, title=_BATCH_TITLE)
+    if exit_code != 0:
+        sys.exit(exit_code)
+
+
+# ---------------------------------------------------------------------------
 # i2i subcommand
 # ---------------------------------------------------------------------------
 
@@ -541,8 +652,7 @@ def _print_t2i_summary(images: list[GeneratedImage], saved_paths: list[Path]) ->
         '  gflow image i2i "blend these" --ref a.png --ref b.png\n'
         '  gflow image i2i "stylize" --ref ddb6ef97-262d-49f4-8269-4a28c0fae6a2\n'
         '  gflow image i2i "mix" --ref hero.png --ref ddb6ef97-262d-49f4-8269-4a28c0fae6a2\n\n'
-        "For text-only generation, use `gflow image t2i` instead.\n"
-        "Note: --seed is only valid when generating a single image (-n 1)."
+        "For text-only generation, use `gflow image t2i` instead."
     ),
 )
 @click.argument("prompt")
@@ -581,12 +691,6 @@ def _print_t2i_summary(images: list[GeneratedImage], saved_paths: list[Path]) ->
     help="How many images to generate (1-4).",
 )
 @click.option(
-    "--seed",
-    default=None,
-    type=int,
-    help="RNG seed for reproducibility (only valid when -n 1).",
-)
-@click.option(
     "--out",
     "out",
     default=None,
@@ -614,19 +718,11 @@ def i2i(
     model: str,
     aspect: str,
     count: int,
-    seed: int | None,
     out: Path | None,
     profile: str | None,
     transport: str | None,
 ) -> None:
     """Generate image(s) from PROMPT + reference image(s) (image-to-image)."""
-    # Mirror t2i's seed/count cross-flag rule — see _run_t2i for the rationale.
-    if seed is not None and count != 1:
-        raise click.UsageError(
-            "--seed is only valid when generating a single image (-n 1). "
-            "For multi-image runs, omit --seed and let each shot get its own."
-        )
-
     # Classify each --ref upfront: UUIDs become ImageRef, path-likes become
     # canonical Paths (with symlinks resolved). _classify_ref raises
     # click.UsageError on missing/broken paths, which Click maps to exit 2.
@@ -646,7 +742,6 @@ def i2i(
             aspect=Aspect.from_cli(aspect),
             model=Model.from_cli(model),
             count=count,
-            seed=seed,
             out=out,
             output_root=settings.output_dir,
             transport=transport,
@@ -696,7 +791,6 @@ async def _run_i2i(
     aspect: Aspect,
     model: Model,
     count: int,
-    seed: int | None,
     out: Path | None,
     output_root: Path,
     transport: str | None = None,
@@ -723,7 +817,7 @@ async def _run_i2i(
             f"({req.model.value}, {req.aspect.value})..."
         )
         if count == 1:
-            img = await client.generate_image(project_id=project.project_id, req=req, seed=seed)
+            img = await client.generate_image(project_id=project.project_id, req=req)
             images: list[GeneratedImage] = [img]
         else:
             images = await client.generate_images_batch(

@@ -310,6 +310,44 @@ def test_auth_missing_error_exit_code():
     assert _exit_code_for(err) == 8
 
 
+# ---------- BatchPartialError and BatchIntegrityError ----------
+
+
+def test_batch_partial_error_carries_partial_results() -> None:
+    from gflow_cli.api.dto import BatchSubmissionResult
+    from gflow_cli.errors import BatchPartialError, GFlowError
+
+    partial = BatchSubmissionResult(
+        status="ok",
+        project_id="p1",
+        prompt_idx=0,
+        prompt_hash="aa",
+        images=(),
+    )
+    cause = GFlowError(detail="upstream timeout", route="batch")
+    err = BatchPartialError(
+        detail="batch failed on prompt 1",
+        route="batch",
+        partial_results=(partial,),
+        cause=cause,
+    )
+    assert err.partial_results == (partial,)
+    assert err.cause is cause
+    assert isinstance(err, GFlowError)
+
+
+def test_batch_integrity_error_carries_indices() -> None:
+    from gflow_cli.errors import BatchIntegrityError, GFlowError
+
+    err = BatchIntegrityError(
+        detail="expected 4 files, got 3",
+        route="batch",
+        prompt_indices=(1, 2),
+    )
+    assert err.prompt_indices == (1, 2)
+    assert isinstance(err, GFlowError)
+
+
 # ---------- gflow_cli.exceptions alias ----------
 
 

@@ -92,7 +92,7 @@ def configure_logging(log_format: LogFormat = LogFormat.AUTO) -> None:
     structlog.configure(
         processors=[*shared_processors, renderer],
         wrapper_class=structlog.make_filtering_bound_logger(INFO_LEVEL),
-        cache_logger_on_first_use=True,
+        cache_logger_on_first_use=False,
     )
 
 

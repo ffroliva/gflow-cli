@@ -105,7 +105,7 @@ Read the full [DISCLAIMER](DISCLAIMER.md) before deploying this in any productio
 gflow image t2i "a quiet mountain lake at dawn, cinematic photography" --aspect 9:16 --model nano2 --out ./gflow-output/example-single
 ```
 
-One prompt, default model (`nano2` = Nano Banana 2), 9:16 portrait, written as `./gflow-output/example-single/<media_name>_0.png`. Wall time is typically 30–90s on a warm profile; the first call after a fresh `gflow auth login` is slower because Playwright spins up Chromium and navigates to the Flow editor. See [`docs/USAGE.md`](docs/USAGE.md) for the full `gflow image t2i` flag reference (`--model`, `--aspect`, `-n`, `--seed`, `--profile`, `--transport`).
+One prompt, default model (`nano2` = Nano Banana 2), 9:16 portrait, written as `./gflow-output/example-single/<media_name>_0.png`. Wall time is typically 30–90s on a warm profile; the first call after a fresh `gflow auth login` is slower because Playwright spins up Chromium and navigates to the Flow editor. See [`docs/USAGE.md`](docs/USAGE.md) for the full `gflow image t2i` flag reference (`--model`, `--aspect`, `-n`, `--profile`, `--transport`).
 
 To reproduce the recording yourself, see [`scripts/record_demo.ps1`](scripts/record_demo.ps1) (Windows, requires OBS + ffmpeg + gifski).
 
@@ -180,7 +180,7 @@ gflow image t2i "a hot air balloon over Tokyo at sunrise"
 gflow video t2v "Slow cinematic push-in on a sunlit forest clearing" --aspect 16:9 --out-dir out/
 ```
 
-The image lands at `$GFLOW_CLI_OUTPUT_DIR/images/<YYYY-MM-DD>/<media_name>_1.png` (defaults to `./out/` when the env var is unset). See [docs/USAGE.md § `gflow image t2i`](docs/USAGE.md#gflow-image-t2i) for `--model`, `--aspect`, `-n/--count`, `--seed`, and `--out` flags. The video lands at `<out-dir>/<media_id>.mp4`.
+The image lands at `$GFLOW_CLI_OUTPUT_DIR/images/<YYYY-MM-DD>/<media_name>_1.png` (defaults to `./out/` when the env var is unset). See [docs/USAGE.md § `gflow image t2i`](docs/USAGE.md#gflow-image-t2i) for `--model`, `--aspect`, `-n/--count`, and `--out` flags. The video lands at `<out-dir>/<media_id>.mp4`.
 
 > **Video generation runs on the UI-automation transport.** The legacy HTTP
 > video path returned HTTP 401 and was retired. `gflow video t2v` is shipped
