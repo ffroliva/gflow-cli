@@ -9,6 +9,17 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ### Fixed
 
+- `gflow image t2i` and `gflow image batch` now explicitly select Image
+  mode in the Flow editor before submitting. Previously, if the account
+  was last in Video mode, prompts were silently routed to the video
+  endpoint — no `batchGenerateImages` response was observed and the
+  listener timed out after 3 minutes. Mirror of the existing
+  `_switch_to_video_mode` on the video transport. Also resolves the
+  historical "first-attempt listener-miss flake" recorded in
+  `phase-b-followups` memory item #1. Live-verified on profile
+  `ffroliva` (1 t2i shot + full batch e2e); evidence in
+  [`docs/LIVE_VERIFICATION_image_batch.md`](docs/LIVE_VERIFICATION_image_batch.md)
+  § Post-mode-switch-fix verification.
 - `gflow image batch` now actually shares one Flow project across all prompts
   in a batch. Previously the `--same-project=1` flag was a no-op at the
   `ui_automation` transport layer; each prompt landed in its own Flow

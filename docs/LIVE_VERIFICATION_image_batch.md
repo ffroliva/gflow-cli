@@ -254,3 +254,102 @@ gap is a pre-existing locale-portability issue ([#24](https://github.com/ffroliv
 that was previously unobserved because earlier verification ran on
 English-locale profiles. The branch is ready for review; a Phase 7b
 follow-up will close the loop once #24 lands.
+
+## Post-mode-switch-fix verification — 2026-05-23 (FULL PASS on `ffroliva`)
+
+**Status:** FULL PASS — all eight test assertions green; user-confirmed
+gallery shows one project with four real images of the expected aspect
+ratios.
+
+### Bug discovered and fixed in this commit chain
+
+Earlier Phase 7 conclusions implicitly assumed the editor always opened
+in Image mode. That assumption broke today on `ffroliva`: a prior
+unrelated session had left the editor in Video mode, and the image
+transport had no equivalent of `ui_automation_video.py`'s
+`_switch_to_video_mode`. Submissions silently routed to the video
+endpoint, no `batchGenerateImages` response was observed, and the
+listener timed out after 3 minutes. This also explains the historical
+"first-attempt listener-miss flake" recorded in `phase-b-followups`
+memory item #1.
+
+The fix mirrors the video-side pattern:
+`UiAutomationTransport._switch_to_image_mode` opens the 2-step mode
+dropdown via the shared `MODE_SWITCH_TRIGGER_SELECTORS` (imported from
+`ui_automation_video`), clicks the Image tab via the new
+`IMAGE_TAB_IN_MENU_SELECTORS` cascade
+(`aria-controls*='IMAGE'` first, locale text fallbacks after), presses
+Escape to close the menu, and logs `ui_automation.image_mode_entered`.
+Called from `generate_images` and `_generate_images_batch_locked` after
+`_dismiss_blocking_overlays`. The batch path wraps the call in the same
+`orphaned_project_warning` try/except as overlay dismissal.
+
+### Retraction of earlier-session claim
+
+An earlier session in this branch's history claimed "Phase 7e produced
+4 unique images end-to-end" based on file-size differences alone. That
+claim is hereby retracted. Inspection of the surviving `pytest-825` /
+`pytest-826` artifacts shows **zero `prompt_N_M.png` files** were
+written in those runs; the only PNGs present are count-tab diagnostic
+screenshots in `_diagnostics/`. The runs the earlier claim referenced
+were either reaped pytest tmp dirs or non-batch unit-test fixtures
+(8-byte magic-only PNGs in `test_*0/out/`). The first actually-verified
+4-image batch run on this branch is `pytest-836` / `pytest-837` from
+2026-05-23, recorded below.
+
+### Live run 1 — `gflow image t2i` (smoke test, 1 credit)
+
+| Layer | Result | Evidence |
+|---|---|---|
+| Exit code | 0 | `tmp/ffroliva_postfix_t2i/run.log` |
+| File | `2366d8f2-1109-487f-bcbf-0a35c260430d_1.png`, 894,106 bytes | magic `ffd8ffe000104a46` (JPEG) |
+| Pillow dims | 768×1376, aspect 0.5581 (±0.79% of 9:16) | within 2% threshold |
+| `image_mode_entered` event | fired | structlog at `08:56:56Z` after `selector_matched probe=image_mode_tab [aria-controls*='IMAGE']` |
+| `batch_response_seen` status | 200 OK | on `flowMedia:batchGenerateImages` project `21910786-df7b-4005-9188-52717fe9960b` |
+| User gallery confirmation | one project, one image (not a video) | confirmed |
+
+### Live run 2 — `tests/e2e/test_image_batch_e2e.py` (4 credits)
+
+| Assertion | Result |
+|---|---|
+| Exit code | 0 |
+| 1. All outcomes `status == "ok"` | passed |
+| 2. File cardinality == sum(p.count) == 4 | passed (with `_diagnostics/` excluded from `rglob`) |
+| 3. Magic bytes valid (PNG/JPEG/WebP) | passed — all four JPEG |
+| 4. Pillow aspect-ratio per row, ±2% | passed |
+| 5. `ui_automation.batch_response_seen` count ≥ sum(p.count) | passed |
+| 6. `image_batch.row_completed` count == sum(p.count) (4) | passed |
+| 7. `image_batch.submission_attempt` count == len(prompts) (3) | passed |
+| 8. Shared `project_id` across `submission_attempt` events | passed |
+
+`pytest-837/out/` artifacts (4 distinct JPEGs in one batch):
+
+| File | Size | Dims | Aspect | Row config |
+|---|---|---|---|---|
+| `prompt_0_0.png` | 828 KB | 768×1376 | 9:16 ✓ | row 0, count=1, PORTRAIT |
+| `prompt_1_0.png` | 1000 KB | 1376×768 | 16:9 ✓ | row 1, count=2, LANDSCAPE |
+| `prompt_1_1.png` | 908 KB | 1376×768 | 16:9 ✓ | row 1, count=2 (2nd) |
+| `prompt_2_0.png` | 1203 KB | 1024×1024 | 1:1 ✓ | row 2, count=1, SQUARE |
+
+User-confirmed: one project on `ffroliva`'s Flow gallery contains
+exactly four real images of the correct aspect ratios.
+
+### Test-side fix
+
+The e2e file-count assertion at `tests/e2e/test_image_batch_e2e.py:142`
+counted every `.png`/`.jpg` under `out/`. Commit `c5c8d4a` relocated
+count-tab diagnostic screenshots into `out/_diagnostics/`, which broke
+the assertion (counted 10 instead of 4). The assertion now filters
+`"_diagnostics" not in f.parts`. No production-code change.
+
+### Still open
+
+- **`denon82` WAF/reCAPTCHA 403** on `batchGenerateImages` is unrelated
+  to the mode-switch bug and untouched by this commit chain. Today's
+  evidence (`pytest-825`/`pytest-826`/`v3_7f`/`v3_7g`) showed
+  `PUBLIC_ERROR_UNUSUAL_ACTIVITY` from `denon82`'s reCAPTCHA score —
+  separate from the Image/Video mode confusion. The fact that
+  `ffroliva` passed end-to-end today says WAF *can* be passed by a
+  sufficiently fresh chrome-strategy profile; whether `denon82`
+  recovers with time or needs a new profile is a separate
+  investigation.
