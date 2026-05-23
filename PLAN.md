@@ -365,16 +365,53 @@ I2V and R2V explicitly deferred — the orchestration raises `NotImplementedErro
 
 ---
 
-### Phase 5 — Public alpha soak + first non-alpha release
+### Phase 5 — Public alpha soak + first non-alpha release ✅ DONE (v0.7.0, 2026-05-20)
 
-`v0.2.0a1` through `v0.6.0a1` are already on PyPI under Trusted Publishing.
-Phase 5 is the soak window before dropping the `aN` suffix:
+`v0.2.0a1` through `v0.6.0a6` shipped as alpha on PyPI under Trusted Publishing
+during the soak window. **v0.7.0 is the first stable (non-`aN`) release**,
+tagged 2026-05-20 with a signed annotated tag (CI gate from #30) and verified
+end-to-end against the live Flow UI across four aspect ratios — see
+[`docs/LIVE_VERIFICATION_v0.7.0.md`](docs/LIVE_VERIFICATION_v0.7.0.md).
 
-- Let `v0.6.0a1` soak on PyPI for at least 1 week with external installs
-- Verify `uvx --from "gflow-cli==0.6.0a1" gflow --help` works on a fresh machine on all three OSes (Windows / macOS / Linux)
-- Triage any issues filed by external users (`gh issue list`)
-- Tag the first non-alpha (`v0.6.0`) once the surface is stable enough for external automation
-- Optional follow-up: scaffold `OfficialVeoProvider` against [`googleapis/python-genai`](https://github.com/googleapis/python-genai) behind `GFLOW_CLI_PROVIDER=official`
+Headline scope for v0.7.0 (downstream-worker ergonomics release):
+
+- `FlowApiClient(out_dir=...)` debug-screenshot plumbing (#18)
+- `health_check()` + `BrowserSessionClosedError` (#16, #18)
+- Optional `project_id` on `generate_image*` (#16)
+- `gflow_cli.exceptions` alias module (#16)
+- `gflow auth login` Flow-session verification (#15) + Chromium-rejection
+  guidance via `AuthBrowserRejectedError` exit 14 (#17)
+- Overlay-dismiss helper for first-run profiles (#26)
+- 1:1 aspect-ratio selector cascade (live-verification fallout)
+- Signed-tag CI gate (#30)
+- Listener instrumentation (`batch_response_seen`, `…_dropped_project_id_mismatch`)
+- New evergreen docs: [`docs/DEBUGGING.md`](docs/DEBUGGING.md) and
+  [`docs/LIVE_VERIFICATION_v0.7.0.md`](docs/LIVE_VERIFICATION_v0.7.0.md)
+
+Optional follow-up still open: scaffold `OfficialVeoProvider` against
+[`googleapis/python-genai`](https://github.com/googleapis/python-genai) behind
+`GFLOW_CLI_PROVIDER=official`.
+
+**External install verified:**
+```bash
+uvx --from "gflow-cli==0.7.0" gflow --version    # → gflow, version 0.7.0
+```
+
+---
+
+### Phase B — Video CLI restoration on `UiAutomationTransport` — IN PROGRESS
+
+Phase A (T2V library transport) shipped with v0.7.0 via PR #23. PR #36
+(merged 2026-05-21) closed the T2V CLI gap on Phase B:
+
+- [x] Restore `gflow video t2v` CLI — shipped via PR #36 (`gflow video t2v PROMPT [--aspect 9:16|16:9] [--profile] [--out-dir]`)
+- [x] Add first-class video download mirroring the image side ([#29](https://github.com/ffroliva/gflow-cli/issues/29)) — shipped via PR #36 (`VideoResult`, `_download_video`, `FlowApiClient.download_video`)
+- [x] Live-verify T2V portrait aspect — shipped 2026-05-21 on profile `ffroliva` (both `9:16` and `16:9`); evidence in [`docs/LIVE_VERIFICATION_video_download.md`](docs/LIVE_VERIFICATION_video_download.md)
+- [ ] I2V (image-to-video) on `UiAutomationTransport` (`Mode.I2V` currently raises `NotImplementedError`); CLI still stubbed
+- [ ] R2V (reference-to-video) on `UiAutomationTransport` (`Mode.R2V` currently raises `NotImplementedError`); CLI still stubbed
+- [ ] Restore `gflow video batch` CLI (TSV-manifest fan-out — currently stubbed)
+- [ ] Parameterized live e2e under `tests/e2e/test_video_t2v_e2e.py` mirroring the image-side e2e
+- [ ] Address the first-attempt listener-miss flake observed during v0.7.0 live verification
 
 ---
 

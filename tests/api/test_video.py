@@ -13,6 +13,7 @@ from gflow_cli.api.video import (
     GenerateVideoRequest,
     Mode,
     Tier,
+    VideoResult,
     VideoStatus,
     media_name_from_generate_response,
     parse_video_status,
@@ -211,3 +212,25 @@ class TestParseVideoStatus:
     def test_malformed_status_raises(self) -> None:
         with pytest.raises(ValueError, match="mediaGenerationStatus"):
             parse_video_status({"media": [{"name": "m", "mediaMetadata": {}}]}, media_id="m")
+
+
+class TestVideoResult:
+    def test_video_result_holds_fields(self) -> None:
+        status = VideoStatus(media_id="abc-123", status="MEDIA_GENERATION_STATUS_SUCCESSFUL")
+        result = VideoResult(status=status, local_path=Path("/tmp/abc-123.mp4"))
+        assert result.status is status
+        assert result.local_path == Path("/tmp/abc-123.mp4")
+
+    def test_video_result_no_path_when_failed(self) -> None:
+        status = VideoStatus(media_id="abc-123", status="MEDIA_GENERATION_STATUS_FAILED")
+        result = VideoResult(status=status, local_path=None)
+        assert result.local_path is None
+        assert not result.status.succeeded
+
+    def test_video_result_is_frozen(self) -> None:
+        from dataclasses import FrozenInstanceError
+
+        status = VideoStatus(media_id="x", status="MEDIA_GENERATION_STATUS_SUCCESSFUL")
+        result = VideoResult(status=status, local_path=None)
+        with pytest.raises(FrozenInstanceError):
+            result.local_path = Path("/tmp/other.mp4")  # type: ignore[misc]

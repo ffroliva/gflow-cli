@@ -15,6 +15,7 @@ a controllable _FakeTransport.
 from __future__ import annotations
 
 import asyncio
+import inspect
 from pathlib import Path
 from typing import Any
 from unittest.mock import AsyncMock, MagicMock, patch
@@ -131,7 +132,7 @@ class TestGenerateImage:
         transport = _FakeTransport()
         client = _client_with_transport(tmp_path, transport)
 
-        await client.generate_image(project_id="proj-1", req=_make_req(), seed=42)
+        await client.generate_image(project_id="proj-1", req=_make_req())
 
         assert len(transport.calls) == 1
         assert transport.calls[0]["project_id"] == "proj-1"
@@ -146,7 +147,7 @@ class TestGenerateImage:
         transport = _FakeTransport()
         client = _client_with_transport(tmp_path, transport)
 
-        result = await client.generate_image(project_id="proj-1", req=_make_req(), seed=1)
+        result = await client.generate_image(project_id="proj-1", req=_make_req())
 
         assert isinstance(result, GeneratedImage)
 
@@ -175,7 +176,7 @@ class TestGenerateImage:
         client = _client_with_transport(tmp_path, _EmptyTransport())
 
         with pytest.raises(ContentPolicyError) as exc_info:
-            await client.generate_image(project_id="proj-1", req=_make_req(), seed=1)
+            await client.generate_image(project_id="proj-1", req=_make_req())
 
         # ContentPolicyError IS a FlowApiError — back-compat preserved.
         assert isinstance(exc_info.value, FlowApiError)
@@ -193,7 +194,7 @@ class TestGenerateImage:
         transport = _FakeTransport()
         client = _client_with_transport(tmp_path, transport)
 
-        await client.generate_image(project_id="proj-1", req=_make_req(), seed=42)
+        await client.generate_image(project_id="proj-1", req=_make_req())
 
         assert len(transport.calls) == 1
 
@@ -203,7 +204,7 @@ class TestGenerateImage:
         transport = _FakeTransport(images=[_FAKE_IMAGE])
         client = _client_with_transport(tmp_path, transport)
 
-        result = await client.generate_image(project_id="proj-1", req=_make_req(), seed=42)
+        result = await client.generate_image(project_id="proj-1", req=_make_req())
 
         assert isinstance(result, GeneratedImage)
         assert result.fife_url == _FAKE_FIFE_URL
@@ -231,13 +232,13 @@ class TestGenerateImage:
         client = _client_with_transport(tmp_path, _ErrorTransport())
 
         with pytest.raises(FlowApiError) as exc_info:
-            await client.generate_image(project_id="proj-1", req=_make_req(), seed=1)
+            await client.generate_image(project_id="proj-1", req=_make_req())
 
         assert "/projects/proj-1/flowMedia:batchGenerateImages" in exc_info.value.route
         assert exc_info.value.status == 400
 
-    async def test_generate_image_idempotent_body_modulo_recaptcha(self, tmp_path: Path) -> None:
-        """Same seed+batch_id → transport called twice with the same project_id.
+    async def test_generate_image_reuses_explicit_project_id(self, tmp_path: Path) -> None:
+        """Repeated calls with the same project_id delegate to that project.
 
         Body idempotency (recaptchaContext.token, sessionId fields) is a
         transport-internal concern tested in tests/api/transports/. The
@@ -247,12 +248,8 @@ class TestGenerateImage:
         transport = _FakeTransport()
         client = _client_with_transport(tmp_path, transport)
 
-        await client.generate_image(
-            project_id="proj-1", req=_make_req(), seed=42, batch_id="batch-1"
-        )
-        await client.generate_image(
-            project_id="proj-1", req=_make_req(), seed=42, batch_id="batch-1"
-        )
+        await client.generate_image(project_id="proj-1", req=_make_req())
+        await client.generate_image(project_id="proj-1", req=_make_req())
 
         assert len(transport.calls) == 2
         assert transport.calls[0]["project_id"] == transport.calls[1]["project_id"]
@@ -273,148 +270,34 @@ def _make_image_for_seed(seed: int) -> GeneratedImage:
 
 
 class TestGenerateImagesBatch:
-    async def test_batch_fan_out_uses_shared_batch_id(self, tmp_path: Path) -> None:
-        """All N parallel calls share one batchId (client-level invariant).
+    async def test_batch_calls_transport_once(self, tmp_path: Path) -> None:
+        """generate_images_batch makes exactly one transport call with count set on the request.
 
-        The client generates one shared_batch_id and passes it to every
-        _drive_image_generation coroutine. This test verifies the transport is
-        called N times (fan-out happened). batchId propagation into the wire
-        body is a transport-internal concern tested in tests/api/transports/.
+        The native count selector (x1/x2/x3/x4) means one submission round-trip
+        produces N images — no parallel fan-out.
         """
         call_count = 0
+        captured_request: GenerateImageRequest | None = None
 
         class _CountingTransport(_FakeTransport):
             async def generate_images(  # type: ignore[override]
                 self, *, project_id: str | None, request: GenerateImageRequest
             ) -> list[GeneratedImage]:
-                nonlocal call_count
+                nonlocal call_count, captured_request
                 call_count += 1
-                return [_make_image_for_seed(call_count)]
+                captured_request = request
+                return [_make_image_for_seed(i) for i in range(request.count)]
 
         client = _client_with_transport(tmp_path, _CountingTransport())
-        await client.generate_images_batch(project_id="proj-1", req=_make_req(), count=3)
+        results = await client.generate_images_batch(project_id="proj-1", req=_make_req(), count=3)
 
-        assert call_count == 3
+        assert call_count == 1, "transport must be called exactly once (native count selector)"
+        assert captured_request is not None
+        assert captured_request.count == 3
+        assert len(results) == 3
 
-    async def test_batch_fan_out_uses_distinct_seeds(self, tmp_path: Path) -> None:
-        """When seeds=None, the client allocates N distinct seeds before fan-out."""
-        call_count = 0
-
-        class _CountingTransport(_FakeTransport):
-            async def generate_images(  # type: ignore[override]
-                self, *, project_id: str | None, request: GenerateImageRequest
-            ) -> list[GeneratedImage]:
-                nonlocal call_count
-                call_count += 1
-                return [_make_image_for_seed(call_count)]
-
-        client = _client_with_transport(tmp_path, _CountingTransport())
-        await client.generate_images_batch(project_id="proj-1", req=_make_req(), count=3)
-
-        assert call_count == 3
-
-    async def test_batch_fan_out_calls_transport_n_times(self, tmp_path: Path) -> None:
-        """generate_images_batch fans out to N independent transport calls.
-
-        Spec C2 post-fixup: with the retry+mint loop now inside each per-shot
-        ``_drive_image_generation``, the transport is invoked exactly count
-        times on the happy path (one per image, no retries triggered here).
-        """
-        call_count = 0
-
-        class _CountingTransport(_FakeTransport):
-            async def generate_images(  # type: ignore[override]
-                self, *, project_id: str | None, request: GenerateImageRequest
-            ) -> list[GeneratedImage]:
-                nonlocal call_count
-                call_count += 1
-                return [_make_image_for_seed(call_count)]
-
-        client = _client_with_transport(tmp_path, _CountingTransport())
-        await client.generate_images_batch(project_id="proj-1", req=_make_req(), count=3)
-
-        assert call_count == 3
-
-    async def test_batch_fan_out_returns_in_input_order(self, tmp_path: Path) -> None:
-        """asyncio.gather may complete out of order — return list must match input seed order.
-
-        Two assertions together prove the contract:
-
-        1. ``completion_log`` is NOT in submission order (idx=0 finishes last
-           because it sleeps longest) — proves real interleaving happened and a
-           sequential ``for`` loop wouldn't pass.
-        2. ``results`` IS in submission order — proves ``asyncio.gather``
-           preserves input order despite out-of-order completion.
-        """
-        completion_log: list[int] = []
-        call_index = 0
-
-        class _DelayedTransport(_FakeTransport):
-            async def generate_images(  # type: ignore[override]
-                self, *, project_id: str | None, request: GenerateImageRequest
-            ) -> list[GeneratedImage]:
-                nonlocal call_index
-                idx = call_index
-                call_index += 1
-                # idx=0 sleeps longest so it finishes last — forces interleaving.
-                delay = 0.03 if idx == 0 else (0.01 if idx == 1 else 0.0)
-                await asyncio.sleep(delay)
-                completion_log.append(idx)
-                return [_make_image_for_seed(idx + 100)]
-
-        client = _client_with_transport(tmp_path, _DelayedTransport())
-
-        results = await client.generate_images_batch(
-            project_id="proj-1",
-            req=_make_req(),
-            count=3,
-            seeds=[100, 200, 300],
-        )
-
-        # Out-of-order completion occurred — a sequential for-loop would log [0,1,2].
-        assert completion_log != [0, 1, 2], (
-            f"expected interleaved completion, got submission-order log {completion_log}"
-        )
-        # gather() preserves input order despite out-of-order completion above.
-        assert [r.seed for r in results] == [100, 101, 102]
-        assert [r.media_name for r in results] == ["media-100", "media-101", "media-102"]
-
-    async def test_batch_fan_out_partial_failure_propagates(self, tmp_path: Path) -> None:
-        """One sibling raising FlowApiError -> whole batch raises.
-
-        The transport raises FlowApiError for the second call; asyncio.gather
-        propagates the first exception immediately.
-        """
-        call_count = 0
-
-        class _FailingTransport(_FakeTransport):
-            async def generate_images(  # type: ignore[override]
-                self, *, project_id: str | None, request: GenerateImageRequest
-            ) -> list[GeneratedImage]:
-                nonlocal call_count
-                call_count += 1
-                if call_count == 2:
-                    raise FlowApiError(
-                        429,
-                        "rate limited",
-                        route=f"/projects/{project_id}/flowMedia:batchGenerateImages",
-                    )
-                return [_make_image_for_seed(call_count)]
-
-        client = _client_with_transport(tmp_path, _FailingTransport())
-
-        with pytest.raises(FlowApiError) as exc_info:
-            await client.generate_images_batch(
-                project_id="proj-1",
-                req=_make_req(),
-                count=3,
-                seeds=[100, 200, 300],
-            )
-
-        assert exc_info.value.status == 429
-
-    async def test_batch_fan_out_count_must_be_1_to_4(self, tmp_path: Path) -> None:
-        """count=0 and count=5 must raise ValueError. Matches Flow UI."""
+    async def test_batch_count_must_be_1_to_4(self, tmp_path: Path) -> None:
+        """count=0 and count=5 must raise ValueError. Matches Flow UI cap."""
         transport = _FakeTransport()
         client = _client_with_transport(tmp_path, transport)
 
@@ -423,27 +306,25 @@ class TestGenerateImagesBatch:
         with pytest.raises(ValueError, match="count must be between 1 and 4"):
             await client.generate_images_batch(project_id="proj-1", req=_make_req(), count=5)
 
-    @pytest.mark.parametrize(
-        "seeds,count",
-        [
-            ([1, 2], 3),
-            ([1, 2, 3, 4], 2),
-        ],
-    )
-    async def test_batch_seeds_count_mismatch_raises(
-        self, tmp_path: Path, seeds: list[int], count: int
-    ) -> None:
-        """If caller supplies ``seeds``, its length must equal ``count``."""
-        transport = _FakeTransport()
-        client = _client_with_transport(tmp_path, transport)
+    async def test_batch_transport_failure_propagates(self, tmp_path: Path) -> None:
+        """Transport raising FlowApiError propagates to the caller."""
 
-        with pytest.raises(ValueError, match="does not match count"):
-            await client.generate_images_batch(
-                project_id="proj-1",
-                req=_make_req(),
-                count=count,
-                seeds=seeds,
-            )
+        class _FailingTransport(_FakeTransport):
+            async def generate_images(  # type: ignore[override]
+                self, *, project_id: str | None, request: GenerateImageRequest
+            ) -> list[GeneratedImage]:
+                raise FlowApiError(
+                    429,
+                    "rate limited",
+                    route=f"/projects/{project_id}/flowMedia:batchGenerateImages",
+                )
+
+        client = _client_with_transport(tmp_path, _FailingTransport())
+
+        with pytest.raises(FlowApiError) as exc_info:
+            await client.generate_images_batch(project_id="proj-1", req=_make_req(), count=2)
+
+        assert exc_info.value.status == 429
 
 
 def _make_image(fife_url: str = _FAKE_FIFE_URL) -> GeneratedImage:
@@ -656,7 +537,7 @@ class TestSpecC2TokenReMint:
         transport = _FakeTransport()
         client = _client_with_transport(tmp_path, transport)
 
-        await client.generate_image(project_id="proj-1", req=_make_req(), seed=42)
+        await client.generate_image(project_id="proj-1", req=_make_req())
 
         assert len(transport.calls) == 1
 
@@ -700,7 +581,7 @@ class TestWireFormatDiscoveryAndRedaction:
         client = _client_with_transport(tmp_path, _WireErrorTransport())
 
         with pytest.raises(WireFormatError) as exc_info:
-            await client.generate_image(project_id="proj-1", req=_make_req(), seed=1)
+            await client.generate_image(project_id="proj-1", req=_make_req())
 
         discovery = exc_info.value.discovery
         assert isinstance(discovery, dict)
@@ -744,7 +625,7 @@ class TestWireFormatDiscoveryAndRedaction:
         client = _client_with_transport(tmp_path, _RedactedWireErrorTransport())
 
         with pytest.raises(WireFormatError) as exc_info:
-            await client.generate_image(project_id="proj-1", req=_make_req(), seed=1)
+            await client.generate_image(project_id="proj-1", req=_make_req())
 
         discovery = exc_info.value.discovery
         body_prefix = discovery.get("body_prefix_redacted", "")
@@ -792,7 +673,8 @@ class TestGenerateImageAutoCreateProject:
             ) -> list[GeneratedImage]:
                 nonlocal call_count
                 call_count += 1
-                return [_make_image_for_seed(call_count)]
+                # Return request.count images to mirror the native count selector.
+                return [_make_image_for_seed(i) for i in range(request.count)]
 
         transport = _CountingTransport()
         client = _client_with_transport(tmp_path, transport)
@@ -800,7 +682,8 @@ class TestGenerateImageAutoCreateProject:
 
         results = await client.generate_images_batch(req=_make_req(), count=2)
 
-        # create_project called ONCE — not once per parallel shot.
+        # Transport called ONCE (native count selector — no fan-out).
+        assert call_count == 1
         client.create_project.assert_awaited_once()  # type: ignore[attr-defined]
         assert len(results) == 2
         for call in transport.calls:
@@ -858,3 +741,23 @@ class TestHealthCheck:
         result = await client.health_check()
 
         assert result is False
+
+
+def test_generate_image_has_no_seed_kwarg() -> None:
+    """seed/batch_id removed in commit #1b — see design spec §1, §12 D8."""
+    params = inspect.signature(FlowApiClient.generate_image).parameters
+    assert "seed" not in params, f"generate_image still accepts seed: {list(params)}"
+    assert "batch_id" not in params, f"generate_image still accepts batch_id: {list(params)}"
+
+
+def test_generate_images_batch_has_no_seeds_kwarg() -> None:
+    """seeds= removed in commit #1b — see design spec §1, §12 D8."""
+    params = inspect.signature(FlowApiClient.generate_images_batch).parameters
+    assert "seeds" not in params, f"generate_images_batch still accepts seeds: {list(params)}"
+
+
+def test_drive_image_generation_private_has_no_seed_kwarg() -> None:
+    """_drive_image_generation kwargs shrunk in commit #1b."""
+    params = inspect.signature(FlowApiClient._drive_image_generation).parameters
+    assert "seed" not in params
+    assert "batch_id" not in params

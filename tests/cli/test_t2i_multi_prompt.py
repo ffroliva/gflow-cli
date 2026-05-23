@@ -138,15 +138,6 @@ def test_t2i_rejects_multiple_prompt_sources_before_profile_resolution(tmp_path:
     resolve_profile.assert_not_called()
 
 
-def test_t2i_rejects_seed_in_multi_prompt_before_profile_resolution() -> None:
-    with patch("gflow_cli.cli_image._resolve_profile") as resolve_profile:
-        result = _invoke_t2i(["p1", "p2", "--seed", "123"])
-
-    assert result.exit_code == 2
-    assert "seed" in result.output.lower()
-    resolve_profile.assert_not_called()
-
-
 def test_t2i_rejects_empty_stdin_before_profile_resolution() -> None:
     from gflow_cli.cli import main
 

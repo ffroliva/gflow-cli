@@ -105,7 +105,6 @@ Options:
   --aspect [9:16|16:9|1:1|4:3|3:4]
                             Aspect ratio.                     [default: 9:16]
   -n, --count INTEGER       How many images to generate (1-4).  [default: 1]
-  --seed INTEGER            RNG seed (only valid when -n 1).
   --out PATH                Output directory (see "Output paths" below).
   --profile NAME            Profile name (overrides default).
 ```
@@ -131,8 +130,6 @@ Options:
 - `--continue-on-error` is default; `--fail-fast` stops after the first failed
   prompt.
 
-**Seed-requires-count==1 invariant.** `--seed` is only valid when generating a single image (`-n 1`). For multi-image runs the CLI rejects the combination upfront — multi-image fan-out uses N independent random seeds (one per shot) wired to a shared `batch_id`, which gives you variation. `--seed` is not supported in multi-prompt mode; use separate single-prompt commands for seeded work today.
-
 **Output paths.**
 
 - **Default (`--out` omitted).** Files land under `$GFLOW_CLI_OUTPUT_DIR/images/<YYYY-MM-DD>/<media_name>_<n>.png`. The date partition keeps long-running batches navigable.
@@ -150,9 +147,6 @@ gflow image t2i "neon cyberpunk alley" --model nano-pro --aspect 16:9
 
 # 4 variations of a logo at 1:1, written flat into ./logos/
 gflow image t2i "variations of a minimalist fox logo" -n 4 --aspect 1:1 --out ./logos
-
-# Reproducible single shot
-gflow image t2i "reproducible reference shot" --seed 42
 
 # Three prompts in one warm Flow session/project
 gflow image t2i "p1" "p2" "p3" --aspect 16:9 --model image4
@@ -192,7 +186,6 @@ Options:
   --aspect [9:16|16:9|1:1|4:3|3:4]
                             Aspect ratio.                     [default: 9:16]
   -n, --count INTEGER       How many images to generate (1-4).  [default: 1]
-  --seed INTEGER            RNG seed (only valid when -n 1).
   --out PATH                Output directory (same semantics as t2i).
   --profile NAME            Profile name (overrides default).
 ```
@@ -229,6 +222,65 @@ A 2-image run produces files numbered `_1.png`, `_2.png`:
 ./variants/<media_name_a>_1.png
 ./variants/<media_name_b>_2.png
 ```
+
+## `gflow image batch`
+
+Generate multiple images from a single manifest file. The format is dispatched by file extension (`.json` or `.tsv`).
+
+### TSV manifest
+
+Tab-separated columns. Only `prompt` is required; remaining columns fall back to the CLI defaults.
+
+```
+prompt<TAB>count<TAB>aspect_ratio<TAB>model
+```
+
+Lines starting with `#` and blank lines are skipped. Example: [`test_assets/sample_batch.tsv`](../test_assets/sample_batch.tsv).
+
+```tsv
+a small calico kitten sitting on a windowsill
+a watercolor sunset over rolling hills	2	16:9
+an isometric pixel-art bakery	1	1:1	nano2
+```
+
+### JSON manifest
+
+```json
+[
+  {"text": "a small calico kitten sitting on a windowsill"},
+  {"text": "a watercolor sunset over rolling hills", "count": 2, "aspect_ratio": "16:9"},
+  {"text": "an isometric pixel-art bakery", "count": 1, "aspect_ratio": "1:1", "model": "nano2"}
+]
+```
+
+Example: [`test_assets/sample_batch.json`](../test_assets/sample_batch.json).
+
+### Session behaviour
+
+All prompts in a batch share one Flow project. The editor is opened once; each prompt is submitted in turn with a random 3–7 second pause between submissions. This jitter is a **submission-cadence anti-bot-detection measure** — it spaces out the submission clicks, not the generation wait. All generations run in parallel inside Flow; only the click timing is jittered. The command returns once every submitted generation has resolved (success or failure), not after the last click.
+
+### Flags
+
+- `--continue-on-error` / `--fail-fast` — keep going past row failures or stop at the first one (default: `--fail-fast`). On fail-fast, already-completed images are downloaded before the error is surfaced.
+
+### Limits
+
+- `MAX_BATCH_PROMPTS = 5` (defined in `src/gflow_cli/image_batch.py`). To raise, edit the constant.
+
+### Exit codes
+
+- `0` — all rows succeeded.
+- `1` — invalid manifest (file not found, parse error, unknown aspect/model).
+- non-zero (other) — transport-level failure.
+
+### Observability
+
+`gflow image batch` emits four structlog events per run, useful for debugging throttling regressions:
+
+- `image_batch.submission_attempt {row_idx, prompt_hash, aspect, model, jitter_enabled, t_since_prev_submit_ms, project_id}`
+- `image_batch.submission_result {row_idx, outcome, latency_ms, ...}`
+- `image_batch.row_completed {row_idx, file_path, sha256_prefix}` (per image)
+- `image_batch.inter_submission_latency_ms {row_idx, latency_ms}` (fires from row 1 onward)
 
 ## `gflow video t2v`
 

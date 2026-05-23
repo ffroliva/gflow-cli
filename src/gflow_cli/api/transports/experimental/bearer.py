@@ -222,6 +222,7 @@ class BearerTransport:
                 headless=True,
                 viewport={"width": 1280, "height": 720},
                 locale="en-US",
+                args=["--password-store=basic"],
             )
             try:
                 page = await ctx.new_page()

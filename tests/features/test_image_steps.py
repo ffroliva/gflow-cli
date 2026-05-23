@@ -79,7 +79,6 @@ def _make_fake_t2i(file_count: int):
         headless: bool,
         req: Any,
         count: int,
-        seed: int | None,
         out: Path | None,
         output_root: Path,
         transport: str | None = None,
