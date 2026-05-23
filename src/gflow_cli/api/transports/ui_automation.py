@@ -235,6 +235,11 @@ _COUNT_TAB_COUNT = 4
 # The pattern is locale-invariant: Flow never translates the digit+x label.
 _COUNT_TAB_TEXT_RE = re.compile(r"^(1x|x[2-4])$")
 
+# Subdirectory inside out_dir where diagnostic artefacts are written.
+# Keeps count_before/after screenshots and DOM dumps out of the user-facing
+# output directory so file-count assertions on *.png never pick them up.
+_DIAGNOSTICS_SUBDIR = "_diagnostics"
+
 
 def _count_tabs_locator(page: Page) -> Locator:
     """Return a Playwright Locator that matches ONLY the 4 count tabs.
@@ -790,7 +795,9 @@ class UiAutomationTransport(VideoGenerationMixin):
 
         # Phase 3 — before screenshot (diagnostic, best-effort).
         if out_dir is not None and prompt_idx is not None:
-            await _capture_debug_screenshot(page, out_dir, f"count_before_prompt_{prompt_idx}.png")
+            diag_dir = out_dir / _DIAGNOSTICS_SUBDIR
+            diag_dir.mkdir(parents=True, exist_ok=True)
+            await _capture_debug_screenshot(page, diag_dir, f"count_before_prompt_{prompt_idx}.png")
 
         if not await UiAutomationTransport._open_gen_settings_panel(page):
             log.warning("ui_automation.gen_settings_panel_not_found", skipping=True)
@@ -836,7 +843,9 @@ class UiAutomationTransport(VideoGenerationMixin):
 
         # Phase 3 — after screenshot (diagnostic, best-effort).
         if out_dir is not None and prompt_idx is not None:
-            await _capture_debug_screenshot(page, out_dir, f"count_after_prompt_{prompt_idx}.png")
+            diag_dir = out_dir / _DIAGNOSTICS_SUBDIR
+            diag_dir.mkdir(parents=True, exist_ok=True)
+            await _capture_debug_screenshot(page, diag_dir, f"count_after_prompt_{prompt_idx}.png")
 
         await page.keyboard.press("Escape")
         await page.wait_for_timeout(400)
@@ -912,7 +921,9 @@ class UiAutomationTransport(VideoGenerationMixin):
                 }
                 return result;
             }""")
-            target = out_dir / f"count_panel_dom_prompt_{prompt_idx}.json"
+            diag_dir = out_dir / _DIAGNOSTICS_SUBDIR
+            diag_dir.mkdir(parents=True, exist_ok=True)
+            target = diag_dir / f"count_panel_dom_prompt_{prompt_idx}.json"
             target.write_text(json.dumps(snapshot, indent=2, ensure_ascii=False), encoding="utf-8")
             log.info(
                 "ui_automation.count_panel_dom_dumped",

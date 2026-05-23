@@ -1805,7 +1805,7 @@ class TestDumpCountPanelDom:
 
         await UiAutomationTransport._dump_count_panel_dom(page, tmp_path, 0)  # type: ignore[attr-defined]
 
-        out_file = tmp_path / "count_panel_dom_prompt_0.json"
+        out_file = tmp_path / "_diagnostics" / "count_panel_dom_prompt_0.json"
         assert out_file.exists(), "JSON dump file must be created"
 
         written = json.loads(out_file.read_text(encoding="utf-8"))
@@ -1848,5 +1848,5 @@ class TestDumpCountPanelDom:
         # Must not raise
         await UiAutomationTransport._dump_count_panel_dom(page, tmp_path, 1)  # type: ignore[attr-defined]
 
-        out_file = tmp_path / "count_panel_dom_prompt_1.json"
+        out_file = tmp_path / "_diagnostics" / "count_panel_dom_prompt_1.json"
         assert not out_file.exists(), "No file written on evaluate failure"
