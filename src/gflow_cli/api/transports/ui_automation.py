@@ -17,6 +17,7 @@ import asyncio
 import hashlib
 import json
 import random
+import re
 import time
 from collections.abc import Callable
 from pathlib import Path
@@ -228,22 +229,26 @@ _SUPPORTED_COUNTS: frozenset[int] = frozenset({1, 2, 3, 4})
 # Number of count tabs Flow renders in the settings panel (1 through 4).
 _COUNT_TAB_COUNT = 4
 
+# Regex that matches count-tab text exactly: "1x", "x2", "x3", "x4".
+# These are the ONLY role="tab" elements whose text fits this pattern —
+# Mode tabs ("image\nImagem") and Aspect tabs ("16:9", "crop_square") do not.
+# The pattern is locale-invariant: Flow never translates the digit+x label.
+_COUNT_TAB_TEXT_RE = re.compile(r"^(1x|x[2-4])$")
 
-def _extract_count_digit(text: str) -> int | None:
-    """Extract the leading digit from a count-tab label, locale-agnostically.
 
-    Works for any rendering locale:
-    - English: "1", "x1", "1x", "1 image", "2 images"
-    - Portuguese: "1 imagem", "2 imagens"
-    - Ligature artefacts: "imageImagem" → None (no leading digit → graceful None)
+def _count_tabs_locator(page: Page) -> Locator:
+    """Return a Playwright Locator that matches ONLY the 4 count tabs.
 
-    Returns the integer value of the first digit sequence found, or ``None``
-    when no digit is present in ``text``.
+    Filters ``role="tab"`` elements by text matching :data:`_COUNT_TAB_TEXT_RE`
+    (``1x``, ``x2``, ``x3``, ``x4``). This pattern is unique to count tabs —
+    Mode tabs and Aspect tabs never match it — so the filter survives all three
+    Radix tablists being present in the DOM simultaneously.
+
+    DOM evidence: ``tmp/dom_dump.json`` captured on profile denon82 (Portuguese
+    locale, 2026-05-22) shows all three tablists rendered; count tabs are the
+    only ones whose ``text`` is ``"1x"`` / ``"x2"`` / ``"x3"`` / ``"x4"``.
     """
-    import re
-
-    m = re.search(r"\d+", text)
-    return int(m.group()) if m else None
+    return page.locator('[role="tab"]').filter(has_text=_COUNT_TAB_TEXT_RE)
 
 
 # Reverse map: domain Aspect enum → CLI string accepted by the settings panel.
@@ -726,115 +731,39 @@ class UiAutomationTransport(VideoGenerationMixin):
     async def _read_displayed_count(page: Page) -> int | None:
         """Read the currently-displayed image count from the settings panel.
 
-        Locale-invariant: reads the ``aria-selected="true"`` tab's text and
-        extracts the leading digit via :func:`_extract_count_digit`, so any
-        locale rendering ("1", "x1", "1x", "1 image", "1 imagem") returns the
-        same integer.
+        Locale-invariant: filters ``[aria-selected="true"]`` tabs by
+        :data:`_COUNT_TAB_TEXT_RE` so only count tabs ("1x", "x2", "x3",
+        "x4") are considered.  Mode tabs ("image\\nImagem") and Aspect tabs
+        ("16:9", etc.) are selected simultaneously in the Radix tablist DOM
+        and would poison the old unfiltered ``[aria-selected="true"]`` query.
 
-        Tries two sources in order:
-        1. ``[role="tab"][aria-selected="true"]`` inside the panel — most
-           precise signal when the panel is open.
-        2. ``button[aria-selected="true"]`` fallback for non-Radix DOM shapes.
-
-        Returns the integer count (1–4) or ``None`` when no digit can be
-        parsed (e.g. icon-ligature artefact "imageImagem" on pt-BR locale).
+        Returns the integer count (1–4) extracted from the matched tab's text,
+        or ``None`` when no count tab is selected / visible.
         """
-        for selector in (
-            '[role="tab"][aria-selected="true"]',
-            'button[aria-selected="true"]',
-        ):
-            try:
-                selected = page.locator(selector).first
-                if await selected.is_visible(timeout=500):
-                    text = await selected.text_content(timeout=500)
-                    if text:
-                        digit = _extract_count_digit(text.strip())
-                        if digit is not None:
-                            return digit
-            except Exception:  # noqa: BLE001 — probe failure is non-fatal
-                continue
-
-        return None
-
-    @staticmethod
-    async def _count_tab_locator(page: Page) -> tuple[Locator, int] | None:
-        """Locate the count-tab list via structural selectors.
-
-        Returns ``(locator, strategy)`` where ``locator`` is a Playwright
-        Locator pointing at **all** count tabs (expected: 4 elements) and
-        ``strategy`` is 1 or 2 for diagnostics, or ``None`` when neither
-        strategy finds exactly ``_COUNT_TAB_COUNT`` tabs.
-
-        Strategy 1 — Radix UI tablist:
-            ``[role="tablist"] [role="tab"]`` — count tabs in a standard
-            tablist container.  Requires exactly 4 visible tabs.
-
-        Strategy 2 — leading-digit buttons:
-            ``button`` elements whose ``innerText`` starts with a digit.
-            Used as a fallback for non-Radix DOM shapes.
-        """
-        # Strategy 1: Radix-style [role="tablist"] > [role="tab"]
         try:
-            tabs = page.locator('[role="tablist"] [role="tab"]')
-            count = await tabs.count()
-            if count == _COUNT_TAB_COUNT:
-                return (tabs, 1)
-        except Exception:  # noqa: BLE001
-            pass
-
-        # Strategy 2: buttons whose visible text starts with a digit
-        try:
-            import re
-
-            all_buttons = page.locator("button")
-            btn_count = await all_buttons.count()
-            digit_indices: list[int] = []
-            for i in range(btn_count):
-                try:
-                    btn = all_buttons.nth(i)
-                    if await btn.is_visible(timeout=200):
-                        text = await btn.inner_text(timeout=200)
-                        if text and re.match(r"^\d", text.strip()):
-                            digit_indices.append(i)
-                except Exception:  # noqa: BLE001
-                    continue
-            if len(digit_indices) == _COUNT_TAB_COUNT:
-                # Reconstruct a locator chain for positional access.
-                # We return the filtered button locator for nth() access.
-                return (all_buttons, 2)
-        except Exception:  # noqa: BLE001
-            pass
-
-        return None
+            selected = page.locator('[role="tab"][aria-selected="true"]').filter(
+                has_text=_COUNT_TAB_TEXT_RE
+            )
+            if await selected.count() == 0:
+                return None
+            text = (await selected.first.text_content(timeout=500) or "").strip()
+            m = re.search(r"\d", text)
+            return int(m.group()) if m else None
+        except Exception:  # noqa: BLE001 — probe failure is non-fatal
+            return None
 
     @staticmethod
     async def _is_settings_panel_open(page: Page) -> bool:
         """True if the generation-settings panel count tabs are currently visible.
 
-        Uses ``[role="tablist"] [role="tab"]`` structural presence as the
-        panel-open indicator — locale-agnostic, no text matching.
-        Falls back to ``button[aria-selected]`` if the tablist isn't present.
+        Uses :func:`_count_tabs_locator` — the panel is open when at least one
+        count tab (text matching ``1x`` / ``x2`` / ``x3`` / ``x4``) is visible.
+        This is locale-invariant and immune to Mode/Aspect tab false-positives.
         """
-        # Primary: look for a tablist with exactly _COUNT_TAB_COUNT tabs.
         try:
-            tabs = page.locator('[role="tablist"] [role="tab"]')
-            count = await tabs.count()
-            if count == _COUNT_TAB_COUNT:
-                # Confirm at least one is visible (panel is actually rendered).
-                if await tabs.first.is_visible(timeout=400):
-                    return True
+            return await _count_tabs_locator(page).first.is_visible()
         except Exception:  # noqa: BLE001
-            pass
-
-        # Fallback: any button with aria-selected visible (simpler panels).
-        try:
-            btn = page.locator("button[aria-selected]").first
-            if await btn.is_visible(timeout=400):
-                return True
-        except Exception:  # noqa: BLE001
-            pass
-
-        return False
+            return False
 
     @staticmethod
     async def _configure_generation_settings(
@@ -1009,19 +938,19 @@ class UiAutomationTransport(VideoGenerationMixin):
     ) -> None:
         """Click the count tab by position — locale-invariant, read-back verify with retry.
 
-        Algorithm (#24 structural-first rewrite):
+        Algorithm (#24 DOM-evidence-driven rewrite):
         1. Ensure the settings panel is open without toggling it closed
            (stay-mounted batch: panel may already be open from the prior prompt).
-        2. Read the currently-displayed count (digit-extraction, locale-agnostic).
+        2. Read the currently-displayed count via :func:`_count_tabs_locator`
+           filtered by :data:`_COUNT_TAB_TEXT_RE` — immune to Mode/Aspect tabs.
         3. If it already matches ``count``, return early (no click needed).
-        4. Locate the count-tab list via :meth:`_count_tab_locator` and click
-           ``nth(count - 1)`` — positional, no text matching.
+        4. Call ``_count_tabs_locator(page).nth(count - 1)`` and click —
+           positional within the filtered set, no text matching.
         5. Read back the digit and confirm the change.
         6. Retry up to 3 attempts total; raise ``RuntimeError`` on non-convergence.
 
-        When read-back returns ``None`` (unrecognised locale text, e.g.
-        "imageImagem"), the position-based click still proceeds and the attempt
-        is treated as a success — the click is deterministic regardless.
+        When read-back returns ``None`` (unrecognised locale text), the
+        position-based click is trusted — it is deterministic regardless.
 
         Four structlog events are emitted for diagnosability:
         - ``ui_automation.count_setter_entered``
@@ -1079,39 +1008,31 @@ class UiAutomationTransport(VideoGenerationMixin):
                 )
                 return
 
-            # Locate the tab list structurally (position-first, no text matching).
-            tab_list_result = await UiAutomationTransport._count_tab_locator(page)
+            # Locate count tabs via text-pattern filter (locale-invariant).
+            # _count_tabs_locator returns role="tab" elements whose text matches
+            # ^(1x|x[2-4])$ — unique to count tabs across all three Radix tablists.
             panel_visible_before = await UiAutomationTransport._is_settings_panel_open(page)
             clicked = False
             click_error: str | None = None
 
-            if tab_list_result is None:
-                click_error = "count tab list not found via structural selectors"
-                log.warning(
-                    "ui_automation.count_tab_list_not_found",
-                    desired_count=count,
-                    attempt=attempt,
-                )
-            else:
-                tabs_locator, strategy = tab_list_result
-                # 0-indexed: count=1 → nth(0), count=2 → nth(1), etc.
-                target_tab = tabs_locator.nth(count - 1)
-                selector_desc = f"nth({count - 1}) via strategy={strategy}"
-                log.info(
-                    "ui_automation.count_click_attempted",
-                    target=f"count={count}",
-                    selector=selector_desc,
-                    strategy=strategy,
-                    panel_visible=panel_visible_before,
-                    current_displayed_count=displayed,
-                )
-                try:
-                    await target_tab.wait_for(state="visible", timeout=3_000)
-                    await target_tab.click()
-                    await page.wait_for_timeout(300)
-                    clicked = True
-                except Exception as e:  # noqa: BLE001
-                    click_error = str(e)
+            tabs_locator = _count_tabs_locator(page)
+            # 0-indexed: count=1 → nth(0), count=2 → nth(1), etc.
+            target_tab = tabs_locator.nth(count - 1)
+            selector_desc = f"nth({count - 1}) of _count_tabs_locator"
+            log.info(
+                "ui_automation.count_click_attempted",
+                target=f"count={count}",
+                selector=selector_desc,
+                panel_visible=panel_visible_before,
+                current_displayed_count=displayed,
+            )
+            try:
+                await target_tab.wait_for(state="visible", timeout=3_000)
+                await target_tab.click()
+                await page.wait_for_timeout(300)
+                clicked = True
+            except Exception as e:  # noqa: BLE001
+                click_error = str(e)
 
             # Read back to verify (digit-extraction, locale-agnostic).
             displayed = await UiAutomationTransport._read_displayed_count(page)

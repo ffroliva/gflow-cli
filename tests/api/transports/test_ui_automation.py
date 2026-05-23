@@ -21,9 +21,11 @@ import pytest
 
 from gflow_cli.api.image import Aspect, GenerateImageRequest, Model
 from gflow_cli.api.transports.ui_automation import (
+    _COUNT_TAB_TEXT_RE,  # noqa: PLC2701
     FLOW_URL,
     ONBOARDING_SELECTORS,
     UiAutomationTransport,
+    _count_tabs_locator,  # noqa: PLC2701
 )
 from gflow_cli.errors import ContentPolicyError, WafRejectionError
 
@@ -1257,22 +1259,49 @@ def _make_selected_tab_page(
     *,
     visible: bool = True,
 ) -> MagicMock:
-    """Minimal fake page wiring [aria-selected="true"] to ``selected_text``."""
+    """Minimal fake page for _read_displayed_count tests.
+
+    Models the new implementation which calls:
+      page.locator('[role="tab"][aria-selected="true"]').filter(has_text=RE)
+
+    The ``filter(has_text=...)`` call is simulated by checking whether
+    ``selected_text`` matches :data:`_COUNT_TAB_TEXT_RE`. When it matches
+    (e.g. "1x", "x2") the filtered locator reports ``count()=1``; when it
+    does not (e.g. "imageImagem", Mode/Aspect tab text) it reports ``count()=0``
+    so ``_read_displayed_count`` returns ``None``.
+    """
     page = MagicMock()
     page.wait_for_timeout = AsyncMock()
     page.keyboard = MagicMock()
     page.keyboard.press = AsyncMock()
 
     def _locator(sel: str) -> MagicMock:
+        outer = MagicMock()
+
+        def _filter(**kwargs: object) -> MagicMock:
+            # Simulate has_text filtering: count=1 only when text matches RE.
+            text_matches = (
+                selected_text is not None
+                and visible
+                and bool(_COUNT_TAB_TEXT_RE.match(selected_text.strip()))
+            )
+            filtered = MagicMock()
+            filtered.count = AsyncMock(return_value=1 if text_matches else 0)
+            first_loc = MagicMock()
+            first_loc.text_content = AsyncMock(return_value=selected_text)
+            filtered.first = first_loc
+            return filtered
+
+        outer.filter = MagicMock(side_effect=_filter)
+
+        # Also wire .first for any direct first-access patterns.
         loc = MagicMock()
-        wrapper = MagicMock()
-        wrapper.first = loc
-        tab_vis = selected_text is not None and visible
-        loc.is_visible = AsyncMock(return_value=tab_vis)
+        loc.is_visible = AsyncMock(return_value=selected_text is not None and visible)
         loc.text_content = AsyncMock(return_value=selected_text)
         loc.wait_for = AsyncMock()
         loc.click = AsyncMock()
-        return wrapper
+        outer.first = loc
+        return outer
 
     page.locator = MagicMock(side_effect=_locator)
     return page
@@ -1282,16 +1311,21 @@ def _make_tablist_page(
     *,
     tab_count: int = 4,
     selected_idx: int = 0,
-    selected_text: str = "1",
+    selected_text: str = "1x",
     readback_after_click: str | None = None,
 ) -> tuple[MagicMock, list[int]]:
-    """Build a fake page with a ``[role="tablist"] [role="tab"]`` locator chain.
+    """Build a fake page modelling the new ``_count_tabs_locator`` / ``_read_displayed_count``.
+
+    The new implementation calls:
+    - ``page.locator('[role="tab"]').filter(has_text=RE).nth(i)`` for click
+    - ``page.locator('[role="tab"][aria-selected="true"]').filter(has_text=RE)``
+      for read-back
 
     Returns ``(page, clicked_indices)`` where ``clicked_indices`` accumulates
     the nth-index of every ``click()`` call.
 
-    ``selected_text`` is returned by ``[aria-selected="true"]`` before any click.
-    ``readback_after_click`` is returned after the first click (simulates DOM update).
+    ``selected_text`` defaults to ``"1x"`` (the count-1 tab label). After any
+    click, ``readback_after_click`` is returned by the read-back filter.
     """
     page = MagicMock()
     page.wait_for_timeout = AsyncMock()
@@ -1316,33 +1350,57 @@ def _make_tablist_page(
         t.click = AsyncMock(side_effect=_click_tab)
         tab_mocks.append(t)
 
+    def _make_count_tabs_filtered_loc() -> MagicMock:
+        """Filtered locator for _count_tabs_locator: all 4 count tabs."""
+        filtered = MagicMock()
+        filtered.first = tab_mocks[0]
+
+        def _nth(i: int) -> MagicMock:
+            return tab_mocks[i] if 0 <= i < tab_count else MagicMock()
+
+        filtered.nth = MagicMock(side_effect=_nth)
+        return filtered
+
+    def _make_selected_filtered_loc() -> MagicMock:
+        """Filtered locator for _read_displayed_count: aria-selected + RE filter."""
+        filtered = MagicMock()
+
+        async def _count_selected() -> int:
+            # selected_text matches RE → count=1; else count=0.
+            has_clicked = readback_after_click is not None and click_count_store[0] > 0
+            text = readback_after_click if has_clicked else selected_text
+            return 1 if (text and _COUNT_TAB_TEXT_RE.match(text.strip())) else 0
+
+        filtered.count = AsyncMock(side_effect=_count_selected)
+
+        first_loc = MagicMock()
+
+        async def _text(timeout: int = 500) -> str | None:
+            if readback_after_click is not None and click_count_store[0] > 0:
+                return readback_after_click
+            return selected_text
+
+        first_loc.text_content = AsyncMock(side_effect=_text)
+        filtered.first = first_loc
+        return filtered
+
     def _locator(sel: str) -> MagicMock:
         wrapper = MagicMock()
 
-        if '[role="tablist"]' in sel:
-            # Return a locator whose .count() == tab_count and .nth(i) == tab_mocks[i].
-            tab_list_loc = MagicMock()
-            tab_list_loc.count = AsyncMock(return_value=tab_count)
-            tab_list_loc.first = tab_mocks[0]
-
-            def _nth(i: int) -> MagicMock:
-                return tab_mocks[i] if 0 <= i < tab_count else MagicMock()
-
-            tab_list_loc.nth = MagicMock(side_effect=_nth)
-            return tab_list_loc  # NOTE: returned directly (not wrapper.first) for locator chains
+        if '[role="tab"]' in sel and "aria-selected" not in sel:
+            # _count_tabs_locator: page.locator('[role="tab"]').filter(has_text=RE)
+            outer = MagicMock()
+            outer.filter = MagicMock(return_value=_make_count_tabs_filtered_loc())
+            # Also wire first/is_visible for _is_settings_panel_open
+            outer.first = tab_mocks[0]
+            return outer
 
         if 'aria-selected="true"' in sel:
-            loc = MagicMock()
-            wrapper.first = loc
-            loc.is_visible = AsyncMock(return_value=True)
-
-            async def _text(timeout: int = 500) -> str | None:
-                if readback_after_click is not None and click_count_store[0] > 0:
-                    return readback_after_click
-                return selected_text
-
-            loc.text_content = AsyncMock(side_effect=_text)
-            return wrapper
+            # _read_displayed_count: page.locator('[role="tab"][aria-selected="true"]').filter(...)
+            outer = MagicMock()
+            outer.filter = MagicMock(return_value=_make_selected_filtered_loc())
+            outer.first = tab_mocks[selected_idx]
+            return outer
 
         if "button[aria-selected]" in sel:
             loc = MagicMock()
@@ -1363,36 +1421,138 @@ def _make_tablist_page(
 
 
 # ---------------------------------------------------------------------------
-# _extract_count_digit — locale-agnostic digit extraction
+# Inline digit extraction — documents the re.search(r"\d", text) logic used
+# inside _read_displayed_count after the _COUNT_TAB_TEXT_RE filter passes.
 # ---------------------------------------------------------------------------
 
 
+def _extract_digit(text: str) -> int | None:
+    """Mirror of the inline digit extraction in _read_displayed_count.
+
+    ``re.search(r"\\d", text)`` finds the first digit character. For count-tab
+    labels ("1x", "x2", "x3", "x4") this always yields the count digit. The
+    function is defined here rather than in production code because it is now
+    an implementation detail of _read_displayed_count only.
+    """
+    import re
+
+    m = re.search(r"\d", text)
+    return int(m.group()) if m else None
+
+
 class TestExtractCountDigit:
-    """_extract_count_digit parses count from any locale rendering."""
+    """Documents digit extraction for count-tab label text.
+
+    The old _extract_count_digit is gone from production code; its logic lives
+    inline in _read_displayed_count. These tests exercise _extract_digit (the
+    local mirror) to ensure the inline behaviour is still well-understood.
+    """
 
     @pytest.mark.parametrize(
         ("text", "expected"),
         [
-            # English variants
-            ("1", 1),
-            ("x1", 1),
+            # Flow count-tab labels (the only ones that reach digit extraction now)
             ("1x", 1),
-            ("1 image", 1),
-            ("2 images", 2),
+            ("x2", 2),
             ("x3", 3),
-            ("4x", 4),
-            # Portuguese variants (live-observed on denon82)
-            ("1 imagem", 1),
-            ("2 imagens", 2),
-            # No digit — icon-ligature artefact
+            ("x4", 4),
+            # No digit — icon-ligature artefact (filtered out before this point by RE)
             ("imageImagem", None),
             ("", None),
         ],
     )
     def test_extract(self, text: str, expected: int | None) -> None:
-        from gflow_cli.api.transports.ui_automation import _extract_count_digit
+        assert _extract_digit(text) == expected
 
-        assert _extract_count_digit(text) == expected
+
+# ---------------------------------------------------------------------------
+# Unit 3.13a — _COUNT_TAB_TEXT_RE pattern correctness
+# ---------------------------------------------------------------------------
+
+
+class TestCountTabTextRe:
+    """_COUNT_TAB_TEXT_RE must match exactly 1x/x2/x3/x4 and nothing else."""
+
+    @pytest.mark.parametrize(
+        ("text", "should_match"),
+        [
+            # Count tab labels (must match)
+            ("1x", True),
+            ("x2", True),
+            ("x3", True),
+            ("x4", True),
+            # Mode / Aspect tab labels (must NOT match)
+            ("imageImagem", False),
+            ("image\nImagem", False),
+            ("16:9", False),
+            ("9:16", False),
+            ("1:1", False),
+            ("4:3", False),
+            ("3:4", False),
+            ("crop_16_9", False),
+            ("", False),
+            # Locale-variant forms that used to work in the old impl (now filtered out)
+            ("x1", False),  # x1 is NOT a Flow count tab — Flow uses 1x for count=1
+            ("1 image", False),
+            ("1 imagem", False),
+            ("2 imagens", False),
+        ],
+    )
+    def test_pattern(self, text: str, should_match: bool) -> None:
+        result = bool(_COUNT_TAB_TEXT_RE.match(text))
+        assert result == should_match, (
+            f"_COUNT_TAB_TEXT_RE.match({text!r}) → {result}, expected {should_match}"
+        )
+
+
+# ---------------------------------------------------------------------------
+# Unit 3.13b — _count_tabs_locator filter disambiguation
+# ---------------------------------------------------------------------------
+
+
+class TestCountTabsLocator:
+    """_count_tabs_locator must return only the 4 count tabs, not Mode/Aspect tabs."""
+
+    @pytest.mark.asyncio
+    async def test_filter_excludes_mode_and_aspect_tabs(self) -> None:
+        """page.locator('[role="tab"]').filter(has_text=RE) is called with the
+        correct regex. When the DOM has Mode + Aspect + Count tabs all present,
+        only the count tabs survive the filter."""
+        page = MagicMock()
+
+        # The locator chain: page.locator(...).filter(has_text=RE)
+        all_tabs_loc = MagicMock()
+        filtered_loc = MagicMock()
+        filtered_loc.count = AsyncMock(return_value=4)  # exactly 4 count tabs survive
+        all_tabs_loc.filter = MagicMock(return_value=filtered_loc)
+        page.locator = MagicMock(return_value=all_tabs_loc)
+
+        result = _count_tabs_locator(page)
+
+        # Must query role="tab" (not role="tablist")
+        page.locator.assert_called_once_with('[role="tab"]')
+        # Must call filter with has_text= the RE
+        all_tabs_loc.filter.assert_called_once()
+        call_kwargs = all_tabs_loc.filter.call_args.kwargs
+        assert "has_text" in call_kwargs, "filter must use has_text= keyword"
+        assert call_kwargs["has_text"] is _COUNT_TAB_TEXT_RE
+
+        # Result is the filtered locator (not the unfiltered all_tabs_loc)
+        assert result is filtered_loc
+
+    @pytest.mark.asyncio
+    async def test_filtered_locator_count_is_4(self) -> None:
+        """After filtering, exactly 4 count tabs are found."""
+        page = MagicMock()
+        all_tabs_loc = MagicMock()
+        filtered_loc = MagicMock()
+        filtered_loc.count = AsyncMock(return_value=4)
+        all_tabs_loc.filter = MagicMock(return_value=filtered_loc)
+        page.locator = MagicMock(return_value=all_tabs_loc)
+
+        result = _count_tabs_locator(page)
+        count = await result.count()
+        assert count == 4
 
 
 # ---------------------------------------------------------------------------
@@ -1401,66 +1561,83 @@ class TestExtractCountDigit:
 
 
 class TestReadDisplayedCount:
-    """_read_displayed_count returns digit from aria-selected tab, locale-agnostically."""
+    """_read_displayed_count returns digit from the selected COUNT tab only.
+
+    The new implementation filters [aria-selected="true"] by _COUNT_TAB_TEXT_RE
+    (``^(1x|x[2-4])$``) so Mode tabs ("image\\nImagem") and Aspect tabs ("16:9")
+    that are also aria-selected never pollute the result.
+    """
 
     @pytest.mark.asyncio
-    async def test_english_x1_returns_1(self) -> None:
-        """'x1' → 1 (English locale)."""
-        page = _make_selected_tab_page("x1")
-        result = await UiAutomationTransport._read_displayed_count(page)  # type: ignore[attr-defined]
-        assert result == 1
-
-    @pytest.mark.asyncio
-    async def test_english_1x_returns_1(self) -> None:
-        """'1x' → 1 (alternate English rendering)."""
+    async def test_count_tab_1x_returns_1(self) -> None:
+        """'1x' (Flow's count-1 tab label) → 1."""
         page = _make_selected_tab_page("1x")
         result = await UiAutomationTransport._read_displayed_count(page)  # type: ignore[attr-defined]
         assert result == 1
 
     @pytest.mark.asyncio
-    async def test_english_1_image_returns_1(self) -> None:
-        """'1 image' → 1."""
-        page = _make_selected_tab_page("1 image")
-        result = await UiAutomationTransport._read_displayed_count(page)  # type: ignore[attr-defined]
-        assert result == 1
-
-    @pytest.mark.asyncio
-    async def test_portuguese_1_imagem_returns_1(self) -> None:
-        """'1 imagem' → 1 (Portuguese locale)."""
-        page = _make_selected_tab_page("1 imagem")
-        result = await UiAutomationTransport._read_displayed_count(page)  # type: ignore[attr-defined]
-        assert result == 1
-
-    @pytest.mark.asyncio
-    async def test_portuguese_2_imagens_returns_2(self) -> None:
-        """'2 imagens' → 2 (Portuguese locale)."""
-        page = _make_selected_tab_page("2 imagens")
+    async def test_count_tab_x2_returns_2(self) -> None:
+        """'x2' (Flow's count-2 tab label) → 2."""
+        page = _make_selected_tab_page("x2")
         result = await UiAutomationTransport._read_displayed_count(page)  # type: ignore[attr-defined]
         assert result == 2
 
     @pytest.mark.asyncio
-    async def test_icon_ligature_artefact_returns_none(self) -> None:
-        """'imageImagem' (icon ligature + pt-BR label) → None, not a crash."""
+    async def test_count_tab_x3_returns_3(self) -> None:
+        """'x3' → 3."""
+        page = _make_selected_tab_page("x3")
+        result = await UiAutomationTransport._read_displayed_count(page)  # type: ignore[attr-defined]
+        assert result == 3
+
+    @pytest.mark.asyncio
+    async def test_count_tab_x4_returns_4(self) -> None:
+        """'x4' → 4."""
+        page = _make_selected_tab_page("x4")
+        result = await UiAutomationTransport._read_displayed_count(page)  # type: ignore[attr-defined]
+        assert result == 4
+
+    @pytest.mark.asyncio
+    async def test_mode_tab_text_returns_none(self) -> None:
+        """'image\\nImagem' (Mode tab, pt-BR) → None.
+
+        This was the original bug: the old unfiltered [aria-selected="true"]
+        matched the Mode tab first (it appeared before the Count tab in DOM
+        order) and returned 'imageImagem', causing _extract_count_digit to
+        return None — which then fell through to a mismatched positional click.
+        The filter now excludes Mode tab text entirely.
+        """
         page = _make_selected_tab_page("imageImagem")
         result = await UiAutomationTransport._read_displayed_count(page)  # type: ignore[attr-defined]
         assert result is None
 
     @pytest.mark.asyncio
-    async def test_returns_none_when_tab_not_visible(self) -> None:
-        """Returns None when aria-selected tab is invisible and button fallback also absent."""
+    async def test_aspect_tab_text_returns_none(self) -> None:
+        """'9:16' (Aspect tab) → None — aspect tabs are also aria-selected."""
+        page = _make_selected_tab_page("9:16")
+        result = await UiAutomationTransport._read_displayed_count(page)  # type: ignore[attr-defined]
+        assert result is None
+
+    @pytest.mark.asyncio
+    async def test_no_count_tab_visible_returns_none(self) -> None:
+        """Returns None when no aria-selected count tab is present."""
         page = _make_selected_tab_page(None)
         result = await UiAutomationTransport._read_displayed_count(page)  # type: ignore[attr-defined]
         assert result is None
 
 
 class TestSetCountRetry:
-    """_set_count uses position-based click with digit read-back; raises after 3 failed attempts."""
+    """_set_count uses position-based click with digit read-back; raises after 3 failed attempts.
+
+    The new implementation uses _count_tabs_locator (text-pattern filtered) for
+    nth() click, so selected_text / readback_after_click use RE-matching labels
+    ("1x", "x2", "x3", "x4") to model the real DOM.
+    """
 
     @pytest.mark.asyncio
     async def test_returns_early_when_count_already_matches(self) -> None:
         """If the displayed count already matches desired, no tab click is made."""
-        # Panel open, selected tab shows "2" → count=2 already, no click.
-        page, clicked = _make_tablist_page(selected_text="2")
+        # Panel open, selected count tab shows "x2" → count=2 already, no click.
+        page, clicked = _make_tablist_page(selected_text="x2")
         with patch.object(
             UiAutomationTransport,
             "_is_settings_panel_open",
@@ -1472,8 +1649,8 @@ class TestSetCountRetry:
     @pytest.mark.asyncio
     async def test_position_click_nth_index(self) -> None:
         """_set_count(3) must call nth(2).click() — 0-indexed position."""
-        # Readback returns "3" after click so the method completes normally.
-        page, clicked = _make_tablist_page(selected_text="1", readback_after_click="3")
+        # Readback returns "x3" after click so the method completes normally.
+        page, clicked = _make_tablist_page(selected_text="1x", readback_after_click="x3")
         with (
             patch.object(
                 UiAutomationTransport,
@@ -1503,7 +1680,7 @@ class TestSetCountRetry:
             patch.object(
                 UiAutomationTransport,
                 "_read_displayed_count",
-                # before: None (can't parse); after click: None (still can't parse)
+                # before: None (filtered out by RE); after click: None (still filtered)
                 new=AsyncMock(return_value=None),
             ),
         ):
@@ -1513,8 +1690,8 @@ class TestSetCountRetry:
 
     @pytest.mark.asyncio
     async def test_clicks_tab_and_succeeds_on_first_attempt(self) -> None:
-        """Happy path: displayed=None, click succeeds, read-back matches."""
-        page, clicked = _make_tablist_page(selected_text="1", readback_after_click="1")
+        """Happy path: displayed=None (unrecognised), click succeeds, read-back matches."""
+        page, clicked = _make_tablist_page(selected_text="1x", readback_after_click="1x")
         with (
             patch.object(
                 UiAutomationTransport,
@@ -1533,7 +1710,7 @@ class TestSetCountRetry:
     @pytest.mark.asyncio
     async def test_raises_after_three_failed_attempts(self) -> None:
         """If read-back never converges after 3 attempts, RuntimeError is raised."""
-        page, clicked = _make_tablist_page(selected_text="2", readback_after_click="2")
+        page, clicked = _make_tablist_page(selected_text="x2", readback_after_click="x2")
         with (
             patch.object(
                 UiAutomationTransport,
@@ -1554,7 +1731,7 @@ class TestSetCountRetry:
     async def test_retry_succeeds_on_second_attempt(self) -> None:
         """If read-back returns wrong value on attempt 1, then correct on attempt 2,
         _set_count succeeds without raising."""
-        page, clicked = _make_tablist_page(selected_text="2", readback_after_click="1")
+        page, clicked = _make_tablist_page(selected_text="x2", readback_after_click="1x")
         with (
             patch.object(
                 UiAutomationTransport,

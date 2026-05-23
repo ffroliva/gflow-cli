@@ -11,7 +11,9 @@ from unittest.mock import AsyncMock, MagicMock, patch
 
 import pytest
 
-from gflow_cli.api.transports.ui_automation import UiAutomationTransport
+from gflow_cli.api.transports.ui_automation import (
+    UiAutomationTransport,
+)
 
 
 class _FakePage:
@@ -891,9 +893,11 @@ class _LocatorRecorder:
     def locator(
         self, selector: str
     ) -> _LocatorRecorder._TabListLoc | _LocatorRecorder._SelectedLoc | _LocatorRecorder._NullLoc:
-        if '[role="tablist"]' in selector:
+        if selector == '[role="tab"]':
+            # _count_tabs_locator: page.locator('[role="tab"]').filter(has_text=RE)
             return _LocatorRecorder._TabListLoc(self)
         if 'aria-selected="true"' in selector:
+            # _read_displayed_count: page.locator('[role="tab"][aria-selected="true"]').filter(...)
             return _LocatorRecorder._SelectedLoc(self)
         # All other selectors (GEN_SETTINGS_BUTTON, button[aria-selected], etc.)
         return _LocatorRecorder._NullLoc()
@@ -908,10 +912,20 @@ class _LocatorRecorder:
     keyboard = _Keyboard()
 
     class _TabListLoc:
-        """Represents ``page.locator('[role="tablist"] [role="tab"]')``."""
+        """Represents ``page.locator('[role="tab"]')`` — supports ``.filter()`` for count tabs.
+
+        The new _count_tabs_locator calls:
+          page.locator('[role="tab"]').filter(has_text=_COUNT_TAB_TEXT_RE)
+
+        filter() returns self (the recorder already models only count tabs).
+        """
 
         def __init__(self, recorder: _LocatorRecorder) -> None:
             self._recorder = recorder
+
+        def filter(self, **kwargs: object) -> _LocatorRecorder._TabListLoc:
+            """Return self — recorder already models only count tabs."""
+            return self
 
         async def count(self) -> int:
             return self._recorder._tab_count
@@ -941,10 +955,24 @@ class _LocatorRecorder:
             self._recorder._selected_idx = self._idx
 
     class _SelectedLoc:
-        """Represents ``page.locator('[role="tab"][aria-selected="true"]')``."""
+        """Represents ``page.locator('[role="tab"][aria-selected="true"]')``.
+
+        The new _read_displayed_count calls:
+          page.locator('[role="tab"][aria-selected="true"]').filter(has_text=RE)
+
+        filter() returns a filtered locator whose count()=1 and whose
+        first.text_content() returns the count-tab label for the selected tab.
+        """
 
         def __init__(self, recorder: _LocatorRecorder) -> None:
             self._recorder = recorder
+
+        def filter(self, **kwargs: object) -> _LocatorRecorder._SelectedLoc:
+            """Return self — recorder already models the selected count tab."""
+            return self
+
+        async def count(self) -> int:
+            return 1  # always exactly one count tab selected
 
         @property
         def first(self) -> _LocatorRecorder._SelectedLoc:
@@ -954,8 +982,10 @@ class _LocatorRecorder:
             return True
 
         async def text_content(self, timeout: int = 500) -> str:
-            # Return the digit string for the currently-selected tab (1-indexed).
-            return str(self._recorder._selected_idx + 1)
+            # Return the count-tab label for the currently-selected tab (1-indexed).
+            # Flow uses "1x" for count=1, "x2" for count=2, etc.
+            idx = self._recorder._selected_idx
+            return "1x" if idx == 0 else f"x{idx + 1}"
 
     class _NullLoc:
         """Matches nothing — used for selectors the recorder doesn't handle."""
