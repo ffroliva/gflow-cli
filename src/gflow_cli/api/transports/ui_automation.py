@@ -462,13 +462,16 @@ class UiAutomationTransport(VideoGenerationMixin):
         pw_cm = async_playwright()
         pw = await pw_cm.__aenter__()
         try:
+            import os
+
             from gflow_cli.browser_manager import channel_for_profile  # noqa: PLC0415
 
+            locale_env = os.getenv("GFLOW_CLI_LOCALE", "en-US")
             ctx = await pw.chromium.launch_persistent_context(
                 str(profile_dir),
                 headless=False,
                 viewport=cast("ViewportSize", _VIEWPORT),
-                locale="en-US",
+                locale=locale_env,
                 channel=channel_for_profile(profile_dir),
                 args=[
                     "--disable-blink-features=AutomationControlled",
