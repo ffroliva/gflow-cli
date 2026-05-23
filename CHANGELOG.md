@@ -7,71 +7,129 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+## [0.8.0] — 2026-05-23
+
+> **Multi-image-prompt release + transport hardening.** Introduces the
+> `gflow image batch` subcommand backed by a stay-mounted editor session,
+> restores `gflow video t2v` with first-class auto-download, and ships the
+> image/video mode-switch symmetry invariant that closes the historical
+> "first-attempt listener-miss flake." Also clears all SonarCloud findings
+> on the multi-image-prompt PR (cognitive-complexity refactors of
+> `_set_count`, `parse_tsv_manifest`, and `_generate_images_batch_locked`).
+
+### Added
+
+- `gflow image batch <manifest>` subcommand for batch image generation from
+  JSON or TSV manifests, with `--continue-on-error`. `MAX_BATCH_PROMPTS = 5`.
+  All prompts share one Flow project; jitter (3–7 s default) spaces the
+  submission clicks for anti-bot cadence, not completion wait. Closes
+  [#14](https://github.com/ffroliva/gflow-cli/issues/14) part 2.
+- Application-layer structlog events for image-batch submission:
+  `image_batch.submission_attempt`, `image_batch.submission_result`,
+  `image_batch.row_completed`, `image_batch.inter_submission_latency_ms`.
+  Use these to debug Flow throttling regressions without re-instrumenting.
+- `BatchPartialError` (in `errors`) — raised by fail-fast batch when
+  earlier prompts produced downloadable images before the failing one;
+  carries `partial_results` so the orchestrator can salvage them.
+- `BatchIntegrityError` (in `errors`) — raised by the orchestrator when
+  post-download file count does not match the expected count.
+- `BatchSubmissionResult` (in `api.dto`) — new transport-layer per-prompt
+  outcome with `project_id`, `prompt_idx`, `prompt_hash` fields. Public
+  `list[BatchOutcome]` orchestrator return is unchanged.
+- `ui_automation.image_mode_entered` structlog event — emitted when the
+  editor is switched into Image mode. Companion to the existing
+  `ui_automation_video.video_mode_entered`.
+- `ui_automation.orphaned_project_warning` structlog event — emitted when
+  `_enter_editor` succeeded but a later setup step
+  (`_dismiss_blocking_overlays` / `_switch_to_image_mode`) raises, so the
+  user can find their server-side project record.
+- `ui_automation.batch_403_body` structlog event — emitted (warning level)
+  with a 200-char body prefix when a `batchGenerateImages` response is HTTP
+  403 (WAF / reCAPTCHA), immediately before the `WafRejectionError` raise.
+- `VideoResult` dataclass — return type of `generate_video`, carries
+  `status` and `local_path` ([#29](https://github.com/ffroliva/gflow-cli/issues/29)).
+- `UiAutomationTransport._download_video` — downloads a generated mp4 via
+  `media.getMediaUrlRedirect` using the authenticated page; falls back to
+  `self._out_dir` then `tmp/` when no `out_dir` is supplied
+  ([#29](https://github.com/ffroliva/gflow-cli/issues/29)).
+- `FlowApiClient.download_video(media_id, out_path)` — public API, mirrors
+  `download_image` ([#29](https://github.com/ffroliva/gflow-cli/issues/29)).
+- `gflow video t2v PROMPT` restored — generates and downloads a video
+  end-to-end on `UiAutomationTransport`; supports `--aspect`
+  (`9:16` / `16:9`), `--profile`, and `--out-dir`
+  ([#29](https://github.com/ffroliva/gflow-cli/issues/29)).
+- `UiAutomationTransport._switch_to_image_mode` static method + module-level
+  `IMAGE_TAB_IN_MENU_SELECTORS` cascade — mirror of the video side's
+  `_switch_to_video_mode`. Called from both `generate_images` and
+  `_generate_images_batch_locked` after `_dismiss_blocking_overlays`,
+  before `_configure_generation_settings`.
+
+### Changed
+
+- `gflow image batch` editor session is now persistent across all prompts
+  in a batch. The transport's stay-mounted-session pattern is the
+  canonical shape; same-project semantics are the only supported mode.
+- `_attach_batch_response_listener` now returns `(captured, detach_fn)`;
+  callers that used the single-list return need to unpack accordingly.
+- `UiAutomationTransport.generate_video` now accepts `download: bool = True`
+  and returns `VideoResult` instead of `VideoStatus` — **breaking change
+  for direct transport callers** (the `FlowApiClient` boundary is
+  unaffected). Pass `download=False` to skip the auto-download step.
+- `_set_count` (count-tab selector) is locale-invariant: regex
+  `^(1x|x[2-4])$` (Flow renders digit+x identically in every locale) +
+  positional `.nth(count - 1)` fallback when read-back text is
+  unrecognised. Partial fix for
+  [#24](https://github.com/ffroliva/gflow-cli/issues/24); `ONBOARDING_SELECTORS`
+  still localized text — see KNOWN_ISSUES.
+
 ### Fixed
 
 - `gflow image t2i` and `gflow image batch` now explicitly select Image
   mode in the Flow editor before submitting. Previously, if the account
   was last in Video mode, prompts were silently routed to the video
   endpoint — no `batchGenerateImages` response was observed and the
-  listener timed out after 3 minutes. Mirror of the existing
-  `_switch_to_video_mode` on the video transport. Also resolves the
-  historical "first-attempt listener-miss flake" recorded in
-  `phase-b-followups` memory item #1. Live-verified on profile
-  `ffroliva` (1 t2i shot + full batch e2e); evidence in
+  listener timed out after 3 minutes. Also resolves the historical
+  "first-attempt listener-miss flake" recorded in `phase-b-followups`
+  memory item #1. Live-verified on profile `ffroliva` (1 t2i shot + full
+  batch e2e); evidence in
   [`docs/LIVE_VERIFICATION_image_batch.md`](docs/LIVE_VERIFICATION_image_batch.md)
   § Post-mode-switch-fix verification.
-- `gflow image batch` now actually shares one Flow project across all prompts
-  in a batch. Previously the `--same-project=1` flag was a no-op at the
-  `ui_automation` transport layer; each prompt landed in its own Flow
-  project. ([spec](docs/superpowers/specs/2026-05-22-stay-mounted-batch-session-design.md))
+- `gflow image batch` now actually shares one Flow project across all
+  prompts in a batch. Previously the `--same-project=1` flag was a no-op
+  at the `ui_automation` transport layer; each prompt landed in its own
+  Flow project. ([spec](docs/superpowers/specs/2026-05-22-stay-mounted-batch-session-design.md))
+- `gflow image t2i -n N` now makes one transport call using Flow's native
+  xN count selector instead of fanning out N parallel single-image
+  submissions. Closes [#14](https://github.com/ffroliva/gflow-cli/issues/14) part 1.
+- Structlog now uses `cache_logger_on_first_use=False` so per-test
+  `LogCapture` fixtures see events fired from production modules
+  (previously the cached logger froze the processor chain at import).
+- All SonarCloud findings on the multi-image-prompt PR (S5655 / S5890 /
+  S1192 / S1172 / S3776 ×3) — see PR #40 commit `a0cb010` for the
+  cognitive-complexity refactors and the cast+pragma pattern for
+  `dataclasses.replace`.
 
 ### Removed
 
-- `--same-project` flag on `gflow image batch`. The flag collapsed to a
-  single behaviour (always-same-project) — no toggle remains. For
-  different-project results, loop `gflow image t2i` externally.
-
-### Changed
-
-- `gflow image batch` editor session is now persistent across all prompts in
-  a batch. Jitter (3–7 s default) is documented as the submission-cadence
-  anti-bot control, not a completion-wait setting.
-- `BatchSubmissionResult` is the new transport-layer per-prompt outcome
-  (with `project_id`, `prompt_idx`, `prompt_hash` fields). Public
-  `list[BatchOutcome]` orchestrator return is unchanged.
-- `_attach_batch_response_listener` now returns `(captured, detach_fn)`;
-  callers that used the single-list return need to unpack accordingly.
-
-### Added
-
-- `BatchPartialError` (in `errors`) — raised by fail-fast batch when
-  earlier prompts produced downloadable images before the failing one;
-  carries `partial_results` so the orchestrator can salvage them.
-- `BatchIntegrityError` (in `errors`) — raised by the orchestrator when
-  post-download file count does not match the expected count.
-- `ui_automation.orphaned_project_warning` structlog event — emitted when
-  `_enter_editor` succeeded but a later setup step (e.g.,
-  `_dismiss_blocking_overlays`) raises, so the user can find their
-  server-side project record.
-- `VideoResult` dataclass — return type of `generate_video`, carries `status` and `local_path` ([#29](https://github.com/ffroliva/gflow-cli/issues/29)).
-- `UiAutomationTransport._download_video` — downloads a generated mp4 via `media.getMediaUrlRedirect` using the authenticated page; falls back to `self._out_dir` then `tmp/` when no `out_dir` is supplied ([#29](https://github.com/ffroliva/gflow-cli/issues/29)).
-- `FlowApiClient.download_video(media_id, out_path)` — public API, mirrors `download_image` ([#29](https://github.com/ffroliva/gflow-cli/issues/29)).
-- `gflow video t2v PROMPT` restored — generates and downloads a video end-to-end on `UiAutomationTransport`; supports `--aspect` (`9:16` / `16:9`), `--profile`, and `--out-dir` ([#29](https://github.com/ffroliva/gflow-cli/issues/29)).
-- `gflow image batch <manifest>` subcommand for batch image generation from JSON or TSV manifests, with `--same-project` and `--continue-on-error` flags. `MAX_BATCH_PROMPTS = 5`. Closes [#14](https://github.com/ffroliva/gflow-cli/issues/14) part 2.
-- Application-layer structlog events for image batch submission: `image_batch.submission_attempt`, `image_batch.submission_result`, `image_batch.row_completed`, `image_batch.inter_submission_latency_ms`. Use these to debug Flow throttling regressions without re-instrumenting.
-
-### Changed
-
-- `UiAutomationTransport.generate_video` now accepts `download: bool = True` and returns `VideoResult` instead of `VideoStatus` — **breaking change for direct transport callers** (the `FlowApiClient` boundary is unaffected). Pass `download=False` to skip the auto-download step.
-
-### Fixed
-
-- `gflow image t2i -n N` now makes one transport call using Flow's native xN count selector instead of fanning out N parallel single-image submissions. Closes [#14](https://github.com/ffroliva/gflow-cli/issues/14) part 1.
-
-### Removed
-
-- **BREAKING:** `--seed` flag from `gflow image t2i` and `gflow image i2i`. The flag was a no-op under the active UI transport since v0.7.0 (silently discarded inside the client before reaching the transport). If reproducibility via user-controlled seed becomes possible again — either through Flow UI exposing a seed control or via HTTP transport revival — the surface will be re-introduced at that layer. The wire-format body builder retains its `seed` / `batch_id` parameters for the experimental HTTP transports' internal use.
-- **BREAKING (library):** `FlowApiClient.generate_image` no longer accepts `seed=` or `batch_id=` kwargs. `FlowApiClient.generate_images_batch` no longer accepts `seeds=`. Callers passing these will get a `TypeError`. Same justification as the CLI removal.
+- **BREAKING:** `--same-project` flag on `gflow image batch`. The flag
+  collapsed to a single behaviour (always-same-project) — no toggle
+  remains. For different-project results, loop `gflow image t2i`
+  externally.
+- **BREAKING:** `--seed` flag from `gflow image t2i` and `gflow image i2i`.
+  The flag was a no-op under the active UI transport since v0.7.0
+  (silently discarded inside the client before reaching the transport).
+  If reproducibility via user-controlled seed becomes possible again —
+  either through Flow UI exposing a seed control or via HTTP transport
+  revival — the surface will be re-introduced at that layer. The
+  wire-format body builder retains its `seed` / `batch_id` parameters for
+  the experimental HTTP transports' internal use.
+- **BREAKING (library):** `FlowApiClient.generate_image` no longer accepts
+  `seed=` or `batch_id=` kwargs. `FlowApiClient.generate_images_batch` no
+  longer accepts `seeds=`. Callers passing these will get a `TypeError`.
+  Same justification as the CLI removal.
+- **BREAKING (library):** `project_title` parameter removed from
+  `run_manifest_image_batch` — the transport now owns project creation
+  via `_enter_editor`, making this orchestrator-side knob dead weight.
 
 ## [0.7.0] — 2026-05-20
 
@@ -751,7 +809,9 @@ shell-script template that branches on these codes.
 
 First skeleton. Not functional end-to-end yet.
 
-[Unreleased]: https://github.com/ffroliva/gflow-cli/compare/v0.6.0a6...HEAD
+[Unreleased]: https://github.com/ffroliva/gflow-cli/compare/v0.8.0...HEAD
+[0.8.0]: https://github.com/ffroliva/gflow-cli/compare/v0.7.0...v0.8.0
+[0.7.0]: https://github.com/ffroliva/gflow-cli/compare/v0.6.0a6...v0.7.0
 [0.6.0a6]: https://github.com/ffroliva/gflow-cli/compare/v0.6.0a5...v0.6.0a6
 [0.6.0a5]: https://github.com/ffroliva/gflow-cli/compare/v0.6.0a4...v0.6.0a5
 [0.6.0a1]: https://github.com/ffroliva/gflow-cli/compare/v0.5.0a1...v0.6.0a1
