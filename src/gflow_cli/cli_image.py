@@ -57,8 +57,8 @@ from gflow_cli.image_batch import (
     MAX_COUNT as _MAX_COUNT,
 )
 from gflow_cli.image_batch import (
-    BatchPromptItem,
     MAX_PROMPT_FILE_BYTES,
+    BatchPromptItem,
     parse_manifest_file,
     parse_prompt_lines,
     prompt_items_from_parsed,
