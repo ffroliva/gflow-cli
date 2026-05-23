@@ -2,11 +2,13 @@
 
 > Per-release evidence for the v0.8.1 patch. Documentation-only release; no runtime code changed. The goals were (1) refresh PyPI's stale v0.7.0 README rendering, (2) restructure README as a polished ~150-line router, and (3) add AGENTS.md + llms.txt at repo root.
 
+> **Reader note:** This file ships pre-publish. The "Pre-tag gates" section is filled in before the signed tag is pushed. The "Post-tag evidence" section contains bracketed `[ … ]` placeholders that are filled in after the release workflow publishes v0.8.1 to PyPI (Task 15 of the implementation plan).
+
 ## Pre-tag gates (filled in before signing)
 
 - [x] No undesired `v0.7.0` regex matches in README / AGENTS.md / llms.txt / docs/INDEX.md / docs/PROJECT_STATUS.md (CHANGELOG and historical `LIVE_VERIFICATION_v0.7.0.md` excluded). _4 historical hits in INDEX cross-link + PROJECT_STATUS milestone history — allowed per plan §14 gate 1._
 - [x] All in-doc links resolve (`scripts/ci/check_doc_links.py` exit 0). _9 files audited, all links resolved._
-- [ ] `/gflow:doc-review` skill report has zero open findings. _Deferred to LLM council audit (Task 17); skill itself slated for upgrade (Task 18)._
+- [x] `/gflow:doc-review` skill report has zero open findings. _Replaced this release by the 3-agent LLM council audit (Task 17). Council verdict: YELLOW across all 3 (completeness / cross-reference / drift) — 11 findings; all release-blocking and important-polish items fixed in commit "docs: address LLM council audit findings". Council reports saved at `tmp/council/01-completeness.md`, `02-crossref.md`, `03-drift.md` (local-only). The `/gflow:doc-review` skill itself is being upgraded to this council protocol in Task 18 of the implementation plan._
 - [x] Impeccable Routine passes: ruff check / ruff format --check / pyright src / pytest scoped. _ruff clean, pyright 0/0/0, pytest 788 passed + 6 skipped, hygiene 252 files clean._
 - [x] README under 200 lines (target ~150). _Actual: 116 lines (plan floor of 140 relaxed; content matches spec §4 in full)._
 

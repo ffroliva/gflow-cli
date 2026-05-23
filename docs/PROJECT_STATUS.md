@@ -4,7 +4,7 @@
 
 ## Current release
 
-**v0.8.1 — alpha (documentation refresh).** Image (T2I / I2I / upload) + Video T2V live end-to-end on the `ui_automation` transport against live Pro/Ultra accounts. Video I2V and batch are queued for Phase B. The earlier HTTP transport strategies (`evaluate_fetch` / `bearer` / `sapisidhash`) live in an `experimental/` subpackage; the production path is `ui_automation`.
+**v0.8.1 — alpha (docs refresh).** Image (T2I / I2I / upload) + Video T2V live end-to-end on the `ui_automation` transport against live Pro/Ultra accounts. Video I2V and batch are queued for Phase B. Three earlier HTTP transport strategies (`evaluate_fetch` / `bearer` / `sapisidhash`) are named in the codebase history; the actual modules have not been extracted into a subpackage. The production path is `ui_automation`.
 
 ## Milestone history
 

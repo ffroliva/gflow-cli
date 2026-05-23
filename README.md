@@ -16,7 +16,7 @@
 
 For Google AI Ultra / Pro subscribers with Veo credits and batch workloads:
 
-- **Burn credits efficiently** — `for img in ./inputs/*.png; do gflow video i2v "$img" "$prompt"; done`
+- **Burn credits efficiently** — `for p in $(cat prompts.txt); do gflow image t2i "$p"; done` _(image batching ships today; `gflow video i2v` lands in Phase B)_
 - **Build pipelines** — wire Veo into your content automation, AI video stack, or batch experiments
 - **Stay in the terminal** — no Chromium UI, no clicking through dialogs (after a one-time `gflow auth login`)
 
@@ -25,7 +25,7 @@ Same Veo + Imagen models, same quality, same Ultra/Pro billing — programmatic.
 ## 60-second quick start
 
 ```bash
-# 1 · Install
+# 1 · Install (uv recommended — also: pip install gflow-cli)
 uv tool install gflow-cli
 uv tool run --from gflow-cli playwright install chromium     # one-time, ~150 MB
 
@@ -93,7 +93,7 @@ gflow CLI  →  Provider (interchangeable)  →  Flow (ui_automation) / Mock (te
 
 **Current transport:** `ui_automation` — drives Flow via a persistent Playwright Chromium profile. Production-stable, end-to-end verified per release (see [LIVE_VERIFICATION_*](docs/) per-release evidence files).
 
-**What's blocked:** A pure HTTP transport for video generation. The video upload endpoint returns HTTP 401 under non-Chrome browsers + a reCAPTCHA mint we cannot reproduce headlessly. Three earlier HTTP strategies (`evaluate_fetch` / `bearer` / `sapisidhash`) ship in an `experimental/` subpackage for archaeology.
+**What's blocked:** A pure HTTP transport for video generation. The video upload endpoint returns HTTP 401 under non-Chrome browsers + a reCAPTCHA mint we cannot reproduce headlessly. Three earlier HTTP strategies (`evaluate_fetch` / `bearer` / `sapisidhash`) are named in the codebase history; the actual transport modules have not yet been extracted into a subpackage.
 
 **How you can help:** If you have successfully driven `aisandbox-pa.googleapis.com` from outside a real Chrome session — or have insight into Google's anti-bot stack here — please open an issue. A working REST transport would unlock serverless deployments, true horizontal concurrency, and roughly 10× the project's reach. Details: [docs/ARCHITECTURE.md § Headed-browser dependency](docs/ARCHITECTURE.md#headed-browser-dependency--current-limitation).
 

@@ -105,10 +105,11 @@ When the project converges on the hexagonal target above, modules graduate to la
 > **Note: this document describes the TARGET architecture, not the current
 > package layout.** The current shape (per [PLAN.md § 2](../PLAN.md#2-architecture-steady-state)
 > and [ADR #2](../PLAN.md#5-decision-log-adrs-in-miniature)) is the simpler
-> `src/gflow_cli/{api/, auth/, cli.py, cli_image.py, cli_video.py,
-> config.py, paths.py, profile_store.py}`. The DDD layout below was deferred
-> indefinitely; converge toward it incrementally if/when a second `Provider`
-> or a `gflow serve` HTTP front-end justifies the split.
+> `src/gflow_cli/{api/, auth/, browser_manager.py, cli.py, _cli_helpers.py,
+> cli_image.py, cli_run.py, cli_video.py, config.py, errors.py, exceptions.py,
+> image_batch.py, manifest.py, observability.py, paths.py, profile_store.py}`.
+> The DDD layout below was deferred indefinitely; converge toward it incrementally
+> if/when a second `Provider` or a `gflow serve` HTTP front-end justifies the split.
 
 ```text
 src/gflow_cli/
@@ -384,7 +385,7 @@ We attempted three pure-HTTP transport strategies before settling on `ui_automat
 - **`bearer`** — extract bearer tokens from the live page and replay them via `httpx`. Tokens rotate too aggressively; rate-limited within minutes.
 - **`sapisidhash`** — compute Google's SAPISIDHASH header from session cookies and replay. Works for read endpoints; rejected for any mutation endpoint (including all generation calls).
 
-All three live in `src/gflow_cli/experimental/` as documented archaeology. The production path is `ui_automation`.
+All three are named in the codebase history; the `src/gflow_cli/experimental/` subpackage has not yet been extracted from `api/` — the strategies live in commit history and PR descriptions rather than as standalone modules. Surfacing them as a real subpackage is a backlog item. The production path is `ui_automation`.
 
 ### What this costs users
 
@@ -398,7 +399,7 @@ All three live in `src/gflow_cli/experimental/` as documented archaeology. The p
 The biggest single improvement to gflow-cli's scalability would be a **working pure-HTTP transport for video generation** that survives Google's anti-bot stack. Specific contributions we welcome:
 
 - Network traffic captures from a successful headed video generation (with personally-identifying data scrubbed) — the [Keysight HAR analysis](https://www.keysight.com/blogs/en/tech/nwvs/2025/08/04/google-flow-ai-har-analysis) is the public reference; we want our own.
-- A working `experimental/` transport that produces a video against the live API without a browser.
+- A working pure-HTTP transport (you can land it in a new `experimental/` subpackage) that produces a video against the live API without a browser.
 - Insight into Google's reCAPTCHA-mint flow for `aisandbox-pa.googleapis.com` (especially how `Authorization: SAPISIDHASH ...` interacts with `X-Goog-Visitor-Id`).
 - An adapter to the **official** Veo API (`googleapis/python-genai`) as a parallel provider — that bypasses the headed-browser dependency entirely for users who have direct API access.
 
