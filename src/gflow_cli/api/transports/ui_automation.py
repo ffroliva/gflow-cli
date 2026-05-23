@@ -14,25 +14,35 @@ Protocol contract.
 from __future__ import annotations
 
 import asyncio
+import hashlib
+import json
+import random
+import re
 import time
+from collections.abc import Callable
 from pathlib import Path
 from typing import TYPE_CHECKING, Any, cast
 from urllib.parse import urlparse
 
 import structlog
 
-from gflow_cli.api.dto import GeneratedImage
+from gflow_cli.api.dto import BatchSubmissionResult, GeneratedImage
 from gflow_cli.api.image import Aspect, GenerateImageRequest
-from gflow_cli.api.transports.ui_automation_video import VideoGenerationMixin
+from gflow_cli.api.transports.ui_automation_video import (
+    MODE_SWITCH_TRIGGER_SELECTORS,
+    VideoGenerationMixin,
+)
 from gflow_cli.errors import (
     AuthExpiredError,
+    BatchPartialError,
     ContentPolicyError,
+    GFlowError,
     WafRejectionError,
     WireFormatError,
 )
 
 if TYPE_CHECKING:
-    from playwright.async_api import Page, ViewportSize
+    from playwright.async_api import Locator, Page, ViewportSize
 
 # Lazy-imported at call time so ``import gflow_cli`` doesn't pay the
 # Playwright import cost when another transport is selected.
@@ -47,6 +57,20 @@ log = structlog.get_logger(__name__)
 FLOW_URL = "https://labs.google/fx/tools/flow?hl=en"
 # URL fragment that distinguishes the project editor from the gallery.
 _PROJECT_URL_FRAGMENT = "/project/"
+
+# Image-mode tab inside the mode-switch dropdown.  Selectors are tried in
+# order; the leading ``aria-controls`` matches are language-independent
+# (Flow's accessibility wiring keeps the IMAGE token across locales),
+# the ``has-text`` variants are Portuguese/English fallbacks, and the
+# icon-ligature is a last resort.  Mirror of
+# :data:`ui_automation_video.VIDEO_TAB_IN_MENU_SELECTORS`.
+IMAGE_TAB_IN_MENU_SELECTORS = (
+    "[role='menu'] [role='tab'][aria-controls*='IMAGE']",
+    "[role='tab'][aria-controls*='IMAGE']",
+    "[role='menu'] [role='tab']:has-text('Imagem')",
+    "[role='menu'] [role='tab']:has-text('Image')",
+    "[role='menu'] [role='tab']:has(i:text('image'))",
+)
 
 # Browser viewport — matches the validated smoke (also matches the CG Worker).
 _VIEWPORT = {"width": 1280, "height": 800}
@@ -216,8 +240,43 @@ _ASPECT_TAB_CANDIDATES: dict[str, tuple[str, ...]] = {
     "3:4": ("3:4",),
 }
 
-# Count → Flow count tab text.
-_COUNT_TAB: dict[int, str] = {1: "1x", 2: "x2", 3: "x3", 4: "x4"}
+# Supported image-count values for the xN selector.
+_SUPPORTED_COUNTS: frozenset[int] = frozenset({1, 2, 3, 4})
+
+# Number of count tabs Flow renders in the settings panel (1 through 4).
+_COUNT_TAB_COUNT = 4
+
+# Structured event name emitted at every exit path of `_set_count`.
+# Extracted to a module-level constant to satisfy SonarCloud S1192
+# (duplicate literal) and keep the spelling consistent across log sites.
+_EVT_COUNT_SETTER_COMPLETED = "ui_automation.count_setter_completed"
+
+# Regex that matches count-tab text exactly: "1x", "x2", "x3", "x4".
+# These are the ONLY role="tab" elements whose text fits this pattern —
+# Mode tabs ("image\nImagem") and Aspect tabs ("16:9", "crop_square") do not.
+# The pattern is locale-invariant: Flow never translates the digit+x label.
+_COUNT_TAB_TEXT_RE = re.compile(r"^(1x|x[2-4])$")
+
+# Subdirectory inside out_dir where diagnostic artefacts are written.
+# Keeps count_before/after screenshots and DOM dumps out of the user-facing
+# output directory so file-count assertions on *.png never pick them up.
+_DIAGNOSTICS_SUBDIR = "_diagnostics"
+
+
+def _count_tabs_locator(page: Page) -> Locator:
+    """Return a Playwright Locator that matches ONLY the 4 count tabs.
+
+    Filters ``role="tab"`` elements by text matching :data:`_COUNT_TAB_TEXT_RE`
+    (``1x``, ``x2``, ``x3``, ``x4``). This pattern is unique to count tabs —
+    Mode tabs and Aspect tabs never match it — so the filter survives all three
+    Radix tablists being present in the DOM simultaneously.
+
+    DOM evidence: ``tmp/dom_dump.json`` captured on profile denon82 (Portuguese
+    locale, 2026-05-22) shows all three tablists rendered; count tabs are the
+    only ones whose ``text`` is ``"1x"`` / ``"x2"`` / ``"x3"`` / ``"x4"``.
+    """
+    return page.locator('[role="tab"]').filter(has_text=_COUNT_TAB_TEXT_RE)
+
 
 # Reverse map: domain Aspect enum → CLI string accepted by the settings panel.
 _CLI_FROM_ASPECT: dict[Aspect, str] = {
@@ -232,6 +291,16 @@ _CLI_FROM_ASPECT: dict[Aspect, str] = {
 def _aspect_cli_from_enum(aspect: Aspect) -> str | None:
     """Map the domain Aspect enum to the CLI string the settings panel expects."""
     return _CLI_FROM_ASPECT.get(aspect)
+
+
+def _prompt_hash_stable(text: str) -> str:
+    """Truncated sha256 matching image_batch._prompt_hash prefix length.
+
+    Inlined here to avoid src/gflow_cli/api/transports importing image_batch
+    (would create a circular dependency). 8-char prefix is sufficient for
+    structlog event correlation within a single batch run.
+    """
+    return hashlib.sha256(text.encode("utf-8")).hexdigest()[:8]
 
 
 def _extract_project_id(url: str) -> str | None:
@@ -605,6 +674,41 @@ class UiAutomationTransport(VideoGenerationMixin):
             f"Screenshot: {shot_path}"
         )
 
+    @staticmethod
+    async def _switch_to_image_mode(page: Page, *, out_dir: Path | None = None) -> None:
+        """Open the 2-step mode dropdown and switch to Image mode.
+
+        Mirror of :meth:`VideoGenerationMixin._switch_to_video_mode`.  Without
+        this, an account whose last-used Flow mode was Video silently routes
+        ``image t2i`` / ``image batch`` prompts to the video endpoint — no
+        ``batchGenerateImages`` response is observed, and the listener times
+        out after 3 minutes (an image typically completes in ~15 s).
+
+        The dropdown is closed afterwards (via :kbd:`Escape`) so the caller's
+        :meth:`_configure_generation_settings` can open it fresh.
+        """
+        trigger = await VideoGenerationMixin._probe_selector_cascade(
+            page, "mode_switch_trigger", MODE_SWITCH_TRIGGER_SELECTORS
+        )
+        if trigger is None:
+            shot = await _capture_debug_screenshot(page, out_dir, "debug_no_mode_trigger.png")
+            raise RuntimeError(
+                f"mode-switch dropdown trigger not found on the Flow editor. Screenshot: {shot}"
+            )
+        await trigger.click()
+        await page.wait_for_timeout(800)
+        image_tab = await VideoGenerationMixin._probe_selector_cascade(
+            page, "image_mode_tab", IMAGE_TAB_IN_MENU_SELECTORS
+        )
+        if image_tab is None:
+            shot = await _capture_debug_screenshot(page, out_dir, "debug_no_image_tab.png")
+            raise RuntimeError(f"Image tab not found in the mode dropdown. Screenshot: {shot}")
+        await image_tab.click()
+        await page.wait_for_timeout(1200)
+        await page.keyboard.press("Escape")
+        await page.wait_for_timeout(200)
+        log.info("ui_automation.image_mode_entered")
+
     # ------------------------------------------------------------------
     # Internal helpers — prompt submission (unit 3.5)
     # ------------------------------------------------------------------
@@ -689,12 +793,58 @@ class UiAutomationTransport(VideoGenerationMixin):
         return False
 
     @staticmethod
+    async def _read_displayed_count(page: Page) -> int | None:
+        """Read the currently-displayed image count from the settings panel.
+
+        Locale-invariant: filters ``[aria-selected="true"]`` tabs by
+        :data:`_COUNT_TAB_TEXT_RE` so only count tabs ("1x", "x2", "x3",
+        "x4") are considered.  Mode tabs ("image\\nImagem") and Aspect tabs
+        ("16:9", etc.) are selected simultaneously in the Radix tablist DOM
+        and would poison the old unfiltered ``[aria-selected="true"]`` query.
+
+        Returns the integer count (1–4) extracted from the matched tab's text,
+        or ``None`` when no count tab is selected / visible.
+        """
+        try:
+            selected = page.locator('[role="tab"][aria-selected="true"]').filter(
+                has_text=_COUNT_TAB_TEXT_RE
+            )
+            if await selected.count() == 0:
+                return None
+            text = (await selected.first.text_content(timeout=500) or "").strip()
+            m = re.search(r"\d", text)
+            return int(m.group()) if m else None
+        except Exception:  # noqa: BLE001 — probe failure is non-fatal
+            return None
+
+    @staticmethod
+    async def _is_settings_panel_open(page: Page) -> bool:
+        """True if the generation-settings panel count tabs are currently visible.
+
+        Uses :func:`_count_tabs_locator` — the panel is open when at least one
+        count tab (text matching ``1x`` / ``x2`` / ``x3`` / ``x4``) is visible.
+        This is locale-invariant and immune to Mode/Aspect tab false-positives.
+        """
+        try:
+            return await _count_tabs_locator(page).first.is_visible()
+        except Exception:  # noqa: BLE001
+            return False
+
+    @staticmethod
     async def _configure_generation_settings(
         page: Page,
         aspect_cli: str | None,
         count: int | None,
+        *,
+        out_dir: Path | None = None,
+        prompt_idx: int | None = None,
     ) -> None:
         """Open the per-generation settings panel and apply aspect ratio and count.
+
+        When ``out_dir`` and ``prompt_idx`` are both provided, diagnostic
+        screenshots are saved as ``count_before_prompt_{idx}.png`` and
+        ``count_after_prompt_{idx}.png`` so future count-drift can be
+        diagnosed without re-instrumenting the code.
 
         Skips gracefully if the panel trigger cannot be found (non-fatal —
         generation will proceed with Flow's current default settings).
@@ -702,6 +852,12 @@ class UiAutomationTransport(VideoGenerationMixin):
         if aspect_cli is None and count is None:
             # Nothing to apply.
             return
+
+        # Phase 3 — before screenshot (diagnostic, best-effort).
+        if out_dir is not None and prompt_idx is not None:
+            diag_dir = out_dir / _DIAGNOSTICS_SUBDIR
+            diag_dir.mkdir(parents=True, exist_ok=True)
+            await _capture_debug_screenshot(page, diag_dir, f"count_before_prompt_{prompt_idx}.png")
 
         if not await UiAutomationTransport._open_gen_settings_panel(page):
             log.warning("ui_automation.gen_settings_panel_not_found", skipping=True)
@@ -738,20 +894,257 @@ class UiAutomationTransport(VideoGenerationMixin):
                 )
 
         if count is not None:
-            count_text = _COUNT_TAB.get(count)
-            if count_text is None:
+            if count not in _SUPPORTED_COUNTS:
                 log.warning("ui_automation.unsupported_count", value=count)
             else:
-                try:
-                    tab = page.locator(f'[role="tab"]:text-is("{count_text}")').first
-                    await tab.wait_for(state="visible", timeout=3_000)
-                    await tab.click()
-                    log.info("ui_automation.count_set", value=count, tab_text=count_text)
-                except Exception as e:  # noqa: BLE001
-                    log.warning("ui_automation.count_set_failed", value=count, error=str(e))
+                await UiAutomationTransport._set_count(
+                    page, count, out_dir=out_dir, prompt_idx=prompt_idx
+                )
+
+        # Phase 3 — after screenshot (diagnostic, best-effort).
+        if out_dir is not None and prompt_idx is not None:
+            diag_dir = out_dir / _DIAGNOSTICS_SUBDIR
+            diag_dir.mkdir(parents=True, exist_ok=True)
+            await _capture_debug_screenshot(page, diag_dir, f"count_after_prompt_{prompt_idx}.png")
 
         await page.keyboard.press("Escape")
         await page.wait_for_timeout(400)
+
+    @staticmethod
+    async def _dump_count_panel_dom(
+        page: Page,
+        out_dir: Path | None,
+        prompt_idx: int | None,
+    ) -> None:
+        """Diagnostic dump of the count-tab area of the editor to out_dir.
+
+        Writes a JSON file enumerating candidate structural patterns so we can
+        derive locale-invariant selectors from real DOM evidence (per issue #24).
+
+        Captures:
+          - All elements with role="tab", role="tablist", role="radiogroup",
+            role="radio" — count, aria-label, aria-selected, text content.
+          - All buttons inside any visible Material panel — text, aria-label,
+            leading digit if any, google-symbols icon ligature children.
+          - Document title + page URL for context.
+
+        Safe-by-default: no-op if out_dir is None or prompt_idx is None.
+        Failures swallowed (this is diagnostic).
+        """
+        if out_dir is None or prompt_idx is None:
+            return
+        try:
+            snapshot = await page.evaluate("""() => {
+                const result = {
+                    url: location.href,
+                    title: document.title,
+                    roles: {},
+                    buttons_with_digits: [],
+                    google_symbols_ligatures: [],
+                };
+                for (const role of ['tab', 'tablist', 'radiogroup', 'radio']) {
+                    const els = Array.from(document.querySelectorAll('[role="' + role + '"]'));
+                    result.roles[role] = els.map(el => ({
+                        text: (el.innerText || '').slice(0, 120),
+                        aria_label: el.getAttribute('aria-label'),
+                        aria_selected: el.getAttribute('aria-selected'),
+                        aria_controls: el.getAttribute('aria-controls'),
+                        id: el.id || null,
+                        classes: el.className.toString().slice(0, 200),
+                    }));
+                }
+                // Buttons whose visible text starts with a digit (count-tab candidates).
+                for (const btn of document.querySelectorAll('button')) {
+                    const text = (btn.innerText || '').trim();
+                    if (/^\\d/.test(text)) {
+                        result.buttons_with_digits.push({
+                            text: text.slice(0, 120),
+                            aria_label: btn.getAttribute('aria-label'),
+                            aria_selected: btn.getAttribute('aria-selected'),
+                            role: btn.getAttribute('role'),
+                            parent_role: btn.parentElement?.getAttribute('role') || null,
+                            parent_class: (btn.parentElement?.className
+                                ?.toString().slice(0, 200)) || null,
+                        });
+                    }
+                }
+                // Google Symbols icons present anywhere — gives us the ligature names Flow uses.
+                const _gsQuery = 'i.google-symbols, span.google-symbols';
+                for (const el of document.querySelectorAll(_gsQuery)) {
+                    const lig = (el.innerText || '').trim();
+                    if (lig) result.google_symbols_ligatures.push({
+                        ligature: lig,
+                        parent_text: (el.parentElement?.innerText || '').trim().slice(0, 80),
+                        parent_role: el.parentElement?.getAttribute('role'),
+                        parent_aria_label: el.parentElement?.getAttribute('aria-label'),
+                    });
+                }
+                return result;
+            }""")
+            diag_dir = out_dir / _DIAGNOSTICS_SUBDIR
+            diag_dir.mkdir(parents=True, exist_ok=True)
+            target = diag_dir / f"count_panel_dom_prompt_{prompt_idx}.json"
+            target.write_text(json.dumps(snapshot, indent=2, ensure_ascii=False), encoding="utf-8")
+            log.info(
+                "ui_automation.count_panel_dom_dumped",
+                target=str(target),
+                tabs_count=len(snapshot.get("roles", {}).get("tab", [])),
+                digit_buttons_count=len(snapshot.get("buttons_with_digits", [])),
+                ligatures_count=len(snapshot.get("google_symbols_ligatures", [])),
+            )
+        except Exception as exc:  # noqa: BLE001 — diagnostic; never mask real failures
+            log.warning(
+                "ui_automation.count_panel_dom_dump_failed",
+                error=str(exc),
+                prompt_idx=prompt_idx,
+            )
+
+    @staticmethod
+    async def _set_count(
+        page: Page,
+        count: int,
+        *,
+        out_dir: Path | None = None,
+        prompt_idx: int | None = None,
+    ) -> None:
+        """Click the count tab by position — locale-invariant, read-back verify with retry.
+
+        Algorithm (#24 DOM-evidence-driven rewrite):
+        1. Ensure the settings panel is open without toggling it closed
+           (stay-mounted batch: panel may already be open from the prior prompt).
+        2. Read the currently-displayed count via :func:`_count_tabs_locator`
+           filtered by :data:`_COUNT_TAB_TEXT_RE` — immune to Mode/Aspect tabs.
+        3. If it already matches ``count``, return early (no click needed).
+        4. Call ``_count_tabs_locator(page).nth(count - 1)`` and click —
+           positional within the filtered set, no text matching.
+        5. Read back the digit and confirm the change.
+        6. Retry up to 3 attempts total; raise ``RuntimeError`` on non-convergence.
+
+        When read-back returns ``None`` (unrecognised locale text), the
+        position-based click is trusted — it is deterministic regardless.
+
+        Four structlog events are emitted for diagnosability:
+        - ``ui_automation.count_setter_entered``
+        - ``ui_automation.count_click_attempted``
+        - ``ui_automation.count_click_result``
+        - ``ui_automation.count_setter_completed``
+        """
+        panel_open = await UiAutomationTransport._is_settings_panel_open(page)
+        initial_displayed = await UiAutomationTransport._read_displayed_count(page)
+
+        log.info(
+            "ui_automation.count_setter_entered",
+            desired_count=count,
+            panel_currently_visible=panel_open,
+            initial_displayed_count=initial_displayed,
+        )
+
+        # Ensure the panel is open — open it only if it's currently closed
+        # (avoid toggling a stay-mounted open panel closed).
+        if not panel_open:
+            opened = await UiAutomationTransport._open_gen_settings_panel(page)
+            if not opened:
+                log.warning(
+                    "ui_automation.count_setter_panel_open_failed",
+                    desired_count=count,
+                )
+                # Non-fatal: completed event records failure.
+                log.info(
+                    _EVT_COUNT_SETTER_COMPLETED,
+                    desired_count=count,
+                    final_displayed_count=initial_displayed,
+                    success=False,
+                    attempts=0,
+                )
+                return
+
+        # Diagnostic DOM dump — captured after panel is confirmed open, before any
+        # tab click attempt. Produces count_panel_dom_prompt_{idx}.json in out_dir
+        # so the real DOM structure is visible for selector research (issue #24).
+        await UiAutomationTransport._dump_count_panel_dom(page, out_dir, prompt_idx)
+
+        _max_attempts = 3
+        # Reuse the initial read — avoids a redundant DOM round-trip.
+        displayed: int | None = initial_displayed
+
+        for attempt in range(1, _max_attempts + 1):
+            # If current display already matches desired, we're done.
+            if displayed == count:
+                log.info(
+                    _EVT_COUNT_SETTER_COMPLETED,
+                    desired_count=count,
+                    final_displayed_count=displayed,
+                    success=True,
+                    attempts=attempt - 1,
+                )
+                return
+
+            # Locate count tabs via text-pattern filter (locale-invariant).
+            # _count_tabs_locator returns role="tab" elements whose text matches
+            # ^(1x|x[2-4])$ — unique to count tabs across all three Radix tablists.
+            panel_visible_before = await UiAutomationTransport._is_settings_panel_open(page)
+            clicked = False
+            click_error: str | None = None
+
+            tabs_locator = _count_tabs_locator(page)
+            # 0-indexed: count=1 → nth(0), count=2 → nth(1), etc.
+            target_tab = tabs_locator.nth(count - 1)
+            selector_desc = f"nth({count - 1}) of _count_tabs_locator"
+            log.info(
+                "ui_automation.count_click_attempted",
+                target=f"count={count}",
+                selector=selector_desc,
+                panel_visible=panel_visible_before,
+                current_displayed_count=displayed,
+            )
+            try:
+                await target_tab.wait_for(state="visible", timeout=3_000)
+                await target_tab.click()
+                await page.wait_for_timeout(300)
+                clicked = True
+            except Exception as e:  # noqa: BLE001
+                click_error = str(e)
+
+            # Read back to verify (digit-extraction, locale-agnostic).
+            displayed = await UiAutomationTransport._read_displayed_count(page)
+            log.info(
+                "ui_automation.count_click_result",
+                target=f"count={count}",
+                success=clicked,
+                current_displayed_count_after=displayed,
+                error=click_error,
+            )
+
+            # Success when the click landed AND read-back digit matches, OR
+            # when read-back returned None (unrecognised locale text — position
+            # click was deterministic so trust it).
+            if clicked and (displayed is None or displayed == count):
+                log.info(
+                    _EVT_COUNT_SETTER_COMPLETED,
+                    desired_count=count,
+                    final_displayed_count=displayed,
+                    success=True,
+                    attempts=attempt,
+                    readback_trusted=(displayed is None),
+                )
+                return
+
+            # Brief pause before retry to allow React re-render.
+            if attempt < _max_attempts:
+                await page.wait_for_timeout(500)
+
+        # All attempts exhausted without convergence.
+        log.info(
+            _EVT_COUNT_SETTER_COMPLETED,
+            desired_count=count,
+            final_displayed_count=displayed,
+            success=False,
+            attempts=_max_attempts,
+        )
+        raise RuntimeError(
+            f"_set_count({count}) failed to update Flow UI; "
+            f"still showing {displayed!r} after {_max_attempts} attempts"
+        )
 
     # ------------------------------------------------------------------
     # Internal helpers — batchGenerateImages capture (unit 3.6)
@@ -760,7 +1153,7 @@ class UiAutomationTransport(VideoGenerationMixin):
     @staticmethod
     def _attach_batch_response_listener(
         page: Page, *, project_id: str | None = None
-    ) -> list[dict[str, Any]]:
+    ) -> tuple[list[dict[str, Any]], Callable[[], None]]:
         """Synchronously register a ``page.on('response', ...)`` listener
         that records ``batchGenerateImages`` responses into a shared list.
 
@@ -768,10 +1161,14 @@ class UiAutomationTransport(VideoGenerationMixin):
         ``/projects/{project_id}/`` are captured — this prevents stale
         responses from previously-visited projects accumulating in the list.
 
-        Returns the shared list — the caller submits the prompt next, then
-        polls / awaits that list via :meth:`_await_captured`. Registering
-        the listener BEFORE issuing the prompt click eliminates the race
-        where the click could fire before an ``asyncio.create_task``-
+        Returns ``(captured, detach_fn)``:
+        - ``captured`` is the shared list — the caller submits the prompt
+          next, then polls / awaits that list via :meth:`_await_captured`.
+        - ``detach_fn`` removes the handler from the page when called; it is
+          idempotent (safe to call multiple times).
+
+        Registering the listener BEFORE issuing the prompt click eliminates
+        the race where the click could fire before an ``asyncio.create_task``-
         scheduled listener attaches.
         """
         captured: list[dict[str, Any]] = []
@@ -804,7 +1201,14 @@ class UiAutomationTransport(VideoGenerationMixin):
                     url=response.url,
                 )
                 return
-            captured.append({"status": response.status, "url": response.url, "body": body})
+            captured.append(
+                {
+                    "status": response.status,
+                    "url": response.url,
+                    "body": body,
+                    "ts": time.monotonic(),
+                }
+            )
             log.info(
                 "ui_automation.batch_response_captured",
                 status=response.status,
@@ -812,7 +1216,20 @@ class UiAutomationTransport(VideoGenerationMixin):
             )
 
         page.on("response", on_response)
-        return captured
+
+        _detached = False
+
+        def detach() -> None:
+            nonlocal _detached
+            if _detached:
+                return
+            _detached = True
+            try:
+                page.remove_listener("response", on_response)
+            except Exception:  # noqa: BLE001 — idempotent on already-removed
+                pass
+
+        return captured, detach
 
     @staticmethod
     async def _await_captured(
@@ -820,29 +1237,65 @@ class UiAutomationTransport(VideoGenerationMixin):
         timeout_s: float = 180.0,
         *,
         expected_count: int = 1,
+        submit_time: float = 0.0,
         poll_interval_s: float = 0.5,
+        straggler_window_s: float = 2.5,
     ) -> list[dict[str, Any]]:
         """Wait for ``expected_count`` batchGenerateImages responses.
 
         Flow generates N images via N separate API calls (not one call with
-        N URLs). We poll until we have enough responses or the timeout expires.
+        N URLs). We poll until we have enough fresh responses (those whose
+        ``ts >= submit_time``) or the timeout expires.
 
-        Raises ``TimeoutError`` if no responses arrive within ``timeout_s``.
-        Returns all captured responses (may be fewer than expected_count if
-        timeout fires after at least one response).
+        **Defense A — post-submit-time filter (primary correctness fix):**
+        Each captured entry carries a ``ts`` field written by the handler at
+        append time (``time.monotonic()``). Only entries with
+        ``entry["ts"] >= submit_time`` count toward ``expected_count``.  This
+        eliminates the cross-contamination bug where a listener attached
+        *before* the submit click inherits stale responses from prior prompts
+        that arrived in the window between attach and click.
+
+        When ``submit_time`` is 0.0 (the default, used by
+        ``_capture_batch_response`` and legacy callers), all entries pass the
+        filter, preserving backwards compatibility.
+
+        **Straggler window:** after the count threshold is first reached the
+        method waits an additional ``straggler_window_s`` seconds so that any
+        slower same-submission responses (e.g. the last of a 2-image batch)
+        can arrive before the list is snapshotted. This mirrors the Worker
+        pattern (``_wait_for_n_new_images`` in the compile-growth monorepo).
+
+        Raises ``TimeoutError`` if no fresh responses arrive within
+        ``timeout_s``.  Returns the underlying response dicts (entries without
+        the ``ts`` wrapper key) for entries with ``ts >= submit_time``.
         """
         deadline = time.monotonic() + timeout_s
-        while time.monotonic() < deadline and len(captured) < expected_count:
+
+        def _fresh() -> list[dict[str, Any]]:
+            return [e for e in captured if e.get("ts", 0.0) >= submit_time]
+
+        # Poll until we have enough fresh responses or the deadline passes.
+        while time.monotonic() < deadline and len(_fresh()) < expected_count:
             await asyncio.sleep(poll_interval_s)
-        if not captured:
+
+        fresh = _fresh()
+        if not fresh:
             raise TimeoutError(f"No batchGenerateImages response within {timeout_s:.1f}s.")
-        if len(captured) < expected_count:
+        if len(fresh) < expected_count:
             log.warning(
                 "ui_automation.fewer_responses_than_expected",
-                got=len(captured),
+                got=len(fresh),
                 expected=expected_count,
             )
-        return list(captured)
+        else:
+            # Threshold reached — wait for any slow stragglers from this same
+            # submission before snapshotting the list.
+            await asyncio.sleep(straggler_window_s)
+            fresh = _fresh()
+
+        # Return entries stripped of the internal `ts` bookkeeping key so
+        # callers (_images_from_responses, tests) receive plain response dicts.
+        return [{k: v for k, v in e.items() if k != "ts"} for e in fresh]
 
     @staticmethod
     async def _capture_batch_response(
@@ -858,7 +1311,7 @@ class UiAutomationTransport(VideoGenerationMixin):
         two halves so the listener is attached synchronously before
         ``_send_prompt`` issues the click.
         """
-        captured = UiAutomationTransport._attach_batch_response_listener(page)
+        captured, _detach = UiAutomationTransport._attach_batch_response_listener(page)
         return await UiAutomationTransport._await_captured(
             captured, timeout_s, poll_interval_s=poll_interval_s
         )
@@ -976,6 +1429,10 @@ class UiAutomationTransport(VideoGenerationMixin):
         # Dismiss any Flow changelog / "What's new" overlay that may be on top
         # of the editor before we click into settings / submit (#26).
         await self._dismiss_blocking_overlays(page, out_dir)
+        # Select Image mode explicitly. If the account was last in Video mode,
+        # an unguarded submission goes to the video endpoint and the image
+        # listener never observes ``batchGenerateImages``.
+        await self._switch_to_image_mode(page, out_dir=out_dir)
 
         # Resolve the project_id from the URL now that we're in the editor.
         nav_project_id = _extract_project_id(page.url)
@@ -991,9 +1448,15 @@ class UiAutomationTransport(VideoGenerationMixin):
         # could happen AFTER _send_prompt's click on a busy loop. Splitting
         # attach/await eliminates that race. Project-ID filter prevents stale
         # responses from previously-visited projects accumulating in the list.
-        captured = self._attach_batch_response_listener(page, project_id=nav_project_id)
+        captured, _detach = self._attach_batch_response_listener(page, project_id=nav_project_id)
+        # Record submit_time BEFORE the click so the post-submit-time filter
+        # in _await_captured can distinguish this prompt's responses from any
+        # stale entries that arrived between listener attach and the click.
+        submit_time = time.monotonic()
         await self._send_prompt(page, request.prompt, out_dir)
-        responses = await self._await_captured(captured, expected_count=request.count)
+        responses = await self._await_captured(
+            captured, expected_count=request.count, submit_time=submit_time
+        )
 
         # Collect images from ALL captured responses (Flow makes one API call
         # per image when count > 1).
@@ -1012,6 +1475,264 @@ class UiAutomationTransport(VideoGenerationMixin):
                 route=first_error_route or "",
             )
         return images
+
+    # ------------------------------------------------------------------
+    # Public batch API — generate_images_batch (stay-mounted, v3-3)
+    # ------------------------------------------------------------------
+
+    async def generate_images_batch(
+        self,
+        *,
+        prompts: list[GenerateImageRequest],
+        jitter_range: tuple[float, float],
+        continue_on_error: bool = False,
+    ) -> list[BatchSubmissionResult]:
+        """Submit all prompts into one Flow project and return per-prompt results.
+
+        Opens the editor once, configures+submits each prompt with jitter
+        between submissions, awaits and parses responses in submission order.
+        The editor stays mounted for the full batch lifetime — this is the
+        bug fix for --same-project=1 no-op (each call to generate_images
+        previously created a new project and discarded the caller's project_id).
+
+        With ``continue_on_error=False`` (default): the first per-prompt
+        failure stops further submissions, remaining listeners are detached,
+        and ``BatchPartialError`` is raised carrying any already-completed
+        ``BatchSubmissionResult`` records so the orchestrator can salvage
+        paid-for images before re-raising.
+
+        With ``continue_on_error=True``: all prompts are submitted regardless
+        of per-prompt failures; failed prompts produce results with
+        ``status="fail"`` and a non-None ``error`` field.
+        """
+        if not self._setup_done or self._page is None:
+            raise RuntimeError(
+                "UiAutomationTransport.setup() must be called before generate_images_batch()"
+            )
+        async with self._generate_lock:
+            return await self._generate_images_batch_locked(
+                prompts=prompts,
+                jitter_range=jitter_range,
+                continue_on_error=continue_on_error,
+            )
+
+    async def _run_one_prompt_in_batch(
+        self,
+        *,
+        page: Page,
+        idx: int,
+        req: GenerateImageRequest,
+        project_id: str,
+        out_dir: Path | None,
+    ) -> tuple[BatchSubmissionResult, GFlowError | None]:
+        """Single prompt's lifecycle inside a batch: configure → attach
+        listener → submit → await → detach → parse.
+
+        Returns ``(result, fatal_error)``.  ``fatal_error`` is ``None`` on
+        success or whenever the failure was non-fatal (the caller can
+        continue).  When non-``None`` it carries the :class:`GFlowError`
+        the caller should propagate via :class:`BatchPartialError`.  Detach
+        is guaranteed exactly once on every code path.
+        """
+        aspect_cli = _aspect_cli_from_enum(req.aspect)
+        prompt_hash = _prompt_hash_stable(req.prompt)
+
+        def _fail(exc: BaseException) -> tuple[BatchSubmissionResult, GFlowError]:
+            g_exc = (
+                exc
+                if isinstance(exc, GFlowError)
+                else GFlowError(detail=str(exc), route="generate_images_batch")
+            )
+            return (
+                BatchSubmissionResult(
+                    status="fail",
+                    project_id=project_id,
+                    prompt_idx=idx,
+                    prompt_hash=prompt_hash,
+                    images=(),
+                    error=g_exc,
+                ),
+                g_exc,
+            )
+
+        # Step 1 — configure settings (aspect + count) for this prompt.
+        try:
+            await self._configure_generation_settings(
+                page, aspect_cli, req.count, out_dir=out_dir, prompt_idx=idx
+            )
+        except Exception as exc:  # noqa: BLE001 — broad on purpose; wrap into GFlowError
+            return _fail(exc)
+
+        # Step 2 — attach a fresh listener JUST for this prompt.
+        # Attaching after configure ensures settings-panel clicks never land
+        # in the listener window.  Detach happens immediately after
+        # _await_captured returns so no two listeners are ever live at once.
+        captured, detach = self._attach_batch_response_listener(page, project_id=project_id)
+        # Record submit_time BEFORE the click — defense-in-depth: the
+        # post-submit-time filter in _await_captured rejects any stale
+        # entries that slipped into the freshly-attached listener before
+        # the click fired.
+        submit_time = time.monotonic()
+
+        # Step 3 — submit the prompt.
+        try:
+            await self._send_prompt(page, req.prompt, out_dir)
+        except Exception as exc:  # noqa: BLE001
+            detach()
+            return _fail(exc)
+
+        # Step 4 — await THIS prompt's responses, then detach immediately.
+        try:
+            responses = await self._await_captured(
+                captured, expected_count=req.count, submit_time=submit_time
+            )
+        except Exception as exc:  # noqa: BLE001
+            detach()
+            return _fail(exc)
+        detach()
+
+        # Step 5 — parse responses.
+        if len(responses) < req.count:
+            err = GFlowError(
+                detail=f"_await_captured timed out: got {len(responses)}/{req.count}",
+                route="generate_images_batch",
+            )
+            return (
+                BatchSubmissionResult(
+                    status="fail",
+                    project_id=project_id,
+                    prompt_idx=idx,
+                    prompt_hash=prompt_hash,
+                    images=(),
+                    error=err,
+                ),
+                err,
+            )
+
+        images, first_error_status, _ = _images_from_responses(responses)
+        if not images:
+            err = GFlowError(
+                detail=f"no parseable images (first_error_status={first_error_status})",
+                route="generate_images_batch",
+            )
+            return (
+                BatchSubmissionResult(
+                    status="fail",
+                    project_id=project_id,
+                    prompt_idx=idx,
+                    prompt_hash=prompt_hash,
+                    images=(),
+                    error=err,
+                ),
+                err,
+            )
+
+        return (
+            BatchSubmissionResult(
+                status="ok",
+                project_id=project_id,
+                prompt_idx=idx,
+                prompt_hash=prompt_hash,
+                images=tuple(images),
+                error=None,
+            ),
+            None,
+        )
+
+    async def _generate_images_batch_locked(
+        self,
+        *,
+        prompts: list[GenerateImageRequest],
+        jitter_range: tuple[float, float],
+        continue_on_error: bool,
+    ) -> list[BatchSubmissionResult]:
+        """Serialized body of generate_images_batch — called under self._generate_lock.
+
+        Strictly serial submission (Worker pattern): each prompt's full
+        lifecycle (configure → attach → submit → await → detach → parse)
+        completes before the next prompt's listener is attached.  Only one
+        listener is active at a time, making cross-contamination structurally
+        impossible even when Flow's response payload carries no per-submission
+        identifier.
+
+        The editor stays mounted for the full batch (same-project invariant
+        intact) — only the submit/await cycle is serial.
+        """
+        page: Any = self._page  # type: ignore[assignment]
+        out_dir = self._out_dir
+
+        # ---- Batch-setup phase (once per batch) ----
+        await self._enter_editor(page, out_dir)
+        project_id = _extract_project_id(page.url)
+        if project_id is None:
+            raise RuntimeError(
+                f"Could not extract project_id from editor URL after _enter_editor. URL: {page.url}"
+            )
+
+        try:
+            await self._dismiss_blocking_overlays(page, out_dir)
+        except Exception:
+            # Orphaned-project warning: _enter_editor succeeded (server-side project
+            # was created) but a later setup step failed. Log so the user can find
+            # their orphaned project on the Flow UI.
+            log.warning(
+                "ui_automation.orphaned_project_warning",
+                project_id=project_id,
+                page_url=page.url,
+                failed_step="_dismiss_blocking_overlays",
+            )
+            raise
+
+        try:
+            await self._switch_to_image_mode(page, out_dir=out_dir)
+        except Exception:
+            log.warning(
+                "ui_automation.orphaned_project_warning",
+                project_id=project_id,
+                page_url=page.url,
+                failed_step="_switch_to_image_mode",
+            )
+            raise
+
+        # ---- Serial per-prompt cycle: each prompt's lifecycle (configure →
+        # attach → submit → await → detach → parse) is encapsulated in
+        # ``_run_one_prompt_in_batch``.  This outer loop only manages
+        # iteration, result collection, fail-fast control, and inter-prompt
+        # jitter.
+        results: list[BatchSubmissionResult] = []
+        submit_error: GFlowError | None = None
+
+        for idx, req in enumerate(prompts):
+            result, fatal_err = await self._run_one_prompt_in_batch(
+                page=page,
+                idx=idx,
+                req=req,
+                project_id=project_id,
+                out_dir=out_dir,
+            )
+            results.append(result)
+
+            # Fail-fast: break before the next submission so we do not spend
+            # credits on prompts the caller will not see in the success path.
+            if result.status == "fail" and not continue_on_error and fatal_err is not None:
+                submit_error = fatal_err
+                break
+
+            # Jitter between iterations (anti-bot cadence) — not after the last.
+            if idx < len(prompts) - 1:
+                await asyncio.sleep(random.uniform(*jitter_range))
+
+        # Fail-fast: surface partial-results salvage so orchestrator can download
+        # already-paid-for images before re-raising.
+        if submit_error is not None and not continue_on_error:
+            raise BatchPartialError(
+                detail=f"batch failed at prompt index {len(results)}: {submit_error!s}",
+                route="generate_images_batch",
+                partial_results=tuple(r for r in results if r.status == "ok"),
+                cause=submit_error,
+            )
+
+        return results
 
     # ------------------------------------------------------------------
     # Protocol — refresh_auth (unit 3.10) + teardown (unit 3.11)

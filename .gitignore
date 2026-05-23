@@ -75,3 +75,6 @@ samples/captured/flow_outgoing_*.json
 
 # Doc-council scratch dir (bundles + raw reviews + consensus matrix)
 .doc-council/
+
+worktrees/
+

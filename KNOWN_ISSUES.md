@@ -276,6 +276,73 @@ find "$HOME/Downloads/gflow-cli" -type f -mtime +30 -delete
 
 ---
 
+### `batchGenerateImages` HTTP 403 — WAF / reCAPTCHA `PUBLIC_ERROR_UNUSUAL_ACTIVITY`
+
+- **Status:** Open · **Severity:** High (blocks affected profile until WAF score decays or profile is replaced)
+- **First observed:** 2026-05-23 on profile `denon82` during `gflow image batch` runs
+- **Surfaces as:** `gflow_cli.errors.WafRejectionError: WAF rejection (HTTP 403): batchGenerateImages HTTP 403 — reCAPTCHA score too low or WAF fingerprint mismatch`
+- **structlog signature:** `ui_automation.batch_response_seen` with `status=403` followed by `ui_automation.batch_403_body` containing `'message': 'reCAPTCHA evaluation failed', 'status': 'PERMISSION_DENIED', 'reason': 'PUBLIC_ERROR_UNUSUAL_ACTIVITY'`
+
+Distinct from the historical `aisandbox-pa` 401 (resolved in v0.7.0). The 403
+here means Flow accepted the session as authenticated but reCAPTCHA Enterprise
+scored the request as bot-like and blocked the generation call. The `denon82`
+profile reproducibly 403s on `batchGenerateImages` even after a fresh
+`gflow auth login --browser chrome`; the same code path on profile `ffroliva`
+(re-authenticated the same day) succeeded end-to-end across one t2i + a 4-image
+batch — so it is not a global incompatibility but a per-profile WAF state.
+
+**Likely contributing factors:**
+- Repeated automated runs on the same profile within a short window
+- Playwright-driven Chrome leaks small fingerprint differences vs. unautomated
+  Chrome that reCAPTCHA Enterprise can score
+- The image-batch path issues several rapid-fire requests after the
+  count-tab clicks, which the scoring may treat as a single fast burst
+
+**Workarounds:**
+1. **Use a profile with lower WAF heat** — re-test on a different Chrome-strategy
+   profile (`gflow auth login --profile <new> --browser chrome`). The profile
+   that has been driven by recent automation runs is usually the hottest.
+2. **Let the WAF score decay** — typically hours to a day. Manually using real
+   Chrome on the same account in between can help (real interactions lower
+   the score).
+3. **Avoid same-day repeated batch runs** on a profile after a 403 — each
+   rejected request can raise the score further.
+
+**Tracked separately from** the architectural ["first-attempt listener-miss
+flake"](https://github.com/ffroliva/gflow-cli/pull/40) — that one was caused
+by editor mode confusion and is resolved by PR #40. WAF 403 is a fresh, distinct
+issue and not blocked by any code change in this repo.
+
+---
+
+### `UiAutomationTransport` selectors still partially localized — issue #24 partial
+
+- **Status:** Mitigated · **Severity:** Medium · **Tracking:** [issue #24](https://github.com/ffroliva/gflow-cli/issues/24)
+
+The Phase 7 multi-image-prompt work addressed the count-tab selectors:
+- `_COUNT_TAB_TEXT_RE = ^(1x|x[2-4])$` only matches the digit+x format Flow
+  renders identically in every locale (numbers/symbols are not translated).
+- `_set_count` falls back to positional `.nth(count - 1)` when the read-back
+  text is unrecognised — locale-invariant.
+
+Still localized as of this writing:
+
+- **`ONBOARDING_SELECTORS`** (`src/gflow_cli/api/transports/ui_automation.py:183-193`)
+  — nine button-text selectors only (`Agree` / `Aceitar` / `I agree` / `Concordo`
+  / `Accept` / `Create with Flow` / `Criar com o Flow` / `Get Started` /
+  `Começar`). An account whose Flow renders in an unlisted language (German,
+  Japanese, ...) **cannot pass onboarding**. This is the issue's stated
+  priority-1 item.
+- **`NEW_PROJECT_SELECTORS` localized fallbacks** + **`SUBMIT_BUTTON_SELECTORS` tail**
+  — icon-first selectors lead, so these work today; the localized fallbacks
+  remain as "maintenance debt and silent-failure risk" per the issue body.
+
+**Workaround:** the account must be in a locale that matches one of the
+hard-coded text selectors. For automation, prefer accounts whose Flow renders
+in English or Portuguese.
+
+---
+
 ## Mitigated
 
 ### Auth verification depends on Google's NextAuth session endpoint

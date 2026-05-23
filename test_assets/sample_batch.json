@@ -1,0 +1,5 @@
+[
+  {"text": "a small calico kitten sitting on a windowsill"},
+  {"text": "a watercolor sunset over rolling hills", "count": 2, "aspect_ratio": "16:9"},
+  {"text": "an isometric pixel-art bakery", "count": 1, "aspect_ratio": "1:1", "model": "nano2"}
+]
