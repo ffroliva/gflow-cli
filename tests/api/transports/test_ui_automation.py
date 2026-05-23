@@ -977,6 +977,12 @@ def _flow_200_capture(body: dict | None = None) -> dict:
 class TestGenerateImages:
     """generate_images orchestrates enter_editor → send_prompt → capture → parse."""
 
+    @pytest.fixture(autouse=True)
+    def _stub_image_mode_switch(self, monkeypatch: pytest.MonkeyPatch) -> None:
+        """Stub _switch_to_image_mode for orchestration tests in this class.
+        The dedicated mode-switch tests live in test_ui_automation_image_mode.py."""
+        monkeypatch.setattr(UiAutomationTransport, "_switch_to_image_mode", AsyncMock())
+
     @pytest.mark.asyncio
     async def test_happy_path_returns_generated_images(self) -> None:
         t = UiAutomationTransport()

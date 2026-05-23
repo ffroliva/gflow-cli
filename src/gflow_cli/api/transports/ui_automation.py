@@ -28,7 +28,10 @@ import structlog
 
 from gflow_cli.api.dto import BatchSubmissionResult, GeneratedImage
 from gflow_cli.api.image import Aspect, GenerateImageRequest
-from gflow_cli.api.transports.ui_automation_video import VideoGenerationMixin
+from gflow_cli.api.transports.ui_automation_video import (
+    MODE_SWITCH_TRIGGER_SELECTORS,
+    VideoGenerationMixin,
+)
 from gflow_cli.errors import (
     AuthExpiredError,
     BatchPartialError,
@@ -54,6 +57,20 @@ log = structlog.get_logger(__name__)
 FLOW_URL = "https://labs.google/fx/tools/flow?hl=en"
 # URL fragment that distinguishes the project editor from the gallery.
 _PROJECT_URL_FRAGMENT = "/project/"
+
+# Image-mode tab inside the mode-switch dropdown.  Selectors are tried in
+# order; the leading ``aria-controls`` matches are language-independent
+# (Flow's accessibility wiring keeps the IMAGE token across locales),
+# the ``has-text`` variants are Portuguese/English fallbacks, and the
+# icon-ligature is a last resort.  Mirror of
+# :data:`ui_automation_video.VIDEO_TAB_IN_MENU_SELECTORS`.
+IMAGE_TAB_IN_MENU_SELECTORS = (
+    "[role='menu'] [role='tab'][aria-controls*='IMAGE']",
+    "[role='tab'][aria-controls*='IMAGE']",
+    "[role='menu'] [role='tab']:has-text('Imagem')",
+    "[role='menu'] [role='tab']:has-text('Image')",
+    "[role='menu'] [role='tab']:has(i:text('image'))",
+)
 
 # Browser viewport — matches the validated smoke (also matches the CG Worker).
 _VIEWPORT = {"width": 1280, "height": 800}
@@ -648,6 +665,41 @@ class UiAutomationTransport(VideoGenerationMixin):
             f"Could not find 'New project' CTA on Flow gallery. URL: {page.url}. "
             f"Screenshot: {shot_path}"
         )
+
+    @staticmethod
+    async def _switch_to_image_mode(page: Page, *, out_dir: Path | None = None) -> None:
+        """Open the 2-step mode dropdown and switch to Image mode.
+
+        Mirror of :meth:`VideoGenerationMixin._switch_to_video_mode`.  Without
+        this, an account whose last-used Flow mode was Video silently routes
+        ``image t2i`` / ``image batch`` prompts to the video endpoint — no
+        ``batchGenerateImages`` response is observed, and the listener times
+        out after 3 minutes (an image typically completes in ~15 s).
+
+        The dropdown is closed afterwards (via :kbd:`Escape`) so the caller's
+        :meth:`_configure_generation_settings` can open it fresh.
+        """
+        trigger = await VideoGenerationMixin._probe_selector_cascade(
+            page, "mode_switch_trigger", MODE_SWITCH_TRIGGER_SELECTORS
+        )
+        if trigger is None:
+            shot = await _capture_debug_screenshot(page, out_dir, "debug_no_mode_trigger.png")
+            raise RuntimeError(
+                f"mode-switch dropdown trigger not found on the Flow editor. Screenshot: {shot}"
+            )
+        await trigger.click()
+        await page.wait_for_timeout(800)
+        image_tab = await VideoGenerationMixin._probe_selector_cascade(
+            page, "image_mode_tab", IMAGE_TAB_IN_MENU_SELECTORS
+        )
+        if image_tab is None:
+            shot = await _capture_debug_screenshot(page, out_dir, "debug_no_image_tab.png")
+            raise RuntimeError(f"Image tab not found in the mode dropdown. Screenshot: {shot}")
+        await image_tab.click()
+        await page.wait_for_timeout(1200)
+        await page.keyboard.press("Escape")
+        await page.wait_for_timeout(200)
+        log.info("ui_automation.image_mode_entered")
 
     # ------------------------------------------------------------------
     # Internal helpers — prompt submission (unit 3.5)
@@ -1370,6 +1422,10 @@ class UiAutomationTransport(VideoGenerationMixin):
         # Dismiss any Flow changelog / "What's new" overlay that may be on top
         # of the editor before we click into settings / submit (#26).
         await self._dismiss_blocking_overlays(page, out_dir)
+        # Select Image mode explicitly. If the account was last in Video mode,
+        # an unguarded submission goes to the video endpoint and the image
+        # listener never observes ``batchGenerateImages``.
+        await self._switch_to_image_mode(page, out_dir=out_dir)
 
         # Resolve the project_id from the URL now that we're in the editor.
         nav_project_id = _extract_project_id(page.url)
@@ -1494,6 +1550,17 @@ class UiAutomationTransport(VideoGenerationMixin):
                 project_id=project_id,
                 page_url=page.url,
                 failed_step="_dismiss_blocking_overlays",
+            )
+            raise
+
+        try:
+            await self._switch_to_image_mode(page, out_dir=out_dir)
+        except Exception:
+            log.warning(
+                "ui_automation.orphaned_project_warning",
+                project_id=project_id,
+                page_url=page.url,
+                failed_step="_switch_to_image_mode",
             )
             raise
 

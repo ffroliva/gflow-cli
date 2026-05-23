@@ -23,6 +23,13 @@ from gflow_cli.api.transports.ui_automation import (
 )
 
 
+@pytest.fixture(autouse=True)
+def _stub_image_mode_switch(monkeypatch: pytest.MonkeyPatch) -> None:
+    """Stub _switch_to_image_mode for all batch orchestration tests in this module.
+    The dedicated mode-switch tests live in test_ui_automation_image_mode.py."""
+    monkeypatch.setattr(UiAutomationTransport, "_switch_to_image_mode", AsyncMock())
+
+
 class _FakePage:
     """Minimal Page surrogate that records response handlers and lets a test
     fire mocked response events at them in arbitrary order."""
