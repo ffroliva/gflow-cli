@@ -710,7 +710,12 @@ async def run_manifest_image_batch(
     """
     output_dir.mkdir(parents=True, exist_ok=True)
     factory = client_factory or FlowApiClient
-    async with factory(profile_dir=profile_dir, headless=headless, transport=transport) as client:
+    async with factory(
+        profile_dir=profile_dir,
+        headless=headless,
+        transport=transport,
+        out_dir=output_dir,
+    ) as client:
         # Capability check: only UiAutomationTransport implements generate_images_batch.
         if not isinstance(client.transport, UiAutomationTransport):
             raise RuntimeError(
