@@ -4,11 +4,11 @@
 
 ## Pre-tag gates (filled in before signing)
 
-- [ ] No undesired `v0.7.0` regex matches in README / AGENTS.md / llms.txt / docs/INDEX.md / docs/PROJECT_STATUS.md (CHANGELOG and historical `LIVE_VERIFICATION_v0.7.0.md` excluded).
-- [ ] All in-doc links resolve (`scripts/ci/check_doc_links.py` exit 0).
-- [ ] `/gflow:doc-review` skill report has zero open findings.
-- [ ] Impeccable Routine passes: ruff check / ruff format --check / pyright src / pytest scoped.
-- [ ] README under 200 lines (target ~150).
+- [x] No undesired `v0.7.0` regex matches in README / AGENTS.md / llms.txt / docs/INDEX.md / docs/PROJECT_STATUS.md (CHANGELOG and historical `LIVE_VERIFICATION_v0.7.0.md` excluded). _4 historical hits in INDEX cross-link + PROJECT_STATUS milestone history — allowed per plan §14 gate 1._
+- [x] All in-doc links resolve (`scripts/ci/check_doc_links.py` exit 0). _9 files audited, all links resolved._
+- [ ] `/gflow:doc-review` skill report has zero open findings. _Deferred to LLM council audit (Task 17); skill itself slated for upgrade (Task 18)._
+- [x] Impeccable Routine passes: ruff check / ruff format --check / pyright src / pytest scoped. _ruff clean, pyright 0/0/0, pytest 788 passed + 6 skipped, hygiene 252 files clean._
+- [x] README under 200 lines (target ~150). _Actual: 116 lines (plan floor of 140 relaxed; content matches spec §4 in full)._
 
 ## Post-tag evidence (filled in after publish)
 
