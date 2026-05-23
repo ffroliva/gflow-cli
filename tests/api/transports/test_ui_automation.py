@@ -1570,3 +1570,106 @@ class TestSetCountRetry:
         ):
             await UiAutomationTransport._set_count(page, 1)  # type: ignore[attr-defined]
         assert len(clicked) >= 1
+
+
+# ---------------------------------------------------------------------------
+# Unit 3.14 — _dump_count_panel_dom diagnostic helper
+# ---------------------------------------------------------------------------
+
+
+class TestDumpCountPanelDom:
+    """_dump_count_panel_dom writes a structured JSON snapshot to out_dir."""
+
+    @pytest.mark.asyncio
+    async def test_dump_count_panel_dom_writes_json(self, tmp_path: Path) -> None:
+        """Mock page.evaluate returns a known snapshot; JSON file is written with correct shape."""
+        import json
+
+        known_snapshot = {
+            "url": "https://labs.google/fx/tools/flow/project/123",
+            "title": "Flow",
+            "roles": {
+                "tab": [
+                    {
+                        "text": "1 Imagem",
+                        "aria_label": None,
+                        "aria_selected": "true",
+                        "aria_controls": None,
+                        "id": None,
+                        "classes": "mat-tab",
+                    }
+                ],
+                "tablist": [],
+                "radiogroup": [],
+                "radio": [],
+            },
+            "buttons_with_digits": [
+                {
+                    "text": "1 Imagem",
+                    "aria_label": None,
+                    "aria_selected": "true",
+                    "role": "tab",
+                    "parent_role": "tablist",
+                    "parent_class": "mat-tab-group",
+                }
+            ],
+            "google_symbols_ligatures": [
+                {
+                    "ligature": "image",
+                    "parent_text": "1 Imagem",
+                    "parent_role": "tab",
+                    "parent_aria_label": None,
+                }
+            ],
+        }
+
+        page = MagicMock()
+        page.evaluate = AsyncMock(return_value=known_snapshot)
+
+        await UiAutomationTransport._dump_count_panel_dom(page, tmp_path, 0)  # type: ignore[attr-defined]
+
+        out_file = tmp_path / "count_panel_dom_prompt_0.json"
+        assert out_file.exists(), "JSON dump file must be created"
+
+        written = json.loads(out_file.read_text(encoding="utf-8"))
+        assert written["url"] == known_snapshot["url"]
+        assert written["title"] == known_snapshot["title"]
+        assert "tab" in written["roles"]
+        assert len(written["roles"]["tab"]) == 1
+        assert written["roles"]["tab"][0]["text"] == "1 Imagem"
+        assert len(written["buttons_with_digits"]) == 1
+        assert written["buttons_with_digits"][0]["role"] == "tab"
+        assert len(written["google_symbols_ligatures"]) == 1
+        assert written["google_symbols_ligatures"][0]["ligature"] == "image"
+
+    @pytest.mark.asyncio
+    async def test_dump_count_panel_dom_noop_without_out_dir(self) -> None:
+        """No-op (no write, no evaluate call) when out_dir is None."""
+        page = MagicMock()
+        page.evaluate = AsyncMock()
+
+        await UiAutomationTransport._dump_count_panel_dom(page, None, 0)  # type: ignore[attr-defined]
+
+        page.evaluate.assert_not_called()
+
+    @pytest.mark.asyncio
+    async def test_dump_count_panel_dom_noop_without_prompt_idx(self, tmp_path: Path) -> None:
+        """No-op when prompt_idx is None even if out_dir is set."""
+        page = MagicMock()
+        page.evaluate = AsyncMock()
+
+        await UiAutomationTransport._dump_count_panel_dom(page, tmp_path, None)  # type: ignore[attr-defined]
+
+        page.evaluate.assert_not_called()
+
+    @pytest.mark.asyncio
+    async def test_dump_count_panel_dom_swallows_evaluate_error(self, tmp_path: Path) -> None:
+        """Failures in page.evaluate are swallowed — diagnostic must not raise."""
+        page = MagicMock()
+        page.evaluate = AsyncMock(side_effect=RuntimeError("CDP disconnected"))
+
+        # Must not raise
+        await UiAutomationTransport._dump_count_panel_dom(page, tmp_path, 1)  # type: ignore[attr-defined]
+
+        out_file = tmp_path / "count_panel_dom_prompt_1.json"
+        assert not out_file.exists(), "No file written on evaluate failure"
