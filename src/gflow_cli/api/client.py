@@ -17,9 +17,6 @@ import asyncio
 import base64
 import json
 import os
-import secrets
-import uuid
-from collections.abc import Sequence
 from dataclasses import replace as _dc_replace
 from datetime import datetime
 from pathlib import Path
@@ -178,7 +175,7 @@ class FlowApiClient:
             locale="en-US",
             extra_http_headers={"Accept-Language": "en-US,en;q=0.9"},
             channel=channel_for_profile(self.profile_dir),
-            ignore_default_args=["--enable-automation", "--no-sandbox"],
+            ignore_default_args=["--enable-automation", "--no-sandbox", "--password-store=basic"],
             args=["--disable-blink-features=AutomationControlled"],
         )
         # Hide the automation flag so reCAPTCHA Enterprise doesn't score
@@ -582,6 +579,22 @@ class FlowApiClient:
         out_path.write_bytes(await resp.body())
         return out_path
 
+    async def download_video(self, media_id: str, out_path: Path) -> Path:
+        """Download a generated video by media ID to disk.
+
+        Wraps :meth:`download` — ``media.getMediaUrlRedirect`` is followed
+        transparently; the response body (mp4) is written to ``out_path``.
+
+        Args:
+            media_id: The UUID returned in :attr:`VideoStatus.media_id`.
+            out_path: Destination file path. Parent directories are created
+                if missing.
+
+        Returns:
+            ``out_path`` for ergonomic chaining.
+        """
+        return await self.download(media_id, out_path)
+
     async def archive_workflow(self, workflow_id: str, project_id: str) -> None:
         """Soft-delete (archive) a workflow — used by clear-library tooling.
 
@@ -617,45 +630,25 @@ class FlowApiClient:
         finally:
             self._checkin_page(page)
 
-    async def _drive_image_generation(
+    async def _drive_images_generation(
         self,
         *,
         project_id: str,
         req: GenerateImageRequest,
-        seed: int,
-        batch_id: str,
         recaptcha_action: str,
-    ) -> GeneratedImage:
-        """Per-shot drive of one ``flowMedia:batchGenerateImages`` request.
+    ) -> list[GeneratedImage]:
+        """Mint a token, call the transport once, and return all images.
 
-        Flow requires a freshly-minted reCAPTCHA Enterprise token on every
-        ``batchGenerateImages`` request (single-use, ~2 min TTL). Minting
-        requires a real Page context — Google's reCAPTCHA JS runs in the
-        browser, not in httpx. So the **client** owns minting (it holds the
-        persistent Chromium context) and the **strategy** owns sending.
-
-        A.7 + Phase B: the strategy receives the request with the freshly
-        minted ``recaptcha_token`` attached, builds the body via the shared
-        ``_build_batch_generate_images_body`` (which reads
-        ``request.recaptcha_token``), and sends via its transport mechanism.
-
-        ``seed`` and ``batch_id`` are currently consumed inside the body
-        builder via the request object after Phase A.2 moved
-        ``recaptcha_token`` there. They are kept in the signature for caller
-        APIs; the strategy receives ``req`` enriched with the live token.
+        ``req.count`` controls how many images Flow generates (1–4). The UI
+        transport clicks the matching x{N} tab so one submission produces N
+        images; other transports may fan-out internally, but that is their
+        concern. This method is the single place reCAPTCHA minting happens.
         """
         if self.transport is None:
             raise RuntimeError(
                 "FlowApiClient.transport is None — call generate_image inside 'async with client'"
             )
-        # Mint a single-use reCAPTCHA token via the client's Page (extracted to
-        # a method so unit tests can monkeypatch it without standing up a real
-        # Playwright Page + reCAPTCHA Enterprise script).
         token = await self._mint_recaptcha_token(recaptcha_action)
-
-        # `seed` + `batch_id` are reserved here for future extension; the
-        # strategy uses what's already on the request.
-        _ = seed, batch_id  # suppress unused-variable warnings
         req_with_token = _dc_replace(req, recaptcha_token=token)
         images = await self.transport.generate_images(
             project_id=project_id,
@@ -667,6 +660,32 @@ class FlowApiClient:
                 instance=_make_instance(),
                 route=routes.batch_generate_images_url(project_id),
             )
+        return images
+
+    async def _drive_image_generation(
+        self,
+        *,
+        project_id: str,
+        req: GenerateImageRequest,
+        recaptcha_action: str,
+    ) -> GeneratedImage:
+        """Single-image shortcut — delegates to ``_drive_images_generation`` with count=1.
+
+        Forces ``count=1`` on the request before delegating so that callers
+        constructing a :class:`GenerateImageRequest` with ``count>1`` and then
+        invoking the single-image API still receive exactly one image (no
+        silent discard).
+        """
+        # Pyright narrows `dataclasses.replace` back to GenerateImageRequest,
+        # but SonarCloud (S5655/S5890) does not — so we cast and pin the
+        # type explicitly.  The `pyright: ignore` silences the otherwise-
+        # accurate `reportUnnecessaryCast` so both analysers are happy.
+        req_one = cast("GenerateImageRequest", _dc_replace(req, count=1))  # pyright: ignore[reportUnnecessaryCast]
+        images = await self._drive_images_generation(
+            project_id=project_id,
+            req=req_one,
+            recaptcha_action=recaptcha_action,
+        )
         return images[0]
 
     async def generate_image(
@@ -674,9 +693,7 @@ class FlowApiClient:
         *,
         project_id: str | None = None,
         req: GenerateImageRequest,
-        seed: int | None = None,
         recaptcha_action: str = "imageGeneration",
-        batch_id: str | None = None,
     ) -> GeneratedImage:
         """Single-shot Imagen/Narwhal image generation.
 
@@ -690,9 +707,6 @@ class FlowApiClient:
         automatically via :meth:`create_project`.  Existing callers that supply
         an explicit ``project_id`` are unaffected.
 
-        Idempotency: calling twice with the same ``seed`` and ``batch_id``
-        yields identical bodies modulo the per-call reCAPTCHA token AND the
-        per-attempt session-id timestamp.
         """
         try:
             resolved_project_id: str
@@ -704,8 +718,6 @@ class FlowApiClient:
             return await self._drive_image_generation(
                 project_id=resolved_project_id,
                 req=req,
-                seed=seed if seed is not None else secrets.randbelow(2**31),
-                batch_id=batch_id or _new_batch_id(),
                 recaptcha_action=recaptcha_action,
             )
         except Exception as e:
@@ -719,51 +731,26 @@ class FlowApiClient:
         project_id: str | None = None,
         req: GenerateImageRequest,
         count: int = 1,
-        seeds: Sequence[int] | None = None,
         recaptcha_action: str = "imageGeneration",
     ) -> list[GeneratedImage]:
-        """Fan out N parallel image generations sharing one ``batchId``.
+        """Generate ``count`` images using Flow's native count selector (1–4).
 
-        Spec C2: each of the N parallel tasks runs ITS OWN retry+mint loop
-        (see :meth:`_drive_image_generation`) on its OWN checked-out Page.
-        This sidesteps the previous shared-Page bottleneck where N tokens had
-        to be minted sequentially (because ``page.evaluate`` is not re-entrant)
-        before any POST could fire. With the per-worker pool, mints happen
-        concurrently — one per Page.
+        One transport call, one submission round-trip — the UI transport clicks
+        the x{count} tab so Flow produces N images in one shot.
 
         Args:
             project_id: Flow project ID.  When ``None``, a new project is
                 created automatically via :meth:`create_project`.
             req: Shared request (prompt, aspect, reference image, ...).
-            count: How many images to generate. Must be 1..4 (Flow UI cap).
-            seeds: Optional explicit seeds. Defaults to ``count`` random
-                31-bit ints. If provided, ``len(seeds)`` must equal ``count``.
-
-        Returns:
-            ``list[GeneratedImage]`` in the same order as ``seeds`` (or the
-            order of internally generated seeds if ``seeds`` is None).
+            count: How many images to generate (1–4, Flow's UI cap).
 
         Raises:
-            ValueError: if ``count`` is outside ``[1, 4]`` or ``seeds``
-                length disagrees with ``count``.
-            FlowApiError: if any of the parallel calls fail. The first failure
-                propagates immediately via asyncio.gather(return_exceptions=False);
-                remaining in-flight requests are not cancelled and may complete
-                (or fail) in the background. With count <= 4 the leakage is
-                time-bounded and the tokens expire harmlessly.
+            ValueError: if ``count`` is outside ``[1, 4]``.
         """
         if not 1 <= count <= 4:
             raise ValueError(f"count must be between 1 and 4, got {count}")
-        seeds_list: list[int]
-        if seeds is None:
-            seeds_list = [secrets.randbelow(2**31) for _ in range(count)]
-        elif len(seeds) != count:
-            raise ValueError(f"len(seeds)={len(seeds)} does not match count={count}")
-        else:
-            seeds_list = list(seeds)
 
         try:
-            # Resolve project_id once — do NOT create N projects for N parallel shots.
             resolved_project_id: str
             if project_id is None:
                 project = await self.create_project()
@@ -771,23 +758,15 @@ class FlowApiClient:
             else:
                 resolved_project_id = project_id
 
-            shared_batch_id = _new_batch_id()
-
-            # asyncio.gather preserves input order in its result list, so the
-            # caller sees results in the same order as `seeds` even though the
-            # network calls (and per-shot retry loops) may complete out of order.
-            return await asyncio.gather(
-                *(
-                    self._drive_image_generation(
-                        project_id=resolved_project_id,
-                        req=req,
-                        seed=s,
-                        batch_id=shared_batch_id,
-                        recaptcha_action=recaptcha_action,
-                    )
-                    for s in seeds_list
-                ),
-                return_exceptions=False,
+            # Pyright narrows `dataclasses.replace` back to GenerateImageRequest,
+            # but SonarCloud (S5655/S5890) does not — so we cast and pin the
+            # type explicitly.  The `pyright: ignore` silences the otherwise-
+            # accurate `reportUnnecessaryCast` so both analysers are happy.
+            req_with_count = cast("GenerateImageRequest", _dc_replace(req, count=count))  # pyright: ignore[reportUnnecessaryCast]
+            return await self._drive_images_generation(
+                project_id=resolved_project_id,
+                req=req_with_count,
+                recaptcha_action=recaptcha_action,
             )
         except Exception as e:
             if _is_target_closed(e):
@@ -817,11 +796,6 @@ class FlowApiClient:
 
 def _default_project_title() -> str:
     return datetime.now().strftime("gflow-cli %b %d, %I:%M %p")
-
-
-def _new_batch_id() -> str:
-    """Generate a fresh batch ID for the mediaGenerationContext."""
-    return str(uuid.uuid4())
 
 
 def _strip_query(url: str) -> str:

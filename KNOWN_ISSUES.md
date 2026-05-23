@@ -16,7 +16,19 @@ Living list of behaviour that's broken, surprising, or limited by design — alo
 
 ### Image generation returns HTTP 401 — `aisandbox-pa` generation endpoint
 
-- **Status:** Open · **Severity:** High (blocks image generation in the e2e path; production-CLI impact unconfirmed) · **Affects:** v0.6.0a6 · **Tracked:** N/A — needs a dedicated issue
+- **Status:** **RESOLVED in v0.7.0** — moved to [Resolved](#resolved) section
+- **Severity:** ~~High~~ · **Was-affecting:** v0.6.0a6 and earlier
+
+> **Resolution (2026-05-20, v0.7.0):** the production `ui_automation` transport
+> drives the Flow web UI so Flow's own JS issues `batchGenerateImages` with
+> full auth context — bypassing the 401 on the `aisandbox-pa` HTTP path
+> entirely. Live-verified end-to-end on the `ffroliva` profile across four
+> aspect ratios (`9:16`, `16:9`, `1:1`, `4:3`); see
+> [`docs/LIVE_VERIFICATION_v0.7.0.md`](docs/LIVE_VERIFICATION_v0.7.0.md). The
+> 401 still hits the experimental HTTP transports
+> (`evaluate_fetch` / `bearer` / `sapisidhash`) under
+> `src/gflow_cli/api/transports/experimental/` — those are not the
+> production path. Historical detail preserved below for searchability.
 
 Image **generation** calls fail with HTTP 401 even on a profile that holds a
 fully verified Flow session. Discovered 2026-05-17 while building the e2e test
@@ -213,7 +225,17 @@ gflow video batch manifest.remaining.tsv
 
 ### REST API 401 — all `aisandbox-pa.googleapis.com` generation endpoints blocked
 
-- **Status:** Open (Mitigated) · **Severity:** High · **Affects:** v0.2.0a1+ · **Fixed in:** v0.6.0a5 (planned)
+- **Status:** **RESOLVED in v0.7.0** — image generation live-verified end-to-end
+- **Severity:** ~~High~~ · **Was-affecting:** v0.2.0a1 through v0.6.0a6
+
+> **Resolution (2026-05-20, v0.7.0):** `UiAutomationTransport` drives the Flow
+> editor so Flow's own JS issues every generation request with full auth
+> context — image generation now succeeds end-to-end (see
+> [`docs/LIVE_VERIFICATION_v0.7.0.md`](docs/LIVE_VERIFICATION_v0.7.0.md)). Video
+> T2V works at the library level via the same transport (Phase A, PR #23);
+> CLI wiring (`gflow video t2v/i2v/batch`) is queued for Phase B. The HTTP
+> transports under `experimental/` remain blocked by this 401 by design —
+> they are not on the production path.
 
 Even with a valid browser session (cookies present), calling Flow's REST API directly via `fetch` or `page.request` against `aisandbox-pa.googleapis.com` returns HTTP 401. This blocks **all** generation routes:
 
@@ -254,6 +276,73 @@ find "$HOME/Downloads/gflow-cli" -type f -mtime +30 -delete
 
 ---
 
+### `batchGenerateImages` HTTP 403 — WAF / reCAPTCHA `PUBLIC_ERROR_UNUSUAL_ACTIVITY`
+
+- **Status:** Open · **Severity:** High (blocks affected profile until WAF score decays or profile is replaced)
+- **First observed:** 2026-05-23 on profile `denon82` during `gflow image batch` runs
+- **Surfaces as:** `gflow_cli.errors.WafRejectionError: WAF rejection (HTTP 403): batchGenerateImages HTTP 403 — reCAPTCHA score too low or WAF fingerprint mismatch`
+- **structlog signature:** `ui_automation.batch_response_seen` with `status=403` followed by `ui_automation.batch_403_body` containing `'message': 'reCAPTCHA evaluation failed', 'status': 'PERMISSION_DENIED', 'reason': 'PUBLIC_ERROR_UNUSUAL_ACTIVITY'`
+
+Distinct from the historical `aisandbox-pa` 401 (resolved in v0.7.0). The 403
+here means Flow accepted the session as authenticated but reCAPTCHA Enterprise
+scored the request as bot-like and blocked the generation call. The `denon82`
+profile reproducibly 403s on `batchGenerateImages` even after a fresh
+`gflow auth login --browser chrome`; the same code path on profile `ffroliva`
+(re-authenticated the same day) succeeded end-to-end across one t2i + a 4-image
+batch — so it is not a global incompatibility but a per-profile WAF state.
+
+**Likely contributing factors:**
+- Repeated automated runs on the same profile within a short window
+- Playwright-driven Chrome leaks small fingerprint differences vs. unautomated
+  Chrome that reCAPTCHA Enterprise can score
+- The image-batch path issues several rapid-fire requests after the
+  count-tab clicks, which the scoring may treat as a single fast burst
+
+**Workarounds:**
+1. **Use a profile with lower WAF heat** — re-test on a different Chrome-strategy
+   profile (`gflow auth login --profile <new> --browser chrome`). The profile
+   that has been driven by recent automation runs is usually the hottest.
+2. **Let the WAF score decay** — typically hours to a day. Manually using real
+   Chrome on the same account in between can help (real interactions lower
+   the score).
+3. **Avoid same-day repeated batch runs** on a profile after a 403 — each
+   rejected request can raise the score further.
+
+**Tracked separately from** the architectural ["first-attempt listener-miss
+flake"](https://github.com/ffroliva/gflow-cli/pull/40) — that one was caused
+by editor mode confusion and is resolved by PR #40. WAF 403 is a fresh, distinct
+issue and not blocked by any code change in this repo.
+
+---
+
+### `UiAutomationTransport` selectors still partially localized — issue #24 partial
+
+- **Status:** Mitigated · **Severity:** Medium · **Tracking:** [issue #24](https://github.com/ffroliva/gflow-cli/issues/24)
+
+The Phase 7 multi-image-prompt work addressed the count-tab selectors:
+- `_COUNT_TAB_TEXT_RE = ^(1x|x[2-4])$` only matches the digit+x format Flow
+  renders identically in every locale (numbers/symbols are not translated).
+- `_set_count` falls back to positional `.nth(count - 1)` when the read-back
+  text is unrecognised — locale-invariant.
+
+Still localized as of this writing:
+
+- **`ONBOARDING_SELECTORS`** (`src/gflow_cli/api/transports/ui_automation.py:183-193`)
+  — nine button-text selectors only (`Agree` / `Aceitar` / `I agree` / `Concordo`
+  / `Accept` / `Create with Flow` / `Criar com o Flow` / `Get Started` /
+  `Começar`). An account whose Flow renders in an unlisted language (German,
+  Japanese, ...) **cannot pass onboarding**. This is the issue's stated
+  priority-1 item.
+- **`NEW_PROJECT_SELECTORS` localized fallbacks** + **`SUBMIT_BUTTON_SELECTORS` tail**
+  — icon-first selectors lead, so these work today; the localized fallbacks
+  remain as "maintenance debt and silent-failure risk" per the issue body.
+
+**Workaround:** the account must be in a locale that matches one of the
+hard-coded text selectors. For automation, prefer accounts whose Flow renders
+in English or Portuguese.
+
+---
+
 ## Mitigated
 
 ### Auth verification depends on Google's NextAuth session endpoint
@@ -274,6 +363,16 @@ change surfaces there as a failing test. Start any investigation of a sudden
 ---
 
 ## Resolved
+
+### aisandbox-pa generation 401 — bypassed by the `ui_automation` transport
+
+- **Status:** Resolved · **Severity:** Was-High (blocked image gen via HTTP transports) · **Fixed in:** v0.7.0
+
+The two long Open-section entries above (*Image generation returns HTTP 401* and *REST API 401 — all `aisandbox-pa.googleapis.com` generation endpoints blocked*) were closed by the same architectural change: `UiAutomationTransport` drives the Flow web UI so Flow's own JavaScript issues every generation request with the full browser auth context (cookies, reCAPTCHA, `Origin`/`Referer` headers). The 401 had affected every direct HTTP call from `evaluate_fetch` / `bearer` / `sapisidhash`; those transports now live under `src/gflow_cli/api/transports/experimental/` and are not on the production path.
+
+End-to-end live-verified on the `ffroliva` profile across `9:16`, `16:9`, `1:1`, and `4:3` aspect ratios; see [`docs/LIVE_VERIFICATION_v0.7.0.md`](docs/LIVE_VERIFICATION_v0.7.0.md) for timing, file sizes, and exact filenames. Video T2V uses the same approach (Phase A — PR #23 — merged 2026-05-19).
+
+---
 
 ### G12 "browser not secure" block — Google rejects automated sign-in
 

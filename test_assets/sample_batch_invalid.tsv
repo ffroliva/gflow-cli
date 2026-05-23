@@ -1,0 +1,4 @@
+ok prompt
+prompt with bad count	not-a-number
+prompt with bad aspect	1	9999:9999
+prompt with unknown model	1	16:9	imaginary-model

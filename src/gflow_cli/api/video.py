@@ -109,6 +109,18 @@ class VideoStatus:
         return self.status == "MEDIA_GENERATION_STATUS_SUCCESSFUL"
 
 
+@dataclass(frozen=True)
+class VideoResult:
+    """Return value of :meth:`generate_video` after Phase B download wiring.
+
+    ``local_path`` is ``None`` when ``download=False`` was passed, or when
+    the generation failed — callers should check ``status.succeeded`` first.
+    """
+
+    status: VideoStatus
+    local_path: Path | None
+
+
 def media_name_from_generate_response(response_json: dict[str, Any]) -> str:
     """Return `media[0].name` from a batchAsyncGenerateVideo* response.
 

@@ -25,16 +25,29 @@ log events (`structlog` JSON lines):
 
 | Event key | When it fires | Useful fields |
 |---|---|---|
+| `ui_automation.image_mode_entered` | After `_enter_editor` + `_dismiss_blocking_overlays`, once the editor has been switched to Image mode. Mirror on the video side: `ui_automation_video.video_mode_entered`. | _(none — presence is the signal)_ |
 | `ui_automation.batch_response_seen` | EVERY `batchGenerateImages` URL observed, BEFORE the project-id filter | `url`, `status`, `filter_project_id` |
 | `ui_automation.batch_response_dropped_project_id_mismatch` | URL contained `batchGenerateImages` but project-id filter rejected it | `url`, `filter_project_id` |
 | `ui_automation.batch_response_captured` | Response passed all filters AND parsed cleanly | `url`, `status` |
 | `ui_automation.batch_response_parse_failed` | Listener fired but `response.json()` raised | `url`, `error` |
+| `ui_automation.batch_403_body` | A `batchGenerateImages` response returned HTTP 403; body prefix logged for WAF / reCAPTCHA diagnosis (subsequently raises `WafRejectionError`) | `body_prefix`, `route` |
 
 If `prompt_submitted` is followed by NO `batch_response_seen` log within the
 timeout, the network request didn't fire (or didn't return as a Playwright
-`response` event). That's almost always a UI flake — see the open
-"first-attempt flake" item in
-[`LIVE_VERIFICATION_v0.7.0.md`](LIVE_VERIFICATION_v0.7.0.md#open-follow-ups).
+`response` event). Most common cause (resolved by [PR #40](https://github.com/ffroliva/gflow-cli/pull/40)
+on 2026-05-23): the editor was in Video mode and Flow fired `generateVideo`
+instead — the listener filter (`batchGenerateImages` URL) never matched.
+Confirm by checking for `ui_automation.image_mode_entered` in the log; if it
+is missing, the mode switch did not run.  If `image_mode_entered` is present
+but `batch_response_seen` is still missing, the remaining hypothesis is the
+historical UI-flake noted in
+[`LIVE_VERIFICATION_v0.7.0.md`](LIVE_VERIFICATION_v0.7.0.md#open-follow-ups)
+(transient overlay swallowed the arrow-forward click).
+
+**Two extra debug-screenshot file names worth searching for in the out dir**
+when the mode switch itself fails: `debug_no_mode_trigger.png` (crop-icon
+dropdown trigger not found) and `debug_no_image_tab.png` (Image tab missing
+inside the open dropdown).
 
 Pipe `--verbose` output through `Select-String` (PowerShell) or `grep` to
 filter:

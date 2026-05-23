@@ -334,6 +334,7 @@ def _spawn_chrome(binary: str, profile_dir: Path, port: int) -> subprocess.Popen
         "--no-first-run",
         "--no-default-browser-check",
         "--disable-background-networking",
+        "--password-store=basic",
     ]
 
     log.info("chrome_spawn", binary=binary, port=port, profile_dir=str(profile_dir))
