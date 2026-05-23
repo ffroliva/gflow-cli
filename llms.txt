@@ -1,0 +1,28 @@
+# gflow-cli
+
+> Unofficial Python CLI for Google Flow — drives Veo (image-to-video, text-to-video) and Imagen (text-to-image) generations from the terminal by reverse-engineering Flow's private REST API at aisandbox-pa.googleapis.com. Requires a Google AI Ultra or Pro subscription with Flow access. Uses Playwright Chromium under the hood (one-time real-Chrome auth, then a persistent Chrome session driven via ui_automation). Production-stable for image generation and video T2V; video I2V and batch are queued for Phase B. MIT licensed, not affiliated with Google.
+
+This file is forward-staged for a future docs site at https://ffroliva.github.io/gflow-cli/llms.txt and is also usable today by LLM agents that read the repo directly.
+
+## Docs
+
+- [README](https://github.com/ffroliva/gflow-cli/blob/main/README.md): Project overview, install, 60-second quick start.
+- [User Guide](https://github.com/ffroliva/gflow-cli/blob/main/docs/USER_GUIDE.md): Task-oriented walkthroughs — first setup, batch video, multi-image, log forensics, recovery, multi-account.
+- [Usage](https://github.com/ffroliva/gflow-cli/blob/main/docs/USAGE.md): Command-by-command reference, manifest format, exit codes.
+- [Architecture](https://github.com/ffroliva/gflow-cli/blob/main/docs/ARCHITECTURE.md): Provider abstraction, ui_automation transport, RFC 9457 error model.
+- [Authentication](https://github.com/ffroliva/gflow-cli/blob/main/docs/AUTHENTICATION.md): One-time Chrome login, session storage, multi-account.
+- [Configuration](https://github.com/ffroliva/gflow-cli/blob/main/docs/CONFIGURATION.md): All env vars, output paths, precedence.
+- [Known Issues](https://github.com/ffroliva/gflow-cli/blob/main/KNOWN_ISSUES.md): Open + mitigated issues with workarounds.
+
+## For AI coding agents
+
+- [AGENTS.md](https://github.com/ffroliva/gflow-cli/blob/main/AGENTS.md): Universal coding-agent spec (Cursor, Codex, Aider, Gemini CLI, Claude Code, etc.).
+- [CLAUDE.md](https://github.com/ffroliva/gflow-cli/blob/main/CLAUDE.md): Claude Code's auto-loaded memory hub.
+- [docs/AGENT_GUIDE.md](https://github.com/ffroliva/gflow-cli/blob/main/docs/AGENT_GUIDE.md): Mandates and routing rules for agents.
+
+## Optional
+
+- [DISCLAIMER](https://github.com/ffroliva/gflow-cli/blob/main/DISCLAIMER.md): Legal scope and takedown policy.
+- [CONTRIBUTING](https://github.com/ffroliva/gflow-cli/blob/main/CONTRIBUTING.md): TDD workflow, coverage targets.
+- [Changelog](https://github.com/ffroliva/gflow-cli/blob/main/CHANGELOG.md): Version-by-version user-visible changes.
+- [Release protocol](https://github.com/ffroliva/gflow-cli/blob/main/RELEASE.md): Signed-tag publishing flow.

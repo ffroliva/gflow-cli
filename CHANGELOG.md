@@ -7,6 +7,23 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+## [0.8.1] — 2026-05-23
+
+### Documentation
+
+- README rewritten as a hybrid router (~150 lines, was 398). New: prominent unofficial-tool + headed-browser callouts above the fold, polished 60-second quick start, in-depth-quick-start link, "For AI agents & LLMs" routing table, ripgrep-style documentation TOC.
+- New [AGENTS.md](AGENTS.md) at repo root — universal agent spec consumed by 60k+ repos' tooling (Cursor, Codex, Aider, Gemini CLI, Claude Code, Copilot, opencode, etc.). Closes the gap left by having Claude-Code-only memory.
+- New [llms.txt](llms.txt) at repo root — llmstxt.org-format summary for end-users feeding the project into an LLM. Forward-staged for a future docs site.
+- New [docs/PROJECT_STATUS.md](docs/PROJECT_STATUS.md) — moved the full milestone table out of README; added lifecycle policy section.
+- [docs/ARCHITECTURE.md](docs/ARCHITECTURE.md) absorbed the ASCII system diagram + Auth strategy paragraphs from README; gained a new "Headed-browser dependency — current limitation" subsection that documents the three retired HTTP transports and invites contributor work on a pure-REST path.
+- [CLAUDE.md](CLAUDE.md) trimmed from ~80 to ~25 lines; universal coding-agent rules now live in AGENTS.md, with CLAUDE.md carrying Claude-Code-specific session protocol only.
+- All `v0.7.0` references that meant "current" updated to `v0.8.1`. Historical mentions preserved in CHANGELOG and `docs/LIVE_VERIFICATION_v0.7.0.md`.
+- New per-release evidence file [docs/LIVE_VERIFICATION_v0.8.1.md](docs/LIVE_VERIFICATION_v0.8.1.md).
+
+### Released
+
+- PyPI: https://pypi.org/project/gflow-cli/0.8.1/ — refreshes the stale README rendering left over from v0.8.0.
+
 ## [0.8.0] — 2026-05-23
 
 > **Multi-image-prompt release + transport hardening.** Introduces the
