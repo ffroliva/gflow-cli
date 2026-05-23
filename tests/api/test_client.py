@@ -395,3 +395,19 @@ async def test_generate_image_translates_target_closed_to_browser_session_closed
                 project_id="p",
                 req=GenerateImageRequest(prompt="x", model=Model.NARWHAL, aspect=Aspect.PORTRAIT),
             )
+
+
+@pytest.mark.asyncio
+async def test_download_video_delegates_to_download(tmp_path: Path) -> None:
+    """download_video(media_id, out_path) delegates to self.download()."""
+    from unittest.mock import patch
+
+    out_path = tmp_path / "my_video.mp4"
+
+    with patch.object(FlowApiClient, "download", new_callable=AsyncMock) as mock_dl:
+        mock_dl.return_value = out_path
+        client = object.__new__(FlowApiClient)  # bypass __init__
+        result = await client.download_video("media-uuid-abc", out_path)
+
+    mock_dl.assert_awaited_once_with("media-uuid-abc", out_path)
+    assert result == out_path

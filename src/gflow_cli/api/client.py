@@ -178,7 +178,7 @@ class FlowApiClient:
             locale="en-US",
             extra_http_headers={"Accept-Language": "en-US,en;q=0.9"},
             channel=channel_for_profile(self.profile_dir),
-            ignore_default_args=["--enable-automation", "--no-sandbox"],
+            ignore_default_args=["--enable-automation", "--no-sandbox", "--password-store=basic"],
             args=["--disable-blink-features=AutomationControlled"],
         )
         # Hide the automation flag so reCAPTCHA Enterprise doesn't score
@@ -581,6 +581,22 @@ class FlowApiClient:
             _raise_for_non_retryable(resp, await resp.text(), route=route)
         out_path.write_bytes(await resp.body())
         return out_path
+
+    async def download_video(self, media_id: str, out_path: Path) -> Path:
+        """Download a generated video by media ID to disk.
+
+        Wraps :meth:`download` — ``media.getMediaUrlRedirect`` is followed
+        transparently; the response body (mp4) is written to ``out_path``.
+
+        Args:
+            media_id: The UUID returned in :attr:`VideoStatus.media_id`.
+            out_path: Destination file path. Parent directories are created
+                if missing.
+
+        Returns:
+            ``out_path`` for ergonomic chaining.
+        """
+        return await self.download(media_id, out_path)
 
     async def archive_workflow(self, workflow_id: str, project_id: str) -> None:
         """Soft-delete (archive) a workflow — used by clear-library tooling.

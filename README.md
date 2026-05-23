@@ -55,7 +55,7 @@ Read the full [DISCLAIMER](DISCLAIMER.md) before deploying this in any productio
 
 ## Project status
 
-**v0.6.0a6 — alpha.** Video (T2V/I2V/batch), image (T2I/I2I/upload), the **`gflow run` JSON-batch command**, and the **`ui_automation` default transport** are functional end-to-end against a live Google AI Pro/Ultra Flow account. Three earlier HTTP transport strategies (`evaluate_fetch` / `bearer` / `sapisidhash`) now live in an `experimental/` subpackage; the production path is `ui_automation`.
+**v0.7.0 — first stable.** Image (T2I/I2I/upload), the **`gflow run` JSON-batch command**, and the **`ui_automation` default transport** are functional end-to-end against a live Google AI Pro/Ultra Flow account — every CLI aspect ratio (`9:16`, `16:9`, `1:1`, `4:3`, `3:4`) live-verified for v0.7.0 (see [`docs/LIVE_VERIFICATION_v0.7.0.md`](docs/LIVE_VERIFICATION_v0.7.0.md)). Video T2V works at the library level via `UiAutomationTransport.generate_video()`; CLI wiring for `gflow video t2v/i2v/batch` is queued for Phase B. Three earlier HTTP transport strategies (`evaluate_fetch` / `bearer` / `sapisidhash`) live in an `experimental/` subpackage; the production path is `ui_automation`.
 
 | Milestone | Status |
 |---|---|
@@ -73,14 +73,22 @@ Read the full [DISCLAIMER](DISCLAIMER.md) before deploying this in any productio
 | `gflow run --config <file>` sequential JSON batches | ✅ done (v0.5.0a1) |
 | `examples/` directory with runnable single-image + batch scripts | ✅ done (v0.5.0a1) |
 | Shell multi-prompt `gflow image t2i` (`PROMPT...`, `--prompts-file`, `--stdin`) | ✅ done (v0.6.0a1) |
+| Downstream-worker ergonomics (`out_dir`, `health_check()`, optional `project_id`, `BrowserSessionClosedError`) | ✅ done (v0.7.0) |
+| Signed-tag release verification + first stable (`v0.7.0`) | ✅ done (v0.7.0) |
+| `gflow video t2v` restored on `ui_automation` with first-class video download (#29) | ✅ done (Unreleased) |
+| `gflow video i2v` + `gflow video batch` on `ui_automation` | ⏳ Phase B |
 | Provider abstraction for official Veo 3.1 API | ⏳ planned |
 
-### What's new in v0.6.0a6
+### What's new in v0.7.0
 
-- **Image-generation concurrency fix** — concurrent `generate_images` calls are now serialized, and every batch creates a fresh Flow project, eliminating project-reuse races when multiple generations overlap.
-- **Green CI pipeline restored** — fixed a test-job hang (mismatched subprocess mocking in the Real Chrome auth tests) and a `structlog` test-isolation bug.
-- **SonarCloud Quality Gate passing** — every open issue resolved (BLOCKER + CRITICAL test findings, async-hygiene and cognitive-complexity rules); the two remaining Security Hotspots were reviewed and marked Safe.
-- **Repository hardening** — accidentally tracked artefacts removed, `.gitignore` tightened, a CI hygiene gate + pre-commit hooks added, and GitHub Actions migrated to Node.js 24.
+- **Downstream-worker ergonomics** — `FlowApiClient(out_dir=...)` plumbing for debug screenshots, `health_check()` for liveness probes, optional `project_id` on `generate_image*`, and `BrowserSessionClosedError` (exit code 15) translating `playwright._impl._errors.TargetClosedError` into a stable library-owned class. Closes issues [#16](https://github.com/ffroliva/gflow-cli/issues/16) and [#18](https://github.com/ffroliva/gflow-cli/issues/18).
+- **`gflow_cli.exceptions` module** — standard alias for `gflow_cli.errors`; either import path works.
+- **Auth hardening** — `gflow auth login` now verifies a real Flow app session before reporting success ([#15](https://github.com/ffroliva/gflow-cli/issues/15)) and fails fast with `AuthBrowserRejectedError` (exit 14) when Google rejects Playwright's bundled Chromium ([#17](https://github.com/ffroliva/gflow-cli/issues/17)).
+- **1:1 aspect-tab cascade** — exact-match (`:text-is`) cascade against `1:1`, `Square`, `1×1`, `1x1` replaces the brittle substring selector; all 5 aspect ratios live-verified end-to-end.
+- **Overlay-dismiss helper** — first-run profiles no longer fail on the next click after the Flow "What's new" iframe appears ([#26](https://github.com/ffroliva/gflow-cli/issues/26)).
+- **Signed-tag CI gate** — `release.yml` now rejects unsigned tags ([#30](https://github.com/ffroliva/gflow-cli/issues/30)).
+- **Listener instrumentation** — `ui_automation.batch_response_seen` and `…_dropped_project_id_mismatch` log keys eliminate the silent listener-miss black-hole.
+- **New docs** — [`docs/DEBUGGING.md`](docs/DEBUGGING.md) (evergreen reference) and [`docs/LIVE_VERIFICATION_v0.7.0.md`](docs/LIVE_VERIFICATION_v0.7.0.md) (per-release evidence).
 - See the full [CHANGELOG](CHANGELOG.md) for details.
 
 ---
@@ -168,17 +176,19 @@ gflow auth status
 # 3a. Generate an image from a text prompt (lands at $GFLOW_CLI_OUTPUT_DIR/images/<date>/)
 gflow image t2i "a hot air balloon over Tokyo at sunrise"
 
-# 3b. Generate a clip end-to-end
-gflow video i2v ./input.png "Slow cinematic push-in, soft golden light" -o out.mp4
+# 3b. Generate a video clip end-to-end (text-to-video, auto-downloads the mp4)
+gflow video t2v "Slow cinematic push-in on a sunlit forest clearing" --aspect 16:9 --out-dir out/
 ```
 
-The image lands at `$GFLOW_CLI_OUTPUT_DIR/images/<YYYY-MM-DD>/<media_name>_1.png` (defaults to `./out/` when the env var is unset). See [docs/USAGE.md § `gflow image t2i`](docs/USAGE.md#gflow-image-t2i) for `--model`, `--aspect`, `-n/--count`, `--seed`, and `--out` flags.
+The image lands at `$GFLOW_CLI_OUTPUT_DIR/images/<YYYY-MM-DD>/<media_name>_1.png` (defaults to `./out/` when the env var is unset). See [docs/USAGE.md § `gflow image t2i`](docs/USAGE.md#gflow-image-t2i) for `--model`, `--aspect`, `-n/--count`, `--seed`, and `--out` flags. The video lands at `<out-dir>/<media_id>.mp4`.
 
-> **Video generation is being rebuilt.** The HTTP video path returned HTTP 401
-> and was retired. Video generation now runs on the UI-automation transport:
-> Phase A ships the text-to-video transport; the `gflow video` CLI commands
-> return in a later release (Phase B). See
-> `docs/superpowers/specs/2026-05-18-ui-automation-video-generation-design.md`.
+> **Video generation runs on the UI-automation transport.** The legacy HTTP
+> video path returned HTTP 401 and was retired. `gflow video t2v` is shipped
+> on the new transport (auto-downloads the mp4 via `media.getMediaUrlRedirect`);
+> `gflow video i2v` and `gflow video batch` follow in a later Phase B release.
+> See [`docs/LIVE_VERIFICATION_video_download.md`](docs/LIVE_VERIFICATION_video_download.md) for the live evidence and
+> `docs/superpowers/specs/2026-05-18-ui-automation-video-generation-design.md`
+> for the design.
 
 ---
 
@@ -194,9 +204,9 @@ gflow image t2i --prompts-file prompts.txt               # text-file multi-promp
 gflow image t2i --stdin                                  # stdin multi-prompt batch
 gflow image i2i "<prompt>" --ref PATH_OR_UUID [...]      # image-to-image (1–4 per call)
 
-gflow video t2v "<prompt>" -o out.mp4                    # text-to-video — returns in Phase B
-gflow video i2v <image> "<prompt>" -o out.mp4            # image-to-video — returns in Phase B
-gflow video batch <manifest.tsv>                         # TSV-driven batch — returns in Phase B
+gflow video t2v "<prompt>" [--aspect 9:16|16:9] [--out-dir DIR]   # text-to-video, auto-downloads mp4
+gflow video i2v <image> "<prompt>" -o out.mp4                    # image-to-video — returns in Phase B
+gflow video batch <manifest.tsv>                                 # TSV-driven batch — returns in Phase B
 ```
 
 Each command supports `--profile <name>` for managing multiple Google accounts side-by-side.
@@ -337,7 +347,7 @@ Each `Provider` method has a corresponding test file under `tests/`. New routes 
 3. Bump `__version__` in `src/gflow_cli/__init__.py`.
 4. Tag the commit with a **signed annotated tag** (`-s`; CI rejects unsigned/lightweight tags):
    ```bash
-   git tag -s v<version> -m "v<version>"  # for example, v0.6.0 or v0.6.0a6
+   git tag -s v<version> -m "v<version>"  # for example, v0.7.0 or v0.7.1a1
    git push origin v<version>
    ```
 5. The [`release.yml`](.github/workflows/release.yml) GitHub Action runs:
@@ -347,7 +357,7 @@ Each `Provider` method has a corresponding test file under `tests/`. New routes 
 
 PEP 440 prerelease tags (`vX.Y.ZaN`, `vX.Y.ZbN`, `vX.Y.ZrcN`) and hyphenated prerelease tags (`vX.Y.Z-alphaN`, `vX.Y.Z-betaN`, `vX.Y.Z-rcN`) auto-flag as prereleases on GitHub. Stable tags such as `v0.6.0` become full GitHub Releases. See [RELEASE.md](RELEASE.md) for the checklist and the prerelease/full-release policy.
 
-Install prereleases explicitly with `pip install --pre gflow-cli` or `uvx --from "gflow-cli==0.6.0a6" gflow`.
+Stable releases (e.g. `v0.7.0`) install via `pip install gflow-cli` or `uvx --from "gflow-cli==0.7.0" gflow`. Prereleases (`vX.Y.ZaN`/`bN`/`rcN`) need `pip install --pre gflow-cli` or an explicit pin like `uvx --from "gflow-cli==0.7.1a1" gflow`.
 
 ---
 

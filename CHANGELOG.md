@@ -7,6 +7,17 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+### Added
+
+- `VideoResult` dataclass — return type of `generate_video`, carries `status` and `local_path` ([#29](https://github.com/ffroliva/gflow-cli/issues/29)).
+- `UiAutomationTransport._download_video` — downloads a generated mp4 via `media.getMediaUrlRedirect` using the authenticated page; falls back to `self._out_dir` then `tmp/` when no `out_dir` is supplied ([#29](https://github.com/ffroliva/gflow-cli/issues/29)).
+- `FlowApiClient.download_video(media_id, out_path)` — public API, mirrors `download_image` ([#29](https://github.com/ffroliva/gflow-cli/issues/29)).
+- `gflow video t2v PROMPT` restored — generates and downloads a video end-to-end on `UiAutomationTransport`; supports `--aspect` (`9:16` / `16:9`), `--profile`, and `--out-dir` ([#29](https://github.com/ffroliva/gflow-cli/issues/29)).
+
+### Changed
+
+- `UiAutomationTransport.generate_video` now accepts `download: bool = True` and returns `VideoResult` instead of `VideoStatus` — **breaking change for direct transport callers** (the `FlowApiClient` boundary is unaffected). Pass `download=False` to skip the auto-download step.
+
 ## [0.7.0] — 2026-05-20
 
 > **Downstream-worker ergonomics release.** Hardens `FlowApiClient` for
