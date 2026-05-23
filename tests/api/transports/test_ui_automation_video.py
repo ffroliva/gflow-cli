@@ -152,6 +152,7 @@ def _cascade_page(visible: set[str]) -> MagicMock:
     page.locator = MagicMock(side_effect=_locator)
     page.wait_for_timeout = AsyncMock()
     page.screenshot = AsyncMock()
+    page.keyboard.press = AsyncMock()
     return page
 
 
@@ -217,9 +218,8 @@ class TestWaitVideoEditorReady:
 class TestSetOutputCountOne:
     @pytest.mark.asyncio
     async def test_clicks_the_count_one_tab(self) -> None:
-        from gflow_cli.api.transports import ui_automation_video as mod
 
-        sel = mod.COUNT_ONE_SELECTORS[0]
+        sel = "[role='tab']:text-is('1x')"  # _set_output_count(1) probes the '1x' label
         page = _cascade_page({sel})
         await VideoGenerationMixin._set_output_count_one(page)
         page.locator.assert_any_call(sel)
@@ -228,6 +228,61 @@ class TestSetOutputCountOne:
     async def test_missing_count_tab_is_non_fatal(self) -> None:
         page = _cascade_page(set())
         await VideoGenerationMixin._set_output_count_one(page)  # must not raise
+
+
+class TestSelectVideoModel:
+    @pytest.mark.asyncio
+    async def test_clicks_trigger_then_option(self) -> None:
+        from gflow_cli.api.transports import ui_automation_video as mod
+        from gflow_cli.api.video import VideoModel
+
+        trig = mod.MODEL_PICKER_TRIGGER
+        opt = mod.VIDEO_MODEL_OPTION_SELECTORS[VideoModel.VEO_3_1_FAST]
+        page = _cascade_page({trig, opt})
+        await VideoGenerationMixin._select_video_model(page, VideoModel.VEO_3_1_FAST, out_dir=None)
+        page.locator.assert_any_call(trig)
+        page.locator.assert_any_call(opt)
+
+    @pytest.mark.asyncio
+    async def test_missing_trigger_is_non_fatal(self) -> None:
+        from gflow_cli.api.video import VideoModel
+
+        page = _cascade_page(set())
+        # must not raise
+        await VideoGenerationMixin._select_video_model(page, VideoModel.OMNI_FLASH, out_dir=None)
+
+    @pytest.mark.asyncio
+    async def test_missing_option_escapes_to_recover(self) -> None:
+        from gflow_cli.api.transports import ui_automation_video as mod
+        from gflow_cli.api.video import VideoModel
+
+        # trigger visible but the option is not -> Escape closes the stray menu
+        page = _cascade_page({mod.MODEL_PICKER_TRIGGER})
+        await VideoGenerationMixin._select_video_model(page, VideoModel.OMNI_FLASH, out_dir=None)
+        page.keyboard.press.assert_any_call("Escape")
+
+
+class TestSelectVideoDuration:
+    @pytest.mark.asyncio
+    async def test_clicks_the_duration_tab(self) -> None:
+        sel = "[role='tab']:text-is('6s')"
+        page = _cascade_page({sel})
+        await VideoGenerationMixin._select_video_duration(page, 6)
+        page.locator.assert_any_call(sel)
+
+    @pytest.mark.asyncio
+    async def test_missing_duration_tab_is_non_fatal(self) -> None:
+        page = _cascade_page(set())
+        await VideoGenerationMixin._select_video_duration(page, 10)  # must not raise
+
+
+class TestSetOutputCount:
+    @pytest.mark.asyncio
+    async def test_clicks_the_count_n_tab(self) -> None:
+        sel = "[role='tab']:text-is('x3')"
+        page = _cascade_page({sel})
+        await VideoGenerationMixin._set_output_count(page, 3)
+        page.locator.assert_any_call(sel)
 
 
 class TestSelectVideoAspect:
@@ -266,8 +321,14 @@ def _stub_video_helpers(monkeypatch: pytest.MonkeyPatch, *, generate_resp: dict)
     `(captured, handler)` tuples to match the real signatures."""
     monkeypatch.setattr(VideoGenerationMixin, "_wait_video_editor_ready", AsyncMock())
     monkeypatch.setattr(VideoGenerationMixin, "_switch_to_video_mode", AsyncMock())
+    monkeypatch.setattr(VideoGenerationMixin, "_set_output_count", AsyncMock())
     monkeypatch.setattr(VideoGenerationMixin, "_set_output_count_one", AsyncMock())
+    monkeypatch.setattr(VideoGenerationMixin, "_select_video_model", AsyncMock())
+    monkeypatch.setattr(VideoGenerationMixin, "_select_video_duration", AsyncMock())
     monkeypatch.setattr(VideoGenerationMixin, "_select_video_aspect", AsyncMock())
+    monkeypatch.setattr(VideoGenerationMixin, "_switch_video_sub_mode", AsyncMock())
+    monkeypatch.setattr(VideoGenerationMixin, "_attach_frame", AsyncMock())
+    monkeypatch.setattr(VideoGenerationMixin, "_attach_references", AsyncMock())
     monkeypatch.setattr(
         VideoGenerationMixin,
         "_attach_video_response_listener",
@@ -288,13 +349,64 @@ class TestGenerateVideoGuards:
             await transport.generate_video(request=GenerateVideoRequest(prompt="x"))
 
     @pytest.mark.asyncio
-    async def test_rejects_non_t2v(self) -> None:
+    async def test_i2v_routes_to_frames_and_attach(self, monkeypatch: pytest.MonkeyPatch) -> None:
         transport = UiAutomationTransport()
-        transport._page = MagicMock()
+        transport._page = _mock_async_page()
         transport._setup_done = True
+        monkeypatch.setattr(transport, "_enter_editor", AsyncMock())
+        monkeypatch.setattr(transport, "_send_prompt", AsyncMock())
+        monkeypatch.setattr(transport, "_dismiss_blocking_overlays", AsyncMock())
+        _stub_video_helpers(
+            monkeypatch,
+            generate_resp={"status": 200, "url": _T2V_URL, "body": {"media": [{"name": "v"}]}},
+        )
+        monkeypatch.setattr(
+            VideoGenerationMixin,
+            "_poll_video_status",
+            AsyncMock(
+                return_value=VideoStatus(media_id="v", status="MEDIA_GENERATION_STATUS_SUCCESSFUL")
+            ),
+        )
+        monkeypatch.setattr(transport, "_download_video", AsyncMock(return_value=Path("v.mp4")))
         req = GenerateVideoRequest(prompt="x", mode=Mode.I2V, start_image=Path("a.png"))
-        with pytest.raises(NotImplementedError, match="T2V"):
-            await transport.generate_video(request=req)
+        await transport.generate_video(request=req, download=False)
+        VideoGenerationMixin._switch_video_sub_mode.assert_awaited()  # type: ignore[attr-defined]
+        VideoGenerationMixin._attach_frame.assert_awaited()  # type: ignore[attr-defined]
+
+    @pytest.mark.asyncio
+    async def test_r2v_routes_to_references_and_attach(
+        self, monkeypatch: pytest.MonkeyPatch
+    ) -> None:
+        """R2V must switch the editor to the 'references' sub-mode and attach the
+        reference image(s) via _attach_references — NOT the I2V frame slots."""
+        transport = UiAutomationTransport()
+        transport._page = _mock_async_page()
+        transport._setup_done = True
+        monkeypatch.setattr(transport, "_enter_editor", AsyncMock())
+        monkeypatch.setattr(transport, "_send_prompt", AsyncMock())
+        monkeypatch.setattr(transport, "_dismiss_blocking_overlays", AsyncMock())
+        _stub_video_helpers(
+            monkeypatch,
+            generate_resp={"status": 200, "url": _T2V_URL, "body": {"media": [{"name": "v"}]}},
+        )
+        monkeypatch.setattr(
+            VideoGenerationMixin,
+            "_poll_video_status",
+            AsyncMock(
+                return_value=VideoStatus(media_id="v", status="MEDIA_GENERATION_STATUS_SUCCESSFUL")
+            ),
+        )
+        monkeypatch.setattr(transport, "_download_video", AsyncMock(return_value=Path("v.mp4")))
+        req = GenerateVideoRequest(prompt="x", mode=Mode.R2V, reference_images=(Path("r.png"),))
+        await transport.generate_video(request=req, download=False)
+        # References sub-mode selected (not frames) + references attached, frames not.
+        sub_args = [
+            c.args
+            for c in VideoGenerationMixin._switch_video_sub_mode.await_args_list  # type: ignore[attr-defined]
+        ]
+        assert any("references" in a for a in sub_args), sub_args
+        VideoGenerationMixin._attach_references.assert_awaited()  # type: ignore[attr-defined]
+        VideoGenerationMixin._attach_frame.assert_not_awaited()  # type: ignore[attr-defined]
 
     @pytest.mark.asyncio
     async def test_rejects_square_aspect(self) -> None:

@@ -14,6 +14,7 @@ POST (spec §5.5).
 from __future__ import annotations
 
 import asyncio
+import json
 import time
 from pathlib import Path
 from typing import TYPE_CHECKING, Any, cast
@@ -25,6 +26,7 @@ from gflow_cli.api.video import (
     Aspect,
     GenerateVideoRequest,
     Mode,
+    VideoModel,
     VideoResult,
     VideoStatus,
     media_name_from_generate_response,
@@ -42,6 +44,7 @@ log = structlog.get_logger(__name__)
 # segment, so a project-id URL filter is impossible (deviation from §5.4).
 VIDEO_GENERATE_ROUTES = (
     "batchAsyncGenerateVideoText",
+    "batchAsyncGenerateVideoStartImage",
     "batchAsyncGenerateVideoStartAndEndImage",
     "batchAsyncGenerateVideoReferenceImages",
 )
@@ -60,33 +63,100 @@ MODE_SWITCH_TRIGGER_SELECTORS = (
     "button[aria-haspopup='menu']:has(i.google-symbols:text('crop_landscape'))",
     "button[aria-haspopup='menu']:has(i.google-symbols:text('crop_original'))",
 )
+# SOT (flow-editor-map.json): the VIDEO mode tab id ends with '-trigger-VIDEO'
+# (radix prefix is dynamic — match the suffix). aria-controls ends with
+# '-content-VIDEO'. Both are EXACT (ends-with), so they do NOT match the
+# sub-mode tabs '-trigger-VIDEO_FRAMES' / '-trigger-VIDEO_REFERENCES'. Icon +
+# id-suffix are locale-independent; the localized-text fallbacks come last.
 VIDEO_TAB_IN_MENU_SELECTORS = (
-    "[role='menu'] [role='tab'][aria-controls*='VIDEO']",
+    "[role='tab'][id$='-trigger-VIDEO']",
+    "[role='tab'][aria-controls$='-content-VIDEO']",
     "[role='menu'] [role='tab']:has(i:text('play_circle'))",
-    "[role='tab'][aria-controls*='VIDEO']",
     "[role='menu'] [role='tab']:has-text('Vídeo')",
     "[role='menu'] [role='tab']:has-text('Video')",
 )
-# Output-count tabs in the same dropdown. Flow defaults output count to x2
-# (two videos = double credits — spec §10.5); generate_video forces count=1.
-COUNT_ONE_SELECTORS = (
-    "[role='menu'] [role='tab'][aria-controls*='-content-1']",
-    "[role='menu'] [role='tab'][id*='-trigger-1']",
-    "[role='menu'] [role='tab']:text-is('1x')",
-)
-# Aspect tabs inside the open menu. §6 best-effort — the Phase 0 spike confirmed
-# video offers 9:16 / 16:9 only but did not lock an exact aspect-set selector;
-# Phase B e2e hardens these. A miss is non-fatal (Flow's default applies).
+# Output-count + duration tabs are selected by aria-label text in
+# `_set_output_count` / `_select_video_duration` — NOT by id-suffix: the count
+# tab '-trigger-4' and the duration tab '-trigger-4' (4s) share a suffix, so an
+# id match is ambiguous (this was the prior '[id*=-trigger-1]' bug that also
+# caught '-trigger-10'). Labels '1x'/'x2'.. and '4s'/'6s'.. are unambiguous and
+# locale-independent.
+
+# Aspect tabs inside the open menu. SOT (flow-editor-map.json): video aspect
+# tab ids end with '-trigger-PORTRAIT' (9:16, icon crop_9_16) and
+# '-trigger-LANDSCAPE' (16:9, icon crop_16_9). The prior selector matched
+# aria-controls*='9_16', but the real aria-controls is '-content-PORTRAIT' /
+# '-content-LANDSCAPE' (NO '9_16'/'16_9' substring) — it never matched and
+# always fell through to text. id-suffix + icon are locale-independent and
+# exact (ends-with '-trigger-PORTRAIT' does not match the image-only
+# '-trigger-PORTRAIT_3_4'). A miss is non-fatal (Flow's default applies).
 VIDEO_ASPECT_TAB_SELECTORS: dict[Aspect, tuple[str, ...]] = {
     Aspect.PORTRAIT: (
-        "[role='menu'] [role='tab'][aria-controls*='9_16']",
-        "[role='menu'] [role='tab']:text-is('9:16')",
+        "[role='tab'][id$='-trigger-PORTRAIT']",
+        "[role='menu'] [role='tab']:has(i.google-symbols:text-is('crop_9_16'))",
         "[role='tab']:has-text('9:16')",
     ),
     Aspect.LANDSCAPE: (
-        "[role='menu'] [role='tab'][aria-controls*='16_9']",
-        "[role='menu'] [role='tab']:text-is('16:9')",
+        "[role='tab'][id$='-trigger-LANDSCAPE']",
+        "[role='menu'] [role='tab']:has(i.google-symbols:text-is('crop_16_9'))",
         "[role='tab']:has-text('16:9')",
+    ),
+}
+
+# Model picker (SOT flow-editor-map.json). The trigger is the only
+# button[aria-haspopup='menu'] carrying an 'arrow_drop_down' icon; its label is
+# the currently-selected model. Options are role='menuitem' matched by product
+# name (NOT localized). 'Veo 3.1 - Lite' is a prefix of 'Veo 3.1 - Lite [Lower
+# Priority]', so it needs an EXACT text match (the menuitem text is the model
+# name prefixed by the 'volume_up' icon ligature); the others match by has-text.
+MODEL_PICKER_TRIGGER = (
+    "button[aria-haspopup='menu']:has(i.google-symbols:text-is('arrow_drop_down'))"
+)
+VIDEO_MODEL_OPTION_SELECTORS: dict[VideoModel, str] = {
+    VideoModel.OMNI_FLASH: "[role='menuitem']:has-text('Omni Flash')",
+    VideoModel.VEO_3_1_FAST: "[role='menuitem']:has-text('Veo 3.1 - Fast')",
+    VideoModel.VEO_3_1_QUALITY: "[role='menuitem']:has-text('Veo 3.1 - Quality')",
+    VideoModel.VEO_3_1_LITE: "[role='menuitem']:text-is('volume_upVeo 3.1 - Lite')",
+    VideoModel.VEO_3_1_LITE_LOWER_PRIORITY: "[role='menuitem']:has-text('[Lower Priority]')",
+}
+
+# Image-attach for I2V (SOT flow-editor-map.json + live verification).
+# CRITICAL: set_input_files() on the generic hidden input only adds the image to
+# the LIBRARY — it does NOT associate it with the start/end frame slot, so Flow
+# then fires the plain `batchAsyncGenerateVideoText` route (image ignored). The
+# frame slot MUST be filled through its own dialog: click the slot
+# (div[aria-haspopup='dialog'] labelled Start/End) -> 'Upload media' (opens a
+# file chooser) -> wait uploadImage -> 'Add to Prompt' to commit it into the
+# slot. Only then does the DOM Generate click fire StartImage/StartAndEndImage.
+UPLOAD_IMAGE_ROUTE = "uploadImage"
+# Frame slots are `div[aria-haspopup='dialog']`. Their label text is localized
+# (EN 'Start'/'End', TH 'เริ่ม'/'สิ้นสุด'). `_attach_frame` tries an English-text
+# match first (the account must be in English for I2V — there is no stable
+# locale-free anchor: no id-suffix, no icon), then falls back to a structural
+# match: the dialog-divs inside the swap_horiz container, by index (0=first,
+# 1=last; the swap_horiz BUTTON is excluded by `> div[aria-haspopup='dialog']`).
+FRAME_SLOT_BY_LABEL = "div[aria-haspopup='dialog']:has-text('{label}')"
+SWAP_CONTAINER = "div:has(> button:has(i.google-symbols:text-is('swap_horiz')))"
+FRAME_SLOTS_STRUCT = SWAP_CONTAINER + " > div[aria-haspopup='dialog']"
+UPLOAD_MEDIA_BUTTON = "button:has-text('Upload media')"
+ADD_TO_PROMPT_BUTTON = "button:has-text('Add to Prompt')"
+# R2V references mode has NO Start/End slots — references are added via the
+# only button[aria-haspopup='dialog'] in the editor: a 'Create' button carrying
+# the 'add_2' icon (its visible text 'Create' / 'Add Media' is unreliable — a
+# has-text('Add Media') match grabbed a nav-header button instead). The icon +
+# dialog-popup combo is locale-free and unambiguous in the editor. Repeat up to
+# MAX_REFERENCE_IMAGES — the button persists to add the next reference.
+ADD_MEDIA_BUTTON = "button[aria-haspopup='dialog']:has(i.google-symbols:text-is('add_2'))"
+VIDEO_SUBMODE_SELECTORS: dict[str, tuple[str, ...]] = {
+    # I2V — "frames" (start + optional end frame). Icon: crop_free.
+    "frames": (
+        "[role='tab'][id$='-trigger-VIDEO_FRAMES']",
+        "[role='menu'] [role='tab']:has(i.google-symbols:text('crop_free'))",
+    ),
+    # R2V — "references"/ingredients/Elementos. Icon: chrome_extension.
+    "references": (
+        "[role='tab'][id$='-trigger-VIDEO_REFERENCES']",
+        "[role='menu'] [role='tab']:has(i.google-symbols:text('chrome_extension'))",
     ),
 }
 
@@ -113,6 +183,38 @@ async def _capture_debug_screenshot(page: Any, out_dir: Path | None, filename: s
     except Exception as e:  # noqa: BLE001 — screenshot is best-effort
         log.debug("ui_automation_video.screenshot_capture_failed", error=str(e))
     return shot_path
+
+
+def _summarize_request_image_inputs(request: Any) -> dict[str, Any]:
+    """Privacy-safe summary of the image inputs in a generate request body:
+    presence of startImage/endImage + referenceImages count, each as an 8-char
+    mediaId PREFIX (UUIDs are asset ids, not secrets). Proves the attached
+    images are bound into the request. Never returns the reCAPTCHA token or
+    credit balance. Non-fatal — returns ``{"parsed": False}`` on any error."""
+    try:
+        raw = request.post_data
+        if not raw:
+            return {"parsed": False}
+        data = cast("dict[str, Any]", json.loads(raw))
+        reqs = cast("list[dict[str, Any]]", data.get("requests") or [])
+        first: dict[str, Any] = reqs[0] if reqs else {}
+
+        def _mid(obj: Any) -> str | None:
+            if not isinstance(obj, dict):
+                return None
+            mid = cast("dict[str, Any]", obj).get("mediaId")
+            return mid[:8] if isinstance(mid, str) else None
+
+        refs = cast("list[dict[str, Any]]", first.get("referenceImages") or [])
+        return {
+            "parsed": True,
+            "startImage": _mid(first.get("startImage")),
+            "endImage": _mid(first.get("endImage")),
+            "referenceCount": len(refs),
+            "referenceIds": [_mid(r) for r in refs],
+        }
+    except Exception as e:  # noqa: BLE001 — diagnostic only
+        return {"parsed": False, "error": str(e)[:60]}
 
 
 class VideoGenerationMixin:
@@ -168,10 +270,17 @@ class VideoGenerationMixin:
                 log.warning("ui_automation_video.generate_parse_failed", error=str(e))
                 return
             captured.append({"status": response.status, "url": response.url, "body": body})
+            # Proof that the attached images actually made it into the request
+            # (the user saw the UI start generating before the upload spinner
+            # cleared). Parse the REQUEST post_data and log only counts +
+            # mediaId prefixes (UUIDs, not secrets) — never the token/credits.
+            inputs = _summarize_request_image_inputs(response.request)
+            captured[-1]["image_inputs"] = inputs
             log.info(
                 "ui_automation_video.generate_captured",
                 status=response.status,
                 url=response.url,
+                image_inputs=inputs,
             )
 
         page.on("response", on_response)
@@ -373,18 +482,233 @@ class VideoGenerationMixin:
             log.warning("ui_automation_video.editor_ready_timeout", error=str(e))
 
     @staticmethod
-    async def _set_output_count_one(page: Page) -> None:
-        """Force the output count to 1. Flow defaults to x2 (two videos =
-        double credits — spec §10.5). Non-fatal on miss."""
+    async def _set_output_count(page: Page, n: int) -> None:
+        """Set the output count to `n` (1-4). Flow defaults to x2 (two videos =
+        double credits — spec §10.5). Disambiguated by aria-label text
+        ('1x'/'x2'/'x3'/'x4'), NOT id-suffix — '-trigger-4' collides with the
+        DURATION 4s tab. Non-fatal on miss."""
+        label = "1x" if n == 1 else f"x{n}"
         tab = await VideoGenerationMixin._probe_selector_cascade(
-            page, "count_one_tab", COUNT_ONE_SELECTORS
+            page,
+            "count_tab",
+            (f"[role='tab']:text-is('{label}')", f"[role='tab']:has-text('{label}')"),
         )
         if tab is None:
-            log.warning("ui_automation_video.count_not_set", note="Flow default (x2) applies")
+            log.warning(
+                "ui_automation_video.count_not_set", count=n, note="Flow default (x2) applies"
+            )
             return
         await tab.click()
         await page.wait_for_timeout(400)
-        log.info("ui_automation_video.output_count_set", count=1)
+        log.info("ui_automation_video.output_count_set", count=n)
+
+    @staticmethod
+    async def _set_output_count_one(page: Page) -> None:
+        """Back-compat shim: force the output count to 1."""
+        await VideoGenerationMixin._set_output_count(page, 1)
+
+    @staticmethod
+    async def _select_video_model(page: Page, model: VideoModel, *, out_dir: Path | None) -> None:
+        """Open the model picker and select `model`. Non-fatal on miss (Flow's
+        default model applies) but logged at WARNING — picking the wrong model
+        changes credit cost, so a miss is a real signal, not noise."""
+        option_sel = VIDEO_MODEL_OPTION_SELECTORS.get(model)
+        if option_sel is None:
+            log.warning("ui_automation_video.model_unknown", model=model.value)
+            return
+        trigger = await VideoGenerationMixin._probe_selector_cascade(
+            page, "model_picker_trigger", (MODEL_PICKER_TRIGGER,)
+        )
+        if trigger is None:
+            log.warning(
+                "ui_automation_video.model_picker_not_found",
+                model=model.value,
+                note="Flow default model applies",
+            )
+            return
+        await trigger.click()
+        await page.wait_for_timeout(600)
+        option = await VideoGenerationMixin._probe_selector_cascade(
+            page, "model_option", (option_sel,)
+        )
+        if option is None:
+            log.warning(
+                "ui_automation_video.model_option_not_found",
+                model=model.value,
+                note="Flow default model applies",
+            )
+            # The model dropdown is the TOP layer here — Escape closes only it,
+            # leaving the settings popover open (Escape on the popover itself
+            # would close everything). Safe to recover.
+            await page.keyboard.press("Escape")
+            await page.wait_for_timeout(200)
+            return
+        await option.click()
+        await page.wait_for_timeout(800)
+        log.info("ui_automation_video.model_selected", model=model.value)
+
+    @staticmethod
+    async def _select_video_duration(page: Page, seconds: int) -> None:
+        """Click the duration tab for `seconds` (4/6/8, or 10 for omni_flash).
+        Disambiguated by aria-label text ('4s'..'10s'), NOT id-suffix
+        (collides with count). Must run AFTER model select — the 10s tab only
+        exists once omni_flash is chosen. Non-fatal on miss."""
+        tab = await VideoGenerationMixin._probe_selector_cascade(
+            page,
+            "duration_tab",
+            (f"[role='tab']:text-is('{seconds}s')", f"[role='tab']:has-text('{seconds}s')"),
+        )
+        if tab is None:
+            log.warning("ui_automation_video.duration_not_set", seconds=seconds)
+            return
+        await tab.click()
+        await page.wait_for_timeout(400)
+        log.info("ui_automation_video.duration_set", seconds=seconds)
+
+    @staticmethod
+    async def _switch_video_sub_mode(page: Page, sub: str, *, out_dir: Path | None) -> None:
+        """Switch the video sub-mode tab: 'frames' (I2V) or 'references' (R2V).
+        Must run while the settings panel is open (after _switch_to_video_mode)."""
+        tab = await VideoGenerationMixin._probe_selector_cascade(
+            page, f"video_submode_{sub}", VIDEO_SUBMODE_SELECTORS[sub]
+        )
+        if tab is None:
+            shot = await _capture_debug_screenshot(page, out_dir, f"debug_no_submode_{sub}.png")
+            raise RuntimeError(
+                f"video sub-mode tab {sub!r} not found on the Flow editor. Screenshot: {shot}"
+            )
+        await tab.click()
+        await page.wait_for_timeout(900)
+        log.info("ui_automation_video.video_submode_entered", sub=sub)
+
+    @staticmethod
+    async def _attach_frame(
+        page: Page,
+        slot_index: int,
+        label: str,
+        image: Path,
+        *,
+        out_dir: Path | None,
+        timeout_s: float = 120.0,
+    ) -> None:
+        """Fill the I2V first/last frame slot (`slot_index` 0=first, 1=last) with
+        `image` through Flow's media dialog (the ONLY way that binds the image to
+        the slot — set_input_files on the generic input only adds it to the
+        library, see the UPLOAD_IMAGE_ROUTE note). Sequence: click slot ->
+        'Upload media' (file chooser) -> wait uploadImage -> commit. Must run with
+        the settings panel CLOSED (the slots live in the main editor). `label` is
+        for logging only. Path existence is validated here (the boundary)."""
+        if not image.exists():
+            raise FileNotFoundError(f"frame image not found: {image}")
+
+        # Locate the slot: English text label first (the editor runs in English
+        # via the --lang=en-US launch arg), then a structural fallback (the
+        # dialog-divs inside the swap_horiz container, by index).
+        slot = page.locator(FRAME_SLOT_BY_LABEL.format(label=label)).first
+        if not await slot.count():
+            structs = page.locator(FRAME_SLOTS_STRUCT)
+            try:
+                await structs.first.wait_for(state="visible", timeout=8000)
+            except Exception as e:  # noqa: BLE001
+                shot = await _capture_debug_screenshot(
+                    page, out_dir, f"debug_no_{label.lower()}_slot.png"
+                )
+                raise RuntimeError(
+                    f"frame slot {label!r} not found on the Flow editor. Screenshot: {shot}"
+                ) from e
+            if await structs.count() <= slot_index:
+                raise RuntimeError(
+                    f"frame slot index {slot_index} ({label}) not present "
+                    f"(found {await structs.count()} slot(s))"
+                )
+            slot = structs.nth(slot_index)
+        await slot.click()
+        await page.wait_for_timeout(1000)  # media dialog opens
+        await VideoGenerationMixin._upload_via_open_dialog(
+            page, image, log_label=label, timeout_s=timeout_s
+        )
+        log.info("ui_automation_video.frame_attached", slot=label)
+
+    @staticmethod
+    async def _upload_via_open_dialog(
+        page: Page, image: Path, *, log_label: str, timeout_s: float = 120.0
+    ) -> None:
+        """With a media dialog ALREADY open, upload `image` and commit it into
+        the active slot/carousel: 'Upload media' (file chooser) -> wait the
+        uploadImage XHR 200 (bytes stored) -> 'Add to Prompt' -> wait the dialog
+        to CLOSE (commit registered) before returning, so the caller never
+        submits before the image binds. Shared by I2V slots and R2V references."""
+        uploaded: list[str] = []
+
+        async def on_response(response: Any) -> None:
+            if UPLOAD_IMAGE_ROUTE in response.url:
+                uploaded.append(response.url)
+                log.info(
+                    "ui_automation_video.image_uploaded", target=log_label, status=response.status
+                )
+
+        page.on("response", on_response)
+        try:
+            async with page.expect_file_chooser(timeout=8000) as fc_info:
+                await page.locator(UPLOAD_MEDIA_BUTTON).first.click()
+            chooser = await fc_info.value
+            await chooser.set_files(str(image))
+            deadline = time.monotonic() + timeout_s
+            while not uploaded and time.monotonic() < deadline:
+                await asyncio.sleep(0.5)
+            if not uploaded:
+                log.warning("ui_automation_video.upload_incomplete", target=log_label)
+        finally:
+            page.remove_listener("response", on_response)
+
+        add_btn = page.locator(ADD_TO_PROMPT_BUTTON).first
+        if await add_btn.count():
+            await add_btn.click()
+        try:
+            await page.locator("[role='dialog']").last.wait_for(state="hidden", timeout=15_000)
+        except Exception:  # noqa: BLE001 — best-effort; fall through to a settle
+            log.warning("ui_automation_video.dialog_close_timeout", target=log_label)
+        await page.wait_for_timeout(1500)
+
+    @staticmethod
+    async def _attach_references(
+        page: Page, images: list[Path], *, out_dir: Path | None, timeout_s: float = 120.0
+    ) -> None:
+        """R2V: attach up to MAX_REFERENCE_IMAGES reference images. References
+        have no Start/End slots — each is added via the 'Add Media' button, which
+        opens the same media dialog. Must run with the settings panel closed."""
+        missing = [str(p) for p in images if not p.exists()]
+        if missing:
+            raise FileNotFoundError(f"reference image(s) not found: {missing}")
+        attached = 0
+        for i, img in enumerate(images):
+            add_media = page.locator(ADD_MEDIA_BUTTON).first
+            try:
+                await add_media.wait_for(state="visible", timeout=8000)
+            except Exception as e:  # noqa: BLE001
+                if i == 0:
+                    shot = await _capture_debug_screenshot(page, out_dir, "debug_no_add_media.png")
+                    raise RuntimeError(
+                        f"'Add Media' button not found for the first reference. Screenshot: {shot}"
+                    ) from e
+                # Flow removes the Add-Media button once the per-model reference
+                # cap is hit (omni_flash=7, veo_3_1_*=3). The DTO enforces this
+                # when the model is known; for an unknown (None) model we only
+                # learn the cap here. Proceed with what's attached + warn loudly.
+                log.warning(
+                    "ui_automation_video.reference_cap_reached",
+                    attached=attached,
+                    requested=len(images),
+                    note="Flow hid 'Add Media' — per-model reference cap reached",
+                )
+                break
+            await add_media.click()
+            await page.wait_for_timeout(1000)
+            await VideoGenerationMixin._upload_via_open_dialog(
+                page, img, log_label=f"ref{i}", timeout_s=timeout_s
+            )
+            attached += 1
+            log.info("ui_automation_video.reference_attached", index=i)
 
     @staticmethod
     async def _select_video_aspect(page: Page, aspect: Aspect) -> None:
@@ -430,22 +754,20 @@ class VideoGenerationMixin:
         poll_timeout_s: float = 600.0,
         download: bool = True,
     ) -> VideoResult:
-        """Generate ONE video by driving the Flow editor UI (Phase A: T2V only).
+        """Generate ONE video by driving the Flow editor UI (T2V / I2V / R2V).
 
         Returns a `VideoResult` carrying both the terminal `VideoStatus` and the
         on-disk `local_path` (``None`` when ``download=False`` or the generation
         failed — callers should check ``result.status.succeeded`` first). Raises
-        `RuntimeError` (no setup / editor control missing), `NotImplementedError`
-        (non-T2V), `ValueError` (SQUARE aspect), `AuthExpiredError` (401),
-        `WafRejectionError` (403), `WireFormatError` (other non-200 / no media),
-        or `TimeoutError`.
+        `RuntimeError` (no setup / editor control missing), `ValueError` (SQUARE
+        aspect), `FileNotFoundError` (I2V/R2V image path missing),
+        `AuthExpiredError` (401), `WafRejectionError` (403), `WireFormatError`
+        (other non-200 / no media), or `TimeoutError`.
         """
         if not self._setup_done or self._page is None:
             raise RuntimeError(
                 "UiAutomationTransport.setup() must be called before generate_video()"
             )
-        if request.mode is not Mode.T2V:
-            raise NotImplementedError("Phase A supports T2V only; I2V and R2V land in Phase B")
         if request.aspect is Aspect.SQUARE:
             raise ValueError(
                 "video generation does not support the SQUARE aspect; "
@@ -471,10 +793,36 @@ class VideoGenerationMixin:
         # of the editor before we click into mode-switch / settings / submit (#26).
         await self._dismiss_blocking_overlays(page, out_dir)
         await VideoGenerationMixin._switch_to_video_mode(page, out_dir=out_dir)
+        # All settings-panel selections happen while the panel is open: model
+        # (gates the 10s duration), sub-mode tab, aspect, count, duration.
+        if request.model is not None:
+            await VideoGenerationMixin._select_video_model(page, request.model, out_dir=out_dir)
+        if request.mode is Mode.I2V:
+            await VideoGenerationMixin._switch_video_sub_mode(page, "frames", out_dir=out_dir)
+        elif request.mode is Mode.R2V:
+            await VideoGenerationMixin._switch_video_sub_mode(page, "references", out_dir=out_dir)
         await VideoGenerationMixin._select_video_aspect(page, request.aspect)
-        await VideoGenerationMixin._set_output_count_one(page)
-        await page.keyboard.press("Escape")  # close the mode dropdown
-        await page.wait_for_timeout(400)
+        await VideoGenerationMixin._set_output_count(page, request.count)
+        if request.duration is not None:
+            await VideoGenerationMixin._select_video_duration(page, request.duration)
+        await page.keyboard.press("Escape")  # close the settings panel
+        await page.wait_for_timeout(600)
+
+        # Attach images AFTER the panel is closed — the slots / 'Add Media' button
+        # live in the main editor. This is what makes Flow fire StartImage /
+        # StartAndEndImage / ReferenceImages instead of the plain Text route.
+        if request.mode is Mode.I2V and request.start_image is not None:
+            await VideoGenerationMixin._attach_frame(
+                page, 0, "Start", request.start_image, out_dir=out_dir
+            )
+            if request.end_image is not None:
+                await VideoGenerationMixin._attach_frame(
+                    page, 1, "End", request.end_image, out_dir=out_dir
+                )
+        elif request.mode is Mode.R2V:
+            await VideoGenerationMixin._attach_references(
+                page, list(request.reference_images), out_dir=out_dir
+            )
 
         # Attach BOTH listeners synchronously BEFORE the prompt is submitted so
         # neither the generate response nor an early status poll is missed.

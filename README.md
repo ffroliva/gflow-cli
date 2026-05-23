@@ -16,7 +16,7 @@
 
 For Google AI Ultra / Pro subscribers with Veo credits and batch workloads:
 
-- **Burn credits efficiently** — `for p in $(cat prompts.txt); do gflow image t2i "$p"; done` _(image batching ships today; `gflow video i2v` lands in Phase B)_
+- **Burn credits efficiently** — `for p in $(cat prompts.txt); do gflow image t2i "$p"; done` _(image batching, plus `gflow video t2v`/`i2v`/`r2v`, all ship today)_
 - **Build pipelines** — wire Veo into your content automation, AI video stack, or batch experiments
 - **Stay in the terminal** — no Chromium UI, no clicking through dialogs (after a one-time `gflow auth login`)
 
@@ -99,7 +99,7 @@ gflow CLI  →  Provider (interchangeable)  →  Flow (ui_automation) / Mock (te
 
 ## Project status
 
-**v0.8.1 — alpha (docs refresh).** Image (T2I / I2I / upload) + Video T2V live end-to-end on `ui_automation`. Video I2V + batch are queued for Phase B. Full milestone history → [docs/PROJECT_STATUS.md](docs/PROJECT_STATUS.md). Changelog → [CHANGELOG.md](CHANGELOG.md).
+**v0.8.1 — alpha (docs refresh).** Image (T2I / I2I / upload) + Video T2V / I2V / R2V live end-to-end on `ui_automation`, with a video `--model` picker (5 Veo models) + `--duration` / `--count`. Only video `batch` is queued for Phase B. Full milestone history → [docs/PROJECT_STATUS.md](docs/PROJECT_STATUS.md). Changelog → [CHANGELOG.md](CHANGELOG.md).
 
 ## License & legal
 
