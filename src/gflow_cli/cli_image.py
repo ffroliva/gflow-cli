@@ -627,7 +627,6 @@ def batch(
             prompts=prompts,
             output_dir=output_dir,
             continue_on_error=continue_on_error,
-            project_title=_BATCH_TITLE,
         )
     )
     exit_code = render_image_batch_summary(outcomes, title=_BATCH_TITLE)

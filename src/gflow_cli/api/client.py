@@ -676,7 +676,10 @@ class FlowApiClient:
         invoking the single-image API still receive exactly one image (no
         silent discard).
         """
-        req_one = _dc_replace(req, count=1)
+        # Explicit annotation pins the type for SonarCloud (S5655):
+        # `dataclasses.replace`'s typing makes the result hard for analysers
+        # to narrow back to GenerateImageRequest.
+        req_one: GenerateImageRequest = _dc_replace(req, count=1)
         images = await self._drive_images_generation(
             project_id=project_id,
             req=req_one,
@@ -754,7 +757,10 @@ class FlowApiClient:
             else:
                 resolved_project_id = project_id
 
-            req_with_count = _dc_replace(req, count=count)
+            # Explicit annotation pins the type for SonarCloud (S5655):
+            # `dataclasses.replace`'s typing makes the result hard for analysers
+            # to narrow back to GenerateImageRequest.
+            req_with_count: GenerateImageRequest = _dc_replace(req, count=count)
             return await self._drive_images_generation(
                 project_id=resolved_project_id,
                 req=req_with_count,

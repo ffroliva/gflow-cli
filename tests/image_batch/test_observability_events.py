@@ -97,7 +97,6 @@ async def test_emits_submission_attempt_per_row(
         prompts=prompts,
         output_dir=tmp_path / "out",
         continue_on_error=False,
-        project_title="t",
         jitter_range=(0.0, 0.0),
         client_factory=_make_client_factory(),
     )
@@ -173,7 +172,6 @@ async def test_emits_row_completed_per_row(
         prompts=prompts,
         output_dir=tmp_path / "out",
         continue_on_error=False,
-        project_title="t",
         jitter_range=(0.0, 0.0),
         client_factory=_ClientWithImage,
     )

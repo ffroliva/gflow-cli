@@ -119,7 +119,6 @@ async def test_image_batch_e2e(
             prompts=prompts,
             output_dir=out,
             continue_on_error=False,
-            project_title="gflow-cli e2e",
             jitter_range=jitter_range,
         )
     except Exception:

@@ -448,6 +448,52 @@ def _validate_batch_prompt_count(count: int) -> None:
         )
 
 
+def _tsv_parse_count(
+    raw_count: str, *, default_count: int, source_label: str, line_number: int
+) -> int:
+    """Parse the ``count`` column of a TSV row. Empty falls back to the default."""
+    if not raw_count:
+        return default_count
+    try:
+        count = int(raw_count)
+    except ValueError as exc:
+        raise ConfigurationError(
+            f"{source_label} line {line_number}: count {raw_count!r} is not an integer."
+        ) from exc
+    if not (MIN_COUNT <= count <= MAX_COUNT):
+        raise ConfigurationError(
+            f"{source_label} line {line_number}: count must be {MIN_COUNT}–{MAX_COUNT} "
+            f"(got {count})."
+        )
+    return count
+
+
+def _tsv_parse_aspect(
+    raw_aspect: str, *, default_aspect_ratio: str, source_label: str, line_number: int
+) -> str:
+    """Parse the ``aspect_ratio`` column of a TSV row, validating against the allowed set."""
+    aspect_ratio = raw_aspect if raw_aspect else default_aspect_ratio
+    if aspect_ratio not in ALLOWED_ASPECT_RATIOS:
+        raise ConfigurationError(
+            f"{source_label} line {line_number}: aspect_ratio {aspect_ratio!r} invalid. "
+            f"Valid: {list(ALLOWED_ASPECT_RATIOS)!r}."
+        )
+    return aspect_ratio
+
+
+def _tsv_parse_model(
+    raw_model: str, *, default_model: str, source_label: str, line_number: int
+) -> str:
+    """Parse the ``model`` column of a TSV row, validating against the allowed set."""
+    model = raw_model if raw_model else default_model
+    if model not in ALLOWED_MODELS:
+        raise ConfigurationError(
+            f"{source_label} line {line_number}: model {model!r} invalid. "
+            f"Valid: {list(ALLOWED_MODELS)!r}."
+        )
+    return model
+
+
 def parse_tsv_manifest(
     text: str,
     *,
@@ -479,37 +525,24 @@ def parse_tsv_manifest(
             )
         _validate_prompt_text(prompt, source_label=source_label, line_number=line_number)
 
-        raw_count = cols[1].strip() if len(cols) > 1 else ""
-        if raw_count:
-            try:
-                count = int(raw_count)
-            except ValueError as exc:
-                raise ConfigurationError(
-                    f"{source_label} line {line_number}: count {raw_count!r} is not an integer."
-                ) from exc
-            if not (MIN_COUNT <= count <= MAX_COUNT):
-                raise ConfigurationError(
-                    f"{source_label} line {line_number}: count must be {MIN_COUNT}–{MAX_COUNT} "
-                    f"(got {count})."
-                )
-        else:
-            count = default_count
-
-        raw_aspect = cols[2].strip() if len(cols) > 2 else ""
-        aspect_ratio = raw_aspect if raw_aspect else default_aspect_ratio
-        if aspect_ratio not in ALLOWED_ASPECT_RATIOS:
-            raise ConfigurationError(
-                f"{source_label} line {line_number}: aspect_ratio {aspect_ratio!r} invalid. "
-                f"Valid: {list(ALLOWED_ASPECT_RATIOS)!r}."
-            )
-
-        raw_model = cols[3].strip() if len(cols) > 3 else ""
-        model = raw_model if raw_model else default_model
-        if model not in ALLOWED_MODELS:
-            raise ConfigurationError(
-                f"{source_label} line {line_number}: model {model!r} invalid. "
-                f"Valid: {list(ALLOWED_MODELS)!r}."
-            )
+        count = _tsv_parse_count(
+            cols[1].strip() if len(cols) > 1 else "",
+            default_count=default_count,
+            source_label=source_label,
+            line_number=line_number,
+        )
+        aspect_ratio = _tsv_parse_aspect(
+            cols[2].strip() if len(cols) > 2 else "",
+            default_aspect_ratio=default_aspect_ratio,
+            source_label=source_label,
+            line_number=line_number,
+        )
+        model = _tsv_parse_model(
+            cols[3].strip() if len(cols) > 3 else "",
+            default_model=default_model,
+            source_label=source_label,
+            line_number=line_number,
+        )
 
         items.append(
             BatchPromptItem(
@@ -680,7 +713,6 @@ async def run_manifest_image_batch(
     prompts: tuple[BatchPromptItem, ...],
     output_dir: Path,
     continue_on_error: bool,
-    project_title: str,
     jitter_range: tuple[float, float] = (JITTER_MIN_SECONDS, JITTER_MAX_SECONDS),
     client_factory: Callable[..., Any] | None = None,
 ) -> list[BatchOutcome]:

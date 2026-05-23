@@ -289,7 +289,6 @@ class TestRunManifestImageBatch:
             prompts=_make_items(2),
             output_dir=tmp_path / "out",
             continue_on_error=False,
-            project_title="test",
             jitter_range=(0.0, 0.0),
             client_factory=factory,
         )
@@ -312,7 +311,6 @@ class TestRunManifestImageBatch:
             prompts=_make_items(3),
             output_dir=tmp_path / "out",
             continue_on_error=True,
-            project_title="test",
             jitter_range=(0.0, 0.0),
             client_factory=factory,
         )
@@ -348,7 +346,6 @@ class TestRunManifestImageBatch:
                 prompts=_make_items(1),
                 output_dir=tmp_path / "out",
                 continue_on_error=False,
-                project_title="test",
                 client_factory=_WrongClient,
             )
 
