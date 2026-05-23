@@ -61,6 +61,7 @@ class InternalChromiumStrategy(AuthStrategy):
                 user_data_dir=str(profile_dir),
                 headless=headless,
                 viewport={"width": 1280, "height": 800},
+                args=["--password-store=basic"],
             )
             try:
                 page = ctx.pages[0] if ctx.pages else await ctx.new_page()

@@ -202,6 +202,7 @@ async def verify_flow_session(
                 user_data_dir=str(profile_dir),
                 channel=channel,
                 headless=True,
+                args=["--password-store=basic"],
             )
             try:
                 cookies = await ctx.cookies()

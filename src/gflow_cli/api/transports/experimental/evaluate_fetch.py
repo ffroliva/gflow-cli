@@ -149,7 +149,10 @@ class EvaluateFetchTransport:
             ctx = await pw.chromium.launch_persistent_context(
                 str(profile_dir),
                 headless=True,
-                args=["--disable-blink-features=AutomationControlled"],
+                args=[
+                    "--disable-blink-features=AutomationControlled",
+                    "--password-store=basic",
+                ],
                 viewport={"width": 1280, "height": 720},
                 locale="en-US",
             )

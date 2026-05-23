@@ -175,7 +175,7 @@ class FlowApiClient:
             locale="en-US",
             extra_http_headers={"Accept-Language": "en-US,en;q=0.9"},
             channel=channel_for_profile(self.profile_dir),
-            ignore_default_args=["--enable-automation", "--no-sandbox"],
+            ignore_default_args=["--enable-automation", "--no-sandbox", "--password-store=basic"],
             args=["--disable-blink-features=AutomationControlled"],
         )
         # Hide the automation flag so reCAPTCHA Enterprise doesn't score

@@ -452,7 +452,10 @@ class UiAutomationTransport(VideoGenerationMixin):
                 viewport=cast("ViewportSize", _VIEWPORT),
                 locale="en-US",
                 channel=channel_for_profile(profile_dir),
-                args=["--disable-blink-features=AutomationControlled"],
+                args=[
+                    "--disable-blink-features=AutomationControlled",
+                    "--password-store=basic",
+                ],
             )
             # Hide the automation flag so reCAPTCHA Enterprise doesn't score
             # the session as a bot — navigator.webdriver=true causes low-score
