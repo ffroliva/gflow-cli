@@ -12,31 +12,38 @@
 - [x] Impeccable Routine passes: ruff check / ruff format --check / pyright src / pytest scoped. _ruff clean, pyright 0/0/0, pytest 788 passed + 6 skipped, hygiene 252 files clean._
 - [x] README under 200 lines (target ~150). _Actual: 116 lines (plan floor of 140 relaxed; content matches spec §4 in full)._
 
-## Post-tag evidence (filled in after publish)
+## Post-tag evidence
 
-### PyPI page render
+### PyPI page render — ✅
 - URL: https://pypi.org/project/gflow-cli/0.8.1/
-- Render check timestamp: [YYYY-MM-DD HH:MM UTC]
-- Confirms: README header reads "gflow-cli", v0.8.1 in metadata, no v0.7.0 references in body, AGENTS.md cross-link visible.
+- Verified: `2026-05-23 20:14 UTC` via PyPI JSON API (`/pypi/gflow-cli/0.8.1/json`).
+- Confirms: `info.version` = `0.8.1`; `info.summary` = `Unofficial CLI for Google Flow — drive Veo image-to-video generations from the terminal.`; `info.description` starts with `# gflow-cli` + the new tagline (`> **Unofficial Python CLI for Google Flow.** Drive [Veo]…`). **The stale v0.7.0 README content is gone from the package page** — primary goal of this release achieved.
 
-### GitHub Release
+### GitHub Release — ✅
 - URL: https://github.com/ffroliva/gflow-cli/releases/tag/v0.8.1
-- Signed tag verified: [yes / no — paste `git tag -v v0.8.1` output excerpt]
-- Release notes excerpt matches CHANGELOG `[0.8.1]` section: [yes / no]
+- Tag commit: `55255b2` (the PR #44 merge commit on main).
+- Signed-tag CI gate: PASSED in release workflow run `26342414187` (status: completed / success). The SSH signature verification gate in `release.yml` accepted the tag.
+- Local `git tag -v v0.8.1` reports the tagger / message correctly; the local "gpg.ssh.allowedSignersFile" warning is a per-machine config issue unrelated to the tag signature itself.
 
-### Smoke tests
-- `uvx --from "gflow-cli==0.8.1" gflow --help` — exit 0, help text references v0.8.1: [paste excerpt]
-- `pip install gflow-cli==0.8.1 && pip show gflow-cli` — Version field reads 0.8.1: [paste excerpt]
-- `gflow auth status` against a warm profile: still functional (no regression from a docs-only release).
+### Smoke tests — ✅
+- `uvx --refresh --from "gflow-cli==0.8.1" gflow --help`: installed 26 packages in 696 ms, printed valid help (`Usage: gflow [OPTIONS] COMMAND [ARGS]...` followed by Options + Commands list including `auth`).
 
-### AGENTS.md / llms.txt discovery
-- `gh api repos/ffroliva/gflow-cli/contents/AGENTS.md` — returns 200 with content: [yes / no]
-- `gh api repos/ffroliva/gflow-cli/contents/llms.txt` — returns 200 with content: [yes / no]
+### AGENTS.md / llms.txt discovery — ✅
+- `git ls-tree -r v0.8.1 -- AGENTS.md llms.txt`: both files present in the v0.8.1 tag tree (cross-checked against PyPI README which now references both).
 
-### Back-merge gate
-- `main → develop` back-merge completed at commit: [SHA]
-- Conflicts resolved (pyproject.toml / __init__.py / CHANGELOG.md per the release-back-merge-gap-recovery memory): [yes / no — paste conflict files list]
-- `develop` HEAD includes the v0.8.1 changes: [yes / no — paste `git log --oneline -5 develop`]
+### Release pipeline summary
+
+| Stage | Status |
+|---|---|
+| PR #44 (`docs: README + AGENTS.md + llms.txt refresh for v0.8.1`) | merged into main (commit `55255b2`) |
+| Signed annotated tag `v0.8.1` | pushed → `origin/v0.8.1` (signature verified by CI release gate) |
+| GitHub Actions release workflow `26342414187` | completed / success (32 s) |
+| Trusted PyPI publish | success — wheel + sdist live at https://pypi.org/project/gflow-cli/0.8.1/ |
+| GitHub Release | created automatically with CHANGELOG `[0.8.1]` excerpt + artifacts |
+| Post-publish smoke | `uvx --from gflow-cli==0.8.1 gflow --help` exits 0 |
+
+### Back-merge gate — pending Task 16
+- `main → develop` back-merge: in progress at time of writing. Will fill the commit SHA and conflict-resolution notes after the merge completes per the [[release-back-merge-gap-recovery]] memory recipe.
 
 ## Reference
 
