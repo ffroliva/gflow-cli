@@ -67,7 +67,6 @@ Or invoke the wrapper: `/gflow:check`.
 ## Where to look next
 
 - **Architecture & target shape** → [docs/ARCHITECTURE.md](docs/ARCHITECTURE.md)
-- **Mandates & routing rules (mandatory)** → [docs/AGENT_GUIDE.md](docs/AGENT_GUIDE.md)
 - **Full docs index** → [docs/INDEX.md](docs/INDEX.md)
 - **Known issues** (read before touching auth / reCAPTCHA) → [KNOWN_ISSUES.md](KNOWN_ISSUES.md)
 - **Active phase & backlog** → [PLAN.md](PLAN.md) or run `/gflow:plan`

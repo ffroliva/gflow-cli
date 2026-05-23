@@ -78,5 +78,5 @@ Slash commands for Claude Code, stored in `.claude/commands/gflow/`. All prefixe
 
 - `README.md` is for first-time visitors. Keep it under ~400 lines. Anything longer belongs in `docs/`.
 - Every new behaviour or env var needs a row in this index AND a section in the relevant `docs/*.md`.
-- Cross-link generously. `[X](Y.md#anchor)` everywhere — readers should never get stuck.
+- Cross-link generously. Use markdown link syntax with an anchor wherever a reader might need to jump deeper — they should never get stuck.
 - Keep file size sane. If `docs/USAGE.md` grows past ~600 lines, split into `docs/USAGE/<topic>.md`.

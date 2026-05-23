@@ -10,8 +10,7 @@
 
 1. Read **[AGENTS.md](AGENTS.md)** — universal rules every agent must follow.
 2. Read **[docs/INDEX.md](docs/INDEX.md)** — routing layer for all project docs and commands.
-3. Read **[docs/AGENT_GUIDE.md](docs/AGENT_GUIDE.md)** — mandatory mandates beyond AGENTS.md.
-4. Pull deeper context on demand:
+3. Pull deeper context on demand:
    - Starting a feature → `/gflow:plan`
    - Touching auth or reCAPTCHA → `/gflow:known-issues`
    - Cutting a release → `/gflow:release`

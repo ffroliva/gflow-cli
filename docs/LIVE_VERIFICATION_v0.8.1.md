@@ -40,5 +40,5 @@
 
 - Spec: [`docs/superpowers/specs/2026-05-23-readme-v0.8.1-refresh-design.md`](superpowers/specs/2026-05-23-readme-v0.8.1-refresh-design.md)
 - Plan: [`docs/superpowers/plans/2026-05-23-readme-v0.8.1-refresh.md`](superpowers/plans/2026-05-23-readme-v0.8.1-refresh.md)
-- Research digest: [`tmp/readme-research-2026-05-23.md`](../tmp/readme-research-2026-05-23.md) (local-only, not committed)
+- Research digest: `tmp/readme-research-2026-05-23.md` (local-only, not committed)
 - Previous release evidence: [`LIVE_VERIFICATION_v0.7.0.md`](LIVE_VERIFICATION_v0.7.0.md), [`LIVE_VERIFICATION_video_download.md`](LIVE_VERIFICATION_video_download.md)
