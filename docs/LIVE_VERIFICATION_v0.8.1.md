@@ -40,7 +40,7 @@
 
 ## Reference
 
-- Spec: [`docs/superpowers/specs/2026-05-23-readme-v0.8.1-refresh-design.md`](superpowers/specs/2026-05-23-readme-v0.8.1-refresh-design.md)
-- Plan: [`docs/superpowers/plans/2026-05-23-readme-v0.8.1-refresh.md`](superpowers/plans/2026-05-23-readme-v0.8.1-refresh.md)
-- Research digest: `tmp/readme-research-2026-05-23.md` (local-only, not committed)
+- Spec + plan: consolidated into agent memory under `~/.claude/projects/<...>/memory/` per the [release-spec-plan-memory-consolidation](../../) policy. The durable patterns (README hybrid-router structure, PyPI staleness rule, LLM council audit, AGENTS.md vs llms.txt) live as discrete memory entries indexed in `MEMORY.md`.
+- Research digest: `tmp/readme-research-2026-05-23.md` (local-only, gitignored)
+- Council reports: `tmp/council/0{1,2,3}-*.md` (local-only, gitignored)
 - Previous release evidence: [`LIVE_VERIFICATION_v0.7.0.md`](LIVE_VERIFICATION_v0.7.0.md), [`LIVE_VERIFICATION_video_download.md`](LIVE_VERIFICATION_video_download.md)
