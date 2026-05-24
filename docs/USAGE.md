@@ -347,28 +347,38 @@ gflow video r2v "blend these worlds" --ref a.png --ref b.png --ref c.png --model
 
 ## `gflow video batch`
 
-Run a TSV manifest of generations against ONE shared project.
+> ⚠️ **Not yet implemented.** The `batch` subcommand currently exits with
+> `[yellow]gflow video batch is not yet available.[/yellow]` (exit 1).
+> Manifest-driven batching on `UiAutomationTransport` is queued for a later
+> release (see Phase B follow-ups).
 
-```text
-gflow video batch MANIFEST [--out-dir DIR] [--profile NAME] [--poll-interval SEC]
+### Workaround — shell for-loop
+
+Until the manifest runner lands, you can drive sequential video generations
+through a plain shell loop. Each `gflow video t2v` / `i2v` / `r2v` call opens
+its **own Flow project**, so the resulting videos will NOT share a
+`project_id` (unlike `gflow image batch`, which mounts one project across
+all prompts) — but they DO get generated and downloaded:
+
+```bash
+# bash / WSL / macOS — one prompt per line
+while IFS= read -r prompt; do
+  gflow video t2v "$prompt" --aspect 9:16
+done < prompts.txt
 ```
 
-Manifest format (tab-separated; `# `-prefixed lines are comments):
-
-```tsv
-# start_image	prompt	end_image	aspect	output_path
-	A serene mountain lake at sunset		9:16	./out/lake.mp4
-hero.png	Slow camera arc		9:16	./out/hero.mp4
-	Aerial coastline		16:9	./out/coast.mp4
+```powershell
+# PowerShell — one prompt per line
+Get-Content prompts.txt | ForEach-Object {
+  gflow video t2v $_ --aspect 9:16
+}
 ```
 
-| Column | Required | Default |
-|---|---|---|
-| `start_image` | no (empty -> T2V) | - |
-| `prompt` | **yes** | - |
-| `end_image` | no (reserved, not yet wired) | - |
-| `aspect` | no | `9:16` |
-| `output_path` | no | `<out_dir>/videos/<date>/<media>.mp4` |
+The trade-off vs. a true manifest runner: separate `project_id`s mean each
+generation re-mints a reCAPTCHA (a few extra seconds per shot) and the
+videos won't appear together in your Flow gallery. The files on disk are
+identical to what `batch` would produce. The same pattern works for
+`gflow video i2v <image> "<prompt>"` and `gflow video r2v "<prompt>" --ref <img>`.
 
 ## `gflow run`
 

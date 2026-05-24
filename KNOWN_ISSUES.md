@@ -319,7 +319,21 @@ issue and not blocked by any code change in this repo.
 
 - **Status:** Mitigated · **Severity:** Medium · **Tracking:** [issue #24](https://github.com/ffroliva/gflow-cli/issues/24)
 
-The Phase 7 multi-image-prompt work addressed the count-tab selectors:
+**Progress (2026-05-24, develop / post-v0.8.1, unreleased):**
+
+- **PR #51** — Playwright's launch `locale=` is now env-overridable via
+  `GFLOW_CLI_LOCALE` (default: `en-US`). Live-verified end-to-end with
+  `GFLOW_CLI_LOCALE=pt-BR uv run pytest -m e2e tests/e2e/test_video_t2v_e2e.py`
+  (1 credit, ~2.5 MB mp4, `MEDIA_GENERATION_STATUS_SUCCESSFUL`).
+- **PR #48** — added the `--lang=en-US` Chromium launch arg so the editor UI
+  itself stays in English regardless of the user's profile/system language.
+  Currently mandatory because the I2V frame-slot labels and parts of
+  `ONBOARDING_SELECTORS` / `NEW_PROJECT_SELECTORS` / `SUBMIT_BUTTON_SELECTORS`
+  still match by localized text. Dropping `--lang=en-US` is the goal but
+  requires invariant capture across the remaining text-matched selectors
+  (`scripts/dev/capture_locale_invariants.py` is the diagnostic).
+
+**Earlier — Phase 7 multi-image-prompt work** addressed the count-tab selectors:
 - `_COUNT_TAB_TEXT_RE = ^(1x|x[2-4])$` only matches the digit+x format Flow
   renders identically in every locale (numbers/symbols are not translated).
 - `_set_count` falls back to positional `.nth(count - 1)` when the read-back
@@ -363,6 +377,23 @@ change surfaces there as a failing test. Start any investigation of a sudden
 ---
 
 ## Resolved
+
+### `gflow image t2i/i2i --model` was a silent no-op on `ui_automation`
+
+- **Status:** Resolved · **Severity:** Was-Medium (wrong model = wrong cost + quality, silently) · **Was-affecting:** v0.7.0 through v0.8.1 · **Fixed in:** develop post-v0.8.1 via PR #48 (2026-05-24)
+
+Pre-fix, `gflow image t2i --model nano-banana-2` (or any other model) under
+`ui_automation` would set the wire-level model field correctly but **never
+click the model picker in the editor UI**, so Flow used whichever model the
+UI's dropdown was last set to (typically the account default). Users got
+their requested model silently substituted for the default — no error, just
+wrong output and wrong credit cost. Fixed by `_select_image_model` in
+`src/gflow_cli/api/transports/ui_automation.py` which mirrors the new
+`_select_video_model` helper. If you ran `gflow image t2i --model <X>`
+against v0.7.0–v0.8.1 and noticed the output didn't match `<X>`, this is
+why; re-run on the next release (≥ v0.9.0).
+
+---
 
 ### aisandbox-pa generation 401 — bypassed by the `ui_automation` transport
 
