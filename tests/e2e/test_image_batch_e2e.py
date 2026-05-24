@@ -25,6 +25,7 @@ from structlog.testing import LogCapture
 from gflow_cli.image_batch import (
     JITTER_MAX_SECONDS,
     JITTER_MIN_SECONDS,
+    BatchClientConfig,
     parse_manifest_file,
     run_manifest_image_batch,
 )
@@ -113,9 +114,7 @@ async def test_image_batch_e2e(
     # diagnosing matrix-run failures post-mortem (spec §11 risk register).
     try:
         outcomes = await run_manifest_image_batch(
-            profile_dir=e2e_profile_dir,
-            headless=False,
-            transport=None,
+            BatchClientConfig(profile_dir=e2e_profile_dir, headless=False),
             prompts=prompts,
             output_dir=out,
             continue_on_error=False,

@@ -15,6 +15,7 @@ in :mod:`gflow_cli._cli_helpers` since T4b — a negative AST-based test in
 from __future__ import annotations
 
 import asyncio
+import dataclasses
 import re
 import sys
 from pathlib import Path
@@ -58,6 +59,7 @@ from gflow_cli.image_batch import (
 )
 from gflow_cli.image_batch import (
     MAX_PROMPT_FILE_BYTES,
+    BatchClientConfig,
     parse_manifest_file,
     parse_prompt_lines,
     prompt_items_from_parsed,
@@ -404,9 +406,9 @@ def t2i(
 
     outcomes = asyncio.run(
         run_image_batch(
-            profile_dir=provider_dir,
-            headless=settings.headless,
-            transport=transport,
+            BatchClientConfig(
+                profile_dir=provider_dir, headless=settings.headless, transport=transport
+            ),
             prompts=batch_prompts,
             output_dir=output_dir,
             continue_on_error=continue_on_error,
@@ -621,9 +623,9 @@ def batch(
 
     outcomes = asyncio.run(
         run_manifest_image_batch(
-            profile_dir=provider_dir,
-            headless=settings.headless,
-            transport=transport,
+            BatchClientConfig(
+                profile_dir=provider_dir, headless=settings.headless, transport=transport
+            ),
             prompts=prompts,
             output_dir=output_dir,
             continue_on_error=continue_on_error,
@@ -737,11 +739,13 @@ def i2i(
         lambda: _run_i2i(
             profile_dir=provider_dir,
             headless=settings.headless,
-            prompt=prompt,
+            base_req=GenerateImageRequest(
+                prompt=prompt,
+                aspect=Aspect.from_cli(aspect),
+                model=Model.from_cli(model),
+                count=count,
+            ),
             classified_refs=classified_refs,
-            aspect=Aspect.from_cli(aspect),
-            model=Model.from_cli(model),
-            count=count,
             out=out,
             output_root=settings.output_dir,
             transport=transport,
@@ -786,11 +790,8 @@ async def _run_i2i(
     *,
     profile_dir: Path,
     headless: bool,
-    prompt: str,
+    base_req: GenerateImageRequest,
     classified_refs: list[ImageRef | Path],
-    aspect: Aspect,
-    model: Model,
-    count: int,
     out: Path | None,
     output_root: Path,
     transport: str | None = None,
@@ -805,23 +806,18 @@ async def _run_i2i(
         console.print(f"  Project: [dim]{project.project_id}[/dim]")
 
         resolved_refs = await _resolve_refs(client, project.project_id, classified_refs)
-        req = GenerateImageRequest(
-            prompt=prompt,
-            aspect=aspect,
-            model=model,
-            refs=resolved_refs,
-        )
+        req = dataclasses.replace(base_req, refs=resolved_refs)
 
         console.print(
-            f"  Generating {count} image(s) with {len(resolved_refs)} ref(s) "
+            f"  Generating {base_req.count} image(s) with {len(resolved_refs)} ref(s) "
             f"({req.model.value}, {req.aspect.value})..."
         )
-        if count == 1:
+        if base_req.count == 1:
             img = await client.generate_image(project_id=project.project_id, req=req)
             images: list[GeneratedImage] = [img]
         else:
             images = await client.generate_images_batch(
-                project_id=project.project_id, req=req, count=count
+                project_id=project.project_id, req=req, count=base_req.count
             )
 
         saved_paths: list[Path] = []

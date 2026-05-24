@@ -99,6 +99,15 @@ class BatchOutcome:
     exit_code: int = 0
 
 
+@dataclass(frozen=True)
+class BatchClientConfig:
+    """Session parameters for creating a FlowApiClient."""
+
+    profile_dir: Path
+    headless: bool
+    transport: str | None = None
+
+
 def resolve_exit_code(exc: GFlowError) -> int:
     for cls, code in EXIT_CODE_MAP.items():
         if isinstance(exc, cls):
@@ -364,10 +373,8 @@ async def run_one_image_prompt(
 
 
 async def run_image_batch(
+    config: BatchClientConfig,
     *,
-    profile_dir: Path,
-    headless: bool,
-    transport: str | None,
     prompts: tuple[BatchPromptItem, ...],
     output_dir: Path,
     continue_on_error: bool,
@@ -388,9 +395,7 @@ async def run_image_batch(
         )
 
     return await run_sequential_batch(
-        profile_dir=profile_dir,
-        headless=headless,
-        transport=transport,
+        config,
         items=prompts,
         continue_on_error=continue_on_error,
         project_title=project_title,
@@ -401,10 +406,8 @@ async def run_image_batch(
 
 
 async def run_sequential_batch(
+    config: BatchClientConfig,
     *,
-    profile_dir: Path,
-    headless: bool,
-    transport: str | None,
     items: tuple[Any, ...],
     continue_on_error: bool,
     project_title: str,
@@ -418,7 +421,9 @@ async def run_sequential_batch(
 
     outcomes: list[BatchOutcome] = []
     factory = client_factory or FlowApiClient
-    async with factory(profile_dir=profile_dir, headless=headless, transport=transport) as client:
+    async with factory(
+        profile_dir=config.profile_dir, headless=config.headless, transport=config.transport
+    ) as client:
         project = await client.create_project(title=project_title)
         for idx, item in enumerate(items):
             outcome = await worker(client, project.project_id, idx, item)
@@ -706,10 +711,8 @@ async def _download_results(
 
 
 async def run_manifest_image_batch(
+    config: BatchClientConfig,
     *,
-    profile_dir: Path,
-    headless: bool,
-    transport: str | None,
     prompts: tuple[BatchPromptItem, ...],
     output_dir: Path,
     continue_on_error: bool,
@@ -743,9 +746,9 @@ async def run_manifest_image_batch(
     output_dir.mkdir(parents=True, exist_ok=True)
     factory = client_factory or FlowApiClient
     async with factory(
-        profile_dir=profile_dir,
-        headless=headless,
-        transport=transport,
+        profile_dir=config.profile_dir,
+        headless=config.headless,
+        transport=config.transport,
         out_dir=output_dir,
     ) as client:
         # Capability check: only UiAutomationTransport implements generate_images_batch.

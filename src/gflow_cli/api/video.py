@@ -70,6 +70,13 @@ class GenerateVideoRequest:
     def __post_init__(self) -> None:
         if not self.prompt.strip():
             raise ValueError("prompt must not be empty")
+        if len(self.reference_images) > MAX_REFERENCE_IMAGES:
+            raise ValueError(f"at most {MAX_REFERENCE_IMAGES} reference images")
+        if self.seed is not None and not (0 <= self.seed <= 2**31 - 1):
+            raise ValueError("seed out of range")
+        self._validate_mode_inputs()
+
+    def _validate_mode_inputs(self) -> None:
         if self.mode is Mode.T2V and (self.start_image or self.end_image or self.reference_images):
             raise ValueError("T2V request must not carry image inputs")
         if self.mode is Mode.I2V:
@@ -82,10 +89,6 @@ class GenerateVideoRequest:
                 raise ValueError("R2V request requires at least one reference image")
             if self.start_image or self.end_image:
                 raise ValueError("R2V request must not carry start/end images")
-        if len(self.reference_images) > MAX_REFERENCE_IMAGES:
-            raise ValueError(f"at most {MAX_REFERENCE_IMAGES} reference images")
-        if self.seed is not None and not (0 <= self.seed <= 2**31 - 1):
-            raise ValueError("seed out of range")
 
 
 @dataclass(frozen=True)

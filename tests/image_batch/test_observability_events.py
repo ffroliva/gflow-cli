@@ -14,7 +14,7 @@ import pytest
 from structlog.testing import LogCapture
 
 from gflow_cli.api.transports.ui_automation import UiAutomationTransport
-from gflow_cli.image_batch import BatchPromptItem, run_manifest_image_batch
+from gflow_cli.image_batch import BatchClientConfig, BatchPromptItem, run_manifest_image_batch
 
 
 def _make_fake_image() -> object:
@@ -91,9 +91,7 @@ async def test_emits_submission_attempt_per_row(
         BatchPromptItem(text="dog", count=1, aspect_ratio="1:1", model="nano2"),
     )
     await run_manifest_image_batch(
-        profile_dir=tmp_path,
-        headless=True,
-        transport=None,
+        BatchClientConfig(profile_dir=tmp_path, headless=True),
         prompts=prompts,
         output_dir=tmp_path / "out",
         continue_on_error=False,
@@ -166,9 +164,7 @@ async def test_emits_row_completed_per_row(
         ),
     )
     await run_manifest_image_batch(
-        profile_dir=tmp_path,
-        headless=True,
-        transport=None,
+        BatchClientConfig(profile_dir=tmp_path, headless=True),
         prompts=prompts,
         output_dir=tmp_path / "out",
         continue_on_error=False,

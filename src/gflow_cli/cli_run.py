@@ -30,6 +30,7 @@ from gflow_cli.errors import ConfigurationError
 from gflow_cli.image_batch import (
     MAX_PROMPTS,
     MIN_PROMPTS,
+    BatchClientConfig,
     BatchOutcome,
     BatchPromptItem,
     parse_batch_item_dict,
@@ -171,9 +172,7 @@ async def _run_batch(
     ``generate_image`` call.
     """
     outcomes = await run_image_batch(
-        profile_dir=profile_dir,
-        headless=headless,
-        transport=transport,
+        BatchClientConfig(profile_dir=profile_dir, headless=headless, transport=transport),
         prompts=prompts,
         output_dir=output_dir,
         continue_on_error=continue_on_error,

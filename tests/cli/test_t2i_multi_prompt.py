@@ -287,7 +287,7 @@ def test_t2i_rejects_prompt_file_directory_before_profile_and_output_dir(
 def test_t2i_multi_positional_delegates_to_batch_runner(tmp_path: Path) -> None:
     from gflow_cli.cli import main
 
-    async def _fake_run_batch(**_kwargs: object) -> list[object]:
+    async def _fake_run_batch(*_args: object, **_kwargs: object) -> list[object]:
         return []
 
     out = tmp_path / "out"
@@ -328,7 +328,7 @@ def test_t2i_multi_positional_delegates_to_batch_runner(tmp_path: Path) -> None:
 def test_t2i_multi_prompt_prints_fanout_before_batch_runner(tmp_path: Path) -> None:
     from gflow_cli.cli import main
 
-    async def _fake_run_batch(**_kwargs: object) -> list[object]:
+    async def _fake_run_batch(*_args: object, **_kwargs: object) -> list[object]:
         return []
 
     with (

@@ -127,7 +127,7 @@ def _mock_wire_format(monkeypatch: pytest.MonkeyPatch) -> None:
 
 @given("the mocked t2i batch runner writes one image per prompt")
 def _mock_t2i_batch_runner(monkeypatch: pytest.MonkeyPatch, batch_state: dict[str, Any]) -> None:
-    async def _fake_batch(**kwargs: Any) -> list[Any]:
+    async def _fake_batch(*_args: Any, **kwargs: Any) -> list[Any]:
         from gflow_cli.image_batch import BatchOutcome
 
         prompts = list(kwargs["prompts"])

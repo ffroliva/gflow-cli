@@ -10,6 +10,7 @@ import pytest
 from gflow_cli.errors import ConfigurationError
 from gflow_cli.image_batch import (
     MAX_BATCH_PROMPTS,
+    BatchClientConfig,
     BatchPromptItem,
     parse_json_manifest,
     parse_manifest_file,
@@ -283,9 +284,7 @@ class TestRunManifestImageBatch:
         factory = _make_batch_factory(project_id="proj-abc")
 
         outcomes = await run_manifest_image_batch(
-            profile_dir=tmp_path,
-            headless=True,
-            transport=None,
+            BatchClientConfig(profile_dir=tmp_path, headless=True),
             prompts=_make_items(2),
             output_dir=tmp_path / "out",
             continue_on_error=False,
@@ -305,9 +304,7 @@ class TestRunManifestImageBatch:
         factory = _make_batch_factory(project_id="proj-abc", fail_on_idx=1)
 
         outcomes = await run_manifest_image_batch(
-            profile_dir=tmp_path,
-            headless=True,
-            transport=None,
+            BatchClientConfig(profile_dir=tmp_path, headless=True),
             prompts=_make_items(3),
             output_dir=tmp_path / "out",
             continue_on_error=True,
@@ -340,9 +337,7 @@ class TestRunManifestImageBatch:
 
         with pytest.raises(RuntimeError, match="ui_automation"):
             await run_manifest_image_batch(
-                profile_dir=tmp_path,
-                headless=True,
-                transport=None,
+                BatchClientConfig(profile_dir=tmp_path, headless=True),
                 prompts=_make_items(1),
                 output_dir=tmp_path / "out",
                 continue_on_error=False,
