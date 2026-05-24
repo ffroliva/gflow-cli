@@ -55,7 +55,9 @@ __all__ = [
 def configure_logging(log_format: LogFormat = LogFormat.AUTO) -> None:
     """Bootstrap structlog.
 
-    Renders text on a TTY, JSON when stdout is piped (``LogFormat.AUTO``).
+    Logs are written to **stderr** (stdout is reserved for command output such
+    as ``--json`` payloads, so a consumer can ``json.loads(stdout)`` cleanly).
+    Renders text on a TTY, JSON when stderr is piped (``LogFormat.AUTO``).
     Sets ``show_locals=False`` on the exception renderer so frame locals
     (which can contain auth tokens or signed URLs) are NEVER serialized.
 
@@ -70,7 +72,8 @@ def configure_logging(log_format: LogFormat = LogFormat.AUTO) -> None:
     visible at the call site.
     """
     if log_format == LogFormat.AUTO:
-        is_tty = bool(getattr(sys.stdout, "isatty", lambda: False)())
+        # Detect the TTY on the LOG stream (stderr) — that's where logs go.
+        is_tty = bool(getattr(sys.stderr, "isatty", lambda: False)())
         log_format = LogFormat.TEXT if is_tty else LogFormat.JSON
 
     timestamper = structlog.processors.TimeStamper(fmt="iso", utc=True)
@@ -92,6 +95,9 @@ def configure_logging(log_format: LogFormat = LogFormat.AUTO) -> None:
     structlog.configure(
         processors=[*shared_processors, renderer],
         wrapper_class=structlog.make_filtering_bound_logger(INFO_LEVEL),
+        # Route to stderr: the default PrintLoggerFactory writes to stdout,
+        # which corrupts `--json` output (logs interleave with the payload).
+        logger_factory=structlog.PrintLoggerFactory(file=sys.stderr),
         cache_logger_on_first_use=False,
     )
 
