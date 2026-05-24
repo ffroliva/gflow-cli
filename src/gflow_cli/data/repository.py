@@ -30,6 +30,10 @@ class DataRepository:
     def __init__(self, store: DataStore) -> None:
         self._store = store
 
+    @property
+    def store(self) -> DataStore:
+        return self._store
+
     # ------------------------------------------------------------------
     # Profiles
     # ------------------------------------------------------------------
