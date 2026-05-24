@@ -64,7 +64,7 @@ async def _generate_and_report(
     try:
         async with FlowApiClient(profile_dir=profile_dir, out_dir=out_dir) as client:
 
-            async def on_started(started: VideoStarted) -> None:
+            def on_started(started: VideoStarted) -> None:
                 try:
                     recorder.record_started_video(
                         profile_name=profile_name,
@@ -89,7 +89,7 @@ async def _generate_and_report(
         try:
             recorder.record_completed_video(
                 profile_name=profile_name,
-                profile_dir=profile_dir,
+                _profile_dir=profile_dir,
                 request=request,
                 result=result,
             )

@@ -5,6 +5,7 @@ import json
 import sqlite3
 from datetime import UTC, datetime
 from pathlib import Path
+from typing import cast
 
 from gflow_cli.data.models import (
     AssetKind,
@@ -87,7 +88,7 @@ class DataRepository:
                 )
         except sqlite3.IntegrityError as exc:
             raise DataIntegrityError(detail=str(exc), route="data.upsert_project") from exc
-        return dataclasses.replace(record, created_at=created_at)
+        return cast(ProjectRecord, dataclasses.replace(record, created_at=created_at))  # pyright: ignore[reportUnnecessaryCast]
 
     # ------------------------------------------------------------------
     # Assets
@@ -146,7 +147,7 @@ class DataRepository:
                 )
         except sqlite3.IntegrityError as exc:
             raise DataIntegrityError(detail=str(exc), route="data.upsert_asset") from exc
-        return dataclasses.replace(record, created_at=created_at)
+        return cast(AssetRecord, dataclasses.replace(record, created_at=created_at))  # pyright: ignore[reportUnnecessaryCast]
 
     def update_asset_status(self, profile_name: str, flow_media_id: str, status: str) -> None:
         with self._store.transaction(immediate=True):
@@ -240,7 +241,7 @@ class DataRepository:
                 )
         except sqlite3.IntegrityError as exc:
             raise DataIntegrityError(detail=str(exc), route="data.insert_operation") from exc
-        return dataclasses.replace(record, started_at=started_at)
+        return cast(OperationRecord, dataclasses.replace(record, started_at=started_at))  # pyright: ignore[reportUnnecessaryCast]
 
     def update_operation_status(
         self,
@@ -345,7 +346,7 @@ class DataRepository:
                 )
         except sqlite3.IntegrityError as exc:
             raise DataIntegrityError(detail=str(exc), route="data.upsert_local_file") from exc
-        return dataclasses.replace(record, created_at=created_at)
+        return cast(LocalFileRecord, dataclasses.replace(record, created_at=created_at))  # pyright: ignore[reportUnnecessaryCast]
 
     # ------------------------------------------------------------------
     # Seed image resolvers

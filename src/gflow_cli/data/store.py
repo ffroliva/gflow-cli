@@ -16,6 +16,7 @@ from gflow_cli.errors import DataMigrationError, DataStoreError
 MIGRATION_PACKAGE = "gflow_cli.data.migrations"
 BUSY_TIMEOUT_MS = 5000
 MIGRATION_RE = re.compile(r"^(?P<version>\d{4,})_.+\.sql$")
+_ROUTE_MIGRATE = "data.migrate"
 
 
 def _utc_now() -> str:
@@ -51,7 +52,7 @@ def _load_migrations() -> list[Migration]:
         if match is None:
             raise DataMigrationError(
                 detail=f"invalid migration filename {file_ref.name!r}",
-                route="data.migrate",
+                route=_ROUTE_MIGRATE,
             )
         version = match.group("version")
         sql = file_ref.read_text(encoding="utf-8")
@@ -65,6 +66,28 @@ def _load_migrations() -> list[Migration]:
             )
         )
     return migrations
+
+
+def _sql_update_quote_state(
+    char: str,
+    nxt: str,
+    in_single: bool,
+    in_double: bool,
+) -> tuple[bool, bool, int]:
+    """Update single/double-quote state for one character.
+
+    Returns (in_single, in_double, extra_advance) where extra_advance is 1
+    when an escaped single-quote (``''``) was consumed so the caller skips
+    the second ``'``.
+    """
+    if in_single and char == "'" and nxt == "'":
+        # Escaped single-quote inside a string literal — consume both chars.
+        return in_single, in_double, 1
+    if char == "'" and not in_double:
+        return not in_single, in_double, 0
+    if char == '"' and not in_single:
+        return in_single, not in_double, 0
+    return in_single, in_double, 0
 
 
 def _iter_sql_statements(sql: str) -> Iterator[str]:
@@ -87,14 +110,11 @@ def _iter_sql_statements(sql: str) -> Iterator[str]:
             buf.extend([char, nxt])
             i += 2
             continue
-        if in_single and char == "'" and nxt == "'":
+        in_single, in_double, extra = _sql_update_quote_state(char, nxt, in_single, in_double)
+        if extra:
             buf.extend([char, nxt])
             i += 2
             continue
-        if char == "'" and not in_double:
-            in_single = not in_single
-        elif char == '"' and not in_single:
-            in_double = not in_double
         if char == ";" and not in_single and not in_double:
             statement = "".join(buf).strip()
             if statement:
@@ -155,7 +175,7 @@ class DataStore:
     def apply_migrations(self) -> None:
         migrations = _load_migrations()
         if not migrations:
-            raise DataMigrationError(detail="no SQL migrations packaged", route="data.migrate")
+            raise DataMigrationError(detail="no SQL migrations packaged", route=_ROUTE_MIGRATE)
 
         table_exists = self.conn.execute(
             "SELECT name FROM sqlite_master WHERE type='table' AND name='schema_migrations'"
@@ -169,7 +189,7 @@ class DataStore:
                     detail=(
                         f"database schema {current} is newer than installed schema {latest_known}"
                     ),
-                    route="data.migrate",
+                    route=_ROUTE_MIGRATE,
                 )
 
         applied = (
@@ -189,7 +209,7 @@ class DataStore:
                 if existing != migration.checksum:
                     raise DataMigrationError(
                         detail=f"migration {migration.version} checksum drift",
-                        route="data.migrate",
+                        route=_ROUTE_MIGRATE,
                     )
                 continue
             with self.transaction(immediate=True):

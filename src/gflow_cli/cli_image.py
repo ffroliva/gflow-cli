@@ -464,8 +464,8 @@ def _execute_t2i_batch(
                 output_dir=output_dir,
                 continue_on_error=continue_on_error,
                 project_title=_T2I_PROJECT_TITLE,
-                profile_name=profile_name,
-                recorder=recorder,
+                _profile_name=profile_name,
+                _recorder=recorder,
             )
         )
     finally:

@@ -390,8 +390,8 @@ async def run_image_batch(
     continue_on_error: bool,
     project_title: str,
     client_factory: Callable[..., Any] | None = None,
-    profile_name: str | None = None,
-    recorder: OperationRecorder | None = None,
+    _profile_name: str | None = None,
+    _recorder: OperationRecorder | None = None,
 ) -> list[BatchOutcome]:
     """Run prompts sequentially through one FlowApiClient session."""
 
@@ -662,6 +662,67 @@ def _to_request(item: BatchPromptItem) -> GenerateImageRequest:
     )
 
 
+async def _download_item_images(
+    *,
+    client: Any,
+    item: BatchPromptItem,
+    result: BatchSubmissionResult,
+    output_dir: Path,
+) -> list[Path]:
+    """Download all images for one ok BatchSubmissionResult; return saved paths."""
+    stem = item.output_filename or f"prompt_{item.index}"
+    saved: list[Path] = []
+    for img_idx, img in enumerate(result.images):
+        target = output_dir / f"{stem}_{img_idx}.png"
+        path = await client.download_image(img, target)
+        saved.append(path)
+        try:
+            sha = hashlib.sha256(Path(path).read_bytes()).hexdigest()[:16]
+        except (OSError, TypeError):
+            sha = "unreadable"
+        logger.info(
+            "image_batch.row_completed",
+            row_idx=item.index,
+            output_idx=img_idx,
+            prompt_hash=result.prompt_hash,
+            project_id=result.project_id,
+            sha256_prefix=sha,
+            outcome="ok",
+        )
+    return saved
+
+
+def _try_record_images(
+    *,
+    recorder: OperationRecorder,
+    profile_name: str,
+    profile_dir: Path,
+    item: BatchPromptItem,
+    result: BatchSubmissionResult,
+    saved: list[Path],
+) -> None:
+    """Persist generated-image metadata; warn on DataStoreError (non-fatal)."""
+    try:
+        recorder.record_generated_images(
+            profile_name=profile_name,
+            profile_dir=profile_dir,
+            project=ProjectInfo(project_id=result.project_id, title="gflow-cli image batch"),
+            request=_to_request(item),
+            images=list(result.images),
+            saved_paths=saved,
+            input_media_ids=[],
+            operation_kind="t2i",
+        )
+    except DataStoreError as exc:
+        first_image = result.images[0] if result.images else None
+        first_path = saved[0] if saved else None
+        _warn_persistence_failed_after_success(
+            exc=exc,
+            flow_media_id=first_image.media_name if first_image else None,
+            local_path=first_path,
+        )
+
+
 async def _download_results(
     *,
     client: Any,
@@ -697,25 +758,9 @@ async def _download_results(
             )
             continue
 
-        stem = item.output_filename or f"prompt_{item.index}"
-        saved: list[Path] = []
-        for img_idx, img in enumerate(result.images):
-            target = output_dir / f"{stem}_{img_idx}.png"
-            path = await client.download_image(img, target)
-            saved.append(path)
-            try:
-                sha = hashlib.sha256(Path(path).read_bytes()).hexdigest()[:16]
-            except (OSError, TypeError):
-                sha = "unreadable"
-            logger.info(
-                "image_batch.row_completed",
-                row_idx=item.index,
-                output_idx=img_idx,
-                prompt_hash=result.prompt_hash,
-                project_id=result.project_id,
-                sha256_prefix=sha,
-                outcome="ok",
-            )
+        saved = await _download_item_images(
+            client=client, item=item, result=result, output_dir=output_dir
+        )
         outcomes.append(
             BatchOutcome(
                 index=item.index,
@@ -724,29 +769,15 @@ async def _download_results(
                 saved_paths=saved,
             )
         )
-
         if recorder is not None and profile_name is not None and profile_dir is not None:
-            try:
-                recorder.record_generated_images(
-                    profile_name=profile_name,
-                    profile_dir=profile_dir,
-                    project=ProjectInfo(
-                        project_id=result.project_id, title="gflow-cli image batch"
-                    ),
-                    request=_to_request(item),
-                    images=list(result.images),
-                    saved_paths=saved,
-                    input_media_ids=[],
-                    operation_kind="t2i",
-                )
-            except DataStoreError as exc:
-                first_image = result.images[0] if result.images else None
-                first_path = saved[0] if saved else None
-                _warn_persistence_failed_after_success(
-                    exc=exc,
-                    flow_media_id=first_image.media_name if first_image else None,
-                    local_path=first_path,
-                )
+            _try_record_images(
+                recorder=recorder,
+                profile_name=profile_name,
+                profile_dir=profile_dir,
+                item=item,
+                result=result,
+                saved=saved,
+            )
 
     return outcomes
 

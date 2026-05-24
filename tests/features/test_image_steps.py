@@ -75,6 +75,7 @@ def _make_fake_t2i(file_count: int):
 
     async def _fake_t2i(
         *,
+        profile_name: str,
         profile_dir: Path,
         headless: bool,
         req: Any,

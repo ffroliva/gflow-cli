@@ -166,7 +166,13 @@ def test_t2v_records_started_then_completed(tmp_path: Path) -> None:
 
     async def fake_generate_video(*, req, out_dir, poll_timeout_s=None, download, on_started):
         if on_started is not None:
-            await on_started(VideoStarted(media_id="m1", project_id="p1", flow_operation_id="o1"))
+            import inspect
+
+            result_or_coro = on_started(
+                VideoStarted(media_id="m1", project_id="p1", flow_operation_id="o1")
+            )
+            if inspect.isawaitable(result_or_coro):
+                await result_or_coro
         return stub_result
 
     runner = CliRunner()
