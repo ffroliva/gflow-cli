@@ -32,7 +32,8 @@ from gflow_cli.api.dto import AssetInfo, GeneratedImage, ProjectInfo
 from gflow_cli.api.image import GenerateImageRequest
 from gflow_cli.api.recaptcha import TokenMinter
 from gflow_cli.api.transports import make_transport
-from gflow_cli.api.transports.base import FlowTransportStrategy
+from gflow_cli.api.transports.base import FlowTransportStrategy, VideoCapableTransport
+from gflow_cli.api.video import GenerateVideoRequest, VideoResult, VideoStartedCallback
 from gflow_cli.config import Settings
 from gflow_cli.errors import (
     AuthExpiredError,
@@ -767,6 +768,46 @@ class FlowApiClient:
                 project_id=resolved_project_id,
                 req=req_with_count,
                 recaptcha_action=recaptcha_action,
+            )
+        except Exception as e:
+            if _is_target_closed(e):
+                raise BrowserSessionClosedError() from e
+            raise
+
+    async def generate_video(
+        self,
+        *,
+        req: GenerateVideoRequest,
+        out_dir: Path | None = None,
+        poll_timeout_s: float = 600.0,
+        download: bool = True,
+        on_started: VideoStartedCallback | None = None,
+    ) -> VideoResult:
+        """Generate a video via the transport's ``generate_video`` method.
+
+        Routes all video generation through a single client boundary so the
+        data-layer recorder (Task 8) can hook in at one place.
+
+        Raises:
+            RuntimeError: transport is None (client not entered) or the transport
+                doesn't implement :class:`VideoCapableTransport`.
+            BrowserSessionClosedError: Playwright target was closed mid-call.
+        """
+        if self.transport is None:
+            raise RuntimeError(
+                "FlowApiClient.transport is None - call generate_video inside 'async with client'"
+            )
+        if not isinstance(self.transport, VideoCapableTransport):
+            raise RuntimeError(
+                f"transport {type(self.transport).__name__} does not support video generation"
+            )
+        try:
+            return await self.transport.generate_video(
+                request=req,
+                out_dir=out_dir,
+                poll_timeout_s=poll_timeout_s,
+                download=download,
+                on_started=on_started,
             )
         except Exception as e:
             if _is_target_closed(e):

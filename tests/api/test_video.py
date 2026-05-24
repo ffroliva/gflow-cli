@@ -17,6 +17,7 @@ from gflow_cli.api.video import (
     VideoResult,
     VideoStatus,
     media_name_from_generate_response,
+    operation_name_from_generate_response,
     parse_video_status,
 )
 
@@ -269,6 +270,28 @@ class TestParseVideoStatus:
     def test_malformed_status_raises(self) -> None:
         with pytest.raises(ValueError, match="mediaGenerationStatus"):
             parse_video_status({"media": [{"name": "m", "mediaMetadata": {}}]}, media_id="m")
+
+
+class TestOperationNameFromGenerateResponse:
+    def test_reads_operation_name(self) -> None:
+        body = {
+            "media": [{"name": "media-1"}],
+            "operations": [{"operation": {"name": "media-1"}}],
+        }
+        assert operation_name_from_generate_response(body) == "media-1"
+
+    def test_matches_current_media_id_in_fixture(self) -> None:
+        body = {
+            "media": [{"name": "media-1"}],
+            "operations": [{"operation": {"name": "media-1"}}],
+        }
+        assert operation_name_from_generate_response(body) == body["media"][0]["name"]
+
+    def test_returns_none_when_operations_absent(self) -> None:
+        assert operation_name_from_generate_response({"media": [{"name": "m"}]}) is None
+
+    def test_returns_none_when_operations_empty(self) -> None:
+        assert operation_name_from_generate_response({"operations": []}) is None
 
 
 class TestVideoResult:

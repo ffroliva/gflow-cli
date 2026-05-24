@@ -397,6 +397,66 @@ async def test_generate_image_translates_target_closed_to_browser_session_closed
             )
 
 
+# ---------------------------------------------------------------------------
+# generate_video client-boundary tests (Task 7)
+# ---------------------------------------------------------------------------
+
+
+class _VideoCapableFakeTransport(_FakeTransport):
+    """FakeTransport that also implements generate_video."""
+
+    async def generate_video(
+        self,
+        *,
+        request: object,
+        out_dir: object,
+        poll_timeout_s: float,
+        download: bool,
+        on_started: object = None,
+    ) -> object:
+        from gflow_cli.api.video import VideoResult, VideoStatus
+
+        status = VideoStatus(media_id="media-1", status="MEDIA_GENERATION_STATUS_SUCCESSFUL")
+        return VideoResult(status=status, local_path=None)
+
+
+@pytest.mark.asyncio
+async def test_generate_video_delegates_to_transport(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    """FlowApiClient.generate_video must delegate to the transport's generate_video."""
+    monkeypatch.delenv("GFLOW_CLI_TRANSPORT", raising=False)
+    _patch_playwright(monkeypatch)
+    fake = _VideoCapableFakeTransport()
+
+    from gflow_cli.api.video import GenerateVideoRequest, Mode
+
+    request = GenerateVideoRequest(prompt="sunset over mountains", mode=Mode.T2V)
+
+    async with FlowApiClient(profile_dir=tmp_path, transport=fake) as client:
+        result = await client.generate_video(req=request, out_dir=tmp_path, download=True)
+
+    assert result.status.media_id == "media-1"
+
+
+@pytest.mark.asyncio
+async def test_generate_video_raises_for_non_video_transport(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    """generate_video must raise RuntimeError if the transport lacks generate_video."""
+    monkeypatch.delenv("GFLOW_CLI_TRANSPORT", raising=False)
+    _patch_playwright(monkeypatch)
+    fake = _FakeTransport()  # does NOT implement generate_video
+
+    from gflow_cli.api.video import GenerateVideoRequest, Mode
+
+    request = GenerateVideoRequest(prompt="x", mode=Mode.T2V)
+
+    async with FlowApiClient(profile_dir=tmp_path, transport=fake) as client:
+        with pytest.raises(RuntimeError, match="does not support video"):
+            await client.generate_video(req=request, out_dir=tmp_path, download=True)
+
+
 @pytest.mark.asyncio
 async def test_download_video_delegates_to_download(tmp_path: Path) -> None:
     """download_video(media_id, out_path) delegates to self.download()."""
