@@ -124,6 +124,7 @@ class GeneratedImage:
     aspect_ratio: str  # e.g. "IMAGE_ASPECT_RATIO_PORTRAIT"
     fife_url: str  # CDN URL — usually expires after ~6 hours
     dimensions: tuple[int, int]  # (width, height)
+    media_generation_id: str | None = None
 
     @property
     def is_signed_url(self) -> bool:
@@ -146,6 +147,7 @@ class GeneratedImage:
                 aspect_ratio=generated["aspectRatio"],
                 fife_url=generated["fifeUrl"],
                 dimensions=(int(dims["width"]), int(dims["height"])),
+                media_generation_id=generated.get("mediaGenerationId"),
             )
         except (KeyError, TypeError) as e:
             raise ValueError(f"unexpected batchGenerateImages media item shape: {e}") from e

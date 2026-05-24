@@ -28,6 +28,9 @@ Commands:
     i2v                         Generate a video from a start (+ optional end) frame + prompt.
     r2v                         Generate a video from reference images + prompt.
     batch                       Run a TSV manifest of video generations.
+
+  data      Local provenance database (read-only queries).
+    media MEDIA_ID              Show stored record for a Flow media ID.
 ```
 
 Global flags:
@@ -380,6 +383,34 @@ videos won't appear together in your Flow gallery. The files on disk are
 identical to what `batch` would produce. The same pattern works for
 `gflow video i2v <image> "<prompt>"` and `gflow video r2v "<prompt>" --ref <img>`.
 
+## `gflow data media`
+
+Look up a recorded operation by its Flow media ID. Prints a summary of the stored provenance record: profile, media ID, Flow project ID, kind (image/video), and the local file paths that were written for that operation.
+
+```text
+gflow data media MEDIA_ID [--profile NAME]
+
+Arguments:
+  MEDIA_ID              Flow media UUID (e.g. ddb6ef97-262d-49f4-8269-4a28c0fae6a2). [required]
+
+Options:
+  --profile NAME        Profile name (overrides default).
+```
+
+**Example output:**
+
+```text
+Profile:    default
+Media ID:   ddb6ef97-262d-49f4-8269-4a28c0fae6a2
+Project ID: f1a2b3c4-0000-0000-0000-000000000001
+Kind:       image
+Paths:
+  /home/user/Downloads/gflow-cli/images/2026-05-24/ddb6ef97_1.png
+  /home/user/Downloads/gflow-cli/images/2026-05-24/ddb6ef97_2.png
+```
+
+Exit codes: `0` success, `2` media ID not found in the local database, `16` database error (see exit code table below).
+
 ## `gflow run`
 
 Sequential JSON-described batch image generation. New in v0.5.0a1.
@@ -508,7 +539,16 @@ shell scripts can branch on the failure mode without parsing stderr.
 | `12` | `AuthLoginTimeoutError` | Browser sign-in was not completed in time       | Re-run login or raise `GFLOW_CLI_AUTH_LOGIN_TIMEOUT`       |
 | `13` | `SecurityError`       | Unsafe local profile or secret handling blocked   | Follow the error's safety guidance                         |
 | `14` | `AuthBrowserRejectedError` | Google rejected the login browser             | `gflow auth login --browser chrome`                        |
+| `16` | `DataStoreError`      | Local database cannot be opened, a migration failed, or the DB schema is newer than the installed gflow-cli | See below                                  |
 | `130`| SIGINT                | User-interrupted (Ctrl-C)                        | —                                                          |
+
+**Exit code 16 — data store / migration error.** Fires when:
+
+- The database file cannot be opened (filesystem permission or path issues).
+- A migration fails or the migration checksum drifts from what the installed version expects.
+- The database has a **newer schema** than the installed gflow-cli (i.e. you downgraded after a migration already ran).
+
+Recovery for the "newer schema" case: upgrade gflow-cli to a version that understands the schema (`uv tool upgrade gflow-cli`), OR point `GFLOW_CLI_DB_PATH` to a different database location (a fresh path creates a new empty database automatically).
 
 All errors emit a structured `error_raised` event (or `error_unhandled` for
 exit code 1) with stable fields — `error_class`, `problem` (RFC 9457 Problem
@@ -538,6 +578,7 @@ if [ "$rc" -ne 0 ]; then
     11)  echo "Configuration error — fix the option or env var shown above"; exit 1 ;;
     13)  echo "Security guard blocked unsafe local state — follow the error guidance"; exit 1 ;;
     14)  echo "Google rejected the login browser — run: gflow auth login --browser chrome"; exit 1 ;;
+    16)  echo "Database error — check permissions or upgrade gflow-cli"; exit 1 ;;
     130) echo "Cancelled with Ctrl-C"; exit 130 ;;
     *)   echo "Unknown failure (exit $rc)"; exit 1 ;;
   esac

@@ -28,6 +28,7 @@ import structlog
 
 from gflow_cli.api.dto import BatchSubmissionResult, GeneratedImage
 from gflow_cli.api.image import Aspect, GenerateImageRequest, Model
+from gflow_cli.api.transports._common import extract_project_id
 from gflow_cli.api.transports.ui_automation_video import (
     MODE_SWITCH_TRIGGER_SELECTORS,
     VideoGenerationMixin,
@@ -317,13 +318,12 @@ def _prompt_hash_stable(text: str) -> str:
 
 
 def _extract_project_id(url: str) -> str | None:
-    """Pull the project UUID out of a Flow editor URL, or None if absent."""
-    if _PROJECT_URL_FRAGMENT not in url:
-        return None
-    try:
-        return url.split(_PROJECT_URL_FRAGMENT)[1].split("?")[0]
-    except (IndexError, ValueError):
-        return None
+    """Thin alias for `extract_project_id` from `_common`.
+
+    Kept for back-compat with any existing call sites and tests that import
+    the private name directly from this module.
+    """
+    return extract_project_id(url)
 
 
 def _collect_images_from_body(body: dict[str, Any], images: list[GeneratedImage]) -> None:

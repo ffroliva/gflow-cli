@@ -22,14 +22,18 @@ from typing import TYPE_CHECKING, Any, cast
 import structlog
 
 from gflow_cli.api import routes
+from gflow_cli.api.transports._common import extract_project_id
 from gflow_cli.api.video import (
     Aspect,
     GenerateVideoRequest,
     Mode,
     VideoModel,
     VideoResult,
+    VideoStarted,
+    VideoStartedCallback,
     VideoStatus,
     media_name_from_generate_response,
+    operation_name_from_generate_response,
     parse_video_status,
 )
 from gflow_cli.errors import AuthExpiredError, WafRejectionError, WireFormatError
@@ -221,14 +225,14 @@ def _summarize_request_image_inputs(request: Any) -> dict[str, Any]:
         raw = request.post_data
         if not raw:
             return {"parsed": False}
-        data = cast("dict[str, Any]", json.loads(raw))
+        data = cast(dict[str, Any], json.loads(raw))
         reqs = cast("list[dict[str, Any]]", data.get("requests") or [])
         first: dict[str, Any] = reqs[0] if reqs else {}
 
         def _mid(obj: Any) -> str | None:
             if not isinstance(obj, dict):
                 return None
-            mid = cast("dict[str, Any]", obj).get("mediaId")
+            mid = cast(dict[str, Any], obj).get("mediaId")
             return mid[:8] if isinstance(mid, str) else None
 
         refs = cast("list[dict[str, Any]]", first.get("referenceImages") or [])
@@ -817,6 +821,7 @@ class VideoGenerationMixin:
         out_dir: Path | None = None,
         poll_timeout_s: float = 600.0,
         download: bool = True,
+        on_started: VideoStartedCallback | None = None,
     ) -> VideoResult:
         """Generate ONE video by driving the Flow editor UI (T2V / I2V / R2V).
 
@@ -827,6 +832,10 @@ class VideoGenerationMixin:
         aspect), `FileNotFoundError` (I2V/R2V image path missing),
         `AuthExpiredError` (401), `WafRejectionError` (403), `WireFormatError`
         (other non-200 / no media), or `TimeoutError`.
+
+        ``on_started`` is called with a :class:`VideoStarted` as soon as the
+        media_id is known (before polling completes) so the recorder can insert
+        a STARTED row even if the long poll later fails.
         """
         if not self._setup_done or self._page is None:
             raise RuntimeError(
@@ -838,7 +847,70 @@ class VideoGenerationMixin:
                 "use PORTRAIT (9:16) or LANDSCAPE (16:9)"
             )
         async with self._generate_lock:
-            return await self._generate_video_locked(request, out_dir, poll_timeout_s, download)
+            return await self._generate_video_locked(
+                request, out_dir, poll_timeout_s, download, on_started
+            )
+
+    @staticmethod
+    def _parse_generate_response(
+        generate_resp: dict[str, Any],
+    ) -> tuple[str, str | None]:
+        """Validate HTTP status, extract media_name and flow_operation_id.
+
+        Raises AuthExpiredError, WafRejectionError, or WireFormatError on bad
+        status codes or missing media id. Returns (media_name, flow_operation_id).
+        """
+        http_status = generate_resp.get("status")
+        url = str(generate_resp.get("url", ""))
+        # errors.py documents `route` as a sanitized route NAME, not a URL.
+        route = next((r for r in VIDEO_GENERATE_ROUTES if r in url), "video:generate")
+        if http_status == 401:
+            raise AuthExpiredError(
+                detail="batchAsyncGenerateVideo* returned HTTP 401 — session expired",
+                status=401,
+                route=route,
+            )
+        if http_status == 403:
+            raise WafRejectionError(
+                detail="batchAsyncGenerateVideo* returned HTTP 403 — WAF / reCAPTCHA rejection",
+                status=403,
+                route=route,
+            )
+        if http_status != 200:
+            raise WireFormatError(
+                detail=f"batchAsyncGenerateVideo* returned HTTP {http_status}",
+                status=http_status if isinstance(http_status, int) else None,
+                route=route,
+            )
+        # A video 200 ALWAYS carries media[0] (the asset slot — capture 02);
+        # content rejection surfaces later as a FAILED *status*, not empty media.
+        # So a missing media[0] here is a genuine wire anomaly — WireFormatError.
+        body: dict[str, Any] = cast(dict[str, Any], generate_resp.get("body") or {})
+        try:
+            media_name = media_name_from_generate_response(body)
+        except ValueError as e:
+            # discovery carries only route + top-level KEY NAMES (not values).
+            raise WireFormatError(
+                detail=f"video generate response carries no media id: {e}",
+                route=route,
+                discovery={"route": route, "top_level_keys": sorted(body)},
+            ) from e
+        # Stored SEPARATELY from media_name even when they currently match —
+        # spec explicitly keeps them distinct for future divergence.
+        flow_operation_id: str | None = operation_name_from_generate_response(body)
+        return media_name, flow_operation_id
+
+    @staticmethod
+    async def _fire_on_started(
+        on_started: VideoStartedCallback,
+        started: VideoStarted,
+    ) -> None:
+        """Invoke the on_started callback, awaiting it if it returns a coroutine."""
+        import inspect
+
+        result_or_coro = on_started(started)
+        if inspect.isawaitable(result_or_coro):
+            await result_or_coro
 
     async def _generate_video_locked(
         self,
@@ -846,6 +918,7 @@ class VideoGenerationMixin:
         out_dir: Path | None,
         poll_timeout_s: float,
         download: bool,
+        on_started: VideoStartedCallback | None,
     ) -> VideoResult:
         """Serialized body of `generate_video` — runs under `self._generate_lock`
         (shared with `generate_images`: one Page, one DOM)."""
@@ -857,6 +930,11 @@ class VideoGenerationMixin:
         # of the editor before we click into mode-switch / settings / submit (#26).
         await self._dismiss_blocking_overlays(page, out_dir)
         await VideoGenerationMixin._switch_to_video_mode(page, out_dir=out_dir)
+
+        # Capture project_id from the editor URL as soon as we have it —
+        # needed for VideoStarted provenance and recorded before the generate request.
+        project_id: str | None = extract_project_id(page.url)
+
         # All settings-panel selections happen while the panel is open: model
         # (gates the 10s duration), sub-mode tab, aspect, count, duration.
         if request.model is not None:
@@ -900,54 +978,34 @@ class VideoGenerationMixin:
             await self._send_prompt(page, request.prompt, out_dir)
 
             generate_resp = await VideoGenerationMixin._await_generate_response(generate_captured)
-            http_status = generate_resp.get("status")
-            url = str(generate_resp.get("url", ""))
-            # errors.py documents `route` as a sanitized route NAME, not a URL.
-            route = next((r for r in VIDEO_GENERATE_ROUTES if r in url), "video:generate")
-            if http_status == 401:
-                raise AuthExpiredError(
-                    detail="batchAsyncGenerateVideo* returned HTTP 401 — session expired",
-                    status=401,
-                    route=route,
+            media_name, flow_operation_id = VideoGenerationMixin._parse_generate_response(
+                generate_resp
+            )
+
+            # Fire on_started BEFORE polling so the recorder can insert a STARTED
+            # row even if the long poll later fails.
+            if on_started is not None:
+                started = VideoStarted(
+                    media_id=media_name,
+                    project_id=project_id,
+                    flow_operation_id=flow_operation_id,
                 )
-            if http_status == 403:
-                raise WafRejectionError(
-                    detail=(
-                        "batchAsyncGenerateVideo* returned HTTP 403 — WAF / reCAPTCHA rejection"
-                    ),
-                    status=403,
-                    route=route,
-                )
-            if http_status != 200:
-                raise WireFormatError(
-                    detail=f"batchAsyncGenerateVideo* returned HTTP {http_status}",
-                    status=http_status if isinstance(http_status, int) else None,
-                    route=route,
-                )
-            # A video 200 ALWAYS carries media[0] (the asset slot — capture 02);
-            # content rejection surfaces later as a FAILED *status*, not empty
-            # media. So a missing media[0] here is a genuine wire anomaly —
-            # WireFormatError, NOT ContentPolicyError (the image-flow pattern).
-            try:
-                media_name = media_name_from_generate_response(generate_resp.get("body") or {})
-            except ValueError as e:
-                # discovery carries only the route + the body's top-level KEY
-                # NAMES (not values) — enough to diagnose the anomaly without
-                # logging `remainingCredits`, media UUIDs, or any token.
-                anomaly_body = cast("dict[str, Any]", generate_resp.get("body") or {})
-                raise WireFormatError(
-                    detail=f"video generate response carries no media id: {e}",
-                    route=route,
-                    discovery={"route": route, "top_level_keys": sorted(anomaly_body)},
-                ) from e
+                await VideoGenerationMixin._fire_on_started(on_started, started)
 
             status = await VideoGenerationMixin._poll_video_status(
                 page, status_captured, media_name, timeout_s=poll_timeout_s
             )
-            if download and status.succeeded:
-                local_path = await self._download_video(status.media_id, out_dir, page)
-                return VideoResult(status=status, local_path=local_path)
-            return VideoResult(status=status, local_path=None)
+            local_path = (
+                await self._download_video(status.media_id, out_dir, page)
+                if download and status.succeeded
+                else None
+            )
+            return VideoResult(
+                status=status,
+                local_path=local_path,
+                project_id=project_id,
+                flow_operation_id=flow_operation_id,
+            )
         finally:
             # The Page is pooled and persistent — remove both listeners so they
             # never leak across calls.
