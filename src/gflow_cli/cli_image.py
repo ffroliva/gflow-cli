@@ -20,6 +20,7 @@ import sys
 from pathlib import Path
 
 import click
+import structlog
 from rich.console import Console
 from rich.table import Table
 
@@ -34,7 +35,8 @@ from gflow_cli.api.dto import GeneratedImage
 from gflow_cli.api.image import Aspect, GenerateImageRequest, ImageRef, Model
 from gflow_cli.api.transports import transport_choices
 from gflow_cli.config import get_settings
-from gflow_cli.errors import ConfigurationError
+from gflow_cli.data.recorder import OperationRecorder
+from gflow_cli.errors import ConfigurationError, DataStoreError
 from gflow_cli.image_batch import (
     ALLOWED_ASPECT_RATIOS as _ALLOWED_ASPECT_RATIOS,
 )
@@ -86,6 +88,22 @@ _CREATING_PROJECT_MSG = "  Creating project..."
 _T2I_PROJECT_TITLE = "gflow-cli t2i"
 
 console = Console()
+logger = structlog.get_logger(__name__)
+
+
+def _warn_persistence_failed_after_success(
+    *,
+    exc: Exception,
+    flow_media_id: str | None,
+    local_path: Path | None,
+) -> None:
+    logger.warning(
+        "data.persistence_failed_after_success",
+        error_class=type(exc).__name__,
+        flow_media_id=flow_media_id,
+        local_path=str(local_path) if local_path is not None else None,
+    )
+    console.print("[yellow]Generated media was saved, but local history was not updated.[/yellow]")
 
 
 def _classify_ref(ref: str) -> ImageRef | Path:
@@ -185,6 +203,7 @@ def upload(path: Path, profile: str | None, transport: str | None) -> None:
     settings = get_settings()
     run_with_handlers(
         lambda: _run_upload(
+            profile_name=profile_name,
             profile_dir=provider_dir,
             headless=settings.headless,
             image_path=path,
@@ -196,25 +215,45 @@ def upload(path: Path, profile: str | None, transport: str | None) -> None:
 
 async def _run_upload(
     *,
+    profile_name: str,
     profile_dir: Path,
     headless: bool,
     image_path: Path,
     transport: str | None = None,
 ) -> None:
-    async with FlowApiClient(
-        profile_dir=profile_dir, headless=headless, transport=transport
-    ) as client:
-        console.print(_CREATING_PROJECT_MSG)
-        project = await client.create_project(title="gflow-cli upload")
-        console.print(f"  Project: [dim]{project.project_id}[/dim]")
-        console.print(f"  Uploading {image_path.name}...")
-        asset = await client.upload_image(project.project_id, image_path)
-        # Render the UUID prominently — that's the load-bearing output.
-        console.print(f"[bold green]Asset UUID:[/bold green] [bold]{asset.name}[/bold]")
-        console.print(
-            f"[dim]Dimensions:[/dim] {asset.width} x {asset.height}  "
-            f"[dim]Project:[/dim] {project.project_id}"
-        )
+    settings = get_settings()
+    recorder = OperationRecorder.open(settings)
+    try:
+        async with FlowApiClient(
+            profile_dir=profile_dir, headless=headless, transport=transport
+        ) as client:
+            console.print(_CREATING_PROJECT_MSG)
+            project = await client.create_project(title="gflow-cli upload")
+            console.print(f"  Project: [dim]{project.project_id}[/dim]")
+            console.print(f"  Uploading {image_path.name}...")
+            asset = await client.upload_image(project.project_id, image_path)
+            # Render the UUID prominently — that's the load-bearing output.
+            console.print(f"[bold green]Asset UUID:[/bold green] [bold]{asset.name}[/bold]")
+            console.print(
+                f"[dim]Dimensions:[/dim] {asset.width} x {asset.height}  "
+                f"[dim]Project:[/dim] {project.project_id}"
+            )
+            try:
+                recorder.record_upload_image(
+                    profile_name=profile_name,
+                    profile_dir=profile_dir,
+                    project=project,
+                    asset=asset,
+                    image_path=image_path,
+                )
+            except DataStoreError as exc:
+                _warn_persistence_failed_after_success(
+                    exc=exc,
+                    flow_media_id=asset.name,
+                    local_path=image_path,
+                )
+    finally:
+        recorder.close()
 
 
 # ---------------------------------------------------------------------------
@@ -333,6 +372,7 @@ def t2i(
         settings = get_settings()
         run_with_handlers(
             lambda: _run_t2i(
+                profile_name=profile_name,
                 profile_dir=provider_dir,
                 headless=settings.headless,
                 req=GenerateImageRequest(
@@ -461,6 +501,7 @@ def _as_usage_error(exc: ConfigurationError) -> click.UsageError:
 
 async def _run_t2i(
     *,
+    profile_name: str,
     profile_dir: Path,
     headless: bool,
     req: GenerateImageRequest,
@@ -469,34 +510,61 @@ async def _run_t2i(
     output_root: Path,
     transport: str | None = None,
 ) -> None:
-    async with FlowApiClient(
-        profile_dir=profile_dir, headless=headless, transport=transport
-    ) as client:
-        console.print(_CREATING_PROJECT_MSG)
-        # Title is a `gflow-cli ...` prefix per project convention (post-rename a02684f).
-        # cli_video.py's _run_t2v / _run_i2v don't currently set a title — tracked separately.
-        project = await client.create_project(title=_T2I_PROJECT_TITLE)
-        console.print(f"  Project: [dim]{project.project_id}[/dim]")
-        console.print(f"  Generating {count} image(s) ({req.model.value}, {req.aspect.value})...")
-        if count == 1:
-            img = await client.generate_image(project_id=project.project_id, req=req)
-            images: list[GeneratedImage] = [img]
-        else:
-            images = await client.generate_images_batch(
-                project_id=project.project_id, req=req, count=count
+    settings = get_settings()
+    recorder = OperationRecorder.open(settings)
+    try:
+        async with FlowApiClient(
+            profile_dir=profile_dir, headless=headless, transport=transport
+        ) as client:
+            console.print(_CREATING_PROJECT_MSG)
+            # Title is a `gflow-cli ...` prefix per project convention (post-rename a02684f).
+            # cli_video.py's _run_t2v / _run_i2v don't currently set a title — tracked separately.
+            project = await client.create_project(title=_T2I_PROJECT_TITLE)
+            console.print(f"  Project: [dim]{project.project_id}[/dim]")
+            console.print(
+                f"  Generating {count} image(s) ({req.model.value}, {req.aspect.value})..."
             )
+            if count == 1:
+                img = await client.generate_image(project_id=project.project_id, req=req)
+                images: list[GeneratedImage] = [img]
+            else:
+                images = await client.generate_images_batch(
+                    project_id=project.project_id, req=req, count=count
+                )
 
-        saved_paths: list[Path] = []
-        for i, img in enumerate(images, start=1):
-            target = (
-                out / f"{img.media_name}_{i}.png"
-                if out is not None
-                else image_output_path(output_root, job_id=img.media_name, index=i)
-            )
-            saved = await client.download_image(img, target)
-            saved_paths.append(saved)
+            saved_paths: list[Path] = []
+            for i, img in enumerate(images, start=1):
+                target = (
+                    out / f"{img.media_name}_{i}.png"
+                    if out is not None
+                    else image_output_path(output_root, job_id=img.media_name, index=i)
+                )
+                saved = await client.download_image(img, target)
+                saved_paths.append(saved)
 
-        _print_t2i_summary(images, saved_paths)
+            _print_t2i_summary(images, saved_paths)
+
+            try:
+                recorder.record_generated_images(
+                    profile_name=profile_name,
+                    profile_dir=profile_dir,
+                    project=project,
+                    request=req,
+                    images=images,
+                    saved_paths=saved_paths,
+                    input_media_ids=[],
+                    operation_kind="t2i",
+                )
+            except DataStoreError as exc:
+                first_image = images[0] if images else None
+                first_path = saved_paths[0] if saved_paths else None
+                _warn_persistence_failed_after_success(
+                    exc=exc,
+                    flow_media_id=first_image.media_name if first_image else None,
+                    local_path=first_path,
+                )
+    finally:
+        recorder.close()
 
 
 def _print_t2i_summary(images: list[GeneratedImage], saved_paths: list[Path]) -> None:
@@ -746,6 +814,7 @@ def i2i(
     settings = get_settings()
     run_with_handlers(
         lambda: _run_i2i(
+            profile_name=profile_name,
             profile_dir=provider_dir,
             headless=settings.headless,
             prompt=prompt,
@@ -795,6 +864,7 @@ async def _resolve_refs(
 
 async def _run_i2i(
     *,
+    profile_name: str,
     profile_dir: Path,
     headless: bool,
     prompt: str,
@@ -806,46 +876,71 @@ async def _run_i2i(
     output_root: Path,
     transport: str | None = None,
 ) -> None:
-    async with FlowApiClient(
-        profile_dir=profile_dir, headless=headless, transport=transport
-    ) as client:
-        console.print(_CREATING_PROJECT_MSG)
-        # Title is a `gflow-cli ...` prefix per project convention (post-rename a02684f).
-        # cli_video.py's _run_t2v / _run_i2v don't currently set a title — tracked separately.
-        project = await client.create_project(title="gflow-cli i2i")
-        console.print(f"  Project: [dim]{project.project_id}[/dim]")
+    settings = get_settings()
+    recorder = OperationRecorder.open(settings)
+    try:
+        async with FlowApiClient(
+            profile_dir=profile_dir, headless=headless, transport=transport
+        ) as client:
+            console.print(_CREATING_PROJECT_MSG)
+            # Title is a `gflow-cli ...` prefix per project convention (post-rename a02684f).
+            # cli_video.py's _run_t2v / _run_i2v don't currently set a title — tracked separately.
+            project = await client.create_project(title="gflow-cli i2i")
+            console.print(f"  Project: [dim]{project.project_id}[/dim]")
 
-        resolved_refs = await _resolve_refs(client, project.project_id, classified_refs)
-        req = GenerateImageRequest(
-            prompt=prompt,
-            aspect=aspect,
-            model=model,
-            refs=resolved_refs,
-        )
-
-        console.print(
-            f"  Generating {count} image(s) with {len(resolved_refs)} ref(s) "
-            f"({req.model.value}, {req.aspect.value})..."
-        )
-        if count == 1:
-            img = await client.generate_image(project_id=project.project_id, req=req)
-            images: list[GeneratedImage] = [img]
-        else:
-            images = await client.generate_images_batch(
-                project_id=project.project_id, req=req, count=count
+            resolved_refs = await _resolve_refs(client, project.project_id, classified_refs)
+            req = GenerateImageRequest(
+                prompt=prompt,
+                aspect=aspect,
+                model=model,
+                refs=resolved_refs,
             )
 
-        saved_paths: list[Path] = []
-        for i, img in enumerate(images, start=1):
-            target = (
-                out / f"{img.media_name}_{i}.png"
-                if out is not None
-                else image_output_path(output_root, job_id=img.media_name, index=i)
+            console.print(
+                f"  Generating {count} image(s) with {len(resolved_refs)} ref(s) "
+                f"({req.model.value}, {req.aspect.value})..."
             )
-            saved = await client.download_image(img, target)
-            saved_paths.append(saved)
+            if count == 1:
+                img = await client.generate_image(project_id=project.project_id, req=req)
+                images: list[GeneratedImage] = [img]
+            else:
+                images = await client.generate_images_batch(
+                    project_id=project.project_id, req=req, count=count
+                )
 
-        _print_i2i_summary(images, saved_paths)
+            saved_paths: list[Path] = []
+            for i, img in enumerate(images, start=1):
+                target = (
+                    out / f"{img.media_name}_{i}.png"
+                    if out is not None
+                    else image_output_path(output_root, job_id=img.media_name, index=i)
+                )
+                saved = await client.download_image(img, target)
+                saved_paths.append(saved)
+
+            _print_i2i_summary(images, saved_paths)
+
+            try:
+                recorder.record_generated_images(
+                    profile_name=profile_name,
+                    profile_dir=profile_dir,
+                    project=project,
+                    request=req,
+                    images=images,
+                    saved_paths=saved_paths,
+                    input_media_ids=[ref.name for ref in resolved_refs],
+                    operation_kind="i2i",
+                )
+            except DataStoreError as exc:
+                first_image = images[0] if images else None
+                first_path = saved_paths[0] if saved_paths else None
+                _warn_persistence_failed_after_success(
+                    exc=exc,
+                    flow_media_id=first_image.media_name if first_image else None,
+                    local_path=first_path,
+                )
+    finally:
+        recorder.close()
 
 
 def _print_i2i_summary(images: list[GeneratedImage], saved_paths: list[Path]) -> None:
