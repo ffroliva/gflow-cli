@@ -9,6 +9,11 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ### Added
 
+- **`--json` flag on `gflow auth list`.** Emits the profile inventory as a JSON
+  array (`name` / `is_default` / `cookies_present` / `profile_dir` /
+  `last_used_at`) on stdout so a programmatic caller (e.g. a worker discovering
+  authenticated profiles) can `json.loads(stdout)` instead of scraping the
+  Rich table.
 - **Per-model r2v reference-image cap rebuilt as a data table.** Replaces the
   prior pair of constants (`OMNI_REFERENCE_CAP=7`, `VEO_REFERENCE_CAP=3`) with
   a `VideoModel -> int` mapping consulted by

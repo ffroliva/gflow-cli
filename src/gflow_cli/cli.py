@@ -190,9 +190,28 @@ def auth_status(profile: str | None) -> None:
 
 
 @auth.command("list")
-def auth_list() -> None:
+@click.option("--json", "as_json", is_flag=True, help="Machine-readable JSON instead of a table.")
+def auth_list(as_json: bool) -> None:
     """List every profile and indicate the current default."""
     profiles = profile_store.list_profiles()
+    if as_json:
+        import json
+
+        click.echo(
+            json.dumps(
+                [
+                    {
+                        "name": p.name,
+                        "is_default": p.is_default,
+                        "cookies_present": p.cookies_present,
+                        "last_used_at": p.last_used_at.isoformat() if p.last_used_at else None,
+                        "profile_dir": str(p.profile_dir),
+                    }
+                    for p in profiles
+                ]
+            )
+        )
+        return
     _render_profiles_table(profiles)
 
 
