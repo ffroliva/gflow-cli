@@ -31,6 +31,14 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ### Fixed
 
+- `FlowApiClient.__aenter__` now tears down a partially-launched browser if any
+  step after the Playwright driver starts raises (e.g. the persistent-context
+  launch, the bootstrap navigation, or `transport.setup`). Python does not call
+  `__aexit__` when `__aenter__` raises, so an unguarded failure orphaned the
+  chrome process, which then held the profile's user-data-dir lock — the next
+  run could not acquire it and spiralled into rapid `about:blank` tabs +
+  `TargetClosedError`. Context close + driver stop are now shared by
+  `__aenter__`'s guard and `__aexit__` via `_close_browser_resources`.
 - `gflow image i2i --ref <local-file>` now binds the reference through the
   editor's media dialog instead of the REST `uploadImage` endpoint (which 401s —
   same root as #15/#39). Local-path refs ride a new `GenerateImageRequest.ref_paths`
