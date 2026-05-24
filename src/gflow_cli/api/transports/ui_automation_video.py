@@ -142,8 +142,34 @@ UPLOAD_IMAGE_ROUTE = "uploadImage"
 FRAME_SLOT_BY_LABEL = "div[aria-haspopup='dialog']:has-text('{label}')"
 SWAP_CONTAINER = "div:has(> button:has(i.google-symbols:text-is('swap_horiz')))"
 FRAME_SLOTS_STRUCT = SWAP_CONTAINER + " > div[aria-haspopup='dialog']"
-UPLOAD_MEDIA_BUTTON = "button:has-text('Upload media')"
-ADD_TO_PROMPT_BUTTON = "button:has-text('Add to Prompt')"
+# Media-dialog action buttons. These MUST be locale-agnostic: Flow renders the
+# dialog in the CHROME PROFILE's language (NOT the Google account language, and
+# the `--lang=en-US` launch arg does NOT override an existing profile's stored
+# language), so a text match like has-text('Upload media') silently misses on a
+# pt-BR / th / ... profile -> the file chooser never opens -> 34s hang (#56).
+# Anchor on the Material Symbols icon ligature (locale-free) instead:
+#   - 'Upload media' carries the `upload` icon. Use :text-is('upload') (EXACT) so
+#     it doesn't also grab the 'Uploads' tab (icon `drive_folder_upload`).
+#   - 'Add to Prompt' has NO icon, so it can't be matched by ligature; it's the
+#     only iconless button in the open dialog -> selected structurally at the
+#     call site via .filter(has_not=<icon>).
+# Both are scoped to the open Radix popover ([role='dialog'][data-state='open']).
+# FALLBACK / OPERATOR NOTE: if Google ever restructures this dialog so even these
+# anchors break, `_upload_via_open_dialog` raises a clear error + screenshot
+# instead of hanging. The operator workaround is to set the CHROME PROFILE
+# language to English -- the Google ACCOUNT language alone is NOT enough.
+UPLOAD_MEDIA_BUTTON = (
+    "[role='dialog'][data-state='open'] button:has(i.google-symbols:text-is('upload'))"
+)
+# Tier-2 fallback: the original localized-text selector (#50). Only matches an
+# ENGLISH-rendering profile — kept as a graceful fallback for the narrow case
+# where Google changes the `upload` icon ligature but the English label survives.
+# This is exactly why the failure message tells the operator to set the Chrome
+# profile to English: it makes this fallback tier viable.
+UPLOAD_MEDIA_BUTTON_TEXT = "[role='dialog'][data-state='open'] button:has-text('Upload media')"
+# 'Add to Prompt' has no stable string anchor; selected structurally (the lone
+# iconless button) at the call site. This scope is the open media dialog.
+ADD_TO_PROMPT_DIALOG = "[role='dialog'][data-state='open']"
 # R2V references mode has NO Start/End slots — references are added via the
 # only button[aria-haspopup='dialog'] in the editor: a 'Create' button carrying
 # the 'add_2' icon (its visible text 'Create' / 'Add Media' is unreliable — a
@@ -629,13 +655,18 @@ class VideoGenerationMixin:
         await slot.click()
         await page.wait_for_timeout(1000)  # media dialog opens
         await VideoGenerationMixin._upload_via_open_dialog(
-            page, image, log_label=label, timeout_s=timeout_s
+            page, image, log_label=label, out_dir=out_dir, timeout_s=timeout_s
         )
         log.info("ui_automation_video.frame_attached", slot=label)
 
     @staticmethod
     async def _upload_via_open_dialog(
-        page: Page, image: Path, *, log_label: str, timeout_s: float = 120.0
+        page: Page,
+        image: Path,
+        *,
+        log_label: str,
+        out_dir: Path | None = None,
+        timeout_s: float = 120.0,
     ) -> None:
         """With a media dialog ALREADY open, upload `image` and commit it into
         the active slot/carousel: 'Upload media' (file chooser) -> wait the
@@ -653,9 +684,35 @@ class VideoGenerationMixin:
 
         page.on("response", on_response)
         try:
-            async with page.expect_file_chooser(timeout=8000) as fc_info:
-                await page.locator(UPLOAD_MEDIA_BUTTON).first.click()
-            chooser = await fc_info.value
+            # Tier 1 = locale-agnostic icon selector (primary, every locale).
+            # Tier 2 = the original English-text selector (#50) — catches an
+            # icon-ligature change on an English profile. If BOTH miss, fail loud
+            # with a screenshot. Short per-tier timeouts so two misses can't add
+            # up to the silent ~34s hang that #56 was about.
+            chooser = None
+            last_err: Exception | None = None
+            for sel in (UPLOAD_MEDIA_BUTTON, UPLOAD_MEDIA_BUTTON_TEXT):
+                try:
+                    async with page.expect_file_chooser(timeout=8000) as fc_info:
+                        await page.locator(sel).first.click(timeout=4000)
+                    chooser = await fc_info.value
+                    break
+                except Exception as e:  # noqa: BLE001 — fall through to the next tier
+                    last_err = e
+            if chooser is None:
+                shot = await _capture_debug_screenshot(
+                    page, out_dir, f"debug_upload_no_chooser_{log_label}.png"
+                )
+                raise RuntimeError(
+                    f"Neither the icon nor the text 'Upload media' selector opened a file "
+                    f"chooser for {log_label!r} — Google likely changed the media dialog "
+                    f"(issue #56). Screenshot: {shot}. Workaround: set the CHROME BROWSER "
+                    f"PROFILE's language to English (chrome://settings/languages). NOTE: "
+                    f"this is the Chrome PROFILE language, NOT the Google ACCOUNT language "
+                    f"— changing only the Google account language does NOT work, because "
+                    f"Flow follows the Chrome profile locale (and the --lang=en-US launch "
+                    f"arg cannot override an already-configured profile)."
+                ) from last_err
             await chooser.set_files(str(image))
             deadline = time.monotonic() + timeout_s
             while not uploaded and time.monotonic() < deadline:
@@ -665,7 +722,14 @@ class VideoGenerationMixin:
         finally:
             page.remove_listener("response", on_response)
 
-        add_btn = page.locator(ADD_TO_PROMPT_BUTTON).first
+        # 'Add to Prompt' = the only iconless button in the open dialog (its text
+        # is localized; see the UPLOAD_MEDIA_BUTTON note). Select it structurally.
+        add_btn = (
+            page.locator(ADD_TO_PROMPT_DIALOG)
+            .last.locator("button")
+            .filter(has_not=page.locator("i.google-symbols"))
+            .last
+        )
         if await add_btn.count():
             await add_btn.click()
         try:
@@ -709,7 +773,7 @@ class VideoGenerationMixin:
             await add_media.click()
             await page.wait_for_timeout(1000)
             await VideoGenerationMixin._upload_via_open_dialog(
-                page, img, log_label=f"ref{i}", timeout_s=timeout_s
+                page, img, log_label=f"ref{i}", out_dir=out_dir, timeout_s=timeout_s
             )
             attached += 1
             log.info("ui_automation_video.reference_attached", index=i)

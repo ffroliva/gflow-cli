@@ -329,13 +329,12 @@ def _make_i2i_client(
 
 
 class TestImageI2I:
-    def test_i2i_uploads_local_ref_paths(self, runner: CliRunner, tmp_path: Path) -> None:
-        """Local --ref path triggers upload_image; the returned UUID lands in
-        the GenerateImageRequest.refs and downstream imageInputs[]."""
+    def test_i2i_attaches_local_ref_paths(self, runner: CliRunner, tmp_path: Path) -> None:
+        """Local --ref path lands on req.ref_paths for UI media-dialog attach —
+        it must NOT hit the REST uploadImage endpoint (which 401s, see #15/#39)."""
         png = tmp_path / "hero.png"
         png.write_bytes(b"\x89PNG\r\n\x1a\n")
-        upload_uuid = "ddb6ef97-262d-49f4-8269-4a28c0fae6a2"
-        client = _make_i2i_client(upload_uuid=upload_uuid)
+        client = _make_i2i_client(upload_uuid="should-not-be-used")
         out_dir = tmp_path / "out"
 
         with (
@@ -352,14 +351,14 @@ class TestImageI2I:
             )
 
         assert result.exit_code == 0, result.output
-        client.upload_image.assert_awaited_once()
-        # Inspect the GenerateImageRequest passed to generate_image — UUID
-        # from upload_image should appear in req.refs.
+        client.upload_image.assert_not_called()
+        # Local file goes to req.ref_paths (UI-attached); refs (wire UUIDs) stays empty.
         call = client.generate_image.await_args
         assert call is not None
         req = call.kwargs["req"]
-        assert len(req.refs) == 1
-        assert req.refs[0].name == upload_uuid
+        assert req.refs == ()
+        assert len(req.ref_paths) == 1
+        assert req.ref_paths[0] == png.resolve()
 
     def test_i2i_passes_through_uuid_refs(self, runner: CliRunner, tmp_path: Path) -> None:
         """Bare-UUID --ref must NOT trigger upload_image and must be used verbatim."""
@@ -388,13 +387,13 @@ class TestImageI2I:
         assert len(req.refs) == 1
         assert req.refs[0].name == uuid_str
 
-    def test_i2i_mixes_paths_and_uuids(self, runner: CliRunner, tmp_path: Path) -> None:
-        """Mixed `--ref path --ref uuid` → one upload, two ordered entries."""
+    def test_i2i_splits_paths_and_uuids(self, runner: CliRunner, tmp_path: Path) -> None:
+        """Mixed `--ref path --ref uuid` → local path on ref_paths (UI-attached),
+        bare UUID on refs (wire). No REST upload for either."""
         png = tmp_path / "hero.png"
         png.write_bytes(b"\x89PNG\r\n\x1a\n")
-        uploaded_uuid = "11111111-1111-1111-1111-111111111111"
         passthrough_uuid = "22222222-2222-2222-2222-222222222222"
-        client = _make_i2i_client(upload_uuid=uploaded_uuid)
+        client = _make_i2i_client(upload_uuid="should-not-be-used")
         out_dir = tmp_path / "out"
 
         with (
@@ -421,13 +420,13 @@ class TestImageI2I:
             )
 
         assert result.exit_code == 0, result.output
-        # Exactly one upload (for the path) — the bare UUID must be passed through.
-        assert client.upload_image.await_count == 1
+        client.upload_image.assert_not_called()
         call = client.generate_image.await_args
         assert call is not None
         req = call.kwargs["req"]
-        # Order matters: path → uploaded_uuid first, then passthrough_uuid.
-        assert [r.name for r in req.refs] == [uploaded_uuid, passthrough_uuid]
+        # Local path → ref_paths; bare UUID → refs.
+        assert [p for p in req.ref_paths] == [png.resolve()]
+        assert [r.name for r in req.refs] == [passthrough_uuid]
 
     def test_i2i_errors_on_no_refs(self, runner: CliRunner) -> None:
         """`image i2i` without any --ref must exit 2 with a clear message."""
@@ -709,11 +708,18 @@ class TestRecorderIntegration:
         assert recorder.closed
 
     def test_i2i_records_inputs_and_outputs(self, runner: CliRunner, tmp_path: Path) -> None:
+        # Post-PR-#50 i2i flow distinguishes two ref shapes:
+        #   1. Already-uploaded UUID ref — persists as input_media_ids.
+        #   2. Local-file ref — bound via the editor's media dialog by the
+        #      transport; has NO Flow media_id at recorder time, so it MUST
+        #      NOT appear in input_media_ids.
         png = tmp_path / "hero.png"
         png.write_bytes(b"\x89PNG\r\n\x1a\n")
-        upload_uuid = "ddb6ef97-262d-49f4-8269-4a28c0fae6a2"
+        existing_uuid = "ddb6ef97-262d-49f4-8269-4a28c0fae6a2"
         images = [_make_generated_image(media_name="out-img-1")]
-        client = _make_i2i_client(images=images, upload_uuid=upload_uuid)
+        # upload_uuid is unused on the new flow (transport binds local refs
+        # directly) but the helper still requires the kwarg.
+        client = _make_i2i_client(images=images, upload_uuid=existing_uuid)
         recorder = FakeRecorder()
         out_dir = tmp_path / "out"
 
@@ -727,7 +733,17 @@ class TestRecorderIntegration:
 
             result = runner.invoke(
                 main,
-                ["image", "i2i", "make cinematic", "--ref", str(png), "--out", str(out_dir)],
+                [
+                    "image",
+                    "i2i",
+                    "make cinematic",
+                    "--ref",
+                    existing_uuid,  # UUID ref — persists
+                    "--ref",
+                    str(png),  # local file ref — invisible to recorder
+                    "--out",
+                    str(out_dir),
+                ],
                 catch_exceptions=False,
             )
 
@@ -735,7 +751,9 @@ class TestRecorderIntegration:
         assert len(recorder.generated) == 1
         rec = recorder.generated[0]
         assert rec["operation_kind"] == "i2i"
-        assert rec["input_media_ids"] == [upload_uuid]
+        # Only the UUID ref reaches the recorder. The local-file ref is bound
+        # directly at the transport layer and has no media_id to persist.
+        assert rec["input_media_ids"] == [existing_uuid]
         assert recorder.closed
 
     def test_t2i_persistence_failure_after_success_warns_and_succeeds(
