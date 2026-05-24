@@ -52,6 +52,12 @@ build-backend = "hatchling.build"
 [tool.hatch.build.targets.wheel]
 packages = ["src/gflow_cli"]
 
+[tool.hatch.build.targets.wheel.force-include]
+"src/gflow_cli/data/migrations" = "gflow_cli/data/migrations"
+
+[tool.hatch.build.targets.sdist.force-include]
+"src/gflow_cli/data/migrations" = "src/gflow_cli/data/migrations"
+
 [tool.ruff]
 line-length = 100
 target-version = "py311"
