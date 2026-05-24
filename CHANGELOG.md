@@ -53,6 +53,15 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   cost sub-marker, and self-tests for the auto-marker conftest hook.
 - `docs/E2E_TESTING.md` — comprehensive e2e strategy and layer reference document.
 
+### Fixed
+
+- Structlog logs are now routed to stderr (via
+  `PrintLoggerFactory(file=sys.stderr)`) instead of stdout. Previously every
+  CLI event leaked onto stdout, which broke the `--json` contract for
+  programmatic callers — `json.loads(stdout)` failed because the JSON
+  payload was preceded by event-log lines. Logs are diagnostics; stdout is
+  data. No-op for human users (terminals still show logs the same way).
+
 ### Changed
 
 - `gflow_cli.api.video` no longer exposes the standalone `OMNI_REFERENCE_CAP` /
