@@ -8,6 +8,7 @@
 |---|---|---|
 | Google session cookies (in `$GFLOW_CLI_HOME/profile_<name>/Default/Cookies`) | Theft → full access to user's Google account | **High** |
 | Generated outputs (`$GFLOW_CLI_OUTPUT_DIR/...`) | Unwanted disclosure | Medium (depends on content) |
+| Local database (`$GFLOW_CLI_HOME/gflow.db`) | Disclosure of prompt history and asset provenance | Low–Medium (depends on prompt content; use `GFLOW_CLI_HISTORY_PROMPTS=redacted` to reduce) |
 | `.env` file with `GFLOW_CLI_GEMINI_API_KEY` | Theft → API quota theft, billing | Medium |
 | Project-internal logs | Leaking prompts / asset IDs | Low |
 
@@ -40,6 +41,38 @@ Not used by v0.4.0a2's reverse-engineered Flow provider. Documented here in adva
 
 - **Location:** stdout/stderr by default. No log file unless you redirect.
 - **Content scrubbing:** Prompts, asset UUIDs, job IDs, profile names. No cookies, no tokens, no API keys.
+
+## Local data layer
+
+`gflow-cli` maintains a local SQLite database at `<GFLOW_CLI_HOME>/gflow.db` (default) that records provenance for every new image and video operation.
+
+### What is stored
+
+| Field | Stored? |
+|---|---|
+| Profile name | Yes |
+| Flow project ID, media ID, workflow ID, operation ID | Yes |
+| Local file paths of downloaded assets | Yes |
+| Prompt text | Yes (default) — set `GFLOW_CLI_HISTORY_PROMPTS=redacted` to store hash only |
+| Prompt SHA-256 hash | Yes (always) |
+| Asset metadata: model, aspect ratio, dimensions, seed, timestamps | Yes |
+| Signed CDN URLs | **Never** — stripped by `redact_metadata` before DB write |
+| reCAPTCHA tokens | **Never** — stripped by `redact_metadata` before DB write |
+| Authorization headers and cookies | **Never** — stripped by `redact_metadata` before DB write |
+
+### Privacy controls
+
+- **`GFLOW_CLI_HISTORY_PROMPTS=redacted`** — store only the SHA-256 hash of the prompt, never the plain text. Useful when prompts contain sensitive or confidential content.
+- The database is local-only. No cloud sync, no telemetry upload. It lives on your filesystem and never leaves the machine unless you explicitly copy it.
+- `GFLOW_CLI_DB_PATH` lets you redirect the database to any path (e.g. an encrypted volume). A fresh path creates an empty database automatically.
+
+### Redaction guarantee
+
+The `OperationRecorder.redact_metadata` method explicitly strips `signedUrl`, `cdnUrl`, `token`, `recaptchaToken`, `authorization`, and `cookie` keys (case-insensitive, including nested structures) before any data reaches the database. This is covered by unit tests in `tests/data/test_recorder.py`.
+
+### Database file permissions
+
+The database is created with standard OS file permissions. On POSIX systems this means it is readable by the current user (mode `0600` is not enforced — use filesystem-level controls if you need strict isolation). On Windows, ACLs follow the `GFLOW_CLI_HOME` directory defaults. Use full-disk encryption (FileVault / BitLocker / LUKS) if you store sensitive prompts and need at-rest protection.
 
 ## CI / Repository security controls (v0.6.0a5+)
 

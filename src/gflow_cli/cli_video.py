@@ -10,6 +10,7 @@ from pathlib import Path
 from typing import Any
 
 import click
+import structlog
 from rich.console import Console
 
 from gflow_cli._cli_helpers import (
@@ -17,8 +18,27 @@ from gflow_cli._cli_helpers import (
     _resolve_profile,
     run_with_handlers,
 )
+from gflow_cli.config import get_settings
+from gflow_cli.data.recorder import OperationRecorder
+from gflow_cli.errors import DataStoreError
 
 console = Console()
+logger = structlog.get_logger(__name__)
+
+
+def _warn_persistence_failed_after_success(
+    *,
+    exc: Exception,
+    flow_media_id: str | None,
+    local_path: Path | None,
+) -> None:
+    logger.warning(
+        "data.persistence_failed_after_success",
+        error_class=type(exc).__name__,
+        flow_media_id=flow_media_id,
+        local_path=str(local_path) if local_path is not None else None,
+    )
+
 
 _BATCH_UNAVAILABLE = (
     "[yellow]`gflow video batch` is not yet available.[/yellow]\n"
@@ -26,18 +46,61 @@ _BATCH_UNAVAILABLE = (
 )
 
 
-async def _generate_and_report(request: Any, *, profile_dir: Path, out_dir: Path | None) -> None:
-    """Drive the transport for a single GenerateVideoRequest and print the
-    result (or fail with a non-zero exit). Shared by t2v and i2v."""
-    from gflow_cli.api.transports.ui_automation import UiAutomationTransport
+async def _generate_and_report(
+    request: Any,
+    *,
+    profile_name: str,
+    profile_dir: Path,
+    out_dir: Path | None,
+) -> None:
+    """Drive FlowApiClient for a single GenerateVideoRequest and print the
+    result (or fail with a non-zero exit). Shared by t2v, i2v, and r2v."""
+    from gflow_cli.api.client import FlowApiClient
+    from gflow_cli.api.video import VideoStarted
 
-    transport = UiAutomationTransport()
+    console.print("[dim]Generating video — this takes ~2 minutes…[/dim]")
+    settings = get_settings()
+    recorder = OperationRecorder.open(settings)
     try:
-        await transport.setup(profile_dir)
-        console.print("[dim]Generating video — this takes ~2 minutes…[/dim]")
-        result = await transport.generate_video(request=request, out_dir=out_dir, download=True)
+        async with FlowApiClient(profile_dir=profile_dir, out_dir=out_dir) as client:
+
+            def on_started(started: VideoStarted) -> None:
+                try:
+                    recorder.record_started_video(
+                        profile_name=profile_name,
+                        profile_dir=profile_dir,
+                        request=request,
+                        started=started,
+                    )
+                except DataStoreError as exc:
+                    _warn_persistence_failed_after_success(
+                        exc=exc,
+                        flow_media_id=started.media_id,
+                        local_path=None,
+                    )
+
+            result = await client.generate_video(
+                req=request,
+                out_dir=out_dir,
+                download=True,
+                on_started=on_started,
+            )
+
+        try:
+            recorder.record_completed_video(
+                profile_name=profile_name,
+                _profile_dir=profile_dir,
+                request=request,
+                result=result,
+            )
+        except DataStoreError as exc:
+            _warn_persistence_failed_after_success(
+                exc=exc,
+                flow_media_id=result.status.media_id,
+                local_path=result.local_path,
+            )
     finally:
-        await transport.teardown()
+        recorder.close()
 
     if not result.status.succeeded:
         reasons = (
@@ -53,6 +116,7 @@ async def _generate_and_report(request: Any, *, profile_dir: Path, out_dir: Path
 
 async def _run_t2v(
     *,
+    profile_name: str,
     profile_dir: Path,
     prompt: str,
     aspect: str,
@@ -71,11 +135,14 @@ async def _run_t2v(
         duration=duration,
         count=count,
     )
-    await _generate_and_report(request, profile_dir=profile_dir, out_dir=out_dir)
+    await _generate_and_report(
+        request, profile_name=profile_name, profile_dir=profile_dir, out_dir=out_dir
+    )
 
 
 async def _run_i2v(
     *,
+    profile_name: str,
     profile_dir: Path,
     image: str,
     prompt: str,
@@ -98,11 +165,14 @@ async def _run_i2v(
         start_image=Path(image),
         end_image=Path(end_image) if end_image else None,
     )
-    await _generate_and_report(request, profile_dir=profile_dir, out_dir=out_dir)
+    await _generate_and_report(
+        request, profile_name=profile_name, profile_dir=profile_dir, out_dir=out_dir
+    )
 
 
 async def _run_r2v(
     *,
+    profile_name: str,
     profile_dir: Path,
     prompt: str,
     refs: tuple[str, ...],
@@ -123,7 +193,9 @@ async def _run_r2v(
         count=count,
         reference_images=tuple(Path(r) for r in refs),
     )
-    await _generate_and_report(request, profile_dir=profile_dir, out_dir=out_dir)
+    await _generate_and_report(
+        request, profile_name=profile_name, profile_dir=profile_dir, out_dir=out_dir
+    )
 
 
 async def _run_batch(**kwargs: Any) -> None:  # pragma: no cover
@@ -197,6 +269,7 @@ def t2v(
     provider_dir = _make_provider_dir(profile_name)
     run_with_handlers(
         lambda: _run_t2v(
+            profile_name=profile_name,
             profile_dir=provider_dir,
             prompt=prompt,
             aspect=aspect,
@@ -280,6 +353,7 @@ def i2v(
     provider_dir = _make_provider_dir(profile_name)
     run_with_handlers(
         lambda: _run_i2v(
+            profile_name=profile_name,
             profile_dir=provider_dir,
             image=image,
             prompt=prompt,
@@ -364,6 +438,7 @@ def r2v(
     provider_dir = _make_provider_dir(profile_name)
     run_with_handlers(
         lambda: _run_r2v(
+            profile_name=profile_name,
             profile_dir=provider_dir,
             prompt=prompt,
             refs=refs,

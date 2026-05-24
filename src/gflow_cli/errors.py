@@ -19,6 +19,9 @@ __all__ = [
     "AuthLoginTimeoutError",
     "BatchPartialError",
     "BatchIntegrityError",
+    "DataStoreError",
+    "DataMigrationError",
+    "DataIntegrityError",
     "EXIT_CODE_MAP",
 ]
 
@@ -391,10 +394,39 @@ class BatchIntegrityError(GFlowError):
         self.prompt_indices = prompt_indices
 
 
+class DataStoreError(GFlowError):
+    """Raised when the local data layer cannot open, read, or write SQLite."""
+
+    problem_type = "https://gflow-cli.dev/errors/data-store"
+    title = "Data store error"
+    _default_remediation = (
+        "Check GFLOW_CLI_DB_PATH and filesystem permissions. "
+        "If the DB was created by a newer gflow-cli, upgrade gflow-cli or "
+        "point GFLOW_CLI_DB_PATH at a compatible database."
+    )
+
+
+class DataMigrationError(DataStoreError):
+    """Raised when local SQLite schema migration cannot proceed safely."""
+
+    problem_type = "https://gflow-cli.dev/errors/data-migration"
+    title = "Data migration error"
+
+
+class DataIntegrityError(DataStoreError):
+    """Raised when repository writes violate expected local DB constraints."""
+
+    problem_type = "https://gflow-cli.dev/errors/data-integrity"
+    title = "Data integrity error"
+
+
 # EXIT_CODE_MAP — most-specific class FIRST per isinstance walk semantics.
 # Subclasses inherit their parent's exit code if they don't have their own
 # entry. New entries MUST go BEFORE their parent class in this dict.
 EXIT_CODE_MAP: dict[type[GFlowError], int] = {
+    DataMigrationError: 16,
+    DataIntegrityError: 16,
+    DataStoreError: 16,
     BrowserSessionClosedError: 15,
     AuthBrowserRejectedError: 14,
     AuthLoginTimeoutError: 12,
