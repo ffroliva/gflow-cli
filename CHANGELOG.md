@@ -25,6 +25,19 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   still forced to en-US via `--lang=en-US`. Prep for issue #24 (locale-agnostic
   selectors); live-verified end-to-end with `GFLOW_CLI_LOCALE=pt-BR` against a
   Pro/Ultra account. See `docs/CONFIGURATION.md § GFLOW_CLI_LOCALE`.
+- **Local data layer** — `gflow-cli` now keeps a SQLite catalog of every new
+  image, batch, and video operation under `$GFLOW_CLI_DB_PATH` (default:
+  `~/.local/share/gflow-cli/data.db`). Records profile, project, asset
+  (model / aspect / dimensions / Flow media ID), operation provenance
+  (mode / prompt / model / timing / error), input↔output links, and
+  downloaded local files. New `gflow data media <id>` command resolves a
+  Flow media ID to its origin. `DataRepository` exposes seed-image resolvers
+  (`resolve_seed_image_by_path` / `resolve_seed_image` /
+  `resolve_latest_image`) — foundation for the upcoming I2V seed-reuse
+  path. Pre-Flow store failures exit `16` (`DataStoreError` /
+  `DataMigrationError` / `DataIntegrityError`); post-success store
+  failures warn and exit `0` (Flow already charged the credits). See
+  [`docs/DATA_LAYER.md`](docs/DATA_LAYER.md). (PR #58, stacked on #52.)
 
 ### Changed
 
