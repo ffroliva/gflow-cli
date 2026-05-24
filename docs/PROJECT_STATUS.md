@@ -4,7 +4,9 @@
 
 ## Current release
 
-**v0.8.1 — alpha (docs refresh).** Image (T2I / I2I / upload) + Video T2V / I2V / R2V live end-to-end on the `ui_automation` transport against live Pro/Ultra accounts, with a video `--model` picker (5 Veo models) and `--duration` / `--count`. Only video `batch` is still queued for Phase B. Three earlier HTTP transport strategies (`evaluate_fetch` / `bearer` / `sapisidhash`) are named in the codebase history; the actual modules have not been extracted into a subpackage. The production path is `ui_automation`.
+**v0.8.1 — alpha (latest on PyPI).** Image (T2I / I2I / upload) + Video T2V / I2V / R2V live end-to-end on the `ui_automation` transport against live Pro/Ultra accounts, with a video `--model` picker (5 Veo models) and `--duration` / `--count`. Only video `batch` (manifest runner) is still queued for Phase B — use a shell for-loop until then ([USAGE](USAGE.md#gflow-video-batch)). Three earlier HTTP transport strategies (`evaluate_fetch` / `bearer` / `sapisidhash`) are named in the codebase history; the actual modules have not been extracted into a subpackage. The production path is `ui_automation`.
+
+**Develop (unreleased, post-v0.8.1):** PR #37 (Sonar refactor), PR #46 (README badges), PR #48 (i2v/r2v + t2v `--model`/`--duration`/`--count` + image `--model` no-op fix), PR #51 (`GFLOW_CLI_LOCALE` env override, prep for issue #24). Targets v0.9.0.
 
 ## Milestone history
 

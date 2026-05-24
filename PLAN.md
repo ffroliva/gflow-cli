@@ -2,7 +2,7 @@
 
 > **Status:** Living document. Updated as phases complete.
 > **Owner:** [@ffroliva](https://github.com/ffroliva)
-> **Last revised:** 2026-05-16 (v0.6.0a5 — Bug A/B transport fixes + issue-tracked work)
+> **Last revised:** 2026-05-24 (develop — post-PR #48 i2v/r2v/model-picker, PR #51 locale env-override)
 
 This plan turns the v0.1 scaffold into a production-grade CLI for Google AI Ultra/Pro subscribers who want to spend their Flow credits via batch automation. The plan is opinionated, treating this repo as a portfolio-grade benchmark.
 
@@ -339,13 +339,13 @@ The video-generation feature has its own sub-phase plan (spike → Phase A → P
 - ⚠️ Q7 — status poll `page.request.post` → 401; the spec §5.5 polling design must be reworked in Phase A (capture Flow's own status responses).
 - ⏭️ Q1 / Q3 / Q6 — image attachment is an in-page catalog dialog; driving it, the start-only-I2V check, and the R2V slot cap are deferred to Phase B.
 
-**Next:** Phase A (T2V transport), once §5.5 is revised for the Q7 401. ✅ Issue #24 (locale-agnostic selectors) completed in v0.8.1.
+**Next:** Phase A (T2V transport), once §5.5 is revised for the Q7 401. Issue #24 (locale-agnostic selectors): Phase 1 (env override via `GFLOW_CLI_LOCALE`) landed via PR #51 on develop 2026-05-24 (post-v0.8.1, unreleased); live-verified end-to-end in pt-BR (1 credit, mp4 downloaded). Full removal of the `--lang=en-US` Chromium arg is gated on a selector-invariant capture across the remaining onboarding/new-project text selectors.
 
 ---
 
 ### Phase 7 — Protocol Extensions (v0.8.1, 2026-05-23)
 
-- [x] **Issue #24: Locale-Agnostic Selectors.** Refactored `UiAutomationTransport` to use locale-invariant selectors (ARIA, Radix tokens, icon ligatures), ensuring compatibility across all Google account languages. Verified E2E in English, Portuguese, and Spanish.
+- [~] **Issue #24: Locale-Agnostic Selectors — Phase 1 shipped, Phase 2 pending.** PR #51 (develop, 2026-05-24, post-v0.8.1) added the `GFLOW_CLI_LOCALE` env override on Playwright's launch `locale=` parameter, and live-verified `gflow video t2v` end-to-end under `pt-BR`. Some selectors are already locale-invariant (count tabs use `^(1x|x[2-4])$`, video aspect/duration use id-suffix + icon ligatures from PR #48); others — notably `ONBOARDING_SELECTORS`, parts of `NEW_PROJECT_SELECTORS` / `SUBMIT_BUTTON_SELECTORS`, and the I2V frame-slot text labels — are still localized and currently rely on the `--lang=en-US` Chromium launch arg added by PR #48. Tracked under [KNOWN_ISSUES § issue #24](KNOWN_ISSUES.md). Dropping `--lang=en-US` requires invariant capture across the remaining text selectors.
 - [ ] **Model Context Protocol (MCP) Server.** (Backlog) Expose core gflow-cli tools via MCP for language-agnostic agentic access.
 
 ---
