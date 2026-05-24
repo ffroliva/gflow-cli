@@ -137,6 +137,30 @@ _MODEL_FROM_CLI: Mapping[str, Model] = MappingProxyType(
     }
 )
 
+# Per-model I2I reference-image cap (live-observed). Flow silently keeps only
+# the first N references when more are attached, so the request is rejected up
+# front rather than letting the caller believe every ref was used. NARWHAL
+# (Nano Banana 2) and GEM_PIX_2 (Nano Pro) accept 10; IMAGEN_3_5 (Imagen 4)
+# accepts 3. MAX_IMAGE_REFERENCES is the ceiling for any (incl. future) model.
+MAX_IMAGE_REFERENCES = 10
+_IMAGE_REFERENCE_CAP: Mapping[Model, int] = MappingProxyType(
+    {
+        Model.NARWHAL: 10,
+        Model.GEM_PIX_2: 10,
+        Model.IMAGEN_3_5: 3,
+    }
+)
+
+
+def reference_cap_for(model: Model) -> int:
+    """Maximum number of I2I reference images *model* accepts.
+
+    Unknown/future models fall back to :data:`MAX_IMAGE_REFERENCES` rather than
+    raising, so adding a `Model` member without a cap entry degrades to the
+    ceiling instead of a `KeyError` at request-build time.
+    """
+    return _IMAGE_REFERENCE_CAP.get(model, MAX_IMAGE_REFERENCES)
+
 
 @dataclass(frozen=True)
 class ImageRef:
@@ -195,6 +219,12 @@ class GenerateImageRequest:
             raise ValueError("GenerateImageRequest.prompt must be non-empty")
         if not 1 <= self.count <= 4:
             raise ValueError(f"GenerateImageRequest.count must be 1–4, got {self.count}")
+        n_refs = len(self.refs) + len(self.ref_paths)
+        cap = reference_cap_for(self.model)
+        if n_refs > cap:
+            raise ValueError(
+                f"{self.model.value} allows at most {cap} reference image(s); got {n_refs}"
+            )
 
 
 def _client_context(*, project_id: str, recaptcha_token: str, session_id: str) -> dict[str, Any]:

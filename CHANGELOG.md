@@ -9,6 +9,17 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ### Added
 
+- **Per-model i2i reference-image cap.** Flow silently keeps only the first N
+  reference images when an i2i request attaches more than the model accepts,
+  so a caller could believe every ref was used. `gflow_cli.api.image.reference_cap_for(model)`
+  exposes the live-observed per-model cap: NARWHAL (Nano Banana 2) and GEM_PIX_2
+  (Nano Pro) accept 10, IMAGEN_3_5 (Imagen 4) accepts 3. Enforced as a domain
+  invariant in `GenerateImageRequest.__post_init__` and at the CLI boundary in
+  `gflow image i2i` (clean `click.UsageError` / exit 2 before any
+  profile/network work). Mirrors the existing video r2v cap pattern. E2e
+  tripwire at `tests/e2e/test_image_i2i_ref_cap_e2e.py` asserts Flow actually
+  consumes all `cap` refs (one `reference_attached` event per ref) so a future
+  silent truncation on the Flow side fails the test.
 - **Layered e2e test strategy with cost sub-markers.** The single `e2e` marker is
   now augmented by cost sub-markers (`e2e_auth`, `e2e_image`, `e2e_video`,
   `e2e_batch`, `e2e_data`, `smoke`) so callers can run only the tier they can

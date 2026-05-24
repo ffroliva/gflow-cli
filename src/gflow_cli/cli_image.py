@@ -32,7 +32,7 @@ from gflow_cli._cli_helpers import (
 )
 from gflow_cli.api.client import FlowApiClient
 from gflow_cli.api.dto import GeneratedImage
-from gflow_cli.api.image import Aspect, GenerateImageRequest, ImageRef, Model
+from gflow_cli.api.image import Aspect, GenerateImageRequest, ImageRef, Model, reference_cap_for
 from gflow_cli.api.transports import transport_choices
 from gflow_cli.config import get_settings
 from gflow_cli.data.recorder import OperationRecorder
@@ -821,6 +821,16 @@ def i2i(
     # "no --ref" case with exit 2 before we get here.
     classified_refs: list[ImageRef | Path] = [_classify_ref(ref) for ref in refs]
 
+    # Reject over-cap ref counts at the CLI boundary with a clear message (exit
+    # 2) rather than letting the domain ValueError surface as a generic error.
+    # GenerateImageRequest.__post_init__ enforces the same cap as an invariant.
+    model_enum = Model.from_cli(model)
+    cap = reference_cap_for(model_enum)
+    if len(classified_refs) > cap:
+        raise click.UsageError(
+            f"{model} allows at most {cap} reference image(s); got {len(classified_refs)}."
+        )
+
     profile_name = _resolve_profile(profile)
     provider_dir = _make_provider_dir(profile_name)
     settings = get_settings()
@@ -832,7 +842,7 @@ def i2i(
             prompt=prompt,
             classified_refs=classified_refs,
             aspect=Aspect.from_cli(aspect),
-            model=Model.from_cli(model),
+            model=model_enum,
             count=count,
             out=out,
             output_root=settings.output_dir,
