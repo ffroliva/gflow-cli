@@ -8,6 +8,7 @@ This module is the foundation for v0.10's ``show``/``search``/``export``
 sub-commands; additional query functions (list_images, list_videos,
 list_profiles) will be added in Tasks 2.3–2.5.
 """
+
 from __future__ import annotations
 
 import sqlite3
@@ -99,6 +100,7 @@ def list_projects(
 
 # ─── ImageRow + list_images ───────────────────────────────────────────────────
 
+
 @dataclass(frozen=True)
 class ImageRow:
     media_id: str
@@ -173,6 +175,7 @@ def list_images(
 
 
 # ─── VideoRow + list_videos ───────────────────────────────────────────────────
+
 
 @dataclass(frozen=True)
 class VideoRow:
@@ -250,6 +253,7 @@ def list_videos(
 
 
 # ─── ProfileRow + list_profiles ───────────────────────────────────────────────
+
 
 @dataclass(frozen=True)
 class ProfileRow:

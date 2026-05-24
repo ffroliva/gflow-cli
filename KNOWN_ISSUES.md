@@ -357,6 +357,34 @@ in English or Portuguese.
 
 ---
 
+### `omni-flash` t2v response omits operation name — `flow_operation_id` persists NULL
+
+- **Status:** Open · **Severity:** Low · **Affects:** v0.9.0+ (data layer)
+
+The data layer's `on_started` callback captures
+`operations[0].operation.name` from each `batchAsyncGenerateVideoText`
+response and persists it as `operations.flow_operation_id`. The
+`omni-flash` model's response shape does not carry that field, so
+omni-flash rows end up with `flow_operation_id` NULL while `veo-*` rows
+carry the expected `operations/...` identifier. The rest of the row
+(prompt, model, aspect, started/completed timestamps, batch ID, output
+paths) is recorded normally.
+
+**Impact:** cosmetic for now — `gflow data media <id>` and provenance
+lookup by Flow media ID still work. Any future feature that joins on
+`flow_operation_id` (none in the current CLI) would miss omni-flash
+rows.
+
+**Workaround:** none needed if you don't query by `flow_operation_id`.
+
+**Roadmap:** capture an `omni-flash` `batchAsyncGenerateVideoText`
+response sample, identify the equivalent provenance handle (if any), and
+either map it into `flow_operation_id` or document that omni-flash
+legitimately has no such identifier. Track via a follow-up issue once a
+sample is captured.
+
+---
+
 ## Mitigated
 
 ### Auth verification depends on Google's NextAuth session endpoint

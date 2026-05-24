@@ -1,4 +1,5 @@
 """Tests for gflow_cli.data.queries — pure read-only query functions."""
+
 from __future__ import annotations
 
 from pathlib import Path
@@ -6,9 +7,6 @@ from pathlib import Path
 import pytest
 
 from gflow_cli.data.queries import (
-    ImageRow,
-    ProfileRow,
-    VideoRow,
     list_images,
     list_profiles,
     list_projects,
@@ -65,6 +63,7 @@ def test_list_projects_image_video_counts(seeded: Path) -> None:
 def test_list_projects_empty_catalog_returns_empty_list(tmp_path: Path) -> None:
     """Open a fresh DB with migrations only — no seed data."""
     from gflow_cli.data.store import DataStore
+
     db = tmp_path / "empty.db"
     DataStore.open(db).close()  # runs migrations, then closes
     rows = list_projects(db_path=db, profile=None, limit=20, offset=0)
@@ -72,6 +71,7 @@ def test_list_projects_empty_catalog_returns_empty_list(tmp_path: Path) -> None:
 
 
 # ─── list_images ──────────────────────────────────────────────────────────────
+
 
 def test_list_images_returns_all_by_default(seeded: Path) -> None:
     rows = list_images(db_path=seeded, profile=None, limit=20, offset=0)
@@ -109,6 +109,7 @@ def test_list_images_pagination(seeded: Path) -> None:
 
 # ─── list_videos ──────────────────────────────────────────────────────────────
 
+
 def test_list_videos_returns_all_by_default(seeded: Path) -> None:
     rows = list_videos(db_path=seeded, profile=None, limit=20, offset=0)
     assert len(rows) == 2
@@ -126,6 +127,7 @@ def test_list_videos_carries_duration(seeded: Path) -> None:
 
 
 # ─── list_profiles ────────────────────────────────────────────────────────────
+
 
 def test_list_profiles_returns_catalog_known_profiles(seeded: Path) -> None:
     rows = list_profiles(db_path=seeded, limit=20, offset=0)

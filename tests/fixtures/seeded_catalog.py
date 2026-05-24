@@ -12,6 +12,7 @@ Catalog shape:
   - 10 local_files total
   - Timestamps span ~7 days so newest-first sort is verifiable
 """
+
 from __future__ import annotations
 
 import uuid
