@@ -31,6 +31,13 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ### Fixed
 
+- `gflow image i2i --ref <local-file>` now binds the reference through the
+  editor's media dialog instead of the REST `uploadImage` endpoint (which 401s —
+  same root as #15/#39). Local-path refs ride a new `GenerateImageRequest.ref_paths`
+  field and are attached via the inherited R2V `_attach_references` (the image-mode
+  add-media dialog is the same `add_2` surface). Live-verified end-to-end: upload
+  200, `imageInputs[]` populated, image returned. Bare-UUID `--ref` still flows
+  through `refs` unchanged.
 - `gflow image t2i/i2i --model` now actually selects the requested model. It was
   a no-op under `ui_automation` (the wire field was set but the model picker was
   never clicked, so Flow used its UI default). Adds `_select_image_model`.
