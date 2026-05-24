@@ -20,14 +20,16 @@ from gflow_cli._cli_helpers import (
     safe_path_text,
 )
 from gflow_cli.api.client import FlowApiClient
-from gflow_cli.api.dto import BatchSubmissionResult
+from gflow_cli.api.dto import BatchSubmissionResult, ProjectInfo
 from gflow_cli.api.image import Aspect, GenerateImageRequest, Model
 from gflow_cli.api.transports.ui_automation import UiAutomationTransport
+from gflow_cli.data.recorder import OperationRecorder
 from gflow_cli.errors import (
     EXIT_CODE_MAP,
     BatchIntegrityError,
     BatchPartialError,
     ConfigurationError,
+    DataStoreError,
     GFlowError,
 )
 
@@ -36,6 +38,21 @@ if TYPE_CHECKING:
 
 console = Console()
 logger = structlog.get_logger(__name__)
+
+
+def _warn_persistence_failed_after_success(
+    *,
+    exc: Exception,
+    flow_media_id: str | None,
+    local_path: Path | None,
+) -> None:
+    logger.warning(
+        "data.persistence_failed_after_success",
+        error_class=type(exc).__name__,
+        flow_media_id=flow_media_id,
+        local_path=str(local_path) if local_path is not None else None,
+    )
+    console.print("[yellow]Generated media was saved, but local history was not updated.[/yellow]")
 
 
 def _prompt_hash(text: str) -> str:
@@ -373,6 +390,8 @@ async def run_image_batch(
     continue_on_error: bool,
     project_title: str,
     client_factory: Callable[..., Any] | None = None,
+    profile_name: str | None = None,
+    recorder: OperationRecorder | None = None,
 ) -> list[BatchOutcome]:
     """Run prompts sequentially through one FlowApiClient session."""
 
@@ -649,6 +668,9 @@ async def _download_results(
     prompts: tuple[BatchPromptItem, ...],
     results: list[BatchSubmissionResult],
     output_dir: Path,
+    profile_name: str | None = None,
+    profile_dir: Path | None = None,
+    recorder: OperationRecorder | None = None,
 ) -> list[BatchOutcome]:
     """Download images from ok BatchSubmissionResults and build BatchOutcome list."""
     outcomes: list[BatchOutcome] = []
@@ -702,6 +724,30 @@ async def _download_results(
                 saved_paths=saved,
             )
         )
+
+        if recorder is not None and profile_name is not None and profile_dir is not None:
+            try:
+                recorder.record_generated_images(
+                    profile_name=profile_name,
+                    profile_dir=profile_dir,
+                    project=ProjectInfo(
+                        project_id=result.project_id, title="gflow-cli image batch"
+                    ),
+                    request=_to_request(item),
+                    images=list(result.images),
+                    saved_paths=saved,
+                    input_media_ids=[],
+                    operation_kind="t2i",
+                )
+            except DataStoreError as exc:
+                first_image = result.images[0] if result.images else None
+                first_path = saved[0] if saved else None
+                _warn_persistence_failed_after_success(
+                    exc=exc,
+                    flow_media_id=first_image.media_name if first_image else None,
+                    local_path=first_path,
+                )
+
     return outcomes
 
 
@@ -715,6 +761,8 @@ async def run_manifest_image_batch(
     continue_on_error: bool,
     jitter_range: tuple[float, float] = (JITTER_MIN_SECONDS, JITTER_MAX_SECONDS),
     client_factory: Callable[..., Any] | None = None,
+    profile_name: str | None = None,
+    recorder: OperationRecorder | None = None,
 ) -> list[BatchOutcome]:
     """Run a manifest batch via the transport's stay-mounted batch method.
 
@@ -774,6 +822,9 @@ async def run_manifest_image_batch(
                 prompts=prompts,
                 results=list(exc.partial_results),
                 output_dir=output_dir,
+                profile_name=profile_name,
+                profile_dir=profile_dir,
+                recorder=recorder,
             )
             raise BatchPartialError(
                 detail=exc.detail,
@@ -819,6 +870,9 @@ async def run_manifest_image_batch(
             prompts=prompts,
             results=results,
             output_dir=output_dir,
+            profile_name=profile_name,
+            profile_dir=profile_dir,
+            recorder=recorder,
         )
 
         # Post-download integrity check.
