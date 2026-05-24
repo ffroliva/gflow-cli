@@ -1,4 +1,5 @@
 """CLI integration tests for `gflow data list ...`."""
+
 from __future__ import annotations
 
 import json
@@ -57,8 +58,12 @@ def test_data_list_projects_profile_filter(seeded_db: Path) -> None:
 
 
 def test_data_list_projects_pagination(seeded_db: Path) -> None:
-    page1 = CliRunner().invoke(main, ["data", "list", "projects", "--limit", "2", "--offset", "0", "--json"])
-    page2 = CliRunner().invoke(main, ["data", "list", "projects", "--limit", "2", "--offset", "2", "--json"])
+    page1 = CliRunner().invoke(
+        main, ["data", "list", "projects", "--limit", "2", "--offset", "0", "--json"]
+    )
+    page2 = CliRunner().invoke(
+        main, ["data", "list", "projects", "--limit", "2", "--offset", "2", "--json"]
+    )
     assert page1.exit_code == 0
     assert page2.exit_code == 0
     p1 = {json.loads(ln)["project_id"] for ln in page1.output.splitlines() if ln.strip()}

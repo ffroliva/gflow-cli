@@ -80,7 +80,16 @@ def _emit_projects_table(rows: list[ProjectRow]) -> None:
 
 def _emit_images_table(rows: list[ImageRow]) -> None:
     tbl = Table(show_header=True, header_style="bold")
-    for col in ("MEDIA_ID", "PROFILE", "PROJECT_ID", "PROMPT", "ASPECT", "MODEL", "CREATED", "LOCAL_PATH"):
+    for col in (
+        "MEDIA_ID",
+        "PROFILE",
+        "PROJECT_ID",
+        "PROMPT",
+        "ASPECT",
+        "MODEL",
+        "CREATED",
+        "LOCAL_PATH",
+    ):
         tbl.add_column(col)
     for r in rows:
         tbl.add_row(
@@ -98,7 +107,17 @@ def _emit_images_table(rows: list[ImageRow]) -> None:
 
 def _emit_videos_table(rows: list[VideoRow]) -> None:
     tbl = Table(show_header=True, header_style="bold")
-    for col in ("MEDIA_ID", "PROFILE", "PROJECT_ID", "PROMPT", "ASPECT", "MODEL", "DURATION", "CREATED", "LOCAL_PATH"):
+    for col in (
+        "MEDIA_ID",
+        "PROFILE",
+        "PROJECT_ID",
+        "PROMPT",
+        "ASPECT",
+        "MODEL",
+        "DURATION",
+        "CREATED",
+        "LOCAL_PATH",
+    ):
         tbl.add_column(col)
     for r in rows:
         tbl.add_row(
