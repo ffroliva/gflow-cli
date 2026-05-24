@@ -25,6 +25,7 @@ import warnings
 from enum import StrEnum
 from functools import lru_cache
 from pathlib import Path
+from typing import Literal
 
 from pydantic import Field
 from pydantic_settings import BaseSettings, SettingsConfigDict
@@ -98,6 +99,21 @@ class Settings(BaseSettings):
         description="Where generated assets land.",
     )
 
+    db_path: Path | None = Field(
+        default=None,
+        description=(
+            "SQLite data-layer path. Defaults to <GFLOW_CLI_HOME>/gflow.db. "
+            "Override with GFLOW_CLI_DB_PATH for tests or advanced local setups."
+        ),
+    )
+    history_prompts: Literal["store", "redacted"] = Field(
+        default="store",
+        description=(
+            "Controls prompt persistence in the local DB. 'store' stores prompt text; "
+            "'redacted' stores only prompt_hash and prompt_redacted=1."
+        ),
+    )
+
     # --- profile ----------------------------------------------------------
     profile: str | None = Field(
         default=None,
@@ -154,6 +170,9 @@ class Settings(BaseSettings):
     log_format: LogFormat = LogFormat.AUTO
 
     # --- derived path helpers --------------------------------------------
+
+    def resolved_db_path(self) -> Path:
+        return self.db_path or paths.database_path(self.home)
 
     def profile_subdir(self, name: str) -> Path:
         return paths.profile_subdir(self.home, name)
