@@ -12,6 +12,7 @@ Welcome to the `gflow-cli` documentation. This index is the routing layer: it te
 | [CLAUDE.md](../CLAUDE.md) | Claude Code's session memory hub (Claude-Code-specific protocol; delegates universal rules to AGENTS.md) | First time Claude Code opens the repo |
 | [PLAN.md](../PLAN.md) | Implementation plan (DDD / CQRS / phases / ADRs) | You want the architectural intent and roadmap |
 | [RELEASE.md](../RELEASE.md) | Release checklist, prerelease policy, PyPI/GitHub publishing protocol | Cutting or auditing a release |
+| [ROADMAP.md](../ROADMAP.md) | Themed milestones from v0.9 through v1.0 | You want a multi-release view of where the project is heading |
 | [CHANGELOG](../CHANGELOG.md) | Version-by-version user-visible changes | Upgrading or auditing what shipped |
 | [KNOWN_ISSUES](../KNOWN_ISSUES.md) | Open / mitigated / resolved issues with workarounds | Before opening a bug report; when something feels off |
 | [DISCLAIMER](../DISCLAIMER.md) | Legal scope, takedown policy, prohibited uses | Before deploying anywhere non-trivial |
