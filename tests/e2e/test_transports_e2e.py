@@ -29,6 +29,7 @@ import time
 from pathlib import Path
 
 import pytest
+import structlog
 
 from gflow_cli.api.client import FlowApiClient
 from gflow_cli.api.image import GenerateImageRequest, Model
@@ -151,12 +152,18 @@ def _tiny_png(path: Path) -> Path:
 
 
 @pytest.mark.asyncio
-async def test_e2e_i2i_local_ref_attach(tmp_path: Path) -> None:
+async def test_e2e_i2i_local_ref_attach(
+    tmp_path: Path,
+    install_log_capture: structlog.testing.LogCapture,
+) -> None:
     """C2/i2i (#56): generate_image with a LOCAL-FILE ``ref_paths`` binds the
     reference through the editor's media dialog and returns >= 1 image.
 
     UI-automation transport ONLY — the REST transports (bearer/sapisidhash)
     cannot drive the add-media dialog, so they never invoke ``_attach_references``.
+    Routing this through ``evaluate_fetch`` (the old bug) silently drops
+    ``ref_paths`` and still returns a text-only image, so the URL asserts alone
+    are a false positive — hence the explicit transport + the event assertion.
 
     This exercises the locale-agnostic media-dialog selectors (icon ``upload`` +
     iconless 'Add to Prompt') that replaced the text-based selectors which hung
@@ -166,12 +173,21 @@ async def test_e2e_i2i_local_ref_attach(tmp_path: Path) -> None:
     ref = _tiny_png(tmp_path / "ref.png")
     req = GenerateImageRequest(prompt=_PROMPT, model=Model.NARWHAL, ref_paths=(ref,))
 
-    async with _make_client("evaluate_fetch", profile) as client:
+    async with _make_client("ui_automation", profile) as client:
         image = await client.generate_image(req=req)
 
     assert image.media_name, "i2i ref-attach returned no image"
     assert image.fife_url.startswith("https://"), (
         f"fife_url must be an https:// URL, got: {image.fife_url!r}"
+    )
+    # Prove the reference was ACTUALLY attached through the media dialog rather
+    # than silently dropped (the #56 false-positive class). ``_attach_references``
+    # emits one ``reference_attached`` event per bound ref; its absence means the
+    # ref never bound even though an image came back.
+    events = [e["event"] for e in install_log_capture.entries]
+    assert "ui_automation_video.reference_attached" in events, (
+        "expected a 'reference_attached' event proving the local ref bound through "
+        f"the media dialog; captured events: {events}"
     )
 
 
