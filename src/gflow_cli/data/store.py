@@ -127,7 +127,7 @@ class DataStore:
             return store
         except DataMigrationError:
             raise
-        except sqlite3.Error as exc:
+        except (sqlite3.Error, OSError) as exc:
             raise DataStoreError(detail=str(exc), route="data.open") from exc
 
     def close(self) -> None:
@@ -146,7 +146,10 @@ class DataStore:
             yield
             self.conn.execute("COMMIT")
         except Exception:
-            self.conn.execute("ROLLBACK")
+            try:
+                self.conn.execute("ROLLBACK")
+            except sqlite3.OperationalError:
+                pass
             raise
 
     def apply_migrations(self) -> None:

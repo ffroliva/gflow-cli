@@ -99,3 +99,16 @@ def test_iter_sql_statements_preserves_semicolon_inside_string_literal() -> None
         _iter_sql_statements("CREATE TABLE x(v TEXT); INSERT INTO x(v) VALUES ('a;b');")
     )
     assert statements == ["CREATE TABLE x(v TEXT)", "INSERT INTO x(v) VALUES ('a;b')"]
+
+
+def test_open_wraps_oserror_into_datastoreerror(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    from gflow_cli.errors import DataStoreError
+
+    def boom(*args: object, **kwargs: object) -> None:
+        raise PermissionError("denied")
+
+    monkeypatch.setattr(Path, "mkdir", boom)
+    with pytest.raises(DataStoreError):
+        DataStore.open(tmp_path / "gflow.db")
