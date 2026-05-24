@@ -7,6 +7,47 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+### Added
+
+- `gflow video t2v` model picker: `--model` (`omni-flash` | `veo-lite` |
+  `veo-fast` | `veo-quality` | `veo-lite-lp`), `--duration` (`4`/`6`/`8`, plus
+  `10` for `omni-flash` only), and `--count` (1–4). Driven via the editor's
+  generation-settings panel; live-verified against a Pro/Ultra profile.
+- `gflow video i2v <image> "<prompt>"` — image-to-video with a start frame and
+  an optional `--end-image` (interpolation). Fires
+  `batchAsyncGenerateVideoStartImage` / `…StartAndEndImage`.
+- `gflow video r2v "<prompt>" --ref <img> [--ref …]` — reference-to-video
+  (Flow "ingredients"). Model-aware reference cap (omni_flash ≤7, veo_3_1_* ≤3)
+  enforced in the request DTO; the transport stops gracefully if Flow hides the
+  add-media button at the cap. Fires `batchAsyncGenerateVideoReferenceImages`.
+
+### Changed
+
+- `MAX_REFERENCE_IMAGES` (in `api/video.py`) now tracks the `omni_flash`
+  ceiling of **7** (was **3**). The tighter per-model cap (`veo_3_1_* ≤ 3`) is
+  still enforced in `GenerateVideoRequest.__post_init__` when the model is
+  known; the constant is only the absolute upper bound. Anyone pinning to the
+  old value of 3 should re-check against the per-model caps.
+
+### Fixed
+
+- `gflow image t2i/i2i --model` now actually selects the requested model. It was
+  a no-op under `ui_automation` (the wire field was set but the model picker was
+  never clicked, so Flow used its UI default). Adds `_select_image_model`.
+- Video selector mismatches: the output-count selector `[id*=-trigger-1]`
+  collided with the `-trigger-10` duration tab; the aspect selector matched a
+  non-existent `aria-controls*=9_16`; the video-mode tab match was ambiguous.
+  All now use exact `[id$=-trigger-X]` suffixes + aria-label text.
+
+### Notes
+
+- I2V/R2V image inputs bind through the editor's media dialog (frame slot /
+  add-media → "Upload media" → file chooser → "Add to Prompt"). `set_input_files`
+  on the generic hidden input only adds to the library and Flow then ignores the
+  image (plain Text route). The editor is forced to English via the
+  `--lang=en-US` Chromium launch arg because the slot/dialog labels are localized
+  with no locale-free anchor.
+
 ## [0.8.1] — 2026-05-23
 
 ### Documentation

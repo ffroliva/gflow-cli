@@ -25,7 +25,8 @@ Commands:
 
   video     Video generation (Veo via Flow).
     t2v                         Generate a video from a text prompt.
-    i2v                         Generate a video from a start image + text prompt.
+    i2v                         Generate a video from a start (+ optional end) frame + prompt.
+    r2v                         Generate a video from reference images + prompt.
     batch                       Run a TSV manifest of video generations.
 ```
 
@@ -282,49 +283,66 @@ All prompts in a batch share one Flow project. The editor is opened once; each p
 - `image_batch.row_completed {row_idx, file_path, sha256_prefix}` (per image)
 - `image_batch.inter_submission_latency_ms {row_idx, latency_ms}` (fires from row 1 onward)
 
+> **Shared video flags** (`t2v` / `i2v` / `r2v`):
+> `--model [omni-flash|veo-lite|veo-fast|veo-quality|veo-lite-lp]` (omit → Flow's
+> current UI default), `--duration [4|6|8|10]` (10 requires `--model omni-flash`),
+> `--count INTEGER` (1–4; >1 multiplies credit cost), `--aspect [9:16|16:9]`,
+> `--profile NAME`, `--out-dir DIR` (default `tmp/`). The mp4 lands at
+> `<out-dir>/<media_id>.mp4`.
+
 ## `gflow video t2v`
 
 Generate a video from a text prompt only.
 
 ```text
-gflow video t2v PROMPT [OPTIONS]
-
-Options:
-  -o, --output PATH       Output mp4. Default: $GFLOW_CLI_OUTPUT_DIR/videos/<date>/<media>.mp4
-  --aspect 9:16|16:9|1:1  Default: 9:16
-  --seed INTEGER          Reproducibility. Default: random.
-  --profile NAME          Account profile. Default: resolved from env/config.
-  --poll-interval FLOAT   Seconds between status polls. Default: 5.
+gflow video t2v PROMPT [--model] [--duration] [--count] [--aspect] [--profile] [--out-dir]
 ```
-
-Examples:
 
 ```bash
 gflow video t2v "Slow cinematic push-in toward a candle flame"
-gflow video t2v "Aerial shot of a coastline at sunset" --aspect 16:9 -o ./coast.mp4
+gflow video t2v "Aerial shot of a coastline at sunset" --aspect 16:9 --out-dir ./out
+gflow video t2v "A neon city timelapse" --model omni-flash --duration 10 --count 2
 ```
 
 ## `gflow video i2v`
 
-Generate a video from a START IMAGE + text prompt. The image must be a local PNG, JPEG, WebP, or GIF; it's uploaded once per call and the resulting clip animates from it according to PROMPT.
+Generate a video from a START frame (+ optional END frame) and a motion prompt.
+Each image is a local PNG/JPEG; it is bound into the editor's frame slot via the
+media dialog, then Flow fires `batchAsyncGenerateVideoStartImage` (start only) or
+`…StartAndEndImage` (start+end interpolation).
 
 ```text
-gflow video i2v IMAGE PROMPT [OPTIONS]
+gflow video i2v IMAGE PROMPT [--end-image LAST] [--model] [--duration] [--count] [--aspect] [...]
 
 Arguments:
-  IMAGE                   Local start image (PNG/JPEG/WebP/GIF). [required]
-  PROMPT                  Text prompt.                            [required]
+  IMAGE   Local start frame (PNG/JPEG). [required]
+  PROMPT  Motion prompt.                [required]
 
 Options:
-  -o, --output PATH       Output mp4. Default: $GFLOW_CLI_OUTPUT_DIR/videos/<date>/<media>.mp4
-  --aspect 9:16|16:9|1:1  Default: 9:16
-  --seed INTEGER          Reproducibility. Default: random.
-  --profile NAME          Account profile. Default: resolved from env/config.
-  --poll-interval FLOAT   Seconds between status polls. Default: 5.
+  --end-image PATH  Optional end frame — Flow interpolates start -> end.
 ```
 
 ```bash
 gflow video i2v ./hero.png "Slow camera arc, soft golden light"
+gflow video i2v ./first.png "morph between scenes" --end-image ./last.png --model veo-quality
+```
+
+## `gflow video r2v`
+
+Reference-to-video (Flow "ingredients"): condition a generation on reference
+images. Per-model cap: `omni-flash` ≤7, the `veo-*` models ≤3. Fires
+`batchAsyncGenerateVideoReferenceImages`.
+
+```text
+gflow video r2v PROMPT --ref IMG [--ref IMG ...] [--model] [--duration] [--count] [--aspect] [...]
+
+Options:
+  --ref PATH  Reference image; repeat for up to 7 (omni-flash) / 3 (veo). [required]
+```
+
+```bash
+gflow video r2v "a knight in this armor walks forward" --ref armor.png
+gflow video r2v "blend these worlds" --ref a.png --ref b.png --ref c.png --model omni-flash
 ```
 
 ## `gflow video batch`
