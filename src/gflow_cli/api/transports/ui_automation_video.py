@@ -94,8 +94,6 @@ VIDEO_TAB_IN_MENU_SELECTORS = (
 # always fell through to text. id-suffix + icon are locale-independent and
 # exact (ends-with '-trigger-PORTRAIT' does not match the image-only
 # '-trigger-PORTRAIT_3_4'). A miss is non-fatal (Flow's default applies).
-_DICT_STR_ANY = "dict[str, Any]"
-
 VIDEO_ASPECT_TAB_SELECTORS: dict[Aspect, tuple[str, ...]] = {
     Aspect.PORTRAIT: (
         "[role='tab'][id$='-trigger-PORTRAIT']",
@@ -201,14 +199,14 @@ def _summarize_request_image_inputs(request: Any) -> dict[str, Any]:
         raw = request.post_data
         if not raw:
             return {"parsed": False}
-        data = cast(_DICT_STR_ANY, json.loads(raw))
+        data = cast(dict[str, Any], json.loads(raw))
         reqs = cast("list[dict[str, Any]]", data.get("requests") or [])
         first: dict[str, Any] = reqs[0] if reqs else {}
 
         def _mid(obj: Any) -> str | None:
             if not isinstance(obj, dict):
                 return None
-            mid = cast(_DICT_STR_ANY, obj).get("mediaId")
+            mid = cast(dict[str, Any], obj).get("mediaId")
             return mid[:8] if isinstance(mid, str) else None
 
         refs = cast("list[dict[str, Any]]", first.get("referenceImages") or [])
@@ -823,7 +821,7 @@ class VideoGenerationMixin:
         # A video 200 ALWAYS carries media[0] (the asset slot — capture 02);
         # content rejection surfaces later as a FAILED *status*, not empty media.
         # So a missing media[0] here is a genuine wire anomaly — WireFormatError.
-        body: dict[str, Any] = cast(_DICT_STR_ANY, generate_resp.get("body") or {})
+        body: dict[str, Any] = cast(dict[str, Any], generate_resp.get("body") or {})
         try:
             media_name = media_name_from_generate_response(body)
         except ValueError as e:
