@@ -453,17 +453,23 @@ def _execute_t2i_batch(
     console.print(f"  output_dir: [dim]{safe_path_text(output_dir)}[/dim]")
     if not continue_on_error:
         console.print("  mode: [yellow]fail-fast[/yellow]")
-    outcomes = asyncio.run(
-        run_image_batch(
-            profile_dir=provider_dir,
-            headless=settings.headless,
-            transport=transport,
-            prompts=batch_prompts,
-            output_dir=output_dir,
-            continue_on_error=continue_on_error,
-            project_title=_T2I_PROJECT_TITLE,
+    recorder = OperationRecorder.open(settings)
+    try:
+        outcomes = asyncio.run(
+            run_image_batch(
+                profile_dir=provider_dir,
+                headless=settings.headless,
+                transport=transport,
+                prompts=batch_prompts,
+                output_dir=output_dir,
+                continue_on_error=continue_on_error,
+                project_title=_T2I_PROJECT_TITLE,
+                profile_name=profile_name,
+                recorder=recorder,
+            )
         )
-    )
+    finally:
+        recorder.close()
     exit_code = render_image_batch_summary(outcomes, title=_T2I_PROJECT_TITLE)
     if exit_code != 0:
         sys.exit(exit_code)
@@ -698,16 +704,22 @@ def batch(
     if not continue_on_error:
         console.print("  mode: [yellow]fail-fast[/yellow]")
 
-    outcomes = asyncio.run(
-        run_manifest_image_batch(
-            profile_dir=provider_dir,
-            headless=settings.headless,
-            transport=transport,
-            prompts=prompts,
-            output_dir=output_dir,
-            continue_on_error=continue_on_error,
+    recorder = OperationRecorder.open(settings)
+    try:
+        outcomes = asyncio.run(
+            run_manifest_image_batch(
+                profile_dir=provider_dir,
+                headless=settings.headless,
+                transport=transport,
+                prompts=prompts,
+                output_dir=output_dir,
+                continue_on_error=continue_on_error,
+                profile_name=profile_name,
+                recorder=recorder,
+            )
         )
-    )
+    finally:
+        recorder.close()
     exit_code = render_image_batch_summary(outcomes, title=_BATCH_TITLE)
     if exit_code != 0:
         sys.exit(exit_code)
