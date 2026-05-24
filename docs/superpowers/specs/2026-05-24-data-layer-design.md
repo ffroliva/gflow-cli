@@ -93,6 +93,7 @@ Migration behavior:
 - Run pending migrations automatically when `DataStore.open()` is called.
 - Apply each migration in a transaction.
 - Calculate a checksum for each SQL file.
+- Use SHA-256 for migration checksums. Normalize SQL before hashing by converting CRLF to LF and trimming trailing whitespace/newlines so contributor line endings do not cause false drift.
 - If a migration already applied with a different checksum, raise `DataMigrationError`.
 - If the DB contains a migration version newer than the installed package, raise `DataMigrationError`.
 - Mirror the highest numeric migration into `PRAGMA user_version` as a convenience only; `schema_migrations` remains the source of truth.
@@ -110,7 +111,8 @@ SQLite connection requirements:
 - Enable foreign key enforcement on every connection: `PRAGMA foreign_keys = ON`.
 - Enable safer concurrent CLI usage: `PRAGMA journal_mode = WAL`.
 - Set a busy timeout, for example `PRAGMA busy_timeout = 5000`, so parallel profile/process runs do not fail immediately with `database is locked`.
-- Use Python `sqlite3` with `isolation_level=None` and explicit `BEGIN` / `COMMIT` blocks so connection-level pragmas and transaction boundaries behave predictably.
+- Use Python `sqlite3` with `isolation_level=None` and explicit transaction blocks so connection-level pragmas and transaction boundaries behave predictably.
+- Use `BEGIN IMMEDIATE` for grouped recorder writes; this avoids deferred-writer deadlocks under WAL when two CLI processes try to upgrade read transactions to writes.
 - Open write transactions explicitly around grouped recorder operations.
 
 ## Error Taxonomy Impact
@@ -157,6 +159,7 @@ Known Flow IDs from captured responses:
 Naming rule:
 
 - `id`: local database primary key.
+- Local database primary keys are app-generated text IDs for `operations.id`, `projects.id`, `assets.id`, and `local_files.id`. v1 may use UUID4 from the standard library; chronological reads must use `created_at` indexes rather than relying on ID ordering.
 - `flow_media_id`: Google Flow `media[].name`.
 - `flow_workflow_id`: Google Flow `workflowId`.
 - `flow_project_id`: Google Flow `projectId`.
@@ -238,6 +241,7 @@ operation_assets(
   position INTEGER NOT NULL DEFAULT 0,
   FOREIGN KEY(operation_id) REFERENCES operations(id),
   FOREIGN KEY(asset_id) REFERENCES assets(id),
+  UNIQUE(operation_id, role, position),
   PRIMARY KEY(operation_id, asset_id, role, position)
 )
 
@@ -261,8 +265,10 @@ Important constraints:
 - `profile_name` is duplicated on key tables to keep common queries simple and future cross-profile scheduling efficient.
 - `metadata_json` can hold route-specific fields without requiring a migration for every observed Flow nuance.
 - `metadata_json` must not store signed CDN URLs such as `fifeUrl`; those expire and contain bearer-style query tokens.
+- `OperationRecorder` owns response redaction before writing `metadata_json`; call sites must not be trusted to strip signed URLs, bearer-style query params, reCAPTCHA tokens, or authorization material correctly.
 - Prompt redaction stores `prompt = NULL`, `prompt_redacted = 1`, and `prompt_hash` for correlation.
 - `local_files.path` stores the resolved absolute local path in v1. Moving output directories or sharing the DB across Windows/WSL path schemes is out of scope until `gflow data repair` can relink files.
+- `operation_assets` includes `position` deliberately so ordered input lists are round-trippable. Reusing the same asset in multiple roles or positions is allowed when it reflects the user's request; `UNIQUE(operation_id, role, position)` prevents two assets occupying the same slot.
 
 ## Prompt Privacy
 
@@ -294,6 +300,7 @@ Persistence failure handling:
 - Before any remote Flow action, DB open/migration failures fail fast with exit code `16`.
 - After a successful paid remote generation, persistence failures must not discard generated media or skip downloads that can still complete.
 - If media was generated and downloaded but the final persistence write fails, keep the local file, emit a visible warning plus a structured `data.persistence_failed_after_success` event, and preserve the command's generation result exit semantics. A successful paid generation with a saved file should not exit non-zero solely because local tracking failed.
+- The `data.persistence_failed_after_success` event must include the unpersisted `flow_media_id` when known and the local file path when available, so future repair tooling can reconcile the saved asset.
 - No data-layer failure should be silently swallowed. If a write is intentionally deferred or retried, emit a structured event with the operation ID and failure class.
 
 ## T2V Client-Boundary Normalization
@@ -356,14 +363,17 @@ Required tests:
 - Checksum drift raises `DataMigrationError`.
 - Newer DB schema raises `DataMigrationError`.
 - Built wheels/sdists contain SQL migration files and the runner reads them through `importlib.resources`.
+- The packaging check must inspect a built wheel in a clean environment or extracted wheel, not an editable install, because editable installs can hide missing package-data declarations.
 - New SQLite connections enable `foreign_keys`, `WAL`, and `busy_timeout`.
 - Foreign key enforcement rejects orphaned `operation_assets` and `local_files` rows.
+- Recorder write transactions use `BEGIN IMMEDIATE` and are covered by a concurrent-writer test that does not fail with immediate `database is locked`.
 - SQLite exceptions are mapped to `DataStoreError` subclasses.
 - Repository upserts are idempotent.
 - Prompt redaction stores hash and no prompt text.
 - Recording an upload persists profile, project, asset, and operation linkage.
 - Recording generated images persists Flow media IDs, workflow IDs, model/aspect/seed, and local files.
 - Recording T2V through `FlowApiClient` persists the pending media ID, terminal status, and local file path.
+- Fixture-driven video tests store `flow_operation_id` separately and assert the current observed invariant that it matches `flow_media_id`; if Flow diverges those IDs later, the test should fail and force an explicit parser/schema decision.
 - I2V seed queries resolve by media ID and local path.
 - `gflow video t2v` no longer instantiates `UiAutomationTransport` directly.
 
@@ -375,6 +385,7 @@ Update:
 
 - `docs/CONFIGURATION.md`: `GFLOW_CLI_DB_PATH`, `GFLOW_CLI_HISTORY_PROMPTS`, DB location.
 - `docs/USAGE.md`: exit code `16`, local history/provenance note, and any new minimal `gflow data` command if implemented.
+- `docs/USAGE.md`: document newer-schema recovery: upgrade `gflow-cli` or repoint `GFLOW_CLI_DB_PATH` to a compatible DB.
 - `docs/SECURITY.md`: prompts are stored locally by default; redaction option; DB may contain profile names and asset IDs.
 - `docs/ARCHITECTURE.md`: add `gflow_cli.data` to modular monolith modules and note SQLite local persistence.
 - `PLAN.md`: replace the broad Phase 6 entry with this concrete data-layer phase and keep import/history UI as backlog.
