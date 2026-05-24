@@ -8,7 +8,7 @@ Supported tools that auto-discover this file: Cursor, Codex, Aider, Gemini CLI, 
 
 - Unofficial Python CLI for [Google Flow](https://labs.google/fx/tools/flow) — drives Veo (image-to-video, text-to-video) and Imagen (text-to-image) generations from the terminal by reverse-engineering Flow's private REST API at `aisandbox-pa.googleapis.com`.
 - Python 3.11+ · `uv`-managed · `hatchling` builds · Playwright Chromium transport · `pyright` strict · `ruff` · `pytest`.
-- Single-package modular monolith. Top-level modules under `src/gflow_cli/`: `api/`, `auth/`, `browser_manager.py`, `cli.py`, `_cli_helpers.py`, `cli_image.py`, `cli_run.py`, `cli_video.py`, `config.py`, `errors.py`, `exceptions.py`, `image_batch.py`, `manifest.py`, `observability.py`, `paths.py`, `profile_store.py`.
+- Single-package modular monolith. Top-level modules under `src/gflow_cli/`: `api/`, `auth/`, `browser_manager.py`, `cli.py`, `_cli_helpers.py`, `cli_data.py`, `cli_image.py`, `cli_run.py`, `cli_video.py`, `config.py`, `data/`, `errors.py`, `exceptions.py`, `image_batch.py`, `manifest.py`, `observability.py`, `paths.py`, `profile_store.py`.
 - Requires a Google AI Ultra or Pro subscription with Flow access. All generations bill against the user's own Google account.
 
 ## Headed-browser dependency (architectural reality)
@@ -53,7 +53,7 @@ Or invoke the wrapper: `/gflow:check`.
 
 - Type hints everywhere; `pyright` strict on `src/gflow_cli`.
 - Structured logging only (`structlog`) — **never** raw `print()` or `import logging` in `src/`.
-- Errors as RFC 9457 Problem Details with stable per-class exit codes (3–15). See `src/gflow_cli/errors.py::EXIT_CODE_MAP` for the complete mapping.
+- Errors as RFC 9457 Problem Details with stable per-class exit codes (3–16, where 16 is the `DataStoreError` family from `gflow_cli.data`). See `src/gflow_cli/errors.py::EXIT_CODE_MAP` for the complete mapping.
 - 100-char line length, `ruff` configured. Imports sorted by `ruff` (isort rules).
 
 ## PR instructions
