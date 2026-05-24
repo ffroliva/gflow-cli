@@ -3,6 +3,7 @@ from __future__ import annotations
 import hashlib
 import mimetypes
 import uuid
+from datetime import UTC, datetime
 from pathlib import Path
 
 from gflow_cli.api.dto import AssetInfo, GeneratedImage, ProjectInfo
@@ -33,6 +34,11 @@ def _file_sha256(path: Path) -> str | None:
         return hashlib.sha256(path.read_bytes()).hexdigest()
     except OSError:
         return None
+
+
+def _now_utc_iso() -> str:
+    """UTC timestamp matching the format used elsewhere in the data layer."""
+    return datetime.now(UTC).isoformat(timespec="milliseconds").replace("+00:00", "Z")
 
 
 def _file_bytes(path: Path) -> int | None:
@@ -126,6 +132,9 @@ class OperationRecorder:
                 error_detail=None,
             )
         )
+        # Upload is synchronous from the recorder's POV: by the time we're here
+        # the upload already succeeded, so completed_at = started_at = now.
+        repo.update_operation_status(op_id, OperationStatus.SUCCEEDED, _now_utc_iso(), None, None)
         repo.link_operation_asset(op_id, asset_id, OperationAssetRole.OUTPUT, 0)
 
         repo.upsert_local_file(
@@ -190,6 +199,11 @@ class OperationRecorder:
                 error_detail=None,
             )
         )
+        # Image generation is recorded AFTER all downloads complete, so the
+        # operation is already terminal at insert time. Stamp completed_at so
+        # downstream queries like "SELECT * FROM operations WHERE completed_at
+        # IS NULL" don't surface successful runs.
+        repo.update_operation_status(op_id, OperationStatus.SUCCEEDED, _now_utc_iso(), None, None)
 
         # Link input assets (I2I seed images)
         for i, media_id in enumerate(input_media_ids):
@@ -315,7 +329,6 @@ class OperationRecorder:
         result: VideoResult,
     ) -> None:
         # VideoResult carries status.media_id (the flow_media_id) and local_path
-        from datetime import UTC, datetime
 
         repo = self.repository
         flow_media_id = result.status.media_id
@@ -344,7 +357,7 @@ class OperationRecorder:
         )
 
         # Update the STARTED operation for this asset to SUCCEEDED
-        completed_at = datetime.now(UTC).isoformat(timespec="milliseconds").replace("+00:00", "Z")
+        completed_at = _now_utc_iso()
         op = repo.get_operation_for_output_asset(
             profile_name, flow_media_id, OperationKind(request.mode.value)
         )
