@@ -172,6 +172,35 @@ See [`SECURITY.md`](SECURITY.md) for the broader threat model.
 
 ## Querying the data layer
 
+### `gflow data list {projects,images,videos,profiles}` — browse the catalog (v0.9.0+)
+
+```bash
+# Newest 20 projects across all profiles
+gflow data list projects
+
+# All images for one profile, paginated
+gflow data list images --profile ffroliva --limit 50 --offset 0
+
+# Videos as JSONL for piping into jq
+gflow data list videos --json | jq '.media_id'
+
+# Profiles with at least one recorded generation
+gflow data list profiles
+```
+
+Flags shared by all four subcommands:
+
+| Flag | Default | Notes |
+|---|---|---|
+| `--limit N` | 20 | 1..1000 |
+| `--offset N` | 0 | for pagination |
+| `--profile NAME` | unset | filter to one profile (not available on `profiles`) |
+| `--json` | off | JSONL output, one object per line |
+
+TTY stdout → Rich table; pipe or `--json` → JSONL. Default sort: newest first. Exit code 16 on data-store errors (same `DataStoreError` family as `gflow data media`).
+
+> **`data list profiles` vs `gflow auth list`:** `data list profiles` shows profiles that have **recorded generations** in the catalog; `gflow auth list` shows profiles that have ever **logged in** via `gflow auth login`. A profile that logged in but never generated anything will appear in `auth list` but not in `data list profiles`.
+
 ### `gflow data media <media_id>` — read a single asset
 
 ```

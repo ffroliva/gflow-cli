@@ -61,6 +61,7 @@ Slash commands for Claude Code, stored in `.claude/commands/gflow/`. All prefixe
 **"How does the layered structure work?"** → [ARCHITECTURE § Layers](ARCHITECTURE.md#layers)
 **"What env var should I set for X?"** → [CONFIGURATION § Reference](CONFIGURATION.md#reference)
 **"What does gflow remember after a generation finishes?"** → [DATA_LAYER § What is recorded](DATA_LAYER.md#what-is-recorded)
+**"How do I see what's in my gflow catalog?"** → run `gflow data list projects` (or `images` / `videos` / `profiles`) — see [DATA_LAYER § Querying the data layer](DATA_LAYER.md#querying-the-data-layer)
 **"Where can I look up a media ID I generated yesterday?"** → [DATA_LAYER § Querying the data layer](DATA_LAYER.md#querying-the-data-layer)
 **"How do I stop gflow from storing my prompts?"** → [DATA_LAYER § Privacy and redaction](DATA_LAYER.md#privacy-and-redaction)
 **"What does exit code 16 mean and how do I recover?"** → [DATA_LAYER § Persistence-failure handling](DATA_LAYER.md#persistence-failure-handling)
