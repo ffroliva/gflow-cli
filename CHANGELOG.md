@@ -20,6 +20,11 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   (Flow "ingredients"). Model-aware reference cap (omni_flash ≤7, veo_3_1_* ≤3)
   enforced in the request DTO; the transport stops gracefully if Flow hides the
   add-media button at the cap. Fires `batchAsyncGenerateVideoReferenceImages`.
+- `GFLOW_CLI_LOCALE` env var — overrides Playwright's launch `locale=` parameter
+  (default: `en-US`). Controls `Accept-Language` only; Chrome's UI language is
+  still forced to en-US via `--lang=en-US`. Prep for issue #24 (locale-agnostic
+  selectors); live-verified end-to-end with `GFLOW_CLI_LOCALE=pt-BR` against a
+  Pro/Ultra account. See `docs/CONFIGURATION.md § GFLOW_CLI_LOCALE`.
 
 ### Changed
 
@@ -31,6 +36,35 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ### Fixed
 
+- `FlowApiClient.__aenter__` now tears down a partially-launched browser if any
+  step after the Playwright driver starts raises (e.g. the persistent-context
+  launch, the bootstrap navigation, or `transport.setup`). Python does not call
+  `__aexit__` when `__aenter__` raises, so an unguarded failure orphaned the
+  chrome process, which then held the profile's user-data-dir lock — the next
+  run could not acquire it and spiralled into rapid `about:blank` tabs +
+  `TargetClosedError`. Context close + driver stop are now shared by
+  `__aenter__`'s guard and `__aexit__` via `_close_browser_resources`.
+- `gflow image i2i --ref <local-file>` now binds the reference through the
+  editor's media dialog instead of the REST `uploadImage` endpoint (which 401s —
+  same root as #15/#39). Local-path refs ride a new `GenerateImageRequest.ref_paths`
+  field and are attached via the inherited R2V `_attach_references` (the image-mode
+  add-media dialog is the same `add_2` surface). Bare-UUID `--ref` still flows
+  through `refs` unchanged. Re-introduces #50 (reverted in #57 for the account/
+  locale variant tracked in #56); the media-dialog selectors are now
+  locale-agnostic (see the next entry).
+- The media-dialog upload selectors are now **locale-agnostic** (issue #56/#24).
+  `UPLOAD_MEDIA_BUTTON` matched localized text (`has-text('Upload media')`), so on
+  a non-English Chrome profile (Flow follows the *Chrome profile* language, which
+  the `--lang=en-US` arg cannot override) the click missed and the file chooser
+  never opened — a silent ~34s hang. It now anchors on the locale-free `upload`
+  icon ligature (`:text-is('upload')`, exact, so it doesn't grab the `Uploads`
+  tab), with the original English-text selector kept as a graceful **fallback
+  tier** (matches if Google ever changes the icon but keeps the English label);
+  'Add to Prompt' (which has no icon) is selected structurally as the only
+  iconless button in the open dialog. If neither tier opens a chooser,
+  `_upload_via_open_dialog` raises a clear error + writes a screenshot (no silent
+  hang) and points the operator at the Chrome-profile-language workaround. Fixes
+  I2I/I2V/R2V upload alike.
 - `gflow image t2i/i2i --model` now actually selects the requested model. It was
   a no-op under `ui_automation` (the wire field was set but the model picker was
   never clicked, so Flow used its UI default). Adds `_select_image_model`.

@@ -120,9 +120,9 @@ def _classify_ref(ref: str) -> ImageRef | Path:
       (raised by ``strict=True``) which we re-raise as :class:`click.UsageError`
       for an exit-2 + friendly message.
 
-    Centralized here so the ``i2i`` Click callback (upfront validation) and
-    the ``_resolve_refs`` async helper (dispatch) share one implementation
-    instead of duplicating the UUID regex check.
+    Centralized here so the ``i2i`` Click callback validates upfront and
+    ``_run_i2i`` can split UUID refs (wire) from local paths (UI-attached)
+    without duplicating the UUID regex check.
 
     Raises:
         click.UsageError: if *ref* is neither a UUID nor an existing path.
@@ -842,38 +842,6 @@ def i2i(
     )
 
 
-async def _resolve_refs(
-    client: FlowApiClient,
-    project_id: str,
-    classified_refs: list[ImageRef | Path],
-) -> tuple[ImageRef, ...]:
-    """Resolve a pre-classified ref list into a tuple of :class:`ImageRef`.
-
-    The input list is produced by :func:`_classify_ref` at the CLI boundary,
-    so this helper only has to dispatch on type:
-
-    * :class:`ImageRef` — append verbatim (already-uploaded asset).
-    * :class:`Path` — upload and wrap the returned UUID.
-
-    Uploads are sequential — parallel uploads are tempting but Flow's web UI
-    uploads serially and we don't want to surprise the rate limiter. Order is
-    preserved so the resulting ``imageInputs[]`` matches the order the user
-    specified on the command line.
-    """
-    resolved: list[ImageRef] = []
-    for item in classified_refs:
-        if isinstance(item, ImageRef):
-            resolved.append(item)
-            continue
-        # Per-file progress feedback. Acceptable Rich `console.print` inside
-        # this async helper because cli_image.py *is* the CLI layer; structlog
-        # will replace this when it lands in Phase 1.
-        console.print(f"  Uploading {item.name}...")
-        asset = await client.upload_image(project_id, item)
-        resolved.append(ImageRef(name=asset.name))
-    return tuple(resolved)
-
-
 async def _run_i2i(
     *,
     profile_name: str,
@@ -900,16 +868,23 @@ async def _run_i2i(
             project = await client.create_project(title="gflow-cli i2i")
             console.print(f"  Project: [dim]{project.project_id}[/dim]")
 
-            resolved_refs = await _resolve_refs(client, project.project_id, classified_refs)
+            # Local-file refs are attached through the editor's media dialog by the
+            # ui_automation transport (the REST uploadImage path 401s — see #15/#39).
+            # Already-uploaded UUID refs go on `refs` (best-effort; binding a library
+            # asset by UUID via the UI is not wired yet — local files are the path).
+            uuid_refs = tuple(r for r in classified_refs if isinstance(r, ImageRef))
+            local_ref_paths = tuple(r for r in classified_refs if isinstance(r, Path))
             req = GenerateImageRequest(
                 prompt=prompt,
                 aspect=aspect,
                 model=model,
-                refs=resolved_refs,
+                refs=uuid_refs,
+                ref_paths=local_ref_paths,
             )
 
+            n_refs = len(uuid_refs) + len(local_ref_paths)
             console.print(
-                f"  Generating {count} image(s) with {len(resolved_refs)} ref(s) "
+                f"  Generating {count} image(s) with {n_refs} ref(s) "
                 f"({req.model.value}, {req.aspect.value})..."
             )
             if count == 1:
@@ -940,7 +915,12 @@ async def _run_i2i(
                     request=req,
                     images=images,
                     saved_paths=saved_paths,
-                    input_media_ids=[ref.name for ref in resolved_refs],
+                    # Only already-uploaded UUID refs have a flow_media_id we
+                    # can persist as INPUT. Local files attached via the media
+                    # dialog don't surface a media_id at this layer; the recorder
+                    # will skip them silently (record_generated_images guards on
+                    # repo.get_asset_by_flow_media_id returning None).
+                    input_media_ids=[ref.name for ref in uuid_refs],
                     operation_kind="i2i",
                 )
             except DataStoreError as exc:
