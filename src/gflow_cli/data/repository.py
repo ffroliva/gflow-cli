@@ -36,17 +36,20 @@ class DataRepository:
 
     def upsert_profile(self, name: str, profile_dir: Path) -> None:
         now = _utc_now()
-        with self._store.transaction(immediate=True):
-            self._store.conn.execute(
-                """
-                INSERT INTO profiles(name, profile_dir, first_seen_at, last_used_at)
-                VALUES (?, ?, ?, ?)
-                ON CONFLICT(name) DO UPDATE SET
-                    profile_dir = excluded.profile_dir,
-                    last_used_at = excluded.last_used_at
-                """,
-                (name, str(profile_dir), now, now),
-            )
+        try:
+            with self._store.transaction(immediate=True):
+                self._store.conn.execute(
+                    """
+                    INSERT INTO profiles(name, profile_dir, first_seen_at, last_used_at)
+                    VALUES (?, ?, ?, ?)
+                    ON CONFLICT(name) DO UPDATE SET
+                        profile_dir = excluded.profile_dir,
+                        last_used_at = excluded.last_used_at
+                    """,
+                    (name, str(profile_dir), now, now),
+                )
+        except sqlite3.IntegrityError as exc:
+            raise DataIntegrityError(detail=str(exc), route="data.upsert_profile") from exc
 
     # ------------------------------------------------------------------
     # Projects
@@ -55,26 +58,31 @@ class DataRepository:
     def upsert_project(self, record: ProjectRecord) -> ProjectRecord:
         now = _utc_now()
         created_at = record.created_at or now
-        with self._store.transaction(immediate=True):
-            self._store.conn.execute(
-                """
-                INSERT INTO projects(id, profile_name, flow_project_id, title, source, created_at)
-                VALUES (?, ?, ?, ?, ?, ?)
-                ON CONFLICT(id) DO UPDATE SET
-                    profile_name = excluded.profile_name,
-                    flow_project_id = excluded.flow_project_id,
-                    title = excluded.title,
-                    source = excluded.source
-                """,
-                (
-                    record.id,
-                    record.profile_name,
-                    record.flow_project_id,
-                    record.title,
-                    record.source,
-                    created_at,
-                ),
-            )
+        try:
+            with self._store.transaction(immediate=True):
+                self._store.conn.execute(
+                    """
+                    INSERT INTO projects(
+                        id, profile_name, flow_project_id, title, source, created_at
+                    )
+                    VALUES (?, ?, ?, ?, ?, ?)
+                    ON CONFLICT(id) DO UPDATE SET
+                        profile_name = excluded.profile_name,
+                        flow_project_id = excluded.flow_project_id,
+                        title = excluded.title,
+                        source = excluded.source
+                    """,
+                    (
+                        record.id,
+                        record.profile_name,
+                        record.flow_project_id,
+                        record.title,
+                        record.source,
+                        created_at,
+                    ),
+                )
+        except sqlite3.IntegrityError as exc:
+            raise DataIntegrityError(detail=str(exc), route="data.upsert_project") from exc
         return dataclasses.replace(record, created_at=created_at)
 
     # ------------------------------------------------------------------
@@ -85,52 +93,55 @@ class DataRepository:
         now = _utc_now()
         created_at = record.created_at or now
         metadata = json.dumps(record.metadata_json, sort_keys=True)
-        with self._store.transaction(immediate=True):
-            self._store.conn.execute(
-                """
-                INSERT INTO assets(
-                    id, profile_name, flow_project_id, flow_media_id,
-                    flow_workflow_id, flow_media_generation_id,
-                    kind, status, model, aspect_ratio,
-                    width, height, duration_seconds, seed,
-                    created_at, metadata_json
+        try:
+            with self._store.transaction(immediate=True):
+                self._store.conn.execute(
+                    """
+                    INSERT INTO assets(
+                        id, profile_name, flow_project_id, flow_media_id,
+                        flow_workflow_id, flow_media_generation_id,
+                        kind, status, model, aspect_ratio,
+                        width, height, duration_seconds, seed,
+                        created_at, metadata_json
+                    )
+                    VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+                    ON CONFLICT(id) DO UPDATE SET
+                        profile_name = excluded.profile_name,
+                        flow_project_id = excluded.flow_project_id,
+                        flow_media_id = excluded.flow_media_id,
+                        flow_workflow_id = excluded.flow_workflow_id,
+                        flow_media_generation_id = excluded.flow_media_generation_id,
+                        kind = excluded.kind,
+                        status = excluded.status,
+                        model = excluded.model,
+                        aspect_ratio = excluded.aspect_ratio,
+                        width = excluded.width,
+                        height = excluded.height,
+                        duration_seconds = excluded.duration_seconds,
+                        seed = excluded.seed,
+                        metadata_json = excluded.metadata_json
+                    """,
+                    (
+                        record.id,
+                        record.profile_name,
+                        record.flow_project_id,
+                        record.flow_media_id,
+                        record.flow_workflow_id,
+                        record.flow_media_generation_id,
+                        record.kind.value,
+                        record.status,
+                        record.model,
+                        record.aspect_ratio,
+                        record.width,
+                        record.height,
+                        record.duration_seconds,
+                        record.seed,
+                        created_at,
+                        metadata,
+                    ),
                 )
-                VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
-                ON CONFLICT(id) DO UPDATE SET
-                    profile_name = excluded.profile_name,
-                    flow_project_id = excluded.flow_project_id,
-                    flow_media_id = excluded.flow_media_id,
-                    flow_workflow_id = excluded.flow_workflow_id,
-                    flow_media_generation_id = excluded.flow_media_generation_id,
-                    kind = excluded.kind,
-                    status = excluded.status,
-                    model = excluded.model,
-                    aspect_ratio = excluded.aspect_ratio,
-                    width = excluded.width,
-                    height = excluded.height,
-                    duration_seconds = excluded.duration_seconds,
-                    seed = excluded.seed,
-                    metadata_json = excluded.metadata_json
-                """,
-                (
-                    record.id,
-                    record.profile_name,
-                    record.flow_project_id,
-                    record.flow_media_id,
-                    record.flow_workflow_id,
-                    record.flow_media_generation_id,
-                    record.kind.value,
-                    record.status,
-                    record.model,
-                    record.aspect_ratio,
-                    record.width,
-                    record.height,
-                    record.duration_seconds,
-                    record.seed,
-                    created_at,
-                    metadata,
-                ),
-            )
+        except sqlite3.IntegrityError as exc:
+            raise DataIntegrityError(detail=str(exc), route="data.upsert_asset") from exc
         return dataclasses.replace(record, created_at=created_at)
 
     def update_asset_status(self, profile_name: str, flow_media_id: str, status: str) -> None:

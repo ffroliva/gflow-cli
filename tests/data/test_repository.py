@@ -127,3 +127,60 @@ def test_operation_asset_position_is_unique(tmp_path: Path) -> None:
         repo.link_operation_asset(operation.id, asset_one.id, OperationAssetRole.INPUT, 0)
         with pytest.raises(DataIntegrityError):
             repo.link_operation_asset(operation.id, asset_two.id, OperationAssetRole.INPUT, 0)
+
+
+def test_upsert_project_natural_key_conflict_raises_data_integrity_error(tmp_path: Path) -> None:
+    with DataStore.open(tmp_path / "gflow.db") as store:
+        repo = DataRepository(store)
+        repo.upsert_profile("default", Path("C:/profiles/default"))
+        repo.upsert_project(
+            ProjectRecord(
+                id="project-a",
+                profile_name="default",
+                flow_project_id="flow-project-1",
+                title="A",
+                source="generated",
+            )
+        )
+        with pytest.raises(DataIntegrityError):
+            repo.upsert_project(
+                ProjectRecord(
+                    id="project-b",
+                    profile_name="default",
+                    flow_project_id="flow-project-1",
+                    title="B",
+                    source="generated",
+                )
+            )
+
+
+def test_upsert_asset_natural_key_conflict_raises_data_integrity_error(tmp_path: Path) -> None:
+    with DataStore.open(tmp_path / "gflow.db") as store:
+        repo = DataRepository(store)
+        repo.upsert_profile("default", Path("C:/profiles/default"))
+        repo.upsert_project(
+            ProjectRecord(
+                id="project-local",
+                profile_name="default",
+                flow_project_id="flow-project-1",
+                title="title",
+                source="generated",
+            )
+        )
+        repo.upsert_asset(
+            AssetRecord.minimal_image(
+                id="asset-a",
+                profile_name="default",
+                flow_project_id="flow-project-1",
+                flow_media_id="media-1",
+            )
+        )
+        with pytest.raises(DataIntegrityError):
+            repo.upsert_asset(
+                AssetRecord.minimal_image(
+                    id="asset-b",
+                    profile_name="default",
+                    flow_project_id="flow-project-1",
+                    flow_media_id="media-1",
+                )
+            )
