@@ -7,8 +7,27 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+## [0.9.0] — 2026-05-25
+
+> **Maturity & Visibility release.** Surfaces the SQLite catalog (PR #52/#58)
+> via a read-only `gflow data list {projects,images,videos,profiles}` CLI,
+> publishes `ROADMAP.md`, wires GitHub Sponsors + Buy Me a Coffee, and ships
+> the locale-agnostic media-dialog selectors that unblock non-English Chrome
+> profiles. Plus the previously-unreleased video model picker, i2v/r2v, and
+> the I2I ref-attach + model-select fixes.
+
 ### Added
 
+- `gflow data list {projects,images,videos,profiles}` — read-only catalog
+  query CLI over the local SQLite data layer. Flags: `--limit` (1..1000,
+  default 20), `--offset` (≥0, default 0), `--profile NAME`, `--json`.
+  Rich table on TTY, JSONL on pipe or `--json`. Default sort: newest first.
+  `DataStoreError` family maps to exit code 16. See
+  [`docs/DATA_LAYER.md § Querying the data layer`](docs/DATA_LAYER.md#querying-the-data-layer).
+- `ROADMAP.md` at repo root — themed milestones from v0.9 through v1.0 (no
+  dates).
+- `.github/FUNDING.yml` + README sponsor badges for [GitHub Sponsors](https://github.com/sponsors/ffroliva)
+  and [Buy Me a Coffee](https://www.buymeacoffee.com/ffroliva).
 - `gflow video t2v` model picker: `--model` (`omni-flash` | `veo-lite` |
   `veo-fast` | `veo-quality` | `veo-lite-lp`), `--duration` (`4`/`6`/`8`, plus
   `10` for `omni-flash` only), and `--count` (1–4). Driven via the editor's
@@ -914,7 +933,9 @@ shell-script template that branches on these codes.
 
 First skeleton. Not functional end-to-end yet.
 
-[Unreleased]: https://github.com/ffroliva/gflow-cli/compare/v0.8.0...HEAD
+[Unreleased]: https://github.com/ffroliva/gflow-cli/compare/v0.9.0...HEAD
+[0.9.0]: https://github.com/ffroliva/gflow-cli/compare/v0.8.1...v0.9.0
+[0.8.1]: https://github.com/ffroliva/gflow-cli/compare/v0.8.0...v0.8.1
 [0.8.0]: https://github.com/ffroliva/gflow-cli/compare/v0.7.0...v0.8.0
 [0.7.0]: https://github.com/ffroliva/gflow-cli/compare/v0.6.0a6...v0.7.0
 [0.6.0a6]: https://github.com/ffroliva/gflow-cli/compare/v0.6.0a5...v0.6.0a6
