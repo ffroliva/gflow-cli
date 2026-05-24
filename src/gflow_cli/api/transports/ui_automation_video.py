@@ -22,14 +22,18 @@ from typing import TYPE_CHECKING, Any, cast
 import structlog
 
 from gflow_cli.api import routes
+from gflow_cli.api.transports._common import extract_project_id
 from gflow_cli.api.video import (
     Aspect,
     GenerateVideoRequest,
     Mode,
     VideoModel,
     VideoResult,
+    VideoStarted,
+    VideoStartedCallback,
     VideoStatus,
     media_name_from_generate_response,
+    operation_name_from_generate_response,
     parse_video_status,
 )
 from gflow_cli.errors import AuthExpiredError, WafRejectionError, WireFormatError
@@ -753,6 +757,7 @@ class VideoGenerationMixin:
         out_dir: Path | None = None,
         poll_timeout_s: float = 600.0,
         download: bool = True,
+        on_started: VideoStartedCallback | None = None,
     ) -> VideoResult:
         """Generate ONE video by driving the Flow editor UI (T2V / I2V / R2V).
 
@@ -763,6 +768,10 @@ class VideoGenerationMixin:
         aspect), `FileNotFoundError` (I2V/R2V image path missing),
         `AuthExpiredError` (401), `WafRejectionError` (403), `WireFormatError`
         (other non-200 / no media), or `TimeoutError`.
+
+        ``on_started`` is called with a :class:`VideoStarted` as soon as the
+        media_id is known (before polling completes) so the recorder can insert
+        a STARTED row even if the long poll later fails.
         """
         if not self._setup_done or self._page is None:
             raise RuntimeError(
@@ -774,7 +783,9 @@ class VideoGenerationMixin:
                 "use PORTRAIT (9:16) or LANDSCAPE (16:9)"
             )
         async with self._generate_lock:
-            return await self._generate_video_locked(request, out_dir, poll_timeout_s, download)
+            return await self._generate_video_locked(
+                request, out_dir, poll_timeout_s, download, on_started
+            )
 
     async def _generate_video_locked(
         self,
@@ -782,6 +793,7 @@ class VideoGenerationMixin:
         out_dir: Path | None,
         poll_timeout_s: float,
         download: bool,
+        on_started: VideoStartedCallback | None,
     ) -> VideoResult:
         """Serialized body of `generate_video` — runs under `self._generate_lock`
         (shared with `generate_images`: one Page, one DOM)."""
@@ -793,6 +805,11 @@ class VideoGenerationMixin:
         # of the editor before we click into mode-switch / settings / submit (#26).
         await self._dismiss_blocking_overlays(page, out_dir)
         await VideoGenerationMixin._switch_to_video_mode(page, out_dir=out_dir)
+
+        # Capture project_id from the editor URL as soon as we have it —
+        # needed for VideoStarted provenance and recorded before the generate request.
+        project_id: str | None = extract_project_id(page.url)
+
         # All settings-panel selections happen while the panel is open: model
         # (gates the 10s duration), sub-mode tab, aspect, count, duration.
         if request.model is not None:
@@ -877,13 +894,45 @@ class VideoGenerationMixin:
                     discovery={"route": route, "top_level_keys": sorted(anomaly_body)},
                 ) from e
 
+            # Parse the flow_operation_id from the generate response body.
+            # Stored SEPARATELY from media_name even when they currently match —
+            # spec explicitly keeps them distinct for future divergence.
+            flow_operation_id: str | None = operation_name_from_generate_response(
+                cast("dict[str, Any]", generate_resp.get("body") or {})
+            )
+
+            # Fire on_started BEFORE polling so the recorder can insert a STARTED
+            # row even if the long poll later fails.
+            if on_started is not None:
+                started = VideoStarted(
+                    media_id=media_name,
+                    project_id=project_id,
+                    flow_operation_id=flow_operation_id,
+                )
+                result_or_coro = on_started(started)
+                if hasattr(result_or_coro, "__await__"):
+                    import inspect
+
+                    if inspect.isawaitable(result_or_coro):
+                        await result_or_coro
+
             status = await VideoGenerationMixin._poll_video_status(
                 page, status_captured, media_name, timeout_s=poll_timeout_s
             )
             if download and status.succeeded:
                 local_path = await self._download_video(status.media_id, out_dir, page)
-                return VideoResult(status=status, local_path=local_path)
-            return VideoResult(status=status, local_path=None)
+                return VideoResult(
+                    status=status,
+                    local_path=local_path,
+                    project_id=project_id,
+                    flow_operation_id=flow_operation_id,
+                )
+            return VideoResult(
+                status=status,
+                local_path=None,
+                project_id=project_id,
+                flow_operation_id=flow_operation_id,
+            )
         finally:
             # The Page is pooled and persistent — remove both listeners so they
             # never leak across calls.

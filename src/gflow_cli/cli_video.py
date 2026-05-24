@@ -27,17 +27,18 @@ _BATCH_UNAVAILABLE = (
 
 
 async def _generate_and_report(request: Any, *, profile_dir: Path, out_dir: Path | None) -> None:
-    """Drive the transport for a single GenerateVideoRequest and print the
-    result (or fail with a non-zero exit). Shared by t2v and i2v."""
-    from gflow_cli.api.transports.ui_automation import UiAutomationTransport
+    """Drive FlowApiClient for a single GenerateVideoRequest and print the
+    result (or fail with a non-zero exit). Shared by t2v, i2v, and r2v."""
+    from gflow_cli.api.client import FlowApiClient
 
-    transport = UiAutomationTransport()
-    try:
-        await transport.setup(profile_dir)
-        console.print("[dim]Generating video — this takes ~2 minutes…[/dim]")
-        result = await transport.generate_video(request=request, out_dir=out_dir, download=True)
-    finally:
-        await transport.teardown()
+    console.print("[dim]Generating video — this takes ~2 minutes…[/dim]")
+    async with FlowApiClient(profile_dir=profile_dir, out_dir=out_dir) as client:
+        result = await client.generate_video(
+            req=request,
+            out_dir=out_dir,
+            download=True,
+            on_started=None,  # Task 8 will wire the recorder callback here
+        )
 
     if not result.status.succeeded:
         reasons = (

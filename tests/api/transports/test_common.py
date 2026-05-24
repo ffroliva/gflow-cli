@@ -204,3 +204,19 @@ def test_interpret_response_non_json_body_chained_from_json_decode_error() -> No
     import json as _json
 
     assert isinstance(exc_info.value.__cause__, _json.JSONDecodeError)
+
+
+# ---------------------------------------------------------------------------
+# extract_project_id
+# ---------------------------------------------------------------------------
+
+
+from gflow_cli.api.transports._common import extract_project_id  # noqa: E402
+
+
+def test_extract_project_id_from_flow_url() -> None:
+    assert extract_project_id("https://labs.google/fx/tools/flow/project/abc-123?x=1") == "abc-123"
+
+
+def test_extract_project_id_returns_none_for_gallery_url() -> None:
+    assert extract_project_id("https://labs.google/fx/tools/flow") is None

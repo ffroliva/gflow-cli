@@ -45,6 +45,22 @@ def mint_batch_id() -> str:
     return str(uuid.uuid4())
 
 
+PROJECT_URL_FRAGMENT = "/project/"
+
+
+def extract_project_id(url: str) -> str | None:
+    """Pull the project UUID out of a Flow editor URL, or None if absent.
+
+    Handles both ``/project/<uuid>`` and ``/project/<uuid>?query`` forms.
+    """
+    if PROJECT_URL_FRAGMENT not in url:
+        return None
+    try:
+        return url.split(PROJECT_URL_FRAGMENT)[1].split("?")[0]
+    except (IndexError, ValueError):
+        return None
+
+
 def interpret_response(strategy_name: str, resp: Any) -> list[GeneratedImage]:
     """Map an httpx-like response (status_code + text) to images or raise.
 
