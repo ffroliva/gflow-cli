@@ -12,6 +12,8 @@
 [![Type checked: pyright](https://img.shields.io/badge/type%20checked-pyright-blue.svg)](https://github.com/microsoft/pyright)
 [![Tests: TDD](https://img.shields.io/badge/tests-TDD-brightgreen.svg)](CONTRIBUTING.md)
 [![Quality Gate Status](https://sonarcloud.io/api/project_badges/measure?project=ffroliva_gflow-cli&metric=alert_status)](https://sonarcloud.io/summary/new_code?id=ffroliva_gflow-cli)
+[![Sponsor on GitHub](https://img.shields.io/static/v1?label=Sponsor&message=GitHub&color=ea4aaa&logo=github)](https://github.com/sponsors/ffroliva)
+[![Buy Me A Coffee](https://img.shields.io/static/v1?label=Buy%20Me%20a&message=Coffee&color=ffdd00&logo=buy-me-a-coffee&logoColor=black)](https://www.buymeacoffee.com/ffroliva)
 
 > ⚠️ **Unofficial. Reverse-engineered. Not affiliated with Google.** Endpoints can change at any time. Full [DISCLAIMER](DISCLAIMER.md).
 >
@@ -68,7 +70,7 @@ Reproduce the recording: [`scripts/record_demo.ps1`](scripts/record_demo.ps1) (W
 | 🎯 **Getting started** | [User Guide](docs/USER_GUIDE.md) · [Usage](docs/USAGE.md) · [Configuration](docs/CONFIGURATION.md) |
 | 🔐 **Auth & sessions** | [Authentication](docs/AUTHENTICATION.md) · [Known issues](KNOWN_ISSUES.md) |
 | 🏗️ **Internals** | [Architecture](docs/ARCHITECTURE.md) · [Security](docs/SECURITY.md) · [Debugging](docs/DEBUGGING.md) |
-| 📦 **Releases** | [Changelog](CHANGELOG.md) · [Release protocol](RELEASE.md) · [Project status](docs/PROJECT_STATUS.md) |
+| 📦 **Releases** | [Changelog](CHANGELOG.md) · [Roadmap](ROADMAP.md) · [Release protocol](RELEASE.md) · [Project status](docs/PROJECT_STATUS.md) |
 | 🤝 **Contributing** | [Contributing](CONTRIBUTING.md) · [Development](docs/DEVELOPMENT.md) · [GitHub workflow](docs/GITHUB.md) |
 
 ## For AI agents & LLMs
@@ -104,7 +106,16 @@ gflow CLI  →  Provider (interchangeable)  →  Flow (ui_automation) / Mock (te
 
 ## Project status
 
-**v0.8.1 — alpha (latest on PyPI).** Image (T2I / I2I / upload) + Video T2V / I2V / R2V live end-to-end on `ui_automation`, with a video `--model` picker (5 Veo models) + `--duration` / `--count`. Only video `batch` (manifest runner) is still queued for Phase B — use a shell for-loop until then ([USAGE](docs/USAGE.md#gflow-video-batch)). The next release will pick up everything in `[Unreleased]` (i2v/r2v wiring, t2v model picker, `GFLOW_CLI_LOCALE` env override). Full milestone history → [docs/PROJECT_STATUS.md](docs/PROJECT_STATUS.md). Changelog → [CHANGELOG.md](CHANGELOG.md).
+**v0.8.1 — alpha (latest on PyPI).** Image (T2I / I2I / upload) + Video T2V / I2V / R2V live end-to-end on `ui_automation`, with a video `--model` picker (5 Veo models) + `--duration` / `--count`. Only video `batch` (manifest runner) is still queued for Phase B — use a shell for-loop until then ([USAGE](docs/USAGE.md#gflow-video-batch)). The next release will pick up everything in `[Unreleased]` (i2v/r2v wiring, t2v model picker, `GFLOW_CLI_LOCALE` env override). Full milestone history → [docs/PROJECT_STATUS.md](docs/PROJECT_STATUS.md). Changelog → [CHANGELOG.md](CHANGELOG.md). Where the project is heading → [ROADMAP.md](ROADMAP.md).
+
+## Support
+
+If `gflow-cli` saves you time, a coffee or sponsorship goes a long way to keeping it maintained.
+
+- [GitHub Sponsors](https://github.com/sponsors/ffroliva)
+- [Buy Me a Coffee](https://www.buymeacoffee.com/ffroliva)
+
+Thanks to everyone who has supported the project so far.
 
 ## License & legal
 
