@@ -7,7 +7,7 @@ from pathlib import Path
 
 from gflow_cli.api.dto import AssetInfo, GeneratedImage, ProjectInfo
 from gflow_cli.api.image import GenerateImageRequest
-from gflow_cli.api.video import GenerateVideoRequest, VideoResult
+from gflow_cli.api.video import GenerateVideoRequest, VideoResult, VideoStarted
 from gflow_cli.config import Settings
 from gflow_cli.data.models import (
     AssetKind,
@@ -246,30 +246,29 @@ class OperationRecorder:
         profile_name: str,
         profile_dir: Path,
         request: GenerateVideoRequest,
-        flow_media_id: str,
-        flow_project_id: str,
-        flow_operation_id: str | None,
+        started: VideoStarted,
     ) -> None:
         repo = self.repository
 
         repo.upsert_profile(profile_name, profile_dir)
-        repo.upsert_project(
-            ProjectRecord(
-                id=_new_id(),
-                profile_name=profile_name,
-                flow_project_id=flow_project_id,
-                title="gflow-cli video",
-                source="generated",
+        if started.project_id is not None:
+            repo.upsert_project(
+                ProjectRecord(
+                    id=_new_id(),
+                    profile_name=profile_name,
+                    flow_project_id=started.project_id,
+                    title="gflow-cli video",
+                    source="generated",
+                )
             )
-        )
 
         asset_id = _new_id()
         repo.upsert_asset(
             AssetRecord(
                 id=asset_id,
                 profile_name=profile_name,
-                flow_project_id=flow_project_id,
-                flow_media_id=flow_media_id,
+                flow_project_id=started.project_id,
+                flow_media_id=started.media_id,
                 flow_workflow_id=None,
                 flow_media_generation_id=None,
                 kind=AssetKind.VIDEO,
@@ -290,11 +289,11 @@ class OperationRecorder:
             OperationRecord(
                 id=op_id,
                 profile_name=profile_name,
-                flow_project_id=flow_project_id,
+                flow_project_id=started.project_id,
                 command=f"video {request.mode.value}",
                 mode=OperationKind(request.mode.value),
                 status=OperationStatus.STARTED,
-                flow_operation_id=flow_operation_id,
+                flow_operation_id=started.flow_operation_id,
                 flow_batch_id=None,
                 prompt=pf.prompt,
                 prompt_hash=pf.prompt_hash,
@@ -316,20 +315,67 @@ class OperationRecorder:
         result: VideoResult,
     ) -> None:
         # VideoResult carries status.media_id (the flow_media_id) and local_path
+        from datetime import UTC, datetime
+
         repo = self.repository
         flow_media_id = result.status.media_id
 
-        repo.update_asset_status(profile_name, flow_media_id, "ready")
+        # Upsert the asset (idempotent) — reuse existing id if already inserted by on_started
+        existing_asset = repo.get_asset_by_flow_media_id(profile_name, flow_media_id)
+        asset_id = existing_asset.id if existing_asset is not None else _new_id()
+        repo.upsert_asset(
+            AssetRecord(
+                id=asset_id,
+                profile_name=profile_name,
+                flow_project_id=result.project_id,
+                flow_media_id=flow_media_id,
+                flow_workflow_id=None,
+                flow_media_generation_id=None,
+                kind=AssetKind.VIDEO,
+                status=result.status.status,
+                model=request.model.value if request.model is not None else None,
+                aspect_ratio=request.aspect.value,
+                width=None,
+                height=None,
+                duration_seconds=float(request.duration) if request.duration is not None else None,
+                seed=request.seed,
+                metadata_json={},
+            )
+        )
 
         # Update the STARTED operation for this asset to SUCCEEDED
-        from datetime import UTC, datetime
-
         completed_at = datetime.now(UTC).isoformat(timespec="milliseconds").replace("+00:00", "Z")
         op = repo.get_operation_for_output_asset(
             profile_name, flow_media_id, OperationKind(request.mode.value)
         )
         if op is not None:
             repo.update_operation_status(op.id, OperationStatus.SUCCEEDED, completed_at, None, None)
+        else:
+            # on_started may have failed — insert a fresh completed operation
+            pf = prompt_fields(request.prompt, mode=self.prompt_mode)
+            op_id = _new_id()
+            repo.insert_operation(
+                OperationRecord(
+                    id=op_id,
+                    profile_name=profile_name,
+                    flow_project_id=result.project_id,
+                    command=f"video {request.mode.value}",
+                    mode=OperationKind(request.mode.value),
+                    status=OperationStatus.SUCCEEDED,
+                    flow_operation_id=result.flow_operation_id,
+                    flow_batch_id=None,
+                    prompt=pf.prompt,
+                    prompt_hash=pf.prompt_hash,
+                    prompt_redacted=pf.prompt_redacted,
+                    model=request.model.value if request.model is not None else None,
+                    aspect_ratio=request.aspect.value,
+                    error_type=None,
+                    error_detail=None,
+                )
+            )
+            asset_lookup = repo.get_asset_by_flow_media_id(profile_name, flow_media_id)
+            if asset_lookup is not None:
+                repo.link_operation_asset(op_id, asset_lookup.id, OperationAssetRole.OUTPUT, 0)
 
         if result.local_path is not None:
             asset_lookup = repo.get_asset_by_flow_media_id(profile_name, flow_media_id)
