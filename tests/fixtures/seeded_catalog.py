@@ -56,7 +56,7 @@ def build_seeded_catalog(db_path: Path) -> tuple[DataStore, DataRepository]:
     ]
 
     # Seed profiles first — projects/assets/operations all FK-reference profiles.
-    for _prof_idx, (profile, _) in enumerate(profiles_with_project_counts):
+    for _, (profile, _) in enumerate(profiles_with_project_counts):
         repo.upsert_profile(name=profile, profile_dir=Path(f"/home/{profile}/.config/gflow"))
 
     for prof_idx, (profile, n_projects) in enumerate(profiles_with_project_counts):
