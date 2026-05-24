@@ -99,6 +99,20 @@ Migration behavior:
 
 This mirrors the useful part of Supabase-style migrations: migration files live in source control, and the database records what has run. We avoid Alembic for v1 because the project does not need SQLAlchemy or multi-dialect migration machinery yet.
 
+Packaging requirements:
+
+- Read migration SQL via `importlib.resources.files(...)`, not filesystem paths relative to the current working directory.
+- Update the Hatchling build configuration in `pyproject.toml` so `gflow_cli/data/migrations/*.sql` is included in wheels and sdists.
+- Add a packaging test or build check that verifies the installed or built package can discover `0001_initial.sql`.
+
+SQLite connection requirements:
+
+- Enable foreign key enforcement on every connection: `PRAGMA foreign_keys = ON`.
+- Enable safer concurrent CLI usage: `PRAGMA journal_mode = WAL`.
+- Set a busy timeout, for example `PRAGMA busy_timeout = 5000`, so parallel profile/process runs do not fail immediately with `database is locked`.
+- Use Python `sqlite3` with `isolation_level=None` and explicit `BEGIN` / `COMMIT` blocks so connection-level pragmas and transaction boundaries behave predictably.
+- Open write transactions explicitly around grouped recorder operations.
+
 ## Error Taxonomy Impact
 
 The persistence layer needs typed project errors; raw `sqlite3.Error` must not cross the `gflow_cli.data` boundary.
@@ -125,6 +139,7 @@ Impact:
 - Add a new stable exit code, `16`, for `DataStoreError`.
 - Update `EXIT_CODE_MAP`, tests, and the docs exit-code table.
 - Keep data errors compatible with RFC 9457 Problem Details logging.
+- Exit code `16` applies to pre-Flow persistence setup failures and explicit future `gflow data ...` command failures. A tracking failure after a paid generation already succeeded must not turn the command into a retry-shaped failure.
 
 ## Flow ID Semantics
 
@@ -170,6 +185,7 @@ projects(
   title TEXT,
   source TEXT NOT NULL,
   created_at TEXT NOT NULL,
+  FOREIGN KEY(profile_name) REFERENCES profiles(name),
   UNIQUE(profile_name, flow_project_id)
 )
 
@@ -190,7 +206,8 @@ operations(
   error_type TEXT,
   error_detail TEXT,
   flow_operation_id TEXT,
-  flow_batch_id TEXT
+  flow_batch_id TEXT,
+  FOREIGN KEY(profile_name) REFERENCES profiles(name)
 )
 
 assets(
@@ -210,6 +227,7 @@ assets(
   status TEXT NOT NULL,
   created_at TEXT NOT NULL,
   metadata_json TEXT,
+  FOREIGN KEY(profile_name) REFERENCES profiles(name),
   UNIQUE(profile_name, flow_media_id)
 )
 
@@ -218,6 +236,8 @@ operation_assets(
   asset_id TEXT NOT NULL,
   role TEXT NOT NULL,
   position INTEGER NOT NULL DEFAULT 0,
+  FOREIGN KEY(operation_id) REFERENCES operations(id),
+  FOREIGN KEY(asset_id) REFERENCES assets(id),
   PRIMARY KEY(operation_id, asset_id, role, position)
 )
 
@@ -230,6 +250,7 @@ local_files(
   bytes INTEGER,
   media_type TEXT,
   created_at TEXT NOT NULL,
+  FOREIGN KEY(asset_id) REFERENCES assets(id),
   UNIQUE(asset_id, path)
 )
 ```
@@ -241,6 +262,7 @@ Important constraints:
 - `metadata_json` can hold route-specific fields without requiring a migration for every observed Flow nuance.
 - `metadata_json` must not store signed CDN URLs such as `fifeUrl`; those expire and contain bearer-style query tokens.
 - Prompt redaction stores `prompt = NULL`, `prompt_redacted = 1`, and `prompt_hash` for correlation.
+- `local_files.path` stores the resolved absolute local path in v1. Moving output directories or sharing the DB across Windows/WSL path schemes is out of scope until `gflow data repair` can relink files.
 
 ## Prompt Privacy
 
@@ -271,7 +293,7 @@ Persistence failure handling:
 
 - Before any remote Flow action, DB open/migration failures fail fast with exit code `16`.
 - After a successful paid remote generation, persistence failures must not discard generated media or skip downloads that can still complete.
-- If media was generated and downloaded but the final persistence write fails, keep the local file and exit with `DataStoreError` after reporting the saved path where the current command UX allows it.
+- If media was generated and downloaded but the final persistence write fails, keep the local file, emit a visible warning plus a structured `data.persistence_failed_after_success` event, and preserve the command's generation result exit semantics. A successful paid generation with a saved file should not exit non-zero solely because local tracking failed.
 - No data-layer failure should be silently swallowed. If a write is intentionally deferred or retried, emit a structured event with the operation ID and failure class.
 
 ## T2V Client-Boundary Normalization
@@ -333,6 +355,9 @@ Required tests:
 - Migration runner is idempotent.
 - Checksum drift raises `DataMigrationError`.
 - Newer DB schema raises `DataMigrationError`.
+- Built wheels/sdists contain SQL migration files and the runner reads them through `importlib.resources`.
+- New SQLite connections enable `foreign_keys`, `WAL`, and `busy_timeout`.
+- Foreign key enforcement rejects orphaned `operation_assets` and `local_files` rows.
 - SQLite exceptions are mapped to `DataStoreError` subclasses.
 - Repository upserts are idempotent.
 - Prompt redaction stores hash and no prompt text.
@@ -358,7 +383,8 @@ Update:
 
 - New operations are recorded in `$GFLOW_CLI_HOME/gflow.db` without user action.
 - Migrations run automatically and safely.
-- Data-layer failures raise typed `GFlowError` subclasses and map to exit code `16`.
+- Pre-Flow data-layer failures raise typed `GFlowError` subclasses and map to exit code `16`.
+- Post-success tracking failures warn and log without causing paid generations to be blindly retried by generic non-zero-exit automation.
 - T2V is invoked via `FlowApiClient`, not direct transport construction in the CLI.
 - Image/video asset rows distinguish local IDs from Flow media IDs, workflow IDs, media generation IDs, operation IDs, and batch IDs.
 - I2V code can query the data layer for a seed image candidate without opening Flow's library UI.
