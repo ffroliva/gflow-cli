@@ -91,6 +91,13 @@ src/gflow_cli/
 ├── observability.py    ← Phase 4 — structlog bootstrap + event emitters
 ├── paths.py            ← XDG-aware default paths
 ├── profile_store.py    ← profile inventory + default-profile config.toml
+├── data/               ← Phase 6 — local SQLite provenance layer
+│   ├── __init__.py
+│   ├── store.py        ← DataStore (connection + migration runner)
+│   ├── repository.py   ← read queries (get_by_media_id, list_by_profile, …)
+│   ├── recorder.py     ← OperationRecorder (write path + redact_metadata)
+│   └── migrations/
+│       └── 0001_initial.sql
 └── api/
     ├── __init__.py
     ├── _retry.py       ← Phase 4 — tenacity AsyncRetrying + Retry-After cap
@@ -108,7 +115,7 @@ src/gflow_cli/
 
 Documented in [docs/CONFIGURATION.md](docs/CONFIGURATION.md) and [.env.template](.env.template). Variables:
 
-`GFLOW_CLI_HOME`, `GFLOW_CLI_OUTPUT_DIR`, `GFLOW_CLI_PROFILE`, `GFLOW_CLI_PROVIDER`, `GFLOW_CLI_GEMINI_API_KEY`, `GFLOW_CLI_TIMEOUT_SECONDS`, `GFLOW_CLI_LOG_LEVEL`, `GFLOW_CLI_LOG_FORMAT`, `GFLOW_CLI_CONCURRENCY`.
+`GFLOW_CLI_HOME`, `GFLOW_CLI_OUTPUT_DIR`, `GFLOW_CLI_PROFILE`, `GFLOW_CLI_PROVIDER`, `GFLOW_CLI_GEMINI_API_KEY`, `GFLOW_CLI_TIMEOUT_SECONDS`, `GFLOW_CLI_LOG_LEVEL`, `GFLOW_CLI_LOG_FORMAT`, `GFLOW_CLI_CONCURRENCY`, `GFLOW_CLI_DB_PATH`, `GFLOW_CLI_HISTORY_PROMPTS`.
 
 Default paths via `platformdirs`:
 
@@ -585,17 +592,22 @@ gates on the same header.
 
 ---
 
-### Phase 6 — Operations history & cost tracking — BACKLOG
+### Phase 6 — Local SQLite data layer — IMPLEMENTED (PR #TBD)
 
-Foundation laid by Phase 4's structured `error_raised` events + Problem Details. Phase 6 adds a local persistence layer so users can answer "what did I generate last week and what did it cost?".
+Records new image, batch, and T2V provenance in a local SQLite database. Read-only `gflow data media <id>` command exposed.
 
-- Local SQLite (or DuckDB if analytical queries dominate) at `$GFLOW_CLI_HOME/operations.db`
-- Schema: `operations(id, timestamp, profile, cli_command, project_id, media_uuids, prompt, model, aspect, seed_count, status, error_class, error_problem, duration_ms, output_paths)` — every CLI invocation appends one row
-- Schema versioned via Alembic-style migrations
-- New CLI: `gflow history list/show/search` — query operations by date / profile / command / status
-- Cost tracking: best-effort credit estimation per call (Veo 3.1 ≈ X credits/sec, Imagen ≈ Y credits/image — tabulate from observation)
-- Privacy: prompts are user-generated content; persist locally only, never transmit
-- Out of scope until Phase 6 ships: cloud sync, multi-user history
+- `gflow_cli/data/` — `DataStore` + repository + `OperationRecorder` + `redact_metadata`
+- Default DB path: `<GFLOW_CLI_HOME>/gflow.db`; override via `GFLOW_CLI_DB_PATH`
+- Schema versioned via SHA-256-checksummed migrations (`0001_initial.sql`); newer-schema detection raises `DataStoreError` (exit 16) with a clear upgrade hint
+- Privacy: `GFLOW_CLI_HISTORY_PROMPTS=redacted` stores only SHA-256 prompt hash; signed CDN URLs, reCAPTCHA tokens, and auth headers are stripped by `redact_metadata` before any DB write
+- `gflow data media <id> [--profile]` prints profile, media ID, project ID, kind, and local file paths
+- T2V now flows through `FlowApiClient.generate_video`, sharing the client boundary with image commands
+
+**Backlog follow-ons (not in this PR):**
+
+- `gflow data import` / `gflow data repair` — back-fill older operations not recorded by this version
+- Richer management UI: `gflow data list`, `gflow data search`, cost/credit estimation
+- `gflow history` alias for the data subcommand
 
 ### CDP Attach Transport — BACKLOG (deferred)
 
