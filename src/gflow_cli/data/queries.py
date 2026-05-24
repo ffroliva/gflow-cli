@@ -11,9 +11,29 @@ list_profiles) will be added in Tasks 2.3–2.5.
 from __future__ import annotations
 
 import sqlite3
+from collections.abc import Generator
+from contextlib import contextmanager
 from dataclasses import dataclass
 from datetime import datetime
 from pathlib import Path
+
+from gflow_cli.errors import DataStoreError
+
+
+@contextmanager
+def _safe_db(db_path: Path) -> Generator[sqlite3.Connection, None, None]:
+    """Open the catalog DB and yield a connection, mapping sqlite3 errors to DataStoreError."""
+    try:
+        conn = sqlite3.connect(db_path)
+        conn.row_factory = sqlite3.Row
+    except sqlite3.Error as exc:
+        raise DataStoreError(f"Failed to open catalog at {db_path}: {exc}") from exc
+    try:
+        yield conn
+    except sqlite3.Error as exc:
+        raise DataStoreError(f"Catalog query failed: {exc}") from exc
+    finally:
+        conn.close()
 
 
 @dataclass(frozen=True)
@@ -63,8 +83,7 @@ def list_projects(
         A list of :class:`ProjectRow` instances ordered newest-first.
     """
     params = {"profile": profile, "limit": limit, "offset": offset}
-    with sqlite3.connect(db_path) as conn:
-        conn.row_factory = sqlite3.Row
+    with _safe_db(db_path) as conn:
         rows = conn.execute(_LIST_PROJECTS_SQL, params).fetchall()
     return [
         ProjectRow(
@@ -136,8 +155,7 @@ def list_images(
         A list of :class:`ImageRow` instances ordered newest-first.
     """
     params = {"profile": profile, "limit": limit, "offset": offset}
-    with sqlite3.connect(db_path) as conn:
-        conn.row_factory = sqlite3.Row
+    with _safe_db(db_path) as conn:
         rows = conn.execute(_LIST_IMAGES_SQL, params).fetchall()
     return [
         ImageRow(
@@ -213,8 +231,7 @@ def list_videos(
         A list of :class:`VideoRow` instances ordered newest-first.
     """
     params = {"profile": profile, "limit": limit, "offset": offset}
-    with sqlite3.connect(db_path) as conn:
-        conn.row_factory = sqlite3.Row
+    with _safe_db(db_path) as conn:
         rows = conn.execute(_LIST_VIDEOS_SQL, params).fetchall()
     return [
         VideoRow(
@@ -291,8 +308,7 @@ def list_profiles(
         last_used_at.
     """
     params = {"limit": limit, "offset": offset}
-    with sqlite3.connect(db_path) as conn:
-        conn.row_factory = sqlite3.Row
+    with _safe_db(db_path) as conn:
         rows = conn.execute(_LIST_PROFILES_SQL, params).fetchall()
     return [
         ProfileRow(
