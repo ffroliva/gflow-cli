@@ -53,6 +53,11 @@ def config_file(home: Path) -> Path:
     return home / "config.toml"
 
 
+def database_path(home: Path) -> Path:
+    """SQLite DB path under GFLOW_CLI_HOME."""
+    return home / "gflow.db"
+
+
 def _validate_job_id(job_id: str) -> str:
     if not _SAFE_ID_RE.match(job_id):
         raise ValueError(f"Unsafe job_id returned by API: {job_id!r}")
