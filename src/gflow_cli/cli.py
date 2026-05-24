@@ -13,6 +13,7 @@ from rich.table import Table
 
 from gflow_cli import __version__, profile_store
 from gflow_cli import auth as auth_mod
+from gflow_cli.cli_data import data as _data_group
 from gflow_cli.cli_image import image as _image_group
 from gflow_cli.cli_run import run as _run_command
 from gflow_cli.cli_video import video as _video_group
@@ -237,6 +238,7 @@ def _resolve_or_prompt(default_for_first_run: str) -> str:
         )
 
 
+main.add_command(_data_group)
 main.add_command(_video_group)
 main.add_command(_image_group)
 main.add_command(_run_command)
