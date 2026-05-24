@@ -6,9 +6,26 @@ from pathlib import Path
 from unittest.mock import AsyncMock, MagicMock, patch
 
 import pytest
+import structlog
 from click.testing import CliRunner
 
 from gflow_cli.api.dto import AssetInfo, GeneratedImage
+
+
+class FakeRecorder:
+    def __init__(self) -> None:
+        self.uploads: list[dict] = []
+        self.generated: list[dict] = []
+        self.closed = False
+
+    def close(self) -> None:
+        self.closed = True
+
+    def record_upload_image(self, **kwargs: object) -> None:
+        self.uploads.append(kwargs)
+
+    def record_generated_images(self, **kwargs: object) -> None:
+        self.generated.append(kwargs)
 
 
 @pytest.fixture
@@ -620,3 +637,158 @@ class TestTransportFlag:
         assert result.exit_code == 0, result.output
         _, kwargs = mock_cls.call_args
         assert kwargs.get("transport") == "bearer"
+
+
+# ---------------------------------------------------------------------------
+# OperationRecorder integration tests
+# ---------------------------------------------------------------------------
+
+
+class TestRecorderIntegration:
+    def test_upload_records_upload_image(self, runner: CliRunner, tmp_path: Path) -> None:
+        png = tmp_path / "hero.png"
+        png.write_bytes(b"\x89PNG\r\n\x1a\n")
+        client = _make_mock_client(asset_name="asset-uuid-123")
+        recorder = FakeRecorder()
+
+        with (
+            patch("gflow_cli.cli_image.FlowApiClient", return_value=client),
+            patch("gflow_cli.cli_image._make_provider_dir", return_value=tmp_path / "prof"),
+            patch("gflow_cli.cli_image._resolve_profile", return_value="default"),
+            patch("gflow_cli.cli_image.OperationRecorder.open", return_value=recorder),
+        ):
+            from gflow_cli.cli import main
+
+            result = runner.invoke(
+                main,
+                ["image", "upload", str(png)],
+                catch_exceptions=False,
+            )
+
+        assert result.exit_code == 0, result.output
+        assert len(recorder.uploads) == 1
+        rec = recorder.uploads[0]
+        assert rec["profile_name"] == "default"
+        assert rec["profile_dir"] == tmp_path / "prof"
+        assert rec["image_path"] == png
+        assert rec["asset"].name == "asset-uuid-123"
+        assert rec["project"].project_id == "proj-1"
+        assert recorder.closed
+
+    def test_t2i_records_generated_images_after_download(
+        self, runner: CliRunner, tmp_path: Path
+    ) -> None:
+        images = [_make_generated_image(media_name="m1")]
+        client = _make_t2i_client(images=images)
+        recorder = FakeRecorder()
+        out_dir = tmp_path / "out"
+
+        with (
+            patch("gflow_cli.cli_image.FlowApiClient", return_value=client),
+            patch("gflow_cli.cli_image._make_provider_dir", return_value=tmp_path / "prof"),
+            patch("gflow_cli.cli_image._resolve_profile", return_value="default"),
+            patch("gflow_cli.cli_image.OperationRecorder.open", return_value=recorder),
+        ):
+            from gflow_cli.cli import main
+
+            result = runner.invoke(
+                main,
+                ["image", "t2i", "a cat", "--out", str(out_dir)],
+                catch_exceptions=False,
+            )
+
+        assert result.exit_code == 0, result.output
+        assert len(recorder.generated) == 1
+        rec = recorder.generated[0]
+        assert rec["operation_kind"] == "t2i"
+        assert rec["input_media_ids"] == []
+        assert rec["profile_name"] == "default"
+        assert rec["profile_dir"] == tmp_path / "prof"
+        assert rec["images"] == images
+        assert len(rec["saved_paths"]) == 1
+        assert recorder.closed
+
+    def test_i2i_records_inputs_and_outputs(self, runner: CliRunner, tmp_path: Path) -> None:
+        png = tmp_path / "hero.png"
+        png.write_bytes(b"\x89PNG\r\n\x1a\n")
+        upload_uuid = "ddb6ef97-262d-49f4-8269-4a28c0fae6a2"
+        images = [_make_generated_image(media_name="out-img-1")]
+        client = _make_i2i_client(images=images, upload_uuid=upload_uuid)
+        recorder = FakeRecorder()
+        out_dir = tmp_path / "out"
+
+        with (
+            patch("gflow_cli.cli_image.FlowApiClient", return_value=client),
+            patch("gflow_cli.cli_image._make_provider_dir", return_value=tmp_path / "prof"),
+            patch("gflow_cli.cli_image._resolve_profile", return_value="default"),
+            patch("gflow_cli.cli_image.OperationRecorder.open", return_value=recorder),
+        ):
+            from gflow_cli.cli import main
+
+            result = runner.invoke(
+                main,
+                ["image", "i2i", "make cinematic", "--ref", str(png), "--out", str(out_dir)],
+                catch_exceptions=False,
+            )
+
+        assert result.exit_code == 0, result.output
+        assert len(recorder.generated) == 1
+        rec = recorder.generated[0]
+        assert rec["operation_kind"] == "i2i"
+        assert rec["input_media_ids"] == [upload_uuid]
+        assert recorder.closed
+
+    def test_t2i_persistence_failure_after_success_warns_and_succeeds(
+        self,
+        runner: CliRunner,
+        tmp_path: Path,
+        install_log_capture: structlog.testing.LogCapture,
+        monkeypatch: pytest.MonkeyPatch,
+    ) -> None:
+        from gflow_cli.errors import DataStoreError
+
+        images = [_make_generated_image(media_name="m1")]
+        client = _make_t2i_client(images=images)
+        out_dir = tmp_path / "out"
+
+        class FailingRecorder(FakeRecorder):
+            def record_generated_images(self, **kwargs: object) -> None:
+                raise DataStoreError("simulated write failure")
+
+        recorder = FailingRecorder()
+
+        # Reset structlog so the install_log_capture fixture's configure() takes effect.
+        structlog.reset_defaults()
+        # Re-install capture after reset (install_log_capture ran before reset).
+        cap = structlog.testing.LogCapture()
+        structlog.configure(
+            processors=[structlog.contextvars.merge_contextvars, cap],
+        )
+
+        # Prevent CLI bootstrap from overwriting the test's LogCapture chain.
+        import gflow_cli.cli as _cli_mod
+
+        monkeypatch.setattr(_cli_mod, "configure_logging", lambda *a, **kw: None)
+
+        with (
+            patch("gflow_cli.cli_image.FlowApiClient", return_value=client),
+            patch("gflow_cli.cli_image._make_provider_dir", return_value=tmp_path / "prof"),
+            patch("gflow_cli.cli_image._resolve_profile", return_value="default"),
+            patch("gflow_cli.cli_image.OperationRecorder.open", return_value=recorder),
+        ):
+            from gflow_cli.cli import main
+
+            result = runner.invoke(
+                main,
+                ["image", "t2i", "a cat", "--out", str(out_dir)],
+                catch_exceptions=False,
+            )
+
+        # Command must succeed despite recorder failure
+        assert result.exit_code == 0, result.output
+        # Saved file must be preserved
+        written = list(out_dir.rglob("*.png"))
+        assert len(written) == 1, f"Expected 1 file, got {written}"
+        # structlog warning must be emitted
+        events = [e["event"] for e in cap.entries]
+        assert "data.persistence_failed_after_success" in events
