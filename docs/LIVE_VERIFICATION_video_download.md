@@ -81,9 +81,11 @@ the new download-enabled path.
 - `--aspect 1:1` (SQUARE) — the transport raises `ValueError` for SQUARE
   on the video path (Flow doesn't offer it); the CLI only accepts
   `9:16` / `16:9`.
-- I2V (image-to-video) and R2V (reference-to-video) modes — still raise
-  `NotImplementedError` on `UiAutomationTransport`; tracked under
-  Phase B follow-ups.
+- I2V (image-to-video) and R2V (reference-to-video) modes — were not
+  exercised in *this* verification (T2V download only). I2V/R2V shipped
+  later via PR #48 (2026-05-24, develop) and were live-verified by the
+  contributor against a Pro/Ultra account; see CHANGELOG `[Unreleased]`.
+  Earlier `NotImplementedError` stubs are gone as of PR #48.
 - `--download=False` opt-out — covered by unit tests
   (`tests/api/transports/test_ui_automation_video.py`); not exercised
   live because the goal of this verification is the download path.

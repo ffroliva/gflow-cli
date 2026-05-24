@@ -20,6 +20,11 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   (Flow "ingredients"). Model-aware reference cap (omni_flash ≤7, veo_3_1_* ≤3)
   enforced in the request DTO; the transport stops gracefully if Flow hides the
   add-media button at the cap. Fires `batchAsyncGenerateVideoReferenceImages`.
+- `GFLOW_CLI_LOCALE` env var — overrides Playwright's launch `locale=` parameter
+  (default: `en-US`). Controls `Accept-Language` only; Chrome's UI language is
+  still forced to en-US via `--lang=en-US`. Prep for issue #24 (locale-agnostic
+  selectors); live-verified end-to-end with `GFLOW_CLI_LOCALE=pt-BR` against a
+  Pro/Ultra account. See `docs/CONFIGURATION.md § GFLOW_CLI_LOCALE`.
 
 ### Changed
 
