@@ -310,7 +310,7 @@ class OperationRecorder:
         self,
         *,
         profile_name: str,
-        profile_dir: Path,
+        _profile_dir: Path,
         request: GenerateVideoRequest,
         result: VideoResult,
     ) -> None:

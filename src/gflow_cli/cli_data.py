@@ -30,7 +30,7 @@ def media(media_id: str, profile: str | None) -> None:
     )
 
 
-async def _run_media(*, profile_name: str, media_id: str) -> None:
+async def _run_media(*, profile_name: str, media_id: str) -> None:  # NOSONAR S7503
     settings = get_settings()
     with DataStore.open(settings.resolved_db_path()) as store:
         repo = DataRepository(store)

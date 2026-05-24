@@ -140,7 +140,7 @@ def test_record_completed_video_updates_media_operation_and_file(tmp_path: Path)
         )
         recorder.record_completed_video(
             profile_name="default",
-            profile_dir=tmp_path / "profile_default",
+            _profile_dir=tmp_path / "profile_default",
             request=request,
             result=result,
         )
