@@ -233,9 +233,7 @@ def operation_name_from_generate_response(response_json: dict[str, Any]) -> str 
     if not isinstance(operations, list) or not operations:
         return None
     first: dict[str, Any] = cast("dict[str, Any]", operations[0])
-    operation: dict[str, Any] | None = cast(
-        "dict[str, Any] | None", first.get("operation")
-    )
+    operation: dict[str, Any] | None = cast("dict[str, Any] | None", first.get("operation"))
     if not isinstance(operation, dict):
         return None
     name_val: str | None = cast("str | None", operation.get("name"))
