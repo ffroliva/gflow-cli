@@ -90,42 +90,58 @@ def _sql_update_quote_state(
     return in_single, in_double, 0
 
 
+@dataclass
+class _SqlTokenizerState:
+    in_single: bool = False
+    in_double: bool = False
+    in_line_comment: bool = False
+
+
+def _sql_advance_one_char(
+    state: _SqlTokenizerState, buf: list[str], char: str, nxt: str
+) -> tuple[int, str | None]:
+    """Process one char of SQL; return ``(chars_consumed, yielded_statement)``.
+
+    ``yielded_statement`` is non-None only when the char terminated a statement
+    (a `;` outside any string/comment). Pure function over the mutable ``state``
+    + ``buf``; the caller owns the index advancement.
+    """
+    if state.in_line_comment:
+        if char == "\n":
+            state.in_line_comment = False
+        buf.append(char)
+        return 1, None
+    if not state.in_single and not state.in_double and char == "-" and nxt == "-":
+        state.in_line_comment = True
+        buf.extend([char, nxt])
+        return 2, None
+    state.in_single, state.in_double, extra = _sql_update_quote_state(
+        char, nxt, state.in_single, state.in_double
+    )
+    if extra:
+        buf.extend([char, nxt])
+        return 2, None
+    if char == ";" and not state.in_single and not state.in_double:
+        statement = "".join(buf).strip()
+        buf.clear()
+        return 1, statement or None
+    buf.append(char)
+    return 1, None
+
+
 def _iter_sql_statements(sql: str) -> Iterator[str]:
     buf: list[str] = []
-    in_single = False
-    in_double = False
-    in_line_comment = False
+    state = _SqlTokenizerState()
     i = 0
     while i < len(sql):
-        char = sql[i]
         nxt = sql[i + 1] if i + 1 < len(sql) else ""
-        if in_line_comment:
-            if char == "\n":
-                in_line_comment = False
-            buf.append(char)
-            i += 1
-            continue
-        if not in_single and not in_double and char == "-" and nxt == "-":
-            in_line_comment = True
-            buf.extend([char, nxt])
-            i += 2
-            continue
-        in_single, in_double, extra = _sql_update_quote_state(char, nxt, in_single, in_double)
-        if extra:
-            buf.extend([char, nxt])
-            i += 2
-            continue
-        if char == ";" and not in_single and not in_double:
-            statement = "".join(buf).strip()
-            if statement:
-                yield statement
-            buf.clear()
-        else:
-            buf.append(char)
-        i += 1
-    statement = "".join(buf).strip()
-    if statement:
-        yield statement
+        consumed, statement = _sql_advance_one_char(state, buf, sql[i], nxt)
+        if statement is not None:
+            yield statement
+        i += consumed
+    tail = "".join(buf).strip()
+    if tail:
+        yield tail
 
 
 class DataStore:
