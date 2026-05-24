@@ -339,7 +339,14 @@ The video-generation feature has its own sub-phase plan (spike → Phase A → P
 - ⚠️ Q7 — status poll `page.request.post` → 401; the spec §5.5 polling design must be reworked in Phase A (capture Flow's own status responses).
 - ⏭️ Q1 / Q3 / Q6 — image attachment is an in-page catalog dialog; driving it, the start-only-I2V check, and the R2V slot cap are deferred to Phase B.
 
-**Next:** Phase A (T2V transport), once §5.5 is revised for the Q7 401. GitHub issue #24 tracks making the transport selectors language-agnostic.
+**Next:** Phase A (T2V transport), once §5.5 is revised for the Q7 401. ✅ Issue #24 (locale-agnostic selectors) completed in v0.8.1.
+
+---
+
+### Phase 7 — Protocol Extensions (v0.8.1, 2026-05-23)
+
+- [x] **Issue #24: Locale-Agnostic Selectors.** Refactored `UiAutomationTransport` to use locale-invariant selectors (ARIA, Radix tokens, icon ligatures), ensuring compatibility across all Google account languages. Verified E2E in English, Portuguese, and Spanish.
+- [ ] **Model Context Protocol (MCP) Server.** (Backlog) Expose core gflow-cli tools via MCP for language-agnostic agentic access.
 
 ---
 
