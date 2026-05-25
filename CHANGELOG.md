@@ -104,6 +104,19 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   non-existent `aria-controls*=9_16`; the video-mode tab match was ambiguous.
   All now use exact `[id$=-trigger-X]` suffixes + aria-label text.
 
+### Build
+
+- **Wheel build no longer emits duplicate ZIP entries.** An earlier attempt at
+  tagging v0.9.0 was rejected by PyPI with HTTP 400 ("Duplicate filename in
+  local headers") because `pyproject.toml` had
+  `[tool.hatch.build.targets.wheel.force-include]` and
+  `[tool.hatch.build.targets.sdist.force-include]` blocks pointing at
+  `src/gflow_cli/data/migrations`, on top of the already-comprehensive
+  `packages = ["src/gflow_cli"]` directive — hatchling included the
+  migrations directory twice (both `__init__.py` and `0001_initial.sql`). The
+  force-include blocks have been removed; hatchling's default package
+  inclusion already covers `.sql` files inside the package tree. (PR #74.)
+
 ### Notes
 
 - I2V/R2V image inputs bind through the editor's media dialog (frame slot /
