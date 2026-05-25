@@ -54,7 +54,9 @@ cat examples/sample_prompts.txt | gflow image t2i --stdin
 GFLOW_EXAMPLE_PROFILE=<your-profile> python examples/batch_from_config.py
 ```
 
-Output PNGs land under `./gflow-output/<UTC-timestamp>/` by default.
+Output PNGs land under `~/gflow-output/<UTC-timestamp>/` by default (your home
+directory, not the current working directory — so running examples from inside
+the gflow-cli repo does not pollute the repo root).
 
 ## Notes
 

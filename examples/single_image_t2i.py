@@ -43,8 +43,10 @@ Custom prompt + explicit profile::
         --profile <your-profile> \\
         --prompt "a quiet mountain lake at dawn, cinematic photography"
 
-Output is written to ``./gflow-output/<UTC-timestamp>/image_00.png`` by
-default. Override with ``--output-dir``.
+Output is written to ``~/gflow-output/<UTC-timestamp>/image_00.png`` by
+default (your home directory, not the current working directory — so running
+the example from inside the gflow-cli repo does not pollute the repo root).
+Override with ``--output-dir``.
 """
 
 from __future__ import annotations
@@ -103,7 +105,7 @@ def main() -> None:
         "--output-dir",
         type=Path,
         default=None,
-        help="Directory to write the PNG. Defaults to ./gflow-output/<UTC>/.",
+        help="Directory to write the PNG. Defaults to ~/gflow-output/<UTC>/.",
     )
     args = parser.parse_args()
 
@@ -125,7 +127,7 @@ def main() -> None:
         sys.exit(2)
 
     output_dir = args.output_dir or (
-        Path("gflow-output") / time.strftime("%Y%m%dT%H%M%SZ", time.gmtime())
+        Path.home() / "gflow-output" / time.strftime("%Y%m%dT%H%M%SZ", time.gmtime())
     )
     saved = asyncio.run(_run(profile_dir, args.prompt, output_dir))
     print(f"\nImage saved: {saved} ({saved.stat().st_size} bytes)")
