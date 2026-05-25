@@ -319,15 +319,27 @@ issue and not blocked by any code change in this repo.
 
 - **Status:** Mitigated · **Severity:** Medium · **Tracking:** [issue #24](https://github.com/ffroliva/gflow-cli/issues/24)
 
+  Status stays *Mitigated* (not *Resolved*) because `--lang=en-US` is still
+  passed and `NEW_PROJECT_SELECTORS` / `SUBMIT_BUTTON_SELECTORS` tails still
+  carry English-text fallbacks; the icon-first leads cover the common path,
+  but the dependency only fully clears after a live e2e on a non-English
+  Chrome profile.
+
 **Phase 2 progress (2026-05-25, develop / post-v0.8.1, unreleased):**
 
 - **`ONBOARDING_SELECTORS` restructured** — replaced the original 9 English/PT-BR
-  text-only entries with a three-tier cascade:
-  1. `_ONBOARDING_STRUCTURAL_SELECTORS` (5 entries) — locale-free ARIA/ID anchors:
-     `button#L2AGLb` (Google Funding Choices SDK stable ID), plus ARIA-label variants
-     (`Accept all`, `I agree`, and case-insensitive partials `Accept*`, `Agree*`).
-  2. `_ONBOARDING_TEXT_SELECTORS` (~35 entries) — `:has-text()` selectors covering
-     12 locales: EN, PT, DE, ES, FR, IT, NL, JA, ZH, KO, PL, RU + TR, ID.
+  text-only entries with a two-tier cascade:
+  1. `_ONBOARDING_STRUCTURAL_SELECTORS` (3 strict entries) — locale-free ARIA/ID
+     anchors: `button#L2AGLb` (Google Funding Choices SDK stable ID) plus exact
+     ARIA-label matches (`Accept all`, `I agree`). These are programmatic SDK
+     constants, not UI strings.
+  2. `_ONBOARDING_TEXT_SELECTORS` (~37 entries) — leads with two
+     case-insensitive ARIA-partial entries (`aria-label*='Accept' i` /
+     `*='Agree' i`) that catch many CMP dialogs (OneTrust, Cookiebot) whose
+     aria-label values stay in English even on non-EN pages, followed by
+     `:has-text()` selectors covering 14 locales: EN, PT, DE, ES, FR, IT, NL,
+     JA, ZH, KO, PL, RU, TR, ID. The ARIA-partial entries live in this tier
+     because English aria-label values are not guaranteed across every CMP.
   3. `ONBOARDING_SELECTORS = (*_ONBOARDING_STRUCTURAL_SELECTORS, *_ONBOARDING_TEXT_SELECTORS)`
      so structural entries are always tried first.
   Cascade-ordering invariant is verified by `TestBypassOnboarding` in
@@ -365,10 +377,10 @@ issue and not blocked by any code change in this repo.
 regression, then removing `--lang=en-US`.
 
 **Workaround:** with Phase 2 changes, most locales are handled automatically.
-For locales outside the 12 covered by `_ONBOARDING_TEXT_SELECTORS`, ARIA-based
+For locales outside the 14 covered by `_ONBOARDING_TEXT_SELECTORS`, ARIA-based
 structural selectors fire first and cover Google's Funding Choices consent SDK.
 For non-standard CMP dialogs not covered, prefer accounts whose Flow renders in
-one of the 12 supported locales or in English.
+one of the 14 supported locales or in English.
 
 ---
 
