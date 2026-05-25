@@ -356,9 +356,15 @@ issue and not blocked by any code change in this repo.
   available (default `en-US`).
 
 - **`--lang=en-US` dependency reduced** — `ONBOARDING_SELECTORS` and `_attach_frame`
-  no longer require it. The arg is still passed because live e2e verification on a
-  non-English Chrome profile has not yet been performed; it will be removed once
-  that passes.
+  no longer require it. The arg is still passed because removing it requires a
+  broader live-e2e sweep (I2V/R2V across multiple locales); it will be dropped
+  once that completes.
+
+- **Live e2e on `de-DE` (2026-05-25)** — `GFLOW_CLI_LOCALE=de-DE` T2V on
+  `ffroliva` (Pro) completed in 70.9 s and returned `MEDIA_GENERATION_STATUS_SUCCESSFUL`
+  with a 3.1 MB 1280×720 H.264 mp4 (8 s clip). Confirms the structural-first
+  selectors and `GFLOW_CLI_LOCALE` env override work end-to-end on a locale
+  outside the original 9-entry English/PT-BR list.
 
 **Earlier — Phase 7 multi-image-prompt work** addressed the count-tab selectors:
 - `_COUNT_TAB_TEXT_RE = ^(1x|x[2-4])$` only matches the digit+x format Flow
