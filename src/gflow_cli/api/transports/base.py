@@ -6,13 +6,14 @@ See docs/superpowers/specs/2026-05-11-gflow-cli-b007-transport-strategy-design.m
 from __future__ import annotations
 
 from pathlib import Path
-from typing import TYPE_CHECKING, Protocol
+from typing import TYPE_CHECKING, Protocol, runtime_checkable
 
 if TYPE_CHECKING:
     from playwright.async_api import Page
 
 from gflow_cli.api.dto import GeneratedImage
 from gflow_cli.api.image import GenerateImageRequest
+from gflow_cli.api.video import GenerateVideoRequest, VideoResult, VideoStartedCallback
 
 
 class FlowTransportStrategy(Protocol):
@@ -58,3 +59,26 @@ class FlowTransportStrategy(Protocol):
     async def teardown(self) -> None:
         """Release resources. Idempotent. Safe to call multiple times."""
         ...
+
+
+@runtime_checkable
+class VideoCapableTransport(Protocol):
+    """Mixin protocol for transports that support video generation.
+
+    ``isinstance(transport, VideoCapableTransport)`` returns True at runtime
+    iff the transport provides ``generate_video`` — used by
+    :meth:`FlowApiClient.generate_video` to fail fast with a clear error
+    rather than an AttributeError.
+    """
+
+    async def generate_video(
+        self,
+        *,
+        request: GenerateVideoRequest,
+        out_dir: Path | None,
+        poll_timeout_s: float,
+        download: bool,
+        on_started: VideoStartedCallback | None = None,
+    ) -> VideoResult:
+        """Drive the Flow editor UI to generate a video and return the result."""
+        raise NotImplementedError

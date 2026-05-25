@@ -8,6 +8,7 @@ retired — see the Phase A plan).
 
 from __future__ import annotations
 
+from collections.abc import Awaitable, Callable
 from dataclasses import dataclass
 from enum import StrEnum
 from pathlib import Path
@@ -23,6 +24,54 @@ class Mode(StrEnum):
 class Tier(StrEnum):
     FAST = "fast"
     QUALITY = "quality"
+
+
+class VideoModel(StrEnum):
+    """Flow video model, as exposed in the editor's model picker.
+
+    Verified live (flow-editor-map.json): the picker offers exactly these five.
+    Only ``OMNI_FLASH`` exposes a 10s duration; the four ``VEO_3_1_*`` models
+    cap at 8s. The selector for each lives in the transport layer (this module
+    is pure — no DOM knowledge).
+    """
+
+    OMNI_FLASH = "omni_flash"
+    VEO_3_1_LITE = "veo_3_1_lite"
+    VEO_3_1_FAST = "veo_3_1_fast"
+    VEO_3_1_QUALITY = "veo_3_1_quality"
+    VEO_3_1_LITE_LOWER_PRIORITY = "veo_3_1_lite_lower_priority"
+
+    @classmethod
+    def from_cli(cls, value: str | None) -> VideoModel | None:
+        """Map a friendly CLI alias to the model. ``None`` -> ``None`` (use
+        Flow's UI default — the picker is not touched)."""
+        if value is None:
+            return None
+        key = value.strip().lower().replace("-", "_").replace(" ", "_")
+        mapping = {
+            "omni_flash": cls.OMNI_FLASH,
+            "omni": cls.OMNI_FLASH,
+            "flash": cls.OMNI_FLASH,
+            "veo_3_1_lite": cls.VEO_3_1_LITE,
+            "veo_lite": cls.VEO_3_1_LITE,
+            "lite": cls.VEO_3_1_LITE,
+            "veo_3_1_fast": cls.VEO_3_1_FAST,
+            "veo_fast": cls.VEO_3_1_FAST,
+            "fast": cls.VEO_3_1_FAST,
+            "veo_3_1_quality": cls.VEO_3_1_QUALITY,
+            "veo_quality": cls.VEO_3_1_QUALITY,
+            "quality": cls.VEO_3_1_QUALITY,
+            "veo_3_1_lite_lower_priority": cls.VEO_3_1_LITE_LOWER_PRIORITY,
+            "veo_lite_lp": cls.VEO_3_1_LITE_LOWER_PRIORITY,
+            "lite_lp": cls.VEO_3_1_LITE_LOWER_PRIORITY,
+            "lower_priority": cls.VEO_3_1_LITE_LOWER_PRIORITY,
+        }
+        if key not in mapping:
+            raise ValueError(
+                f"Unknown video model {value!r}; choose from "
+                f"{sorted({m.value for m in cls})} or aliases {sorted(mapping)}"
+            )
+        return mapping[key]
 
 
 class Aspect(StrEnum):
@@ -41,11 +90,14 @@ class Aspect(StrEnum):
         return mapping[value]
 
 
-# Flow's R2V ("Elementos") reference-image slot cap. ESTIMATE — spec §10.2 Q6
-# was NOT resolved by the Phase 0 spike (§10.5); Phase B confirms the real
-# upper bound. R2V is not wired in Phase A, so this value is never exercised
-# in production yet.
-MAX_REFERENCE_IMAGES = 3
+# Flow's R2V reference cap is MODEL-DEPENDENT (live-verified): omni_flash allows
+# 7 ("Maximum image ingredients reached (7 allowed)"), the veo_3_1_* models allow
+# 3. A veo request with >3 refs uploads all but the generate request silently
+# keeps only 3. MAX_REFERENCE_IMAGES is the absolute ceiling (omni); the
+# model-aware check below enforces the per-model limit when the model is known.
+OMNI_REFERENCE_CAP = 7
+VEO_REFERENCE_CAP = 3
+MAX_REFERENCE_IMAGES = OMNI_REFERENCE_CAP
 
 
 @dataclass(frozen=True)
@@ -62,6 +114,9 @@ class GenerateVideoRequest:
     mode: Mode = Mode.T2V
     aspect: Aspect = Aspect.PORTRAIT
     tier: Tier = Tier.FAST  # meaningful for T2V only — I2V/R2V model keys are fixed
+    model: VideoModel | None = None  # None -> Flow UI default (picker untouched)
+    duration: int | None = None  # seconds: 4/6/8 (or 10, omni_flash only); None -> default
+    count: int = 1  # 1-4 outputs; >1 multiplies credit cost
     seed: int | None = None
     start_image: Path | None = None  # I2V
     end_image: Path | None = None  # I2V (optional)
@@ -70,6 +125,19 @@ class GenerateVideoRequest:
     def __post_init__(self) -> None:
         if not self.prompt.strip():
             raise ValueError("prompt must not be empty")
+        if self.duration is not None and self.duration not in (4, 6, 8, 10):
+            raise ValueError(f"duration must be one of 4/6/8/10 seconds, got {self.duration}")
+        if (
+            self.duration == 10
+            and self.model is not None
+            and self.model is not VideoModel.OMNI_FLASH
+        ):
+            raise ValueError(
+                f"10s duration is only available for the omni_flash model; "
+                f"{self.model.value} caps at 8s"
+            )
+        if not (1 <= self.count <= 4):
+            raise ValueError(f"count must be 1-4, got {self.count}")
         if self.mode is Mode.T2V and (self.start_image or self.end_image or self.reference_images):
             raise ValueError("T2V request must not carry image inputs")
         if self.mode is Mode.I2V:
@@ -84,6 +152,15 @@ class GenerateVideoRequest:
                 raise ValueError("R2V request must not carry start/end images")
         if len(self.reference_images) > MAX_REFERENCE_IMAGES:
             raise ValueError(f"at most {MAX_REFERENCE_IMAGES} reference images")
+        # Per-model reference cap: omni_flash=7, veo_3_1_*=3 (live-verified). When
+        # the model is None (Flow UI default) we can't know it — leave the ceiling.
+        if self.mode is Mode.R2V and self.model is not None:
+            cap = OMNI_REFERENCE_CAP if self.model is VideoModel.OMNI_FLASH else VEO_REFERENCE_CAP
+            if len(self.reference_images) > cap:
+                raise ValueError(
+                    f"{self.model.value} allows at most {cap} reference images; "
+                    f"got {len(self.reference_images)} (omni_flash allows {OMNI_REFERENCE_CAP})"
+                )
         if self.seed is not None and not (0 <= self.seed <= 2**31 - 1):
             raise ValueError("seed out of range")
 
@@ -110,15 +187,57 @@ class VideoStatus:
 
 
 @dataclass(frozen=True)
+class VideoStarted:
+    """Fired as soon as a media_id/project_id/operation_id are known, BEFORE
+    polling completes — allows a recorder to insert a STARTED row even if the
+    long poll later fails.
+    """
+
+    media_id: str
+    project_id: str | None = None
+    flow_operation_id: str | None = None
+
+
+@dataclass(frozen=True)
 class VideoResult:
     """Return value of :meth:`generate_video` after Phase B download wiring.
 
     ``local_path`` is ``None`` when ``download=False`` was passed, or when
     the generation failed — callers should check ``status.succeeded`` first.
+
+    ``project_id`` and ``flow_operation_id`` are populated by the transport
+    when available, for use by the data-layer recorder (Task 8).
     """
 
     status: VideoStatus
     local_path: Path | None
+    project_id: str | None = None
+    flow_operation_id: str | None = None
+
+
+# Callback type: invoked by the transport the moment a media_id becomes known,
+# before polling completes. May be sync or async.
+VideoStartedCallback = Callable[[VideoStarted], Awaitable[None] | None]
+
+
+def operation_name_from_generate_response(response_json: dict[str, Any]) -> str | None:
+    """Return the operation name from ``operations[0].operation.name`` in a
+    batchAsyncGenerateVideo* response, or None if absent.
+
+    The T2V response body carries both ``media[0].name`` AND
+    ``operations[0].operation.name``. The spec stores them SEPARATELY even when
+    they currently happen to match — use :func:`media_name_from_generate_response`
+    for the media id and this function for the operation id.
+    """
+    operations = response_json.get("operations")
+    if not isinstance(operations, list) or not operations:
+        return None
+    first: dict[str, Any] = cast("dict[str, Any]", operations[0])
+    operation: dict[str, Any] | None = cast("dict[str, Any] | None", first.get("operation"))
+    if not isinstance(operation, dict):
+        return None
+    name_val: str | None = cast("str | None", operation.get("name"))
+    return name_val if name_val is not None else None
 
 
 def media_name_from_generate_response(response_json: dict[str, Any]) -> str:

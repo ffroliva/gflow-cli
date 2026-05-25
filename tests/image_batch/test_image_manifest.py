@@ -7,7 +7,7 @@ from pathlib import Path
 
 import pytest
 
-from gflow_cli.errors import ConfigurationError
+from gflow_cli.errors import BatchPartialError, ConfigurationError
 from gflow_cli.image_batch import (
     MAX_BATCH_PROMPTS,
     BatchPromptItem,
@@ -16,6 +16,33 @@ from gflow_cli.image_batch import (
     parse_tsv_manifest,
     run_manifest_image_batch,
 )
+
+# ---------------------------------------------------------------------------
+# FakeRecorder shared by recorder-integration tests
+# ---------------------------------------------------------------------------
+
+
+class FakeRecorder:
+    def __init__(self) -> None:
+        self.generated: list[dict] = []
+        self.uploads: list[dict] = []
+        self.closed = False
+        self.fail_index: int | None = None  # if set, raise DataStoreError on that 0-based call
+
+    def close(self) -> None:
+        self.closed = True
+
+    def record_upload_image(self, **kwargs):  # type: ignore[no-untyped-def]
+        self.uploads.append(kwargs)
+
+    def record_generated_images(self, **kwargs):  # type: ignore[no-untyped-def]
+        idx = len(self.generated)
+        self.generated.append(kwargs)
+        if self.fail_index is not None and idx == self.fail_index:
+            from gflow_cli.errors import DataStoreError
+
+            raise DataStoreError(detail="boom", route="test")
+
 
 # ---------------------------------------------------------------------------
 # TSV parsing
@@ -382,3 +409,197 @@ def test_manifest_dispatcher_raises_on_invalid_fixture() -> None:
     assert fixture.is_file(), "fixture must be committed"
     with pytest.raises(ConfigurationError):
         parse_manifest_file(fixture)
+
+
+# ---------------------------------------------------------------------------
+# OperationRecorder integration tests for run_manifest_image_batch
+# ---------------------------------------------------------------------------
+
+
+def _make_recorder_batch_factory(
+    *,
+    project_id: str = "flow-project-batch",
+    n_rows: int = 2,
+    fail_download_on_idx: int | None = None,
+) -> type:
+    """Build a client factory for recorder-integration tests.
+
+    ``fail_download_on_idx``: if set, ``download_image`` raises on that row index
+    to exercise the partial-results + recorder path.
+    """
+    from gflow_cli.api.dto import BatchSubmissionResult, GeneratedImage
+    from gflow_cli.api.transports.ui_automation import UiAutomationTransport
+
+    fake_image = GeneratedImage(
+        media_name="m1",
+        workflow_id="wf1",
+        seed=1,
+        prompt="p",
+        model_name_type="NARWHAL",
+        aspect_ratio="IMAGE_ASPECT_RATIO_PORTRAIT",
+        fife_url="https://example.com/img.png",
+        dimensions=(64, 64),
+    )
+
+    class _FakeTransport(UiAutomationTransport):
+        def __init__(self) -> None:
+            pass
+
+    class _FakeClient:
+        def __init__(self, **_: object) -> None:
+            transport_instance = _FakeTransport()
+            _n = n_rows
+
+            async def _batch_impl(prompts, jitter_range, continue_on_error=False):  # type: ignore[no-untyped-def]
+                results = []
+                for idx, req in enumerate(prompts):
+                    results.append(
+                        BatchSubmissionResult(
+                            status="ok",
+                            project_id=project_id,
+                            prompt_idx=idx,
+                            prompt_hash="aabbccdd",
+                            images=(fake_image,) * req.count,
+                        )
+                    )
+                return results
+
+            transport_instance.generate_images_batch = _batch_impl  # type: ignore[method-assign]
+            self.transport = transport_instance
+            self._download_call_idx = 0
+
+        async def __aenter__(self) -> _FakeClient:
+            return self
+
+        async def __aexit__(self, *_: object) -> None:
+            pass
+
+        async def download_image(self, img: object, target: Path) -> Path:
+            idx = self._download_call_idx
+            self._download_call_idx += 1
+            if fail_download_on_idx is not None and idx == fail_download_on_idx:
+                raise RuntimeError(f"simulated download failure at idx {idx}")
+            target.parent.mkdir(parents=True, exist_ok=True)
+            target.write_bytes(b"PNG")
+            return target
+
+    return _FakeClient
+
+
+class TestRunManifestImageBatchRecorder:
+    @pytest.mark.asyncio
+    async def test_run_manifest_image_batch_records_each_row(self, tmp_path: Path) -> None:
+        """Recorder receives one entry per ok row with correct fields."""
+        recorder = FakeRecorder()
+        factory = _make_recorder_batch_factory(project_id="flow-project-batch", n_rows=2)
+        items = _make_items(2)
+
+        await run_manifest_image_batch(
+            profile_dir=tmp_path,
+            headless=True,
+            transport=None,
+            prompts=items,
+            output_dir=tmp_path / "out",
+            continue_on_error=True,
+            jitter_range=(0.0, 0.0),
+            client_factory=factory,
+            profile_name="default",
+            recorder=recorder,
+        )
+
+        assert len(recorder.generated) == 2
+        for rec in recorder.generated:
+            assert rec["profile_name"] == "default"
+            assert rec["operation_kind"] == "t2i"
+            assert rec["input_media_ids"] == []
+            assert rec["project"].project_id == "flow-project-batch"
+            assert rec["project"].title == "gflow-cli image batch"
+
+    @pytest.mark.asyncio
+    async def test_run_manifest_image_batch_records_partial_results_before_re_raise(
+        self, tmp_path: Path
+    ) -> None:
+        """Row 0 is recorded before BatchPartialError is re-raised on row 1 download failure."""
+
+        # Make transport return 2 ok results, but download fails on idx 1 (row 1's image)
+        recorder = FakeRecorder()
+        items = _make_items(2)
+
+        # The batch raises BatchPartialError because download fails mid-way.
+        # We need to make the transport itself raise BatchPartialError with partial results.
+        # Since our factory raises RuntimeError on download, we need a different approach:
+        # patch _download_results to simulate the BatchPartialError path.
+
+        # Actually: the fail_download_on_idx raises RuntimeError inside _download_results,
+        # which is NOT caught as BatchPartialError — that path is only for transport failures.
+        # For this test, we simulate a transport-level BatchPartialError.
+
+        from gflow_cli.api.dto import BatchSubmissionResult, GeneratedImage
+        from gflow_cli.api.transports.ui_automation import UiAutomationTransport
+
+        fake_image = GeneratedImage(
+            media_name="m1",
+            workflow_id="wf1",
+            seed=1,
+            prompt="p",
+            model_name_type="NARWHAL",
+            aspect_ratio="IMAGE_ASPECT_RATIO_PORTRAIT",
+            fife_url="https://example.com/img.png",
+            dimensions=(64, 64),
+        )
+
+        ok_result = BatchSubmissionResult(
+            status="ok",
+            project_id="flow-project-batch",
+            prompt_idx=0,
+            prompt_hash="aabbccdd",
+            images=(fake_image,),
+        )
+
+        class _FakeTransport(UiAutomationTransport):
+            def __init__(self) -> None:
+                pass
+
+        class _PartialClient:
+            def __init__(self, **_: object) -> None:
+                transport_instance = _FakeTransport()
+
+                async def _batch_impl(prompts, jitter_range, continue_on_error=False):  # type: ignore[no-untyped-def]
+                    raise BatchPartialError(
+                        detail="fail-fast",
+                        route="test",
+                        partial_results=(ok_result,),
+                    )
+
+                transport_instance.generate_images_batch = _batch_impl  # type: ignore[method-assign]
+                self.transport = transport_instance
+
+            async def __aenter__(self) -> _PartialClient:
+                return self
+
+            async def __aexit__(self, *_: object) -> None:
+                pass
+
+            async def download_image(self, img: object, target: Path) -> Path:
+                target.parent.mkdir(parents=True, exist_ok=True)
+                target.write_bytes(b"PNG")
+                return target
+
+        with pytest.raises(BatchPartialError):
+            await run_manifest_image_batch(
+                profile_dir=tmp_path,
+                headless=True,
+                transport=None,
+                prompts=items,
+                output_dir=tmp_path / "out",
+                continue_on_error=False,
+                jitter_range=(0.0, 0.0),
+                client_factory=_PartialClient,
+                profile_name="default",
+                recorder=recorder,
+            )
+
+        # Recorder must have captured the salvaged row before re-raise
+        assert len(recorder.generated) == 1
+        assert recorder.generated[0]["profile_name"] == "default"
+        assert recorder.generated[0]["project"].project_id == "flow-project-batch"

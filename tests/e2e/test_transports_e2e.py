@@ -29,6 +29,7 @@ import time
 from pathlib import Path
 
 import pytest
+import structlog
 
 from gflow_cli.api.client import FlowApiClient
 from gflow_cli.api.image import GenerateImageRequest, Model
@@ -122,6 +123,71 @@ async def test_e2e_single_image_gen(strategy: str) -> None:
     assert image.media_name, "media_name must be non-empty"
     assert image.fife_url.startswith("https://"), (
         f"fife_url must be an https:// URL, got: {image.fife_url!r}"
+    )
+
+
+# ---------------------------------------------------------------------------
+# Criterion C2 (i2i variant) — local-file reference attach via media dialog (#56)
+# ---------------------------------------------------------------------------
+
+
+def _tiny_png(path: Path) -> Path:
+    """Write a valid 8x8 red RGBA PNG (no external asset / Pillow dependency)."""
+    import struct
+    import zlib
+
+    def _chunk(typ: bytes, data: bytes) -> bytes:
+        body = typ + data
+        crc = zlib.crc32(body) & 0xFFFFFFFF
+        return struct.pack(">I", len(data)) + body + struct.pack(">I", crc)
+
+    w = h = 8
+    raw = b"".join(b"\x00" + b"\xff\x00\x00\xff" * w for _ in range(h))
+    png = b"\x89PNG\r\n\x1a\n"
+    png += _chunk(b"IHDR", struct.pack(">IIBBBBB", w, h, 8, 6, 0, 0, 0))
+    png += _chunk(b"IDAT", zlib.compress(raw))
+    png += _chunk(b"IEND", b"")
+    path.write_bytes(png)
+    return path
+
+
+@pytest.mark.asyncio
+async def test_e2e_i2i_local_ref_attach(
+    tmp_path: Path,
+    install_log_capture: structlog.testing.LogCapture,
+) -> None:
+    """C2/i2i (#56): generate_image with a LOCAL-FILE ``ref_paths`` binds the
+    reference through the editor's media dialog and returns >= 1 image.
+
+    UI-automation transport ONLY — the REST transports (bearer/sapisidhash)
+    cannot drive the add-media dialog, so they never invoke ``_attach_references``.
+    Routing this through ``evaluate_fetch`` (the old bug) silently drops
+    ``ref_paths`` and still returns a text-only image, so the URL asserts alone
+    are a false positive — hence the explicit transport + the event assertion.
+
+    This exercises the locale-agnostic media-dialog selectors (icon ``upload`` +
+    iconless 'Add to Prompt') that replaced the text-based selectors which hung
+    on non-English Chrome profiles. Costs 1 credit when it runs.
+    """
+    profile = _profile_dir()
+    ref = _tiny_png(tmp_path / "ref.png")
+    req = GenerateImageRequest(prompt=_PROMPT, model=Model.NARWHAL, ref_paths=(ref,))
+
+    async with _make_client("ui_automation", profile) as client:
+        image = await client.generate_image(req=req)
+
+    assert image.media_name, "i2i ref-attach returned no image"
+    assert image.fife_url.startswith("https://"), (
+        f"fife_url must be an https:// URL, got: {image.fife_url!r}"
+    )
+    # Prove the reference was ACTUALLY attached through the media dialog rather
+    # than silently dropped (the #56 false-positive class). ``_attach_references``
+    # emits one ``reference_attached`` event per bound ref; its absence means the
+    # ref never bound even though an image came back.
+    events = [e["event"] for e in install_log_capture.entries]
+    assert "ui_automation_video.reference_attached" in events, (
+        "expected a 'reference_attached' event proving the local ref bound through "
+        f"the media dialog; captured events: {events}"
     )
 
 

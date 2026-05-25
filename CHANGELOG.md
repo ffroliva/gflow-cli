@@ -7,6 +7,112 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+## [0.9.0] — 2026-05-25
+
+> **Maturity & Visibility release.** Surfaces the SQLite catalog (PR #52/#58)
+> via a read-only `gflow data list {projects,images,videos,profiles}` CLI,
+> publishes `ROADMAP.md`, and ships the locale-agnostic media-dialog
+> selectors that unblock non-English Chrome profiles. Plus the previously-
+> unreleased video model picker, i2v/r2v, and the I2I ref-attach + model-
+> select fixes. Sponsorship wiring will land in a follow-up patch release
+> once GitHub Sponsors / Buy Me a Coffee accounts are fully provisioned.
+
+### Added
+
+- `gflow data list {projects,images,videos,profiles}` — read-only catalog
+  query CLI over the local SQLite data layer. Flags: `--limit` (1..1000,
+  default 20), `--offset` (≥0, default 0), `--profile NAME`, `--json`.
+  Rich table on TTY, JSONL on pipe or `--json`. Default sort: newest first.
+  `DataStoreError` family maps to exit code 16. See
+  [`docs/DATA_LAYER.md § Querying the data layer`](docs/DATA_LAYER.md#querying-the-data-layer).
+- `ROADMAP.md` at repo root — themed milestones from v0.9 through v1.0 (no
+  dates).
+- `gflow video t2v` model picker: `--model` (`omni-flash` | `veo-lite` |
+  `veo-fast` | `veo-quality` | `veo-lite-lp`), `--duration` (`4`/`6`/`8`, plus
+  `10` for `omni-flash` only), and `--count` (1–4). Driven via the editor's
+  generation-settings panel; live-verified against a Pro/Ultra profile.
+- `gflow video i2v <image> "<prompt>"` — image-to-video with a start frame and
+  an optional `--end-image` (interpolation). Fires
+  `batchAsyncGenerateVideoStartImage` / `…StartAndEndImage`.
+- `gflow video r2v "<prompt>" --ref <img> [--ref …]` — reference-to-video
+  (Flow "ingredients"). Model-aware reference cap (omni_flash ≤7, veo_3_1_* ≤3)
+  enforced in the request DTO; the transport stops gracefully if Flow hides the
+  add-media button at the cap. Fires `batchAsyncGenerateVideoReferenceImages`.
+- `GFLOW_CLI_LOCALE` env var — overrides Playwright's launch `locale=` parameter
+  (default: `en-US`). Controls `Accept-Language` only; Chrome's UI language is
+  still forced to en-US via `--lang=en-US`. Prep for issue #24 (locale-agnostic
+  selectors); live-verified end-to-end with `GFLOW_CLI_LOCALE=pt-BR` against a
+  Pro/Ultra account. See `docs/CONFIGURATION.md § GFLOW_CLI_LOCALE`.
+- **Local data layer** — `gflow-cli` now keeps a SQLite catalog of every new
+  image, batch, and video operation under `$GFLOW_CLI_DB_PATH` (default:
+  `~/.local/share/gflow-cli/data.db`). Records profile, project, asset
+  (model / aspect / dimensions / Flow media ID), operation provenance
+  (mode / prompt / model / timing / error), input↔output links, and
+  downloaded local files. New `gflow data media <id>` command resolves a
+  Flow media ID to its origin. `DataRepository` exposes seed-image resolvers
+  (`resolve_seed_image_by_path` / `resolve_seed_image` /
+  `resolve_latest_image`) — foundation for the upcoming I2V seed-reuse
+  path. Pre-Flow store failures exit `16` (`DataStoreError` /
+  `DataMigrationError` / `DataIntegrityError`); post-success store
+  failures warn and exit `0` (Flow already charged the credits). See
+  [`docs/DATA_LAYER.md`](docs/DATA_LAYER.md). (PR #58, stacked on #52.)
+
+### Changed
+
+- `MAX_REFERENCE_IMAGES` (in `api/video.py`) now tracks the `omni_flash`
+  ceiling of **7** (was **3**). The tighter per-model cap (`veo_3_1_* ≤ 3`) is
+  still enforced in `GenerateVideoRequest.__post_init__` when the model is
+  known; the constant is only the absolute upper bound. Anyone pinning to the
+  old value of 3 should re-check against the per-model caps.
+
+### Fixed
+
+- `FlowApiClient.__aenter__` now tears down a partially-launched browser if any
+  step after the Playwright driver starts raises (e.g. the persistent-context
+  launch, the bootstrap navigation, or `transport.setup`). Python does not call
+  `__aexit__` when `__aenter__` raises, so an unguarded failure orphaned the
+  chrome process, which then held the profile's user-data-dir lock — the next
+  run could not acquire it and spiralled into rapid `about:blank` tabs +
+  `TargetClosedError`. Context close + driver stop are now shared by
+  `__aenter__`'s guard and `__aexit__` via `_close_browser_resources`.
+- `gflow image i2i --ref <local-file>` now binds the reference through the
+  editor's media dialog instead of the REST `uploadImage` endpoint (which 401s —
+  same root as #15/#39). Local-path refs ride a new `GenerateImageRequest.ref_paths`
+  field and are attached via the inherited R2V `_attach_references` (the image-mode
+  add-media dialog is the same `add_2` surface). Bare-UUID `--ref` still flows
+  through `refs` unchanged. Re-introduces #50 (reverted in #57 for the account/
+  locale variant tracked in #56); the media-dialog selectors are now
+  locale-agnostic (see the next entry).
+- The media-dialog upload selectors are now **locale-agnostic** (issue #56/#24).
+  `UPLOAD_MEDIA_BUTTON` matched localized text (`has-text('Upload media')`), so on
+  a non-English Chrome profile (Flow follows the *Chrome profile* language, which
+  the `--lang=en-US` arg cannot override) the click missed and the file chooser
+  never opened — a silent ~34s hang. It now anchors on the locale-free `upload`
+  icon ligature (`:text-is('upload')`, exact, so it doesn't grab the `Uploads`
+  tab), with the original English-text selector kept as a graceful **fallback
+  tier** (matches if Google ever changes the icon but keeps the English label);
+  'Add to Prompt' (which has no icon) is selected structurally as the only
+  iconless button in the open dialog. If neither tier opens a chooser,
+  `_upload_via_open_dialog` raises a clear error + writes a screenshot (no silent
+  hang) and points the operator at the Chrome-profile-language workaround. Fixes
+  I2I/I2V/R2V upload alike.
+- `gflow image t2i/i2i --model` now actually selects the requested model. It was
+  a no-op under `ui_automation` (the wire field was set but the model picker was
+  never clicked, so Flow used its UI default). Adds `_select_image_model`.
+- Video selector mismatches: the output-count selector `[id*=-trigger-1]`
+  collided with the `-trigger-10` duration tab; the aspect selector matched a
+  non-existent `aria-controls*=9_16`; the video-mode tab match was ambiguous.
+  All now use exact `[id$=-trigger-X]` suffixes + aria-label text.
+
+### Notes
+
+- I2V/R2V image inputs bind through the editor's media dialog (frame slot /
+  add-media → "Upload media" → file chooser → "Add to Prompt"). `set_input_files`
+  on the generic hidden input only adds to the library and Flow then ignores the
+  image (plain Text route). The editor is forced to English via the
+  `--lang=en-US` Chromium launch arg because the slot/dialog labels are localized
+  with no locale-free anchor.
+
 ## [0.8.1] — 2026-05-23
 
 ### Documentation
@@ -826,7 +932,9 @@ shell-script template that branches on these codes.
 
 First skeleton. Not functional end-to-end yet.
 
-[Unreleased]: https://github.com/ffroliva/gflow-cli/compare/v0.8.0...HEAD
+[Unreleased]: https://github.com/ffroliva/gflow-cli/compare/v0.9.0...HEAD
+[0.9.0]: https://github.com/ffroliva/gflow-cli/compare/v0.8.1...v0.9.0
+[0.8.1]: https://github.com/ffroliva/gflow-cli/compare/v0.8.0...v0.8.1
 [0.8.0]: https://github.com/ffroliva/gflow-cli/compare/v0.7.0...v0.8.0
 [0.7.0]: https://github.com/ffroliva/gflow-cli/compare/v0.6.0a6...v0.7.0
 [0.6.0a6]: https://github.com/ffroliva/gflow-cli/compare/v0.6.0a5...v0.6.0a6

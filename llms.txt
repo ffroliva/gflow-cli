@@ -1,6 +1,6 @@
 # gflow-cli
 
-> Unofficial Python CLI for Google Flow — drives Veo (image-to-video, text-to-video) and Imagen (text-to-image) generations from the terminal by reverse-engineering Flow's private REST API at aisandbox-pa.googleapis.com. Requires a Google AI Ultra or Pro subscription with Flow access. Uses Playwright Chromium under the hood (one-time real-Chrome auth, then a persistent Chrome session driven via ui_automation). Production-stable for image generation and video T2V; video I2V and batch are queued for Phase B. MIT licensed, not affiliated with Google.
+> Unofficial Python CLI for Google Flow — drives Veo (image-to-video, text-to-video, reference-to-video) and Imagen (text-to-image) generations from the terminal by reverse-engineering Flow's private REST API at aisandbox-pa.googleapis.com. Requires a Google AI Ultra or Pro subscription with Flow access. Uses Playwright Chromium under the hood (one-time real-Chrome auth, then a persistent Chrome session driven via ui_automation). Production-stable for image generation and video T2V/I2V/R2V with a `--model`/`--duration`/`--count` picker; only `gflow video batch` (manifest runner) is still queued for Phase B — use a shell for-loop in the meantime. Keeps a local SQLite catalog of every generation, queryable via `gflow data list {projects,images,videos,profiles}`. MIT licensed, not affiliated with Google.
 
 This file is forward-staged for a future docs site at https://ffroliva.github.io/gflow-cli/llms.txt and is also usable today by LLM agents that read the repo directly.
 
@@ -13,6 +13,8 @@ This file is forward-staged for a future docs site at https://ffroliva.github.io
 - [Authentication](https://github.com/ffroliva/gflow-cli/blob/main/docs/AUTHENTICATION.md): One-time Chrome login, session storage, multi-account.
 - [Configuration](https://github.com/ffroliva/gflow-cli/blob/main/docs/CONFIGURATION.md): All env vars, output paths, precedence.
 - [Known Issues](https://github.com/ffroliva/gflow-cli/blob/main/KNOWN_ISSUES.md): Open + mitigated issues with workarounds.
+- [Data Layer](https://github.com/ffroliva/gflow-cli/blob/main/docs/DATA_LAYER.md): Local SQLite catalog schema and the `gflow data list` query CLI.
+- [Roadmap](https://github.com/ffroliva/gflow-cli/blob/main/ROADMAP.md): Themed milestones through v1.0.
 
 ## For AI coding agents
 

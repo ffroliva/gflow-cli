@@ -1049,6 +1049,49 @@ class TestGenerateImages:
         ):
             await t.generate_images(project_id="x", request=_req())
 
+    @pytest.mark.asyncio
+    async def test_i2i_ref_paths_bound_via_attach_references(self) -> None:
+        """I2I local refs (request.ref_paths) bind through the editor media
+        dialog — _generate_images_locked awaits the inherited _attach_references
+        with the local paths. Without this, the i2i bind is only covered at the
+        CLI layer (mirrors the R2V transport-attach coverage)."""
+        t = UiAutomationTransport()
+        t._setup_done = True  # type: ignore[attr-defined]
+        t._page = MagicMock()  # type: ignore[attr-defined]
+        ref = Path("hero.png")
+        req = GenerateImageRequest(prompt="stylize", model=Model.NARWHAL, ref_paths=(ref,))
+
+        with (
+            patch.object(t, "_enter_editor", new=AsyncMock()),
+            patch.object(t, "_send_prompt", new=AsyncMock()),
+            patch.object(t, "_attach_references", new=AsyncMock()) as attach,
+            patch.object(t, "_await_captured", new=AsyncMock(return_value=[_flow_200_capture()])),
+        ):
+            await t.generate_images(project_id="x", request=req)
+
+        attach.assert_awaited_once()
+        call = attach.await_args
+        assert call is not None
+        # The local path is forwarded to the attach helper (positional arg 1).
+        assert list(call.args[1]) == [ref]
+
+    @pytest.mark.asyncio
+    async def test_t2i_without_ref_paths_skips_attach(self) -> None:
+        """T2I (no ref_paths) must NOT touch _attach_references."""
+        t = UiAutomationTransport()
+        t._setup_done = True  # type: ignore[attr-defined]
+        t._page = MagicMock()  # type: ignore[attr-defined]
+
+        with (
+            patch.object(t, "_enter_editor", new=AsyncMock()),
+            patch.object(t, "_send_prompt", new=AsyncMock()),
+            patch.object(t, "_attach_references", new=AsyncMock()) as attach,
+            patch.object(t, "_await_captured", new=AsyncMock(return_value=[_flow_200_capture()])),
+        ):
+            await t.generate_images(project_id="x", request=_req())
+
+        attach.assert_not_awaited()
+
 
 # ---------------------------------------------------------------------------
 # Unit 3.10 — refresh_auth (no-op)

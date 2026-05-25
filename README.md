@@ -4,9 +4,14 @@
 
 [![PyPI version](https://img.shields.io/pypi/v/gflow-cli.svg)](https://pypi.org/project/gflow-cli/)
 [![CI](https://github.com/ffroliva/gflow-cli/actions/workflows/ci.yml/badge.svg)](https://github.com/ffroliva/gflow-cli/actions/workflows/ci.yml)
+[![Release](https://github.com/ffroliva/gflow-cli/actions/workflows/release.yml/badge.svg)](https://github.com/ffroliva/gflow-cli/actions/workflows/release.yml)
 [![Python versions](https://img.shields.io/pypi/pyversions/gflow-cli.svg)](https://pypi.org/project/gflow-cli/)
 [![License: MIT](https://img.shields.io/badge/License-MIT-blue.svg)](LICENSE)
 [![Status: alpha](https://img.shields.io/badge/status-alpha-orange.svg)](docs/PROJECT_STATUS.md)
+[![Code style: ruff](https://img.shields.io/badge/code%20style-ruff-000000.svg)](https://github.com/astral-sh/ruff)
+[![Type checked: pyright](https://img.shields.io/badge/type%20checked-pyright-blue.svg)](https://github.com/microsoft/pyright)
+[![Tests: TDD](https://img.shields.io/badge/tests-TDD-brightgreen.svg)](CONTRIBUTING.md)
+[![Quality Gate Status](https://sonarcloud.io/api/project_badges/measure?project=ffroliva_gflow-cli&metric=alert_status)](https://sonarcloud.io/summary/new_code?id=ffroliva_gflow-cli)
 
 > ⚠️ **Unofficial. Reverse-engineered. Not affiliated with Google.** Endpoints can change at any time. Full [DISCLAIMER](DISCLAIMER.md).
 >
@@ -16,7 +21,7 @@
 
 For Google AI Ultra / Pro subscribers with Veo credits and batch workloads:
 
-- **Burn credits efficiently** — `for p in $(cat prompts.txt); do gflow image t2i "$p"; done` _(image batching ships today; `gflow video i2v` lands in Phase B)_
+- **Burn credits efficiently** — `for p in $(cat prompts.txt); do gflow image t2i "$p"; done` _(image batching, plus `gflow video t2v`/`i2v`/`r2v`, all ship today)_
 - **Build pipelines** — wire Veo into your content automation, AI video stack, or batch experiments
 - **Stay in the terminal** — no Chromium UI, no clicking through dialogs (after a one-time `gflow auth login`)
 
@@ -63,7 +68,7 @@ Reproduce the recording: [`scripts/record_demo.ps1`](scripts/record_demo.ps1) (W
 | 🎯 **Getting started** | [User Guide](docs/USER_GUIDE.md) · [Usage](docs/USAGE.md) · [Configuration](docs/CONFIGURATION.md) |
 | 🔐 **Auth & sessions** | [Authentication](docs/AUTHENTICATION.md) · [Known issues](KNOWN_ISSUES.md) |
 | 🏗️ **Internals** | [Architecture](docs/ARCHITECTURE.md) · [Security](docs/SECURITY.md) · [Debugging](docs/DEBUGGING.md) |
-| 📦 **Releases** | [Changelog](CHANGELOG.md) · [Release protocol](RELEASE.md) · [Project status](docs/PROJECT_STATUS.md) |
+| 📦 **Releases** | [Changelog](CHANGELOG.md) · [Roadmap](ROADMAP.md) · [Release protocol](RELEASE.md) · [Project status](docs/PROJECT_STATUS.md) |
 | 🤝 **Contributing** | [Contributing](CONTRIBUTING.md) · [Development](docs/DEVELOPMENT.md) · [GitHub workflow](docs/GITHUB.md) |
 
 ## For AI agents & LLMs
@@ -99,7 +104,7 @@ gflow CLI  →  Provider (interchangeable)  →  Flow (ui_automation) / Mock (te
 
 ## Project status
 
-**v0.8.1 — alpha (docs refresh).** Image (T2I / I2I / upload) + Video T2V live end-to-end on `ui_automation`. Video I2V + batch are queued for Phase B. Full milestone history → [docs/PROJECT_STATUS.md](docs/PROJECT_STATUS.md). Changelog → [CHANGELOG.md](CHANGELOG.md).
+**v0.9.0 — alpha (latest on PyPI).** Image (T2I / I2I / upload) + Video T2V / I2V / R2V live end-to-end on `ui_automation`, with a video `--model` picker (5 Veo models) + `--duration` / `--count`. New in v0.9.0: `gflow data list {projects,images,videos,profiles}` read CLI over the local SQLite catalog, `ROADMAP.md`, sponsorship wiring, and locale-agnostic media-dialog selectors. Only video `batch` (manifest runner) is still queued for Phase B — use a shell for-loop until then ([USAGE](docs/USAGE.md#gflow-video-batch)). Full milestone history → [docs/PROJECT_STATUS.md](docs/PROJECT_STATUS.md). Changelog → [CHANGELOG.md](CHANGELOG.md). Where the project is heading → [ROADMAP.md](ROADMAP.md).
 
 ## License & legal
 
@@ -112,5 +117,16 @@ gflow CLI  →  Provider (interchangeable)  →  Flow (ui_automation) / Mock (te
 - [Keysight — *Google Labs – Flow AI with Veo3: A Network Traffic Analysis*](https://www.keysight.com/blogs/en/tech/nwvs/2025/08/04/google-flow-ai-har-analysis) — independent capture that helped validate the captured route patterns.
 
 ---
+
+## Stats
+
+[![GitHub stars](https://img.shields.io/github/stars/ffroliva/gflow-cli?style=social)](https://github.com/ffroliva/gflow-cli/stargazers)
+[![GitHub forks](https://img.shields.io/github/forks/ffroliva/gflow-cli?style=social)](https://github.com/ffroliva/gflow-cli/network/members)
+[![GitHub watchers](https://img.shields.io/github/watchers/ffroliva/gflow-cli?style=social)](https://github.com/ffroliva/gflow-cli/watchers)
+[![GitHub issues](https://img.shields.io/github/issues/ffroliva/gflow-cli)](https://github.com/ffroliva/gflow-cli/issues)
+[![GitHub pull requests](https://img.shields.io/github/issues-pr/ffroliva/gflow-cli)](https://github.com/ffroliva/gflow-cli/pulls)
+[![GitHub last commit](https://img.shields.io/github/last-commit/ffroliva/gflow-cli)](https://github.com/ffroliva/gflow-cli/commits/main)
+[![GitHub repo size](https://img.shields.io/github/repo-size/ffroliva/gflow-cli)](https://github.com/ffroliva/gflow-cli)
+[![PyPI downloads](https://img.shields.io/pypi/dm/gflow-cli.svg)](https://pypi.org/project/gflow-cli/)
 
 If `gflow-cli` saves you time, please ⭐ the repo — it is the cheapest way to support the project.
