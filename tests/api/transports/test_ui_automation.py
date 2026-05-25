@@ -597,6 +597,21 @@ class TestBypassOnboarding:
         """No selector should appear twice."""
         assert len(ONBOARDING_SELECTORS) == len(set(ONBOARDING_SELECTORS))
 
+    def test_structural_tier_is_contiguous_prefix(self) -> None:
+        """The structural tier must be an unbroken prefix of the combined
+        tuple, with the text tier as the contiguous suffix. Stronger than
+        ``test_structural_selectors_precede_text_selectors`` because it does
+        not rely on the ``:has-text(`` boundary marker — the text tier leads
+        with two ``aria-label*`` ARIA-partial entries that lack that marker
+        but are still text-tier (not locale-guaranteed)."""
+        n = len(_ONBOARDING_STRUCTURAL_SELECTORS)
+        assert ONBOARDING_SELECTORS[:n] == _ONBOARDING_STRUCTURAL_SELECTORS, (
+            "Structural selectors must form an unbroken prefix"
+        )
+        assert ONBOARDING_SELECTORS[n:] == _ONBOARDING_TEXT_SELECTORS, (
+            "Text selectors must form the contiguous suffix"
+        )
+
     # --- structural-tier behaviour ------------------------------------------
 
     @pytest.mark.asyncio

@@ -209,9 +209,13 @@ _ONBOARDING_STRUCTURAL_SELECTORS: tuple[str, ...] = (
 )
 
 # Tier 2 — localised text / language-dependent ARIA: extends coverage to
-# the 12 locales most likely to be used with Flow.  Not locale-invariant,
+# the 14 locales most likely to be used with Flow.  Not locale-invariant,
 # but maximises the fallback surface for users who hit onboarding before
-# entering the editor.
+# entering the editor.  Includes two case-insensitive ARIA-partial entries
+# (`aria-label*='Accept' i` / `*='Agree' i`) at the head: these match many
+# CMP dialogs (OneTrust, Cookiebot) whose aria-label values stay in English
+# even on non-EN pages, but English ARIA values are not guaranteed across
+# every CMP so they live here rather than in the strict structural tier.
 _ONBOARDING_TEXT_SELECTORS: tuple[str, ...] = (
     # English-language ARIA partial catches (OneTrust, Cookiebot, etc. often
     # use English aria-label values even on non-EN pages, but this is not

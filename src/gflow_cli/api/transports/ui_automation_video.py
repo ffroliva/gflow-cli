@@ -638,12 +638,14 @@ class VideoGenerationMixin:
         # tried only as a fallback when the structural count is insufficient —
         # it requires --lang=en-US / English Chrome profile to work.
         #
-        # wait_for is called unconditionally because the frame panel may still be
-        # animating in when _attach_frame is entered; on a pre-rendered page it
-        # resolves in <10 ms (one CDP round-trip).
+        # wait_for is short (1500 ms) because _wait_video_editor_ready already
+        # guaranteed the editor SPA is mounted; the frame panel resolves in
+        # <10 ms (one CDP round-trip) on a pre-rendered page.  A shorter probe
+        # means a future swap_horiz rename surfaces as a fast, clear error
+        # instead of an 8-second dead wait on every I2V/R2V call.
         structs = page.locator(FRAME_SLOTS_STRUCT)
         try:
-            await structs.first.wait_for(state="visible", timeout=8000)
+            await structs.first.wait_for(state="visible", timeout=1500)
         except Exception as e:  # noqa: BLE001
             shot = await _capture_debug_screenshot(
                 page, out_dir, f"debug_no_{label.lower()}_slot.png"
