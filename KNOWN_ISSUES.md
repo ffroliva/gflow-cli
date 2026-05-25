@@ -319,19 +319,52 @@ issue and not blocked by any code change in this repo.
 
 - **Status:** Mitigated · **Severity:** Medium · **Tracking:** [issue #24](https://github.com/ffroliva/gflow-cli/issues/24)
 
-**Progress (2026-05-24, develop / post-v0.8.1, unreleased):**
+  Status stays *Mitigated* (not *Resolved*) because `--lang=en-US` is still
+  passed and `NEW_PROJECT_SELECTORS` / `SUBMIT_BUTTON_SELECTORS` tails still
+  carry English-text fallbacks; the icon-first leads cover the common path,
+  but the dependency only fully clears after a live e2e on a non-English
+  Chrome profile.
 
-- **PR #51** — Playwright's launch `locale=` is now env-overridable via
-  `GFLOW_CLI_LOCALE` (default: `en-US`). Live-verified end-to-end with
-  `GFLOW_CLI_LOCALE=pt-BR uv run pytest -m e2e tests/e2e/test_video_t2v_e2e.py`
-  (1 credit, ~2.5 MB mp4, `MEDIA_GENERATION_STATUS_SUCCESSFUL`).
-- **PR #48** — added the `--lang=en-US` Chromium launch arg so the editor UI
-  itself stays in English regardless of the user's profile/system language.
-  Currently mandatory because the I2V frame-slot labels and parts of
-  `ONBOARDING_SELECTORS` / `NEW_PROJECT_SELECTORS` / `SUBMIT_BUTTON_SELECTORS`
-  still match by localized text. Dropping `--lang=en-US` is the goal but
-  requires invariant capture across the remaining text-matched selectors
-  (`scripts/dev/capture_locale_invariants.py` is the diagnostic).
+**Phase 2 progress (2026-05-25, develop / post-v0.8.1, unreleased):**
+
+- **`ONBOARDING_SELECTORS` restructured** — replaced the original 9 English/PT-BR
+  text-only entries with a two-tier cascade:
+  1. `_ONBOARDING_STRUCTURAL_SELECTORS` (3 strict entries) — locale-free ARIA/ID
+     anchors: `button#L2AGLb` (Google Funding Choices SDK stable ID) plus exact
+     ARIA-label matches (`Accept all`, `I agree`). These are programmatic SDK
+     constants, not UI strings.
+  2. `_ONBOARDING_TEXT_SELECTORS` (~37 entries) — leads with two
+     case-insensitive ARIA-partial entries (`aria-label*='Accept' i` /
+     `*='Agree' i`) that catch many CMP dialogs (OneTrust, Cookiebot) whose
+     aria-label values stay in English even on non-EN pages, followed by
+     `:has-text()` selectors covering 14 locales: EN, PT, DE, ES, FR, IT, NL,
+     JA, ZH, KO, PL, RU, TR, ID. The ARIA-partial entries live in this tier
+     because English aria-label values are not guaranteed across every CMP.
+  3. `ONBOARDING_SELECTORS = (*_ONBOARDING_STRUCTURAL_SELECTORS, *_ONBOARDING_TEXT_SELECTORS)`
+     so structural entries are always tried first.
+  Cascade-ordering invariant is verified by `TestBypassOnboarding` in
+  `tests/api/transports/test_ui_automation.py`.
+
+- **`_attach_frame` (I2V/R2V frame slots) flipped to structural-first** — was
+  English text-label first (`FRAME_SLOT_BY_LABEL`) with structural fallback; now
+  tries `FRAME_SLOTS_STRUCT` (`div:has(> button:has(i.google-symbols:text-is('swap_horiz'))) > div[aria-haspopup='dialog']`)
+  first, falls back to `FRAME_SLOT_BY_LABEL` only when structural count is
+  insufficient. Slot selection unit tests live in `TestAttachFrameSlotSelection`
+  (`tests/api/transports/test_ui_automation_video.py`).
+
+- **`GFLOW_CLI_LOCALE`** — Playwright `locale=` env override from PR #51 remains
+  available (default `en-US`).
+
+- **`--lang=en-US` dependency reduced** — `ONBOARDING_SELECTORS` and `_attach_frame`
+  no longer require it. The arg is still passed because removing it requires a
+  broader live-e2e sweep (I2V/R2V across multiple locales); it will be dropped
+  once that completes.
+
+- **Live e2e on `de-DE` (2026-05-25)** — `GFLOW_CLI_LOCALE=de-DE` T2V on
+  `ffroliva` (Pro) completed in 70.9 s and returned `MEDIA_GENERATION_STATUS_SUCCESSFUL`
+  with a 3.1 MB 1280×720 H.264 mp4 (8 s clip). Confirms the structural-first
+  selectors and `GFLOW_CLI_LOCALE` env override work end-to-end on a locale
+  outside the original 9-entry English/PT-BR list.
 
 **Earlier — Phase 7 multi-image-prompt work** addressed the count-tab selectors:
 - `_COUNT_TAB_TEXT_RE = ^(1x|x[2-4])$` only matches the digit+x format Flow
@@ -339,21 +372,21 @@ issue and not blocked by any code change in this repo.
 - `_set_count` falls back to positional `.nth(count - 1)` when the read-back
   text is unrecognised — locale-invariant.
 
-Still localized as of this writing:
+**Earlier — PR #48:**
+- Added `--lang=en-US` Chromium launch arg; parts of `NEW_PROJECT_SELECTORS` /
+  `SUBMIT_BUTTON_SELECTORS` tails still match by English text (icon-first selectors
+  lead and cover the common path, so these are maintenance debt rather than
+  active blockers).
 
-- **`ONBOARDING_SELECTORS`** (`src/gflow_cli/api/transports/ui_automation.py:183-193`)
-  — nine button-text selectors only (`Agree` / `Aceitar` / `I agree` / `Concordo`
-  / `Accept` / `Create with Flow` / `Criar com o Flow` / `Get Started` /
-  `Começar`). An account whose Flow renders in an unlisted language (German,
-  Japanese, ...) **cannot pass onboarding**. This is the issue's stated
-  priority-1 item.
-- **`NEW_PROJECT_SELECTORS` localized fallbacks** + **`SUBMIT_BUTTON_SELECTORS` tail**
-  — icon-first selectors lead, so these work today; the localized fallbacks
-  remain as "maintenance debt and silent-failure risk" per the issue body.
+**Full resolution requires:** live e2e verification on a non-English Chrome profile
+(`GFLOW_CLI_LOCALE=<non-EN>` + a non-English browser profile) to confirm no
+regression, then removing `--lang=en-US`.
 
-**Workaround:** the account must be in a locale that matches one of the
-hard-coded text selectors. For automation, prefer accounts whose Flow renders
-in English or Portuguese.
+**Workaround:** with Phase 2 changes, most locales are handled automatically.
+For locales outside the 14 covered by `_ONBOARDING_TEXT_SELECTORS`, ARIA-based
+structural selectors fire first and cover Google's Funding Choices consent SDK.
+For non-standard CMP dialogs not covered, prefer accounts whose Flow renders in
+one of the 14 supported locales or in English.
 
 ---
 
