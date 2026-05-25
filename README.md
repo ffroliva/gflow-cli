@@ -98,13 +98,13 @@ gflow CLI  →  Provider (interchangeable)  →  Flow (ui_automation) / Mock (te
 
 **Current transport:** `ui_automation` — drives Flow via a persistent Playwright Chromium profile. Production-stable, end-to-end verified per release (see [LIVE_VERIFICATION_*](docs/) per-release evidence files).
 
-**What's blocked:** A pure HTTP transport for video generation. The video upload endpoint returns HTTP 401 under non-Chrome browsers + a reCAPTCHA mint we cannot reproduce headlessly. Three earlier HTTP strategies (`evaluate_fetch` / `bearer` / `sapisidhash`) are named in the codebase history; the actual transport modules have not yet been extracted into a subpackage.
+**What's blocked:** A pure HTTP transport for video generation. The video upload endpoint returns HTTP 401 under non-Chrome browsers + a reCAPTCHA mint we cannot reproduce headlessly. Three earlier HTTP strategies (`evaluate_fetch` / `bearer` / `sapisidhash`) live under `src/gflow_cli/api/transports/experimental/` — they are importable for research but not on the production critical path.
 
 **How you can help:** If you have successfully driven `aisandbox-pa.googleapis.com` from outside a real Chrome session — or have insight into Google's anti-bot stack here — please open an issue. A working REST transport would unlock serverless deployments, true horizontal concurrency, and roughly 10× the project's reach. Details: [docs/ARCHITECTURE.md § Headed-browser dependency](docs/ARCHITECTURE.md#headed-browser-dependency--current-limitation).
 
 ## Project status
 
-**v0.9.0 — alpha (latest on PyPI).** Image (T2I / I2I / upload) + Video T2V / I2V / R2V live end-to-end on `ui_automation`, with a video `--model` picker (5 Veo models) + `--duration` / `--count`. New in v0.9.0: `gflow data list {projects,images,videos,profiles}` read CLI over the local SQLite catalog, `ROADMAP.md`, sponsorship wiring, and locale-agnostic media-dialog selectors. Only video `batch` (manifest runner) is still queued for Phase B — use a shell for-loop until then ([USAGE](docs/USAGE.md#gflow-video-batch)). Full milestone history → [docs/PROJECT_STATUS.md](docs/PROJECT_STATUS.md). Changelog → [CHANGELOG.md](CHANGELOG.md). Where the project is heading → [ROADMAP.md](ROADMAP.md).
+**v0.9.0 — alpha.** Image (T2I / I2I / upload) + Video T2V / I2V / R2V live end-to-end on `ui_automation`, with a video `--model` picker (5 Veo models) + `--duration` / `--count`. New in v0.9.0: `gflow data list {projects,images,videos,profiles}` read CLI over the local SQLite catalog, `ROADMAP.md`, and locale-agnostic media-dialog selectors that fix non-English Chrome profiles. Only video `batch` (manifest runner) is still queued for Phase B — use a shell for-loop until then ([USAGE](docs/USAGE.md#gflow-video-batch)). Full milestone history → [docs/PROJECT_STATUS.md](docs/PROJECT_STATUS.md). Changelog → [CHANGELOG.md](CHANGELOG.md). Where the project is heading → [ROADMAP.md](ROADMAP.md).
 
 ## License & legal
 

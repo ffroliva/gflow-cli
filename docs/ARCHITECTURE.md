@@ -50,9 +50,9 @@ The hexagonal target above is the steady state. The **current** package — and 
 - `gflow_cli.errors` — exception taxonomy aligned with [RFC 9457 Problem Details](https://datatracker.ietf.org/doc/html/rfc9457). Each `GFlowError` subclass carries `type` (URI), `title`, `status`, `detail`, `instance`, `remediation_hint`. The `to_problem_details()` method serializes to the RFC 9457 JSON shape and is the stable contract for telemetry consumers.
 - `gflow_cli.observability` — structlog configuration + the `error_raised` event emitter. This is the future home for metrics + tracing (Phase 5+) too.
 
-**Data layer module (feature/data-layer, targeting v0.9.0):**
+**Data layer module (shipped in v0.9.0):**
 
-- `gflow_cli/data/` — local SQLite persistence layer (`DataStore` + repository + `OperationRecorder` + redaction). Records all new image/video operations, asset provenance, and local file metadata. Default path `<GFLOW_CLI_HOME>/gflow.db`. Migrations versioned via SHA-256 checksums; safe forward-only semantics with newer-schema detection. T2V now flows through `FlowApiClient.generate_video`, sharing the client boundary with image commands.
+- `gflow_cli/data/` — local SQLite persistence layer (`DataStore` + `DataRepository` + `OperationRecorder` + redaction + read-only `queries` for `gflow data list`). Records all new image/video operations, asset provenance, and local file metadata. Default DB path is resolved from `$GFLOW_CLI_DB_PATH` (default: `~/.local/share/gflow-cli/data.db` on POSIX, the equivalent platformdirs user-data dir on Windows). Migrations versioned via SHA-256 checksums; safe forward-only semantics with newer-schema detection. T2V now flows through `FlowApiClient.generate_video`, sharing the client boundary with image commands.
 
 **Why RFC 9457 for errors:** Problem Details is the IETF-standard shape for machine-readable HTTP error responses. Even though gflow-cli is a CLI (not an HTTP server), adopting the same vocabulary means: (a) the error log shape is greppable by stable `type` URI, (b) future cloud-edge integrations (e.g., a `gflow serve` HTTP front-end) can return our errors directly without translation, (c) downstream telemetry tools recognize the shape immediately.
 

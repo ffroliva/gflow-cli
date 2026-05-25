@@ -383,6 +383,49 @@ videos won't appear together in your Flow gallery. The files on disk are
 identical to what `batch` would produce. The same pattern works for
 `gflow video i2v <image> "<prompt>"` and `gflow video r2v "<prompt>" --ref <img>`.
 
+## `gflow data list`
+
+Read-only browse over the local SQLite catalog. Shipped in v0.9.0.
+
+```text
+gflow data list projects   [--profile NAME] [--limit N] [--offset N] [--json]
+gflow data list images     [--profile NAME] [--limit N] [--offset N] [--json]
+gflow data list videos     [--profile NAME] [--limit N] [--offset N] [--json]
+gflow data list profiles                    [--limit N] [--offset N] [--json]
+
+Options:
+  --profile NAME        Filter to one profile (not available on `profiles`).
+  --limit N             Max rows returned. Range 1..1000. Default 20.
+  --offset N            Rows to skip (pagination). Default 0.
+  --json                Force JSONL output (one record per line).
+```
+
+Output:
+- TTY stdout → Rich-formatted table.
+- Pipe / non-TTY / `--json` → JSONL.
+
+Default sort: newest first (by `created_at`). Exit codes: 0 success / 2 Click usage / **16** `DataStoreError` family (catalog missing, migration mismatch, etc.).
+
+**Examples:**
+
+```bash
+# Newest 20 projects across all profiles
+gflow data list projects
+
+# All images for one profile, paginated
+gflow data list images --profile ffroliva --limit 50 --offset 0
+
+# Videos as JSONL for piping into jq
+gflow data list videos --json | jq '.media_id'
+
+# Profiles with at least one recorded generation
+gflow data list profiles
+```
+
+> **`data list profiles` vs `gflow auth list`** — `data list profiles` shows profiles that have **recorded generations** in the catalog; `gflow auth list` shows profiles that have ever **logged in** via `gflow auth login`. A profile that logged in but never generated anything will appear in `auth list` but not in `data list profiles`.
+
+For full schema details and JOIN semantics, see [`docs/DATA_LAYER.md § Querying the data layer`](DATA_LAYER.md#querying-the-data-layer).
+
 ## `gflow data media`
 
 Look up a recorded operation by its Flow media ID. Prints a summary of the stored provenance record: profile, media ID, Flow project ID, kind (image/video), and the local file paths that were written for that operation.
