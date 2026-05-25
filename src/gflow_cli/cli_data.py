@@ -38,12 +38,22 @@ console = Console()
 
 
 def _db_path() -> Path:
-    """Resolve the catalog DB path from env or platformdirs default."""
+    """Resolve the catalog DB path: ``GFLOW_CLI_DB_PATH`` env first, then
+    the canonical resolver used by the rest of the codebase.
+
+    The env-var check is direct (not via ``Settings``) so test
+    ``monkeypatch.setenv`` calls take effect even when ``get_settings()`` is
+    already cached.  When the env var is absent, delegates to
+    ``paths.database_path(home)`` via ``Settings.resolved_db_path`` — the
+    SAME resolver as ``data media`` and the recorder, so all subcommands
+    agree on the path.  The prior platformdirs lookup here used the wrong
+    appauthor + filename and resolved to a non-existent path on Windows
+    (``AppData\\Local\\gflow-cli\\gflow-cli\\data.db`` vs the real
+    ``AppData\\Local\\ffroliva\\gflow-cli\\gflow.db``).
+    """
     if env := os.environ.get("GFLOW_CLI_DB_PATH"):
         return Path(env)
-    from platformdirs import user_data_dir
-
-    return Path(user_data_dir("gflow-cli")) / "data.db"
+    return get_settings().resolved_db_path()
 
 
 def _truncate(s: str | None, n: int = 40) -> str:
@@ -127,7 +137,7 @@ def _emit_videos_table(rows: list[VideoRow]) -> None:
             _truncate(r.prompt),
             r.aspect,
             r.model,
-            f"{r.duration:g}s",
+            f"{r.duration:g}s" if r.duration is not None else "",
             r.created_at.strftime("%Y-%m-%d %H:%M"),
             r.local_path or "",
         )

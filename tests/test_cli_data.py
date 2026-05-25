@@ -117,6 +117,69 @@ def test_data_list_videos_filter_no_match(seeded_db: Path) -> None:
     assert result.output.strip() == ""
 
 
+def test_data_list_videos_null_duration(tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> None:
+    """Regression: a video row with NULL duration_seconds (e.g. omni-flash t2v,
+    where the response shape omits duration) must not crash list_videos with
+    TypeError on float(None). Both JSON output and the Rich table renderer
+    must handle a None duration cleanly."""
+    import uuid
+    from datetime import UTC, datetime
+
+    from gflow_cli.data.models import AssetKind, AssetRecord, ProjectRecord
+    from gflow_cli.data.repository import DataRepository
+    from gflow_cli.data.store import DataStore
+
+    db = tmp_path / "null_duration.db"
+    store = DataStore.open(db)
+    try:
+        repo = DataRepository(store)
+        now_iso = datetime.now(UTC).isoformat()
+        repo.upsert_profile(name="someone", profile_dir=tmp_path / "profile_someone")
+        repo.upsert_project(
+            ProjectRecord(
+                id=str(uuid.uuid4()),
+                profile_name="someone",
+                flow_project_id="proj-x",
+                title="null-duration regression",
+                source="cli",
+                created_at=now_iso,
+            )
+        )
+        repo.upsert_asset(
+            AssetRecord(
+                id=str(uuid.uuid4()),
+                profile_name="someone",
+                flow_project_id="proj-x",
+                flow_media_id="vid-null-duration",
+                flow_workflow_id=None,
+                flow_media_generation_id=None,
+                kind=AssetKind.VIDEO,
+                status="ready",
+                model="omni-flash",
+                aspect_ratio="16:9",
+                width=1280,
+                height=720,
+                duration_seconds=None,
+                seed=None,
+                metadata_json={},
+                created_at=now_iso,
+            )
+        )
+    finally:
+        store.close()
+    monkeypatch.setenv("GFLOW_CLI_DB_PATH", str(db))
+
+    result_json = CliRunner().invoke(main, ["data", "list", "videos", "--json"])
+    assert result_json.exit_code == 0, result_json.output
+    rows = [json.loads(ln) for ln in result_json.output.splitlines() if ln.strip()]
+    assert len(rows) == 1
+    assert rows[0]["duration"] is None
+
+    result_tbl = CliRunner().invoke(main, ["data", "list", "videos"])
+    assert result_tbl.exit_code == 0, result_tbl.output
+    assert "vid-null-duration" in result_tbl.output
+
+
 # ─── profiles ────────────────────────────────────────────────────────────────
 
 
