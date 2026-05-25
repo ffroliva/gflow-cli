@@ -12,8 +12,6 @@
 [![Type checked: pyright](https://img.shields.io/badge/type%20checked-pyright-blue.svg)](https://github.com/microsoft/pyright)
 [![Tests: TDD](https://img.shields.io/badge/tests-TDD-brightgreen.svg)](CONTRIBUTING.md)
 [![Quality Gate Status](https://sonarcloud.io/api/project_badges/measure?project=ffroliva_gflow-cli&metric=alert_status)](https://sonarcloud.io/summary/new_code?id=ffroliva_gflow-cli)
-[![Sponsor on GitHub](https://img.shields.io/static/v1?label=Sponsor&message=GitHub&color=ea4aaa&logo=github)](https://github.com/sponsors/ffroliva)
-[![Buy Me A Coffee](https://img.shields.io/static/v1?label=Buy%20Me%20a&message=Coffee&color=ffdd00&logo=buy-me-a-coffee&logoColor=black)](https://www.buymeacoffee.com/ffroliva)
 
 > ⚠️ **Unofficial. Reverse-engineered. Not affiliated with Google.** Endpoints can change at any time. Full [DISCLAIMER](DISCLAIMER.md).
 >
@@ -107,15 +105,6 @@ gflow CLI  →  Provider (interchangeable)  →  Flow (ui_automation) / Mock (te
 ## Project status
 
 **v0.9.0 — alpha (latest on PyPI).** Image (T2I / I2I / upload) + Video T2V / I2V / R2V live end-to-end on `ui_automation`, with a video `--model` picker (5 Veo models) + `--duration` / `--count`. New in v0.9.0: `gflow data list {projects,images,videos,profiles}` read CLI over the local SQLite catalog, `ROADMAP.md`, sponsorship wiring, and locale-agnostic media-dialog selectors. Only video `batch` (manifest runner) is still queued for Phase B — use a shell for-loop until then ([USAGE](docs/USAGE.md#gflow-video-batch)). Full milestone history → [docs/PROJECT_STATUS.md](docs/PROJECT_STATUS.md). Changelog → [CHANGELOG.md](CHANGELOG.md). Where the project is heading → [ROADMAP.md](ROADMAP.md).
-
-## Support
-
-If `gflow-cli` saves you time, a coffee or sponsorship goes a long way to keeping it maintained.
-
-- [GitHub Sponsors](https://github.com/sponsors/ffroliva)
-- [Buy Me a Coffee](https://www.buymeacoffee.com/ffroliva)
-
-Thanks to everyone who has supported the project so far.
 
 ## License & legal
 

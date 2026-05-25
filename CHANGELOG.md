@@ -11,10 +11,11 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 > **Maturity & Visibility release.** Surfaces the SQLite catalog (PR #52/#58)
 > via a read-only `gflow data list {projects,images,videos,profiles}` CLI,
-> publishes `ROADMAP.md`, wires GitHub Sponsors + Buy Me a Coffee, and ships
-> the locale-agnostic media-dialog selectors that unblock non-English Chrome
-> profiles. Plus the previously-unreleased video model picker, i2v/r2v, and
-> the I2I ref-attach + model-select fixes.
+> publishes `ROADMAP.md`, and ships the locale-agnostic media-dialog
+> selectors that unblock non-English Chrome profiles. Plus the previously-
+> unreleased video model picker, i2v/r2v, and the I2I ref-attach + model-
+> select fixes. Sponsorship wiring will land in a follow-up patch release
+> once GitHub Sponsors / Buy Me a Coffee accounts are fully provisioned.
 
 ### Added
 
@@ -26,8 +27,6 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   [`docs/DATA_LAYER.md § Querying the data layer`](docs/DATA_LAYER.md#querying-the-data-layer).
 - `ROADMAP.md` at repo root — themed milestones from v0.9 through v1.0 (no
   dates).
-- `.github/FUNDING.yml` + README sponsor badges for [GitHub Sponsors](https://github.com/sponsors/ffroliva)
-  and [Buy Me a Coffee](https://www.buymeacoffee.com/ffroliva).
 - `gflow video t2v` model picker: `--model` (`omni-flash` | `veo-lite` |
   `veo-fast` | `veo-quality` | `veo-lite-lp`), `--duration` (`4`/`6`/`8`, plus
   `10` for `omni-flash` only), and `--count` (1–4). Driven via the editor's
