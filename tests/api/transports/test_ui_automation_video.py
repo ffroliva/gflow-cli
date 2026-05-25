@@ -604,7 +604,11 @@ def _make_frame_slot_page(
 
     text_locator_inner = MagicMock()
     text_locator_inner.click = AsyncMock()
-    text_locator_inner.is_visible = AsyncMock(return_value=text_label_visible)
+    # Production code uses wait_for(state="visible") not is_visible()
+    if text_label_visible:
+        text_locator_inner.wait_for = AsyncMock()
+    else:
+        text_locator_inner.wait_for = AsyncMock(side_effect=Exception("not visible"))
     text_locator_wrapper = MagicMock()
     text_locator_wrapper.first = text_locator_inner
 
@@ -629,33 +633,31 @@ class TestAttachFrameSlotSelection:
     """
 
     @pytest.mark.asyncio
-    async def test_structural_slot_used_when_available(self, tmp_path: Path) -> None:
+    async def test_structural_slot_used_when_available(
+        self, tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+    ) -> None:
         """When structural slots are found, _attach_frame clicks the indexed
         one without consulting the text-label fallback."""
         image = tmp_path / "start.png"
         image.write_bytes(b"\x89PNG")
 
         page = _make_frame_slot_page(structural_count=2)
+        monkeypatch.setattr(VideoGenerationMixin, "_upload_via_open_dialog", AsyncMock())
 
-        with MagicMock() as mock_upload:
-            mock_upload.__aenter__ = AsyncMock(return_value=None)
-            mock_upload.__aexit__ = AsyncMock(return_value=None)
-            VideoGenerationMixin._upload_via_open_dialog = AsyncMock()  # type: ignore[attr-defined]
-
-            await VideoGenerationMixin._attach_frame(
-                page, slot_index=0, label="Start", image=image, out_dir=None
-            )
+        await VideoGenerationMixin._attach_frame(
+            page, slot_index=0, label="Start", image=image, out_dir=None
+        )
 
         # structural slot nth(0) was clicked
         struct_locator = page.locator(FRAME_SLOTS_STRUCT)
         struct_locator.nth(0).click.assert_awaited_once()
-        # text locator was never probed for visibility
+        # text locator was never probed via wait_for
         text_wrapper = page.locator(FRAME_SLOT_BY_LABEL.format(label="Start"))
-        text_wrapper.first.is_visible.assert_not_awaited()
+        text_wrapper.first.wait_for.assert_not_awaited()
 
     @pytest.mark.asyncio
     async def test_text_label_fallback_used_when_structural_count_insufficient(
-        self, tmp_path: Path
+        self, tmp_path: Path, monkeypatch: pytest.MonkeyPatch
     ) -> None:
         """When structural count < slot_index + 1, _attach_frame falls back to
         the text-label selector (requires English Chrome profile)."""
@@ -664,15 +666,15 @@ class TestAttachFrameSlotSelection:
 
         # Only 0 structural slots — fallback must be used
         page = _make_frame_slot_page(structural_count=0, text_label_visible=True)
-        VideoGenerationMixin._upload_via_open_dialog = AsyncMock()  # type: ignore[attr-defined]
+        monkeypatch.setattr(VideoGenerationMixin, "_upload_via_open_dialog", AsyncMock())
 
         await VideoGenerationMixin._attach_frame(
             page, slot_index=0, label="Start", image=image, out_dir=None
         )
 
-        # text locator was probed for visibility
+        # text locator was probed via wait_for and then clicked
         text_wrapper = page.locator(FRAME_SLOT_BY_LABEL.format(label="Start"))
-        text_wrapper.first.is_visible.assert_awaited_once()
+        text_wrapper.first.wait_for.assert_awaited_once()
         text_wrapper.first.click.assert_awaited_once()
 
     @pytest.mark.asyncio

@@ -647,17 +647,20 @@ class VideoGenerationMixin:
                 f"frame slot {label!r} not found on the Flow editor. Screenshot: {shot}"
             ) from e
 
-        if await structs.count() > slot_index:
+        struct_count = await structs.count()
+        if struct_count > slot_index:
             slot = structs.nth(slot_index)
         else:
             # Structural count was insufficient; fall back to text-label match.
             slot = page.locator(FRAME_SLOT_BY_LABEL.format(label=label)).first
-            if not await slot.is_visible(timeout=3000):
+            try:
+                await slot.wait_for(state="visible", timeout=3000)
+            except Exception as e:  # noqa: BLE001
                 raise RuntimeError(
                     f"frame slot index {slot_index} ({label!r}) not present "
-                    f"(found {await structs.count()} structural slot(s), "
+                    f"(found {struct_count} structural slot(s), "
                     f"text-label fallback also missed)"
-                )
+                ) from e
         await slot.click()
         await page.wait_for_timeout(1000)  # media dialog opens
         await VideoGenerationMixin._upload_via_open_dialog(
