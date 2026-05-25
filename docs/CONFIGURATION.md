@@ -109,12 +109,46 @@ GFLOW_CLI_AUTH_LOGIN_TIMEOUT=120 gflow auth login   # abort after 2 minutes
 **Recommended starting point:** `4`. Each Page costs ~30–60 MiB of memory on Chromium headless; don't exceed `8` without measuring resident-set size. Cookies and storage state are shared at Context level, so every Page inherits the signed-in profile for free.
 **Shipped in:** v0.4.0a2.
 
+### `GFLOW_CLI_DB_PATH`
+
+**What:** Override the path to the local SQLite operations database.
+**Default:** `<GFLOW_CLI_HOME>/gflow.db`
+**Override examples:**
+```bash
+export GFLOW_CLI_DB_PATH=/secure-volume/gflow.db       # POSIX
+$env:GFLOW_CLI_DB_PATH = "D:\gflow-data\gflow.db"     # PowerShell
+```
+
+Use this when you want the DB on a different volume, outside `GFLOW_CLI_HOME`, or when running multiple isolated environments that share the same home dir.
+
+### `GFLOW_CLI_HISTORY_PROMPTS`
+
+**What:** Controls how prompt text is persisted in the local database.
+**Values:**
+- `store` (default) — the full prompt text is saved to the database alongside the operation record.
+- `redacted` — only the SHA-256 hash of the prompt is stored; the prompt text itself is never written to disk. Use this when prompts may contain sensitive content.
+
+**Default:** `store`
+
+```bash
+GFLOW_CLI_HISTORY_PROMPTS=redacted gflow image t2i "confidential brief"
+```
+
 ### `GFLOW_CLI_HEADLESS`
 
 **What:** Run Playwright in headless mode for non-`auth login` commands.
 **Values:** `true` | `false`
 **Default:** `true`
 **When to flip to `false`:** if reCAPTCHA Enterprise refuses to mint tokens (Google's bot-detection sometimes refuses headless Chromium but accepts a visible window). Set to `false` and re-run; the browser will appear during generation but the session is still reused from the persistent profile.
+
+### `GFLOW_CLI_LOCALE`
+
+**What:** BCP-47 locale tag passed to Playwright's `launch_persistent_context(locale=...)` — controls the `Accept-Language` HTTP header only.
+**Values:** any BCP-47 tag (e.g. `en-US`, `pt-BR`, `es-ES`, `ja-JP`)
+**Default:** `en-US`
+**Shipped in:** post-v0.8.1 develop (PR #51).
+**When to set it:** capturing locale-invariant DOM via `scripts/dev/capture_locale_invariants.py`, or live-verifying a generation under a non-EN account language.
+**Important:** Chrome's *UI* language is independently forced to `en-US` via the `--lang=en-US` launch arg (so Flow keeps serving `/fx/tools/flow/` and the editor's localized text selectors keep working). This env var only affects request headers — not the editor UI you see. See [KNOWN_ISSUES § issue #24](../KNOWN_ISSUES.md) for the path to dropping `--lang=en-US`.
 
 ## Output paths
 

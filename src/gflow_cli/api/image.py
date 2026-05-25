@@ -23,6 +23,7 @@ from __future__ import annotations
 from collections.abc import Mapping
 from dataclasses import dataclass
 from enum import StrEnum
+from pathlib import Path
 from types import MappingProxyType
 from typing import Any
 
@@ -181,6 +182,10 @@ class GenerateImageRequest:
     aspect: Aspect = Aspect.PORTRAIT
     model: Model = Model.NARWHAL
     refs: tuple[ImageRef, ...] = ()
+    # Local reference-image files for I2I — attached through the editor's media
+    # dialog by the ui_automation transport (the REST uploadImage path 401s).
+    # The common i2i case; `refs` (pre-uploaded UUIDs) would need library-select.
+    ref_paths: tuple[Path, ...] = ()
     recaptcha_token: str = ""  # populated by caller right before send; "" means unminted
     # number of images to generate (1–4); UI transport uses this to set Flow's count tab
     count: int = 1

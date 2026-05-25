@@ -198,3 +198,30 @@ async def test_aexit_resets_pool_even_when_close_raises(
         assert client._page is None
         assert client._context is None
         assert client._pw is None
+
+
+@pytest.mark.asyncio
+async def test_aenter_partial_failure_tears_down_browser(
+    tmp_path: Path, settings_n4: Settings, fake_context: MagicMock
+) -> None:
+    """If __aenter__ fails AFTER launching the persistent context, the browser
+    MUST be torn down. __aexit__ is NOT invoked when __aenter__ raises, so an
+    unguarded failure would orphan the chrome process and lock the profile dir
+    (regression: next run spirals into about:blank spam + TargetClosedError).
+    The partial-setup guard owns cleanup here."""
+    fake_context.add_init_script = AsyncMock(side_effect=RuntimeError("boom mid-setup"))
+    with patch("gflow_cli.api.client.async_playwright") as mock_pw_factory:
+        pw = MagicMock()
+        pw.stop = AsyncMock()
+        pw.chromium.launch_persistent_context = AsyncMock(return_value=fake_context)
+        mock_pw_factory.return_value.start = AsyncMock(return_value=pw)
+        client = FlowApiClient(profile_dir=tmp_path, settings=settings_n4)
+        with pytest.raises(RuntimeError, match="boom mid-setup"):
+            await client.__aenter__()
+        # The launched context + driver were closed even though __aexit__ never ran:
+        fake_context.close.assert_awaited()
+        pw.stop.assert_awaited()
+        # Fields reset to a clean state so a retry/reuse starts fresh.
+        assert client._context is None
+        assert client._pw is None
+        assert client._page_queue is None

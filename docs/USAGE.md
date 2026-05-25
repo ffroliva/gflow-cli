@@ -25,8 +25,12 @@ Commands:
 
   video     Video generation (Veo via Flow).
     t2v                         Generate a video from a text prompt.
-    i2v                         Generate a video from a start image + text prompt.
+    i2v                         Generate a video from a start (+ optional end) frame + prompt.
+    r2v                         Generate a video from reference images + prompt.
     batch                       Run a TSV manifest of video generations.
+
+  data      Local provenance database (read-only queries).
+    media MEDIA_ID              Show stored record for a Flow media ID.
 ```
 
 Global flags:
@@ -282,75 +286,130 @@ All prompts in a batch share one Flow project. The editor is opened once; each p
 - `image_batch.row_completed {row_idx, file_path, sha256_prefix}` (per image)
 - `image_batch.inter_submission_latency_ms {row_idx, latency_ms}` (fires from row 1 onward)
 
+> **Shared video flags** (`t2v` / `i2v` / `r2v`):
+> `--model [omni-flash|veo-lite|veo-fast|veo-quality|veo-lite-lp]` (omit → Flow's
+> current UI default), `--duration [4|6|8|10]` (10 requires `--model omni-flash`),
+> `--count INTEGER` (1–4; >1 multiplies credit cost), `--aspect [9:16|16:9]`,
+> `--profile NAME`, `--out-dir DIR` (default `tmp/`). The mp4 lands at
+> `<out-dir>/<media_id>.mp4`.
+
 ## `gflow video t2v`
 
 Generate a video from a text prompt only.
 
 ```text
-gflow video t2v PROMPT [OPTIONS]
-
-Options:
-  -o, --output PATH       Output mp4. Default: $GFLOW_CLI_OUTPUT_DIR/videos/<date>/<media>.mp4
-  --aspect 9:16|16:9|1:1  Default: 9:16
-  --seed INTEGER          Reproducibility. Default: random.
-  --profile NAME          Account profile. Default: resolved from env/config.
-  --poll-interval FLOAT   Seconds between status polls. Default: 5.
+gflow video t2v PROMPT [--model] [--duration] [--count] [--aspect] [--profile] [--out-dir]
 ```
-
-Examples:
 
 ```bash
 gflow video t2v "Slow cinematic push-in toward a candle flame"
-gflow video t2v "Aerial shot of a coastline at sunset" --aspect 16:9 -o ./coast.mp4
+gflow video t2v "Aerial shot of a coastline at sunset" --aspect 16:9 --out-dir ./out
+gflow video t2v "A neon city timelapse" --model omni-flash --duration 10 --count 2
 ```
 
 ## `gflow video i2v`
 
-Generate a video from a START IMAGE + text prompt. The image must be a local PNG, JPEG, WebP, or GIF; it's uploaded once per call and the resulting clip animates from it according to PROMPT.
+Generate a video from a START frame (+ optional END frame) and a motion prompt.
+Each image is a local PNG/JPEG; it is bound into the editor's frame slot via the
+media dialog, then Flow fires `batchAsyncGenerateVideoStartImage` (start only) or
+`…StartAndEndImage` (start+end interpolation).
 
 ```text
-gflow video i2v IMAGE PROMPT [OPTIONS]
+gflow video i2v IMAGE PROMPT [--end-image LAST] [--model] [--duration] [--count] [--aspect] [...]
 
 Arguments:
-  IMAGE                   Local start image (PNG/JPEG/WebP/GIF). [required]
-  PROMPT                  Text prompt.                            [required]
+  IMAGE   Local start frame (PNG/JPEG). [required]
+  PROMPT  Motion prompt.                [required]
 
 Options:
-  -o, --output PATH       Output mp4. Default: $GFLOW_CLI_OUTPUT_DIR/videos/<date>/<media>.mp4
-  --aspect 9:16|16:9|1:1  Default: 9:16
-  --seed INTEGER          Reproducibility. Default: random.
-  --profile NAME          Account profile. Default: resolved from env/config.
-  --poll-interval FLOAT   Seconds between status polls. Default: 5.
+  --end-image PATH  Optional end frame — Flow interpolates start -> end.
 ```
 
 ```bash
 gflow video i2v ./hero.png "Slow camera arc, soft golden light"
+gflow video i2v ./first.png "morph between scenes" --end-image ./last.png --model veo-quality
+```
+
+## `gflow video r2v`
+
+Reference-to-video (Flow "ingredients"): condition a generation on reference
+images. Per-model cap: `omni-flash` ≤7, the `veo-*` models ≤3. Fires
+`batchAsyncGenerateVideoReferenceImages`.
+
+```text
+gflow video r2v PROMPT --ref IMG [--ref IMG ...] [--model] [--duration] [--count] [--aspect] [...]
+
+Options:
+  --ref PATH  Reference image; repeat for up to 7 (omni-flash) / 3 (veo). [required]
+```
+
+```bash
+gflow video r2v "a knight in this armor walks forward" --ref armor.png
+gflow video r2v "blend these worlds" --ref a.png --ref b.png --ref c.png --model omni-flash
 ```
 
 ## `gflow video batch`
 
-Run a TSV manifest of generations against ONE shared project.
+> ⚠️ **Not yet implemented.** The `batch` subcommand currently exits with
+> `[yellow]gflow video batch is not yet available.[/yellow]` (exit 1).
+> Manifest-driven batching on `UiAutomationTransport` is queued for a later
+> release (see Phase B follow-ups).
+
+### Workaround — shell for-loop
+
+Until the manifest runner lands, you can drive sequential video generations
+through a plain shell loop. Each `gflow video t2v` / `i2v` / `r2v` call opens
+its **own Flow project**, so the resulting videos will NOT share a
+`project_id` (unlike `gflow image batch`, which mounts one project across
+all prompts) — but they DO get generated and downloaded:
+
+```bash
+# bash / WSL / macOS — one prompt per line
+while IFS= read -r prompt; do
+  gflow video t2v "$prompt" --aspect 9:16
+done < prompts.txt
+```
+
+```powershell
+# PowerShell — one prompt per line
+Get-Content prompts.txt | ForEach-Object {
+  gflow video t2v $_ --aspect 9:16
+}
+```
+
+The trade-off vs. a true manifest runner: separate `project_id`s mean each
+generation re-mints a reCAPTCHA (a few extra seconds per shot) and the
+videos won't appear together in your Flow gallery. The files on disk are
+identical to what `batch` would produce. The same pattern works for
+`gflow video i2v <image> "<prompt>"` and `gflow video r2v "<prompt>" --ref <img>`.
+
+## `gflow data media`
+
+Look up a recorded operation by its Flow media ID. Prints a summary of the stored provenance record: profile, media ID, Flow project ID, kind (image/video), and the local file paths that were written for that operation.
 
 ```text
-gflow video batch MANIFEST [--out-dir DIR] [--profile NAME] [--poll-interval SEC]
+gflow data media MEDIA_ID [--profile NAME]
+
+Arguments:
+  MEDIA_ID              Flow media UUID (e.g. ddb6ef97-262d-49f4-8269-4a28c0fae6a2). [required]
+
+Options:
+  --profile NAME        Profile name (overrides default).
 ```
 
-Manifest format (tab-separated; `# `-prefixed lines are comments):
+**Example output:**
 
-```tsv
-# start_image	prompt	end_image	aspect	output_path
-	A serene mountain lake at sunset		9:16	./out/lake.mp4
-hero.png	Slow camera arc		9:16	./out/hero.mp4
-	Aerial coastline		16:9	./out/coast.mp4
+```text
+Profile:    default
+Media ID:   ddb6ef97-262d-49f4-8269-4a28c0fae6a2
+Project ID: f1a2b3c4-0000-0000-0000-000000000001
+Kind:       image
+Paths:
+  /home/user/Downloads/gflow-cli/images/2026-05-24/ddb6ef97_1.png
+  /home/user/Downloads/gflow-cli/images/2026-05-24/ddb6ef97_2.png
 ```
 
-| Column | Required | Default |
-|---|---|---|
-| `start_image` | no (empty -> T2V) | - |
-| `prompt` | **yes** | - |
-| `end_image` | no (reserved, not yet wired) | - |
-| `aspect` | no | `9:16` |
-| `output_path` | no | `<out_dir>/videos/<date>/<media>.mp4` |
+Exit codes: `0` success, `2` media ID not found in the local database, `16` database error (see exit code table below).
 
 ## `gflow run`
 
@@ -480,7 +539,16 @@ shell scripts can branch on the failure mode without parsing stderr.
 | `12` | `AuthLoginTimeoutError` | Browser sign-in was not completed in time       | Re-run login or raise `GFLOW_CLI_AUTH_LOGIN_TIMEOUT`       |
 | `13` | `SecurityError`       | Unsafe local profile or secret handling blocked   | Follow the error's safety guidance                         |
 | `14` | `AuthBrowserRejectedError` | Google rejected the login browser             | `gflow auth login --browser chrome`                        |
+| `16` | `DataStoreError`      | Local database cannot be opened, a migration failed, or the DB schema is newer than the installed gflow-cli | See below                                  |
 | `130`| SIGINT                | User-interrupted (Ctrl-C)                        | —                                                          |
+
+**Exit code 16 — data store / migration error.** Fires when:
+
+- The database file cannot be opened (filesystem permission or path issues).
+- A migration fails or the migration checksum drifts from what the installed version expects.
+- The database has a **newer schema** than the installed gflow-cli (i.e. you downgraded after a migration already ran).
+
+Recovery for the "newer schema" case: upgrade gflow-cli to a version that understands the schema (`uv tool upgrade gflow-cli`), OR point `GFLOW_CLI_DB_PATH` to a different database location (a fresh path creates a new empty database automatically).
 
 All errors emit a structured `error_raised` event (or `error_unhandled` for
 exit code 1) with stable fields — `error_class`, `problem` (RFC 9457 Problem
@@ -510,6 +578,7 @@ if [ "$rc" -ne 0 ]; then
     11)  echo "Configuration error — fix the option or env var shown above"; exit 1 ;;
     13)  echo "Security guard blocked unsafe local state — follow the error guidance"; exit 1 ;;
     14)  echo "Google rejected the login browser — run: gflow auth login --browser chrome"; exit 1 ;;
+    16)  echo "Database error — check permissions or upgrade gflow-cli"; exit 1 ;;
     130) echo "Cancelled with Ctrl-C"; exit 130 ;;
     *)   echo "Unknown failure (exit $rc)"; exit 1 ;;
   esac

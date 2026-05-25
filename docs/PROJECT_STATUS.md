@@ -4,7 +4,9 @@
 
 ## Current release
 
-**v0.8.1 — alpha (docs refresh).** Image (T2I / I2I / upload) + Video T2V live end-to-end on the `ui_automation` transport against live Pro/Ultra accounts. Video I2V and batch are queued for Phase B. Three earlier HTTP transport strategies (`evaluate_fetch` / `bearer` / `sapisidhash`) are named in the codebase history; the actual modules have not been extracted into a subpackage. The production path is `ui_automation`.
+**v0.8.1 — alpha (latest on PyPI).** Image (T2I / I2I / upload) + Video T2V / I2V / R2V live end-to-end on the `ui_automation` transport against live Pro/Ultra accounts, with a video `--model` picker (5 Veo models) and `--duration` / `--count`. Only video `batch` (manifest runner) is still queued for Phase B — use a shell for-loop until then ([USAGE](USAGE.md#gflow-video-batch)). Three earlier HTTP transport strategies (`evaluate_fetch` / `bearer` / `sapisidhash`) are named in the codebase history; the actual modules have not been extracted into a subpackage. The production path is `ui_automation`.
+
+**Develop (unreleased, post-v0.8.1):** PR #37 (Sonar refactor), PR #46 (README badges), PR #48 (i2v/r2v + t2v `--model`/`--duration`/`--count` + image `--model` no-op fix), PR #51 (`GFLOW_CLI_LOCALE` env override, prep for issue #24), PR #52 + #58 (local SQLite catalog / data layer + `gflow data media`), PR #60 (locale-agnostic media-dialog selectors), PR #66 (`gflow data list` read CLI over the catalog), PR #67 (`ROADMAP.md` + sponsorship). Targets **v0.9.0 — Maturity & Visibility**.
 
 ## Milestone history
 
@@ -29,7 +31,15 @@
 | `gflow video t2v` restored on `ui_automation` with first-class video download | ✅ done (v0.7.0 unreleased → v0.8.0) |
 | Image/video mode-switch symmetry + live verify on ffroliva (PR #40) | ✅ done (v0.8.0) |
 | README + AGENTS.md + llms.txt refresh, docs governance | ✅ done (v0.8.1) |
-| `gflow video i2v` + `gflow video batch` on `ui_automation` | ⏳ Phase B |
+| `gflow video t2v` model picker (5 Veo models) + `--duration` / `--count` | ✅ done (Unreleased) |
+| `gflow video i2v` (start + optional end frame) on `ui_automation` | ✅ done (Unreleased) |
+| `gflow video r2v` (reference-to-video, model-aware ref cap omni≤7 / veo≤3) | ✅ done (Unreleased) |
+| `gflow image t2i/i2i --model` actually selects the model (was a no-op) | ✅ done (Unreleased) |
+| Local SQLite catalog (data layer) recording every project / image / video / operation | ✅ done (Unreleased) |
+| `gflow data list {projects,images,videos,profiles}` read CLI over the catalog | ✅ done (Unreleased) |
+| `ROADMAP.md` published (themed milestones through v1.0) | ✅ done (Unreleased) |
+| Locale-agnostic media-dialog upload selectors (fixes non-English Chrome profiles) | ✅ done (Unreleased) |
+| `gflow video batch` (TSV manifest) on `ui_automation` | ⏳ Phase B |
 | Persistence layer (stay-mounted batch sessions across project boundaries) | ⏳ Phase B |
 | Provider abstraction for official Veo 3.1 API | ⏳ planned |
 | Signed-tag CI verification automation (no manual signing in CI yet) | ⏳ planned |

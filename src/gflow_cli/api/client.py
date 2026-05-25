@@ -32,7 +32,8 @@ from gflow_cli.api.dto import AssetInfo, GeneratedImage, ProjectInfo
 from gflow_cli.api.image import GenerateImageRequest
 from gflow_cli.api.recaptcha import TokenMinter
 from gflow_cli.api.transports import make_transport
-from gflow_cli.api.transports.base import FlowTransportStrategy
+from gflow_cli.api.transports.base import FlowTransportStrategy, VideoCapableTransport
+from gflow_cli.api.video import GenerateVideoRequest, VideoResult, VideoStartedCallback
 from gflow_cli.config import Settings
 from gflow_cli.errors import (
     AuthExpiredError,
@@ -166,6 +167,26 @@ class FlowApiClient:
         # opening a second Playwright process against the same profile dir
         # (which would conflict on the Chromium lockfile — spec § 5.4.4).
         self._pw = await async_playwright().start()
+        # Partial-setup leak guard: __aexit__ is NOT invoked when __aenter__
+        # raises, so a launched persistent context (and its chrome process)
+        # would leak and lock the profile dir — the next run then fails to
+        # acquire it and spirals into about:blank / TargetClosedError. Tear
+        # down everything opened after the driver starts on any failure.
+        try:
+            await self._enter_setup()
+        except BaseException:
+            await self._close_browser_resources()
+            raise
+        return self
+
+    async def _enter_setup(self) -> None:
+        """Body of __aenter__ after the Playwright driver starts.
+
+        Extracted so __aenter__ can wrap it in a partial-setup leak guard
+        (a failed launch must not orphan a chrome process).
+        """
+        # Invariant: __aenter__ sets self._pw immediately before calling us.
+        assert self._pw is not None
         from gflow_cli.browser_manager import channel_for_profile
 
         self._context = await self._pw.chromium.launch_persistent_context(
@@ -241,8 +262,6 @@ class FlowApiClient:
             self._owns_transport = False
             self._plumb_out_dir(self.transport)
 
-        return self
-
     def _plumb_out_dir(self, transport: FlowTransportStrategy) -> None:
         """Forward ``self._out_dir`` onto a transport that exposes the slot.
 
@@ -257,33 +276,43 @@ class FlowApiClient:
         transport._out_dir = self._out_dir  # type: ignore[attr-defined]
 
     async def __aexit__(self, *exc: object) -> None:
-        try:
-            if self._context:
-                try:
-                    await self._context.close()
-                except Exception:
-                    # Browser cleanup is best-effort but MUST be surfaced for
-                    # diagnosis (CLAUDE.md: never silently swallow errors).
-                    logger.warning("browser_context_close_error", exc_info=True)
-            if self._pw:
-                try:
-                    await self._pw.stop()
-                except Exception:
-                    logger.warning("playwright_stop_error", exc_info=True)
-            if self._owns_transport and self.transport is not None:
-                try:
-                    await self.transport.teardown()
-                except Exception:
-                    logger.warning("transport_teardown_error", exc_info=True)
-        finally:
-            # Always reset pool state — even if close() raised — so a
-            # reused client instance doesn't keep dangling references to a
-            # dead BrowserContext's Pages.
-            self._pages = []
-            self._page_queue = None
-            self._page = None
-            self._context = None
-            self._pw = None
+        # _close_browser_resources is fully guarded internally and always resets
+        # the pool fields (even if context.close raises), so the client is left
+        # in a clean state without a separate finally block here.
+        await self._close_browser_resources()
+        if self._owns_transport and self.transport is not None:
+            try:
+                await self.transport.teardown()
+            except Exception:
+                logger.warning("transport_teardown_error", exc_info=True)
+
+    async def _close_browser_resources(self) -> None:
+        """Close the BrowserContext and stop the Playwright driver, best-effort.
+
+        Shared by :meth:`__aexit__` and :meth:`__aenter__`'s partial-setup
+        guard so a failed launch can't orphan a chrome process that then locks
+        the profile dir. Each step is independently guarded so one failure
+        still runs the next; errors surface as warnings (CLAUDE.md: never
+        silently swallow). Resets the browser fields so a reused client never
+        holds references to a dead BrowserContext.
+        """
+        if self._context is not None:
+            try:
+                await self._context.close()
+            except Exception:
+                # Browser cleanup is best-effort but MUST be surfaced for
+                # diagnosis (CLAUDE.md: never silently swallow errors).
+                logger.warning("browser_context_close_error", exc_info=True)
+        if self._pw is not None:
+            try:
+                await self._pw.stop()
+            except Exception:
+                logger.warning("playwright_stop_error", exc_info=True)
+        self._pages = []
+        self._page_queue = None
+        self._page = None
+        self._context = None
+        self._pw = None
 
     async def _checkout_page(self) -> Page:
         """Block until a Page is available from the pool; FIFO.
@@ -767,6 +796,46 @@ class FlowApiClient:
                 project_id=resolved_project_id,
                 req=req_with_count,
                 recaptcha_action=recaptcha_action,
+            )
+        except Exception as e:
+            if _is_target_closed(e):
+                raise BrowserSessionClosedError() from e
+            raise
+
+    async def generate_video(
+        self,
+        *,
+        req: GenerateVideoRequest,
+        out_dir: Path | None = None,
+        poll_timeout_s: float = 600.0,
+        download: bool = True,
+        on_started: VideoStartedCallback | None = None,
+    ) -> VideoResult:
+        """Generate a video via the transport's ``generate_video`` method.
+
+        Routes all video generation through a single client boundary so the
+        data-layer recorder (Task 8) can hook in at one place.
+
+        Raises:
+            RuntimeError: transport is None (client not entered) or the transport
+                doesn't implement :class:`VideoCapableTransport`.
+            BrowserSessionClosedError: Playwright target was closed mid-call.
+        """
+        if self.transport is None:
+            raise RuntimeError(
+                "FlowApiClient.transport is None - call generate_video inside 'async with client'"
+            )
+        if not isinstance(self.transport, VideoCapableTransport):
+            raise RuntimeError(
+                f"transport {type(self.transport).__name__} does not support video generation"
+            )
+        try:
+            return await self.transport.generate_video(
+                request=req,
+                out_dir=out_dir,
+                poll_timeout_s=poll_timeout_s,
+                download=download,
+                on_started=on_started,
             )
         except Exception as e:
             if _is_target_closed(e):

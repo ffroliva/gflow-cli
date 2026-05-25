@@ -13,11 +13,54 @@ from gflow_cli.api.video import (
     GenerateVideoRequest,
     Mode,
     Tier,
+    VideoModel,
     VideoResult,
     VideoStatus,
     media_name_from_generate_response,
+    operation_name_from_generate_response,
     parse_video_status,
 )
+
+
+class TestVideoModelEnum:
+    def test_from_cli_none_returns_none(self) -> None:
+        assert VideoModel.from_cli(None) is None
+
+    def test_from_cli_aliases(self) -> None:
+        assert VideoModel.from_cli("omni-flash") is VideoModel.OMNI_FLASH
+        assert VideoModel.from_cli("veo-fast") is VideoModel.VEO_3_1_FAST
+        assert VideoModel.from_cli("veo-quality") is VideoModel.VEO_3_1_QUALITY
+        assert VideoModel.from_cli("veo-lite") is VideoModel.VEO_3_1_LITE
+        assert VideoModel.from_cli("veo-lite-lp") is VideoModel.VEO_3_1_LITE_LOWER_PRIORITY
+
+    def test_from_cli_invalid_raises(self) -> None:
+        with pytest.raises(ValueError, match="Unknown video model"):
+            VideoModel.from_cli("sora")
+
+
+class TestVideoRequestNewFields:
+    def test_defaults(self) -> None:
+        req = GenerateVideoRequest(prompt="x")
+        assert req.model is None
+        assert req.duration is None
+        assert req.count == 1
+
+    def test_invalid_duration_rejected(self) -> None:
+        with pytest.raises(ValueError, match="duration must be"):
+            GenerateVideoRequest(prompt="x", duration=5)
+
+    def test_10s_requires_omni_flash(self) -> None:
+        with pytest.raises(ValueError, match="10s duration"):
+            GenerateVideoRequest(prompt="x", duration=10, model=VideoModel.VEO_3_1_FAST)
+        # omni_flash + 10s, and model-less 10s (default unknown), are both OK
+        GenerateVideoRequest(prompt="x", duration=10, model=VideoModel.OMNI_FLASH)
+        GenerateVideoRequest(prompt="x", duration=10)
+
+    def test_count_out_of_range_rejected(self) -> None:
+        with pytest.raises(ValueError, match="count must be"):
+            GenerateVideoRequest(prompt="x", count=5)
+        with pytest.raises(ValueError, match="count must be"):
+            GenerateVideoRequest(prompt="x", count=0)
 
 
 class TestAspectEnum:
@@ -102,6 +145,21 @@ class TestGenerateVideoRequest:
         too_many = tuple(Path(f"r{i}.png") for i in range(MAX_REFERENCE_IMAGES + 1))
         with pytest.raises(ValueError, match="at most"):
             GenerateVideoRequest(prompt="x", mode=Mode.R2V, reference_images=too_many)
+
+    def test_per_model_reference_cap(self) -> None:
+        refs5 = tuple(Path(f"r{i}.png") for i in range(5))
+        refs7 = tuple(Path(f"r{i}.png") for i in range(7))
+        # veo caps at 3 -> 5 refs rejected
+        with pytest.raises(ValueError, match="at most 3 reference"):
+            GenerateVideoRequest(
+                prompt="x", mode=Mode.R2V, model=VideoModel.VEO_3_1_FAST, reference_images=refs5
+            )
+        # omni_flash allows 7
+        GenerateVideoRequest(
+            prompt="x", mode=Mode.R2V, model=VideoModel.OMNI_FLASH, reference_images=refs7
+        )
+        # model None -> only the absolute ceiling (7) applies; 5 is fine
+        GenerateVideoRequest(prompt="x", mode=Mode.R2V, reference_images=refs5)
 
     def test_seed_range_enforced(self) -> None:
         with pytest.raises(ValueError, match="seed out of range"):
@@ -212,6 +270,28 @@ class TestParseVideoStatus:
     def test_malformed_status_raises(self) -> None:
         with pytest.raises(ValueError, match="mediaGenerationStatus"):
             parse_video_status({"media": [{"name": "m", "mediaMetadata": {}}]}, media_id="m")
+
+
+class TestOperationNameFromGenerateResponse:
+    def test_reads_operation_name(self) -> None:
+        body = {
+            "media": [{"name": "media-1"}],
+            "operations": [{"operation": {"name": "media-1"}}],
+        }
+        assert operation_name_from_generate_response(body) == "media-1"
+
+    def test_matches_current_media_id_in_fixture(self) -> None:
+        body = {
+            "media": [{"name": "media-1"}],
+            "operations": [{"operation": {"name": "media-1"}}],
+        }
+        assert operation_name_from_generate_response(body) == body["media"][0]["name"]
+
+    def test_returns_none_when_operations_absent(self) -> None:
+        assert operation_name_from_generate_response({"media": [{"name": "m"}]}) is None
+
+    def test_returns_none_when_operations_empty(self) -> None:
+        assert operation_name_from_generate_response({"operations": []}) is None
 
 
 class TestVideoResult:

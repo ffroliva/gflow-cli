@@ -163,8 +163,8 @@ def test_exit_code_map_ordering_invariant():
     seen: list[type] = []
     for cls in EXIT_CODE_MAP:
         for prior in seen:
-            assert not issubclass(prior, cls), (
-                f"{prior.__name__} is a subclass of {cls.__name__} but appears AFTER it; "
+            assert not issubclass(cls, prior), (
+                f"{cls.__name__} is a subclass of {prior.__name__} but appears AFTER it; "
                 f"swap their order in EXIT_CODE_MAP."
             )
         seen.append(cls)
