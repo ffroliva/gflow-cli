@@ -134,11 +134,12 @@ VIDEO_MODEL_OPTION_SELECTORS: dict[VideoModel, str] = {
 # slot. Only then does the DOM Generate click fire StartImage/StartAndEndImage.
 UPLOAD_IMAGE_ROUTE = "uploadImage"
 # Frame slots are `div[aria-haspopup='dialog']`. Their label text is localized
-# (EN 'Start'/'End', TH 'เริ่ม'/'สิ้นสุด'). `_attach_frame` tries an English-text
-# match first (the account must be in English for I2V — there is no stable
-# locale-free anchor: no id-suffix, no icon), then falls back to a structural
-# match: the dialog-divs inside the swap_horiz container, by index (0=first,
-# 1=last; the swap_horiz BUTTON is excluded by `> div[aria-haspopup='dialog']`).
+# (EN 'Start'/'End', TH 'เริ่ม'/'สิ้นสุด'). `_attach_frame` uses FRAME_SLOTS_STRUCT
+# first (structural / locale-free: the dialog-divs inside the swap_horiz container,
+# by index 0=first, 1=last; the swap_horiz BUTTON is excluded by
+# `> div[aria-haspopup='dialog']`). FRAME_SLOT_BY_LABEL is the English text-label
+# fallback, only consulted when the structural count is insufficient. Caller labels
+# are always the hardcoded constants 'Start' / 'End', so no CSS-escaping is needed.
 FRAME_SLOT_BY_LABEL = "div[aria-haspopup='dialog']:has-text('{label}')"
 SWAP_CONTAINER = "div:has(> button:has(i.google-symbols:text-is('swap_horiz')))"
 FRAME_SLOTS_STRUCT = SWAP_CONTAINER + " > div[aria-haspopup='dialog']"
@@ -636,6 +637,10 @@ class VideoGenerationMixin:
         # (0=start, 1=end).  FRAME_SLOT_BY_LABEL (has-text 'Start'/'End') is
         # tried only as a fallback when the structural count is insufficient —
         # it requires --lang=en-US / English Chrome profile to work.
+        #
+        # wait_for is called unconditionally because the frame panel may still be
+        # animating in when _attach_frame is entered; on a pre-rendered page it
+        # resolves in <10 ms (one CDP round-trip).
         structs = page.locator(FRAME_SLOTS_STRUCT)
         try:
             await structs.first.wait_for(state="visible", timeout=8000)
