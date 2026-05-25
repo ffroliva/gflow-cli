@@ -199,22 +199,25 @@ NEW_PROJECT_SELECTORS = (
 # Tier 1 — structural / ARIA: locale-invariant regardless of the Chrome
 # profile's display language.
 #   • Google Funding Choices / GDPR consent SDK sets button#L2AGLb and
-#     aria-label="Accept all" in English even when the *button text* is
-#     translated — these are programmatic SDK constants, not UI strings.
-#   • The broader aria-label*= catches variants across consent-management
-#     platforms (OneTrust, Cookiebot, etc.) that also set English ARIA names.
+#     aria-label="Accept all" / aria-label="I agree" in English even when
+#     the *button text* is translated — these are programmatic SDK constants,
+#     not UI strings.
 _ONBOARDING_STRUCTURAL_SELECTORS: tuple[str, ...] = (
     "button#L2AGLb",  # Google consent SDK "Accept all"
     "button[aria-label='Accept all']",  # consent SDK ARIA name (exact)
     "button[aria-label='I agree']",  # consent SDK ARIA name (exact)
-    "button[aria-label*='Accept' i]",  # broader CMP ARIA catch (en)
-    "button[aria-label*='Agree' i]",  # broader CMP ARIA catch (en)
 )
 
-# Tier 2 — localised text: extends coverage to the 12 locales most likely
-# to be used with Flow.  Not locale-invariant, but maximises the fallback
-# surface for users who hit onboarding before entering the editor.
+# Tier 2 — localised text / language-dependent ARIA: extends coverage to
+# the 12 locales most likely to be used with Flow.  Not locale-invariant,
+# but maximises the fallback surface for users who hit onboarding before
+# entering the editor.
 _ONBOARDING_TEXT_SELECTORS: tuple[str, ...] = (
+    # English-language ARIA partial catches (OneTrust, Cookiebot, etc. often
+    # use English aria-label values even on non-EN pages, but this is not
+    # guaranteed, so these belong here rather than in the structural tier).
+    "button[aria-label*='Accept' i]",  # broader CMP ARIA catch (en)
+    "button[aria-label*='Agree' i]",  # broader CMP ARIA catch (en)
     # EN
     "button:has-text('Accept all')",
     "button:has-text('Agree')",
