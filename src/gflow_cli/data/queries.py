@@ -185,7 +185,7 @@ class VideoRow:
     prompt: str | None
     aspect: str
     model: str
-    duration: float
+    duration: float | None
     created_at: datetime
     local_path: str | None
 
@@ -222,7 +222,9 @@ def list_videos(
     """Return video assets newest-first, filtered by profile if given.
 
     prompt and local_path are NULLable (LEFT JOINs). duration maps to the
-    duration_seconds REAL column in the schema.
+    duration_seconds REAL column in the schema, which is also nullable
+    (e.g. omni-flash currently returns no duration in its t2v response, and
+    smoke-test fixtures may insert rows without it).
 
     Args:
         db_path: Absolute path to the SQLite catalog.
@@ -244,7 +246,7 @@ def list_videos(
             prompt=str(r["prompt"]) if r["prompt"] is not None else None,
             aspect=str(r["aspect"]),
             model=str(r["model"]),
-            duration=float(r["duration"]),
+            duration=float(r["duration"]) if r["duration"] is not None else None,
             created_at=datetime.fromisoformat(str(r["created_at"])),
             local_path=str(r["local_path"]) if r["local_path"] is not None else None,
         )
