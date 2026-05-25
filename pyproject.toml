@@ -1,6 +1,6 @@
 [project]
 name = "gflow-cli"
-version = "0.9.0"
+version = "0.9.1"
 description = "Unofficial CLI for Google Flow — drive Veo image-to-video generations from the terminal."
 readme = "README.md"
 license = { file = "LICENSE" }
@@ -51,12 +51,6 @@ build-backend = "hatchling.build"
 
 [tool.hatch.build.targets.wheel]
 packages = ["src/gflow_cli"]
-
-[tool.hatch.build.targets.wheel.force-include]
-"src/gflow_cli/data/migrations" = "gflow_cli/data/migrations"
-
-[tool.hatch.build.targets.sdist.force-include]
-"src/gflow_cli/data/migrations" = "src/gflow_cli/data/migrations"
 
 [tool.ruff]
 line-length = 100

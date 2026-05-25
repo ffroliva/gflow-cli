@@ -7,6 +7,23 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+## [0.9.1] — 2026-05-25
+
+### Fixed
+
+- **Wheel build no longer emits duplicate ZIP entries.** PyPI rejected the
+  `v0.9.0` upload with HTTP 400 *"Duplicate filename in local headers"*
+  because `pyproject.toml` had `[tool.hatch.build.targets.wheel.force-include]`
+  AND `[tool.hatch.build.targets.sdist.force-include]` blocks pointing at
+  `src/gflow_cli/data/migrations`, on top of the already-comprehensive
+  `packages = ["src/gflow_cli"]` directive — hatchling included the
+  migrations directory twice (both the `__init__.py` and the
+  `0001_initial.sql`). The force-include blocks have been removed;
+  hatchling's default package inclusion already covers `.sql` files inside
+  the package tree. Tag `v0.9.0` exists on GitHub but never reached PyPI;
+  **`v0.9.1` is the first PyPI release of the v0.9.x line and carries the
+  same content as `v0.9.0`** plus this build fix.
+
 ## [0.9.0] — 2026-05-25
 
 > **Maturity & Visibility release.** Surfaces the SQLite catalog (PR #52/#58)
@@ -932,7 +949,8 @@ shell-script template that branches on these codes.
 
 First skeleton. Not functional end-to-end yet.
 
-[Unreleased]: https://github.com/ffroliva/gflow-cli/compare/v0.9.0...HEAD
+[Unreleased]: https://github.com/ffroliva/gflow-cli/compare/v0.9.1...HEAD
+[0.9.1]: https://github.com/ffroliva/gflow-cli/compare/v0.9.0...v0.9.1
 [0.9.0]: https://github.com/ffroliva/gflow-cli/compare/v0.8.1...v0.9.0
 [0.8.1]: https://github.com/ffroliva/gflow-cli/compare/v0.8.0...v0.8.1
 [0.8.0]: https://github.com/ffroliva/gflow-cli/compare/v0.7.0...v0.8.0
