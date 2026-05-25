@@ -71,12 +71,17 @@ def resolve_batch_output_dir(
     output_root: Path,
     kind: str = "images",
 ) -> Path:
-    """CLI flag > config value > default (``<output_root>/<kind>/<YYYY-MM-DD>/``)."""
+    """CLI flag > config value > default (``<output_root>/<kind>/<YYYY-MM-DD>/``).
+
+    All path inputs are passed through ``.expanduser()`` so users can use
+    ``~/`` in their config files or CLI flags without it being interpreted
+    as a literal directory name.
+    """
     if cli_override is not None:
-        return cli_override
+        return cli_override.expanduser()
     if config_value is not None:
-        return Path(config_value)
-    return output_root / kind / date.today().isoformat()
+        return Path(config_value).expanduser()
+    return output_root.expanduser() / kind / date.today().isoformat()
 
 
 def video_output_path(
