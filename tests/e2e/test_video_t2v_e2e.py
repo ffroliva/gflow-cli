@@ -21,7 +21,7 @@ import pytest
 import pytest_asyncio  # noqa: F401 — ensures asyncio mode is registered
 
 from gflow_cli.api.transports.ui_automation import UiAutomationTransport
-from gflow_cli.api.video import Aspect, GenerateVideoRequest, Mode, VideoStatus
+from gflow_cli.api.video import Aspect, GenerateVideoRequest, Mode, VideoResult, VideoStatus
 
 # ---------------------------------------------------------------------------
 # Module-level marker — every test in this file is e2e (opt-in only)
@@ -98,8 +98,9 @@ def _aspect() -> Aspect:
 
 @pytest.mark.asyncio
 async def test_t2v_generates_video(tmp_path: Path) -> None:
-    """T2V-1: generate_video() with T2V returns a terminal SUCCESSFUL
-    VideoStatus with a non-empty media_id.
+    """T2V-1: generate_video() with T2V returns a VideoResult whose nested
+    VideoStatus is terminal SUCCESSFUL with a non-empty media_id, and whose
+    local_path points to a downloaded mp4.
 
     Aspect is selected via ``$GFLOW_CLI_E2E_VIDEO_ASPECT`` (default
     ``landscape``). ``tmp_path`` is used as ``out_dir`` so any debug
@@ -117,7 +118,7 @@ async def test_t2v_generates_video(tmp_path: Path) -> None:
     transport = UiAutomationTransport()
     try:
         await transport.setup(profile)
-        result: VideoStatus = await transport.generate_video(
+        result: VideoResult = await transport.generate_video(
             request=req,
             out_dir=tmp_path,
             poll_timeout_s=_POLL_TIMEOUT_S,
@@ -125,15 +126,24 @@ async def test_t2v_generates_video(tmp_path: Path) -> None:
     finally:
         await transport.teardown()
 
-    assert isinstance(result, VideoStatus), (
-        f"generate_video() must return a VideoStatus, got {type(result)!r}"
+    assert isinstance(result, VideoResult), (
+        f"generate_video() must return a VideoResult, got {type(result)!r}"
     )
-    assert result.is_terminal, (
-        f"VideoStatus must be terminal after generate_video() returns; status={result.status!r}"
+    assert isinstance(result.status, VideoStatus), (
+        f"VideoResult.status must be a VideoStatus, got {type(result.status)!r}"
     )
-    assert result.succeeded, (
-        f"Expected SUCCESSFUL terminal status, got {result.status!r}. "
-        f"failure_reasons={result.failure_reasons!r}, "
-        f"error_message={result.error_message!r}"
+    assert result.status.is_terminal, (
+        f"VideoStatus must be terminal after generate_video() returns; "
+        f"status={result.status.status!r}"
     )
-    assert result.media_id, "VideoStatus.media_id must be non-empty for a successful generation"
+    assert result.status.succeeded, (
+        f"Expected SUCCESSFUL terminal status, got {result.status.status!r}. "
+        f"failure_reasons={result.status.failure_reasons!r}, "
+        f"error_message={result.status.error_message!r}"
+    )
+    assert result.status.media_id, (
+        "VideoStatus.media_id must be non-empty for a successful generation"
+    )
+    assert result.local_path is not None and result.local_path.exists(), (
+        f"VideoResult.local_path must point to a downloaded mp4; got {result.local_path!r}"
+    )

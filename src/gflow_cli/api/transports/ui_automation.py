@@ -192,18 +192,103 @@ NEW_PROJECT_SELECTORS = (
     "[aria-label*='Project' i]",
 )
 
-# Onboarding bypass selectors — cookie banners, terms, landing pages.
-# Handled gracefully if not found; localized variants included.
-ONBOARDING_SELECTORS = (
+# Onboarding bypass — cookie banners, GDPR consent dialogs, landing-page CTAs.
+# Cascade discipline: structural/ARIA anchors (Tier 1) before localised text
+# (Tier 2).  Every entry is best-effort: _bypass_onboarding swallows misses.
+#
+# Tier 1 — structural / ARIA: locale-invariant regardless of the Chrome
+# profile's display language.
+#   • Google Funding Choices / GDPR consent SDK sets button#L2AGLb and
+#     aria-label="Accept all" / aria-label="I agree" in English even when
+#     the *button text* is translated — these are programmatic SDK constants,
+#     not UI strings.
+_ONBOARDING_STRUCTURAL_SELECTORS: tuple[str, ...] = (
+    "button#L2AGLb",  # Google consent SDK "Accept all"
+    "button[aria-label='Accept all']",  # consent SDK ARIA name (exact)
+    "button[aria-label='I agree']",  # consent SDK ARIA name (exact)
+)
+
+# Tier 2 — localised text / language-dependent ARIA: extends coverage to
+# the 14 locales most likely to be used with Flow.  Not locale-invariant,
+# but maximises the fallback surface for users who hit onboarding before
+# entering the editor.  Includes two case-insensitive ARIA-partial entries
+# (`aria-label*='Accept' i` / `*='Agree' i`) at the head: these match many
+# CMP dialogs (OneTrust, Cookiebot) whose aria-label values stay in English
+# even on non-EN pages, but English ARIA values are not guaranteed across
+# every CMP so they live here rather than in the strict structural tier.
+_ONBOARDING_TEXT_SELECTORS: tuple[str, ...] = (
+    # English-language ARIA partial catches (OneTrust, Cookiebot, etc. often
+    # use English aria-label values even on non-EN pages, but this is not
+    # guaranteed, so these belong here rather than in the structural tier).
+    "button[aria-label*='Accept' i]",  # broader CMP ARIA catch (en)
+    "button[aria-label*='Agree' i]",  # broader CMP ARIA catch (en)
+    # EN
+    "button:has-text('Accept all')",
     "button:has-text('Agree')",
-    "button:has-text('Aceitar')",
     "button:has-text('I agree')",
-    "button:has-text('Concordo')",
     "button:has-text('Accept')",
     "button:has-text('Create with Flow')",
-    "button:has-text('Criar com o Flow')",
     "button:has-text('Get Started')",
+    # PT (Brasil / Portugal)
+    "button:has-text('Aceitar tudo')",
+    "button:has-text('Aceitar')",
+    "button:has-text('Concordo')",
+    "button:has-text('Criar com o Flow')",
     "button:has-text('Começar')",
+    # DE
+    "button:has-text('Alle akzeptieren')",
+    "button:has-text('Zustimmen')",
+    "button:has-text('Ich stimme zu')",
+    "button:has-text('Loslegen')",
+    # ES
+    "button:has-text('Aceptar todo')",
+    "button:has-text('Aceptar')",
+    "button:has-text('Acepto')",
+    "button:has-text('Comenzar')",
+    # FR
+    "button:has-text('Tout accepter')",
+    "button:has-text('Accepter')",
+    'button:has-text("J\'accepte")',
+    "button:has-text('Commencer')",
+    # IT
+    "button:has-text('Accetta tutto')",
+    "button:has-text('Accetto')",
+    "button:has-text('Inizia')",
+    # NL
+    "button:has-text('Alles accepteren')",
+    "button:has-text('Akkoord')",
+    # JA
+    "button:has-text('すべて同意する')",
+    "button:has-text('同意する')",
+    "button:has-text('はじめる')",
+    # ZH (Simplified)
+    "button:has-text('全部接受')",
+    "button:has-text('接受')",
+    "button:has-text('开始使用')",
+    # KO
+    "button:has-text('모두 동의')",
+    "button:has-text('동의')",
+    "button:has-text('시작하기')",
+    # PL
+    "button:has-text('Zaakceptuj wszystko')",
+    "button:has-text('Zgadzam się')",
+    # RU
+    "button:has-text('Принять всё')",
+    "button:has-text('Принять')",
+    # TR
+    "button:has-text('Tümünü kabul et')",
+    "button:has-text('Kabul et')",
+    # ID (Indonesian)
+    "button:has-text('Setujui semua')",
+    "button:has-text('Setujui')",
+)
+
+# Combined public tuple — structural first, text fallbacks after.
+# Import this; use _ONBOARDING_STRUCTURAL_SELECTORS / _ONBOARDING_TEXT_SELECTORS
+# only when testing cascade ordering.
+ONBOARDING_SELECTORS: tuple[str, ...] = (
+    *_ONBOARDING_STRUCTURAL_SELECTORS,
+    *_ONBOARDING_TEXT_SELECTORS,
 )
 
 # Changelog / "What's new" iframe selectors — these src patterns match the
@@ -478,9 +563,14 @@ class UiAutomationTransport(VideoGenerationMixin):
                     "--password-store=basic",
                     # locale="en-US" only sets Accept-Language; Chrome still picks
                     # its UI language from the profile/system and Flow then serves
-                    # /fx/<locale>/ with a localized editor (breaking text-based
-                    # selectors like the I2V frame slots). --lang forces the UI to
-                    # English so Flow stays on /fx/tools/flow for ANY profile.
+                    # /fx/<locale>/ with a localized editor.  --lang forces the UI
+                    # to English so the model-picker product names (e.g. "Nano
+                    # Banana 2") are rendered consistently and so the NEW_PROJECT
+                    # text fallbacks remain viable.  ONBOARDING_SELECTORS and
+                    # _attach_frame are structural-first and no longer require this
+                    # arg — dropping it is deferred until live e2e on a non-English
+                    # Chrome profile confirms no other selector regresses (issue #24
+                    # Phase 2 follow-up).
                     "--lang=en-US",
                 ],
             )
