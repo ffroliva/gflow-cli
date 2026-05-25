@@ -37,7 +37,7 @@
 | `gflow image t2i/i2i --model` actually selects the model (was a no-op) | ✅ done (Unreleased) |
 | Local SQLite catalog (data layer) recording every project / image / video / operation | ✅ done (Unreleased) |
 | `gflow data list {projects,images,videos,profiles}` read CLI over the catalog | ✅ done (Unreleased) |
-| `ROADMAP.md` published + sponsorship wired (GitHub Sponsors + Buy Me a Coffee) | ✅ done (Unreleased) |
+| `ROADMAP.md` published (themed milestones through v1.0) | ✅ done (Unreleased) |
 | Locale-agnostic media-dialog upload selectors (fixes non-English Chrome profiles) | ✅ done (Unreleased) |
 | `gflow video batch` (TSV manifest) on `ui_automation` | ⏳ Phase B |
 | Persistence layer (stay-mounted batch sessions across project boundaries) | ⏳ Phase B |

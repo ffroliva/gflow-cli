@@ -12,7 +12,7 @@ The release that makes the underlying data layer visible to the user. Adds `gflo
 - `gflow video r2v` — reference-to-video (Flow ingredients)
 - `gflow data list {projects,images,videos,profiles}` — read-only catalog query
 - Locale-agnostic media-dialog selectors (fixes non-English Chrome profiles)
-- `ROADMAP.md`, `.github/FUNDING.yml`, sponsor badges
+- `ROADMAP.md` (sponsorship wiring deferred to a follow-up patch release)
 
 ## v0.10.0 — Data Query Surface
 
