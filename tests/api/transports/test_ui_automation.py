@@ -22,6 +22,8 @@ import pytest
 from gflow_cli.api.image import Aspect, GenerateImageRequest, Model
 from gflow_cli.api.transports.ui_automation import (
     _COUNT_TAB_TEXT_RE,  # noqa: PLC2701
+    _ONBOARDING_STRUCTURAL_SELECTORS,  # noqa: PLC2701
+    _ONBOARDING_TEXT_SELECTORS,  # noqa: PLC2701
     FLOW_URL,
     ONBOARDING_SELECTORS,
     UiAutomationTransport,
@@ -570,10 +572,49 @@ class TestBypassOnboarding:
     """_bypass_onboarding force-clicks visible cookie/onboarding CTAs and
     tolerates every miss — the gallery often loads with no interstitial."""
 
+    # --- cascade-order invariants -------------------------------------------
+
+    def test_structural_selectors_precede_text_selectors(self) -> None:
+        """ONBOARDING_SELECTORS must lead with structural/ARIA tiers before
+        any text-based selector — validates the cascade ordering."""
+        first_text_idx = next(i for i, s in enumerate(ONBOARDING_SELECTORS) if ":has-text(" in s)
+        last_structural_idx = max(
+            i for i, s in enumerate(ONBOARDING_SELECTORS) if s in _ONBOARDING_STRUCTURAL_SELECTORS
+        )
+        assert last_structural_idx < first_text_idx, (
+            "All structural selectors must appear before the first text selector"
+        )
+
+    def test_structural_selectors_are_subset_of_combined(self) -> None:
+        """Every structural selector must appear in the combined tuple."""
+        assert all(s in ONBOARDING_SELECTORS for s in _ONBOARDING_STRUCTURAL_SELECTORS)
+
+    def test_text_selectors_are_subset_of_combined(self) -> None:
+        """Every text selector must appear in the combined tuple."""
+        assert all(s in ONBOARDING_SELECTORS for s in _ONBOARDING_TEXT_SELECTORS)
+
+    def test_combined_has_no_duplicates(self) -> None:
+        """No selector should appear twice."""
+        assert len(ONBOARDING_SELECTORS) == len(set(ONBOARDING_SELECTORS))
+
+    # --- structural-tier behaviour ------------------------------------------
+
+    @pytest.mark.asyncio
+    async def test_clicks_structural_selector_when_visible(self) -> None:
+        """A visible structural (ARIA/id-based) selector is force-clicked and
+        a settle delay runs — validates the structural tier is exercised."""
+        structural_target = _ONBOARDING_STRUCTURAL_SELECTORS[0]
+        t = UiAutomationTransport()
+        page, clicked = _make_onboarding_page(visible_selectors={structural_target})
+        await t._bypass_onboarding(page)  # type: ignore[attr-defined]
+        assert structural_target in {sel for sel, _ in clicked}
+        assert clicked[0][1].get("force") is True
+        page.wait_for_timeout.assert_awaited()
+
     @pytest.mark.asyncio
     async def test_clicks_visible_onboarding_cta_with_force(self) -> None:
-        """A visible onboarding CTA is force-clicked (overlays intercept
-        pointer events, so force=True is required) and a settle delay runs."""
+        """Any visible onboarding CTA is force-clicked (overlays intercept
+        pointer events) and a settle delay follows."""
         target = ONBOARDING_SELECTORS[0]
         t = UiAutomationTransport()
         page, clicked = _make_onboarding_page(visible_selectors={target})
@@ -581,6 +622,8 @@ class TestBypassOnboarding:
         assert [sel for sel, _ in clicked] == [target]
         assert clicked[0][1].get("force") is True
         page.wait_for_timeout.assert_awaited()
+
+    # --- sweep behaviour ----------------------------------------------------
 
     @pytest.mark.asyncio
     async def test_no_interstitial_is_a_noop(self) -> None:
@@ -594,12 +637,16 @@ class TestBypassOnboarding:
     @pytest.mark.asyncio
     async def test_clicks_every_visible_selector(self) -> None:
         """The loop does not stop at the first hit — a page stacking a
-        cookie banner and a 'Get Started' CTA has both dismissed."""
-        targets = {ONBOARDING_SELECTORS[0], ONBOARDING_SELECTORS[-1]}
+        cookie banner (structural) and a landing CTA (text) has both dismissed."""
+        structural = _ONBOARDING_STRUCTURAL_SELECTORS[0]
+        text = _ONBOARDING_TEXT_SELECTORS[0]
+        targets = {structural, text}
         t = UiAutomationTransport()
         page, clicked = _make_onboarding_page(visible_selectors=targets)
         await t._bypass_onboarding(page)  # type: ignore[attr-defined]
         assert {sel for sel, _ in clicked} == targets
+
+    # --- fault-tolerance ----------------------------------------------------
 
     @pytest.mark.asyncio
     async def test_is_visible_failure_is_swallowed(self) -> None:
