@@ -631,27 +631,33 @@ class VideoGenerationMixin:
         if not image.exists():
             raise FileNotFoundError(f"frame image not found: {image}")
 
-        # Locate the slot: English text label first (the editor runs in English
-        # via the --lang=en-US launch arg), then a structural fallback (the
-        # dialog-divs inside the swap_horiz container, by index).
-        slot = page.locator(FRAME_SLOT_BY_LABEL.format(label=label)).first
-        if not await slot.count():
-            structs = page.locator(FRAME_SLOTS_STRUCT)
-            try:
-                await structs.first.wait_for(state="visible", timeout=8000)
-            except Exception as e:  # noqa: BLE001
-                shot = await _capture_debug_screenshot(
-                    page, out_dir, f"debug_no_{label.lower()}_slot.png"
-                )
-                raise RuntimeError(
-                    f"frame slot {label!r} not found on the Flow editor. Screenshot: {shot}"
-                ) from e
-            if await structs.count() <= slot_index:
-                raise RuntimeError(
-                    f"frame slot index {slot_index} ({label}) not present "
-                    f"(found {await structs.count()} slot(s))"
-                )
+        # Locate the slot structural-first (locale-free): the frame slots are the
+        # dialog-divs inside the swap_horiz container, indexed by position
+        # (0=start, 1=end).  FRAME_SLOT_BY_LABEL (has-text 'Start'/'End') is
+        # tried only as a fallback when the structural count is insufficient —
+        # it requires --lang=en-US / English Chrome profile to work.
+        structs = page.locator(FRAME_SLOTS_STRUCT)
+        try:
+            await structs.first.wait_for(state="visible", timeout=8000)
+        except Exception as e:  # noqa: BLE001
+            shot = await _capture_debug_screenshot(
+                page, out_dir, f"debug_no_{label.lower()}_slot.png"
+            )
+            raise RuntimeError(
+                f"frame slot {label!r} not found on the Flow editor. Screenshot: {shot}"
+            ) from e
+
+        if await structs.count() > slot_index:
             slot = structs.nth(slot_index)
+        else:
+            # Structural count was insufficient; fall back to text-label match.
+            slot = page.locator(FRAME_SLOT_BY_LABEL.format(label=label)).first
+            if not await slot.is_visible(timeout=3000):
+                raise RuntimeError(
+                    f"frame slot index {slot_index} ({label!r}) not present "
+                    f"(found {await structs.count()} structural slot(s), "
+                    f"text-label fallback also missed)"
+                )
         await slot.click()
         await page.wait_for_timeout(1000)  # media dialog opens
         await VideoGenerationMixin._upload_via_open_dialog(

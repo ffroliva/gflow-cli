@@ -9,7 +9,11 @@ from unittest.mock import AsyncMock, MagicMock
 import pytest
 
 from gflow_cli.api.transports.ui_automation import UiAutomationTransport
-from gflow_cli.api.transports.ui_automation_video import VideoGenerationMixin
+from gflow_cli.api.transports.ui_automation_video import (
+    FRAME_SLOT_BY_LABEL,
+    FRAME_SLOTS_STRUCT,
+    VideoGenerationMixin,
+)
 from gflow_cli.api.video import Aspect, GenerateVideoRequest, Mode, VideoStatus
 
 
@@ -562,3 +566,140 @@ class TestGenerateVideoReturnType:
         assert ret is VideoResult or str(ret) == "VideoResult", (
             f"generate_video must return VideoResult, got {ret!r}"
         )
+
+
+# ---------------------------------------------------------------------------
+# Unit — _attach_frame: structural-first slot selection (issue #24 Phase 2)
+# ---------------------------------------------------------------------------
+
+
+def _make_frame_slot_page(
+    *,
+    structural_count: int,
+    text_label_visible: bool = False,
+    upload_dialog_raises: bool = False,
+) -> MagicMock:
+    """Build a fake page for _attach_frame locale-selection tests.
+
+    structural_count  — how many results FRAME_SLOTS_STRUCT returns
+    text_label_visible — whether FRAME_SLOT_BY_LABEL.first is visible
+    """
+    page = MagicMock()
+    page.wait_for_timeout = AsyncMock()
+    page.on = MagicMock()
+    page.remove_listener = MagicMock()
+
+    struct_slots: list[MagicMock] = []
+    for _ in range(structural_count):
+        s = MagicMock()
+        s.click = AsyncMock()
+        struct_slots.append(s)
+
+    struct_locator = MagicMock()
+    first_struct = MagicMock()
+    first_struct.wait_for = AsyncMock()
+    struct_locator.first = first_struct
+    struct_locator.count = AsyncMock(return_value=structural_count)
+    struct_locator.nth = MagicMock(side_effect=lambda i: struct_slots[i])
+
+    text_locator_inner = MagicMock()
+    text_locator_inner.click = AsyncMock()
+    text_locator_inner.is_visible = AsyncMock(return_value=text_label_visible)
+    text_locator_wrapper = MagicMock()
+    text_locator_wrapper.first = text_locator_inner
+
+    def _locator(sel: str) -> MagicMock:
+        if FRAME_SLOTS_STRUCT in sel or sel == FRAME_SLOTS_STRUCT:
+            return struct_locator
+        # FRAME_SLOT_BY_LABEL is a format string; any has-text variant
+        if "has-text" in sel:
+            return text_locator_wrapper
+        return MagicMock()
+
+    page.locator = MagicMock(side_effect=_locator)
+    return page
+
+
+class TestAttachFrameSlotSelection:
+    """_attach_frame selects frame slots structural-first (issue #24 Phase 2).
+
+    Validates that locale-free structural selection (FRAME_SLOTS_STRUCT) is
+    used when the slots are present, and that FRAME_SLOT_BY_LABEL text-match
+    is only consulted as a fallback.
+    """
+
+    @pytest.mark.asyncio
+    async def test_structural_slot_used_when_available(self, tmp_path: Path) -> None:
+        """When structural slots are found, _attach_frame clicks the indexed
+        one without consulting the text-label fallback."""
+        image = tmp_path / "start.png"
+        image.write_bytes(b"\x89PNG")
+
+        page = _make_frame_slot_page(structural_count=2)
+
+        with MagicMock() as mock_upload:
+            mock_upload.__aenter__ = AsyncMock(return_value=None)
+            mock_upload.__aexit__ = AsyncMock(return_value=None)
+            VideoGenerationMixin._upload_via_open_dialog = AsyncMock()  # type: ignore[attr-defined]
+
+            await VideoGenerationMixin._attach_frame(
+                page, slot_index=0, label="Start", image=image, out_dir=None
+            )
+
+        # structural slot nth(0) was clicked
+        struct_locator = page.locator(FRAME_SLOTS_STRUCT)
+        struct_locator.nth(0).click.assert_awaited_once()
+        # text locator was never probed for visibility
+        text_wrapper = page.locator(FRAME_SLOT_BY_LABEL.format(label="Start"))
+        text_wrapper.first.is_visible.assert_not_awaited()
+
+    @pytest.mark.asyncio
+    async def test_text_label_fallback_used_when_structural_count_insufficient(
+        self, tmp_path: Path
+    ) -> None:
+        """When structural count < slot_index + 1, _attach_frame falls back to
+        the text-label selector (requires English Chrome profile)."""
+        image = tmp_path / "start.png"
+        image.write_bytes(b"\x89PNG")
+
+        # Only 0 structural slots — fallback must be used
+        page = _make_frame_slot_page(structural_count=0, text_label_visible=True)
+        VideoGenerationMixin._upload_via_open_dialog = AsyncMock()  # type: ignore[attr-defined]
+
+        await VideoGenerationMixin._attach_frame(
+            page, slot_index=0, label="Start", image=image, out_dir=None
+        )
+
+        # text locator was probed for visibility
+        text_wrapper = page.locator(FRAME_SLOT_BY_LABEL.format(label="Start"))
+        text_wrapper.first.is_visible.assert_awaited_once()
+        text_wrapper.first.click.assert_awaited_once()
+
+    @pytest.mark.asyncio
+    async def test_raises_when_structural_and_text_both_miss(self, tmp_path: Path) -> None:
+        """RuntimeError is raised when neither structural nor text-label finds
+        the slot — gives a clear error instead of a silent hang."""
+        image = tmp_path / "start.png"
+        image.write_bytes(b"\x89PNG")
+
+        page = _make_frame_slot_page(structural_count=0, text_label_visible=False)
+
+        with pytest.raises(RuntimeError, match="frame slot index 0"):
+            await VideoGenerationMixin._attach_frame(
+                page, slot_index=0, label="Start", image=image, out_dir=None
+            )
+
+    @pytest.mark.asyncio
+    async def test_raises_when_image_missing(self, tmp_path: Path) -> None:
+        """FileNotFoundError is raised before any DOM interaction when the
+        source image does not exist."""
+        page = _make_frame_slot_page(structural_count=2)
+
+        with pytest.raises(FileNotFoundError, match="frame image not found"):
+            await VideoGenerationMixin._attach_frame(
+                page,
+                slot_index=0,
+                label="Start",
+                image=tmp_path / "nonexistent.png",
+                out_dir=None,
+            )
