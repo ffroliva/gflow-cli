@@ -7,6 +7,13 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+## [0.9.1] — 2026-05-27
+
+> **Locale and catalog patch release.** Hardens the headed-browser UI
+> automation path for localized Flow profiles, fixes I2V start/end-frame
+> attachment on non-English Chrome/Flow sessions, and repairs first-run catalog
+> edge cases found after v0.9.0.
+
 ### Changed
 
 - `NEW_PROJECT_SELECTORS` now covers all 14 supported locales (EN / PT / ES /
@@ -24,6 +31,16 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   (English product names); its removal is tracked as issue #24 Phase 5 (#94).
 
 ### Fixed
+
+- Bare `pytest` no longer collects live/e2e tests by default. The project-wide
+  pytest `addopts` now excludes `e2e` and `live` unless callers explicitly pass
+  a different `-m` expression, and `tests/smoke/test_real_flow.py` is marked
+  with both markers so marker-filtered local and CI runs cannot accidentally
+  launch a real Flow browser session.
+- Browser-manager PID tests no longer call the real `os.kill` while pretending
+  to be on POSIX from a Windows runner. The POSIX liveness branches are now
+  tested with mocked `os.kill`, avoiding hard interpreter/session exits during
+  local test runs.
 
 - Running the pytest suite no longer writes fixture rows into the developer's
   production `gflow.db` catalog. A new autouse `_isolate_settings` fixture in
@@ -1017,7 +1034,8 @@ shell-script template that branches on these codes.
 
 First skeleton. Not functional end-to-end yet.
 
-[Unreleased]: https://github.com/ffroliva/gflow-cli/compare/v0.9.0...HEAD
+[Unreleased]: https://github.com/ffroliva/gflow-cli/compare/v0.9.1...HEAD
+[0.9.1]: https://github.com/ffroliva/gflow-cli/compare/v0.9.0...v0.9.1
 [0.9.0]: https://github.com/ffroliva/gflow-cli/compare/v0.8.1...v0.9.0
 [0.8.1]: https://github.com/ffroliva/gflow-cli/compare/v0.8.0...v0.8.1
 [0.8.0]: https://github.com/ffroliva/gflow-cli/compare/v0.7.0...v0.8.0
