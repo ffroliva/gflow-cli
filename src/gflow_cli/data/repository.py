@@ -169,6 +169,28 @@ class DataRepository:
         ).fetchone()
         if row is None:
             return None
+        return self._hydrate_asset_lookup(row)
+
+    def find_assets_by_flow_media_id(self, flow_media_id: str) -> list[AssetLookup]:
+        """Return every asset matching ``flow_media_id`` across all profiles.
+
+        Used by read-only catalog queries (e.g. ``gflow data media <id>`` when
+        ``--profile`` is omitted) where the caller does not yet know which
+        profile owns the row. Returns an empty list when nothing matches.
+        Closes #87.
+        """
+        rows = self._store.conn.execute(
+            """
+            SELECT id, profile_name, flow_project_id, flow_media_id, kind
+            FROM assets
+            WHERE flow_media_id = ?
+            ORDER BY profile_name ASC, id ASC
+            """,
+            (flow_media_id,),
+        ).fetchall()
+        return [self._hydrate_asset_lookup(row) for row in rows]
+
+    def _hydrate_asset_lookup(self, row: sqlite3.Row) -> AssetLookup:
         file_rows = self._store.conn.execute(
             """
             SELECT id, profile_name, asset_id, path, media_type, bytes, sha256, created_at
@@ -176,7 +198,7 @@ class DataRepository:
             WHERE profile_name = ? AND asset_id = ?
             ORDER BY created_at ASC, id ASC
             """,
-            (profile_name, row["id"]),
+            (row["profile_name"], row["id"]),
         ).fetchall()
         local_files = [_row_to_local_file(r) for r in file_rows]
         return AssetLookup(
