@@ -197,7 +197,7 @@ Flags shared by all four subcommands:
 | `--profile NAME` | unset | filter to one profile (not available on `profiles`) |
 | `--json` | off | JSONL output, one object per line |
 
-TTY stdout → Rich table; pipe or `--json` → JSONL. Default sort: newest first. Exit code 16 on data-store errors (same `DataStoreError` family as `gflow data media`).
+TTY stdout → Rich table; pipe or `--json` → JSONL. Default sort: newest first. Exit code 16 on data-store errors (same `DataStoreError` family as `gflow data media`). A **missing or freshly-created** DB is NOT a data-store error — `data list` auto-creates the schema via `DataStore.open()` and returns exit 0 with an empty result (see [#88](https://github.com/ffroliva/gflow-cli/issues/88)).
 
 > **`data list profiles` vs `gflow auth list`:** `data list profiles` shows profiles that have **recorded generations** in the catalog; `gflow auth list` shows profiles that have ever **logged in** via `gflow auth login`. A profile that logged in but never generated anything will appear in `auth list` but not in `data list profiles`.
 
@@ -206,6 +206,8 @@ TTY stdout → Rich table; pipe or `--json` → JSONL. Default sort: newest firs
 ```
 gflow data media MEDIA_ID [--profile NAME]
 ```
+
+Without `--profile`, the lookup spans **every profile** in the catalog (matching the cross-profile default of `gflow data list`). Pass `--profile NAME` to scope to a specific profile in the rare case where the same Flow `media_id` exists under multiple profiles — `data media` refuses to guess and prints the candidate profiles annotated with their `kind` (`image` / `video`) so you can disambiguate. See [#87](https://github.com/ffroliva/gflow-cli/issues/87).
 
 Returns a Rich-formatted table:
 
@@ -222,7 +224,7 @@ gflow data media
 └────────────────┴─────────────────────────────────┘
 ```
 
-Exits with code 16 if the media ID is not in the DB. Exits 0 with the table if found.
+Exits with code 16 if the media ID is not in the DB or if multiple profiles claim it without `--profile` disambiguation. Exits 0 with the table if exactly one match is found.
 
 ### Direct SQL inspection
 

@@ -404,7 +404,7 @@ Output:
 - TTY stdout → Rich-formatted table.
 - Pipe / non-TTY / `--json` → JSONL.
 
-Default sort: newest first (by `created_at`). Exit codes: 0 success / 2 Click usage / **16** `DataStoreError` family (catalog missing, migration mismatch, etc.).
+Default sort: newest first (by `created_at`). Exit codes: 0 success (including the empty-catalog case — a missing/freshly-created DB is auto-migrated and returns 0 with no rows) / 2 Click usage / **16** `DataStoreError` family (migration mismatch, permission denied, corrupt schema). See [#88](https://github.com/ffroliva/gflow-cli/issues/88).
 
 **Examples:**
 
@@ -430,6 +430,8 @@ For full schema details and JOIN semantics, see [`docs/DATA_LAYER.md § Querying
 
 Look up a recorded operation by its Flow media ID. Prints a summary of the stored provenance record: profile, media ID, Flow project ID, kind (image/video), and the local file paths that were written for that operation.
 
+Without `--profile` the lookup spans **every profile** in the catalog — matching the cross-profile default of `gflow data list`. Pass `--profile NAME` to scope to a specific profile (this is the way to disambiguate the rare case where two profiles share the same Flow `media_id`; the command refuses to guess and lists the candidates annotated with `kind`). See [#87](https://github.com/ffroliva/gflow-cli/issues/87).
+
 ```text
 gflow data media MEDIA_ID [--profile NAME]
 
@@ -437,7 +439,8 @@ Arguments:
   MEDIA_ID              Flow media UUID (e.g. ddb6ef97-262d-49f4-8269-4a28c0fae6a2). [required]
 
 Options:
-  --profile NAME        Profile name (overrides default).
+  --profile NAME        Scope the lookup to a specific profile.
+                        Default: search all profiles.
 ```
 
 **Example output:**
