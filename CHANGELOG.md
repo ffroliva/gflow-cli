@@ -7,7 +7,31 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+### Changed
+
+- `NEW_PROJECT_SELECTORS` now covers all 14 supported locales (EN / PT / ES /
+  FR / DE / IT / NL / JA / ZH / KO / PL / RU / TR / ID) and leads with
+  locale-stable icon selectors (`add_2` Material Symbols ligature on
+  `<button>` and on `[role='button']` ARIA-role variants, plus an anchored
+  `^\+\s+\S+$` regex for `+ <word>` host elements). English-only
+  `[aria-label*='New project']` and `[aria-label*='Project']` ARIA fallbacks
+  removed.
+  `SUBMIT_BUTTON_SELECTORS` drops its English-only
+  `button[aria-label*="Create"]` fallback — the preceding `arrow_forward` icon
+  entries already cover this button in every locale. Both selector tuples are
+  now fully locale-invariant for non-English Chrome profiles. The `--lang=en-US`
+  Chromium launch arg is retained only to stabilise `IMAGE_MODEL_OPTION_SELECTORS`
+  (English product names); its removal is tracked as issue #24 Phase 5 (#94).
+
 ### Fixed
+
+- Running the pytest suite no longer writes fixture rows into the developer's
+  production `gflow.db` catalog. A new autouse `_isolate_settings` fixture in
+  `tests/conftest.py` redirects `GFLOW_CLI_HOME` and `GFLOW_CLI_DB_PATH` to
+  per-test `tmp_path` dirs and clears the `get_settings()` `lru_cache` before
+  and after every test, preventing the cached singleton from ever resolving to
+  a `platformdirs` production path. Closes
+  [#86](https://github.com/ffroliva/gflow-cli/issues/86).
 
 - `gflow video i2v` no longer silently breaks on non-English Chrome profiles.
   PR #70's structural-first `_attach_frame` cascade matched **zero** real

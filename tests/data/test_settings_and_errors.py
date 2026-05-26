@@ -17,7 +17,8 @@ def test_database_path_defaults_under_home(tmp_path: Path) -> None:
     assert database_path(tmp_path) == tmp_path / "gflow.db"
 
 
-def test_settings_resolves_default_db_path(tmp_path: Path) -> None:
+def test_settings_resolves_default_db_path(tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> None:
+    monkeypatch.delenv("GFLOW_CLI_DB_PATH", raising=False)
     settings = Settings(home=tmp_path)
     assert settings.resolved_db_path() == tmp_path / "gflow.db"
 
