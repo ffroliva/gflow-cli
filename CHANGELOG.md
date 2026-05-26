@@ -7,6 +7,21 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+### Fixed
+
+- `gflow auth list` no longer crashes with `UnicodeEncodeError` on Windows
+  consoles whose code page cannot encode the default-profile marker `●`
+  (cp1252 in PowerShell / cmd by default). The renderer now picks a glyph
+  safe for the active `sys.stdout.encoding` — `●` on UTF-8, ASCII `*` on
+  cp1252 / ascii / latin-1 / unknown. Closes [#82](https://github.com/ffroliva/gflow-cli/issues/82).
+
+### Documentation
+
+- `PLAN.md` refreshed to reflect develop state through v0.9.0 — marks Phase 6
+  (data layer) shipped via PR #58 + #78 + #81, Phase 7 Issue #24 Phase 2
+  shipped via PR #70, Phase B I2V/R2V shipped via PR #48, and resolves the
+  duplicate Phase 7 numbering (pluggable storage renumbered to Phase 8).
+
 ## [0.9.0] — 2026-05-25
 
 > **Maturity & Visibility release.** Surfaces the SQLite catalog (PR #52/#58)
