@@ -18,6 +18,7 @@ env/
 pytest-of-*/
 .coverage
 .coverage.*
+coverage.xml
 htmlcov/
 .tox/
 .mypy_cache/
