@@ -22,6 +22,32 @@ def seeded(tmp_path: Path) -> Path:
     return db
 
 
+# ---------------------------------------------------------------------------
+# Empty / missing DB — regression coverage for #88
+# ---------------------------------------------------------------------------
+
+
+def test_list_profiles_on_missing_db_returns_empty(tmp_path: Path) -> None:
+    """Closes #88 — `data list` used to crash on a missing/empty DB because the
+    raw sqlite3.connect path skipped migrations. After routing through
+    DataStore.open, missing/empty DBs are auto-migrated and queries return []."""
+    missing = tmp_path / "does_not_exist.db"
+    assert not missing.exists()
+    rows = list_profiles(db_path=missing, limit=20, offset=0)
+    assert rows == []
+    # DataStore.open creates the file (with schema) — that's the contract.
+    assert missing.exists()
+
+
+def test_list_all_kinds_on_freshly_created_db_returns_empty(tmp_path: Path) -> None:
+    """All four `list_*` functions must tolerate a freshly-created empty DB."""
+    fresh = tmp_path / "fresh.db"
+    assert list_profiles(db_path=fresh, limit=20, offset=0) == []
+    assert list_projects(db_path=fresh, profile=None, limit=20, offset=0) == []
+    assert list_images(db_path=fresh, profile=None, limit=20, offset=0) == []
+    assert list_videos(db_path=fresh, profile=None, limit=20, offset=0) == []
+
+
 def test_list_projects_returns_all_by_default(seeded: Path) -> None:
     rows = list_projects(db_path=seeded, profile=None, limit=20, offset=0)
     assert len(rows) == 4

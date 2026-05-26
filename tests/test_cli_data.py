@@ -200,11 +200,18 @@ def test_data_list_profiles_no_profile_option(seeded_db: Path) -> None:
 # ─── error handling ──────────────────────────────────────────────────────────
 
 
-def test_data_list_db_missing_exits_16(tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> None:
-    """A DB path pointing at a directory with no schema → DataStoreError → exit 16."""
-    monkeypatch.setenv("GFLOW_CLI_DB_PATH", str(tmp_path / "does-not-exist.db"))
+def test_data_list_db_missing_exits_0_with_empty_rows(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    """Closes #88 — a missing DB path is no longer an error.
+
+    `_safe_db` now routes through `DataStore.open`, which auto-creates the file
+    and runs migrations. A first-time user (or anyone recovering from #86 by
+    deleting the DB) sees zero rows and exit 0, not a `DataStoreError`/exit 16.
+    """
+    missing = tmp_path / "does-not-exist.db"
+    monkeypatch.setenv("GFLOW_CLI_DB_PATH", str(missing))
     result = CliRunner().invoke(main, ["data", "list", "projects"])
-    # sqlite3 creates an empty file on connect, but without migrations the
-    # query fails with OperationalError (no such table). _safe_db wraps it
-    # as DataStoreError → _guard raises Exit(16).
-    assert result.exit_code == 16
+    assert result.exit_code == 0, result.output
+    # DataStore.open is responsible for creating the file + applying migrations.
+    assert missing.exists(), "DataStore.open must create the catalog file"
