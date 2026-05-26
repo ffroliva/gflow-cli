@@ -6,7 +6,7 @@ import pytest
 from click.testing import CliRunner
 
 from gflow_cli.cli import main
-from gflow_cli.data.models import AssetRecord, LocalFileRecord, ProjectRecord
+from gflow_cli.data.models import AssetKind, AssetRecord, LocalFileRecord, ProjectRecord
 from gflow_cli.data.repository import DataRepository
 from gflow_cli.data.store import DataStore
 
@@ -86,7 +86,14 @@ def test_data_media_missing_exits_non_zero(tmp_path: Path, monkeypatch: pytest.M
 # ---------------------------------------------------------------------------
 
 
-def _seed_extra_profile(db_path: Path, *, profile: str, media_id: str, asset_id: str) -> None:
+def _seed_extra_profile(
+    db_path: Path,
+    *,
+    profile: str,
+    media_id: str,
+    asset_id: str,
+    kind: AssetKind = AssetKind.IMAGE,
+) -> None:
     """Append a second profile + asset to an already-initialised DB."""
     with DataStore.open(db_path) as store:
         repo = DataRepository(store)
@@ -100,14 +107,19 @@ def _seed_extra_profile(db_path: Path, *, profile: str, media_id: str, asset_id:
                 source="generated",
             )
         )
-        repo.upsert_asset(
-            AssetRecord.minimal_image(
-                id=asset_id,
-                profile_name=profile,
-                flow_project_id=f"flow-project-{profile}",
-                flow_media_id=media_id,
-            )
+        record = AssetRecord.minimal_image(
+            id=asset_id,
+            profile_name=profile,
+            flow_project_id=f"flow-project-{profile}",
+            flow_media_id=media_id,
         )
+        if kind is not AssetKind.IMAGE:
+            # AssetRecord is frozen; the minimal_image factory hard-codes kind
+            # so we round-trip through dataclasses.replace for the video case.
+            import dataclasses
+
+            record = dataclasses.replace(record, kind=kind)
+        repo.upsert_asset(record)
 
 
 def test_data_media_finds_match_cross_profile_when_profile_omitted(
@@ -154,6 +166,38 @@ def test_data_media_disambiguates_when_multiple_profiles_match(
     out = result.output.lower()
     assert "multiple profiles" in out
     assert "--profile" in result.output  # exact case for the flag hint
+    # Disambiguation hint must include each match's kind so an image-vs-video
+    # collision under the same media_id is visible at a glance.
+    assert "(image)" in result.output
+
+
+def test_data_media_disambiguation_shows_image_vs_video_kind(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    """Same flow_media_id under two profiles with different kinds (image vs
+    video) — the disambiguation hint must show kind alongside each profile so
+    the user can pick the right one without re-querying."""
+    db = tmp_path / "gflow.db"
+    monkeypatch.setenv("GFLOW_CLI_HOME", str(tmp_path))
+    monkeypatch.setenv("GFLOW_CLI_DB_PATH", str(db))
+    monkeypatch.setenv("GFLOW_CLI_PROFILE", "default")
+    _seed_db(db, media_id="collision-id", profile="default")  # default → image
+    _seed_extra_profile(
+        db,
+        profile="bob",
+        media_id="collision-id",
+        asset_id="asset-bob-video",
+        kind=AssetKind.VIDEO,
+    )
+
+    from gflow_cli.config import reset_settings
+
+    reset_settings()
+    runner = CliRunner()
+    result = runner.invoke(main, ["data", "media", "collision-id"])
+    assert result.exit_code != 0, result.output
+    assert "(image)" in result.output
+    assert "(video)" in result.output
 
 
 def test_data_media_profile_flag_still_scopes_strictly(
