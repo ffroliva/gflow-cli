@@ -179,17 +179,18 @@ SUBMIT_BUTTON_SELECTORS = (
 # (locale-stable) before localised text fallbacks spanning all 14 supported
 # locales.  The ``add_2`` Material Symbols ligature is locale-invariant — the
 # icon-class tier is tried first so this selector works even when the Chrome
-# profile runs in a non-English locale.  The ``[role='button']`` structural
-# catch-all covers host elements that are not ``<button>`` tags.  The regex
-# matches any ``+ <word>`` pattern as a last-resort locale-free net.  Text
-# variants are ordered by onboarding-locale list (same 14 as
-# ``ONBOARDING_SELECTORS``).
+# profile runs in a non-English locale.  The ``[role='button']`` ARIA-role
+# variant of the icon anchor covers host elements that are not ``<button>``
+# tags.  The anchored ``^\+\s+\S+$`` regex matches "+ <single-word>" buttons
+# only — anchoring prevents matching e.g. "+ Filter" or "+ Add member" rows
+# that contain extra words.  Text variants are ordered by onboarding-locale
+# list (same 14 as ``ONBOARDING_SELECTORS``).
 NEW_PROJECT_SELECTORS = (
     # Tier 1 — structural / icon: locale-invariant.
     "button:has(i.google-symbols:text('add_2'))",
     "button:has(i:text('add_2'))",
     "[role='button']:has(i.google-symbols:text('add_2'))",
-    r"button:text-matches('\+\s+\S+', 'i')",
+    r"button:text-matches('^\+\s+\S+$', 'i')",
     # Tier 2 — localised text: 14 locales (EN / PT / ES / FR / DE / IT / NL /
     # JA / ZH / KO / PL / RU / TR / ID).
     "button:has-text('New project')",  # EN
