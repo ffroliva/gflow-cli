@@ -30,8 +30,11 @@ param(
     [string]$BatchConfig = "examples/sample_config.json",
     [string]$MasterMp4 = "docs/assets/example-run.mp4",
     [string]$OutputGif = "docs/assets/example-run.gif",
-    [string]$BatchOutputDir = "gflow-output/example-batch",
-    [string]$SingleOutputDir = "gflow-output/example-single",
+    # Default under $HOME so running the script from the repo root does not
+    # leave gflow-output/ in the repo. Override with -BatchOutputDir to point
+    # somewhere else.
+    [string]$BatchOutputDir = (Join-Path $env:USERPROFILE "gflow-output\example-batch"),
+    [string]$SingleOutputDir = (Join-Path $env:USERPROFILE "gflow-output\example-single"),
     [int]$GifFps = 12,
     [int]$GifWidth = 960,
     [int]$GifQuality = 80,

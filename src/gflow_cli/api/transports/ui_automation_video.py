@@ -133,15 +133,35 @@ VIDEO_MODEL_OPTION_SELECTORS: dict[VideoModel, str] = {
 # file chooser) -> wait uploadImage -> 'Add to Prompt' to commit it into the
 # slot. Only then does the DOM Generate click fire StartImage/StartAndEndImage.
 UPLOAD_IMAGE_ROUTE = "uploadImage"
-# Frame slots are `div[aria-haspopup='dialog']`. Their label text is localized
-# (EN 'Start'/'End', TH 'เริ่ม'/'สิ้นสุด'). `_attach_frame` tries an English-text
-# match first (the account must be in English for I2V — there is no stable
-# locale-free anchor: no id-suffix, no icon), then falls back to a structural
-# match: the dialog-divs inside the swap_horiz container, by index (0=first,
-# 1=last; the swap_horiz BUTTON is excluded by `> div[aria-haspopup='dialog']`).
+# Frame slots are `<div type="button" aria-haspopup="dialog">` — Flow uses a
+# div-with-button-semantics custom component for the Start/End slots in I2V mode.
+# Their label text is localized (EN 'Start'/'End', PT-BR 'Inicial'/'Final',
+# DE 'Anfang'/'Ende', JA '開始'/'終了', etc.).
+#
+# Tier 1 (PRIMARY, locale-free): `FRAME_SLOTS_STRUCT` matches the exact pair via
+# the `type='button'` + `aria-haspopup='dialog'` composite — a unique pattern in
+# Flow's editor (regular elements don't carry a `type` attr on divs). Order is
+# DOM order: `.nth(0)` = Start, `.nth(1)` = End.
+#
+# Tier 2 (FALLBACK, EN-only): `FRAME_SLOT_BY_LABEL` matches by visible English
+# text. Kept for defense-in-depth in case Flow drops the `type` attribute on
+# the slots; the fail-loud `RuntimeError` in `_attach_frame` covers the case
+# where both tiers miss on a non-EN profile.
+#
+# Caller labels are always the hardcoded constants 'Start' / 'End', so no
+# CSS-escaping is needed.
+#
+# Earlier PR #70 used a structural anchor
+#   `div:has(> button:has(i.google-symbols:text-is('swap_horiz')))`
+# as the parent of the dialog slots. That anchor was broken on real Flow DOMs because
+# (1) the slots are `<div type="button">` not children of any `div > button`
+# wrapper, and (2) the `swap_horiz` icon uses class `material-icons` (NOT
+# `google-symbols`). PR #70's structural tier therefore matched ZERO elements
+# on every profile, silently falling through to the text-tier which only
+# matched on EN. This was discovered 2026-05-26 via DOM probe on pt-BR — see
+# scripts/dev/capture_i2v_frame_slots_dom.py.
+FRAME_SLOTS_STRUCT = "div[type='button'][aria-haspopup='dialog']"
 FRAME_SLOT_BY_LABEL = "div[aria-haspopup='dialog']:has-text('{label}')"
-SWAP_CONTAINER = "div:has(> button:has(i.google-symbols:text-is('swap_horiz')))"
-FRAME_SLOTS_STRUCT = SWAP_CONTAINER + " > div[aria-haspopup='dialog']"
 # Media-dialog action buttons. These MUST be locale-agnostic: Flow renders the
 # dialog in the CHROME PROFILE's language (NOT the Google account language, and
 # the `--lang=en-US` launch arg does NOT override an existing profile's stored
@@ -631,27 +651,52 @@ class VideoGenerationMixin:
         if not image.exists():
             raise FileNotFoundError(f"frame image not found: {image}")
 
-        # Locate the slot: English text label first (the editor runs in English
-        # via the --lang=en-US launch arg), then a structural fallback (the
-        # dialog-divs inside the swap_horiz container, by index).
-        slot = page.locator(FRAME_SLOT_BY_LABEL.format(label=label)).first
-        if not await slot.count():
-            structs = page.locator(FRAME_SLOTS_STRUCT)
-            try:
-                await structs.first.wait_for(state="visible", timeout=8000)
-            except Exception as e:  # noqa: BLE001
-                shot = await _capture_debug_screenshot(
-                    page, out_dir, f"debug_no_{label.lower()}_slot.png"
-                )
-                raise RuntimeError(
-                    f"frame slot {label!r} not found on the Flow editor. Screenshot: {shot}"
-                ) from e
-            if await structs.count() <= slot_index:
-                raise RuntimeError(
-                    f"frame slot index {slot_index} ({label}) not present "
-                    f"(found {await structs.count()} slot(s))"
-                )
+        # Locate the slot structural-first (locale-free): the frame slots are the
+        # dialog-divs inside the swap_horiz container, indexed by position
+        # (0=start, 1=end).  FRAME_SLOT_BY_LABEL (has-text 'Start'/'End') is
+        # tried only as a fallback when the structural count is insufficient —
+        # it requires --lang=en-US / English Chrome profile to work.
+        #
+        # wait_for is short (1500 ms) because _wait_video_editor_ready already
+        # guaranteed the editor SPA is mounted; the frame panel resolves in
+        # <10 ms (one CDP round-trip) on a pre-rendered page.  A shorter probe
+        # means a future swap_horiz rename surfaces as a fast, clear error
+        # instead of an 8-second dead wait on every I2V/R2V call.
+        structs = page.locator(FRAME_SLOTS_STRUCT)
+        try:
+            await structs.first.wait_for(state="visible", timeout=1500)
+        except Exception as e:  # noqa: BLE001
+            shot = await _capture_debug_screenshot(
+                page, out_dir, f"debug_no_{label.lower()}_slot.png"
+            )
+            raise RuntimeError(
+                f"frame slot {label!r} not found on the Flow editor. Screenshot: {shot}"
+            ) from e
+
+        struct_count = await structs.count()
+        if struct_count > slot_index:
+            # Both slots unfilled — pick by DOM order.
             slot = structs.nth(slot_index)
+        elif struct_count > 0:
+            # Some slots already attached (typical: Start filled, End remaining).
+            # The DOM only keeps `div[type='button'][aria-haspopup='dialog']` on
+            # the unfilled slot(s) — once an image binds, the slot transitions
+            # away from that pattern. The next unfilled slot is therefore
+            # `.first` of the remaining matches, regardless of its original
+            # positional index. This case is hit on the End-frame call after
+            # Start was just attached.
+            slot = structs.first
+        else:
+            # Structural count was insufficient; fall back to text-label match.
+            slot = page.locator(FRAME_SLOT_BY_LABEL.format(label=label)).first
+            try:
+                await slot.wait_for(state="visible", timeout=3000)
+            except Exception as e:  # noqa: BLE001
+                raise RuntimeError(
+                    f"frame slot index {slot_index} ({label!r}) not present "
+                    f"(found {struct_count} structural slot(s), "
+                    f"text-label fallback also missed)"
+                ) from e
         await slot.click()
         await page.wait_for_timeout(1000)  # media dialog opens
         await VideoGenerationMixin._upload_via_open_dialog(

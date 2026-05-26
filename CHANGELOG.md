@@ -7,6 +7,95 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+## [0.9.1] — 2026-05-27
+
+> **Locale and catalog patch release.** Hardens the headed-browser UI
+> automation path for localized Flow profiles, fixes I2V start/end-frame
+> attachment on non-English Chrome/Flow sessions, and repairs first-run catalog
+> edge cases found after v0.9.0.
+
+### Changed
+
+- `NEW_PROJECT_SELECTORS` now covers all 14 supported locales (EN / PT / ES /
+  FR / DE / IT / NL / JA / ZH / KO / PL / RU / TR / ID) and leads with
+  locale-stable icon selectors (`add_2` Material Symbols ligature on
+  `<button>` and on `[role='button']` ARIA-role variants, plus an anchored
+  `^\+\s+\S+$` regex for `+ <word>` host elements). English-only
+  `[aria-label*='New project']` and `[aria-label*='Project']` ARIA fallbacks
+  removed.
+  `SUBMIT_BUTTON_SELECTORS` drops its English-only
+  `button[aria-label*="Create"]` fallback — the preceding `arrow_forward` icon
+  entries already cover this button in every locale. Both selector tuples are
+  now fully locale-invariant for non-English Chrome profiles. The `--lang=en-US`
+  Chromium launch arg is retained only to stabilise `IMAGE_MODEL_OPTION_SELECTORS`
+  (English product names); its removal is tracked as issue #24 Phase 5 (#94).
+
+### Fixed
+
+- Bare `pytest` no longer collects live/e2e tests by default. The project-wide
+  pytest `addopts` now excludes `e2e` and `live` unless callers explicitly pass
+  a different `-m` expression, and `tests/smoke/test_real_flow.py` is marked
+  with both markers so marker-filtered local and CI runs cannot accidentally
+  launch a real Flow browser session.
+- Browser-manager PID tests no longer call the real `os.kill` while pretending
+  to be on POSIX from a Windows runner. The POSIX liveness branches are now
+  tested with mocked `os.kill`, avoiding hard interpreter/session exits during
+  local test runs.
+
+- Running the pytest suite no longer writes fixture rows into the developer's
+  production `gflow.db` catalog. A new autouse `_isolate_settings` fixture in
+  `tests/conftest.py` redirects `GFLOW_CLI_HOME` and `GFLOW_CLI_DB_PATH` to
+  per-test `tmp_path` dirs and clears the `get_settings()` `lru_cache` before
+  and after every test, preventing the cached singleton from ever resolving to
+  a `platformdirs` production path. Closes
+  [#86](https://github.com/ffroliva/gflow-cli/issues/86).
+
+- `gflow video i2v` no longer silently breaks on non-English Chrome profiles.
+  PR #70's structural-first `_attach_frame` cascade matched **zero** real
+  slots — its anchor selector assumed the `swap_horiz` icon used class
+  `google-symbols` (it uses `material-icons`) and the slots were `<button>`
+  (they're `<div type="button">`). Production I2V therefore relied on the
+  English-text fallback, which silently misses on any non-EN profile (pt-BR
+  shows `Inicial`/`Final`, DE shows `Anfang`/`Ende`, etc.). Replaced
+  `FRAME_SLOTS_STRUCT` with the locale-free pattern
+  `div[type='button'][aria-haspopup='dialog']` and added a `.first`-of-remaining
+  fallback for the End-frame case (after Start is attached, only one slot
+  matches and the prior `.nth(slot_index)` went out-of-bounds). Live-verified
+  with `tests/e2e/test_transports_e2e.py::test_e2e_i2v_start_end_frame_attach`
+  on `ffroliva` + `GFLOW_CLI_LOCALE=de-DE` (Chrome rendered pt-BR; both
+  non-EN). Closes [#63](https://github.com/ffroliva/gflow-cli/issues/63).
+
+### Changed
+
+- `gflow data media <id>` now searches across **all** profiles by default,
+  matching the cross-profile default of `gflow data list`. Pass
+  `--profile NAME` to disambiguate the rare case where the same Flow
+  media ID exists under multiple profiles (the command refuses to
+  guess and prints the list of candidate profiles, each annotated with
+  its `kind`). Closes
+  [#87](https://github.com/ffroliva/gflow-cli/issues/87).
+
+### Fixed
+
+- `gflow data list` no longer crashes with `no such table: assets` on a
+  missing or freshly-created catalog DB. The query path now routes through
+  `DataStore.open`, which applies schema migrations on first connect —
+  first-time users and anyone recovering from a wiped DB get an empty
+  table and exit 0 instead of a `DataStoreError`. Closes
+  [#88](https://github.com/ffroliva/gflow-cli/issues/88).
+- `gflow auth list` no longer crashes with `UnicodeEncodeError` on Windows
+  consoles whose code page cannot encode the default-profile marker `●`
+  (cp1252 in PowerShell / cmd by default). The renderer now picks a glyph
+  safe for the active `sys.stdout.encoding` — `●` on UTF-8, ASCII `*` on
+  cp1252 / ascii / latin-1 / unknown. Closes [#82](https://github.com/ffroliva/gflow-cli/issues/82).
+
+### Documentation
+
+- `PLAN.md` refreshed to reflect develop state through v0.9.0 — marks Phase 6
+  (data layer) shipped via PR #58 + #78 + #81, Phase 7 Issue #24 Phase 2
+  shipped via PR #70, Phase B I2V/R2V shipped via PR #48, and resolves the
+  duplicate Phase 7 numbering (pluggable storage renumbered to Phase 8).
+
 ## [0.9.0] — 2026-05-25
 
 > **Maturity & Visibility release.** Surfaces the SQLite catalog (PR #52/#58)
@@ -945,7 +1034,8 @@ shell-script template that branches on these codes.
 
 First skeleton. Not functional end-to-end yet.
 
-[Unreleased]: https://github.com/ffroliva/gflow-cli/compare/v0.9.0...HEAD
+[Unreleased]: https://github.com/ffroliva/gflow-cli/compare/v0.9.1...HEAD
+[0.9.1]: https://github.com/ffroliva/gflow-cli/compare/v0.9.0...v0.9.1
 [0.9.0]: https://github.com/ffroliva/gflow-cli/compare/v0.8.1...v0.9.0
 [0.8.1]: https://github.com/ffroliva/gflow-cli/compare/v0.8.0...v0.8.1
 [0.8.0]: https://github.com/ffroliva/gflow-cli/compare/v0.7.0...v0.8.0

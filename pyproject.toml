@@ -1,6 +1,6 @@
 [project]
 name = "gflow-cli"
-version = "0.9.0"
+version = "0.9.1"
 description = "Unofficial CLI for Google Flow — drive Veo image-to-video generations from the terminal."
 readme = "README.md"
 license = { file = "LICENSE" }
@@ -67,6 +67,12 @@ pythonVersion = "3.11"
 [tool.pytest.ini_options]
 testpaths = ["tests"]
 asyncio_mode = "auto"
+# Pin pytest's tmp_path basetemp under the repo's gitignored tmp/ dir so
+# tests never pollute the project root (or other CWDs) with pytest-of-<user>/
+# fixtures.  Without this, pytest falls back to `tempfile.gettempdir()` which
+# can be CWD on some Windows shells (e.g. msys2 sets TMPDIR=$PWD), leaving
+# stray pytest-of-*/ directories in the repo root.
+addopts = "--basetemp=tmp/pytest -m 'not e2e and not live'"
 markers = [
     "unit: pure logic, no I/O (the default category)",
     "integration: real Provider plumbing with mocked HTTP",

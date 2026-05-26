@@ -13,7 +13,7 @@ import click
 from rich.console import Console
 from rich.table import Table
 
-from gflow_cli._cli_helpers import _resolve_profile, run_with_handlers, safe_path_text
+from gflow_cli._cli_helpers import run_with_handlers, safe_path_text
 from gflow_cli.config import get_settings
 from gflow_cli.data.queries import (
     ImageRow,
@@ -38,12 +38,22 @@ console = Console()
 
 
 def _db_path() -> Path:
-    """Resolve the catalog DB path from env or platformdirs default."""
+    """Resolve the catalog DB path: ``GFLOW_CLI_DB_PATH`` env first, then
+    the canonical resolver used by the rest of the codebase.
+
+    The env-var check is direct (not via ``Settings``) so test
+    ``monkeypatch.setenv`` calls take effect even when ``get_settings()`` is
+    already cached.  When the env var is absent, delegates to
+    ``paths.database_path(home)`` via ``Settings.resolved_db_path`` — the
+    SAME resolver as ``data media`` and the recorder, so all subcommands
+    agree on the path.  The prior platformdirs lookup here used the wrong
+    appauthor + filename and resolved to a non-existent path on Windows
+    (``AppData\\Local\\gflow-cli\\gflow-cli\\data.db`` vs the real
+    ``AppData\\Local\\ffroliva\\gflow-cli\\gflow.db``).
+    """
     if env := os.environ.get("GFLOW_CLI_DB_PATH"):
         return Path(env)
-    from platformdirs import user_data_dir
-
-    return Path(user_data_dir("gflow-cli")) / "data.db"
+    return get_settings().resolved_db_path()
 
 
 def _truncate(s: str | None, n: int = 40) -> str:
@@ -127,7 +137,7 @@ def _emit_videos_table(rows: list[VideoRow]) -> None:
             _truncate(r.prompt),
             r.aspect,
             r.model,
-            f"{r.duration:g}s",
+            f"{r.duration:g}s" if r.duration is not None else "",
             r.created_at.strftime("%Y-%m-%d %H:%M"),
             r.local_path or "",
         )
@@ -210,30 +220,68 @@ def data() -> None:
 
 @data.command("media")
 @click.argument("media_id")
-@click.option("--profile", default=None, help="Profile name (overrides default).")
+@click.option(
+    "--profile",
+    default=None,
+    help="Scope the lookup to a specific profile. Default: search all profiles.",
+)
 def media(media_id: str, profile: str | None) -> None:
-    """Show local metadata for a media asset by its Flow media ID."""
-    profile_name = _resolve_profile(profile)
+    """Show local metadata for a media asset by its Flow media ID.
+
+    Without ``--profile`` the lookup spans every profile in the catalog —
+    matching the cross-profile default of ``gflow data list``. Pass
+    ``--profile NAME`` to disambiguate the rare case where the same Flow
+    media ID exists under multiple profiles.
+    """
     run_with_handlers(
-        lambda: _run_media(profile_name=profile_name, media_id=media_id),
+        lambda: _run_media(profile=profile, media_id=media_id),
         cli_command="data media",
     )
 
 
-async def _run_media(*, profile_name: str, media_id: str) -> None:  # NOSONAR S7503
+async def _run_media(*, profile: str | None, media_id: str) -> None:  # NOSONAR S7503
+    """Resolve ``media_id`` to its catalog row.
+
+    When *profile* is given, the lookup is scoped to that profile (existing
+    behaviour for explicit ``--profile``). When *profile* is ``None`` (the
+    new default), every profile in the catalog is searched. Multiple matches
+    across profiles raise a typed ``DataStoreError`` with a clear
+    disambiguation hint. Closes #87.
+    """
     settings = get_settings()
     with DataStore.open(settings.resolved_db_path()) as store:
         repo = DataRepository(store)
-        asset = repo.get_asset_by_flow_media_id(profile_name, media_id)
-        if asset is None:
-            raise DataStoreError(
-                detail=f"No local media record found: {media_id}",
-                route="data.media",
-            )
+        if profile is not None:
+            scoped = repo.get_asset_by_flow_media_id(profile, media_id)
+            asset = scoped
+            if asset is None:
+                raise DataStoreError(
+                    detail=f"No local media record found: {media_id} (profile={profile!r})",
+                    route="data.media",
+                )
+        else:
+            matches = repo.find_assets_by_flow_media_id(media_id)
+            if not matches:
+                raise DataStoreError(
+                    detail=f"No local media record found: {media_id}",
+                    route="data.media",
+                )
+            if len(matches) > 1:
+                # Include each match's kind in the hint so an image/video
+                # collision under the same media_id is visible at a glance.
+                candidates = sorted({f"{m.profile_name} ({m.kind.value})" for m in matches})
+                raise DataStoreError(
+                    detail=(
+                        f"Media {media_id!r} exists under multiple profiles: "
+                        f"{candidates}. Pass --profile NAME to disambiguate."
+                    ),
+                    route="data.media",
+                )
+            asset = matches[0]
         table = Table(title="gflow data media")
         table.add_column("field")
         table.add_column("value", overflow="fold")
-        table.add_row("profile", profile_name)
+        table.add_row("profile", asset.profile_name)
         table.add_row("media_id", asset.flow_media_id)
         table.add_row("project_id", asset.flow_project_id or "")
         table.add_row("kind", asset.kind.value)
