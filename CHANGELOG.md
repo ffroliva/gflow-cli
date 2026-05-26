@@ -11,9 +11,11 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 - `NEW_PROJECT_SELECTORS` now covers all 14 supported locales (EN / PT / ES /
   FR / DE / IT / NL / JA / ZH / KO / PL / RU / TR / ID) and leads with
-  locale-stable icon selectors (`add_2` ligature + `[role='button']` structural
-  catch-all). English-only `[aria-label*='New project']` and
-  `[aria-label*='Project']` ARIA fallbacks removed.
+  locale-stable icon selectors (`add_2` Material Symbols ligature on
+  `<button>` and on `[role='button']` ARIA-role variants, plus an anchored
+  `^\+\s+\S+$` regex for `+ <word>` host elements). English-only
+  `[aria-label*='New project']` and `[aria-label*='Project']` ARIA fallbacks
+  removed.
   `SUBMIT_BUTTON_SELECTORS` drops its English-only
   `button[aria-label*="Create"]` fallback — the preceding `arrow_forward` icon
   entries already cover this button in every locale. Both selector tuples are
