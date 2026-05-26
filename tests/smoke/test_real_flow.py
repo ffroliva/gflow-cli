@@ -26,10 +26,14 @@ from pathlib import Path
 
 import pytest
 
-pytestmark = pytest.mark.skipif(
-    os.getenv("GFLOW_E2E") != "1",
-    reason="Real-Flow E2E — set GFLOW_E2E=1 to opt in.",
-)
+pytestmark = [
+    pytest.mark.e2e,
+    pytest.mark.live,
+    pytest.mark.skipif(
+        os.getenv("GFLOW_E2E") != "1",
+        reason="Real-Flow E2E — set GFLOW_E2E=1 to opt in.",
+    ),
+]
 
 
 _DEFAULT_PROMPT = "a quiet mountain lake at dawn, cinematic photography"

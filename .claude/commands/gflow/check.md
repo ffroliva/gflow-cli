@@ -32,7 +32,7 @@ uv run pyright src
 **4. Tests + coverage** (report only)
 
 ```bash
-uv run pytest -q --cov=gflow_cli --cov-fail-under=80
+uv run python -m pytest -q --cov=gflow_cli --cov-fail-under=80
 ```
 
 ## Output
@@ -46,3 +46,7 @@ uv run pytest -q --cov=gflow_cli --cov-fail-under=80
 
 Ruff fix and format may rewrite multiple files. Always `git diff` before staging.
 Pyright errors and test failures require manual intervention — do not attempt silent workarounds.
+If the coverage run crashes the current MCP/sandbox session with `Connection closed`, re-run the
+same marker-filtered suite in smaller chunks without coverage and rely on CI for the coverage XML.
+Project pytest defaults already exclude `e2e` and `live`; those markers are explicit,
+credit-spending gates and must be requested with a separate `-m e2e` / `-m live` command.
