@@ -7,6 +7,23 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+### Fixed
+
+- `gflow video i2v` no longer silently breaks on non-English Chrome profiles.
+  PR #70's structural-first `_attach_frame` cascade matched **zero** real
+  slots — its anchor selector assumed the `swap_horiz` icon used class
+  `google-symbols` (it uses `material-icons`) and the slots were `<button>`
+  (they're `<div type="button">`). Production I2V therefore relied on the
+  English-text fallback, which silently misses on any non-EN profile (pt-BR
+  shows `Inicial`/`Final`, DE shows `Anfang`/`Ende`, etc.). Replaced
+  `FRAME_SLOTS_STRUCT` with the locale-free pattern
+  `div[type='button'][aria-haspopup='dialog']` and added a `.first`-of-remaining
+  fallback for the End-frame case (after Start is attached, only one slot
+  matches and the prior `.nth(slot_index)` went out-of-bounds). Live-verified
+  with `tests/e2e/test_transports_e2e.py::test_e2e_i2v_start_end_frame_attach`
+  on `ffroliva` + `GFLOW_CLI_LOCALE=de-DE` (Chrome rendered pt-BR; both
+  non-EN). Closes [#63](https://github.com/ffroliva/gflow-cli/issues/63).
+
 ### Changed
 
 - `gflow data media <id>` now searches across **all** profiles by default,
