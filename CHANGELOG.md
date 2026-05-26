@@ -7,6 +7,20 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+### Changed
+
+- `NEW_PROJECT_SELECTORS` now covers all 14 supported locales (EN / PT / ES /
+  FR / DE / IT / NL / JA / ZH / KO / PL / RU / TR / ID) and leads with
+  locale-stable icon selectors (`add_2` ligature + `[role='button']` structural
+  catch-all). English-only `[aria-label*='New project']` and
+  `[aria-label*='Project']` ARIA fallbacks removed.
+  `SUBMIT_BUTTON_SELECTORS` drops its English-only
+  `button[aria-label*="Create"]` fallback — the preceding `arrow_forward` icon
+  entries already cover this button in every locale. Both selector tuples are
+  now fully locale-invariant for non-English Chrome profiles. The `--lang=en-US`
+  Chromium launch arg is retained only to stabilise `IMAGE_MODEL_OPTION_SELECTORS`
+  (English product names); its removal is tracked as issue #24 Phase 4.
+
 ### Fixed
 
 - `gflow video i2v` no longer silently breaks on non-English Chrome profiles.

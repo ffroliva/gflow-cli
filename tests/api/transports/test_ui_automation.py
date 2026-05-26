@@ -25,7 +25,9 @@ from gflow_cli.api.transports.ui_automation import (
     _ONBOARDING_STRUCTURAL_SELECTORS,  # noqa: PLC2701
     _ONBOARDING_TEXT_SELECTORS,  # noqa: PLC2701
     FLOW_URL,
+    NEW_PROJECT_SELECTORS,
     ONBOARDING_SELECTORS,
+    SUBMIT_BUTTON_SELECTORS,
     UiAutomationTransport,
     _count_tabs_locator,  # noqa: PLC2701
 )
@@ -1961,3 +1963,67 @@ class TestDumpCountPanelDom:
 
         out_file = tmp_path / "_diagnostics" / "count_panel_dom_prompt_1.json"
         assert not out_file.exists(), "No file written on evaluate failure"
+
+
+# ---------------------------------------------------------------------------
+# Selector locale-invariance invariants
+# ---------------------------------------------------------------------------
+
+_NEW_PROJECT_REQUIRED_LOCALES = [
+    "New project",  # EN
+    "Novo projeto",  # PT
+    "Nuevo proyecto",  # ES
+    "Nouveau projet",  # FR
+    "Neues Projekt",  # DE
+    "Nuovo progetto",  # IT
+    "Nieuw project",  # NL
+    "新しいプロジェクト",  # JA
+    "新建项目",  # ZH
+    "새 프로젝트",  # KO
+    "Nowy projekt",  # PL
+    "Новый проект",  # RU
+    "Yeni proje",  # TR
+    "Proyek baru",  # ID
+]
+
+
+class TestSelectorLocaleInvariance:
+    """Static invariants ensuring selector tuples are locale-agnostic."""
+
+    def test_submit_button_selectors_no_english_aria(self) -> None:
+        """SUBMIT_BUTTON_SELECTORS must not contain English aria-label fallbacks."""
+        for sel in SUBMIT_BUTTON_SELECTORS:
+            assert "Create" not in sel, (
+                f"English-only aria-label fallback found in SUBMIT_BUTTON_SELECTORS: {sel!r}"
+            )
+
+    def test_submit_button_selectors_lead_with_icon(self) -> None:
+        """First selector in SUBMIT_BUTTON_SELECTORS must be the icon-class anchor."""
+        assert "google-symbols" in SUBMIT_BUTTON_SELECTORS[0], (
+            "SUBMIT_BUTTON_SELECTORS must lead with the google-symbols icon selector"
+        )
+
+    def test_new_project_selectors_no_duplicates(self) -> None:
+        assert len(NEW_PROJECT_SELECTORS) == len(set(NEW_PROJECT_SELECTORS))
+
+    def test_new_project_selectors_icon_leads(self) -> None:
+        """First selector must be the google-symbols icon-class anchor."""
+        assert "google-symbols" in NEW_PROJECT_SELECTORS[0], (
+            "NEW_PROJECT_SELECTORS must lead with the google-symbols icon selector"
+        )
+
+    def test_new_project_selectors_covers_all_14_locales(self) -> None:
+        """Every required locale text must appear in at least one selector."""
+        combined = " ".join(NEW_PROJECT_SELECTORS)
+        missing = [loc for loc in _NEW_PROJECT_REQUIRED_LOCALES if loc not in combined]
+        assert not missing, f"NEW_PROJECT_SELECTORS missing locale entries: {missing}"
+
+    def test_new_project_selectors_no_english_only_aria(self) -> None:
+        """No English-only aria-label partial match should appear."""
+        for sel in NEW_PROJECT_SELECTORS:
+            assert "[aria-label*='New project'" not in sel, (
+                f"English-only aria-label in NEW_PROJECT_SELECTORS: {sel!r}"
+            )
+            assert "[aria-label*='Project'" not in sel, (
+                f"English-only aria-label in NEW_PROJECT_SELECTORS: {sel!r}"
+            )
