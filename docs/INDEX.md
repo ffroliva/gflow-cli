@@ -15,6 +15,7 @@ Welcome to the `gflow-cli` documentation. This index is the routing layer: it te
 | [ROADMAP.md](../ROADMAP.md) | Themed milestones from v0.9 through v1.0 | You want a multi-release view of where the project is heading |
 | [CHANGELOG](../CHANGELOG.md) | Version-by-version user-visible changes | Upgrading or auditing what shipped |
 | [KNOWN_ISSUES](../KNOWN_ISSUES.md) | Open / mitigated / resolved issues with workarounds | Before opening a bug report; when something feels off |
+| **[docs/REFERENCES.md](REFERENCES.md)** | External repos studied for harness/agent patterns — what we adopted, rejected, and why | Evaluating a new agent engineering pattern; onboarding to the harness design decisions |
 | [DISCLAIMER](../DISCLAIMER.md) | Legal scope, takedown policy, prohibited uses | Before deploying anywhere non-trivial |
 | [LICENSE](../LICENSE) | MIT license text | Always |
 | [CONTRIBUTING](../CONTRIBUTING.md) | TDD workflow, test categories, coverage targets | Before opening a PR |

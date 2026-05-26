@@ -20,7 +20,7 @@
 
 - Slash commands live under `.claude/commands/gflow/` (all prefixed `/gflow:`).
 - Skills under `skills/` are auto-discoverable; `gflow-cli` ships its own at [`skills/gflow-cli/SKILL.md`](skills/gflow-cli/SKILL.md).
-- Auto-memory at `~/.claude/projects/C--development-github-gflow-cli/memory/MEMORY.md` carries cross-session feedback and project state.
+- Agent memory lives at `~/.claude/projects/<project-slug>/memory/MEMORY.md`. The slug is derived from the local checkout path (e.g., `-home-user-gflow-cli` on Linux). Create the directory if it doesn't exist. The file carries cross-session state, harness decisions, and the session log. See `docs/REFERENCES.md` for the reference repositories that inform our harness decisions.
 
 ## Active phase
 
