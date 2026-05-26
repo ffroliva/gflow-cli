@@ -23,6 +23,21 @@ from gflow_cli.observability import DEBUG_LEVEL, configure_logging
 console = Console()
 
 
+def _default_marker_glyph(encoding: str | None) -> str:
+    """Return a default-profile marker glyph safe to render on `encoding`.
+
+    Falls back to ASCII ``*`` when the console codec cannot encode ``●``
+    (e.g. Windows ``cp1252`` PowerShell / cmd default). See issue #82.
+    """
+    if not encoding:
+        return "*"
+    try:
+        "●".encode(encoding)
+    except (UnicodeEncodeError, LookupError):
+        return "*"
+    return "●"
+
+
 def _render_profiles_table(profiles: list[profile_store.ProfileMeta]) -> None:
     """Pretty-print the profile inventory."""
     if not profiles:
@@ -30,6 +45,7 @@ def _render_profiles_table(profiles: list[profile_store.ProfileMeta]) -> None:
         return
     root = auth_mod.default_profile_root()
     console.print(f"\n[bold]Profiles in[/bold] {root}\n")
+    marker_glyph = _default_marker_glyph(getattr(sys.stdout, "encoding", None))
     table = Table(show_header=True, header_style="bold cyan")
     table.add_column("Default", justify="center")
     table.add_column("Name", style="bold")
@@ -37,7 +53,7 @@ def _render_profiles_table(profiles: list[profile_store.ProfileMeta]) -> None:
     table.add_column("Last used (UTC)")
     table.add_column("Profile dir", overflow="fold")
     for p in profiles:
-        marker = "[bold green]●[/bold green]" if p.is_default else ""
+        marker = f"[bold green]{marker_glyph}[/bold green]" if p.is_default else ""
         session = "[green]present[/green]" if p.cookies_present else "[red]missing[/red]"
         last = p.last_used_at.strftime("%Y-%m-%d %H:%M:%S") if p.last_used_at else "-"
         table.add_row(marker, p.name, session, last, str(p.profile_dir))
