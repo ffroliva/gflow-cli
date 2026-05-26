@@ -2007,9 +2007,25 @@ class TestSelectorLocaleInvariance:
         assert len(NEW_PROJECT_SELECTORS) == len(set(NEW_PROJECT_SELECTORS))
 
     def test_new_project_selectors_icon_leads(self) -> None:
-        """First selector must be the google-symbols icon-class anchor."""
-        assert "google-symbols" in NEW_PROJECT_SELECTORS[0], (
-            "NEW_PROJECT_SELECTORS must lead with the google-symbols icon selector"
+        """First selector must be the exact google-symbols icon-class anchor.
+
+        Locks the full selector prefix (not just substring) so a future rename of
+        the icon ligature, container tag, or class can't silently slip past.
+        """
+        assert NEW_PROJECT_SELECTORS[0] == "button:has(i.google-symbols:text('add_2'))", (
+            f"NEW_PROJECT_SELECTORS[0] drifted: {NEW_PROJECT_SELECTORS[0]!r}"
+        )
+
+    def test_new_project_selectors_plus_regex_is_anchored(self) -> None:
+        """The '+ <word>' Tier-1 regex must be anchored to avoid over-matching.
+
+        Without ``^`` / ``$``, the pattern matches buttons like '+ Filter' or
+        '+ Add member'. Anchoring keeps it scoped to the new-project CTA shape.
+        """
+        plus_regex = next((s for s in NEW_PROJECT_SELECTORS if "text-matches" in s), None)
+        assert plus_regex is not None, "No text-matches '+' regex in NEW_PROJECT_SELECTORS"
+        assert "^" in plus_regex and "$" in plus_regex, (
+            f"Plus regex must be anchored: {plus_regex!r}"
         )
 
     def test_new_project_selectors_covers_all_14_locales(self) -> None:

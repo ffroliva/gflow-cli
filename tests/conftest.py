@@ -38,6 +38,13 @@ def _isolate_settings(tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> Iterat
     can override ``GFLOW_CLI_DB_PATH`` with another ``monkeypatch.setenv`` call
     after this fixture runs — the cache is already cleared so the next
     ``get_settings()`` will pick up the overridden value.
+
+    **Tests that assert default-resolution behavior** (i.e. the "no explicit
+    path" code path that lets ``platformdirs`` pick the location) must first
+    undo the autouse env with ``monkeypatch.delenv("GFLOW_CLI_DB_PATH",
+    raising=False)`` (see ``test_settings_resolves_default_db_path``). Tests in
+    ``tests/test_config.py::TestDefaults`` use the ``clean_env`` fixture which
+    strips all ``GFLOW_CLI_*`` vars and already covers this case.
     """
     from gflow_cli.config import reset_settings
 
