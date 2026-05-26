@@ -347,10 +347,22 @@ issue and not blocked by any code change in this repo.
 
 - **`_attach_frame` (I2V/R2V frame slots) flipped to structural-first** — was
   English text-label first (`FRAME_SLOT_BY_LABEL`) with structural fallback; now
-  tries `FRAME_SLOTS_STRUCT` (`div:has(> button:has(i.google-symbols:text-is('swap_horiz'))) > div[aria-haspopup='dialog']`)
-  first, falls back to `FRAME_SLOT_BY_LABEL` only when structural count is
-  insufficient. Slot selection unit tests live in `TestAttachFrameSlotSelection`
-  (`tests/api/transports/test_ui_automation_video.py`).
+  tries `FRAME_SLOTS_STRUCT` first, falls back to `FRAME_SLOT_BY_LABEL` only
+  when structural count is insufficient. Slot selection unit tests live in
+  `TestAttachFrameSlotSelection` (`tests/api/transports/test_ui_automation_video.py`).
+
+  **Correction (2026-05-26, issue #63):** PR #70's original
+  `FRAME_SLOTS_STRUCT = "div:has(> button:has(i.google-symbols:text-is('swap_horiz'))) > div[aria-haspopup='dialog']"`
+  matched **zero** elements on real Flow DOMs — the `swap_horiz` icon uses class
+  `material-icons` (NOT `google-symbols`) and the slots are `<div type="button">`,
+  not children of any `div > button` wrapper. Production I2V therefore relied on
+  the English-text fallback and silently broke on non-EN profiles. Discovered
+  via DOM probe + LIVE e2e on `ffroliva` (de-DE → pt-BR effective). Replaced
+  with `FRAME_SLOTS_STRUCT = "div[type='button'][aria-haspopup='dialog']"` (a
+  unique pattern in Flow's editor). Also added a `.first` fallback for the
+  End-frame case — after Start is attached, only one structural slot remains
+  and the prior `.nth(slot_index)` went out-of-bounds. Both fixes shipped
+  together via [#63](https://github.com/ffroliva/gflow-cli/issues/63).
 
 - **`GFLOW_CLI_LOCALE`** — Playwright `locale=` env override from PR #51 remains
   available (default `en-US`).
@@ -365,6 +377,18 @@ issue and not blocked by any code change in this repo.
   with a 3.1 MB 1280×720 H.264 mp4 (8 s clip). Confirms the structural-first
   selectors and `GFLOW_CLI_LOCALE` env override work end-to-end on a locale
   outside the original 9-entry English/PT-BR list.
+
+- **Live I2V e2e on `de-DE` (2026-05-26, issue #63 closure)** —
+  `GFLOW_CLI_LOCALE=de-DE` I2V (Start + End frames) on `ffroliva` via
+  `tests/e2e/test_transports_e2e.py::test_e2e_i2v_start_end_frame_attach`
+  completed in 124 s and returned a terminal `SUCCESSFUL` `VideoResult` with a
+  downloaded mp4 carrying valid `ftyp` magic bytes. The test asserts on the
+  `ui_automation_video.frame_attached` structlog event for both Start and End,
+  proving the structural cascade resolved both slots without falling through
+  to the EN-text tier. Note: Chrome's UI rendered in pt-BR despite
+  `GFLOW_CLI_LOCALE=de-DE` (env affects Playwright's `Accept-Language`, not
+  Chrome's profile language) — both are non-EN so the test still verifies the
+  locale-leak fix.
 
 **Earlier — Phase 7 multi-image-prompt work** addressed the count-tab selectors:
 - `_COUNT_TAB_TEXT_RE = ^(1x|x[2-4])$` only matches the digit+x format Flow
