@@ -7,8 +7,24 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+### Changed
+
+- `gflow data media <id>` now searches across **all** profiles by default,
+  matching the cross-profile default of `gflow data list`. Pass
+  `--profile NAME` to disambiguate the rare case where the same Flow
+  media ID exists under multiple profiles (the command refuses to
+  guess and prints the list of candidate profiles, each annotated with
+  its `kind`). Closes
+  [#87](https://github.com/ffroliva/gflow-cli/issues/87).
+
 ### Fixed
 
+- `gflow data list` no longer crashes with `no such table: assets` on a
+  missing or freshly-created catalog DB. The query path now routes through
+  `DataStore.open`, which applies schema migrations on first connect —
+  first-time users and anyone recovering from a wiped DB get an empty
+  table and exit 0 instead of a `DataStoreError`. Closes
+  [#88](https://github.com/ffroliva/gflow-cli/issues/88).
 - `gflow auth list` no longer crashes with `UnicodeEncodeError` on Windows
   consoles whose code page cannot encode the default-profile marker `●`
   (cp1252 in PowerShell / cmd by default). The renderer now picks a glyph

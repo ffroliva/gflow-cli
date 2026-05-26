@@ -6,7 +6,7 @@ import pytest
 from click.testing import CliRunner
 
 from gflow_cli.cli import main
-from gflow_cli.data.models import AssetRecord, LocalFileRecord, ProjectRecord
+from gflow_cli.data.models import AssetKind, AssetRecord, LocalFileRecord, ProjectRecord
 from gflow_cli.data.repository import DataRepository
 from gflow_cli.data.store import DataStore
 
@@ -79,3 +79,143 @@ def test_data_media_missing_exits_non_zero(tmp_path: Path, monkeypatch: pytest.M
     result = runner.invoke(main, ["data", "media", "media-missing", "--profile", "default"])
     assert result.exit_code != 0
     assert "media-missing" in result.output or "not" in result.output.lower()
+
+
+# ---------------------------------------------------------------------------
+# #87 — data media cross-profile lookup default
+# ---------------------------------------------------------------------------
+
+
+def _seed_extra_profile(
+    db_path: Path,
+    *,
+    profile: str,
+    media_id: str,
+    asset_id: str,
+    kind: AssetKind = AssetKind.IMAGE,
+) -> None:
+    """Append a second profile + asset to an already-initialised DB."""
+    with DataStore.open(db_path) as store:
+        repo = DataRepository(store)
+        repo.upsert_profile(profile, db_path.parent / f"profile_{profile}")
+        repo.upsert_project(
+            ProjectRecord(
+                id=f"project-{profile}",
+                profile_name=profile,
+                flow_project_id=f"flow-project-{profile}",
+                title=f"title-{profile}",
+                source="generated",
+            )
+        )
+        record = AssetRecord.minimal_image(
+            id=asset_id,
+            profile_name=profile,
+            flow_project_id=f"flow-project-{profile}",
+            flow_media_id=media_id,
+        )
+        if kind is not AssetKind.IMAGE:
+            # AssetRecord is frozen; the minimal_image factory hard-codes kind
+            # so we round-trip through dataclasses.replace for the video case.
+            import dataclasses
+
+            record = dataclasses.replace(record, kind=kind)
+        repo.upsert_asset(record)
+
+
+def test_data_media_finds_match_cross_profile_when_profile_omitted(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    """Closes #87 — a media_id present in `data list` must be findable by
+    `data media <id>` without passing `--profile`, even when the row's
+    profile is not the active default."""
+    db = tmp_path / "gflow.db"
+    monkeypatch.setenv("GFLOW_CLI_HOME", str(tmp_path))
+    monkeypatch.setenv("GFLOW_CLI_DB_PATH", str(db))
+    # Seed under profile "default" but make the active profile something else
+    # to force the cross-profile path — this is the original #87 repro shape.
+    monkeypatch.setenv("GFLOW_CLI_PROFILE", "other")
+    _seed_db(db, media_id="cross-profile-media", profile="default")
+
+    from gflow_cli.config import reset_settings
+
+    reset_settings()
+    runner = CliRunner()
+    result = runner.invoke(main, ["data", "media", "cross-profile-media"])
+    assert result.exit_code == 0, result.output
+    assert "cross-profile-media" in result.output
+    assert "default" in result.output  # the row's profile is printed
+
+
+def test_data_media_disambiguates_when_multiple_profiles_match(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    """Two profiles each owning the same flow_media_id → require --profile."""
+    db = tmp_path / "gflow.db"
+    monkeypatch.setenv("GFLOW_CLI_HOME", str(tmp_path))
+    monkeypatch.setenv("GFLOW_CLI_DB_PATH", str(db))
+    monkeypatch.setenv("GFLOW_CLI_PROFILE", "default")
+    _seed_db(db, media_id="shared-media", profile="default")
+    _seed_extra_profile(db, profile="alice", media_id="shared-media", asset_id="asset-alice")
+
+    from gflow_cli.config import reset_settings
+
+    reset_settings()
+    runner = CliRunner()
+    result = runner.invoke(main, ["data", "media", "shared-media"])
+    assert result.exit_code != 0, result.output
+    out = result.output.lower()
+    assert "multiple profiles" in out
+    assert "--profile" in result.output  # exact case for the flag hint
+    # Disambiguation hint must include each match's kind so an image-vs-video
+    # collision under the same media_id is visible at a glance.
+    assert "(image)" in result.output
+
+
+def test_data_media_disambiguation_shows_image_vs_video_kind(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    """Same flow_media_id under two profiles with different kinds (image vs
+    video) — the disambiguation hint must show kind alongside each profile so
+    the user can pick the right one without re-querying."""
+    db = tmp_path / "gflow.db"
+    monkeypatch.setenv("GFLOW_CLI_HOME", str(tmp_path))
+    monkeypatch.setenv("GFLOW_CLI_DB_PATH", str(db))
+    monkeypatch.setenv("GFLOW_CLI_PROFILE", "default")
+    _seed_db(db, media_id="collision-id", profile="default")  # default → image
+    _seed_extra_profile(
+        db,
+        profile="bob",
+        media_id="collision-id",
+        asset_id="asset-bob-video",
+        kind=AssetKind.VIDEO,
+    )
+
+    from gflow_cli.config import reset_settings
+
+    reset_settings()
+    runner = CliRunner()
+    result = runner.invoke(main, ["data", "media", "collision-id"])
+    assert result.exit_code != 0, result.output
+    assert "(image)" in result.output
+    assert "(video)" in result.output
+
+
+def test_data_media_profile_flag_still_scopes_strictly(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    """With --profile passed, lookup must scope to that profile and report
+    not-found if the row lives under a different profile."""
+    db = tmp_path / "gflow.db"
+    monkeypatch.setenv("GFLOW_CLI_HOME", str(tmp_path))
+    monkeypatch.setenv("GFLOW_CLI_DB_PATH", str(db))
+    monkeypatch.setenv("GFLOW_CLI_PROFILE", "default")
+    _seed_db(db, media_id="row-under-default", profile="default")
+
+    from gflow_cli.config import reset_settings
+
+    reset_settings()
+    runner = CliRunner()
+    result = runner.invoke(main, ["data", "media", "row-under-default", "--profile", "alice"])
+    assert result.exit_code != 0
+    assert "row-under-default" in result.output
+    assert "alice" in result.output  # the scoped profile name appears in the error

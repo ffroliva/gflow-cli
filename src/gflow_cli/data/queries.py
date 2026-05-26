@@ -18,23 +18,28 @@ from dataclasses import dataclass
 from datetime import datetime
 from pathlib import Path
 
+from gflow_cli.data.store import DataStore
 from gflow_cli.errors import DataStoreError
 
 
 @contextmanager
 def _safe_db(db_path: Path) -> Generator[sqlite3.Connection, None, None]:
-    """Open the catalog DB and yield a connection, mapping sqlite3 errors to DataStoreError."""
-    try:
-        conn = sqlite3.connect(db_path)
-        conn.row_factory = sqlite3.Row
-    except sqlite3.Error as exc:
-        raise DataStoreError(f"Failed to open catalog at {db_path}: {exc}") from exc
-    try:
-        yield conn
-    except sqlite3.Error as exc:
-        raise DataStoreError(f"Catalog query failed: {exc}") from exc
-    finally:
-        conn.close()
+    """Open the catalog DB via :class:`DataStore` and yield a connection.
+
+    Routes through ``DataStore.open`` so schema migrations are applied even on
+    a freshly created (or just-deleted) DB file. The previous implementation
+    used a raw ``sqlite3.connect`` and skipped migrations, which made any
+    ``gflow data list ...`` invocation crash with ``no such table: assets``
+    on an empty DB. Closes #88.
+
+    Query-time sqlite errors are mapped to :class:`DataStoreError`. DB open /
+    migration errors propagate from ``DataStore.open`` as their typed errors.
+    """
+    with DataStore.open(db_path) as store:
+        try:
+            yield store.conn
+        except sqlite3.Error as exc:
+            raise DataStoreError(f"Catalog query failed: {exc}") from exc
 
 
 @dataclass(frozen=True)
