@@ -2,7 +2,7 @@
 
 > **Status:** Living document. Updated as phases complete.
 > **Owner:** [@ffroliva](https://github.com/ffroliva)
-> **Last revised:** 2026-05-26 (develop — post-v0.9.0; PR #58 data layer, PR #70 locale Phase 2, PR #78 data Windows fixes, PR #81 root cleanup)
+> **Last revised:** 2026-05-26 (develop — post-v0.9.0; PR #58 data layer, PR #70 locale Phase 2, PR #78 data Windows fixes, PR #81 root cleanup, PR #84 cp1252+plan refresh, PR #89 data list/media UX, PR #90 #63 closure)
 
 This plan turns the v0.1 scaffold into a production-grade CLI for Google AI Ultra/Pro subscribers who want to spend their Flow credits via batch automation. The plan is opinionated, treating this repo as a portfolio-grade benchmark.
 
@@ -352,10 +352,11 @@ The video-generation feature has its own sub-phase plan (spike → Phase A → P
 
 ### Phase 7 — Protocol Extensions (v0.8.1, 2026-05-23)
 
-- [x] **Issue #24: Locale-Agnostic Selectors — Phase 1 + Phase 2 shipped.**
+- [x] **Issue #24: Locale-Agnostic Selectors — Phase 1 + Phase 2 + Phase 3 shipped.**
   - **Phase 1 (PR #51, 2026-05-24, post-v0.8.1):** added the `GFLOW_CLI_LOCALE` env override on Playwright's launch `locale=` parameter; live-verified `gflow video t2v` end-to-end under `pt-BR`.
-  - **Phase 2 (PR #70, 2026-05-25, develop `c6e32aa`):** restructured `ONBOARDING_SELECTORS` into a two-tier cascade (3 strict ARIA/ID anchors + ~37 text entries spanning 14 locales: EN, PT, DE, ES, FR, IT, NL, JA, ZH, KO, PL, RU, TR, ID). `_attach_frame` (I2V/R2V) flipped to structural-first via `FRAME_SLOTS_STRUCT` (locale-free `swap_horiz` container). New `test_structural_tier_is_contiguous_prefix` invariant. **Live-proof: `GFLOW_CLI_LOCALE=de-DE` T2V e2e completed 70.9 s, 3.1 MB 1280×720 H.264 mp4.**
-  - **Remaining tails (cosmetic / non-blocking):** `NEW_PROJECT_SELECTORS` + `SUBMIT_BUTTON_SELECTORS` carry English-text fallbacks behind icon-first leads. `FRAME_SLOT_BY_LABEL` (I2V Start/End label text) is the last text-based selector — tracked as [#63](https://github.com/ffroliva/gflow-cli/issues/63). Dropping `--lang=en-US` gates on closing #63 + a non-EN I2V/R2V live e2e.
+  - **Phase 2 (PR #70, 2026-05-25, develop `c6e32aa`):** restructured `ONBOARDING_SELECTORS` into a two-tier cascade (3 strict ARIA/ID anchors + ~37 text entries spanning 14 locales). `_attach_frame` (I2V/R2V) was intended to flip to structural-first, but the shipped `FRAME_SLOTS_STRUCT` (`swap_horiz` icon container) matched **zero** elements on real Flow DOMs (wrong icon class + wrong slot tag). Discovered + corrected by PR #90 below. **T2V live-proof on de-DE: 70.9 s, 3.1 MB 1280×720 H.264 mp4.**
+  - **Phase 3 (PR #90 / [#63](https://github.com/ffroliva/gflow-cli/issues/63), 2026-05-26, develop `9a0896a8`):** replaced `FRAME_SLOTS_STRUCT` with the locale-free pattern `div[type='button'][aria-haspopup='dialog']` (verified via DOM probe — matches exactly 2). Also fixed the End-frame OOB index after Start is attached. **I2V live-proof on de-DE: 124 s, mp4 with `ftyp` magic bytes, both `frame_attached` events fired (Start + End).**
+  - **Remaining tails (cosmetic / blocking `--lang=en-US` removal):** `NEW_PROJECT_SELECTORS` + `SUBMIT_BUTTON_SELECTORS` carry English-text fallbacks behind icon-first leads; R2V live e2e on non-EN not yet exercised. Tracked by Task #6 / next session.
 - [ ] **Model Context Protocol (MCP) Server.** (Backlog) Expose core gflow-cli tools via MCP for language-agnostic agentic access.
 
 ---
