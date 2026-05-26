@@ -66,10 +66,15 @@ uv run python scripts/ci/check_repo_hygiene.py
 uv run ruff check src tests
 uv run ruff format --check src tests
 uv run pyright src
-uv run pytest -q --cov=gflow_cli -m "not e2e"
+uv run python -m pytest -q --cov=gflow_cli
 ```
 
 CI runs the same five on every push. Do not bypass with `--no-verify`.
+Project pytest defaults exclude `e2e` and `live`; run those credit-spending
+tests only with an explicit marker expression and profile/env setup.
+Local agents running inside an MCP/context sandbox may need to split the
+marker-filtered pytest suite by path and omit coverage locally; CI remains the
+authoritative coverage gate.
 
 ### Merging feature PRs into develop
 

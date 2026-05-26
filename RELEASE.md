@@ -62,10 +62,11 @@ python -m pip install --pre gflow-cli
    ```
 3. Run quality gates:
    ```bash
+   uv run python scripts/ci/check_repo_hygiene.py
    uv run ruff check src tests
    uv run ruff format --check src tests
    uv run pyright src
-   uv run pytest -q
+   uv run python -m pytest -q --cov=gflow_cli
    ```
 4. Update the version in:
    - `pyproject.toml`
@@ -95,3 +96,18 @@ python -m pip install --pre gflow-cli
 Older alpha tags (`v0.2.0a1`, `v0.3.0a1`) were created as normal GitHub
 Releases because the workflow only detected hyphenated prerelease names. The
 workflow now recognizes PEP 440 alpha, beta, and release-candidate tags.
+
+## Local Test-Memory Quirk
+
+`@pytest.mark.e2e` and `@pytest.mark.live` tests are opt-in, may open real
+browser sessions, and may spend Flow credits. The default pytest configuration
+excludes both markers, so the release smoke gate mirrors CI:
+
+```bash
+uv run python -m pytest -q --cov=gflow_cli
+```
+
+When running through an MCP/context sandbox, coverage instrumentation can exceed
+the sidecar memory ceiling and close the connection. In that case, run the same
+marker-filtered suite in smaller path chunks without coverage for local evidence
+and let GitHub Actions produce the authoritative coverage XML.
