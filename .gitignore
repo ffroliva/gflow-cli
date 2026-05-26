@@ -18,6 +18,7 @@ env/
 pytest-of-*/
 .coverage
 .coverage.*
+coverage.xml
 htmlcov/
 .tox/
 .mypy_cache/
@@ -78,3 +79,5 @@ samples/captured/flow_outgoing_*.json
 
 worktrees/
 
+# E2E test logs (live Flow runs — may contain account/profile names)
+.planning/e2e-logs/

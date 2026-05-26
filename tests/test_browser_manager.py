@@ -1045,7 +1045,10 @@ class TestPidAlive:
         """Current process PID → alive on POSIX."""
         from gflow_cli.browser_manager import _pid_alive
 
-        with patch("sys.platform", "linux"):
+        with (
+            patch("sys.platform", "linux"),
+            patch("gflow_cli.browser_manager.os.kill", return_value=None),
+        ):
             result = _pid_alive(os.getpid())
 
         assert result is True
@@ -1054,7 +1057,10 @@ class TestPidAlive:
         """Very large PID that doesn't exist → False on POSIX."""
         from gflow_cli.browser_manager import _pid_alive
 
-        with patch("sys.platform", "linux"):
+        with (
+            patch("sys.platform", "linux"),
+            patch("gflow_cli.browser_manager.os.kill", side_effect=ProcessLookupError()),
+        ):
             result = _pid_alive(999999999)
 
         assert result is False

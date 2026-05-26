@@ -6,12 +6,53 @@ test files. Centralizing prevents the most likely regression: a new test that
 needs to assert on a contextvar-bound field (e.g. ``correlation_id``) and
 silently omits ``merge_contextvars`` from its processor chain, yielding
 mysteriously-missing fields in the captured event dict.
+
+``_isolate_settings`` is an autouse fixture that prevents the cached
+``get_settings()`` singleton from ever resolving to the developer's real
+``platformdirs`` paths during test runs. It writes ``GFLOW_CLI_HOME`` and
+``GFLOW_CLI_DB_PATH`` to per-test tmp dirs, then clears the ``lru_cache``
+before and after every test. Without this, any test that calls
+``get_settings()`` without first patching the env will open — and write into
+— the developer's production catalog (issue #86).
 """
 
 from __future__ import annotations
 
+from collections.abc import Iterator
+from pathlib import Path
+
 import pytest
 import structlog
+
+
+@pytest.fixture(autouse=True)
+def _isolate_settings(tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> Iterator[None]:
+    """Redirect GFLOW_CLI_HOME and GFLOW_CLI_DB_PATH to per-test tmp dirs.
+
+    Clears the ``get_settings()`` lru_cache before the test so the first call
+    inside the test (or in any fixture that runs after this one) reads the
+    patched env vars, not a stale cached value from a previous test. Cache is
+    cleared again at teardown so it does not bleed into the next test.
+
+    Tests that need a specific DB (e.g. ``seeded_db`` in ``test_cli_data.py``)
+    can override ``GFLOW_CLI_DB_PATH`` with another ``monkeypatch.setenv`` call
+    after this fixture runs — the cache is already cleared so the next
+    ``get_settings()`` will pick up the overridden value.
+
+    **Tests that assert default-resolution behavior** (i.e. the "no explicit
+    path" code path that lets ``platformdirs`` pick the location) must first
+    undo the autouse env with ``monkeypatch.delenv("GFLOW_CLI_DB_PATH",
+    raising=False)`` (see ``test_settings_resolves_default_db_path``). Tests in
+    ``tests/test_config.py::TestDefaults`` use the ``clean_env`` fixture which
+    strips all ``GFLOW_CLI_*`` vars and already covers this case.
+    """
+    from gflow_cli.config import reset_settings
+
+    monkeypatch.setenv("GFLOW_CLI_HOME", str(tmp_path / "gflow_home"))
+    monkeypatch.setenv("GFLOW_CLI_DB_PATH", str(tmp_path / "test_gflow.db"))
+    reset_settings()
+    yield
+    reset_settings()
 
 
 @pytest.fixture

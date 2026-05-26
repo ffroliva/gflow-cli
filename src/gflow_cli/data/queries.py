@@ -18,23 +18,28 @@ from dataclasses import dataclass
 from datetime import datetime
 from pathlib import Path
 
+from gflow_cli.data.store import DataStore
 from gflow_cli.errors import DataStoreError
 
 
 @contextmanager
 def _safe_db(db_path: Path) -> Generator[sqlite3.Connection, None, None]:
-    """Open the catalog DB and yield a connection, mapping sqlite3 errors to DataStoreError."""
-    try:
-        conn = sqlite3.connect(db_path)
-        conn.row_factory = sqlite3.Row
-    except sqlite3.Error as exc:
-        raise DataStoreError(f"Failed to open catalog at {db_path}: {exc}") from exc
-    try:
-        yield conn
-    except sqlite3.Error as exc:
-        raise DataStoreError(f"Catalog query failed: {exc}") from exc
-    finally:
-        conn.close()
+    """Open the catalog DB via :class:`DataStore` and yield a connection.
+
+    Routes through ``DataStore.open`` so schema migrations are applied even on
+    a freshly created (or just-deleted) DB file. The previous implementation
+    used a raw ``sqlite3.connect`` and skipped migrations, which made any
+    ``gflow data list ...`` invocation crash with ``no such table: assets``
+    on an empty DB. Closes #88.
+
+    Query-time sqlite errors are mapped to :class:`DataStoreError`. DB open /
+    migration errors propagate from ``DataStore.open`` as their typed errors.
+    """
+    with DataStore.open(db_path) as store:
+        try:
+            yield store.conn
+        except sqlite3.Error as exc:
+            raise DataStoreError(f"Catalog query failed: {exc}") from exc
 
 
 @dataclass(frozen=True)
@@ -185,7 +190,7 @@ class VideoRow:
     prompt: str | None
     aspect: str
     model: str
-    duration: float
+    duration: float | None
     created_at: datetime
     local_path: str | None
 
@@ -222,7 +227,9 @@ def list_videos(
     """Return video assets newest-first, filtered by profile if given.
 
     prompt and local_path are NULLable (LEFT JOINs). duration maps to the
-    duration_seconds REAL column in the schema.
+    duration_seconds REAL column in the schema, which is also nullable
+    (e.g. omni-flash currently returns no duration in its t2v response, and
+    smoke-test fixtures may insert rows without it).
 
     Args:
         db_path: Absolute path to the SQLite catalog.
@@ -244,7 +251,7 @@ def list_videos(
             prompt=str(r["prompt"]) if r["prompt"] is not None else None,
             aspect=str(r["aspect"]),
             model=str(r["model"]),
-            duration=float(r["duration"]),
+            duration=float(r["duration"]) if r["duration"] is not None else None,
             created_at=datetime.fromisoformat(str(r["created_at"])),
             local_path=str(r["local_path"]) if r["local_path"] is not None else None,
         )

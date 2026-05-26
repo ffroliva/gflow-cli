@@ -104,7 +104,7 @@ gflow CLI  →  Provider (interchangeable)  →  Flow (ui_automation) / Mock (te
 
 ## Project status
 
-**v0.9.0 — alpha.** Image (T2I / I2I / upload) + Video T2V / I2V / R2V live end-to-end on `ui_automation`, with a video `--model` picker (5 Veo models) + `--duration` / `--count`. New in v0.9.0: `gflow data list {projects,images,videos,profiles}` read CLI over the local SQLite catalog, `ROADMAP.md`, and locale-agnostic media-dialog selectors that fix non-English Chrome profiles. Only video `batch` (manifest runner) is still queued for Phase B — use a shell for-loop until then ([USAGE](docs/USAGE.md#gflow-video-batch)). Full milestone history → [docs/PROJECT_STATUS.md](docs/PROJECT_STATUS.md). Changelog → [CHANGELOG.md](CHANGELOG.md). Where the project is heading → [ROADMAP.md](ROADMAP.md).
+**v0.9.1 — alpha.** Image (T2I / I2I / upload) + Video T2V / I2V / R2V live end-to-end on `ui_automation`, with a video `--model` picker (5 Veo models) + `--duration` / `--count`. New in v0.9.1: hardened locale-invariant Flow selectors, fixed I2V start/end-frame attachment for non-English Chrome/Flow sessions, and safer first-run catalog behavior. Only video `batch` (manifest runner) is still queued for Phase B — use a shell for-loop until then ([USAGE](docs/USAGE.md#gflow-video-batch)). Full milestone history → [docs/PROJECT_STATUS.md](docs/PROJECT_STATUS.md). Changelog → [CHANGELOG.md](CHANGELOG.md). Where the project is heading → [ROADMAP.md](ROADMAP.md).
 
 ## License & legal
 

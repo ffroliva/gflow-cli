@@ -22,8 +22,12 @@ import pytest
 from gflow_cli.api.image import Aspect, GenerateImageRequest, Model
 from gflow_cli.api.transports.ui_automation import (
     _COUNT_TAB_TEXT_RE,  # noqa: PLC2701
+    _ONBOARDING_STRUCTURAL_SELECTORS,  # noqa: PLC2701
+    _ONBOARDING_TEXT_SELECTORS,  # noqa: PLC2701
     FLOW_URL,
+    NEW_PROJECT_SELECTORS,
     ONBOARDING_SELECTORS,
+    SUBMIT_BUTTON_SELECTORS,
     UiAutomationTransport,
     _count_tabs_locator,  # noqa: PLC2701
 )
@@ -570,10 +574,64 @@ class TestBypassOnboarding:
     """_bypass_onboarding force-clicks visible cookie/onboarding CTAs and
     tolerates every miss — the gallery often loads with no interstitial."""
 
+    # --- cascade-order invariants -------------------------------------------
+
+    def test_structural_selectors_precede_text_selectors(self) -> None:
+        """ONBOARDING_SELECTORS must lead with structural/ARIA tiers before
+        any text-based selector — validates the cascade ordering."""
+        first_text_idx = next(i for i, s in enumerate(ONBOARDING_SELECTORS) if ":has-text(" in s)
+        last_structural_idx = max(
+            i for i, s in enumerate(ONBOARDING_SELECTORS) if s in _ONBOARDING_STRUCTURAL_SELECTORS
+        )
+        assert last_structural_idx < first_text_idx, (
+            "All structural selectors must appear before the first text selector"
+        )
+
+    def test_structural_selectors_are_subset_of_combined(self) -> None:
+        """Every structural selector must appear in the combined tuple."""
+        assert all(s in ONBOARDING_SELECTORS for s in _ONBOARDING_STRUCTURAL_SELECTORS)
+
+    def test_text_selectors_are_subset_of_combined(self) -> None:
+        """Every text selector must appear in the combined tuple."""
+        assert all(s in ONBOARDING_SELECTORS for s in _ONBOARDING_TEXT_SELECTORS)
+
+    def test_combined_has_no_duplicates(self) -> None:
+        """No selector should appear twice."""
+        assert len(ONBOARDING_SELECTORS) == len(set(ONBOARDING_SELECTORS))
+
+    def test_structural_tier_is_contiguous_prefix(self) -> None:
+        """The structural tier must be an unbroken prefix of the combined
+        tuple, with the text tier as the contiguous suffix. Stronger than
+        ``test_structural_selectors_precede_text_selectors`` because it does
+        not rely on the ``:has-text(`` boundary marker — the text tier leads
+        with two ``aria-label*`` ARIA-partial entries that lack that marker
+        but are still text-tier (not locale-guaranteed)."""
+        n = len(_ONBOARDING_STRUCTURAL_SELECTORS)
+        assert ONBOARDING_SELECTORS[:n] == _ONBOARDING_STRUCTURAL_SELECTORS, (
+            "Structural selectors must form an unbroken prefix"
+        )
+        assert ONBOARDING_SELECTORS[n:] == _ONBOARDING_TEXT_SELECTORS, (
+            "Text selectors must form the contiguous suffix"
+        )
+
+    # --- structural-tier behaviour ------------------------------------------
+
+    @pytest.mark.asyncio
+    async def test_clicks_structural_selector_when_visible(self) -> None:
+        """A visible structural (ARIA/id-based) selector is force-clicked and
+        a settle delay runs — validates the structural tier is exercised."""
+        structural_target = _ONBOARDING_STRUCTURAL_SELECTORS[0]
+        t = UiAutomationTransport()
+        page, clicked = _make_onboarding_page(visible_selectors={structural_target})
+        await t._bypass_onboarding(page)  # type: ignore[attr-defined]
+        assert structural_target in {sel for sel, _ in clicked}
+        assert clicked[0][1].get("force") is True
+        page.wait_for_timeout.assert_awaited()
+
     @pytest.mark.asyncio
     async def test_clicks_visible_onboarding_cta_with_force(self) -> None:
-        """A visible onboarding CTA is force-clicked (overlays intercept
-        pointer events, so force=True is required) and a settle delay runs."""
+        """Any visible onboarding CTA is force-clicked (overlays intercept
+        pointer events) and a settle delay follows."""
         target = ONBOARDING_SELECTORS[0]
         t = UiAutomationTransport()
         page, clicked = _make_onboarding_page(visible_selectors={target})
@@ -581,6 +639,8 @@ class TestBypassOnboarding:
         assert [sel for sel, _ in clicked] == [target]
         assert clicked[0][1].get("force") is True
         page.wait_for_timeout.assert_awaited()
+
+    # --- sweep behaviour ----------------------------------------------------
 
     @pytest.mark.asyncio
     async def test_no_interstitial_is_a_noop(self) -> None:
@@ -594,12 +654,16 @@ class TestBypassOnboarding:
     @pytest.mark.asyncio
     async def test_clicks_every_visible_selector(self) -> None:
         """The loop does not stop at the first hit — a page stacking a
-        cookie banner and a 'Get Started' CTA has both dismissed."""
-        targets = {ONBOARDING_SELECTORS[0], ONBOARDING_SELECTORS[-1]}
+        cookie banner (structural) and a landing CTA (text) has both dismissed."""
+        structural = _ONBOARDING_STRUCTURAL_SELECTORS[0]
+        text = _ONBOARDING_TEXT_SELECTORS[0]
+        targets = {structural, text}
         t = UiAutomationTransport()
         page, clicked = _make_onboarding_page(visible_selectors=targets)
         await t._bypass_onboarding(page)  # type: ignore[attr-defined]
         assert {sel for sel, _ in clicked} == targets
+
+    # --- fault-tolerance ----------------------------------------------------
 
     @pytest.mark.asyncio
     async def test_is_visible_failure_is_swallowed(self) -> None:
@@ -1899,3 +1963,83 @@ class TestDumpCountPanelDom:
 
         out_file = tmp_path / "_diagnostics" / "count_panel_dom_prompt_1.json"
         assert not out_file.exists(), "No file written on evaluate failure"
+
+
+# ---------------------------------------------------------------------------
+# Selector locale-invariance invariants
+# ---------------------------------------------------------------------------
+
+_NEW_PROJECT_REQUIRED_LOCALES = [
+    "New project",  # EN
+    "Novo projeto",  # PT
+    "Nuevo proyecto",  # ES
+    "Nouveau projet",  # FR
+    "Neues Projekt",  # DE
+    "Nuovo progetto",  # IT
+    "Nieuw project",  # NL
+    "新しいプロジェクト",  # JA
+    "新建项目",  # ZH
+    "새 프로젝트",  # KO
+    "Nowy projekt",  # PL
+    "Новый проект",  # RU
+    "Yeni proje",  # TR
+    "Proyek baru",  # ID
+]
+
+
+class TestSelectorLocaleInvariance:
+    """Static invariants ensuring selector tuples are locale-agnostic."""
+
+    def test_submit_button_selectors_no_english_aria(self) -> None:
+        """SUBMIT_BUTTON_SELECTORS must not contain English aria-label fallbacks."""
+        for sel in SUBMIT_BUTTON_SELECTORS:
+            assert "Create" not in sel, (
+                f"English-only aria-label fallback found in SUBMIT_BUTTON_SELECTORS: {sel!r}"
+            )
+
+    def test_submit_button_selectors_lead_with_icon(self) -> None:
+        """First selector in SUBMIT_BUTTON_SELECTORS must be the icon-class anchor."""
+        assert "google-symbols" in SUBMIT_BUTTON_SELECTORS[0], (
+            "SUBMIT_BUTTON_SELECTORS must lead with the google-symbols icon selector"
+        )
+
+    def test_new_project_selectors_no_duplicates(self) -> None:
+        assert len(NEW_PROJECT_SELECTORS) == len(set(NEW_PROJECT_SELECTORS))
+
+    def test_new_project_selectors_icon_leads(self) -> None:
+        """First selector must be the exact google-symbols icon-class anchor.
+
+        Locks the full selector prefix (not just substring) so a future rename of
+        the icon ligature, container tag, or class can't silently slip past.
+        """
+        assert NEW_PROJECT_SELECTORS[0] == "button:has(i.google-symbols:text('add_2'))", (
+            f"NEW_PROJECT_SELECTORS[0] drifted: {NEW_PROJECT_SELECTORS[0]!r}"
+        )
+
+    def test_new_project_selectors_plus_regex_is_anchored(self) -> None:
+        """The '+ <word>' Tier-1 regex must be anchored to avoid over-matching.
+
+        Without ``^`` / ``$``, the pattern matches buttons like '+ Filter' or
+        '+ Add member'. Anchoring keeps it scoped to the new-project CTA shape.
+        """
+        plus_regex = next((s for s in NEW_PROJECT_SELECTORS if "text-matches" in s), None)
+        assert plus_regex is not None, "No text-matches '+' regex in NEW_PROJECT_SELECTORS"
+        assert "^" in plus_regex and "$" in plus_regex, (
+            f"Plus regex must be anchored: {plus_regex!r}"
+        )
+
+    def test_new_project_selectors_covers_all_14_locales(self) -> None:
+        """Every required locale text must appear in at least one selector."""
+        combined = " ".join(NEW_PROJECT_SELECTORS)
+        missing = [loc for loc in _NEW_PROJECT_REQUIRED_LOCALES if loc not in combined]
+        assert not missing, f"NEW_PROJECT_SELECTORS missing locale entries: {missing}"
+
+    def test_new_project_selectors_no_english_only_aria(self) -> None:
+        """No English-only aria-label partial match should appear."""
+        for sel in NEW_PROJECT_SELECTORS:
+            assert "[aria-label*='New project'" not in sel, (
+                f"English-only aria-label in NEW_PROJECT_SELECTORS: {sel!r}"
+            )
+            assert "[aria-label*='Project'" not in sel, (
+                f"English-only aria-label in NEW_PROJECT_SELECTORS: {sel!r}"
+            )

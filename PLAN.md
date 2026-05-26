@@ -2,7 +2,7 @@
 
 > **Status:** Living document. Updated as phases complete.
 > **Owner:** [@ffroliva](https://github.com/ffroliva)
-> **Last revised:** 2026-05-24 (develop — post-PR #48 i2v/r2v/model-picker, PR #51 locale env-override)
+> **Last revised:** 2026-05-26 (develop — post-v0.9.0; PR #58 data layer, PR #70 locale Phase 2, PR #78 data Windows fixes, PR #81 root cleanup, PR #84 cp1252+plan refresh, PR #89 data list/media UX, PR #90 #63 closure)
 
 This plan turns the v0.1 scaffold into a production-grade CLI for Google AI Ultra/Pro subscribers who want to spend their Flow credits via batch automation. The plan is opinionated, treating this repo as a portfolio-grade benchmark.
 
@@ -352,8 +352,18 @@ The video-generation feature has its own sub-phase plan (spike → Phase A → P
 
 ### Phase 7 — Protocol Extensions (v0.8.1, 2026-05-23)
 
-- [~] **Issue #24: Locale-Agnostic Selectors — Phase 1 shipped, Phase 2 pending.** PR #51 (develop, 2026-05-24, post-v0.8.1) added the `GFLOW_CLI_LOCALE` env override on Playwright's launch `locale=` parameter, and live-verified `gflow video t2v` end-to-end under `pt-BR`. Some selectors are already locale-invariant (count tabs use `^(1x|x[2-4])$`, video aspect/duration use id-suffix + icon ligatures from PR #48); others — notably `ONBOARDING_SELECTORS`, parts of `NEW_PROJECT_SELECTORS` / `SUBMIT_BUTTON_SELECTORS`, and the I2V frame-slot text labels — are still localized and currently rely on the `--lang=en-US` Chromium launch arg added by PR #48. Tracked under [KNOWN_ISSUES § issue #24](KNOWN_ISSUES.md). Dropping `--lang=en-US` requires invariant capture across the remaining text selectors.
+- [x] **Issue #24: Locale-Agnostic Selectors — Phase 1 + Phase 2 + Phase 3 shipped.**
+  - **Phase 1 (PR #51, 2026-05-24, post-v0.8.1):** added the `GFLOW_CLI_LOCALE` env override on Playwright's launch `locale=` parameter; live-verified `gflow video t2v` end-to-end under `pt-BR`.
+  - **Phase 2 (PR #70, 2026-05-25, develop `c6e32aa`):** restructured `ONBOARDING_SELECTORS` into a two-tier cascade (3 strict ARIA/ID anchors + ~37 text entries spanning 14 locales). `_attach_frame` (I2V/R2V) was intended to flip to structural-first, but the shipped `FRAME_SLOTS_STRUCT` (`swap_horiz` icon container) matched **zero** elements on real Flow DOMs (wrong icon class + wrong slot tag). Discovered + corrected by PR #90 below. **T2V live-proof on de-DE: 70.9 s, 3.1 MB 1280×720 H.264 mp4.**
+  - **Phase 3 (PR #90 / [#63](https://github.com/ffroliva/gflow-cli/issues/63), 2026-05-26, develop `9a0896a8`):** replaced `FRAME_SLOTS_STRUCT` with the locale-free pattern `div[type='button'][aria-haspopup='dialog']` (verified via DOM probe — matches exactly 2). Also fixed the End-frame OOB index after Start is attached. **I2V live-proof on de-DE: 124 s, mp4 with `ftyp` magic bytes, both `frame_attached` events fired (Start + End).**
+  - **Phase 4 (Task #6, 2026-05-26, branch `claude/next-quick-win-gBPqS`, PR #93):** `NEW_PROJECT_SELECTORS` expanded to all 14 locales (icon-first tier + 14-locale text tier); English-only ARIA fallbacks (`[aria-label*='New project']`, `[aria-label*='Project']`) removed. `SUBMIT_BUTTON_SELECTORS` drops its English-only `button[aria-label*="Create"]` entry — `arrow_forward` icon selectors cover it in all locales. Both tuples are now fully locale-invariant. Note: issue #24 was closed 2026-05-24 after Phases 1–3; Phase 4 is cosmetic tail work. `--lang=en-US` retained only to stabilise `IMAGE_MODEL_OPTION_SELECTORS` (product names like "Nano Banana 2" may be localised). Removing it requires converting the image model picker to a structural anchor — tracked as issue #94 (Phase 5 below). **R2V live e2e on non-EN not yet exercised** — still open.
+  - **Phase 5 (open):** Convert `IMAGE_MODEL_OPTION_SELECTORS` from English has-text to a locale-invariant anchor (e.g. `data-model-id` attribute or icon ligature), then drop `--lang=en-US`. R2V live e2e on non-EN also pending.
 - [ ] **Model Context Protocol (MCP) Server.** (Backlog) Expose core gflow-cli tools via MCP for language-agnostic agentic access.
+- [x] **`/gflow:pr-council-review` slash command shipped 2026-05-26 (PR #97).** Multi-dimensional LLM council for open PRs (4 baseline + 8 adaptive dimensions, mandatory memory-slug binding, draft-PR guard, YELLOW escape valve, live-verify gate). Validated on PR #93; self-audited by 3-agent meta-council surfacing 13 must-fix items applied before merge. See memory `[[llm-council-code-review-pr93]]`.
+  - **Phase A (Backlog — Portability):** extract command body into `skills/pr-council-review/SKILL.md` so Gemini CLI / Codex / Cursor / Aider can consume it. Keep `.claude/commands/gflow/pr-council-review.md` as a thin wrapper. Memory: `[[pr-council-review-portability-backlog]]`.
+  - **Phase B (Backlog — Token optimization):** add `scripts/dev/pr_council_prefetch.py` (single gh-call producing structured JSON for agents) and `scripts/dev/memory_filter.py` (relevant slug bodies only). Targets ~30-50% per-agent context cost reduction.
+  - **Phase C (Backlog — Reusable meta-council):** codify the 3-dim audit (completeness / robustness / prompt-clarity) we used on this command as `/gflow:meta-council-audit <path>` for re-use on future skills/commands.
+  - Sequencing: **A → C → B**.
 
 ---
 
@@ -413,18 +423,19 @@ uvx --from "gflow-cli==0.7.0" gflow --version    # → gflow, version 0.7.0
 
 ---
 
-### Phase B — Video CLI restoration on `UiAutomationTransport` — IN PROGRESS
+### Phase B — Video CLI restoration on `UiAutomationTransport` — ✅ MOSTLY DONE
 
-Phase A (T2V library transport) shipped with v0.7.0 via PR #23. PR #36
-(merged 2026-05-21) closed the T2V CLI gap on Phase B:
+Phase A (T2V library transport) shipped with v0.7.0 via PR #23. PR #36 (2026-05-21) closed the T2V CLI gap; PR #48 (merged 2026-05-24) shipped I2V + R2V + model picker:
 
 - [x] Restore `gflow video t2v` CLI — shipped via PR #36 (`gflow video t2v PROMPT [--aspect 9:16|16:9] [--profile] [--out-dir]`)
-- [x] Add first-class video download mirroring the image side ([#29](https://github.com/ffroliva/gflow-cli/issues/29)) — shipped via PR #36 (`VideoResult`, `_download_video`, `FlowApiClient.download_video`)
-- [x] Live-verify T2V portrait aspect — shipped 2026-05-21 on profile `ffroliva` (both `9:16` and `16:9`); evidence in [`docs/LIVE_VERIFICATION_video_download.md`](docs/LIVE_VERIFICATION_video_download.md)
-- [ ] I2V (image-to-video) on `UiAutomationTransport` (`Mode.I2V` currently raises `NotImplementedError`); CLI still stubbed
-- [ ] R2V (reference-to-video) on `UiAutomationTransport` (`Mode.R2V` currently raises `NotImplementedError`); CLI still stubbed
-- [ ] Restore `gflow video batch` CLI (TSV-manifest fan-out — currently stubbed)
-- [ ] Parameterized live e2e under `tests/e2e/test_video_t2v_e2e.py` mirroring the image-side e2e
+- [x] First-class video download mirroring the image side ([#29](https://github.com/ffroliva/gflow-cli/issues/29)) — shipped via PR #36 (`VideoResult`, `_download_video`, `FlowApiClient.download_video`)
+- [x] Live-verify T2V portrait/landscape — 2026-05-21 on profile `ffroliva` (both `9:16` and `16:9`); evidence in [`docs/LIVE_VERIFICATION_video_download.md`](docs/LIVE_VERIFICATION_video_download.md)
+- [x] **I2V (image-to-video)** on `UiAutomationTransport` — shipped via PR #48 (`gflow video i2v IMAGE PROMPT`)
+- [x] **R2V (reference-to-video)** on `UiAutomationTransport` — shipped via PR #48 (`gflow video r2v PROMPT --ref IMAGE`)
+- [x] **Model picker** (fast/quality tier selection) — shipped via PR #48
+- [x] Parameterized live e2e under `tests/e2e/test_video_t2v_e2e.py` — shipped; assertion stale-fix in `8dce1a9` (issue #54 closed)
+- [ ] Restore `gflow video batch` CLI (TSV-manifest fan-out — currently stubbed; awaiting manifest-driven runner design)
+- [ ] Live e2e for I2V + R2V (only T2V exercised on non-EN locale to date — gate for dropping `--lang=en-US`)
 - [ ] Address the first-attempt listener-miss flake observed during v0.7.0 live verification
 
 ---
@@ -592,22 +603,27 @@ gates on the same header.
 
 ---
 
-### Phase 6 — Local SQLite data layer — IMPLEMENTED (PR #TBD)
+### Phase 6 — Local SQLite data layer — ✅ SHIPPED (PR #58 + #78 + #81, v0.9.0)
 
-Records new image, batch, and T2V provenance in a local SQLite database. Read-only `gflow data media <id>` command exposed.
+Records image, batch, T2V, I2V, and R2V provenance in a local SQLite catalog. Read-only `gflow data` subcommands exposed.
 
 - `gflow_cli/data/` — `DataStore` + repository + `OperationRecorder` + `redact_metadata`
 - Default DB path: `<GFLOW_CLI_HOME>/gflow.db`; override via `GFLOW_CLI_DB_PATH`
 - Schema versioned via SHA-256-checksummed migrations (`0001_initial.sql`); newer-schema detection raises `DataStoreError` (exit 16) with a clear upgrade hint
 - Privacy: `GFLOW_CLI_HISTORY_PROMPTS=redacted` stores only SHA-256 prompt hash; signed CDN URLs, reCAPTCHA tokens, and auth headers are stripped by `redact_metadata` before any DB write
-- `gflow data media <id> [--profile]` prints profile, media ID, project ID, kind, and local file paths
-- T2V now flows through `FlowApiClient.generate_video`, sharing the client boundary with image commands
+- **Shipped CLI surface:**
+  - `gflow data media <id> [--profile]` — profile, media ID, project ID, kind, and local file paths
+  - `gflow data list projects|images|videos|profiles [--profile] [--limit N] [--offset N] [--json]`
+- T2V/I2V/R2V/image flows through `FlowApiClient`, sharing the client boundary
+- **PR #78 fixes:** DB path drift (#79) + videos NULL-duration crash (#80) on Windows
+- **PR #81 fix:** keep test + example outputs out of the repo root
 
-**Backlog follow-ons (not in this PR):**
+**Backlog follow-ons:**
 
 - `gflow data import` / `gflow data repair` — back-fill older operations not recorded by this version
-- Richer management UI: `gflow data list`, `gflow data search`, cost/credit estimation
+- `gflow data search` — full-text / metadata search across catalog
 - `gflow history` alias for the data subcommand
+- Cost/credit estimation per profile or per project
 
 ### CDP Attach Transport — BACKLOG (deferred)
 
@@ -630,9 +646,9 @@ Records new image, batch, and T2V provenance in a local SQLite database. Read-on
 
 ---
 
-### Phase 7 — Pluggable storage backend — BACKLOG
+### Phase 8 — Pluggable storage backend — BACKLOG
 
-Today the CLI writes media to `$GFLOW_CLI_OUTPUT_DIR` on the local filesystem. Phase 7 makes the storage backend pluggable so generated assets can stream directly to S3 / GCS / Azure Blob without an intermediate local copy.
+Today the CLI writes media to `$GFLOW_CLI_OUTPUT_DIR` on the local filesystem. Phase 8 makes the storage backend pluggable so generated assets can stream directly to S3 / GCS / Azure Blob without an intermediate local copy.
 
 - New `gflow_cli.storage` module with a `StorageBackend` Protocol (write_bytes, exists, stat, list)
 - Implementations: `LocalStorage` (today's behaviour, default), `S3Storage`, `GCSStorage`, `AzureBlobStorage`
@@ -641,7 +657,7 @@ Today the CLI writes media to `$GFLOW_CLI_OUTPUT_DIR` on the local filesystem. P
 - Object naming convention: `{profile}/{command}/{YYYY-MM-DD}/{media_uuid}.png|mp4`
 - Metadata sidecar: each object has a corresponding `.problem.json` (RFC 9457 Problem Details for any error during retrieval) and `.manifest.json` (prompt, model, aspect, seed) for full provenance
 - Hooks into Phase 6: `operations` table records the storage URL alongside the local path
-- Out of scope until Phase 7 ships: lifecycle policies, deduplication, presigned URL generation
+- Out of scope until Phase 8 ships: lifecycle policies, deduplication, presigned URL generation
 
 ---
 

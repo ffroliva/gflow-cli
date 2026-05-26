@@ -165,45 +165,147 @@ PROMPT_INPUT_SELECTORS = (
     '[aria-label*="prompt"]',
 )
 
-# Submit button selectors — arrow_forward icon is locale-stable.
+# Submit button selectors — all entries are locale-stable.
+# The ``arrow_forward`` ligature is a Material Symbols icon name (not a UI
+# label), so it renders identically regardless of the Chrome profile locale.
 # Use :text() inside :has() (not :has-text() which is invalid inside :has()).
 SUBMIT_BUTTON_SELECTORS = (
     "button:has(i.google-symbols:text('arrow_forward'))",
     "button:has(i:text('arrow_forward'))",
     "button:has-text('arrow_forward')",
-    'button[aria-label*="Create"]',
 )
 
-# "+ New project" CTA selectors. Pattern G13: the Material Symbols icon
-# (``i.google-symbols`` with inner text ``add_2``) is locale-stable; the
-# localized button label ("New project", "Novo projeto", ...) is not.
-# Icon-class match is tried first; localized text variants are fallbacks.
+# "+ New project" CTA selectors.  Cascade discipline: structural / icon-first
+# (locale-stable) before localised text fallbacks spanning all 14 supported
+# locales.  The ``add_2`` Material Symbols ligature is locale-invariant — the
+# icon-class tier is tried first so this selector works even when the Chrome
+# profile runs in a non-English locale.  The ``[role='button']`` ARIA-role
+# variant of the icon anchor covers host elements that are not ``<button>``
+# tags.  The anchored ``^\+\s+\S+$`` regex matches "+ <single-word>" buttons
+# only — anchoring prevents matching e.g. "+ Filter" or "+ Add member" rows
+# that contain extra words.  Text variants are ordered by onboarding-locale
+# list (same 14 as ``ONBOARDING_SELECTORS``).
 NEW_PROJECT_SELECTORS = (
+    # Tier 1 — structural / icon: locale-invariant.
     "button:has(i.google-symbols:text('add_2'))",
     "button:has(i:text('add_2'))",
-    "button:has-text('New project')",
-    "button:has-text('Novo projeto')",
-    "button:has-text('Nuevo proyecto')",
-    "button:has-text('Nouveau projet')",
-    "[role='button']:has-text('New project')",
-    "a:has-text('New project')",
-    r"button:text-matches('\+\s+\S+', 'i')",
-    "[aria-label*='New project' i]",
-    "[aria-label*='Project' i]",
+    "[role='button']:has(i.google-symbols:text('add_2'))",
+    r"button:text-matches('^\+\s+\S+$', 'i')",
+    # Tier 2 — localised text: 14 locales (EN / PT / ES / FR / DE / IT / NL /
+    # JA / ZH / KO / PL / RU / TR / ID).
+    "button:has-text('New project')",  # EN
+    "button:has-text('Novo projeto')",  # PT
+    "button:has-text('Nuevo proyecto')",  # ES
+    "button:has-text('Nouveau projet')",  # FR
+    "button:has-text('Neues Projekt')",  # DE
+    "button:has-text('Nuovo progetto')",  # IT
+    "button:has-text('Nieuw project')",  # NL
+    "button:has-text('新しいプロジェクト')",  # JA
+    "button:has-text('新建项目')",  # ZH (Simplified)
+    "button:has-text('새 프로젝트')",  # KO
+    "button:has-text('Nowy projekt')",  # PL
+    "button:has-text('Новый проект')",  # RU
+    "button:has-text('Yeni proje')",  # TR
+    "button:has-text('Proyek baru')",  # ID
 )
 
-# Onboarding bypass selectors — cookie banners, terms, landing pages.
-# Handled gracefully if not found; localized variants included.
-ONBOARDING_SELECTORS = (
+# Onboarding bypass — cookie banners, GDPR consent dialogs, landing-page CTAs.
+# Cascade discipline: structural/ARIA anchors (Tier 1) before localised text
+# (Tier 2).  Every entry is best-effort: _bypass_onboarding swallows misses.
+#
+# Tier 1 — structural / ARIA: locale-invariant regardless of the Chrome
+# profile's display language.
+#   • Google Funding Choices / GDPR consent SDK sets button#L2AGLb and
+#     aria-label="Accept all" / aria-label="I agree" in English even when
+#     the *button text* is translated — these are programmatic SDK constants,
+#     not UI strings.
+_ONBOARDING_STRUCTURAL_SELECTORS: tuple[str, ...] = (
+    "button#L2AGLb",  # Google consent SDK "Accept all"
+    "button[aria-label='Accept all']",  # consent SDK ARIA name (exact)
+    "button[aria-label='I agree']",  # consent SDK ARIA name (exact)
+)
+
+# Tier 2 — localised text / language-dependent ARIA: extends coverage to
+# the 14 locales most likely to be used with Flow.  Not locale-invariant,
+# but maximises the fallback surface for users who hit onboarding before
+# entering the editor.  Includes two case-insensitive ARIA-partial entries
+# (`aria-label*='Accept' i` / `*='Agree' i`) at the head: these match many
+# CMP dialogs (OneTrust, Cookiebot) whose aria-label values stay in English
+# even on non-EN pages, but English ARIA values are not guaranteed across
+# every CMP so they live here rather than in the strict structural tier.
+_ONBOARDING_TEXT_SELECTORS: tuple[str, ...] = (
+    # English-language ARIA partial catches (OneTrust, Cookiebot, etc. often
+    # use English aria-label values even on non-EN pages, but this is not
+    # guaranteed, so these belong here rather than in the structural tier).
+    "button[aria-label*='Accept' i]",  # broader CMP ARIA catch (en)
+    "button[aria-label*='Agree' i]",  # broader CMP ARIA catch (en)
+    # EN
+    "button:has-text('Accept all')",
     "button:has-text('Agree')",
-    "button:has-text('Aceitar')",
     "button:has-text('I agree')",
-    "button:has-text('Concordo')",
     "button:has-text('Accept')",
     "button:has-text('Create with Flow')",
-    "button:has-text('Criar com o Flow')",
     "button:has-text('Get Started')",
+    # PT (Brasil / Portugal)
+    "button:has-text('Aceitar tudo')",
+    "button:has-text('Aceitar')",
+    "button:has-text('Concordo')",
+    "button:has-text('Criar com o Flow')",
     "button:has-text('Começar')",
+    # DE
+    "button:has-text('Alle akzeptieren')",
+    "button:has-text('Zustimmen')",
+    "button:has-text('Ich stimme zu')",
+    "button:has-text('Loslegen')",
+    # ES
+    "button:has-text('Aceptar todo')",
+    "button:has-text('Aceptar')",
+    "button:has-text('Acepto')",
+    "button:has-text('Comenzar')",
+    # FR
+    "button:has-text('Tout accepter')",
+    "button:has-text('Accepter')",
+    'button:has-text("J\'accepte")',
+    "button:has-text('Commencer')",
+    # IT
+    "button:has-text('Accetta tutto')",
+    "button:has-text('Accetto')",
+    "button:has-text('Inizia')",
+    # NL
+    "button:has-text('Alles accepteren')",
+    "button:has-text('Akkoord')",
+    # JA
+    "button:has-text('すべて同意する')",
+    "button:has-text('同意する')",
+    "button:has-text('はじめる')",
+    # ZH (Simplified)
+    "button:has-text('全部接受')",
+    "button:has-text('接受')",
+    "button:has-text('开始使用')",
+    # KO
+    "button:has-text('모두 동의')",
+    "button:has-text('동의')",
+    "button:has-text('시작하기')",
+    # PL
+    "button:has-text('Zaakceptuj wszystko')",
+    "button:has-text('Zgadzam się')",
+    # RU
+    "button:has-text('Принять всё')",
+    "button:has-text('Принять')",
+    # TR
+    "button:has-text('Tümünü kabul et')",
+    "button:has-text('Kabul et')",
+    # ID (Indonesian)
+    "button:has-text('Setujui semua')",
+    "button:has-text('Setujui')",
+)
+
+# Combined public tuple — structural first, text fallbacks after.
+# Import this; use _ONBOARDING_STRUCTURAL_SELECTORS / _ONBOARDING_TEXT_SELECTORS
+# only when testing cascade ordering.
+ONBOARDING_SELECTORS: tuple[str, ...] = (
+    *_ONBOARDING_STRUCTURAL_SELECTORS,
+    *_ONBOARDING_TEXT_SELECTORS,
 )
 
 # Changelog / "What's new" iframe selectors — these src patterns match the
@@ -478,9 +580,16 @@ class UiAutomationTransport(VideoGenerationMixin):
                     "--password-store=basic",
                     # locale="en-US" only sets Accept-Language; Chrome still picks
                     # its UI language from the profile/system and Flow then serves
-                    # /fx/<locale>/ with a localized editor (breaking text-based
-                    # selectors like the I2V frame slots). --lang forces the UI to
-                    # English so Flow stays on /fx/tools/flow for ANY profile.
+                    # /fx/<locale>/ with a localized editor.  --lang forces the UI
+                    # to English so the image model-picker product names (e.g.
+                    # "Nano Banana 2") in IMAGE_MODEL_OPTION_SELECTORS are rendered
+                    # consistently — those selectors use English has-text() matches
+                    # against product names that Google may localise.
+                    # ONBOARDING_SELECTORS, _attach_frame, NEW_PROJECT_SELECTORS,
+                    # and SUBMIT_BUTTON_SELECTORS are all structural/icon-first and
+                    # no longer require this arg.  Dropping it entirely is deferred
+                    # until IMAGE_MODEL_OPTION_SELECTORS is converted to a
+                    # locale-invariant anchor (issue #24 Phase 4 follow-up).
                     "--lang=en-US",
                 ],
             )
