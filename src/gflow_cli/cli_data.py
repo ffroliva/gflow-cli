@@ -267,11 +267,13 @@ async def _run_media(*, profile: str | None, media_id: str) -> None:  # NOSONAR 
                     route="data.media",
                 )
             if len(matches) > 1:
-                profiles = sorted({m.profile_name for m in matches})
+                # Include each match's kind in the hint so an image/video
+                # collision under the same media_id is visible at a glance.
+                candidates = sorted({f"{m.profile_name} ({m.kind.value})" for m in matches})
                 raise DataStoreError(
                     detail=(
                         f"Media {media_id!r} exists under multiple profiles: "
-                        f"{profiles}. Pass --profile NAME to disambiguate."
+                        f"{candidates}. Pass --profile NAME to disambiguate."
                     ),
                     route="data.media",
                 )
