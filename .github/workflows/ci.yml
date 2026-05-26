@@ -54,14 +54,10 @@ jobs:
         run: uv run pyright src
 
       - name: Test (smoke only) + coverage
-        # e2e tests (tests/e2e/) require a logged-in Chromium profile
-        # and live Flow auth — never runnable in CI. They self-mark with
-        # `pytestmark = pytest.mark.e2e` (file-level) and are opt-in via
-        # `-m e2e` per their module docstring. `live` marker is reserved for
-        # `GFLOW_LIVE=1` tests that hit the real Flow API. Both are excluded
-        # from the default smoke run; `tests/smoke/test_real_flow.py` already
-        # self-skips via `pytest.mark.skipif(GFLOW_E2E != "1")`.
-        run: uv run python -m pytest -q -m "not e2e and not live" --cov=gflow_cli --cov-report=xml
+        # e2e/live tests require a logged-in Chromium profile and may spend
+        # Flow credits. pyproject.toml excludes both markers by default; CI
+        # intentionally relies on that default smoke set.
+        run: uv run python -m pytest -q --cov=gflow_cli --cov-report=xml
 
       # Upload coverage XML so the sonar job can consume it
       - name: Upload coverage report
