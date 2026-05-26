@@ -36,6 +36,14 @@ from gflow_cli.api.image import GenerateImageRequest, Model
 from gflow_cli.api.transports import make_transport
 from gflow_cli.api.transports.experimental.bearer import BearerTransport
 from gflow_cli.api.transports.experimental.sapisidhash import SapisidhashTransport
+from gflow_cli.api.transports.ui_automation import UiAutomationTransport
+from gflow_cli.api.video import (
+    Aspect,
+    GenerateVideoRequest,
+    Mode,
+    VideoModel,
+    VideoResult,
+)
 from gflow_cli.errors import (
     EXIT_CODE_MAP,
     AuthExpiredError,
@@ -188,6 +196,126 @@ async def test_e2e_i2i_local_ref_attach(
     assert "ui_automation_video.reference_attached" in events, (
         "expected a 'reference_attached' event proving the local ref bound through "
         f"the media dialog; captured events: {events}"
+    )
+
+
+# ---------------------------------------------------------------------------
+# Criterion C2/i2v (#63) — I2V Start + End frame attach via media dialog
+# ---------------------------------------------------------------------------
+
+
+# Defaults are tuned for minimum credit spend: omni-flash, 4 s duration, count=1,
+# landscape. Override via env for variation (per [[e2e-tests-parameterize]]).
+_E2E_VIDEO_ASPECT_ENV = "GFLOW_CLI_E2E_VIDEO_ASPECT"
+_E2E_VIDEO_MODEL_ENV = "GFLOW_CLI_E2E_VIDEO_MODEL"
+_E2E_VIDEO_DURATION_ENV = "GFLOW_CLI_E2E_VIDEO_DURATION"
+_I2V_POLL_TIMEOUT_S = 600.0
+_I2V_PROMPT = "the subject moves gently in a calm scene, cinematic"
+
+
+def _i2v_aspect() -> Aspect:
+    raw = os.environ.get(_E2E_VIDEO_ASPECT_ENV, "landscape").strip().lower()
+    if raw == "landscape":
+        return Aspect.LANDSCAPE
+    if raw == "portrait":
+        return Aspect.PORTRAIT
+    pytest.skip(f"Unsupported {_E2E_VIDEO_ASPECT_ENV}={raw!r}")
+
+
+def _i2v_model() -> VideoModel | None:
+    raw = os.environ.get(_E2E_VIDEO_MODEL_ENV, "omni-flash").strip().lower()
+    return VideoModel.from_cli(raw)
+
+
+def _i2v_duration() -> int:
+    raw = os.environ.get(_E2E_VIDEO_DURATION_ENV, "4").strip()
+    return int(raw)
+
+
+@pytest.mark.asyncio
+async def test_e2e_i2v_start_end_frame_attach(
+    tmp_path: Path,
+    install_log_capture: structlog.testing.LogCapture,
+) -> None:
+    """I2V (#63): generate_video with ``mode=I2V`` + ``start_image`` + ``end_image``
+    binds BOTH frames through the editor's media dialog and returns a successful
+    ``VideoResult`` with a downloaded mp4 on disk.
+
+    UI-automation transport ONLY — the REST transports drop UI-only DTO fields
+    silently (see [[rest-transports-drop-ui-fields]]).
+
+    This exercises the locale-free structural cascade in ``_attach_frame``
+    (``FRAME_SLOTS_STRUCT = "div[type='button'][aria-haspopup='dialog']"``).
+    PR #70's earlier anchor (``swap_horiz`` icon container) was broken on real
+    Flow DOMs and matched ZERO elements; production I2V silently relied on the
+    English-text fallback, which fails on non-English Chrome profiles. The
+    ``ui_automation_video.frame_attached`` event MUST fire twice (one per slot)
+    — its absence indicates the structural tier still misses.
+
+    Costs 1 credit per run (omni-flash, 4 s, count=1 by default). Override:
+        GFLOW_CLI_E2E_VIDEO_MODEL=veo-fast
+        GFLOW_CLI_E2E_VIDEO_DURATION=6
+        GFLOW_CLI_E2E_VIDEO_ASPECT=portrait
+    """
+    profile = _profile_dir()
+    start = _tiny_png(tmp_path / "start.png")
+    end = _tiny_png(tmp_path / "end.png")
+
+    req = GenerateVideoRequest(
+        prompt=_I2V_PROMPT,
+        mode=Mode.I2V,
+        aspect=_i2v_aspect(),
+        model=_i2v_model(),
+        duration=_i2v_duration(),
+        count=1,
+        start_image=start,
+        end_image=end,
+    )
+
+    transport = UiAutomationTransport()
+    try:
+        await transport.setup(profile)
+        result: VideoResult = await transport.generate_video(
+            request=req,
+            out_dir=tmp_path,
+            poll_timeout_s=_I2V_POLL_TIMEOUT_S,
+        )
+    finally:
+        await transport.teardown()
+
+    # 1. Terminal-success contract (mirrors test_video_t2v_e2e).
+    assert isinstance(result, VideoResult), (
+        f"generate_video() must return a VideoResult, got {type(result)!r}"
+    )
+    assert result.status.is_terminal and result.status.succeeded, (
+        f"Expected SUCCESSFUL terminal status, got {result.status.status!r}; "
+        f"failure_reasons={result.status.failure_reasons!r}"
+    )
+    assert result.status.media_id, "VideoStatus.media_id must be non-empty"
+
+    # 2. File-on-disk contract (per [[verification-ledger-5-layer]]).
+    assert result.local_path is not None and result.local_path.exists(), (
+        f"VideoResult.local_path must point to a downloaded mp4; got {result.local_path!r}"
+    )
+    head = result.local_path.read_bytes()[:32]
+    assert b"ftyp" in head, (
+        f"mp4 magic bytes not found in first 32 bytes of {result.local_path}: {head!r}"
+    )
+
+    # 3. Locale-free selector contract (the #63 closure):
+    #    _attach_frame must fire `frame_attached` exactly twice — once with
+    #    slot=Start and once with slot=End. Its presence proves the structural
+    #    cascade resolved both slots without falling through to the text-tier
+    #    (which only works on EN profiles). The text-tier would still allow a
+    #    successful run on EN but the EVENT would not fire if the cascade had
+    #    silently mismatched.
+    frame_events = [
+        e for e in install_log_capture.entries if e["event"] == "ui_automation_video.frame_attached"
+    ]
+    slots = {e.get("slot") for e in frame_events}
+    assert slots == {"Start", "End"}, (
+        f"expected frame_attached for {{Start, End}}, got {slots!r}; "
+        f"all events: {[e['event'] for e in install_log_capture.entries]}"
     )
 
 
