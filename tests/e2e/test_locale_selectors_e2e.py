@@ -64,8 +64,8 @@ def test_image_t2i_succeeds_under_non_en_locale(locale: str, tmp_path: Path) -> 
             "t2i",
             "a calm forest at dawn",
             "--model",
-            "narwhal",
-            "--out-dir",
+            "nano2",
+            "--out",
             str(out_dir),
         ],
         env=env,
@@ -76,8 +76,7 @@ def test_image_t2i_succeeds_under_non_en_locale(locale: str, tmp_path: Path) -> 
     )
 
     assert result.returncode == 0, (
-        f"gflow image t2i failed for locale={locale}: "
-        f"stderr={result.stderr[-500:]}"
+        f"gflow image t2i failed for locale={locale}: stderr={result.stderr[-500:]}"
     )
 
     images = list(out_dir.rglob("*.png")) + list(out_dir.rglob("*.jpg"))
