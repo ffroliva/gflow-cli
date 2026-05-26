@@ -19,7 +19,6 @@ import os
 from pathlib import Path
 
 import pytest
-import structlog
 from structlog.testing import LogCapture
 
 from gflow_cli.image_batch import (
@@ -29,7 +28,7 @@ from gflow_cli.image_batch import (
     run_manifest_image_batch,
 )
 
-pytestmark = pytest.mark.e2e
+pytestmark = [pytest.mark.e2e, pytest.mark.e2e_batch]
 
 _E2E_PROFILE_ENV = "GFLOW_CLI_E2E_PROFILE"
 _E2E_MANIFEST_ENV = "GFLOW_CLI_E2E_BATCH_MANIFEST"
@@ -55,18 +54,6 @@ def _resolve_manifest_path() -> Path:
     # burns Flow credits on `sample_batch_invalid.tsv`.
     assert "_invalid" not in path.stem, f"live e2e refuses malformed-row fixture: {path}"
     return path
-
-
-@pytest.fixture
-def log_capture():
-    """Capture structlog events; reset config on teardown so test ordering
-    cannot bleed events between tests."""
-    capture = LogCapture()
-    structlog.configure(processors=[capture])
-    try:
-        yield capture
-    finally:
-        structlog.reset_defaults()
 
 
 def _image_kind(path: Path) -> str | None:
@@ -96,7 +83,7 @@ def _aspect_within(
 async def test_image_batch_e2e(
     e2e_profile_dir: Path,  # pytest fixture from tests/e2e/conftest.py
     tmp_path: Path,
-    log_capture: LogCapture,
+    install_log_capture: LogCapture,
 ) -> None:
     """Live image-batch e2e. Spends Flow credits when GFLOW_CLI_E2E_PROFILE is set."""
     manifest_path = _resolve_manifest_path()
@@ -123,7 +110,7 @@ async def test_image_batch_e2e(
         )
     except Exception:
         (tmp_path / "last_events.json").write_text(
-            json.dumps(log_capture.entries[-10:], default=str, indent=2),
+            json.dumps(install_log_capture.entries[-10:], default=str, indent=2),
             encoding="utf-8",
         )
         raise
@@ -179,19 +166,23 @@ async def test_image_batch_e2e(
     # result), so the floor is "at least one response per generated image".
     # We assert a lower bound, not equality, because count>1 rows and
     # same-project multiplexing produce multiple listener hits per row.
-    seen = [e for e in log_capture.entries if e["event"] == "ui_automation.batch_response_seen"]
+    seen = [
+        e for e in install_log_capture.entries if e["event"] == "ui_automation.batch_response_seen"
+    ]
     expected_min = sum(p.count for p in prompts)
     assert len(seen) >= expected_min, (
         f"expected >= {expected_min} batch_response_seen, got {len(seen)}"
     )
 
     # 6. New application event count — one image_batch.row_completed per image.
-    completed = [e for e in log_capture.entries if e["event"] == "image_batch.row_completed"]
+    completed = [
+        e for e in install_log_capture.entries if e["event"] == "image_batch.row_completed"
+    ]
     assert len(completed) == sum(p.count for p in prompts)
 
     # 7. submission_attempt event present per row, with project_id.
     attempt_events = [
-        e for e in log_capture.entries if e["event"] == "image_batch.submission_attempt"
+        e for e in install_log_capture.entries if e["event"] == "image_batch.submission_attempt"
     ]
     assert len(attempt_events) == len(prompts), "missing submission_attempt events"
 

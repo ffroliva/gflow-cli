@@ -39,6 +39,11 @@ def test_parse_uuid_from_url(): ...
 async def test_upload_returns_asset(): ...
 
 @pytest.mark.e2e               # Hits the real Flow API. Requires GFLOW_CLI_E2E_PROFILE env var.
+@pytest.mark.e2e_image         # Cost sub-marker: spends ~1 Imagen credit.
+async def test_full_t2i_roundtrip(): ...
+
+@pytest.mark.e2e
+@pytest.mark.e2e_video         # Cost sub-marker: spends ~1 Veo credit (most expensive).
 async def test_full_i2v_roundtrip(): ...
 ```
 
@@ -46,10 +51,23 @@ CI runs `unit` + `integration` on every push. `e2e` tests require a live authent
 
 ```bash
 export GFLOW_CLI_E2E_PROFILE=<profile-name>   # name of a logged-in profile
-uv run pytest -m e2e -v
+
+# Zero-credit sanity check (auth + health)
+uv run pytest -m e2e_auth -v
+
+# Single image (1 Imagen credit)
+uv run pytest -m "e2e_image and not e2e_batch" -v
+
+# Full regression (all credits)
+GFLOW_CLI_E2E_RUN_VIDEO=1 uv run pytest -m e2e -v
 ```
 
-E2e tests spend real Veo/Imagen credits — run them on `develop` before opening a release PR to `main`. See [docs/DEVELOPMENT.md § E2e gate](docs/DEVELOPMENT.md#e2e-gate-before-merging-develop--main).
+E2e tests spend real Veo/Imagen credits. Video tests default to opt-out — set
+`GFLOW_CLI_E2E_RUN_VIDEO=1` to include them. Run the full suite on `develop`
+before opening a release PR to `main`.
+
+See [docs/E2E_TESTING.md](docs/E2E_TESTING.md) for the complete layer reference,
+cost table, and run commands.
 
 ### Coverage targets
 

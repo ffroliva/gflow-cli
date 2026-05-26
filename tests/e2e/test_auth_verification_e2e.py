@@ -20,7 +20,7 @@ import pytest
 from gflow_cli.api.client import FlowApiClient
 from gflow_cli.auth.verification import FlowSessionOutcome, verify_flow_session
 
-pytestmark = pytest.mark.e2e
+pytestmark = [pytest.mark.e2e, pytest.mark.e2e_auth]
 
 
 async def test_e2e_verify_flow_session_authenticated(e2e_profile_dir: Path) -> None:
