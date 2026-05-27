@@ -18,6 +18,7 @@ from gflow_cli._cli_helpers import (
     _resolve_profile,
     run_with_handlers,
 )
+from gflow_cli.api.video import VideoModel, reference_cap_for
 from gflow_cli.config import get_settings
 from gflow_cli.data.recorder import OperationRecorder
 from gflow_cli.errors import DataStoreError
@@ -434,6 +435,22 @@ def r2v(
     out_dir: Path | None,
 ) -> None:
     """Generate a video from reference images (--ref) + PROMPT."""
+    # Reject over-cap ref counts (and the unsupported model+R2V combo) at the
+    # CLI boundary with a clear message (exit 2) rather than letting the domain
+    # ValueError surface as a generic error. GenerateVideoRequest.__post_init__
+    # enforces the same caps as an invariant. Mirrors the i2i pattern.
+    if model is not None:
+        model_enum = VideoModel.from_cli(model)
+        assert model_enum is not None  # narrows for type-checkers; from_cli only
+        # returns None for input None — we just guarded against that.
+        cap = reference_cap_for(model_enum)
+        if cap == 0:
+            raise click.UsageError(f"{model} does not support R2V (reference-to-video).")
+        if len(refs) > cap:
+            raise click.UsageError(
+                f"{model} allows at most {cap} reference image(s); got {len(refs)}."
+            )
+
     profile_name = _resolve_profile(profile)
     provider_dir = _make_provider_dir(profile_name)
     run_with_handlers(

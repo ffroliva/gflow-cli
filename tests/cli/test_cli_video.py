@@ -206,3 +206,67 @@ def test_t2v_records_started_then_completed(tmp_path: Path) -> None:
     completed_kwargs = fake_recorder.completed[0]
     assert completed_kwargs["result"] is stub_result
     assert fake_recorder.closed is True
+
+
+# ---------------------------------------------------------------------------
+# r2v reference-cap CLI guard (mirrors the i2i ref-cap tests).
+# ---------------------------------------------------------------------------
+
+
+def test_r2v_rejects_over_cap_for_veo_fast(tmp_path: Path) -> None:
+    """4 --ref against veo-fast (cap 3) -> exit 2 + UsageError message."""
+    runner = CliRunner()
+    refs: list[Path] = []
+    for i in range(4):
+        p = tmp_path / f"r{i}.png"
+        p.write_bytes(b"\x89PNG\r\n\x1a\n")
+        refs.append(p)
+    args = ["r2v", "a prompt", "--model", "veo-fast"]
+    for r in refs:
+        args.extend(["--ref", str(r)])
+    with (
+        patch("gflow_cli.cli_video._resolve_profile", return_value="default"),
+        patch("gflow_cli.cli_video._make_provider_dir", return_value=tmp_path),
+    ):
+        result = runner.invoke(video, args)
+    assert result.exit_code == 2, result.output
+    assert "at most 3 reference image" in result.output
+    assert "got 4" in result.output
+
+
+def test_r2v_rejects_quality_model(tmp_path: Path) -> None:
+    """veo-quality does not support R2V (cap 0) -> exit 2 even with 1 --ref."""
+    runner = CliRunner()
+    ref = tmp_path / "r.png"
+    ref.write_bytes(b"\x89PNG\r\n\x1a\n")
+    with (
+        patch("gflow_cli.cli_video._resolve_profile", return_value="default"),
+        patch("gflow_cli.cli_video._make_provider_dir", return_value=tmp_path),
+    ):
+        result = runner.invoke(
+            video, ["r2v", "a prompt", "--model", "veo-quality", "--ref", str(ref)]
+        )
+    assert result.exit_code == 2, result.output
+    assert "does not support R2V" in result.output
+
+
+def test_r2v_accepts_seven_refs_for_omni_flash(tmp_path: Path) -> None:
+    """omni-flash accepts up to 7 refs; the cap guard must pass them through."""
+    runner = CliRunner()
+    refs: list[Path] = []
+    for i in range(7):
+        p = tmp_path / f"r{i}.png"
+        p.write_bytes(b"\x89PNG\r\n\x1a\n")
+        refs.append(p)
+    args = ["r2v", "a prompt", "--model", "omni-flash"]
+    for r in refs:
+        args.extend(["--ref", str(r)])
+    with (
+        patch("gflow_cli.cli_video._resolve_profile", return_value="default"),
+        patch("gflow_cli.cli_video._make_provider_dir", return_value=tmp_path),
+        patch("gflow_cli.cli_video._run_r2v", new_callable=AsyncMock) as mock_run,
+    ):
+        mock_run.return_value = None
+        result = runner.invoke(video, args)
+    assert result.exit_code == 0, result.output
+    mock_run.assert_awaited_once()
