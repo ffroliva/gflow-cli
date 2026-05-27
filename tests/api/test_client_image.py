@@ -515,6 +515,31 @@ class TestDownloadImage:
         out = await client.download_image(_make_image(fife_url=good_url), tmp_path / "out.png")
         assert out.read_bytes() == b"png"
 
+    async def test_download_image_corrects_jpeg_with_png_suffix(
+        self, client: FlowApiClient, tmp_path: Path
+    ) -> None:
+        """Issue #96: when Flow's fife_url returns JPEG bytes but the caller
+        requested ``.png``, the returned path must be ``.jpg`` and the bytes
+        must be intact on disk under the new name."""
+        jpeg_bytes = b"\xff\xd8\xff\xe0\x00\x10JFIF" + b"\x00" * 100
+
+        async def fake_request_get(url, **kwargs):
+            resp = MagicMock()
+            resp.status = 200
+            resp.body = AsyncMock(return_value=jpeg_bytes)
+            return resp
+
+        client._page.request.get = AsyncMock(side_effect=fake_request_get)
+
+        out_path = tmp_path / "abc_1.png"
+        result = await client.download_image(_make_image(), out_path)
+
+        assert result.suffix == ".jpg"
+        assert result.name == "abc_1.jpg"
+        assert result.read_bytes() == jpeg_bytes
+        # Original .png path no longer exists — file was renamed in-place.
+        assert not out_path.exists()
+
 
 class TestSpecC2TokenReMint:
     """Spec C2: reCAPTCHA token is minted INSIDE the retry loop, EVERY attempt.

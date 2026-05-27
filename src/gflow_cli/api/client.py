@@ -44,6 +44,7 @@ from gflow_cli.errors import (
     RateLimitError,
     WireFormatError,
 )
+from gflow_cli.paths import correct_image_extension
 
 # Marker substring used by Playwright when a Page/Context/Browser is closed.
 # Stable across recent Playwright versions; we match on message text to avoid
@@ -606,7 +607,8 @@ class FlowApiClient:
         if resp.status >= 400:
             _raise_for_non_retryable(resp, await resp.text(), route=route)
         out_path.write_bytes(await resp.body())
-        return out_path
+        # Issue #96: fife CDN may serve JPEG for a .png target — rename in-place.
+        return correct_image_extension(out_path)
 
     async def download_video(self, media_id: str, out_path: Path) -> Path:
         """Download a generated video by media ID to disk.
