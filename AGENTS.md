@@ -45,7 +45,7 @@ uv run python -m pytest -q --cov=gflow_cli
 
 Or invoke the wrapper: `/gflow:check`.
 
-- Use `pytest -m "not live and not e2e"` locally; full suite OOMs on small dev machines. Scope to changed dirs; trust CI for the full sweep.
+- Use `pytest -m "not live and not e2e and not smoke"` locally; full suite OOMs on small dev machines. Scope to changed dirs; trust CI for the full sweep.
 - TDD is non-negotiable. Coverage floor: 80% overall.
 - Live tests (`@pytest.mark.live`) opt in via `GFLOW_LIVE=1`. E2E tests require `GFLOW_CLI_E2E_PROFILE`.
 
