@@ -152,6 +152,28 @@ def extension_from_magic(head: bytes) -> str | None:
     return None
 
 
+def adjust_key_extension(path: Path, data: bytes) -> Path:
+    """Return *path* with its suffix corrected to match *data*'s magic bytes.
+
+    In-memory variant of :func:`correct_image_extension` — operates on raw
+    bytes before writing so it works for both local ``Path`` and cloud
+    ``UPath`` targets (cloud storage has no atomic rename).
+
+    No-ops when the format is unrecognised or the suffix already matches.
+    ``UPath`` subclasses ``Path`` so this function accepts both.
+    """
+    head = data[:12]
+    actual = extension_from_magic(head)
+    if actual is None:
+        return path
+    current = path.suffix.lower()
+    if current == actual:
+        return path
+    if actual == ".jpg" and current in _JPEG_ALIASES:
+        return path
+    return path.with_suffix(actual)
+
+
 def correct_image_extension(path: Path) -> Path:
     """Rename ``path`` to match the format detected in its first bytes.
 

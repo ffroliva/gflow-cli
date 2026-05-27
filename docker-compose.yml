@@ -1,0 +1,40 @@
+services:
+  # S3-compatible local storage — for testing the [s3] extra without real AWS.
+  # Endpoint: http://localhost:9000
+  # Console:  http://localhost:9001  (minioadmin / minioadmin)
+  minio:
+    image: minio/minio:latest
+    command: server /data --console-address ":9001"
+    ports:
+      - "9000:9000"
+      - "9001:9001"
+    environment:
+      MINIO_ROOT_USER: minioadmin
+      MINIO_ROOT_PASSWORD: minioadmin
+    volumes:
+      - minio_data:/data
+    healthcheck:
+      test: ["CMD", "mc", "ready", "local"]
+      interval: 5s
+      timeout: 5s
+      retries: 5
+
+  # GCS emulator — for testing the [gcs] extra without real Google Cloud.
+  # Endpoint: http://localhost:4443
+  # Set STORAGE_EMULATOR_HOST=http://localhost:4443 when running gcsfs against it.
+  fake-gcs:
+    image: fsouza/fake-gcs-server:latest
+    command: -scheme http -port 4443
+    ports:
+      - "4443:4443"
+    volumes:
+      - fake_gcs_data:/data
+    healthcheck:
+      test: ["CMD", "wget", "-q", "--spider", "http://localhost:4443/"]
+      interval: 5s
+      timeout: 5s
+      retries: 5
+
+volumes:
+  minio_data:
+  fake_gcs_data:

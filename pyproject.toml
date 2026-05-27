@@ -36,6 +36,18 @@ dev = [
     "ruff>=0.5.0",
     "pyright>=1.1.0",
 ]
+# Cloud storage extras — install only one at a time.
+# aiobotocore and boto3 pin conflicting botocore versions; avoid mixing [s3]
+# with any package that pulls in boto3 (AWS CLI, CDK, SAM, etc.).
+# Use pipx or a dedicated venv: pipx install 'gflow-cli[s3]'
+gcs = [
+    "universal_pathlib>=0.2.5",
+    "gcsfs>=2024.2.0",
+]
+s3 = [
+    "universal_pathlib>=0.2.5",
+    "s3fs>=2024.2.0",
+]
 
 [project.scripts]
 gflow = "gflow_cli.cli:main"

@@ -146,10 +146,12 @@ class LocalFileRecord:
     id: str
     profile_name: str
     asset_id: str
-    path: Path
+    path: Path | None        # None for cloud-only files
     media_type: str | None
     bytes: int | None
     sha256: str | None
+    storage_provider: str | None = None  # "gcs" | "s3" | None (= local)
+    cloud_uri: str | None = None         # gs://bucket/key or s3://bucket/key
     created_at: str | None = None
 
 

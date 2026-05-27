@@ -37,6 +37,7 @@ from gflow_cli.api.video import (
     parse_video_status,
 )
 from gflow_cli.errors import AuthExpiredError, WafRejectionError, WireFormatError
+from gflow_cli.storage import AnyPath, storage_path, write_asset_async
 
 if TYPE_CHECKING:
     from playwright.async_api import Locator, Page
@@ -441,16 +442,16 @@ class VideoGenerationMixin:
         media_id: str,
         out_dir: Path | None,
         page: Any,
-    ) -> Path:
-        """Download a generated video to disk using the authenticated page.
+    ) -> AnyPath:
+        """Download a generated video to local disk or cloud storage.
 
         Calls ``media.getMediaUrlRedirect?name=<media_id>`` which 302s to a
         signed GCS URL; Playwright follows the redirect automatically.
+
+        When the transport's ``_storage_uri`` is set the video is uploaded to
+        the configured cloud backend; otherwise it is written to ``out_dir``.
         """
         url = routes.media_download_url(media_id)
-        effective_dir = out_dir or self._out_dir or Path("tmp")
-        effective_dir.mkdir(parents=True, exist_ok=True)
-        out_path = effective_dir / f"{media_id}.mp4"
         resp = await page.request.get(url, max_redirects=5, timeout=180_000)
         if resp.status >= 400:
             raise WireFormatError(
@@ -462,14 +463,26 @@ class VideoGenerationMixin:
                 route="media.getMediaUrlRedirect",
             )
         body = await resp.body()
-        out_path.write_bytes(body)
+        storage_uri: str | None = getattr(self, "_storage_uri", None)
+        if storage_uri:
+            from datetime import date  # noqa: PLC0415
+
+            from gflow_cli import paths as _paths  # noqa: PLC0415
+            key = f"videos/{date.today().isoformat()}/{_paths._validate_job_id(media_id)}.mp4"
+            # output_dir fallback only used for key computation when cloud is active
+            output_dir = getattr(self, "_output_dir", None) or Path("tmp")
+            target: AnyPath = storage_path(storage_uri, output_dir, key)
+        else:
+            effective_dir = out_dir or self._out_dir or Path("tmp")
+            target = effective_dir / f"{media_id}.mp4"
+        await write_asset_async(target, body)
         log.info(
             "ui_automation_video.video_saved",
-            path=str(out_path),
+            path=str(target),
             bytes=len(body),
             media_id=media_id,
         )
-        return out_path
+        return target
 
     @staticmethod
     async def _probe_selector_cascade(
