@@ -8,10 +8,11 @@ retired — see the Phase A plan).
 
 from __future__ import annotations
 
-from collections.abc import Awaitable, Callable
+from collections.abc import Awaitable, Callable, Mapping
 from dataclasses import dataclass
 from enum import StrEnum
 from pathlib import Path
+from types import MappingProxyType
 from typing import Any, cast
 
 
@@ -90,14 +91,37 @@ class Aspect(StrEnum):
         return mapping[value]
 
 
-# Flow's R2V reference cap is MODEL-DEPENDENT (live-verified): omni_flash allows
-# 7 ("Maximum image ingredients reached (7 allowed)"), the veo_3_1_* models allow
-# 3. A veo request with >3 refs uploads all but the generate request silently
-# keeps only 3. MAX_REFERENCE_IMAGES is the absolute ceiling (omni); the
-# model-aware check below enforces the per-model limit when the model is known.
-OMNI_REFERENCE_CAP = 7
-VEO_REFERENCE_CAP = 3
-MAX_REFERENCE_IMAGES = OMNI_REFERENCE_CAP
+# Flow's R2V reference cap is MODEL-DEPENDENT (live-verified + Google's
+# official support page): omni_flash allows 7 ("Maximum image ingredients
+# reached (7 allowed)"); veo_3_1_lite / veo_3_1_fast / veo_3_1_lite_lower_priority
+# allow 3; veo_3_1_quality does NOT support R2V at all (Google Flow help page
+# "Ingredients/References to Video" row = "No"). A request that exceeds the cap
+# uploads all refs but the generate call silently keeps only N — so we reject
+# up front. MAX_REFERENCE_IMAGES is the absolute ceiling (omni) used when the
+# model is unknown; the model-aware check below enforces the exact per-model
+# limit (incl. the special cap=0 for QUALITY) when the model is known.
+MAX_REFERENCE_IMAGES = 7
+_VIDEO_REFERENCE_CAP: Mapping[VideoModel, int] = MappingProxyType(
+    {
+        VideoModel.OMNI_FLASH: 7,
+        VideoModel.VEO_3_1_LITE: 3,
+        VideoModel.VEO_3_1_FAST: 3,
+        VideoModel.VEO_3_1_LITE_LOWER_PRIORITY: 3,
+        VideoModel.VEO_3_1_QUALITY: 0,  # R2V unsupported per Google Flow docs
+    }
+)
+
+
+def reference_cap_for(model: VideoModel) -> int:
+    """Maximum number of R2V reference images *model* accepts.
+
+    Returns 0 for models that do not support R2V at all
+    (``VEO_3_1_QUALITY`` — per Google Flow's official support page).
+    Unknown/future models fall back to :data:`MAX_REFERENCE_IMAGES` rather than
+    raising, so adding a new ``VideoModel`` member without a cap entry degrades
+    to the ceiling instead of a ``KeyError`` at request-build time.
+    """
+    return _VIDEO_REFERENCE_CAP.get(model, MAX_REFERENCE_IMAGES)
 
 
 @dataclass(frozen=True)
@@ -152,14 +176,17 @@ class GenerateVideoRequest:
                 raise ValueError("R2V request must not carry start/end images")
         if len(self.reference_images) > MAX_REFERENCE_IMAGES:
             raise ValueError(f"at most {MAX_REFERENCE_IMAGES} reference images")
-        # Per-model reference cap: omni_flash=7, veo_3_1_*=3 (live-verified). When
-        # the model is None (Flow UI default) we can't know it — leave the ceiling.
+        # Per-model reference cap (live-verified): omni_flash=7, veo lite/fast/lite_lp=3,
+        # veo_quality=0 (R2V unsupported per Google docs). When the model is None
+        # (Flow UI default) we can't know it — leave the absolute ceiling above.
         if self.mode is Mode.R2V and self.model is not None:
-            cap = OMNI_REFERENCE_CAP if self.model is VideoModel.OMNI_FLASH else VEO_REFERENCE_CAP
+            cap = reference_cap_for(self.model)
+            if cap == 0:
+                raise ValueError(f"{self.model.value} does not support R2V (reference-to-video)")
             if len(self.reference_images) > cap:
                 raise ValueError(
-                    f"{self.model.value} allows at most {cap} reference images; "
-                    f"got {len(self.reference_images)} (omni_flash allows {OMNI_REFERENCE_CAP})"
+                    f"{self.model.value} allows at most {cap} reference image(s); "
+                    f"got {len(self.reference_images)}"
                 )
         if self.seed is not None and not (0 <= self.seed <= 2**31 - 1):
             raise ValueError("seed out of range")
