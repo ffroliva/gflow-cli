@@ -9,6 +9,22 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ### Added
 
+- **`gflow models` catalog command.** New top-level command that enumerates
+  the image and video model catalog as a Rich table (default) or as a single
+  JSON object (`--json`). Per-model: `name`, CLI aliases (filtered to what
+  the generation command's `--model` Choice actually accepts), `ref_cap`,
+  `default` (image), `max_duration` (video). Built from the
+  `Model` / `VideoModel` enums + their alias maps so the catalog can never
+  drift from what the generation commands accept. A UI populating its model
+  picker from `gflow models --json` is guaranteed to pass any selected alias
+  back to `--model`.
+- **`gflow_cli.json_output` module + `--json` error path on
+  `run_with_handlers`.** Pure builders for image/video result payloads and
+  RFC 9457 problem-details errors (plus a `retryable` flag worker schedulers
+  key their retry-vs-absorb decision off — WAF / rate-limit / network /
+  timeout). When `as_json=True`, errors emit a parseable JSON payload on
+  stdout with the same exit code as the Rich path; the observability event
+  still fires.
 - **`--json` flag on `gflow auth list`.** Emits the profile inventory as a JSON
   array (`name` / `is_default` / `cookies_present` / `profile_dir` /
   `last_used_at`) on stdout so a programmatic caller (e.g. a worker discovering
