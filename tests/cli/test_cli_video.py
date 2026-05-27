@@ -209,6 +209,148 @@ def test_t2v_records_started_then_completed(tmp_path: Path) -> None:
 
 
 # ---------------------------------------------------------------------------
+# --json output (mirrors the image json output tests).
+# ---------------------------------------------------------------------------
+
+
+def test_t2v_json_emits_clean_machine_readable_result(tmp_path: Path) -> None:
+    """`gflow video t2v --json` emits a pure-JSON document on stdout (no
+    progress chatter) when the generation succeeds."""
+    import json as _json
+
+    from gflow_cli.api.video import VideoResult, VideoStarted, VideoStatus
+
+    saved = tmp_path / "test-uuid.mp4"
+    saved.touch()
+    stub_result = VideoResult(
+        status=VideoStatus(media_id="m1", status="MEDIA_GENERATION_STATUS_SUCCESSFUL"),
+        local_path=saved,
+        project_id="p1",
+        flow_operation_id="o1",
+    )
+
+    fake_recorder = FakeVideoRecorder()
+
+    async def fake_generate_video(*, req, out_dir, poll_timeout_s=None, download, on_started):
+        if on_started is not None:
+            import inspect
+
+            res = on_started(VideoStarted(media_id="m1", project_id="p1", flow_operation_id="o1"))
+            if inspect.isawaitable(res):
+                await res
+        return stub_result
+
+    runner = CliRunner()
+    with (
+        patch("gflow_cli.cli_video._resolve_profile", return_value="default"),
+        patch("gflow_cli.cli_video._make_provider_dir", return_value=tmp_path),
+        patch("gflow_cli.data.recorder.OperationRecorder.open", return_value=fake_recorder),
+        patch(
+            "gflow_cli.api.client.FlowApiClient.__aenter__",
+            new_callable=AsyncMock,
+        ) as mock_enter,
+        patch("gflow_cli.api.client.FlowApiClient.__aexit__", new_callable=AsyncMock),
+    ):
+        from gflow_cli.api.client import FlowApiClient
+
+        fake_client = MagicMock(spec=FlowApiClient)
+        fake_client.generate_video = fake_generate_video
+        mock_enter.return_value = fake_client
+
+        result = runner.invoke(video, ["t2v", "a sunset", "--json"])
+
+    assert result.exit_code == 0, result.output
+    # Pure JSON: anything that doesn't parse cleanly means progress chatter leaked.
+    data = _json.loads(result.output)
+    assert data["status"] == "ok"
+    assert data["command"] == "video t2v"
+    assert data["succeeded"] is True
+    assert data["media_id"] == "m1"
+    assert data["request"]["mode"] == "t2v"
+
+
+def test_t2v_json_failed_gen_emits_exactly_one_payload(tmp_path: Path) -> None:
+    """A failed `video t2v --json` must emit EXACTLY ONE JSON document on
+    stdout and exit 1 — not two.
+
+    Regression guard for the bug where `_generate_and_report` emitted the
+    failed `video_result` payload + raised `SystemExit(1)`, and
+    `run_with_handlers(as_json=True)`'s `except BaseException` clause caught
+    the SystemExit and appended a SECOND `UnexpectedError` JSON document
+    behind the first — making `json.loads(stdout)` raise `Extra data` and
+    defeating the whole point of `--json` for a programmatic caller.
+    """
+    import json as _json
+
+    from gflow_cli.api.video import VideoResult, VideoStarted, VideoStatus
+
+    failed_result = VideoResult(
+        status=VideoStatus(
+            media_id="m_fail",
+            status="MEDIA_GENERATION_STATUS_FAILED",
+            failure_reasons=("safety_filter",),
+        ),
+        local_path=None,
+        project_id="p_fail",
+        flow_operation_id="o_fail",
+    )
+
+    fake_recorder = FakeVideoRecorder()
+
+    async def fake_generate_video(*, req, out_dir, poll_timeout_s=None, download, on_started):
+        if on_started is not None:
+            import inspect
+
+            res = on_started(
+                VideoStarted(media_id="m_fail", project_id="p_fail", flow_operation_id="o_fail")
+            )
+            if inspect.isawaitable(res):
+                await res
+        return failed_result
+
+    runner = CliRunner()
+    with (
+        patch("gflow_cli.cli_video._resolve_profile", return_value="default"),
+        patch("gflow_cli.cli_video._make_provider_dir", return_value=tmp_path),
+        patch("gflow_cli.data.recorder.OperationRecorder.open", return_value=fake_recorder),
+        patch(
+            "gflow_cli.api.client.FlowApiClient.__aenter__",
+            new_callable=AsyncMock,
+        ) as mock_enter,
+        patch("gflow_cli.api.client.FlowApiClient.__aexit__", new_callable=AsyncMock),
+    ):
+        from gflow_cli.api.client import FlowApiClient
+
+        fake_client = MagicMock(spec=FlowApiClient)
+        fake_client.generate_video = fake_generate_video
+        mock_enter.return_value = fake_client
+
+        result = runner.invoke(video, ["t2v", "a sunset", "--json"])
+
+    # Exit code matches the failed-gen contract.
+    assert result.exit_code == 1, result.output
+    # `json.loads` succeeds iff stdout is exactly ONE JSON document.
+    # If a SECOND `UnexpectedError` payload leaks in (the old bug),
+    # `json.loads` raises ``json.JSONDecodeError: Extra data``.
+    data = _json.loads(result.output)
+    assert data["status"] == "fail"
+    assert data["command"] == "video t2v"
+    assert data["succeeded"] is False
+    assert data["media_id"] == "m_fail"
+    assert data["generation_status"] == "MEDIA_GENERATION_STATUS_FAILED"
+    assert data["failure_reasons"] == ["safety_filter"]
+    # Belt-and-braces: assert no second top-level JSON object follows.
+    # `{...}{...}` would parse only the first object with `raw_decode`, then
+    # leave non-whitespace trailing chars — the assertion below catches that.
+    decoder = _json.JSONDecoder()
+    _, end = decoder.raw_decode(result.output)
+    trailing = result.output[end:].strip()
+    assert trailing == "", (
+        f"stdout had a second JSON document after the failed-gen payload: {trailing[:200]!r}"
+    )
+
+
+# ---------------------------------------------------------------------------
 # r2v reference-cap CLI guard (mirrors the i2i ref-cap tests).
 # ---------------------------------------------------------------------------
 
