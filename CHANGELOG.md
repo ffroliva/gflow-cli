@@ -9,6 +9,20 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ### Added
 
+- **Per-model r2v reference-image cap rebuilt as a data table.** Replaces the
+  prior pair of constants (`OMNI_REFERENCE_CAP=7`, `VEO_REFERENCE_CAP=3`) with
+  a `VideoModel -> int` mapping consulted by
+  `gflow_cli.api.video.reference_cap_for(model)`. New entries:
+  `veo_3_1_lite_lower_priority=3` (was implicitly covered by the veo branch),
+  and `veo_3_1_quality=0` — Veo 3.1 Quality does NOT support
+  Ingredients/References to Video at all per Google Flow's official support
+  page; passing it to r2v raises a clear `does not support R2V
+  (reference-to-video)` error rather than letting the request fail at the
+  wire. CLI guard added on `gflow video r2v` (`click.UsageError`, exit 2)
+  mirroring the i2i pattern so over-cap and quality+r2v fail before any
+  profile/network work. E2e tripwire at
+  `tests/e2e/test_video_r2v_ref_cap_e2e.py` asserts Flow actually consumes
+  all `cap` refs at the at-cap boundary.
 - **Per-model i2i reference-image cap.** Flow silently keeps only the first N
   reference images when an i2i request attaches more than the model accepts,
   so a caller could believe every ref was used. `gflow_cli.api.image.reference_cap_for(model)`
@@ -36,6 +50,11 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ### Changed
 
+- `gflow_cli.api.video` no longer exposes the standalone `OMNI_REFERENCE_CAP` /
+  `VEO_REFERENCE_CAP` constants. Callers that need a per-model R2V cap should
+  use `reference_cap_for(model)` (which returns `0` for `VEO_3_1_QUALITY` —
+  R2V is unsupported there). `MAX_REFERENCE_IMAGES` (= 7) is unchanged and
+  still the absolute ceiling used when the model is unknown.
 - `GFLOW_CLI_E2E_RUN_VIDEO` default flipped from `"1"` to `"0"`. The Veo step in
   `test_data_layer_e2e.py` is now **opt-in**: set `GFLOW_CLI_E2E_RUN_VIDEO=1` to
   include it. This prevents accidental Veo credit burns on unattended CI runs.
