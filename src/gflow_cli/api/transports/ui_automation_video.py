@@ -468,7 +468,8 @@ class VideoGenerationMixin:
             from datetime import date  # noqa: PLC0415
 
             from gflow_cli import paths as _paths  # noqa: PLC0415
-            key = f"videos/{date.today().isoformat()}/{_paths._validate_job_id(media_id)}.mp4"
+
+            key = f"videos/{date.today().isoformat()}/{_paths.validate_job_id(media_id)}.mp4"
             # output_dir fallback only used for key computation when cloud is active
             output_dir = getattr(self, "_output_dir", None) or Path("tmp")
             target: AnyPath = storage_path(storage_uri, output_dir, key)

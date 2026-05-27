@@ -23,17 +23,13 @@ import asyncio
 import posixpath
 from dataclasses import dataclass
 from pathlib import Path
-from typing import TYPE_CHECKING, Union
-
-if TYPE_CHECKING:
-    from upath import UPath
 
 # ---------------------------------------------------------------------------
 # Public type alias
 # ---------------------------------------------------------------------------
 
-#: Either a local ``pathlib.Path`` or a cloud ``UPath``.
-AnyPath = Union[Path, "UPath"]
+#: Either a local ``pathlib.Path`` or a cloud ``UPath`` (UPath IS-A Path).
+AnyPath = Path
 
 _CLOUD_SCHEMES: tuple[str, ...] = ("gs://", "s3://", "memory://")
 
@@ -47,7 +43,7 @@ _CLOUD_SCHEMES: tuple[str, ...] = ("gs://", "s3://", "memory://")
 class CloudStorageInfo:
     """Metadata about a cloud-stored asset, persisted to the local DB."""
 
-    uri: str       # gs://bucket/prefix/key  or  s3://bucket/prefix/key
+    uri: str  # gs://bucket/prefix/key  or  s3://bucket/prefix/key
     provider: str  # "gcs" | "s3"
 
 
@@ -68,9 +64,9 @@ def _sanitize_key(key: str) -> str:
     return normalized
 
 
-def _make_upath(uri: str) -> UPath:
+def _make_upath(uri: str) -> Path:
     try:
-        from upath import UPath  # noqa: PLC0415
+        from upath import UPath  # type: ignore[import-untyped]  # noqa: PLC0415
     except ImportError as exc:
         raise ImportError(
             "Cloud storage requires universal_pathlib. "
@@ -78,7 +74,7 @@ def _make_upath(uri: str) -> UPath:
             "  pip install 'gflow-cli[gcs]'   # Google Cloud Storage\n"
             "  pip install 'gflow-cli[s3]'    # Amazon S3 / MinIO"
         ) from exc
-    return UPath(uri)
+    return UPath(uri)  # type: ignore[return-value]
 
 
 def _write_local(path: Path, data: bytes) -> None:

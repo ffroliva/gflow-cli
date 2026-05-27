@@ -58,7 +58,7 @@ def database_path(home: Path) -> Path:
     return home / "gflow.db"
 
 
-def _validate_job_id(job_id: str) -> str:
+def validate_job_id(job_id: str) -> str:
     if not _SAFE_ID_RE.match(job_id):
         raise ValueError(f"Unsafe job_id returned by API: {job_id!r}")
     return job_id
@@ -92,7 +92,7 @@ def video_output_path(
 ) -> Path:
     """`<output_dir>/videos/<YYYY-MM-DD>/<job_id>.mp4`."""
     on = on or date.today()
-    return output_dir / "videos" / on.isoformat() / f"{_validate_job_id(job_id)}.mp4"
+    return output_dir / "videos" / on.isoformat() / f"{validate_job_id(job_id)}.mp4"
 
 
 def image_output_path(
@@ -111,7 +111,7 @@ def image_output_path(
     differs. See issue #96.
     """
     on = on or date.today()
-    return output_dir / "images" / on.isoformat() / f"{_validate_job_id(job_id)}_{index}.png"
+    return output_dir / "images" / on.isoformat() / f"{validate_job_id(job_id)}_{index}.png"
 
 
 # Magic-byte signatures for the image formats Flow's fife CDN is known to
