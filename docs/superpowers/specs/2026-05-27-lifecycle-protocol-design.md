@@ -68,7 +68,7 @@ All three follow the **wrapper-around-skill pattern** validated in v2 of `pr-cou
 | A4 | **Effort** | Rough sizing: 1-PR / 1-day / 1-week / multi-week. Compare against PRs of similar scope in `git log`. If no comparable PR exists (fresh feature surface, pre-first-PR work), mark A4 as **INSUFFICIENT-DATA**; do not block a GREEN verdict. | `[[release-spec-plan-memory-consolidation]]` |
 | A5 | **Memory-Search** | Probe MCP memory servers. **Before invoking any `mcp__*memory*` / `mcp__*mempalace*` / `mcp__*mem0*` tool, call `ToolSearch` with `select:<tool_name>` to load the schema (most MCP memory tools are deferred-tools per the harness convention)**. If no MCP memory server is loaded in-session, state explicitly "file-based memory only" and proceed with `~/.claude/projects/<slug>/memory/` filesystem reads. | `[[release-spec-plan-memory-consolidation]]`, `[[llm-council-code-review-pr93]]` (council-pattern provenance), `[[pr-council-review-portability-backlog]]` |
 
-**Iron Law** (per `superpowers:verification-before-completion`): *NO VERDICT WITHOUT EVERY DIMENSION HAVING REPORTED AND A5 (Memory-Search) HAVING CITED AT LEAST ONE SLUG OR EXPLICITLY DECLARED `NO_PRIOR_ART`.* Sub-agent timeouts must NOT be rationalized as GREEN.
+**Iron Law** (per `superpowers:verification-before-completion`, composes with §5.9 status protocol): *NO VERDICT WITHOUT EVERY DIMENSION HAVING SUBMITTED A STATUS — one of `DONE` / `DONE_WITH_CONCERNS` / `NEEDS_CONTEXT` / `BLOCKED` — AND A5 (Memory-Search) HAVING CITED AT LEAST ONE SLUG OR EXPLICITLY DECLARED `NO_PRIOR_ART`.* Sub-agent timeouts that produce neither status nor citation must NOT be rationalized as GREEN — the synthesizer marks them `BLOCKED` and downgrades the consensus per §5.9 (silent ignore is forbidden).
 
 **Per-finding citation contract** (mirrors `pr-council-review` v2.1 verify-before-claim): every finding MUST cite `file:line` (for code) or memory `slug + line range` (for prior art). Orphan findings (no citation) are dropped at synthesis.
 
@@ -100,7 +100,9 @@ All three follow the **wrapper-around-skill pattern** validated in v2 of `pr-cou
 
 **File reading discipline:** ⚠️ different from PR mode — sub-agents CAN use `Read` on the working tree IF `git branch --show-current` matches the orchestrator's captured branch (local files reflect HEAD on the same branch). They MUST still verify with `git show HEAD:<path>` if uncertain. **For large diffs (`additions + deletions > 5000` OR > 20 files), route `git diff base..HEAD` through `ctx_execute(language="shell", ...)` to avoid context flood — per `context-mode:context-mode` routing rule.**
 
-**`release/*` branch special case:** if `git branch --show-current` matches `release/*`, the council's D11 (Release-gate compliance) will RED-flag an in-progress CHANGELOG / version bump. Treat D11 as **YELLOW not RED until tag is cut** — surface this downgrade in the verdict report so users don't chase a false negative.
+**`release/*` branch special case:** if `git branch --show-current` matches `release/*`, the council's D11 (Release-gate compliance) will RED-flag an in-progress CHANGELOG / version bump. Treat D11 as **YELLOW not RED until tag is cut** — surface this downgrade in the verdict report so users don't chase a false negative. **"Tag is cut" detection:** `git tag --list "v*" --contains HEAD` returns non-empty (per D3 v1 council ambiguity finding). Do NOT use `gh release list` (requires network) or branch-name parsing.
+
+**REVIEWED_SHA drift in branch mode** (mirrors `pr-council-review` v2.1 §5 step 5 for PR mode): capture `REVIEWED_SHA = $(git rev-parse HEAD)` BEFORE dispatching agents. At Phase 5 synthesis, compare `git rev-parse HEAD` to `REVIEWED_SHA`; if diverged (user committed mid-review, ran `git stash`, etc.), prepend the report with: *"Local HEAD moved during review (was X, now Y). Findings apply to X."* Do NOT silently re-review the new commits.
 
 **Output:** verdict report identical to `pr-council-review` Phase 6, but without "post to PR" action — instead offers: (a) apply fixes now, (b) save findings as `.planning/branch-review-<branch>-<ts>.md`, (c) defer to PR-time review.
 
@@ -130,6 +132,8 @@ All three follow the **wrapper-around-skill pattern** validated in v2 of `pr-cou
 **Drawer rotation policy:** `drawer-session-log.md` is append-only and would grow unbounded. **Rotate at 500 lines** — when the file crosses 500 lines, rename to `drawer-session-log-archive-<YYYY-MM>.md` and start a fresh `drawer-session-log.md`. Archives are not auto-loaded next session (only the current `drawer-session-log.md` is). Other drawers do NOT auto-rotate (they should stay small by design).
 
 **Iron Law** (per `superpowers:verification-before-completion`): *NO HANDOVER WITHOUT VERIFIED HEAD SHA + CLEAN GIT STATUS.* If `git status --porcelain` is non-empty and no `--reason <string>` was passed, refuse to write drawers — uncommitted work captured as "session state" would mislead the next session.
+
+**Drawer auto-load contract** (CRITICAL — drawers are dead weight without this; D6 v1 council audit found that the harness only auto-loads `MEMORY.md` by default, not arbitrary `.md` files in the memory dir): on every successful handover, the command MUST patch `~/.claude/projects/<slug>/memory/MEMORY.md` to ensure a `## Drawers` section exists and contains `[[drawer-project-state]]`-style wikilinks to every drawer file. Without this `MEMORY.md` patch, the next session's auto-memory loader will not surface drawer content. The patch is idempotent (only adds missing links; does not duplicate existing ones).
 
 **Severity markers** (per PR #83 T2) apply to entries in `drawer-cross-session-rules-digest.md` only.
 
@@ -168,6 +172,8 @@ HANDOVER: .planning/handover-<ts>.md
 
 ### 5.1 Wrapper-around-skill pattern
 All 3 Phase 1 commands follow the v2 precedent (PR #99): thin imperative wrapper at `.claude/commands/gflow/<name>.md` (invokes `Skill(skill="<name>")`); canonical body at `skills/<name>/SKILL.md` (cross-tool portable for Gemini/Codex/Cursor/Aider).
+
+**Cross-tool portability is read-only** (per D4 v1 council audit): other tools (Gemini CLI, Cursor, Aider, Codex) can consume the SKILL.md as a reference document — they will read the protocol, dimension lists, and per-command checks. However, the structural enforcement (`<HARD-GATE>` / `<EXTREMELY-IMPORTANT>` XML blocks honored as bulletproofing) and the composition mechanism (`Skill(skill="...")` invocations in §A.3) are **Claude-Code-specific** — other tools will see them as prose hints but won't structurally enforce them. Plan for graceful degradation: the protocol's intent (verify-before-claim, council pattern, status taxonomy) is portable; the gates are not.
 
 ### 5.2 Severity markers — MUST / FORBID / NORM
 Adopted from PR #83 T2 (`yzddp/harnesscode` reference repo). Apply to:
@@ -215,20 +221,77 @@ Surfaced by the pre-council survey (§A.3):
 
 ### 5.8 Structural enforcement — `<HARD-GATE>` and `<EXTREMELY-IMPORTANT>` XML conventions
 
-Adopted from `superpowers:brainstorming` and `superpowers:using-superpowers`. These XML-tagged blocks survive prompt compression and pressure scenarios better than prose ("the bulletproofing pattern"). All 3 new SKILL.mds open with an `<EXTREMELY-IMPORTANT>` block:
+Adopted from `superpowers:brainstorming` and `superpowers:using-superpowers`. These XML-tagged blocks survive prompt compression and pressure scenarios better than prose ("the bulletproofing pattern").
 
-> *These commands are local-only side-channels. They do NOT replace `/gflow:pr-council-review`, `/gflow:check`, or `/gflow:release`. Skipping the canonical gates because an assess / branch-review / handover passed is a rationalization.*
+**ALL 3 new SKILL.mds open with this `<EXTREMELY-IMPORTANT>` block verbatim:**
 
-Per-command HARD-GATES:
+```xml
+<EXTREMELY-IMPORTANT>
+These commands are local-only side-channels. They do NOT replace
+`/gflow:pr-council-review`, `/gflow:check`, or `/gflow:release`.
+Skipping the canonical gates because an assess / branch-review /
+handover passed is a rationalization. Do NOT skip.
+</EXTREMELY-IMPORTANT>
+```
 
-| Command | HARD-GATE | Rationale |
+**Per-command HARD-GATES — must be written as actual XML blocks in each SKILL.md (not markdown rows; the XML tagging is the enforcement mechanism per the bulletproofing thesis):**
+
+```xml
+<!-- /gflow:assess SKILL.md -->
+<HARD-GATE>
+Do NOT emit a verdict until all 5 dimensions have submitted a status
+(DONE | DONE_WITH_CONCERNS | NEEDS_CONTEXT | BLOCKED) AND A5 has cited
+at least one memory slug OR explicitly declared NO_PRIOR_ART.
+</HARD-GATE>
+
+<HARD-GATE>
+Do NOT invoke `/gflow:plan` or `superpowers:writing-plans` after a RED
+verdict. The user MUST refine the task description and re-assess first.
+</HARD-GATE>
+```
+
+```xml
+<!-- /gflow:branch-review SKILL.md -->
+<HARD-GATE>
+Do NOT run the council before `/gflow:check` passes (lint + format +
+types + tests must be green). Pre-existing red baseline will be
+mis-flagged as new findings.
+</HARD-GATE>
+
+<HARD-GATE>
+Do NOT post findings to a PR — this command is local-only. Use
+`/gflow:pr-council-review <N>` for PR-time review.
+</HARD-GATE>
+```
+
+```xml
+<!-- /gflow:handover SKILL.md -->
+<HARD-GATE>
+Do NOT write to memory drawers if `git status --porcelain` is non-empty
+AND no `--reason <string>` flag was passed. Uncommitted work captured
+as session state will mislead the next session.
+</HARD-GATE>
+
+<HARD-GATE>
+Drawer files are APPEND-ONLY. NEVER overwrite. On any write, use
+`open(path, "a")` (POSIX O_APPEND semantics — single-syscall appends
+under PIPE_BUF are atomic). On Windows, prefer
+`pathlib.Path.open("a", encoding="utf-8", newline="\n")`.
+</HARD-GATE>
+```
+
+**Structural enforcement hook (per D6 NH#6):** synthesizers MUST emit a literal `HARD-GATE FAILED: <reason>` as the first line of output when a gate trips. Wrappers grep for this prefix to abort downstream invocation. Without this hook, gates are advisory not enforceable.
+
+**Gate context table** (rationale for each gate):
+
+| Command | Gate | Rationale |
 |---|---|---|
-| `/gflow:assess` | "Do NOT emit a verdict until all 5 dimensions have reported AND A5 has cited a slug or declared `NO_PRIOR_ART`." | Otherwise sub-agent timeouts get rationalized as GREEN. Mirrors `[[verification-ledger-5-layer]]`. |
-| `/gflow:assess` | "Do NOT invoke `/gflow:plan` or `superpowers:writing-plans` after a RED verdict." | Mirrors `superpowers:brainstorming` gate that blocks implementation skills pre-approval. Resolves §10 Q3. |
-| `/gflow:branch-review` | "Do NOT run the council before `/gflow:check` passes (baseline must be green)." | Adopts `superpowers:finishing-a-development-branch` Step 1. Prevents the council from flagging pre-existing lint as new. |
-| `/gflow:branch-review` | "Do NOT post findings to a PR (local-only); use `/gflow:pr-council-review` for PR-time review." | Forces the dogfooding split in §5.5 to be enforced, not merely documented. |
-| `/gflow:handover` | "Do NOT write to memory drawers if `git status --porcelain` is non-empty AND no `--reason` flag is given." | Closes the dirty-tree-as-intentional-state loophole. |
-| `/gflow:handover` | "Drawer files are APPEND-ONLY — never overwrite." | Already in §3.3 prose; HARD-GATE promotes it to structural enforcement. |
+| `/gflow:assess` | Status-before-verdict | Mirrors `[[verification-ledger-5-layer]]`; prevents silent-ignore of sub-agent timeouts |
+| `/gflow:assess` | No-plan-on-RED | Mirrors `superpowers:brainstorming` pre-implementation gate; resolves §10 Q3 |
+| `/gflow:branch-review` | Green-baseline-first | Adopts `superpowers:finishing-a-development-branch` Step 1 |
+| `/gflow:branch-review` | No-PR-post | Forces the dogfooding split in §5.5 to be enforced not documented |
+| `/gflow:handover` | Clean-tree-or-reason | Closes dirty-tree-as-intentional-state loophole |
+| `/gflow:handover` | Append-only-drawers | Promotes the §3.3 prose rule to structural enforcement |
 
 ### 5.9 Sub-agent status reporting (4-status protocol)
 
@@ -305,7 +368,7 @@ Existing memory slugs to update:
 
 ## 10 · Open questions for review
 
-1. Should `branch-review` use a literal flag `--branch` on `pr-council-review`, or a separate slash command that internally invokes the same skill in branch mode? (Currently: separate command, same skill — see §3.2.)
+1. ~~Should `branch-review` use a literal flag `--branch` on `pr-council-review`, or a separate slash command that internally invokes the same skill in branch mode?~~ **Resolved by LP-2**: separate slash command (`/gflow:branch-review`), same skill body (extended with mode signaling in the wrapper's prompt body). LP-2 is the canonical decision; this question previously contradicted it (per D2 v1 council audit).
 2. Should the 7 memory drawers replace the existing flat-memory pattern over time, or coexist indefinitely? (Currently: coexist; drawers only for handover state.)
 3. Should `/gflow:assess` block planning if verdict is RED, or just surface findings? **Resolved by §5.8 HARD-GATE**: RED blocks `/gflow:plan` invocation; user can override via explicit re-assess (refine task description, re-run).
 4. **(NEW from survey, §A.2)** Should `/gflow:assess` invoke `gsd:list-phase-assumptions` or `gsd:discuss-phase` as a sub-skill when the repo has a `.planning/` tree, instead of fully reimplementing the gray-area probe? Currently: no — keep `/gflow:assess` task-scoped per §1.1. Revisit if GSD adoption grows in the project.
@@ -363,11 +426,45 @@ Each SKILL.md should explicitly invoke these via `Skill(skill="...")` at the ind
 
 ### A.4 Other items deferred to implementation plan / follow-up
 
+**From the original survey:**
 - Quick-Reference tables per command (mirroring `finishing-a-development-branch` style)
 - `figma:*` MANDATORY-prerequisite block at top of each wrapper
 - Per-dimension language-selection mini-table for sandbox execution (mirror `context-mode`)
 - Orchestrator-stays-lean: sub-agents write `.planning/<dim>-<ts>.md` and return `{verdict, path}` instead of inline reports
 - Drawer rotation extended beyond `drawer-session-log.md` if other drawers prove to grow
+
+**From the v1 spec council audit (2026-05-27, 6 agents) — Tier 2 items the implementation plan MUST address as concrete tasks:**
+
+| Source | Item | Plan task |
+|---|---|---|
+| D3 MF#1 | Define what "probe" means in A5 — exact `ToolSearch` + query algorithm | Concrete probe contract in SKILL.md |
+| D3 MF#2 | Sub-agent cwd + HEAD comparison (orchestrator vs sub-agent context divergence) | `git -C <orchestrator-cwd>` discipline in SKILL.md |
+| D3 MF#4 | Drawer rotation actor (the handover command itself does it pre-append) | Algorithm in SKILL.md: `wc -l` → rename if `current + new > 500` |
+| D3 MF#5 | Status downgrade rules for YELLOW (no-op) and RED (no-op) cases | One-row addition to §5.9 table or SKILL.md |
+| D6 MF#3 | Slug generation algorithm — kebab-case-truncate-40 + HHMMSS suffix on collision | `re.sub` regex in SKILL.md; applies to assess + branch-review + handover filenames |
+| D6 MF#4 | Drawer atomicity contract — `open(..., 'a')`/`open(..., 'x')` semantics | Specified inline in §5.8 HARD-GATE (just done in Tier 1); verify implementation honors |
+| D4 MF#4 | User-visible error message per HARD-GATE | One-line message per gate in SKILL.md table |
+| D2 MF#3 | Dogfooding chicken-egg: first branch-review PR can't run itself | Plan PR #2 notes "skip self-dogfooding; first dogfooding run is on PR #3 (assess)" |
+
+**From the v1 spec council audit — Tier 3 items deferred to follow-up issues / memory:**
+
+| Source | Item | Disposition |
+|---|---|---|
+| D4 MF#1 | PR #3 (assess) effort is 2-3 days not 1 | Plan re-estimates; not a spec edit |
+| D4 MF#2 | Drawer rotation YAGNI for PR #1 | Plan defers rotation to follow-up PR #4 if usage warrants |
+| D5 MF#2 | Severity × action-tier matrix — which combinations valid | Plan clarifies in §5.9 table; not blocking |
+| D6 MF#1 | `.planning/*` not in `.gitignore` (only `.planning/e2e-logs/`) | PR #1 (handover) adds `.planning/*` + `!.planning/.gitkeep`; not a spec edit |
+| D1 NH#1 | §3.1/§3.2 missing explicit "Synthesis" sub-section | Cosmetic; plan adds one sentence per command |
+| D1 NH#2 | §9 LP-6 (No CI/CD) not defended in §1 body | Cosmetic; plan adds one sentence to §1 Out-of-scope at next revision |
+
+**Tier 1 items applied directly to this spec** (this commit):
+- D2 MF#1 — Iron Law rewording (§3.1) — composes with §5.9 status taxonomy
+- D2 MF#2 — §10 Q1 struck-through with LP-2 resolution noted
+- D5 MF#1 — §5.8 HARD-GATEs rewritten as actual XML blocks (not markdown rows)
+- D6 MF#2 — §3.3 drawer auto-load contract (MEMORY.md patching mandatory)
+- D6 MF#5 — §3.2 REVIEWED_SHA drift handling for branch mode
+- D4 MF#5 — §5.1 cross-tool portability clarified as read-only
+- Bonus from D6 NH#6 — §5.8 `HARD-GATE FAILED: <reason>` structural hook for synthesizer + wrapper
 
 ---
 
