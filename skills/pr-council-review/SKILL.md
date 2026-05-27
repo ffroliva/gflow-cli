@@ -1,6 +1,6 @@
 ---
 name: pr-council-review
-description: Multi-dimensional LLM council review of an open PR. Five baseline dimensions (correctness, quality, security, tests, memory-hygiene) plus adaptive dimensions per PR surface (transports / data / CLI / docs / auth / BDD / scripts / release-gate). Each agent invokes specialized skills (security-review, code-review, verify) for its dimension. Reads files via `git show origin/<head>:<path>` to avoid stale-working-tree false positives. Cross-tool portable.
+description: Multi-dimensional LLM council review of an open PR (default) or a local feature branch (§ 8 branch mode, invoked via `/gflow:branch-review`). Five baseline dimensions (correctness, quality, security, tests, memory-hygiene) plus adaptive dimensions per surface (transports / data / CLI / docs / auth / BDD / scripts / release-gate). Each agent invokes specialized skills (security-review, code-review, verify) for its dimension. Reads files via `git show <sha>:<path>` to avoid stale-working-tree false positives. Cross-tool portable.
 ---
 
 # `pr-council-review` — PR Council Review skill
@@ -9,9 +9,10 @@ Council-driven PR review. Dispatches **5 baseline + N adaptive** parallel review
 
 This skill is the canonical body. The Claude Code slash command at `.claude/commands/gflow/pr-council-review.md` is a thin wrapper that invokes this skill. Non-Claude tools (Gemini CLI / Codex / Cursor / Aider) can consume this SKILL.md directly via their own skill loaders.
 
-**Two modes:**
-1. **No argument** → list open PRs ranked by review priority; user picks.
-2. **`PR#` argument** → run the full council on that PR.
+**Three modes:**
+1. **No argument** → list open PRs ranked by review priority; user picks. (See § 1.)
+2. **`PR#` argument** → run the full council on that PR. (See § 2 onward.)
+3. **Branch mode** → run the full council on the current local feature branch (no PR yet). Invoked via the `/gflow:branch-review` wrapper. See § 8 for the PR→branch translation table and pre-flight.
 
 Treat **YELLOW as soft block** (per memory `[[llm-council-data-layer-fixes]]`).
 
@@ -281,3 +282,69 @@ Always end with an `AskUserQuestion`.
 - **Idempotence:** same PR SHA → comparable verdicts on different days. Drift usually means memory grew new precedents or the mandatory-slug table needs an update.
 - **Sibling commands.** `/review` is the single-agent Claude-Code built-in (one-pass, cheap) — use for spot-checks or draft iteration. `/gflow:pr-council-review` is the council version for pre-merge audits and high-risk surfaces.
 - **Cross-tool portability.** This SKILL.md is the canonical body. The Claude Code slash command at `.claude/commands/gflow/pr-council-review.md` is a thin wrapper. Other tools (Gemini CLI / Codex / Cursor / Aider) consume this file directly via their own skill-loading mechanism. See `[[pr-council-review-portability-backlog]]` for the cross-tool playbook.
+
+---
+
+## 8 · Branch Mode (for `/gflow:branch-review`)
+
+Same council, but run against a local feature branch instead of an open PR — pre-PR review. The slash command `/gflow:branch-review` invokes this skill in branch mode.
+
+### Sections replaced in branch mode
+
+- **§ 1 (Prioritize, no-argument mode)** — skipped; branch mode operates on the current branch, no PR list to rank.
+- **§ 2 (Gather context, PR# mode)** — replaced by the translation table below + the branch-mode pre-flight.
+- **§ 0 (Pre-flight)** — steps 1, 3, 4 replaced (see "Pre-flight" subsection below); step 2 (`AGENTS.md` + `CLAUDE.md`) is kept.
+
+All other sections (§ 3 Detect adaptive dimensions, § 4 Dispatch, § 5 Synthesize, § 6 Report, § 7 Provenance) apply unchanged.
+
+### Argument shape
+
+`--base <ref>` — base reference to diff against. Default: `develop`.
+
+### Translation table — PR mode → branch mode
+
+| Step | PR mode | Branch mode |
+|---|---|---|
+| Reviewed SHA | `gh pr view <N> --json headRefOid --jq '.headRefOid'` | `git rev-parse HEAD` |
+| Head branch name | `gh pr view <N> --json headRefName --jq '.headRefName'` | `git branch --show-current` |
+| Diff | `gh pr diff <N>` | `git diff <base>..HEAD` |
+| Changed files | `gh pr view <N> --json files --jq '.files[].path'` | `git diff --name-only <base>..HEAD` |
+| Recent commits | `gh pr view <N> --json commits …` | `git log --oneline <base>..HEAD` |
+| PR metadata (title, body, labels, CI checks) | `gh pr view <N> --json …` | N/A — skip; use `git log <base>..HEAD` for narrative |
+| Output channel | terminal | terminal + optional `.planning/branch-review-<branch>-<ts>.md` (gitignored). **Never** posts to a PR. |
+
+### Pre-flight (replaces § 0 steps 1, 3, 4)
+
+Steps that stay: § 0 step 2 (`AGENTS.md` AND `CLAUDE.md` exist). Step 5 (REVIEWED_SHA capture) is replaced as below.
+
+1. `git rev-parse --is-inside-work-tree` returns true. Otherwise: *"Not in a git repo."*
+2. `current_branch = git branch --show-current`. Must be non-empty AND not `main` AND not `develop`. If empty (detached HEAD) or matches a protected branch, refuse with: *"Branch-review is for feature branches. For a PR, run `/gflow:pr-council-review <N>`. For ad-hoc audit, check out a feature branch first."*
+3. `git diff --quiet <base>..HEAD` — exit code MUST be non-zero (there must be a diff). If exit code is zero (no diff), exit with: *"No commits ahead of `<base>` — nothing to review."*
+4. `REVIEWED_SHA = git rev-parse HEAD` — pin up front and pass to every dispatched agent.
+5. PR-draft check (§ 0 step 4) is skipped — there is no PR yet.
+
+### Sub-agent file reads
+
+Same rule as PR mode (§ 4 mandatory rule 1): read via `git show $REVIEWED_SHA:<path>`. Even though the working tree is ON the reviewed branch, pinning to `REVIEWED_SHA` keeps the verdict stable if the branch moves mid-review.
+
+### `release/*` branch downgrade
+
+If `current_branch` matches `release/*`, D11 (Release-gate compliance) will RED-flag the in-progress CHANGELOG / version bump as expected for a release-in-progress. The synthesizer auto-downgrades D11 **RED → YELLOW** when `git tag --list "v*" --contains HEAD` returns empty (release tag not yet cut). Surface the downgrade in the verdict so users don't chase a false negative. Per memory `[[release-back-merge-gap-recovery]]` + `[[wheel-build-sanity-gate]]`, this downgrade does NOT suppress findings about missing back-merge or skipped wheel-sanity.
+
+### SHA drift at synthesis
+
+At Phase 5 (Synthesize), compare `git rev-parse HEAD` to `REVIEWED_SHA`. If diverged (user committed mid-review, ran `git stash pop`, rebased, etc.), prepend the report with: *"Local HEAD moved during review (was `<X>`, now `<Y>`). Findings apply to `<X>`."* Do NOT silently re-review the new commits.
+
+### Output
+
+- Terminal report identical in shape to PR mode § 6.
+- Optional save to `.planning/branch-review-<branch>-<ts>.md` (path is gitignored per the repo's `.gitignore` for `.planning/`).
+- No `gh pr comment`, no `gh pr review`, no `gh pr merge`. Branch mode is local-only and read-only.
+
+### What does NOT change
+
+Dimension detection (§ 3), memory traversal (§ 2 — same Dimension → Slugs table), agent dispatch (§ 4), synthesis rules (§ 5), and report shape (§ 6). Same baseline D1–D5 + adaptive D6–D13. Same per-dimension specialized-skill mapping. Same false-positive filter and YELLOW soft-block treatment.
+
+### Why a mode, not a sibling skill
+
+Single source of truth. ~90% of the council protocol is shared between PR mode and branch mode; only the input channel (PR vs `git diff`) and the output channel (terminal vs terminal + `.planning/`) differ. A sibling skill would drift over time.
