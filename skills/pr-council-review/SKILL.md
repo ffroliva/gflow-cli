@@ -27,7 +27,7 @@ Treat **YELLOW as soft block** (per memory `[[llm-council-data-layer-fixes]]`).
    - **Empty** → jump to **Phase 1 (Prioritize)**.
    - **PR number** → validate with `gh pr view <N> --json number`. If error → stop with the error verbatim.
 4. **Draft check** (PR# mode only) — if `gh pr view <N> --json isDraft` returns `true`, surface a banner citing memory `[[draft-pr-merge-trap]]`: *"PR #N is DRAFT. Reviewing is fine, but do NOT merge a draft (the merge API can close it + delete the head ref). Run `gh pr ready N` first if you intend to merge. Continue review? (yes/no)"*. Ask the user before dispatching.
-5. **Capture PR head ref + SHA** — `head_branch=$(gh pr view <N> --json headRefName --jq '.headRefName')` and `head_sha=$(gh pr view <N> --json headRefOid --jq '.headRefOid')`. Pass both to every dispatched agent. The local working tree is NOT on the PR head; all file reads must go through `git show origin/$head_branch:<path>`.
+5. **Capture PR head ref + SHA (pin the review)** — `head_branch=$(gh pr view <N> --json headRefName --jq '.headRefName')` and `head_sha=$(gh pr view <N> --json headRefOid --jq '.headRefOid')`. **Pin both to a `REVIEWED_SHA` variable** and pass to every dispatched agent so the council's verdict is anchored to one commit. The local working tree is NOT on the PR head; all file reads must go through `git show $REVIEWED_SHA:<path>` (or `git show origin/$head_branch:<path>` if you fetched first). If the author pushes new commits during the review, the council still reports against `REVIEWED_SHA`; the synthesizer notes any divergence in Phase 5 step 5.
 
 ---
 
@@ -138,12 +138,17 @@ Your dimension is **<DIMENSION NAME>**. Other agents handle <other dimensions> �
 **PR head branch:** `<head_branch>` (head SHA: `<head_sha>`).
 **Base branch:** `<base_branch>`.
 
-**🚨 CRITICAL — file reading rule (v2 stale-tree-reads fix):**
-The orchestrator's working tree is on `<base_branch>` (typically `develop`), NOT the PR head. If you `Read` a file in `C:\development\github\gflow-cli\`, you get the PRE-PR copy and will produce FALSE POSITIVES like "file X doesn't exist" or "claim Y not applied" when in fact X and Y are present on the PR head. To inspect a file as it WILL look post-merge, ALWAYS use:
+**🚨 CRITICAL — file reading + verification rules (v2 stale-tree-reads fix + v2.1 verify-before-claim):**
 
-  ctx_execute(language="shell", code="git show origin/<head_branch>:<path>")
+The orchestrator's working tree is on `<base_branch>` (typically `develop`), NOT the PR head. If you `Read` a file in `C:\development\github\gflow-cli\`, you get the PRE-PR copy and will produce FALSE POSITIVES like "file X doesn't exist" or "claim Y not applied" when in fact X and Y are present on the PR head.
 
-For the diff itself, use `gh pr diff <N>` via ctx_execute. For PR metadata, use `gh pr view <N> --json ...`. Only use `Read` if you have explicitly verified you are on the PR head branch via `git branch --show-current`.
+**Mandatory rules:**
+
+1. **For file inspection** — ALWAYS use `ctx_execute(language="shell", code="git show <REVIEWED_SHA>:<path>")` (or `git show origin/<head_branch>:<path>`). For the diff itself, `gh pr diff <N>`. For metadata, `gh pr view <N> --json ...`. NEVER use `Read` on a repo file unless you have verified `git branch --show-current` returns `<head_branch>`.
+
+2. **Verify-before-claim — applies to BEHAVIOR claims, not just file existence (v2.1 NEW):** any "feature/setting/marker/env-var is NOT present" or "is missing" or "is wrong" claim MUST be backed by an explicit `git show <REVIEWED_SHA>:<path> | grep <expected>` (or equivalent) that you ran. Quote the exact command + its output in your report. Do NOT rely on memory or summary; the v2 council had a real false-negative where D5 claimed "PR doesn't add addopts filter" because the agent assumed-not-verified — the addopts WAS added but the agent never ran `git show <SHA>:pyproject.toml`. Treat your own claims like a code reviewer: would this assertion survive a hostile re-review? If yes, ship it; if uncertain, re-verify.
+
+3. **SHA pinning verification (v2.1 NEW):** before reporting findings, run `git rev-parse $REVIEWED_SHA` (or `git ls-remote origin <head_branch>`) and confirm your reads were against `<REVIEWED_SHA>`. If the author has pushed new commits during your dispatch, your findings still apply to `<REVIEWED_SHA>` — the synthesizer will note any divergence at Phase 5 step 5.
 
 **Specialized skill (if listed for your dimension):** before deep analysis, invoke the Skill tool for `<skill_name>` to load specialized review guidance. Apply that skill's checklists in addition to the dimension-specific questions below.
 
@@ -190,12 +195,14 @@ If you are NOT sure a finding is real because it depends on file content, VERIFY
 - **D4 Tests:**
   - **Mandatory affected-surface check:** identify the runtime surface (T2V / I2V / data / CLI / auth / etc.). If the suite doesn't exercise that exact surface → **automatically YELLOW**. Cite the test file:line proving coverage, or state explicitly no such test exists.
   - Test pyramid placement? Behavior vs shape? Coverage delta meaningful vs dead?
-- **D5 Memory hygiene & consolidation (NEW v2):**
-  - Inspect `~/.claude/projects/C--development-github-gflow-cli/memory/` (or the per-user equivalent if mempalace / mem0 / other MCP memory servers are available — probe with the relevant tool to enumerate).
+- **D5 Memory hygiene & consolidation (NEW v2, refined v2.1):**
+  - Inspect `~/.claude/projects/C--development-github-gflow-cli/memory/` (file-based memory — primary source).
+  - **Concrete MCP memory-server probe (v2.1):** in the current session, look at the tool list for any tool whose name matches `mcp__*memory*`, `mcp__*mempalace*`, `mcp__*mem0*`, `mcp__*context-mode*` (for indexed KB), or any tool the user explicitly mentioned. If found, invoke its "list" / "search" / "stats" tool to enumerate stored items. If no such tool is loaded in-session, state explicitly "no MCP memory server loaded; D5 scope = file-based memory only".
   - For each memory entry potentially relevant to the PR's surface: does the PR's content CONTRADICT or SUPERSEDE it? If so, the PR must include a memory edit/delete in the same change. Flag missing edits.
   - Does the PR introduce a new durable pattern / failure mode / decision that should be captured as a NEW memory entry? Flag missing additions.
   - Is `MEMORY.md` index still in sync (entries listed correspond to existing files)? Flag drift.
-  - Per `[[release-spec-plan-memory-consolidation]]`: any spec/plan in `docs/superpowers/` or `.planning/` that's now post-ship should be deleted on merge, with durable bits extracted to memory.
+  - Per `[[release-spec-plan-memory-consolidation]]`: any spec/plan in `docs/superpowers/` or `.planning/` that's now post-ship should be deleted on merge, with durable bits extracted to memory. **When D5 fires RED on consolidation, D9 (Docs drift) defers to D5 — do not double-list the same plan-file finding in both dimensions.**
+  - **Verify-before-claim discipline applies here too (v2.1):** any "this memory entry is missing X" or "this PR doesn't update memory Y" claim must cite the exact memory file you read (`git show` or filesystem `cat`) and the line range. The v2 run had a real false-claim here.
 - **D6 UI/live-verify:** selector matches real DOM on non-EN? Runtime evidence beyond static-string invariants? Live-verify evidence (file count + magic bytes + Pillow dims + structlog events: `new_project_clicked`/`submit_clicked`/`frame_attached`/`image_mode_entered`/`count_setter_completed`/`reference_attached`) in PR body? Absent → YELLOW per `[[pr-must-verify-on-affected-surface]]`.
 - **D7 Data-migration:** on_started callback safety (every callsite wrapped in `try/except DataStoreError` — bare callback in paid-generation path = RED). Schema compat. Migration idempotent. `DataStoreError` vs `DataMigrationError` vs `DataIntegrityError` semantics.
 - **D8 CLI UX:** help text matches? Flag names `--kebab-case`? `--help` golden-snapshot tests updated? Docstring examples runnable?
@@ -216,7 +223,10 @@ If you are NOT sure a finding is real because it depends on file content, VERIFY
    - Any YELLOW → **YELLOW** (soft block per `[[llm-council-data-layer-fixes]]`).
    - All GREEN → **GREEN** (mergeable).
 4. **Deduplicate must-fix AND confirmed-good** — same finding from two dimensions = list once + credit both.
-5. **False-positive filter (NEW v2):** before reporting, spot-check 2-3 file-state claims via `git show origin/<head>:<path>`. If any agent claim contradicts the PR head, mark it FALSE POSITIVE in the report — do not silently drop, so the council's accuracy is auditable.
+5. **False-positive filter + SHA divergence check (NEW v2, refined v2.1):**
+   - **Spot-check 2-3 file-state claims** via `git show <REVIEWED_SHA>:<path>` (NOT `git show origin/<head>:<path>` — the remote may have moved since dispatch). If any agent claim contradicts `<REVIEWED_SHA>`, mark it FALSE POSITIVE in the report — do not silently drop, so accuracy is auditable.
+   - **Also spot-check 1-2 BEHAVIOR/content claims** (v2.1) — e.g. "marker X isn't registered", "addopts doesn't have Y". Same `git show` verification. The v2 council had a real false-claim here from D5 (assumed-not-verified).
+   - **SHA divergence note:** check `gh pr view <N> --json headRefOid --jq '.headRefOid'`. If the current head differs from `<REVIEWED_SHA>`, note this prominently in the report: *"Author pushed N new commits during the review. This verdict reports against `<REVIEWED_SHA>`; the new commits may have resolved findings (re-run the council to confirm)."* Do NOT try to re-review the new commits silently.
 6. **Live-verify gate** (D6 fired + PR body has unchecked live-verify boxes): explicit `AskUserQuestion` with three options — *Run now (~1 Flow credit per locale)*, *Block merge — add to PR body as required reviewer action*, *Skip and accept risk*. Cite `[[verification-ledger-5-layer]]`. Do NOT spend credits without affirmative click.
 7. **Memory-action gate** (D5 fired with must-fix items): explicit `AskUserQuestion` offering to APPLY the memory edits/additions/deletions in the same PR or as a follow-up.
 8. **YELLOW escape valve:** the Phase 6 `AskUserQuestion` MUST include a *"Dismiss YELLOW with justification (logged)"* option. Dismissal requires a one-line reason appended to the PR body or comment, so the override is auditable.
