@@ -359,6 +359,75 @@ def _make_i2i_client(
     return client
 
 
+class TestImageJsonOutput:
+    def test_t2i_json_emits_clean_machine_readable_result(
+        self, runner: CliRunner, tmp_path: Path
+    ) -> None:
+        import json as _json
+
+        client = _make_t2i_client(images=[_make_generated_image(media_name="m1")])
+        out_dir = tmp_path / "out"
+        with (
+            patch("gflow_cli.cli_image.FlowApiClient", return_value=client),
+            patch("gflow_cli.cli_image._make_provider_dir", return_value=tmp_path / "prof"),
+            patch("gflow_cli.cli_image._resolve_profile", return_value="default"),
+        ):
+            from gflow_cli.cli import main
+
+            result = runner.invoke(
+                main,
+                ["image", "t2i", "a cat", "--json", "--out", str(out_dir)],
+                catch_exceptions=False,
+            )
+
+        assert result.exit_code == 0, result.output
+        # Output must be pure JSON — progress chatter is suppressed under --json,
+        # so json.loads succeeding is itself the assertion that nothing leaked.
+        data = _json.loads(result.output)
+        assert data["status"] == "ok"
+        assert data["command"] == "image t2i"
+        assert data["count"] == 1
+        assert data["images"][0]["media_name"] == "m1"
+        assert data["images"][0]["local_path"].endswith("m1_1.png")
+
+    def test_t2i_json_rejects_multi_prompt(self, runner: CliRunner) -> None:
+        from gflow_cli.cli import main
+
+        result = runner.invoke(
+            main,
+            ["image", "t2i", "first", "second", "--json"],
+            catch_exceptions=False,
+        )
+
+        assert result.exit_code == 2, result.output
+        assert "single-prompt" in result.output
+
+    def test_i2i_json_includes_ref_count(self, runner: CliRunner, tmp_path: Path) -> None:
+        import json as _json
+
+        client = _make_t2i_client(images=[_make_generated_image(media_name="m1")])
+        out_dir = tmp_path / "out"
+        uuid = "11111111-1111-1111-1111-111111111111"
+        with (
+            patch("gflow_cli.cli_image.FlowApiClient", return_value=client),
+            patch("gflow_cli.cli_image._make_provider_dir", return_value=tmp_path / "prof"),
+            patch("gflow_cli.cli_image._resolve_profile", return_value="default"),
+        ):
+            from gflow_cli.cli import main
+
+            result = runner.invoke(
+                main,
+                ["image", "i2i", "stylize", "--ref", uuid, "--json", "--out", str(out_dir)],
+                catch_exceptions=False,
+            )
+
+        assert result.exit_code == 0, result.output
+        data = _json.loads(result.output)
+        assert data["command"] == "image i2i"
+        assert data["ref_count"] == 1
+        assert data["images"][0]["media_name"] == "m1"
+
+
 class TestImageI2I:
     def test_i2i_attaches_local_ref_paths(self, runner: CliRunner, tmp_path: Path) -> None:
         """Local --ref path lands on req.ref_paths for UI media-dialog attach —

@@ -24,6 +24,7 @@ import structlog
 from rich.console import Console
 from rich.table import Table
 
+from gflow_cli import json_output
 from gflow_cli._cli_helpers import (
     _make_provider_dir,
     _resolve_profile,
@@ -345,6 +346,12 @@ async def _run_upload(
         "GFLOW_CLI_EXPERIMENTAL_TRANSPORTS=1 to enable evaluate_fetch/bearer/sapisidhash."
     ),
 )
+@click.option(
+    "--json",
+    "as_json",
+    is_flag=True,
+    help="Emit a machine-readable JSON result instead of a Rich table.",
+)
 def t2i(
     prompts: tuple[str, ...],
     prompts_file: Path | None,
@@ -356,10 +363,16 @@ def t2i(
     out: Path | None,
     profile: str | None,
     transport: str | None,
+    as_json: bool,
 ) -> None:
     """Generate image(s) from one or more text prompts."""
     is_multi_prompt = len(prompts) > 1 or prompts_file is not None or read_stdin
     _validate_t2i_input(prompts, prompts_file, read_stdin)
+
+    if is_multi_prompt and as_json:
+        # --json is single-prompt only — the batch summary shape is rich-table
+        # specific and a worker shells out one prompt at a time anyway.
+        raise click.UsageError("--json is single-prompt only; remove the extra prompts.")
 
     if not is_multi_prompt:
         if not prompts:
@@ -384,8 +397,10 @@ def t2i(
                 out=out,
                 output_root=settings.output_dir,
                 transport=transport,
+                as_json=as_json,
             ),
             cli_command="image t2i",
+            as_json=as_json,
         )
         return
 
@@ -515,6 +530,7 @@ async def _run_t2i(
     out: Path | None,
     output_root: Path,
     transport: str | None = None,
+    as_json: bool = False,
 ) -> None:
     settings = get_settings()
     recorder = OperationRecorder.open(settings)
@@ -522,14 +538,16 @@ async def _run_t2i(
         async with FlowApiClient(
             profile_dir=profile_dir, headless=headless, transport=transport
         ) as client:
-            console.print(_CREATING_PROJECT_MSG)
+            if not as_json:
+                console.print(_CREATING_PROJECT_MSG)
             # Title is a `gflow-cli ...` prefix per project convention (post-rename a02684f).
             # cli_video.py's _run_t2v / _run_i2v don't currently set a title — tracked separately.
             project = await client.create_project(title=_T2I_PROJECT_TITLE)
-            console.print(f"  Project: [dim]{project.project_id}[/dim]")
-            console.print(
-                f"  Generating {count} image(s) ({req.model.value}, {req.aspect.value})..."
-            )
+            if not as_json:
+                console.print(f"  Project: [dim]{project.project_id}[/dim]")
+                console.print(
+                    f"  Generating {count} image(s) ({req.model.value}, {req.aspect.value})..."
+                )
             if count == 1:
                 img = await client.generate_image(project_id=project.project_id, req=req)
                 images: list[GeneratedImage] = [img]
@@ -548,7 +566,18 @@ async def _run_t2i(
                 saved = await client.download_image(img, target)
                 saved_paths.append(saved)
 
-            _print_t2i_summary(images, saved_paths)
+            if as_json:
+                json_output.emit(
+                    json_output.image_result(
+                        command="image t2i",
+                        project_id=project.project_id,
+                        model=req.model.value,
+                        images=images,
+                        saved_paths=saved_paths,
+                    )
+                )
+            else:
+                _print_t2i_summary(images, saved_paths)
 
             try:
                 recorder.record_generated_images(
@@ -803,6 +832,12 @@ def batch(
         "GFLOW_CLI_EXPERIMENTAL_TRANSPORTS=1 to enable evaluate_fetch/bearer/sapisidhash."
     ),
 )
+@click.option(
+    "--json",
+    "as_json",
+    is_flag=True,
+    help="Emit a machine-readable JSON result instead of a Rich table.",
+)
 def i2i(
     prompt: str,
     refs: tuple[str, ...],
@@ -812,6 +847,7 @@ def i2i(
     out: Path | None,
     profile: str | None,
     transport: str | None,
+    as_json: bool,
 ) -> None:
     """Generate image(s) from PROMPT + reference image(s) (image-to-image)."""
     # Classify each --ref upfront: UUIDs become ImageRef, path-likes become
@@ -847,8 +883,10 @@ def i2i(
             out=out,
             output_root=settings.output_dir,
             transport=transport,
+            as_json=as_json,
         ),
         cli_command="image i2i",
+        as_json=as_json,
     )
 
 
@@ -865,6 +903,7 @@ async def _run_i2i(
     out: Path | None,
     output_root: Path,
     transport: str | None = None,
+    as_json: bool = False,
 ) -> None:
     settings = get_settings()
     recorder = OperationRecorder.open(settings)
@@ -872,11 +911,13 @@ async def _run_i2i(
         async with FlowApiClient(
             profile_dir=profile_dir, headless=headless, transport=transport
         ) as client:
-            console.print(_CREATING_PROJECT_MSG)
+            if not as_json:
+                console.print(_CREATING_PROJECT_MSG)
             # Title is a `gflow-cli ...` prefix per project convention (post-rename a02684f).
             # cli_video.py's _run_t2v / _run_i2v don't currently set a title — tracked separately.
             project = await client.create_project(title="gflow-cli i2i")
-            console.print(f"  Project: [dim]{project.project_id}[/dim]")
+            if not as_json:
+                console.print(f"  Project: [dim]{project.project_id}[/dim]")
 
             # Local-file refs are attached through the editor's media dialog by the
             # ui_automation transport (the REST uploadImage path 401s — see #15/#39).
@@ -893,10 +934,11 @@ async def _run_i2i(
             )
 
             n_refs = len(uuid_refs) + len(local_ref_paths)
-            console.print(
-                f"  Generating {count} image(s) with {n_refs} ref(s) "
-                f"({req.model.value}, {req.aspect.value})..."
-            )
+            if not as_json:
+                console.print(
+                    f"  Generating {count} image(s) with {n_refs} ref(s) "
+                    f"({req.model.value}, {req.aspect.value})..."
+                )
             if count == 1:
                 img = await client.generate_image(project_id=project.project_id, req=req)
                 images: list[GeneratedImage] = [img]
@@ -915,7 +957,19 @@ async def _run_i2i(
                 saved = await client.download_image(img, target)
                 saved_paths.append(saved)
 
-            _print_i2i_summary(images, saved_paths)
+            if as_json:
+                json_output.emit(
+                    json_output.image_result(
+                        command="image i2i",
+                        project_id=project.project_id,
+                        model=req.model.value,
+                        images=images,
+                        saved_paths=saved_paths,
+                        ref_count=n_refs,
+                    )
+                )
+            else:
+                _print_i2i_summary(images, saved_paths)
 
             try:
                 recorder.record_generated_images(
