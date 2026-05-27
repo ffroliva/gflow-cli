@@ -13,6 +13,7 @@ import click
 import structlog
 from rich.console import Console
 
+from gflow_cli import json_output
 from gflow_cli._cli_helpers import (
     _make_provider_dir,
     _resolve_profile,
@@ -53,13 +54,21 @@ async def _generate_and_report(
     profile_name: str,
     profile_dir: Path,
     out_dir: Path | None,
+    command: str = "video",
+    as_json: bool = False,
 ) -> None:
     """Drive FlowApiClient for a single GenerateVideoRequest and print the
-    result (or fail with a non-zero exit). Shared by t2v, i2v, and r2v."""
+    result (or fail with a non-zero exit). Shared by t2v, i2v, and r2v.
+
+    With ``as_json`` the result is emitted as a JSON object (carrying the same
+    ok/fail status as the exit code) instead of the Rich lines; a failed
+    generation still emits its JSON payload and then exits 1.
+    """
     from gflow_cli.api.client import FlowApiClient
     from gflow_cli.api.video import VideoStarted
 
-    console.print("[dim]Generating video — this takes ~2 minutes…[/dim]")
+    if not as_json:
+        console.print("[dim]Generating video — this takes ~2 minutes…[/dim]")
     settings = get_settings()
     recorder = OperationRecorder.open(settings)
     try:
@@ -103,6 +112,12 @@ async def _generate_and_report(
     finally:
         recorder.close()
 
+    if as_json:
+        json_output.emit(json_output.video_result(command=command, request=request, result=result))
+        if not result.status.succeeded:
+            raise SystemExit(1)
+        return
+
     if not result.status.succeeded:
         reasons = (
             ", ".join(result.status.failure_reasons)
@@ -125,6 +140,7 @@ async def _run_t2v(
     model: str | None = None,
     duration: int | None = None,
     count: int = 1,
+    as_json: bool = False,
 ) -> None:
     from gflow_cli.api.video import Aspect, GenerateVideoRequest, Mode, VideoModel
 
@@ -137,7 +153,12 @@ async def _run_t2v(
         count=count,
     )
     await _generate_and_report(
-        request, profile_name=profile_name, profile_dir=profile_dir, out_dir=out_dir
+        request,
+        profile_name=profile_name,
+        profile_dir=profile_dir,
+        out_dir=out_dir,
+        command="video t2v",
+        as_json=as_json,
     )
 
 
@@ -153,6 +174,7 @@ async def _run_i2v(
     model: str | None = None,
     duration: int | None = None,
     count: int = 1,
+    as_json: bool = False,
 ) -> None:
     from gflow_cli.api.video import Aspect, GenerateVideoRequest, Mode, VideoModel
 
@@ -167,7 +189,12 @@ async def _run_i2v(
         end_image=Path(end_image) if end_image else None,
     )
     await _generate_and_report(
-        request, profile_name=profile_name, profile_dir=profile_dir, out_dir=out_dir
+        request,
+        profile_name=profile_name,
+        profile_dir=profile_dir,
+        out_dir=out_dir,
+        command="video i2v",
+        as_json=as_json,
     )
 
 
@@ -182,6 +209,7 @@ async def _run_r2v(
     model: str | None = None,
     duration: int | None = None,
     count: int = 1,
+    as_json: bool = False,
 ) -> None:
     from gflow_cli.api.video import Aspect, GenerateVideoRequest, Mode, VideoModel
 
@@ -195,7 +223,12 @@ async def _run_r2v(
         reference_images=tuple(Path(r) for r in refs),
     )
     await _generate_and_report(
-        request, profile_name=profile_name, profile_dir=profile_dir, out_dir=out_dir
+        request,
+        profile_name=profile_name,
+        profile_dir=profile_dir,
+        out_dir=out_dir,
+        command="video r2v",
+        as_json=as_json,
     )
 
 
@@ -256,6 +289,12 @@ def video() -> None:
     type=click.Path(file_okay=False, path_type=Path),
     help="Directory to save the generated mp4. Defaults to tmp/.",
 )
+@click.option(
+    "--json",
+    "as_json",
+    is_flag=True,
+    help="Emit a machine-readable JSON result instead of Rich output.",
+)
 def t2v(
     prompt: str,
     aspect: str,
@@ -264,6 +303,7 @@ def t2v(
     count: int,
     profile: str | None,
     out_dir: Path | None,
+    as_json: bool,
 ) -> None:
     """Generate a video from PROMPT."""
     profile_name = _resolve_profile(profile)
@@ -278,8 +318,10 @@ def t2v(
             model=model,
             duration=int(duration) if duration is not None else None,
             count=count,
+            as_json=as_json,
         ),
         cli_command="video t2v",
+        as_json=as_json,
     )
 
 
@@ -338,6 +380,12 @@ def t2v(
     type=click.Path(file_okay=False, path_type=Path),
     help="Directory to save the generated mp4. Defaults to tmp/.",
 )
+@click.option(
+    "--json",
+    "as_json",
+    is_flag=True,
+    help="Emit a machine-readable JSON result instead of Rich output.",
+)
 def i2v(
     image: str,
     prompt: str,
@@ -348,6 +396,7 @@ def i2v(
     count: int,
     profile: str | None,
     out_dir: Path | None,
+    as_json: bool,
 ) -> None:
     """Generate a video from a start IMAGE + motion PROMPT."""
     profile_name = _resolve_profile(profile)
@@ -364,8 +413,10 @@ def i2v(
             duration=int(duration) if duration is not None else None,
             count=count,
             out_dir=out_dir,
+            as_json=as_json,
         ),
         cli_command="video i2v",
+        as_json=as_json,
     )
 
 
@@ -429,6 +480,12 @@ def i2v(
     type=click.Path(file_okay=False, path_type=Path),
     help="Directory to save the generated mp4. Defaults to tmp/.",
 )
+@click.option(
+    "--json",
+    "as_json",
+    is_flag=True,
+    help="Emit a machine-readable JSON result instead of Rich output.",
+)
 def r2v(
     prompt: str,
     refs: tuple[str, ...],
@@ -438,6 +495,7 @@ def r2v(
     count: int,
     profile: str | None,
     out_dir: Path | None,
+    as_json: bool,
 ) -> None:
     """Generate a video from reference images (--ref) + PROMPT."""
     # Reject over-cap ref counts (and the unsupported model+R2V combo) at the
@@ -469,8 +527,10 @@ def r2v(
             duration=int(duration) if duration is not None else None,
             count=count,
             out_dir=out_dir,
+            as_json=as_json,
         ),
         cli_command="video r2v",
+        as_json=as_json,
     )
 
 
