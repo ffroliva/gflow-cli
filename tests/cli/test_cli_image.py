@@ -122,6 +122,28 @@ class TestImageUpload:
         assert str(missing) in result.output or "does not exist" in result.output.lower()
 
 
+class TestI2iRefCap:
+    def test_i2i_rejects_over_cap_refs(self, runner: CliRunner) -> None:
+        # imagen4 caps at 3 refs; 4 UUID refs must be rejected at the CLI
+        # boundary (exit 2) before any profile/network work. UUIDs are used so
+        # _classify_ref treats them as assets and doesn't stat a local file.
+        uuids = [
+            "11111111-1111-1111-1111-111111111111",
+            "22222222-2222-2222-2222-222222222222",
+            "33333333-3333-3333-3333-333333333333",
+            "44444444-4444-4444-4444-444444444444",
+        ]
+        from gflow_cli.cli import main
+
+        args = ["image", "i2i", "stylize", "--model", "imagen4"]
+        for u in uuids:
+            args += ["--ref", u]
+        result = runner.invoke(main, args, catch_exceptions=False)
+
+        assert result.exit_code == 2, result.output
+        assert "at most 3" in result.output
+
+
 # ---------------------------------------------------------------------------
 # t2i subcommand
 # ---------------------------------------------------------------------------
