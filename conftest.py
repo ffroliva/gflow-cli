@@ -36,9 +36,9 @@ def pytest_collection_modifyitems(items: list[pytest.Item]) -> None:
     are still preferred and will be the canonical record.
     """
     for item in items:
-        path_str = str(item.fspath)
+        parts = item.path.parts
         marker_names = {m.name for m in item.iter_markers()}
-        if "/tests/e2e/" in path_str and "e2e" not in marker_names:
+        if "e2e" in parts and "tests" in parts and "e2e" not in marker_names:
             item.add_marker(pytest.mark.e2e)
-        if "/tests/smoke/" in path_str and "smoke" not in marker_names:
+        if "smoke" in parts and "tests" in parts and "smoke" not in marker_names:
             item.add_marker(pytest.mark.smoke)

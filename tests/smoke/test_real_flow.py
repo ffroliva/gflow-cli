@@ -99,9 +99,7 @@ async def test_ui_automation_ships_one_image(
     )
 
     mode_events = [
-        e
-        for e in install_log_capture.entries
-        if e["event"] == "ui_automation.image_mode_entered"
+        e for e in install_log_capture.entries if e["event"] == "ui_automation.image_mode_entered"
     ]
     assert mode_events, (
         "Expected at least one 'ui_automation.image_mode_entered' structlog event; "

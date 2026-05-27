@@ -21,7 +21,7 @@ Doc:  ``docs/DATA_LAYER.md``
 # Opt-in gates
 
   - ``GFLOW_CLI_E2E_PROFILE``    master gate; Chrome-strategy profile name
-  - ``GFLOW_CLI_E2E_RUN_VIDEO``  default "1"; set to "0" to skip the Veo step
+  - ``GFLOW_CLI_E2E_RUN_VIDEO``  default "0"; set to "1" to run the Veo step
                                   (only spends an Imagen credit then)
 
 # Spending
