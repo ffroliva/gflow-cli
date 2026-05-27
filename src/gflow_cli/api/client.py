@@ -606,7 +606,14 @@ class FlowApiClient:
         if resp.status >= 400:
             _raise_for_non_retryable(resp, await resp.text(), route=route)
         out_path.write_bytes(await resp.body())
-        return out_path
+        # Flow's fife CDN may return JPEG bytes for an image whose target
+        # path is ``.png`` (issue #96). Rename in-place to match the actual
+        # format so downstream tools (and `gflow data list`) see the right
+        # extension. Returns the original path unchanged when format is
+        # already correct or unrecognised.
+        from gflow_cli.paths import correct_image_extension
+
+        return correct_image_extension(out_path)
 
     async def download_video(self, media_id: str, out_path: Path) -> Path:
         """Download a generated video by media ID to disk.
