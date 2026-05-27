@@ -18,6 +18,7 @@ from gflow_cli._cli_helpers import (
     _resolve_profile,
     run_with_handlers,
 )
+from gflow_cli.api.video import VideoModel, reference_cap_for
 from gflow_cli.config import get_settings
 from gflow_cli.data.recorder import OperationRecorder
 from gflow_cli.errors import DataStoreError
@@ -372,12 +373,14 @@ def i2v(
     "r2v",
     short_help="Generate a video from reference images + prompt (ingredients).",
     help=(
-        "Reference-to-video: condition a generation on 1-3 reference images "
-        "(Flow's 'ingredients' / Elementos).\n\n"
+        "Reference-to-video: condition a generation on reference images "
+        "(Flow's 'ingredients' / Elementos). Per-model cap: omni-flash accepts "
+        "up to 7, veo-lite/veo-fast/veo-lite-lp accept up to 3, veo-quality "
+        "does not support R2V at all.\n\n"
         "\b\n"
         "Examples:\n"
-        '  gflow video r2v "a knight in this armor walks forward" --ref armor.png\n'
-        '  gflow video r2v "they meet" --ref a.png --ref b.png --aspect 16:9\n'
+        '  gflow video r2v "knight walks forward" --ref armor.png --model omni-flash\n'
+        '  gflow video r2v "they meet" --ref a.png --ref b.png --model veo-fast\n'
     ),
 )
 @click.argument("prompt")
@@ -387,7 +390,10 @@ def i2v(
     multiple=True,
     required=True,
     type=click.Path(exists=True, dir_okay=False, path_type=str),
-    help="Reference image (repeat for up to 3).",
+    help=(
+        "Reference image (repeat per ref). Per-model cap enforced by --model: "
+        "omni-flash=7, veo-lite/veo-fast/veo-lite-lp=3, veo-quality rejects R2V."
+    ),
 )
 @click.option(
     "--aspect",
@@ -434,6 +440,22 @@ def r2v(
     out_dir: Path | None,
 ) -> None:
     """Generate a video from reference images (--ref) + PROMPT."""
+    # Reject over-cap ref counts (and the unsupported model+R2V combo) at the
+    # CLI boundary with a clear message (exit 2) rather than letting the domain
+    # ValueError surface as a generic error. GenerateVideoRequest.__post_init__
+    # enforces the same caps as an invariant. Mirrors the i2i pattern.
+    if model is not None:
+        model_enum = VideoModel.from_cli(model)
+        assert model_enum is not None  # narrows for type-checkers; from_cli only
+        # returns None for input None — we just guarded against that.
+        cap = reference_cap_for(model_enum)
+        if cap == 0:
+            raise click.UsageError(f"{model} does not support R2V (reference-to-video).")
+        if len(refs) > cap:
+            raise click.UsageError(
+                f"{model} allows at most {cap} reference image(s); got {len(refs)}."
+            )
+
     profile_name = _resolve_profile(profile)
     provider_dir = _make_provider_dir(profile_name)
     run_with_handlers(

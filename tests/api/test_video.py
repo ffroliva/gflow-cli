@@ -19,6 +19,7 @@ from gflow_cli.api.video import (
     media_name_from_generate_response,
     operation_name_from_generate_response,
     parse_video_status,
+    reference_cap_for,
 )
 
 
@@ -147,19 +148,54 @@ class TestGenerateVideoRequest:
             GenerateVideoRequest(prompt="x", mode=Mode.R2V, reference_images=too_many)
 
     def test_per_model_reference_cap(self) -> None:
+        refs1 = (Path("r0.png"),)
+        refs3 = tuple(Path(f"r{i}.png") for i in range(3))
+        refs4 = tuple(Path(f"r{i}.png") for i in range(4))
         refs5 = tuple(Path(f"r{i}.png") for i in range(5))
         refs7 = tuple(Path(f"r{i}.png") for i in range(7))
-        # veo caps at 3 -> 5 refs rejected
-        with pytest.raises(ValueError, match="at most 3 reference"):
+        refs8 = tuple(Path(f"r{i}.png") for i in range(8))
+
+        # Veo lite/fast/lite_lp cap at 3 -> 4 refs rejected, 3 refs accepted.
+        for veo3 in (
+            VideoModel.VEO_3_1_LITE,
+            VideoModel.VEO_3_1_FAST,
+            VideoModel.VEO_3_1_LITE_LOWER_PRIORITY,
+        ):
+            with pytest.raises(ValueError, match="at most 3 reference image"):
+                GenerateVideoRequest(prompt="x", mode=Mode.R2V, model=veo3, reference_images=refs4)
+            # exactly at cap is fine
+            GenerateVideoRequest(prompt="x", mode=Mode.R2V, model=veo3, reference_images=refs3)
+
+        # Veo 3.1 Quality does NOT support R2V at all (cap=0) — any ref count rejected.
+        with pytest.raises(ValueError, match="does not support R2V"):
             GenerateVideoRequest(
-                prompt="x", mode=Mode.R2V, model=VideoModel.VEO_3_1_FAST, reference_images=refs5
+                prompt="x",
+                mode=Mode.R2V,
+                model=VideoModel.VEO_3_1_QUALITY,
+                reference_images=refs1,
             )
-        # omni_flash allows 7
+
+        # omni_flash allows 7; 8 rejected (via the absolute ceiling), 7 accepted.
+        with pytest.raises(ValueError, match="at most 7 reference images"):
+            GenerateVideoRequest(
+                prompt="x",
+                mode=Mode.R2V,
+                model=VideoModel.OMNI_FLASH,
+                reference_images=refs8,
+            )
         GenerateVideoRequest(
             prompt="x", mode=Mode.R2V, model=VideoModel.OMNI_FLASH, reference_images=refs7
         )
-        # model None -> only the absolute ceiling (7) applies; 5 is fine
+
+        # model None -> only the absolute ceiling (7) applies; 5 is fine.
         GenerateVideoRequest(prompt="x", mode=Mode.R2V, reference_images=refs5)
+
+    def test_reference_cap_for_helper(self) -> None:
+        assert reference_cap_for(VideoModel.OMNI_FLASH) == 7
+        assert reference_cap_for(VideoModel.VEO_3_1_LITE) == 3
+        assert reference_cap_for(VideoModel.VEO_3_1_FAST) == 3
+        assert reference_cap_for(VideoModel.VEO_3_1_LITE_LOWER_PRIORITY) == 3
+        assert reference_cap_for(VideoModel.VEO_3_1_QUALITY) == 0
 
     def test_seed_range_enforced(self) -> None:
         with pytest.raises(ValueError, match="seed out of range"):
