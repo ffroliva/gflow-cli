@@ -98,6 +98,17 @@ async def test_ui_automation_ships_one_image(
         f"File at {saved} does not start with PNG magic bytes."
     )
 
+    # Verification-ledger layer 3: Pillow dimensions. Aspect.PORTRAIT (9:16)
+    # produces a taller-than-wide image; this catches a regression where the
+    # transport silently routes through a different aspect endpoint.
+    from PIL import Image
+
+    with Image.open(saved) as im:
+        width, height = im.size
+    assert height > width, (
+        f"Expected portrait image (height > width) for Aspect.PORTRAIT; got {width}x{height}."
+    )
+
     mode_events = [
         e for e in install_log_capture.entries if e["event"] == "ui_automation.image_mode_entered"
     ]

@@ -75,5 +75,6 @@ def install_log_capture() -> structlog.testing.LogCapture:
     cap = structlog.testing.LogCapture()
     structlog.configure(
         processors=[structlog.contextvars.merge_contextvars, cap],
+        cache_logger_on_first_use=False,
     )
     return cap

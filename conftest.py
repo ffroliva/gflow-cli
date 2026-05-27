@@ -37,8 +37,12 @@ def pytest_collection_modifyitems(items: list[pytest.Item]) -> None:
     """
     for item in items:
         parts = item.path.parts
+        # Adjacent-pair check: matches `.../tests/e2e/...` or `.../tests/smoke/...`
+        # at any nesting depth. Prevents the false-positive a substring check
+        # would have on a hypothetical `tests/api/e2e_helpers/test_x.py`.
+        adjacent = set(zip(parts, parts[1:]))
         marker_names = {m.name for m in item.iter_markers()}
-        if "e2e" in parts and "tests" in parts and "e2e" not in marker_names:
+        if ("tests", "e2e") in adjacent and "e2e" not in marker_names:
             item.add_marker(pytest.mark.e2e)
-        if "smoke" in parts and "tests" in parts and "smoke" not in marker_names:
+        if ("tests", "smoke") in adjacent and "smoke" not in marker_names:
             item.add_marker(pytest.mark.smoke)
