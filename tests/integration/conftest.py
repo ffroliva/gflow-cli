@@ -56,14 +56,16 @@ def minio_storage_uri() -> Generator[str, None, None]:
     The fixture is skipped when ``testcontainers`` or ``s3fs`` are not
     installed, or when Docker is unavailable.
     """
-    testcontainers_mod: Any = pytest.importorskip("testcontainers")
+    # Use importorskip to both guard against missing deps and get the module.
+    # Accessing DockerContainer via the module avoids a `from X import Y`
+    # inside the function body, which ruff's isort (I001) would flag.
+    tc_container_mod: Any = pytest.importorskip("testcontainers.core.container")
     s3fs_mod: Any = pytest.importorskip("s3fs")
     pytest.importorskip("upath")
-    _ = testcontainers_mod  # mark used
 
-    from testcontainers.core.container import DockerContainer  # type: ignore[import-untyped]  # noqa: PLC0415, E501
+    docker_container_cls = tc_container_mod.DockerContainer
 
-    container = DockerContainer(MINIO_IMAGE)
+    container = docker_container_cls(MINIO_IMAGE)
     container.with_command("server /data")
     container.with_env("MINIO_ROOT_USER", MINIO_ACCESS_KEY)
     container.with_env("MINIO_ROOT_PASSWORD", MINIO_SECRET_KEY)
@@ -118,14 +120,13 @@ def fake_gcs_storage_uri() -> Generator[str, None, None]:
     The fixture is skipped when ``testcontainers`` or ``gcsfs`` are not
     installed, or when Docker is unavailable.
     """
-    testcontainers_mod: Any = pytest.importorskip("testcontainers")
+    tc_container_mod: Any = pytest.importorskip("testcontainers.core.container")
     gcsfs_mod: Any = pytest.importorskip("gcsfs")
     pytest.importorskip("upath")
-    _ = testcontainers_mod
 
-    from testcontainers.core.container import DockerContainer  # type: ignore[import-untyped]  # noqa: PLC0415, E501
+    docker_container_cls = tc_container_mod.DockerContainer
 
-    container = DockerContainer(FAKE_GCS_IMAGE)
+    container = docker_container_cls(FAKE_GCS_IMAGE)
     container.with_command("-scheme http -port 4443 -backend memory")
     container.with_exposed_ports(4443)
 
