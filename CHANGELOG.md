@@ -9,6 +9,14 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ### Added
 
+- **`--json` flag on `gflow image t2i` and `gflow image i2i`.** Emits the
+  complete `GeneratedImage` result (every field — `media_name`,
+  `workflow_id`, `seed`, `prompt`, `model_name_type`, `aspect_ratio`,
+  `dimensions`, `fife_url`, `is_signed_url`) plus the on-disk `local_path`
+  as a single JSON object on stdout. A worker keys `images[0].seed` for
+  refine-regen seed continuity. Single-prompt only (`--json` rejects
+  multi-prompt batch with a Click usage error); progress chatter is
+  suppressed so stdout is pure JSON. `ref_count` surfaces only on i2i.
 - **`gflow models` catalog command.** New top-level command that enumerates
   the image and video model catalog as a Rich table (default) or as a single
   JSON object (`--json`). Per-model: `name`, CLI aliases (filtered to what
