@@ -12,8 +12,10 @@ Criteria covered (spec § 8.4):
   C4a — recoverable auth expiry: stale credential triggers silent refresh
   C4b — unrecoverable auth expiry: missing profile raises AuthExpiredError /
         AuthMissingError with the correct exit_code
-  C5  — 30-second timeout budget: slow send raises TransportTimeoutError
-        within 35 s
+
+Note: C5 (30-second timeout budget) was moved to
+``tests/api/transports/test_transport_timeout.py`` (``integration`` marker)
+because it mocks all network I/O and does not require a real API call.
 
 Strategies under test (spec § 8.2):
   evaluate_fetch  — Playwright page.evaluate() passthrough
@@ -23,7 +25,6 @@ Strategies under test (spec § 8.2):
 
 from __future__ import annotations
 
-import asyncio
 import os
 import time
 from pathlib import Path
@@ -48,7 +49,6 @@ from gflow_cli.errors import (
     EXIT_CODE_MAP,
     AuthExpiredError,
     AuthMissingError,
-    TransportTimeoutError,
 )
 
 # ---------------------------------------------------------------------------
@@ -63,41 +63,11 @@ pytestmark = pytest.mark.e2e
 STRATEGIES = ["evaluate_fetch", "bearer", "sapisidhash"]
 
 _PROMPT = "A motivational sunrise over mountains, cinematic, 4K"
-_E2E_PROFILE_ENV = "GFLOW_CLI_E2E_PROFILE"
 
 
 # ---------------------------------------------------------------------------
 # Helpers
 # ---------------------------------------------------------------------------
-
-
-def _profile_dir() -> Path:
-    """Resolve the Chromium profile directory from the environment variable.
-
-    Uses gflow-cli's real profile-dir resolver (``gflow_cli.auth.profile_dir``)
-    which is `platformdirs`-based — on Windows this is
-    ``%LOCALAPPDATA%\\<author>\\gflow-cli\\profile_<name>``, NOT
-    ``~/.config/gflow-cli/profiles/<name>``.
-
-    Raises ``pytest.skip`` when the env var is absent or the profile dir
-    does not exist (e.g. user has not yet run ``gflow auth login --profile``).
-    """
-    name = os.environ.get(_E2E_PROFILE_ENV, "")
-    if not name:
-        pytest.skip(
-            f"E2E tests require {_E2E_PROFILE_ENV} env var — "
-            "set it to a logged-in Chromium profile name and re-run with -m e2e"
-        )
-    # Use the actual resolver — must match where `gflow auth login` writes.
-    from gflow_cli.auth import profile_dir as _resolve_profile_dir
-
-    candidate = _resolve_profile_dir(name)
-    if not candidate.exists():
-        pytest.skip(
-            f"Profile directory not found: {candidate}. "
-            f"Run `gflow auth login --profile {name}` to create it."
-        )
-    return candidate
 
 
 def _make_client(strategy: str, profile: Path) -> FlowApiClient:
@@ -119,12 +89,12 @@ def _make_client(strategy: str, profile: Path) -> FlowApiClient:
 
 @pytest.mark.parametrize("strategy", STRATEGIES)
 @pytest.mark.asyncio
-async def test_e2e_single_image_gen(strategy: str) -> None:
+@pytest.mark.e2e_image
+async def test_e2e_single_image_gen(strategy: str, e2e_profile_dir: Path) -> None:
     """C2: generate_image() returns ≥ 1 GeneratedImage with an https:// fife_url."""
-    profile = _profile_dir()
     req = GenerateImageRequest(prompt=_PROMPT, model=Model.NARWHAL)
 
-    async with _make_client(strategy, profile) as client:
+    async with _make_client(strategy, e2e_profile_dir) as client:
         project = await client.create_project(title=f"e2e-c2-{strategy}")
         image = await client.generate_image(project_id=project.project_id, req=req)
 
@@ -160,7 +130,9 @@ def _tiny_png(path: Path) -> Path:
 
 
 @pytest.mark.asyncio
+@pytest.mark.e2e_image
 async def test_e2e_i2i_local_ref_attach(
+    e2e_profile_dir: Path,
     tmp_path: Path,
     install_log_capture: structlog.testing.LogCapture,
 ) -> None:
@@ -177,11 +149,10 @@ async def test_e2e_i2i_local_ref_attach(
     iconless 'Add to Prompt') that replaced the text-based selectors which hung
     on non-English Chrome profiles. Costs 1 credit when it runs.
     """
-    profile = _profile_dir()
     ref = _tiny_png(tmp_path / "ref.png")
     req = GenerateImageRequest(prompt=_PROMPT, model=Model.NARWHAL, ref_paths=(ref,))
 
-    async with _make_client("ui_automation", profile) as client:
+    async with _make_client("ui_automation", e2e_profile_dir) as client:
         image = await client.generate_image(req=req)
 
     assert image.media_name, "i2i ref-attach returned no image"
@@ -233,7 +204,9 @@ def _i2v_duration() -> int:
 
 
 @pytest.mark.asyncio
+@pytest.mark.e2e_video
 async def test_e2e_i2v_start_end_frame_attach(
+    e2e_profile_dir: Path,
     tmp_path: Path,
     install_log_capture: structlog.testing.LogCapture,
 ) -> None:
@@ -257,7 +230,6 @@ async def test_e2e_i2v_start_end_frame_attach(
         GFLOW_CLI_E2E_VIDEO_DURATION=6
         GFLOW_CLI_E2E_VIDEO_ASPECT=portrait
     """
-    profile = _profile_dir()
     start = _tiny_png(tmp_path / "start.png")
     end = _tiny_png(tmp_path / "end.png")
 
@@ -274,7 +246,7 @@ async def test_e2e_i2v_start_end_frame_attach(
 
     transport = UiAutomationTransport()
     try:
-        await transport.setup(profile)
+        await transport.setup(e2e_profile_dir)
         result: VideoResult = await transport.generate_video(
             request=req,
             out_dir=tmp_path,
@@ -326,13 +298,13 @@ async def test_e2e_i2v_start_end_frame_attach(
 
 @pytest.mark.parametrize("strategy", STRATEGIES)
 @pytest.mark.asyncio
-async def test_e2e_5_sequential_batches(strategy: str) -> None:
+@pytest.mark.e2e_batch
+async def test_e2e_5_sequential_batches(strategy: str, e2e_profile_dir: Path) -> None:
     """C3: 5 sequential generate_images_batch(count=4) calls return 20 images total."""
-    profile = _profile_dir()
     req = GenerateImageRequest(prompt=_PROMPT, model=Model.NARWHAL)
     all_images = []
 
-    async with _make_client(strategy, profile) as client:
+    async with _make_client(strategy, e2e_profile_dir) as client:
         project = await client.create_project(title=f"e2e-c3-{strategy}")
         for _ in range(5):
             batch = await client.generate_images_batch(
@@ -356,7 +328,8 @@ async def test_e2e_5_sequential_batches(strategy: str) -> None:
 
 @pytest.mark.parametrize("strategy", STRATEGIES)
 @pytest.mark.asyncio
-async def test_e2e_recoverable_auth_expiry(strategy: str) -> None:
+@pytest.mark.e2e_image
+async def test_e2e_recoverable_auth_expiry(strategy: str, e2e_profile_dir: Path) -> None:
     """C4a: Deliberately staling the cached credential triggers a silent refresh.
 
     Strategy-specific staleness injection:
@@ -365,11 +338,10 @@ async def test_e2e_recoverable_auth_expiry(strategy: str) -> None:
       evaluate_fetch — no in-process cache; validate that a 401 response from
                        the server triggers a page reload + retry (refresh path)
     """
-    profile = _profile_dir()
     req = GenerateImageRequest(prompt=_PROMPT, model=Model.NARWHAL)
     transport = make_transport(strategy)
 
-    async with FlowApiClient(profile_dir=profile, transport=transport) as client:
+    async with FlowApiClient(profile_dir=e2e_profile_dir, transport=transport) as client:
         project = await client.create_project(title=f"e2e-c4a-{strategy}")
 
         # Inject stale credential AFTER setup so the transport is fully
@@ -408,6 +380,7 @@ async def test_e2e_recoverable_auth_expiry(strategy: str) -> None:
 
 @pytest.mark.parametrize("strategy", STRATEGIES)
 @pytest.mark.asyncio
+@pytest.mark.e2e_auth
 async def test_e2e_unrecoverable_auth_expiry(
     strategy: str,
     tmp_path: Path,
@@ -436,93 +409,21 @@ async def test_e2e_unrecoverable_auth_expiry(
 
 
 # ---------------------------------------------------------------------------
-# Criterion C5 — 30-second timeout budget
-# ---------------------------------------------------------------------------
-
-
-@pytest.mark.parametrize("strategy", STRATEGIES)
-@pytest.mark.asyncio
-async def test_e2e_30s_timeout_budget(
-    strategy: str,
-    monkeypatch: pytest.MonkeyPatch,
-) -> None:
-    """C5: A transport whose inner HTTP send blocks > 30 s raises
-    TransportTimeoutError within 35 s.
-
-    Strategy-specific patching of the inner async I/O point — each strategy
-    has a different one. We bypass FlowApiClient entirely because this test
-    asserts the strategy's own asyncio.wait_for budget, not the client wrapper.
-    No real Flow auth is required.
-
-    Per-strategy patch surface:
-      - evaluate_fetch  → ``transport._page.evaluate``
-      - bearer          → ``transport._http_post``
-      - sapisidhash     → ``transport._http_post``
-    """
-    from gflow_cli.api.transports._fingerprint import BrowserFingerprint
-
-    transport = make_transport(strategy)
-
-    async def _hang(*_args: object, **_kwargs: object) -> object:
-        await asyncio.sleep(60)
-        return None  # never reached
-
-    if strategy == "evaluate_fetch":
-        # S1 calls self._page.evaluate(...) inside generate_images.
-        # Inject a fake page + the hang; mark setup_done so the strategy
-        # skips its lazy-init path.
-        from unittest.mock import MagicMock
-
-        fake_page = MagicMock()
-        fake_page.evaluate = _hang  # type: ignore[assignment]
-        transport._page = fake_page  # type: ignore[attr-defined]
-        transport._setup_done = True  # type: ignore[attr-defined]
-    elif strategy == "bearer":
-        # S2 calls self._http_post(...) after checking self._cached.
-        # Build a valid cached auth so the proactive-refresh path is skipped.
-        from gflow_cli.api.transports.experimental.bearer import _CachedAuth
-
-        transport._cached = _CachedAuth(  # type: ignore[attr-defined]
-            token="fake-bearer-for-timeout-test",  # NOSONAR
-            expires_at=time.time() + 3600,
-            fingerprint=BrowserFingerprint(),
-        )
-        monkeypatch.setattr(transport, "_http_post", _hang)
-    elif strategy == "sapisidhash":
-        # S3 guards `generate_images` on `_sapisid is None or _profile_dir is None`.
-        # Populate both + the captured fingerprint, then patch the I/O point.
-        transport._sapisid = "fake-sapisid-for-timeout-test"  # type: ignore[attr-defined]
-        transport._profile_dir = Path("/dev/null")  # type: ignore[attr-defined]
-        transport._fingerprint = BrowserFingerprint()  # type: ignore[attr-defined]
-        monkeypatch.setattr(transport, "_http_post", _hang)
-
-    req = GenerateImageRequest(prompt=_PROMPT, model=Model.NARWHAL)
-    start = time.monotonic()
-    with pytest.raises(TransportTimeoutError):
-        await transport.generate_images(
-            project_id="00000000-0000-0000-0000-000000000000",
-            request=req,
-        )
-    elapsed = time.monotonic() - start
-    assert elapsed < 35.0, f"TransportTimeoutError must fire within 35 s; took {elapsed:.1f} s"
-
-
-# ---------------------------------------------------------------------------
 # Auto-create project_id (Issue #16 — optional project_id)
 # ---------------------------------------------------------------------------
 
 
 @pytest.mark.parametrize("strategy", STRATEGIES)
 @pytest.mark.asyncio
-async def test_e2e_generate_image_without_project_id(strategy: str) -> None:
+@pytest.mark.e2e_image
+async def test_e2e_generate_image_without_project_id(strategy: str, e2e_profile_dir: Path) -> None:
     """generate_image(req=req) without project_id auto-creates a project.
 
     Confirms the auto-create path works end-to-end against the real Flow API.
     """
-    profile = _profile_dir()
     req = GenerateImageRequest(prompt=_PROMPT, model=Model.NARWHAL)
 
-    async with _make_client(strategy, profile) as client:
+    async with _make_client(strategy, e2e_profile_dir) as client:
         # Intentionally omit project_id — the client must create one internally.
         image = await client.generate_image(req=req)
 
@@ -539,11 +440,12 @@ async def test_e2e_generate_image_without_project_id(strategy: str) -> None:
 
 @pytest.mark.parametrize("strategy", STRATEGIES)
 @pytest.mark.asyncio
-async def test_e2e_health_check_returns_true_when_active(strategy: str) -> None:
+@pytest.mark.e2e_auth
+async def test_e2e_health_check_returns_true_when_active(
+    strategy: str, e2e_profile_dir: Path
+) -> None:
     """health_check() returns True for a live browser context on a Google domain."""
-    profile = _profile_dir()
-
-    async with _make_client(strategy, profile) as client:
+    async with _make_client(strategy, e2e_profile_dir) as client:
         result = await client.health_check()
 
     assert result is True, "health_check() must return True for an active Google-domain page"
@@ -555,7 +457,8 @@ async def test_e2e_health_check_returns_true_when_active(strategy: str) -> None:
 
 
 @pytest.mark.asyncio
-async def test_e2e_health_check_false_after_close() -> None:
+@pytest.mark.e2e_auth
+async def test_e2e_health_check_false_after_close(e2e_profile_dir: Path) -> None:
     """health_check() returns False (never raises) once the client is closed.
 
     A long-lived worker holding a client whose context has been torn down must
@@ -565,8 +468,7 @@ async def test_e2e_health_check_false_after_close() -> None:
     the bearer / sapisidhash experimental transports fail at setup() (obsolete —
     see KNOWN_ISSUES.md). evaluate_fetch is the live transport.
     """
-    profile = _profile_dir()
-    client = _make_client("evaluate_fetch", profile)
+    client = _make_client("evaluate_fetch", e2e_profile_dir)
 
     async with client:
         assert await client.health_check() is True, (

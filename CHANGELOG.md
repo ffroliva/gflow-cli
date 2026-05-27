@@ -7,6 +7,33 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+### Added
+
+- **Layered e2e test strategy with cost sub-markers.** The single `e2e` marker is
+  now augmented by cost sub-markers (`e2e_auth`, `e2e_image`, `e2e_video`,
+  `e2e_batch`, `e2e_data`, `smoke`) so callers can run only the tier they can
+  afford (zero-credit auth checks, single-credit image smoke, etc.). See
+  `docs/E2E_TESTING.md` for the full reference.
+- `tests/e2e/conftest.py` — shared `e2e_profile_dir`, `e2e_nosession_profile`,
+  and `e2e_env` fixtures replace duplicated inline helpers in individual test files.
+- `tests/api/transports/test_transport_timeout.py` — extracted from e2e as a
+  pure-mock integration test; also fixes `Path("/dev/null")` → `Path(os.devnull)`
+  for Windows portability.
+- `tests/test_marker_registry.py` — invariant checks that every e2e test carries a
+  cost sub-marker, and self-tests for the auto-marker conftest hook.
+- `docs/E2E_TESTING.md` — comprehensive e2e strategy and layer reference document.
+
+### Changed
+
+- `GFLOW_CLI_E2E_RUN_VIDEO` default flipped from `"1"` to `"0"`. The Veo step in
+  `test_data_layer_e2e.py` is now **opt-in**: set `GFLOW_CLI_E2E_RUN_VIDEO=1` to
+  include it. This prevents accidental Veo credit burns on unattended CI runs.
+- `pytest` `addopts` now excludes `smoke` in addition to `e2e` and `live`:
+  `not e2e and not live and not smoke`. Bare `pytest` never launches a live
+  browser session.
+- Auto-marker conftest hook uses `item.path.parts` instead of a slash-delimited
+  string substring, fixing Windows backslash path compatibility.
+
 ## [0.9.1] — 2026-05-27
 
 > **Locale and catalog patch release.** Hardens the headed-browser UI
