@@ -18,6 +18,16 @@ Apply the multi-dim council pattern at lifecycle phases beyond just PR review. M
 
 Out of scope: full guided orchestration (rejected as over-prescriptive vs `gsd:*` family). CI/CD integration of these commands (manual invocation only). Web UI / dashboard.
 
+### 1.1 · Position vs `gsd:*` (rationalized — not duplicating)
+
+The post-survey audit (§A) flagged ~70% interface overlap between `/gflow:assess` and `gsd:list-phase-assumptions` + `gsd:discuss-phase`, and ~80% overlap between `/gflow:handover` and `gsd:pause-work` + `gsd:resume-work`. We are NOT deferring to GSD because:
+
+- **Task-scoped, not phase-scoped.** `gsd:*` imposes a milestone → phase → sub-phase numbering hierarchy with `PROJECT.md` routing. We work in PR-as-unit-of-work + memory drawers; phase numbers would duplicate `git log` and conflict with `[[release-spec-plan-memory-consolidation]]` (delete spec/plan after release).
+- **Memory-drawer-native, not `.planning/`-tree-native.** GSD persists state under a per-phase directory tree. Our 7 drawers live in `~/.claude/projects/<slug>/memory/` and auto-load every session.
+- **Compose-friendly, not framework-style.** Each of our 3 commands is independently invokable from the existing `/gflow:*` mental model.
+
+`/gflow:branch-review` has no GSD analog at all (council pattern is ours; see §A.1).
+
 ---
 
 ## 2 · 5-phase lifecycle map
@@ -50,13 +60,17 @@ All three follow the **wrapper-around-skill pattern** validated in v2 of `pr-cou
 
 **Council dimensions (5, baseline):**
 
-| Dim | Name | What it asks |
-|---|---|---|
-| A1 | **Fit** | Does this align with the project mission (per `CLAUDE.md` + `README.md`)? Is it within the local-first / no-SaaS scope per `[[gflow-strategy-local-first]]`? |
-| A2 | **Precedent** | Does memory show we've tried this before? Look for: prior approaches, known-issues, abandoned designs. Cite slug + outcome. |
-| A3 | **Risk** | What could break? Touch the cardinal traps: `[[draft-pr-merge-trap]]`, `[[pr-must-verify-on-affected-surface]]`, `[[on-started-callback-recorder-safety]]`, `[[release-back-merge-gap-recovery]]`, etc. |
-| A4 | **Effort** | Rough sizing: 1-PR / 1-day / 1-week / multi-week. Compare against PRs of similar scope in `git log`. |
-| A5 | **Memory-Search** | Probe MCP memory servers (`mcp__*memory*`, `mcp__*mempalace*`, `mcp__*mem0*`, `mcp__*context-mode*`) per v2.1 D5 protocol. Enumerate relevant slugs, cite line ranges. |
+| Dim | Name | What it asks | Mandatory memory slugs |
+|---|---|---|---|
+| A1 | **Fit** | Does this align with the project mission (per `CLAUDE.md` + `README.md`)? Is it within the local-first / no-SaaS scope per `[[gflow-strategy-local-first]]`? | `[[gflow-strategy-local-first]]`, `[[readme-hybrid-router-pattern]]` |
+| A2 | **Precedent** | Does memory show we've tried this before? Look for: prior approaches, known-issues, abandoned designs. Cite slug + outcome. | (none mandatory; depends on task surface) |
+| A3 | **Risk** | What could break? Touch the cardinal traps. | `[[pr-must-verify-on-affected-surface]]`, `[[on-started-callback-recorder-safety]]`, `[[draft-pr-merge-trap]]`, `[[release-back-merge-gap-recovery]]`, `[[verification-ledger-5-layer]]` |
+| A4 | **Effort** | Rough sizing: 1-PR / 1-day / 1-week / multi-week. Compare against PRs of similar scope in `git log`. If no comparable PR exists (fresh feature surface, pre-first-PR work), mark A4 as **INSUFFICIENT-DATA**; do not block a GREEN verdict. | `[[release-spec-plan-memory-consolidation]]` |
+| A5 | **Memory-Search** | Probe MCP memory servers. **Before invoking any `mcp__*memory*` / `mcp__*mempalace*` / `mcp__*mem0*` tool, call `ToolSearch` with `select:<tool_name>` to load the schema (most MCP memory tools are deferred-tools per the harness convention)**. If no MCP memory server is loaded in-session, state explicitly "file-based memory only" and proceed with `~/.claude/projects/<slug>/memory/` filesystem reads. | `[[release-spec-plan-memory-consolidation]]`, `[[llm-council-code-review-pr93]]` (council-pattern provenance), `[[pr-council-review-portability-backlog]]` |
+
+**Iron Law** (per `superpowers:verification-before-completion`): *NO VERDICT WITHOUT EVERY DIMENSION HAVING REPORTED AND A5 (Memory-Search) HAVING CITED AT LEAST ONE SLUG OR EXPLICITLY DECLARED `NO_PRIOR_ART`.* Sub-agent timeouts must NOT be rationalized as GREEN.
+
+**Per-finding citation contract** (mirrors `pr-council-review` v2.1 verify-before-claim): every finding MUST cite `file:line` (for code) or memory `slug + line range` (for prior art). Orphan findings (no citation) are dropped at synthesis.
 
 **Specialized skill invocation:**
 - A1 (Fit) and A3 (Risk) agents invoke `Skill: review` (single-agent design review framing)
@@ -84,7 +98,9 @@ All three follow the **wrapper-around-skill pattern** validated in v2 of `pr-cou
 
 **Council dimensions:** same as `pr-council-review` v2.1 (5 baseline D1-D5 + adaptive D6-D13).
 
-**File reading discipline:** ⚠️ different from PR mode — sub-agents CAN use `Read` on the working tree IF `git branch --show-current` matches the orchestrator's captured branch (local files reflect HEAD on the same branch). They MUST still verify with `git show HEAD:<path>` if uncertain.
+**File reading discipline:** ⚠️ different from PR mode — sub-agents CAN use `Read` on the working tree IF `git branch --show-current` matches the orchestrator's captured branch (local files reflect HEAD on the same branch). They MUST still verify with `git show HEAD:<path>` if uncertain. **For large diffs (`additions + deletions > 5000` OR > 20 files), route `git diff base..HEAD` through `ctx_execute(language="shell", ...)` to avoid context flood — per `context-mode:context-mode` routing rule.**
+
+**`release/*` branch special case:** if `git branch --show-current` matches `release/*`, the council's D11 (Release-gate compliance) will RED-flag an in-progress CHANGELOG / version bump. Treat D11 as **YELLOW not RED until tag is cut** — surface this downgrade in the verdict report so users don't chase a false negative.
 
 **Output:** verdict report identical to `pr-council-review` Phase 6, but without "post to PR" action — instead offers: (a) apply fixes now, (b) save findings as `.planning/branch-review-<branch>-<ts>.md`, (c) defer to PR-time review.
 
@@ -108,6 +124,12 @@ All three follow the **wrapper-around-skill pattern** validated in v2 of `pr-cou
   - `drawer-session-log.md` — chronological session activity (append-only)
 
 **Note on drawers:** these are NEW per-drawer memory files, distinct from but complementary to PR #83's `MEMORY.md` initialization (PR #83 sets up the directory + index; this command creates the individual drawer files). The command creates them idempotently if absent. If a drawer file already exists, append; never overwrite.
+
+**Idempotent reconstruction** (adapted from `gsd:resume-work`): if any drawer file is missing on a subsequent run, the command auto-reconstructs it as empty (with frontmatter only). A missing drawer must NOT abort the handover.
+
+**Drawer rotation policy:** `drawer-session-log.md` is append-only and would grow unbounded. **Rotate at 500 lines** — when the file crosses 500 lines, rename to `drawer-session-log-archive-<YYYY-MM>.md` and start a fresh `drawer-session-log.md`. Archives are not auto-loaded next session (only the current `drawer-session-log.md` is). Other drawers do NOT auto-rotate (they should stay small by design).
+
+**Iron Law** (per `superpowers:verification-before-completion`): *NO HANDOVER WITHOUT VERIFIED HEAD SHA + CLEAN GIT STATUS.* If `git status --porcelain` is non-empty and no `--reason <string>` was passed, refuse to write drawers — uncommitted work captured as "session state" would mislead the next session.
 
 **Severity markers** (per PR #83 T2) apply to entries in `drawer-cross-session-rules-digest.md` only.
 
@@ -179,6 +201,54 @@ Each implementation PR is reviewed by the council command it relates to:
 - Handover ALSO writes to memory drawers (out-of-repo, per-user)
 - Branch-review is otherwise read-only (no commits, no pushes, no PR comments)
 
+### 5.7 Composition with existing commands (resolves 5 hidden coupling risks)
+
+Surfaced by the pre-council survey (§A.3):
+
+| Risk | Resolution |
+|---|---|
+| `/gflow:handover` writes `.planning/handover-<ts>.md` then `/gflow:check` could reformat it | `.planning/` is gitignored already; explicitly state that `/gflow:check`'s lint/format pass MUST exclude `.planning/`. Handover output is read-only post-write. |
+| `/gflow:assess` A4 (Effort) compares against `git log` on a fresh repo with no comparable PRs | A4 reports `INSUFFICIENT-DATA` and does NOT block a GREEN verdict (see §3.1 table). |
+| `/gflow:branch-review` runs on a `release/*` branch mid-release; D11 RED-flags WIP CHANGELOG | D11 downgrades RED → YELLOW until release tag is cut (see §3.2). |
+| Drawer files grow unbounded over many sessions | `drawer-session-log.md` rotates at 500 lines; archives are not auto-loaded (see §3.3). |
+| Phase 2's `/gflow:work` could nest dispatch via `Skill` → council sub-agents → `Skill: security-review` → its own sub-agents (3-level recursion) | Phase 2 router MUST use **direct command invocation** (`/gflow:assess <task>`, not `Skill(skill="assess")`) to avoid nested-dispatch recursion limits. Documented in §4. |
+
+### 5.8 Structural enforcement — `<HARD-GATE>` and `<EXTREMELY-IMPORTANT>` XML conventions
+
+Adopted from `superpowers:brainstorming` and `superpowers:using-superpowers`. These XML-tagged blocks survive prompt compression and pressure scenarios better than prose ("the bulletproofing pattern"). All 3 new SKILL.mds open with an `<EXTREMELY-IMPORTANT>` block:
+
+> *These commands are local-only side-channels. They do NOT replace `/gflow:pr-council-review`, `/gflow:check`, or `/gflow:release`. Skipping the canonical gates because an assess / branch-review / handover passed is a rationalization.*
+
+Per-command HARD-GATES:
+
+| Command | HARD-GATE | Rationale |
+|---|---|---|
+| `/gflow:assess` | "Do NOT emit a verdict until all 5 dimensions have reported AND A5 has cited a slug or declared `NO_PRIOR_ART`." | Otherwise sub-agent timeouts get rationalized as GREEN. Mirrors `[[verification-ledger-5-layer]]`. |
+| `/gflow:assess` | "Do NOT invoke `/gflow:plan` or `superpowers:writing-plans` after a RED verdict." | Mirrors `superpowers:brainstorming` gate that blocks implementation skills pre-approval. Resolves §10 Q3. |
+| `/gflow:branch-review` | "Do NOT run the council before `/gflow:check` passes (baseline must be green)." | Adopts `superpowers:finishing-a-development-branch` Step 1. Prevents the council from flagging pre-existing lint as new. |
+| `/gflow:branch-review` | "Do NOT post findings to a PR (local-only); use `/gflow:pr-council-review` for PR-time review." | Forces the dogfooding split in §5.5 to be enforced, not merely documented. |
+| `/gflow:handover` | "Do NOT write to memory drawers if `git status --porcelain` is non-empty AND no `--reason` flag is given." | Closes the dirty-tree-as-intentional-state loophole. |
+| `/gflow:handover` | "Drawer files are APPEND-ONLY — never overwrite." | Already in §3.3 prose; HARD-GATE promotes it to structural enforcement. |
+
+### 5.9 Sub-agent status reporting (4-status protocol)
+
+Adopted from `superpowers:subagent-driven-development`. Each council sub-agent (in `/gflow:assess` and `/gflow:branch-review`) reports both a **verdict** (GREEN / YELLOW / RED) AND a **status** (orthogonal axis):
+
+| Status | Meaning | Synthesizer action |
+|---|---|---|
+| `DONE` | Dimension reviewed cleanly | Use verdict as-is |
+| `DONE_WITH_CONCERNS` | Reviewed but the agent had reservations about its own confidence | Use verdict, but downgrade GREEN → YELLOW automatically |
+| `NEEDS_CONTEXT` | Agent couldn't complete due to missing context (couldn't find a file, ambiguous prompt) | Mark dimension `UNKNOWN`, downgrade consensus by one step (per `pr-council-review` v2.1 §5 step 2) |
+| `BLOCKED` | Agent failed (timeout, dispatch error, tool unavailable) | Same as `NEEDS_CONTEXT`; surface for re-dispatch |
+
+**Severity action-tier** (companion to MUST / FORBID / NORM per §5.2; adopted from `superpowers:requesting-code-review`): each finding ALSO carries an action-tier:
+
+- **Critical** — fix immediately (blocks merge / handover)
+- **Important** — fix before proceeding to next phase
+- **Minor** — note for later (does not block)
+
+So a complete finding is `<SEVERITY> <ACTION-TIER>` — e.g. `MUST Critical: missing test coverage on affected surface`, or `NORM Minor: comment density above project convention`.
+
 ---
 
 ## 6 · Implementation order (3 PRs)
@@ -237,7 +307,67 @@ Existing memory slugs to update:
 
 1. Should `branch-review` use a literal flag `--branch` on `pr-council-review`, or a separate slash command that internally invokes the same skill in branch mode? (Currently: separate command, same skill — see §3.2.)
 2. Should the 7 memory drawers replace the existing flat-memory pattern over time, or coexist indefinitely? (Currently: coexist; drawers only for handover state.)
-3. Should `/gflow:assess` block planning if verdict is RED, or just surface findings? (Currently: surface findings; user retains escape valve like the council's YELLOW dismiss option.)
+3. Should `/gflow:assess` block planning if verdict is RED, or just surface findings? **Resolved by §5.8 HARD-GATE**: RED blocks `/gflow:plan` invocation; user can override via explicit re-assess (refine task description, re-run).
+4. **(NEW from survey, §A.2)** Should `/gflow:assess` invoke `gsd:list-phase-assumptions` or `gsd:discuss-phase` as a sub-skill when the repo has a `.planning/` tree, instead of fully reimplementing the gray-area probe? Currently: no — keep `/gflow:assess` task-scoped per §1.1. Revisit if GSD adoption grows in the project.
+
+---
+
+## A · Appendix — Survey integration record
+
+Three parallel surveys (gsd, superpowers, gflow/other) produced ~40 findings. The high-value subset was applied directly to the spec sections above; the remainder is captured here for the implementation plan to consume.
+
+### A.1 Patterns ADOPTED into the spec
+
+| Source skill | Pattern | Spec section now containing it |
+|---|---|---|
+| `superpowers:verification-before-completion` | Iron Law block | §3.1 (assess), §3.3 (handover) |
+| `superpowers:subagent-driven-development` | 4-status protocol (DONE / DONE_WITH_CONCERNS / NEEDS_CONTEXT / BLOCKED) | §5.9 |
+| `superpowers:requesting-code-review` | Severity action-tiers (Critical / Important / Minor) | §5.9 |
+| `superpowers:brainstorming` + `using-superpowers` | `<HARD-GATE>` / `<EXTREMELY-IMPORTANT>` XML conventions | §5.8 |
+| `superpowers:finishing-a-development-branch` | Step-1 baseline verification gate | §5.8 (branch-review HARD-GATE) |
+| `gsd:research-phase` | Downstream consumer contract (named consumers + required headings) | §3.1 output schema (implicit via slug table + citation contract) |
+| `gsd:execute-phase` + `map-codebase` | Orchestrator-stays-lean wave (sub-agents write to disk, return path) | (deferred to implementation plan — too granular for spec) |
+| `gsd:resume-work` | Idempotent reconstruction of missing state | §3.3 |
+| `gsd:discuss-phase` | Adaptive 4-questions-per-gray-area probe | (deferred — assess uses fixed 5 dims for now; probe deferred to Phase 2 router) |
+| `gflow:pr-council-review` (own) | Mandatory memory-slug table per dimension | §3.1 (A1-A5 slug table) |
+| `gflow:pr-council-review` (own) | REVIEWED_SHA + per-finding citation discipline | §3.1, §3.2, §3.3 |
+| `gflow:pr-council-review` (own) | Always end with AskUserQuestion | §3.1 output (explicit), §3.2/§3.3 (implied — to be explicit in SKILL.md) |
+| `figma:figma-use` family | MANDATORY-prerequisite block on wrappers | (deferred to wrapper files in implementation PRs) |
+| `context-mode:context-mode` | "Bash >20 lines → ctx_execute" routing rule | §3.2 file-reading discipline |
+| `context-mode` (deferred-tools) | `ToolSearch` for MCP memory tool schemas | §3.1 A5 (Memory-Search) |
+
+### A.2 Patterns considered and EXPLICITLY NOT adopted
+
+| Source | Pattern | Why rejected |
+|---|---|---|
+| `gsd:new-milestone` / `add-phase` / `insert-phase` | Milestone → phase → sub-phase numbering with PROJECT.md routing | Already rejected per §1.1 (task-scoped, not phase-scoped). Adopting would conflict with `[[release-spec-plan-memory-consolidation]]`. |
+| `gsd:validate-phase` | "Nyquist retroactive audit" for already-completed phases | Over-engineering. We already have `pr-council-review` + `[[verification-ledger-5-layer]]` + `[[pr-must-verify-on-affected-surface]]` covering this. |
+| `superpowers:writing-skills` | TDD-adapted RED→GREEN→REFACTOR phase for new skills | Adapted instead (§A.1 dogfooding) — the manual baseline-run requirement satisfies the RED phase without bolting on full TDD ceremony for markdown skills. |
+| `gsd:list-phase-assumptions` | Pre-planning assumption-listing as standalone command | We fold this into `/gflow:assess` A2 (Precedent) instead of building a separate command. §10 Q4 leaves the door open. |
+
+### A.3 Composition opportunities deferred to implementation PRs (not spec content)
+
+Each SKILL.md should explicitly invoke these via `Skill(skill="...")` at the indicated phase:
+
+| Target command | Step | Skill to invoke |
+|---|---|---|
+| `/gflow:assess` A1 (Fit) | per-dimension agent prompt | `Skill: review` |
+| `/gflow:assess` A3 (Risk) | per-dimension agent prompt | `Skill: security-review` |
+| `/gflow:assess` (final report) | before printing | `Skill: superpowers:verification-before-completion` |
+| `/gflow:assess` (RED handler) | when verdict is RED | `Skill: superpowers:brainstorming` (refine task description loop) |
+| `/gflow:branch-review` (orchestrator) | before dispatch | `Skill: superpowers:dispatching-parallel-agents` (already implied; make explicit) |
+| `/gflow:branch-review` "apply fixes" path | per finding | `Skill: superpowers:receiving-code-review` |
+| `/gflow:branch-review` (final exit) | when verdict GREEN + apply path | `Skill: superpowers:finishing-a-development-branch` |
+| `/gflow:handover` (final write) | before saving drawers | `Skill: superpowers:verification-before-completion` |
+| `/gflow:handover` drawer entries | per-entry write | `Skill: superpowers:writing-skills` ("close every loophole explicitly" pattern) for `drawer-cross-session-rules-digest.md` |
+
+### A.4 Other items deferred to implementation plan / follow-up
+
+- Quick-Reference tables per command (mirroring `finishing-a-development-branch` style)
+- `figma:*` MANDATORY-prerequisite block at top of each wrapper
+- Per-dimension language-selection mini-table for sandbox execution (mirror `context-mode`)
+- Orchestrator-stays-lean: sub-agents write `.planning/<dim>-<ts>.md` and return `{verdict, path}` instead of inline reports
+- Drawer rotation extended beyond `drawer-session-log.md` if other drawers prove to grow
 
 ---
 
