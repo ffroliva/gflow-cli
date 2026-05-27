@@ -9,6 +9,16 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ### Added
 
+- **`--json` flag on `gflow video t2v`, `gflow video i2v`, and `gflow video r2v`.**
+  Emits the `VideoResult` (status / command / media_id / generation_status /
+  succeeded / local_path / failure_reasons / error_message) plus the request
+  echo (model / mode / aspect / duration / count / seed) as a single JSON
+  object on stdout. A failed generation still emits its JSON payload and
+  then exits 1. The data-layer recorder
+  (`record_started_video` / `record_completed_video`) fires regardless of
+  `--json` so audit history is independent of the output channel. E2e
+  coverage for `--json` shape across image / video / auth / models lives at
+  `tests/e2e/test_json_output_e2e.py`.
 - **`--json` flag on `gflow image t2i` and `gflow image i2i`.** Emits the
   complete `GeneratedImage` result (every field — `media_name`,
   `workflow_id`, `seed`, `prompt`, `model_name_type`, `aspect_ratio`,
