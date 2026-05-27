@@ -162,6 +162,16 @@ def reference_cap_for(model: Model) -> int:
     return _IMAGE_REFERENCE_CAP.get(model, MAX_IMAGE_REFERENCES)
 
 
+def model_aliases(model: Model) -> list[str]:
+    """Sorted CLI aliases that resolve to *model* (for `gflow models`)."""
+    return sorted(alias for alias, m in _MODEL_FROM_CLI.items() if m is model)
+
+
+def aspect_choices() -> dict[str, str]:
+    """Map each accepted CLI aspect ratio to its wire value."""
+    return {ratio: aspect.value for ratio, aspect in _ASPECT_FROM_CLI.items()}
+
+
 @dataclass(frozen=True)
 class ImageRef:
     """A reference image for I2I, identified by the upload's media UUID.

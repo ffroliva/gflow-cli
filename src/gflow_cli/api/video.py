@@ -49,30 +49,35 @@ class VideoModel(StrEnum):
         if value is None:
             return None
         key = value.strip().lower().replace("-", "_").replace(" ", "_")
-        mapping = {
-            "omni_flash": cls.OMNI_FLASH,
-            "omni": cls.OMNI_FLASH,
-            "flash": cls.OMNI_FLASH,
-            "veo_3_1_lite": cls.VEO_3_1_LITE,
-            "veo_lite": cls.VEO_3_1_LITE,
-            "lite": cls.VEO_3_1_LITE,
-            "veo_3_1_fast": cls.VEO_3_1_FAST,
-            "veo_fast": cls.VEO_3_1_FAST,
-            "fast": cls.VEO_3_1_FAST,
-            "veo_3_1_quality": cls.VEO_3_1_QUALITY,
-            "veo_quality": cls.VEO_3_1_QUALITY,
-            "quality": cls.VEO_3_1_QUALITY,
-            "veo_3_1_lite_lower_priority": cls.VEO_3_1_LITE_LOWER_PRIORITY,
-            "veo_lite_lp": cls.VEO_3_1_LITE_LOWER_PRIORITY,
-            "lite_lp": cls.VEO_3_1_LITE_LOWER_PRIORITY,
-            "lower_priority": cls.VEO_3_1_LITE_LOWER_PRIORITY,
-        }
-        if key not in mapping:
+        if key not in _VIDEO_MODEL_FROM_CLI:
             raise ValueError(
                 f"Unknown video model {value!r}; choose from "
-                f"{sorted({m.value for m in cls})} or aliases {sorted(mapping)}"
+                f"{sorted({m.value for m in cls})} or aliases {sorted(_VIDEO_MODEL_FROM_CLI)}"
             )
-        return mapping[key]
+        return _VIDEO_MODEL_FROM_CLI[key]
+
+
+# Module-level alias map — friendly CLI strings -> VideoModel. Hoisted out of
+# `VideoModel.from_cli` (defined after the class so the members resolve) so
+# `gflow models` can enumerate the aliases without duplicating them.
+_VIDEO_MODEL_FROM_CLI: dict[str, VideoModel] = {
+    "omni_flash": VideoModel.OMNI_FLASH,
+    "omni": VideoModel.OMNI_FLASH,
+    "flash": VideoModel.OMNI_FLASH,
+    "veo_3_1_lite": VideoModel.VEO_3_1_LITE,
+    "veo_lite": VideoModel.VEO_3_1_LITE,
+    "lite": VideoModel.VEO_3_1_LITE,
+    "veo_3_1_fast": VideoModel.VEO_3_1_FAST,
+    "veo_fast": VideoModel.VEO_3_1_FAST,
+    "fast": VideoModel.VEO_3_1_FAST,
+    "veo_3_1_quality": VideoModel.VEO_3_1_QUALITY,
+    "veo_quality": VideoModel.VEO_3_1_QUALITY,
+    "quality": VideoModel.VEO_3_1_QUALITY,
+    "veo_3_1_lite_lower_priority": VideoModel.VEO_3_1_LITE_LOWER_PRIORITY,
+    "veo_lite_lp": VideoModel.VEO_3_1_LITE_LOWER_PRIORITY,
+    "lite_lp": VideoModel.VEO_3_1_LITE_LOWER_PRIORITY,
+    "lower_priority": VideoModel.VEO_3_1_LITE_LOWER_PRIORITY,
+}
 
 
 class Aspect(StrEnum):
@@ -122,6 +127,25 @@ def reference_cap_for(model: VideoModel) -> int:
     to the ceiling instead of a ``KeyError`` at request-build time.
     """
     return _VIDEO_REFERENCE_CAP.get(model, MAX_REFERENCE_IMAGES)
+
+
+def model_aliases(model: VideoModel) -> list[str]:
+    """Sorted CLI aliases that resolve to *model* (for `gflow models`)."""
+    return sorted(alias for alias, m in _VIDEO_MODEL_FROM_CLI.items() if m is model)
+
+
+def max_duration_for(model: VideoModel) -> int:
+    """Maximum clip length in seconds: omni_flash=10, veo_3_1_*=8."""
+    return 10 if model is VideoModel.OMNI_FLASH else 8
+
+
+def aspect_choices() -> dict[str, str]:
+    """Map each accepted CLI aspect ratio to its wire value."""
+    return {
+        "9:16": Aspect.PORTRAIT.wire(),
+        "16:9": Aspect.LANDSCAPE.wire(),
+        "1:1": Aspect.SQUARE.wire(),
+    }
 
 
 @dataclass(frozen=True)

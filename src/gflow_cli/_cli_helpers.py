@@ -45,7 +45,7 @@ import structlog
 from rich.console import Console
 
 from gflow_cli import auth as auth_mod
-from gflow_cli import profile_store
+from gflow_cli import json_output, profile_store
 from gflow_cli.errors import (
     EXIT_CODE_MAP,
     GFlowError,
@@ -144,6 +144,7 @@ def run_with_handlers(
     coro_factory: Callable[[], Coroutine[Any, Any, Any]],
     *,
     cli_command: str,
+    as_json: bool = False,
 ) -> None:
     """Wrap an :func:`asyncio.run` call in the GFlowError + unhandled handlers.
 
@@ -158,16 +159,39 @@ def run_with_handlers(
             lambda: _run_t2i(prompt, ...),
             cli_command="image t2i",
         )
+
+    When ``as_json`` is set the error path emits a machine-readable JSON
+    payload on stdout instead of the Rich message (the observability event
+    still fires either way) so a programmatic caller gets a parseable failure
+    with the same exit code. The success payload is the coroutine's own
+    responsibility — it knows the result shape.
     """
     import asyncio
 
     try:
         asyncio.run(coro_factory())
     except GFlowError as e:
+        if as_json:
+            emit_error_event(_logger, e, cli_command=cli_command)
+            json_output.emit(json_output.error_payload(e))
+            sys.exit(_exit_code_for(e))
         sys.exit(_handle_gflow_error(e, cli_command=cli_command))
     except (KeyboardInterrupt, click.Abort):
         sys.exit(130)
+    except SystemExit:
+        # A coroutine that has already taken responsibility for its own exit
+        # (e.g. `video t2v --json` emits the failed `video_result` payload and
+        # then raises SystemExit(1) so we don't print a second "Saved:" / Rich
+        # error). Propagate the exit code without emitting a SECOND JSON
+        # `UnexpectedError` payload through the catch-all below — that would
+        # leave stdout with two concatenated documents that no `json.loads`
+        # call can parse, defeating the whole point of --json.
+        raise
     except BaseException as e:  # noqa: BLE001 — intentional catch-all at the CLI boundary
+        if as_json:
+            emit_unhandled_event(_logger, e, cli_command=cli_command)
+            json_output.emit(json_output.unexpected_payload())
+            sys.exit(1)
         sys.exit(_handle_unhandled_error(e, cli_command=cli_command))
 
 
