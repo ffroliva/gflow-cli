@@ -1886,7 +1886,10 @@ class UiAutomationTransport(VideoGenerationMixin):
         await self._enter_editor(page, out_dir)
         project_id = _extract_project_id(page.url)
         if project_id is None:
-            msg = f"Could not extract project_id from editor URL after _enter_editor. URL: {page.url}"
+            msg = (
+                f"Could not extract project_id from editor URL after _enter_editor. "
+                f"URL: {page.url}"
+            )
             raise RuntimeError(
                 msg,
             )

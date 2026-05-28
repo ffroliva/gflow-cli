@@ -830,7 +830,7 @@ class VideoGenerationMixin:
             except Exception as e:
                 if i == 0:
                     shot = await _capture_debug_screenshot(page, out_dir, "debug_no_add_media.png")
-                    msg = f"'Add Media' button not found for the first reference. Screenshot: {shot}"
+                    msg = f"'Add Media' button not found for first reference. Screenshot: {shot}"
                     raise RuntimeError(
                         msg,
                     ) from e
