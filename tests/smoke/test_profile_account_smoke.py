@@ -1,22 +1,35 @@
 """Smoke test for issue-#92 — Google account persistence and profile naming.
 
-Verifies the full observable chain introduced by the fix:
+REAL ENVIRONMENT REQUIRED
+--------------------------
+These tests require a profile that was authenticated with ``gflow auth login``
+against real Google Flow. They **cannot** run in CI, a sandbox, or any
+environment without a live Google session. The tests skip automatically when
+``GFLOW_CLI_E2E_PROFILE`` is unset or the named profile directory does not exist.
 
-  1. `.gflow_account` file in the profile dir holds a valid email.
-  2. `profile_store.list_profiles()` surfaces that email in `google_account`.
-  3. `gflow auth list --json` returns `google_account` in every entry.
-
-Zero Flow credits — no image or video generation. If `.gflow_account` is
-absent (profile created before this fix), the test derives the email from
-``verify_flow_session`` and writes the file, emulating what a fresh
-``gflow auth login`` would do.
-
-Required environment variable:
-  GFLOW_CLI_E2E_PROFILE — name of a profile already signed in to Flow.
-
-Run with::
+To run on a developer workstation or server::
 
     GFLOW_CLI_E2E_PROFILE=<name> pytest -m smoke tests/smoke/test_profile_account_smoke.py -v
+
+Credit cost: zero — no image or video generation is performed.
+
+What is verified
+----------------
+  1. ``.gflow_account`` file in the profile dir holds a valid email address.
+  2. ``profile_store.list_profiles()`` surfaces that email in ``google_account``.
+  3. ``gflow auth list --json`` returns the ``google_account`` key per entry.
+
+Backfill behaviour
+------------------
+If ``.gflow_account`` is absent (profile created before the PR #110 fix), the
+first two tests derive the email from ``verify_flow_session`` and write the file,
+emulating what a fresh ``gflow auth login`` would do. The third test
+(``test_auth_list_json_includes_google_account``) skips if the file is still
+absent after that, since the CLI subprocess cannot write to the profile during
+``--json`` output.
+
+See ``docs/E2E_TESTING.md`` § Smoke test inventory and
+``docs/AUTHENTICATION.md`` § Profile naming for full context.
 """
 
 from __future__ import annotations
