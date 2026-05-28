@@ -1,0 +1,27 @@
+# GEMINI.md
+
+> Project memory hub for **Gemini CLI**. The universal coding-agent rules for any tool (Cursor, Codex, Aider, Gemini CLI, etc.) live in [AGENTS.md](AGENTS.md) — this file carries Gemini-specific session protocol only.
+
+## What this project is
+
+`gflow-cli` is an unofficial Python CLI that drives [Google Flow](https://labs.google/fx/tools/flow) (Veo image-to-video, Imagen text-to-image) from the terminal by reverse-engineering Flow's private REST API. See [README.md](README.md) for the user-facing overview.
+
+## On every session start
+
+1. Read **[AGENTS.md](AGENTS.md)** — universal rules every agent must follow.
+2. Read **[docs/INDEX.md](docs/INDEX.md)** — routing layer for all project docs and commands.
+3. Pull deeper context on demand:
+   - Starting a feature → `/gflow:plan`
+   - Touching auth or reCAPTCHA → `/gflow:known-issues`
+   - Cutting a release → `/gflow:release`
+   - Before any commit → `/gflow:check`
+
+## Gemini-specific
+
+- Use specialized skills when relevant (e.g., `find-docs` for library research, `pr-council-review` for PR audits).
+- Maintain memory via the `mcp-mempalace` tool if available.
+- Prioritize **turn efficiency** and **high-signal output**.
+
+## Active phase
+
+See [PLAN.md](PLAN.md) or run `/gflow:plan` for the current detailed plan.
