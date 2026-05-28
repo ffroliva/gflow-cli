@@ -43,6 +43,8 @@ Slash commands for Claude Code, stored in `.claude/commands/gflow/`. All prefixe
 | `/gflow:known-issues` | Surface open and mitigated issues | Before touching auth, reCAPTCHA, or previously-flagged code |
 | `/gflow:changelog` | Show `[Unreleased]` entries + last tagged release | Need a quick picture of recent work |
 | `/gflow:release` | Full release flow (calls `/gflow:changelog` + `/gflow:check`) | Cutting a new version |
+| `/gflow:predict <proposal>` | 5-persona pre-implementation analysis → GO / CAUTION / STOP | Before any high-stakes design decision (new transport, auth change, selector redesign, schema migration) |
+| `/gflow:scenario <feature>` | 12-dimension edge-case explorer → severity-ranked scenario table + BDD skeleton | After predict GO/CAUTION; before writing the PLAN.md task spec |
 
 **Governance:** commands are executable docs — they decay like any doc. When a phase advances or a file path changes, update the relevant command in the same commit. `/gflow:release` includes a staleness review step.
 
