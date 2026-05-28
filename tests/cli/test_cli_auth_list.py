@@ -14,8 +14,12 @@ from pathlib import Path
 import pytest
 
 from gflow_cli import cli as cli_mod
-from gflow_cli.cli import _default_marker_glyph, _render_profiles_table
-from gflow_cli.profile_store import ProfileMeta
+from gflow_cli.cli import (
+    _default_marker_glyph,
+    _profile_name_from_account,
+    _render_profiles_table,
+)
+from gflow_cli.profile_store import _SAFE_PROFILE_NAME_RE, ProfileMeta
 
 
 @pytest.mark.parametrize(
@@ -36,7 +40,13 @@ def test_default_marker_glyph_picks_safe_fallback(encoding: str | None, expected
     assert _default_marker_glyph(encoding) == expected
 
 
-def _make_profile(*, name: str = "default", is_default: bool = True, tmp_path: Path) -> ProfileMeta:
+def _make_profile(
+    *,
+    name: str = "default",
+    is_default: bool = True,
+    google_account: str | None = None,
+    tmp_path: Path,
+) -> ProfileMeta:
     profile_dir = tmp_path / f"profile_{name}"
     profile_dir.mkdir(parents=True, exist_ok=True)
     return ProfileMeta(
@@ -45,6 +55,7 @@ def _make_profile(*, name: str = "default", is_default: bool = True, tmp_path: P
         is_default=is_default,
         cookies_present=True,
         last_used_at=datetime(2026, 5, 26, 12, 0, 0, tzinfo=UTC),
+        google_account=google_account,
     )
 
 
@@ -78,3 +89,55 @@ def test_render_profiles_table_does_not_crash_on_cp1252(
     assert "default" in rendered
     assert "●" not in rendered
     assert "*" in rendered
+
+
+def test_render_profiles_table_shows_google_account(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    """The 'Google account' column shows the email when present, 'unknown' otherwise."""
+    import io
+
+    from rich.console import Console
+
+    buf = io.StringIO()
+    monkeypatch.setattr(
+        cli_mod, "console", Console(file=buf, force_terminal=False, highlight=False, width=200)
+    )
+
+    profiles = [
+        _make_profile(name="alice", google_account="alice@example.com", tmp_path=tmp_path),
+        _make_profile(name="bob", google_account=None, tmp_path=tmp_path),
+    ]
+    _render_profiles_table(profiles)
+
+    rendered = buf.getvalue()
+    assert "alice@example.com" in rendered
+    assert "unknown" in rendered
+
+
+@pytest.mark.parametrize(
+    ("email", "expected"),
+    [
+        ("ffroliva@gmail.com", "ffroliva"),
+        ("dev@axelate.io", "dev"),
+        ("flavio.oliva@gmail.com", "flavio-oliva"),
+        ("john.smith@example.com", "john-smith"),
+        ("user+flow@example.com", "user-flow"),
+        ("a.b.c@example.com", "a-b-c"),
+        ("under_score@example.com", "under_score"),
+    ],
+)
+def test_profile_name_from_account_sanitizes_local_part(email: str, expected: str) -> None:
+    """Email local-parts with '.'/'+' (Gmail dots, aliases, firstname.lastname)
+    must become a name that rename_profile's _SAFE_PROFILE_NAME_RE accepts —
+    otherwise auth_login raises an uncaught ValueError after the session is saved."""
+    result = _profile_name_from_account(email)
+    assert result == expected
+    assert result is not None and _SAFE_PROFILE_NAME_RE.match(result)
+
+
+@pytest.mark.parametrize("email", ["....@example.com", "@example.com", "++@example.com", ""])
+def test_profile_name_from_account_returns_none_when_nothing_usable(email: str) -> None:
+    """When the local-part has no safe characters, return None so the caller
+    keeps the existing profile name instead of attempting an invalid rename."""
+    assert _profile_name_from_account(email) is None

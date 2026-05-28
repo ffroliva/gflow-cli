@@ -26,15 +26,17 @@ async def _poll_session_until_authenticated(
     page: Any,
     timeout_seconds: int,
     strategy_name: str,
-) -> None:
+) -> str | None:
     """Poll the Flow NextAuth session endpoint until the sign-in completes.
 
+    Returns the verified user email, or None if it could not be extracted.
     Raises ``AuthBrowserRejectedError`` if Google rejects the browser.
     Raises ``AuthLoginTimeoutError`` if the timeout elapses or the browser
     closes before authentication is verified.
     """
     timeout_at = asyncio.get_running_loop().time() + timeout_seconds
     success = False
+    _email: str | None = None
 
     while asyncio.get_running_loop().time() < timeout_at:
         try:
@@ -58,6 +60,7 @@ async def _poll_session_until_authenticated(
                     user_email=status.user_email,
                 )
                 success = True
+                _email = status.user_email
                 break
         except asyncio.CancelledError:
             raise
@@ -93,6 +96,8 @@ async def _poll_session_until_authenticated(
                 "before closing the browser. Run `gflow auth login` to retry."
             ),
         )
+
+    return _email
 
 
 def _is_google_rejected_browser_page(page: object) -> bool:
@@ -130,6 +135,7 @@ class InternalChromiumStrategy(AuthStrategy):
         profile_dir.mkdir(parents=True, exist_ok=True)
         logger.info("auth_login_started", profile_dir=str(profile_dir), strategy=self.name)
 
+        user_email: str | None = None
         async with async_playwright() as pw:
             # We use launch_persistent_context to ensure cookies are saved to profile_dir
             ctx = await pw.chromium.launch_persistent_context(
@@ -150,9 +156,14 @@ class InternalChromiumStrategy(AuthStrategy):
                     )
 
                 # Poll until the Flow app sign-in completes; raises on timeout/rejection.
-                await _poll_session_until_authenticated(ctx, page, self._timeout_seconds, self.name)
+                user_email = await _poll_session_until_authenticated(
+                    ctx, page, self._timeout_seconds, self.name
+                )
                 # Small delay to ensure state is flushed to disk
                 await asyncio.sleep(1)
 
             finally:
                 await ctx.close()
+
+        if user_email:
+            (profile_dir / ".gflow_account").write_text(user_email, encoding="utf-8")
