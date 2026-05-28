@@ -71,6 +71,8 @@ samples/captured/flow_outgoing_*.jsonl
 samples/captured/flow_outgoing_*.json
 
 # Claude Code worktrees and lock files
+.claude/settings.json
+.claude/settings.local.json
 .claude/worktrees/
 .claude/scheduled_tasks.lock
 
