@@ -82,13 +82,19 @@ cost table, and run commands.
 
 ```bash
 uv run python scripts/ci/check_repo_hygiene.py  # artefact + path hygiene
+uv run python scripts/ci/check_doc_links.py     # internal Markdown links
 uv run ruff check src tests          # lint
 uv run ruff format src tests         # auto-format
 uv run pyright src                   # type-check (strict on src/gflow_cli/)
 uv run pytest -q --cov=gflow_cli      # tests + coverage
 ```
 
-CI runs all five on every push. Install local pre-commit hooks (recommended):
+CI runs all six on every push. Documentation is part of the merge gate: update
+the relevant docs for behavior, workflow, configuration, architecture, or
+operator-facing changes. If no documentation change is needed, state that in
+the PR validation checklist.
+
+Install local pre-commit hooks (recommended):
 
 ```bash
 pip install pre-commit && pre-commit install

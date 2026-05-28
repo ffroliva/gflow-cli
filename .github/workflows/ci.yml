@@ -44,6 +44,9 @@ jobs:
       - name: Repo hygiene (no artefacts, no hardcoded paths)
         run: uv run python scripts/ci/check_repo_hygiene.py
 
+      - name: Documentation links
+        run: uv run python scripts/ci/check_doc_links.py
+
       - name: Lint
         run: uv run ruff check src tests
 
