@@ -9,6 +9,41 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ### Added
 
+- **Google account identity persisted to every profile (`issue #92`).** Both
+  auth strategies (`real_chrome`, `internal_chromium`) now write a
+  `.gflow_account` file to the profile directory immediately after the session
+  is verified, durably associating the signed-in email with the profile on disk.
+  `ProfileMeta` gains a `google_account: str | None` field populated by
+  `profile_store.list_profiles()` from that file. `gflow auth list` (table and
+  `--json`) now includes a **Google account** column so every profile is
+  immediately identifiable — no more opaque `default` entries.  The `--json`
+  output gains the `google_account` key for programmatic callers.  Closes #92.
+
+- **Auto-rename of the first-run `default` profile to email local-part.** When
+  `gflow auth login` creates the first profile and no `--profile` flag was given,
+  the profile is named `default` as a placeholder. After the session is verified
+  and the email is known, `auth login` automatically renames `profile_default` to
+  `profile_<email-local-part>` (e.g. `profile_ffroliva`) and updates
+  `config.toml`'s `default_profile` pointer atomically. The local-part is
+  sanitized to a filesystem-safe name (characters outside letters, digits, `-`,
+  and `_` become `-`), so `flavio.oliva@gmail.com` → `profile_flavio-oliva` and
+  `user+flow@gmail.com` → `profile_user-flow`. Existing `default`
+  profiles that were created before this change continue to work; they gain the
+  email column the next time `gflow auth login` is run against them.  Closes #92.
+
+- **`profile_store.rename_profile(old_name, new_name)`** — reusable primitive that
+  renames a profile directory and updates `config.toml` when the renamed profile
+  was the default. Raises `FileNotFoundError` / `FileExistsError` on invalid input.
+
+- **Zero-credit smoke test for profile account persistence
+  (`tests/smoke/test_profile_account_smoke.py`).** Three smoke tests that verify
+  the full observable chain — account file present + readable, `list_profiles()`
+  surfaces `google_account`, `gflow auth list --json` includes the field — against
+  a real authenticated profile. No image or video generation; zero Flow credits.
+  Backfills the `.gflow_account` file for profiles created before the fix so the
+  tests work on existing sessions. Opt-in via
+  `GFLOW_CLI_E2E_PROFILE=<name> pytest -m smoke tests/smoke/test_profile_account_smoke.py`.
+
 - **Aggregated asset view in `gflow data list images/videos`.** By default,
   listing images or videos now returns one row per asset (Flow media ID),
   collapsing multiple local copies into a single entry with a `COPIES` count

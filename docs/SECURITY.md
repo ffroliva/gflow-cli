@@ -28,6 +28,13 @@
 - **Access:** OS file permissions enforce single-user access. On POSIX, `chmod 0700` is applied to the profile dir at creation time. On Windows, ACLs grant access only to the current user.
 - **Lifetime:** Persists until `gflow auth logout`, manual deletion, or session invalidation by Google.
 
+### Google account email
+
+- **Location:** `$GFLOW_CLI_HOME/profile_<name>/.gflow_account` — one file per profile, plaintext UTF-8.
+- **Content:** The verified email address of the signed-in Google account (e.g. `you@gmail.com`). Written once per `gflow auth login` by both auth strategies.
+- **Sensitivity:** Low. The email is already visible to any process that can read Chromium cookies; it is not a credential. No passwords, tokens, or session artefacts are stored in this file.
+- **Access:** Same OS file permissions as the profile dir (`chmod 0700` on POSIX). Visible only to the current user.
+
 ### Gemini API key (future official provider, planned v0.5+)
 
 Not used by v0.4.0a2's reverse-engineered Flow provider. Documented here in advance of `GFLOW_CLI_PROVIDER=official`.

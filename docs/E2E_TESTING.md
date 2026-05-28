@@ -94,12 +94,27 @@ e2e ─┬─ e2e_auth     (auth/session, health check — zero credits)
 uv run pytest -m "not e2e and not smoke and not live" -q --cov=gflow_cli
 ```
 
-### Layer 3 — Smoke (1 Imagen credit)
+### Layer 3 — Smoke
+
+> **Requires a real authenticated profile.** Smoke tests will skip automatically
+> if `GFLOW_CLI_E2E_PROFILE` is not set or the named profile directory does not
+> exist. They cannot be run in CI or any sandbox environment — a live Google
+> Flow session on a workstation or server with a headed browser is required.
 
 ```bash
 export GFLOW_CLI_E2E_PROFILE=<profile-name>
+
+# All smoke tests (includes the 1-credit golden-path image test)
 uv run pytest -m smoke -v
+
+# Zero-credit only — account persistence check, no generation
+uv run pytest -m smoke tests/smoke/test_profile_account_smoke.py -v
 ```
+
+| Smoke test | Credits | Notes |
+|---|---|---|
+| `test_real_flow.py` | ~1 Imagen | Full golden path; use `GFLOW_CLI_E2E_PROMPT` to override the prompt |
+| `test_profile_account_smoke.py` | **0** | Auth verification only; backfills `.gflow_account` for pre-v0.10 profiles |
 
 ### Layer 4 — Cost-stratified e2e runs
 
@@ -137,18 +152,33 @@ See [DEVELOPMENT.md § E2e gate](DEVELOPMENT.md#e2e-gate-before-merging-develop-
 
 ```
 tests/
-├── conftest.py                       # install_log_capture; auto-marker hook
+├── conftest.py                           # install_log_capture; auto-marker hook
 ├── smoke/
-│   └── test_real_flow.py             # [smoke] golden path, 1 Imagen credit
+│   ├── test_real_flow.py                 # [smoke] golden path, 1 Imagen credit
+│   └── test_profile_account_smoke.py     # [smoke] profile account persistence — 0 credits
 └── e2e/
-    ├── conftest.py                   # e2e_profile_dir, e2e_nosession_profile,
-    │                                 #   e2e_env (shared fixtures)
-    ├── test_auth_verification_e2e.py # [e2e, e2e_auth]
-    ├── test_transports_e2e.py        # [e2e, e2e_{auth,image,batch,video}]
-    ├── test_image_batch_e2e.py       # [e2e, e2e_batch]
-    ├── test_video_t2v_e2e.py         # [e2e, e2e_video]
-    └── test_data_layer_e2e.py        # [e2e, e2e_{image,video,data}]
+    ├── conftest.py                       # e2e_profile_dir, e2e_nosession_profile,
+    │                                     #   e2e_env (shared fixtures)
+    ├── test_auth_verification_e2e.py     # [e2e, e2e_auth]
+    ├── test_transports_e2e.py            # [e2e, e2e_{auth,image,batch,video}]
+    ├── test_image_batch_e2e.py           # [e2e, e2e_batch]
+    ├── test_video_t2v_e2e.py             # [e2e, e2e_video]
+    └── test_data_layer_e2e.py            # [e2e, e2e_{image,video,data}]
 ```
+
+### Smoke test inventory
+
+| File | Credits | What it verifies |
+|------|---------|-----------------|
+| `test_real_flow.py` | 1 Imagen | Golden path: open Flow, submit prompt, save PNG, check dimensions |
+| `test_profile_account_smoke.py` | 0 | `.gflow_account` file present + valid email; `list_profiles()` surfaces `google_account`; `gflow auth list --json` includes the field |
+
+> **Real environment required.** Both smoke tests require a profile that has been
+> authenticated with `gflow auth login` against real Google Flow. They cannot run in
+> a sandbox, CI, or any environment without a live Google session.
+> Set `GFLOW_CLI_E2E_PROFILE=<name>` to the name of a logged-in profile before running.
+> See [AUTHENTICATION.md § Session storage](AUTHENTICATION.md#session-storage) for
+> where profile directories live on each OS.
 
 Tests that were previously misclassified as e2e:
 

@@ -61,6 +61,8 @@ Slash commands for Claude Code, stored in `.claude/commands/gflow/`. All prefixe
 **"Where do generated files land?"** → [CONFIGURATION § Output paths](CONFIGURATION.md#output-paths)
 **"How do I write outputs to S3, MinIO, or Google Cloud Storage?"** → [EXTERNAL_STORAGE](EXTERNAL_STORAGE.md) and [CONFIGURATION § `GFLOW_CLI_STORAGE_URI`](CONFIGURATION.md#gflow_cli_storage_uri)
 **"How do I run with multiple Google accounts?"** → [AUTHENTICATION § Multiple accounts](AUTHENTICATION.md#multiple-accounts)
+**"How do I know which Google account a profile is signed into?"** → [AUTHENTICATION § gflow auth list](AUTHENTICATION.md#gflow-auth-list)
+**"Why is my profile named 'default' and how do I rename it?"** → [AUTHENTICATION § Profile naming](AUTHENTICATION.md#profile-naming)
 **"How does the layered structure work?"** → [ARCHITECTURE § Layers](ARCHITECTURE.md#layers)
 **"What env var should I set for X?"** → [CONFIGURATION § Reference](CONFIGURATION.md#reference)
 **"What does gflow remember after a generation finishes?"** → [DATA_LAYER § What is recorded](DATA_LAYER.md#what-is-recorded)
