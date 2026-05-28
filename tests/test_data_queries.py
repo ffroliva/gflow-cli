@@ -11,7 +11,9 @@ import pytest
 
 from gflow_cli.data.models import AssetKind, AssetRecord, LocalFileRecord, ProjectRecord
 from gflow_cli.data.queries import (
+    _LIST_IMAGES_ALL_COPIES_SQL,
     _LIST_IMAGES_SQL,
+    _LIST_VIDEOS_ALL_COPIES_SQL,
     _LIST_VIDEOS_SQL,
     list_images,
     list_profiles,
@@ -301,7 +303,7 @@ def test_list_images_no_local_files_copy_count_is_zero(tmp_path: Path) -> None:
 
 
 # ---------------------------------------------------------------------------
-# Query-plan regression — closes #112
+# Query-plan regression — refs #112
 # ---------------------------------------------------------------------------
 
 
@@ -313,12 +315,18 @@ def _local_files_scan_lines(plan_rows: list[sqlite3.Row]) -> list[str]:
 
 @pytest.mark.parametrize(
     "sql",
-    [_LIST_IMAGES_SQL, _LIST_VIDEOS_SQL],
-    ids=["images", "videos"],
+    [
+        _LIST_IMAGES_SQL,
+        _LIST_VIDEOS_SQL,
+        _LIST_IMAGES_ALL_COPIES_SQL,
+        _LIST_VIDEOS_ALL_COPIES_SQL,
+    ],
+    ids=["images-agg", "videos-agg", "images-all-copies", "videos-all-copies"],
 )
-def test_list_aggregation_uses_index_not_full_scan(tmp_path: Path, sql: str) -> None:
-    """#112: the ``GROUP BY asset_id`` aggregation must resolve via an index, never
-    a full table scan of ``local_files``.
+def test_list_queries_use_index_not_full_scan(tmp_path: Path, sql: str) -> None:
+    """#112: every list-images/videos query must reach ``local_files`` through an
+    index, never a full table scan — both the default per-asset aggregation
+    (``GROUP BY asset_id``) and the ``--all-copies`` flat join.
 
     The covering index is supplied for free by the ``UNIQUE(asset_id, path)``
     constraint — SQLite's implicit ``sqlite_autoindex_local_files_2`` — so no extra
@@ -333,7 +341,9 @@ def test_list_aggregation_uses_index_not_full_scan(tmp_path: Path, sql: str) -> 
         plan = store.conn.execute("EXPLAIN QUERY PLAN " + sql, params).fetchall()
 
     scans = _local_files_scan_lines(plan)
-    assert scans, f"expected the plan to scan local_files; plan was {[r[-1] for r in plan]}"
+    assert scans, (
+        f"expected local_files to be reached via an index; plan was {[r[-1] for r in plan]}"
+    )
     for line in scans:
         assert "USING" in line and "INDEX" in line, (
             f"full-scan regression on local_files — expected an index scan, got {line!r}"
