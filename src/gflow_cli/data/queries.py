@@ -116,18 +116,47 @@ class ImageRow:
     model: str
     created_at: datetime
     local_path: str | None
+    copy_count: int = 1
 
 
+# Aggregated: one row per asset, local_files collapsed into a subquery.
 _LIST_IMAGES_SQL = """
     SELECT
-        a.flow_media_id  AS media_id,
-        a.profile_name   AS profile,
+        a.flow_media_id   AS media_id,
+        a.profile_name    AS profile,
         a.flow_project_id AS project_id,
-        o.prompt         AS prompt,
-        a.aspect_ratio   AS aspect,
-        a.model          AS model,
-        a.created_at     AS created_at,
-        lf.path          AS local_path
+        o.prompt          AS prompt,
+        a.aspect_ratio    AS aspect,
+        a.model           AS model,
+        a.created_at      AS created_at,
+        COALESCE(lfa.copy_count, 0) AS copy_count,
+        lfa.latest_path   AS local_path
+    FROM assets a
+    LEFT JOIN operation_assets oa ON oa.asset_id = a.id AND oa.role = 'output'
+    LEFT JOIN operations o ON o.id = oa.operation_id
+    LEFT JOIN (
+        SELECT asset_id, COUNT(*) AS copy_count, MAX(path) AS latest_path
+          FROM local_files
+         GROUP BY asset_id
+    ) lfa ON lfa.asset_id = a.id
+    WHERE a.kind = 'image'
+      AND (:profile IS NULL OR a.profile_name = :profile)
+    ORDER BY a.created_at DESC
+    LIMIT :limit OFFSET :offset
+"""
+
+# Flat: one row per local_file (current row-per-file behaviour).
+_LIST_IMAGES_ALL_COPIES_SQL = """
+    SELECT
+        a.flow_media_id   AS media_id,
+        a.profile_name    AS profile,
+        a.flow_project_id AS project_id,
+        o.prompt          AS prompt,
+        a.aspect_ratio    AS aspect,
+        a.model           AS model,
+        a.created_at      AS created_at,
+        1                 AS copy_count,
+        lf.path           AS local_path
     FROM assets a
     LEFT JOIN operation_assets oa ON oa.asset_id = a.id AND oa.role = 'output'
     LEFT JOIN operations o ON o.id = oa.operation_id
@@ -145,25 +174,28 @@ def list_images(
     profile: str | None,
     limit: int,
     offset: int,
+    all_copies: bool = False,
 ) -> list[ImageRow]:
     """Return image assets newest-first, filtered by profile if given.
 
-    prompt and local_path are NULLable (LEFT JOINs): prompt is absent for
-    uploaded reference images; local_path is absent for assets not yet
-    downloaded.
+    By default returns one row per asset with ``copy_count`` showing how many
+    local copies exist.  Pass ``all_copies=True`` for one row per local_file
+    (the pre-aggregation behaviour).
 
     Args:
         db_path: Absolute path to the SQLite catalog.
         profile: If given, only return images belonging to this profile name.
         limit: Maximum number of rows to return.
         offset: Number of rows to skip (for pagination).
+        all_copies: If True, emit one row per local_file instead of one per asset.
 
     Returns:
         A list of :class:`ImageRow` instances ordered newest-first.
     """
+    sql = _LIST_IMAGES_ALL_COPIES_SQL if all_copies else _LIST_IMAGES_SQL
     params = {"profile": profile, "limit": limit, "offset": offset}
     with _safe_db(db_path) as conn:
-        rows = conn.execute(_LIST_IMAGES_SQL, params).fetchall()
+        rows = conn.execute(sql, params).fetchall()
     return [
         ImageRow(
             media_id=str(r["media_id"]),
@@ -174,6 +206,7 @@ def list_images(
             model=str(r["model"]),
             created_at=datetime.fromisoformat(str(r["created_at"])),
             local_path=str(r["local_path"]) if r["local_path"] is not None else None,
+            copy_count=int(r["copy_count"]),
         )
         for r in rows
     ]
@@ -193,8 +226,10 @@ class VideoRow:
     duration: float | None
     created_at: datetime
     local_path: str | None
+    copy_count: int = 1
 
 
+# Aggregated: one row per asset, local_files collapsed into a subquery.
 _LIST_VIDEOS_SQL = """
     SELECT
         a.flow_media_id   AS media_id,
@@ -205,6 +240,34 @@ _LIST_VIDEOS_SQL = """
         a.model           AS model,
         a.duration_seconds AS duration,
         a.created_at      AS created_at,
+        COALESCE(lfa.copy_count, 0) AS copy_count,
+        lfa.latest_path   AS local_path
+    FROM assets a
+    LEFT JOIN operation_assets oa ON oa.asset_id = a.id AND oa.role = 'output'
+    LEFT JOIN operations o ON o.id = oa.operation_id
+    LEFT JOIN (
+        SELECT asset_id, COUNT(*) AS copy_count, MAX(path) AS latest_path
+          FROM local_files
+         GROUP BY asset_id
+    ) lfa ON lfa.asset_id = a.id
+    WHERE a.kind = 'video'
+      AND (:profile IS NULL OR a.profile_name = :profile)
+    ORDER BY a.created_at DESC
+    LIMIT :limit OFFSET :offset
+"""
+
+# Flat: one row per local_file (current row-per-file behaviour).
+_LIST_VIDEOS_ALL_COPIES_SQL = """
+    SELECT
+        a.flow_media_id   AS media_id,
+        a.profile_name    AS profile,
+        a.flow_project_id AS project_id,
+        o.prompt          AS prompt,
+        a.aspect_ratio    AS aspect,
+        a.model           AS model,
+        a.duration_seconds AS duration,
+        a.created_at      AS created_at,
+        1                 AS copy_count,
         lf.path           AS local_path
     FROM assets a
     LEFT JOIN operation_assets oa ON oa.asset_id = a.id AND oa.role = 'output'
@@ -223,26 +286,27 @@ def list_videos(
     profile: str | None,
     limit: int,
     offset: int,
+    all_copies: bool = False,
 ) -> list[VideoRow]:
     """Return video assets newest-first, filtered by profile if given.
 
-    prompt and local_path are NULLable (LEFT JOINs). duration maps to the
-    duration_seconds REAL column in the schema, which is also nullable
-    (e.g. omni-flash currently returns no duration in its t2v response, and
-    smoke-test fixtures may insert rows without it).
+    By default returns one row per asset with ``copy_count`` showing how many
+    local copies exist.  Pass ``all_copies=True`` for one row per local_file.
 
     Args:
         db_path: Absolute path to the SQLite catalog.
         profile: If given, only return videos belonging to this profile name.
         limit: Maximum number of rows to return.
         offset: Number of rows to skip (for pagination).
+        all_copies: If True, emit one row per local_file instead of one per asset.
 
     Returns:
         A list of :class:`VideoRow` instances ordered newest-first.
     """
+    sql = _LIST_VIDEOS_ALL_COPIES_SQL if all_copies else _LIST_VIDEOS_SQL
     params = {"profile": profile, "limit": limit, "offset": offset}
     with _safe_db(db_path) as conn:
-        rows = conn.execute(_LIST_VIDEOS_SQL, params).fetchall()
+        rows = conn.execute(sql, params).fetchall()
     return [
         VideoRow(
             media_id=str(r["media_id"]),
@@ -254,6 +318,7 @@ def list_videos(
             duration=float(r["duration"]) if r["duration"] is not None else None,
             created_at=datetime.fromisoformat(str(r["created_at"])),
             local_path=str(r["local_path"]) if r["local_path"] is not None else None,
+            copy_count=int(r["copy_count"]),
         )
         for r in rows
     ]

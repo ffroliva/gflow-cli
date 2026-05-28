@@ -98,6 +98,7 @@ def _emit_images_table(rows: list[ImageRow]) -> None:
         "ASPECT",
         "MODEL",
         "CREATED",
+        "COPIES",
         "LOCAL_PATH",
     ):
         tbl.add_column(col)
@@ -110,6 +111,7 @@ def _emit_images_table(rows: list[ImageRow]) -> None:
             r.aspect,
             r.model,
             r.created_at.strftime("%Y-%m-%d %H:%M"),
+            str(r.copy_count),
             r.local_path or "",
         )
     Console().print(tbl)
@@ -126,6 +128,7 @@ def _emit_videos_table(rows: list[VideoRow]) -> None:
         "MODEL",
         "DURATION",
         "CREATED",
+        "COPIES",
         "LOCAL_PATH",
     ):
         tbl.add_column(col)
@@ -139,6 +142,7 @@ def _emit_videos_table(rows: list[VideoRow]) -> None:
             r.model,
             f"{r.duration:g}s" if r.duration is not None else "",
             r.created_at.strftime("%Y-%m-%d %H:%M"),
+            str(r.copy_count),
             r.local_path or "",
         )
     Console().print(tbl)
@@ -315,15 +319,32 @@ def list_projects_cmd(profile: str | None, limit: int, offset: int, as_json: boo
     _emit(rows, as_json, _emit_projects_table, "No projects recorded.")
 
 
+_ALL_COPIES_OPT = click.option(
+    "--all-copies",
+    "all_copies",
+    is_flag=True,
+    help="Show one row per local file instead of one row per asset.",
+)
+
+
 @list_group.command(name="images")
 @_PROFILE_OPT
 @_LIMIT_OPT
 @_OFFSET_OPT
 @_JSON_OPT
+@_ALL_COPIES_OPT
 @_guard
-def list_images_cmd(profile: str | None, limit: int, offset: int, as_json: bool) -> None:
-    """List images newest-first."""
-    rows = list_images(db_path=_db_path(), profile=profile, limit=limit, offset=offset)
+def list_images_cmd(
+    profile: str | None, limit: int, offset: int, as_json: bool, all_copies: bool
+) -> None:
+    """List images newest-first.
+
+    By default shows one row per asset with a copy-count.  Use --all-copies to
+    see every local path separately.
+    """
+    rows = list_images(
+        db_path=_db_path(), profile=profile, limit=limit, offset=offset, all_copies=all_copies
+    )
     _emit(rows, as_json, _emit_images_table, "No images recorded.")
 
 
@@ -332,10 +353,19 @@ def list_images_cmd(profile: str | None, limit: int, offset: int, as_json: bool)
 @_LIMIT_OPT
 @_OFFSET_OPT
 @_JSON_OPT
+@_ALL_COPIES_OPT
 @_guard
-def list_videos_cmd(profile: str | None, limit: int, offset: int, as_json: bool) -> None:
-    """List videos newest-first."""
-    rows = list_videos(db_path=_db_path(), profile=profile, limit=limit, offset=offset)
+def list_videos_cmd(
+    profile: str | None, limit: int, offset: int, as_json: bool, all_copies: bool
+) -> None:
+    """List videos newest-first.
+
+    By default shows one row per asset with a copy-count.  Use --all-copies to
+    see every local path separately.
+    """
+    rows = list_videos(
+        db_path=_db_path(), profile=profile, limit=limit, offset=offset, all_copies=all_copies
+    )
     _emit(rows, as_json, _emit_videos_table, "No videos recorded.")
 
 
@@ -348,3 +378,47 @@ def list_profiles_cmd(limit: int, offset: int, as_json: bool) -> None:
     """List catalog-known profiles (not auth-known)."""
     rows = list_profiles(db_path=_db_path(), limit=limit, offset=offset)
     _emit(rows, as_json, _emit_profiles_table, "No profiles recorded.")
+
+
+# ---------------------------------------------------------------------------
+# `gflow data prune`
+# ---------------------------------------------------------------------------
+
+
+@data.command("prune")
+@click.option("--dry-run", is_flag=True, help="Report dead rows without deleting them.")
+@click.option("--profile", default=None, help="Limit scan to a specific profile.")
+@_guard
+def prune_cmd(dry_run: bool, profile: str | None) -> None:
+    """Remove local_files rows whose paths no longer exist on disk.
+
+    Useful after test runs that wrote files to temporary directories, or after
+    manually deleting downloaded media.  Pass --dry-run to preview what would
+    be removed.
+    """
+    db = _db_path()
+    with DataStore.open(db) as store:
+        rows = store.conn.execute(
+            "SELECT id, path FROM local_files"
+            " WHERE path IS NOT NULL"
+            " AND (:profile IS NULL OR profile_name = :profile)",
+            {"profile": profile},
+        ).fetchall()
+
+        dead = [r for r in rows if not Path(str(r["path"])).exists()]
+
+        if not dead:
+            click.echo("No dead local_files rows found.")
+            return
+
+        if dry_run:
+            for r in dead:
+                click.echo(f"  [dead] {r['path']}")
+            click.echo(f"{len(dead)} dead row(s) found. --dry-run: no changes made.")
+            return
+
+        placeholders = ",".join("?" * len(dead))
+        dead_ids = [r["id"] for r in dead]
+        with store.transaction(immediate=True):
+            store.conn.execute(f"DELETE FROM local_files WHERE id IN ({placeholders})", dead_ids)
+        click.echo(f"Pruned {len(dead)} dead local_files row(s).")
