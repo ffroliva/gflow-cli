@@ -7,6 +7,8 @@
 <!-- List the focused commands you ran, plus any checks you could not run. -->
 
 - [ ] Focused tests added or updated for behavior changes
+- [ ] Documentation updated or explicitly marked not applicable
+- [ ] `uv run python scripts/ci/check_doc_links.py`
 - [ ] `uv run ruff check src tests`
 - [ ] `uv run pyright src`
 - [ ] Relevant pytest command:
