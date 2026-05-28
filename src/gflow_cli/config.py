@@ -24,15 +24,13 @@ import os
 import warnings
 from enum import StrEnum
 from functools import lru_cache
-from typing import TYPE_CHECKING, Literal
+from pathlib import Path
+from typing import Literal
 
 from pydantic import Field, field_validator
 from pydantic_settings import BaseSettings, SettingsConfigDict
 
 from gflow_cli import paths
-
-if TYPE_CHECKING:
-    from pathlib import Path
 
 _LEGACY_ENV_PREFIX = "FLOW_CLI_"
 _NEW_ENV_PREFIX = "GFLOW_CLI_"
