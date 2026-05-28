@@ -208,7 +208,8 @@ class BearerTransport:
         log.info("bearer.refresh_done", expires_at=expires_at)
 
     async def _capture_bearer_via_playwright(
-        self, profile_dir: Path,
+        self,
+        profile_dir: Path,
     ) -> tuple[str, float, BrowserFingerprint]:
         """Launch Playwright once, intercept the outgoing Bearer from Flow.
 

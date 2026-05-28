@@ -92,7 +92,8 @@ class _LambdaWait(wait_base):
 
 
 def _make_retrying(
-    *, wait_seconds: Callable[[RetryCallState], float] | None = None,
+    *,
+    wait_seconds: Callable[[RetryCallState], float] | None = None,
 ) -> AsyncRetrying:
     """Internal factory; tests override ``wait_seconds`` to skip real sleeps.
 

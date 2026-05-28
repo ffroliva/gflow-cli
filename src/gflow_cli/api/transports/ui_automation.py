@@ -741,7 +741,9 @@ class UiAutomationTransport(VideoGenerationMixin):
             return True
         except Exception as exc:
             shot_path = await _capture_debug_screenshot(
-                page, out_dir, "debug_overlay_dismiss_failed.png",
+                page,
+                out_dir,
+                "debug_overlay_dismiss_failed.png",
             )
             log.warning(
                 "ui_automation.overlay_dismiss_failed",
@@ -795,7 +797,8 @@ class UiAutomationTransport(VideoGenerationMixin):
                 await loc.click()
                 try:
                     await page.wait_for_url(
-                        lambda url: _PROJECT_URL_FRAGMENT in url, timeout=15_000,
+                        lambda url: _PROJECT_URL_FRAGMENT in url,
+                        timeout=15_000,
                     )
                     log.info("ui_automation.entered_editor", url=page.url)
                     return
@@ -830,7 +833,9 @@ class UiAutomationTransport(VideoGenerationMixin):
         :meth:`_configure_generation_settings` can open it fresh.
         """
         trigger = await VideoGenerationMixin._probe_selector_cascade(
-            page, "mode_switch_trigger", MODE_SWITCH_TRIGGER_SELECTORS,
+            page,
+            "mode_switch_trigger",
+            MODE_SWITCH_TRIGGER_SELECTORS,
         )
         if trigger is None:
             shot = await _capture_debug_screenshot(page, out_dir, "debug_no_mode_trigger.png")
@@ -841,7 +846,9 @@ class UiAutomationTransport(VideoGenerationMixin):
         await trigger.click()
         await page.wait_for_timeout(800)
         image_tab = await VideoGenerationMixin._probe_selector_cascade(
-            page, "image_mode_tab", IMAGE_TAB_IN_MENU_SELECTORS,
+            page,
+            "image_mode_tab",
+            IMAGE_TAB_IN_MENU_SELECTORS,
         )
         if image_tab is None:
             shot = await _capture_debug_screenshot(page, out_dir, "debug_no_image_tab.png")
@@ -1032,7 +1039,10 @@ class UiAutomationTransport(VideoGenerationMixin):
 
         # Phase 3 — before screenshot (diagnostic, best-effort).
         await UiAutomationTransport._capture_diag_screenshot(
-            page, out_dir, prompt_idx, "before",
+            page,
+            out_dir,
+            prompt_idx,
+            "before",
         )
 
         if not await UiAutomationTransport._open_gen_settings_panel(page):
@@ -1050,7 +1060,10 @@ class UiAutomationTransport(VideoGenerationMixin):
 
         # Phase 3 — after screenshot (diagnostic, best-effort).
         await UiAutomationTransport._capture_diag_screenshot(
-            page, out_dir, prompt_idx, "after",
+            page,
+            out_dir,
+            prompt_idx,
+            "after",
         )
 
         await page.keyboard.press("Escape")
@@ -1067,7 +1080,9 @@ class UiAutomationTransport(VideoGenerationMixin):
             diag_dir = out_dir / _DIAGNOSTICS_SUBDIR
             diag_dir.mkdir(parents=True, exist_ok=True)
             await _capture_debug_screenshot(
-                page, diag_dir, f"count_{suffix}_prompt_{prompt_idx}.png",
+                page,
+                diag_dir,
+                f"count_{suffix}_prompt_{prompt_idx}.png",
             )
 
     @staticmethod
@@ -1112,7 +1127,10 @@ class UiAutomationTransport(VideoGenerationMixin):
             log.warning("ui_automation.unsupported_count", value=count)
         else:
             await UiAutomationTransport._set_count(
-                page, count, out_dir=out_dir, prompt_idx=prompt_idx,
+                page,
+                count,
+                out_dir=out_dir,
+                prompt_idx=prompt_idx,
             )
 
     @staticmethod
@@ -1360,7 +1378,9 @@ class UiAutomationTransport(VideoGenerationMixin):
 
     @staticmethod
     def _attach_batch_response_listener(
-        page: Page, *, project_id: str | None = None,
+        page: Page,
+        *,
+        project_id: str | None = None,
     ) -> tuple[list[dict[str, Any]], Callable[[], None]]:
         """Synchronously register a ``page.on('response', ...)`` listener
         that records ``batchGenerateImages`` responses into a shared list.
@@ -1522,7 +1542,9 @@ class UiAutomationTransport(VideoGenerationMixin):
         """
         captured, _detach = UiAutomationTransport._attach_batch_response_listener(page)
         return await UiAutomationTransport._await_captured(
-            captured, timeout_s, poll_interval_s=poll_interval_s,
+            captured,
+            timeout_s,
+            poll_interval_s=poll_interval_s,
         )
 
     # ------------------------------------------------------------------
@@ -1652,7 +1674,10 @@ class UiAutomationTransport(VideoGenerationMixin):
         # Configure generation settings (aspect ratio + count) BEFORE attaching
         # the response listener so settings clicks don't interfere with capture.
         await self._configure_generation_settings(
-            page, aspect_cli, request.count, model=request.model,
+            page,
+            aspect_cli,
+            request.count,
+            model=request.model,
         )
 
         # I2I: bind local reference images through the editor's media dialog —
@@ -1675,7 +1700,9 @@ class UiAutomationTransport(VideoGenerationMixin):
         submit_time = time.monotonic()
         await self._send_prompt(page, request.prompt, out_dir)
         responses = await self._await_captured(
-            captured, expected_count=request.count, submit_time=submit_time,
+            captured,
+            expected_count=request.count,
+            submit_time=submit_time,
         )
 
         # Collect images from ALL captured responses (Flow makes one API call
@@ -1779,7 +1806,12 @@ class UiAutomationTransport(VideoGenerationMixin):
         # Step 1 — configure settings (aspect + count) for this prompt.
         try:
             await self._configure_generation_settings(
-                page, aspect_cli, req.count, model=req.model, out_dir=out_dir, prompt_idx=idx,
+                page,
+                aspect_cli,
+                req.count,
+                model=req.model,
+                out_dir=out_dir,
+                prompt_idx=idx,
             )
         except Exception as exc:
             return _fail(exc)
@@ -1805,7 +1837,9 @@ class UiAutomationTransport(VideoGenerationMixin):
         # Step 4 — await THIS prompt's responses, then detach immediately.
         try:
             responses = await self._await_captured(
-                captured, expected_count=req.count, submit_time=submit_time,
+                captured,
+                expected_count=req.count,
+                submit_time=submit_time,
             )
         except Exception as exc:
             detach()
@@ -1887,8 +1921,7 @@ class UiAutomationTransport(VideoGenerationMixin):
         project_id = _extract_project_id(page.url)
         if project_id is None:
             msg = (
-                f"Could not extract project_id from editor URL after _enter_editor. "
-                f"URL: {page.url}"
+                f"Could not extract project_id from editor URL after _enter_editor. URL: {page.url}"
             )
             raise RuntimeError(
                 msg,

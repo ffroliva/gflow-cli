@@ -233,7 +233,9 @@ async def _run_upload(
     recorder = OperationRecorder.open(settings)
     try:
         async with FlowApiClient(
-            profile_dir=profile_dir, headless=headless, transport=transport,
+            profile_dir=profile_dir,
+            headless=headless,
+            transport=transport,
         ) as client:
             console.print(_CREATING_PROJECT_MSG)
             project = await client.create_project(title="gflow-cli upload")
@@ -414,7 +416,12 @@ def t2i(
         return
 
     batch_prompts = _build_t2i_batch_prompts(
-        prompts, prompts_file, read_stdin, aspect, model, count,
+        prompts,
+        prompts_file,
+        read_stdin,
+        aspect,
+        model,
+        count,
     )
     _execute_t2i_batch(batch_prompts, count, continue_on_error, profile, out, transport)
 
@@ -471,7 +478,9 @@ def _execute_t2i_batch(
     provider_dir = _make_provider_dir(profile_name)
     settings = get_settings()
     output_dir = resolve_batch_output_dir(
-        cli_override=out, output_root=settings.output_dir, kind="images",
+        cli_override=out,
+        output_root=settings.output_dir,
+        kind="images",
     )
     console.print(
         f"\n[bold]gflow image t2i[/bold] · profile=[bold]{profile_name}[/bold] "
@@ -503,7 +512,9 @@ def _execute_t2i_batch(
 
 
 def _count_t2i_sources(
-    prompts: tuple[str, ...], prompts_file: Path | None, read_stdin: bool,
+    prompts: tuple[str, ...],
+    prompts_file: Path | None,
+    read_stdin: bool,
 ) -> int:
     return int(bool(prompts)) + int(prompts_file is not None) + int(read_stdin)
 
@@ -552,7 +563,9 @@ async def _run_t2i(
     recorder = OperationRecorder.open(settings)
     try:
         async with FlowApiClient(
-            profile_dir=profile_dir, headless=headless, transport=transport,
+            profile_dir=profile_dir,
+            headless=headless,
+            transport=transport,
         ) as client:
             if not as_json:
                 console.print(_CREATING_PROJECT_MSG)
@@ -569,7 +582,9 @@ async def _run_t2i(
                 images: list[GeneratedImage] = [img]
             else:
                 images = await client.generate_images_batch(
-                    project_id=project.project_id, req=req, count=count,
+                    project_id=project.project_id,
+                    req=req,
+                    count=count,
                 )
 
             saved_paths: list[Path] = []
@@ -738,7 +753,9 @@ def batch(
     provider_dir = _make_provider_dir(profile_name)
     settings = get_settings()
     output_dir = resolve_batch_output_dir(
-        cli_override=out, output_root=settings.output_dir, kind="images",
+        cli_override=out,
+        output_root=settings.output_dir,
+        kind="images",
     )
 
     total_images = sum(p.count for p in prompts)
@@ -927,7 +944,9 @@ async def _run_i2i(
     recorder = OperationRecorder.open(settings)
     try:
         async with FlowApiClient(
-            profile_dir=profile_dir, headless=headless, transport=transport,
+            profile_dir=profile_dir,
+            headless=headless,
+            transport=transport,
         ) as client:
             if not as_json:
                 console.print(_CREATING_PROJECT_MSG)
@@ -962,7 +981,9 @@ async def _run_i2i(
                 images: list[GeneratedImage] = [img]
             else:
                 images = await client.generate_images_batch(
-                    project_id=project.project_id, req=req, count=count,
+                    project_id=project.project_id,
+                    req=req,
+                    count=count,
                 )
 
             saved_paths: list[Path] = []

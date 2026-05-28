@@ -6,4 +6,3 @@ remains the canonical location.
 """
 
 from __future__ import annotations
-

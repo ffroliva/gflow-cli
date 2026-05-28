@@ -205,7 +205,9 @@ class EvaluateFetchTransport:
             msg = "EvaluateFetchTransport requires an explicit project_id"
             raise ValueError(msg)
         return await self._generate_images_inner(
-            project_id=project_id, request=request, is_retry=False,
+            project_id=project_id,
+            request=request,
+            is_retry=False,
         )
 
     async def _generate_images_inner(
@@ -249,7 +251,10 @@ class EvaluateFetchTransport:
             ) from exc
 
         return await self._handle_response(
-            raw, project_id=project_id, request=request, is_retry=is_retry,
+            raw,
+            project_id=project_id,
+            request=request,
+            is_retry=is_retry,
         )
 
     async def teardown(self) -> None:

@@ -598,7 +598,9 @@ async def get_or_launch_browser(
 
     async with _spawn_lock:
         existing_lock, locked_pid, locked_port = _sanitize_existing_lock(
-            lock_path, _read_lock(lock_path), port,
+            lock_path,
+            _read_lock(lock_path),
+            port,
         )
 
         if existing_lock is not None:

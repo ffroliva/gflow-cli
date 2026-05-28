@@ -379,7 +379,9 @@ class OperationRecorder:
         # Update the STARTED operation for this asset to SUCCEEDED
         completed_at = _now_utc_iso()
         op = repo.get_operation_for_output_asset(
-            profile_name, flow_media_id, OperationKind(request.mode.value),
+            profile_name,
+            flow_media_id,
+            OperationKind(request.mode.value),
         )
         if op is not None:
             repo.update_operation_status(op.id, OperationStatus.SUCCEEDED, completed_at, None, None)

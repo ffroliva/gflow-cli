@@ -164,7 +164,10 @@ class InternalChromiumStrategy(AuthStrategy):
 
                 # Poll until the Flow app sign-in completes; raises on timeout/rejection.
                 user_email = await _poll_session_until_authenticated(
-                    ctx, page, self._timeout_seconds, self.name,
+                    ctx,
+                    page,
+                    self._timeout_seconds,
+                    self.name,
                 )
                 # Small delay to ensure state is flushed to disk
                 await asyncio.sleep(1)

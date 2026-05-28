@@ -236,7 +236,9 @@ class FlowApiClient:
         # re-minting reCAPTCHA inside each retry loop on the worker's own
         # Page; no session-id work happens in T2.)
         await self._page.goto(
-            routes.EDITOR_BOOTSTRAP_URL, wait_until="domcontentloaded", timeout=60_000,
+            routes.EDITOR_BOOTSTRAP_URL,
+            wait_until="domcontentloaded",
+            timeout=60_000,
         )
 
         # --- Step 2: Resolve and set up transport, passing the live Page so
@@ -420,7 +422,11 @@ class FlowApiClient:
             ) from e
 
     async def _patch_json(
-        self, url: str, body: dict[str, Any], *, route_name: str | None = None,
+        self,
+        url: str,
+        body: dict[str, Any],
+        *,
+        route_name: str | None = None,
     ) -> Any:
         body_str = json.dumps(body)
         logger.debug("patch_json", url=url, body=body_str[:300])

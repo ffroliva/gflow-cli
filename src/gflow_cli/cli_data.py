@@ -340,7 +340,11 @@ _ALL_COPIES_OPT = click.option(
 @_ALL_COPIES_OPT
 @_guard
 def list_images_cmd(
-    profile: str | None, limit: int, offset: int, as_json: bool, all_copies: bool,
+    profile: str | None,
+    limit: int,
+    offset: int,
+    as_json: bool,
+    all_copies: bool,
 ) -> None:
     """List images newest-first.
 
@@ -348,7 +352,11 @@ def list_images_cmd(
     see every local path separately.
     """
     rows = list_images(
-        db_path=_db_path(), profile=profile, limit=limit, offset=offset, all_copies=all_copies,
+        db_path=_db_path(),
+        profile=profile,
+        limit=limit,
+        offset=offset,
+        all_copies=all_copies,
     )
     _emit(rows, as_json, _emit_images_table, "No images recorded.")
 
@@ -361,7 +369,11 @@ def list_images_cmd(
 @_ALL_COPIES_OPT
 @_guard
 def list_videos_cmd(
-    profile: str | None, limit: int, offset: int, as_json: bool, all_copies: bool,
+    profile: str | None,
+    limit: int,
+    offset: int,
+    as_json: bool,
+    all_copies: bool,
 ) -> None:
     """List videos newest-first.
 
@@ -369,7 +381,11 @@ def list_videos_cmd(
     see every local path separately.
     """
     rows = list_videos(
-        db_path=_db_path(), profile=profile, limit=limit, offset=offset, all_copies=all_copies,
+        db_path=_db_path(),
+        profile=profile,
+        limit=limit,
+        offset=offset,
+        all_copies=all_copies,
     )
     _emit(rows, as_json, _emit_videos_table, "No videos recorded.")
 

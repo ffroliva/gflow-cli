@@ -101,7 +101,10 @@ class _SqlTokenizerState:
 
 
 def _sql_advance_one_char(
-    state: _SqlTokenizerState, buf: list[str], char: str, nxt: str,
+    state: _SqlTokenizerState,
+    buf: list[str],
+    char: str,
+    nxt: str,
 ) -> tuple[int, str | None]:
     """Process one char of SQL; return ``(chars_consumed, yielded_statement)``.
 
@@ -119,7 +122,10 @@ def _sql_advance_one_char(
         buf.extend([char, nxt])
         return 2, None
     state.in_single, state.in_double, extra = _sql_update_quote_state(
-        char, nxt, state.in_single, state.in_double,
+        char,
+        nxt,
+        state.in_single,
+        state.in_double,
     )
     if extra:
         buf.extend([char, nxt])

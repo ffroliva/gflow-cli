@@ -17,7 +17,6 @@ if TYPE_CHECKING:
     from gflow_cli.api.video import GenerateVideoRequest, VideoResult, VideoStartedCallback
 
 
-
 class FlowTransportStrategy(Protocol):
     """Pluggable transport for Flow API calls.
 

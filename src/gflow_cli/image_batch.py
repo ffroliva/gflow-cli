@@ -395,7 +395,9 @@ async def run_one_image_prompt(
             images: list[GeneratedImage] = [img]
         else:
             images = await client.generate_images_batch(
-                project_id=project_id, req=req, count=item.count,
+                project_id=project_id,
+                req=req,
+                count=item.count,
             )
         saved: list[Path] = []
         for img_idx, img in enumerate(images):
@@ -429,7 +431,10 @@ async def run_image_batch(
     """Run prompts sequentially through one FlowApiClient session."""
 
     async def image_worker(
-        client: Any, project_id: str, idx: int, item: BatchPromptItem,
+        client: Any,
+        project_id: str,
+        idx: int,
+        item: BatchPromptItem,
     ) -> BatchOutcome:
         return await run_one_image_prompt(
             client=client,
@@ -502,7 +507,11 @@ def _validate_batch_prompt_count(count: int) -> None:
 
 
 def _tsv_parse_count(
-    raw_count: str, *, default_count: int, source_label: str, line_number: int,
+    raw_count: str,
+    *,
+    default_count: int,
+    source_label: str,
+    line_number: int,
 ) -> int:
     """Parse the ``count`` column of a TSV row. Empty falls back to the default."""
     if not raw_count:
@@ -526,7 +535,11 @@ def _tsv_parse_count(
 
 
 def _tsv_parse_aspect(
-    raw_aspect: str, *, default_aspect_ratio: str, source_label: str, line_number: int,
+    raw_aspect: str,
+    *,
+    default_aspect_ratio: str,
+    source_label: str,
+    line_number: int,
 ) -> str:
     """Parse the ``aspect_ratio`` column of a TSV row, validating against the allowed set."""
     aspect_ratio = raw_aspect or default_aspect_ratio
@@ -542,7 +555,11 @@ def _tsv_parse_aspect(
 
 
 def _tsv_parse_model(
-    raw_model: str, *, default_model: str, source_label: str, line_number: int,
+    raw_model: str,
+    *,
+    default_model: str,
+    source_label: str,
+    line_number: int,
 ) -> str:
     """Parse the ``model`` column of a TSV row, validating against the allowed set."""
     model = raw_model or default_model
@@ -811,7 +828,10 @@ async def _download_results(
             continue
 
         saved = await _download_item_images(
-            client=client, item=item, result=result, output_dir=output_dir,
+            client=client,
+            item=item,
+            result=result,
+            output_dir=output_dir,
         )
         outcomes.append(
             BatchOutcome(

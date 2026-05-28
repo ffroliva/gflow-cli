@@ -291,10 +291,15 @@ class VideoGenerationMixin:
 
         async def _enter_editor(self, page: Page, out_dir: Path | None = None) -> None: ...
         async def _send_prompt(
-            self, page: Page, prompt_text: str, out_dir: Path | None = None,
+            self,
+            page: Page,
+            prompt_text: str,
+            out_dir: Path | None = None,
         ) -> None: ...
         async def _dismiss_blocking_overlays(
-            self, page: Page, out_dir: Path | None = None,
+            self,
+            page: Page,
+            out_dir: Path | None = None,
         ) -> bool: ...
 
     @staticmethod
@@ -515,7 +520,9 @@ class VideoGenerationMixin:
         """Open the 2-step mode dropdown and switch to Video mode. The menu
         stays open afterward so the caller can also set aspect + count."""
         trigger = await VideoGenerationMixin._probe_selector_cascade(
-            page, "mode_switch_trigger", MODE_SWITCH_TRIGGER_SELECTORS,
+            page,
+            "mode_switch_trigger",
+            MODE_SWITCH_TRIGGER_SELECTORS,
         )
         if trigger is None:
             shot = await _capture_debug_screenshot(page, out_dir, "debug_no_mode_trigger.png")
@@ -526,7 +533,9 @@ class VideoGenerationMixin:
         await trigger.click()
         await page.wait_for_timeout(800)
         video_tab = await VideoGenerationMixin._probe_selector_cascade(
-            page, "video_mode_tab", VIDEO_TAB_IN_MENU_SELECTORS,
+            page,
+            "video_mode_tab",
+            VIDEO_TAB_IN_MENU_SELECTORS,
         )
         if video_tab is None:
             shot = await _capture_debug_screenshot(page, out_dir, "debug_no_video_tab.png")
@@ -564,7 +573,9 @@ class VideoGenerationMixin:
         )
         if tab is None:
             log.warning(
-                "ui_automation_video.count_not_set", count=n, note="Flow default (x2) applies",
+                "ui_automation_video.count_not_set",
+                count=n,
+                note="Flow default (x2) applies",
             )
             return
         await tab.click()
@@ -586,7 +597,9 @@ class VideoGenerationMixin:
             log.warning("ui_automation_video.model_unknown", model=model.value)
             return
         trigger = await VideoGenerationMixin._probe_selector_cascade(
-            page, "model_picker_trigger", (MODEL_PICKER_TRIGGER,),
+            page,
+            "model_picker_trigger",
+            (MODEL_PICKER_TRIGGER,),
         )
         if trigger is None:
             log.warning(
@@ -598,7 +611,9 @@ class VideoGenerationMixin:
         await trigger.click()
         await page.wait_for_timeout(600)
         option = await VideoGenerationMixin._probe_selector_cascade(
-            page, "model_option", (option_sel,),
+            page,
+            "model_option",
+            (option_sel,),
         )
         if option is None:
             log.warning(
@@ -639,7 +654,9 @@ class VideoGenerationMixin:
         """Switch the video sub-mode tab: 'frames' (I2V) or 'references' (R2V).
         Must run while the settings panel is open (after _switch_to_video_mode)."""
         tab = await VideoGenerationMixin._probe_selector_cascade(
-            page, f"video_submode_{sub}", VIDEO_SUBMODE_SELECTORS[sub],
+            page,
+            f"video_submode_{sub}",
+            VIDEO_SUBMODE_SELECTORS[sub],
         )
         if tab is None:
             shot = await _capture_debug_screenshot(page, out_dir, f"debug_no_submode_{sub}.png")
@@ -688,7 +705,9 @@ class VideoGenerationMixin:
             await structs.first.wait_for(state="visible", timeout=1500)
         except Exception as e:
             shot = await _capture_debug_screenshot(
-                page, out_dir, f"debug_no_{label.lower()}_slot.png",
+                page,
+                out_dir,
+                f"debug_no_{label.lower()}_slot.png",
             )
             msg = f"frame slot {label!r} not found on the Flow editor. Screenshot: {shot}"
             raise RuntimeError(
@@ -725,7 +744,11 @@ class VideoGenerationMixin:
         await slot.click()
         await page.wait_for_timeout(1000)  # media dialog opens
         await VideoGenerationMixin._upload_via_open_dialog(
-            page, image, log_label=label, out_dir=out_dir, timeout_s=timeout_s,
+            page,
+            image,
+            log_label=label,
+            out_dir=out_dir,
+            timeout_s=timeout_s,
         )
         log.info("ui_automation_video.frame_attached", slot=label)
 
@@ -749,7 +772,9 @@ class VideoGenerationMixin:
             if UPLOAD_IMAGE_ROUTE in response.url:
                 uploaded.append(response.url)
                 log.info(
-                    "ui_automation_video.image_uploaded", target=log_label, status=response.status,
+                    "ui_automation_video.image_uploaded",
+                    target=log_label,
+                    status=response.status,
                 )
 
         page.on("response", on_response)
@@ -771,7 +796,9 @@ class VideoGenerationMixin:
                     last_err = e
             if chooser is None:
                 shot = await _capture_debug_screenshot(
-                    page, out_dir, f"debug_upload_no_chooser_{log_label}.png",
+                    page,
+                    out_dir,
+                    f"debug_upload_no_chooser_{log_label}.png",
                 )
                 msg = (
                     f"Neither the icon nor the text 'Upload media' selector opened a file "
@@ -813,7 +840,11 @@ class VideoGenerationMixin:
 
     @staticmethod
     async def _attach_references(
-        page: Page, images: list[Path], *, out_dir: Path | None, timeout_s: float = 120.0,
+        page: Page,
+        images: list[Path],
+        *,
+        out_dir: Path | None,
+        timeout_s: float = 120.0,
     ) -> None:
         """R2V: attach up to MAX_REFERENCE_IMAGES reference images. References
         have no Start/End slots — each is added via the 'Add Media' button, which
@@ -848,7 +879,11 @@ class VideoGenerationMixin:
             await add_media.click()
             await page.wait_for_timeout(1000)
             await VideoGenerationMixin._upload_via_open_dialog(
-                page, img, log_label=f"ref{i}", out_dir=out_dir, timeout_s=timeout_s,
+                page,
+                img,
+                log_label=f"ref{i}",
+                out_dir=out_dir,
+                timeout_s=timeout_s,
             )
             attached += 1
             log.info("ui_automation_video.reference_attached", index=i)
@@ -862,7 +897,9 @@ class VideoGenerationMixin:
             log.warning("ui_automation_video.aspect_unsupported", aspect=aspect.value)
             return
         tab = await VideoGenerationMixin._probe_selector_cascade(
-            page, "video_aspect_tab", candidates,
+            page,
+            "video_aspect_tab",
+            candidates,
         )
         if tab is None:
             log.warning("ui_automation_video.aspect_not_set", aspect=aspect.value)
@@ -930,7 +967,11 @@ class VideoGenerationMixin:
             )
         async with self._generate_lock:
             return await self._generate_video_locked(
-                request, out_dir, poll_timeout_s, download, on_started,
+                request,
+                out_dir,
+                poll_timeout_s,
+                download,
+                on_started,
             )
 
     @staticmethod
@@ -1037,15 +1078,25 @@ class VideoGenerationMixin:
         # StartAndEndImage / ReferenceImages instead of the plain Text route.
         if request.mode is Mode.I2V and request.start_image is not None:
             await VideoGenerationMixin._attach_frame(
-                page, 0, "Start", request.start_image, out_dir=out_dir,
+                page,
+                0,
+                "Start",
+                request.start_image,
+                out_dir=out_dir,
             )
             if request.end_image is not None:
                 await VideoGenerationMixin._attach_frame(
-                    page, 1, "End", request.end_image, out_dir=out_dir,
+                    page,
+                    1,
+                    "End",
+                    request.end_image,
+                    out_dir=out_dir,
                 )
         elif request.mode is Mode.R2V:
             await VideoGenerationMixin._attach_references(
-                page, list(request.reference_images), out_dir=out_dir,
+                page,
+                list(request.reference_images),
+                out_dir=out_dir,
             )
 
         # Attach BOTH listeners synchronously BEFORE the prompt is submitted so
@@ -1075,7 +1126,10 @@ class VideoGenerationMixin:
                 await VideoGenerationMixin._fire_on_started(on_started, started)
 
             status = await VideoGenerationMixin._poll_video_status(
-                page, status_captured, media_name, timeout_s=poll_timeout_s,
+                page,
+                status_captured,
+                media_name,
+                timeout_s=poll_timeout_s,
             )
             local_path = (
                 await self._download_video(status.media_id, out_dir, page)

@@ -159,7 +159,9 @@ class DataRepository:
             )
 
     def get_asset_by_flow_media_id(
-        self, profile_name: str, flow_media_id: str,
+        self,
+        profile_name: str,
+        flow_media_id: str,
     ) -> AssetLookup | None:
         row = self._store.conn.execute(
             """
@@ -287,7 +289,10 @@ class DataRepository:
             )
 
     def get_operation_for_output_asset(
-        self, profile_name: str, flow_media_id: str, mode: OperationKind,
+        self,
+        profile_name: str,
+        flow_media_id: str,
+        mode: OperationKind,
     ) -> OperationRecord | None:
         row = self._store.conn.execute(
             """

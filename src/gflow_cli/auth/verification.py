@@ -216,16 +216,23 @@ async def verify_flow_session(
     except Exception as exc:
         logger.warning("auth_flow_session_probe_error", source=source, error=type(exc).__name__)
         return FlowSessionStatus(
-            outcome=FlowSessionOutcome.VERIFICATION_ERROR, user_email=None, source=source,
+            outcome=FlowSessionOutcome.VERIFICATION_ERROR,
+            user_email=None,
+            source=source,
         )
 
     result = evaluate_session_response(
-        status_code, body, google_session=google_session, source=source,
+        status_code,
+        body,
+        google_session=google_session,
+        source=source,
     )
     if result.outcome is FlowSessionOutcome.VERIFICATION_ERROR:
         # Observable durability signal — distinguishes a moved/changed endpoint
         # from a flaky link. The status code is safe to log; the body is not.
         logger.warning(
-            "auth_flow_session_unexpected_response", source=source, status_code=status_code,
+            "auth_flow_session_unexpected_response",
+            source=source,
+            status_code=status_code,
         )
     return result
