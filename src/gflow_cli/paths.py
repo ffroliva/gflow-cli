@@ -60,7 +60,8 @@ def database_path(home: Path) -> Path:
 
 def validate_job_id(job_id: str) -> str:
     if not _SAFE_ID_RE.match(job_id):
-        raise ValueError(f"Unsafe job_id returned by API: {job_id!r}")
+        msg = f"Unsafe job_id returned by API: {job_id!r}"
+        raise ValueError(msg)
     return job_id
 
 

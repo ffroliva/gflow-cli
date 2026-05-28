@@ -37,7 +37,8 @@ def _parse_manifest_row(lineno: int, cols: list[str]) -> ManifestEntry:
         cols.append("")
     start_image_s, prompt, end_image_s, aspect_s, output_s = (c.strip() for c in cols[:5])
     if not prompt:
-        raise ValueError(f"line {lineno}: prompt is required (got empty)")
+        msg = f"line {lineno}: prompt is required (got empty)"
+        raise ValueError(msg)
     return ManifestEntry(
         prompt=prompt,
         start_image=Path(start_image_s) if start_image_s else None,

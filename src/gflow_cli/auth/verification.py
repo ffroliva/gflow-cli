@@ -16,7 +16,6 @@ import asyncio
 import json
 from dataclasses import dataclass
 from enum import StrEnum
-from pathlib import Path
 from typing import TYPE_CHECKING, Any, cast
 
 import structlog
@@ -25,6 +24,8 @@ from gflow_cli.config import get_settings
 from gflow_cli.errors import SecurityError
 
 if TYPE_CHECKING:
+    from pathlib import Path
+
     from playwright.async_api import BrowserContext
 
 logger = structlog.get_logger(__name__)
@@ -115,7 +116,7 @@ def evaluate_session_response(
     if not isinstance(parsed, dict):
         return _result(FlowSessionOutcome.VERIFICATION_ERROR)
 
-    parsed_dict = cast(dict[str, Any], parsed)
+    parsed_dict = cast("dict[str, Any]", parsed)
     user = parsed_dict.get("user")
     if user is None or user == {}:
         # Authenticated-shaped endpoint reachable, but no Flow session.
@@ -126,7 +127,7 @@ def evaluate_session_response(
     if not isinstance(user, dict):
         return _result(FlowSessionOutcome.VERIFICATION_ERROR)
 
-    user_dict = cast(dict[str, Any], user)
+    user_dict = cast("dict[str, Any]", user)
     email = user_dict.get("email")
     if isinstance(email, str) and email:
         return _result(FlowSessionOutcome.AUTHENTICATED, email)
@@ -153,7 +154,7 @@ async def _fetch_session(ctx: BrowserContext) -> tuple[int, str]:
             resp = await ctx.request.get(SESSION_API_URL, timeout=_REQUEST_TIMEOUT_MS)
             body = await resp.text()
         # A network/timeout error is retried below, or re-raised on the final attempt.
-        except Exception as exc:  # noqa: BLE001
+        except Exception as exc:
             last_exc = exc
             if attempt == _MAX_ATTEMPTS:
                 raise
@@ -186,8 +187,9 @@ async def verify_flow_session(
     try:
         profile_dir.resolve(strict=True).relative_to(home)
     except (ValueError, OSError):
+        msg = f"Profile directory {profile_dir} is outside of GFLOW_CLI_HOME ({home})."
         raise SecurityError(
-            f"Profile directory {profile_dir} is outside of GFLOW_CLI_HOME ({home})."
+            msg,
         ) from None
 
     # Lazy import — a top-level `from .strategies import ...` would create the
@@ -211,19 +213,26 @@ async def verify_flow_session(
             finally:
                 await ctx.close()
     # Fail-closed: any failure here yields VERIFICATION_ERROR, never AUTHENTICATED.
-    except Exception as exc:  # noqa: BLE001
+    except Exception as exc:
         logger.warning("auth_flow_session_probe_error", source=source, error=type(exc).__name__)
         return FlowSessionStatus(
-            outcome=FlowSessionOutcome.VERIFICATION_ERROR, user_email=None, source=source
+            outcome=FlowSessionOutcome.VERIFICATION_ERROR,
+            user_email=None,
+            source=source,
         )
 
     result = evaluate_session_response(
-        status_code, body, google_session=google_session, source=source
+        status_code,
+        body,
+        google_session=google_session,
+        source=source,
     )
     if result.outcome is FlowSessionOutcome.VERIFICATION_ERROR:
         # Observable durability signal — distinguishes a moved/changed endpoint
         # from a flaky link. The status code is safe to log; the body is not.
         logger.warning(
-            "auth_flow_session_unexpected_response", source=source, status_code=status_code
+            "auth_flow_session_unexpected_response",
+            source=source,
+            status_code=status_code,
         )
     return result

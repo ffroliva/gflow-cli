@@ -5,7 +5,7 @@ import json
 import sqlite3
 from datetime import UTC, datetime
 from pathlib import Path
-from typing import cast
+from typing import TYPE_CHECKING, cast
 
 from gflow_cli.data.models import (
     AssetKind,
@@ -19,8 +19,10 @@ from gflow_cli.data.models import (
     ProjectRecord,
     SeedImage,
 )
-from gflow_cli.data.store import DataStore
 from gflow_cli.errors import DataIntegrityError
+
+if TYPE_CHECKING:
+    from gflow_cli.data.store import DataStore
 
 
 def _utc_now() -> str:
@@ -88,7 +90,7 @@ class DataRepository:
                 )
         except sqlite3.IntegrityError as exc:
             raise DataIntegrityError(detail=str(exc), route="data.upsert_project") from exc
-        return cast(ProjectRecord, dataclasses.replace(record, created_at=created_at))  # pyright: ignore[reportUnnecessaryCast]
+        return cast("ProjectRecord", dataclasses.replace(record, created_at=created_at))  # pyright: ignore[reportUnnecessaryCast]
 
     # ------------------------------------------------------------------
     # Assets
@@ -147,7 +149,7 @@ class DataRepository:
                 )
         except sqlite3.IntegrityError as exc:
             raise DataIntegrityError(detail=str(exc), route="data.upsert_asset") from exc
-        return cast(AssetRecord, dataclasses.replace(record, created_at=created_at))  # pyright: ignore[reportUnnecessaryCast]
+        return cast("AssetRecord", dataclasses.replace(record, created_at=created_at))  # pyright: ignore[reportUnnecessaryCast]
 
     def update_asset_status(self, profile_name: str, flow_media_id: str, status: str) -> None:
         with self._store.transaction(immediate=True):
@@ -157,7 +159,9 @@ class DataRepository:
             )
 
     def get_asset_by_flow_media_id(
-        self, profile_name: str, flow_media_id: str
+        self,
+        profile_name: str,
+        flow_media_id: str,
     ) -> AssetLookup | None:
         row = self._store.conn.execute(
             """
@@ -264,7 +268,7 @@ class DataRepository:
                 )
         except sqlite3.IntegrityError as exc:
             raise DataIntegrityError(detail=str(exc), route="data.insert_operation") from exc
-        return cast(OperationRecord, dataclasses.replace(record, started_at=started_at))  # pyright: ignore[reportUnnecessaryCast]
+        return cast("OperationRecord", dataclasses.replace(record, started_at=started_at))  # pyright: ignore[reportUnnecessaryCast]
 
     def update_operation_status(
         self,
@@ -285,7 +289,10 @@ class DataRepository:
             )
 
     def get_operation_for_output_asset(
-        self, profile_name: str, flow_media_id: str, mode: OperationKind
+        self,
+        profile_name: str,
+        flow_media_id: str,
+        mode: OperationKind,
     ) -> OperationRecord | None:
         row = self._store.conn.execute(
             """
@@ -382,7 +389,7 @@ class DataRepository:
                 )
         except sqlite3.IntegrityError as exc:
             raise DataIntegrityError(detail=str(exc), route="data.upsert_local_file") from exc
-        return cast(LocalFileRecord, dataclasses.replace(record, created_at=created_at))  # pyright: ignore[reportUnnecessaryCast]
+        return cast("LocalFileRecord", dataclasses.replace(record, created_at=created_at))  # pyright: ignore[reportUnnecessaryCast]
 
     # ------------------------------------------------------------------
     # Seed image resolvers
@@ -558,7 +565,7 @@ class DataRepository:
                     model=row["model"],
                     aspect_ratio=row["aspect_ratio"],
                     created_at=str(row["created_at"]),
-                )
+                ),
             )
         return result
 

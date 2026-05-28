@@ -27,13 +27,15 @@ from __future__ import annotations
 import hashlib
 import sys
 import traceback
-from typing import Any
+from typing import TYPE_CHECKING, Any
 
 import structlog
-from structlog.types import FilteringBoundLogger
 
 from gflow_cli.config import LogFormat
 from gflow_cli.errors import ContentPolicyError, GFlowError, WireFormatError
+
+if TYPE_CHECKING:
+    from structlog.types import FilteringBoundLogger
 
 # Numeric stdlib-logging level constants, mirrored here so observability.py and
 # cli.py do NOT need to `import logging` solely for one constant each. Source
@@ -78,7 +80,7 @@ def configure_logging(log_format: LogFormat = LogFormat.AUTO) -> None:
 
     timestamper = structlog.processors.TimeStamper(fmt="iso", utc=True)
     exc_renderer = structlog.processors.ExceptionRenderer(
-        structlog.tracebacks.ExceptionDictTransformer(show_locals=False)
+        structlog.tracebacks.ExceptionDictTransformer(show_locals=False),
     )
     shared_processors: list[Any] = [
         structlog.contextvars.merge_contextvars,
