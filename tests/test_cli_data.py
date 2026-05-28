@@ -197,6 +197,203 @@ def test_data_list_profiles_no_profile_option(seeded_db: Path) -> None:
     assert result.exit_code == 2
 
 
+# ─── --all-copies ────────────────────────────────────────────────────────────
+
+
+def test_data_list_images_all_copies_flag(tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> None:
+    """--all-copies returns one row per local_file; duplicate asset appears twice."""
+    import uuid
+    from datetime import UTC, datetime, timedelta
+
+    from gflow_cli.data.models import AssetKind, AssetRecord, LocalFileRecord, ProjectRecord
+    from gflow_cli.data.repository import DataRepository
+    from gflow_cli.data.store import DataStore
+
+    db = tmp_path / "all_copies.db"
+    with DataStore.open(db) as store:
+        repo = DataRepository(store)
+        now = datetime.now(UTC)
+        repo.upsert_profile("tester", tmp_path / "p")
+        repo.upsert_project(
+            ProjectRecord(
+                id=str(uuid.uuid4()),
+                profile_name="tester",
+                flow_project_id="proj-ac",
+                title="all-copies test",
+                source="cli",
+                created_at=now.isoformat(),
+            )
+        )
+        asset_id = str(uuid.uuid4())
+        repo.upsert_asset(
+            AssetRecord(
+                id=asset_id,
+                profile_name="tester",
+                flow_project_id="proj-ac",
+                flow_media_id="img-ac-001",
+                flow_workflow_id=None,
+                flow_media_generation_id=None,
+                kind=AssetKind.IMAGE,
+                status="ready",
+                model="imagen-3.0-fast-generate-001",
+                aspect_ratio="1:1",
+                width=512,
+                height=512,
+                duration_seconds=None,
+                seed=1,
+                metadata_json={},
+                created_at=now.isoformat(),
+            )
+        )
+        for i in range(2):
+            repo.upsert_local_file(
+                LocalFileRecord(
+                    id=str(uuid.uuid4()),
+                    profile_name="tester",
+                    asset_id=asset_id,
+                    path=Path(f"/tmp/gflow/tester/copy_{i}.png"),
+                    media_type="image/png",
+                    bytes=1024,
+                    sha256=None,
+                    created_at=(now + timedelta(seconds=i)).isoformat(),
+                )
+            )
+
+    monkeypatch.setenv("GFLOW_CLI_DB_PATH", str(db))
+
+    # default (aggregated): 1 row with copy_count=2
+    result = CliRunner().invoke(main, ["data", "list", "images", "--json"])
+    assert result.exit_code == 0, result.output
+    rows = [json.loads(ln) for ln in result.output.splitlines() if ln.strip()]
+    assert len(rows) == 1
+    assert rows[0]["copy_count"] == 2
+
+    # --all-copies: 2 rows
+    result2 = CliRunner().invoke(main, ["data", "list", "images", "--all-copies", "--json"])
+    assert result2.exit_code == 0, result2.output
+    rows2 = [json.loads(ln) for ln in result2.output.splitlines() if ln.strip()]
+    assert len(rows2) == 2
+
+
+# ─── prune ───────────────────────────────────────────────────────────────────
+
+
+def _seed_with_dead_path(db_path: Path, *, live_path: Path, dead_path: Path) -> None:
+    """Seed a DB with one image asset having two local_files: one live, one dead."""
+    import uuid
+    from datetime import UTC, datetime
+
+    from gflow_cli.data.models import AssetKind, AssetRecord, LocalFileRecord, ProjectRecord
+    from gflow_cli.data.repository import DataRepository
+    from gflow_cli.data.store import DataStore
+
+    with DataStore.open(db_path) as store:
+        repo = DataRepository(store)
+        now = datetime.now(UTC).isoformat()
+        repo.upsert_profile("tester", db_path.parent / "p")
+        repo.upsert_project(
+            ProjectRecord(
+                id=str(uuid.uuid4()),
+                profile_name="tester",
+                flow_project_id="proj-prune",
+                title="prune test",
+                source="cli",
+                created_at=now,
+            )
+        )
+        asset_id = str(uuid.uuid4())
+        repo.upsert_asset(
+            AssetRecord(
+                id=asset_id,
+                profile_name="tester",
+                flow_project_id="proj-prune",
+                flow_media_id="img-prune-001",
+                flow_workflow_id=None,
+                flow_media_generation_id=None,
+                kind=AssetKind.IMAGE,
+                status="ready",
+                model="imagen-3.0-fast-generate-001",
+                aspect_ratio="1:1",
+                width=512,
+                height=512,
+                duration_seconds=None,
+                seed=1,
+                metadata_json={},
+                created_at=now,
+            )
+        )
+        live_path.write_bytes(b"x")
+        for path in (live_path, dead_path):
+            repo.upsert_local_file(
+                LocalFileRecord(
+                    id=str(uuid.uuid4()),
+                    profile_name="tester",
+                    asset_id=asset_id,
+                    path=path,
+                    media_type="image/png",
+                    bytes=1,
+                    sha256=None,
+                    created_at=now,
+                )
+            )
+
+
+def test_data_prune_dry_run_reports_dead_rows(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    live = tmp_path / "live.png"
+    dead = tmp_path / "dead.png"  # intentionally NOT created
+    db = tmp_path / "prune.db"
+    _seed_with_dead_path(db, live_path=live, dead_path=dead)
+    monkeypatch.setenv("GFLOW_CLI_DB_PATH", str(db))
+
+    result = CliRunner().invoke(main, ["data", "prune", "--dry-run"])
+    assert result.exit_code == 0, result.output
+    assert "dead" in result.output.lower()
+    assert str(dead) in result.output
+    assert "no changes made" in result.output.lower()
+
+    # dry-run must not delete anything
+    from gflow_cli.data.store import DataStore
+
+    with DataStore.open(db) as store:
+        count = store.conn.execute("SELECT COUNT(*) FROM local_files").fetchone()[0]
+    assert count == 2
+
+
+def test_data_prune_deletes_dead_rows(tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> None:
+    live = tmp_path / "live.png"
+    dead = tmp_path / "dead.png"
+    db = tmp_path / "prune.db"
+    _seed_with_dead_path(db, live_path=live, dead_path=dead)
+    monkeypatch.setenv("GFLOW_CLI_DB_PATH", str(db))
+
+    result = CliRunner().invoke(main, ["data", "prune"])
+    assert result.exit_code == 0, result.output
+    assert "pruned" in result.output.lower()
+
+    from gflow_cli.data.store import DataStore
+
+    with DataStore.open(db) as store:
+        rows = store.conn.execute("SELECT path FROM local_files").fetchall()
+    paths = [r["path"] for r in rows]
+    assert len(paths) == 1
+    assert str(live) in paths[0]
+
+
+def test_data_prune_no_dead_rows(tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> None:
+    """prune on a fresh (empty) DB exits cleanly with a 'nothing found' message."""
+    from gflow_cli.data.store import DataStore
+
+    db = tmp_path / "clean.db"
+    DataStore.open(db).close()
+    monkeypatch.setenv("GFLOW_CLI_DB_PATH", str(db))
+
+    result = CliRunner().invoke(main, ["data", "prune"])
+    assert result.exit_code == 0
+    assert "no dead" in result.output.lower()
+
+
 # ─── error handling ──────────────────────────────────────────────────────────
 
 
