@@ -20,6 +20,7 @@ These are non-negotiable. They override default agent behavior where conflicts e
 - **Branch naming.** `feature/`, `bugfix/`, `hotfix/`, `chore/`, `docs/`, `test/`, `release/`. Never `claude/` or unprefixed.
 - **Signed tags only.** Releases tag with `git tag -s vX.Y.Z`. CI rejects unsigned or lightweight tags.
 - **Back-merge `main → develop` after every release.** See the `release-back-merge-gap-recovery` runbook in agent memory.
+- **Enforce model-dependent reference caps.** Flow's R2V (reference-to-video) and I2I (image-to-image) reference image caps are model-dependent (Omni=7, Veo Lite/Fast=3, Quality=0). These MUST be enforced at both the Domain layer (`GenerateVideoRequest`) and the CLI layer. Use `reference_cap_for(model)` and include event-based tripwires in E2E tests.
 
 ## Routing rules
 

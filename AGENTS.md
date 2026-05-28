@@ -2,7 +2,7 @@
 
 > Universal entry point for AI coding agents. Read this first; everything else routes from here.
 
-Supported tools that auto-discover this file: Cursor, Codex, Aider, Gemini CLI, Jules, Devin, Windsurf, Zed, Warp, opencode, RooCode, Amp, Junie, Phoenix, GitHub Copilot, VS Code, Factory, Augment, Semgrep, Kilo Code, UiPath. Claude Code reads [CLAUDE.md](CLAUDE.md), which cross-references this file.
+Supported tools that auto-discover this file: Cursor, Codex, Aider, Jules, Devin, Windsurf, Zed, Warp, opencode, RooCode, Amp, Junie, Phoenix, GitHub Copilot, VS Code, Factory, Augment, Semgrep, Kilo Code, UiPath. Gemini CLI reads [GEMINI.md](GEMINI.md) and Claude Code reads [CLAUDE.md](CLAUDE.md), both of which cross-reference this file.
 
 ## Project at a glance
 
