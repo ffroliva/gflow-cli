@@ -23,6 +23,7 @@ from gflow_cli.api.video import VideoModel, reference_cap_for
 from gflow_cli.config import get_settings
 from gflow_cli.data.recorder import OperationRecorder
 from gflow_cli.errors import DataStoreError
+from gflow_cli.storage import cloud_info_from_path
 
 console = Console()
 logger = structlog.get_logger(__name__)
@@ -102,6 +103,11 @@ async def _generate_and_report(
                 _profile_dir=profile_dir,
                 request=request,
                 result=result,
+                cloud_storage_info=(
+                    cloud_info_from_path(result.local_path)
+                    if result.local_path is not None
+                    else None
+                ),
             )
         except DataStoreError as exc:
             _warn_persistence_failed_after_success(

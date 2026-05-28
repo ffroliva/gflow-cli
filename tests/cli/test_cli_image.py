@@ -807,6 +807,44 @@ class TestRecorderIntegration:
         assert len(rec["saved_paths"]) == 1
         assert recorder.closed
 
+    def test_t2i_records_cloud_storage_info_after_download(
+        self, runner: CliRunner, tmp_path: Path
+    ) -> None:
+        from gflow_cli.storage import CloudStorageInfo
+
+        images = [_make_generated_image(media_name="m1")]
+        client = _make_t2i_client(images=images)
+        recorder = FakeRecorder()
+        out_dir = tmp_path / "out"
+        cloud_info = CloudStorageInfo(
+            uri="s3://bucket/prefix/images/2026-05-28/m1_1.png",
+            provider="s3",
+        )
+
+        with (
+            patch("gflow_cli.cli_image.FlowApiClient", return_value=client),
+            patch("gflow_cli.cli_image._make_provider_dir", return_value=tmp_path / "prof"),
+            patch("gflow_cli.cli_image._resolve_profile", return_value="default"),
+            patch("gflow_cli.cli_image.OperationRecorder.open", return_value=recorder),
+            patch(
+                "gflow_cli.cli_image.cloud_info_from_path",
+                return_value=cloud_info,
+                create=True,
+            ) as cloud_info_mock,
+        ):
+            from gflow_cli.cli import main
+
+            result = runner.invoke(
+                main,
+                ["image", "t2i", "a cat", "--out", str(out_dir)],
+                catch_exceptions=False,
+            )
+
+        assert result.exit_code == 0, result.output
+        rec = recorder.generated[0]
+        assert rec["cloud_storage_infos"] == [cloud_info]
+        cloud_info_mock.assert_called_once_with(rec["saved_paths"][0])
+
     def test_t2i_records_corrected_extension_when_bytes_are_jpeg(
         self, runner: CliRunner, tmp_path: Path
     ) -> None:

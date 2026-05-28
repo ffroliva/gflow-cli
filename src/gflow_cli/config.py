@@ -27,7 +27,7 @@ from functools import lru_cache
 from pathlib import Path
 from typing import Literal
 
-from pydantic import Field
+from pydantic import Field, field_validator
 from pydantic_settings import BaseSettings, SettingsConfigDict
 
 from gflow_cli import paths
@@ -96,8 +96,36 @@ class Settings(BaseSettings):
     )
     output_dir: Path = Field(
         default_factory=paths.default_output_dir,
-        description="Where generated assets land.",
+        description="Where generated assets land (local storage).",
     )
+
+    # --- cloud storage ----------------------------------------------------
+    storage_uri: str | None = Field(
+        default=None,
+        description=(
+            "Cloud storage URI prefix for generated assets. "
+            "When set, files are uploaded to cloud instead of (or in addition to) "
+            "local disk. Supported schemes: gs:// (GCS), s3:// (S3/MinIO). "
+            "Example: gs://my-bucket/gflow/  or  s3://my-bucket/gflow/ "
+            "Requires gflow-cli[gcs] or gflow-cli[s3] extras. "
+            "Override via GFLOW_CLI_STORAGE_URI."
+        ),
+    )
+
+    @field_validator("storage_uri", mode="before")
+    @classmethod
+    def _validate_storage_uri(cls, v: object) -> object:
+        if v is None or v == "":
+            return None
+        if not isinstance(v, str):
+            raise ValueError("storage_uri must be a string")
+        allowed = ("gs://", "s3://", "memory://")
+        if not any(v.startswith(scheme) for scheme in allowed):
+            raise ValueError(
+                f"GFLOW_CLI_STORAGE_URI scheme not supported: {v!r}. "
+                "Use gs:// (GCS), s3:// (S3/MinIO), or memory:// (tests only)."
+            )
+        return v
 
     db_path: Path | None = Field(
         default=None,
