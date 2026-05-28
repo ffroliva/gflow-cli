@@ -123,10 +123,10 @@ $ gflow auth
 
 Profiles in /home/you/.local/share/gflow-cli
 
-  Default  Name       Session   Last used (UTC)        Profile dir
-    ●      default    present   2026-05-09 14:42:18    /home/you/.local/share/gflow-cli/profile_default
-           work       present   2026-05-08 09:11:02    /home/you/.local/share/gflow-cli/profile_work
-           experiments missing  -                      /home/you/.local/share/gflow-cli/profile_experiments
+  Default  Name          Google account          Session   Last used (UTC)        Profile dir
+    ●      default       you@gmail.com            present   2026-05-09 14:42:18    /home/you/.local/share/gflow-cli/profile_default
+           work          you@work.example.com     present   2026-05-08 09:11:02    /home/you/.local/share/gflow-cli/profile_work
+           experiments   unknown                  missing   -                      /home/you/.local/share/gflow-cli/profile_experiments
 
 Use `gflow auth use <name>` to set the default profile.
 Use `gflow auth login --profile <name>` to add or refresh a profile.
@@ -218,8 +218,8 @@ Profiles in /home/you/.local/share/gflow-cli
 ```
 
 The **Google account** column shows the email address from `.gflow_account`. Profiles
-created before v0.10.0 (before this feature shipped) will show `unknown` until
-`gflow auth login` is re-run against them — the file is written on every login.
+created before develop post-v0.9.1 (before this feature shipped) will show `unknown`
+until `gflow auth login` is re-run against them — the file is written on every login.
 
 `--json` includes `google_account` per entry:
 

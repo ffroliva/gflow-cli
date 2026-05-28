@@ -56,7 +56,7 @@ def _render_profiles_table(profiles: list[profile_store.ProfileMeta]) -> None:
     table.add_column("Profile dir", overflow="fold")
     for p in profiles:
         marker = f"[bold green]{marker_glyph}[/bold green]" if p.is_default else ""
-        account = p.google_account or "[dim]unknown[/dim]"
+        account = p.google_account or "unknown"
         session = "[green]present[/green]" if p.cookies_present else "[red]missing[/red]"
         last = p.last_used_at.strftime("%Y-%m-%d %H:%M:%S") if p.last_used_at else "-"
         table.add_row(marker, p.name, account, session, last, str(p.profile_dir))
@@ -169,9 +169,16 @@ def auth_login(profile: str | None, browser: str | None) -> None:
     console.print(f"[green]Session saved.[/green] Profile dir: {pdir}")
 
     # Auto-rename an opaque "default" profile to the email local-part on first
-    # login so the profile inventory is immediately human-readable.
+    # login so the profile inventory is immediately human-readable. Only fires
+    # when no explicit --profile was given (profile is None), so `gflow auth
+    # login --profile default` never silently renames the user's named profile.
     profiles = profile_store.list_profiles()
-    if len(profiles) == 1 and profiles[0].name == "default" and profiles[0].google_account:
+    if (
+        profile is None
+        and len(profiles) == 1
+        and profiles[0].name == "default"
+        and profiles[0].google_account
+    ):
         local_part = profiles[0].google_account.split("@")[0]
         if local_part and local_part != "default":
             try:
@@ -182,7 +189,10 @@ def auth_login(profile: str | None, browser: str | None) -> None:
                     f"[bold]{local_part}[/bold] (derived from Google account).[/dim]"
                 )
             except FileExistsError:
-                pass  # another profile with that name already exists — keep "default"
+                console.print(
+                    f"[dim]Profile [bold]{local_part}[/bold] already exists — "
+                    "keeping name [bold]default[/bold].[/dim]"
+                )
 
     # If this was the very first profile, set it as default automatically so
     # subsequent commands work without explicit --profile / GFLOW_CLI_PROFILE.

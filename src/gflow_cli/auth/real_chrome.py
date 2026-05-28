@@ -205,8 +205,8 @@ class RealChromeStrategy(AuthStrategy):
             # Marker read by browser_manager.channel_for_profile so FlowApiClient
             # selects the system Chrome channel. Load-bearing — must persist here.
             (profile_dir / ".gflow_browser_strategy").write_text("chrome", encoding="utf-8")
-            if status.user_email:
-                (profile_dir / ".gflow_account").write_text(status.user_email, encoding="utf-8")
+            # verification.py guarantees user_email is non-None/non-empty when AUTHENTICATED.
+            (profile_dir / ".gflow_account").write_text(status.user_email, encoding="utf-8")
             _console.print(f"[green][OK] Flow session verified ({status.user_email}).[/green]")
         else:
             logger.warning(

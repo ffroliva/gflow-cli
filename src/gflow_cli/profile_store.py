@@ -18,6 +18,7 @@ Resolution precedence (highest first):
 from __future__ import annotations
 
 import os
+import re
 import shutil
 import tomllib
 from dataclasses import dataclass
@@ -29,6 +30,9 @@ from gflow_cli.auth import default_profile_root, profile_dir, status
 CONFIG_FILENAME = "config.toml"
 PROFILE_DIR_PREFIX = "profile_"
 ACCOUNT_FILE = ".gflow_account"
+
+# Mirrors gflow_cli.paths._SAFE_ID_RE — alphanumerics, hyphens, underscores, ≤128 chars.
+_SAFE_PROFILE_NAME_RE = re.compile(r"^[\w\-]{1,128}$")
 
 
 @dataclass(frozen=True)
@@ -156,11 +160,15 @@ def rename_profile(old_name: str, new_name: str) -> Path:
 
     Updates config.toml when old_name was the default. Raises FileNotFoundError
     if old_name doesn't exist; raises FileExistsError if new_name already exists.
+    Raises ValueError if new_name contains path-traversal characters.
     """
-    from gflow_cli.auth import profile_dir as _profile_dir
-
-    old_dir = _profile_dir(old_name)
-    new_dir = _profile_dir(new_name)
+    if not _SAFE_PROFILE_NAME_RE.match(new_name):
+        raise ValueError(
+            f"Profile name {new_name!r} contains invalid characters. "
+            "Use only letters, digits, hyphens, and underscores (max 128 chars)."
+        )
+    old_dir = profile_dir(old_name)
+    new_dir = profile_dir(new_name)
     if not old_dir.exists():
         raise FileNotFoundError(f"Profile dir not found: {old_dir}")
     if new_dir.exists():

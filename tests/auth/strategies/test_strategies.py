@@ -105,6 +105,9 @@ class TestRealChromeStrategy:
         marker = profile_dir / ".gflow_browser_strategy"
         assert marker.exists()
         assert marker.read_text(encoding="utf-8") == "chrome"
+        account_file = profile_dir / ".gflow_account"
+        assert account_file.exists(), ".gflow_account must be written on successful login"
+        assert account_file.read_text(encoding="utf-8") == "test@example.com"
 
     @pytest.mark.asyncio
     @pytest.mark.parametrize(
@@ -256,6 +259,9 @@ class TestInternalChromiumStrategy:
         assert "channel" not in kwargs or kwargs["channel"] != "chrome"
         assert "--disable-blink-features=AutomationControlled" not in kwargs.get("args", [])
         mock_page.request.get.assert_awaited()
+        account_file = profile_dir / ".gflow_account"
+        assert account_file.exists(), ".gflow_account must be written on successful login"
+        assert account_file.read_text(encoding="utf-8") == "test@example.com"
 
     @pytest.mark.asyncio
     async def test_internal_chromium_timeout_raises(self, tmp_path: Path) -> None:
