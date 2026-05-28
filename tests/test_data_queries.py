@@ -106,8 +106,7 @@ def test_list_projects_image_video_counts(seeded: Path) -> None:
 
 
 def test_list_projects_image_video_counts_profile_scoped(tmp_path: Path) -> None:
-    """Issue #113: Ensure image/video counts do not leak across profiles sharing a flow_project_id.
-    """
+    """Issue #113: Ensure image/video counts do not leak across profiles sharing a flow_project_id."""
     db = tmp_path / "shared_project.db"
     with DataStore.open(db) as store:
         repo = DataRepository(store)
