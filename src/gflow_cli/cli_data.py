@@ -255,7 +255,7 @@ async def _run_media(*, profile: str | None, media_id: str) -> None:
     """
     import asyncio
 
-    def _sync_query() -> AssetRecord:
+    def _sync_query() -> AssetLookup:
         settings = get_settings()
         with DataStore.open(settings.resolved_db_path()) as store:
             repo = DataRepository(store)

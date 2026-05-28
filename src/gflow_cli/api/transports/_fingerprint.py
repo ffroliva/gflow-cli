@@ -60,7 +60,7 @@ class BrowserFingerprint:
                  them to lowercase for httpx compatibility.
     """
 
-    headers: dict[str, str] = field(default_factory=dict)
+    headers: dict[str, str] = field(default_factory=lambda: {})
 
     def to_dict(self) -> dict[str, str]:
         """Return headers with all keys lowercased (httpx canonical form)."""

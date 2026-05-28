@@ -113,7 +113,7 @@ class BatchOutcome:
     index: int
     prompt: BatchPromptItem
     status: str
-    saved_paths: list[Path] = field(default_factory=list)
+    saved_paths: list[Path] = field(default_factory=lambda: [])
     error: str | None = None
     exit_code: int = 0
 
