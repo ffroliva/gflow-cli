@@ -4,6 +4,8 @@ description: Multi-dimensional LLM council review of an open PR. Five baseline d
 
 # `/gflow:pr-council-review [PR#]`
 
-**Invoke `Skill(skill="pr-council-review")` now**, passing `$ARGUMENTS` (the PR number, or empty for prioritize-mode). The skill at `skills/pr-council-review/SKILL.md` contains the full protocol: preflight, dimension detection, parallel dispatch, synthesis, report.
+**Read `skills/pr-council-review/SKILL.md` and follow its protocol now**, treating `$ARGUMENTS` as the PR number (or empty for prioritize-mode). That file is the canonical body: preflight, dimension detection, parallel dispatch, synthesis, report.
+
+> Do **not** call `Skill(skill="pr-council-review")` — the repo's `skills/*/SKILL.md` files are plain Markdown, not registered as Skill-tool-invocable (only `.claude/commands/gflow/*` are). Invoking it errors with `Unknown skill: pr-council-review`. Read the file directly instead.
 
 Sibling: `/review` is the single-agent Claude-Code built-in (fast, one-pass). Use it for spot-checks; use this command for pre-merge multi-dim audits.

@@ -4,7 +4,9 @@ description: Multi-dimensional LLM council review on the current local feature b
 
 # `/gflow:branch-review [--base <ref>]`
 
-**Invoke `Skill(skill="pr-council-review")` now in BRANCH MODE**, passing `$ARGUMENTS` (optional `--base <ref>`; default `develop`).
+**Read `skills/pr-council-review/SKILL.md` and follow its protocol now in BRANCH MODE (§ 8)**, passing `$ARGUMENTS` (optional `--base <ref>`; default `develop`).
+
+> Do **not** call `Skill(skill="pr-council-review")` — the repo's `skills/*/SKILL.md` files are plain Markdown, not registered as Skill-tool-invocable (only `.claude/commands/gflow/*` are). Invoking it errors with `Unknown skill: pr-council-review`. Read the file directly instead.
 
 The canonical body is `skills/pr-council-review/SKILL.md`. § 8 documents branch-mode-specific behavior: pre-flight, the PR→branch translation table, `release/*` downgrade, SHA drift, and local-only output. All other phases (gather context, detect dimensions, dispatch, synthesize, report) are identical to PR mode.
 

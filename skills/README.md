@@ -6,6 +6,14 @@ This directory ships an installable Skill that lets agents (Claude Code, Cursor,
 
 [`gflow-cli/SKILL.md`](gflow-cli/SKILL.md) — describes when to invoke `gflow`, prerequisites, the command surface, recipes, and common errors. Plain Markdown with frontmatter, so it works as both a Claude Code skill and a generic agent reference doc.
 
+## predict skill
+
+[`predict/SKILL.md`](predict/SKILL.md) — pre-implementation 5-persona adversarial analysis (Architect · Security/reCAPTCHA · Performance/Playwright · CLI UX · Devil's Advocate). Returns a GO / CAUTION / STOP verdict before any code is written. Invoke via `/gflow:predict <proposal>` for high-stakes decisions: new transport, auth change, selector redesign, schema migration.
+
+## scenario skill
+
+[`scenario/SKILL.md`](scenario/SKILL.md) — 12-dimension edge-case explorer tuned to gflow-cli's known failure surfaces (WAF/reCAPTCHA scoring, Playwright selector drift, auth token lifecycle, batch resume idempotency, SQLite data layer, RFC 9457 error propagation, cross-platform paths, observability contract). Produces a severity-ranked scenario table and BDD `Scenario:` blocks. Invoke via `/gflow:scenario <feature>` after a predict GO/CAUTION, before writing the PLAN.md task spec.
+
 ### Install for Claude Code
 
 ```bash
