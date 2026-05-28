@@ -125,15 +125,20 @@ _LIST_IMAGES_SQL = """
         a.flow_media_id   AS media_id,
         a.profile_name    AS profile,
         a.flow_project_id AS project_id,
-        o.prompt          AS prompt,
+        op.prompt         AS prompt,
         a.aspect_ratio    AS aspect,
         a.model           AS model,
         a.created_at      AS created_at,
         COALESCE(lfa.copy_count, 0) AS copy_count,
         lfa.latest_path   AS local_path
     FROM assets a
-    LEFT JOIN operation_assets oa ON oa.asset_id = a.id AND oa.role = 'output'
-    LEFT JOIN operations o ON o.id = oa.operation_id
+    LEFT JOIN (
+        SELECT oa2.asset_id, MAX(o2.prompt) AS prompt
+          FROM operation_assets oa2
+          JOIN operations o2 ON o2.id = oa2.operation_id
+         WHERE oa2.role = 'output'
+         GROUP BY oa2.asset_id
+    ) op ON op.asset_id = a.id
     LEFT JOIN (
         SELECT asset_id, COUNT(*) AS copy_count, MAX(path) AS latest_path
           FROM local_files
@@ -151,15 +156,20 @@ _LIST_IMAGES_ALL_COPIES_SQL = """
         a.flow_media_id   AS media_id,
         a.profile_name    AS profile,
         a.flow_project_id AS project_id,
-        o.prompt          AS prompt,
+        op.prompt         AS prompt,
         a.aspect_ratio    AS aspect,
         a.model           AS model,
         a.created_at      AS created_at,
         1                 AS copy_count,
         lf.path           AS local_path
     FROM assets a
-    LEFT JOIN operation_assets oa ON oa.asset_id = a.id AND oa.role = 'output'
-    LEFT JOIN operations o ON o.id = oa.operation_id
+    LEFT JOIN (
+        SELECT oa2.asset_id, MAX(o2.prompt) AS prompt
+          FROM operation_assets oa2
+          JOIN operations o2 ON o2.id = oa2.operation_id
+         WHERE oa2.role = 'output'
+         GROUP BY oa2.asset_id
+    ) op ON op.asset_id = a.id
     LEFT JOIN local_files lf ON lf.asset_id = a.id
     WHERE a.kind = 'image'
       AND (:profile IS NULL OR a.profile_name = :profile)
@@ -235,7 +245,7 @@ _LIST_VIDEOS_SQL = """
         a.flow_media_id   AS media_id,
         a.profile_name    AS profile,
         a.flow_project_id AS project_id,
-        o.prompt          AS prompt,
+        op.prompt         AS prompt,
         a.aspect_ratio    AS aspect,
         a.model           AS model,
         a.duration_seconds AS duration,
@@ -243,8 +253,13 @@ _LIST_VIDEOS_SQL = """
         COALESCE(lfa.copy_count, 0) AS copy_count,
         lfa.latest_path   AS local_path
     FROM assets a
-    LEFT JOIN operation_assets oa ON oa.asset_id = a.id AND oa.role = 'output'
-    LEFT JOIN operations o ON o.id = oa.operation_id
+    LEFT JOIN (
+        SELECT oa2.asset_id, MAX(o2.prompt) AS prompt
+          FROM operation_assets oa2
+          JOIN operations o2 ON o2.id = oa2.operation_id
+         WHERE oa2.role = 'output'
+         GROUP BY oa2.asset_id
+    ) op ON op.asset_id = a.id
     LEFT JOIN (
         SELECT asset_id, COUNT(*) AS copy_count, MAX(path) AS latest_path
           FROM local_files
@@ -262,7 +277,7 @@ _LIST_VIDEOS_ALL_COPIES_SQL = """
         a.flow_media_id   AS media_id,
         a.profile_name    AS profile,
         a.flow_project_id AS project_id,
-        o.prompt          AS prompt,
+        op.prompt         AS prompt,
         a.aspect_ratio    AS aspect,
         a.model           AS model,
         a.duration_seconds AS duration,
@@ -270,8 +285,13 @@ _LIST_VIDEOS_ALL_COPIES_SQL = """
         1                 AS copy_count,
         lf.path           AS local_path
     FROM assets a
-    LEFT JOIN operation_assets oa ON oa.asset_id = a.id AND oa.role = 'output'
-    LEFT JOIN operations o ON o.id = oa.operation_id
+    LEFT JOIN (
+        SELECT oa2.asset_id, MAX(o2.prompt) AS prompt
+          FROM operation_assets oa2
+          JOIN operations o2 ON o2.id = oa2.operation_id
+         WHERE oa2.role = 'output'
+         GROUP BY oa2.asset_id
+    ) op ON op.asset_id = a.id
     LEFT JOIN local_files lf ON lf.asset_id = a.id
     WHERE a.kind = 'video'
       AND (:profile IS NULL OR a.profile_name = :profile)

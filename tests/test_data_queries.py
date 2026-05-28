@@ -9,7 +9,16 @@ from pathlib import Path
 
 import pytest
 
-from gflow_cli.data.models import AssetKind, AssetRecord, LocalFileRecord, ProjectRecord
+from gflow_cli.data.models import (
+    AssetKind,
+    AssetRecord,
+    LocalFileRecord,
+    OperationAssetRole,
+    OperationKind,
+    OperationRecord,
+    OperationStatus,
+    ProjectRecord,
+)
 from gflow_cli.data.queries import (
     _LIST_IMAGES_ALL_COPIES_SQL,
     _LIST_IMAGES_SQL,
@@ -372,3 +381,117 @@ def test_local_files_scan_guard_detects_full_scan() -> None:
     assert any("USING" not in line or "INDEX" not in line for line in scans), (
         f"expected a bare full scan without the covering index; got {scans}"
     )
+
+
+# ─── multi-operation aggregation ──────────────────────────────────────────────
+
+
+def test_list_images_with_multiple_operations_no_duplicate_rows(tmp_path: Path) -> None:
+    """Closes #111 — if multiple operations claim the same output asset, we must
+    not fan out rows in list_images or list_videos."""
+    db = tmp_path / "multi-op.db"
+    with DataStore.open(db) as store:
+        repo = DataRepository(store)
+        now = datetime.now(UTC).isoformat()
+        repo.upsert_profile("tester", tmp_path / "p")
+        repo.upsert_project(
+            ProjectRecord(
+                id="proj-1",
+                profile_name="tester",
+                flow_project_id="proj-op",
+                title="op-test",
+                source="cli",
+                created_at=now,
+            )
+        )
+        asset_id = "asset-multi-op"
+        repo.upsert_asset(
+            AssetRecord(
+                id=asset_id,
+                profile_name="tester",
+                flow_project_id="proj-op",
+                flow_media_id="img-op",
+                flow_workflow_id=None,
+                flow_media_generation_id=None,
+                kind=AssetKind.IMAGE,
+                status="ready",
+                model="test-model",
+                aspect_ratio="1:1",
+                width=512,
+                height=512,
+                duration_seconds=None,
+                seed=None,
+                metadata_json={},
+                created_at=now,
+            )
+        )
+        
+        # Insert op 1
+        op1_id = "op-1"
+        repo.insert_operation(
+            OperationRecord(
+                id=op1_id,
+                profile_name="tester",
+                flow_project_id="proj-op",
+                command="image",
+                mode=OperationKind.T2I,
+                status=OperationStatus.SUCCEEDED,
+                flow_operation_id="op1",
+                flow_batch_id=None,
+                prompt="First prompt",
+                prompt_hash=None,
+                prompt_redacted=False,
+                model="test-model",
+                aspect_ratio="1:1",
+                error_type=None,
+                error_detail=None,
+                started_at=now,
+                completed_at=now,
+            )
+        )
+        repo.link_operation_asset(
+            operation_id=op1_id,
+            asset_id=asset_id,
+            role=OperationAssetRole.OUTPUT,
+            position=0,
+        )
+
+        # Insert op 2
+        op2_id = "op-2"
+        repo.insert_operation(
+            OperationRecord(
+                id=op2_id,
+                profile_name="tester",
+                flow_project_id="proj-op",
+                command="image",
+                mode=OperationKind.T2I,
+                status=OperationStatus.SUCCEEDED,
+                flow_operation_id="op2",
+                flow_batch_id=None,
+                prompt="Second prompt",
+                prompt_hash=None,
+                prompt_redacted=False,
+                model="test-model",
+                aspect_ratio="1:1",
+                error_type=None,
+                error_detail=None,
+                started_at=now,
+                completed_at=now,
+            )
+        )
+        repo.link_operation_asset(
+            operation_id=op2_id,
+            asset_id=asset_id,
+            role=OperationAssetRole.OUTPUT,
+            position=0,
+        )
+
+    # 1. Aggregated query
+    rows = list_images(db_path=db, profile=None, limit=20, offset=0)
+    assert len(rows) == 1
+    assert rows[0].prompt in ("First prompt", "Second prompt")
+
+    # 2. All copies query
+    rows_all = list_images(db_path=db, profile=None, limit=20, offset=0, all_copies=True)
+    assert len(rows_all) == 1
+    assert rows_all[0].prompt in ("First prompt", "Second prompt")
