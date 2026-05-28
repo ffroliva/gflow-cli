@@ -2,6 +2,7 @@
 
 from __future__ import annotations
 
+import sqlite3
 import uuid
 from datetime import UTC, datetime, timedelta
 from pathlib import Path
@@ -10,6 +11,8 @@ import pytest
 
 from gflow_cli.data.models import AssetKind, AssetRecord, LocalFileRecord, ProjectRecord
 from gflow_cli.data.queries import (
+    _LIST_IMAGES_SQL,
+    _LIST_VIDEOS_SQL,
     list_images,
     list_profiles,
     list_projects,
@@ -295,3 +298,67 @@ def test_list_images_no_local_files_copy_count_is_zero(tmp_path: Path) -> None:
     assert len(rows) == 1
     assert rows[0].copy_count == 0
     assert rows[0].local_path is None
+
+
+# ---------------------------------------------------------------------------
+# Query-plan regression — closes #112
+# ---------------------------------------------------------------------------
+
+
+def _local_files_scan_lines(plan_rows: list[sqlite3.Row]) -> list[str]:
+    """Return plan detail lines that scan the ``local_files`` table directly."""
+    details = [str(row[-1]) for row in plan_rows]
+    return [d for d in details if "local_files" in d and d.lstrip().startswith(("SCAN", "SEARCH"))]
+
+
+@pytest.mark.parametrize(
+    "sql",
+    [_LIST_IMAGES_SQL, _LIST_VIDEOS_SQL],
+    ids=["images", "videos"],
+)
+def test_list_aggregation_uses_index_not_full_scan(tmp_path: Path, sql: str) -> None:
+    """#112: the ``GROUP BY asset_id`` aggregation must resolve via an index, never
+    a full table scan of ``local_files``.
+
+    The covering index is supplied for free by the ``UNIQUE(asset_id, path)``
+    constraint — SQLite's implicit ``sqlite_autoindex_local_files_2`` — so no extra
+    index or migration is warranted (this is why #112 needs no schema change). The
+    assertion matches on "uses an index" rather than the autoindex's name so it stays
+    valid if SQLite renames it or we later add an explicit index. It guards against a
+    schema change (e.g. dropping that UNIQUE constraint) silently regressing the list
+    queries to a full scan.
+    """
+    params = {"profile": None, "limit": 50, "offset": 0}
+    with DataStore.open(tmp_path / "plan.db") as store:
+        plan = store.conn.execute("EXPLAIN QUERY PLAN " + sql, params).fetchall()
+
+    scans = _local_files_scan_lines(plan)
+    assert scans, f"expected the plan to scan local_files; plan was {[r[-1] for r in plan]}"
+    for line in scans:
+        assert "USING" in line and "INDEX" in line, (
+            f"full-scan regression on local_files — expected an index scan, got {line!r}"
+        )
+
+
+def test_local_files_scan_guard_detects_full_scan() -> None:
+    """Proves the guard above is not vacuous: without the ``UNIQUE(asset_id, path)``
+    covering index the same aggregation falls back to a bare ``SCAN local_files``,
+    which :func:`_local_files_scan_lines` flags and the assertion above would reject."""
+    conn = sqlite3.connect(":memory:")
+    try:
+        conn.execute(
+            "CREATE TABLE local_files (id TEXT PRIMARY KEY, asset_id TEXT NOT NULL, "
+            "path TEXT NOT NULL)"
+        )
+        plan = conn.execute(
+            "EXPLAIN QUERY PLAN "
+            "SELECT asset_id, COUNT(*), MAX(path) FROM local_files GROUP BY asset_id"
+        ).fetchall()
+    finally:
+        conn.close()
+
+    scans = _local_files_scan_lines(plan)
+    assert scans, "expected a scan over local_files"
+    assert any("USING" not in line or "INDEX" not in line for line in scans), (
+        f"expected a bare full scan without the covering index; got {scans}"
+    )
