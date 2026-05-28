@@ -350,6 +350,67 @@ def test_t2v_json_failed_gen_emits_exactly_one_payload(tmp_path: Path) -> None:
     )
 
 
+def test_t2v_records_cloud_storage_info_for_downloaded_video(tmp_path: Path) -> None:
+    from gflow_cli.api.video import VideoResult, VideoStarted, VideoStatus
+    from gflow_cli.storage import CloudStorageInfo
+
+    saved = tmp_path / "test-uuid.mp4"
+    cloud_info = CloudStorageInfo(
+        uri="s3://bucket/prefix/videos/2026-05-28/test-uuid.mp4",
+        provider="s3",
+    )
+    stub_result = VideoResult(
+        status=VideoStatus(
+            media_id="m1",
+            status="MEDIA_GENERATION_STATUS_SUCCESSFUL",
+        ),
+        local_path=saved,
+        project_id="p1",
+        flow_operation_id="o1",
+    )
+
+    fake_recorder = FakeVideoRecorder()
+
+    async def fake_generate_video(*, req, out_dir, poll_timeout_s=None, download, on_started):
+        if on_started is not None:
+            import inspect
+
+            result_or_coro = on_started(
+                VideoStarted(media_id="m1", project_id="p1", flow_operation_id="o1")
+            )
+            if inspect.isawaitable(result_or_coro):
+                await result_or_coro
+        return stub_result
+
+    runner = CliRunner()
+    with (
+        patch("gflow_cli.cli_video._resolve_profile", return_value="default"),
+        patch("gflow_cli.cli_video._make_provider_dir", return_value=tmp_path),
+        patch("gflow_cli.data.recorder.OperationRecorder.open", return_value=fake_recorder),
+        patch(
+            "gflow_cli.cli_video.cloud_info_from_path",
+            return_value=cloud_info,
+        ) as cloud_info_mock,
+        patch(
+            "gflow_cli.api.client.FlowApiClient.__aenter__",
+            new_callable=AsyncMock,
+        ) as mock_enter,
+        patch("gflow_cli.api.client.FlowApiClient.__aexit__", new_callable=AsyncMock),
+    ):
+        from gflow_cli.api.client import FlowApiClient
+
+        fake_client = MagicMock(spec=FlowApiClient)
+        fake_client.generate_video = fake_generate_video
+        mock_enter.return_value = fake_client
+
+        result = runner.invoke(video, ["t2v", "x"])
+
+    assert result.exit_code == 0, result.output
+    completed_kwargs = fake_recorder.completed[0]
+    assert completed_kwargs["cloud_storage_info"] == cloud_info
+    cloud_info_mock.assert_called_once_with(saved)
+
+
 # ---------------------------------------------------------------------------
 # r2v reference-cap CLI guard (mirrors the i2i ref-cap tests).
 # ---------------------------------------------------------------------------

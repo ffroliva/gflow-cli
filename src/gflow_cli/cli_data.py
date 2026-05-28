@@ -286,7 +286,12 @@ async def _run_media(*, profile: str | None, media_id: str) -> None:  # NOSONAR 
         table.add_row("project_id", asset.flow_project_id or "")
         table.add_row("kind", asset.kind.value)
         for idx, local_file in enumerate(asset.local_files, start=1):
-            table.add_row(f"local_path_{idx}", safe_path_text(local_file.path))
+            path_text = (
+                safe_path_text(local_file.path)
+                if local_file.path is not None
+                else (local_file.cloud_uri or "")
+            )
+            table.add_row(f"local_path_{idx}", path_text)
         console.print(table)
 
 
