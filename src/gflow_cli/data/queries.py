@@ -57,9 +57,13 @@ _LIST_PROJECTS_SQL = """
         p.profile_name    AS profile,
         p.created_at      AS created_at,
         (SELECT COUNT(*) FROM assets
-         WHERE kind = 'image' AND flow_project_id = p.flow_project_id) AS image_count,
+         WHERE kind = 'image'
+           AND flow_project_id = p.flow_project_id
+           AND profile_name = p.profile_name) AS image_count,
         (SELECT COUNT(*) FROM assets
-         WHERE kind = 'video' AND flow_project_id = p.flow_project_id) AS video_count
+         WHERE kind = 'video'
+           AND flow_project_id = p.flow_project_id
+           AND profile_name = p.profile_name) AS video_count
     FROM projects p
     WHERE (:profile IS NULL OR p.profile_name = :profile)
     ORDER BY p.created_at DESC

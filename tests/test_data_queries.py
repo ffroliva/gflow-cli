@@ -105,6 +105,121 @@ def test_list_projects_image_video_counts(seeded: Path) -> None:
         assert r.video_count == 1
 
 
+def test_list_projects_image_video_counts_profile_scoped(tmp_path: Path) -> None:
+    """Issue #113: Ensure image/video counts do not leak across profiles sharing a flow_project_id.
+    """
+    db = tmp_path / "shared_project.db"
+    with DataStore.open(db) as store:
+        repo = DataRepository(store)
+        now = datetime.now(UTC).isoformat()
+
+        # Two profiles
+        repo.upsert_profile("alice", tmp_path / "alice")
+        repo.upsert_profile("bob", tmp_path / "bob")
+
+        # Both share the same flow_project_id
+        shared_flow_id = "shared-proj-id"
+
+        repo.upsert_project(
+            ProjectRecord(
+                id=str(uuid.uuid4()),
+                profile_name="alice",
+                flow_project_id=shared_flow_id,
+                title="alice view",
+                source="cli",
+                created_at=now,
+            )
+        )
+        repo.upsert_project(
+            ProjectRecord(
+                id=str(uuid.uuid4()),
+                profile_name="bob",
+                flow_project_id=shared_flow_id,
+                title="bob view",
+                source="cli",
+                created_at=now,
+            )
+        )
+
+        # Alice gets 1 image
+        repo.upsert_asset(
+            AssetRecord(
+                id=str(uuid.uuid4()),
+                profile_name="alice",
+                flow_project_id=shared_flow_id,
+                flow_media_id="alice-img-1",
+                flow_workflow_id=None,
+                flow_media_generation_id=None,
+                kind=AssetKind.IMAGE,
+                status="ready",
+                model="test-model",
+                aspect_ratio="1:1",
+                width=512,
+                height=512,
+                duration_seconds=None,
+                seed=None,
+                metadata_json={},
+                created_at=now,
+            )
+        )
+
+        # Bob gets 2 images, 1 video
+        for i in range(2):
+            repo.upsert_asset(
+                AssetRecord(
+                    id=str(uuid.uuid4()),
+                    profile_name="bob",
+                    flow_project_id=shared_flow_id,
+                    flow_media_id=f"bob-img-{i}",
+                    flow_workflow_id=None,
+                    flow_media_generation_id=None,
+                    kind=AssetKind.IMAGE,
+                    status="ready",
+                    model="test-model",
+                    aspect_ratio="1:1",
+                    width=512,
+                    height=512,
+                    duration_seconds=None,
+                    seed=None,
+                    metadata_json={},
+                    created_at=now,
+                )
+            )
+        repo.upsert_asset(
+            AssetRecord(
+                id=str(uuid.uuid4()),
+                profile_name="bob",
+                flow_project_id=shared_flow_id,
+                flow_media_id="bob-vid-1",
+                flow_workflow_id=None,
+                flow_media_generation_id=None,
+                kind=AssetKind.VIDEO,
+                status="ready",
+                model="test-model",
+                aspect_ratio="1:1",
+                width=512,
+                height=512,
+                duration_seconds=1.0,
+                seed=None,
+                metadata_json={},
+                created_at=now,
+            )
+        )
+
+    # Query without profile filter returns projects for both profiles
+    rows = list_projects(db_path=db, profile=None, limit=20, offset=0)
+    assert len(rows) == 2
+
+    rows_by_profile = {r.profile: r for r in rows}
+
+    # Assert counts are scoped to the profile, not leaking across the shared flow_project_id
+    assert rows_by_profile["alice"].image_count == 1
+    assert rows_by_profile["alice"].video_count == 0
+
+    assert rows_by_profile["bob"].image_count == 2
+    assert rows_by_profile["bob"].video_count == 1
+
+
 def test_list_projects_empty_catalog_returns_empty_list(tmp_path: Path) -> None:
     """Open a fresh DB with migrations only — no seed data."""
     from gflow_cli.data.store import DataStore
@@ -425,7 +540,7 @@ def test_list_images_with_multiple_operations_no_duplicate_rows(tmp_path: Path) 
                 created_at=now,
             )
         )
-        
+
         # Insert op 1
         op1_id = "op-1"
         repo.insert_operation(
