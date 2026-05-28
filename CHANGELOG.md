@@ -9,6 +9,18 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ### Added
 
+- **Aggregated asset view in `gflow data list images/videos`.** By default,
+  listing images or videos now returns one row per asset (Flow media ID),
+  collapsing multiple local copies into a single entry with a `COPIES` count
+  and the path of the latest copy. This prevents duplicate rows when
+  re-downloading the same media to different directories. The `copy_count`
+  is also exposed in JSONL output.
+- **`--all-copies` flag on `gflow data list images/videos`.** Restores the
+  previous behavior of showing every local file as a separate row.
+- **`gflow data prune` command.** New maintenance utility to remove stale
+  `local_files` database entries for local paths that no longer exist on
+  disk. Only targets local files (ignores cloud-stored assets). Supports
+  `--dry-run` to preview deletions and `--profile` to limit the scan.
 - **External storage documentation for S3, MinIO, and Google Cloud Storage.**
   Adds `docs/EXTERNAL_STORAGE.md`, cross-links it from the README, docs index,
   configuration, data-layer, usage, security, and user-guide docs, and clarifies

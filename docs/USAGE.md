@@ -31,6 +31,8 @@ Commands:
 
   data      Local provenance database (read-only queries).
     media MEDIA_ID              Show stored record for a Flow media ID.
+    list {projects,images,videos,profiles}  Browse the catalog.
+    prune                       Remove stale local file entries.
 ```
 
 Global flags:
@@ -389,8 +391,8 @@ Read-only browse over the local SQLite catalog. Shipped in v0.9.0.
 
 ```text
 gflow data list projects   [--profile NAME] [--limit N] [--offset N] [--json]
-gflow data list images     [--profile NAME] [--limit N] [--offset N] [--json]
-gflow data list videos     [--profile NAME] [--limit N] [--offset N] [--json]
+gflow data list images     [--profile NAME] [--limit N] [--offset N] [--json] [--all-copies]
+gflow data list videos     [--profile NAME] [--limit N] [--offset N] [--json] [--all-copies]
 gflow data list profiles                    [--limit N] [--offset N] [--json]
 
 Options:
@@ -398,7 +400,13 @@ Options:
   --limit N             Max rows returned. Range 1..1000. Default 20.
   --offset N            Rows to skip (pagination). Default 0.
   --json                Force JSONL output (one record per line).
+  --all-copies          Show every local file copy separately (images/videos only).
 ```
+
+By default, `images` and `videos` aggregate rows by Flow media ID. If an asset
+has multiple local copies (e.g. re-downloaded to different paths), they appear
+as a single row with a `COPIES` count and the path of the latest copy. Use
+`--all-copies` to see every path as a separate row.
 
 Output:
 - TTY stdout → Rich-formatted table.
@@ -412,8 +420,11 @@ Default sort: newest first (by `created_at`). Exit codes: 0 success (including t
 # Newest 20 projects across all profiles
 gflow data list projects
 
-# All images for one profile, paginated
+# All images for one profile, aggregated by asset by default
 gflow data list images --profile ffroliva --limit 50 --offset 0
+
+# Show every local file copy separately
+gflow data list images --all-copies
 
 # Videos as JSONL for piping into jq
 gflow data list videos --json | jq '.media_id'
@@ -425,6 +436,24 @@ gflow data list profiles
 > **`data list profiles` vs `gflow auth list`** — `data list profiles` shows profiles that have **recorded generations** in the catalog; `gflow auth list` shows profiles that have ever **logged in** via `gflow auth login`. A profile that logged in but never generated anything will appear in `auth list` but not in `data list profiles`.
 
 For full schema details and JOIN semantics, see [`docs/DATA_LAYER.md § Querying the data layer`](DATA_LAYER.md#querying-the-data-layer).
+
+## `gflow data prune`
+
+Remove `local_files` database entries whose local paths no longer exist on
+disk. Shipped in v0.9.1.
+
+```bash
+gflow data prune [--dry-run] [--profile NAME]
+```
+
+Useful after test runs that wrote to temporary directories, or after manually
+deleting media files. Only **local files** (where `storage_provider` is NULL)
+are scanned; cloud-stored assets are ignored to prevent accidental pruning of
+remote objects.
+
+Options:
+  --dry-run             Preview dead rows without deleting.
+  --profile NAME        Limit scan to a specific profile.
 
 ## `gflow data media`
 

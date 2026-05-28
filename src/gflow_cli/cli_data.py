@@ -400,7 +400,7 @@ def prune_cmd(dry_run: bool, profile: str | None) -> None:
     with DataStore.open(db) as store:
         rows = store.conn.execute(
             "SELECT id, path FROM local_files"
-            " WHERE path IS NOT NULL"
+            " WHERE storage_provider IS NULL"
             " AND (:profile IS NULL OR profile_name = :profile)",
             {"profile": profile},
         ).fetchall()
@@ -417,8 +417,15 @@ def prune_cmd(dry_run: bool, profile: str | None) -> None:
             click.echo(f"{len(dead)} dead row(s) found. --dry-run: no changes made.")
             return
 
-        placeholders = ",".join("?" * len(dead))
         dead_ids = [r["id"] for r in dead]
+        # SQLite variable limit is usually 999; 500 is safe.
+        chunk_size = 500
+        pruned_count = 0
         with store.transaction(immediate=True):
-            store.conn.execute(f"DELETE FROM local_files WHERE id IN ({placeholders})", dead_ids)
-        click.echo(f"Pruned {len(dead)} dead local_files row(s).")
+            for i in range(0, len(dead_ids), chunk_size):
+                chunk = dead_ids[i : i + chunk_size]
+                placeholders = ",".join("?" * len(chunk))
+                store.conn.execute(f"DELETE FROM local_files WHERE id IN ({placeholders})", chunk)
+                pruned_count += len(chunk)
+
+        click.echo(f"Pruned {pruned_count} dead local_files row(s).")

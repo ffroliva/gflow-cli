@@ -195,8 +195,11 @@ See [`SECURITY.md`](SECURITY.md) for the broader threat model.
 # Newest 20 projects across all profiles
 gflow data list projects
 
-# All images for one profile, paginated
+# All images for one profile, aggregated by asset by default
 gflow data list images --profile ffroliva --limit 50 --offset 0
+
+# Show every local file copy instead of aggregating
+gflow data list images --all-copies
 
 # Videos as JSONL for piping into jq
 gflow data list videos --json | jq '.media_id'
@@ -214,9 +217,36 @@ Flags shared by all four subcommands:
 | `--profile NAME` | unset | filter to one profile (not available on `profiles`) |
 | `--json` | off | JSONL output, one object per line |
 
+The `images` and `videos` subcommands support an additional flag:
+
+| Flag | Default | Notes |
+|---|---|---|
+| `--all-copies` | off | Show one row per local file instead of one row per asset. |
+
+By default, `images` and `videos` aggregate rows by Flow media ID. If an asset
+has multiple local copies (e.g. re-downloaded to different paths), they appear
+as a single row with a `COPIES` count and the path of the latest copy.
+
 TTY stdout → Rich table; pipe or `--json` → JSONL. Default sort: newest first. Exit code 16 on data-store errors (same `DataStoreError` family as `gflow data media`). A **missing or freshly-created** DB is NOT a data-store error — `data list` auto-creates the schema via `DataStore.open()` and returns exit 0 with an empty result (see [#88](https://github.com/ffroliva/gflow-cli/issues/88)).
 
 > **`data list profiles` vs `gflow auth list`:** `data list profiles` shows profiles that have **recorded generations** in the catalog; `gflow auth list` shows profiles that have ever **logged in** via `gflow auth login`. A profile that logged in but never generated anything will appear in `auth list` but not in `data list profiles`.
+
+### `gflow data prune` — clean up stale entries (v0.9.1+)
+
+Remove `local_files` rows whose paths no longer exist on disk. Useful after
+test runs that wrote to temporary directories, or after manually deleting
+media files.
+
+```bash
+# Preview dead rows without deleting
+gflow data prune --dry-run
+
+# Delete stale local_files entries
+gflow data prune
+```
+
+Only **local files** (where `storage_provider` is NULL) are scanned; cloud-stored
+assets are ignored to prevent accidental pruning of remote objects.
 
 ### `gflow data media <media_id>` — read a single asset
 
