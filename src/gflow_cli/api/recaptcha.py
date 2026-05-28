@@ -63,10 +63,13 @@ async def discover_site_key(page: _PageLike) -> str:
     """
     key = await page.evaluate(_DISCOVER_SITE_KEY_JS)
     if not isinstance(key, str) or not key:
-        raise RecaptchaError(
+        msg = (
             "Could not discover reCAPTCHA site key from the page. "
             "The Flow editor page may have failed to load, or the reCAPTCHA "
             "script tag layout has changed."
+        )
+        raise RecaptchaError(
+            msg,
         )
     return key
 
@@ -93,15 +96,21 @@ class TokenMinter:
         try:
             token = await self._page.evaluate(_EXECUTE_JS, [site_key, action])
         except Exception as exc:
-            raise RecaptchaError(
+            msg = (
                 f"reCAPTCHA evaluate failed for action={action!r}: {exc}. "
                 "Likely causes: grecaptcha not loaded, page navigated away, "
                 "or Playwright timeout. Try GFLOW_CLI_HEADLESS=false."
+            )
+            raise RecaptchaError(
+                msg,
             ) from exc
         if not isinstance(token, str) or not token:
-            raise RecaptchaError(
+            msg = (
                 f"reCAPTCHA returned an empty token for action={action!r}. "
                 "Likely causes: headless detection by Google, or the page "
                 "navigated away before mint. Try GFLOW_CLI_HEADLESS=false."
+            )
+            raise RecaptchaError(
+                msg,
             )
         return token

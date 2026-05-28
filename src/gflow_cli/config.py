@@ -24,13 +24,15 @@ import os
 import warnings
 from enum import StrEnum
 from functools import lru_cache
-from pathlib import Path
-from typing import Literal
+from typing import TYPE_CHECKING, Literal
 
 from pydantic import Field, field_validator
 from pydantic_settings import BaseSettings, SettingsConfigDict
 
 from gflow_cli import paths
+
+if TYPE_CHECKING:
+    from pathlib import Path
 
 _LEGACY_ENV_PREFIX = "FLOW_CLI_"
 _NEW_ENV_PREFIX = "GFLOW_CLI_"
@@ -118,12 +120,16 @@ class Settings(BaseSettings):
         if v is None or v == "":
             return None
         if not isinstance(v, str):
-            raise ValueError("storage_uri must be a string")
+            msg = "storage_uri must be a string"
+            raise ValueError(msg)
         allowed = ("gs://", "s3://", "memory://")
         if not any(v.startswith(scheme) for scheme in allowed):
-            raise ValueError(
+            msg = (
                 f"GFLOW_CLI_STORAGE_URI scheme not supported: {v!r}. "
                 "Use gs:// (GCS), s3:// (S3/MinIO), or memory:// (tests only)."
+            )
+            raise ValueError(
+                msg,
             )
         return v
 

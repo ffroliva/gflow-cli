@@ -69,8 +69,9 @@ def make_transport(name: str | None = None) -> FlowTransportStrategy:
     registry = _registry()
     klass = registry.get(resolved)
     if klass is None:
+        msg = f"Transport {resolved!r} is not registered. Valid options: {sorted(registry)}."
         raise ConfigurationError(
-            f"Transport {resolved!r} is not registered. Valid options: {sorted(registry)}."
+            msg,
         )
     return klass()
 

@@ -20,15 +20,17 @@ import asyncio
 import hashlib
 import json
 import time
-from pathlib import Path
 from typing import TYPE_CHECKING, Any
 
 if TYPE_CHECKING:
+    from pathlib import Path
+
     from playwright.async_api import Page
+
+    from gflow_cli.api.dto import GeneratedImage
 
 import structlog
 
-from gflow_cli.api.dto import GeneratedImage
 from gflow_cli.api.image import (
     GenerateImageRequest,
     _build_batch_generate_images_body,
@@ -134,7 +136,7 @@ class EvaluateFetchTransport:
         # Own-context path: strategy owns the full Playwright lifecycle.
         # Lazy import: keeps module-level import cheap when other transports
         # are selected; only imported when S1 is actually used.
-        from playwright.async_api import async_playwright  # noqa: PLC0415
+        from playwright.async_api import async_playwright
 
         pw_cm = async_playwright()
         self._pw_cm = pw_cm
@@ -175,12 +177,14 @@ class EvaluateFetchTransport:
         clear remediation hint.
         """
         if not self._setup_done or self._page is None:
-            raise AuthExpiredError("evaluate_fetch: cannot refresh — setup not done")
+            msg = "evaluate_fetch: cannot refresh — setup not done"
+            raise AuthExpiredError(msg)
         try:
             await self._page.goto(FLOW_URL, wait_until="domcontentloaded", timeout=30_000)
             log.info("evaluate_fetch.refresh_auth_done")
         except Exception as exc:
-            raise AuthExpiredError(f"evaluate_fetch: refresh navigation failed: {exc}") from exc
+            msg = f"evaluate_fetch: refresh navigation failed: {exc}"
+            raise AuthExpiredError(msg) from exc
 
     async def generate_images(
         self,
@@ -198,9 +202,10 @@ class EvaluateFetchTransport:
         its own project internally.
         """
         if project_id is None:
-            raise ValueError("EvaluateFetchTransport requires an explicit project_id")
+            msg = "EvaluateFetchTransport requires an explicit project_id"
+            raise ValueError(msg)
         return await self._generate_images_inner(
-            project_id=project_id, request=request, is_retry=False
+            project_id=project_id, request=request, is_retry=False,
         )
 
     async def _generate_images_inner(
@@ -212,7 +217,8 @@ class EvaluateFetchTransport:
     ) -> list[GeneratedImage]:
         """Internal implementation; ``is_retry`` tracks single-retry state."""
         if self._page is None:
-            raise RuntimeError("evaluate_fetch: setup() must be called before generate_images()")
+            msg = "evaluate_fetch: setup() must be called before generate_images()"
+            raise RuntimeError(msg)
 
         seed = (
             int(hashlib.sha256(request.refs[0].name.encode("utf-8")).hexdigest(), 16) % 2**31
@@ -237,12 +243,13 @@ class EvaluateFetchTransport:
                 timeout=PER_CALL_TIMEOUT_S,
             )
         except TimeoutError as exc:
+            msg = f"evaluate_fetch: page.evaluate hung > {PER_CALL_TIMEOUT_S}s"
             raise TransportTimeoutError(
-                f"evaluate_fetch: page.evaluate hung > {PER_CALL_TIMEOUT_S}s"
+                msg,
             ) from exc
 
         return await self._handle_response(
-            raw, project_id=project_id, request=request, is_retry=is_retry
+            raw, project_id=project_id, request=request, is_retry=is_retry,
         )
 
     async def teardown(self) -> None:
@@ -292,8 +299,9 @@ class EvaluateFetchTransport:
 
         if status == 401:
             if is_retry:
+                msg = "evaluate_fetch: HTTP 401 persisted after refresh — session expired"
                 raise AuthExpiredError(
-                    "evaluate_fetch: HTTP 401 persisted after refresh — session expired"
+                    msg,
                 )
             # First 401: refresh then retry exactly once.
             await self.refresh_auth()
@@ -304,8 +312,9 @@ class EvaluateFetchTransport:
             )
 
         if status == 403:
+            msg = f"evaluate_fetch: HTTP 403 — WAF/fingerprint rejection: {body_text[:200]}"
             raise WafRejectionError(
-                f"evaluate_fetch: HTTP 403 — WAF/fingerprint rejection: {body_text[:200]}"
+                msg,
             )
 
         # Delegate all other status codes (200, 429, 5xx, etc.) to the shared

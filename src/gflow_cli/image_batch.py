@@ -6,7 +6,6 @@ import hashlib
 import json
 import re
 import time
-from collections.abc import Callable, Coroutine
 from dataclasses import dataclass, field
 from pathlib import Path
 from typing import TYPE_CHECKING, Any
@@ -23,7 +22,6 @@ from gflow_cli.api.client import FlowApiClient
 from gflow_cli.api.dto import BatchSubmissionResult, ProjectInfo
 from gflow_cli.api.image import Aspect, GenerateImageRequest, Model
 from gflow_cli.api.transports.ui_automation import UiAutomationTransport
-from gflow_cli.data.recorder import OperationRecorder
 from gflow_cli.errors import (
     EXIT_CODE_MAP,
     BatchIntegrityError,
@@ -35,7 +33,10 @@ from gflow_cli.errors import (
 from gflow_cli.storage import cloud_info_from_path
 
 if TYPE_CHECKING:
+    from collections.abc import Callable, Coroutine
+
     from gflow_cli.api.dto import GeneratedImage
+    from gflow_cli.data.recorder import OperationRecorder
 
 console = Console()
 logger = structlog.get_logger(__name__)
@@ -112,7 +113,7 @@ class BatchOutcome:
     index: int
     prompt: BatchPromptItem
     status: str
-    saved_paths: list[Path] = field(default_factory=lambda: [])
+    saved_paths: list[Path] = field(default_factory=list)
     error: str | None = None
     exit_code: int = 0
 
@@ -141,9 +142,12 @@ def _prompt_file_label(path: Path) -> str:
 
 def _validate_prompt_count(count: int) -> None:
     if not (MIN_PROMPTS <= count <= MAX_PROMPTS):
-        raise ConfigurationError(
+        msg = (
             f"Prompt source must contain between {MIN_PROMPTS} and {MAX_PROMPTS} "
             f"prompts (got {count})."
+        )
+        raise ConfigurationError(
+            msg,
         )
 
 
@@ -152,9 +156,12 @@ def _validate_prompt_text(text: str, *, source_label: str, line_number: int | No
         location = source_label
         if line_number is not None:
             location += f" line {line_number}"
-        raise ConfigurationError(
+        msg = (
             f"{location}: prompt length must be between {MIN_TEXT_LEN} and "
             f"{MAX_TEXT_LEN} characters (got {len(text)})."
+        )
+        raise ConfigurationError(
+            msg,
         )
 
 
@@ -174,7 +181,7 @@ def parse_prompt_lines(text: str, *, source_label: str) -> tuple[ParsedPromptLin
                 source_label=source_label,
                 line_number=line_number,
                 prompt_index=len(parsed),
-            )
+            ),
         )
     _validate_prompt_count(len(parsed))
     return tuple(parsed)
@@ -186,22 +193,27 @@ def read_prompt_file(path: Path) -> tuple[ParsedPromptLine, ...]:
     try:
         stat = path.stat()
     except OSError as exc:
-        raise ConfigurationError(f"{label}: file not found or is not readable.") from exc
+        msg = f"{label}: file not found or is not readable."
+        raise ConfigurationError(msg) from exc
     if not path.is_file():
-        raise ConfigurationError(f"{label}: must be a regular file.")
+        msg = f"{label}: must be a regular file."
+        raise ConfigurationError(msg)
     if stat.st_size > MAX_PROMPT_FILE_BYTES:
-        raise ConfigurationError(f"{label}: file must be at most 512 KiB.")
+        msg = f"{label}: file must be at most 512 KiB."
+        raise ConfigurationError(msg)
     try:
         text = path.read_text(encoding="utf-8")
     except UnicodeDecodeError as exc:
-        raise ConfigurationError(f"{label}: file must be valid UTF-8.") from exc
+        msg = f"{label}: file must be valid UTF-8."
+        raise ConfigurationError(msg) from exc
     except OSError as exc:
-        raise ConfigurationError(f"{label}: failed to read file.") from exc
+        msg = f"{label}: failed to read file."
+        raise ConfigurationError(msg) from exc
     return parse_prompt_lines(text, source_label=label)
 
 
 _ALLOWED_PROMPT_KEYS: frozenset[str] = frozenset(
-    {"text", "aspect_ratio", "model", "count", "output_filename"}
+    {"text", "aspect_ratio", "model", "count", "output_filename"},
 )
 
 
@@ -212,41 +224,55 @@ def parse_batch_item_dict(p: dict[str, Any], idx: int) -> BatchPromptItem:
     """
     unknown = set(p) - _ALLOWED_PROMPT_KEYS
     if unknown:
-        raise ConfigurationError(
+        msg = (
             f"prompts[{idx}] has unknown key(s) {sorted(unknown)!r}. "
             f"Valid: {sorted(_ALLOWED_PROMPT_KEYS)!r}."
         )
+        raise ConfigurationError(
+            msg,
+        )
     text_raw = p.get("text")
     if not isinstance(text_raw, str):
-        raise ConfigurationError(f"prompts[{idx}].text must be a string.")
+        msg = f"prompts[{idx}].text must be a string."
+        raise ConfigurationError(msg)
     if not (MIN_TEXT_LEN <= len(text_raw) <= MAX_TEXT_LEN):
-        raise ConfigurationError(
+        msg = (
             f"prompts[{idx}].text length must be between {MIN_TEXT_LEN} "
             f"and {MAX_TEXT_LEN} (got {len(text_raw)})."
         )
+        raise ConfigurationError(
+            msg,
+        )
     aspect_ratio = p.get("aspect_ratio", DEFAULT_ASPECT_RATIO)
     if aspect_ratio not in ALLOWED_ASPECT_RATIOS:
-        raise ConfigurationError(
+        msg = (
             f"prompts[{idx}].aspect_ratio {aspect_ratio!r} is invalid. "
             f"Valid: {list(ALLOWED_ASPECT_RATIOS)!r}."
         )
+        raise ConfigurationError(
+            msg,
+        )
     model = p.get("model", DEFAULT_MODEL)
     if model not in ALLOWED_MODELS:
+        msg = f"prompts[{idx}].model {model!r} is invalid. Valid: {list(ALLOWED_MODELS)!r}."
         raise ConfigurationError(
-            f"prompts[{idx}].model {model!r} is invalid. Valid: {list(ALLOWED_MODELS)!r}."
+            msg,
         )
     count = p.get("count", DEFAULT_COUNT)
     if not isinstance(count, int) or isinstance(count, bool):
-        raise ConfigurationError(f"prompts[{idx}].count must be an integer.")
+        msg = f"prompts[{idx}].count must be an integer."
+        raise ConfigurationError(msg)
     if not (MIN_COUNT <= count <= MAX_COUNT):
+        msg = f"prompts[{idx}].count must be between {MIN_COUNT} and {MAX_COUNT} (got {count})."
         raise ConfigurationError(
-            f"prompts[{idx}].count must be between {MIN_COUNT} and {MAX_COUNT} (got {count})."
+            msg,
         )
     output_filename = p.get("output_filename")
     if output_filename is not None and (
         not isinstance(output_filename, str) or not output_filename
     ):
-        raise ConfigurationError(f"prompts[{idx}].output_filename must be a non-empty string.")
+        msg = f"prompts[{idx}].output_filename must be a non-empty string."
+        raise ConfigurationError(msg)
     return BatchPromptItem(
         text=text_raw,
         aspect_ratio=aspect_ratio,
@@ -265,19 +291,25 @@ def _validate_item_values(
     label: str,
 ) -> None:
     if aspect_ratio not in ALLOWED_ASPECT_RATIOS:
-        raise ConfigurationError(
+        msg = (
             f"{label}.aspect_ratio {aspect_ratio!r} is invalid. "
             f"Valid: {list(ALLOWED_ASPECT_RATIOS)!r}."
         )
-    if model not in ALLOWED_MODELS:
         raise ConfigurationError(
-            f"{label}.model {model!r} is invalid. Valid: {list(ALLOWED_MODELS)!r}."
+            msg,
+        )
+    if model not in ALLOWED_MODELS:
+        msg = f"{label}.model {model!r} is invalid. Valid: {list(ALLOWED_MODELS)!r}."
+        raise ConfigurationError(
+            msg,
         )
     if not isinstance(count, int) or isinstance(count, bool):
-        raise ConfigurationError(f"{label}.count must be an integer.")
+        msg = f"{label}.count must be an integer."
+        raise ConfigurationError(msg)
     if not (MIN_COUNT <= count <= MAX_COUNT):
+        msg = f"{label}.count must be between {MIN_COUNT} and {MAX_COUNT} (got {count})."
         raise ConfigurationError(
-            f"{label}.count must be between {MIN_COUNT} and {MAX_COUNT} (got {count})."
+            msg,
         )
 
 
@@ -333,7 +365,7 @@ def prompt_items_from_texts(
                 count=count,
                 output_filename=f"prompt_{index}",
                 index=index,
-            )
+            ),
         )
     return tuple(items)
 
@@ -363,7 +395,7 @@ async def run_one_image_prompt(
             images: list[GeneratedImage] = [img]
         else:
             images = await client.generate_images_batch(
-                project_id=project_id, req=req, count=item.count
+                project_id=project_id, req=req, count=item.count,
             )
         saved: list[Path] = []
         for img_idx, img in enumerate(images):
@@ -397,7 +429,7 @@ async def run_image_batch(
     """Run prompts sequentially through one FlowApiClient session."""
 
     async def image_worker(
-        client: Any, project_id: str, idx: int, item: BatchPromptItem
+        client: Any, project_id: str, idx: int, item: BatchPromptItem,
     ) -> BatchOutcome:
         return await run_one_image_prompt(
             client=client,
@@ -450,7 +482,7 @@ async def run_sequential_batch(
                             index=skip_idx,
                             prompt=items[skip_idx],
                             status="skipped",
-                        )
+                        ),
                     )
                 break
     return outcomes
@@ -463,13 +495,14 @@ async def run_sequential_batch(
 
 def _validate_batch_prompt_count(count: int) -> None:
     if not (1 <= count <= MAX_BATCH_PROMPTS):
+        msg = f"Manifest must contain between 1 and {MAX_BATCH_PROMPTS} prompts (got {count})."
         raise ConfigurationError(
-            f"Manifest must contain between 1 and {MAX_BATCH_PROMPTS} prompts (got {count})."
+            msg,
         )
 
 
 def _tsv_parse_count(
-    raw_count: str, *, default_count: int, source_label: str, line_number: int
+    raw_count: str, *, default_count: int, source_label: str, line_number: int,
 ) -> int:
     """Parse the ``count`` column of a TSV row. Empty falls back to the default."""
     if not raw_count:
@@ -477,39 +510,49 @@ def _tsv_parse_count(
     try:
         count = int(raw_count)
     except ValueError as exc:
+        msg = f"{source_label} line {line_number}: count {raw_count!r} is not an integer."
         raise ConfigurationError(
-            f"{source_label} line {line_number}: count {raw_count!r} is not an integer."
+            msg,
         ) from exc
     if not (MIN_COUNT <= count <= MAX_COUNT):
-        raise ConfigurationError(
+        msg = (
             f"{source_label} line {line_number}: count must be {MIN_COUNT}–{MAX_COUNT} "
             f"(got {count})."
+        )
+        raise ConfigurationError(
+            msg,
         )
     return count
 
 
 def _tsv_parse_aspect(
-    raw_aspect: str, *, default_aspect_ratio: str, source_label: str, line_number: int
+    raw_aspect: str, *, default_aspect_ratio: str, source_label: str, line_number: int,
 ) -> str:
     """Parse the ``aspect_ratio`` column of a TSV row, validating against the allowed set."""
-    aspect_ratio = raw_aspect if raw_aspect else default_aspect_ratio
+    aspect_ratio = raw_aspect or default_aspect_ratio
     if aspect_ratio not in ALLOWED_ASPECT_RATIOS:
-        raise ConfigurationError(
+        msg = (
             f"{source_label} line {line_number}: aspect_ratio {aspect_ratio!r} invalid. "
             f"Valid: {list(ALLOWED_ASPECT_RATIOS)!r}."
+        )
+        raise ConfigurationError(
+            msg,
         )
     return aspect_ratio
 
 
 def _tsv_parse_model(
-    raw_model: str, *, default_model: str, source_label: str, line_number: int
+    raw_model: str, *, default_model: str, source_label: str, line_number: int,
 ) -> str:
     """Parse the ``model`` column of a TSV row, validating against the allowed set."""
-    model = raw_model if raw_model else default_model
+    model = raw_model or default_model
     if model not in ALLOWED_MODELS:
-        raise ConfigurationError(
+        msg = (
             f"{source_label} line {line_number}: model {model!r} invalid. "
             f"Valid: {list(ALLOWED_MODELS)!r}."
+        )
+        raise ConfigurationError(
+            msg,
         )
     return model
 
@@ -540,8 +583,9 @@ def parse_tsv_manifest(
         cols = raw.split("\t")
         prompt = cols[0].strip()
         if not prompt:
+            msg = f"{source_label} line {line_number}: prompt column is required."
             raise ConfigurationError(
-                f"{source_label} line {line_number}: prompt column is required."
+                msg,
             )
         _validate_prompt_text(prompt, source_label=source_label, line_number=line_number)
 
@@ -572,7 +616,7 @@ def parse_tsv_manifest(
                 count=count,
                 output_filename=f"prompt_{len(items)}",
                 index=len(items),
-            )
+            ),
         )
 
     _validate_batch_prompt_count(len(items))
@@ -593,11 +637,13 @@ def parse_json_manifest(
     defaults before validation.
     """
     if not isinstance(data, list):
-        raise ConfigurationError("JSON manifest must be a top-level array.")
+        msg = "JSON manifest must be a top-level array."
+        raise ConfigurationError(msg)
     items: list[BatchPromptItem] = []
     for idx, raw_entry in enumerate(data):  # type: ignore[union-attr]
         if not isinstance(raw_entry, dict):
-            raise ConfigurationError(f"prompts[{idx}] must be an object.")
+            msg = f"prompts[{idx}] must be an object."
+            raise ConfigurationError(msg)
         entry: dict[str, Any] = raw_entry  # type: ignore[assignment]
         # Inject defaults for missing optional keys before delegating validation.
         entry_with_defaults: dict[str, Any] = {
@@ -620,17 +666,20 @@ def parse_manifest_file(
 ) -> tuple[BatchPromptItem, ...]:
     """Read and parse a manifest file, dispatching on ``.json`` / ``.tsv`` extension."""
     if not path.is_file():
-        raise ConfigurationError(f"Manifest file not found: {path}")
+        msg = f"Manifest file not found: {path}"
+        raise ConfigurationError(msg)
     suffix = path.suffix.lower()
     try:
         text = path.read_text(encoding="utf-8")
     except OSError as exc:
-        raise ConfigurationError(f"Cannot read manifest {path.name}: {exc}") from exc
+        msg = f"Cannot read manifest {path.name}: {exc}"
+        raise ConfigurationError(msg) from exc
     if suffix == ".json":
         try:
             data = json.loads(text)
         except json.JSONDecodeError as exc:
-            raise ConfigurationError(f"Manifest {path.name} is not valid JSON: {exc}") from exc
+            msg = f"Manifest {path.name} is not valid JSON: {exc}"
+            raise ConfigurationError(msg) from exc
         return parse_json_manifest(
             data,
             default_count=default_count,
@@ -645,7 +694,8 @@ def parse_manifest_file(
             default_model=default_model,
             source_label=path.name,
         )
-    raise ConfigurationError(f"Unsupported manifest format {suffix!r}. Use .json or .tsv.")
+    msg = f"Unsupported manifest format {suffix!r}. Use .json or .tsv."
+    raise ConfigurationError(msg)
 
 
 # ---------------------------------------------------------------------------
@@ -749,7 +799,7 @@ async def _download_results(
                         if result.error
                         else "unknown"
                     ),
-                )
+                ),
             )
             logger.info(
                 "image_batch.row_completed",
@@ -761,7 +811,7 @@ async def _download_results(
             continue
 
         saved = await _download_item_images(
-            client=client, item=item, result=result, output_dir=output_dir
+            client=client, item=item, result=result, output_dir=output_dir,
         )
         outcomes.append(
             BatchOutcome(
@@ -769,7 +819,7 @@ async def _download_results(
                 prompt=item,
                 status="ok",
                 saved_paths=saved,
-            )
+            ),
         )
         if recorder is not None and profile_name is not None and profile_dir is not None:
             _try_record_images(
@@ -831,9 +881,12 @@ async def run_manifest_image_batch(
     ) as client:
         # Capability check: only UiAutomationTransport implements generate_images_batch.
         if not isinstance(client.transport, UiAutomationTransport):
-            raise RuntimeError(
+            msg = (
                 f"gflow image batch requires the ui_automation transport; "
                 f"got {type(client.transport).__name__}"
+            )
+            raise RuntimeError(
+                msg,
             )
 
         # Build per-prompt requests.
@@ -959,6 +1012,6 @@ def render_image_batch_summary(outcomes: list[BatchOutcome], *, title: str) -> i
     failed = sum(1 for outcome in outcomes if outcome.status == "fail")
     skipped = sum(1 for outcome in outcomes if outcome.status == "skipped")
     console.print(
-        f"\n{succeeded}/{len(outcomes)} succeeded · {failed} failure(s) · {skipped} skipped"
+        f"\n{succeeded}/{len(outcomes)} succeeded · {failed} failure(s) · {skipped} skipped",
     )
     return max((outcome.exit_code for outcome in outcomes), default=0)

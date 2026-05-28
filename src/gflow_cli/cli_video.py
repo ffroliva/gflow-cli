@@ -514,10 +514,12 @@ def r2v(
         # returns None for input None — we just guarded against that.
         cap = reference_cap_for(model_enum)
         if cap == 0:
-            raise click.UsageError(f"{model} does not support R2V (reference-to-video).")
+            msg = f"{model} does not support R2V (reference-to-video)."
+            raise click.UsageError(msg)
         if len(refs) > cap:
+            msg = f"{model} allows at most {cap} reference image(s); got {len(refs)}."
             raise click.UsageError(
-                f"{model} allows at most {cap} reference image(s); got {len(refs)}."
+                msg,
             )
 
     profile_name = _resolve_profile(profile)

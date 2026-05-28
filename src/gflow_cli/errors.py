@@ -3,26 +3,26 @@ from __future__ import annotations
 from typing import Any, TypedDict
 
 __all__ = [
-    "ProblemDetails",
-    "GFlowError",
-    "FlowApiError",
+    "EXIT_CODE_MAP",
     "AuthExpiredError",
-    "RateLimitError",
+    "AuthLoginTimeoutError",
+    "AuthMissingError",
+    "BatchIntegrityError",
+    "BatchPartialError",
+    "ConfigurationError",
     "ContentPolicyError",
+    "DataIntegrityError",
+    "DataMigrationError",
+    "DataStoreError",
+    "FlowApiError",
+    "GFlowError",
     "NetworkError",
-    "WireFormatError",
+    "ProblemDetails",
+    "RateLimitError",
+    "SecurityError",
     "TransportTimeoutError",
     "WafRejectionError",
-    "ConfigurationError",
-    "SecurityError",
-    "AuthMissingError",
-    "AuthLoginTimeoutError",
-    "BatchPartialError",
-    "BatchIntegrityError",
-    "DataStoreError",
-    "DataMigrationError",
-    "DataIntegrityError",
-    "EXIT_CODE_MAP",
+    "WireFormatError",
 ]
 
 
@@ -30,7 +30,7 @@ class ProblemDetails(TypedDict, total=False):
     """RFC 9457 Problem Details JSON shape (https://datatracker.ietf.org/doc/html/rfc9457).
     Two gflow extensions: `remediation_hint` and `route`."""
 
-    type: str  # required  # noqa: A003 — RFC 9457 wire field name; cannot rename
+    type: str  # required
     title: str  # required
     status: int  # optional — only the literal HTTP status of the failed call
     detail: str  # optional

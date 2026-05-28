@@ -60,19 +60,23 @@ def _sanitize_key(key: str) -> str:
     """
     normalized = posixpath.normpath(key.lstrip("/"))
     if normalized.startswith(".."):
-        raise ValueError(f"Unsafe storage key (path traversal detected): {key!r}")
+        msg = f"Unsafe storage key (path traversal detected): {key!r}"
+        raise ValueError(msg)
     return normalized
 
 
 def _make_upath(uri: str) -> Path:
     try:
-        from upath import UPath  # type: ignore[import-untyped]  # noqa: PLC0415
+        from upath import UPath  # type: ignore[import-untyped]
     except ImportError as exc:
-        raise ImportError(
+        msg = (
             "Cloud storage requires universal_pathlib. "
             "Install the matching extra:\n"
             "  pip install 'gflow-cli[gcs]'   # Google Cloud Storage\n"
             "  pip install 'gflow-cli[s3]'    # Amazon S3 / MinIO"
+        )
+        raise ImportError(
+            msg,
         ) from exc
     return UPath(uri)  # type: ignore[return-value]
 

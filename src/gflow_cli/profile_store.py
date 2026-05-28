@@ -23,9 +23,12 @@ import shutil
 import tomllib
 from dataclasses import dataclass
 from datetime import UTC, datetime
-from pathlib import Path
+from typing import TYPE_CHECKING
 
 from gflow_cli.auth import default_profile_root, profile_dir, status
+
+if TYPE_CHECKING:
+    from pathlib import Path
 
 CONFIG_FILENAME = "config.toml"
 PROFILE_DIR_PREFIX = "profile_"
@@ -96,7 +99,7 @@ def list_profiles() -> list[ProfileMeta]:
                 last_used_at=last_used,
                 is_default=(name == default_name),
                 google_account=google_account,
-            )
+            ),
         )
     return out
 
@@ -130,8 +133,9 @@ def set_default_profile(name: str) -> Path:
     """
     pdir = profile_dir(name)
     if not pdir.exists():
+        msg = f"Profile dir not found: {pdir}\nRun `gflow auth login --profile {name}` first."
         raise FileNotFoundError(
-            f"Profile dir not found: {pdir}\nRun `gflow auth login --profile {name}` first."
+            msg,
         )
     cfg = config_path()
     cfg.parent.mkdir(parents=True, exist_ok=True)
@@ -163,18 +167,25 @@ def rename_profile(old_name: str, new_name: str) -> Path:
     Raises ValueError if new_name contains path-traversal characters.
     """
     if not _SAFE_PROFILE_NAME_RE.match(new_name):
-        raise ValueError(
+        msg = (
             f"Profile name {new_name!r} contains invalid characters. "
             "Use only letters, digits, hyphens, and underscores (max 128 chars)."
+        )
+        raise ValueError(
+            msg,
         )
     old_dir = profile_dir(old_name)
     new_dir = profile_dir(new_name)
     if not old_dir.exists():
-        raise FileNotFoundError(f"Profile dir not found: {old_dir}")
+        msg = f"Profile dir not found: {old_dir}"
+        raise FileNotFoundError(msg)
     if new_dir.exists():
-        raise FileExistsError(
+        msg = (
             f"Profile '{new_name}' already exists: {new_dir}. "
             "Choose a different name or delete it first."
+        )
+        raise FileExistsError(
+            msg,
         )
     old_dir.rename(new_dir)
     if _read_default_profile_name() == old_name:
@@ -188,7 +199,8 @@ def delete_profile(name: str) -> Path:
     """Hard-delete the profile dir. Clears it as default if it was set."""
     pdir = profile_dir(name)
     if not pdir.exists():
-        raise FileNotFoundError(f"Profile dir not found: {pdir}")
+        msg = f"Profile dir not found: {pdir}"
+        raise FileNotFoundError(msg)
     shutil.rmtree(pdir, ignore_errors=False)
     if _read_default_profile_name() == name:
         clear_default_profile()
@@ -207,7 +219,8 @@ def resolve_profile(cli_flag: str | None) -> str:
         return default
     profiles = list_profiles()
     if not profiles:
-        raise NoProfilesError("No profiles found. Run `gflow auth login` to create one.")
+        msg = "No profiles found. Run `gflow auth login` to create one."
+        raise NoProfilesError(msg)
     raise NoDefaultProfileError([p.name for p in profiles])
 
 
@@ -240,9 +253,12 @@ def _dump_config(data: dict[str, object]) -> str:
     lines: list[str] = []
     for key, value in sorted(data.items()):
         if not isinstance(value, str):
-            raise TypeError(
+            msg = (
                 f"Only string values are supported in config.toml; "
                 f"got {type(value).__name__} for key {key!r}."
+            )
+            raise TypeError(
+                msg,
             )
         # Escape backslashes and double-quotes in TOML basic string.
         escaped = value.replace("\\", "\\\\").replace('"', '\\"')

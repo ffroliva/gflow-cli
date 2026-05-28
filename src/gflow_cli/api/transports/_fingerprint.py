@@ -37,7 +37,7 @@ REQUIRED_HEADERS: frozenset[str] = frozenset(
         "sec-fetch-site",
         "origin",
         "referer",
-    }
+    },
 )
 
 # Preflight target that reliably triggers browser credential headers without
@@ -60,7 +60,7 @@ class BrowserFingerprint:
                  them to lowercase for httpx compatibility.
     """
 
-    headers: dict[str, str] = field(default_factory=lambda: {})
+    headers: dict[str, str] = field(default_factory=dict)
 
     def to_dict(self) -> dict[str, str]:
         """Return headers with all keys lowercased (httpx canonical form)."""
@@ -77,11 +77,11 @@ class BrowserFingerprint:
         If the 'headers' key is absent the instance is created with an empty
         dict, which is safe (caller should validate before use).
         """
-        parsed = cast(dict[str, object], json.loads(raw))
+        parsed = cast("dict[str, object]", json.loads(raw))
         headers_raw = parsed.get("headers", {})
         headers: dict[str, str]
         if isinstance(headers_raw, dict):
-            headers = {str(k): str(v) for k, v in cast(dict[object, object], headers_raw).items()}
+            headers = {str(k): str(v) for k, v in cast("dict[object, object]", headers_raw).items()}
         else:
             headers = {}
         return cls(headers=headers)
@@ -112,7 +112,7 @@ async def capture_fingerprint(page: Page) -> BrowserFingerprint:
             return
         all_headers: dict[str, str] = request.headers or {}
         captured.update(
-            {k.lower(): v for k, v in all_headers.items() if k.lower() in REQUIRED_HEADERS}
+            {k.lower(): v for k, v in all_headers.items() if k.lower() in REQUIRED_HEADERS},
         )
         event.set()
 
@@ -122,7 +122,7 @@ async def capture_fingerprint(page: Page) -> BrowserFingerprint:
             "() => fetch("
             f"'{_PREFLIGHT_URL}',"
             " {method: 'OPTIONS', credentials: 'include'}"
-            ").catch(() => null)"
+            ").catch(() => null)",
         )
         # Give the listener up to 5 s to fire; in practice it fires instantly.
         await asyncio.wait_for(event.wait(), timeout=5.0)

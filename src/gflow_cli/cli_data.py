@@ -243,7 +243,7 @@ def media(media_id: str, profile: str | None) -> None:
     )
 
 
-async def _run_media(*, profile: str | None, media_id: str) -> None:  # NOSONAR S7503
+async def _run_media(*, profile: str | None, media_id: str) -> None:
     """Resolve ``media_id`` to its catalog row.
 
     When *profile* is given, the lookup is scoped to that profile (existing
@@ -252,18 +252,21 @@ async def _run_media(*, profile: str | None, media_id: str) -> None:  # NOSONAR 
     across profiles raise a typed ``DataStoreError`` with a clear
     disambiguation hint. Closes #87.
     """
-    settings = get_settings()
-    with DataStore.open(settings.resolved_db_path()) as store:
-        repo = DataRepository(store)
-        if profile is not None:
-            scoped = repo.get_asset_by_flow_media_id(profile, media_id)
-            asset = scoped
-            if asset is None:
-                raise DataStoreError(
-                    detail=f"No local media record found: {media_id} (profile={profile!r})",
-                    route="data.media",
-                )
-        else:
+    import asyncio
+
+    def _sync_query() -> AssetRecord:
+        settings = get_settings()
+        with DataStore.open(settings.resolved_db_path()) as store:
+            repo = DataRepository(store)
+            if profile is not None:
+                scoped = repo.get_asset_by_flow_media_id(profile, media_id)
+                if scoped is None:
+                    raise DataStoreError(
+                        detail=f"No local media record found: {media_id} (profile={profile!r})",
+                        route="data.media",
+                    )
+                return scoped
+
             matches = repo.find_assets_by_flow_media_id(media_id)
             if not matches:
                 raise DataStoreError(
@@ -271,8 +274,6 @@ async def _run_media(*, profile: str | None, media_id: str) -> None:  # NOSONAR 
                     route="data.media",
                 )
             if len(matches) > 1:
-                # Include each match's kind in the hint so an image/video
-                # collision under the same media_id is visible at a glance.
                 candidates = sorted({f"{m.profile_name} ({m.kind.value})" for m in matches})
                 raise DataStoreError(
                     detail=(
@@ -281,20 +282,23 @@ async def _run_media(*, profile: str | None, media_id: str) -> None:  # NOSONAR 
                     ),
                     route="data.media",
                 )
-            asset = matches[0]
-        table = Table(title="gflow data media")
-        table.add_column("field")
-        table.add_column("value", overflow="fold")
-        table.add_row("profile", asset.profile_name)
-        table.add_row("media_id", asset.flow_media_id)
-        table.add_row("project_id", asset.flow_project_id or "")
-        table.add_row("kind", asset.kind.value)
-        for idx, local_file in enumerate(asset.local_files, start=1):
-            if local_file.path is not None:
-                table.add_row(f"local_path_{idx}", safe_path_text(local_file.path))
-            else:
-                table.add_row(f"cloud_uri_{idx}", local_file.cloud_uri or "")
-        console.print(table)
+            return matches[0]
+
+    asset = await asyncio.to_thread(_sync_query)
+
+    table = Table(title="gflow data media")
+    table.add_column("field")
+    table.add_column("value", overflow="fold")
+    table.add_row("profile", asset.profile_name)
+    table.add_row("media_id", asset.flow_media_id)
+    table.add_row("project_id", asset.flow_project_id or "")
+    table.add_row("kind", asset.kind.value)
+    for idx, local_file in enumerate(asset.local_files, start=1):
+        if local_file.path is not None:
+            table.add_row(f"local_path_{idx}", safe_path_text(local_file.path))
+        else:
+            table.add_row(f"cloud_uri_{idx}", local_file.cloud_uri or "")
+    console.print(table)
 
 
 # ---------------------------------------------------------------------------
@@ -335,7 +339,7 @@ _ALL_COPIES_OPT = click.option(
 @_ALL_COPIES_OPT
 @_guard
 def list_images_cmd(
-    profile: str | None, limit: int, offset: int, as_json: bool, all_copies: bool
+    profile: str | None, limit: int, offset: int, as_json: bool, all_copies: bool,
 ) -> None:
     """List images newest-first.
 
@@ -343,7 +347,7 @@ def list_images_cmd(
     see every local path separately.
     """
     rows = list_images(
-        db_path=_db_path(), profile=profile, limit=limit, offset=offset, all_copies=all_copies
+        db_path=_db_path(), profile=profile, limit=limit, offset=offset, all_copies=all_copies,
     )
     _emit(rows, as_json, _emit_images_table, "No images recorded.")
 
@@ -356,7 +360,7 @@ def list_images_cmd(
 @_ALL_COPIES_OPT
 @_guard
 def list_videos_cmd(
-    profile: str | None, limit: int, offset: int, as_json: bool, all_copies: bool
+    profile: str | None, limit: int, offset: int, as_json: bool, all_copies: bool,
 ) -> None:
     """List videos newest-first.
 
@@ -364,7 +368,7 @@ def list_videos_cmd(
     see every local path separately.
     """
     rows = list_videos(
-        db_path=_db_path(), profile=profile, limit=limit, offset=offset, all_copies=all_copies
+        db_path=_db_path(), profile=profile, limit=limit, offset=offset, all_copies=all_copies,
     )
     _emit(rows, as_json, _emit_videos_table, "No videos recorded.")
 

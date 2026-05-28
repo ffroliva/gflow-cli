@@ -159,9 +159,12 @@ def _find_chrome_binary() -> str:
         if p.exists():
             return str(p)
 
-    raise ConfigurationError(
+    msg = (
         "Chrome not found. Install from https://www.google.com/chrome/"
         " or set CHROME_BINARY env var."
+    )
+    raise ConfigurationError(
+        msg,
     )
 
 
@@ -228,9 +231,7 @@ def is_browser_running(port: int = 9222) -> bool:
             resp.raise_for_status()
             data = resp.json()
             # Sanity-check: must be a dict with at least a "Browser" key
-            if not isinstance(data, dict) or "Browser" not in data:
-                return False
-            return True
+            return not (not isinstance(data, dict) or "Browser" not in data)
         except httpx.TimeoutException:
             raise  # re-raise so caller can retry
         except (httpx.HTTPError, ValueError, OSError):
@@ -309,9 +310,12 @@ def _check_chrome_singleton_lock(profile_dir: Path) -> None:
         return
 
     if _pid_alive(pid):
-        raise ConfigurationError(
+        msg = (
             f"Profile in use by another Chrome (PID {pid}) — "
             "close it OR run with `--browser cdp:<port>` to attach to the existing one."
+        )
+        raise ConfigurationError(
+            msg,
         )
 
 
@@ -457,9 +461,12 @@ def _find_available_cdp_port(profile_dir: Path, start_port: int = _CDP_PORT_STAR
             msg="Port taken by non-gflow Chrome; trying next port",
         )
 
-    raise ConfigurationError(
+    msg = (
         f"All CDP ports {_CDP_PORT_START}-{_CDP_PORT_END} in use. "
         "Close other Chrome debug sessions or specify a custom port."
+    )
+    raise ConfigurationError(
+        msg,
     )
 
 
@@ -487,7 +494,7 @@ async def _is_logged_in_to_flow(page: Any) -> bool:
         sign_in_count = await page.locator('button:has-text("Sign in")').count()
         if sign_in_count and sign_in_count > 0:
             return False
-    except Exception:  # noqa: BLE001 — fail-open: DOM race must not block every session
+    except Exception:
         pass
 
     return True
@@ -535,8 +542,9 @@ async def _attach_and_verify_login(port: int, profile_name: str) -> Any:
     page = await context.new_page()
     await page.goto(_FLOW_HOME_URL, wait_until="domcontentloaded")
     if not await _is_logged_in_to_flow(page):
+        msg = f"Profile not logged in to Flow. Run: gflow auth login --profile {profile_name}"
         raise AuthMissingError(
-            f"Profile not logged in to Flow. Run: gflow auth login --profile {profile_name}"
+            msg,
         )
     return context
 
@@ -563,9 +571,12 @@ async def _resolve_race_loss(lock_path: Path, actual_port: int) -> int:
         actual_port = existing_lock.get("port", actual_port)
     await _wait_chrome_ready(actual_port)
     if not is_browser_running(port=actual_port):
-        raise ConfigurationError(
+        msg = (
             f"Lockfile exists (PID {winner_pid}, port {actual_port}) but "
             "Chrome is not responsive. Run `gflow chrome stop` to clean up."
+        )
+        raise ConfigurationError(
+            msg,
         ) from None
     return actual_port
 
@@ -587,7 +598,7 @@ async def get_or_launch_browser(
 
     async with _spawn_lock:
         existing_lock, locked_pid, locked_port = _sanitize_existing_lock(
-            lock_path, _read_lock(lock_path), port
+            lock_path, _read_lock(lock_path), port,
         )
 
         if existing_lock is not None:

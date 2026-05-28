@@ -12,7 +12,7 @@ Override the root with `GFLOW_CLI_HOME`. See `docs/AUTHENTICATION.md`.
 
 from __future__ import annotations
 
-from pathlib import Path
+from typing import TYPE_CHECKING
 
 from gflow_cli.config import get_settings
 
@@ -20,14 +20,17 @@ from .factory import AuthStrategyFactory
 from .internal_chromium import InternalChromiumStrategy
 from .real_chrome import RealChromeStrategy
 
+if TYPE_CHECKING:
+    from pathlib import Path
+
 __all__ = [
     "AuthStrategyFactory",
     "InternalChromiumStrategy",
     "RealChromeStrategy",
     "default_profile_root",
+    "login",
     "profile_dir",
     "status",
-    "login",
 ]
 
 

@@ -28,7 +28,7 @@ def prompt_fields(prompt: str | None, *, mode: PromptMode) -> PromptFields:
 def redact_metadata(value: Any) -> Any:
     if isinstance(value, dict):
         out: dict[str, Any] = {}
-        d = cast(dict[str, Any], value)
+        d = cast("dict[str, Any]", value)
         for key, item in d.items():
             lowered: str = key.lower()
             if lowered in {"token", "recaptchatoken"}:
@@ -41,7 +41,7 @@ def redact_metadata(value: Any) -> Any:
                 out[key] = redact_metadata(item)
         return out
     if isinstance(value, list):
-        items = cast(list[Any], value)
+        items = cast("list[Any]", value)
         return [redact_metadata(item) for item in items]
     if isinstance(value, str) and any(marker in value.lower() for marker in SENSITIVE_QUERY_KEYS):
         return "<redacted:url>"

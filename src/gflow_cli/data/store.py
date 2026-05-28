@@ -3,15 +3,18 @@ from __future__ import annotations
 import hashlib
 import re
 import sqlite3
-from collections.abc import Generator, Iterator
 from contextlib import contextmanager
 from dataclasses import dataclass
 from datetime import UTC, datetime
 from importlib import resources
-from importlib.resources.abc import Traversable
-from pathlib import Path
+from typing import TYPE_CHECKING, Self
 
 from gflow_cli.errors import DataMigrationError, DataStoreError
+
+if TYPE_CHECKING:
+    from collections.abc import Generator, Iterator
+    from importlib.resources.abc import Traversable
+    from pathlib import Path
 
 MIGRATION_PACKAGE = "gflow_cli.data.migrations"
 BUSY_TIMEOUT_MS = 5000
@@ -63,7 +66,7 @@ def _load_migrations() -> list[Migration]:
                 filename=file_ref.name,
                 sql=sql,
                 checksum=_checksum_sql(sql),
-            )
+            ),
         )
     return migrations
 
@@ -98,7 +101,7 @@ class _SqlTokenizerState:
 
 
 def _sql_advance_one_char(
-    state: _SqlTokenizerState, buf: list[str], char: str, nxt: str
+    state: _SqlTokenizerState, buf: list[str], char: str, nxt: str,
 ) -> tuple[int, str | None]:
     """Process one char of SQL; return ``(chars_consumed, yielded_statement)``.
 
@@ -116,7 +119,7 @@ def _sql_advance_one_char(
         buf.extend([char, nxt])
         return 2, None
     state.in_single, state.in_double, extra = _sql_update_quote_state(
-        char, nxt, state.in_single, state.in_double
+        char, nxt, state.in_single, state.in_double,
     )
     if extra:
         buf.extend([char, nxt])
@@ -169,7 +172,7 @@ class DataStore:
     def close(self) -> None:
         self.conn.close()
 
-    def __enter__(self) -> DataStore:
+    def __enter__(self) -> Self:
         return self
 
     def __exit__(self, *exc: object) -> None:
@@ -194,7 +197,7 @@ class DataStore:
             raise DataMigrationError(detail="no SQL migrations packaged", route=_ROUTE_MIGRATE)
 
         table_exists = self.conn.execute(
-            "SELECT name FROM sqlite_master WHERE type='table' AND name='schema_migrations'"
+            "SELECT name FROM sqlite_master WHERE type='table' AND name='schema_migrations'",
         ).fetchone()
         latest_known = migrations[-1].version_number
         if table_exists is not None:
@@ -212,7 +215,7 @@ class DataStore:
             {
                 str(row["version"]): str(row["checksum"])
                 for row in self.conn.execute(
-                    "SELECT version, checksum FROM schema_migrations"
+                    "SELECT version, checksum FROM schema_migrations",
                 ).fetchall()
             }
             if table_exists is not None

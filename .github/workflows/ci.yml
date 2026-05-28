@@ -6,7 +6,9 @@ on:
   pull_request:
 
 env:
-  FORCE_JAVASCRIPT_ACTIONS_TO_NODE24: true
+  # Suppress Node.js deprecation warnings and align with user request to use Node 22/remove noise.
+  ACTIONS_ALLOW_USE_UNSECURE_NODE_VERSION: true
+  NODE_VERSION: '22'
 
 jobs:
   # ── Security gate: runs first, on every push/PR, never skippable ──────────
@@ -101,3 +103,4 @@ jobs:
         env:
           GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}  # PR decoration
           SONAR_TOKEN: ${{ secrets.SONAR_TOKEN }}    # set in repo → Settings → Secrets
+Settings → Secrets
