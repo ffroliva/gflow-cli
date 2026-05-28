@@ -7,6 +7,15 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+### Fixed
+
+- **List queries fan-out when multiple operations claim an asset (issue #111).**
+  Fixed a bug in `gflow data list images` and `gflow data list videos` where 
+  assets would be duplicated or have non-deterministic prompts if multiple 
+  operations (e.g., retries) claimed the same output asset. The SQL queries 
+  now use a deterministic subquery grouping by `asset_id` to ensure exactly 
+  one-to-one cardinality.
+
 ### Added
 
 - **Google account identity persisted to every profile (`issue #92`).** Both
