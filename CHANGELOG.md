@@ -24,7 +24,10 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   the profile is named `default` as a placeholder. After the session is verified
   and the email is known, `auth login` automatically renames `profile_default` to
   `profile_<email-local-part>` (e.g. `profile_ffroliva`) and updates
-  `config.toml`'s `default_profile` pointer atomically. Existing `default`
+  `config.toml`'s `default_profile` pointer atomically. The local-part is
+  sanitized to a filesystem-safe name (characters outside letters, digits, `-`,
+  and `_` become `-`), so `flavio.oliva@gmail.com` → `profile_flavio-oliva` and
+  `user+flow@gmail.com` → `profile_user-flow`. Existing `default`
   profiles that were created before this change continue to work; they gain the
   email column the next time `gflow auth login` is run against them.  Closes #92.
 

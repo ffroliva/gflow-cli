@@ -52,11 +52,18 @@ _E2E_PROFILE_ENV = "GFLOW_CLI_E2E_PROFILE"
 
 
 @pytest.fixture
-def smoke_profile(tmp_path: Path) -> tuple[str, Path]:
+def smoke_profile(monkeypatch: pytest.MonkeyPatch) -> tuple[str, Path]:
     """Resolve the authenticated profile from ``GFLOW_CLI_E2E_PROFILE``.
 
     Returns (profile_name, profile_dir). Skips when the env var is unset or
     the profile directory doesn't exist.
+
+    The suite-wide autouse ``_isolate_settings`` fixture (``tests/conftest.py``)
+    redirects ``GFLOW_CLI_HOME`` to a per-test tmp dir, so without intervention
+    every profile resolves into an empty sandbox and these tests skip
+    unconditionally — even on a workstation with a real logged-in profile. Smoke
+    tests must see the developer's *real* profile, so we undo that redirect and
+    reset the cached settings before resolving the profile directory.
     """
     name = os.environ.get(_E2E_PROFILE_ENV, "").strip()
     if not name:
@@ -64,6 +71,12 @@ def smoke_profile(tmp_path: Path) -> tuple[str, Path]:
             f"Smoke tests require {_E2E_PROFILE_ENV} — set it to a logged-in "
             "profile name and re-run with -m smoke"
         )
+
+    from gflow_cli.config import reset_settings
+
+    monkeypatch.delenv("GFLOW_CLI_HOME", raising=False)
+    reset_settings()
+
     from gflow_cli.auth import profile_dir as _resolve
 
     pdir = _resolve(name)

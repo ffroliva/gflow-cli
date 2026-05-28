@@ -14,8 +14,12 @@ from pathlib import Path
 import pytest
 
 from gflow_cli import cli as cli_mod
-from gflow_cli.cli import _default_marker_glyph, _render_profiles_table
-from gflow_cli.profile_store import ProfileMeta
+from gflow_cli.cli import (
+    _default_marker_glyph,
+    _profile_name_from_account,
+    _render_profiles_table,
+)
+from gflow_cli.profile_store import _SAFE_PROFILE_NAME_RE, ProfileMeta
 
 
 @pytest.mark.parametrize(
@@ -109,3 +113,31 @@ def test_render_profiles_table_shows_google_account(
     rendered = buf.getvalue()
     assert "alice@example.com" in rendered
     assert "unknown" in rendered
+
+
+@pytest.mark.parametrize(
+    ("email", "expected"),
+    [
+        ("ffroliva@gmail.com", "ffroliva"),
+        ("dev@axelate.io", "dev"),
+        ("flavio.oliva@gmail.com", "flavio-oliva"),
+        ("john.smith@example.com", "john-smith"),
+        ("user+flow@example.com", "user-flow"),
+        ("a.b.c@example.com", "a-b-c"),
+        ("under_score@example.com", "under_score"),
+    ],
+)
+def test_profile_name_from_account_sanitizes_local_part(email: str, expected: str) -> None:
+    """Email local-parts with '.'/'+' (Gmail dots, aliases, firstname.lastname)
+    must become a name that rename_profile's _SAFE_PROFILE_NAME_RE accepts —
+    otherwise auth_login raises an uncaught ValueError after the session is saved."""
+    result = _profile_name_from_account(email)
+    assert result == expected
+    assert result is not None and _SAFE_PROFILE_NAME_RE.match(result)
+
+
+@pytest.mark.parametrize("email", ["....@example.com", "@example.com", "++@example.com", ""])
+def test_profile_name_from_account_returns_none_when_nothing_usable(email: str) -> None:
+    """When the local-part has no safe characters, return None so the caller
+    keeps the existing profile name instead of attempting an invalid rename."""
+    assert _profile_name_from_account(email) is None

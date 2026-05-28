@@ -154,6 +154,11 @@ and the signed-in email is known, it **automatically renames** the profile to th
 local-part of the email address (e.g. `profile_default` → `profile_ffroliva`) and
 updates `config.toml`'s `default_profile` pointer atomically.
 
+The local-part is sanitized to a filesystem-safe name: any character outside
+letters, digits, `-`, and `_` is replaced with `-`. So `flavio.oliva@gmail.com`
+becomes `profile_flavio-oliva` and `user+flow@gmail.com` becomes `profile_user-flow`.
+If nothing usable remains, the profile keeps the name `default`.
+
 ```text
 $ gflow auth login
 Launching real Chrome...

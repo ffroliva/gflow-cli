@@ -3,6 +3,7 @@
 from __future__ import annotations
 
 import asyncio
+import re
 import sys
 import uuid
 
@@ -37,6 +38,21 @@ def _default_marker_glyph(encoding: str | None) -> str:
     except (UnicodeEncodeError, LookupError):
         return "*"
     return "●"
+
+
+def _profile_name_from_account(account: str) -> str | None:
+    """Derive a filesystem-safe profile name from a Google account email.
+
+    Takes the local-part (before ``@``), replaces every run of characters
+    outside ``[A-Za-z0-9_-]`` with a single ``-``, and trims leading/trailing
+    ``-``. Returns ``None`` when nothing usable remains so the caller keeps the
+    existing name. The result always satisfies
+    ``profile_store._SAFE_PROFILE_NAME_RE``; without this, dotted/aliased emails
+    (``flavio.oliva@``, ``user+flow@``) would make ``rename_profile`` raise.
+    """
+    local_part = account.split("@", 1)[0]
+    slug = re.sub(r"[^\w\-]+", "-", local_part).strip("-")[:128]
+    return slug or None
 
 
 def _render_profiles_table(profiles: list[profile_store.ProfileMeta]) -> None:
@@ -179,7 +195,7 @@ def auth_login(profile: str | None, browser: str | None) -> None:
         and profiles[0].name == "default"
         and profiles[0].google_account
     ):
-        local_part = profiles[0].google_account.split("@")[0]
+        local_part = _profile_name_from_account(profiles[0].google_account)
         if local_part and local_part != "default":
             try:
                 pdir = profile_store.rename_profile("default", local_part)
