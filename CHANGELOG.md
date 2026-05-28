@@ -9,6 +9,11 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ### Fixed
 
+- **Image and video counts leaking across profiles in `gflow data list projects` (issue #113).**
+  Fixed an issue where project media counts were combined if two different profiles
+  happened to share the same `flow_project_id`. The counts in `_LIST_PROJECTS_SQL`
+  are now strictly scoped to the active `profile_name`.
+
 - **List queries fan-out when multiple operations claim an asset (issue #111).**
   Fixed a bug in `gflow data list images` and `gflow data list videos` where 
   assets would be duplicated or have non-deterministic prompts if multiple 
