@@ -104,8 +104,8 @@ class Settings(BaseSettings):
         default=None,
         description=(
             "Cloud storage URI prefix for generated assets. "
-            "When set, files are uploaded to cloud instead of (or in addition to) "
-            "local disk. Supported schemes: gs:// (GCS), s3:// (S3/MinIO). "
+            "When set, generated asset files are uploaded to cloud storage instead "
+            "of local disk. Supported schemes: gs:// (GCS), s3:// (S3/MinIO). "
             "Example: gs://my-bucket/gflow/  or  s3://my-bucket/gflow/ "
             "Requires gflow-cli[gcs] or gflow-cli[s3] extras. "
             "Override via GFLOW_CLI_STORAGE_URI."

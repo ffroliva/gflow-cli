@@ -47,6 +47,42 @@ def _seed_db(db_path: Path, *, media_id: str, profile: str = "default") -> None:
         )
 
 
+def _seed_cloud_db(db_path: Path, *, media_id: str, profile: str = "default") -> None:
+    with DataStore.open(db_path) as store:
+        repo = DataRepository(store)
+        repo.upsert_profile(profile, db_path.parent / "profile_default")
+        repo.upsert_project(
+            ProjectRecord(
+                id="project-cloud",
+                profile_name=profile,
+                flow_project_id="flow-project-cloud",
+                title="title",
+                source="generated",
+            )
+        )
+        asset = repo.upsert_asset(
+            AssetRecord.minimal_image(
+                id="asset-cloud",
+                profile_name=profile,
+                flow_project_id="flow-project-cloud",
+                flow_media_id=media_id,
+            )
+        )
+        repo.upsert_local_file(
+            LocalFileRecord(
+                id="file-cloud",
+                profile_name=profile,
+                asset_id=asset.id,
+                path=None,
+                media_type="image/jpeg",
+                bytes=None,
+                sha256=None,
+                storage_provider="s3",
+                cloud_uri="s3://gflow-test/images/2026-05-28/media-image-1.jpg",
+            )
+        )
+
+
 def test_data_media_prints_media_record(tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> None:
     db = tmp_path / "gflow.db"
     monkeypatch.setenv("GFLOW_CLI_HOME", str(tmp_path))
@@ -63,6 +99,26 @@ def test_data_media_prints_media_record(tmp_path: Path, monkeypatch: pytest.Monk
     assert "media-image-1" in result.output
     assert "flow-project-1" in result.output
     assert "image" in result.output  # asset kind
+
+
+def test_data_media_labels_cloud_records_as_cloud_uri(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    db = tmp_path / "gflow.db"
+    monkeypatch.setenv("GFLOW_CLI_HOME", str(tmp_path))
+    monkeypatch.setenv("GFLOW_CLI_DB_PATH", str(db))
+    monkeypatch.setenv("GFLOW_CLI_PROFILE", "default")
+    _seed_cloud_db(db, media_id="media-image-cloud")
+
+    from gflow_cli.config import reset_settings
+
+    reset_settings()
+    runner = CliRunner()
+    result = runner.invoke(main, ["data", "media", "media-image-cloud", "--profile", "default"])
+    assert result.exit_code == 0, result.output
+    assert "cloud_uri_1" in result.output
+    assert "s3://gflow-test/images/2026-05-28/media-image-1.jpg" in result.output
+    assert "local_path_1" not in result.output
 
 
 def test_data_media_missing_exits_non_zero(tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> None:

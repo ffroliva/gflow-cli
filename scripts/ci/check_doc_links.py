@@ -25,6 +25,12 @@ FILES: tuple[str, ...] = (
     "docs/INDEX.md",
     "docs/PROJECT_STATUS.md",
     "docs/ARCHITECTURE.md",
+    "docs/CONFIGURATION.md",
+    "docs/DATA_LAYER.md",
+    "docs/EXTERNAL_STORAGE.md",
+    "docs/SECURITY.md",
+    "docs/USAGE.md",
+    "docs/USER_GUIDE.md",
     "docs/LIVE_VERIFICATION_v0.8.1.md",
 )
 
