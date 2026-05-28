@@ -326,7 +326,9 @@ class BearerTransport:
             "authorization": f"Bearer {self._cached.token}",
             "content-type": "text/plain;charset=UTF-8",
         }
-        coro = self._http_post(url, headers=headers, content=body_bytes, call_timeout=PER_CALL_TIMEOUT_S)
+        coro = self._http_post(
+            url, headers=headers, content=body_bytes, call_timeout=PER_CALL_TIMEOUT_S
+        )
         try:
             return await asyncio.wait_for(coro, timeout=PER_CALL_TIMEOUT_S)
         except TimeoutError as exc:

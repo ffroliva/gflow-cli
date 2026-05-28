@@ -15,7 +15,7 @@ from rich.table import Table
 
 from gflow_cli._cli_helpers import run_with_handlers, safe_path_text
 from gflow_cli.config import get_settings
-from gflow_cli.data.models import AssetRecord
+from gflow_cli.data.models import AssetLookup
 from gflow_cli.data.queries import (
     ImageRow,
     ProfileRow,
