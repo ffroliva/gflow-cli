@@ -56,8 +56,7 @@ def smoke_profile(tmp_path: Path) -> tuple[str, Path]:
     pdir = _resolve(name)
     if not pdir.exists():
         pytest.skip(
-            f"Profile directory not found: {pdir}. "
-            f"Run `gflow auth login --profile {name}` first."
+            f"Profile directory not found: {pdir}. Run `gflow auth login --profile {name}` first."
         )
     return name, pdir
 
@@ -104,8 +103,7 @@ async def test_list_profiles_surfaces_google_account(smoke_profile: tuple[str, P
 
     profiles = {p.name: p for p in profile_store.list_profiles()}
     assert name in profiles, (
-        f"Profile '{name}' not found in list_profiles(); "
-        f"available: {list(profiles)}"
+        f"Profile '{name}' not found in list_profiles(); available: {list(profiles)}"
     )
     meta = profiles[name]
     assert meta.google_account, (
@@ -153,6 +151,5 @@ def test_auth_list_json_includes_google_account(smoke_profile: tuple[str, Path])
         "Was the CLI rebuilt after the fix?"
     )
     assert entry["google_account"], (
-        f"'google_account' is null/empty for '{name}' — expected a valid email. "
-        f"Full entry: {entry}"
+        f"'google_account' is null/empty for '{name}' — expected a valid email. Full entry: {entry}"
     )
