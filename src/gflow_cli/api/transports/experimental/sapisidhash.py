@@ -15,15 +15,17 @@ import hashlib
 import json
 import sqlite3
 import time
-from pathlib import Path
 from typing import TYPE_CHECKING, Any
 
 if TYPE_CHECKING:
+    from pathlib import Path
+
     from playwright.async_api import Page
+
+    from gflow_cli.api.dto import GeneratedImage
 
 import structlog
 
-from gflow_cli.api.dto import GeneratedImage
 from gflow_cli.api.image import GenerateImageRequest, _build_batch_generate_images_body
 from gflow_cli.api.transports._common import (
     FLOW_URL,
@@ -66,9 +68,12 @@ def read_sapisid_from_profile(profile_dir: Path) -> str:
     """
     db_path = profile_dir / "Default" / "Network" / "Cookies"
     if not db_path.exists():
-        raise AuthMissingError(
+        msg = (
             f"sapisidhash: cookie DB not found at {db_path}. "
             "Run `gflow auth login --profile <name>` first."
+        )
+        raise AuthMissingError(
+            msg,
         )
     # HIGH #6: open read-only via URI mode — Chromium holds an exclusive write
     # lock on this file; an RW open can raise OperationalError or corrupt the
@@ -79,37 +84,49 @@ def read_sapisid_from_profile(profile_dir: Path) -> str:
             row = conn.execute(
                 "SELECT value, encrypted_value FROM cookies "
                 "WHERE name = 'SAPISID' AND host_key LIKE '%google.com%' "
-                "LIMIT 1"
+                "LIMIT 1",
             ).fetchone()
         finally:
             conn.close()
     except sqlite3.Error as exc:
         # MEDIUM #17: map DB errors to AuthMissingError so callers see a
         # consistent error type (e.g. schema mismatch on a different Chromium).
-        raise AuthMissingError(
+        msg = (
             f"sapisidhash: failed reading SAPISID from {db_path}: {exc}. "
             "Run `gflow auth login --profile <name>`."
+        )
+        raise AuthMissingError(
+            msg,
         ) from exc
     if row is None:
-        raise AuthMissingError(
+        msg = (
             "sapisidhash: SAPISID cookie not found in profile. "
             "Run `gflow auth login --profile <name>`."
+        )
+        raise AuthMissingError(
+            msg,
         )
     value, encrypted_value = row[0], row[1]
     if not value and encrypted_value:
         # HIGH #8: Chromium 80+ stores the cookie in encrypted_value (DPAPI /
         # libsecret / Keychain); the plaintext value column is empty.
-        raise AuthMissingError(
+        msg = (
             "sapisidhash: SAPISID cookie is encrypted "
             "(Chromium 80+ DPAPI/libsecret/Keychain). "
             "S3 cannot decrypt this. "
             "Use the `evaluate_fetch` or `bearer` strategy instead via "
             "`--transport evaluate_fetch` or `GFLOW_CLI_TRANSPORT=bearer`."
         )
-    if not value:
         raise AuthMissingError(
+            msg,
+        )
+    if not value:
+        msg = (
             "sapisidhash: SAPISID cookie not found in profile. "
             "Run `gflow auth login --profile <name>`."
+        )
+        raise AuthMissingError(
+            msg,
         )
     return str(value)
 
@@ -175,12 +192,14 @@ class SapisidhashTransport:
         """
         await asyncio.sleep(0)  # yield to event loop — Protocol-required async signature
         if self._profile_dir is None:
-            raise AuthExpiredError("sapisidhash: cannot refresh — setup() was never called")
+            msg = "sapisidhash: cannot refresh — setup() was never called"
+            raise AuthExpiredError(msg)
         try:
             self._sapisid = self._read_sapisid(self._profile_dir)
         except AuthMissingError as exc:
+            msg = "sapisidhash: SAPISID missing from profile on refresh — re-login required"
             raise AuthExpiredError(
-                "sapisidhash: SAPISID missing from profile on refresh — re-login required"
+                msg,
             ) from exc
         log.info("sapisidhash.refresh_done")
 
@@ -224,9 +243,11 @@ class SapisidhashTransport:
         if the call hangs beyond PER_CALL_TIMEOUT_S.
         """
         if project_id is None:
-            raise ValueError("SapisidhashTransport requires an explicit project_id")
+            msg = "SapisidhashTransport requires an explicit project_id"
+            raise ValueError(msg)
         if self._sapisid is None or self._profile_dir is None:
-            raise AuthMissingError("sapisidhash: setup() was not called before generate_images()")
+            msg = "sapisidhash: setup() was not called before generate_images()"
+            raise AuthMissingError(msg)
 
         body = _build_batch_generate_images_body(
             request,
@@ -247,8 +268,9 @@ class SapisidhashTransport:
             await self.refresh_auth()
             resp = await self._call_once(url, body_bytes)
             if resp.status_code == 401:
+                msg = "sapisidhash: refresh succeeded but retry still returned 401"
                 raise AuthExpiredError(
-                    "sapisidhash: refresh succeeded but retry still returned 401"
+                    msg,
                 )
 
         return interpret_response("sapisidhash", resp)
@@ -279,11 +301,13 @@ class SapisidhashTransport:
         try:
             return await asyncio.wait_for(coro, timeout=PER_CALL_TIMEOUT_S)
         except TimeoutError as exc:
+            msg = f"sapisidhash: hung > {PER_CALL_TIMEOUT_S}s on POST {url}"
             raise TransportTimeoutError(
-                f"sapisidhash: hung > {PER_CALL_TIMEOUT_S}s on POST {url}"
+                msg,
             ) from exc
         except httpx.RequestError as exc:
-            raise NetworkError(f"sapisidhash: httpx request error: {exc}") from exc
+            msg = f"sapisidhash: httpx request error: {exc}"
+            raise NetworkError(msg) from exc
 
     async def _http_post(
         self,

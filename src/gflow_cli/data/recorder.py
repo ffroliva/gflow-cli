@@ -4,12 +4,8 @@ import hashlib
 import mimetypes
 import uuid
 from datetime import UTC, datetime
-from pathlib import Path
+from typing import TYPE_CHECKING
 
-from gflow_cli.api.dto import AssetInfo, GeneratedImage, ProjectInfo
-from gflow_cli.api.image import GenerateImageRequest
-from gflow_cli.api.video import GenerateVideoRequest, VideoResult, VideoStarted
-from gflow_cli.config import Settings
 from gflow_cli.data.models import (
     AssetKind,
     AssetRecord,
@@ -23,7 +19,15 @@ from gflow_cli.data.models import (
 from gflow_cli.data.redaction import PromptMode, prompt_fields, redact_metadata
 from gflow_cli.data.repository import DataRepository
 from gflow_cli.data.store import DataStore
-from gflow_cli.storage import CloudStorageInfo
+
+if TYPE_CHECKING:
+    from pathlib import Path
+
+    from gflow_cli.api.dto import AssetInfo, GeneratedImage, ProjectInfo
+    from gflow_cli.api.image import GenerateImageRequest
+    from gflow_cli.api.video import GenerateVideoRequest, VideoResult, VideoStarted
+    from gflow_cli.config import Settings
+    from gflow_cli.storage import CloudStorageInfo
 
 
 def _new_id() -> str:
@@ -89,7 +93,7 @@ class OperationRecorder:
                 flow_project_id=project.project_id,
                 title=project.title,
                 source="uploaded",
-            )
+            ),
         )
 
         asset_id = _new_id()
@@ -111,7 +115,7 @@ class OperationRecorder:
                 duration_seconds=None,
                 seed=None,
                 metadata_json=redact_metadata({"display_name": asset.display_name}),
-            )
+            ),
         )
 
         op_id = _new_id()
@@ -132,7 +136,7 @@ class OperationRecorder:
                 aspect_ratio=None,
                 error_type=None,
                 error_detail=None,
-            )
+            ),
         )
         # Upload is synchronous from the recorder's POV: by the time we're here
         # the upload already succeeded, so completed_at = started_at = now.
@@ -150,7 +154,7 @@ class OperationRecorder:
                 sha256=_file_sha256(image_path) if cloud_storage_info is None else None,
                 storage_provider=cloud_storage_info.provider if cloud_storage_info else None,
                 cloud_uri=cloud_storage_info.uri if cloud_storage_info else None,
-            )
+            ),
         )
 
     # ------------------------------------------------------------------
@@ -180,7 +184,7 @@ class OperationRecorder:
                 flow_project_id=project.project_id,
                 title=project.title,
                 source="generated",
-            )
+            ),
         )
 
         pf = prompt_fields(request.prompt, mode=self.prompt_mode)
@@ -202,7 +206,7 @@ class OperationRecorder:
                 aspect_ratio=request.aspect.value,
                 error_type=None,
                 error_detail=None,
-            )
+            ),
         )
         # Image generation is recorded AFTER all downloads complete, so the
         # operation is already terminal at insert time. Stamp completed_at so
@@ -245,7 +249,7 @@ class OperationRecorder:
                     duration_seconds=None,
                     seed=image.seed,
                     metadata_json=redact_metadata({"fife_url": image.fife_url}),
-                )
+                ),
             )
             repo.link_operation_asset(op_id, asset_id, OperationAssetRole.OUTPUT, i)
             is_cloud = cloud_info is not None
@@ -260,7 +264,7 @@ class OperationRecorder:
                     sha256=_file_sha256(saved_path) if not is_cloud else None,
                     storage_provider=cloud_info.provider if cloud_info else None,
                     cloud_uri=cloud_info.uri if cloud_info else None,
-                )
+                ),
             )
 
     # ------------------------------------------------------------------
@@ -288,7 +292,7 @@ class OperationRecorder:
                     flow_project_id=started.project_id,
                     title="gflow-cli video",
                     source="generated",
-                )
+                ),
             )
 
         asset_id = _new_id()
@@ -309,7 +313,7 @@ class OperationRecorder:
                 duration_seconds=float(request.duration) if request.duration is not None else None,
                 seed=request.seed,
                 metadata_json={},
-            )
+            ),
         )
 
         pf = prompt_fields(request.prompt, mode=self.prompt_mode)
@@ -331,7 +335,7 @@ class OperationRecorder:
                 aspect_ratio=request.aspect.value,
                 error_type=None,
                 error_detail=None,
-            )
+            ),
         )
         repo.link_operation_asset(op_id, asset_id, OperationAssetRole.OUTPUT, 0)
 
@@ -369,13 +373,15 @@ class OperationRecorder:
                 duration_seconds=float(request.duration) if request.duration is not None else None,
                 seed=request.seed,
                 metadata_json={},
-            )
+            ),
         )
 
         # Update the STARTED operation for this asset to SUCCEEDED
         completed_at = _now_utc_iso()
         op = repo.get_operation_for_output_asset(
-            profile_name, flow_media_id, OperationKind(request.mode.value)
+            profile_name,
+            flow_media_id,
+            OperationKind(request.mode.value),
         )
         if op is not None:
             repo.update_operation_status(op.id, OperationStatus.SUCCEEDED, completed_at, None, None)
@@ -400,7 +406,7 @@ class OperationRecorder:
                     aspect_ratio=request.aspect.value,
                     error_type=None,
                     error_detail=None,
-                )
+                ),
             )
             asset_lookup = repo.get_asset_by_flow_media_id(profile_name, flow_media_id)
             if asset_lookup is not None:
@@ -448,5 +454,5 @@ class OperationRecorder:
                             cloud_storage_info.provider if cloud_storage_info else None
                         ),
                         cloud_uri=cloud_storage_info.uri if cloud_storage_info else None,
-                    )
+                    ),
                 )

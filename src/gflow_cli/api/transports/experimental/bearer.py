@@ -13,16 +13,18 @@ import json
 import os
 import time
 from dataclasses import dataclass
-from pathlib import Path
 from typing import TYPE_CHECKING, Any, cast
 
 if TYPE_CHECKING:
+    from pathlib import Path
+
     from playwright.async_api import Page
     from playwright.async_api import Request as PlaywrightRequest
 
+    from gflow_cli.api.dto import GeneratedImage
+
 import structlog
 
-from gflow_cli.api.dto import GeneratedImage
 from gflow_cli.api.image import GenerateImageRequest, _build_batch_generate_images_body
 from gflow_cli.api.transports._common import (
     BEARER_DEFAULT_TTL_S,
@@ -108,7 +110,7 @@ class _BearerCache:
             data: dict[str, Any] = json.loads(self.path.read_text())
             fp_raw: Any = data.get("fingerprint", {})
             fp_headers: dict[str, str] = (
-                cast(dict[str, str], fp_raw["headers"])
+                cast("dict[str, str]", fp_raw["headers"])
                 if isinstance(fp_raw, dict) and "headers" in fp_raw
                 else {}
             )
@@ -190,13 +192,15 @@ class BearerTransport:
         self._cached = None
 
         if self._profile_dir is None:
-            raise AuthExpiredError("bearer: cannot refresh — setup() was never called")
+            msg = "bearer: cannot refresh — setup() was never called"
+            raise AuthExpiredError(msg)
         try:
             token, expires_at, fp = await self._capture_bearer_via_playwright(self._profile_dir)
         except AuthExpiredError:
             raise
         except Exception as exc:
-            raise AuthExpiredError(f"bearer: refresh failed: {exc}") from exc
+            msg = f"bearer: refresh failed: {exc}"
+            raise AuthExpiredError(msg) from exc
 
         if self._cache is not None:
             self._cache.save(token=token, expires_at=expires_at, fingerprint=fp)
@@ -204,7 +208,8 @@ class BearerTransport:
         log.info("bearer.refresh_done", expires_at=expires_at)
 
     async def _capture_bearer_via_playwright(
-        self, profile_dir: Path
+        self,
+        profile_dir: Path,
     ) -> tuple[str, float, BrowserFingerprint]:
         """Launch Playwright once, intercept the outgoing Bearer from Flow.
 
@@ -243,9 +248,12 @@ class BearerTransport:
                 await ctx.close()
 
         if not captured_token:
-            raise AuthExpiredError(
+            msg = (
                 "bearer: failed to intercept Bearer token from Flow page. "
                 "Run `gflow auth login --profile <name>` to refresh the session."
+            )
+            raise AuthExpiredError(
+                msg,
             )
 
         # Flow does not return an explicit expiry; assume default TTL.
@@ -268,9 +276,11 @@ class BearerTransport:
         Raises ``TransportTimeoutError`` if the call hangs > PER_CALL_TIMEOUT_S.
         """
         if project_id is None:
-            raise ValueError("BearerTransport requires an explicit project_id")
+            msg = "BearerTransport requires an explicit project_id"
+            raise ValueError(msg)
         if self._cached is None:
-            raise AuthMissingError("bearer: setup() was not called before generate_images()")
+            msg = "bearer: setup() was not called before generate_images()"
+            raise AuthMissingError(msg)
 
         if self._cached.is_expired(REFRESH_SAFETY_MARGIN_S):
             await self.refresh_auth()
@@ -294,7 +304,8 @@ class BearerTransport:
             await self.refresh_auth()
             resp = await self._call_once(url, body_bytes)
             if resp.status_code == 401:
-                raise AuthExpiredError("bearer: refresh succeeded but retry still returned 401")
+                msg = "bearer: refresh succeeded but retry still returned 401"
+                raise AuthExpiredError(msg)
 
         return interpret_response("bearer", resp)
 
@@ -305,7 +316,8 @@ class BearerTransport:
         Raises ``NetworkError`` on httpx transport errors.
         """
         if self._cached is None:
-            raise AuthMissingError("bearer: _cached is None inside _call_once")
+            msg = "bearer: _cached is None inside _call_once"
+            raise AuthMissingError(msg)
 
         import httpx  # lazy import — keeps module import cheap
 
@@ -314,15 +326,19 @@ class BearerTransport:
             "authorization": f"Bearer {self._cached.token}",
             "content-type": "text/plain;charset=UTF-8",
         }
-        coro = self._http_post(url, headers=headers, content=body_bytes, timeout=PER_CALL_TIMEOUT_S)
+        coro = self._http_post(
+            url, headers=headers, content=body_bytes, call_timeout=PER_CALL_TIMEOUT_S
+        )
         try:
             return await asyncio.wait_for(coro, timeout=PER_CALL_TIMEOUT_S)
         except TimeoutError as exc:
+            msg = f"bearer: hung > {PER_CALL_TIMEOUT_S}s on POST {url}"
             raise TransportTimeoutError(
-                f"bearer: hung > {PER_CALL_TIMEOUT_S}s on POST {url}"
+                msg,
             ) from exc
         except httpx.RequestError as exc:
-            raise NetworkError(f"bearer: httpx request error: {exc}") from exc
+            msg = f"bearer: httpx request error: {exc}"
+            raise NetworkError(msg) from exc
 
     async def _http_post(
         self,
@@ -330,10 +346,10 @@ class BearerTransport:
         *,
         headers: dict[str, str],
         content: bytes,
-        timeout: float,  # NOSONAR S7483 — httpx.AsyncClient(timeout=...) is the canonical API
+        call_timeout: float,
     ) -> Any:
         """Injectable seam: real httpx POST.  Tests replace this with a fake."""
         import httpx  # lazy import
 
-        async with httpx.AsyncClient(timeout=timeout, follow_redirects=False) as client:
+        async with httpx.AsyncClient(timeout=call_timeout, follow_redirects=False) as client:
             return await client.post(url, headers=headers, content=content)

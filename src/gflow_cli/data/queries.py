@@ -12,14 +12,17 @@ list_profiles) will be added in Tasks 2.3–2.5.
 from __future__ import annotations
 
 import sqlite3
-from collections.abc import Generator
 from contextlib import contextmanager
 from dataclasses import dataclass
 from datetime import datetime
-from pathlib import Path
+from typing import TYPE_CHECKING
 
 from gflow_cli.data.store import DataStore
 from gflow_cli.errors import DataStoreError
+
+if TYPE_CHECKING:
+    from collections.abc import Generator
+    from pathlib import Path
 
 
 @contextmanager
@@ -39,7 +42,8 @@ def _safe_db(db_path: Path) -> Generator[sqlite3.Connection, None, None]:
         try:
             yield store.conn
         except sqlite3.Error as exc:
-            raise DataStoreError(f"Catalog query failed: {exc}") from exc
+            msg = f"Catalog query failed: {exc}"
+            raise DataStoreError(msg) from exc
 
 
 @dataclass(frozen=True)

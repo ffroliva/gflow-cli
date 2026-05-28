@@ -79,7 +79,7 @@ def _render_profiles_table(profiles: list[profile_store.ProfileMeta]) -> None:
     console.print(table)
     console.print("\nUse [bold]gflow auth use <name>[/bold] to set the default profile.")
     console.print(
-        "Use [bold]gflow auth login --profile <name>[/bold] to add or refresh a profile.\n"
+        "Use [bold]gflow auth login --profile <name>[/bold] to add or refresh a profile.\n",
     )
 
 
@@ -165,7 +165,7 @@ def auth_login(profile: str | None, browser: str | None) -> None:
         console.print(
             "Launching real Chrome..."
             if is_chrome_available()
-            else "Launching internal Chromium..."
+            else "Launching internal Chromium...",
         )
 
     try:
@@ -202,12 +202,12 @@ def auth_login(profile: str | None, browser: str | None) -> None:
                 profiles = profile_store.list_profiles()
                 console.print(
                     f"[dim]Renamed profile from [bold]default[/bold] to "
-                    f"[bold]{local_part}[/bold] (derived from Google account).[/dim]"
+                    f"[bold]{local_part}[/bold] (derived from Google account).[/dim]",
                 )
             except FileExistsError:
                 console.print(
                     f"[dim]Profile [bold]{local_part}[/bold] already exists — "
-                    "keeping name [bold]default[/bold].[/dim]"
+                    "keeping name [bold]default[/bold].[/dim]",
                 )
 
     # If this was the very first profile, set it as default automatically so
@@ -228,7 +228,7 @@ def auth_status(profile: str | None) -> None:
     else:
         console.print(
             f"[yellow]Profile '{name}' has no session.[/yellow] "
-            f"Run [bold]gflow auth login --profile {name}[/bold]."
+            f"Run [bold]gflow auth login --profile {name}[/bold].",
         )
     for k, v in s.items():
         console.print(f"  {k}: {v}")
@@ -254,8 +254,8 @@ def auth_list(as_json: bool) -> None:
                         "profile_dir": str(p.profile_dir),
                     }
                     for p in profiles
-                ]
-            )
+                ],
+            ),
         )
         return
     _render_profiles_table(profiles)
@@ -271,7 +271,7 @@ def auth_use(name: str) -> None:
         console.print(f"[red]{e}[/red]")
         sys.exit(2)
     console.print(
-        f"[green]Default profile set to[/green] [bold]{name}[/bold]\n[dim]Persisted in {cfg}[/dim]"
+        f"[green]Default profile set to[/green] [bold]{name}[/bold]\n[dim]Persisted in {cfg}[/dim]",
     )
 
 

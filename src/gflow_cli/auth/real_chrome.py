@@ -3,7 +3,7 @@ from __future__ import annotations
 import asyncio
 import os
 import sys
-from pathlib import Path
+from typing import TYPE_CHECKING
 
 import structlog
 from rich.console import Console
@@ -13,6 +13,9 @@ from gflow_cli.errors import AuthLoginTimeoutError, AuthMissingError, SecurityEr
 
 from .base import AuthStrategy
 from .verification import FlowSessionOutcome, verify_flow_session
+
+if TYPE_CHECKING:
+    from pathlib import Path
 
 logger = structlog.get_logger(__name__)
 _console = Console()
@@ -46,9 +49,12 @@ def _validate_profile_dir(profile_dir: Path, settings: Settings) -> None:
     try:
         profile_dir.resolve(strict=False).relative_to(settings.home.resolve())
     except ValueError:
-        raise SecurityError(
+        msg = (
             f"Profile directory {profile_dir} is outside of GFLOW_CLI_HOME "
             f"({settings.home}) boundaries."
+        )
+        raise SecurityError(
+            msg,
         ) from None
 
 
@@ -81,14 +87,14 @@ def _print_login_instructions() -> None:
     _console.print("2. Sign in with your Google account.")
     _console.print(
         "3. [bold yellow]Keep going until the Flow editor itself loads[/bold yellow] "
-        "— the prompt box and your projects."
+        "— the prompt box and your projects.",
     )
     _console.print(
-        "   Signing in to Google is NOT enough; gflow needs a completed Flow app sign-in."
+        "   Signing in to Google is NOT enough; gflow needs a completed Flow app sign-in.",
     )
     _console.print(
         "4. Then [bold yellow]CLOSE THE BROWSER[/bold yellow] — gflow verifies "
-        "the Flow session automatically."
+        "the Flow session automatically.",
     )
     _console.print("-" * 60)
     _console.print("Launching Chrome...")
@@ -104,8 +110,9 @@ async def _await_chrome_close(proc: asyncio.subprocess.Process, timeout_seconds:
             await asyncio.wait_for(proc.wait(), timeout=5)
         except TimeoutError:
             proc.kill()
+        msg = f"Sign-in timed out after {timeout_seconds}s; Chrome was stopped."
         raise AuthLoginTimeoutError(
-            f"Sign-in timed out after {timeout_seconds}s; Chrome was stopped.",
+            msg,
             remediation_hint=(
                 "Run `gflow auth login` again and complete sign-in before the time limit. "
                 f"Set GFLOW_CLI_AUTH_LOGIN_TIMEOUT to raise the limit "
@@ -166,9 +173,12 @@ class RealChromeStrategy(AuthStrategy):
 
         chrome_exe = find_chrome_executable()
         if not chrome_exe:
-            raise RuntimeError(
+            msg = (
                 "Google Chrome not found on system. "
                 "Please install Chrome or use '--browser internal'."
+            )
+            raise RuntimeError(
+                msg,
             )
 
         chrome_args = _build_chrome_args(chrome_exe, profile_dir, headless)

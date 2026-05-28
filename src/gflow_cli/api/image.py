@@ -20,12 +20,14 @@ Key wire-format observations:
 
 from __future__ import annotations
 
-from collections.abc import Mapping
 from dataclasses import dataclass
 from enum import StrEnum
-from pathlib import Path
 from types import MappingProxyType
-from typing import Any
+from typing import TYPE_CHECKING, Any
+
+if TYPE_CHECKING:
+    from collections.abc import Mapping
+    from pathlib import Path
 
 __all__ = [
     "Aspect",
@@ -67,8 +69,9 @@ class Aspect(StrEnum):
         if cli is None:
             return cls.PORTRAIT
         if cli not in _ASPECT_FROM_CLI:
+            msg = f"Unsupported image aspect ratio {cli!r}; choose from {sorted(_ASPECT_FROM_CLI)}"
             raise ValueError(
-                f"Unsupported image aspect ratio {cli!r}; choose from {sorted(_ASPECT_FROM_CLI)}"
+                msg,
             )
         return _ASPECT_FROM_CLI[cli]
 
@@ -96,10 +99,13 @@ class Model(StrEnum):
             return cls.NARWHAL
         key = cli.strip().lower()
         if key not in _MODEL_FROM_CLI:
-            raise ValueError(
+            msg = (
                 f"Unknown image model {cli!r}; choose from "
                 f"{sorted({m.value for m in cls})} or aliases "
                 f"{sorted(_MODEL_FROM_CLI)}"
+            )
+            raise ValueError(
+                msg,
             )
         return _MODEL_FROM_CLI[key]
 
@@ -112,7 +118,7 @@ _ASPECT_FROM_CLI: Mapping[str, Aspect] = MappingProxyType(
         "1:1": Aspect.SQUARE,
         "4:3": Aspect.LANDSCAPE_FOUR_THREE,
         "3:4": Aspect.PORTRAIT_THREE_FOUR,
-    }
+    },
 )
 
 _MODEL_FROM_CLI: Mapping[str, Model] = MappingProxyType(
@@ -134,7 +140,7 @@ _MODEL_FROM_CLI: Mapping[str, Model] = MappingProxyType(
         "imagen-3-5": Model.IMAGEN_3_5,
         "image4": Model.IMAGEN_3_5,
         "imagen4": Model.IMAGEN_3_5,
-    }
+    },
 )
 
 # Per-model I2I reference-image cap (live-observed). Flow silently keeps only
@@ -148,7 +154,7 @@ _IMAGE_REFERENCE_CAP: Mapping[Model, int] = MappingProxyType(
         Model.NARWHAL: 10,
         Model.GEM_PIX_2: 10,
         Model.IMAGEN_3_5: 3,
-    }
+    },
 )
 
 
@@ -189,9 +195,12 @@ class ImageRef:
         # because frozen dataclasses can't mutate, and explicit reject is
         # clearer than silently accepting malformed input.
         if not self.name or self.name != self.name.strip():
-            raise ValueError(
+            msg = (
                 "ImageRef.name must be a non-empty UUID string with no "
                 "leading or trailing whitespace"
+            )
+            raise ValueError(
+                msg,
             )
 
     def to_wire(self) -> dict[str, str]:
@@ -226,14 +235,17 @@ class GenerateImageRequest:
 
     def __post_init__(self) -> None:
         if not self.prompt or not self.prompt.strip():
-            raise ValueError("GenerateImageRequest.prompt must be non-empty")
+            msg = "GenerateImageRequest.prompt must be non-empty"
+            raise ValueError(msg)
         if not 1 <= self.count <= 4:
-            raise ValueError(f"GenerateImageRequest.count must be 1–4, got {self.count}")
+            msg = f"GenerateImageRequest.count must be 1–4, got {self.count}"
+            raise ValueError(msg)
         n_refs = len(self.refs) + len(self.ref_paths)
         cap = reference_cap_for(self.model)
         if n_refs > cap:
+            msg = f"{self.model.value} allows at most {cap} reference image(s); got {n_refs}"
             raise ValueError(
-                f"{self.model.value} allows at most {cap} reference image(s); got {n_refs}"
+                msg,
             )
 
 

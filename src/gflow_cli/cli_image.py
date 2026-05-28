@@ -18,6 +18,7 @@ import asyncio
 import re
 import sys
 from pathlib import Path
+from typing import TYPE_CHECKING
 
 import click
 import structlog
@@ -32,7 +33,6 @@ from gflow_cli._cli_helpers import (
     safe_path_text,
 )
 from gflow_cli.api.client import FlowApiClient
-from gflow_cli.api.dto import GeneratedImage
 from gflow_cli.api.image import Aspect, GenerateImageRequest, ImageRef, Model, reference_cap_for
 from gflow_cli.api.transports import transport_choices
 from gflow_cli.config import get_settings
@@ -76,6 +76,9 @@ from gflow_cli.image_batch import (
 )
 from gflow_cli.paths import image_output_path, resolve_batch_output_dir
 from gflow_cli.storage import cloud_info_from_path
+
+if TYPE_CHECKING:
+    from gflow_cli.api.dto import GeneratedImage
 
 # Case-insensitive 8-4-4-4-12 hex with hyphens — Flow's media UUIDs.
 # When a `--ref` value matches this regex it's treated as an already-uploaded
@@ -134,10 +137,13 @@ def _classify_ref(ref: str) -> ImageRef | Path:
     try:
         return Path(ref).resolve(strict=True)
     except FileNotFoundError as exc:
-        raise click.UsageError(
+        msg = (
             f"--ref {ref!r} does not exist as a file and is not a valid asset UUID. "
             "Pass either a local image path or a 32-char hex UUID with hyphens "
             "(from a prior `gflow image upload`)."
+        )
+        raise click.UsageError(
+            msg,
         ) from exc
 
 
@@ -227,7 +233,9 @@ async def _run_upload(
     recorder = OperationRecorder.open(settings)
     try:
         async with FlowApiClient(
-            profile_dir=profile_dir, headless=headless, transport=transport
+            profile_dir=profile_dir,
+            headless=headless,
+            transport=transport,
         ) as client:
             console.print(_CREATING_PROJECT_MSG)
             project = await client.create_project(title="gflow-cli upload")
@@ -238,7 +246,7 @@ async def _run_upload(
             console.print(f"[bold green]Asset UUID:[/bold green] [bold]{asset.name}[/bold]")
             console.print(
                 f"[dim]Dimensions:[/dim] {asset.width} x {asset.height}  "
-                f"[dim]Project:[/dim] {project.project_id}"
+                f"[dim]Project:[/dim] {project.project_id}",
             )
             try:
                 recorder.record_upload_image(
@@ -373,12 +381,14 @@ def t2i(
     if is_multi_prompt and as_json:
         # --json is single-prompt only — the batch summary shape is rich-table
         # specific and a worker shells out one prompt at a time anyway.
-        raise click.UsageError("--json is single-prompt only; remove the extra prompts.")
+        msg = "--json is single-prompt only; remove the extra prompts."
+        raise click.UsageError(msg)
 
     if not is_multi_prompt:
         if not prompts:
+            msg = "Provide a prompt, multiple prompts, --prompts-file, or --stdin."
             raise click.UsageError(
-                "Provide a prompt, multiple prompts, --prompts-file, or --stdin."
+                msg,
             )
         prompt = prompts[0]
         profile_name = _resolve_profile(profile)
@@ -406,7 +416,12 @@ def t2i(
         return
 
     batch_prompts = _build_t2i_batch_prompts(
-        prompts, prompts_file, read_stdin, aspect, model, count
+        prompts,
+        prompts_file,
+        read_stdin,
+        aspect,
+        model,
+        count,
     )
     _execute_t2i_batch(batch_prompts, count, continue_on_error, profile, out, transport)
 
@@ -430,9 +445,12 @@ def _build_t2i_batch_prompts(
         if read_stdin:
             raw_stdin = sys.stdin.read(MAX_PROMPT_FILE_BYTES + 1)
             if len(raw_stdin) > MAX_PROMPT_FILE_BYTES:
-                raise click.UsageError(
+                msg = (
                     f"Standard input exceeds the maximum allowed size of "
                     f"{MAX_PROMPT_FILE_BYTES // 1024} KiB."
+                )
+                raise click.UsageError(
+                    msg,
                 )
             parsed = parse_prompt_lines(raw_stdin, source_label="--stdin")
             return prompt_items_from_parsed(parsed, aspect_ratio=aspect, model=model, count=count)
@@ -460,11 +478,13 @@ def _execute_t2i_batch(
     provider_dir = _make_provider_dir(profile_name)
     settings = get_settings()
     output_dir = resolve_batch_output_dir(
-        cli_override=out, output_root=settings.output_dir, kind="images"
+        cli_override=out,
+        output_root=settings.output_dir,
+        kind="images",
     )
     console.print(
         f"\n[bold]gflow image t2i[/bold] · profile=[bold]{profile_name}[/bold] "
-        f"· {len(batch_prompts)} prompt(s) · up to {len(batch_prompts) * count} image(s)"
+        f"· {len(batch_prompts)} prompt(s) · up to {len(batch_prompts) * count} image(s)",
     )
     console.print(f"  output_dir: [dim]{safe_path_text(output_dir)}[/dim]")
     if not continue_on_error:
@@ -482,7 +502,7 @@ def _execute_t2i_batch(
                 project_title=_T2I_PROJECT_TITLE,
                 _profile_name=profile_name,
                 _recorder=recorder,
-            )
+            ),
         )
     finally:
         recorder.close()
@@ -492,7 +512,9 @@ def _execute_t2i_batch(
 
 
 def _count_t2i_sources(
-    prompts: tuple[str, ...], prompts_file: Path | None, read_stdin: bool
+    prompts: tuple[str, ...],
+    prompts_file: Path | None,
+    read_stdin: bool,
 ) -> int:
     return int(bool(prompts)) + int(prompts_file is not None) + int(read_stdin)
 
@@ -509,11 +531,15 @@ def _validate_t2i_input(
     """
     source_count = _count_t2i_sources(prompts, prompts_file, read_stdin)
     if source_count == 0:
-        raise click.UsageError("Provide a prompt, multiple prompts, --prompts-file, or --stdin.")
+        msg = "Provide a prompt, multiple prompts, --prompts-file, or --stdin."
+        raise click.UsageError(msg)
     if source_count > 1:
-        raise click.UsageError(
+        msg = (
             "Prompt sources are mutually exclusive: use positional prompts, "
             "--prompts-file, or --stdin."
+        )
+        raise click.UsageError(
+            msg,
         )
 
 
@@ -537,7 +563,9 @@ async def _run_t2i(
     recorder = OperationRecorder.open(settings)
     try:
         async with FlowApiClient(
-            profile_dir=profile_dir, headless=headless, transport=transport
+            profile_dir=profile_dir,
+            headless=headless,
+            transport=transport,
         ) as client:
             if not as_json:
                 console.print(_CREATING_PROJECT_MSG)
@@ -547,14 +575,16 @@ async def _run_t2i(
             if not as_json:
                 console.print(f"  Project: [dim]{project.project_id}[/dim]")
                 console.print(
-                    f"  Generating {count} image(s) ({req.model.value}, {req.aspect.value})..."
+                    f"  Generating {count} image(s) ({req.model.value}, {req.aspect.value})...",
                 )
             if count == 1:
                 img = await client.generate_image(project_id=project.project_id, req=req)
                 images: list[GeneratedImage] = [img]
             else:
                 images = await client.generate_images_batch(
-                    project_id=project.project_id, req=req, count=count
+                    project_id=project.project_id,
+                    req=req,
+                    count=count,
                 )
 
             saved_paths: list[Path] = []
@@ -575,7 +605,7 @@ async def _run_t2i(
                         model=req.model.value,
                         images=images,
                         saved_paths=saved_paths,
-                    )
+                    ),
                 )
             else:
                 _print_t2i_summary(images, saved_paths)
@@ -723,13 +753,15 @@ def batch(
     provider_dir = _make_provider_dir(profile_name)
     settings = get_settings()
     output_dir = resolve_batch_output_dir(
-        cli_override=out, output_root=settings.output_dir, kind="images"
+        cli_override=out,
+        output_root=settings.output_dir,
+        kind="images",
     )
 
     total_images = sum(p.count for p in prompts)
     console.print(
         f"\n[bold]{_BATCH_TITLE}[/bold] · profile=[bold]{profile_name}[/bold] "
-        f"· {len(prompts)} prompt(s) · up to {total_images} image(s)"
+        f"· {len(prompts)} prompt(s) · up to {total_images} image(s)",
     )
     console.print(f"  output_dir: [dim]{safe_path_text(output_dir)}[/dim]")
     if not continue_on_error:
@@ -747,7 +779,7 @@ def batch(
                 continue_on_error=continue_on_error,
                 profile_name=profile_name,
                 recorder=recorder,
-            )
+            ),
         )
     finally:
         recorder.close()
@@ -865,8 +897,9 @@ def i2i(
     model_enum = Model.from_cli(model)
     cap = reference_cap_for(model_enum)
     if len(classified_refs) > cap:
+        msg = f"{model} allows at most {cap} reference image(s); got {len(classified_refs)}."
         raise click.UsageError(
-            f"{model} allows at most {cap} reference image(s); got {len(classified_refs)}."
+            msg,
         )
 
     profile_name = _resolve_profile(profile)
@@ -911,7 +944,9 @@ async def _run_i2i(
     recorder = OperationRecorder.open(settings)
     try:
         async with FlowApiClient(
-            profile_dir=profile_dir, headless=headless, transport=transport
+            profile_dir=profile_dir,
+            headless=headless,
+            transport=transport,
         ) as client:
             if not as_json:
                 console.print(_CREATING_PROJECT_MSG)
@@ -939,14 +974,16 @@ async def _run_i2i(
             if not as_json:
                 console.print(
                     f"  Generating {count} image(s) with {n_refs} ref(s) "
-                    f"({req.model.value}, {req.aspect.value})..."
+                    f"({req.model.value}, {req.aspect.value})...",
                 )
             if count == 1:
                 img = await client.generate_image(project_id=project.project_id, req=req)
                 images: list[GeneratedImage] = [img]
             else:
                 images = await client.generate_images_batch(
-                    project_id=project.project_id, req=req, count=count
+                    project_id=project.project_id,
+                    req=req,
+                    count=count,
                 )
 
             saved_paths: list[Path] = []
@@ -968,7 +1005,7 @@ async def _run_i2i(
                         images=images,
                         saved_paths=saved_paths,
                         ref_count=n_refs,
-                    )
+                    ),
                 )
             else:
                 _print_i2i_summary(images, saved_paths)

@@ -126,7 +126,7 @@ def image_result(
                 "fife_url": img.fife_url,
                 "is_signed_url": img.is_signed_url,
                 "local_path": str(path),
-            }
+            },
         )
     payload: dict[str, Any] = {
         "status": "ok",
