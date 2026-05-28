@@ -26,7 +26,7 @@ This document is the steady-state reference for how `gflow-cli` is organised. Th
 ┌──────────────────────┴───────────────────────────────────────┐
 │  infrastructure/  ← Adapters (driven side)                   │
 │                     FlowProvider (REST), AuthSession         │
-│                     (Playwright), LocalStorage (filesystem). │
+│                     (Playwright), AssetStorage (local/cloud).│
 └──────────────────────────────────────────────────────────────┘
 ```
 
@@ -38,7 +38,7 @@ The hexagonal target above is the steady state. The **current** package — and 
 
 **Per-module rules:**
 
-- Each top-level package or file under `src/gflow_cli/` is a module with one clear domain (`auth`, `api`, `cli`, `errors`, `observability`, `manifest`, `paths`, `config`, `profile_store`, `data`).
+- Each top-level package or file under `src/gflow_cli/` is a module with one clear domain (`auth`, `api`, `cli`, `errors`, `observability`, `manifest`, `paths`, `storage`, `config`, `profile_store`, `data`).
 - Each module exposes a public interface via `__init__.py` and (where applicable) explicit `__all__`.
 - Internals are prefixed with `_` (single leading underscore) and never imported across modules.
 - Cross-module communication goes through public interfaces, never private internals.
@@ -52,7 +52,11 @@ The hexagonal target above is the steady state. The **current** package — and 
 
 **Data layer module (shipped in v0.9.0):**
 
-- `gflow_cli/data/` — local SQLite persistence layer (`DataStore` + `DataRepository` + `OperationRecorder` + redaction + read-only `queries` for `gflow data list`). Records all new image/video operations, asset provenance, and local file metadata. Default DB path is resolved from `$GFLOW_CLI_DB_PATH` (default: `~/.local/share/gflow-cli/data.db` on POSIX, the equivalent platformdirs user-data dir on Windows). Migrations versioned via SHA-256 checksums; safe forward-only semantics with newer-schema detection. T2V now flows through `FlowApiClient.generate_video`, sharing the client boundary with image commands.
+- `gflow_cli/data/` — local SQLite persistence layer (`DataStore` + `DataRepository` + `OperationRecorder` + redaction + read-only `queries` for `gflow data list`). Records all new image/video operations, asset provenance, and final asset locations (local paths or cloud URIs). Default DB path is resolved from `$GFLOW_CLI_DB_PATH` (default: `~/.local/share/gflow-cli/data.db` on POSIX, the equivalent platformdirs user-data dir on Windows). Migrations versioned via SHA-256 checksums; safe forward-only semantics with newer-schema detection. T2V now flows through `FlowApiClient.generate_video`, sharing the client boundary with image commands.
+
+**External storage module (shipped after v0.9.1):**
+
+- `gflow_cli/storage.py` — target resolver and writer for generated assets. With `GFLOW_CLI_STORAGE_URI` unset it returns normal local `Path` targets under `GFLOW_CLI_OUTPUT_DIR`; with `gs://` or `s3://` it returns a cloud-backed `UPath` and writes through the matching fsspec backend. The module owns key sanitisation, cloud URI metadata extraction, and event-loop-safe writes. User-facing setup lives in [EXTERNAL_STORAGE.md](EXTERNAL_STORAGE.md).
 
 **Why RFC 9457 for errors:** Problem Details is the IETF-standard shape for machine-readable HTTP error responses. Even though gflow-cli is a CLI (not an HTTP server), adopting the same vocabulary means: (a) the error log shape is greppable by stable `type` URI, (b) future cloud-edge integrations (e.g., a `gflow serve` HTTP front-end) can return our errors directly without translation, (c) downstream telemetry tools recognize the shape immediately.
 
@@ -149,7 +153,7 @@ src/gflow_cli/
 │   ├── auth/
 │   │   └── playwright_session.py
 │   ├── storage/
-│   │   └── local.py
+│   │   └── asset_storage.py
 │   └── observability/
 │       └── logging.py
 ├── interfaces/
@@ -256,7 +260,7 @@ def build_bus(settings: Settings) -> CommandBus:
     auth_session = PlaywrightSession(profile_dir=settings.profile_subdir(profile_name))
     image_provider = FlowImageProvider(auth_session)
     video_provider = FlowVideoProvider(auth_session)
-    storage = LocalStorage(settings.output_dir)
+    storage = AssetStorage.from_settings(settings)
 
     bus = CommandBus()
     bus.register(GenerateImageCommand, GenerateImageHandler(image_provider, storage))

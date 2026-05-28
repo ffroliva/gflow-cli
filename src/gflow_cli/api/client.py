@@ -576,7 +576,7 @@ class FlowApiClient:
         labs.google redirect path which doesn't apply here.
 
         When ``GFLOW_CLI_STORAGE_URI`` is set the file is uploaded to the
-        configured cloud backend instead of (or in addition to) local disk.
+        configured cloud backend instead of local disk.
         The actual write target is derived from ``out_path`` relative to the
         configured output directory.
 

@@ -52,7 +52,7 @@ Not used by v0.4.0a2's reverse-engineered Flow provider. Documented here in adva
 |---|---|
 | Profile name | Yes |
 | Flow project ID, media ID, workflow ID, operation ID | Yes |
-| Local file paths of downloaded assets | Yes |
+| Local file paths or cloud URIs of downloaded assets | Yes |
 | Prompt text | Yes (default) — set `GFLOW_CLI_HISTORY_PROMPTS=redacted` to store hash only |
 | Prompt SHA-256 hash | Yes (always) |
 | Asset metadata: model, aspect ratio, dimensions, seed, timestamps | Yes |
@@ -63,7 +63,7 @@ Not used by v0.4.0a2's reverse-engineered Flow provider. Documented here in adva
 ### Privacy controls
 
 - **`GFLOW_CLI_HISTORY_PROMPTS=redacted`** — store only the SHA-256 hash of the prompt, never the plain text. Useful when prompts contain sensitive or confidential content.
-- The database is local-only. No cloud sync, no telemetry upload. It lives on your filesystem and never leaves the machine unless you explicitly copy it.
+- The database is local-only. No database cloud sync, no telemetry upload. It lives on your filesystem and never leaves the machine unless you explicitly copy it.
 - `GFLOW_CLI_DB_PATH` lets you redirect the database to any path (e.g. an encrypted volume). A fresh path creates an empty database automatically.
 
 ### Redaction guarantee
@@ -73,6 +73,26 @@ The `OperationRecorder.redact_metadata` method explicitly strips `signedUrl`, `c
 ### Database file permissions
 
 The database is created with standard OS file permissions. On POSIX systems this means it is readable by the current user (mode `0600` is not enforced — use filesystem-level controls if you need strict isolation). On Windows, ACLs follow the `GFLOW_CLI_HOME` directory defaults. Use full-disk encryption (FileVault / BitLocker / LUKS) if you store sensitive prompts and need at-rest protection.
+
+## Cloud storage
+
+When [`GFLOW_CLI_STORAGE_URI`](EXTERNAL_STORAGE.md) is set, generated asset
+bytes are uploaded to the configured S3/GCS/MinIO bucket instead of local asset
+files. This is explicit user configuration, not telemetry.
+
+Security responsibilities for cloud storage:
+
+- Keep AWS/GCS credentials out of Git and shell history. Prefer the provider's
+  normal credential chain or short-lived environment variables.
+- Lock bucket public access unless you intentionally need public outputs.
+- Configure encryption, retention, lifecycle, and audit logging at the bucket
+  layer. `gflow-cli` does not manage provider-side IAM policy.
+- Treat object names and `cloud_uri` values as metadata. The local SQLite
+  catalog stores those URIs so `gflow data media <media-id>` can find outputs.
+
+`gflow-cli` still redacts Flow signed CDN URLs before writing metadata. Bucket
+URIs are not signed Flow URLs; they are the durable output locations you asked
+the CLI to write.
 
 ## CI / Repository security controls (v0.6.0a5+)
 

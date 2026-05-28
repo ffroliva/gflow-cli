@@ -43,7 +43,10 @@ gflow image t2i "a hot air balloon over Tokyo at sunrise"
 gflow video t2v "Slow cinematic push-in on a sunlit forest clearing" --aspect 16:9
 ```
 
-Outputs land under `./out/` (or `$GFLOW_CLI_OUTPUT_DIR`). First call is ~30–90 s while Chromium warms; subsequent calls reuse the warm session.
+Outputs land under `$GFLOW_CLI_OUTPUT_DIR` unless
+[`GFLOW_CLI_STORAGE_URI`](docs/EXTERNAL_STORAGE.md) sends generated assets to
+S3, MinIO, or Google Cloud Storage. First call is ~30–90 s while Chromium warms;
+subsequent calls reuse the warm session.
 
 > **Why `--browser chrome`?** Google rejects Playwright's bundled Chromium. The CLI fails fast with a friendly error (`AuthBrowserRejectedError`, exit code 14) if you pick anything else.
 
@@ -66,6 +69,7 @@ Reproduce the recording: [`scripts/record_demo.ps1`](scripts/record_demo.ps1) (W
 | Topic | Read |
 |---|---|
 | 🎯 **Getting started** | [User Guide](docs/USER_GUIDE.md) · [Usage](docs/USAGE.md) · [Configuration](docs/CONFIGURATION.md) |
+| **Storage & catalog** | [External Storage](docs/EXTERNAL_STORAGE.md) · [Data Layer](docs/DATA_LAYER.md) |
 | 🔐 **Auth & sessions** | [Authentication](docs/AUTHENTICATION.md) · [Known issues](KNOWN_ISSUES.md) |
 | 🏗️ **Internals** | [Architecture](docs/ARCHITECTURE.md) · [Security](docs/SECURITY.md) · [Debugging](docs/DEBUGGING.md) |
 | 📦 **Releases** | [Changelog](CHANGELOG.md) · [Roadmap](ROADMAP.md) · [Release protocol](RELEASE.md) · [Project status](docs/PROJECT_STATUS.md) |

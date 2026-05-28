@@ -9,6 +9,11 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ### Added
 
+- **External storage documentation for S3, MinIO, and Google Cloud Storage.**
+  Adds `docs/EXTERNAL_STORAGE.md`, cross-links it from the README, docs index,
+  configuration, data-layer, usage, security, and user-guide docs, and clarifies
+  that `GFLOW_CLI_STORAGE_URI` is a cloud-only output mode rather than
+  local-plus-cloud dual-write.
 - **`--json` flag on `gflow video t2v`, `gflow video i2v`, and `gflow video r2v`.**
   Emits the `VideoResult` (status / command / media_id / generation_status /
   succeeded / local_path / failure_reasons / error_message) plus the request
@@ -98,6 +103,8 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ### Changed
 
+- `gflow data media` now labels cloud-backed asset records as `cloud_uri_N`
+  while keeping local assets under the existing `local_path_N` labels.
 - `gflow_cli.api.video` no longer exposes the standalone `OMNI_REFERENCE_CAP` /
   `VEO_REFERENCE_CAP` constants. Callers that need a per-model R2V cap should
   use `reference_cap_for(model)` (which returns `0` for `VEO_3_1_QUALITY` —

@@ -24,6 +24,7 @@ Welcome to the `gflow-cli` documentation. This index is the routing layer: it te
 | [.env.template](../.env.template) | All environment variables with defaults | Setting up a new shell or container |
 | **[docs/AUTHENTICATION.md](AUTHENTICATION.md)** | Full auth flow, session storage, multi-account, refresh | First `gflow auth login`, or auth errors |
 | **[docs/CONFIGURATION.md](CONFIGURATION.md)** | All env vars, precedence chain, default paths per OS | Tuning behaviour, picking output paths |
+| **[docs/EXTERNAL_STORAGE.md](EXTERNAL_STORAGE.md)** | S3, MinIO, and Google Cloud Storage output configuration | Sending generated assets to a bucket instead of local disk |
 | **[docs/USER_GUIDE.md](USER_GUIDE.md)** | Task-oriented walkthroughs (first setup, batch video, multi-image, log forensics, recovery, multi-account, migration) | You want to GET SOMETHING DONE — not look up a flag |
 | **[docs/USAGE.md](USAGE.md)** | Command-by-command reference, manifest format, recipes, exit-code table | Day-to-day CLI use — look up specific commands / flags |
 | **[docs/ARCHITECTURE.md](ARCHITECTURE.md)** | Modular monolith, per-worker Page pool, RFC 9457 Problem Details, retry layer | Adding a feature or a new provider |
@@ -58,6 +59,7 @@ Slash commands for Claude Code, stored in `.claude/commands/gflow/`. All prefixe
 **"Is `v0.5.0a1` a prerelease, and how do I cut a full release?"** → [RELEASE § Prerelease Versus Full Release](../RELEASE.md#prerelease-versus-full-release)
 **"Where is my session stored?"** → [AUTHENTICATION § Session storage](AUTHENTICATION.md#session-storage)
 **"Where do generated files land?"** → [CONFIGURATION § Output paths](CONFIGURATION.md#output-paths)
+**"How do I write outputs to S3, MinIO, or Google Cloud Storage?"** → [EXTERNAL_STORAGE](EXTERNAL_STORAGE.md) and [CONFIGURATION § `GFLOW_CLI_STORAGE_URI`](CONFIGURATION.md#gflow_cli_storage_uri)
 **"How do I run with multiple Google accounts?"** → [AUTHENTICATION § Multiple accounts](AUTHENTICATION.md#multiple-accounts)
 **"How does the layered structure work?"** → [ARCHITECTURE § Layers](ARCHITECTURE.md#layers)
 **"What env var should I set for X?"** → [CONFIGURATION § Reference](CONFIGURATION.md#reference)

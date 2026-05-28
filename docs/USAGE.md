@@ -428,7 +428,7 @@ For full schema details and JOIN semantics, see [`docs/DATA_LAYER.md § Querying
 
 ## `gflow data media`
 
-Look up a recorded operation by its Flow media ID. Prints a summary of the stored provenance record: profile, media ID, Flow project ID, kind (image/video), and the local file paths that were written for that operation.
+Look up a recorded operation by its Flow media ID. Prints a summary of the stored provenance record: profile, media ID, Flow project ID, kind (image/video), and the local paths or cloud URIs that were written for that operation.
 
 Without `--profile` the lookup spans **every profile** in the catalog — matching the cross-profile default of `gflow data list`. Pass `--profile NAME` to scope to a specific profile (this is the way to disambiguate the rare case where two profiles share the same Flow `media_id`; the command refuses to guess and lists the candidates annotated with `kind`). See [#87](https://github.com/ffroliva/gflow-cli/issues/87).
 
@@ -454,6 +454,10 @@ Paths:
   /home/user/Downloads/gflow-cli/images/2026-05-24/ddb6ef97_1.png
   /home/user/Downloads/gflow-cli/images/2026-05-24/ddb6ef97_2.png
 ```
+
+When [`GFLOW_CLI_STORAGE_URI`](EXTERNAL_STORAGE.md) was active for the run, the
+same command prints `cloud_uri_1`, `cloud_uri_2`, and so on instead of
+`local_path_N` rows.
 
 Exit codes: `0` success, `2` media ID not found in the local database, `16` database error (see exit code table below).
 
@@ -664,12 +668,17 @@ async def main() -> None:
         req = GenerateImageRequest(prompt="a peaceful lake at dawn", model=Model.IMAGE4)
         # project_id is optional — omit it and a new project is created automatically.
         image = await client.generate_image(req=req)
-        await client.download_image(image, Path("lake.png"))
+        saved = await client.download_image(image, Path("lake.png"))
+        print(saved)
 
 asyncio.run(main())
 ```
 
 `project_id` defaults to `None`. When omitted, `generate_image()` (and `generate_images_batch()`) call `create_project()` internally. Pass an explicit `project_id` when you want multiple generations to land in the same Flow project.
+
+`download_image()` returns the final write location. That is a local
+`pathlib.Path` by default, or a cloud-backed path when
+`GFLOW_CLI_STORAGE_URI` is set; see [EXTERNAL_STORAGE.md](EXTERNAL_STORAGE.md).
 
 ### Archive / cleanup
 
