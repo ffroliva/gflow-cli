@@ -50,14 +50,16 @@ def _render_profiles_table(profiles: list[profile_store.ProfileMeta]) -> None:
     table = Table(show_header=True, header_style="bold cyan")
     table.add_column("Default", justify="center")
     table.add_column("Name", style="bold")
+    table.add_column("Google account")
     table.add_column("Session")
     table.add_column("Last used (UTC)")
     table.add_column("Profile dir", overflow="fold")
     for p in profiles:
         marker = f"[bold green]{marker_glyph}[/bold green]" if p.is_default else ""
+        account = p.google_account or "[dim]unknown[/dim]"
         session = "[green]present[/green]" if p.cookies_present else "[red]missing[/red]"
         last = p.last_used_at.strftime("%Y-%m-%d %H:%M:%S") if p.last_used_at else "-"
-        table.add_row(marker, p.name, session, last, str(p.profile_dir))
+        table.add_row(marker, p.name, account, session, last, str(p.profile_dir))
     console.print(table)
     console.print("\nUse [bold]gflow auth use <name>[/bold] to set the default profile.")
     console.print(
@@ -165,9 +167,25 @@ def auth_login(profile: str | None, browser: str | None) -> None:
         console.print(f"[red]Unexpected error during login: {e}[/red]")
         sys.exit(1)
     console.print(f"[green]Session saved.[/green] Profile dir: {pdir}")
+
+    # Auto-rename an opaque "default" profile to the email local-part on first
+    # login so the profile inventory is immediately human-readable.
+    profiles = profile_store.list_profiles()
+    if len(profiles) == 1 and profiles[0].name == "default" and profiles[0].google_account:
+        local_part = profiles[0].google_account.split("@")[0]
+        if local_part and local_part != "default":
+            try:
+                pdir = profile_store.rename_profile("default", local_part)
+                profiles = profile_store.list_profiles()
+                console.print(
+                    f"[dim]Renamed profile from [bold]default[/bold] to "
+                    f"[bold]{local_part}[/bold] (derived from Google account).[/dim]"
+                )
+            except FileExistsError:
+                pass  # another profile with that name already exists — keep "default"
+
     # If this was the very first profile, set it as default automatically so
     # subsequent commands work without explicit --profile / GFLOW_CLI_PROFILE.
-    profiles = profile_store.list_profiles()
     if len(profiles) == 1:
         profile_store.set_default_profile(profiles[0].name)
         console.print(f"[dim]Set [bold]{profiles[0].name}[/bold] as default profile.[/dim]")
@@ -203,6 +221,7 @@ def auth_list(as_json: bool) -> None:
                 [
                     {
                         "name": p.name,
+                        "google_account": p.google_account,
                         "is_default": p.is_default,
                         "cookies_present": p.cookies_present,
                         "last_used_at": p.last_used_at.isoformat() if p.last_used_at else None,
