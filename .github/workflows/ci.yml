@@ -99,8 +99,7 @@ jobs:
         continue-on-error: true  # graceful if coverage upload was skipped
 
       - name: SonarCloud scan
-        uses: SonarSource/sonarcloud-github-action@master
+        uses: SonarSource/sonarcloud-github-action@v5.0.0
         env:
           GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}  # PR decoration
           SONAR_TOKEN: ${{ secrets.SONAR_TOKEN }}    # set in repo → Settings → Secrets
-Settings → Secrets
