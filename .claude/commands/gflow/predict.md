@@ -8,7 +8,9 @@ description: >
 
 # `/gflow:predict [proposal]`
 
-**Invoke `Skill(skill="predict")` now**, passing `$ARGUMENTS` as the proposal description.
+**Read `skills/predict/SKILL.md` and follow its protocol now**, passing `$ARGUMENTS` as the proposal description.
+
+> Do **not** call `Skill(skill="predict")` — the repo's `skills/*/SKILL.md` files are plain Markdown, not registered as Skill-tool-invocable (only `.claude/commands/gflow/*` are). Invoking it errors with `Unknown skill: predict`. Read the file directly instead.
 
 The skill at `skills/predict/SKILL.md` runs five independent expert personas
 (Architect · Security/reCAPTCHA · Performance/Playwright · CLI UX · Devil's Advocate),

@@ -9,7 +9,9 @@ description: >
 
 # `/gflow:scenario [feature description]`
 
-**Invoke `Skill(skill="scenario")` now**, passing `$ARGUMENTS` as the feature or change description.
+**Read `skills/scenario/SKILL.md` and follow its protocol now**, passing `$ARGUMENTS` as the feature or change description.
+
+> Do **not** call `Skill(skill="scenario")` — the repo's `skills/*/SKILL.md` files are plain Markdown, not registered as Skill-tool-invocable (only `.claude/commands/gflow/*` are). Invoking it errors with `Unknown skill: scenario`. Read the file directly instead.
 
 The skill at `skills/scenario/SKILL.md` covers 12 dimensions tuned to gflow-cli's
 known failure surfaces and outputs:
