@@ -7,6 +7,7 @@ from gflow_cli.api.video import GenerateVideoRequest, Mode, VideoResult, VideoSt
 from gflow_cli.data.recorder import OperationRecorder
 from gflow_cli.data.repository import DataRepository
 from gflow_cli.data.store import DataStore
+from gflow_cli.storage import CloudStorageInfo
 
 
 def test_record_upload_persists_project_asset_and_file(tmp_path: Path) -> None:
@@ -153,3 +154,61 @@ def test_record_completed_video_updates_media_operation_and_file(tmp_path: Path)
         ).fetchone()
         assert row["status"] == "succeeded"
         assert row["completed_at"] is not None
+
+
+def test_record_completed_video_with_cloud_storage_uses_cloud_columns(
+    tmp_path: Path,
+) -> None:
+    with DataStore.open(tmp_path / "gflow.db") as store:
+        recorder = OperationRecorder(DataRepository(store), prompt_mode="store")
+        request = GenerateVideoRequest(
+            prompt="video prompt",
+            mode=Mode.T2V,
+            aspect=VideoAspect.PORTRAIT,
+        )
+        recorder.record_started_video(
+            profile_name="default",
+            profile_dir=tmp_path / "profile_default",
+            request=request,
+            started=VideoStarted(
+                media_id="media-video-1",
+                project_id="flow-project-video-1",
+                flow_operation_id="media-video-1",
+            ),
+        )
+        result = VideoResult(
+            status=VideoStatus(
+                media_id="media-video-1",
+                status="MEDIA_GENERATION_STATUS_SUCCESSFUL",
+            ),
+            local_path=tmp_path / "cloud-placeholder.mp4",
+            project_id="flow-project-video-1",
+            flow_operation_id="media-video-1",
+        )
+        cloud_info = CloudStorageInfo(
+            uri="s3://bucket/prefix/videos/2026-05-28/media-video-1.mp4",
+            provider="s3",
+        )
+
+        recorder.record_completed_video(
+            profile_name="default",
+            _profile_dir=tmp_path / "profile_default",
+            request=request,
+            result=result,
+            cloud_storage_info=cloud_info,
+        )
+
+        row = store.conn.execute(
+            "SELECT path, bytes, sha256, storage_provider, cloud_uri FROM local_files"
+        ).fetchone()
+        # The v1 schema keeps local_files.path NOT NULL for the unique key, so
+        # cloud rows store the URI there while hydrated records expose path=None.
+        assert row["path"] == cloud_info.uri
+        assert row["bytes"] is None
+        assert row["sha256"] is None
+        assert row["storage_provider"] == "s3"
+        assert row["cloud_uri"] == cloud_info.uri
+        asset = recorder.repository.get_asset_by_flow_media_id("default", "media-video-1")
+        assert asset is not None
+        assert asset.local_files[0].path is None
+        assert asset.local_files[0].cloud_uri == cloud_info.uri

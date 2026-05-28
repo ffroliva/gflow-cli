@@ -32,6 +32,7 @@ from gflow_cli.errors import (
     DataStoreError,
     GFlowError,
 )
+from gflow_cli.storage import cloud_info_from_path
 
 if TYPE_CHECKING:
     from gflow_cli.api.dto import GeneratedImage
@@ -710,6 +711,7 @@ def _try_record_images(
             request=_to_request(item),
             images=list(result.images),
             saved_paths=saved,
+            cloud_storage_infos=[cloud_info_from_path(path) for path in saved],
             input_media_ids=[],
             operation_kind="t2i",
         )

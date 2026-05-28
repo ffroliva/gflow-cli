@@ -1,0 +1,47 @@
+# Local development stack for cloud-storage testing.
+# Image tags are pinned — keep in sync with tests/integration/constants.py.
+# Start:  docker compose up -d
+# Stop:   docker compose down
+#
+# S3 credentials/bucket:  minioadmin / minioadmin  →  bucket "gflow-test"
+# GCS emulator:           set STORAGE_EMULATOR_HOST=http://localhost:4443
+
+services:
+  # S3-compatible local storage — for testing the [s3] extra without real AWS.
+  # Endpoint: http://localhost:9000
+  # Console:  http://localhost:9001
+  minio:
+    image: minio/minio:RELEASE.2024-06-13T22-53-53Z
+    command: server /data --console-address ":9001"
+    ports:
+      - "9000:9000"
+      - "9001:9001"
+    environment:
+      MINIO_ROOT_USER: ${MINIO_ROOT_USER:-minioadmin}
+      MINIO_ROOT_PASSWORD: ${MINIO_ROOT_PASSWORD:-minioadmin}
+    volumes:
+      - minio_data:/data
+    healthcheck:
+      test: ["CMD-SHELL", "mc ready local || exit 1"]
+      interval: 5s
+      timeout: 5s
+      retries: 5
+
+  # GCS emulator — for testing the [gcs] extra without real Google Cloud.
+  # Endpoint: http://localhost:4443
+  fake-gcs:
+    image: fsouza/fake-gcs-server:1.49.3
+    command: -scheme http -port 4443 -backend filesystem -data /data
+    ports:
+      - "4443:4443"
+    volumes:
+      - fake_gcs_data:/data
+    healthcheck:
+      test: ["CMD-SHELL", "wget -q --spider http://localhost:4443/ || exit 1"]
+      interval: 5s
+      timeout: 5s
+      retries: 5
+
+volumes:
+  minio_data:
+  fake_gcs_data:

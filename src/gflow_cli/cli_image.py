@@ -75,6 +75,7 @@ from gflow_cli.image_batch import (
     MIN_COUNT as _MIN_COUNT,
 )
 from gflow_cli.paths import image_output_path, resolve_batch_output_dir
+from gflow_cli.storage import cloud_info_from_path
 
 # Case-insensitive 8-4-4-4-12 hex with hyphens — Flow's media UUIDs.
 # When a `--ref` value matches this regex it's treated as an already-uploaded
@@ -587,6 +588,7 @@ async def _run_t2i(
                     request=req,
                     images=images,
                     saved_paths=saved_paths,
+                    cloud_storage_infos=[cloud_info_from_path(path) for path in saved_paths],
                     input_media_ids=[],
                     operation_kind="t2i",
                 )
@@ -979,6 +981,7 @@ async def _run_i2i(
                     request=req,
                     images=images,
                     saved_paths=saved_paths,
+                    cloud_storage_infos=[cloud_info_from_path(path) for path in saved_paths],
                     # Only already-uploaded UUID refs have a flow_media_id we
                     # can persist as INPUT. Local files attached via the media
                     # dialog don't surface a media_id at this layer; the recorder

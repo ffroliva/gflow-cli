@@ -519,6 +519,10 @@ class UiAutomationTransport(VideoGenerationMixin):
         # from its `out_dir` constructor arg (#18). When None, the internal
         # _capture_debug_screenshot helper is a no-op.
         self._out_dir: Path | None = None
+        # Optional cloud-storage configuration set by FlowApiClient. Video
+        # downloads read these slots inside VideoGenerationMixin._download_video.
+        self._storage_uri: str | None = None
+        self._output_dir: Path | None = None
         # Serialize concurrent generate_images calls — a single Playwright Page
         # cannot be safely shared across parallel asyncio tasks (each call
         # navigates, opens panels, and types into the same DOM). The lock

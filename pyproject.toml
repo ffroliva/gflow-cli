@@ -36,6 +36,18 @@ dev = [
     "ruff>=0.5.0",
     "pyright>=1.1.0",
 ]
+# Cloud storage extras — install only one at a time.
+# aiobotocore and boto3 pin conflicting botocore versions; avoid mixing [s3]
+# with any package that pulls in boto3 (AWS CLI, CDK, SAM, etc.).
+# Use pipx or a dedicated venv: pipx install 'gflow-cli[s3]'
+gcs = [
+    "universal_pathlib>=0.2.5",
+    "gcsfs>=2024.2.0",
+]
+s3 = [
+    "universal_pathlib>=0.2.5",
+    "s3fs>=2024.2.0",
+]
 
 [project.scripts]
 gflow = "gflow_cli.cli:main"
@@ -72,10 +84,11 @@ asyncio_mode = "auto"
 # fixtures.  Without this, pytest falls back to `tempfile.gettempdir()` which
 # can be CWD on some Windows shells (e.g. msys2 sets TMPDIR=$PWD), leaving
 # stray pytest-of-*/ directories in the repo root.
-addopts = "--basetemp=tmp/pytest -m 'not e2e and not live and not smoke'"
+addopts = "--basetemp=tmp/pytest -m 'not e2e and not live and not smoke and not containers'"
 markers = [
     "unit: pure logic, no I/O (the default category)",
     "integration: real Provider plumbing with mocked HTTP",
+    "containers: requires Docker daemon; opt-in via -m containers",
     "live: hits the real Flow API — opt-in via GFLOW_LIVE=1",
     # -----------------------------------------------------------------------
     # e2e: tests that touch the real Google Flow API / real browser sessions.
@@ -101,4 +114,14 @@ dev = [
     "pytest-bdd>=8.1.0",
     "pytest-cov>=7.1.0",
     "ruff>=0.15.12",
+]
+# Container-based integration tests — requires Docker daemon.
+# Install: uv sync --group containers
+# Run:     uv run --group containers pytest -m containers tests/integration/
+containers = [
+    { include-group = "dev" },
+    "testcontainers>=4.8.0",
+    "s3fs>=2024.2.0",
+    "gcsfs>=2024.2.0",
+    "universal_pathlib>=0.2.5",
 ]

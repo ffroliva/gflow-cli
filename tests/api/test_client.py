@@ -21,6 +21,8 @@ from gflow_cli.api.client import (
 )
 from gflow_cli.api.dto import GeneratedImage
 from gflow_cli.api.image import Aspect, GenerateImageRequest, Model
+from gflow_cli.api.transports.ui_automation import UiAutomationTransport
+from gflow_cli.config import Settings
 from gflow_cli.errors import BrowserSessionClosedError
 
 
@@ -39,6 +41,20 @@ class TestConstruction:
         c = FlowApiClient(profile_dir=tmp_path / "prof")
         with pytest.raises(RuntimeError, match="not entered"):
             _ = c.page
+
+    def test_storage_uri_plumbs_to_ui_automation_transport(self, tmp_path: Path) -> None:
+        transport = UiAutomationTransport()
+        settings = Settings(storage_uri="s3://bucket/prefix/", output_dir=tmp_path / "out")
+        client = FlowApiClient(
+            profile_dir=tmp_path / "prof",
+            settings=settings,
+            transport=transport,
+        )
+
+        client._plumb_storage_uri(transport)
+
+        assert transport._storage_uri == "s3://bucket/prefix/"
+        assert transport._output_dir == tmp_path / "out"
 
 
 class TestApiError:
