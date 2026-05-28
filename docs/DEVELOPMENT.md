@@ -76,6 +76,13 @@ Local agents running inside an MCP/context sandbox may need to split the
 marker-filtered pytest suite by path and omit coverage locally; CI remains the
 authoritative coverage gate.
 
+A sixth gate runs after the scan: the **SonarCloud quality gate** (new-code
+coverage ≥ 80 %, rating A, duplication ≤ 3 %). It blocks merge via
+`sonar.qualitygate.wait=true`, so a failed gate turns the `SonarCloud analysis`
+check red rather than reporting silently on the dashboard. Browser-automation
+and live-auth transports are coverage-excluded (e2e-tested, not unit-tested).
+See [docs/GITHUB.md § SonarCloud Quality Gate](GITHUB.md#sonarcloud-quality-gate).
+
 ### Merging feature PRs into develop
 
 - Squash merge preferred — keeps `develop` history linear.
