@@ -19,8 +19,7 @@ import json
 import os
 from dataclasses import replace as _dc_replace
 from datetime import datetime
-from pathlib import Path
-from typing import Any, cast
+from typing import TYPE_CHECKING, Any, Self, cast
 from urllib.parse import urlsplit, urlunsplit
 
 import structlog
@@ -29,11 +28,9 @@ from playwright.async_api import BrowserContext, Page, Playwright, async_playwri
 from gflow_cli.api import routes
 from gflow_cli.api._retry import parse_retry_after, post_with_retry
 from gflow_cli.api.dto import AssetInfo, GeneratedImage, ProjectInfo
-from gflow_cli.api.image import GenerateImageRequest
 from gflow_cli.api.recaptcha import TokenMinter
 from gflow_cli.api.transports import make_transport
 from gflow_cli.api.transports.base import FlowTransportStrategy, VideoCapableTransport
-from gflow_cli.api.video import GenerateVideoRequest, VideoResult, VideoStartedCallback
 from gflow_cli.config import Settings
 from gflow_cli.errors import (
     AuthExpiredError,
@@ -44,6 +41,14 @@ from gflow_cli.errors import (
     RateLimitError,
     WireFormatError,
 )
+from gflow_cli.paths import adjust_key_extension
+from gflow_cli.storage import AnyPath, storage_path, write_asset_async
+
+if TYPE_CHECKING:
+    from pathlib import Path
+
+    from gflow_cli.api.image import GenerateImageRequest
+    from gflow_cli.api.video import GenerateVideoRequest, VideoResult, VideoStartedCallback
 
 # Marker substring used by Playwright when a Page/Context/Browser is closed.
 # Stable across recent Playwright versions; we match on message text to avoid
@@ -101,9 +106,7 @@ def _is_supported_image_header(header: bytes) -> bool:
         return True
     if header[:4] == b"RIFF" and header[8:12] == b"WEBP":
         return True
-    if header[:6] in (b"GIF87a", b"GIF89a"):
-        return True
-    return False
+    return header[:6] in (b"GIF87a", b"GIF89a")
 
 
 class FlowApiClient:
@@ -159,7 +162,7 @@ class FlowApiClient:
 
     # --- lifecycle --------------------------------------------------------
 
-    async def __aenter__(self) -> FlowApiClient:
+    async def __aenter__(self) -> Self:
         # --- Step 1: Launch Playwright FIRST so self._page is ready before
         # transport.setup() is called.  This order is load-bearing for S1
         # (EvaluateFetchTransport): it needs a live Page passed via the
@@ -203,7 +206,7 @@ class FlowApiClient:
         # the session as a bot — navigator.webdriver=true causes low-score
         # tokens and HTTP 403 on batchGenerateImages.
         await self._context.add_init_script(
-            "Object.defineProperty(navigator,'webdriver',{get:()=>undefined})"
+            "Object.defineProperty(navigator,'webdriver',{get:()=>undefined})",
         )
         # Open ``Settings.concurrency`` Pages inside the one persistent
         # BrowserContext. ``launch_persistent_context`` opens one Page by
@@ -233,7 +236,9 @@ class FlowApiClient:
         # re-minting reCAPTCHA inside each retry loop on the worker's own
         # Page; no session-id work happens in T2.)
         await self._page.goto(
-            routes.EDITOR_BOOTSTRAP_URL, wait_until="domcontentloaded", timeout=60_000
+            routes.EDITOR_BOOTSTRAP_URL,
+            wait_until="domcontentloaded",
+            timeout=60_000,
         )
 
         # --- Step 2: Resolve and set up transport, passing the live Page so
@@ -253,6 +258,7 @@ class FlowApiClient:
             # can inspect (#18). Guarded by hasattr so transports without an
             # `_out_dir` slot are unaffected.
             self._plumb_out_dir(self.transport)
+            self._plumb_storage_uri(self.transport)
             await self.transport.setup(self.profile_dir, page=self._page)
             self._owns_transport = True
         else:
@@ -261,19 +267,22 @@ class FlowApiClient:
             self.transport = inp
             self._owns_transport = False
             self._plumb_out_dir(self.transport)
+            self._plumb_storage_uri(self.transport)
 
     def _plumb_out_dir(self, transport: FlowTransportStrategy) -> None:
-        """Forward ``self._out_dir`` onto a transport that exposes the slot.
-
-        No-op when ``self._out_dir`` is None or the transport doesn't carry an
-        ``_out_dir`` attribute (Protocol-level — the field is transport-private,
-        not part of the FlowTransportStrategy contract).
-        """
+        """Forward ``self._out_dir`` onto a transport that exposes the slot."""
         if self._out_dir is None:
             return
         if not hasattr(transport, "_out_dir"):
             return
         transport._out_dir = self._out_dir  # type: ignore[attr-defined]
+
+    def _plumb_storage_uri(self, transport: FlowTransportStrategy) -> None:
+        """Forward ``self.settings.storage_uri`` and ``output_dir`` onto the transport."""
+        if not hasattr(transport, "_storage_uri"):
+            return
+        transport._storage_uri = self.settings.storage_uri  # type: ignore[attr-defined]
+        transport._output_dir = self.settings.output_dir  # type: ignore[attr-defined]
 
     async def __aexit__(self, *exc: object) -> None:
         # _close_browser_resources is fully guarded internally and always resets
@@ -330,7 +339,8 @@ class FlowApiClient:
         if self._page_queue is None:
             if self._page is not None:
                 return self._page
-            raise RuntimeError("FlowApiClient not entered — use `async with`")
+            msg = "FlowApiClient not entered — use `async with`"
+            raise RuntimeError(msg)
         return await self._page_queue.get()
 
     def _checkin_page(self, page: Page) -> None:
@@ -348,7 +358,8 @@ class FlowApiClient:
     @property
     def page(self) -> Page:
         if self._page is None:
-            raise RuntimeError("FlowApiClient not entered — use `async with`")
+            msg = "FlowApiClient not entered — use `async with`"
+            raise RuntimeError(msg)
         return self._page
 
     # --- private HTTP helpers --------------------------------------------
@@ -411,7 +422,11 @@ class FlowApiClient:
             ) from e
 
     async def _patch_json(
-        self, url: str, body: dict[str, Any], *, route_name: str | None = None
+        self,
+        url: str,
+        body: dict[str, Any],
+        *,
+        route_name: str | None = None,
     ) -> Any:
         body_str = json.dumps(body)
         logger.debug("patch_json", url=url, body=body_str[:300])
@@ -506,9 +521,12 @@ class FlowApiClient:
             raise FileNotFoundError(image_path)
         size = image_path.stat().st_size
         if size > MAX_IMAGE_BYTES:
-            raise ValueError(
+            msg = (
                 f"Image too large: {size / 1_048_576:.1f} MB exceeds "
                 f"{MAX_IMAGE_BYTES // 1_048_576} MB limit"
+            )
+            raise ValueError(
+                msg,
             )
 
         # Staged read: validate magic bytes first (12 B) before loading the full
@@ -519,7 +537,8 @@ class FlowApiClient:
 
         header = await asyncio.to_thread(_read_header, image_path)
         if not _is_supported_image_header(header):
-            raise ValueError(f"Not a supported image format: {image_path.name}")
+            msg = f"Not a supported image format: {image_path.name}"
+            raise ValueError(msg)
         full_bytes = await asyncio.to_thread(image_path.read_bytes)
         b64 = base64.b64encode(full_bytes).decode()
         body = {
@@ -560,8 +579,8 @@ class FlowApiClient:
         out_path.write_bytes(await resp.body())
         return out_path
 
-    async def download_image(self, image: GeneratedImage, out_path: Path) -> Path:
-        """Download a generated image's signed ``fifeUrl`` straight to disk.
+    async def download_image(self, image: GeneratedImage, out_path: Path) -> AnyPath:
+        """Download a generated image's signed ``fifeUrl`` to local disk or cloud storage.
 
         Distinct from :meth:`download`: ``fifeUrl`` is already a fully
         qualified signed CDN URL on ``flow-content.google`` (carrying
@@ -569,27 +588,19 @@ class FlowApiClient:
         ``routes.media_download_url`` — that helper builds the
         labs.google redirect path which doesn't apply here.
 
-        Args:
-            image: The :class:`GeneratedImage` returned from
-                :meth:`generate_image` / :meth:`generate_images_batch`.
-            out_path: Destination file path. Parent directories are
-                created if missing.
+        When ``GFLOW_CLI_STORAGE_URI`` is set the file is uploaded to the
+        configured cloud backend instead of local disk.
+        The actual write target is derived from ``out_path`` relative to the
+        configured output directory.
 
-        Returns:
-            ``out_path`` for ergonomic chaining.
+        Returns the final write location (local ``Path`` or cloud ``UPath``).
 
         Raises:
-            FlowApiError: when the CDN responds with a 4xx/5xx status
-                (e.g. the signature has already expired). The ``route``
-                attribute carries a query-stripped URL so the time-limited
-                ``Signature=...`` token cannot leak through logs.
+            FlowApiError: when the CDN responds with a 4xx/5xx status.
             ValueError: when ``image.fife_url`` is not an HTTPS URL on a
-                trusted Google host (SSRF guard — the response is parsed
-                from the wire, so we refuse to follow attacker-controlled
-                URLs blindly).
+                trusted Google host (SSRF guard).
         """
         _validate_fife_url(image.fife_url)
-        out_path.parent.mkdir(parents=True, exist_ok=True)
         # Strip query string before logging — signed CDN URLs carry
         # bearer-style tokens (Signature=, Expires=) that must not
         # leak via str(exc) or log lines. See docs/SECURITY.md.
@@ -605,8 +616,26 @@ class FlowApiClient:
         resp = await self._run_with_retry(attempt, route=route)
         if resp.status >= 400:
             _raise_for_non_retryable(resp, await resp.text(), route=route)
-        out_path.write_bytes(await resp.body())
-        return out_path
+        body = await resp.body()
+
+        # Resolve the write target: local Path or cloud UPath.
+        # Compute a relative key from out_path so cloud keys mirror the local
+        # directory structure (images/YYYY-MM-DD/media_id_N.ext).
+        storage_uri = self.settings.storage_uri
+        if storage_uri:
+            try:
+                key = out_path.relative_to(self.settings.output_dir).as_posix()
+            except ValueError:
+                key = out_path.name
+            target: AnyPath = storage_path(storage_uri, self.settings.output_dir, key)
+        else:
+            target = out_path
+
+        # Issue #96: detect actual format from in-memory bytes and correct the
+        # suffix before writing — avoids post-write rename (unsupported on cloud).
+        target = adjust_key_extension(target, body)
+        await write_asset_async(target, body)
+        return target
 
     async def download_video(self, media_id: str, out_path: Path) -> Path:
         """Download a generated video by media ID to disk.
@@ -674,8 +703,9 @@ class FlowApiClient:
         concern. This method is the single place reCAPTCHA minting happens.
         """
         if self.transport is None:
+            msg = "FlowApiClient.transport is None — call generate_image inside 'async with client'"
             raise RuntimeError(
-                "FlowApiClient.transport is None — call generate_image inside 'async with client'"
+                msg,
             )
         token = await self._mint_recaptcha_token(recaptcha_action)
         req_with_token = _dc_replace(req, recaptcha_token=token)
@@ -705,11 +735,7 @@ class FlowApiClient:
         invoking the single-image API still receive exactly one image (no
         silent discard).
         """
-        # Pyright narrows `dataclasses.replace` back to GenerateImageRequest,
-        # but SonarCloud (S5655/S5890) does not — so we cast and pin the
-        # type explicitly.  The `pyright: ignore` silences the otherwise-
-        # accurate `reportUnnecessaryCast` so both analysers are happy.
-        req_one = cast("GenerateImageRequest", _dc_replace(req, count=1))  # pyright: ignore[reportUnnecessaryCast]
+        req_one = _dc_replace(req, count=1)
         images = await self._drive_images_generation(
             project_id=project_id,
             req=req_one,
@@ -751,7 +777,7 @@ class FlowApiClient:
             )
         except Exception as e:
             if _is_target_closed(e):
-                raise BrowserSessionClosedError() from e
+                raise BrowserSessionClosedError from e
             raise
 
     async def generate_images_batch(
@@ -777,7 +803,8 @@ class FlowApiClient:
             ValueError: if ``count`` is outside ``[1, 4]``.
         """
         if not 1 <= count <= 4:
-            raise ValueError(f"count must be between 1 and 4, got {count}")
+            msg = f"count must be between 1 and 4, got {count}"
+            raise ValueError(msg)
 
         try:
             resolved_project_id: str
@@ -787,11 +814,7 @@ class FlowApiClient:
             else:
                 resolved_project_id = project_id
 
-            # Pyright narrows `dataclasses.replace` back to GenerateImageRequest,
-            # but SonarCloud (S5655/S5890) does not — so we cast and pin the
-            # type explicitly.  The `pyright: ignore` silences the otherwise-
-            # accurate `reportUnnecessaryCast` so both analysers are happy.
-            req_with_count = cast("GenerateImageRequest", _dc_replace(req, count=count))  # pyright: ignore[reportUnnecessaryCast]
+            req_with_count = _dc_replace(req, count=count)
             return await self._drive_images_generation(
                 project_id=resolved_project_id,
                 req=req_with_count,
@@ -799,7 +822,7 @@ class FlowApiClient:
             )
         except Exception as e:
             if _is_target_closed(e):
-                raise BrowserSessionClosedError() from e
+                raise BrowserSessionClosedError from e
             raise
 
     async def generate_video(
@@ -822,12 +845,14 @@ class FlowApiClient:
             BrowserSessionClosedError: Playwright target was closed mid-call.
         """
         if self.transport is None:
+            msg = "FlowApiClient.transport is None - call generate_video inside 'async with client'"
             raise RuntimeError(
-                "FlowApiClient.transport is None - call generate_video inside 'async with client'"
+                msg,
             )
         if not isinstance(self.transport, VideoCapableTransport):
+            msg = f"transport {type(self.transport).__name__} does not support video generation"
             raise RuntimeError(
-                f"transport {type(self.transport).__name__} does not support video generation"
+                msg,
             )
         try:
             return await self.transport.generate_video(
@@ -839,7 +864,7 @@ class FlowApiClient:
             )
         except Exception as e:
             if _is_target_closed(e):
-                raise BrowserSessionClosedError() from e
+                raise BrowserSessionClosedError from e
             raise
 
     async def health_check(self) -> bool:
@@ -898,10 +923,12 @@ def _validate_fife_url(url: str) -> None:
     """
     parts = urlsplit(url)
     if parts.scheme != "https":
-        raise ValueError(f"Refusing non-HTTPS download URL: scheme={parts.scheme!r}")
+        msg = f"Refusing non-HTTPS download URL: scheme={parts.scheme!r}"
+        raise ValueError(msg)
     host = parts.hostname or ""
     if not (host == "flow-content.google" or host.endswith(".google")):
-        raise ValueError(f"Refusing download from unexpected host: {host!r}")
+        msg = f"Refusing download from unexpected host: {host!r}"
+        raise ValueError(msg)
 
 
 def _make_instance() -> str:
@@ -938,7 +965,7 @@ def _build_wire_format_discovery(resp: Any, body_text: str, route: str) -> dict[
     try:
         parsed = json.loads(body_text) if content_type.startswith("application/json") else None
         if isinstance(parsed, dict):
-            top_keys = sorted(cast(dict[str, Any], parsed).keys())
+            top_keys = sorted(cast("dict[str, Any]", parsed).keys())
     except ValueError:  # json.JSONDecodeError is a ValueError subclass
         top_keys = []
     # SECURITY: redact BEFORE truncating to 200 chars. If we truncated first,
@@ -1007,13 +1034,13 @@ def _redact_for_log(body_str: str) -> str:
     if not isinstance(parsed, dict):
         return body_str
 
-    parsed_dict = cast(dict[str, Any], parsed)
+    parsed_dict = cast("dict[str, Any]", parsed)
     _redact_in_client_context(parsed_dict.get("clientContext"))
     requests_list = parsed_dict.get("requests")
     if isinstance(requests_list, list):
-        for item in cast(list[Any], requests_list):
+        for item in cast("list[Any]", requests_list):
             if isinstance(item, dict):
-                _redact_in_client_context(cast(dict[str, Any], item).get("clientContext"))
+                _redact_in_client_context(cast("dict[str, Any]", item).get("clientContext"))
 
     return json.dumps(parsed_dict)
 
@@ -1036,9 +1063,9 @@ def _redact_in_client_context(client_context: Any) -> None:
     if present. No-op for any non-dict shape."""
     if not isinstance(client_context, dict):
         return
-    ctx_dict = cast(dict[str, Any], client_context)
+    ctx_dict = cast("dict[str, Any]", client_context)
     recaptcha = ctx_dict.get("recaptchaContext")
     if isinstance(recaptcha, dict):
-        recaptcha_dict = cast(dict[str, Any], recaptcha)
+        recaptcha_dict = cast("dict[str, Any]", recaptcha)
         if "token" in recaptcha_dict:
             recaptcha_dict["token"] = "<redacted>"

@@ -122,6 +122,28 @@ class TestImageUpload:
         assert str(missing) in result.output or "does not exist" in result.output.lower()
 
 
+class TestI2iRefCap:
+    def test_i2i_rejects_over_cap_refs(self, runner: CliRunner) -> None:
+        # imagen4 caps at 3 refs; 4 UUID refs must be rejected at the CLI
+        # boundary (exit 2) before any profile/network work. UUIDs are used so
+        # _classify_ref treats them as assets and doesn't stat a local file.
+        uuids = [
+            "11111111-1111-1111-1111-111111111111",
+            "22222222-2222-2222-2222-222222222222",
+            "33333333-3333-3333-3333-333333333333",
+            "44444444-4444-4444-4444-444444444444",
+        ]
+        from gflow_cli.cli import main
+
+        args = ["image", "i2i", "stylize", "--model", "imagen4"]
+        for u in uuids:
+            args += ["--ref", u]
+        result = runner.invoke(main, args, catch_exceptions=False)
+
+        assert result.exit_code == 2, result.output
+        assert "at most 3" in result.output
+
+
 # ---------------------------------------------------------------------------
 # t2i subcommand
 # ---------------------------------------------------------------------------
@@ -150,8 +172,17 @@ def _make_generated_image(
 def _make_t2i_client(
     *,
     images: list[GeneratedImage] | None = None,
+    payload: bytes = b"\x89PNG\r\n\x1a\n",
 ) -> MagicMock:
-    """Stub FlowApiClient: create_project + generate_image[s_batch] + download_image."""
+    """Stub FlowApiClient: create_project + generate_image[s_batch] + download_image.
+
+    ``payload`` is the bytes written by the fake ``download_image``. The fake
+    mirrors the real client (``api/client.py``): write bytes, then pass through
+    ``correct_image_extension`` so the CLI sees the post-rename path. Pass a
+    JPEG header to exercise the issue-#96 codepath end-to-end.
+    """
+    from gflow_cli.paths import correct_image_extension
+
     images = images or [_make_generated_image()]
     client = MagicMock()
     client.__aenter__ = AsyncMock(return_value=client)
@@ -164,8 +195,8 @@ def _make_t2i_client(
 
     async def _fake_download(image: GeneratedImage, out_path: Path) -> Path:
         out_path.parent.mkdir(parents=True, exist_ok=True)
-        out_path.write_bytes(b"\x89PNG\r\n\x1a\n")
-        return out_path
+        out_path.write_bytes(payload)
+        return correct_image_extension(out_path)
 
     client.download_image = AsyncMock(side_effect=_fake_download)
     return client
@@ -326,6 +357,75 @@ def _make_i2i_client(
 
     client.download_image = AsyncMock(side_effect=_fake_download)
     return client
+
+
+class TestImageJsonOutput:
+    def test_t2i_json_emits_clean_machine_readable_result(
+        self, runner: CliRunner, tmp_path: Path
+    ) -> None:
+        import json as _json
+
+        client = _make_t2i_client(images=[_make_generated_image(media_name="m1")])
+        out_dir = tmp_path / "out"
+        with (
+            patch("gflow_cli.cli_image.FlowApiClient", return_value=client),
+            patch("gflow_cli.cli_image._make_provider_dir", return_value=tmp_path / "prof"),
+            patch("gflow_cli.cli_image._resolve_profile", return_value="default"),
+        ):
+            from gflow_cli.cli import main
+
+            result = runner.invoke(
+                main,
+                ["image", "t2i", "a cat", "--json", "--out", str(out_dir)],
+                catch_exceptions=False,
+            )
+
+        assert result.exit_code == 0, result.output
+        # Output must be pure JSON — progress chatter is suppressed under --json,
+        # so json.loads succeeding is itself the assertion that nothing leaked.
+        data = _json.loads(result.output)
+        assert data["status"] == "ok"
+        assert data["command"] == "image t2i"
+        assert data["count"] == 1
+        assert data["images"][0]["media_name"] == "m1"
+        assert data["images"][0]["local_path"].endswith("m1_1.png")
+
+    def test_t2i_json_rejects_multi_prompt(self, runner: CliRunner) -> None:
+        from gflow_cli.cli import main
+
+        result = runner.invoke(
+            main,
+            ["image", "t2i", "first", "second", "--json"],
+            catch_exceptions=False,
+        )
+
+        assert result.exit_code == 2, result.output
+        assert "single-prompt" in result.output
+
+    def test_i2i_json_includes_ref_count(self, runner: CliRunner, tmp_path: Path) -> None:
+        import json as _json
+
+        client = _make_t2i_client(images=[_make_generated_image(media_name="m1")])
+        out_dir = tmp_path / "out"
+        uuid = "11111111-1111-1111-1111-111111111111"
+        with (
+            patch("gflow_cli.cli_image.FlowApiClient", return_value=client),
+            patch("gflow_cli.cli_image._make_provider_dir", return_value=tmp_path / "prof"),
+            patch("gflow_cli.cli_image._resolve_profile", return_value="default"),
+        ):
+            from gflow_cli.cli import main
+
+            result = runner.invoke(
+                main,
+                ["image", "i2i", "stylize", "--ref", uuid, "--json", "--out", str(out_dir)],
+                catch_exceptions=False,
+            )
+
+        assert result.exit_code == 0, result.output
+        data = _json.loads(result.output)
+        assert data["command"] == "image i2i"
+        assert data["ref_count"] == 1
+        assert data["images"][0]["media_name"] == "m1"
 
 
 class TestImageI2I:
@@ -706,6 +806,83 @@ class TestRecorderIntegration:
         assert rec["images"] == images
         assert len(rec["saved_paths"]) == 1
         assert recorder.closed
+
+    def test_t2i_records_cloud_storage_info_after_download(
+        self, runner: CliRunner, tmp_path: Path
+    ) -> None:
+        from gflow_cli.storage import CloudStorageInfo
+
+        images = [_make_generated_image(media_name="m1")]
+        client = _make_t2i_client(images=images)
+        recorder = FakeRecorder()
+        out_dir = tmp_path / "out"
+        cloud_info = CloudStorageInfo(
+            uri="s3://bucket/prefix/images/2026-05-28/m1_1.png",
+            provider="s3",
+        )
+
+        with (
+            patch("gflow_cli.cli_image.FlowApiClient", return_value=client),
+            patch("gflow_cli.cli_image._make_provider_dir", return_value=tmp_path / "prof"),
+            patch("gflow_cli.cli_image._resolve_profile", return_value="default"),
+            patch("gflow_cli.cli_image.OperationRecorder.open", return_value=recorder),
+            patch(
+                "gflow_cli.cli_image.cloud_info_from_path",
+                return_value=cloud_info,
+                create=True,
+            ) as cloud_info_mock,
+        ):
+            from gflow_cli.cli import main
+
+            result = runner.invoke(
+                main,
+                ["image", "t2i", "a cat", "--out", str(out_dir)],
+                catch_exceptions=False,
+            )
+
+        assert result.exit_code == 0, result.output
+        rec = recorder.generated[0]
+        assert rec["cloud_storage_infos"] == [cloud_info]
+        cloud_info_mock.assert_called_once_with(rec["saved_paths"][0])
+
+    def test_t2i_records_corrected_extension_when_bytes_are_jpeg(
+        self, runner: CliRunner, tmp_path: Path
+    ) -> None:
+        """Issue #96 end-to-end: when Flow's CDN serves JPEG bytes for a
+        `.png` target, the recorder must receive the corrected `.jpg` path
+        — not the original `.png`. This is the surface that broke in PR #93;
+        unit + transport tests would have passed there too."""
+        images = [_make_generated_image(media_name="m1")]
+        # JFIF header followed by padding — sniffer detects this as .jpg.
+        jpeg_payload = b"\xff\xd8\xff\xe0\x00\x10JFIF" + b"\x00" * 64
+        client = _make_t2i_client(images=images, payload=jpeg_payload)
+        recorder = FakeRecorder()
+        out_dir = tmp_path / "out"
+
+        with (
+            patch("gflow_cli.cli_image.FlowApiClient", return_value=client),
+            patch("gflow_cli.cli_image._make_provider_dir", return_value=tmp_path / "prof"),
+            patch("gflow_cli.cli_image._resolve_profile", return_value="default"),
+            patch("gflow_cli.cli_image.OperationRecorder.open", return_value=recorder),
+        ):
+            from gflow_cli.cli import main
+
+            result = runner.invoke(
+                main,
+                ["image", "t2i", "a cat", "--out", str(out_dir)],
+                catch_exceptions=False,
+            )
+
+        assert result.exit_code == 0, result.output
+        rec = recorder.generated[0]
+        # Recorder receives the post-rename path — historical trap surface.
+        assert len(rec["saved_paths"]) == 1
+        saved = rec["saved_paths"][0]
+        assert saved.suffix == ".jpg", f"recorder got {saved!r}, expected .jpg"
+        assert saved.exists()
+        assert saved.read_bytes() == jpeg_payload
+        # No stale `.png` left in the output directory.
+        assert list(out_dir.rglob("*.png")) == []
 
     def test_i2i_records_inputs_and_outputs(self, runner: CliRunner, tmp_path: Path) -> None:
         # Post-PR-#50 i2i flow distinguishes two ref shapes:

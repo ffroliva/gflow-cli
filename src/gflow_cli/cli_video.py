@@ -13,14 +13,17 @@ import click
 import structlog
 from rich.console import Console
 
+from gflow_cli import json_output
 from gflow_cli._cli_helpers import (
     _make_provider_dir,
     _resolve_profile,
     run_with_handlers,
 )
+from gflow_cli.api.video import VideoModel, reference_cap_for
 from gflow_cli.config import get_settings
 from gflow_cli.data.recorder import OperationRecorder
 from gflow_cli.errors import DataStoreError
+from gflow_cli.storage import cloud_info_from_path
 
 console = Console()
 logger = structlog.get_logger(__name__)
@@ -52,13 +55,21 @@ async def _generate_and_report(
     profile_name: str,
     profile_dir: Path,
     out_dir: Path | None,
+    command: str = "video",
+    as_json: bool = False,
 ) -> None:
     """Drive FlowApiClient for a single GenerateVideoRequest and print the
-    result (or fail with a non-zero exit). Shared by t2v, i2v, and r2v."""
+    result (or fail with a non-zero exit). Shared by t2v, i2v, and r2v.
+
+    With ``as_json`` the result is emitted as a JSON object (carrying the same
+    ok/fail status as the exit code) instead of the Rich lines; a failed
+    generation still emits its JSON payload and then exits 1.
+    """
     from gflow_cli.api.client import FlowApiClient
     from gflow_cli.api.video import VideoStarted
 
-    console.print("[dim]Generating video — this takes ~2 minutes…[/dim]")
+    if not as_json:
+        console.print("[dim]Generating video — this takes ~2 minutes…[/dim]")
     settings = get_settings()
     recorder = OperationRecorder.open(settings)
     try:
@@ -92,6 +103,11 @@ async def _generate_and_report(
                 _profile_dir=profile_dir,
                 request=request,
                 result=result,
+                cloud_storage_info=(
+                    cloud_info_from_path(result.local_path)
+                    if result.local_path is not None
+                    else None
+                ),
             )
         except DataStoreError as exc:
             _warn_persistence_failed_after_success(
@@ -101,6 +117,12 @@ async def _generate_and_report(
             )
     finally:
         recorder.close()
+
+    if as_json:
+        json_output.emit(json_output.video_result(command=command, request=request, result=result))
+        if not result.status.succeeded:
+            raise SystemExit(1)
+        return
 
     if not result.status.succeeded:
         reasons = (
@@ -124,6 +146,7 @@ async def _run_t2v(
     model: str | None = None,
     duration: int | None = None,
     count: int = 1,
+    as_json: bool = False,
 ) -> None:
     from gflow_cli.api.video import Aspect, GenerateVideoRequest, Mode, VideoModel
 
@@ -136,7 +159,12 @@ async def _run_t2v(
         count=count,
     )
     await _generate_and_report(
-        request, profile_name=profile_name, profile_dir=profile_dir, out_dir=out_dir
+        request,
+        profile_name=profile_name,
+        profile_dir=profile_dir,
+        out_dir=out_dir,
+        command="video t2v",
+        as_json=as_json,
     )
 
 
@@ -152,6 +180,7 @@ async def _run_i2v(
     model: str | None = None,
     duration: int | None = None,
     count: int = 1,
+    as_json: bool = False,
 ) -> None:
     from gflow_cli.api.video import Aspect, GenerateVideoRequest, Mode, VideoModel
 
@@ -166,7 +195,12 @@ async def _run_i2v(
         end_image=Path(end_image) if end_image else None,
     )
     await _generate_and_report(
-        request, profile_name=profile_name, profile_dir=profile_dir, out_dir=out_dir
+        request,
+        profile_name=profile_name,
+        profile_dir=profile_dir,
+        out_dir=out_dir,
+        command="video i2v",
+        as_json=as_json,
     )
 
 
@@ -181,6 +215,7 @@ async def _run_r2v(
     model: str | None = None,
     duration: int | None = None,
     count: int = 1,
+    as_json: bool = False,
 ) -> None:
     from gflow_cli.api.video import Aspect, GenerateVideoRequest, Mode, VideoModel
 
@@ -194,7 +229,12 @@ async def _run_r2v(
         reference_images=tuple(Path(r) for r in refs),
     )
     await _generate_and_report(
-        request, profile_name=profile_name, profile_dir=profile_dir, out_dir=out_dir
+        request,
+        profile_name=profile_name,
+        profile_dir=profile_dir,
+        out_dir=out_dir,
+        command="video r2v",
+        as_json=as_json,
     )
 
 
@@ -255,6 +295,12 @@ def video() -> None:
     type=click.Path(file_okay=False, path_type=Path),
     help="Directory to save the generated mp4. Defaults to tmp/.",
 )
+@click.option(
+    "--json",
+    "as_json",
+    is_flag=True,
+    help="Emit a machine-readable JSON result instead of Rich output.",
+)
 def t2v(
     prompt: str,
     aspect: str,
@@ -263,6 +309,7 @@ def t2v(
     count: int,
     profile: str | None,
     out_dir: Path | None,
+    as_json: bool,
 ) -> None:
     """Generate a video from PROMPT."""
     profile_name = _resolve_profile(profile)
@@ -277,8 +324,10 @@ def t2v(
             model=model,
             duration=int(duration) if duration is not None else None,
             count=count,
+            as_json=as_json,
         ),
         cli_command="video t2v",
+        as_json=as_json,
     )
 
 
@@ -337,6 +386,12 @@ def t2v(
     type=click.Path(file_okay=False, path_type=Path),
     help="Directory to save the generated mp4. Defaults to tmp/.",
 )
+@click.option(
+    "--json",
+    "as_json",
+    is_flag=True,
+    help="Emit a machine-readable JSON result instead of Rich output.",
+)
 def i2v(
     image: str,
     prompt: str,
@@ -347,6 +402,7 @@ def i2v(
     count: int,
     profile: str | None,
     out_dir: Path | None,
+    as_json: bool,
 ) -> None:
     """Generate a video from a start IMAGE + motion PROMPT."""
     profile_name = _resolve_profile(profile)
@@ -363,8 +419,10 @@ def i2v(
             duration=int(duration) if duration is not None else None,
             count=count,
             out_dir=out_dir,
+            as_json=as_json,
         ),
         cli_command="video i2v",
+        as_json=as_json,
     )
 
 
@@ -372,12 +430,14 @@ def i2v(
     "r2v",
     short_help="Generate a video from reference images + prompt (ingredients).",
     help=(
-        "Reference-to-video: condition a generation on 1-3 reference images "
-        "(Flow's 'ingredients' / Elementos).\n\n"
+        "Reference-to-video: condition a generation on reference images "
+        "(Flow's 'ingredients' / Elementos). Per-model cap: omni-flash accepts "
+        "up to 7, veo-lite/veo-fast/veo-lite-lp accept up to 3, veo-quality "
+        "does not support R2V at all.\n\n"
         "\b\n"
         "Examples:\n"
-        '  gflow video r2v "a knight in this armor walks forward" --ref armor.png\n'
-        '  gflow video r2v "they meet" --ref a.png --ref b.png --aspect 16:9\n'
+        '  gflow video r2v "knight walks forward" --ref armor.png --model omni-flash\n'
+        '  gflow video r2v "they meet" --ref a.png --ref b.png --model veo-fast\n'
     ),
 )
 @click.argument("prompt")
@@ -387,7 +447,10 @@ def i2v(
     multiple=True,
     required=True,
     type=click.Path(exists=True, dir_okay=False, path_type=str),
-    help="Reference image (repeat for up to 3).",
+    help=(
+        "Reference image (repeat per ref). Per-model cap enforced by --model: "
+        "omni-flash=7, veo-lite/veo-fast/veo-lite-lp=3, veo-quality rejects R2V."
+    ),
 )
 @click.option(
     "--aspect",
@@ -423,6 +486,12 @@ def i2v(
     type=click.Path(file_okay=False, path_type=Path),
     help="Directory to save the generated mp4. Defaults to tmp/.",
 )
+@click.option(
+    "--json",
+    "as_json",
+    is_flag=True,
+    help="Emit a machine-readable JSON result instead of Rich output.",
+)
 def r2v(
     prompt: str,
     refs: tuple[str, ...],
@@ -432,8 +501,27 @@ def r2v(
     count: int,
     profile: str | None,
     out_dir: Path | None,
+    as_json: bool,
 ) -> None:
     """Generate a video from reference images (--ref) + PROMPT."""
+    # Reject over-cap ref counts (and the unsupported model+R2V combo) at the
+    # CLI boundary with a clear message (exit 2) rather than letting the domain
+    # ValueError surface as a generic error. GenerateVideoRequest.__post_init__
+    # enforces the same caps as an invariant. Mirrors the i2i pattern.
+    if model is not None:
+        model_enum = VideoModel.from_cli(model)
+        assert model_enum is not None  # narrows for type-checkers; from_cli only
+        # returns None for input None — we just guarded against that.
+        cap = reference_cap_for(model_enum)
+        if cap == 0:
+            msg = f"{model} does not support R2V (reference-to-video)."
+            raise click.UsageError(msg)
+        if len(refs) > cap:
+            msg = f"{model} allows at most {cap} reference image(s); got {len(refs)}."
+            raise click.UsageError(
+                msg,
+            )
+
     profile_name = _resolve_profile(profile)
     provider_dir = _make_provider_dir(profile_name)
     run_with_handlers(
@@ -447,8 +535,10 @@ def r2v(
             duration=int(duration) if duration is not None else None,
             count=count,
             out_dir=out_dir,
+            as_json=as_json,
         ),
         cli_command="video r2v",
+        as_json=as_json,
     )
 
 

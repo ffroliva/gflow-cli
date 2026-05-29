@@ -36,7 +36,8 @@ class ProjectInfo:
                 title=inner["projectInfo"]["projectTitle"],
             )
         except (KeyError, TypeError) as e:
-            raise ValueError(f"unexpected createProject response shape: {e}") from e
+            msg = f"unexpected createProject response shape: {e}"
+            raise ValueError(msg) from e
 
 
 @dataclass(frozen=True)
@@ -70,7 +71,8 @@ class AssetInfo:
                 height=int(dims.get("height", 0)),
             )
         except (KeyError, TypeError) as e:
-            raise ValueError(f"unexpected uploadImage response shape: {e}") from e
+            msg = f"unexpected uploadImage response shape: {e}"
+            raise ValueError(msg) from e
 
 
 @dataclass(frozen=True)
@@ -102,7 +104,8 @@ class UploadedImage:
                 dimensions=(int(dims.get("width", 0)), int(dims.get("height", 0))),
             )
         except (KeyError, TypeError) as e:
-            raise ValueError(f"unexpected uploadImage response shape: {e}") from e
+            msg = f"unexpected uploadImage response shape: {e}"
+            raise ValueError(msg) from e
 
 
 @dataclass(frozen=True)
@@ -150,7 +153,8 @@ class GeneratedImage:
                 media_generation_id=generated.get("mediaGenerationId"),
             )
         except (KeyError, TypeError) as e:
-            raise ValueError(f"unexpected batchGenerateImages media item shape: {e}") from e
+            msg = f"unexpected batchGenerateImages media item shape: {e}"
+            raise ValueError(msg) from e
 
     @classmethod
     def from_response_dict(cls, data: dict[str, Any]) -> list[GeneratedImage]:
@@ -163,10 +167,12 @@ class GeneratedImage:
         try:
             media = data["media"]
         except (KeyError, TypeError) as e:
-            raise ValueError(f"unexpected batchGenerateImages response shape: {e}") from e
+            msg = f"unexpected batchGenerateImages response shape: {e}"
+            raise ValueError(msg) from e
         if not isinstance(media, list):
-            raise ValueError("unexpected batchGenerateImages response shape: media is not a list")
-        items = cast(list[dict[str, Any]], media)
+            msg = "unexpected batchGenerateImages response shape: media is not a list"
+            raise ValueError(msg)
+        items = cast("list[dict[str, Any]]", media)
         return [cls.from_response_item(item) for item in items]
 
 

@@ -33,6 +33,7 @@ _LIVE_SMOKE_ENABLED = os.environ.get("GFLOW_CLI_E2E_RUN_LOCALE_SMOKE") == "1"
 
 pytestmark = [
     pytest.mark.e2e,
+    pytest.mark.e2e_image,
     pytest.mark.live,
     pytest.mark.skipif(
         not _LIVE_SMOKE_ENABLED,

@@ -14,19 +14,33 @@
 These are non-negotiable. They override default agent behavior where conflicts exist.
 
 - **TDD before code.** Write a failing test, then the minimum production code to make it pass, then refactor. Coverage floor: 80% overall. See [CONTRIBUTING.md](../CONTRIBUTING.md).
+- **Documentation is first-class.** Any user-facing, operator-facing, architecture, configuration, workflow, or agent-rule change must update the matching docs, changelog/release note when relevant, and docs index if a new doc is added. If no docs change, record the reason in the PR/checklist. `scripts/ci/check_doc_links.py` must pass before merge.
 - **No raw `print()` or `import logging` in `src/`.** Structured logging via `structlog` only.
 - **No secrets in commits.** `.env.local` is gitignored; never commit it. `pre-commit` hooks run `detect-secrets` on staged content.
 - **No AI attribution in commit messages.** `Co-Authored-By:` trailers are fine when explicitly requested; auto-generated `🤖 Generated with…` footers are not.
 - **Branch naming.** `feature/`, `bugfix/`, `hotfix/`, `chore/`, `docs/`, `test/`, `release/`. Never `claude/` or unprefixed.
 - **Signed tags only.** Releases tag with `git tag -s vX.Y.Z`. CI rejects unsigned or lightweight tags.
 - **Back-merge `main → develop` after every release.** See the `release-back-merge-gap-recovery` runbook in agent memory.
+- **Enforce model-dependent reference caps.** Flow's R2V (reference-to-video) and I2I (image-to-image) reference image caps are model-dependent (Omni=7, Veo Lite/Fast=3, Quality=0). These MUST be enforced at both the Domain layer (`GenerateVideoRequest`) and the CLI layer. Use `reference_cap_for(model)` and include event-based tripwires in E2E tests.
 
 ## Routing rules
 
 - **Starting a feature?** Run `/gflow:plan` first to see the active phase scope and definition of done.
 - **Touching auth, reCAPTCHA, browser flow, or anything previously flagged?** Run `/gflow:known-issues` first.
 - **Cutting a release?** Run `/gflow:release` — it sequences `/gflow:changelog`, `/gflow:check`, `/gflow:doc-review`.
-- **Before any commit:** Run `/gflow:check` (or the Impeccable Routine in AGENTS.md).
+- **Before any commit:** Run `/gflow:check` (or the Impeccable Routine in AGENTS.md), including the documentation link gate.
+
+## Production-ready checklist
+
+Before merge, verify each item and record the evidence in the PR or final handoff:
+
+- **Scope complete:** issue acceptance criteria are met, and any deferred item is named with an issue or follow-up.
+- **Tests prove behavior:** behavior changes have focused tests, and the full non-live suite passes with coverage at or above 80%.
+- **Documentation is current:** user-facing, operator-facing, architecture, configuration, workflow, and agent-rule changes update the matching docs; new docs are linked from `docs/INDEX.md`; `scripts/ci/check_doc_links.py` passes.
+- **Quality gates pass:** repo hygiene, documentation links, ruff check, ruff format check, pyright, and pytest all pass from a clean checkout-equivalent state.
+- **Operational risks are explicit:** live/e2e gaps, credit-spending tests, auth/browser limitations, and platform caveats are called out instead of hidden.
+- **Git hygiene is clean:** branch targets `develop`, unrelated local changes are not included, commit messages contain no AI attribution, and generated artefacts stay out of git.
+- **Memory is updated:** durable project rules or operational lessons are written to agent memory before closing the work.
 
 ## When in doubt
 

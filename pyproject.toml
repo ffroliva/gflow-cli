@@ -1,6 +1,6 @@
 [project]
 name = "gflow-cli"
-version = "0.9.1"
+version = "0.10.0"
 description = "Unofficial CLI for Google Flow — drive Veo image-to-video generations from the terminal."
 readme = "README.md"
 license = { file = "LICENSE" }
@@ -35,6 +35,18 @@ dev = [
     "pytest-asyncio>=0.23.0",
     "ruff>=0.5.0",
     "pyright>=1.1.0",
+]
+# Cloud storage extras — install only one at a time.
+# aiobotocore and boto3 pin conflicting botocore versions; avoid mixing [s3]
+# with any package that pulls in boto3 (AWS CLI, CDK, SAM, etc.).
+# Use pipx or a dedicated venv: pipx install 'gflow-cli[s3]'
+gcs = [
+    "universal_pathlib>=0.2.5",
+    "gcsfs>=2024.2.0",
+]
+s3 = [
+    "universal_pathlib>=0.2.5",
+    "s3fs>=2024.2.0",
 ]
 
 [project.scripts]
@@ -72,12 +84,25 @@ asyncio_mode = "auto"
 # fixtures.  Without this, pytest falls back to `tempfile.gettempdir()` which
 # can be CWD on some Windows shells (e.g. msys2 sets TMPDIR=$PWD), leaving
 # stray pytest-of-*/ directories in the repo root.
-addopts = "--basetemp=tmp/pytest -m 'not e2e and not live'"
+addopts = "--basetemp=tmp/pytest -m 'not e2e and not live and not smoke and not containers'"
 markers = [
     "unit: pure logic, no I/O (the default category)",
     "integration: real Provider plumbing with mocked HTTP",
+    "containers: requires Docker daemon; opt-in via -m containers",
     "live: hits the real Flow API — opt-in via GFLOW_LIVE=1",
+    # -----------------------------------------------------------------------
+    # e2e: tests that touch the real Google Flow API / real browser sessions.
+    # Always require GFLOW_CLI_E2E_PROFILE and opt-in via -m e2e.
+    # Use cost sub-markers for selective execution (see docs/E2E_TESTING.md).
+    # -----------------------------------------------------------------------
     "e2e: real Flow API tests; require GFLOW_CLI_E2E_PROFILE env var; opt-in via -m e2e",
+    # Cost sub-markers (each test carries 'e2e' PLUS one or more of these):
+    "e2e_auth: auth/session/health tests — zero credits, needs browser only",
+    "e2e_image: spends Imagen credits (text-to-image or image-to-image)",
+    "e2e_video: spends Veo credits (text-to-video or image-to-video) — slowest",
+    "e2e_batch: spends multiple Imagen credits via batch generation",
+    "e2e_data: verifies data-layer (SQLite) persistence — combines with e2e_image or e2e_video",
+    "smoke: golden-path live test (1 Imagen credit); opt-in via GFLOW_CLI_E2E_PROFILE",
 ]
 
 [dependency-groups]
@@ -89,4 +114,14 @@ dev = [
     "pytest-bdd>=8.1.0",
     "pytest-cov>=7.1.0",
     "ruff>=0.15.12",
+]
+# Container-based integration tests — requires Docker daemon.
+# Install: uv sync --group containers
+# Run:     uv run --group containers pytest -m containers tests/integration/
+containers = [
+    { include-group = "dev" },
+    "testcontainers>=4.8.0",
+    "s3fs>=2024.2.0",
+    "gcsfs>=2024.2.0",
+    "universal_pathlib>=0.2.5",
 ]

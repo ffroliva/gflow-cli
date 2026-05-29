@@ -27,13 +27,12 @@ from gflow_cli.api.video import Aspect, GenerateVideoRequest, Mode, VideoResult,
 # Module-level marker — every test in this file is e2e (opt-in only)
 # ---------------------------------------------------------------------------
 
-pytestmark = pytest.mark.e2e
+pytestmark = [pytest.mark.e2e, pytest.mark.e2e_video]
 
 # ---------------------------------------------------------------------------
 # Constants
 # ---------------------------------------------------------------------------
 
-_E2E_PROFILE_ENV = "GFLOW_CLI_E2E_PROFILE"
 _E2E_ASPECT_ENV = "GFLOW_CLI_E2E_VIDEO_ASPECT"
 
 # Short, safe prompt — generic enough to pass content-policy, visual enough
@@ -48,33 +47,6 @@ _POLL_TIMEOUT_S = 600.0
 # ---------------------------------------------------------------------------
 # Helpers
 # ---------------------------------------------------------------------------
-
-
-def _profile_dir() -> Path:
-    """Resolve the Chromium profile directory from the environment variable.
-
-    Uses gflow-cli's real profile-dir resolver (``gflow_cli.auth.profile_dir``)
-    which is ``platformdirs``-based — on Windows this is
-    ``%LOCALAPPDATA%\\<author>\\gflow-cli\\profile_<name>``.
-
-    Raises ``pytest.skip`` when the env var is absent or the profile dir
-    does not exist (e.g. the user has not yet run ``gflow auth login --profile``).
-    """
-    name = os.environ.get(_E2E_PROFILE_ENV, "")
-    if not name:
-        pytest.skip(
-            f"E2E tests require {_E2E_PROFILE_ENV} env var — "
-            "set it to a logged-in Chromium profile name and re-run with -m e2e"
-        )
-    from gflow_cli.auth import profile_dir as _resolve_profile_dir
-
-    candidate = _resolve_profile_dir(name)
-    if not candidate.exists():
-        pytest.skip(
-            f"Profile directory not found: {candidate}. "
-            f"Run `gflow auth login --profile {name}` to create it."
-        )
-    return candidate
 
 
 def _aspect() -> Aspect:
@@ -97,7 +69,7 @@ def _aspect() -> Aspect:
 
 
 @pytest.mark.asyncio
-async def test_t2v_generates_video(tmp_path: Path) -> None:
+async def test_t2v_generates_video(e2e_profile_dir: Path, tmp_path: Path) -> None:
     """T2V-1: generate_video() with T2V returns a VideoResult whose nested
     VideoStatus is terminal SUCCESSFUL with a non-empty media_id, and whose
     local_path points to a downloaded mp4.
@@ -106,7 +78,7 @@ async def test_t2v_generates_video(tmp_path: Path) -> None:
     ``landscape``). ``tmp_path`` is used as ``out_dir`` so any debug
     screenshots land in pytest's temp directory.
     """
-    profile = _profile_dir()
+    profile = e2e_profile_dir
     aspect = _aspect()
 
     req = GenerateVideoRequest(

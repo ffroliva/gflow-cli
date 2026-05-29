@@ -463,6 +463,33 @@ change surfaces there as a failing test. Start any investigation of a sudden
 
 ## Resolved
 
+### Profile named `default` is opaque — no Google account identity
+
+- **Status:** Resolved · **Severity:** Was-Low (UX confusion, no data loss) · **Was-affecting:** all versions through v0.9.x · **Fixed in:** v0.10.0 via PR #110 (2026-05-28) · **Tracked:** issue #92
+
+The first-run default profile name `default` gave no indication of which Google
+account it belonged to, what locale it used, or whether it was valid. On
+developer machines with multiple Google Pro/Ultra accounts, this caused confusion
+when test profiles, expired sessions, or stale `gflow auth login` runs silently
+wrote to the wrong directory.
+
+**Resolution:** `gflow auth login` now writes a `.gflow_account` file to the
+profile directory immediately after the session is verified. `profile_store.list_profiles()`
+surfaces this as `ProfileMeta.google_account`, and `gflow auth list` (both table
+and `--json`) now includes a **Google account** column. The first-run `default`
+profile is automatically renamed to the email local-part (e.g. `profile_ffroliva`)
+once the email is known, and `config.toml` is updated atomically.
+
+Profiles created before this fix continue to work and display `unknown` in the
+account column. Re-running `gflow auth login` against an existing profile backfills
+the `.gflow_account` file.
+
+See [AUTHENTICATION.md § Profile naming](AUTHENTICATION.md#profile-naming) for the
+new naming convention and [AUTHENTICATION.md § gflow auth list](AUTHENTICATION.md#gflow-auth-list)
+for the updated `--json` schema.
+
+---
+
 ### `gflow image t2i/i2i --model` was a silent no-op on `ui_automation`
 
 - **Status:** Resolved · **Severity:** Was-Medium (wrong model = wrong cost + quality, silently) · **Was-affecting:** v0.7.0 through v0.8.1 · **Fixed in:** develop post-v0.8.1 via PR #48 (2026-05-24)

@@ -25,6 +25,7 @@ import pytest
 from gflow_cli.api.client import FlowApiClient, FlowApiError
 from gflow_cli.api.dto import GeneratedImage
 from gflow_cli.api.image import Aspect, GenerateImageRequest
+from gflow_cli.config import Settings
 from gflow_cli.errors import ContentPolicyError, WireFormatError
 
 # Realistic mock response distilled from samples/captured/06_batchGenerateImages.json
@@ -514,6 +515,66 @@ class TestDownloadImage:
         client._page.request.get = AsyncMock(side_effect=fake_request_get)
         out = await client.download_image(_make_image(fife_url=good_url), tmp_path / "out.png")
         assert out.read_bytes() == b"png"
+
+    async def test_download_image_corrects_jpeg_with_png_suffix(
+        self, client: FlowApiClient, tmp_path: Path
+    ) -> None:
+        """Issue #96: when Flow's fife_url returns JPEG bytes but the caller
+        requested ``.png``, the returned path must be ``.jpg`` and the bytes
+        must be intact on disk under the new name."""
+        jpeg_bytes = b"\xff\xd8\xff\xe0\x00\x10JFIF" + b"\x00" * 100
+
+        async def fake_request_get(url, **kwargs):
+            resp = MagicMock()
+            resp.status = 200
+            resp.body = AsyncMock(return_value=jpeg_bytes)
+            return resp
+
+        client._page.request.get = AsyncMock(side_effect=fake_request_get)
+
+        out_path = tmp_path / "abc_1.png"
+        result = await client.download_image(_make_image(), out_path)
+
+        assert result.suffix == ".jpg"
+        assert result.name == "abc_1.jpg"
+        assert result.read_bytes() == jpeg_bytes
+        # Original .png path no longer exists — file was renamed in-place.
+        assert not out_path.exists()
+
+    async def test_download_image_uses_posix_key_for_cloud_storage(
+        self, client: FlowApiClient, tmp_path: Path
+    ) -> None:
+        payload = b"\x89PNG\r\n\x1a\nfake-image-bytes"
+        captured: dict[str, str] = {}
+        local_target = tmp_path / "cloud-target.png"
+
+        async def fake_request_get(url, **kwargs):
+            resp = MagicMock()
+            resp.status = 200
+            resp.body = AsyncMock(return_value=payload)
+            return resp
+
+        def fake_storage_path(storage_uri: str | None, output_dir: Path, key: str) -> Path:
+            captured["storage_uri"] = storage_uri or ""
+            captured["output_dir"] = str(output_dir)
+            captured["key"] = key
+            return local_target
+
+        client._page.request.get = AsyncMock(side_effect=fake_request_get)
+        client.settings = Settings(
+            storage_uri="s3://bucket/prefix/",
+            output_dir=tmp_path / "out",
+        )
+
+        with patch("gflow_cli.api.client.storage_path", side_effect=fake_storage_path):
+            result = await client.download_image(
+                _make_image(),
+                client.settings.output_dir / "images" / "2026-05-28" / "abc_1.png",
+            )
+
+        assert result == local_target
+        assert captured["storage_uri"] == "s3://bucket/prefix/"
+        assert captured["key"] == "images/2026-05-28/abc_1.png"
 
 
 class TestSpecC2TokenReMint:

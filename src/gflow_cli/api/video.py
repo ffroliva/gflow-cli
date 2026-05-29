@@ -8,11 +8,14 @@ retired — see the Phase A plan).
 
 from __future__ import annotations
 
-from collections.abc import Awaitable, Callable
+from collections.abc import Awaitable, Callable, Mapping
 from dataclasses import dataclass
 from enum import StrEnum
-from pathlib import Path
-from typing import Any, cast
+from types import MappingProxyType
+from typing import TYPE_CHECKING, Any, cast
+
+if TYPE_CHECKING:
+    from pathlib import Path
 
 
 class Mode(StrEnum):
@@ -48,30 +51,38 @@ class VideoModel(StrEnum):
         if value is None:
             return None
         key = value.strip().lower().replace("-", "_").replace(" ", "_")
-        mapping = {
-            "omni_flash": cls.OMNI_FLASH,
-            "omni": cls.OMNI_FLASH,
-            "flash": cls.OMNI_FLASH,
-            "veo_3_1_lite": cls.VEO_3_1_LITE,
-            "veo_lite": cls.VEO_3_1_LITE,
-            "lite": cls.VEO_3_1_LITE,
-            "veo_3_1_fast": cls.VEO_3_1_FAST,
-            "veo_fast": cls.VEO_3_1_FAST,
-            "fast": cls.VEO_3_1_FAST,
-            "veo_3_1_quality": cls.VEO_3_1_QUALITY,
-            "veo_quality": cls.VEO_3_1_QUALITY,
-            "quality": cls.VEO_3_1_QUALITY,
-            "veo_3_1_lite_lower_priority": cls.VEO_3_1_LITE_LOWER_PRIORITY,
-            "veo_lite_lp": cls.VEO_3_1_LITE_LOWER_PRIORITY,
-            "lite_lp": cls.VEO_3_1_LITE_LOWER_PRIORITY,
-            "lower_priority": cls.VEO_3_1_LITE_LOWER_PRIORITY,
-        }
-        if key not in mapping:
-            raise ValueError(
+        if key not in _VIDEO_MODEL_FROM_CLI:
+            msg = (
                 f"Unknown video model {value!r}; choose from "
-                f"{sorted({m.value for m in cls})} or aliases {sorted(mapping)}"
+                f"{sorted({m.value for m in cls})} or aliases {sorted(_VIDEO_MODEL_FROM_CLI)}"
             )
-        return mapping[key]
+            raise ValueError(
+                msg,
+            )
+        return _VIDEO_MODEL_FROM_CLI[key]
+
+
+# Module-level alias map — friendly CLI strings -> VideoModel. Hoisted out of
+# `VideoModel.from_cli` (defined after the class so the members resolve) so
+# `gflow models` can enumerate the aliases without duplicating them.
+_VIDEO_MODEL_FROM_CLI: dict[str, VideoModel] = {
+    "omni_flash": VideoModel.OMNI_FLASH,
+    "omni": VideoModel.OMNI_FLASH,
+    "flash": VideoModel.OMNI_FLASH,
+    "veo_3_1_lite": VideoModel.VEO_3_1_LITE,
+    "veo_lite": VideoModel.VEO_3_1_LITE,
+    "lite": VideoModel.VEO_3_1_LITE,
+    "veo_3_1_fast": VideoModel.VEO_3_1_FAST,
+    "veo_fast": VideoModel.VEO_3_1_FAST,
+    "fast": VideoModel.VEO_3_1_FAST,
+    "veo_3_1_quality": VideoModel.VEO_3_1_QUALITY,
+    "veo_quality": VideoModel.VEO_3_1_QUALITY,
+    "quality": VideoModel.VEO_3_1_QUALITY,
+    "veo_3_1_lite_lower_priority": VideoModel.VEO_3_1_LITE_LOWER_PRIORITY,
+    "veo_lite_lp": VideoModel.VEO_3_1_LITE_LOWER_PRIORITY,
+    "lite_lp": VideoModel.VEO_3_1_LITE_LOWER_PRIORITY,
+    "lower_priority": VideoModel.VEO_3_1_LITE_LOWER_PRIORITY,
+}
 
 
 class Aspect(StrEnum):
@@ -86,18 +97,61 @@ class Aspect(StrEnum):
     def from_cli(cls, value: str) -> Aspect:
         mapping = {"9:16": cls.PORTRAIT, "16:9": cls.LANDSCAPE, "1:1": cls.SQUARE}
         if value not in mapping:
-            raise ValueError(f"Unsupported aspect ratio {value!r}; choose from {sorted(mapping)}")
+            msg = f"Unsupported aspect ratio {value!r}; choose from {sorted(mapping)}"
+            raise ValueError(msg)
         return mapping[value]
 
 
-# Flow's R2V reference cap is MODEL-DEPENDENT (live-verified): omni_flash allows
-# 7 ("Maximum image ingredients reached (7 allowed)"), the veo_3_1_* models allow
-# 3. A veo request with >3 refs uploads all but the generate request silently
-# keeps only 3. MAX_REFERENCE_IMAGES is the absolute ceiling (omni); the
-# model-aware check below enforces the per-model limit when the model is known.
-OMNI_REFERENCE_CAP = 7
-VEO_REFERENCE_CAP = 3
-MAX_REFERENCE_IMAGES = OMNI_REFERENCE_CAP
+# Flow's R2V reference cap is MODEL-DEPENDENT (live-verified + Google's
+# official support page): omni_flash allows 7 ("Maximum image ingredients
+# reached (7 allowed)"); veo_3_1_lite / veo_3_1_fast / veo_3_1_lite_lower_priority
+# allow 3; veo_3_1_quality does NOT support R2V at all (Google Flow help page
+# "Ingredients/References to Video" row = "No"). A request that exceeds the cap
+# uploads all refs but the generate call silently keeps only N — so we reject
+# up front. MAX_REFERENCE_IMAGES is the absolute ceiling (omni) used when the
+# model is unknown; the model-aware check below enforces the exact per-model
+# limit (incl. the special cap=0 for QUALITY) when the model is known.
+MAX_REFERENCE_IMAGES = 7
+_VIDEO_REFERENCE_CAP: Mapping[VideoModel, int] = MappingProxyType(
+    {
+        VideoModel.OMNI_FLASH: 7,
+        VideoModel.VEO_3_1_LITE: 3,
+        VideoModel.VEO_3_1_FAST: 3,
+        VideoModel.VEO_3_1_LITE_LOWER_PRIORITY: 3,
+        VideoModel.VEO_3_1_QUALITY: 0,  # R2V unsupported per Google Flow docs
+    },
+)
+
+
+def reference_cap_for(model: VideoModel) -> int:
+    """Maximum number of R2V reference images *model* accepts.
+
+    Returns 0 for models that do not support R2V at all
+    (``VEO_3_1_QUALITY`` — per Google Flow's official support page).
+    Unknown/future models fall back to :data:`MAX_REFERENCE_IMAGES` rather than
+    raising, so adding a new ``VideoModel`` member without a cap entry degrades
+    to the ceiling instead of a ``KeyError`` at request-build time.
+    """
+    return _VIDEO_REFERENCE_CAP.get(model, MAX_REFERENCE_IMAGES)
+
+
+def model_aliases(model: VideoModel) -> list[str]:
+    """Sorted CLI aliases that resolve to *model* (for `gflow models`)."""
+    return sorted(alias for alias, m in _VIDEO_MODEL_FROM_CLI.items() if m is model)
+
+
+def max_duration_for(model: VideoModel) -> int:
+    """Maximum clip length in seconds: omni_flash=10, veo_3_1_*=8."""
+    return 10 if model is VideoModel.OMNI_FLASH else 8
+
+
+def aspect_choices() -> dict[str, str]:
+    """Map each accepted CLI aspect ratio to its wire value."""
+    return {
+        "9:16": Aspect.PORTRAIT.wire(),
+        "16:9": Aspect.LANDSCAPE.wire(),
+        "1:1": Aspect.SQUARE.wire(),
+    }
 
 
 @dataclass(frozen=True)
@@ -123,46 +177,84 @@ class GenerateVideoRequest:
     reference_images: tuple[Path, ...] = ()  # R2V
 
     def __post_init__(self) -> None:
+        self._validate_prompt()
+        self._validate_duration()
+        self._validate_count()
+        self._validate_mode_symmetry()
+        self._validate_r2v_caps()
+        self._validate_seed()
+
+    def _validate_prompt(self) -> None:
         if not self.prompt.strip():
-            raise ValueError("prompt must not be empty")
+            msg = "prompt must not be empty"
+            raise ValueError(msg)
+
+    def _validate_duration(self) -> None:
         if self.duration is not None and self.duration not in (4, 6, 8, 10):
-            raise ValueError(f"duration must be one of 4/6/8/10 seconds, got {self.duration}")
+            msg = f"duration must be one of 4/6/8/10 seconds, got {self.duration}"
+            raise ValueError(msg)
         if (
             self.duration == 10
             and self.model is not None
             and self.model is not VideoModel.OMNI_FLASH
         ):
-            raise ValueError(
+            msg = (
                 f"10s duration is only available for the omni_flash model; "
                 f"{self.model.value} caps at 8s"
             )
+            raise ValueError(
+                msg,
+            )
+
+    def _validate_count(self) -> None:
         if not (1 <= self.count <= 4):
-            raise ValueError(f"count must be 1-4, got {self.count}")
+            msg = f"count must be 1-4, got {self.count}"
+            raise ValueError(msg)
+
+    def _validate_mode_symmetry(self) -> None:
         if self.mode is Mode.T2V and (self.start_image or self.end_image or self.reference_images):
-            raise ValueError("T2V request must not carry image inputs")
+            msg = "T2V request must not carry image inputs"
+            raise ValueError(msg)
         if self.mode is Mode.I2V:
             if self.start_image is None:
-                raise ValueError("I2V request requires start_image")
+                msg = "I2V request requires start_image"
+                raise ValueError(msg)
             if self.reference_images:
-                raise ValueError("I2V request must not carry reference_images")
+                msg = "I2V request must not carry reference_images"
+                raise ValueError(msg)
         if self.mode is Mode.R2V:
             if not self.reference_images:
-                raise ValueError("R2V request requires at least one reference image")
+                msg = "R2V request requires at least one reference image"
+                raise ValueError(msg)
             if self.start_image or self.end_image:
-                raise ValueError("R2V request must not carry start/end images")
+                msg = "R2V request must not carry start/end images"
+                raise ValueError(msg)
+
+    def _validate_r2v_caps(self) -> None:
         if len(self.reference_images) > MAX_REFERENCE_IMAGES:
-            raise ValueError(f"at most {MAX_REFERENCE_IMAGES} reference images")
-        # Per-model reference cap: omni_flash=7, veo_3_1_*=3 (live-verified). When
-        # the model is None (Flow UI default) we can't know it — leave the ceiling.
+            msg = f"at most {MAX_REFERENCE_IMAGES} reference images"
+            raise ValueError(msg)
+        # Per-model reference cap (live-verified): omni_flash=7, veo lite/fast/lite_lp=3,
+        # veo_quality=0 (R2V unsupported per Google docs). When the model is None
+        # (Flow UI default) we can't know it — leave the absolute ceiling above.
         if self.mode is Mode.R2V and self.model is not None:
-            cap = OMNI_REFERENCE_CAP if self.model is VideoModel.OMNI_FLASH else VEO_REFERENCE_CAP
+            cap = reference_cap_for(self.model)
+            if cap == 0:
+                msg = f"{self.model.value} does not support R2V (reference-to-video)"
+                raise ValueError(msg)
             if len(self.reference_images) > cap:
-                raise ValueError(
-                    f"{self.model.value} allows at most {cap} reference images; "
-                    f"got {len(self.reference_images)} (omni_flash allows {OMNI_REFERENCE_CAP})"
+                msg = (
+                    f"{self.model.value} allows at most {cap} reference image(s); "
+                    f"got {len(self.reference_images)}"
                 )
+                raise ValueError(
+                    msg,
+                )
+
+    def _validate_seed(self) -> None:
         if self.seed is not None and not (0 <= self.seed <= 2**31 - 1):
-            raise ValueError("seed out of range")
+            msg = "seed out of range"
+            raise ValueError(msg)
 
 
 @dataclass(frozen=True)
@@ -251,7 +343,8 @@ def media_name_from_generate_response(response_json: dict[str, Any]) -> str:
         media = response_json["media"]
         return str(media[0]["name"])
     except (KeyError, IndexError, TypeError) as e:
-        raise ValueError(f"generate response carries no media[0].name: {e}") from e
+        msg = f"generate response carries no media[0].name: {e}"
+        raise ValueError(msg) from e
 
 
 def parse_video_status(response_json: dict[str, Any], *, media_id: str) -> VideoStatus:
@@ -264,18 +357,20 @@ def parse_video_status(response_json: dict[str, Any], *, media_id: str) -> Video
     """
     _media = response_json.get("media")
     if not isinstance(_media, list):
-        raise ValueError("status response has no media[] array")
-    media: list[dict[str, Any]] = cast(list[dict[str, Any]], _media)
+        msg = "status response has no media[] array"
+        raise ValueError(msg)
+    media: list[dict[str, Any]] = cast("list[dict[str, Any]]", _media)
     for item in media:
         if item.get("name") != media_id:
             continue
-        meta = cast(dict[str, Any], item.get("mediaMetadata") or {})
-        media_status = cast(dict[str, Any], meta.get("mediaStatus") or {})
+        meta = cast("dict[str, Any]", item.get("mediaMetadata") or {})
+        media_status = cast("dict[str, Any]", meta.get("mediaStatus") or {})
         status = media_status.get("mediaGenerationStatus")
         if not isinstance(status, str):
-            raise ValueError(f"status entry for {media_id} has no mediaGenerationStatus")
-        reasons = tuple(cast(list[str], media_status.get("failureReasons") or []))
-        error_entry = cast(dict[str, Any], media_status.get("error") or {})
+            msg = f"status entry for {media_id} has no mediaGenerationStatus"
+            raise ValueError(msg)
+        reasons = tuple(cast("list[str]", media_status.get("failureReasons") or []))
+        error_entry = cast("dict[str, Any]", media_status.get("error") or {})
         raw_msg = error_entry.get("message")
         error_message: str | None = str(raw_msg) if raw_msg is not None else None
         return VideoStatus(
@@ -284,4 +379,5 @@ def parse_video_status(response_json: dict[str, Any], *, media_id: str) -> Video
             failure_reasons=reasons,
             error_message=error_message,
         )
-    raise ValueError(f"media_id {media_id!r} not found in status response")
+    msg = f"media_id {media_id!r} not found in status response"
+    raise ValueError(msg)

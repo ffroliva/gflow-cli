@@ -2,7 +2,7 @@
 
 > Universal entry point for AI coding agents. Read this first; everything else routes from here.
 
-Supported tools that auto-discover this file: Cursor, Codex, Aider, Gemini CLI, Jules, Devin, Windsurf, Zed, Warp, opencode, RooCode, Amp, Junie, Phoenix, GitHub Copilot, VS Code, Factory, Augment, Semgrep, Kilo Code, UiPath. Claude Code reads [CLAUDE.md](CLAUDE.md), which cross-references this file.
+Supported tools that auto-discover this file: Cursor, Codex, Aider, Jules, Devin, Windsurf, Zed, Warp, opencode, RooCode, Amp, Junie, Phoenix, GitHub Copilot, VS Code, Factory, Augment, Semgrep, Kilo Code, UiPath. Gemini CLI reads [GEMINI.md](GEMINI.md) and Claude Code reads [CLAUDE.md](CLAUDE.md), both of which cross-reference this file.
 
 ## Project at a glance
 
@@ -37,6 +37,7 @@ Run these gates in order before every commit:
 ```powershell
 $env:PYTHONUTF8=1
 uv run python scripts/ci/check_repo_hygiene.py
+uv run python scripts/ci/check_doc_links.py
 uv run ruff check src tests
 uv run ruff format --check src tests
 uv run pyright src
@@ -45,8 +46,9 @@ uv run python -m pytest -q --cov=gflow_cli
 
 Or invoke the wrapper: `/gflow:check`.
 
-- Use `pytest -m "not live and not e2e"` locally; full suite OOMs on small dev machines. Scope to changed dirs; trust CI for the full sweep.
+- Use `pytest -m "not live and not e2e and not smoke"` locally; full suite OOMs on small dev machines. Scope to changed dirs; trust CI for the full sweep.
 - TDD is non-negotiable. Coverage floor: 80% overall.
+- Documentation is a first-class deliverable. Every behavior, workflow, config, or operator-facing change must update the relevant docs or state why no docs changed in the PR/checklist. `scripts/ci/check_doc_links.py` is a merge gate.
 - Live tests (`@pytest.mark.live`) opt in via `GFLOW_LIVE=1`. E2E tests require `GFLOW_CLI_E2E_PROFILE`.
 
 ## Code style

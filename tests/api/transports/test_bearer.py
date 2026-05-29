@@ -197,7 +197,9 @@ async def test_generate_images_replays_fingerprint_headers(tmp_path: Path) -> No
 
     captured_headers: dict[str, str] = {}
 
-    async def fake_post(url: str, *, headers: dict, content: bytes, timeout: float) -> MagicMock:
+    async def fake_post(
+        url: str, *, headers: dict, content: bytes, call_timeout: float
+    ) -> MagicMock:
         captured_headers.update(headers)
         return _make_200_response()
 
@@ -293,7 +295,9 @@ async def test_generate_images_401_then_refresh_succeeds_returns_images() -> Non
     call_count: dict[str, int] = {"n": 0}
     tokens_seen: list[str] = []
 
-    async def fake_post(url: str, *, headers: dict, content: bytes, timeout: float) -> MagicMock:
+    async def fake_post(
+        url: str, *, headers: dict, content: bytes, call_timeout: float
+    ) -> MagicMock:
         call_count["n"] += 1
         tokens_seen.append(headers.get("authorization", ""))
         if call_count["n"] == 1:

@@ -18,12 +18,14 @@ import asyncio
 import re
 import sys
 from pathlib import Path
+from typing import TYPE_CHECKING
 
 import click
 import structlog
 from rich.console import Console
 from rich.table import Table
 
+from gflow_cli import json_output
 from gflow_cli._cli_helpers import (
     _make_provider_dir,
     _resolve_profile,
@@ -31,8 +33,7 @@ from gflow_cli._cli_helpers import (
     safe_path_text,
 )
 from gflow_cli.api.client import FlowApiClient
-from gflow_cli.api.dto import GeneratedImage
-from gflow_cli.api.image import Aspect, GenerateImageRequest, ImageRef, Model
+from gflow_cli.api.image import Aspect, GenerateImageRequest, ImageRef, Model, reference_cap_for
 from gflow_cli.api.transports import transport_choices
 from gflow_cli.config import get_settings
 from gflow_cli.data.recorder import OperationRecorder
@@ -74,6 +75,10 @@ from gflow_cli.image_batch import (
     MIN_COUNT as _MIN_COUNT,
 )
 from gflow_cli.paths import image_output_path, resolve_batch_output_dir
+from gflow_cli.storage import cloud_info_from_path
+
+if TYPE_CHECKING:
+    from gflow_cli.api.dto import GeneratedImage
 
 # Case-insensitive 8-4-4-4-12 hex with hyphens — Flow's media UUIDs.
 # When a `--ref` value matches this regex it's treated as an already-uploaded
@@ -132,10 +137,13 @@ def _classify_ref(ref: str) -> ImageRef | Path:
     try:
         return Path(ref).resolve(strict=True)
     except FileNotFoundError as exc:
-        raise click.UsageError(
+        msg = (
             f"--ref {ref!r} does not exist as a file and is not a valid asset UUID. "
             "Pass either a local image path or a 32-char hex UUID with hyphens "
             "(from a prior `gflow image upload`)."
+        )
+        raise click.UsageError(
+            msg,
         ) from exc
 
 
@@ -225,7 +233,9 @@ async def _run_upload(
     recorder = OperationRecorder.open(settings)
     try:
         async with FlowApiClient(
-            profile_dir=profile_dir, headless=headless, transport=transport
+            profile_dir=profile_dir,
+            headless=headless,
+            transport=transport,
         ) as client:
             console.print(_CREATING_PROJECT_MSG)
             project = await client.create_project(title="gflow-cli upload")
@@ -236,7 +246,7 @@ async def _run_upload(
             console.print(f"[bold green]Asset UUID:[/bold green] [bold]{asset.name}[/bold]")
             console.print(
                 f"[dim]Dimensions:[/dim] {asset.width} x {asset.height}  "
-                f"[dim]Project:[/dim] {project.project_id}"
+                f"[dim]Project:[/dim] {project.project_id}",
             )
             try:
                 recorder.record_upload_image(
@@ -345,6 +355,12 @@ async def _run_upload(
         "GFLOW_CLI_EXPERIMENTAL_TRANSPORTS=1 to enable evaluate_fetch/bearer/sapisidhash."
     ),
 )
+@click.option(
+    "--json",
+    "as_json",
+    is_flag=True,
+    help="Emit a machine-readable JSON result instead of a Rich table.",
+)
 def t2i(
     prompts: tuple[str, ...],
     prompts_file: Path | None,
@@ -356,15 +372,23 @@ def t2i(
     out: Path | None,
     profile: str | None,
     transport: str | None,
+    as_json: bool,
 ) -> None:
     """Generate image(s) from one or more text prompts."""
     is_multi_prompt = len(prompts) > 1 or prompts_file is not None or read_stdin
     _validate_t2i_input(prompts, prompts_file, read_stdin)
 
+    if is_multi_prompt and as_json:
+        # --json is single-prompt only — the batch summary shape is rich-table
+        # specific and a worker shells out one prompt at a time anyway.
+        msg = "--json is single-prompt only; remove the extra prompts."
+        raise click.UsageError(msg)
+
     if not is_multi_prompt:
         if not prompts:
+            msg = "Provide a prompt, multiple prompts, --prompts-file, or --stdin."
             raise click.UsageError(
-                "Provide a prompt, multiple prompts, --prompts-file, or --stdin."
+                msg,
             )
         prompt = prompts[0]
         profile_name = _resolve_profile(profile)
@@ -384,13 +408,20 @@ def t2i(
                 out=out,
                 output_root=settings.output_dir,
                 transport=transport,
+                as_json=as_json,
             ),
             cli_command="image t2i",
+            as_json=as_json,
         )
         return
 
     batch_prompts = _build_t2i_batch_prompts(
-        prompts, prompts_file, read_stdin, aspect, model, count
+        prompts,
+        prompts_file,
+        read_stdin,
+        aspect,
+        model,
+        count,
     )
     _execute_t2i_batch(batch_prompts, count, continue_on_error, profile, out, transport)
 
@@ -414,9 +445,12 @@ def _build_t2i_batch_prompts(
         if read_stdin:
             raw_stdin = sys.stdin.read(MAX_PROMPT_FILE_BYTES + 1)
             if len(raw_stdin) > MAX_PROMPT_FILE_BYTES:
-                raise click.UsageError(
+                msg = (
                     f"Standard input exceeds the maximum allowed size of "
                     f"{MAX_PROMPT_FILE_BYTES // 1024} KiB."
+                )
+                raise click.UsageError(
+                    msg,
                 )
             parsed = parse_prompt_lines(raw_stdin, source_label="--stdin")
             return prompt_items_from_parsed(parsed, aspect_ratio=aspect, model=model, count=count)
@@ -444,11 +478,13 @@ def _execute_t2i_batch(
     provider_dir = _make_provider_dir(profile_name)
     settings = get_settings()
     output_dir = resolve_batch_output_dir(
-        cli_override=out, output_root=settings.output_dir, kind="images"
+        cli_override=out,
+        output_root=settings.output_dir,
+        kind="images",
     )
     console.print(
         f"\n[bold]gflow image t2i[/bold] · profile=[bold]{profile_name}[/bold] "
-        f"· {len(batch_prompts)} prompt(s) · up to {len(batch_prompts) * count} image(s)"
+        f"· {len(batch_prompts)} prompt(s) · up to {len(batch_prompts) * count} image(s)",
     )
     console.print(f"  output_dir: [dim]{safe_path_text(output_dir)}[/dim]")
     if not continue_on_error:
@@ -466,7 +502,7 @@ def _execute_t2i_batch(
                 project_title=_T2I_PROJECT_TITLE,
                 _profile_name=profile_name,
                 _recorder=recorder,
-            )
+            ),
         )
     finally:
         recorder.close()
@@ -476,7 +512,9 @@ def _execute_t2i_batch(
 
 
 def _count_t2i_sources(
-    prompts: tuple[str, ...], prompts_file: Path | None, read_stdin: bool
+    prompts: tuple[str, ...],
+    prompts_file: Path | None,
+    read_stdin: bool,
 ) -> int:
     return int(bool(prompts)) + int(prompts_file is not None) + int(read_stdin)
 
@@ -493,11 +531,15 @@ def _validate_t2i_input(
     """
     source_count = _count_t2i_sources(prompts, prompts_file, read_stdin)
     if source_count == 0:
-        raise click.UsageError("Provide a prompt, multiple prompts, --prompts-file, or --stdin.")
+        msg = "Provide a prompt, multiple prompts, --prompts-file, or --stdin."
+        raise click.UsageError(msg)
     if source_count > 1:
-        raise click.UsageError(
+        msg = (
             "Prompt sources are mutually exclusive: use positional prompts, "
             "--prompts-file, or --stdin."
+        )
+        raise click.UsageError(
+            msg,
         )
 
 
@@ -515,27 +557,34 @@ async def _run_t2i(
     out: Path | None,
     output_root: Path,
     transport: str | None = None,
+    as_json: bool = False,
 ) -> None:
     settings = get_settings()
     recorder = OperationRecorder.open(settings)
     try:
         async with FlowApiClient(
-            profile_dir=profile_dir, headless=headless, transport=transport
+            profile_dir=profile_dir,
+            headless=headless,
+            transport=transport,
         ) as client:
-            console.print(_CREATING_PROJECT_MSG)
+            if not as_json:
+                console.print(_CREATING_PROJECT_MSG)
             # Title is a `gflow-cli ...` prefix per project convention (post-rename a02684f).
             # cli_video.py's _run_t2v / _run_i2v don't currently set a title — tracked separately.
             project = await client.create_project(title=_T2I_PROJECT_TITLE)
-            console.print(f"  Project: [dim]{project.project_id}[/dim]")
-            console.print(
-                f"  Generating {count} image(s) ({req.model.value}, {req.aspect.value})..."
-            )
+            if not as_json:
+                console.print(f"  Project: [dim]{project.project_id}[/dim]")
+                console.print(
+                    f"  Generating {count} image(s) ({req.model.value}, {req.aspect.value})...",
+                )
             if count == 1:
                 img = await client.generate_image(project_id=project.project_id, req=req)
                 images: list[GeneratedImage] = [img]
             else:
                 images = await client.generate_images_batch(
-                    project_id=project.project_id, req=req, count=count
+                    project_id=project.project_id,
+                    req=req,
+                    count=count,
                 )
 
             saved_paths: list[Path] = []
@@ -548,7 +597,18 @@ async def _run_t2i(
                 saved = await client.download_image(img, target)
                 saved_paths.append(saved)
 
-            _print_t2i_summary(images, saved_paths)
+            if as_json:
+                json_output.emit(
+                    json_output.image_result(
+                        command="image t2i",
+                        project_id=project.project_id,
+                        model=req.model.value,
+                        images=images,
+                        saved_paths=saved_paths,
+                    ),
+                )
+            else:
+                _print_t2i_summary(images, saved_paths)
 
             try:
                 recorder.record_generated_images(
@@ -558,6 +618,7 @@ async def _run_t2i(
                     request=req,
                     images=images,
                     saved_paths=saved_paths,
+                    cloud_storage_infos=[cloud_info_from_path(path) for path in saved_paths],
                     input_media_ids=[],
                     operation_kind="t2i",
                 )
@@ -692,13 +753,15 @@ def batch(
     provider_dir = _make_provider_dir(profile_name)
     settings = get_settings()
     output_dir = resolve_batch_output_dir(
-        cli_override=out, output_root=settings.output_dir, kind="images"
+        cli_override=out,
+        output_root=settings.output_dir,
+        kind="images",
     )
 
     total_images = sum(p.count for p in prompts)
     console.print(
         f"\n[bold]{_BATCH_TITLE}[/bold] · profile=[bold]{profile_name}[/bold] "
-        f"· {len(prompts)} prompt(s) · up to {total_images} image(s)"
+        f"· {len(prompts)} prompt(s) · up to {total_images} image(s)",
     )
     console.print(f"  output_dir: [dim]{safe_path_text(output_dir)}[/dim]")
     if not continue_on_error:
@@ -716,7 +779,7 @@ def batch(
                 continue_on_error=continue_on_error,
                 profile_name=profile_name,
                 recorder=recorder,
-            )
+            ),
         )
     finally:
         recorder.close()
@@ -803,6 +866,12 @@ def batch(
         "GFLOW_CLI_EXPERIMENTAL_TRANSPORTS=1 to enable evaluate_fetch/bearer/sapisidhash."
     ),
 )
+@click.option(
+    "--json",
+    "as_json",
+    is_flag=True,
+    help="Emit a machine-readable JSON result instead of a Rich table.",
+)
 def i2i(
     prompt: str,
     refs: tuple[str, ...],
@@ -812,6 +881,7 @@ def i2i(
     out: Path | None,
     profile: str | None,
     transport: str | None,
+    as_json: bool,
 ) -> None:
     """Generate image(s) from PROMPT + reference image(s) (image-to-image)."""
     # Classify each --ref upfront: UUIDs become ImageRef, path-likes become
@@ -820,6 +890,17 @@ def i2i(
     # Click's `multiple=True` with `required=True` already rejects the
     # "no --ref" case with exit 2 before we get here.
     classified_refs: list[ImageRef | Path] = [_classify_ref(ref) for ref in refs]
+
+    # Reject over-cap ref counts at the CLI boundary with a clear message (exit
+    # 2) rather than letting the domain ValueError surface as a generic error.
+    # GenerateImageRequest.__post_init__ enforces the same cap as an invariant.
+    model_enum = Model.from_cli(model)
+    cap = reference_cap_for(model_enum)
+    if len(classified_refs) > cap:
+        msg = f"{model} allows at most {cap} reference image(s); got {len(classified_refs)}."
+        raise click.UsageError(
+            msg,
+        )
 
     profile_name = _resolve_profile(profile)
     provider_dir = _make_provider_dir(profile_name)
@@ -832,13 +913,15 @@ def i2i(
             prompt=prompt,
             classified_refs=classified_refs,
             aspect=Aspect.from_cli(aspect),
-            model=Model.from_cli(model),
+            model=model_enum,
             count=count,
             out=out,
             output_root=settings.output_dir,
             transport=transport,
+            as_json=as_json,
         ),
         cli_command="image i2i",
+        as_json=as_json,
     )
 
 
@@ -855,18 +938,23 @@ async def _run_i2i(
     out: Path | None,
     output_root: Path,
     transport: str | None = None,
+    as_json: bool = False,
 ) -> None:
     settings = get_settings()
     recorder = OperationRecorder.open(settings)
     try:
         async with FlowApiClient(
-            profile_dir=profile_dir, headless=headless, transport=transport
+            profile_dir=profile_dir,
+            headless=headless,
+            transport=transport,
         ) as client:
-            console.print(_CREATING_PROJECT_MSG)
+            if not as_json:
+                console.print(_CREATING_PROJECT_MSG)
             # Title is a `gflow-cli ...` prefix per project convention (post-rename a02684f).
             # cli_video.py's _run_t2v / _run_i2v don't currently set a title — tracked separately.
             project = await client.create_project(title="gflow-cli i2i")
-            console.print(f"  Project: [dim]{project.project_id}[/dim]")
+            if not as_json:
+                console.print(f"  Project: [dim]{project.project_id}[/dim]")
 
             # Local-file refs are attached through the editor's media dialog by the
             # ui_automation transport (the REST uploadImage path 401s — see #15/#39).
@@ -883,16 +971,19 @@ async def _run_i2i(
             )
 
             n_refs = len(uuid_refs) + len(local_ref_paths)
-            console.print(
-                f"  Generating {count} image(s) with {n_refs} ref(s) "
-                f"({req.model.value}, {req.aspect.value})..."
-            )
+            if not as_json:
+                console.print(
+                    f"  Generating {count} image(s) with {n_refs} ref(s) "
+                    f"({req.model.value}, {req.aspect.value})...",
+                )
             if count == 1:
                 img = await client.generate_image(project_id=project.project_id, req=req)
                 images: list[GeneratedImage] = [img]
             else:
                 images = await client.generate_images_batch(
-                    project_id=project.project_id, req=req, count=count
+                    project_id=project.project_id,
+                    req=req,
+                    count=count,
                 )
 
             saved_paths: list[Path] = []
@@ -905,7 +996,19 @@ async def _run_i2i(
                 saved = await client.download_image(img, target)
                 saved_paths.append(saved)
 
-            _print_i2i_summary(images, saved_paths)
+            if as_json:
+                json_output.emit(
+                    json_output.image_result(
+                        command="image i2i",
+                        project_id=project.project_id,
+                        model=req.model.value,
+                        images=images,
+                        saved_paths=saved_paths,
+                        ref_count=n_refs,
+                    ),
+                )
+            else:
+                _print_i2i_summary(images, saved_paths)
 
             try:
                 recorder.record_generated_images(
@@ -915,6 +1018,7 @@ async def _run_i2i(
                     request=req,
                     images=images,
                     saved_paths=saved_paths,
+                    cloud_storage_infos=[cloud_info_from_path(path) for path in saved_paths],
                     # Only already-uploaded UUID refs have a flow_media_id we
                     # can persist as INPUT. Local files attached via the media
                     # dialog don't surface a media_id at this layer; the recorder

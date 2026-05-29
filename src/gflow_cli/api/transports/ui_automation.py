@@ -19,8 +19,6 @@ import json
 import random
 import re
 import time
-from collections.abc import Callable
-from pathlib import Path
 from typing import TYPE_CHECKING, Any, cast
 from urllib.parse import urlparse
 
@@ -43,12 +41,15 @@ from gflow_cli.errors import (
 )
 
 if TYPE_CHECKING:
+    from collections.abc import Callable
+    from pathlib import Path
+
     from playwright.async_api import Locator, Page, ViewportSize
 
 # Lazy-imported at call time so ``import gflow_cli`` doesn't pay the
 # Playwright import cost when another transport is selected.
 try:  # pragma: no cover — re-bound at module import in production
-    from playwright.async_api import async_playwright as async_playwright
+    from playwright.async_api import async_playwright
 except ImportError:  # pragma: no cover — Playwright is an install dependency
     async_playwright = None  # type: ignore[assignment]
 
@@ -150,7 +151,7 @@ async def _capture_debug_screenshot(
                 "the authenticated Google session"
             ),
         )
-    except Exception as e:  # noqa: BLE001 — screenshot is best-effort
+    except Exception as e:
         log.debug("ui_automation.screenshot_capture_failed", error=str(e))
     return shot_path
 
@@ -519,6 +520,10 @@ class UiAutomationTransport(VideoGenerationMixin):
         # from its `out_dir` constructor arg (#18). When None, the internal
         # _capture_debug_screenshot helper is a no-op.
         self._out_dir: Path | None = None
+        # Optional cloud-storage configuration set by FlowApiClient. Video
+        # downloads read these slots inside VideoGenerationMixin._download_video.
+        self._storage_uri: str | None = None
+        self._output_dir: Path | None = None
         # Serialize concurrent generate_images calls — a single Playwright Page
         # cannot be safely shared across parallel asyncio tasks (each call
         # navigates, opens panels, and types into the same DOM). The lock
@@ -556,9 +561,12 @@ class UiAutomationTransport(VideoGenerationMixin):
             return
 
         if async_playwright is None:  # pragma: no cover — install-time guard
-            raise RuntimeError(
+            msg = (
                 "Playwright is required for UiAutomationTransport. "
                 "Install via `uv sync` (it is a runtime dependency)."
+            )
+            raise RuntimeError(
+                msg,
             )
 
         pw_cm = async_playwright()
@@ -566,7 +574,7 @@ class UiAutomationTransport(VideoGenerationMixin):
         try:
             import os
 
-            from gflow_cli.browser_manager import channel_for_profile  # noqa: PLC0415
+            from gflow_cli.browser_manager import channel_for_profile
 
             locale_env = os.getenv("GFLOW_CLI_LOCALE", "en-US")
             ctx = await pw.chromium.launch_persistent_context(
@@ -597,14 +605,14 @@ class UiAutomationTransport(VideoGenerationMixin):
             # the session as a bot — navigator.webdriver=true causes low-score
             # tokens and HTTP 403 on batchGenerateImages.
             await ctx.add_init_script(
-                "Object.defineProperty(navigator,'webdriver',{get:()=>undefined})"
+                "Object.defineProperty(navigator,'webdriver',{get:()=>undefined})",
             )
             self._pw_cm = pw_cm
             self._ctx = ctx
             self._page = ctx.pages[0] if ctx.pages else await ctx.new_page()
             try:
                 await self._page.goto(FLOW_URL, wait_until="networkidle", timeout=45_000)
-            except Exception as e:  # noqa: BLE001 — initial nav is best-effort
+            except Exception as e:
                 log.warning("ui_automation.flow_initial_goto_failed", error=str(e))
             self._owns_playwright = True
             self._setup_done = True
@@ -645,9 +653,9 @@ class UiAutomationTransport(VideoGenerationMixin):
             return True
         try:
             signin_button = await page.locator(
-                "button:has-text('Sign in'), a:has-text('Sign in')"
+                "button:has-text('Sign in'), a:has-text('Sign in')",
             ).count()
-        except Exception:  # noqa: BLE001 — defensive: transient DOM probe
+        except Exception:
             signin_button = 0
         return signin_button == 0
 
@@ -699,7 +707,7 @@ class UiAutomationTransport(VideoGenerationMixin):
                     iframe_found = True
                     log.info("ui_automation.overlay_detected", selector=sel)
                     break
-            except Exception:  # noqa: BLE001 — probe failure means no match
+            except Exception:
                 continue
 
         if not iframe_found:
@@ -718,7 +726,7 @@ class UiAutomationTransport(VideoGenerationMixin):
                         method="close_button",
                     )
                     return True
-            except Exception:  # noqa: BLE001 — selector miss or stale element
+            except Exception:
                 continue
 
         # Step 3 — Escape fallback (regression test case: iframe present, no close button).
@@ -731,9 +739,11 @@ class UiAutomationTransport(VideoGenerationMixin):
                 method="escape",
             )
             return True
-        except Exception as exc:  # noqa: BLE001 — keyboard unavailable in some sandboxes
+        except Exception as exc:
             shot_path = await _capture_debug_screenshot(
-                page, out_dir, "debug_overlay_dismiss_failed.png"
+                page,
+                out_dir,
+                "debug_overlay_dismiss_failed.png",
             )
             log.warning(
                 "ui_automation.overlay_dismiss_failed",
@@ -787,22 +797,26 @@ class UiAutomationTransport(VideoGenerationMixin):
                 await loc.click()
                 try:
                     await page.wait_for_url(
-                        lambda url: _PROJECT_URL_FRAGMENT in url, timeout=15_000
+                        lambda url: _PROJECT_URL_FRAGMENT in url,
+                        timeout=15_000,
                     )
                     log.info("ui_automation.entered_editor", url=page.url)
                     return
-                except Exception:  # noqa: BLE001 — try next selector
+                except Exception:
                     log.warning(
                         "ui_automation.new_project_click_did_not_navigate",
                         selector=selector,
                     )
-            except Exception:  # noqa: BLE001 — selector didn't match; try next
+            except Exception:
                 continue
 
         shot_path = await _capture_debug_screenshot(page, out_dir, "debug_new_project.png")
-        raise RuntimeError(
+        msg = (
             f"Could not find 'New project' CTA on Flow gallery. URL: {page.url}. "
             f"Screenshot: {shot_path}"
+        )
+        raise RuntimeError(
+            msg,
         )
 
     @staticmethod
@@ -819,21 +833,27 @@ class UiAutomationTransport(VideoGenerationMixin):
         :meth:`_configure_generation_settings` can open it fresh.
         """
         trigger = await VideoGenerationMixin._probe_selector_cascade(
-            page, "mode_switch_trigger", MODE_SWITCH_TRIGGER_SELECTORS
+            page,
+            "mode_switch_trigger",
+            MODE_SWITCH_TRIGGER_SELECTORS,
         )
         if trigger is None:
             shot = await _capture_debug_screenshot(page, out_dir, "debug_no_mode_trigger.png")
+            msg = f"mode-switch dropdown trigger not found on the Flow editor. Screenshot: {shot}"
             raise RuntimeError(
-                f"mode-switch dropdown trigger not found on the Flow editor. Screenshot: {shot}"
+                msg,
             )
         await trigger.click()
         await page.wait_for_timeout(800)
         image_tab = await VideoGenerationMixin._probe_selector_cascade(
-            page, "image_mode_tab", IMAGE_TAB_IN_MENU_SELECTORS
+            page,
+            "image_mode_tab",
+            IMAGE_TAB_IN_MENU_SELECTORS,
         )
         if image_tab is None:
             shot = await _capture_debug_screenshot(page, out_dir, "debug_no_image_tab.png")
-            raise RuntimeError(f"Image tab not found in the mode dropdown. Screenshot: {shot}")
+            msg = f"Image tab not found in the mode dropdown. Screenshot: {shot}"
+            raise RuntimeError(msg)
         await image_tab.click()
         await page.wait_for_timeout(1200)
         await page.keyboard.press("Escape")
@@ -870,13 +890,14 @@ class UiAutomationTransport(VideoGenerationMixin):
                 input_box = loc
                 log.info("ui_automation.prompt_input_found", selector=selector)
                 break
-            except Exception:  # noqa: BLE001 — try next selector
+            except Exception:
                 continue
 
         if input_box is None:
             shot_path = await _capture_debug_screenshot(page, out_dir, "debug_prompt_not_found.png")
+            msg = f"Prompt input not found in Flow UI. URL: {page.url}. Screenshot: {shot_path}"
             raise RuntimeError(
-                f"Prompt input not found in Flow UI. URL: {page.url}. Screenshot: {shot_path}"
+                msg,
             )
 
         await input_box.click()
@@ -894,7 +915,7 @@ class UiAutomationTransport(VideoGenerationMixin):
                 await btn.click()
                 log.info("ui_automation.prompt_submitted", via=sel)
                 return
-            except Exception:  # noqa: BLE001 — try next submit selector
+            except Exception:
                 continue
 
         log.info("ui_automation.prompt_submitted", via="enter_key_fallback")
@@ -919,7 +940,7 @@ class UiAutomationTransport(VideoGenerationMixin):
                 await page.wait_for_timeout(600)
                 log.info("ui_automation.gen_settings_opened", via=sel)
                 return True
-            except Exception:  # noqa: BLE001
+            except Exception:
                 continue
         return False
 
@@ -938,14 +959,14 @@ class UiAutomationTransport(VideoGenerationMixin):
         """
         try:
             selected = page.locator('[role="tab"][aria-selected="true"]').filter(
-                has_text=_COUNT_TAB_TEXT_RE
+                has_text=_COUNT_TAB_TEXT_RE,
             )
             if await selected.count() == 0:
                 return None
             text = (await selected.first.text_content(timeout=500) or "").strip()
             m = re.search(r"\d", text)
             return int(m.group()) if m else None
-        except Exception:  # noqa: BLE001 — probe failure is non-fatal
+        except Exception:
             return None
 
     @staticmethod
@@ -958,7 +979,7 @@ class UiAutomationTransport(VideoGenerationMixin):
         """
         try:
             return await _count_tabs_locator(page).first.is_visible()
-        except Exception:  # noqa: BLE001
+        except Exception:
             return False
 
     @staticmethod
@@ -982,7 +1003,7 @@ class UiAutomationTransport(VideoGenerationMixin):
             await option.click()
             await page.wait_for_timeout(500)
             log.info("ui_automation.image_model_selected", model=model.value)
-        except Exception as e:  # noqa: BLE001 — non-fatal; Flow default applies
+        except Exception as e:
             log.warning(
                 "ui_automation.image_model_not_set",
                 model=model.value,
@@ -1017,10 +1038,12 @@ class UiAutomationTransport(VideoGenerationMixin):
             return
 
         # Phase 3 — before screenshot (diagnostic, best-effort).
-        if out_dir is not None and prompt_idx is not None:
-            diag_dir = out_dir / _DIAGNOSTICS_SUBDIR
-            diag_dir.mkdir(parents=True, exist_ok=True)
-            await _capture_debug_screenshot(page, diag_dir, f"count_before_prompt_{prompt_idx}.png")
+        await UiAutomationTransport._capture_diag_screenshot(
+            page,
+            out_dir,
+            prompt_idx,
+            "before",
+        )
 
         if not await UiAutomationTransport._open_gen_settings_panel(page):
             log.warning("ui_automation.gen_settings_panel_not_found", skipping=True)
@@ -1030,51 +1053,85 @@ class UiAutomationTransport(VideoGenerationMixin):
             await UiAutomationTransport._select_image_model(page, model)
 
         if aspect_cli:
-            candidates = _ASPECT_TAB_CANDIDATES.get(aspect_cli, (aspect_cli,))
-            clicked = False
-            last_err: str | None = None
-            for tab_text in candidates:
-                # `:text-is(...)` is exact-match — preferred for short labels
-                # like "1:1" because `:has-text(...)` substring-matches and
-                # would clash with longer tabs that include the label.
-                try:
-                    tab = page.locator(f'[role="tab"]:text-is("{tab_text}")').first
-                    await tab.wait_for(state="visible", timeout=2_000)
-                    await tab.click()
-                    clicked = True
-                    log.info(
-                        "ui_automation.aspect_ratio_set",
-                        value=aspect_cli,
-                        matched_label=tab_text,
-                    )
-                    break
-                except Exception as e:  # noqa: BLE001
-                    last_err = str(e)
-                    continue
-            if not clicked:
-                log.warning(
-                    "ui_automation.aspect_ratio_set_failed",
-                    value=aspect_cli,
-                    candidates_tried=list(candidates),
-                    error=last_err,
-                )
+            await UiAutomationTransport._apply_aspect_ratio(page, aspect_cli)
 
         if count is not None:
-            if count not in _SUPPORTED_COUNTS:
-                log.warning("ui_automation.unsupported_count", value=count)
-            else:
-                await UiAutomationTransport._set_count(
-                    page, count, out_dir=out_dir, prompt_idx=prompt_idx
-                )
+            await UiAutomationTransport._apply_count(page, count, out_dir, prompt_idx)
 
         # Phase 3 — after screenshot (diagnostic, best-effort).
-        if out_dir is not None and prompt_idx is not None:
-            diag_dir = out_dir / _DIAGNOSTICS_SUBDIR
-            diag_dir.mkdir(parents=True, exist_ok=True)
-            await _capture_debug_screenshot(page, diag_dir, f"count_after_prompt_{prompt_idx}.png")
+        await UiAutomationTransport._capture_diag_screenshot(
+            page,
+            out_dir,
+            prompt_idx,
+            "after",
+        )
 
         await page.keyboard.press("Escape")
         await page.wait_for_timeout(400)
+
+    @staticmethod
+    async def _capture_diag_screenshot(
+        page: Page,
+        out_dir: Path | None,
+        prompt_idx: int | None,
+        suffix: str,
+    ) -> None:
+        if out_dir is not None and prompt_idx is not None:
+            diag_dir = out_dir / _DIAGNOSTICS_SUBDIR
+            diag_dir.mkdir(parents=True, exist_ok=True)
+            await _capture_debug_screenshot(
+                page,
+                diag_dir,
+                f"count_{suffix}_prompt_{prompt_idx}.png",
+            )
+
+    @staticmethod
+    async def _apply_aspect_ratio(page: Page, aspect_cli: str) -> None:
+        candidates = _ASPECT_TAB_CANDIDATES.get(aspect_cli, (aspect_cli,))
+        clicked = False
+        last_err: str | None = None
+        for tab_text in candidates:
+            # `:text-is(...)` is exact-match — preferred for short labels
+            # like "1:1" because `:has-text(...)` substring-matches and
+            # would clash with longer tabs that include the label.
+            try:
+                tab = page.locator(f'[role="tab"]:text-is("{tab_text}")').first
+                await tab.wait_for(state="visible", timeout=2_000)
+                await tab.click()
+                clicked = True
+                log.info(
+                    "ui_automation.aspect_ratio_set",
+                    value=aspect_cli,
+                    matched_label=tab_text,
+                )
+                break
+            except Exception as e:
+                last_err = str(e)
+                continue
+        if not clicked:
+            log.warning(
+                "ui_automation.aspect_ratio_set_failed",
+                value=aspect_cli,
+                candidates_tried=list(candidates),
+                error=last_err,
+            )
+
+    @staticmethod
+    async def _apply_count(
+        page: Page,
+        count: int,
+        out_dir: Path | None,
+        prompt_idx: int | None,
+    ) -> None:
+        if count not in _SUPPORTED_COUNTS:
+            log.warning("ui_automation.unsupported_count", value=count)
+        else:
+            await UiAutomationTransport._set_count(
+                page,
+                count,
+                out_dir=out_dir,
+                prompt_idx=prompt_idx,
+            )
 
     @staticmethod
     async def _dump_count_panel_dom(
@@ -1158,7 +1215,7 @@ class UiAutomationTransport(VideoGenerationMixin):
                 digit_buttons_count=len(snapshot.get("buttons_with_digits", [])),
                 ligatures_count=len(snapshot.get("google_symbols_ligatures", [])),
             )
-        except Exception as exc:  # noqa: BLE001 — diagnostic; never mask real failures
+        except Exception as exc:
             log.warning(
                 "ui_automation.count_panel_dom_dump_failed",
                 error=str(exc),
@@ -1268,7 +1325,7 @@ class UiAutomationTransport(VideoGenerationMixin):
                 await target_tab.click()
                 await page.wait_for_timeout(300)
                 clicked = True
-            except Exception as e:  # noqa: BLE001
+            except Exception as e:
                 click_error = str(e)
 
             # Read back to verify (digit-extraction, locale-agnostic).
@@ -1307,9 +1364,12 @@ class UiAutomationTransport(VideoGenerationMixin):
             success=False,
             attempts=_max_attempts,
         )
-        raise RuntimeError(
+        msg = (
             f"_set_count({count}) failed to update Flow UI; "
             f"still showing {displayed!r} after {_max_attempts} attempts"
+        )
+        raise RuntimeError(
+            msg,
         )
 
     # ------------------------------------------------------------------
@@ -1318,7 +1378,9 @@ class UiAutomationTransport(VideoGenerationMixin):
 
     @staticmethod
     def _attach_batch_response_listener(
-        page: Page, *, project_id: str | None = None
+        page: Page,
+        *,
+        project_id: str | None = None,
     ) -> tuple[list[dict[str, Any]], Callable[[], None]]:
         """Synchronously register a ``page.on('response', ...)`` listener
         that records ``batchGenerateImages`` responses into a shared list.
@@ -1360,7 +1422,7 @@ class UiAutomationTransport(VideoGenerationMixin):
                 return
             try:
                 body = await response.json()
-            except Exception as e:  # noqa: BLE001 — parse failures are non-fatal
+            except Exception as e:
                 log.warning(
                     "ui_automation.batch_response_parse_failed",
                     error=str(e),
@@ -1373,7 +1435,7 @@ class UiAutomationTransport(VideoGenerationMixin):
                     "url": response.url,
                     "body": body,
                     "ts": time.monotonic(),
-                }
+                },
             )
             log.info(
                 "ui_automation.batch_response_captured",
@@ -1392,7 +1454,7 @@ class UiAutomationTransport(VideoGenerationMixin):
             _detached = True
             try:
                 page.remove_listener("response", on_response)
-            except Exception:  # noqa: BLE001 — idempotent on already-removed
+            except Exception:
                 pass
 
         return captured, detach
@@ -1446,7 +1508,8 @@ class UiAutomationTransport(VideoGenerationMixin):
 
         fresh = _fresh()
         if not fresh:
-            raise TimeoutError(f"No batchGenerateImages response within {timeout_s:.1f}s.")
+            msg = f"No batchGenerateImages response within {timeout_s:.1f}s."
+            raise TimeoutError(msg)
         if len(fresh) < expected_count:
             log.warning(
                 "ui_automation.fewer_responses_than_expected",
@@ -1479,7 +1542,9 @@ class UiAutomationTransport(VideoGenerationMixin):
         """
         captured, _detach = UiAutomationTransport._attach_batch_response_listener(page)
         return await UiAutomationTransport._await_captured(
-            captured, timeout_s, poll_interval_s=poll_interval_s
+            captured,
+            timeout_s,
+            poll_interval_s=poll_interval_s,
         )
 
     # ------------------------------------------------------------------
@@ -1540,8 +1605,8 @@ class UiAutomationTransport(VideoGenerationMixin):
                         bytes=len(resp.content),
                         format=ext,
                     )
-                except Exception as e:  # noqa: BLE001 — log and skip
-                    log.error(
+                except Exception as e:
+                    log.exception(
                         "ui_automation.download_failed",
                         url=url,
                         error=str(e),
@@ -1574,8 +1639,9 @@ class UiAutomationTransport(VideoGenerationMixin):
         # project_id is accepted for Protocol parity; the UI transport creates
         # its own Flow project on each call rather than reusing a supplied one.
         if not self._setup_done or self._page is None:
+            msg = "UiAutomationTransport.setup() must be called before generate_images()"
             raise RuntimeError(
-                "UiAutomationTransport.setup() must be called before generate_images()"
+                msg,
             )
         async with self._generate_lock:
             return await self._generate_images_locked(request)
@@ -1608,7 +1674,10 @@ class UiAutomationTransport(VideoGenerationMixin):
         # Configure generation settings (aspect ratio + count) BEFORE attaching
         # the response listener so settings clicks don't interfere with capture.
         await self._configure_generation_settings(
-            page, aspect_cli, request.count, model=request.model
+            page,
+            aspect_cli,
+            request.count,
+            model=request.model,
         )
 
         # I2I: bind local reference images through the editor's media dialog —
@@ -1631,7 +1700,9 @@ class UiAutomationTransport(VideoGenerationMixin):
         submit_time = time.monotonic()
         await self._send_prompt(page, request.prompt, out_dir)
         responses = await self._await_captured(
-            captured, expected_count=request.count, submit_time=submit_time
+            captured,
+            expected_count=request.count,
+            submit_time=submit_time,
         )
 
         # Collect images from ALL captured responses (Flow makes one API call
@@ -1682,8 +1753,9 @@ class UiAutomationTransport(VideoGenerationMixin):
         ``status="fail"`` and a non-None ``error`` field.
         """
         if not self._setup_done or self._page is None:
+            msg = "UiAutomationTransport.setup() must be called before generate_images_batch()"
             raise RuntimeError(
-                "UiAutomationTransport.setup() must be called before generate_images_batch()"
+                msg,
             )
         async with self._generate_lock:
             return await self._generate_images_batch_locked(
@@ -1734,9 +1806,14 @@ class UiAutomationTransport(VideoGenerationMixin):
         # Step 1 — configure settings (aspect + count) for this prompt.
         try:
             await self._configure_generation_settings(
-                page, aspect_cli, req.count, model=req.model, out_dir=out_dir, prompt_idx=idx
+                page,
+                aspect_cli,
+                req.count,
+                model=req.model,
+                out_dir=out_dir,
+                prompt_idx=idx,
             )
-        except Exception as exc:  # noqa: BLE001 — broad on purpose; wrap into GFlowError
+        except Exception as exc:
             return _fail(exc)
 
         # Step 2 — attach a fresh listener JUST for this prompt.
@@ -1753,16 +1830,18 @@ class UiAutomationTransport(VideoGenerationMixin):
         # Step 3 — submit the prompt.
         try:
             await self._send_prompt(page, req.prompt, out_dir)
-        except Exception as exc:  # noqa: BLE001
+        except Exception as exc:
             detach()
             return _fail(exc)
 
         # Step 4 — await THIS prompt's responses, then detach immediately.
         try:
             responses = await self._await_captured(
-                captured, expected_count=req.count, submit_time=submit_time
+                captured,
+                expected_count=req.count,
+                submit_time=submit_time,
             )
-        except Exception as exc:  # noqa: BLE001
+        except Exception as exc:
             detach()
             return _fail(exc)
         detach()
@@ -1841,8 +1920,11 @@ class UiAutomationTransport(VideoGenerationMixin):
         await self._enter_editor(page, out_dir)
         project_id = _extract_project_id(page.url)
         if project_id is None:
-            raise RuntimeError(
+            msg = (
                 f"Could not extract project_id from editor URL after _enter_editor. URL: {page.url}"
+            )
+            raise RuntimeError(
+                msg,
             )
 
         try:
@@ -1939,11 +2021,11 @@ class UiAutomationTransport(VideoGenerationMixin):
             try:
                 if self._ctx is not None:
                     await self._ctx.close()
-            except Exception as e:  # noqa: BLE001 — log and continue cleanup
+            except Exception as e:
                 log.warning("ui_automation.context_close_failed", error=str(e))
             try:
                 await self._pw_cm.__aexit__(None, None, None)
-            except Exception as e:  # noqa: BLE001 — log and continue cleanup
+            except Exception as e:
                 log.warning("ui_automation.playwright_exit_failed", error=str(e))
         self._pw_cm = None
         self._ctx = None

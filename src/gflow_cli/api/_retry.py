@@ -20,8 +20,7 @@ Internal API (test-only):
 from __future__ import annotations
 
 import random
-from collections.abc import AsyncIterator, Callable
-from typing import Any
+from typing import TYPE_CHECKING, Any
 
 from playwright.async_api import Error as PlaywrightError
 from playwright.async_api import TimeoutError as PlaywrightTimeoutError
@@ -34,6 +33,9 @@ from tenacity import (
 from tenacity.wait import wait_base
 
 from gflow_cli.errors import NetworkError, RateLimitError
+
+if TYPE_CHECKING:
+    from collections.abc import AsyncIterator, Callable
 
 MAX_ATTEMPTS = 3
 RETRY_AFTER_CAP_SECONDS = 60.0
@@ -90,7 +92,8 @@ class _LambdaWait(wait_base):
 
 
 def _make_retrying(
-    *, wait_seconds: Callable[[RetryCallState], float] | None = None
+    *,
+    wait_seconds: Callable[[RetryCallState], float] | None = None,
 ) -> AsyncRetrying:
     """Internal factory; tests override ``wait_seconds`` to skip real sleeps.
 
@@ -109,7 +112,7 @@ def _make_retrying(
         stop=stop_after_attempt(MAX_ATTEMPTS),
         wait=waiter,
         retry=retry_if_exception_type(
-            (NetworkError, RateLimitError, PlaywrightError, PlaywrightTimeoutError)
+            (NetworkError, RateLimitError, PlaywrightError, PlaywrightTimeoutError),
         ),
         reraise=True,
     )

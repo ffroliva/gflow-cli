@@ -54,7 +54,8 @@ def batch_generate_images_url(project_id: str) -> str:
     so anything outside the allowlist is rejected.
     """
     if not _PROJECT_ID_RE.fullmatch(project_id):
-        raise ValueError(f"Invalid project_id: {project_id!r}")
+        msg = f"Invalid project_id: {project_id!r}"
+        raise ValueError(msg)
     return f"{FLOW_API_BASE}/projects/{project_id}/flowMedia:batchGenerateImages"
 
 

@@ -15,6 +15,7 @@ from rich.table import Table
 
 from gflow_cli._cli_helpers import run_with_handlers, safe_path_text
 from gflow_cli.config import get_settings
+from gflow_cli.data.models import AssetLookup
 from gflow_cli.data.queries import (
     ImageRow,
     ProfileRow,
@@ -98,6 +99,7 @@ def _emit_images_table(rows: list[ImageRow]) -> None:
         "ASPECT",
         "MODEL",
         "CREATED",
+        "COPIES",
         "LOCAL_PATH",
     ):
         tbl.add_column(col)
@@ -110,6 +112,7 @@ def _emit_images_table(rows: list[ImageRow]) -> None:
             r.aspect,
             r.model,
             r.created_at.strftime("%Y-%m-%d %H:%M"),
+            str(r.copy_count),
             r.local_path or "",
         )
     Console().print(tbl)
@@ -126,6 +129,7 @@ def _emit_videos_table(rows: list[VideoRow]) -> None:
         "MODEL",
         "DURATION",
         "CREATED",
+        "COPIES",
         "LOCAL_PATH",
     ):
         tbl.add_column(col)
@@ -139,6 +143,7 @@ def _emit_videos_table(rows: list[VideoRow]) -> None:
             r.model,
             f"{r.duration:g}s" if r.duration is not None else "",
             r.created_at.strftime("%Y-%m-%d %H:%M"),
+            str(r.copy_count),
             r.local_path or "",
         )
     Console().print(tbl)
@@ -239,7 +244,7 @@ def media(media_id: str, profile: str | None) -> None:
     )
 
 
-async def _run_media(*, profile: str | None, media_id: str) -> None:  # NOSONAR S7503
+async def _run_media(*, profile: str | None, media_id: str) -> None:
     """Resolve ``media_id`` to its catalog row.
 
     When *profile* is given, the lookup is scoped to that profile (existing
@@ -248,18 +253,21 @@ async def _run_media(*, profile: str | None, media_id: str) -> None:  # NOSONAR 
     across profiles raise a typed ``DataStoreError`` with a clear
     disambiguation hint. Closes #87.
     """
-    settings = get_settings()
-    with DataStore.open(settings.resolved_db_path()) as store:
-        repo = DataRepository(store)
-        if profile is not None:
-            scoped = repo.get_asset_by_flow_media_id(profile, media_id)
-            asset = scoped
-            if asset is None:
-                raise DataStoreError(
-                    detail=f"No local media record found: {media_id} (profile={profile!r})",
-                    route="data.media",
-                )
-        else:
+    import asyncio
+
+    def _sync_query() -> AssetLookup:
+        settings = get_settings()
+        with DataStore.open(settings.resolved_db_path()) as store:
+            repo = DataRepository(store)
+            if profile is not None:
+                scoped = repo.get_asset_by_flow_media_id(profile, media_id)
+                if scoped is None:
+                    raise DataStoreError(
+                        detail=f"No local media record found: {media_id} (profile={profile!r})",
+                        route="data.media",
+                    )
+                return scoped
+
             matches = repo.find_assets_by_flow_media_id(media_id)
             if not matches:
                 raise DataStoreError(
@@ -267,8 +275,6 @@ async def _run_media(*, profile: str | None, media_id: str) -> None:  # NOSONAR 
                     route="data.media",
                 )
             if len(matches) > 1:
-                # Include each match's kind in the hint so an image/video
-                # collision under the same media_id is visible at a glance.
                 candidates = sorted({f"{m.profile_name} ({m.kind.value})" for m in matches})
                 raise DataStoreError(
                     detail=(
@@ -277,17 +283,23 @@ async def _run_media(*, profile: str | None, media_id: str) -> None:  # NOSONAR 
                     ),
                     route="data.media",
                 )
-            asset = matches[0]
-        table = Table(title="gflow data media")
-        table.add_column("field")
-        table.add_column("value", overflow="fold")
-        table.add_row("profile", asset.profile_name)
-        table.add_row("media_id", asset.flow_media_id)
-        table.add_row("project_id", asset.flow_project_id or "")
-        table.add_row("kind", asset.kind.value)
-        for idx, local_file in enumerate(asset.local_files, start=1):
+            return matches[0]
+
+    asset = await asyncio.to_thread(_sync_query)
+
+    table = Table(title="gflow data media")
+    table.add_column("field")
+    table.add_column("value", overflow="fold")
+    table.add_row("profile", asset.profile_name)
+    table.add_row("media_id", asset.flow_media_id)
+    table.add_row("project_id", asset.flow_project_id or "")
+    table.add_row("kind", asset.kind.value)
+    for idx, local_file in enumerate(asset.local_files, start=1):
+        if local_file.path is not None:
             table.add_row(f"local_path_{idx}", safe_path_text(local_file.path))
-        console.print(table)
+        else:
+            table.add_row(f"cloud_uri_{idx}", local_file.cloud_uri or "")
+    console.print(table)
 
 
 # ---------------------------------------------------------------------------
@@ -312,15 +324,40 @@ def list_projects_cmd(profile: str | None, limit: int, offset: int, as_json: boo
     _emit(rows, as_json, _emit_projects_table, "No projects recorded.")
 
 
+_ALL_COPIES_OPT = click.option(
+    "--all-copies",
+    "all_copies",
+    is_flag=True,
+    help="Show one row per local file instead of one row per asset.",
+)
+
+
 @list_group.command(name="images")
 @_PROFILE_OPT
 @_LIMIT_OPT
 @_OFFSET_OPT
 @_JSON_OPT
+@_ALL_COPIES_OPT
 @_guard
-def list_images_cmd(profile: str | None, limit: int, offset: int, as_json: bool) -> None:
-    """List images newest-first."""
-    rows = list_images(db_path=_db_path(), profile=profile, limit=limit, offset=offset)
+def list_images_cmd(
+    profile: str | None,
+    limit: int,
+    offset: int,
+    as_json: bool,
+    all_copies: bool,
+) -> None:
+    """List images newest-first.
+
+    By default shows one row per asset with a copy-count.  Use --all-copies to
+    see every local path separately.
+    """
+    rows = list_images(
+        db_path=_db_path(),
+        profile=profile,
+        limit=limit,
+        offset=offset,
+        all_copies=all_copies,
+    )
     _emit(rows, as_json, _emit_images_table, "No images recorded.")
 
 
@@ -329,10 +366,27 @@ def list_images_cmd(profile: str | None, limit: int, offset: int, as_json: bool)
 @_LIMIT_OPT
 @_OFFSET_OPT
 @_JSON_OPT
+@_ALL_COPIES_OPT
 @_guard
-def list_videos_cmd(profile: str | None, limit: int, offset: int, as_json: bool) -> None:
-    """List videos newest-first."""
-    rows = list_videos(db_path=_db_path(), profile=profile, limit=limit, offset=offset)
+def list_videos_cmd(
+    profile: str | None,
+    limit: int,
+    offset: int,
+    as_json: bool,
+    all_copies: bool,
+) -> None:
+    """List videos newest-first.
+
+    By default shows one row per asset with a copy-count.  Use --all-copies to
+    see every local path separately.
+    """
+    rows = list_videos(
+        db_path=_db_path(),
+        profile=profile,
+        limit=limit,
+        offset=offset,
+        all_copies=all_copies,
+    )
     _emit(rows, as_json, _emit_videos_table, "No videos recorded.")
 
 
@@ -345,3 +399,54 @@ def list_profiles_cmd(limit: int, offset: int, as_json: bool) -> None:
     """List catalog-known profiles (not auth-known)."""
     rows = list_profiles(db_path=_db_path(), limit=limit, offset=offset)
     _emit(rows, as_json, _emit_profiles_table, "No profiles recorded.")
+
+
+# ---------------------------------------------------------------------------
+# `gflow data prune`
+# ---------------------------------------------------------------------------
+
+
+@data.command("prune")
+@click.option("--dry-run", is_flag=True, help="Report dead rows without deleting them.")
+@click.option("--profile", default=None, help="Limit scan to a specific profile.")
+@_guard
+def prune_cmd(dry_run: bool, profile: str | None) -> None:
+    """Remove local_files rows whose paths no longer exist on disk.
+
+    Useful after test runs that wrote files to temporary directories, or after
+    manually deleting downloaded media.  Pass --dry-run to preview what would
+    be removed.
+    """
+    db = _db_path()
+    with DataStore.open(db) as store:
+        rows = store.conn.execute(
+            "SELECT id, path FROM local_files"
+            " WHERE storage_provider IS NULL"
+            " AND (:profile IS NULL OR profile_name = :profile)",
+            {"profile": profile},
+        ).fetchall()
+
+        dead = [r for r in rows if not Path(str(r["path"])).exists()]
+
+        if not dead:
+            click.echo("No dead local_files rows found.")
+            return
+
+        if dry_run:
+            for r in dead:
+                click.echo(f"  [dead] {r['path']}")
+            click.echo(f"{len(dead)} dead row(s) found. --dry-run: no changes made.")
+            return
+
+        dead_ids = [r["id"] for r in dead]
+        # SQLite variable limit is usually 999; 500 is safe.
+        chunk_size = 500
+        pruned_count = 0
+        with store.transaction(immediate=True):
+            for i in range(0, len(dead_ids), chunk_size):
+                chunk = dead_ids[i : i + chunk_size]
+                placeholders = ",".join("?" * len(chunk))
+                store.conn.execute(f"DELETE FROM local_files WHERE id IN ({placeholders})", chunk)
+                pruned_count += len(chunk)
+
+        click.echo(f"Pruned {pruned_count} dead local_files row(s).")

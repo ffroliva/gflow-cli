@@ -26,6 +26,8 @@
 - [Journey 11 — Wiring gflow outputs into a downstream pipeline](#journey-11--wiring-gflow-outputs-into-a-downstream-pipeline)
 - [Journey 12 — Recovering from `ContentPolicyError` or `RateLimitError`](#journey-12--recovering-from-contentpolicyerror-or-ratelimiterror)
 - [Journey 13 — Diagnosing a persistent `AuthExpiredError` after a successful re-login](#journey-13--diagnosing-a-persistent-authexpirederror-after-a-successful-re-login)
+- [Journey 14 — Embedding `FlowApiClient` in a long-lived worker](#journey-14--embedding-flowapiclient-in-a-long-lived-worker)
+- [Journey 15 — Sending generated assets to S3, MinIO, or GCS](#journey-15--sending-generated-assets-to-s3-minio-or-gcs)
 - [Common errors quick-reference](#common-errors-quick-reference)
 
 ---
@@ -462,7 +464,13 @@ $GFLOW_CLI_OUTPUT_DIR/
 
 `<media_uuid>` is the asset UUID returned by Flow — globally unique. Same UUID across the operation poll response and the on-disk filename.
 
-When you pass `-o ./custom/path.mp4` or `--out-dir ./custom/`, `gflow-cli` writes there instead.
+When you pass `--out ./images/` for image commands or `--out-dir ./videos/`
+for video commands, `gflow-cli` writes there instead.
+
+If `GFLOW_CLI_STORAGE_URI` is set, generated asset bytes go to the configured
+bucket prefix instead of local disk. Use [Journey 15](#journey-15--sending-generated-assets-to-s3-minio-or-gcs)
+for the storage setup, then use `gflow data media <media-id>` to retrieve the
+recorded `cloud_uri_N` values.
 
 ### 11.2 Enumerate today's renders (POSIX shell)
 
@@ -861,10 +869,71 @@ async def dispatch(client: FlowApiClient, req: GenerateImageRequest) -> ...:
 
 ---
 
+## Journey 15 — Sending generated assets to S3, MinIO, or GCS
+
+**Goal:** run the same image/video commands, but store generated asset bytes in
+a bucket instead of the local output directory.
+
+### 15.1 Install the storage extra
+
+```bash
+uv tool install --force "gflow-cli[s3]"   # S3 or MinIO
+uv tool install --force "gflow-cli[gcs]"  # Google Cloud Storage
+```
+
+### 15.2 Configure the target
+
+S3 or MinIO:
+
+```bash
+export GFLOW_CLI_STORAGE_URI=s3://gflow-test/prod/
+export AWS_ACCESS_KEY_ID=...
+export AWS_SECRET_ACCESS_KEY=...
+export AWS_DEFAULT_REGION=us-east-1
+```
+
+For MinIO, also set:
+
+```bash
+export AWS_ENDPOINT_URL=http://localhost:9000
+```
+
+GCS:
+
+```bash
+export GFLOW_CLI_STORAGE_URI=gs://my-gcs-bucket/gflow/
+gcloud auth application-default login
+```
+
+### 15.3 Generate normally
+
+```bash
+gflow image t2i "blue cube on a white sweep" -n 2
+gflow video t2v "slow dolly-in on the same blue cube" --aspect 16:9
+```
+
+With `GFLOW_CLI_STORAGE_URI` set, these commands write to the bucket instead of
+local asset files. This is not a dual-write mode.
+
+### 15.4 Verify the catalog and bucket
+
+```bash
+gflow data media <media-id>
+```
+
+Expected: one or more `cloud_uri_N` rows. Then inspect the bucket with
+`aws s3 ls`, `gsutil ls`, or the MinIO console.
+
+Deep details, object layout, and provider-specific notes live in
+[EXTERNAL_STORAGE.md](EXTERNAL_STORAGE.md).
+
+---
+
 ## See also
 
 - [USAGE.md](USAGE.md) — every flag, every output path, every command in alphabetical order.
 - [CONFIGURATION.md](CONFIGURATION.md) — every env var with default, precedence chain, and security notes.
+- [EXTERNAL_STORAGE.md](EXTERNAL_STORAGE.md) — S3, MinIO, and GCS output setup.
 - [AUTHENTICATION.md](AUTHENTICATION.md) — full auth flow, session storage, multi-account details, refresh strategy.
 - [ARCHITECTURE.md](ARCHITECTURE.md) — modular monolith layout, per-worker Page pool, RFC 9457 Problem Details, retry layer.
 - [SECURITY.md](SECURITY.md) — threat model, redaction strategy, what's on disk.

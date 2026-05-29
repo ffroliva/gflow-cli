@@ -5,15 +5,16 @@ See docs/superpowers/specs/2026-05-11-gflow-cli-b007-transport-strategy-design.m
 
 from __future__ import annotations
 
-from pathlib import Path
 from typing import TYPE_CHECKING, Protocol, runtime_checkable
 
 if TYPE_CHECKING:
+    from pathlib import Path
+
     from playwright.async_api import Page
 
-from gflow_cli.api.dto import GeneratedImage
-from gflow_cli.api.image import GenerateImageRequest
-from gflow_cli.api.video import GenerateVideoRequest, VideoResult, VideoStartedCallback
+    from gflow_cli.api.dto import GeneratedImage
+    from gflow_cli.api.image import GenerateImageRequest
+    from gflow_cli.api.video import GenerateVideoRequest, VideoResult, VideoStartedCallback
 
 
 class FlowTransportStrategy(Protocol):
