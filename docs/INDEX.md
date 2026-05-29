@@ -5,6 +5,7 @@ Welcome to the `gflow-cli` documentation. This index is the routing layer: it te
 | Doc | Purpose | Read when… |
 |---|---|---|
 | [README](../README.md) | Project overview, install, quick start | First time landing on the repo |
+| [docs/DEMOS.md](DEMOS.md) | Gallery of `gflow` in action (terminal + split-screen Flow recordings) | You want to see what gflow looks like running |
 | [AGENTS.md](../AGENTS.md) | Universal coding-agent spec — Cursor / Codex / Aider / Gemini CLI / Jules / etc. | Any AI coding agent enters the repo |
 | [llms.txt](../llms.txt) | LLM-readable summary (llmstxt.org format) | A user pastes context about gflow into ChatGPT / Claude / Gemini |
 | [docs/PROJECT_STATUS.md](PROJECT_STATUS.md) | Full milestone history + lifecycle policy | Auditing where the project is in its lifecycle |

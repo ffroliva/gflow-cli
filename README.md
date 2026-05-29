@@ -62,6 +62,8 @@ See **[USER_GUIDE — Journey 1: First-time setup](docs/USER_GUIDE.md#journey-1-
 
 Reproduce the recording: [`scripts/record_demo.ps1`](scripts/record_demo.ps1) (Windows + OBS + ffmpeg + gifski).
 
+**▶ More demos** — split-screen (terminal command + Flow generating, side-by-side) and other formats: **[docs/DEMOS.md](docs/DEMOS.md)**.
+
 ## Documentation
 
 [**docs/INDEX.md**](docs/INDEX.md) is the master routing layer. Quick links:
