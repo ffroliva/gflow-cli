@@ -26,7 +26,7 @@ This document is the steady-state reference for how `gflow-cli` is organised. Th
 ┌──────────────────────┴───────────────────────────────────────┐
 │  infrastructure/  ← Adapters (driven side)                   │
 │                     FlowProvider (REST), AuthSession         │
-│                     (Playwright), LocalStorage (filesystem). │
+│                     (Playwright), AssetStorage (local/cloud).│
 └──────────────────────────────────────────────────────────────┘
 ```
 
@@ -38,7 +38,7 @@ The hexagonal target above is the steady state. The **current** package — and 
 
 **Per-module rules:**
 
-- Each top-level package or file under `src/gflow_cli/` is a module with one clear domain (`auth`, `api`, `cli`, `errors`, `observability`, `manifest`, `paths`, `config`, `profile_store`, `data`).
+- Each top-level package or file under `src/gflow_cli/` is a module with one clear domain (`auth`, `api`, `cli`, `errors`, `observability`, `manifest`, `paths`, `storage`, `config`, `profile_store`, `data`).
 - Each module exposes a public interface via `__init__.py` and (where applicable) explicit `__all__`.
 - Internals are prefixed with `_` (single leading underscore) and never imported across modules.
 - Cross-module communication goes through public interfaces, never private internals.
@@ -52,7 +52,11 @@ The hexagonal target above is the steady state. The **current** package — and 
 
 **Data layer module (shipped in v0.9.0):**
 
-- `gflow_cli/data/` — local SQLite persistence layer (`DataStore` + `DataRepository` + `OperationRecorder` + redaction + read-only `queries` for `gflow data list`). Records all new image/video operations, asset provenance, and local file metadata. Default DB path is resolved from `$GFLOW_CLI_DB_PATH` (default: `~/.local/share/gflow-cli/data.db` on POSIX, the equivalent platformdirs user-data dir on Windows). Migrations versioned via SHA-256 checksums; safe forward-only semantics with newer-schema detection. T2V now flows through `FlowApiClient.generate_video`, sharing the client boundary with image commands.
+- `gflow_cli/data/` — local SQLite persistence layer (`DataStore` + `DataRepository` + `OperationRecorder` + redaction + read-only `queries` for `gflow data list`). Records all new image/video operations, asset provenance, and final asset locations (local paths or cloud URIs). Default DB path is resolved from `$GFLOW_CLI_DB_PATH` (default: `~/.local/share/gflow-cli/data.db` on POSIX, the equivalent platformdirs user-data dir on Windows). Migrations versioned via SHA-256 checksums; safe forward-only semantics with newer-schema detection. T2V now flows through `FlowApiClient.generate_video`, sharing the client boundary with image commands.
+
+**External storage module (shipped after v0.9.1):**
+
+- `gflow_cli/storage.py` — target resolver and writer for generated assets. With `GFLOW_CLI_STORAGE_URI` unset it returns normal local `Path` targets under `GFLOW_CLI_OUTPUT_DIR`; with `gs://` or `s3://` it returns a cloud-backed `UPath` and writes through the matching fsspec backend. The module owns key sanitisation, cloud URI metadata extraction, and event-loop-safe writes. User-facing setup lives in [EXTERNAL_STORAGE.md](EXTERNAL_STORAGE.md).
 
 **Why RFC 9457 for errors:** Problem Details is the IETF-standard shape for machine-readable HTTP error responses. Even though gflow-cli is a CLI (not an HTTP server), adopting the same vocabulary means: (a) the error log shape is greppable by stable `type` URI, (b) future cloud-edge integrations (e.g., a `gflow serve` HTTP front-end) can return our errors directly without translation, (c) downstream telemetry tools recognize the shape immediately.
 
@@ -149,7 +153,7 @@ src/gflow_cli/
 │   ├── auth/
 │   │   └── playwright_session.py
 │   ├── storage/
-│   │   └── local.py
+│   │   └── asset_storage.py
 │   └── observability/
 │       └── logging.py
 ├── interfaces/
@@ -256,7 +260,7 @@ def build_bus(settings: Settings) -> CommandBus:
     auth_session = PlaywrightSession(profile_dir=settings.profile_subdir(profile_name))
     image_provider = FlowImageProvider(auth_session)
     video_provider = FlowVideoProvider(auth_session)
-    storage = LocalStorage(settings.output_dir)
+    storage = AssetStorage.from_settings(settings)
 
     bus = CommandBus()
     bus.register(GenerateImageCommand, GenerateImageHandler(image_provider, storage))
@@ -336,7 +340,7 @@ The dependency direction is inviolate. Everything else is preference, not religi
 └────────┬────────┘
          │
 ┌────────▼────────┐
-│  Provider       │ ← protocol (Provider in gflow_cli/providers/base.py)
+│  Provider       │ ← protocol (planned abstraction — see ROADMAP; not yet a `providers/` package)
 │  abstraction    │
 └────────┬────────┘
          │
@@ -389,7 +393,7 @@ We attempted three pure-HTTP transport strategies before settling on `ui_automat
 - **`bearer`** — extract bearer tokens from the live page and replay them via `httpx`. Tokens rotate too aggressively; rate-limited within minutes.
 - **`sapisidhash`** — compute Google's SAPISIDHASH header from session cookies and replay. Works for read endpoints; rejected for any mutation endpoint (including all generation calls).
 
-All three are named in the codebase history; the `src/gflow_cli/experimental/` subpackage has not yet been extracted from `api/` — the strategies live in commit history and PR descriptions rather than as standalone modules. Surfacing them as a real subpackage is a backlog item. The production path is `ui_automation`.
+All three now live as standalone modules under `src/gflow_cli/api/transports/experimental/` (`evaluate_fetch.py` / `bearer.py` / `sapisidhash.py`), preserved for reference and future iteration. None survives Google's anti-bot stack for mutation/generation endpoints, so the production path is `ui_automation`.
 
 ### What this costs users
 
@@ -403,7 +407,7 @@ All three are named in the codebase history; the `src/gflow_cli/experimental/` s
 The biggest single improvement to gflow-cli's scalability would be a **working pure-HTTP transport for video generation** that survives Google's anti-bot stack. Specific contributions we welcome:
 
 - Network traffic captures from a successful headed video generation (with personally-identifying data scrubbed) — the [Keysight HAR analysis](https://www.keysight.com/blogs/en/tech/nwvs/2025/08/04/google-flow-ai-har-analysis) is the public reference; we want our own.
-- A working pure-HTTP transport (you can land it in a new `experimental/` subpackage) that produces a video against the live API without a browser.
+- A working pure-HTTP transport (extend the existing `api/transports/experimental/` subpackage) that produces a video against the live API without a browser.
 - Insight into Google's reCAPTCHA-mint flow for `aisandbox-pa.googleapis.com` (especially how `Authorization: SAPISIDHASH ...` interacts with `X-Goog-Visitor-Id`).
 - An adapter to the **official** Veo API (`googleapis/python-genai`) as a parallel provider — that bypasses the headed-browser dependency entirely for users who have direct API access.
 

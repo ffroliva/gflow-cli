@@ -36,21 +36,23 @@ been removed. Both error handlers now import
 from __future__ import annotations
 
 import sys
-from collections.abc import Callable, Coroutine
 from pathlib import Path
-from typing import Any
+from typing import TYPE_CHECKING, Any
 
 import click
 import structlog
 from rich.console import Console
 
 from gflow_cli import auth as auth_mod
-from gflow_cli import profile_store
+from gflow_cli import json_output, profile_store
 from gflow_cli.errors import (
     EXIT_CODE_MAP,
     GFlowError,
 )
 from gflow_cli.observability import emit_error_event, emit_unhandled_event
+
+if TYPE_CHECKING:
+    from collections.abc import Callable, Coroutine
 
 _logger = structlog.get_logger(__name__)
 _console = Console()
@@ -135,7 +137,7 @@ def _handle_unhandled_error(exc: BaseException, *, cli_command: str) -> int:
     emit_unhandled_event(_logger, exc, cli_command=cli_command)
     _console.print(
         "[red]Unexpected error.[/red] Re-run with --verbose to capture details. "
-        "If this persists, file a bug at https://github.com/ffroliva/gflow-cli/issues."
+        "If this persists, file a bug at https://github.com/ffroliva/gflow-cli/issues.",
     )
     return 1
 
@@ -144,6 +146,7 @@ def run_with_handlers(
     coro_factory: Callable[[], Coroutine[Any, Any, Any]],
     *,
     cli_command: str,
+    as_json: bool = False,
 ) -> None:
     """Wrap an :func:`asyncio.run` call in the GFlowError + unhandled handlers.
 
@@ -158,16 +161,39 @@ def run_with_handlers(
             lambda: _run_t2i(prompt, ...),
             cli_command="image t2i",
         )
+
+    When ``as_json`` is set the error path emits a machine-readable JSON
+    payload on stdout instead of the Rich message (the observability event
+    still fires either way) so a programmatic caller gets a parseable failure
+    with the same exit code. The success payload is the coroutine's own
+    responsibility — it knows the result shape.
     """
     import asyncio
 
     try:
         asyncio.run(coro_factory())
     except GFlowError as e:
+        if as_json:
+            emit_error_event(_logger, e, cli_command=cli_command)
+            json_output.emit(json_output.error_payload(e))
+            sys.exit(_exit_code_for(e))
         sys.exit(_handle_gflow_error(e, cli_command=cli_command))
     except (KeyboardInterrupt, click.Abort):
         sys.exit(130)
-    except BaseException as e:  # noqa: BLE001 — intentional catch-all at the CLI boundary
+    except SystemExit:
+        # A coroutine that has already taken responsibility for its own exit
+        # (e.g. `video t2v --json` emits the failed `video_result` payload and
+        # then raises SystemExit(1) so we don't print a second "Saved:" / Rich
+        # error). Propagate the exit code without emitting a SECOND JSON
+        # `UnexpectedError` payload through the catch-all below — that would
+        # leave stdout with two concatenated documents that no `json.loads`
+        # call can parse, defeating the whole point of --json.
+        raise
+    except BaseException as e:
+        if as_json:
+            emit_unhandled_event(_logger, e, cli_command=cli_command)
+            json_output.emit(json_output.unexpected_payload())
+            sys.exit(1)
         sys.exit(_handle_unhandled_error(e, cli_command=cli_command))
 
 
@@ -210,7 +236,7 @@ def _make_provider_dir(profile_name: str) -> Path:
     if not pdir.exists():
         _console.print(
             f"[red]No session for profile '{profile_name}'.[/red] "
-            "Run [bold]gflow auth login[/bold] first."
+            "Run [bold]gflow auth login[/bold] first.",
         )
         sys.exit(2)
     return pdir

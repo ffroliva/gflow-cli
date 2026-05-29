@@ -43,7 +43,7 @@ console = Console()
 
 
 _ALLOWED_TOP_LEVEL_KEYS: frozenset[str] = frozenset(
-    {"profile", "transport", "output_dir", "prompts"}
+    {"profile", "transport", "output_dir", "prompts"},
 )
 # ---------------------------------------------------------------------------
 # Dataclasses — validated config + per-prompt outcome.
@@ -67,20 +67,24 @@ class BatchConfig:
         message that points at the offending key.
         """
         if not path.exists():
-            raise ConfigurationError(f"Config file not found: {path}")
+            msg = f"Config file not found: {path}"
+            raise ConfigurationError(msg)
         try:
             raw_text = path.read_text(encoding="utf-8")
         except OSError as e:
-            raise ConfigurationError(f"Failed to read {path}: {e}") from e
+            msg = f"Failed to read {path}: {e}"
+            raise ConfigurationError(msg) from e
         try:
             data = json.loads(raw_text)
         except json.JSONDecodeError as e:
+            msg = f"Failed to parse {path}: line {e.lineno}:{e.colno} {e.msg}"
             raise ConfigurationError(
-                f"Failed to parse {path}: line {e.lineno}:{e.colno} {e.msg}"
+                msg,
             ) from e
         if not isinstance(data, dict):
+            msg = f"Config root must be a JSON object, got {type(data).__name__}."
             raise ConfigurationError(
-                f"Config root must be a JSON object, got {type(data).__name__}."
+                msg,
             )
         return cls._from_dict(cast("dict[str, Any]", data))
 
@@ -88,35 +92,46 @@ class BatchConfig:
     def _from_dict(cls, data: dict[str, Any]) -> BatchConfig:
         unknown = set(data) - _ALLOWED_TOP_LEVEL_KEYS
         if unknown:
-            raise ConfigurationError(
+            msg = (
                 f"Unknown key(s) {sorted(unknown)!r} in config. "
                 f"Valid: {sorted(_ALLOWED_TOP_LEVEL_KEYS)!r}."
             )
+            raise ConfigurationError(
+                msg,
+            )
         prompts_raw_obj = data.get("prompts")
         if not isinstance(prompts_raw_obj, list):
-            raise ConfigurationError("'prompts' must be a JSON array.")
+            msg = "'prompts' must be a JSON array."
+            raise ConfigurationError(msg)
         prompts_raw = cast("list[Any]", prompts_raw_obj)
 
         if not (MIN_PROMPTS <= len(prompts_raw) <= MAX_PROMPTS):
-            raise ConfigurationError(
+            msg = (
                 f"'prompts' must have between {MIN_PROMPTS} and "
                 f"{MAX_PROMPTS} entries (got {len(prompts_raw)})."
+            )
+            raise ConfigurationError(
+                msg,
             )
         prompts: list[BatchPromptItem] = []
         for idx, p in enumerate(prompts_raw):
             if not isinstance(p, dict):
-                raise ConfigurationError(f"prompts[{idx}] must be a JSON object.")
+                msg = f"prompts[{idx}] must be a JSON object."
+                raise ConfigurationError(msg)
             prompts.append(parse_batch_item_dict(cast("dict[str, Any]", p), idx))
 
         profile = data.get("profile")
         if profile is not None and (not isinstance(profile, str) or not profile):
-            raise ConfigurationError("'profile' must be a non-empty string.")
+            msg = "'profile' must be a non-empty string."
+            raise ConfigurationError(msg)
         transport = data.get("transport")
         if transport is not None and (not isinstance(transport, str) or not transport):
-            raise ConfigurationError("'transport' must be a non-empty string.")
+            msg = "'transport' must be a non-empty string."
+            raise ConfigurationError(msg)
         output_dir = data.get("output_dir")
         if output_dir is not None and (not isinstance(output_dir, str) or not output_dir):
-            raise ConfigurationError("'output_dir' must be a non-empty string.")
+            msg = "'output_dir' must be a non-empty string."
+            raise ConfigurationError(msg)
 
         return cls(
             prompts=tuple(prompts),
@@ -140,12 +155,15 @@ def _check_transport_gated(transport: str | None) -> None:
     """
     if transport is None or transport not in EXPERIMENTAL_TRANSPORTS:
         return
-    import os  # noqa: PLC0415 — only needed on the rejection path
+    import os
 
     if os.getenv("GFLOW_CLI_EXPERIMENTAL_TRANSPORTS") != "1":
-        raise ConfigurationError(
+        msg = (
             f"Transport {transport!r} is experimental. "
             f"Set GFLOW_CLI_EXPERIMENTAL_TRANSPORTS=1 to enable."
+        )
+        raise ConfigurationError(
+            msg,
         )
 
 
@@ -243,7 +261,7 @@ def run(
     console.print(
         f"\n[bold]gflow run[/bold] · profile=[bold]{profile_name}[/bold] "
         f"· transport=[bold]{cfg.transport or '(default)'}[/bold] "
-        f"· {len(cfg.prompts)} prompt(s)"
+        f"· {len(cfg.prompts)} prompt(s)",
     )
     console.print(f"  output_dir: [dim]{output_dir}[/dim]")
     if not continue_on_error:
@@ -257,7 +275,7 @@ def run(
             prompts=cfg.prompts,
             output_dir=output_dir,
             continue_on_error=continue_on_error,
-        )
+        ),
     )
     exit_code = render_image_batch_summary(outcomes, title="gflow run")
     if exit_code != 0:

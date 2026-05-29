@@ -43,7 +43,10 @@ gflow image t2i "a hot air balloon over Tokyo at sunrise"
 gflow video t2v "Slow cinematic push-in on a sunlit forest clearing" --aspect 16:9
 ```
 
-Outputs land under `./out/` (or `$GFLOW_CLI_OUTPUT_DIR`). First call is ~30–90 s while Chromium warms; subsequent calls reuse the warm session.
+Outputs land under `$GFLOW_CLI_OUTPUT_DIR` unless
+[`GFLOW_CLI_STORAGE_URI`](docs/EXTERNAL_STORAGE.md) sends generated assets to
+S3, MinIO, or Google Cloud Storage. First call is ~30–90 s while Chromium warms;
+subsequent calls reuse the warm session.
 
 > **Why `--browser chrome`?** Google rejects Playwright's bundled Chromium. The CLI fails fast with a friendly error (`AuthBrowserRejectedError`, exit code 14) if you pick anything else.
 
@@ -66,6 +69,7 @@ Reproduce the recording: [`scripts/record_demo.ps1`](scripts/record_demo.ps1) (W
 | Topic | Read |
 |---|---|
 | 🎯 **Getting started** | [User Guide](docs/USER_GUIDE.md) · [Usage](docs/USAGE.md) · [Configuration](docs/CONFIGURATION.md) |
+| **Storage & catalog** | [External Storage](docs/EXTERNAL_STORAGE.md) · [Data Layer](docs/DATA_LAYER.md) |
 | 🔐 **Auth & sessions** | [Authentication](docs/AUTHENTICATION.md) · [Known issues](KNOWN_ISSUES.md) |
 | 🏗️ **Internals** | [Architecture](docs/ARCHITECTURE.md) · [Security](docs/SECURITY.md) · [Debugging](docs/DEBUGGING.md) |
 | 📦 **Releases** | [Changelog](CHANGELOG.md) · [Roadmap](ROADMAP.md) · [Release protocol](RELEASE.md) · [Project status](docs/PROJECT_STATUS.md) |
@@ -104,7 +108,7 @@ gflow CLI  →  Provider (interchangeable)  →  Flow (ui_automation) / Mock (te
 
 ## Project status
 
-**v0.9.1 — alpha.** Image (T2I / I2I / upload) + Video T2V / I2V / R2V live end-to-end on `ui_automation`, with a video `--model` picker (5 Veo models) + `--duration` / `--count`. New in v0.9.1: hardened locale-invariant Flow selectors, fixed I2V start/end-frame attachment for non-English Chrome/Flow sessions, and safer first-run catalog behavior. Only video `batch` (manifest runner) is still queued for Phase B — use a shell for-loop until then ([USAGE](docs/USAGE.md#gflow-video-batch)). Full milestone history → [docs/PROJECT_STATUS.md](docs/PROJECT_STATUS.md). Changelog → [CHANGELOG.md](CHANGELOG.md). Where the project is heading → [ROADMAP.md](ROADMAP.md).
+**v0.10.0 — alpha.** Image (T2I / I2I / upload) + Video T2V / I2V / R2V live end-to-end on `ui_automation`, with a video `--model` picker (5 Veo models) + `--duration` / `--count`. New in v0.10.0: `--json` output across every generation command (`image t2i/i2i`, `video t2v/i2v/r2v`, `auth list`) plus a `gflow models` catalog so worker schedulers can drive the CLI machine-to-machine; per-model reference-image caps for `i2i`/`r2v`; profile Google-account identity persisted to disk (with auto-rename of the first-run `default` profile); external cloud storage (S3 / MinIO / GCS) via `GFLOW_CLI_STORAGE_URI`; and a `gflow data prune` maintenance command. Only video `batch` (manifest runner) is still queued for Phase B — use a shell for-loop until then ([USAGE](docs/USAGE.md#gflow-video-batch)). Full milestone history → [docs/PROJECT_STATUS.md](docs/PROJECT_STATUS.md). Changelog → [CHANGELOG.md](CHANGELOG.md). Where the project is heading → [ROADMAP.md](ROADMAP.md).
 
 ## License & legal
 

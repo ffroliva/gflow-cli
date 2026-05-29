@@ -4,12 +4,8 @@ import hashlib
 import mimetypes
 import uuid
 from datetime import UTC, datetime
-from pathlib import Path
+from typing import TYPE_CHECKING
 
-from gflow_cli.api.dto import AssetInfo, GeneratedImage, ProjectInfo
-from gflow_cli.api.image import GenerateImageRequest
-from gflow_cli.api.video import GenerateVideoRequest, VideoResult, VideoStarted
-from gflow_cli.config import Settings
 from gflow_cli.data.models import (
     AssetKind,
     AssetRecord,
@@ -23,6 +19,15 @@ from gflow_cli.data.models import (
 from gflow_cli.data.redaction import PromptMode, prompt_fields, redact_metadata
 from gflow_cli.data.repository import DataRepository
 from gflow_cli.data.store import DataStore
+
+if TYPE_CHECKING:
+    from pathlib import Path
+
+    from gflow_cli.api.dto import AssetInfo, GeneratedImage, ProjectInfo
+    from gflow_cli.api.image import GenerateImageRequest
+    from gflow_cli.api.video import GenerateVideoRequest, VideoResult, VideoStarted
+    from gflow_cli.config import Settings
+    from gflow_cli.storage import CloudStorageInfo
 
 
 def _new_id() -> str:
@@ -76,6 +81,7 @@ class OperationRecorder:
         project: ProjectInfo,
         asset: AssetInfo,
         image_path: Path,
+        cloud_storage_info: CloudStorageInfo | None = None,
     ) -> None:
         repo = self.repository
 
@@ -87,7 +93,7 @@ class OperationRecorder:
                 flow_project_id=project.project_id,
                 title=project.title,
                 source="uploaded",
-            )
+            ),
         )
 
         asset_id = _new_id()
@@ -109,7 +115,7 @@ class OperationRecorder:
                 duration_seconds=None,
                 seed=None,
                 metadata_json=redact_metadata({"display_name": asset.display_name}),
-            )
+            ),
         )
 
         op_id = _new_id()
@@ -130,7 +136,7 @@ class OperationRecorder:
                 aspect_ratio=None,
                 error_type=None,
                 error_detail=None,
-            )
+            ),
         )
         # Upload is synchronous from the recorder's POV: by the time we're here
         # the upload already succeeded, so completed_at = started_at = now.
@@ -142,11 +148,13 @@ class OperationRecorder:
                 id=_new_id(),
                 profile_name=profile_name,
                 asset_id=asset_id,
-                path=image_path.resolve(),
+                path=image_path.resolve() if cloud_storage_info is None else None,
                 media_type=media_type,
-                bytes=_file_bytes(image_path),
-                sha256=_file_sha256(image_path),
-            )
+                bytes=_file_bytes(image_path) if cloud_storage_info is None else None,
+                sha256=_file_sha256(image_path) if cloud_storage_info is None else None,
+                storage_provider=cloud_storage_info.provider if cloud_storage_info else None,
+                cloud_uri=cloud_storage_info.uri if cloud_storage_info else None,
+            ),
         )
 
     # ------------------------------------------------------------------
@@ -164,6 +172,7 @@ class OperationRecorder:
         saved_paths: list[Path],
         input_media_ids: list[str],
         operation_kind: str,
+        cloud_storage_infos: list[CloudStorageInfo | None] | None = None,
     ) -> None:
         repo = self.repository
 
@@ -175,7 +184,7 @@ class OperationRecorder:
                 flow_project_id=project.project_id,
                 title=project.title,
                 source="generated",
-            )
+            ),
         )
 
         pf = prompt_fields(request.prompt, mode=self.prompt_mode)
@@ -197,7 +206,7 @@ class OperationRecorder:
                 aspect_ratio=request.aspect.value,
                 error_type=None,
                 error_detail=None,
-            )
+            ),
         )
         # Image generation is recorded AFTER all downloads complete, so the
         # operation is already terminal at insert time. Stamp completed_at so
@@ -213,6 +222,13 @@ class OperationRecorder:
 
         # Persist each output image
         for i, (image, saved_path) in enumerate(zip(images, saved_paths, strict=False)):
+            cloud_info = (
+                cloud_storage_infos[i]
+                if cloud_storage_infos and i < len(cloud_storage_infos)
+                else None
+            )
+            # Use the saved_path name for mime-type detection; for cloud paths
+            # str(saved_path) returns the full URI but .name gives the filename.
             media_type = mimetypes.guess_type(saved_path.name)[0]
             asset_id = _new_id()
             width, height = image.dimensions
@@ -233,19 +249,22 @@ class OperationRecorder:
                     duration_seconds=None,
                     seed=image.seed,
                     metadata_json=redact_metadata({"fife_url": image.fife_url}),
-                )
+                ),
             )
             repo.link_operation_asset(op_id, asset_id, OperationAssetRole.OUTPUT, i)
+            is_cloud = cloud_info is not None
             repo.upsert_local_file(
                 LocalFileRecord(
                     id=_new_id(),
                     profile_name=profile_name,
                     asset_id=asset_id,
-                    path=saved_path.resolve(),
+                    path=saved_path.resolve() if not is_cloud else None,
                     media_type=media_type,
-                    bytes=_file_bytes(saved_path),
-                    sha256=_file_sha256(saved_path),
-                )
+                    bytes=_file_bytes(saved_path) if not is_cloud else None,
+                    sha256=_file_sha256(saved_path) if not is_cloud else None,
+                    storage_provider=cloud_info.provider if cloud_info else None,
+                    cloud_uri=cloud_info.uri if cloud_info else None,
+                ),
             )
 
     # ------------------------------------------------------------------
@@ -273,7 +292,7 @@ class OperationRecorder:
                     flow_project_id=started.project_id,
                     title="gflow-cli video",
                     source="generated",
-                )
+                ),
             )
 
         asset_id = _new_id()
@@ -294,7 +313,7 @@ class OperationRecorder:
                 duration_seconds=float(request.duration) if request.duration is not None else None,
                 seed=request.seed,
                 metadata_json={},
-            )
+            ),
         )
 
         pf = prompt_fields(request.prompt, mode=self.prompt_mode)
@@ -316,7 +335,7 @@ class OperationRecorder:
                 aspect_ratio=request.aspect.value,
                 error_type=None,
                 error_detail=None,
-            )
+            ),
         )
         repo.link_operation_asset(op_id, asset_id, OperationAssetRole.OUTPUT, 0)
 
@@ -327,6 +346,7 @@ class OperationRecorder:
         _profile_dir: Path,
         request: GenerateVideoRequest,
         result: VideoResult,
+        cloud_storage_info: CloudStorageInfo | None = None,
     ) -> None:
         # VideoResult carries status.media_id (the flow_media_id) and local_path
 
@@ -353,13 +373,15 @@ class OperationRecorder:
                 duration_seconds=float(request.duration) if request.duration is not None else None,
                 seed=request.seed,
                 metadata_json={},
-            )
+            ),
         )
 
         # Update the STARTED operation for this asset to SUCCEEDED
         completed_at = _now_utc_iso()
         op = repo.get_operation_for_output_asset(
-            profile_name, flow_media_id, OperationKind(request.mode.value)
+            profile_name,
+            flow_media_id,
+            OperationKind(request.mode.value),
         )
         if op is not None:
             repo.update_operation_status(op.id, OperationStatus.SUCCEEDED, completed_at, None, None)
@@ -384,24 +406,53 @@ class OperationRecorder:
                     aspect_ratio=request.aspect.value,
                     error_type=None,
                     error_detail=None,
-                )
+                ),
             )
             asset_lookup = repo.get_asset_by_flow_media_id(profile_name, flow_media_id)
             if asset_lookup is not None:
                 repo.link_operation_asset(op_id, asset_lookup.id, OperationAssetRole.OUTPUT, 0)
 
-        if result.local_path is not None:
+        has_local = result.local_path is not None
+        if has_local or cloud_storage_info is not None:
             asset_lookup = repo.get_asset_by_flow_media_id(profile_name, flow_media_id)
             if asset_lookup is not None:
-                media_type = mimetypes.guess_type(result.local_path.name)[0]
+                local_path = result.local_path
+                is_cloud = cloud_storage_info is not None
+                media_type = (
+                    mimetypes.guess_type(local_path.name)[0]
+                    if local_path is not None
+                    else "video/mp4"
+                )
                 repo.upsert_local_file(
                     LocalFileRecord(
                         id=_new_id(),
                         profile_name=profile_name,
                         asset_id=asset_lookup.id,
-                        path=result.local_path.resolve(),
+                        path=(
+                            None
+                            if is_cloud
+                            else local_path.resolve()
+                            if local_path is not None
+                            else None
+                        ),
                         media_type=media_type,
-                        bytes=_file_bytes(result.local_path),
-                        sha256=_file_sha256(result.local_path),
-                    )
+                        bytes=(
+                            None
+                            if is_cloud
+                            else _file_bytes(local_path)
+                            if local_path is not None
+                            else None
+                        ),
+                        sha256=(
+                            None
+                            if is_cloud
+                            else _file_sha256(local_path)
+                            if local_path is not None
+                            else None
+                        ),
+                        storage_provider=(
+                            cloud_storage_info.provider if cloud_storage_info else None
+                        ),
+                        cloud_uri=cloud_storage_info.uri if cloud_storage_info else None,
+                    ),
                 )

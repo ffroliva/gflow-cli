@@ -31,10 +31,10 @@ def _reset_structlog():
 
 
 def test_auto_detects_tty_renders_text(monkeypatch):
-    """When stdout.isatty() == True, AUTO selects text format."""
+    """When stderr.isatty() == True, AUTO selects text format (logs go to stderr)."""
     fake_tty = StringIO()
     fake_tty.isatty = lambda: True  # type: ignore[method-assign]
-    monkeypatch.setattr("sys.stdout", fake_tty)
+    monkeypatch.setattr("sys.stderr", fake_tty)
     configure_logging(LogFormat.AUTO)
     log = structlog.get_logger("test")
     log.info("hello", extra="value")
@@ -48,7 +48,7 @@ def test_auto_detects_tty_renders_text(monkeypatch):
 def test_auto_detects_pipe_renders_json(monkeypatch):
     fake_pipe = StringIO()
     fake_pipe.isatty = lambda: False  # type: ignore[method-assign]
-    monkeypatch.setattr("sys.stdout", fake_pipe)
+    monkeypatch.setattr("sys.stderr", fake_pipe)
     configure_logging(LogFormat.AUTO)
     log = structlog.get_logger("test")
     log.info("hello", extra="value")
@@ -62,7 +62,7 @@ def test_show_locals_is_false_in_exception_renderer():
     """show_locals=False — secrets in local frames must NOT leak into output."""
     fake_pipe = StringIO()
     fake_pipe.isatty = lambda: False  # type: ignore[method-assign]
-    with patch("sys.stdout", fake_pipe):
+    with patch("sys.stderr", fake_pipe):
         configure_logging(LogFormat.JSON)
         log = structlog.get_logger("test")
         try:
@@ -72,6 +72,25 @@ def test_show_locals_is_false_in_exception_renderer():
             log.exception("oops")
         output = fake_pipe.getvalue()
     assert "DO_NOT_LEAK_xyz123" not in output
+
+
+def test_logs_go_to_stderr_not_stdout(monkeypatch):
+    """Logs must land on stderr, leaving stdout clean for command output.
+
+    Regression guard: structlog's default PrintLoggerFactory writes to stdout,
+    which interleaves log lines with a `--json` payload and breaks a
+    consumer's `json.loads(stdout)`. Logs belong on stderr.
+    """
+    fake_out = StringIO()
+    fake_out.isatty = lambda: False  # type: ignore[method-assign]
+    fake_err = StringIO()
+    fake_err.isatty = lambda: False  # type: ignore[method-assign]
+    monkeypatch.setattr("sys.stdout", fake_out)
+    monkeypatch.setattr("sys.stderr", fake_err)
+    configure_logging(LogFormat.JSON)
+    structlog.get_logger("test").info("diagnostic-event")
+    assert fake_out.getvalue() == ""  # stdout untouched
+    assert "diagnostic-event" in fake_err.getvalue()  # log on stderr
 
 
 def _install_log_capture() -> structlog.testing.LogCapture:

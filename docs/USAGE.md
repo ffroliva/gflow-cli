@@ -31,12 +31,21 @@ Commands:
 
   data      Local provenance database (read-only queries).
     media MEDIA_ID              Show stored record for a Flow media ID.
+    list {projects,images,videos,profiles}  Browse the catalog.
+    prune                       Remove stale local file entries.
+
+  models    Print the image/video model catalog (Rich table or --json).
 ```
 
 Global flags:
 
 - `-V`, `--version` — print version and exit.
 - `-v`, `--verbose` — log at DEBUG level.
+
+Machine-readable output: the generation commands (`image t2i` / `image i2i`,
+`video t2v` / `i2v` / `r2v`), `auth list`, and `gflow models` accept `--json` to
+emit a single parseable object on stdout instead of Rich tables. See
+[§ JSON output](#json-output---json).
 
 Note: `--profile NAME` is **per-subcommand**, not global — pass it after the subcommand name (e.g. `gflow image t2i "..." --profile experiments`, not `gflow --profile experiments image t2i ...`).
 
@@ -389,8 +398,8 @@ Read-only browse over the local SQLite catalog. Shipped in v0.9.0.
 
 ```text
 gflow data list projects   [--profile NAME] [--limit N] [--offset N] [--json]
-gflow data list images     [--profile NAME] [--limit N] [--offset N] [--json]
-gflow data list videos     [--profile NAME] [--limit N] [--offset N] [--json]
+gflow data list images     [--profile NAME] [--limit N] [--offset N] [--json] [--all-copies]
+gflow data list videos     [--profile NAME] [--limit N] [--offset N] [--json] [--all-copies]
 gflow data list profiles                    [--limit N] [--offset N] [--json]
 
 Options:
@@ -398,7 +407,13 @@ Options:
   --limit N             Max rows returned. Range 1..1000. Default 20.
   --offset N            Rows to skip (pagination). Default 0.
   --json                Force JSONL output (one record per line).
+  --all-copies          Show every local file copy separately (images/videos only).
 ```
+
+By default, `images` and `videos` aggregate rows by Flow media ID. If an asset
+has multiple local copies (e.g. re-downloaded to different paths), they appear
+as a single row with a `COPIES` count and the path of the latest copy. Use
+`--all-copies` to see every path as a separate row.
 
 Output:
 - TTY stdout → Rich-formatted table.
@@ -412,8 +427,11 @@ Default sort: newest first (by `created_at`). Exit codes: 0 success (including t
 # Newest 20 projects across all profiles
 gflow data list projects
 
-# All images for one profile, paginated
+# All images for one profile, aggregated by asset by default
 gflow data list images --profile ffroliva --limit 50 --offset 0
+
+# Show every local file copy separately
+gflow data list images --all-copies
 
 # Videos as JSONL for piping into jq
 gflow data list videos --json | jq '.media_id'
@@ -426,9 +444,27 @@ gflow data list profiles
 
 For full schema details and JOIN semantics, see [`docs/DATA_LAYER.md § Querying the data layer`](DATA_LAYER.md#querying-the-data-layer).
 
+## `gflow data prune`
+
+Remove `local_files` database entries whose local paths no longer exist on
+disk. Shipped in v0.9.1.
+
+```bash
+gflow data prune [--dry-run] [--profile NAME]
+```
+
+Useful after test runs that wrote to temporary directories, or after manually
+deleting media files. Only **local files** (where `storage_provider` is NULL)
+are scanned; cloud-stored assets are ignored to prevent accidental pruning of
+remote objects.
+
+Options:
+  --dry-run             Preview dead rows without deleting.
+  --profile NAME        Limit scan to a specific profile.
+
 ## `gflow data media`
 
-Look up a recorded operation by its Flow media ID. Prints a summary of the stored provenance record: profile, media ID, Flow project ID, kind (image/video), and the local file paths that were written for that operation.
+Look up a recorded operation by its Flow media ID. Prints a summary of the stored provenance record: profile, media ID, Flow project ID, kind (image/video), and the local paths or cloud URIs that were written for that operation.
 
 Without `--profile` the lookup spans **every profile** in the catalog — matching the cross-profile default of `gflow data list`. Pass `--profile NAME` to scope to a specific profile (this is the way to disambiguate the rare case where two profiles share the same Flow `media_id`; the command refuses to guess and lists the candidates annotated with `kind`). See [#87](https://github.com/ffroliva/gflow-cli/issues/87).
 
@@ -455,7 +491,64 @@ Paths:
   /home/user/Downloads/gflow-cli/images/2026-05-24/ddb6ef97_2.png
 ```
 
+When [`GFLOW_CLI_STORAGE_URI`](EXTERNAL_STORAGE.md) was active for the run, the
+same command prints `cloud_uri_1`, `cloud_uri_2`, and so on instead of
+`local_path_N` rows.
+
 Exit codes: `0` success, `2` media ID not found in the local database, `16` database error (see exit code table below).
+
+## `gflow models`
+
+Print the image and video model catalog — the source of truth for what
+`--model` accepts on the generation commands. Defaults to a Rich table; pass
+`--json` for a single machine-readable object.
+
+```text
+gflow models [OPTIONS]
+```
+
+Per model the catalog reports: `name`, the CLI aliases the matching generation
+command's `--model` choice actually accepts, `ref_cap` (max reference images),
+plus `default` (image models) and `max_duration` (video models). Because it is
+built from the same `Model` / `VideoModel` enums + alias maps the generation
+commands use, any alias it prints is guaranteed to be accepted back by
+`--model` — a UI populating its model picker from `gflow models --json` can
+round-trip every value.
+
+```bash
+# Human-readable table
+gflow models
+
+# Machine-readable catalog for a worker / model picker
+gflow models --json
+```
+
+## JSON output (`--json`)
+
+The generation commands (`image t2i` / `image i2i`, `video t2v` / `i2v` /
+`r2v`), `auth list`, and `gflow models` accept `--json` for machine-to-machine
+use. When set:
+
+- The command emits **one** parseable JSON object (or array, for `auth list`)
+  on **stdout** and nothing else — progress chatter is suppressed and structured
+  logs go to **stderr**, so `json.loads(stdout)` always succeeds.
+- `image t2i/i2i` emits the complete `GeneratedImage` result (`media_name`,
+  `workflow_id`, `seed`, `prompt`, `model_name_type`, `aspect_ratio`,
+  `dimensions`, `fife_url`, `is_signed_url`) plus the on-disk `local_path`;
+  `ref_count` is included on `i2i`. Single-prompt only — `--json` rejects
+  multi-prompt batches with a Click usage error.
+- `video t2v/i2v/r2v` emits the `VideoResult` (`status`, `command`, `media_id`,
+  `generation_status`, `succeeded`, `local_path`, `failure_reasons`,
+  `error_message`) plus the request echo (`model`, `mode`, `aspect`,
+  `duration`, `count`, `seed`).
+- On failure, the command still emits a JSON payload — an RFC 9457
+  problem-details object including a `retryable` flag (true for WAF /
+  rate-limit / network / timeout) that a worker scheduler can key its
+  retry-vs-absorb decision off — and exits with the same non-zero code as the
+  Rich path.
+
+The data-layer recorder fires regardless of `--json`, so audit history is
+independent of the output channel.
 
 ## `gflow run`
 
@@ -664,12 +757,17 @@ async def main() -> None:
         req = GenerateImageRequest(prompt="a peaceful lake at dawn", model=Model.IMAGE4)
         # project_id is optional — omit it and a new project is created automatically.
         image = await client.generate_image(req=req)
-        await client.download_image(image, Path("lake.png"))
+        saved = await client.download_image(image, Path("lake.png"))
+        print(saved)
 
 asyncio.run(main())
 ```
 
 `project_id` defaults to `None`. When omitted, `generate_image()` (and `generate_images_batch()`) call `create_project()` internally. Pass an explicit `project_id` when you want multiple generations to land in the same Flow project.
+
+`download_image()` returns the final write location. That is a local
+`pathlib.Path` by default, or a cloud-backed path when
+`GFLOW_CLI_STORAGE_URI` is set; see [EXTERNAL_STORAGE.md](EXTERNAL_STORAGE.md).
 
 ### Archive / cleanup
 

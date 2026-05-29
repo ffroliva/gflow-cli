@@ -155,3 +155,53 @@ class TestDelete:
     def test_missing_raises(self, home: Path) -> None:
         with pytest.raises(FileNotFoundError):
             profile_store.delete_profile("never_existed")
+
+
+class TestGoogleAccount:
+    def test_none_when_file_absent(self, home: Path) -> None:
+        _mk_profile(home, "alice")
+        profiles = {p.name: p for p in profile_store.list_profiles()}
+        assert profiles["alice"].google_account is None
+
+    def test_populated_from_account_file(self, home: Path) -> None:
+        pdir = _mk_profile(home, "alice")
+        (pdir / profile_store.ACCOUNT_FILE).write_text("alice@example.com", encoding="utf-8")
+        profiles = {p.name: p for p in profile_store.list_profiles()}
+        assert profiles["alice"].google_account == "alice@example.com"
+
+    def test_empty_account_file_treated_as_none(self, home: Path) -> None:
+        pdir = _mk_profile(home, "bob")
+        (pdir / profile_store.ACCOUNT_FILE).write_text("   ", encoding="utf-8")
+        profiles = {p.name: p for p in profile_store.list_profiles()}
+        assert profiles["bob"].google_account is None
+
+
+class TestRenameProfile:
+    def test_renames_directory(self, home: Path) -> None:
+        _mk_profile(home, "old")
+        new_dir = profile_store.rename_profile("old", "new")
+        assert new_dir.exists()
+        assert not (home / "profile_old").exists()
+
+    def test_missing_source_raises(self, home: Path) -> None:
+        with pytest.raises(FileNotFoundError):
+            profile_store.rename_profile("ghost", "new")
+
+    def test_existing_target_raises(self, home: Path) -> None:
+        _mk_profile(home, "old")
+        _mk_profile(home, "new")
+        with pytest.raises(FileExistsError):
+            profile_store.rename_profile("old", "new")
+
+    def test_updates_default_in_config(self, home: Path) -> None:
+        _mk_profile(home, "old")
+        profile_store.set_default_profile("old")
+        profile_store.rename_profile("old", "new")
+        assert profile_store.get_default_profile() == "new"
+
+    def test_leaves_config_alone_when_not_default(self, home: Path) -> None:
+        _mk_profile(home, "keep")
+        _mk_profile(home, "old")
+        profile_store.set_default_profile("keep")
+        profile_store.rename_profile("old", "renamed")
+        assert profile_store.get_default_profile() == "keep"

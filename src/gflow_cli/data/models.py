@@ -2,8 +2,10 @@ from __future__ import annotations
 
 from dataclasses import dataclass
 from enum import StrEnum
-from pathlib import Path
-from typing import Any
+from typing import TYPE_CHECKING, Any
+
+if TYPE_CHECKING:
+    from pathlib import Path
 
 JsonObject = dict[str, Any]
 
@@ -146,10 +148,12 @@ class LocalFileRecord:
     id: str
     profile_name: str
     asset_id: str
-    path: Path
+    path: Path | None  # None for cloud-only files
     media_type: str | None
     bytes: int | None
     sha256: str | None
+    storage_provider: str | None = None  # "gcs" | "s3" | None (= local)
+    cloud_uri: str | None = None  # gs://bucket/key or s3://bucket/key
     created_at: str | None = None
 
 

@@ -1,13 +1,17 @@
 from __future__ import annotations
 
+from typing import TYPE_CHECKING
+
 import structlog
 
 from gflow_cli.config import get_settings
 from gflow_cli.errors import ConfigurationError
 
-from .base import AuthStrategy
 from .internal_chromium import InternalChromiumStrategy
 from .real_chrome import RealChromeStrategy
+
+if TYPE_CHECKING:
+    from .base import AuthStrategy
 
 logger = structlog.get_logger(__name__)
 
@@ -35,14 +39,16 @@ class AuthStrategyFactory:
             return InternalChromiumStrategy(timeout_seconds=timeout)
 
         if mode not in self._strategies:
+            msg = f"Unknown auth browser mode '{mode}'. Supported: auto, chrome, internal."
             raise ConfigurationError(
-                f"Unknown auth browser mode '{mode}'. Supported: auto, chrome, internal."
+                msg,
             )
 
         if mode == "chrome":
             if not self._is_chrome_available():
+                msg = "Chrome binary not found. Install Google Chrome or use '--browser internal'."
                 raise ConfigurationError(
-                    "Chrome binary not found. Install Google Chrome or use '--browser internal'."
+                    msg,
                 )
             return RealChromeStrategy(timeout_seconds=timeout)
 

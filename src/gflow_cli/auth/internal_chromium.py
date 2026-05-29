@@ -1,8 +1,7 @@
 from __future__ import annotations
 
 import asyncio
-from pathlib import Path
-from typing import Any
+from typing import TYPE_CHECKING, Any
 
 import structlog
 from playwright.async_api import Error as PlaywrightError
@@ -13,6 +12,9 @@ from gflow_cli.errors import AuthBrowserRejectedError, AuthLoginTimeoutError, Se
 
 from .base import AuthStrategy
 from .verification import SESSION_API_URL, FlowSessionOutcome, evaluate_session_response
+
+if TYPE_CHECKING:
+    from pathlib import Path
 
 logger = structlog.get_logger(__name__)
 _console = Console()
@@ -26,20 +28,22 @@ async def _poll_session_until_authenticated(
     page: Any,
     timeout_seconds: int,
     strategy_name: str,
-) -> None:
+) -> str | None:
     """Poll the Flow NextAuth session endpoint until the sign-in completes.
 
+    Returns the verified user email, or None if it could not be extracted.
     Raises ``AuthBrowserRejectedError`` if Google rejects the browser.
     Raises ``AuthLoginTimeoutError`` if the timeout elapses or the browser
     closes before authentication is verified.
     """
     timeout_at = asyncio.get_running_loop().time() + timeout_seconds
     success = False
+    _email: str | None = None
 
     while asyncio.get_running_loop().time() < timeout_at:
         try:
             if _is_google_rejected_browser_page(page):
-                raise AuthBrowserRejectedError()
+                raise AuthBrowserRejectedError
 
             cookies = await ctx.cookies()
             google_session = any(c.get("name") == "SAPISID" for c in cookies)
@@ -58,6 +62,7 @@ async def _poll_session_until_authenticated(
                     user_email=status.user_email,
                 )
                 success = True
+                _email = status.user_email
                 break
         except asyncio.CancelledError:
             raise
@@ -66,7 +71,7 @@ async def _poll_session_until_authenticated(
         except PlaywrightError:
             # Browser / page / context closed — stop polling.
             break
-        except Exception as exc:  # noqa: BLE001
+        except Exception as exc:
             logger.warning(
                 "auth_flow_session_poll_error",
                 strategy=strategy_name,
@@ -76,8 +81,9 @@ async def _poll_session_until_authenticated(
 
         await asyncio.sleep(3)
     else:
+        msg = f"Flow sign-in not completed within {timeout_seconds}s."
         raise AuthLoginTimeoutError(
-            f"Flow sign-in not completed within {timeout_seconds}s.",
+            msg,
             remediation_hint=(
                 "Run `gflow auth login` again and continue until the Flow "
                 "editor loads. Set GFLOW_CLI_AUTH_LOGIN_TIMEOUT higher if "
@@ -86,13 +92,16 @@ async def _poll_session_until_authenticated(
         )
 
     if not success:
+        msg = "Browser closed before the Flow editor sign-in was verified."
         raise AuthLoginTimeoutError(
-            "Browser closed before the Flow editor sign-in was verified.",
+            msg,
             remediation_hint=(
                 "Complete the Flow sign-in — until the editor loads — "
                 "before closing the browser. Run `gflow auth login` to retry."
             ),
         )
+
+    return _email
 
 
 def _is_google_rejected_browser_page(page: object) -> bool:
@@ -119,9 +128,12 @@ class InternalChromiumStrategy(AuthStrategy):
         try:
             profile_dir.resolve(strict=False).relative_to(settings.home.resolve())
         except ValueError:
-            raise SecurityError(
+            msg = (
                 f"Profile directory {profile_dir} is outside of GFLOW_CLI_HOME "
                 f"({settings.home}) boundaries."
+            )
+            raise SecurityError(
+                msg,
             ) from None
 
         # Deferred import to avoid circular dependency and support test patching
@@ -130,6 +142,7 @@ class InternalChromiumStrategy(AuthStrategy):
         profile_dir.mkdir(parents=True, exist_ok=True)
         logger.info("auth_login_started", profile_dir=str(profile_dir), strategy=self.name)
 
+        user_email: str | None = None
         async with async_playwright() as pw:
             # We use launch_persistent_context to ensure cookies are saved to profile_dir
             ctx = await pw.chromium.launch_persistent_context(
@@ -146,13 +159,21 @@ class InternalChromiumStrategy(AuthStrategy):
                     _console.print(
                         "\n  Sign into your Google account in the open window.\n"
                         "  Once you reach the Flow editor, gflow will automatically detect "
-                        "success and exit.\n"
+                        "success and exit.\n",
                     )
 
                 # Poll until the Flow app sign-in completes; raises on timeout/rejection.
-                await _poll_session_until_authenticated(ctx, page, self._timeout_seconds, self.name)
+                user_email = await _poll_session_until_authenticated(
+                    ctx,
+                    page,
+                    self._timeout_seconds,
+                    self.name,
+                )
                 # Small delay to ensure state is flushed to disk
                 await asyncio.sleep(1)
 
             finally:
                 await ctx.close()
+
+        if user_email:
+            (profile_dir / ".gflow_account").write_text(user_email, encoding="utf-8")

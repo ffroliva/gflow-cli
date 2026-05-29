@@ -7,6 +7,181 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+## [0.10.0] — 2026-05-29
+
+### Fixed
+
+- **Image and video counts leaking across profiles in `gflow data list projects` (issue #113).**
+  Fixed an issue where project media counts were combined if two different profiles
+  happened to share the same `flow_project_id`. The counts in `_LIST_PROJECTS_SQL`
+  are now strictly scoped to the active `profile_name`.
+
+- **List queries fan-out when multiple operations claim an asset (issue #111).**
+  Fixed a bug in `gflow data list images` and `gflow data list videos` where 
+  assets would be duplicated or have non-deterministic prompts if multiple 
+  operations (e.g., retries) claimed the same output asset. The SQL queries 
+  now use a deterministic subquery grouping by `asset_id` to ensure exactly 
+  one-to-one cardinality.
+
+### Added
+
+- **Google account identity persisted to every profile (`issue #92`).** Both
+  auth strategies (`real_chrome`, `internal_chromium`) now write a
+  `.gflow_account` file to the profile directory immediately after the session
+  is verified, durably associating the signed-in email with the profile on disk.
+  `ProfileMeta` gains a `google_account: str | None` field populated by
+  `profile_store.list_profiles()` from that file. `gflow auth list` (table and
+  `--json`) now includes a **Google account** column so every profile is
+  immediately identifiable — no more opaque `default` entries.  The `--json`
+  output gains the `google_account` key for programmatic callers.  Closes #92.
+
+- **Auto-rename of the first-run `default` profile to email local-part.** When
+  `gflow auth login` creates the first profile and no `--profile` flag was given,
+  the profile is named `default` as a placeholder. After the session is verified
+  and the email is known, `auth login` automatically renames `profile_default` to
+  `profile_<email-local-part>` (e.g. `profile_ffroliva`) and updates
+  `config.toml`'s `default_profile` pointer atomically. The local-part is
+  sanitized to a filesystem-safe name (characters outside letters, digits, `-`,
+  and `_` become `-`), so `flavio.oliva@gmail.com` → `profile_flavio-oliva` and
+  `user+flow@gmail.com` → `profile_user-flow`. Existing `default`
+  profiles that were created before this change continue to work; they gain the
+  email column the next time `gflow auth login` is run against them.  Closes #92.
+
+- **`profile_store.rename_profile(old_name, new_name)`** — reusable primitive that
+  renames a profile directory and updates `config.toml` when the renamed profile
+  was the default. Raises `FileNotFoundError` / `FileExistsError` on invalid input.
+
+- **Zero-credit smoke test for profile account persistence
+  (`tests/smoke/test_profile_account_smoke.py`).** Three smoke tests that verify
+  the full observable chain — account file present + readable, `list_profiles()`
+  surfaces `google_account`, `gflow auth list --json` includes the field — against
+  a real authenticated profile. No image or video generation; zero Flow credits.
+  Backfills the `.gflow_account` file for profiles created before the fix so the
+  tests work on existing sessions. Opt-in via
+  `GFLOW_CLI_E2E_PROFILE=<name> pytest -m smoke tests/smoke/test_profile_account_smoke.py`.
+
+- **Aggregated asset view in `gflow data list images/videos`.** By default,
+  listing images or videos now returns one row per asset (Flow media ID),
+  collapsing multiple local copies into a single entry with a `COPIES` count
+  and the path of the latest copy. This prevents duplicate rows when
+  re-downloading the same media to different directories. The `copy_count`
+  is also exposed in JSONL output.
+- **`--all-copies` flag on `gflow data list images/videos`.** Restores the
+  previous behavior of showing every local file as a separate row.
+- **`gflow data prune` command.** New maintenance utility to remove stale
+  `local_files` database entries for local paths that no longer exist on
+  disk. Only targets local files (ignores cloud-stored assets). Supports
+  `--dry-run` to preview deletions and `--profile` to limit the scan.
+- **External storage documentation for S3, MinIO, and Google Cloud Storage.**
+  Adds `docs/EXTERNAL_STORAGE.md`, cross-links it from the README, docs index,
+  configuration, data-layer, usage, security, and user-guide docs, and clarifies
+  that `GFLOW_CLI_STORAGE_URI` is a cloud-only output mode rather than
+  local-plus-cloud dual-write.
+- **`--json` flag on `gflow video t2v`, `gflow video i2v`, and `gflow video r2v`.**
+  Emits the `VideoResult` (status / command / media_id / generation_status /
+  succeeded / local_path / failure_reasons / error_message) plus the request
+  echo (model / mode / aspect / duration / count / seed) as a single JSON
+  object on stdout. A failed generation still emits its JSON payload and
+  then exits 1. The data-layer recorder
+  (`record_started_video` / `record_completed_video`) fires regardless of
+  `--json` so audit history is independent of the output channel. E2e
+  coverage for `--json` shape across image / video / auth / models lives at
+  `tests/e2e/test_json_output_e2e.py`.
+- **`--json` flag on `gflow image t2i` and `gflow image i2i`.** Emits the
+  complete `GeneratedImage` result (every field — `media_name`,
+  `workflow_id`, `seed`, `prompt`, `model_name_type`, `aspect_ratio`,
+  `dimensions`, `fife_url`, `is_signed_url`) plus the on-disk `local_path`
+  as a single JSON object on stdout. A worker keys `images[0].seed` for
+  refine-regen seed continuity. Single-prompt only (`--json` rejects
+  multi-prompt batch with a Click usage error); progress chatter is
+  suppressed so stdout is pure JSON. `ref_count` surfaces only on i2i.
+- **`gflow models` catalog command.** New top-level command that enumerates
+  the image and video model catalog as a Rich table (default) or as a single
+  JSON object (`--json`). Per-model: `name`, CLI aliases (filtered to what
+  the generation command's `--model` Choice actually accepts), `ref_cap`,
+  `default` (image), `max_duration` (video). Built from the
+  `Model` / `VideoModel` enums + their alias maps so the catalog can never
+  drift from what the generation commands accept. A UI populating its model
+  picker from `gflow models --json` is guaranteed to pass any selected alias
+  back to `--model`.
+- **`gflow_cli.json_output` module + `--json` error path on
+  `run_with_handlers`.** Pure builders for image/video result payloads and
+  RFC 9457 problem-details errors (plus a `retryable` flag worker schedulers
+  key their retry-vs-absorb decision off — WAF / rate-limit / network /
+  timeout). When `as_json=True`, errors emit a parseable JSON payload on
+  stdout with the same exit code as the Rich path; the observability event
+  still fires.
+- **`--json` flag on `gflow auth list`.** Emits the profile inventory as a JSON
+  array (`name` / `is_default` / `cookies_present` / `profile_dir` /
+  `last_used_at`) on stdout so a programmatic caller (e.g. a worker discovering
+  authenticated profiles) can `json.loads(stdout)` instead of scraping the
+  Rich table.
+- **Per-model r2v reference-image cap rebuilt as a data table.** Replaces the
+  prior pair of constants (`OMNI_REFERENCE_CAP=7`, `VEO_REFERENCE_CAP=3`) with
+  a `VideoModel -> int` mapping consulted by
+  `gflow_cli.api.video.reference_cap_for(model)`. New entries:
+  `veo_3_1_lite_lower_priority=3` (was implicitly covered by the veo branch),
+  and `veo_3_1_quality=0` — Veo 3.1 Quality does NOT support
+  Ingredients/References to Video at all per Google Flow's official support
+  page; passing it to r2v raises a clear `does not support R2V
+  (reference-to-video)` error rather than letting the request fail at the
+  wire. CLI guard added on `gflow video r2v` (`click.UsageError`, exit 2)
+  mirroring the i2i pattern so over-cap and quality+r2v fail before any
+  profile/network work. E2e tripwire at
+  `tests/e2e/test_video_r2v_ref_cap_e2e.py` asserts Flow actually consumes
+  all `cap` refs at the at-cap boundary.
+- **Per-model i2i reference-image cap.** Flow silently keeps only the first N
+  reference images when an i2i request attaches more than the model accepts,
+  so a caller could believe every ref was used. `gflow_cli.api.image.reference_cap_for(model)`
+  exposes the live-observed per-model cap: NARWHAL (Nano Banana 2) and GEM_PIX_2
+  (Nano Pro) accept 10, IMAGEN_3_5 (Imagen 4) accepts 3. Enforced as a domain
+  invariant in `GenerateImageRequest.__post_init__` and at the CLI boundary in
+  `gflow image i2i` (clean `click.UsageError` / exit 2 before any
+  profile/network work). Mirrors the existing video r2v cap pattern. E2e
+  tripwire at `tests/e2e/test_image_i2i_ref_cap_e2e.py` asserts Flow actually
+  consumes all `cap` refs (one `reference_attached` event per ref) so a future
+  silent truncation on the Flow side fails the test.
+- **Layered e2e test strategy with cost sub-markers.** The single `e2e` marker is
+  now augmented by cost sub-markers (`e2e_auth`, `e2e_image`, `e2e_video`,
+  `e2e_batch`, `e2e_data`, `smoke`) so callers can run only the tier they can
+  afford (zero-credit auth checks, single-credit image smoke, etc.). See
+  `docs/E2E_TESTING.md` for the full reference.
+- `tests/e2e/conftest.py` — shared `e2e_profile_dir`, `e2e_nosession_profile`,
+  and `e2e_env` fixtures replace duplicated inline helpers in individual test files.
+- `tests/api/transports/test_transport_timeout.py` — extracted from e2e as a
+  pure-mock integration test; also fixes `Path("/dev/null")` → `Path(os.devnull)`
+  for Windows portability.
+- `tests/test_marker_registry.py` — invariant checks that every e2e test carries a
+  cost sub-marker, and self-tests for the auto-marker conftest hook.
+- `docs/E2E_TESTING.md` — comprehensive e2e strategy and layer reference document.
+
+### Fixed
+
+- Structlog logs are now routed to stderr (via
+  `PrintLoggerFactory(file=sys.stderr)`) instead of stdout. Previously every
+  CLI event leaked onto stdout, which broke the `--json` contract for
+  programmatic callers — `json.loads(stdout)` failed because the JSON
+  payload was preceded by event-log lines. Logs are diagnostics; stdout is
+  data. No-op for human users (terminals still show logs the same way).
+
+### Changed
+
+- `gflow data media` now labels cloud-backed asset records as `cloud_uri_N`
+  while keeping local assets under the existing `local_path_N` labels.
+- `gflow_cli.api.video` no longer exposes the standalone `OMNI_REFERENCE_CAP` /
+  `VEO_REFERENCE_CAP` constants. Callers that need a per-model R2V cap should
+  use `reference_cap_for(model)` (which returns `0` for `VEO_3_1_QUALITY` —
+  R2V is unsupported there). `MAX_REFERENCE_IMAGES` (= 7) is unchanged and
+  still the absolute ceiling used when the model is unknown.
+- `GFLOW_CLI_E2E_RUN_VIDEO` default flipped from `"1"` to `"0"`. The Veo step in
+  `test_data_layer_e2e.py` is now **opt-in**: set `GFLOW_CLI_E2E_RUN_VIDEO=1` to
+  include it. This prevents accidental Veo credit burns on unattended CI runs.
+- `pytest` `addopts` now excludes `smoke` in addition to `e2e` and `live`:
+  `not e2e and not live and not smoke`. Bare `pytest` never launches a live
+  browser session.
+- Auto-marker conftest hook uses `item.path.parts` instead of a slash-delimited
+  string substring, fixing Windows backslash path compatibility.
+
 ## [0.9.1] — 2026-05-27
 
 > **Locale and catalog patch release.** Hardens the headed-browser UI
@@ -1034,7 +1209,8 @@ shell-script template that branches on these codes.
 
 First skeleton. Not functional end-to-end yet.
 
-[Unreleased]: https://github.com/ffroliva/gflow-cli/compare/v0.9.1...HEAD
+[Unreleased]: https://github.com/ffroliva/gflow-cli/compare/v0.10.0...HEAD
+[0.10.0]: https://github.com/ffroliva/gflow-cli/compare/v0.9.1...v0.10.0
 [0.9.1]: https://github.com/ffroliva/gflow-cli/compare/v0.9.0...v0.9.1
 [0.9.0]: https://github.com/ffroliva/gflow-cli/compare/v0.8.1...v0.9.0
 [0.8.1]: https://github.com/ffroliva/gflow-cli/compare/v0.8.0...v0.8.1

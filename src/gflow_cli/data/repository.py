@@ -5,7 +5,7 @@ import json
 import sqlite3
 from datetime import UTC, datetime
 from pathlib import Path
-from typing import cast
+from typing import TYPE_CHECKING, cast
 
 from gflow_cli.data.models import (
     AssetKind,
@@ -19,8 +19,10 @@ from gflow_cli.data.models import (
     ProjectRecord,
     SeedImage,
 )
-from gflow_cli.data.store import DataStore
 from gflow_cli.errors import DataIntegrityError
+
+if TYPE_CHECKING:
+    from gflow_cli.data.store import DataStore
 
 
 def _utc_now() -> str:
@@ -88,7 +90,7 @@ class DataRepository:
                 )
         except sqlite3.IntegrityError as exc:
             raise DataIntegrityError(detail=str(exc), route="data.upsert_project") from exc
-        return cast(ProjectRecord, dataclasses.replace(record, created_at=created_at))  # pyright: ignore[reportUnnecessaryCast]
+        return cast("ProjectRecord", dataclasses.replace(record, created_at=created_at))  # pyright: ignore[reportUnnecessaryCast]
 
     # ------------------------------------------------------------------
     # Assets
@@ -147,7 +149,7 @@ class DataRepository:
                 )
         except sqlite3.IntegrityError as exc:
             raise DataIntegrityError(detail=str(exc), route="data.upsert_asset") from exc
-        return cast(AssetRecord, dataclasses.replace(record, created_at=created_at))  # pyright: ignore[reportUnnecessaryCast]
+        return cast("AssetRecord", dataclasses.replace(record, created_at=created_at))  # pyright: ignore[reportUnnecessaryCast]
 
     def update_asset_status(self, profile_name: str, flow_media_id: str, status: str) -> None:
         with self._store.transaction(immediate=True):
@@ -157,7 +159,9 @@ class DataRepository:
             )
 
     def get_asset_by_flow_media_id(
-        self, profile_name: str, flow_media_id: str
+        self,
+        profile_name: str,
+        flow_media_id: str,
     ) -> AssetLookup | None:
         row = self._store.conn.execute(
             """
@@ -193,7 +197,8 @@ class DataRepository:
     def _hydrate_asset_lookup(self, row: sqlite3.Row) -> AssetLookup:
         file_rows = self._store.conn.execute(
             """
-            SELECT id, profile_name, asset_id, path, media_type, bytes, sha256, created_at
+            SELECT id, profile_name, asset_id, path, media_type, bytes, sha256, created_at,
+                   storage_provider, cloud_uri
             FROM local_files
             WHERE profile_name = ? AND asset_id = ?
             ORDER BY created_at ASC, id ASC
@@ -263,7 +268,7 @@ class DataRepository:
                 )
         except sqlite3.IntegrityError as exc:
             raise DataIntegrityError(detail=str(exc), route="data.insert_operation") from exc
-        return cast(OperationRecord, dataclasses.replace(record, started_at=started_at))  # pyright: ignore[reportUnnecessaryCast]
+        return cast("OperationRecord", dataclasses.replace(record, started_at=started_at))  # pyright: ignore[reportUnnecessaryCast]
 
     def update_operation_status(
         self,
@@ -284,7 +289,10 @@ class DataRepository:
             )
 
     def get_operation_for_output_asset(
-        self, profile_name: str, flow_media_id: str, mode: OperationKind
+        self,
+        profile_name: str,
+        flow_media_id: str,
+        mode: OperationKind,
     ) -> OperationRecord | None:
         row = self._store.conn.execute(
             """
@@ -339,36 +347,49 @@ class DataRepository:
     def upsert_local_file(self, record: LocalFileRecord) -> LocalFileRecord:
         now = _utc_now()
         created_at = record.created_at or now
+        # For cloud-only rows path is None; store cloud_uri in the path column
+        # to satisfy the NOT NULL + UNIQUE(asset_id, path) constraint.
+        db_path = str(record.path) if record.path is not None else record.cloud_uri
+        if db_path is None:
+            raise DataIntegrityError(
+                detail="LocalFileRecord must have path or cloud_uri",
+                route="data.upsert_local_file",
+            )
         try:
             with self._store.transaction(immediate=True):
                 self._store.conn.execute(
                     """
                     INSERT INTO local_files(
                         id, profile_name, asset_id, path,
-                        sha256, bytes, media_type, created_at
+                        sha256, bytes, media_type, created_at,
+                        storage_provider, cloud_uri
                     )
-                    VALUES (?, ?, ?, ?, ?, ?, ?, ?)
+                    VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
                     ON CONFLICT(asset_id, path) DO UPDATE SET
                         id = excluded.id,
                         profile_name = excluded.profile_name,
                         sha256 = excluded.sha256,
                         bytes = excluded.bytes,
-                        media_type = excluded.media_type
+                        media_type = excluded.media_type,
+                        storage_provider = excluded.storage_provider,
+                        cloud_uri = excluded.cloud_uri
                     """,
                     (
                         record.id,
                         record.profile_name,
                         record.asset_id,
-                        str(record.path),
+                        db_path,
                         record.sha256,
                         record.bytes,
                         record.media_type,
                         created_at,
+                        record.storage_provider,
+                        record.cloud_uri,
                     ),
                 )
         except sqlite3.IntegrityError as exc:
             raise DataIntegrityError(detail=str(exc), route="data.upsert_local_file") from exc
-        return cast(LocalFileRecord, dataclasses.replace(record, created_at=created_at))  # pyright: ignore[reportUnnecessaryCast]
+        return cast("LocalFileRecord", dataclasses.replace(record, created_at=created_at))  # pyright: ignore[reportUnnecessaryCast]
 
     # ------------------------------------------------------------------
     # Seed image resolvers
@@ -544,7 +565,7 @@ class DataRepository:
                     model=row["model"],
                     aspect_ratio=row["aspect_ratio"],
                     created_at=str(row["created_at"]),
-                )
+                ),
             )
         return result
 
@@ -555,7 +576,7 @@ class DataRepository:
     def _latest_local_path(self, asset_id: str) -> Path | None:
         row = self._store.conn.execute(
             """
-            SELECT path FROM local_files
+            SELECT path, storage_provider FROM local_files
             WHERE asset_id = ?
             ORDER BY created_at DESC, id DESC
             LIMIT 1
@@ -563,6 +584,9 @@ class DataRepository:
             (asset_id,),
         ).fetchone()
         if row is None:
+            return None
+        # Cloud-only rows have storage_provider set; path holds the cloud URI.
+        if row["storage_provider"] is not None:
             return None
         return Path(str(row["path"]))
 
@@ -573,14 +597,19 @@ class DataRepository:
 
 
 def _row_to_local_file(row: sqlite3.Row) -> LocalFileRecord:
+    provider: str | None = row["storage_provider"]
+    # Cloud-only rows: path column holds the cloud URI, not a filesystem path.
+    local_path = None if provider is not None else Path(str(row["path"]))
     return LocalFileRecord(
         id=str(row["id"]),
         profile_name=str(row["profile_name"]),
         asset_id=str(row["asset_id"]),
-        path=Path(str(row["path"])),
+        path=local_path,
         media_type=row["media_type"],
         bytes=row["bytes"],
         sha256=row["sha256"],
+        storage_provider=provider,
+        cloud_uri=row["cloud_uri"],
         created_at=row["created_at"],
     )
 

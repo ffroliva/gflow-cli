@@ -56,7 +56,7 @@ def extract_project_id(url: str) -> str | None:
     if PROJECT_URL_FRAGMENT not in url:
         return None
     try:
-        return url.split(PROJECT_URL_FRAGMENT)[1].split("?")[0]
+        return url.split(PROJECT_URL_FRAGMENT)[1].split("?", maxsplit=1)[0]
     except (IndexError, ValueError):
         return None
 
@@ -85,26 +85,34 @@ def interpret_response(strategy_name: str, resp: Any) -> list[GeneratedImage]:
         try:
             payload = json.loads(text)
         except json.JSONDecodeError as exc:
-            raise WireFormatError(f"{strategy_name}: non-JSON response body: {text[:200]}") from exc
+            msg = f"{strategy_name}: non-JSON response body: {text[:200]}"
+            raise WireFormatError(msg) from exc
 
         media = payload.get("media")
         if not isinstance(media, list):
+            msg = f"{strategy_name}: missing or invalid 'media' list in response: {text[:200]}"
             raise WireFormatError(
-                f"{strategy_name}: missing or invalid 'media' list in response: {text[:200]}"
+                msg,
             )
         if not media:
-            raise ContentPolicyError(f"{strategy_name}: empty media[] — content policy rejection")
+            msg = f"{strategy_name}: empty media[] — content policy rejection"
+            raise ContentPolicyError(msg)
         return GeneratedImage.from_response_dict(payload)
 
     if status == 401:
-        raise AuthExpiredError(f"{strategy_name}: HTTP 401 from Flow API — session expired")
+        msg = f"{strategy_name}: HTTP 401 from Flow API — session expired"
+        raise AuthExpiredError(msg)
     if status == 403:
+        msg = f"{strategy_name}: HTTP 403 — likely WAF/fingerprint mismatch: {text[:200]}"
         raise WafRejectionError(
-            f"{strategy_name}: HTTP 403 — likely WAF/fingerprint mismatch: {text[:200]}"
+            msg,
         )
     if status == 429:
-        raise RateLimitError(f"{strategy_name}: HTTP 429 — rate limit hit: {text[:200]}")
+        msg = f"{strategy_name}: HTTP 429 — rate limit hit: {text[:200]}"
+        raise RateLimitError(msg)
     if status >= 500:
-        raise NetworkError(f"{strategy_name}: HTTP {status} server error: {text[:200]}")
+        msg = f"{strategy_name}: HTTP {status} server error: {text[:200]}"
+        raise NetworkError(msg)
 
-    raise WireFormatError(f"{strategy_name}: unexpected HTTP status {status}: {text[:200]}")
+    msg = f"{strategy_name}: unexpected HTTP status {status}: {text[:200]}"
+    raise WireFormatError(msg)

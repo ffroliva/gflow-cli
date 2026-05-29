@@ -92,6 +92,44 @@ This is intentional. Do not switch the normal PR workflow to
 repository privileges and can expose secrets if it checks out or executes
 untrusted PR code.
 
+## SonarCloud Quality Gate
+
+The gate is evaluated on **new code** (changed lines vs `main`, per
+`sonar.newCode.referenceBranch`). Conditions: new-code coverage ≥ 80 %,
+reliability / security / maintainability rating A, duplicated lines ≤ 3 %, and
+all new security hotspots reviewed.
+
+**The gate blocks CI.** `sonar-project.properties` sets
+`sonar.qualitygate.wait=true`, so the scanner polls for the verdict and the
+`SonarCloud analysis` check goes **red** when the gate is ERROR. Without that
+flag the check only confirmed the scan was *submitted* — a failed gate showed a
+misleading green while the real verdict sat on the dashboard. If you see a green
+`SonarCloud analysis` check, the gate genuinely passed.
+
+### Coverage exclusions (why a refactor can still be green)
+
+Browser-automation and live-auth transports are exercised by the **e2e suite**
+(real Chrome / live Flow), not unit tests. They are listed under
+`sonar.coverage.exclusions` so unreachable Playwright/network glue does not drag
+new-code coverage below the gate:
+
+- `api/transports/ui_automation.py`, `ui_automation_video.py`
+- `api/transports/experimental/{bearer,evaluate_fetch,sapisidhash}.py`
+
+Excluded files are **still analysed** for bugs and code smells — only the
+coverage metric ignores them. Everything else (CLI, data layer, helpers, REST
+plumbing) must hit 80 % on changed lines: add unit tests, don't widen the
+exclusion list.
+
+### Reading a red gate
+
+Open the PR Summary at `sonarcloud.io/summary/new_code?id=ffroliva_gflow-cli&pullRequest=<N>`.
+- **Coverage failed** → add tests for the changed non-excluded lines.
+- **New issues** (e.g. `S5655` "function expects a different type" after a
+  `cast(...)` removal) → fix them, or keep the
+  `cast(T, ...)  # pyright: ignore[reportUnnecessaryCast]` pattern that satisfies
+  S5655/S5890 (removing those casts reintroduces the finding).
+
 ## If Sonar Did Not Run
 
 For small PRs, merge to `develop` after review when tests and gitleaks are

@@ -21,7 +21,7 @@ Doc:  ``docs/DATA_LAYER.md``
 # Opt-in gates
 
   - ``GFLOW_CLI_E2E_PROFILE``    master gate; Chrome-strategy profile name
-  - ``GFLOW_CLI_E2E_RUN_VIDEO``  default "1"; set to "0" to skip the Veo step
+  - ``GFLOW_CLI_E2E_RUN_VIDEO``  default "0"; set to "1" to run the Veo step
                                   (only spends an Imagen credit then)
 
 # Spending
@@ -40,14 +40,12 @@ import os
 import sqlite3
 import subprocess
 import sys
-from collections.abc import Iterator
 from pathlib import Path
 
 import pytest
 
 pytestmark = pytest.mark.e2e
 
-_E2E_PROFILE_ENV = "GFLOW_CLI_E2E_PROFILE"
 _E2E_RUN_VIDEO_ENV = "GFLOW_CLI_E2E_RUN_VIDEO"
 
 _IMAGE_PROMPT = "a single red apple on a wooden table, soft daylight"
@@ -63,18 +61,10 @@ _VIDEO_TIMEOUT_S = 600
 # ---------------------------------------------------------------------------
 
 
-def _profile_name() -> str:
-    name = os.environ.get(_E2E_PROFILE_ENV, "").strip()
-    if not name:
-        pytest.skip(
-            f"E2E data-layer test requires {_E2E_PROFILE_ENV} — "
-            "set it to a logged-in Chromium profile name and re-run with -m e2e"
-        )
-    return name
-
-
 def _run_video_enabled() -> bool:
-    return os.environ.get(_E2E_RUN_VIDEO_ENV, "1").strip() != "0"
+    # Default "0": video tests are opt-in to avoid unintended Veo credit burn.
+    # Set GFLOW_CLI_E2E_RUN_VIDEO=1 to include video generation in data-layer e2e.
+    return os.environ.get(_E2E_RUN_VIDEO_ENV, "0").strip() == "1"
 
 
 def _run_gflow(
@@ -90,22 +80,6 @@ def _run_gflow(
         timeout=timeout,
         check=False,
     )
-
-
-@pytest.fixture
-def e2e_env(tmp_path: Path) -> Iterator[dict[str, str]]:
-    """Build an isolated subprocess env: tmp DB + tmp output dir + active profile."""
-    profile = _profile_name()
-    db = tmp_path / "gflow.db"
-    out = tmp_path / "out"
-    out.mkdir()
-    env = os.environ.copy()
-    env["PYTHONUTF8"] = "1"
-    env["GFLOW_CLI_DB_PATH"] = str(db)
-    env["GFLOW_CLI_OUTPUT_DIR"] = str(out)
-    env["GFLOW_CLI_PROFILE"] = profile
-    env["GFLOW_CLI_HISTORY_PROMPTS"] = "store"  # keep full prompt for assertion
-    yield env
 
 
 def _open_db(env: dict[str, str]) -> sqlite3.Connection:
@@ -137,6 +111,8 @@ def _is_mp4(path: Path) -> bool:
 # ---------------------------------------------------------------------------
 
 
+@pytest.mark.e2e_image
+@pytest.mark.e2e_data
 def test_t2i_records_full_provenance(e2e_env: dict[str, str]) -> None:
     """Live t2i: ~1 Imagen credit. Asserts file lands AND DB carries the full
     profile→project→asset→operation→operation_assets→local_files chain."""
@@ -266,12 +242,14 @@ def test_t2i_records_full_provenance(e2e_env: dict[str, str]) -> None:
 # ---------------------------------------------------------------------------
 
 
+@pytest.mark.e2e_video
+@pytest.mark.e2e_data
 def test_t2v_records_started_and_completed_lifecycle(e2e_env: dict[str, str]) -> None:
     """Live t2v: 1 Veo credit (omni-flash, 4s, count=1). Asserts video lands
     AND DB shows the operation went through started → succeeded plus a
     video-kind asset and a local_files row.
 
-    Skipped when ``GFLOW_CLI_E2E_RUN_VIDEO=0`` (cost-control)."""
+    Skipped when ``GFLOW_CLI_E2E_RUN_VIDEO=1`` is not set (video is opt-in)."""
     if not _run_video_enabled():
         pytest.skip(f"{_E2E_RUN_VIDEO_ENV}=0 — skipping live Veo run")
 
@@ -389,6 +367,7 @@ def test_t2v_records_started_and_completed_lifecycle(e2e_env: dict[str, str]) ->
 # ---------------------------------------------------------------------------
 
 
+@pytest.mark.e2e_data
 def test_data_media_unknown_id_exits_non_zero(e2e_env: dict[str, str]) -> None:
     """Sanity: an unknown media ID against a freshly-created DB exits non-zero
     via DataStoreError (exit 16). This does NOT spend credits."""

@@ -16,11 +16,13 @@ from typing import Any
 import pytest
 
 from gflow_cli.api.image import (
+    MAX_IMAGE_REFERENCES,
     Aspect,
     GenerateImageRequest,
     ImageRef,
     Model,
     _build_batch_generate_images_body,
+    reference_cap_for,
 )
 
 SAMPLES_DIR = Path(__file__).resolve().parents[2] / "samples" / "captured"
@@ -163,6 +165,48 @@ class TestGenerateImageRequest:
     def test_recaptcha_token_defaults_to_empty(self) -> None:
         req = GenerateImageRequest(prompt="test", model=Model.NARWHAL, aspect=Aspect.PORTRAIT)
         assert req.recaptcha_token == ""
+
+
+class TestReferenceCap:
+    def test_cap_values(self) -> None:
+        assert reference_cap_for(Model.NARWHAL) == 10
+        assert reference_cap_for(Model.GEM_PIX_2) == 10
+        assert reference_cap_for(Model.IMAGEN_3_5) == 3
+
+    def test_at_cap_is_allowed(self) -> None:
+        # Imagen 4 at exactly its 3-ref cap must build cleanly.
+        req = GenerateImageRequest(
+            prompt="ok",
+            model=Model.IMAGEN_3_5,
+            refs=tuple(ImageRef(f"ref-{i}") for i in range(3)),
+        )
+        assert len(req.refs) == 3
+
+    def test_over_cap_raises(self) -> None:
+        with pytest.raises(ValueError, match="at most 3"):
+            GenerateImageRequest(
+                prompt="too many",
+                model=Model.IMAGEN_3_5,
+                refs=tuple(ImageRef(f"ref-{i}") for i in range(4)),
+            )
+
+    def test_cap_counts_refs_and_ref_paths_together(self) -> None:
+        # The cap is on TOTAL refs (uploaded UUIDs + local files combined).
+        with pytest.raises(ValueError, match="at most 3"):
+            GenerateImageRequest(
+                prompt="mix",
+                model=Model.IMAGEN_3_5,
+                refs=(ImageRef("a"), ImageRef("b")),
+                ref_paths=(Path("c.png"), Path("d.png")),
+            )
+
+    def test_nano_allows_ten(self) -> None:
+        req = GenerateImageRequest(
+            prompt="ten refs",
+            model=Model.NARWHAL,
+            refs=tuple(ImageRef(f"ref-{i}") for i in range(MAX_IMAGE_REFERENCES)),
+        )
+        assert len(req.refs) == MAX_IMAGE_REFERENCES
 
 
 class TestBuildBatchGenerateImagesBody:

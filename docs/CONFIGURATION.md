@@ -52,7 +52,56 @@ A profile maps to a directory `$GFLOW_CLI_HOME/profile_<name>/`. Profiles are is
 - macOS: `~/Downloads/gflow-cli`
 - Linux (XDG): `$XDG_DOWNLOAD_DIR/gflow-cli` (falls back to `~/Downloads/gflow-cli`)
 
-**CLI override:** `--output <path>` per-call.
+**CLI override:** command-specific output flags such as `--out` for image
+commands and `--out-dir` for video commands.
+
+If [`GFLOW_CLI_STORAGE_URI`](#gflow_cli_storage_uri) is set, generated asset
+bytes are uploaded to the configured cloud bucket instead of this local output
+root. `GFLOW_CLI_OUTPUT_DIR` still matters for local mode and for deriving the
+default image/video key layout. See [EXTERNAL_STORAGE.md](EXTERNAL_STORAGE.md).
+
+### `GFLOW_CLI_STORAGE_URI`
+
+**What:** Optional cloud storage URI prefix for generated assets.
+**Values:** `gs://bucket/prefix/` for Google Cloud Storage or
+`s3://bucket/prefix/` for S3-compatible storage, including MinIO.
+**Default:** unset, which means local filesystem output.
+**Requires:** install the matching optional extra:
+
+```bash
+uv tool install "gflow-cli[gcs]"
+uv tool install "gflow-cli[s3]"
+```
+
+When set, `gflow-cli` uploads generated assets to the cloud prefix instead of
+saving local asset copies. It does not dual-write local + cloud copies. The
+local SQLite catalog still records the operation and stores `storage_provider`
+plus `cloud_uri` for each uploaded asset.
+
+Examples:
+
+```bash
+# Choose one:
+export GFLOW_CLI_STORAGE_URI=gs://my-gcs-bucket/gflow/
+export GFLOW_CLI_STORAGE_URI=s3://my-s3-bucket/gflow/
+export GFLOW_CLI_STORAGE_URI=s3://gflow-test/dev/   # MinIO local dev
+```
+
+S3 and MinIO use the standard AWS SDK environment variables:
+
+```bash
+export AWS_ACCESS_KEY_ID=minioadmin
+export AWS_SECRET_ACCESS_KEY=minioadmin
+export AWS_ENDPOINT_URL=http://localhost:9000   # omit for real AWS
+export AWS_DEFAULT_REGION=us-east-1
+```
+
+GCS uses Application Default Credentials, a service-account file through
+`GOOGLE_APPLICATION_CREDENTIALS`, or `STORAGE_EMULATOR_HOST` for local emulator
+runs.
+
+Deep setup, verification, and security notes live in
+[EXTERNAL_STORAGE.md](EXTERNAL_STORAGE.md).
 
 ### `GFLOW_CLI_PROVIDER`
 
@@ -162,20 +211,28 @@ $GFLOW_CLI_OUTPUT_DIR/
 
 `<media_name>` is the per-asset UUID Flow assigns; `<index>` is the 1-based shot number for multi-image runs (`-n 2..4`).
 
+With `GFLOW_CLI_STORAGE_URI` set, the same default layout is used under the
+configured bucket prefix, and `gflow data media <media_id>` reports `cloud_uri_N`
+rows instead of local paths.
+
 ### Per-call override
 
 ```bash
 # Image: --out is a directory; files written flat (no date subdir)
 gflow image t2i "..." --out ./shots/
 
-# Video: -o / --output is a single mp4 path
-gflow video t2v "..." -o ./out/clip.mp4
+# Video: --out-dir is a directory for the generated mp4
+gflow video t2v "..." --out-dir ./out/
 
 # Video batch: --out-dir overrides the videos/<date>/ root
 gflow video batch ./manifest.tsv --out-dir ./batch-out/
 ```
 
-For images, `--out DIR` writes flat as `<DIR>/<media_name>_<n>.png` — file paths are not accepted (rename after the fact if needed). For videos, `-o FILE` controls the single output `.mp4`.
+For images, `--out DIR` writes flat as `<DIR>/<media_name>_<n>.png` — file paths are not accepted (rename after the fact if needed). For videos, `--out-dir DIR` controls the local output directory.
+
+Per-call local output flags are not intended as bucket-prefix controls. For
+predictable external storage keys, set the bucket prefix in
+`GFLOW_CLI_STORAGE_URI` and leave per-command output flags unset.
 
 ## .env loading
 
@@ -198,6 +255,18 @@ $EDITOR .env
 # .env in CWD or $GFLOW_CLI_HOME
 GFLOW_CLI_OUTPUT_DIR=/mnt/big-disk/flow-output
 ```
+
+### "I want generated assets in S3 or GCS"
+
+```bash
+GFLOW_CLI_STORAGE_URI=s3://my-bucket/gflow/ \
+AWS_ACCESS_KEY_ID=... \
+AWS_SECRET_ACCESS_KEY=... \
+AWS_DEFAULT_REGION=us-east-1 \
+gflow image t2i "product photo on a white sweep"
+```
+
+See [EXTERNAL_STORAGE.md](EXTERNAL_STORAGE.md) for MinIO and GCS examples.
 
 ### "I'm running in CI — I want JSON logs and a strict timeout"
 

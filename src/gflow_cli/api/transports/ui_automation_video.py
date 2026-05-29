@@ -37,6 +37,7 @@ from gflow_cli.api.video import (
     parse_video_status,
 )
 from gflow_cli.errors import AuthExpiredError, WafRejectionError, WireFormatError
+from gflow_cli.storage import AnyPath, storage_path, write_asset_async
 
 if TYPE_CHECKING:
     from playwright.async_api import Locator, Page
@@ -230,7 +231,7 @@ async def _capture_debug_screenshot(page: Any, out_dir: Path | None, filename: s
             path=str(shot_path),
             note="viewport may include the account avatar / email from the Google session",
         )
-    except Exception as e:  # noqa: BLE001 — screenshot is best-effort
+    except Exception as e:
         log.debug("ui_automation_video.screenshot_capture_failed", error=str(e))
     return shot_path
 
@@ -245,14 +246,14 @@ def _summarize_request_image_inputs(request: Any) -> dict[str, Any]:
         raw = request.post_data
         if not raw:
             return {"parsed": False}
-        data = cast(dict[str, Any], json.loads(raw))
+        data = cast("dict[str, Any]", json.loads(raw))
         reqs = cast("list[dict[str, Any]]", data.get("requests") or [])
         first: dict[str, Any] = reqs[0] if reqs else {}
 
         def _mid(obj: Any) -> str | None:
             if not isinstance(obj, dict):
                 return None
-            mid = cast(dict[str, Any], obj).get("mediaId")
+            mid = cast("dict[str, Any]", obj).get("mediaId")
             return mid[:8] if isinstance(mid, str) else None
 
         refs = cast("list[dict[str, Any]]", first.get("referenceImages") or [])
@@ -263,7 +264,7 @@ def _summarize_request_image_inputs(request: Any) -> dict[str, Any]:
             "referenceCount": len(refs),
             "referenceIds": [_mid(r) for r in refs],
         }
-    except Exception as e:  # noqa: BLE001 — diagnostic only
+    except Exception as e:
         return {"parsed": False, "error": str(e)[:60]}
 
 
@@ -290,10 +291,15 @@ class VideoGenerationMixin:
 
         async def _enter_editor(self, page: Page, out_dir: Path | None = None) -> None: ...
         async def _send_prompt(
-            self, page: Page, prompt_text: str, out_dir: Path | None = None
+            self,
+            page: Page,
+            prompt_text: str,
+            out_dir: Path | None = None,
         ) -> None: ...
         async def _dismiss_blocking_overlays(
-            self, page: Page, out_dir: Path | None = None
+            self,
+            page: Page,
+            out_dir: Path | None = None,
         ) -> bool: ...
 
     @staticmethod
@@ -316,7 +322,7 @@ class VideoGenerationMixin:
                 return
             try:
                 body = await response.json()
-            except Exception as e:  # noqa: BLE001 — parse failures are non-fatal
+            except Exception as e:
                 log.warning("ui_automation_video.generate_parse_failed", error=str(e))
                 return
             captured.append({"status": response.status, "url": response.url, "body": body})
@@ -351,7 +357,7 @@ class VideoGenerationMixin:
                 return
             try:
                 body = await response.json()
-            except Exception as e:  # noqa: BLE001 — parse failures are non-fatal
+            except Exception as e:
                 log.warning("ui_automation_video.status_parse_failed", error=str(e))
                 return
             captured.append({"status": response.status, "url": response.url, "body": body})
@@ -423,7 +429,7 @@ class VideoGenerationMixin:
                 log.warning(event, media_name=media_name, status_responses_seen=seen_count)
                 try:
                     await page.bring_to_front()
-                except Exception as e:  # noqa: BLE001 — best-effort
+                except Exception as e:
                     log.debug("ui_automation_video.bring_to_front_failed", error=str(e))
             await asyncio.sleep(poll_interval_s)
         cause = (
@@ -431,9 +437,12 @@ class VideoGenerationMixin:
             if seen_count == 0
             else "Flow stopped polling before a terminal status"
         )
-        raise TimeoutError(
+        msg = (
             f"no terminal status for {media_name!r} within {timeout_s:.0f}s — "
             f"{seen_count} status response(s) seen, last status: {last_status}. {cause}."
+        )
+        raise TimeoutError(
+            msg,
         )
 
     async def _download_video(
@@ -441,16 +450,16 @@ class VideoGenerationMixin:
         media_id: str,
         out_dir: Path | None,
         page: Any,
-    ) -> Path:
-        """Download a generated video to disk using the authenticated page.
+    ) -> AnyPath:
+        """Download a generated video to local disk or cloud storage.
 
         Calls ``media.getMediaUrlRedirect?name=<media_id>`` which 302s to a
         signed GCS URL; Playwright follows the redirect automatically.
+
+        When the transport's ``_storage_uri`` is set the video is uploaded to
+        the configured cloud backend; otherwise it is written to ``out_dir``.
         """
         url = routes.media_download_url(media_id)
-        effective_dir = out_dir or self._out_dir or Path("tmp")
-        effective_dir.mkdir(parents=True, exist_ok=True)
-        out_path = effective_dir / f"{media_id}.mp4"
         resp = await page.request.get(url, max_redirects=5, timeout=180_000)
         if resp.status >= 400:
             raise WireFormatError(
@@ -462,14 +471,27 @@ class VideoGenerationMixin:
                 route="media.getMediaUrlRedirect",
             )
         body = await resp.body()
-        out_path.write_bytes(body)
+        storage_uri: str | None = getattr(self, "_storage_uri", None)
+        if storage_uri:
+            from datetime import date
+
+            from gflow_cli import paths as _paths
+
+            key = f"videos/{date.today().isoformat()}/{_paths.validate_job_id(media_id)}.mp4"
+            # output_dir fallback only used for key computation when cloud is active
+            output_dir = getattr(self, "_output_dir", None) or Path("tmp")
+            target: AnyPath = storage_path(storage_uri, output_dir, key)
+        else:
+            effective_dir = out_dir or self._out_dir or Path("tmp")
+            target = effective_dir / f"{media_id}.mp4"
+        await write_asset_async(target, body)
         log.info(
             "ui_automation_video.video_saved",
-            path=str(out_path),
+            path=str(target),
             bytes=len(body),
             media_id=media_id,
         )
-        return out_path
+        return target
 
     @staticmethod
     async def _probe_selector_cascade(
@@ -488,7 +510,7 @@ class VideoGenerationMixin:
                 await loc.wait_for(state="visible", timeout=timeout_ms)
                 log.info("ui_automation_video.selector_matched", probe=label, selector=selector)
                 return loc
-            except Exception:  # noqa: BLE001 — selector miss; try the next
+            except Exception:
                 log.debug("ui_automation_video.selector_miss", probe=label, selector=selector)
         log.warning("ui_automation_video.selector_probe_failed", probe=label)
         return None
@@ -498,21 +520,27 @@ class VideoGenerationMixin:
         """Open the 2-step mode dropdown and switch to Video mode. The menu
         stays open afterward so the caller can also set aspect + count."""
         trigger = await VideoGenerationMixin._probe_selector_cascade(
-            page, "mode_switch_trigger", MODE_SWITCH_TRIGGER_SELECTORS
+            page,
+            "mode_switch_trigger",
+            MODE_SWITCH_TRIGGER_SELECTORS,
         )
         if trigger is None:
             shot = await _capture_debug_screenshot(page, out_dir, "debug_no_mode_trigger.png")
+            msg = f"mode-switch dropdown trigger not found on the Flow editor. Screenshot: {shot}"
             raise RuntimeError(
-                f"mode-switch dropdown trigger not found on the Flow editor. Screenshot: {shot}"
+                msg,
             )
         await trigger.click()
         await page.wait_for_timeout(800)
         video_tab = await VideoGenerationMixin._probe_selector_cascade(
-            page, "video_mode_tab", VIDEO_TAB_IN_MENU_SELECTORS
+            page,
+            "video_mode_tab",
+            VIDEO_TAB_IN_MENU_SELECTORS,
         )
         if video_tab is None:
             shot = await _capture_debug_screenshot(page, out_dir, "debug_no_video_tab.png")
-            raise RuntimeError(f"Video tab not found in the mode dropdown. Screenshot: {shot}")
+            msg = f"Video tab not found in the mode dropdown. Screenshot: {shot}"
+            raise RuntimeError(msg)
         await video_tab.click()
         await page.wait_for_timeout(1200)
         log.info("ui_automation_video.video_mode_entered")
@@ -528,7 +556,7 @@ class VideoGenerationMixin:
             await page.locator(_EDITOR_READY_ANCHOR).first.wait_for(state="visible", timeout=20_000)
             await page.wait_for_timeout(1000)
             log.info("ui_automation_video.editor_ready")
-        except Exception as e:  # noqa: BLE001 — non-fatal readiness gate
+        except Exception as e:
             log.warning("ui_automation_video.editor_ready_timeout", error=str(e))
 
     @staticmethod
@@ -545,7 +573,9 @@ class VideoGenerationMixin:
         )
         if tab is None:
             log.warning(
-                "ui_automation_video.count_not_set", count=n, note="Flow default (x2) applies"
+                "ui_automation_video.count_not_set",
+                count=n,
+                note="Flow default (x2) applies",
             )
             return
         await tab.click()
@@ -567,7 +597,9 @@ class VideoGenerationMixin:
             log.warning("ui_automation_video.model_unknown", model=model.value)
             return
         trigger = await VideoGenerationMixin._probe_selector_cascade(
-            page, "model_picker_trigger", (MODEL_PICKER_TRIGGER,)
+            page,
+            "model_picker_trigger",
+            (MODEL_PICKER_TRIGGER,),
         )
         if trigger is None:
             log.warning(
@@ -579,7 +611,9 @@ class VideoGenerationMixin:
         await trigger.click()
         await page.wait_for_timeout(600)
         option = await VideoGenerationMixin._probe_selector_cascade(
-            page, "model_option", (option_sel,)
+            page,
+            "model_option",
+            (option_sel,),
         )
         if option is None:
             log.warning(
@@ -620,12 +654,15 @@ class VideoGenerationMixin:
         """Switch the video sub-mode tab: 'frames' (I2V) or 'references' (R2V).
         Must run while the settings panel is open (after _switch_to_video_mode)."""
         tab = await VideoGenerationMixin._probe_selector_cascade(
-            page, f"video_submode_{sub}", VIDEO_SUBMODE_SELECTORS[sub]
+            page,
+            f"video_submode_{sub}",
+            VIDEO_SUBMODE_SELECTORS[sub],
         )
         if tab is None:
             shot = await _capture_debug_screenshot(page, out_dir, f"debug_no_submode_{sub}.png")
+            msg = f"video sub-mode tab {sub!r} not found on the Flow editor. Screenshot: {shot}"
             raise RuntimeError(
-                f"video sub-mode tab {sub!r} not found on the Flow editor. Screenshot: {shot}"
+                msg,
             )
         await tab.click()
         await page.wait_for_timeout(900)
@@ -649,7 +686,8 @@ class VideoGenerationMixin:
         the settings panel CLOSED (the slots live in the main editor). `label` is
         for logging only. Path existence is validated here (the boundary)."""
         if not image.exists():
-            raise FileNotFoundError(f"frame image not found: {image}")
+            msg = f"frame image not found: {image}"
+            raise FileNotFoundError(msg)
 
         # Locate the slot structural-first (locale-free): the frame slots are the
         # dialog-divs inside the swap_horiz container, indexed by position
@@ -665,12 +703,15 @@ class VideoGenerationMixin:
         structs = page.locator(FRAME_SLOTS_STRUCT)
         try:
             await structs.first.wait_for(state="visible", timeout=1500)
-        except Exception as e:  # noqa: BLE001
+        except Exception as e:
             shot = await _capture_debug_screenshot(
-                page, out_dir, f"debug_no_{label.lower()}_slot.png"
+                page,
+                out_dir,
+                f"debug_no_{label.lower()}_slot.png",
             )
+            msg = f"frame slot {label!r} not found on the Flow editor. Screenshot: {shot}"
             raise RuntimeError(
-                f"frame slot {label!r} not found on the Flow editor. Screenshot: {shot}"
+                msg,
             ) from e
 
         struct_count = await structs.count()
@@ -691,16 +732,23 @@ class VideoGenerationMixin:
             slot = page.locator(FRAME_SLOT_BY_LABEL.format(label=label)).first
             try:
                 await slot.wait_for(state="visible", timeout=3000)
-            except Exception as e:  # noqa: BLE001
-                raise RuntimeError(
+            except Exception as e:
+                msg = (
                     f"frame slot index {slot_index} ({label!r}) not present "
                     f"(found {struct_count} structural slot(s), "
                     f"text-label fallback also missed)"
+                )
+                raise RuntimeError(
+                    msg,
                 ) from e
         await slot.click()
         await page.wait_for_timeout(1000)  # media dialog opens
         await VideoGenerationMixin._upload_via_open_dialog(
-            page, image, log_label=label, out_dir=out_dir, timeout_s=timeout_s
+            page,
+            image,
+            log_label=label,
+            out_dir=out_dir,
+            timeout_s=timeout_s,
         )
         log.info("ui_automation_video.frame_attached", slot=label)
 
@@ -724,7 +772,9 @@ class VideoGenerationMixin:
             if UPLOAD_IMAGE_ROUTE in response.url:
                 uploaded.append(response.url)
                 log.info(
-                    "ui_automation_video.image_uploaded", target=log_label, status=response.status
+                    "ui_automation_video.image_uploaded",
+                    target=log_label,
+                    status=response.status,
                 )
 
         page.on("response", on_response)
@@ -742,13 +792,15 @@ class VideoGenerationMixin:
                         await page.locator(sel).first.click(timeout=4000)
                     chooser = await fc_info.value
                     break
-                except Exception as e:  # noqa: BLE001 — fall through to the next tier
+                except Exception as e:
                     last_err = e
             if chooser is None:
                 shot = await _capture_debug_screenshot(
-                    page, out_dir, f"debug_upload_no_chooser_{log_label}.png"
+                    page,
+                    out_dir,
+                    f"debug_upload_no_chooser_{log_label}.png",
                 )
-                raise RuntimeError(
+                msg = (
                     f"Neither the icon nor the text 'Upload media' selector opened a file "
                     f"chooser for {log_label!r} — Google likely changed the media dialog "
                     f"(issue #56). Screenshot: {shot}. Workaround: set the CHROME BROWSER "
@@ -757,6 +809,9 @@ class VideoGenerationMixin:
                     f"— changing only the Google account language does NOT work, because "
                     f"Flow follows the Chrome profile locale (and the --lang=en-US launch "
                     f"arg cannot override an already-configured profile)."
+                )
+                raise RuntimeError(
+                    msg,
                 ) from last_err
             await chooser.set_files(str(image))
             deadline = time.monotonic() + timeout_s
@@ -779,30 +834,36 @@ class VideoGenerationMixin:
             await add_btn.click()
         try:
             await page.locator("[role='dialog']").last.wait_for(state="hidden", timeout=15_000)
-        except Exception:  # noqa: BLE001 — best-effort; fall through to a settle
+        except Exception:
             log.warning("ui_automation_video.dialog_close_timeout", target=log_label)
         await page.wait_for_timeout(1500)
 
     @staticmethod
     async def _attach_references(
-        page: Page, images: list[Path], *, out_dir: Path | None, timeout_s: float = 120.0
+        page: Page,
+        images: list[Path],
+        *,
+        out_dir: Path | None,
+        timeout_s: float = 120.0,
     ) -> None:
         """R2V: attach up to MAX_REFERENCE_IMAGES reference images. References
         have no Start/End slots — each is added via the 'Add Media' button, which
         opens the same media dialog. Must run with the settings panel closed."""
         missing = [str(p) for p in images if not p.exists()]
         if missing:
-            raise FileNotFoundError(f"reference image(s) not found: {missing}")
+            msg = f"reference image(s) not found: {missing}"
+            raise FileNotFoundError(msg)
         attached = 0
         for i, img in enumerate(images):
             add_media = page.locator(ADD_MEDIA_BUTTON).first
             try:
                 await add_media.wait_for(state="visible", timeout=8000)
-            except Exception as e:  # noqa: BLE001
+            except Exception as e:
                 if i == 0:
                     shot = await _capture_debug_screenshot(page, out_dir, "debug_no_add_media.png")
+                    msg = f"'Add Media' button not found for first reference. Screenshot: {shot}"
                     raise RuntimeError(
-                        f"'Add Media' button not found for the first reference. Screenshot: {shot}"
+                        msg,
                     ) from e
                 # Flow removes the Add-Media button once the per-model reference
                 # cap is hit (omni_flash=7, veo_3_1_*=3). The DTO enforces this
@@ -818,7 +879,11 @@ class VideoGenerationMixin:
             await add_media.click()
             await page.wait_for_timeout(1000)
             await VideoGenerationMixin._upload_via_open_dialog(
-                page, img, log_label=f"ref{i}", out_dir=out_dir, timeout_s=timeout_s
+                page,
+                img,
+                log_label=f"ref{i}",
+                out_dir=out_dir,
+                timeout_s=timeout_s,
             )
             attached += 1
             log.info("ui_automation_video.reference_attached", index=i)
@@ -832,7 +897,9 @@ class VideoGenerationMixin:
             log.warning("ui_automation_video.aspect_unsupported", aspect=aspect.value)
             return
         tab = await VideoGenerationMixin._probe_selector_cascade(
-            page, "video_aspect_tab", candidates
+            page,
+            "video_aspect_tab",
+            candidates,
         )
         if tab is None:
             log.warning("ui_automation_video.aspect_not_set", aspect=aspect.value)
@@ -853,9 +920,12 @@ class VideoGenerationMixin:
         while time.monotonic() < deadline and not captured:
             await asyncio.sleep(poll_interval_s)
         if not captured:
-            raise TimeoutError(
+            msg = (
                 f"no batchAsyncGenerateVideo* response within {timeout_s:.0f}s — "
                 "did the submit fire? did reCAPTCHA fail silently?"
+            )
+            raise TimeoutError(
+                msg,
             )
         return captured[0]
 
@@ -883,17 +953,25 @@ class VideoGenerationMixin:
         a STARTED row even if the long poll later fails.
         """
         if not self._setup_done or self._page is None:
+            msg = "UiAutomationTransport.setup() must be called before generate_video()"
             raise RuntimeError(
-                "UiAutomationTransport.setup() must be called before generate_video()"
+                msg,
             )
         if request.aspect is Aspect.SQUARE:
-            raise ValueError(
+            msg = (
                 "video generation does not support the SQUARE aspect; "
                 "use PORTRAIT (9:16) or LANDSCAPE (16:9)"
             )
+            raise ValueError(
+                msg,
+            )
         async with self._generate_lock:
             return await self._generate_video_locked(
-                request, out_dir, poll_timeout_s, download, on_started
+                request,
+                out_dir,
+                poll_timeout_s,
+                download,
+                on_started,
             )
 
     @staticmethod
@@ -930,7 +1008,7 @@ class VideoGenerationMixin:
         # A video 200 ALWAYS carries media[0] (the asset slot — capture 02);
         # content rejection surfaces later as a FAILED *status*, not empty media.
         # So a missing media[0] here is a genuine wire anomaly — WireFormatError.
-        body: dict[str, Any] = cast(dict[str, Any], generate_resp.get("body") or {})
+        body: dict[str, Any] = cast("dict[str, Any]", generate_resp.get("body") or {})
         try:
             media_name = media_name_from_generate_response(body)
         except ValueError as e:
@@ -1000,31 +1078,41 @@ class VideoGenerationMixin:
         # StartAndEndImage / ReferenceImages instead of the plain Text route.
         if request.mode is Mode.I2V and request.start_image is not None:
             await VideoGenerationMixin._attach_frame(
-                page, 0, "Start", request.start_image, out_dir=out_dir
+                page,
+                0,
+                "Start",
+                request.start_image,
+                out_dir=out_dir,
             )
             if request.end_image is not None:
                 await VideoGenerationMixin._attach_frame(
-                    page, 1, "End", request.end_image, out_dir=out_dir
+                    page,
+                    1,
+                    "End",
+                    request.end_image,
+                    out_dir=out_dir,
                 )
         elif request.mode is Mode.R2V:
             await VideoGenerationMixin._attach_references(
-                page, list(request.reference_images), out_dir=out_dir
+                page,
+                list(request.reference_images),
+                out_dir=out_dir,
             )
 
         # Attach BOTH listeners synchronously BEFORE the prompt is submitted so
         # neither the generate response nor an early status poll is missed.
         generate_captured, generate_handler = VideoGenerationMixin._attach_video_response_listener(
-            page
+            page,
         )
         status_captured, status_handler = VideoGenerationMixin._attach_status_response_listener(
-            page
+            page,
         )
         try:
             await self._send_prompt(page, request.prompt, out_dir)
 
             generate_resp = await VideoGenerationMixin._await_generate_response(generate_captured)
             media_name, flow_operation_id = VideoGenerationMixin._parse_generate_response(
-                generate_resp
+                generate_resp,
             )
 
             # Fire on_started BEFORE polling so the recorder can insert a STARTED
@@ -1038,7 +1126,10 @@ class VideoGenerationMixin:
                 await VideoGenerationMixin._fire_on_started(on_started, started)
 
             status = await VideoGenerationMixin._poll_video_status(
-                page, status_captured, media_name, timeout_s=poll_timeout_s
+                page,
+                status_captured,
+                media_name,
+                timeout_s=poll_timeout_s,
             )
             local_path = (
                 await self._download_video(status.media_id, out_dir, page)

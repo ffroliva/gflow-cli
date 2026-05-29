@@ -3,6 +3,7 @@
 from __future__ import annotations
 
 import asyncio
+import re
 import sys
 import uuid
 
@@ -15,6 +16,7 @@ from gflow_cli import __version__, profile_store
 from gflow_cli import auth as auth_mod
 from gflow_cli.cli_data import data as _data_group
 from gflow_cli.cli_image import image as _image_group
+from gflow_cli.cli_models import models as _models_command
 from gflow_cli.cli_run import run as _run_command
 from gflow_cli.cli_video import video as _video_group
 from gflow_cli.config import get_settings
@@ -38,6 +40,21 @@ def _default_marker_glyph(encoding: str | None) -> str:
     return "●"
 
 
+def _profile_name_from_account(account: str) -> str | None:
+    """Derive a filesystem-safe profile name from a Google account email.
+
+    Takes the local-part (before ``@``), replaces every run of characters
+    outside ``[A-Za-z0-9_-]`` with a single ``-``, and trims leading/trailing
+    ``-``. Returns ``None`` when nothing usable remains so the caller keeps the
+    existing name. The result always satisfies
+    ``profile_store._SAFE_PROFILE_NAME_RE``; without this, dotted/aliased emails
+    (``flavio.oliva@``, ``user+flow@``) would make ``rename_profile`` raise.
+    """
+    local_part = account.split("@", 1)[0]
+    slug = re.sub(r"[^\w\-]+", "-", local_part).strip("-")[:128]
+    return slug or None
+
+
 def _render_profiles_table(profiles: list[profile_store.ProfileMeta]) -> None:
     """Pretty-print the profile inventory."""
     if not profiles:
@@ -49,18 +66,20 @@ def _render_profiles_table(profiles: list[profile_store.ProfileMeta]) -> None:
     table = Table(show_header=True, header_style="bold cyan")
     table.add_column("Default", justify="center")
     table.add_column("Name", style="bold")
+    table.add_column("Google account")
     table.add_column("Session")
     table.add_column("Last used (UTC)")
     table.add_column("Profile dir", overflow="fold")
     for p in profiles:
         marker = f"[bold green]{marker_glyph}[/bold green]" if p.is_default else ""
+        account = p.google_account or "unknown"
         session = "[green]present[/green]" if p.cookies_present else "[red]missing[/red]"
         last = p.last_used_at.strftime("%Y-%m-%d %H:%M:%S") if p.last_used_at else "-"
-        table.add_row(marker, p.name, session, last, str(p.profile_dir))
+        table.add_row(marker, p.name, account, session, last, str(p.profile_dir))
     console.print(table)
     console.print("\nUse [bold]gflow auth use <name>[/bold] to set the default profile.")
     console.print(
-        "Use [bold]gflow auth login --profile <name>[/bold] to add or refresh a profile.\n"
+        "Use [bold]gflow auth login --profile <name>[/bold] to add or refresh a profile.\n",
     )
 
 
@@ -146,7 +165,7 @@ def auth_login(profile: str | None, browser: str | None) -> None:
         console.print(
             "Launching real Chrome..."
             if is_chrome_available()
-            else "Launching internal Chromium..."
+            else "Launching internal Chromium...",
         )
 
     try:
@@ -164,9 +183,35 @@ def auth_login(profile: str | None, browser: str | None) -> None:
         console.print(f"[red]Unexpected error during login: {e}[/red]")
         sys.exit(1)
     console.print(f"[green]Session saved.[/green] Profile dir: {pdir}")
+
+    # Auto-rename an opaque "default" profile to the email local-part on first
+    # login so the profile inventory is immediately human-readable. Only fires
+    # when no explicit --profile was given (profile is None), so `gflow auth
+    # login --profile default` never silently renames the user's named profile.
+    profiles = profile_store.list_profiles()
+    if (
+        profile is None
+        and len(profiles) == 1
+        and profiles[0].name == "default"
+        and profiles[0].google_account
+    ):
+        local_part = _profile_name_from_account(profiles[0].google_account)
+        if local_part and local_part != "default":
+            try:
+                pdir = profile_store.rename_profile("default", local_part)
+                profiles = profile_store.list_profiles()
+                console.print(
+                    f"[dim]Renamed profile from [bold]default[/bold] to "
+                    f"[bold]{local_part}[/bold] (derived from Google account).[/dim]",
+                )
+            except FileExistsError:
+                console.print(
+                    f"[dim]Profile [bold]{local_part}[/bold] already exists — "
+                    "keeping name [bold]default[/bold].[/dim]",
+                )
+
     # If this was the very first profile, set it as default automatically so
     # subsequent commands work without explicit --profile / GFLOW_CLI_PROFILE.
-    profiles = profile_store.list_profiles()
     if len(profiles) == 1:
         profile_store.set_default_profile(profiles[0].name)
         console.print(f"[dim]Set [bold]{profiles[0].name}[/bold] as default profile.[/dim]")
@@ -183,16 +228,36 @@ def auth_status(profile: str | None) -> None:
     else:
         console.print(
             f"[yellow]Profile '{name}' has no session.[/yellow] "
-            f"Run [bold]gflow auth login --profile {name}[/bold]."
+            f"Run [bold]gflow auth login --profile {name}[/bold].",
         )
     for k, v in s.items():
         console.print(f"  {k}: {v}")
 
 
 @auth.command("list")
-def auth_list() -> None:
+@click.option("--json", "as_json", is_flag=True, help="Machine-readable JSON instead of a table.")
+def auth_list(as_json: bool) -> None:
     """List every profile and indicate the current default."""
     profiles = profile_store.list_profiles()
+    if as_json:
+        import json
+
+        click.echo(
+            json.dumps(
+                [
+                    {
+                        "name": p.name,
+                        "google_account": p.google_account,
+                        "is_default": p.is_default,
+                        "cookies_present": p.cookies_present,
+                        "last_used_at": p.last_used_at.isoformat() if p.last_used_at else None,
+                        "profile_dir": str(p.profile_dir),
+                    }
+                    for p in profiles
+                ],
+            ),
+        )
+        return
     _render_profiles_table(profiles)
 
 
@@ -206,7 +271,7 @@ def auth_use(name: str) -> None:
         console.print(f"[red]{e}[/red]")
         sys.exit(2)
     console.print(
-        f"[green]Default profile set to[/green] [bold]{name}[/bold]\n[dim]Persisted in {cfg}[/dim]"
+        f"[green]Default profile set to[/green] [bold]{name}[/bold]\n[dim]Persisted in {cfg}[/dim]",
     )
 
 
@@ -258,6 +323,7 @@ main.add_command(_data_group)
 main.add_command(_video_group)
 main.add_command(_image_group)
 main.add_command(_run_command)
+main.add_command(_models_command)
 
 
 if __name__ == "__main__":

@@ -12,6 +12,7 @@ This file is forward-staged for a future docs site at https://ffroliva.github.io
 - [Architecture](https://github.com/ffroliva/gflow-cli/blob/main/docs/ARCHITECTURE.md): Provider abstraction, ui_automation transport, RFC 9457 error model.
 - [Authentication](https://github.com/ffroliva/gflow-cli/blob/main/docs/AUTHENTICATION.md): One-time Chrome login, session storage, multi-account.
 - [Configuration](https://github.com/ffroliva/gflow-cli/blob/main/docs/CONFIGURATION.md): All env vars, output paths, precedence.
+- [External Storage](https://github.com/ffroliva/gflow-cli/blob/main/docs/EXTERNAL_STORAGE.md): S3, MinIO, and Google Cloud Storage output setup.
 - [Known Issues](https://github.com/ffroliva/gflow-cli/blob/main/KNOWN_ISSUES.md): Open + mitigated issues with workarounds.
 - [Data Layer](https://github.com/ffroliva/gflow-cli/blob/main/docs/DATA_LAYER.md): Local SQLite catalog schema and the `gflow data list` query CLI.
 - [Roadmap](https://github.com/ffroliva/gflow-cli/blob/main/ROADMAP.md): Themed milestones through v1.0.

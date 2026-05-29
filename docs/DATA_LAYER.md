@@ -2,7 +2,7 @@
 
 `gflow-cli` keeps a local SQLite catalog of every new image, batch, and video operation. This document explains what it stores, why, and how to use it.
 
-If you only need quick lookup syntax, jump to [Querying the data layer](#querying-the-data-layer). For env vars, see [`CONFIGURATION.md`](CONFIGURATION.md#gflow_cli_db_path). For exit codes and recovery, see [`USAGE.md`](USAGE.md#exit-codes).
+If you only need quick lookup syntax, jump to [Querying the data layer](#querying-the-data-layer). For env vars, see [`CONFIGURATION.md`](CONFIGURATION.md#gflow_cli_db_path) and [external storage configuration](EXTERNAL_STORAGE.md). For exit codes and recovery, see [`USAGE.md`](USAGE.md#exit-codes).
 
 ---
 
@@ -10,7 +10,7 @@ If you only need quick lookup syntax, jump to [Querying the data layer](#queryin
 
 The data layer exists to answer three questions that the CLI alone cannot:
 
-1. **"What generated this file?"** — given a local `.png` / `.mp4`, find the prompt, model, aspect ratio, profile, project, and Flow media ID that produced it.
+1. **"What generated this file?"** — given a local path or cloud URI, find the prompt, model, aspect ratio, profile, project, and Flow media ID that produced it.
 2. **"Which seed image can I reuse for I2V?"** — given a profile, resolve a candidate image to the Flow `media_id` + `project_id` the video transport needs, without rewalking the Flow UI library.
 3. **"What happened during that batch?"** — given a batch run, list every output with success/failure status and the operation provenance.
 
@@ -18,7 +18,7 @@ It is also the foundation for future history browsing, cost tracking, repair/imp
 
 ### Explicit non-goals (v1)
 
-- No Postgres / cloud / `DATABASE_URL` runtime support — SQLite only.
+- No Postgres, cloud-hosted catalog, or `DATABASE_URL` runtime support — SQLite only.
 - No event sourcing, ORM, or remote multi-user semantics.
 - No backfill of existing output folders — only NEW operations are recorded.
 - No user-facing history browser — only the minimal `gflow data media <id>` lookup.
@@ -36,7 +36,7 @@ The schema is adapter-shaped so a future Postgres backend can slot in without ch
 | `assets` | One row per Flow media ID (image OR video) — model, aspect, dimensions, seed, generation ID, status | Upload response, image generation response, video start, video completion |
 | `operations` | One row per CLI command invocation — mode (`upload_image`/`t2i`/`i2i`/`t2v`/`i2v`/`r2v`), prompt, model, aspect, started/completed timestamps, error type/detail, Flow operation/batch IDs | Each command run |
 | `operation_assets` | Many-to-many between operations and assets, with role (`input`/`output`/`seed_start`/`seed_end`/`reference`) and ordered position | When the operation links its inputs/outputs |
-| `local_files` | One row per downloaded file — path, sha256, byte count, media type | After each download completes |
+| `local_files` | One row per downloaded asset location — local path or cloud URI, sha256/byte count when local, media type | After each download/upload completes |
 
 Schema lives in [`src/gflow_cli/data/migrations/0001_initial.sql`](../src/gflow_cli/data/migrations/0001_initial.sql).
 
@@ -44,8 +44,25 @@ Schema lives in [`src/gflow_cli/data/migrations/0001_initial.sql`](../src/gflow_
 
 - Signed CDN URLs (e.g., `fifeUrl?Signature=...`) — they expire and contain bearer-style tokens.
 - reCAPTCHA tokens, `Authorization` headers, cookies — stripped by [`redact_metadata`](#privacy-and-redaction).
-- Thumbnails or preview blobs — only the local file path is recorded.
+- Thumbnails or preview blobs — only the final local path or cloud URI is recorded.
 - Anything from Flow's anonymous gallery — only operations issued by gflow.
+
+### Cloud-backed files
+
+When `GFLOW_CLI_STORAGE_URI` is unset, `local_files.path` stores an absolute
+local path and the row may include local `sha256` and byte count values.
+
+When `GFLOW_CLI_STORAGE_URI` is set, generated asset bytes are uploaded to the
+configured bucket instead of local disk. The row stores:
+
+- `storage_provider`: `gcs` or `s3`
+- `cloud_uri`: full `gs://...` or `s3://...` object URI
+- `path`: the same cloud URI at the raw SQLite layer, kept only to satisfy the
+  v1 schema's `NOT NULL` and `UNIQUE(asset_id, path)` constraints
+
+Hydrated `LocalFileRecord` objects expose `path=None` for cloud-only rows and
+use `cloud_uri` as the authoritative location. See
+[EXTERNAL_STORAGE.md](EXTERNAL_STORAGE.md) for setup and verification.
 
 ---
 
@@ -109,10 +126,10 @@ A typical `gflow image t2i` invocation records this sequence:
    - One `operations` row (mode=`t2i`, prompt + hash + redacted flag)
    - One `assets` row per generated image (kind=`image`, status=`ready`, dimensions, seed, model, aspect, `flow_media_generation_id`)
    - `operation_assets` link as `output` per position
-   - `local_files` row per downloaded file with sha256 + bytes + media type
+   - `local_files` row per downloaded asset with either a local path or cloud URI
 5. `recorder.close()` is called in a `finally` block.
 
-For T2V the sequence is split: `record_started_video(...)` fires the moment the generation response yields a media ID (via the `on_started` callback in `FlowApiClient.generate_video`), then `record_completed_video(...)` updates status + inserts the local file after long polling finishes. This way a paid video is recorded with `status="pending"` even if the long poll later fails.
+For T2V the sequence is split: `record_started_video(...)` fires the moment the generation response yields a media ID (via the `on_started` callback in `FlowApiClient.generate_video`), then `record_completed_video(...)` updates status + inserts the final local path or cloud URI after long polling finishes. This way a paid video is recorded with `status="pending"` even if the long poll later fails.
 
 For batches, each row is recorded individually in a per-row `try/except DataStoreError`, so one row's persistence failure does not stop the rest of the batch.
 
@@ -127,7 +144,7 @@ The data layer follows a "fail fast before billing, warn after success" contract
 | DB cannot be opened (permission, path) | Raise `DataStoreError` BEFORE Flow call | 16 |
 | Migration fails or detects checksum drift | Raise `DataMigrationError` BEFORE Flow call | 16 |
 | DB has a NEWER schema than installed gflow-cli | Raise `DataMigrationError` BEFORE Flow call | 16 |
-| Recorder write fails AFTER successful paid generation | Emit `data.persistence_failed_after_success` structlog event with `flow_media_id` + `local_path`; print yellow warning; **return 0** | 0 |
+| Recorder write fails AFTER successful paid generation | Emit `data.persistence_failed_after_success` structlog event with `flow_media_id` + `local_path` when available; print yellow warning; **return 0** | 0 |
 | Batch row N fails to persist | Same warning; later rows still recorded | 0 (or 1 if other failure modes apply) |
 
 **Why "warn and continue" after success?** If your `gflow video t2v` succeeds and the file lands on disk, exiting non-zero solely because the local catalog could not be updated would teach scripts to retry the paid generation. The catalog can be reconciled later by a future `gflow data repair`; the file cannot be un-billed.
@@ -164,7 +181,7 @@ This means the recorder OWNS redaction — call sites cannot leak signed URLs in
 
 ### What the DB still contains
 
-Even with `redacted` mode and metadata stripping, the DB stores: profile names, Flow project/media/workflow/operation IDs, local file paths, asset dimensions/seeds/timestamps, model and aspect choices, and prompt hashes. If your threat model requires hiding even profile-level activity, exclude `<GFLOW_CLI_HOME>/gflow.db` from backups or set `GFLOW_CLI_DB_PATH` to a per-task ephemeral location.
+Even with `redacted` mode and metadata stripping, the DB stores: profile names, Flow project/media/workflow/operation IDs, local file paths or cloud URIs, asset dimensions/seeds/timestamps, model and aspect choices, and prompt hashes. If your threat model requires hiding even profile-level activity, exclude `<GFLOW_CLI_HOME>/gflow.db` from backups or set `GFLOW_CLI_DB_PATH` to a per-task ephemeral location.
 
 See [`SECURITY.md`](SECURITY.md) for the broader threat model.
 
@@ -178,8 +195,11 @@ See [`SECURITY.md`](SECURITY.md) for the broader threat model.
 # Newest 20 projects across all profiles
 gflow data list projects
 
-# All images for one profile, paginated
+# All images for one profile, aggregated by asset by default
 gflow data list images --profile ffroliva --limit 50 --offset 0
+
+# Show every local file copy instead of aggregating
+gflow data list images --all-copies
 
 # Videos as JSONL for piping into jq
 gflow data list videos --json | jq '.media_id'
@@ -197,9 +217,36 @@ Flags shared by all four subcommands:
 | `--profile NAME` | unset | filter to one profile (not available on `profiles`) |
 | `--json` | off | JSONL output, one object per line |
 
+The `images` and `videos` subcommands support an additional flag:
+
+| Flag | Default | Notes |
+|---|---|---|
+| `--all-copies` | off | Show one row per local file instead of one row per asset. |
+
+By default, `images` and `videos` aggregate rows by Flow media ID. If an asset
+has multiple local copies (e.g. re-downloaded to different paths), they appear
+as a single row with a `COPIES` count and the path of the latest copy.
+
 TTY stdout → Rich table; pipe or `--json` → JSONL. Default sort: newest first. Exit code 16 on data-store errors (same `DataStoreError` family as `gflow data media`). A **missing or freshly-created** DB is NOT a data-store error — `data list` auto-creates the schema via `DataStore.open()` and returns exit 0 with an empty result (see [#88](https://github.com/ffroliva/gflow-cli/issues/88)).
 
 > **`data list profiles` vs `gflow auth list`:** `data list profiles` shows profiles that have **recorded generations** in the catalog; `gflow auth list` shows profiles that have ever **logged in** via `gflow auth login`. A profile that logged in but never generated anything will appear in `auth list` but not in `data list profiles`.
+
+### `gflow data prune` — clean up stale entries (v0.9.1+)
+
+Remove `local_files` rows whose paths no longer exist on disk. Useful after
+test runs that wrote to temporary directories, or after manually deleting
+media files.
+
+```bash
+# Preview dead rows without deleting
+gflow data prune --dry-run
+
+# Delete stale local_files entries
+gflow data prune
+```
+
+Only **local files** (where `storage_provider` is NULL) are scanned; cloud-stored
+assets are ignored to prevent accidental pruning of remote objects.
 
 ### `gflow data media <media_id>` — read a single asset
 
@@ -224,6 +271,12 @@ gflow data media
 └────────────────┴─────────────────────────────────┘
 ```
 
+Cloud-backed rows use `cloud_uri_N` instead:
+
+```
+│ cloud_uri_1    │ s3://gflow/out/image.jpg        │
+```
+
 Exits with code 16 if the media ID is not in the DB or if multiple profiles claim it without `--profile` disambiguation. Exits 0 with the table if exactly one match is found.
 
 ### Direct SQL inspection
@@ -235,6 +288,11 @@ sqlite3 ~/.gflow/gflow.db
 sqlite> SELECT mode, prompt, model, status, started_at
         FROM operations
         ORDER BY started_at DESC LIMIT 10;
+
+sqlite> SELECT storage_provider, cloud_uri, path
+        FROM local_files
+        WHERE cloud_uri IS NOT NULL
+        ORDER BY created_at DESC LIMIT 10;
 ```
 
 The schema is fixed at v1; future migrations will be additive (new tables, new nullable columns).
@@ -261,6 +319,10 @@ with DataStore.open(get_settings().resolved_db_path()) as store:
     by_path = repo.resolve_seed_image_by_path("default", Path("C:/out/image.png"))
 ```
 
+Cloud-only assets have `LocalFileRecord.path is None` and carry their object
+location in `LocalFileRecord.cloud_uri`; path-based seed-image resolution is
+local-only.
+
 The public read API is documented in [`src/gflow_cli/data/repository.py`](../src/gflow_cli/data/repository.py); all read methods return typed `SeedImage` / `AssetLookup` dataclasses, not raw SQLite rows.
 
 ---
@@ -271,6 +333,7 @@ The public read API is documented in [`src/gflow_cli/data/repository.py`](../src
 |---|---|---|
 | `GFLOW_CLI_DB_PATH` | `<GFLOW_CLI_HOME>/gflow.db` | Override the SQLite file location. Useful for tests, per-account isolation, or shared filesystems. |
 | `GFLOW_CLI_HISTORY_PROMPTS` | `store` | `store` keeps prompt text, `redacted` keeps only the SHA-256 hash. |
+| `GFLOW_CLI_STORAGE_URI` | unset | Optional S3/GCS output prefix; cloud-backed rows store `storage_provider` and `cloud_uri`. |
 
 The DB file is created on first run. Parent directory is auto-created.
 
@@ -336,7 +399,7 @@ See [`errors.py::EXIT_CODE_MAP`](../src/gflow_cli/errors.py) for the complete ex
 ### Adding a new operation kind
 
 1. Add the enum value to `OperationKind` in [`data/models.py`](../src/gflow_cli/data/models.py).
-2. Add a `record_<kind>(...)` method to `OperationRecorder` following the existing patterns (upsert profile → project → asset → insert operation → link → local files).
+2. Add a `record_<kind>(...)` method to `OperationRecorder` following the existing patterns (upsert profile → project → asset → insert operation → link → asset location rows).
 3. Wire it into the CLI call site, mirroring the `_run_t2i` / `record_completed_video` patterns: open recorder BEFORE Flow, close in `finally`, wrap the `record_*` call in `try/except DataStoreError` calling `_warn_persistence_failed_after_success(...)`.
 
 ### Adding a new column
@@ -396,6 +459,7 @@ These are tracked in [`PLAN.md`](../PLAN.md) under the data-layer phase backlog.
 - [Spec](superpowers/specs/2026-05-24-data-layer-design.md) — original design document with goals, non-goals, and architectural rationale.
 - [Plan](superpowers/plans/2026-05-24-data-layer.md) — task-by-task implementation plan.
 - [`CONFIGURATION.md`](CONFIGURATION.md) — env-var reference.
+- [`EXTERNAL_STORAGE.md`](EXTERNAL_STORAGE.md) — S3, MinIO, and GCS output configuration.
 - [`USAGE.md`](USAGE.md) — `gflow data media` command reference.
 - [`SECURITY.md`](SECURITY.md) — threat model for stored prompts and metadata.
 - [`ARCHITECTURE.md`](ARCHITECTURE.md) — how `gflow_cli.data` fits into the modular monolith.
