@@ -2,7 +2,7 @@
 
 > **Status:** Living document. Updated as phases complete.
 > **Owner:** [@ffroliva](https://github.com/ffroliva)
-> **Last revised:** 2026-05-28 (develop — post-v0.9.1; PR #58 data layer, PR #70 locale Phase 2, PR #78 data Windows fixes, PR #81 root cleanup, PR #84 cp1252+plan refresh, PR #89 data list/media UX, PR #90 #63 closure, PR #110 issue #92 Google account persistence)
+> **Last revised:** 2026-05-29 (v0.10.0 release — `--json` everywhere + `gflow models` catalog, per-model i2i/r2v ref caps, profile Google-account persistence (#92), external cloud storage, `gflow data prune`, cross-profile count fixes #111/#113)
 
 This plan turns the v0.1 scaffold into a production-grade CLI for Google AI Ultra/Pro subscribers who want to spend their Flow credits via batch automation. The plan is opinionated, treating this repo as a portfolio-grade benchmark.
 
