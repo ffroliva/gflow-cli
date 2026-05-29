@@ -465,7 +465,7 @@ change surfaces there as a failing test. Start any investigation of a sudden
 
 ### Profile named `default` is opaque — no Google account identity
 
-- **Status:** Resolved · **Severity:** Was-Low (UX confusion, no data loss) · **Was-affecting:** all versions through v0.9.x · **Fixed in:** develop post-v0.9.1 via PR #110 (2026-05-28) · **Tracked:** issue #92
+- **Status:** Resolved · **Severity:** Was-Low (UX confusion, no data loss) · **Was-affecting:** all versions through v0.9.x · **Fixed in:** v0.10.0 via PR #110 (2026-05-28) · **Tracked:** issue #92
 
 The first-run default profile name `default` gave no indication of which Google
 account it belonged to, what locale it used, or whether it was valid. On
