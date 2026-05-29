@@ -9,6 +9,11 @@ Follow this sequence verbatim. Every step matters.
 > **Branch-protection note:** `main` blocks direct pushes. The release commit travels
 > via a `chore/release-vX.Y.Z` branch PR. The signed tag is pushed independently
 > (tag pushes bypass branch protection and trigger the CI release workflow immediately).
+>
+> **Source-branch note (read first):** `develop` is the integration branch — it carries
+> ALL unreleased work and `main` usually lags it. The release branch is cut from
+> **`develop`**, NOT `main`. The PR `chore/release-vX.Y.Z → main` then brings the full
+> integration history onto `main`. Do not expect the work to already be on `main`.
 
 ## Inputs
 
@@ -25,36 +30,56 @@ Ask the user (if not already provided):
 
 Run `/gflow:changelog` — confirm the `[Unreleased]` block is non-empty and accurate before proceeding.
 
-**2. Verify clean working tree.**
+**2. Verify (or triage) a clean working tree.**
 
 ```bash
 git status --short
 ```
 
-Must be empty. If not, abort and tell the user to commit or stash first.
+If empty, continue. If not, **triage before aborting** — do not blindly stop:
 
-**3. Verify `main` is up-to-date.**
+- **Auto-injected boilerplate** (e.g. a context-mode routing block appended to
+  `CLAUDE.md` by an MCP plugin's SessionStart hook): this is plugin-injected, not
+  project content — `git restore` it. Confirm with the user if unsure.
+- **Build/temp artifacts** (e.g. a stray `tmp*.tar.gz` sdist at repo root): delete them.
+- **Genuine uncommitted work:** STOP and tell the user to commit or stash on the
+  appropriate branch (never commit straight to `develop`).
+
+The tree must be clean before you create the release branch.
+
+**3. Verify `develop` is the release source and up-to-date.**
+
+The release is cut from `develop`, NOT `main` (see Source-branch note above).
+Confirm direction explicitly — a backwards divergence means a prior back-merge was skipped.
 
 ```bash
-git rev-parse --abbrev-ref HEAD     # must be "main"
 git fetch origin
-git rev-list HEAD..origin/main      # must be empty
+git rev-parse --abbrev-ref HEAD                      # expect "develop"
+git rev-list --count HEAD..origin/develop            # local behind origin — expect 0
+git rev-list --count origin/main..origin/develop     # develop AHEAD of main — expect > 0 (the work to release)
+git rev-list --count origin/develop..origin/main     # main AHEAD of develop — expect 0
 ```
 
-If not on `main`, switch: `git checkout main && git pull origin main`.
-If `main` is behind, pull first.
+If not on `develop`: `git checkout develop && git pull origin develop`.
+If local is behind origin: `git pull origin develop`.
+**If `main` is AHEAD of `develop` (last count > 0): STOP.** A prior release skipped its
+`main → develop` back-merge — recover first (see the `release-back-merge-gap-recovery`
+memory) or the release branch will hit conflicts on `pyproject.toml` / `__init__.py` / `CHANGELOG.md`.
 
 **4. Run quality gates.**
 
 Run `/gflow:check` — all gates must pass. Abort if any fail.
 
-**5. Create a release branch.**
+**5. Create a release branch off `develop`.**
 
 ```bash
+git checkout develop                          # ensure the base is develop, not main
 git checkout -b chore/release-v<NEW_VERSION>
 ```
 
-All release prep commits live here; this branch gets PR'd into `main`.
+This branch now contains all of `develop` (⊇ `main`) plus your release prep. All
+release prep commits live here; the PR into `main` (step 14) carries the full
+integration history forward.
 
 **6. Bump version** in `pyproject.toml`:
 
@@ -79,10 +104,12 @@ rg -n "__version__|<OLD_VERSION>|version assertion" tests src pyproject.toml
 
 - Move all entries under `## [Unreleased]` to a new `## [<NEW_VERSION>] — YYYY-MM-DD` section.
 - Leave `## [Unreleased]` empty.
-- Update the link footer:
+- Update the link footer. Match the repo's existing convention — every prior entry
+  uses the `compare/vPREV...vNEW` form, so use that for the new version too (NOT the
+  `releases/tag/` form), or `/gflow:doc-review` will flag the inconsistency:
   ```
   [Unreleased]: https://github.com/ffroliva/gflow-cli/compare/v<NEW_VERSION>...HEAD
-  [<NEW_VERSION>]: https://github.com/ffroliva/gflow-cli/releases/tag/v<NEW_VERSION>
+  [<NEW_VERSION>]: https://github.com/ffroliva/gflow-cli/compare/v<PREV_VERSION>...v<NEW_VERSION>
   ```
 
 **10. Run the documentation review gate.**
@@ -92,10 +119,17 @@ Run `/gflow:doc-review` — audit all version refs, INDEX completeness, evidence
 **11. Commit the release prep.**
 
 ```bash
-git add pyproject.toml src/gflow_cli/__init__.py CHANGELOG.md
+git add pyproject.toml src/gflow_cli/__init__.py uv.lock CHANGELOG.md
 git add docs/ .claude/commands/gflow/        # include any doc-review fixes
+# doc-review version-currency fixes often also touch ROOT docs — stage them too:
+git add README.md PLAN.md KNOWN_ISSUES.md AGENTS.md llms.txt 2>/dev/null || true
+git status --short                            # review EVERYTHING staged before committing
 git commit -m "chore(release): v<NEW_VERSION>"
 ```
+
+- **`uv.lock` changes** on every version bump (the editable package version is
+  pinned in the lockfile) — it is easy to forget and must ship in this commit.
+- The release-prep commit must NOT carry a `Co-Authored-By` trailer (see reminders).
 
 **12. Tag the release commit.** Use `-s` for a signed annotated tag so GitHub shows **"Verified"** AND `.github/workflows/release.yml` passes the signed-tag gate (unsigned or lightweight tags are rejected by CI).
 
@@ -108,21 +142,55 @@ Signing requirements:
 - **GPG:** any registered GPG key works.
 - Run `git config --global user.signingkey` to confirm a key is configured.
 
+Confirm the tag actually carries a signature (this is what CI checks):
+
+```bash
+git cat-file -p v<NEW_VERSION> | grep -c "BEGIN SSH SIGNATURE"   # expect 1 (or "BEGIN PGP SIGNATURE" for GPG)
+```
+
+> **Benign local-verify error:** `git tag -v v<NEW_VERSION>` may fail with
+> `gpg.ssh.allowedSignersFile needs to be configured`. This is a *local
+> verification-config* gap only — the tag IS validly signed and CI still passes
+> (CI greps for the signature header, above). To make local verify work once and
+> for all, create an allowed-signers file (`<your-email> ssh-rsa AAAA...`) and run
+> `git config --global gpg.ssh.allowedSignersFile <path>`. See the `release-signing`
+> memory for the exact recipe. Do NOT treat this error as a signing failure.
+
 **13. Push the tag first** (bypasses branch protection; triggers the CI release workflow immediately):
+
+> **⚠ POINT OF NO RETURN — confirm with the user before this push.** Pushing the
+> tag immediately triggers `.github/workflows/release.yml` → **PyPI publish +
+> public GitHub Release**. A pushed release tag must NOT be force-replaced (ship a
+> PATCH instead). Get an explicit go-ahead, then push.
 
 ```bash
 git push origin v<NEW_VERSION>
 ```
 
 CI will start building the release. Watch <https://github.com/ffroliva/gflow-cli/actions>.
+Wait for the `Release` run to report **completed / success** and confirm the GitHub
+Release published before continuing (`gh release view v<NEW_VERSION>`).
 
 **14. Push the release branch and open the PR.**
 
 ```bash
-git push origin chore/release-v<NEW_VERSION>
+git push -u origin chore/release-v<NEW_VERSION>
+gh pr create --base main --head chore/release-v<NEW_VERSION> \
+  --title "chore(release): v<NEW_VERSION>"
 ```
 
-Open PR `chore/release-v<NEW_VERSION> → main` with title `chore(release): v<NEW_VERSION>`. Merge it once CI is green. (The release workflow already ran from the tag push in step 13 — the PR is to keep `main` up-to-date with the bump commit.)
+Wait for PR CI to go green (`gh pr checks <N> --watch`), then merge with a **merge
+commit** — never squash:
+
+```bash
+gh pr merge <N> --merge --delete-branch
+```
+
+> **NEVER `--squash` this PR.** Because the branch was cut from `develop`, the PR
+> carries the entire batch of unreleased integration commits. A squash collapses
+> them into one opaque commit on `main` and destroys that history. `--merge`
+> preserves it. (The release workflow already ran from the tag push in step 13 —
+> this PR is to bring the bump commit + integration history onto `main`.)
 
 **15. Back-merge `main` into `develop`.**
 
@@ -152,10 +220,15 @@ Tell the user:
 
 ## Critical reminders
 
+- **ALWAYS** cut the release branch from `develop`, not `main` — `develop` carries the work.
+- **NEVER** `--squash` the release PR into `main` — it destroys the integration history the branch carries. Use `--merge`.
+- **NEVER** skip the `main → develop` back-merge (step 15) — skipping it guarantees conflicts at the next release.
 - **NEVER** add `Co-Authored-By: Claude` (or any AI co-author) to the release commit.
 - **NEVER** force-push a release tag once it's on GitHub. Ship a PATCH fix instead.
 - **NEVER** `--no-verify` past hooks. Fix the underlying issue.
 - **NEVER** push directly to `main` — branch protection will reject it. Always use a PR.
+- A `git tag -v` `allowedSignersFile` error is **benign** (verify-only) — the tag is still signed and CI passes. Don't treat it as a failure.
+- **CONFIRM with the user before the step 13 tag push** — it's the irreversible PyPI + public Release trigger.
 - If quality gates fail at step 4, **STOP**. Surface the failures to the user.
 - If doc-review fails at step 10, **STOP**. Fix before committing.
 
