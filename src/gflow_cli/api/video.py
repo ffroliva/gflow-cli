@@ -22,6 +22,10 @@ class Mode(StrEnum):
     T2V = "t2v"
     I2V = "i2v"
     R2V = "r2v"
+    # AVATAR = pure T2V + likeness (no reference images).
+    # likeness_refs can also be added to R2V — confirmed from payload_video.json
+    # where referenceLikenesses coexists with referenceImages.
+    AVATAR = "avatar"
 
 
 class Tier(StrEnum):
@@ -175,6 +179,9 @@ class GenerateVideoRequest:
     start_image: Path | None = None  # I2V
     end_image: Path | None = None  # I2V (optional)
     reference_images: tuple[Path, ...] = ()  # R2V
+    # Avatar flag — UI automation clicks Avatar → Add to Prompt; Flow's JS handles the wire.
+    # Valid on Mode.AVATAR (pure) and Mode.R2V (reference images + avatar).
+    use_avatar: bool = False
 
     def __post_init__(self) -> None:
         self._validate_prompt()
@@ -212,8 +219,9 @@ class GenerateVideoRequest:
             raise ValueError(msg)
 
     def _validate_mode_symmetry(self) -> None:
-        if self.mode is Mode.T2V and (self.start_image or self.end_image or self.reference_images):
-            msg = "T2V request must not carry image inputs"
+        has_inputs = self.start_image or self.end_image or self.reference_images or self.use_avatar
+        if self.mode is Mode.T2V and has_inputs:
+            msg = "T2V request must not carry image inputs; use Mode.AVATAR for avatar"
             raise ValueError(msg)
         if self.mode is Mode.I2V:
             if self.start_image is None:
@@ -229,6 +237,20 @@ class GenerateVideoRequest:
             if self.start_image or self.end_image:
                 msg = "R2V request must not carry start/end images"
                 raise ValueError(msg)
+        if self.mode is Mode.AVATAR:
+            # Pure avatar: prompt + use_avatar only — no reference images.
+            # For avatar + reference images together, use Mode.R2V + use_avatar=True.
+            if not self.use_avatar:
+                msg = "AVATAR request requires use_avatar=True"
+                raise ValueError(msg)
+            if self.start_image or self.end_image or self.reference_images:
+                msg = (
+                    "AVATAR request must not carry start/end/reference images; "
+                    "use Mode.R2V + use_avatar=True instead"
+                )
+                raise ValueError(msg)
+        # use_avatar=True is also valid on R2V (confirmed: payload_video.json shows
+        # referenceLikenesses coexisting with referenceImages in one request).
 
     def _validate_r2v_caps(self) -> None:
         if len(self.reference_images) > MAX_REFERENCE_IMAGES:

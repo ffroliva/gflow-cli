@@ -1050,3 +1050,209 @@ def _print_i2i_summary(images: list[GeneratedImage], saved_paths: list[Path]) ->
         w, h = img.dimensions
         table.add_row(img.media_name, str(img.seed), f"{w}x{h}", safe_path_text(path))
     console.print(table)
+
+
+# ---------------------------------------------------------------------------
+# avatar subcommand
+# ---------------------------------------------------------------------------
+
+
+@image.command(
+    "avatar",
+    short_help="Generate image(s) from a prompt + a pre-existing Flow avatar.",
+    help=(
+        "Avatar generation: use a pre-existing Flow avatar/likeness with a text prompt.\n\n"
+        "Flow's avatar is selected automatically via UI automation — "
+        "no UUID needed. Unlike i2i (which uploads a local image), avatar "
+        "uses your pre-existing Flow character.\n\n"
+        "\b\n"
+        "Examples:\n"
+        '  gflow image avatar "raise a fist in Paris" --avatar\n'
+        '  gflow image avatar "walk through Tokyo" --avatar -n 4\n'
+        '  gflow image avatar "cinematic portrait" --avatar --aspect 1:1\n\n'
+        "For local-file reference images, use `gflow image i2i` instead."
+    ),
+)
+@click.argument("prompt")
+@click.option(
+    "--avatar",
+    "use_avatar",
+    is_flag=True,
+    default=True,
+    help="Use your Flow avatar (UI automation clicks Avatar → Add to Prompt).",
+)
+@click.option(
+    "--model",
+    default=_DEFAULT_MODEL,
+    show_default=True,
+    type=click.Choice(_ALLOWED_MODELS),
+    help="Image model alias.",
+)
+@click.option(
+    "--aspect",
+    default=_DEFAULT_ASPECT_RATIO,
+    show_default=True,
+    type=click.Choice(_ALLOWED_ASPECT_RATIOS),
+    help="Image aspect ratio.",
+)
+@click.option(
+    "-n",
+    "--count",
+    "count",
+    default=1,
+    show_default=True,
+    type=click.IntRange(1, 4),
+    help="How many images to generate (1-4).",
+)
+@click.option(
+    "--out",
+    "out",
+    default=None,
+    type=click.Path(file_okay=False, path_type=Path),
+    help=(
+        "Directory to write generated PNGs. When omitted, files land under "
+        "<output_dir>/images/<YYYY-MM-DD>/."
+    ),
+)
+@click.option("--profile", default=None, help="Profile name (overrides default).")
+@click.option(
+    "--transport",
+    type=click.Choice(transport_choices(), case_sensitive=False),
+    default=None,
+    help="Override transport strategy.",
+)
+@click.option(
+    "--json",
+    "as_json",
+    is_flag=True,
+    help="Emit a machine-readable JSON result instead of a Rich table.",
+)
+def avatar(
+    prompt: str,
+    use_avatar: bool,
+    model: str,
+    aspect: str,
+    count: int,
+    out: Path | None,
+    profile: str | None,
+    transport: str | None,
+    as_json: bool,
+) -> None:
+    """Generate image(s) from PROMPT using your Flow avatar."""
+    profile_name = _resolve_profile(profile)
+    provider_dir = _make_provider_dir(profile_name)
+    settings = get_settings()
+    run_with_handlers(
+        lambda: _run_avatar(
+            profile_name=profile_name,
+            profile_dir=provider_dir,
+            headless=settings.headless,
+            prompt=prompt,
+            aspect=Aspect.from_cli(aspect),
+            model=Model.from_cli(model),
+            count=count,
+            out=out,
+            output_root=settings.output_dir,
+            transport=transport,
+            as_json=as_json,
+        ),
+        cli_command="image avatar",
+        as_json=as_json,
+    )
+
+
+async def _run_avatar(
+    *,
+    profile_name: str,
+    profile_dir: Path,
+    headless: bool,
+    prompt: str,
+    aspect: Aspect,
+    model: Model,
+    count: int,
+    out: Path | None,
+    output_root: Path,
+    transport: str | None = None,
+    as_json: bool = False,
+) -> None:
+    settings = get_settings()
+    recorder = OperationRecorder.open(settings)
+    try:
+        async with FlowApiClient(
+            profile_dir=profile_dir,
+            headless=headless,
+            transport=transport,
+        ) as client:
+            if not as_json:
+                console.print(_CREATING_PROJECT_MSG)
+            project = await client.create_project(title="gflow-cli avatar")
+            if not as_json:
+                console.print(f"  Project: [dim]{project.project_id}[/dim]")
+
+            req = GenerateImageRequest(
+                prompt=prompt,
+                aspect=aspect,
+                model=model,
+                use_avatar=True,
+            )
+
+            if not as_json:
+                console.print(
+                    f"  Generating {count} image(s) with avatar "
+                    f"({req.model.value}, {req.aspect.value})...",
+                )
+            if count == 1:
+                img = await client.generate_image(project_id=project.project_id, req=req)
+                images: list[GeneratedImage] = [img]
+            else:
+                images = await client.generate_images_batch(
+                    project_id=project.project_id,
+                    req=req,
+                    count=count,
+                )
+
+            saved_paths: list[Path] = []
+            for i, img in enumerate(images, start=1):
+                target = (
+                    out / f"{img.media_name}_{i}.png"
+                    if out is not None
+                    else image_output_path(output_root, job_id=img.media_name, index=i)
+                )
+                saved = await client.download_image(img, target)
+                saved_paths.append(saved)
+
+            if as_json:
+                json_output.emit(
+                    json_output.image_result(
+                        command="image avatar",
+                        project_id=project.project_id,
+                        model=req.model.value,
+                        images=images,
+                        saved_paths=saved_paths,
+                    ),
+                )
+            else:
+                _print_i2i_summary(images, saved_paths)
+
+            try:
+                recorder.record_generated_images(
+                    profile_name=profile_name,
+                    profile_dir=profile_dir,
+                    project=project,
+                    request=req,
+                    images=images,
+                    saved_paths=saved_paths,
+                    cloud_storage_infos=[cloud_info_from_path(path) for path in saved_paths],
+                    input_media_ids=[],
+                    operation_kind="avatar",
+                )
+            except DataStoreError as exc:
+                first_image = images[0] if images else None
+                first_path = saved_paths[0] if saved_paths else None
+                _warn_persistence_failed_after_success(
+                    exc=exc,
+                    flow_media_id=first_image.media_name if first_image else None,
+                    local_path=first_path,
+                )
+    finally:
+        recorder.close()

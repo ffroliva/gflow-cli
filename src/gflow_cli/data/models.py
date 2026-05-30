@@ -19,6 +19,7 @@ class OperationKind(StrEnum):
     UPLOAD_IMAGE = "upload_image"
     T2I = "t2i"
     I2I = "i2i"
+    AVATAR = "avatar"
     T2V = "t2v"
     I2V = "i2v"
     R2V = "r2v"

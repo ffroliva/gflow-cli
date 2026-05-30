@@ -121,7 +121,10 @@ VIDEO_MODEL_OPTION_SELECTORS: dict[VideoModel, str] = {
     VideoModel.OMNI_FLASH: "[role='menuitem']:has-text('Omni Flash')",
     VideoModel.VEO_3_1_FAST: "[role='menuitem']:has-text('Veo 3.1 - Fast')",
     VideoModel.VEO_3_1_QUALITY: "[role='menuitem']:has-text('Veo 3.1 - Quality')",
-    VideoModel.VEO_3_1_LITE: "[role='menuitem']:text-is('volume_upVeo 3.1 - Lite')",
+    # :not excludes 'Veo 3.1 - Lite [Lower Priority]' — has-text is a prefix match.
+    VideoModel.VEO_3_1_LITE: (
+        "[role='menuitem']:has-text('Veo 3.1 - Lite'):not(:has-text('[Lower Priority]'))"
+    ),
     VideoModel.VEO_3_1_LITE_LOWER_PRIORITY: "[role='menuitem']:has-text('[Lower Priority]')",
 }
 
@@ -839,6 +842,54 @@ class VideoGenerationMixin:
         await page.wait_for_timeout(1500)
 
     @staticmethod
+    async def _attach_likeness(
+        page: Page,
+        likeness_id: str,
+        *,
+        out_dir: Path | None,
+    ) -> None:
+        """Open the add-media dialog, click the Avatar tab, click Add to Prompt.
+
+        Flow (confirmed from DOM inspection):
+        1. Click the '+' / add_2 button (aria-haspopup=dialog) — same as ADD_MEDIA_BUTTON
+        2. Click 'Avatar' tab (role=tab) inside the dialog
+        3. Click 'Add to Prompt' button
+
+        No gallery selection — Flow shows the user's single avatar after tab click.
+        If multi-avatar gallery is ever added, insert a selector keyed on likeness_id.
+        """
+        add_media = page.locator(ADD_MEDIA_BUTTON).first
+        try:
+            await add_media.wait_for(state="visible", timeout=8000)
+        except Exception as e:
+            shot = await _capture_debug_screenshot(page, out_dir, "debug_no_add_media_avatar.png")
+            msg = f"'+' button not found before Avatar dialog. Screenshot: {shot}"
+            raise RuntimeError(msg) from e
+        await add_media.click()
+        await page.wait_for_timeout(800)
+
+        avatar_tab = page.locator("button[role='tab']:has-text('Avatar')").first
+        try:
+            await avatar_tab.wait_for(state="visible", timeout=8000)
+        except Exception as e:
+            shot = await _capture_debug_screenshot(page, out_dir, "debug_no_avatar_tab.png")
+            msg = f"Avatar tab not found after '+' click. Screenshot: {shot}"
+            raise RuntimeError(msg) from e
+        await avatar_tab.click()
+        await page.wait_for_timeout(800)
+
+        add_to_prompt = page.locator("button:has-text('Add to Prompt')").first
+        try:
+            await add_to_prompt.wait_for(state="visible", timeout=8000)
+        except Exception as e:
+            shot = await _capture_debug_screenshot(page, out_dir, "debug_no_add_to_prompt.png")
+            msg = f"'Add to Prompt' not found after Avatar tab click. Screenshot: {shot}"
+            raise RuntimeError(msg) from e
+        await add_to_prompt.click()
+        await page.wait_for_timeout(800)
+        log.info("ui_automation.avatar_attached", likeness_id=likeness_id)
+
+    @staticmethod
     async def _attach_references(
         page: Page,
         images: list[Path],
@@ -1096,6 +1147,15 @@ class VideoGenerationMixin:
             await VideoGenerationMixin._attach_references(
                 page,
                 list(request.reference_images),
+                out_dir=out_dir,
+            )
+
+        # Avatar: independent of mode — fires for Mode.AVATAR and Mode.R2V + use_avatar.
+        # Flow's JS includes referenceLikenesses automatically after UI click.
+        if request.use_avatar:
+            await VideoGenerationMixin._attach_likeness(
+                page,
+                "",
                 out_dir=out_dir,
             )
 

@@ -21,8 +21,9 @@
 
 For Google AI Ultra / Pro subscribers with Veo credits and batch workloads:
 
-- **Burn credits efficiently** — `for p in $(cat prompts.txt); do gflow image t2i "$p"; done` _(image batching, plus `gflow video t2v`/`i2v`/`r2v`, all ship today)_
+- **Burn credits efficiently** — `for p in $(cat prompts.txt); do gflow image t2i "$p"; done` _(image batching, plus `gflow video t2v`/`i2v`/`r2v`/`avatar`, all ship today)_
 - **Build pipelines** — wire Veo into your content automation, AI video stack, or batch experiments
+- **Avatar generations** — `gflow image avatar` / `gflow video avatar` drive Flow's Avatar tab to generate images and videos with your pre-existing Flow avatar; combine with R2V via `gflow video r2v --avatar`
 - **Stay in the terminal** — no Chromium UI, no clicking through dialogs (after a one-time `gflow auth login`)
 
 Same Veo + Imagen models, same quality, same Ultra/Pro billing — programmatic.
@@ -41,6 +42,10 @@ gflow auth login --browser chrome
 gflow image t2i "a hot air balloon over Tokyo at sunrise"
 # or:
 gflow video t2v "Slow cinematic push-in on a sunlit forest clearing" --aspect 16:9
+# or (avatar — requires a Flow avatar set up on your account):
+gflow image avatar "walk through Paris"
+gflow video avatar "walk through Bangkok" --model veo-lite
+gflow video r2v "product review" --ref product.jpg --avatar --model omni-flash --duration 10
 ```
 
 Outputs land under `$GFLOW_CLI_OUTPUT_DIR` unless
@@ -110,7 +115,7 @@ gflow CLI  →  Provider (interchangeable)  →  Flow (ui_automation) / Mock (te
 
 ## Project status
 
-**v0.10.0 — alpha.** Image (T2I / I2I / upload) + Video T2V / I2V / R2V live end-to-end on `ui_automation`, with a video `--model` picker (5 Veo models) + `--duration` / `--count`. New in v0.10.0: `--json` output across every generation command (`image t2i/i2i`, `video t2v/i2v/r2v`, `auth list`) plus a `gflow models` catalog so worker schedulers can drive the CLI machine-to-machine; per-model reference-image caps for `i2i`/`r2v`; profile Google-account identity persisted to disk (with auto-rename of the first-run `default` profile); external cloud storage (S3 / MinIO / GCS) via `GFLOW_CLI_STORAGE_URI`; and a `gflow data prune` maintenance command. Only video `batch` (manifest runner) is still queued for Phase B — use a shell for-loop until then ([USAGE](docs/USAGE.md#gflow-video-batch)). Full milestone history → [docs/PROJECT_STATUS.md](docs/PROJECT_STATUS.md). Changelog → [CHANGELOG.md](CHANGELOG.md). Where the project is heading → [ROADMAP.md](ROADMAP.md).
+**v0.10.0 — alpha.** Image (T2I / I2I / upload / **avatar**) + Video T2V / I2V / R2V / **avatar** live end-to-end on `ui_automation`, with a video `--model` picker (5 Veo models) + `--duration` / `--count`. **Avatar generation** (`gflow image avatar`, `gflow video avatar`, `gflow video r2v --avatar`) drives Flow's Avatar tab via UI automation — no UUID needed, works with any Flow account that has an avatar configured. New in v0.10.0: `--json` output across every generation command (`image t2i/i2i`, `video t2v/i2v/r2v`, `auth list`) plus a `gflow models` catalog so worker schedulers can drive the CLI machine-to-machine; per-model reference-image caps for `i2i`/`r2v`; profile Google-account identity persisted to disk (with auto-rename of the first-run `default` profile); external cloud storage (S3 / MinIO / GCS) via `GFLOW_CLI_STORAGE_URI`; and a `gflow data prune` maintenance command. Only video `batch` (manifest runner) is still queued for Phase B — use a shell for-loop until then ([USAGE](docs/USAGE.md#gflow-video-batch)). Full milestone history → [docs/PROJECT_STATUS.md](docs/PROJECT_STATUS.md). Changelog → [CHANGELOG.md](CHANGELOG.md). Where the project is heading → [ROADMAP.md](ROADMAP.md).
 
 ## License & legal
 

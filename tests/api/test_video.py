@@ -88,8 +88,8 @@ class TestMode:
     def test_has_r2v(self) -> None:
         assert Mode.R2V == "r2v"
 
-    def test_three_modes(self) -> None:
-        assert {m.value for m in Mode} == {"t2v", "i2v", "r2v"}
+    def test_modes(self) -> None:
+        assert {m.value for m in Mode} == {"t2v", "i2v", "r2v", "avatar"}
 
 
 class TestGenerateVideoRequest:

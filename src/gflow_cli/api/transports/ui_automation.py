@@ -1687,6 +1687,14 @@ class UiAutomationTransport(VideoGenerationMixin):
         if request.ref_paths:
             await self._attach_references(page, list(request.ref_paths), out_dir=out_dir)
 
+        # Avatar: click Avatar tab → Add to Prompt; Flow's JS includes referenceLikenesses.
+        if request.use_avatar:
+            await self._attach_likeness(
+                page,
+                "",
+                out_dir=out_dir,
+            )
+
         # Attach the response listener SYNCHRONOUSLY before any prompt
         # action. asyncio.create_task is unsafe here: it defers the listener
         # registration until the new task gets event-loop scheduling, which

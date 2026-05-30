@@ -33,6 +33,7 @@ __all__ = [
     "Aspect",
     "GenerateImageRequest",
     "ImageRef",
+    "LikenessRef",
     "Model",
     "_build_batch_generate_images_body",
 ]
@@ -179,6 +180,30 @@ def aspect_choices() -> dict[str, str]:
 
 
 @dataclass(frozen=True)
+class LikenessRef:
+    """A pre-existing avatar/likeness for avatar generation.
+
+    ``likeness_id`` is the UUID shown in ``imageGenerationLikenessInputs``
+    in the ``batchGenerateImages`` response (confirmed from
+    ``payload_avatar_ref.json``). On the wire it appears in
+    ``referenceLikenesses`` alongside an empty ``imageInputs`` list.
+    """
+
+    likeness_id: str
+
+    def __post_init__(self) -> None:
+        if not self.likeness_id or self.likeness_id != self.likeness_id.strip():
+            msg = (
+                "LikenessRef.likeness_id must be a non-empty UUID string with no "
+                "leading or trailing whitespace"
+            )
+            raise ValueError(msg)
+
+    def to_wire(self) -> dict[str, str]:
+        return {"likenessId": self.likeness_id}
+
+
+@dataclass(frozen=True)
 class ImageRef:
     """A reference image for I2I, identified by the upload's media UUID.
 
@@ -229,6 +254,10 @@ class GenerateImageRequest:
     # dialog by the ui_automation transport (the REST uploadImage path 401s).
     # The common i2i case; `refs` (pre-uploaded UUIDs) would need library-select.
     ref_paths: tuple[Path, ...] = ()
+    # Avatar flag — UI automation clicks the Avatar tab and "Add to Prompt".
+    # Flow's JS includes referenceLikenesses in the request automatically.
+    # Mutually exclusive with refs/ref_paths.
+    use_avatar: bool = False
     recaptcha_token: str = ""  # populated by caller right before send; "" means unminted
     # number of images to generate (1–4); UI transport uses this to set Flow's count tab
     count: int = 1
@@ -247,6 +276,9 @@ class GenerateImageRequest:
             raise ValueError(
                 msg,
             )
+        if self.use_avatar and n_refs > 0:
+            msg = "use_avatar and refs/ref_paths are mutually exclusive"
+            raise ValueError(msg)
 
 
 def _client_context(*, project_id: str, recaptcha_token: str, session_id: str) -> dict[str, Any]:
@@ -296,8 +328,12 @@ def _build_batch_generate_images_body(
         "imageAspectRatio": req.aspect.value,
         "structuredPrompt": {"parts": [{"text": req.prompt}]},
         "seed": seed,
-        # Always present — empty list for T2I, populated for I2I.
+        # Always present — empty list for T2I/avatar, populated for I2I.
         "imageInputs": [r.to_wire() for r in req.refs],
+        # referenceLikenesses is NOT injected here — when use_avatar=True the
+        # ui_automation transport clicks Avatar → Add to Prompt and Flow's JS
+        # includes referenceLikenesses automatically. REST transports would need
+        # to pass explicit LikenessRef objects if that path ever becomes viable.
     }
     return {
         "clientContext": cc,

@@ -19,7 +19,15 @@ from gflow_cli._cli_helpers import (
     _resolve_profile,
     run_with_handlers,
 )
-from gflow_cli.api.video import VideoModel, reference_cap_for
+from gflow_cli.api.client import FlowApiClient
+from gflow_cli.api.video import (
+    Aspect,
+    GenerateVideoRequest,
+    Mode,
+    VideoModel,
+    VideoStarted,
+    reference_cap_for,
+)
 from gflow_cli.config import get_settings
 from gflow_cli.data.recorder import OperationRecorder
 from gflow_cli.errors import DataStoreError
@@ -65,9 +73,6 @@ async def _generate_and_report(
     ok/fail status as the exit code) instead of the Rich lines; a failed
     generation still emits its JSON payload and then exits 1.
     """
-    from gflow_cli.api.client import FlowApiClient
-    from gflow_cli.api.video import VideoStarted
-
     if not as_json:
         console.print("[dim]Generating video — this takes ~2 minutes…[/dim]")
     settings = get_settings()
@@ -148,7 +153,6 @@ async def _run_t2v(
     count: int = 1,
     as_json: bool = False,
 ) -> None:
-    from gflow_cli.api.video import Aspect, GenerateVideoRequest, Mode, VideoModel
 
     request = GenerateVideoRequest(
         prompt=prompt,
@@ -182,7 +186,6 @@ async def _run_i2v(
     count: int = 1,
     as_json: bool = False,
 ) -> None:
-    from gflow_cli.api.video import Aspect, GenerateVideoRequest, Mode, VideoModel
 
     request = GenerateVideoRequest(
         prompt=prompt,
@@ -215,9 +218,9 @@ async def _run_r2v(
     model: str | None = None,
     duration: int | None = None,
     count: int = 1,
+    use_avatar: bool = False,
     as_json: bool = False,
 ) -> None:
-    from gflow_cli.api.video import Aspect, GenerateVideoRequest, Mode, VideoModel
 
     request = GenerateVideoRequest(
         prompt=prompt,
@@ -227,6 +230,7 @@ async def _run_r2v(
         duration=duration,
         count=count,
         reference_images=tuple(Path(r) for r in refs),
+        use_avatar=use_avatar,
     )
     await _generate_and_report(
         request,
@@ -234,6 +238,38 @@ async def _run_r2v(
         profile_dir=profile_dir,
         out_dir=out_dir,
         command="video r2v",
+        as_json=as_json,
+    )
+
+
+async def _run_avatar_video(
+    *,
+    profile_name: str,
+    profile_dir: Path,
+    prompt: str,
+    aspect: str,
+    out_dir: Path | None,
+    model: str | None = None,
+    duration: int | None = None,
+    count: int = 1,
+    as_json: bool = False,
+) -> None:
+
+    request = GenerateVideoRequest(
+        prompt=prompt,
+        mode=Mode.AVATAR,
+        aspect=Aspect.from_cli(aspect),
+        model=VideoModel.from_cli(model),
+        duration=duration,
+        count=count,
+        use_avatar=True,
+    )
+    await _generate_and_report(
+        request,
+        profile_name=profile_name,
+        profile_dir=profile_dir,
+        out_dir=out_dir,
+        command="video avatar",
         as_json=as_json,
     )
 
@@ -487,6 +523,12 @@ def i2v(
     help="Directory to save the generated mp4. Defaults to tmp/.",
 )
 @click.option(
+    "--avatar",
+    "use_avatar",
+    is_flag=True,
+    help="Add your Flow avatar to the reference-image video (R2V + avatar).",
+)
+@click.option(
     "--json",
     "as_json",
     is_flag=True,
@@ -501,6 +543,7 @@ def r2v(
     count: int,
     profile: str | None,
     out_dir: Path | None,
+    use_avatar: bool,
     as_json: bool,
 ) -> None:
     """Generate a video from reference images (--ref) + PROMPT."""
@@ -535,9 +578,94 @@ def r2v(
             duration=int(duration) if duration is not None else None,
             count=count,
             out_dir=out_dir,
+            use_avatar=use_avatar,
             as_json=as_json,
         ),
         cli_command="video r2v",
+        as_json=as_json,
+    )
+
+
+@video.command(
+    "avatar",
+    short_help="Generate a video from a prompt + a pre-existing Flow avatar.",
+    help=(
+        "Avatar video generation: use a pre-existing Flow avatar/likeness with a text prompt.\n\n"
+        "Flow's avatar is selected automatically via UI automation — no UUID needed.\n\n"
+        "\b\n"
+        "Examples:\n"
+        '  gflow video avatar "walk through Bangkok"\n'
+        '  gflow video avatar "cinematic walk" --model omni-flash\n\n'
+        "For reference-image video with avatar, use `gflow video r2v --avatar` instead."
+    ),
+)
+@click.argument("prompt")
+@click.option(
+    "--aspect",
+    default="9:16",
+    show_default=True,
+    type=click.Choice(["9:16", "16:9"]),
+    help="Video aspect ratio.",
+)
+@click.option(
+    "--model",
+    default=None,
+    type=click.Choice(["omni-flash", "veo-lite", "veo-fast", "veo-quality", "veo-lite-lp"]),
+    help="Veo model. Omit to use Flow's current default.",
+)
+@click.option(
+    "--duration",
+    default=None,
+    type=click.Choice(["4", "6", "8", "10"]),
+    help="Clip length in seconds. 10 requires --model omni-flash.",
+)
+@click.option(
+    "--count",
+    default=1,
+    show_default=True,
+    type=click.IntRange(1, 4),
+    help="How many videos to generate (1-4).",
+)
+@click.option("--profile", default=None, help="Profile name (overrides default).")
+@click.option(
+    "--out-dir",
+    "out_dir",
+    default=None,
+    type=click.Path(file_okay=False, path_type=Path),
+    help="Directory to save the generated mp4. Defaults to tmp/.",
+)
+@click.option(
+    "--json",
+    "as_json",
+    is_flag=True,
+    help="Emit a machine-readable JSON result instead of Rich output.",
+)
+def avatar(
+    prompt: str,
+    aspect: str,
+    model: str | None,
+    duration: str | None,
+    count: int,
+    profile: str | None,
+    out_dir: Path | None,
+    as_json: bool,
+) -> None:
+    """Generate a video from PROMPT using your Flow avatar."""
+    profile_name = _resolve_profile(profile)
+    provider_dir = _make_provider_dir(profile_name)
+    run_with_handlers(
+        lambda: _run_avatar_video(
+            profile_name=profile_name,
+            profile_dir=provider_dir,
+            prompt=prompt,
+            aspect=aspect,
+            model=model,
+            duration=int(duration) if duration is not None else None,
+            count=count,
+            out_dir=out_dir,
+            as_json=as_json,
+        ),
+        cli_command="video avatar",
         as_json=as_json,
     )
 
