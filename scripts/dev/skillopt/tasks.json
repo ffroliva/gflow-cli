@@ -5,7 +5,7 @@
     "context": "Clean install. No profiles exist. Playwright Chromium has not been downloaded yet.",
     "expected": {
       "must_include": ["gflow auth login"],
-      "must_not_include": ["gflow login", "gflow auth ", "gflow auth --"],
+      "must_not_include": ["gflow login", "gflow auth\n", "gflow auth --"],
       "partial_credit": ["playwright install chromium", "gflow auth status"]
     },
     "tags": ["auth", "first-run"],
@@ -148,12 +148,12 @@
     "question": "Apply the style 'cinematic, golden hour' to the user's local file hero.png.",
     "context": null,
     "expected": {
-      "must_include": ["gflow image i2i", "--ref hero.png"],
+      "must_include": ["gflow image i2i", "--ref"],
       "must_not_include": ["gflow image t2i", "--input", "--base", "--source"],
-      "partial_credit": []
+      "partial_credit": ["hero.png"]
     },
     "tags": ["image", "i2i"],
-    "notes": "Image-to-image uses '--ref', not '--input' or '--base'. Subcommand is 'gflow image i2i'."
+    "notes": "Image-to-image uses '--ref', not '--input' or '--base'. Subcommand is 'gflow image i2i'. '--ref' without the filename matches both '--ref hero.png' and '--ref ./hero.png'."
   },
   {
     "id": "image-005",
