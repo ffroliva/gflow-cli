@@ -393,11 +393,16 @@ class FlowApiClient:
         browser — unlike reading the on-disk SQLite DB, which fails on Windows
         (DPAPI-encrypted; see transports/experimental/sapisidhash.py).
         """
-        page = await self._checkout_page()
-        try:
-            cookies = await page.context.cookies("https://www.google.com")
-        finally:
-            self._checkin_page(page)
+        # Read from the shared BrowserContext jar DIRECTLY — never via a
+        # checked-out Page. This runs from inside a _post_json attempt() that
+        # already holds a Page; checking out a second one deadlocks a size-1
+        # pool (caught by the live smoke 2026-05-31). Cookies live at the
+        # Context level, so a Page is unnecessary anyway.
+        ctx = self._context
+        if ctx is None:
+            msg = "SAPISID read needs an active browser context (use within `async with client`)."
+            raise AuthMissingError(msg)
+        cookies = await ctx.cookies("https://www.google.com")
         for cookie in cookies:
             value = cookie.get("value")
             if cookie.get("name") == "SAPISID" and value:
