@@ -25,6 +25,7 @@ from gflow_cli.api.transports.ui_automation import (
     _ONBOARDING_STRUCTURAL_SELECTORS,  # noqa: PLC2701
     _ONBOARDING_TEXT_SELECTORS,  # noqa: PLC2701
     FLOW_URL,
+    IMAGE_MODEL_OPTION_SELECTORS,
     NEW_PROJECT_SELECTORS,
     ONBOARDING_SELECTORS,
     SUBMIT_BUTTON_SELECTORS,
@@ -2047,6 +2048,49 @@ class TestSelectorLocaleInvariance:
             assert "[aria-label*='Project'" not in sel, (
                 f"English-only aria-label in NEW_PROJECT_SELECTORS: {sel!r}"
             )
+
+    def test_image_model_option_selectors_are_tuples(self) -> None:
+        """Every model entry in IMAGE_MODEL_OPTION_SELECTORS must be a non-empty tuple."""
+        from gflow_cli.api.image import Model
+
+        for model in (Model.NARWHAL, Model.GEM_PIX_2, Model.IMAGEN_3_5):
+            sels = IMAGE_MODEL_OPTION_SELECTORS.get(model)
+            assert sels is not None, f"Missing entry for {model!r}"
+            assert isinstance(sels, tuple), f"Entry for {model!r} must be a tuple, got {type(sels)}"
+            assert len(sels) > 0, f"Selector tuple for {model!r} must not be empty"
+
+    def test_image_model_option_selectors_no_duplicates(self) -> None:
+        """No duplicate selectors within any model's cascade."""
+        for model, sels in IMAGE_MODEL_OPTION_SELECTORS.items():
+            assert len(sels) == len(set(sels)), (
+                f"Duplicate selectors in IMAGE_MODEL_OPTION_SELECTORS[{model!r}]: {sels}"
+            )
+
+    def test_image_model_option_selectors_all_models_covered(self) -> None:
+        """All three image models must have selector entries."""
+        from gflow_cli.api.image import Model
+
+        for model in (Model.NARWHAL, Model.GEM_PIX_2, Model.IMAGEN_3_5):
+            assert model in IMAGE_MODEL_OPTION_SELECTORS, (
+                f"{model!r} missing from IMAGE_MODEL_OPTION_SELECTORS"
+            )
+
+    def test_launch_args_no_lang_en_us(self) -> None:
+        """--lang=en-US must not appear in UiAutomationTransport launch args.
+
+        IMAGE_MODEL_OPTION_SELECTORS uses locale-stable product names; FLOW_URL's
+        ``?hl=en`` parameter locks the Flow SPA to English for the session, making
+        --lang=en-US redundant (issue #94 / issue #24 Phase 5).
+        """
+        import inspect
+
+        from gflow_cli.api.transports import ui_automation
+
+        source = inspect.getsource(ui_automation)
+        assert "--lang=en-US" not in source, (
+            "--lang=en-US was re-introduced into the launch args; "
+            "IMAGE_MODEL_OPTION_SELECTORS must not require it (issue #94)"
+        )
 
 
 def _agent_loc(count: int) -> MagicMock:
