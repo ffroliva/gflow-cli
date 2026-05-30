@@ -32,6 +32,8 @@ Welcome to the `gflow-cli` documentation. This index is the routing layer: it te
 | **[docs/SECURITY.md](SECURITY.md)** | What secrets are stored where, threat model, hardening | Audit, code review, multi-user machines |
 | **[docs/DATA_LAYER.md](DATA_LAYER.md)** | Local SQLite catalog: goals, schema, recording flow, redaction, `gflow data` CLI, migrations, extension guide | Anything touching `gflow_cli.data`, debugging missing rows, building I2V/repair tooling, auditing what is stored |
 | **[tasks/lessons.md](../tasks/lessons.md)** | Running notebook of patterns + reviewer findings, dated and traced to commits | Starting a new phase; debugging "why did the council flag this?" |
+| **[skills/README.md](../skills/README.md)** | Installable agent skill docs (gflow-cli, predict, pr-council-review, scenario) — cross-tool portable Markdown consumed by Claude Code, Cursor, Codex, Gemini CLI, Aider, etc. | Any agent wanting to use gflow-cli correctly |
+| **[scripts/dev/skillopt/README.md](../scripts/dev/skillopt/README.md)** | SkillOpt mock harness — rollout→score loop for measuring and improving skill doc accuracy across multiple LLM providers | Measuring a skill edit's impact; comparing Claude vs GPT-4o vs Gemini on gflow tasks |
 
 ## Agent commands
 
@@ -73,6 +75,9 @@ Slash commands for Claude Code, stored in `.claude/commands/gflow/`. All prefixe
 **"Where can I look up a media ID I generated yesterday?"** → [DATA_LAYER § Querying the data layer](DATA_LAYER.md#querying-the-data-layer)
 **"How do I stop gflow from storing my prompts?"** → [DATA_LAYER § Privacy and redaction](DATA_LAYER.md#privacy-and-redaction)
 **"What does exit code 16 mean and how do I recover?"** → [DATA_LAYER § Persistence-failure handling](DATA_LAYER.md#persistence-failure-handling)
+**"How do I use this project's skills in Cursor / Codex / Gemini CLI / Aider?"** → [skills/README.md](../skills/README.md#use-with-other-agents)
+**"How do I benchmark a skill doc against real tasks?"** → [scripts/dev/skillopt/README.md](../scripts/dev/skillopt/README.md)
+**"How do I compare Claude vs GPT-4o vs Gemini on gflow tasks?"** → `python scripts/dev/skillopt/harness.py --provider openai --model gpt-4o` (see [skillopt README](../scripts/dev/skillopt/README.md))
 **"How do I report a security issue?"** → [SECURITY § Reporting](SECURITY.md#reporting)
 **"What branch do I work on? How do I name it?"** → [DEVELOPMENT § Branching model](DEVELOPMENT.md#branching-model)
 **"How do I handle an external GitHub PR?"** → [GITHUB § Scenario Matrix](GITHUB.md#scenario-matrix)
