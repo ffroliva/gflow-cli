@@ -725,9 +725,10 @@ class VideoGenerationMixin:
         On miss the default behaviour is non-fatal (Flow's default model
         applies) but logged at WARNING — picking the wrong model changes credit
         cost. When ``required=True`` (i2v: see issue #125), a miss is FATAL and
-        raises ``RuntimeError`` BEFORE any frame attach or submit, because Flow's
-        default model is ``omni-flash`` which silently drops i2v frame refs and
-        routes to T2V — a wasted credit. Failing here spends nothing.
+        raises ``VideoModelSelectionError`` BEFORE any frame attach or submit,
+        because Flow's default model is ``omni-flash`` which silently drops i2v
+        frame refs and routes to T2V — a wasted credit. Failing here spends
+        nothing.
 
         Reliability (issue #125): the trigger click occasionally does not open
         the menu (the option probe then times out and Flow keeps its default).
@@ -738,8 +739,11 @@ class VideoGenerationMixin:
         if option_sel is None:
             log.warning("ui_automation_video.model_unknown", model=model.value)
             if required:
+                # Consistent with the other required-misses below: a typed
+                # exit-18 error, not a bare RuntimeError (exit 1). Unreachable
+                # for the 5 registered models, but keeps the i2v contract intact.
                 msg = f"no model-picker selector registered for {model.value!r}"
-                raise RuntimeError(msg)
+                raise VideoModelSelectionError(detail=msg, route="model_option")
             return
         trigger = await VideoGenerationMixin._probe_selector_cascade(
             page,
