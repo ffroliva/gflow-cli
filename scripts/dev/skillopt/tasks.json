@@ -5,7 +5,7 @@
     "context": "Clean install. No profiles exist. Playwright Chromium has not been downloaded yet.",
     "expected": {
       "must_include": ["gflow auth login"],
-      "must_not_include": ["gflow login", "gflow auth\n", "gflow auth --"],
+      "must_not_include": ["gflow login", "gflow auth ", "gflow auth --"],
       "partial_credit": ["playwright install chromium", "gflow auth status"]
     },
     "tags": ["auth", "first-run"],

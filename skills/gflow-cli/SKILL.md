@@ -186,4 +186,4 @@ Documented errors agents commonly make — negative examples for the SkillOpt tr
 
 ## Disclaimer
 
-gflow-cli is **not affiliated with Google**. Reverse-engineered, alpha-stage (v0.3.0a1), may break. Read the [DISCLAIMER](https://github.com/ffroliva/gflow-cli/blob/main/DISCLAIMER.md) before deploying in any sensitive setting.
+gflow-cli is **not affiliated with Google**. Reverse-engineered, unofficial; may break when Google changes Flow's private API. Read the [DISCLAIMER](https://github.com/ffroliva/gflow-cli/blob/main/DISCLAIMER.md) before deploying in any sensitive setting.

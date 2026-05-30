@@ -102,7 +102,7 @@ def score_response(response: str, expected: dict[str, Any]) -> tuple[float, list
     base = hits / len(must_include) if must_include else 1.0
 
     forbidden_hits = [p for p in must_not_include if p.lower() in resp_lower]
-    penalty = len(forbidden_hits) * 0.3
+    penalty = min(len(forbidden_hits) * 0.3, 0.9)
 
     bonus_hits = [p for p in partial_credit if p.lower() in resp_lower]
     bonus = min(len(bonus_hits) * 0.1, 0.3)
@@ -311,7 +311,9 @@ def main() -> None:
         help=(
             "OpenAI-compatible base URL (openai provider only). "
             "Examples: https://generativelanguage.googleapis.com/v1beta/openai/ (Gemini), "
-            "http://localhost:11434/v1 (Ollama)."
+            "http://localhost:11434/v1 (Ollama). "
+            "WARNING: do not point at internal/metadata endpoints in CI — "
+            "this value is passed directly to the SDK without validation."
         ),
     )
     parser.add_argument(
@@ -324,8 +326,9 @@ def main() -> None:
         type=str,
         default=None,
         help=(
-            "API key. Defaults: $ANTHROPIC_API_KEY (anthropic provider) or "
-            "$OPENAI_API_KEY (openai provider)."
+            "API key. Prefer env vars ($ANTHROPIC_API_KEY / $OPENAI_API_KEY) over this flag — "
+            "CLI flags are visible in process listings (ps aux). "
+            "This flag exists only for scripting contexts where env vars are unavailable."
         ),
     )
     args = parser.parse_args()

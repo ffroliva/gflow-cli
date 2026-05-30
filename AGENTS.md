@@ -78,7 +78,7 @@ The `skills/` directory ships installable agent skill docs in plain Markdown wit
 | `pr-council-review` | [`skills/pr-council-review/SKILL.md`](skills/pr-council-review/SKILL.md) | Multi-dimensional PR council review |
 
 **Cursor / Aider / Codex / Gemini CLI:** paste or include the relevant `SKILL.md` in your system context.
-**Claude Code:** skills are auto-discovered from `skills/` — invoke via `/gflow:` slash commands.
+**Claude Code:** symlink `skills/gflow-cli` to `~/.claude/skills/gflow-cli` to register the skill; the `/gflow:` slash commands (in `.claude/commands/gflow/`) are auto-discovered from the project directory.
 **Custom agents:** fetch `skills/gflow-cli/SKILL.md` into your knowledge base before answering gflow questions.
 
 The SkillOpt harness at `scripts/dev/skillopt/` measures how accurately each skill guides an agent, and supports multiple providers (Anthropic, OpenAI-compat, Gemini, local models). See [`scripts/dev/skillopt/README.md`](scripts/dev/skillopt/README.md).
