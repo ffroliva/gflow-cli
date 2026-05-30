@@ -1,5 +1,6 @@
 ---
 name: predict
+version: "1.0"
 description: >
   Pre-implementation multi-persona adversarial analysis for gflow-cli proposals.
   Five expert personas independently evaluate a proposed change before a single
