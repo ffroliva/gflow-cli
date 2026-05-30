@@ -139,6 +139,23 @@ class AuthExpiredError(FlowApiError):
     _default_remediation = "Run `gflow auth login --profile <name>` to refresh the session."
 
 
+class AisandboxAuthError(AuthExpiredError):
+    """aisandbox-pa REST returned 401 even after a fresh SAPISIDHASH.
+
+    Distinct from the generic AuthExpiredError so callers (and the scene
+    feature) can catch the aisandbox-specific auth failure, while still
+    mapping to exit code 3 via the EXIT_CODE_MAP isinstance walk (no own
+    entry needed — it inherits AuthExpiredError's code).
+    """
+
+    problem_type = "https://gflow-cli.dev/errors/aisandbox-auth"
+    title = "aisandbox-pa authentication failed"
+    _default_remediation = (
+        "SAPISID cookie missing, expired, or unreadable. "
+        "Re-run `gflow auth login --profile <name>` and retry."
+    )
+
+
 class RateLimitError(FlowApiError):
     problem_type = "https://gflow-cli.dev/errors/rate-limit"
     title = "Rate limit or quota hit"
