@@ -24,6 +24,7 @@ import structlog
 from gflow_cli.api import routes
 from gflow_cli.api.transports._common import extract_project_id
 from gflow_cli.api.video import (
+    I2V_DEFAULT_MODEL,
     Aspect,
     GenerateVideoRequest,
     Mode,
@@ -36,7 +37,13 @@ from gflow_cli.api.video import (
     operation_name_from_generate_response,
     parse_video_status,
 )
-from gflow_cli.errors import AuthExpiredError, WafRejectionError, WireFormatError
+from gflow_cli.errors import (
+    AuthExpiredError,
+    ModelModeIncompatibilityError,
+    VideoModelSelectionError,
+    WafRejectionError,
+    WireFormatError,
+)
 from gflow_cli.storage import AnyPath, storage_path, write_asset_async
 
 if TYPE_CHECKING:
@@ -53,6 +60,9 @@ VIDEO_GENERATE_ROUTES = (
     "batchAsyncGenerateVideoStartAndEndImage",
     "batchAsyncGenerateVideoReferenceImages",
 )
+# The pure text-to-video route. An i2v request that lands here had its frame
+# refs silently dropped (issue #125) — used by the Layer-2 post-submit backstop.
+_T2V_GENERATE_ROUTE = "batchAsyncGenerateVideoText"
 # Status-poll route — Flow's SPA polls this itself while a generation runs.
 VIDEO_STATUS_ROUTE = "batchCheckAsyncVideoGenerationStatus"
 
@@ -79,6 +89,44 @@ VIDEO_TAB_IN_MENU_SELECTORS = (
     "[role='menu'] [role='tab']:has(i:text('play_circle'))",
     "[role='menu'] [role='tab']:has-text('Vídeo')",
     "[role='menu'] [role='tab']:has-text('Video')",
+)
+
+# Composer "Agent" mode toggle. Flow's newer editor puts a pill toggle next to
+# the prompt box: a ``<button>`` whose only label is a ``<span class="content">``.
+# When Agent mode is on, the whole media-generation panel is REMOVED from the
+# DOM — the aspect/settings button (the locale-stable ``crop_*`` icon trigger
+# keyed on by MODE_SWITCH_TRIGGER_SELECTORS / GEN_SETTINGS_BUTTON_SELECTORS), the
+# Image/Video tablist, and the count/model controls all disappear, so
+# ``_switch_to_image_mode`` / ``_switch_to_video_mode`` raise "mode-switch
+# dropdown trigger not found". Clicking the pill returns to media mode.
+#
+# This selector is deliberately STRUCTURAL — no localized text and no ARIA:
+#  * No localized text: the pill's "Agent" label is translated in some Flow
+#    locales, so matching it by visible text would regress non-English users
+#    (issue #24: locale-agnostic selectors — a recurring source of PR pushback in
+#    this module). The only ``:text(...)`` here is ``arrow_forward``, a Material
+#    Symbols icon ligature, which is locale-invariant — the same technique the
+#    module already uses for ``crop_*`` / SUBMIT_BUTTON_SELECTORS anchors.
+#  * No ARIA: aria-* anchors have also been pushed back on in past reviews, and
+#    one is not needed here — Agent mode is detected from the *absence* of the
+#    ``crop_*`` media trigger, so the toggle only has to be located, not have its
+#    state read.
+#
+# SCOPED to the generation composer (PR #124 review must-fix): the pill is
+# matched only inside the element that holds BOTH the Slate prompt box AND the
+# ``arrow_forward`` submit button. Page-wide there is exactly one
+# ``button:has(span.content)`` today (live-verified count == 1), but ``.first``
+# on the bare global selector would silently grab the wrong element if a future
+# Flow build added another ``span.content`` button (header/sidebar) ordered
+# before the pill. Scoping to the prompt+submit composer keeps the match correct
+# regardless of unrelated additions elsewhere. The composer's own ancestor chain
+# carries no stable id/role/data-* attribute (all styled-component hashes), so
+# the prompt box and submit icon ARE the stable structural anchors. Uniqueness is
+# pinned by a structural unit test (decoy outside the composer) and asserted live
+# (count == 1) in the e2e.
+COMPOSER_AGENT_TOGGLE_SELECTOR = (
+    "div:has(div[role='textbox'][data-slate-editor='true'])"
+    ":has(button:has(i:text('arrow_forward'))) button:has(span.content)"
 )
 # Output-count + duration tabs are selected by aria-label text in
 # `_set_output_count` / `_select_video_duration` — NOT by id-suffix: the count
@@ -121,7 +169,16 @@ VIDEO_MODEL_OPTION_SELECTORS: dict[VideoModel, str] = {
     VideoModel.OMNI_FLASH: "[role='menuitem']:has-text('Omni Flash')",
     VideoModel.VEO_3_1_FAST: "[role='menuitem']:has-text('Veo 3.1 - Fast')",
     VideoModel.VEO_3_1_QUALITY: "[role='menuitem']:has-text('Veo 3.1 - Quality')",
-    VideoModel.VEO_3_1_LITE: "[role='menuitem']:text-is('volume_upVeo 3.1 - Lite')",
+    # Substring `:has-text` (NOT `:text-is`) so it matches regardless of the
+    # leading Material Symbols icon ligature in the menu item's accessible text
+    # (e.g. "volume_upVeo 3.1 - Lite"). The exact-match `:text-is(...)` form that
+    # hardcoded the icon prefix was the issue #125 model-select reliability bug:
+    # it silently missed -> Flow kept omni-flash -> i2v routed to T2V. `:not`
+    # excludes the 'Veo 3.1 - Lite [Lower Priority]' sibling (has-text is a
+    # substring/prefix match).
+    VideoModel.VEO_3_1_LITE: (
+        "[role='menuitem']:has-text('Veo 3.1 - Lite'):not(:has-text('[Lower Priority]'))"
+    ),
     VideoModel.VEO_3_1_LITE_LOWER_PRIORITY: "[role='menuitem']:has-text('[Lower Priority]')",
 }
 
@@ -516,9 +573,77 @@ class VideoGenerationMixin:
         return None
 
     @staticmethod
+    async def _media_panel_present(page: Page) -> bool:
+        """True if the media-generation panel is mounted.
+
+        Keyed on the locale-stable ``crop_*`` settings trigger
+        (:data:`MODE_SWITCH_TRIGGER_SELECTORS`) — the same anchor the mode
+        switches probe. Its presence is the signal that the composer is in media
+        (Image/Video) mode rather than Agent mode, which removes the panel.
+        """
+        for sel in MODE_SWITCH_TRIGGER_SELECTORS:
+            if await page.locator(sel).count() > 0:
+                return True
+        return False
+
+    @staticmethod
+    async def _exit_agent_mode(page: Page) -> bool:
+        """Ensure the composer is in media (Image/Video) mode, not Agent mode.
+
+        When Flow's composer is in "Agent" mode the media-generation panel is
+        absent (see :data:`COMPOSER_AGENT_TOGGLE_SELECTOR`), which makes
+        :meth:`_switch_to_image_mode`, :meth:`_switch_to_video_mode`, and
+        ``_configure_generation_settings`` fail to find their ``crop_*`` trigger.
+        This presses the Agent pill toggle off to re-mount the panel.
+
+        Returns ``True`` only when it actually brought the media panel back,
+        ``False`` otherwise (already in media mode, the toggle is absent on an
+        older UI, or the click did not re-mount the panel). Best-effort,
+        locale-invariant, and never raises — a DOM probe failure must not abort
+        generation.
+        """
+        try:
+            # Common case: the media panel is already mounted → media mode,
+            # nothing to do. This keeps the helper a cheap no-op on every normal
+            # generation and avoids touching the toggle unnecessarily.
+            if await VideoGenerationMixin._media_panel_present(page):
+                return False
+            # Panel absent → we are in Agent mode: click the pill (located by its
+            # structural span.content child) to turn Agent off and re-mount the
+            # panel. No ARIA state and no localized label is read — the panel
+            # absence above already established the mode, so the toggle only has
+            # to be found. Works in every Flow UI language.
+            toggle = page.locator(COMPOSER_AGENT_TOGGLE_SELECTOR).first
+            if await toggle.count() == 0:
+                return False  # toggle not present (older UI) → leave as-is
+            await toggle.click()
+            await page.wait_for_timeout(700)
+            # Defensive: confirm the click actually re-mounted the panel instead
+            # of blindly trusting it. The pill is a binary toggle, so if the
+            # panel was absent for some other reason — or a future Flow change
+            # flips the click direction — the crop_* trigger stays missing. Don't
+            # claim a false "exited"; warn and let the caller's own trigger probe
+            # fail loudly (with a screenshot) so the real cause surfaces.
+            if await VideoGenerationMixin._media_panel_present(page):
+                log.info("ui_automation_video.exited_agent_mode")
+                return True
+            log.warning(
+                "ui_automation_video.exit_agent_mode_no_panel",
+                note="clicked the composer toggle but the media panel did not re-mount",
+            )
+            return False
+        except Exception as e:  # noqa: BLE001 — best-effort, never fatal
+            log.debug("ui_automation_video.agent_toggle_probe_failed", error=str(e)[:80])
+            return False
+
+    @staticmethod
     async def _switch_to_video_mode(page: Page, *, out_dir: Path | None) -> None:
         """Open the 2-step mode dropdown and switch to Video mode. The menu
         stays open afterward so the caller can also set aspect + count."""
+        # New Flow UI: if the composer is in Agent mode the generation panel is
+        # absent — return to media mode first so the trigger probe can find the
+        # crop_* dropdown.
+        await VideoGenerationMixin._exit_agent_mode(page)
         trigger = await VideoGenerationMixin._probe_selector_cascade(
             page,
             "mode_switch_trigger",
@@ -588,13 +713,37 @@ class VideoGenerationMixin:
         await VideoGenerationMixin._set_output_count(page, 1)
 
     @staticmethod
-    async def _select_video_model(page: Page, model: VideoModel, *, out_dir: Path | None) -> None:
-        """Open the model picker and select `model`. Non-fatal on miss (Flow's
-        default model applies) but logged at WARNING — picking the wrong model
-        changes credit cost, so a miss is a real signal, not noise."""
+    async def _select_video_model(
+        page: Page,
+        model: VideoModel,
+        *,
+        out_dir: Path | None,
+        required: bool = False,
+    ) -> None:
+        """Open the model picker and select `model`.
+
+        On miss the default behaviour is non-fatal (Flow's default model
+        applies) but logged at WARNING — picking the wrong model changes credit
+        cost. When ``required=True`` (i2v: see issue #125), a miss is FATAL and
+        raises ``VideoModelSelectionError`` BEFORE any frame attach or submit,
+        because Flow's default model is ``omni-flash`` which silently drops i2v
+        frame refs and routes to T2V — a wasted credit. Failing here spends
+        nothing.
+
+        Reliability (issue #125): the trigger click occasionally does not open
+        the menu (the option probe then times out and Flow keeps its default).
+        We click the trigger and probe the option up to two times, pressing
+        Escape between attempts to reset the dropdown state.
+        """
         option_sel = VIDEO_MODEL_OPTION_SELECTORS.get(model)
         if option_sel is None:
             log.warning("ui_automation_video.model_unknown", model=model.value)
+            if required:
+                # Consistent with the other required-misses below: a typed
+                # exit-18 error, not a bare RuntimeError (exit 1). Unreachable
+                # for the 5 registered models, but keeps the i2v contract intact.
+                msg = f"no model-picker selector registered for {model.value!r}"
+                raise VideoModelSelectionError(detail=msg, route="model_option")
             return
         trigger = await VideoGenerationMixin._probe_selector_cascade(
             page,
@@ -607,29 +756,56 @@ class VideoGenerationMixin:
                 model=model.value,
                 note="Flow default model applies",
             )
+            if required:
+                shot = await _capture_debug_screenshot(page, out_dir, "debug_no_model_picker.png")
+                msg = (
+                    f"model picker trigger not found; cannot select {model.value!r} "
+                    f"for i2v. Refusing to proceed (Flow's default would drop the "
+                    f"frames to T2V — issue #125). Screenshot: {shot}"
+                )
+                raise VideoModelSelectionError(detail=msg, route="model_picker_trigger")
             return
-        await trigger.click()
-        await page.wait_for_timeout(600)
-        option = await VideoGenerationMixin._probe_selector_cascade(
-            page,
-            "model_option",
-            (option_sel,),
-        )
-        if option is None:
-            log.warning(
-                "ui_automation_video.model_option_not_found",
-                model=model.value,
-                note="Flow default model applies",
+
+        for attempt in (1, 2):
+            await trigger.click()
+            await page.wait_for_timeout(600)
+            option = await VideoGenerationMixin._probe_selector_cascade(
+                page,
+                "model_option",
+                (option_sel,),
             )
-            # The model dropdown is the TOP layer here — Escape closes only it,
-            # leaving the settings popover open (Escape on the popover itself
-            # would close everything). Safe to recover.
+            if option is not None:
+                await option.click()
+                await page.wait_for_timeout(800)
+                log.info("ui_automation_video.model_selected", model=model.value)
+                return
+            # The menu may not have opened (trigger click raced) or rendered the
+            # option late. Escape closes only the dropdown (the settings popover
+            # underneath stays open), then we retry the trigger click once.
+            log.debug(
+                "ui_automation_video.model_option_retry",
+                model=model.value,
+                attempt=attempt,
+            )
             await page.keyboard.press("Escape")
             await page.wait_for_timeout(200)
-            return
-        await option.click()
-        await page.wait_for_timeout(800)
-        log.info("ui_automation_video.model_selected", model=model.value)
+
+        log.warning(
+            "ui_automation_video.model_option_not_found",
+            model=model.value,
+            note="Flow default model applies" if not required else "i2v — refusing T2V fallback",
+        )
+        if required:
+            shot = await _capture_debug_screenshot(
+                page, out_dir, "debug_model_option_not_found.png"
+            )
+            msg = (
+                f"could not select video model {model.value!r} for i2v after 2 "
+                f"attempts. Refusing to proceed — Flow's default model "
+                f"({VideoModel.OMNI_FLASH.value}) silently drops the start/end "
+                f"frames and routes to T2V (issue #125). Screenshot: {shot}"
+            )
+            raise VideoModelSelectionError(detail=msg, route="model_option")
 
     @staticmethod
     async def _select_video_duration(page: Page, seconds: int) -> None:
@@ -1045,6 +1221,51 @@ class VideoGenerationMixin:
     ) -> VideoResult:
         """Serialized body of `generate_video` — runs under `self._generate_lock`
         (shared with `generate_images`: one Page, one DOM)."""
+        # Defense-in-depth model/mode guard (issue #125). Pure DTO check — runs
+        # BEFORE any browser interaction so a bad combination fails instantly
+        # with no DOM state mutated and no credit risk. The CLI Click Choice
+        # already blocks omni-flash for i2v, but direct FlowApiClient callers
+        # (e.g. gflow-cli-remotion) bypass Click; this is their safety net.
+        # omni-flash silently drops i2v frame refs at submit and routes to the
+        # T2V endpoint — see VideoModel.supports_i2v_interpolation.
+        is_i2v_with_frames = request.mode is Mode.I2V and (
+            request.start_image is not None or request.end_image is not None
+        )
+        if (
+            is_i2v_with_frames
+            and request.model is not None
+            and not request.model.supports_i2v_interpolation()
+        ):
+            log.error(
+                "ui_automation_video.model_mode_rejected",
+                model=request.model.value,
+                mode=request.mode.name,
+                has_start_image=request.start_image is not None,
+                has_end_image=request.end_image is not None,
+                issue_ref="#125",
+            )
+            raise ModelModeIncompatibilityError(
+                detail=(
+                    f"{request.model.value!r} does not support image-to-video "
+                    f"interpolation; Flow silently drops the start/end frames "
+                    f"and produces a text-only video (issue #125)."
+                ),
+            )
+
+        # For i2v, never leave the model unset. An unset model means
+        # `_select_video_model` is skipped and Flow applies its last-used default
+        # (often omni-flash), which silently drops the frames to T2V (issue #125).
+        # Default to an interpolation-capable model — mirrors the CLI's resolution
+        # so direct FlowApiClient callers get the same safe behaviour.
+        effective_model: VideoModel | None = request.model
+        if is_i2v_with_frames and effective_model is None:
+            effective_model = I2V_DEFAULT_MODEL
+            log.info(
+                "ui_automation_video.i2v_model_defaulted",
+                model=effective_model.value,
+                issue_ref="#125",
+            )
+
         page: Page = self._page  # type: ignore[assignment]  # guarded in generate_video
 
         await self._enter_editor(page, out_dir)
@@ -1060,8 +1281,17 @@ class VideoGenerationMixin:
 
         # All settings-panel selections happen while the panel is open: model
         # (gates the 10s duration), sub-mode tab, aspect, count, duration.
-        if request.model is not None:
-            await VideoGenerationMixin._select_video_model(page, request.model, out_dir=out_dir)
+        # For i2v, model selection is REQUIRED (required=True): a silent miss
+        # would let Flow fall back to omni-flash and route to T2V (issue #125),
+        # so _select_video_model raises here — before any frame attach or submit,
+        # spending no credit.
+        if effective_model is not None:
+            await VideoGenerationMixin._select_video_model(
+                page,
+                effective_model,
+                out_dir=out_dir,
+                required=is_i2v_with_frames,
+            )
         if request.mode is Mode.I2V:
             await VideoGenerationMixin._switch_video_sub_mode(page, "frames", out_dir=out_dir)
         elif request.mode is Mode.R2V:
@@ -1111,6 +1341,33 @@ class VideoGenerationMixin:
             await self._send_prompt(page, request.prompt, out_dir)
 
             generate_resp = await VideoGenerationMixin._await_generate_response(generate_captured)
+
+            # Layer-2 backstop (issue #125): for i2v, the request MUST have
+            # routed to a Start/StartAndEndImage endpoint. If it landed on the
+            # plain T2V route, Flow silently dropped the frames (e.g. an
+            # undiscovered fallback path) — the credit is already spent, but we
+            # MUST NOT return a "successful i2v" VideoResult that is actually a
+            # text-only video. Raise loudly instead of recording a fake success.
+            if is_i2v_with_frames:
+                captured_url = str(generate_resp.get("url") or "")
+                if _T2V_GENERATE_ROUTE in captured_url:
+                    log.error(
+                        "ui_automation_video.i2v_routed_to_t2v",
+                        url=captured_url,
+                        model=(effective_model.value if effective_model else None),
+                        issue_ref="#125",
+                    )
+                    raise WireFormatError(
+                        detail=(
+                            "i2v request routed to the T2V endpoint "
+                            f"({_T2V_GENERATE_ROUTE}); Flow dropped the start/end "
+                            "frames and produced a text-only video (issue #125). "
+                            "The credit was spent but the output is not an "
+                            "interpolation — refusing to report success."
+                        ),
+                        route=_T2V_GENERATE_ROUTE,
+                    )
+
             media_name, flow_operation_id = VideoGenerationMixin._parse_generate_response(
                 generate_resp,
             )
