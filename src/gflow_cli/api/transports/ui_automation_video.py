@@ -24,6 +24,7 @@ import structlog
 from gflow_cli.api import routes
 from gflow_cli.api.transports._common import extract_project_id
 from gflow_cli.api.video import (
+    I2V_DEFAULT_MODEL,
     Aspect,
     GenerateVideoRequest,
     Mode,
@@ -58,6 +59,9 @@ VIDEO_GENERATE_ROUTES = (
     "batchAsyncGenerateVideoStartAndEndImage",
     "batchAsyncGenerateVideoReferenceImages",
 )
+# The pure text-to-video route. An i2v request that lands here had its frame
+# refs silently dropped (issue #125) — used by the Layer-2 post-submit backstop.
+_T2V_GENERATE_ROUTE = "batchAsyncGenerateVideoText"
 # Status-poll route — Flow's SPA polls this itself while a generation runs.
 VIDEO_STATUS_ROUTE = "batchCheckAsyncVideoGenerationStatus"
 
@@ -699,13 +703,33 @@ class VideoGenerationMixin:
         await VideoGenerationMixin._set_output_count(page, 1)
 
     @staticmethod
-    async def _select_video_model(page: Page, model: VideoModel, *, out_dir: Path | None) -> None:
-        """Open the model picker and select `model`. Non-fatal on miss (Flow's
-        default model applies) but logged at WARNING — picking the wrong model
-        changes credit cost, so a miss is a real signal, not noise."""
+    async def _select_video_model(
+        page: Page,
+        model: VideoModel,
+        *,
+        out_dir: Path | None,
+        required: bool = False,
+    ) -> None:
+        """Open the model picker and select `model`.
+
+        On miss the default behaviour is non-fatal (Flow's default model
+        applies) but logged at WARNING — picking the wrong model changes credit
+        cost. When ``required=True`` (i2v: see issue #125), a miss is FATAL and
+        raises ``RuntimeError`` BEFORE any frame attach or submit, because Flow's
+        default model is ``omni-flash`` which silently drops i2v frame refs and
+        routes to T2V — a wasted credit. Failing here spends nothing.
+
+        Reliability (issue #125): the trigger click occasionally does not open
+        the menu (the option probe then times out and Flow keeps its default).
+        We click the trigger and probe the option up to two times, pressing
+        Escape between attempts to reset the dropdown state.
+        """
         option_sel = VIDEO_MODEL_OPTION_SELECTORS.get(model)
         if option_sel is None:
             log.warning("ui_automation_video.model_unknown", model=model.value)
+            if required:
+                msg = f"no model-picker selector registered for {model.value!r}"
+                raise RuntimeError(msg)
             return
         trigger = await VideoGenerationMixin._probe_selector_cascade(
             page,
@@ -718,29 +742,56 @@ class VideoGenerationMixin:
                 model=model.value,
                 note="Flow default model applies",
             )
+            if required:
+                shot = await _capture_debug_screenshot(page, out_dir, "debug_no_model_picker.png")
+                msg = (
+                    f"model picker trigger not found; cannot select {model.value!r} "
+                    f"for i2v. Refusing to proceed (Flow's default would drop the "
+                    f"frames to T2V — issue #125). Screenshot: {shot}"
+                )
+                raise RuntimeError(msg)
             return
-        await trigger.click()
-        await page.wait_for_timeout(600)
-        option = await VideoGenerationMixin._probe_selector_cascade(
-            page,
-            "model_option",
-            (option_sel,),
-        )
-        if option is None:
-            log.warning(
-                "ui_automation_video.model_option_not_found",
-                model=model.value,
-                note="Flow default model applies",
+
+        for attempt in (1, 2):
+            await trigger.click()
+            await page.wait_for_timeout(600)
+            option = await VideoGenerationMixin._probe_selector_cascade(
+                page,
+                "model_option",
+                (option_sel,),
             )
-            # The model dropdown is the TOP layer here — Escape closes only it,
-            # leaving the settings popover open (Escape on the popover itself
-            # would close everything). Safe to recover.
+            if option is not None:
+                await option.click()
+                await page.wait_for_timeout(800)
+                log.info("ui_automation_video.model_selected", model=model.value)
+                return
+            # The menu may not have opened (trigger click raced) or rendered the
+            # option late. Escape closes only the dropdown (the settings popover
+            # underneath stays open), then we retry the trigger click once.
+            log.debug(
+                "ui_automation_video.model_option_retry",
+                model=model.value,
+                attempt=attempt,
+            )
             await page.keyboard.press("Escape")
             await page.wait_for_timeout(200)
-            return
-        await option.click()
-        await page.wait_for_timeout(800)
-        log.info("ui_automation_video.model_selected", model=model.value)
+
+        log.warning(
+            "ui_automation_video.model_option_not_found",
+            model=model.value,
+            note="Flow default model applies" if not required else "i2v — refusing T2V fallback",
+        )
+        if required:
+            shot = await _capture_debug_screenshot(
+                page, out_dir, "debug_model_option_not_found.png"
+            )
+            msg = (
+                f"could not select video model {model.value!r} for i2v after 2 "
+                f"attempts. Refusing to proceed — Flow's default model "
+                f"({VideoModel.OMNI_FLASH.value}) silently drops the start/end "
+                f"frames and routes to T2V (issue #125). Screenshot: {shot}"
+            )
+            raise RuntimeError(msg)
 
     @staticmethod
     async def _select_video_duration(page: Page, seconds: int) -> None:
@@ -1163,9 +1214,11 @@ class VideoGenerationMixin:
         # (e.g. gflow-cli-remotion) bypass Click; this is their safety net.
         # omni-flash silently drops i2v frame refs at submit and routes to the
         # T2V endpoint — see VideoModel.supports_i2v_interpolation.
+        is_i2v_with_frames = request.mode is Mode.I2V and (
+            request.start_image is not None or request.end_image is not None
+        )
         if (
-            request.mode is Mode.I2V
-            and (request.start_image is not None or request.end_image is not None)
+            is_i2v_with_frames
             and request.model is not None
             and not request.model.supports_i2v_interpolation()
         ):
@@ -1185,6 +1238,20 @@ class VideoGenerationMixin:
                 ),
             )
 
+        # For i2v, never leave the model unset. An unset model means
+        # `_select_video_model` is skipped and Flow applies its last-used default
+        # (often omni-flash), which silently drops the frames to T2V (issue #125).
+        # Default to an interpolation-capable model — mirrors the CLI's resolution
+        # so direct FlowApiClient callers get the same safe behaviour.
+        effective_model: VideoModel | None = request.model
+        if is_i2v_with_frames and effective_model is None:
+            effective_model = I2V_DEFAULT_MODEL
+            log.info(
+                "ui_automation_video.i2v_model_defaulted",
+                model=effective_model.value,
+                issue_ref="#125",
+            )
+
         page: Page = self._page  # type: ignore[assignment]  # guarded in generate_video
 
         await self._enter_editor(page, out_dir)
@@ -1200,8 +1267,17 @@ class VideoGenerationMixin:
 
         # All settings-panel selections happen while the panel is open: model
         # (gates the 10s duration), sub-mode tab, aspect, count, duration.
-        if request.model is not None:
-            await VideoGenerationMixin._select_video_model(page, request.model, out_dir=out_dir)
+        # For i2v, model selection is REQUIRED (required=True): a silent miss
+        # would let Flow fall back to omni-flash and route to T2V (issue #125),
+        # so _select_video_model raises here — before any frame attach or submit,
+        # spending no credit.
+        if effective_model is not None:
+            await VideoGenerationMixin._select_video_model(
+                page,
+                effective_model,
+                out_dir=out_dir,
+                required=is_i2v_with_frames,
+            )
         if request.mode is Mode.I2V:
             await VideoGenerationMixin._switch_video_sub_mode(page, "frames", out_dir=out_dir)
         elif request.mode is Mode.R2V:
@@ -1251,6 +1327,33 @@ class VideoGenerationMixin:
             await self._send_prompt(page, request.prompt, out_dir)
 
             generate_resp = await VideoGenerationMixin._await_generate_response(generate_captured)
+
+            # Layer-2 backstop (issue #125): for i2v, the request MUST have
+            # routed to a Start/StartAndEndImage endpoint. If it landed on the
+            # plain T2V route, Flow silently dropped the frames (e.g. an
+            # undiscovered fallback path) — the credit is already spent, but we
+            # MUST NOT return a "successful i2v" VideoResult that is actually a
+            # text-only video. Raise loudly instead of recording a fake success.
+            if is_i2v_with_frames:
+                captured_url = str(generate_resp.get("url") or "")
+                if _T2V_GENERATE_ROUTE in captured_url:
+                    log.error(
+                        "ui_automation_video.i2v_routed_to_t2v",
+                        url=captured_url,
+                        model=(effective_model.value if effective_model else None),
+                        issue_ref="#125",
+                    )
+                    raise WireFormatError(
+                        detail=(
+                            "i2v request routed to the T2V endpoint "
+                            f"({_T2V_GENERATE_ROUTE}); Flow dropped the start/end "
+                            "frames and produced a text-only video (issue #125). "
+                            "The credit was spent but the output is not an "
+                            "interpolation — refusing to report success."
+                        ),
+                        route=_T2V_GENERATE_ROUTE,
+                    )
+
             media_name, flow_operation_id = VideoGenerationMixin._parse_generate_response(
                 generate_resp,
             )
