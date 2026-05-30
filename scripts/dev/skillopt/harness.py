@@ -7,21 +7,32 @@ agents guided by that skill answer gflow-cli usage questions.
 Mimics the SkillOpt rollout→score loop without the automated edit step,
 making it easy to measure baseline accuracy before / after manual edits.
 
-Usage:
-    # Dry-run: print formatted prompts without calling the API
-    python scripts/dev/skillopt/harness.py --dry-run
+Supports multiple LLM providers so you can compare how different agents
+perform against the same skill doc:
 
-    # Live run against Claude (requires ANTHROPIC_API_KEY)
+Provider: anthropic (default)
     ANTHROPIC_API_KEY=sk-ant-... python scripts/dev/skillopt/harness.py
+    python scripts/dev/skillopt/harness.py --model claude-sonnet-4-6
 
-    # Point at a different skill version
-    python scripts/dev/skillopt/harness.py --skill skills/gflow-cli/SKILL.md
+Provider: openai  (GPT-4o, Gemini OpenAI-compat, local Ollama, LM Studio, …)
+    OPENAI_API_KEY=sk-... python scripts/dev/skillopt/harness.py \\
+        --provider openai --model gpt-4o
 
-    # Filter by tag
-    python scripts/dev/skillopt/harness.py --tags auth,video --dry-run
+    # Gemini via its OpenAI-compatible endpoint
+    OPENAI_API_KEY=$GEMINI_API_KEY python scripts/dev/skillopt/harness.py \\
+        --provider openai \\
+        --base-url https://generativelanguage.googleapis.com/v1beta/openai/ \\
+        --model gemini-2.0-flash
 
-    # Use a specific model
-    python scripts/dev/skillopt/harness.py --model claude-haiku-4-5-20251001
+    # Local model via Ollama
+    python scripts/dev/skillopt/harness.py \\
+        --provider openai --base-url http://localhost:11434/v1 \\
+        --model llama3.2 --api-key ollama
+
+Other flags:
+    --dry-run          Print prompts + scoring spec; no API call
+    --skill PATH       Point at a different skill version
+    --tags auth,video  Filter tasks by tag
 """
 from __future__ import annotations
 
@@ -36,6 +47,7 @@ REPO_ROOT = Path(__file__).resolve().parents[3]
 TASKS_PATH = Path(__file__).parent / "tasks.json"
 DEFAULT_SKILL_PATH = REPO_ROOT / "skills" / "gflow-cli" / "SKILL.md"
 DEFAULT_MODEL = "claude-haiku-4-5-20251001"
+DEFAULT_PROVIDER = "anthropic"
 
 SYSTEM_TEMPLATE = """\
 You are an agent assistant helping users operate gflow-cli, the unofficial terminal CLI for Google Flow (Veo video generation and Imagen image generation).
@@ -128,6 +140,49 @@ def run_dry(tasks: list[dict[str, Any]], skill_text: str, version: str, epoch: i
         print()
 
 
+def _call_anthropic(system: str, user: str, model: str, api_key: str) -> str:
+    try:
+        import anthropic
+    except ImportError:
+        sys.exit(
+            "anthropic package not found. Install it:\n"
+            "  uv pip install anthropic"
+        )
+    client = anthropic.Anthropic(api_key=api_key)
+    msg = client.messages.create(
+        model=model,
+        max_tokens=512,
+        system=system,
+        messages=[{"role": "user", "content": user}],
+    )
+    return msg.content[0].text.strip()
+
+
+def _call_openai_compat(
+    system: str, user: str, model: str, api_key: str, base_url: str | None
+) -> str:
+    try:
+        import openai
+    except ImportError:
+        sys.exit(
+            "openai package not found. Install it:\n"
+            "  uv pip install openai"
+        )
+    kwargs: dict[str, Any] = {"api_key": api_key}
+    if base_url:
+        kwargs["base_url"] = base_url
+    client = openai.OpenAI(**kwargs)
+    resp = client.chat.completions.create(
+        model=model,
+        max_tokens=512,
+        messages=[
+            {"role": "system", "content": system},
+            {"role": "user", "content": user},
+        ],
+    )
+    return (resp.choices[0].message.content or "").strip()
+
+
 def run_live(
     tasks: list[dict[str, Any]],
     skill_text: str,
@@ -135,33 +190,27 @@ def run_live(
     epoch: int,
     model: str,
     api_key: str,
+    provider: str = DEFAULT_PROVIDER,
+    base_url: str | None = None,
 ) -> None:
-    try:
-        import anthropic
-    except ImportError:
-        sys.exit(
-            "anthropic package not found. Install it:\n"
-            "  uv pip install anthropic\n"
-            "or:\n"
-            "  pip install anthropic"
-        )
-
-    client = anthropic.Anthropic(api_key=api_key)
     results: list[dict[str, Any]] = []
 
-    print(f"=== LIVE RUN — {len(tasks)} task(s) — skill v{version} epoch {epoch} — model {model} ===\n")
+    print(
+        f"=== LIVE RUN — {len(tasks)} task(s) — skill v{version} epoch {epoch}"
+        f" — provider {provider} — model {model} ===\n"
+    )
 
     for i, task in enumerate(tasks, 1):
         system, user = format_prompt(skill_text, version, epoch, task)
         print(f"[{i}/{len(tasks)}] {task['id']}: {task['question'][:70]}...")
 
-        message = client.messages.create(
-            model=model,
-            max_tokens=512,
-            system=system,
-            messages=[{"role": "user", "content": user}],
-        )
-        response = message.content[0].text.strip()
+        if provider == "anthropic":
+            response = _call_anthropic(system, user, model, api_key)
+        elif provider == "openai":
+            response = _call_openai_compat(system, user, model, api_key, base_url)
+        else:
+            sys.exit(f"Unknown provider '{provider}'. Use 'anthropic' or 'openai'.")
+
         score, reasons = score_response(response, task["expected"])
 
         status = "PASS" if score >= 0.8 else ("PARTIAL" if score >= 0.4 else "FAIL")
@@ -236,10 +285,34 @@ def main() -> None:
         help="Comma-separated tag filter, e.g. 'auth,video'",
     )
     parser.add_argument(
+        "--provider",
+        type=str,
+        default=DEFAULT_PROVIDER,
+        choices=["anthropic", "openai"],
+        help=(
+            "LLM provider (default: anthropic). "
+            "Use 'openai' for GPT-4o, Gemini (via --base-url), or any OpenAI-compat endpoint."
+        ),
+    )
+    parser.add_argument(
         "--model",
         type=str,
-        default=DEFAULT_MODEL,
-        help=f"Claude model ID (default: {DEFAULT_MODEL})",
+        default=None,
+        help=(
+            f"Model ID. Defaults: anthropic={DEFAULT_MODEL}, openai=gpt-4o. "
+            "For Gemini: gemini-2.0-flash. For Ollama: llama3.2."
+        ),
+    )
+    parser.add_argument(
+        "--base-url",
+        type=str,
+        default=None,
+        dest="base_url",
+        help=(
+            "OpenAI-compatible base URL (openai provider only). "
+            "Examples: https://generativelanguage.googleapis.com/v1beta/openai/ (Gemini), "
+            "http://localhost:11434/v1 (Ollama)."
+        ),
     )
     parser.add_argument(
         "--dry-run",
@@ -249,8 +322,11 @@ def main() -> None:
     parser.add_argument(
         "--api-key",
         type=str,
-        default=os.environ.get("ANTHROPIC_API_KEY"),
-        help="Anthropic API key (default: $ANTHROPIC_API_KEY)",
+        default=None,
+        help=(
+            "API key. Defaults: $ANTHROPIC_API_KEY (anthropic provider) or "
+            "$OPENAI_API_KEY (openai provider)."
+        ),
     )
     args = parser.parse_args()
 
@@ -266,12 +342,20 @@ def main() -> None:
 
     skill_text, version, epoch = load_skill(args.skill)
 
+    provider_defaults = {"anthropic": DEFAULT_MODEL, "openai": "gpt-4o"}
+    model = args.model or provider_defaults.get(args.provider, DEFAULT_MODEL)
+
     if args.dry_run:
         run_dry(tasks, skill_text, version, epoch)
     else:
-        if not args.api_key:
-            sys.exit("No API key. Set ANTHROPIC_API_KEY or pass --api-key.")
-        run_live(tasks, skill_text, version, epoch, args.model, args.api_key)
+        env_key = "ANTHROPIC_API_KEY" if args.provider == "anthropic" else "OPENAI_API_KEY"
+        api_key = args.api_key or os.environ.get(env_key)
+        if not api_key:
+            sys.exit(f"No API key. Set ${env_key} or pass --api-key.")
+        run_live(
+            tasks, skill_text, version, epoch, model, api_key,
+            provider=args.provider, base_url=args.base_url,
+        )
 
 
 if __name__ == "__main__":

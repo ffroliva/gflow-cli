@@ -1,6 +1,13 @@
 # Skills
 
-This directory ships an installable Skill that lets agents (Claude Code, Cursor, Codex, Gemini CLI, Aider, etc.) discover and invoke `gflow-cli` correctly.
+This directory ships installable agent skill docs for `gflow-cli`. Each `SKILL.md` is plain Markdown with YAML frontmatter, consumable by Claude Code, Cursor, Codex, Gemini CLI, Aider, and any custom agent.
+
+| Skill | Path | `version` |
+|---|---|---|
+| gflow-cli | [`gflow-cli/SKILL.md`](gflow-cli/SKILL.md) | 1.1 |
+| predict | [`predict/SKILL.md`](predict/SKILL.md) | 1.0 |
+| scenario | [`scenario/SKILL.md`](scenario/SKILL.md) | — |
+| pr-council-review | [`pr-council-review/SKILL.md`](pr-council-review/SKILL.md) | 2.1 |
 
 ## gflow-cli skill
 
@@ -34,3 +41,26 @@ The SKILL.md file is plain Markdown. Read it into your agent's context however y
 - **Custom agents**: include it in your system prompt or knowledge base.
 
 The CLI itself (`gflow`) is identical regardless of which agent invokes it.
+
+## SkillOpt harness
+
+The harness at [`../scripts/dev/skillopt/`](../scripts/dev/skillopt/) measures how accurately any LLM agent performs against the 20-task scored dataset when guided by a skill doc. Supports Anthropic, OpenAI-compat (GPT-4o, Gemini, Ollama, LM Studio), and any custom provider.
+
+```bash
+# Dry-run (no API call)
+python scripts/dev/skillopt/harness.py --dry-run
+
+# Claude
+ANTHROPIC_API_KEY=... python scripts/dev/skillopt/harness.py
+
+# GPT-4o
+OPENAI_API_KEY=... python scripts/dev/skillopt/harness.py --provider openai --model gpt-4o
+
+# Gemini
+OPENAI_API_KEY=$GEMINI_API_KEY python scripts/dev/skillopt/harness.py \
+    --provider openai \
+    --base-url https://generativelanguage.googleapis.com/v1beta/openai/ \
+    --model gemini-2.0-flash
+```
+
+See [`scripts/dev/skillopt/README.md`](../scripts/dev/skillopt/README.md) for the full improvement loop.
