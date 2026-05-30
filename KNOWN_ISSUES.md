@@ -65,6 +65,17 @@ a different 401** — it occurs on a profile that *is* verified and *can* create
 projects, specifically on the `aisandbox-pa.googleapis.com` generation
 endpoint, a different surface from the `labs.google` tRPC API.
 
+> **Related — L0 SAPISIDHASH (`feature/scene-add-clip`, 2026-05-31):** the
+> `aisandbox-pa` 401 is a missing `Authorization: SAPISIDHASH` header. The
+> `gflow scene` groundwork wired this header into the **`page.request` REST
+> path** (`_post_json` / `_patch_json`, host-scoped to `aisandbox-pa`) so
+> `uploadImage` / `scenes` / `commit` authenticate — see
+> [`docs/superpowers/plans/2026-05-30-l0-sapisidhash-aisandbox-auth.md`](docs/superpowers/plans/2026-05-30-l0-sapisidhash-aisandbox-auth.md).
+> Unit + integration tests are green; the live REST-`uploadImage`-200 proof is
+> opt-in (`tests/e2e/test_aisandbox_auth_live.py`) and **pending confirmation**.
+> The same header is the likely fix for the `evaluate_fetch` generation 401
+> above — a follow-up, not yet applied to that transport.
+
 **Scope.** The 401 affects every image-generation path uniformly on the
 `evaluate_fetch` transport (the live one): `test_e2e_single_image_gen` (C2,
 pre-existing), `test_e2e_generate_image_without_project_id` (PR #20,
