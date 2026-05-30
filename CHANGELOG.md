@@ -13,8 +13,10 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   last-used model, which was typically `omni-flash`). The Veo 3.1 family is
   the only model line that supports i2v interpolation; `omni-flash` is now
   rejected for any i2v invocation (start-only or start+end) and has been
-  removed from the i2v `--model` choices. `omni-flash` remains valid for
-  `gflow video t2v` and `gflow video r2v`. See issue #125.
+  removed from the i2v `--model` choices. Because `--duration 10` is
+  omni-flash-only, the i2v `--duration` choices are now `[4|6|8]`. `omni-flash`
+  (and `--duration 10`) remain valid for `gflow video t2v` and `gflow video r2v`.
+  See issue #125.
 
 ### Fixed
 
