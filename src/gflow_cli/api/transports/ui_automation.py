@@ -64,29 +64,21 @@ _PROJECT_URL_FRAGMENT = "/project/"
 # video; options matched by product name.  Cascade discipline: Tier 1 (structural
 # / ARIA) before Tier 2 (text).  The product names "Nano Banana 2", "Nano Banana
 # Pro", and "Imagen 4" are Google-branded model identifiers that Flow does not
-# localise across locales — the has-text() entries are therefore locale-stable
-# without a Chrome --lang override.  FLOW_URL's ``?hl=en`` parameter locks the Flow SPA to
-# English for the session lifetime, so Tier-2 text matches remain unambiguous
-# even when Chrome's profile language is non-English.  'Nano Banana 2' is not a
-# substring of 'Nano Banana Pro', so has-text is unambiguous across the three.
+# localise across locales — the has-text() entries are therefore locale-stable.
+# Primary locale control is ``locale=locale_env`` in launch_persistent_context
+# (Playwright kwarg — persists across all in-session navigations including
+# /project/<uuid> deep-links that drop the ?hl= param).  FLOW_URL's ``?hl=en``
+# reinforces English on the initial load.  'Nano Banana 2' is not a substring of
+# 'Nano Banana Pro', so has-text is unambiguous across the three.
 # Tier 1 (structural) slots are reserved for data-* / aria-* anchors once a DOM
 # probe via scripts/dev/capture_locale_invariants.py confirms stable attributes.
 IMAGE_MODEL_PICKER_TRIGGER = (
     "button[aria-haspopup='menu']:has(i.google-symbols:text-is('arrow_drop_down'))"
 )
 IMAGE_MODEL_OPTION_SELECTORS: dict[Model, tuple[str, ...]] = {
-    Model.NARWHAL: (
-        # Tier 2 — product name (locale-stable branded identifier).
-        "[role='menuitem']:has-text('Nano Banana 2')",
-    ),
-    Model.GEM_PIX_2: (
-        # Tier 2 — product name (locale-stable branded identifier).
-        "[role='menuitem']:has-text('Nano Banana Pro')",
-    ),
-    Model.IMAGEN_3_5: (
-        # Tier 2 — product name (locale-stable branded identifier).
-        "[role='menuitem']:has-text('Imagen 4')",
-    ),
+    Model.NARWHAL: ("[role='menuitem']:has-text('Nano Banana 2')",),
+    Model.GEM_PIX_2: ("[role='menuitem']:has-text('Nano Banana Pro')",),
+    Model.IMAGEN_3_5: ("[role='menuitem']:has-text('Imagen 4')",),
 }
 
 # Image-mode tab inside the mode-switch dropdown.  Selectors are tried in
@@ -1013,7 +1005,12 @@ class UiAutomationTransport(VideoGenerationMixin):
                     await page.wait_for_timeout(500)
                     log.info("ui_automation.image_model_selected", model=model.value, via=sel)
                     return
-                except Exception:
+                except Exception as sel_err:
+                    log.debug(
+                        "ui_automation.image_model_selector_miss",
+                        sel=sel,
+                        error=str(sel_err)[:120],
+                    )
                     continue
             raise RuntimeError(f"no visible option matched for model {model.value!r}")
         except Exception as e:

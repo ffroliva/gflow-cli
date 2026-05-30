@@ -241,7 +241,7 @@ class TestSelectVideoModel:
         from gflow_cli.api.video import VideoModel
 
         trig = mod.MODEL_PICKER_TRIGGER
-        opt = mod.VIDEO_MODEL_OPTION_SELECTORS[VideoModel.VEO_3_1_FAST]
+        opt = mod.VIDEO_MODEL_OPTION_SELECTORS[VideoModel.VEO_3_1_FAST][0]
         page = _cascade_page({trig, opt})
         await VideoGenerationMixin._select_video_model(page, VideoModel.VEO_3_1_FAST, out_dir=None)
         page.locator.assert_any_call(trig)

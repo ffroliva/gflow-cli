@@ -315,15 +315,18 @@ issue and not blocked by any code change in this repo.
 
 ---
 
-### `UiAutomationTransport` selectors still partially localized — issue #24 partial
+### `UiAutomationTransport` selectors locale-agnostic — issue #24 Phase 5 complete
 
-- **Status:** Mitigated · **Severity:** Medium · **Tracking:** [issue #24](https://github.com/ffroliva/gflow-cli/issues/24)
+- **Status:** Resolved (pending owner live e2e on non-EN profile) · **Severity:** Low · **Tracking:** [issue #24](https://github.com/ffroliva/gflow-cli/issues/24), [issue #94](https://github.com/ffroliva/gflow-cli/issues/94)
 
-  Status stays *Mitigated* (not *Resolved*) because `--lang=en-US` is still
-  passed and `NEW_PROJECT_SELECTORS` / `SUBMIT_BUTTON_SELECTORS` tails still
-  carry English-text fallbacks; the icon-first leads cover the common path,
-  but the dependency only fully clears after a live e2e on a non-English
-  Chrome profile.
+  `--lang=en-US` removed in PR #127 (2026-05-30). All selector groups now use
+  locale-stable anchors: `IMAGE_MODEL_OPTION_SELECTORS` and
+  `VIDEO_MODEL_OPTION_SELECTORS` converted to `dict[Model, tuple[str, ...]]`
+  cascade structure; branded product names ("Nano Banana 2", "Nano Banana Pro",
+  "Imagen 4", "Veo 3.1 - *", "Omni Flash") are confirmed locale-stable
+  Google-branded identifiers. Locale is controlled by the `locale=locale_env`
+  Playwright kwarg (persists across all in-session navigations). Full resolution
+  gate: live e2e with `gflow image t2i` (each model) on a non-EN Chrome profile.
 
 **Phase 2 progress (2026-05-25, develop / post-v0.8.1, unreleased):**
 
@@ -402,9 +405,10 @@ issue and not blocked by any code change in this repo.
   lead and cover the common path, so these are maintenance debt rather than
   active blockers).
 
-**Full resolution requires:** live e2e verification on a non-English Chrome profile
-(`GFLOW_CLI_LOCALE=<non-EN>` + a non-English browser profile) to confirm no
-regression, then removing `--lang=en-US`.
+**Remaining gate:** live e2e with `gflow image t2i --model <each>` on a non-EN
+Chrome profile (`GFLOW_CLI_LOCALE=<non-EN>`) to confirm model picker resolves
+correctly without `--lang=en-US`. `--lang=en-US` has been removed (PR #127);
+`locale=locale_env` Playwright kwarg provides locale continuity across navigations.
 
 **Workaround:** with Phase 2 changes, most locales are handled automatically.
 For locales outside the 14 covered by `_ONBOARDING_TEXT_SELECTORS`, ARIA-based
