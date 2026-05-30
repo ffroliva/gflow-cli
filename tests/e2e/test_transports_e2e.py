@@ -176,13 +176,20 @@ async def test_e2e_i2i_local_ref_attach(
 # ---------------------------------------------------------------------------
 
 
-# Defaults are tuned for minimum credit spend: omni-flash, 4 s duration, count=1,
+# Defaults are tuned for minimum credit spend: veo-lite, 4 s duration, count=1,
 # landscape. Override via env for variation (per [[e2e-tests-parameterize]]).
+# NOTE: the i2v default is veo-lite (NOT omni-flash) — omni-flash silently
+# drops the start/end frames and routes to T2V (issue #125). Using omni-flash
+# here previously made this test a false positive: frame_attached + terminal
+# success both held while the actual output was a text-only video.
 _E2E_VIDEO_ASPECT_ENV = "GFLOW_CLI_E2E_VIDEO_ASPECT"
 _E2E_VIDEO_MODEL_ENV = "GFLOW_CLI_E2E_VIDEO_MODEL"
 _E2E_VIDEO_DURATION_ENV = "GFLOW_CLI_E2E_VIDEO_DURATION"
 _I2V_POLL_TIMEOUT_S = 600.0
 _I2V_PROMPT = "the subject moves gently in a calm scene, cinematic"
+# The generate request MUST route here — the start+end frame endpoint. If it
+# lands on batchAsyncGenerateVideoText, the frames were dropped (issue #125).
+_I2V_EXPECTED_GENERATE_URL_SUBSTR = "batchAsyncGenerateVideoStartAndEndImage"
 
 
 def _i2v_aspect() -> Aspect:
@@ -195,7 +202,8 @@ def _i2v_aspect() -> Aspect:
 
 
 def _i2v_model() -> VideoModel | None:
-    raw = os.environ.get(_E2E_VIDEO_MODEL_ENV, "omni-flash").strip().lower()
+    # veo-lite default (issue #125): omni-flash does not support i2v.
+    raw = os.environ.get(_E2E_VIDEO_MODEL_ENV, "veo-lite").strip().lower()
     return VideoModel.from_cli(raw)
 
 
@@ -289,6 +297,32 @@ async def test_e2e_i2v_start_end_frame_attach(
     assert slots == {"Start", "End"}, (
         f"expected frame_attached for {{Start, End}}, got {slots!r}; "
         f"all events: {[e['event'] for e in install_log_capture.entries]}"
+    )
+
+    # 4. Frame-routing contract (issue #125 — the assertion this test was
+    #    missing). frame_attached fires even when Flow drops the refs and routes
+    #    to T2V, so it cannot prove the frames reached Veo. The captured generate
+    #    request URL is the only proof: it MUST be the StartAndEndImage endpoint,
+    #    NOT batchAsyncGenerateVideoText. And the model/mode guard must NOT have
+    #    fired (a valid veo-lite + i2v combination).
+    rejected = [
+        e
+        for e in install_log_capture.entries
+        if e["event"] == "ui_automation_video.model_mode_rejected"
+    ]
+    assert not rejected, f"model_mode_rejected fired unexpectedly: {rejected!r}"
+    generate_events = [
+        e
+        for e in install_log_capture.entries
+        if e["event"] == "ui_automation_video.generate_captured"
+    ]
+    assert generate_events, "no ui_automation_video.generate_captured event was emitted"
+    gen_url = str(generate_events[-1].get("url", ""))
+    assert _I2V_EXPECTED_GENERATE_URL_SUBSTR in gen_url, (
+        f"i2v generate request routed to {gen_url!r}; expected it to contain "
+        f"{_I2V_EXPECTED_GENERATE_URL_SUBSTR!r}. If it landed on "
+        f"batchAsyncGenerateVideoText, the start/end frames were dropped "
+        f"(issue #125 regression)."
     )
 
 
