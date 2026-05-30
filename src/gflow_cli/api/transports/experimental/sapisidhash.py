@@ -11,7 +11,6 @@ Per spec § 5.4.3:
 from __future__ import annotations
 
 import asyncio
-import hashlib
 import json
 import sqlite3
 import time
@@ -26,6 +25,7 @@ if TYPE_CHECKING:
 
 import structlog
 
+from gflow_cli.api._sapisidhash import compute_sapisidhash
 from gflow_cli.api.image import GenerateImageRequest, _build_batch_generate_images_body
 from gflow_cli.api.transports._common import (
     FLOW_URL,
@@ -48,13 +48,6 @@ _ORIGIN = "https://labs.google"
 # ---------------------------------------------------------------------------
 # Module-level helpers (exported for testability)
 # ---------------------------------------------------------------------------
-
-
-def compute_sapisidhash(*, timestamp: int, sapisid: str, origin: str) -> str:
-    """Return ``<timestamp>_<sha1("<timestamp> <sapisid> <origin>")>``."""
-    payload = f"{timestamp} {sapisid} {origin}".encode()
-    digest = hashlib.sha1(payload).hexdigest()
-    return f"{timestamp}_{digest}"
 
 
 def read_sapisid_from_profile(profile_dir: Path) -> str:
