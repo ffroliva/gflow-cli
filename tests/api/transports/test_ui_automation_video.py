@@ -876,8 +876,10 @@ class TestSelectVideoModelRequired:
     async def test_required_raises_when_option_never_found(self) -> None:
         """Issue #125 Layer 1: with required=True (i2v), a model-option miss is
         FATAL — raise rather than let Flow fall back to omni-flash -> T2V."""
+        from gflow_cli.errors import VideoModelSelectionError
+
         page = _select_model_page(option_visible_on_attempt=None)
-        with pytest.raises(RuntimeError, match="#125"):
+        with pytest.raises(VideoModelSelectionError, match="#125"):
             await VideoGenerationMixin._select_video_model(
                 page, VideoModel.VEO_3_1_LITE, out_dir=None, required=True
             )

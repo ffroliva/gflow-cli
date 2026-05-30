@@ -40,6 +40,7 @@ from gflow_cli.api.video import (
 from gflow_cli.errors import (
     AuthExpiredError,
     ModelModeIncompatibilityError,
+    VideoModelSelectionError,
     WafRejectionError,
     WireFormatError,
 )
@@ -168,7 +169,16 @@ VIDEO_MODEL_OPTION_SELECTORS: dict[VideoModel, str] = {
     VideoModel.OMNI_FLASH: "[role='menuitem']:has-text('Omni Flash')",
     VideoModel.VEO_3_1_FAST: "[role='menuitem']:has-text('Veo 3.1 - Fast')",
     VideoModel.VEO_3_1_QUALITY: "[role='menuitem']:has-text('Veo 3.1 - Quality')",
-    VideoModel.VEO_3_1_LITE: "[role='menuitem']:text-is('volume_upVeo 3.1 - Lite')",
+    # Substring `:has-text` (NOT `:text-is`) so it matches regardless of the
+    # leading Material Symbols icon ligature in the menu item's accessible text
+    # (e.g. "volume_upVeo 3.1 - Lite"). The exact-match `:text-is(...)` form that
+    # hardcoded the icon prefix was the issue #125 model-select reliability bug:
+    # it silently missed -> Flow kept omni-flash -> i2v routed to T2V. `:not`
+    # excludes the 'Veo 3.1 - Lite [Lower Priority]' sibling (has-text is a
+    # substring/prefix match).
+    VideoModel.VEO_3_1_LITE: (
+        "[role='menuitem']:has-text('Veo 3.1 - Lite'):not(:has-text('[Lower Priority]'))"
+    ),
     VideoModel.VEO_3_1_LITE_LOWER_PRIORITY: "[role='menuitem']:has-text('[Lower Priority]')",
 }
 
@@ -749,7 +759,7 @@ class VideoGenerationMixin:
                     f"for i2v. Refusing to proceed (Flow's default would drop the "
                     f"frames to T2V — issue #125). Screenshot: {shot}"
                 )
-                raise RuntimeError(msg)
+                raise VideoModelSelectionError(detail=msg, route="model_picker_trigger")
             return
 
         for attempt in (1, 2):
@@ -791,7 +801,7 @@ class VideoGenerationMixin:
                 f"({VideoModel.OMNI_FLASH.value}) silently drops the start/end "
                 f"frames and routes to T2V (issue #125). Screenshot: {shot}"
             )
-            raise RuntimeError(msg)
+            raise VideoModelSelectionError(detail=msg, route="model_option")
 
     @staticmethod
     async def _select_video_duration(page: Page, seconds: int) -> None:
