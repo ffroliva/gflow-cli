@@ -35,6 +35,7 @@ from gflow_cli.api.transports import make_transport
 from gflow_cli.api.transports.base import FlowTransportStrategy, VideoCapableTransport
 from gflow_cli.config import Settings
 from gflow_cli.errors import (
+    AisandboxAuthError,
     AuthExpiredError,
     AuthMissingError,
     BrowserSessionClosedError,
@@ -454,25 +455,37 @@ class FlowApiClient:
         # holds regardless. Redact before logging.
         logger.debug("post_json", url=url, body=_redact_for_log(body_str)[:300])
         route = route_name or url
+        is_aisandbox = self._is_aisandbox_url(url)
 
         async def attempt() -> Any:
             page = await self._checkout_page()
             try:
+                headers = {"content-type": content_type}
+                if is_aisandbox:
+                    headers.update(await self._aisandbox_auth_headers())
                 if os.environ.get("GFLOW_CLI_LOG_REQUEST_HEADERS") == "1":
                     logger.info(
                         "request_headers",
                         url=url,
-                        headers=_redact_headers_for_log({"content-type": content_type}),
+                        headers=_redact_headers_for_log(headers),
                     )
-                return await page.request.post(
-                    url,
-                    data=body_str,
-                    headers={"content-type": content_type},
-                )
+                return await page.request.post(url, data=body_str, headers=headers)
             finally:
                 self._checkin_page(page)
 
         resp = await self._run_with_retry(attempt, route=route)
+        if is_aisandbox and resp.status == 401:
+            # Cookie may have rotated mid-session — re-read SAPISID once and retry.
+            self._sapisid = None
+            await self._ensure_sapisid()
+            resp = await self._run_with_retry(attempt, route=route)
+            if resp.status == 401:
+                raise AisandboxAuthError(
+                    detail="aisandbox-pa returned 401 after SAPISID refresh",
+                    status=401,
+                    instance=_make_instance(),
+                    route=route,
+                )
         text = await resp.text()
         _raise_for_non_retryable(resp, text, route=route)
         try:
@@ -496,25 +509,37 @@ class FlowApiClient:
         body_str = json.dumps(body)
         logger.debug("patch_json", url=url, body=body_str[:300])
         route = route_name or url
+        is_aisandbox = self._is_aisandbox_url(url)
 
         async def attempt() -> Any:
             page = await self._checkout_page()
             try:
+                headers = {"content-type": _AISANDBOX_CONTENT_TYPE}
+                if is_aisandbox:
+                    headers.update(await self._aisandbox_auth_headers())
                 if os.environ.get("GFLOW_CLI_LOG_REQUEST_HEADERS") == "1":
                     logger.info(
                         "request_headers",
                         url=url,
-                        headers=_redact_headers_for_log({"content-type": _AISANDBOX_CONTENT_TYPE}),
+                        headers=_redact_headers_for_log(headers),
                     )
-                return await page.request.patch(
-                    url,
-                    data=body_str,
-                    headers={"content-type": _AISANDBOX_CONTENT_TYPE},
-                )
+                return await page.request.patch(url, data=body_str, headers=headers)
             finally:
                 self._checkin_page(page)
 
         resp = await self._run_with_retry(attempt, route=route)
+        if is_aisandbox and resp.status == 401:
+            # Cookie may have rotated mid-session — re-read SAPISID once and retry.
+            self._sapisid = None
+            await self._ensure_sapisid()
+            resp = await self._run_with_retry(attempt, route=route)
+            if resp.status == 401:
+                raise AisandboxAuthError(
+                    detail="aisandbox-pa returned 401 after SAPISID refresh",
+                    status=401,
+                    instance=_make_instance(),
+                    route=route,
+                )
         text = await resp.text()
         _raise_for_non_retryable(resp, text, route=route)
         try:
