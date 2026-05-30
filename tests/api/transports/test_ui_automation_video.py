@@ -7,6 +7,7 @@ from pathlib import Path
 from unittest.mock import AsyncMock, MagicMock
 
 import pytest
+import structlog
 
 from gflow_cli.api.transports.ui_automation import UiAutomationTransport
 from gflow_cli.api.transports.ui_automation_video import (
@@ -351,6 +352,104 @@ class TestGenerateVideoGuards:
         transport = UiAutomationTransport()
         with pytest.raises(RuntimeError, match="setup"):
             await transport.generate_video(request=GenerateVideoRequest(prompt="x"))
+
+    @pytest.mark.asyncio
+    async def test_i2v_with_omni_flash_raises_before_any_browser_call(
+        self,
+        monkeypatch: pytest.MonkeyPatch,
+        install_log_capture: structlog.testing.LogCapture,
+    ) -> None:
+        """Issue #125: omni-flash + i2v must raise ModelModeIncompatibilityError
+        BEFORE any DOM interaction, and emit `model_mode_rejected`."""
+        from gflow_cli.api.video import VideoModel
+        from gflow_cli.errors import ModelModeIncompatibilityError
+
+        transport = UiAutomationTransport()
+        transport._page = _mock_async_page()
+        transport._setup_done = True
+        # If the guard fails to fire first, _enter_editor would run — make it
+        # explode so a regression is caught loudly rather than silently passing.
+        monkeypatch.setattr(
+            transport,
+            "_enter_editor",
+            AsyncMock(side_effect=AssertionError("guard must fire before _enter_editor")),
+        )
+        req = GenerateVideoRequest(
+            prompt="rise up",
+            mode=Mode.I2V,
+            model=VideoModel.OMNI_FLASH,
+            start_image=Path("a.png"),
+            end_image=Path("b.png"),
+        )
+        with pytest.raises(ModelModeIncompatibilityError, match="#125"):
+            await transport.generate_video(request=req, download=False)
+
+        events = [
+            e
+            for e in install_log_capture.entries
+            if e["event"] == "ui_automation_video.model_mode_rejected"
+        ]
+        assert len(events) == 1
+        evt = events[0]
+        assert evt["model"] == "omni_flash"
+        assert evt["mode"] == "I2V"
+        assert evt["has_start_image"] is True
+        assert evt["has_end_image"] is True
+        assert evt["issue_ref"] == "#125"
+
+    @pytest.mark.asyncio
+    async def test_i2v_start_only_with_omni_flash_also_raises(
+        self, monkeypatch: pytest.MonkeyPatch
+    ) -> None:
+        """omni-flash is rejected for start-only i2v too (probe v5 evidence)."""
+        from gflow_cli.api.video import VideoModel
+        from gflow_cli.errors import ModelModeIncompatibilityError
+
+        transport = UiAutomationTransport()
+        transport._page = _mock_async_page()
+        transport._setup_done = True
+        monkeypatch.setattr(
+            transport,
+            "_enter_editor",
+            AsyncMock(side_effect=AssertionError("guard must fire first")),
+        )
+        req = GenerateVideoRequest(
+            prompt="rise up",
+            mode=Mode.I2V,
+            model=VideoModel.OMNI_FLASH,
+            start_image=Path("a.png"),
+        )
+        with pytest.raises(ModelModeIncompatibilityError):
+            await transport.generate_video(request=req, download=False)
+
+    @pytest.mark.asyncio
+    async def test_t2v_with_omni_flash_does_not_raise(
+        self, monkeypatch: pytest.MonkeyPatch
+    ) -> None:
+        """Guard is i2v-only: t2v + omni-flash is a valid combination."""
+        from gflow_cli.api.video import VideoModel
+
+        transport = UiAutomationTransport()
+        transport._page = _mock_async_page()
+        transport._setup_done = True
+        monkeypatch.setattr(transport, "_enter_editor", AsyncMock())
+        monkeypatch.setattr(transport, "_send_prompt", AsyncMock())
+        monkeypatch.setattr(transport, "_dismiss_blocking_overlays", AsyncMock())
+        _stub_video_helpers(
+            monkeypatch,
+            generate_resp={"status": 200, "url": _T2V_URL, "body": {"media": [{"name": "v"}]}},
+        )
+        monkeypatch.setattr(
+            VideoGenerationMixin,
+            "_poll_video_status",
+            AsyncMock(
+                return_value=VideoStatus(media_id="v", status="MEDIA_GENERATION_STATUS_SUCCESSFUL")
+            ),
+        )
+        monkeypatch.setattr(transport, "_download_video", AsyncMock(return_value=Path("v.mp4")))
+        req = GenerateVideoRequest(prompt="x", mode=Mode.T2V, model=VideoModel.OMNI_FLASH)
+        # Must NOT raise — the guard is scoped to i2v.
+        await transport.generate_video(request=req, download=False)
 
     @pytest.mark.asyncio
     async def test_i2v_routes_to_frames_and_attach(self, monkeypatch: pytest.MonkeyPatch) -> None:

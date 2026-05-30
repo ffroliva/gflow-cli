@@ -16,6 +16,7 @@ __all__ = [
     "DataStoreError",
     "FlowApiError",
     "GFlowError",
+    "ModelModeIncompatibilityError",
     "NetworkError",
     "ProblemDetails",
     "RateLimitError",
@@ -259,6 +260,33 @@ class ConfigurationError(GFlowError):
     )
 
 
+class ModelModeIncompatibilityError(ConfigurationError):
+    """Raised when the chosen video model is incompatible with the requested
+    generation mode (issue #125).
+
+    The canonical case: ``omni-flash`` does NOT support i2v interpolation
+    (start or start+end frames). Flow's frontend silently drops the frame
+    refs at submit time and routes the request to the T2V endpoint,
+    charging a credit for a generation that ignores the supplied images
+    entirely. This error is raised pre-submit by both the CLI (Click
+    callback) and the transport (defense-in-depth for direct
+    ``FlowApiClient`` callers that bypass the CLI), preventing the
+    silent credit-burn.
+
+    Distinct exit code 17 (not Click's exit 2, not generic exit 1) so
+    scripted callers can branch on "I picked an incompatible
+    model/mode" without parsing stderr.
+    """
+
+    problem_type = "https://gflow-cli.dev/errors/model-mode-incompatibility"
+    title = "Model is incompatible with the requested generation mode"
+    _default_remediation = (
+        "The selected video model does not support this generation mode. "
+        "For i2v with a start or end frame, use --model veo-lite (or "
+        "veo-fast / veo-quality / veo-lite-lp). See issue #125."
+    )
+
+
 class SecurityError(GFlowError):
     """Raised when a security boundary is violated (e.g. profile_dir outside HOME)."""
 
@@ -434,6 +462,9 @@ EXIT_CODE_MAP: dict[type[GFlowError], int] = {
     AuthMissingError: 8,
     TransportTimeoutError: 9,
     WafRejectionError: 10,
+    # ModelModeIncompatibilityError BEFORE ConfigurationError (subclass) so the
+    # isinstance walk lands on 17, not 11. Per [[exit-code-map-ordering-invariant-test-pitfall]].
+    ModelModeIncompatibilityError: 17,
     ConfigurationError: 11,
     AuthExpiredError: 3,
     RateLimitError: 4,

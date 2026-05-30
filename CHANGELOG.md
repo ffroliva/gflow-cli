@@ -7,7 +7,28 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+### Changed
+
+- **`gflow video i2v` default model is now `veo-lite`** (was: inherit Flow's
+  last-used model, which was typically `omni-flash`). The Veo 3.1 family is
+  the only model line that supports i2v interpolation; `omni-flash` is now
+  rejected for any i2v invocation (start-only or start+end) and has been
+  removed from the i2v `--model` choices. `omni-flash` remains valid for
+  `gflow video t2v` and `gflow video r2v`. See issue #125.
+
 ### Fixed
+
+- **`gflow video i2v` silently produced text-to-video output, ignoring the
+  start/end frames (issue #125).** When the model was `omni-flash` (Flow's
+  last-used default in most sessions), Flow's frontend dropped the bound
+  start/end frame references at submit time and routed every call to
+  `batchAsyncGenerateVideoText` with `image_inputs: null` — charging a credit
+  for a pure text-to-video generation that had no visual relationship to the
+  supplied frames. **Every i2v paid run on v0.10.0 before this fix produced
+  T2V output regardless of the start/end frames.** Fix: `omni-flash` is
+  dropped from the i2v `--model` choices and the i2v default is now `veo-lite`;
+  a defense-in-depth transport guard raises `ModelModeIncompatibilityError`
+  (exit code 17) for direct `FlowApiClient` callers that bypass the CLI.
 
 - **Create-project generation failing when Flow's "Agent" composer mode is active.**
   Flow's newer editor adds an Agent toggle next to the prompt box; when it is on,
