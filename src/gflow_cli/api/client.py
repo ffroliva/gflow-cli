@@ -17,6 +17,7 @@ import asyncio
 import base64
 import json
 import os
+import time
 from dataclasses import replace as _dc_replace
 from datetime import datetime
 from typing import TYPE_CHECKING, Any, Self, cast
@@ -27,6 +28,7 @@ from playwright.async_api import BrowserContext, Page, Playwright, async_playwri
 
 from gflow_cli.api import routes
 from gflow_cli.api._retry import parse_retry_after, post_with_retry
+from gflow_cli.api._sapisidhash import compute_sapisidhash
 from gflow_cli.api.dto import AssetInfo, GeneratedImage, ProjectInfo
 from gflow_cli.api.recaptcha import TokenMinter
 from gflow_cli.api.transports import make_transport
@@ -34,6 +36,7 @@ from gflow_cli.api.transports.base import FlowTransportStrategy, VideoCapableTra
 from gflow_cli.config import Settings
 from gflow_cli.errors import (
     AuthExpiredError,
+    AuthMissingError,
     BrowserSessionClosedError,
     ContentPolicyError,
     FlowApiError,  # re-exported via gflow_cli.api.__init__
@@ -81,6 +84,12 @@ MAX_IMAGE_BYTES = 20 * 1024 * 1024  # 20 MB
 
 # aisandbox-pa rejects application/json — see samples/captured/*.json.
 _AISANDBOX_CONTENT_TYPE = "text/plain;charset=UTF-8"
+
+# aisandbox-pa POSTs return 401 to page.request unless an Authorization:
+# SAPISIDHASH header is attached (Issue #15). The labs.google BFF authenticates
+# on session cookies alone, so the header is scoped to this host only.
+_AISANDBOX_HOST = "aisandbox-pa.googleapis.com"
+_SAPISID_ORIGIN = "https://labs.google"
 
 
 def _is_supported_image_header(header: bytes) -> bool:
@@ -146,6 +155,10 @@ class FlowApiClient:
         self._transport_input: FlowTransportStrategy | str | None = transport
         self.transport: FlowTransportStrategy | None = None
         self._owns_transport: bool = False
+        # SAPISID cookie value, read lazily from the live browser context and
+        # cached for the session. Used to compute the SAPISIDHASH auth header
+        # for aisandbox-pa REST calls (Issue #15). Re-read on a 401.
+        self._sapisid: str | None = None
         self._pw: Playwright | None = None
         self._context: BrowserContext | None = None
         # Per-worker Page pool (Phase 4 T2). All Pages live inside ONE
@@ -363,6 +376,58 @@ class FlowApiClient:
         return self._page
 
     # --- private HTTP helpers --------------------------------------------
+
+    @staticmethod
+    def _is_aisandbox_url(url: str) -> bool:
+        """True for aisandbox-pa REST URLs, which require SAPISIDHASH auth.
+
+        BFF (labs.google) URLs authenticate on cookies alone — never matched.
+        """
+        return _AISANDBOX_HOST in url
+
+    async def _read_sapisid_from_context(self) -> str:
+        """Read the SAPISID cookie from the LIVE browser context.
+
+        Playwright returns HttpOnly cookie values decrypted from the running
+        browser — unlike reading the on-disk SQLite DB, which fails on Windows
+        (DPAPI-encrypted; see transports/experimental/sapisidhash.py).
+        """
+        page = await self._checkout_page()
+        try:
+            cookies = await page.context.cookies("https://www.google.com")
+        finally:
+            self._checkin_page(page)
+        for cookie in cookies:
+            value = cookie.get("value")
+            if cookie.get("name") == "SAPISID" and value:
+                return str(value)
+        msg = (
+            "SAPISID cookie not present in the browser session. "
+            "Run `gflow auth login --profile <name>`."
+        )
+        raise AuthMissingError(msg)
+
+    async def _ensure_sapisid(self) -> str:
+        """Lazily read + cache SAPISID for the session."""
+        if self._sapisid is None:
+            self._sapisid = await self._read_sapisid_from_context()
+        return self._sapisid
+
+    async def _aisandbox_auth_headers(self) -> dict[str, str]:
+        """Build the SAPISIDHASH Authorization header for an aisandbox call.
+
+        Timestamp is recomputed every call (freshness signal); SAPISID is
+        long-lived and cached. NEVER log the returned values.
+        """
+        sapisid = await self._ensure_sapisid()
+        ts = int(time.time())
+        hash_value = compute_sapisidhash(
+            timestamp=ts, sapisid=sapisid, origin=_SAPISID_ORIGIN
+        )
+        return {
+            "authorization": f"SAPISIDHASH {hash_value}",
+            "origin": _SAPISID_ORIGIN,
+        }
 
     async def _post_json(
         self,
