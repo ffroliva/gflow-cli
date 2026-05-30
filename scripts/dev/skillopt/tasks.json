@@ -1,0 +1,242 @@
+[
+  {
+    "id": "auth-001",
+    "question": "A user just installed gflow-cli on a fresh machine and wants to sign in to their Google account for the first time.",
+    "context": "Clean install. No profiles exist. Playwright Chromium has not been downloaded yet.",
+    "expected": {
+      "must_include": ["gflow auth login"],
+      "must_not_include": ["gflow login", "gflow auth\n", "gflow auth --"],
+      "partial_credit": ["playwright install chromium", "gflow auth status"]
+    },
+    "tags": ["auth", "first-run"],
+    "notes": "Agents often suggest bare 'gflow auth' or 'gflow login' which do not trigger browser sign-in. Missing the Playwright prerequisite is the other common gap."
+  },
+  {
+    "id": "auth-002",
+    "question": "The user wants to check whether their current session is still valid before running a long batch job.",
+    "context": "Profile 'default' was created last week.",
+    "expected": {
+      "must_include": ["gflow auth status"],
+      "must_not_include": ["gflow auth login", "gflow auth check"],
+      "partial_credit": []
+    },
+    "tags": ["auth"],
+    "notes": "Agents sometimes suggest 'gflow auth login' (which would open a browser) instead of the non-destructive status check."
+  },
+  {
+    "id": "auth-003",
+    "question": "The user has two Google accounts and wants to generate a T2I image using their 'work' account profile.",
+    "context": "Profiles 'work' and 'personal' both exist. Default is 'personal'.",
+    "expected": {
+      "must_include": ["gflow image t2i", "--profile work"],
+      "must_not_include": ["gflow auth use work", "--account", "GFLOW_CLI_PROFILE"],
+      "partial_credit": []
+    },
+    "tags": ["auth", "multi-profile", "image"],
+    "notes": "Agents sometimes suggest 'gflow auth use work' (which changes the default permanently) rather than the per-command --profile flag."
+  },
+  {
+    "id": "auth-004",
+    "question": "The user's gflow commands are suddenly failing with 'No session for profile default'. What is the fix?",
+    "context": "Profile 'default' exists but the session cookies have expired.",
+    "expected": {
+      "must_include": ["gflow auth login"],
+      "must_not_include": ["gflow auth refresh", "gflow auth renew", "gflow auth reset", "gflow auth update"],
+      "partial_credit": ["gflow auth status"]
+    },
+    "tags": ["auth", "error-recovery"],
+    "notes": "gflow has no 'refresh' or 'renew' subcommand. The only fix for an expired session is a fresh 'gflow auth login'."
+  },
+  {
+    "id": "video-001",
+    "question": "Generate a short vertical video of 'a surfer riding a massive wave at sunset'.",
+    "context": null,
+    "expected": {
+      "must_include": ["gflow video t2v"],
+      "must_not_include": ["gflow video generate", "gflow video create", "gflow t2v", "gflow video i2v"],
+      "partial_credit": ["--aspect 9:16", "-o "]
+    },
+    "tags": ["video", "t2v"],
+    "notes": "The subcommand is 'gflow video t2v', not 'gflow video generate'. Vertical (9:16) is the default aspect."
+  },
+  {
+    "id": "video-002",
+    "question": "Generate a landscape (16:9) video of 'a timelapse of clouds over mountains' and save it to ./output/clouds.mp4.",
+    "context": null,
+    "expected": {
+      "must_include": ["gflow video t2v", "--aspect 16:9", "-o "],
+      "must_not_include": ["--output ", "--format", "--save"],
+      "partial_credit": ["clouds.mp4"]
+    },
+    "tags": ["video", "t2v", "aspect"],
+    "notes": "Output path uses '-o', not '--output'. Aspect uses '--aspect 16:9'."
+  },
+  {
+    "id": "video-003",
+    "question": "Animate a local image ./hero.png with the prompt 'slow cinematic push-in, soft golden light'.",
+    "context": null,
+    "expected": {
+      "must_include": ["gflow video i2v", "./hero.png"],
+      "must_not_include": ["gflow video t2v", "--image", "--start-image", "--input"],
+      "partial_credit": ["-o ", "--aspect"]
+    },
+    "tags": ["video", "i2v"],
+    "notes": "Image-to-video uses 'gflow video i2v IMAGE PROMPT'. The image path is a positional argument, not a flag."
+  },
+  {
+    "id": "video-004",
+    "question": "Using the 'client-a' profile, generate a video from ./logo.png with the prompt 'spinning logo reveal'.",
+    "context": "Profile 'client-a' exists alongside the default profile.",
+    "expected": {
+      "must_include": ["gflow video i2v", "--profile client-a"],
+      "must_not_include": ["gflow auth use client-a", "--account"],
+      "partial_credit": ["./logo.png"]
+    },
+    "tags": ["video", "i2v", "multi-profile"],
+    "notes": "Profile is specified per-command with --profile, not by switching the default with 'gflow auth use'."
+  },
+  {
+    "id": "video-005",
+    "question": "Run all 10 video generation jobs from a TSV manifest at ./batch.tsv and save output files to ./out/.",
+    "context": "The manifest columns are: start_image, prompt, end_image, aspect, output_path.",
+    "expected": {
+      "must_include": ["gflow video batch", "./batch.tsv"],
+      "must_not_include": ["gflow video t2v", "for ", "while ", "xargs"],
+      "partial_credit": ["--out-dir", "./out"]
+    },
+    "tags": ["video", "batch"],
+    "notes": "gflow has a native batch runner. Agents sometimes suggest shell loops over 'gflow video t2v' instead."
+  },
+  {
+    "id": "image-001",
+    "question": "Generate a single image of 'a minimalist fox logo on a white background'.",
+    "context": null,
+    "expected": {
+      "must_include": ["gflow image t2i"],
+      "must_not_include": ["gflow image generate", "gflow t2i", "gflow image create", "gflow image make"],
+      "partial_credit": []
+    },
+    "tags": ["image", "t2i"],
+    "notes": "Subcommand is 'gflow image t2i', not 'gflow image generate'."
+  },
+  {
+    "id": "image-002",
+    "question": "Generate 4 landscape variations of 'futuristic city skyline at night'.",
+    "context": null,
+    "expected": {
+      "must_include": ["gflow image t2i", "-n 4", "--aspect 16:9"],
+      "must_not_include": ["-n4", "--count 4", "--num 4", "--variants"],
+      "partial_credit": []
+    },
+    "tags": ["image", "t2i", "fanout"],
+    "notes": "Flag is '-n 4' (with space), not '-n4' or '--count'. Aspect is '--aspect 16:9'."
+  },
+  {
+    "id": "image-003",
+    "question": "Generate a reproducible image of 'golden hour rolling hills' that the user can regenerate with the same result later.",
+    "context": "The user wants deterministic output.",
+    "expected": {
+      "must_include": ["gflow image t2i", "--seed"],
+      "must_not_include": ["--random-seed", "-s ", "--deterministic"],
+      "partial_credit": []
+    },
+    "tags": ["image", "t2i", "seed"],
+    "notes": "Determinism uses '--seed N'. Agents sometimes suggest '-s' which is not a valid flag."
+  },
+  {
+    "id": "image-004",
+    "question": "Apply the style 'cinematic, golden hour' to the user's local file hero.png.",
+    "context": null,
+    "expected": {
+      "must_include": ["gflow image i2i", "--ref"],
+      "must_not_include": ["gflow image t2i", "--input", "--base", "--source"],
+      "partial_credit": ["hero.png"]
+    },
+    "tags": ["image", "i2i"],
+    "notes": "Image-to-image uses '--ref', not '--input' or '--base'. Subcommand is 'gflow image i2i'. '--ref' without the filename matches both '--ref hero.png' and '--ref ./hero.png'."
+  },
+  {
+    "id": "image-005",
+    "question": "The user already uploaded hero.png and got asset UUID 'a1b2c3d4-xyz'. Apply 'make it minimalist' to the same asset without re-uploading.",
+    "context": "UUID 'a1b2c3d4-xyz' is from a previous 'gflow image upload' call.",
+    "expected": {
+      "must_include": ["gflow image i2i", "--ref a1b2c3d4-xyz"],
+      "must_not_include": ["gflow image upload", "gflow image t2i"],
+      "partial_credit": []
+    },
+    "tags": ["image", "i2i", "uuid-reuse"],
+    "notes": "Already-uploaded UUIDs can be passed directly to --ref. Agents often suggest re-uploading, burning quota."
+  },
+  {
+    "id": "image-006",
+    "question": "Generate an image using the highest-quality Imagen model (not a Nano model).",
+    "context": "Available model aliases: nano2, nano-pro, image4.",
+    "expected": {
+      "must_include": ["gflow image t2i", "--model image4"],
+      "must_not_include": ["--model imagen", "--model quality", "--model high", "--model imagen3", "--model best"],
+      "partial_credit": []
+    },
+    "tags": ["image", "t2i", "model-selection"],
+    "notes": "The highest-quality alias is '--model image4' (maps to IMAGEN_3_5). 'imagen' is not a valid alias."
+  },
+  {
+    "id": "error-001",
+    "question": "Image generation keeps failing silently. The user suspects the headless browser is being detected as a bot by reCAPTCHA. Which environment variable disables headless mode?",
+    "context": "Running on Linux CI. No display available but the user can launch a visible window via SSH tunnel.",
+    "expected": {
+      "must_include": ["GFLOW_CLI_HEADLESS=false"],
+      "must_not_include": ["GFLOW_CLI_HEADLESS=true", "GFLOW_CLI_HEADLESS=0", "GFLOW_CLI_HEADLESS=1"],
+      "partial_credit": []
+    },
+    "tags": ["error-recovery", "recaptcha", "headless"],
+    "notes": "Setting HEADLESS=false disables headless mode so the visible browser passes reCAPTCHA. HEADLESS=true makes it worse."
+  },
+  {
+    "id": "error-002",
+    "question": "During a batch video job, the run stops with 'AuthExpiredError'. What is the minimum command to fix the session and resume?",
+    "context": "Profile 'default' exists. The session cookies expired mid-batch.",
+    "expected": {
+      "must_include": ["gflow auth login"],
+      "must_not_include": ["gflow auth refresh", "gflow auth renew", "gflow auth reset", "gflow auth fix"],
+      "partial_credit": ["gflow auth status"]
+    },
+    "tags": ["error-recovery", "auth"],
+    "notes": "'gflow auth refresh' and 'gflow auth renew' do not exist. The only fix is 'gflow auth login' to re-establish the session."
+  },
+  {
+    "id": "error-003",
+    "question": "A fresh install throws 'Playwright Executable doesn't exist'. How does the user fix it?",
+    "context": "gflow-cli was just installed with 'uv tool install gflow-cli'. No Playwright browser has been downloaded.",
+    "expected": {
+      "must_include": ["playwright install chromium"],
+      "must_not_include": ["pip install playwright", "uv add playwright", "playwright install --all", "playwright install firefox"],
+      "partial_credit": ["uvx --from gflow-cli playwright install chromium"]
+    },
+    "tags": ["error-recovery", "playwright", "first-run"],
+    "notes": "Only Chromium is needed (~150 MB). '--all' wastes bandwidth. 'pip install' installs the Python package, not the browser."
+  },
+  {
+    "id": "python-001",
+    "question": "Show the minimal Python code to generate a video from a local image using gflow-cli as a library.",
+    "context": "User wants programmatic I2V, not the CLI. Python 3.11+.",
+    "expected": {
+      "must_include": ["FlowApiClient", "async with", "asyncio"],
+      "must_not_include": ["subprocess", "os.system", "os.popen"],
+      "partial_credit": ["from gflow_cli.api.client import FlowApiClient", "generate_video", "profile_dir", "await"]
+    },
+    "tags": ["python-api", "i2v"],
+    "notes": "FlowApiClient is an async context manager. Agents sometimes use subprocess to shell out instead of the library API."
+  },
+  {
+    "id": "parallel-001",
+    "question": "The user wants to run two video generations simultaneously, one for each of their profiles 'account-a' and 'account-b'. Give them the two commands to run in parallel.",
+    "context": "Both profiles are configured. The user understands the commands will run concurrently.",
+    "expected": {
+      "must_include": ["gflow video t2v", "--profile account-a", "--profile account-b"],
+      "must_not_include": ["--profile default", "same profile"],
+      "partial_credit": ["&", "tmux", "screen"]
+    },
+    "tags": ["video", "t2v", "multi-profile", "parallel"],
+    "notes": "Parallel generation requires different --profile names. Agents sometimes suggest running both on the same profile which crashes Chromium."
+  }
+]

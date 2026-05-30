@@ -182,13 +182,36 @@ async def _run_i2v(
     count: int = 1,
     as_json: bool = False,
 ) -> None:
-    from gflow_cli.api.video import Aspect, GenerateVideoRequest, Mode, VideoModel
+    from gflow_cli.api.video import (
+        I2V_DEFAULT_MODEL,
+        Aspect,
+        GenerateVideoRequest,
+        Mode,
+        VideoModel,
+    )
+    from gflow_cli.errors import ModelModeIncompatibilityError
+
+    # Resolve the model with i2v-specific defaulting + validation. The Click
+    # Choice already excludes omni-flash, but a stale `--config` JSON or a
+    # direct programmatic call can still smuggle it in. omni-flash silently
+    # drops the start/end frames at submit and routes to T2V (issue #125), so
+    # reject it here before any paid call.
+    resolved_model = VideoModel.from_cli(model)
+    if resolved_model is None:
+        resolved_model = I2V_DEFAULT_MODEL
+    elif not resolved_model.supports_i2v_interpolation():
+        msg = (
+            f"{resolved_model.value!r} does not support image-to-video "
+            f"interpolation; Flow silently drops the start/end frames and "
+            f"produces a text-only video (issue #125)."
+        )
+        raise ModelModeIncompatibilityError(detail=msg)
 
     request = GenerateVideoRequest(
         prompt=prompt,
         mode=Mode.I2V,
         aspect=Aspect.from_cli(aspect),
-        model=VideoModel.from_cli(model),
+        model=resolved_model,
         duration=duration,
         count=count,
         start_image=Path(image),
@@ -336,6 +359,10 @@ def t2v(
     short_help="Generate a video from a start image + motion prompt.",
     help=(
         "Image-to-video: animate a start image with a motion prompt (Veo).\n\n"
+        "Only the Veo 3.1 models support i2v interpolation; omni-flash is NOT "
+        "accepted here because Flow silently drops the start/end frames and "
+        "falls back to text-to-video (issue #125). Omit --model to use "
+        "veo-lite (the default i2v model).\n\n"
         "\b\n"
         "Examples:\n"
         '  gflow video i2v hero.png "slow cinematic push-in"\n'
@@ -362,14 +389,17 @@ def t2v(
 @click.option(
     "--model",
     default=None,
-    type=click.Choice(["omni-flash", "veo-lite", "veo-fast", "veo-quality", "veo-lite-lp"]),
-    help="Veo model. Omit to use Flow's current default.",
+    # omni-flash is intentionally absent: it does not support i2v
+    # interpolation and silently routes to T2V (issue #125). Use a Veo 3.1
+    # model. Omitting --model resolves to veo-lite (I2V_DEFAULT_MODEL).
+    type=click.Choice(["veo-lite", "veo-fast", "veo-quality", "veo-lite-lp"]),
+    help="Veo 3.1 model. Omit to use veo-lite (the default i2v model).",
 )
 @click.option(
     "--duration",
     default=None,
-    type=click.Choice(["4", "6", "8", "10"]),
-    help="Clip length in seconds. 10 requires --model omni-flash.",
+    type=click.Choice(["4", "6", "8"]),
+    help="Clip length in seconds (i2v supports 4/6/8; 10 is omni-flash-only).",
 )
 @click.option(
     "--count",

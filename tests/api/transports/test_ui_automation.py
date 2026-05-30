@@ -31,6 +31,10 @@ from gflow_cli.api.transports.ui_automation import (
     UiAutomationTransport,
     _count_tabs_locator,  # noqa: PLC2701
 )
+from gflow_cli.api.transports.ui_automation_video import (
+    COMPOSER_AGENT_TOGGLE_SELECTOR,
+    VideoGenerationMixin,
+)
 from gflow_cli.errors import ContentPolicyError, WafRejectionError
 
 # ---------------------------------------------------------------------------
@@ -2043,3 +2047,263 @@ class TestSelectorLocaleInvariance:
             assert "[aria-label*='Project'" not in sel, (
                 f"English-only aria-label in NEW_PROJECT_SELECTORS: {sel!r}"
             )
+
+
+def _agent_loc(count: int) -> MagicMock:
+    """A Playwright-locator mock with a fixed ``.count()`` and chainable ``.first``."""
+    loc = MagicMock()
+    loc.first = loc
+    loc.count = AsyncMock(return_value=count)
+    loc.click = AsyncMock()
+    return loc
+
+
+class TestExitAgentMode:
+    """``_exit_agent_mode`` restores the media panel when Flow's composer is in
+    "Agent" mode — without matching any localized UI string or aria attribute
+    (issue #24 locale discipline + the aria-selector pushback in past reviews)."""
+
+    def test_toggle_selector_is_locale_safe_aria_free_and_scoped(self) -> None:
+        """The toggle selector is locale-safe, aria-free, AND scoped to the composer.
+
+        Guards the three review concerns at once:
+
+        * **Locale (issue #24):** no visible-text match (``:has-text`` /
+          ``:text-is`` / ``text-matches``) and the literal label "Agent" never
+          appears — it is translated per Flow locale. The only ``:text(...)`` is
+          ``arrow_forward``, a Material Symbols icon ligature, which is
+          locale-invariant (same technique the module uses for ``crop_*``).
+        * **No ARIA:** aria-* anchors were rejected in past reviews; none here.
+        * **Scoped (PR #124 must-fix):** the pill is matched only inside the
+          composer holding the Slate prompt box, so ``.first`` cannot grab an
+          unrelated ``span.content`` button added elsewhere in a future build.
+        """
+        sel = COMPOSER_AGENT_TOGGLE_SELECTOR
+        # Structural pill marker.
+        assert "span.content" in sel
+        # Locale-safe: no aria, no visible-text engines, no literal label.
+        assert "aria-" not in sel
+        assert ":has-text(" not in sel
+        assert ":text-is(" not in sel
+        assert "text-matches" not in sel
+        assert "Agent" not in sel and "agent" not in sel
+        # The only :text() permitted is the locale-invariant icon ligature.
+        assert sel.count(":text(") == 1
+        assert ":text('arrow_forward')" in sel
+        # Scoped to the prompt-box composer — not the bare global selector.
+        assert "data-slate-editor" in sel
+        assert sel.strip() != "button:has(span.content)"
+
+    @pytest.mark.asyncio
+    async def test_noop_when_media_panel_present(self) -> None:
+        """The crop_* media-settings trigger is mounted → media mode already, so
+        the helper returns False and never touches the toggle (common path)."""
+        page = AsyncMock()
+        page.locator = MagicMock(return_value=_agent_loc(1))  # crop trigger present
+        page.wait_for_timeout = AsyncMock()
+
+        switched = await UiAutomationTransport._exit_agent_mode(page)
+
+        assert switched is False
+        page.wait_for_timeout.assert_not_awaited()
+
+    @pytest.mark.asyncio
+    async def test_clicks_toggle_and_confirms_panel_remounts(self) -> None:
+        """Panel absent + pill present → click the pill; once the crop_* panel
+        comes back, return True (this is the Agent-mode bug being fixed)."""
+        page = AsyncMock()
+        state = {"clicked": False}
+
+        toggle = MagicMock()
+        toggle.first = toggle
+        toggle.count = AsyncMock(return_value=1)
+        toggle.click = AsyncMock(side_effect=lambda: state.__setitem__("clicked", True))
+
+        def _crop_loc() -> MagicMock:
+            loc = MagicMock()
+            loc.first = loc
+            # crop_* trigger is absent until the toggle is clicked (Agent off).
+            loc.count = AsyncMock(return_value=1 if state["clicked"] else 0)
+            return loc
+
+        def locator(sel: str) -> MagicMock:
+            return toggle if sel == COMPOSER_AGENT_TOGGLE_SELECTOR else _crop_loc()
+
+        page.locator = MagicMock(side_effect=locator)
+        page.wait_for_timeout = AsyncMock()
+
+        switched = await UiAutomationTransport._exit_agent_mode(page)
+
+        assert switched is True
+        toggle.click.assert_awaited_once()
+
+    @pytest.mark.asyncio
+    async def test_returns_false_when_panel_does_not_remount(self) -> None:
+        """Panel absent + pill present, but clicking does NOT bring the crop_*
+        trigger back → return False (no false "exited" claim) and warn, rather
+        than blindly reporting success."""
+        page = AsyncMock()
+        toggle = _agent_loc(1)
+
+        def locator(sel: str) -> MagicMock:
+            # Toggle present; crop_* trigger never appears (before OR after click).
+            return toggle if sel == COMPOSER_AGENT_TOGGLE_SELECTOR else _agent_loc(0)
+
+        page.locator = MagicMock(side_effect=locator)
+        page.wait_for_timeout = AsyncMock()
+
+        switched = await UiAutomationTransport._exit_agent_mode(page)
+
+        assert switched is False
+        toggle.click.assert_awaited_once()
+
+    @pytest.mark.asyncio
+    async def test_noop_when_no_toggle_present(self) -> None:
+        """Crop trigger absent AND no pill toggle (older UI) → clean no-op."""
+        page = AsyncMock()
+        page.locator = MagicMock(return_value=_agent_loc(0))  # nothing present
+        page.wait_for_timeout = AsyncMock()
+
+        switched = await UiAutomationTransport._exit_agent_mode(page)
+
+        assert switched is False
+        page.wait_for_timeout.assert_not_awaited()
+
+    @pytest.mark.asyncio
+    async def test_never_raises_on_probe_error(self) -> None:
+        """A DOM probe failure is swallowed (best-effort) and returns False —
+        a transient editor error must not abort generation."""
+        page = AsyncMock()
+        page.locator = MagicMock(side_effect=RuntimeError("execution context destroyed"))
+
+        switched = await UiAutomationTransport._exit_agent_mode(page)
+
+        assert switched is False
+
+    def test_scope_excludes_a_decoy_span_content_button_outside_composer(self) -> None:
+        """Structural guard for the PR #124 must-fix: the scoped selector must
+        match the Agent pill *inside the composer* and exclude a
+        ``button > span.content`` that lives elsewhere on the page (a future Flow
+        build could add one in the header/sidebar).
+
+        Playwright's ``:has()`` / ``:text()`` pseudo-classes can only be resolved
+        by a real browser (covered live by the e2e's ``count() == 1`` assert), so
+        this pins the same invariant the selector encodes against a hand-written
+        DOM using the stdlib parser — no browser, runs in CI. It confirms exactly
+        one ``span.content`` button sits within the element that holds BOTH the
+        Slate prompt box and the ``arrow_forward`` submit (the composer), while a
+        decoy in the page header is seen as outside.
+        """
+        from html.parser import HTMLParser
+
+        html = (
+            '<header><button><span class="content">Sidebar</span></button></header>'
+            '<div class="composer">'
+            '<div role="textbox" data-slate-editor="true"></div>'
+            '<button><span class="content">Agent</span></button>'
+            '<button><i class="google-symbols">arrow_forward</i></button>'
+            "</div>"
+        )
+
+        class _Counter(HTMLParser):
+            def __init__(self) -> None:
+                super().__init__()
+                self.depth = 0
+                self.composer_depth: int | None = None
+                self.in_button = 0
+                self.cur_has_span_content = False
+                self.cur_in_composer = False
+                self.pill_in_composer = 0
+                self.pill_outside = 0
+
+            def handle_starttag(self, tag: str, attrs: list[tuple[str, str | None]]) -> None:
+                a = dict(attrs)
+                self.depth += 1
+                if tag == "div" and a.get("class") == "composer":
+                    self.composer_depth = self.depth
+                if tag == "button":
+                    self.in_button += 1
+                    self.cur_has_span_content = False
+                    self.cur_in_composer = (
+                        self.composer_depth is not None and self.depth > self.composer_depth
+                    )
+                if tag == "span" and self.in_button and "content" in (a.get("class") or "").split():
+                    self.cur_has_span_content = True
+
+            def handle_endtag(self, tag: str) -> None:
+                if tag == "button" and self.in_button:
+                    if self.cur_has_span_content:
+                        if self.cur_in_composer:
+                            self.pill_in_composer += 1
+                        else:
+                            self.pill_outside += 1
+                    self.in_button -= 1
+                if tag == "div" and self.depth == self.composer_depth:
+                    self.composer_depth = None
+                self.depth -= 1
+
+        counter = _Counter()
+        counter.feed(html)
+
+        assert counter.pill_in_composer == 1, "expected one span.content pill inside the composer"
+        assert counter.pill_outside == 1, "the header decoy must be seen as outside the composer"
+        # The production selector is the scoped form that achieves this.
+        assert "data-slate-editor" in COMPOSER_AGENT_TOGGLE_SELECTOR
+        assert "arrow_forward" in COMPOSER_AGENT_TOGGLE_SELECTOR
+
+
+class TestModeSwitchExitsAgentFirst:
+    """Both mode switches must call ``_exit_agent_mode`` BEFORE probing for the
+    ``crop_*`` trigger — otherwise an Agent-mode composer (panel removed) makes
+    the trigger probe fail. The image path is exercised live by the e2e; these
+    cheap mock tests pin the call-site ordering for BOTH paths in CI (PR #124)."""
+
+    @pytest.mark.asyncio
+    async def test_switch_to_image_mode_exits_agent_first(self) -> None:
+        page = AsyncMock()
+        page.keyboard = AsyncMock()
+        order: list[str] = []
+
+        async def _exit(_p: object) -> bool:
+            order.append("exit_agent")
+            return True
+
+        async def _probe(_p: object, _label: str, _sels: object) -> MagicMock:
+            order.append("probe")
+            trigger = MagicMock()
+            trigger.click = AsyncMock()
+            return trigger
+
+        # The mode switches reference the helpers on VideoGenerationMixin
+        # directly (the base class), so patch there — patching the subclass would
+        # not intercept the base-class lookup.
+        with (
+            patch.object(VideoGenerationMixin, "_exit_agent_mode", new=_exit),
+            patch.object(VideoGenerationMixin, "_probe_selector_cascade", new=_probe),
+        ):
+            await UiAutomationTransport._switch_to_image_mode(page)
+
+        assert order and order[0] == "exit_agent", f"expected exit_agent first, got {order}"
+
+    @pytest.mark.asyncio
+    async def test_switch_to_video_mode_exits_agent_first(self) -> None:
+        page = AsyncMock()
+        order: list[str] = []
+
+        async def _exit(_p: object) -> bool:
+            order.append("exit_agent")
+            return True
+
+        async def _probe(_p: object, _label: str, _sels: object) -> MagicMock:
+            order.append("probe")
+            loc = MagicMock()
+            loc.click = AsyncMock()
+            return loc
+
+        with (
+            patch.object(VideoGenerationMixin, "_exit_agent_mode", new=_exit),
+            patch.object(VideoGenerationMixin, "_probe_selector_cascade", new=_probe),
+        ):
+            await UiAutomationTransport._switch_to_video_mode(page, out_dir=None)
+
+        assert order and order[0] == "exit_agent", f"expected exit_agent first, got {order}"

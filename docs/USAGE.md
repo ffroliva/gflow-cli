@@ -301,6 +301,13 @@ All prompts in a batch share one Flow project. The editor is opened once; each p
 > `--count INTEGER` (1–4; >1 multiplies credit cost), `--aspect [9:16|16:9]`,
 > `--profile NAME`, `--out-dir DIR` (default `tmp/`). The mp4 lands at
 > `<out-dir>/<media_id>.mp4`.
+>
+> **`i2v` is narrower (issue #125):** `omni-flash` does NOT support image-to-video
+> interpolation — Flow silently drops the start/end frames and produces a
+> text-only video — so it is **not** an accepted `--model` for `i2v`. The `i2v`
+> choices are `[veo-lite|veo-fast|veo-quality|veo-lite-lp]` and the **default is
+> `veo-lite`** (not Flow's UI default). `--duration` for `i2v` is `[4|6|8]` (10s
+> is omni-flash-only). `t2v` and `r2v` keep the full shared set above.
 
 ## `gflow video t2v`
 
@@ -679,6 +686,8 @@ shell scripts can branch on the failure mode without parsing stderr.
 | `13` | `SecurityError`       | Unsafe local profile or secret handling blocked   | Follow the error's safety guidance                         |
 | `14` | `AuthBrowserRejectedError` | Google rejected the login browser             | `gflow auth login --browser chrome`                        |
 | `16` | `DataStoreError`      | Local database cannot be opened, a migration failed, or the DB schema is newer than the installed gflow-cli | See below                                  |
+| `17` | `ModelModeIncompatibilityError` | The chosen video model can't do the requested mode (e.g. `--model omni-flash` with an `i2v` start/end frame — issue #125) | Use `--model veo-lite` (or veo-fast / veo-quality / veo-lite-lp) for `i2v` |
+| `18` | `VideoModelSelectionError` | gflow could not select the requested video model in Flow's editor for an `i2v` run (model-picker option not found) | Usually transient — retry; if it persists, Flow's model-picker UI changed (report referencing #125) |
 | `130`| SIGINT                | User-interrupted (Ctrl-C)                        | —                                                          |
 
 **Exit code 16 — data store / migration error.** Fires when:
