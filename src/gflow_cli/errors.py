@@ -4,6 +4,7 @@ from typing import Any, TypedDict
 
 __all__ = [
     "EXIT_CODE_MAP",
+    "AisandboxAuthError",
     "AuthExpiredError",
     "AuthLoginTimeoutError",
     "AuthMissingError",
