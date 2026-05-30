@@ -832,6 +832,10 @@ class UiAutomationTransport(VideoGenerationMixin):
         The dropdown is closed afterwards (via :kbd:`Escape`) so the caller's
         :meth:`_configure_generation_settings` can open it fresh.
         """
+        # New Flow UI: if the composer is in Agent mode the generation panel is
+        # absent — switch back to media mode first so the trigger probe below
+        # can find the crop_* dropdown.
+        await VideoGenerationMixin._exit_agent_mode(page)
         trigger = await VideoGenerationMixin._probe_selector_cascade(
             page,
             "mode_switch_trigger",
