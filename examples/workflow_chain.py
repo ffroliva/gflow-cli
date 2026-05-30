@@ -258,8 +258,13 @@ def main() -> None:
     )
     parser.add_argument(
         "--video-model",
-        default="omni-flash",
-        help="Video model alias for i2v (default omni-flash).",
+        default="veo-lite",
+        help=(
+            "Video model alias for i2v (default veo-lite). NOTE: omni-flash does "
+            "NOT support i2v interpolation — it silently drops the start/end "
+            "frames and produces a text-only video (gflow-cli issue #125) — so "
+            "use a veo-3.1 model here (veo-lite / veo-fast / veo-quality)."
+        ),
     )
     parser.add_argument(
         "--output-dir",
