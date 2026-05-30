@@ -7,6 +7,18 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+### Fixed
+
+- **Create-project generation failing when Flow's "Agent" composer mode is active.**
+  Flow's newer editor adds an Agent toggle next to the prompt box; when it is on,
+  the media-generation panel (the `crop_*` settings trigger, Image/Video mode
+  tablist, and count/model controls) is removed from the DOM, so the UI-automation
+  transport raised "mode-switch dropdown trigger not found". `_switch_to_image_mode`
+  and `_switch_to_video_mode` now call `_exit_agent_mode()` first, which re-mounts
+  the panel by clicking the toggle off. Detection is locale-invariant and uses no
+  UI text and no `aria-` attribute (`button:has(span.content)` plus the absence of
+  the locale-stable `crop_*` trigger), so it works in every Flow UI language.
+
 ## [0.10.0] — 2026-05-29
 
 ### Fixed

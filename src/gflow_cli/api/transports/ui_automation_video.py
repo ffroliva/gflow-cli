@@ -80,6 +80,44 @@ VIDEO_TAB_IN_MENU_SELECTORS = (
     "[role='menu'] [role='tab']:has-text('Vídeo')",
     "[role='menu'] [role='tab']:has-text('Video')",
 )
+
+# Composer "Agent" mode toggle. Flow's newer editor puts a pill toggle next to
+# the prompt box: a ``<button>`` whose only label is a ``<span class="content">``.
+# When Agent mode is on, the whole media-generation panel is REMOVED from the
+# DOM — the aspect/settings button (the locale-stable ``crop_*`` icon trigger
+# keyed on by MODE_SWITCH_TRIGGER_SELECTORS / GEN_SETTINGS_BUTTON_SELECTORS), the
+# Image/Video tablist, and the count/model controls all disappear, so
+# ``_switch_to_image_mode`` / ``_switch_to_video_mode`` raise "mode-switch
+# dropdown trigger not found". Clicking the pill returns to media mode.
+#
+# This selector is deliberately STRUCTURAL — no localized text and no ARIA:
+#  * No localized text: the pill's "Agent" label is translated in some Flow
+#    locales, so matching it by visible text would regress non-English users
+#    (issue #24: locale-agnostic selectors — a recurring source of PR pushback in
+#    this module). The only ``:text(...)`` here is ``arrow_forward``, a Material
+#    Symbols icon ligature, which is locale-invariant — the same technique the
+#    module already uses for ``crop_*`` / SUBMIT_BUTTON_SELECTORS anchors.
+#  * No ARIA: aria-* anchors have also been pushed back on in past reviews, and
+#    one is not needed here — Agent mode is detected from the *absence* of the
+#    ``crop_*`` media trigger, so the toggle only has to be located, not have its
+#    state read.
+#
+# SCOPED to the generation composer (PR #124 review must-fix): the pill is
+# matched only inside the element that holds BOTH the Slate prompt box AND the
+# ``arrow_forward`` submit button. Page-wide there is exactly one
+# ``button:has(span.content)`` today (live-verified count == 1), but ``.first``
+# on the bare global selector would silently grab the wrong element if a future
+# Flow build added another ``span.content`` button (header/sidebar) ordered
+# before the pill. Scoping to the prompt+submit composer keeps the match correct
+# regardless of unrelated additions elsewhere. The composer's own ancestor chain
+# carries no stable id/role/data-* attribute (all styled-component hashes), so
+# the prompt box and submit icon ARE the stable structural anchors. Uniqueness is
+# pinned by a structural unit test (decoy outside the composer) and asserted live
+# (count == 1) in the e2e.
+COMPOSER_AGENT_TOGGLE_SELECTOR = (
+    "div:has(div[role='textbox'][data-slate-editor='true'])"
+    ":has(button:has(i:text('arrow_forward'))) button:has(span.content)"
+)
 # Output-count + duration tabs are selected by aria-label text in
 # `_set_output_count` / `_select_video_duration` — NOT by id-suffix: the count
 # tab '-trigger-4' and the duration tab '-trigger-4' (4s) share a suffix, so an
@@ -516,9 +554,77 @@ class VideoGenerationMixin:
         return None
 
     @staticmethod
+    async def _media_panel_present(page: Page) -> bool:
+        """True if the media-generation panel is mounted.
+
+        Keyed on the locale-stable ``crop_*`` settings trigger
+        (:data:`MODE_SWITCH_TRIGGER_SELECTORS`) — the same anchor the mode
+        switches probe. Its presence is the signal that the composer is in media
+        (Image/Video) mode rather than Agent mode, which removes the panel.
+        """
+        for sel in MODE_SWITCH_TRIGGER_SELECTORS:
+            if await page.locator(sel).count() > 0:
+                return True
+        return False
+
+    @staticmethod
+    async def _exit_agent_mode(page: Page) -> bool:
+        """Ensure the composer is in media (Image/Video) mode, not Agent mode.
+
+        When Flow's composer is in "Agent" mode the media-generation panel is
+        absent (see :data:`COMPOSER_AGENT_TOGGLE_SELECTOR`), which makes
+        :meth:`_switch_to_image_mode`, :meth:`_switch_to_video_mode`, and
+        ``_configure_generation_settings`` fail to find their ``crop_*`` trigger.
+        This presses the Agent pill toggle off to re-mount the panel.
+
+        Returns ``True`` only when it actually brought the media panel back,
+        ``False`` otherwise (already in media mode, the toggle is absent on an
+        older UI, or the click did not re-mount the panel). Best-effort,
+        locale-invariant, and never raises — a DOM probe failure must not abort
+        generation.
+        """
+        try:
+            # Common case: the media panel is already mounted → media mode,
+            # nothing to do. This keeps the helper a cheap no-op on every normal
+            # generation and avoids touching the toggle unnecessarily.
+            if await VideoGenerationMixin._media_panel_present(page):
+                return False
+            # Panel absent → we are in Agent mode: click the pill (located by its
+            # structural span.content child) to turn Agent off and re-mount the
+            # panel. No ARIA state and no localized label is read — the panel
+            # absence above already established the mode, so the toggle only has
+            # to be found. Works in every Flow UI language.
+            toggle = page.locator(COMPOSER_AGENT_TOGGLE_SELECTOR).first
+            if await toggle.count() == 0:
+                return False  # toggle not present (older UI) → leave as-is
+            await toggle.click()
+            await page.wait_for_timeout(700)
+            # Defensive: confirm the click actually re-mounted the panel instead
+            # of blindly trusting it. The pill is a binary toggle, so if the
+            # panel was absent for some other reason — or a future Flow change
+            # flips the click direction — the crop_* trigger stays missing. Don't
+            # claim a false "exited"; warn and let the caller's own trigger probe
+            # fail loudly (with a screenshot) so the real cause surfaces.
+            if await VideoGenerationMixin._media_panel_present(page):
+                log.info("ui_automation_video.exited_agent_mode")
+                return True
+            log.warning(
+                "ui_automation_video.exit_agent_mode_no_panel",
+                note="clicked the composer toggle but the media panel did not re-mount",
+            )
+            return False
+        except Exception as e:  # noqa: BLE001 — best-effort, never fatal
+            log.debug("ui_automation_video.agent_toggle_probe_failed", error=str(e)[:80])
+            return False
+
+    @staticmethod
     async def _switch_to_video_mode(page: Page, *, out_dir: Path | None) -> None:
         """Open the 2-step mode dropdown and switch to Video mode. The menu
         stays open afterward so the caller can also set aspect + count."""
+        # New Flow UI: if the composer is in Agent mode the generation panel is
+        # absent — return to media mode first so the trigger probe can find the
+        # crop_* dropdown.
+        await VideoGenerationMixin._exit_agent_mode(page)
         trigger = await VideoGenerationMixin._probe_selector_cascade(
             page,
             "mode_switch_trigger",
