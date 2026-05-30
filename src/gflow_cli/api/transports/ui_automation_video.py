@@ -149,18 +149,21 @@ VIDEO_ASPECT_TAB_SELECTORS: dict[Aspect, tuple[str, ...]] = {
 # Model picker (SOT flow-editor-map.json). The trigger is the only
 # button[aria-haspopup='menu'] carrying an 'arrow_drop_down' icon; its label is
 # the currently-selected model. Options are role='menuitem' matched by product
-# name (NOT localized). 'Veo 3.1 - Lite' is a prefix of 'Veo 3.1 - Lite [Lower
-# Priority]', so it needs an EXACT text match (the menuitem text is the model
-# name prefixed by the 'volume_up' icon ligature); the others match by has-text.
+# name (branded identifiers not localised by Flow). Cascade discipline mirrors
+# IMAGE_MODEL_OPTION_SELECTORS: Tier 1 (structural/ARIA, reserved for future
+# data-* anchors) before Tier 2 (branded product name via has-text / text-is).
+# 'Veo 3.1 - Lite' is a prefix of 'Veo 3.1 - Lite [Lower Priority]', so it
+# needs an EXACT text match (menuitem text is the model name prefixed by the
+# 'volume_up' icon ligature); the others match by has-text.
 MODEL_PICKER_TRIGGER = (
     "button[aria-haspopup='menu']:has(i.google-symbols:text-is('arrow_drop_down'))"
 )
-VIDEO_MODEL_OPTION_SELECTORS: dict[VideoModel, str] = {
-    VideoModel.OMNI_FLASH: "[role='menuitem']:has-text('Omni Flash')",
-    VideoModel.VEO_3_1_FAST: "[role='menuitem']:has-text('Veo 3.1 - Fast')",
-    VideoModel.VEO_3_1_QUALITY: "[role='menuitem']:has-text('Veo 3.1 - Quality')",
-    VideoModel.VEO_3_1_LITE: "[role='menuitem']:text-is('volume_upVeo 3.1 - Lite')",
-    VideoModel.VEO_3_1_LITE_LOWER_PRIORITY: "[role='menuitem']:has-text('[Lower Priority]')",
+VIDEO_MODEL_OPTION_SELECTORS: dict[VideoModel, tuple[str, ...]] = {
+    VideoModel.OMNI_FLASH: ("[role='menuitem']:has-text('Omni Flash')",),
+    VideoModel.VEO_3_1_FAST: ("[role='menuitem']:has-text('Veo 3.1 - Fast')",),
+    VideoModel.VEO_3_1_QUALITY: ("[role='menuitem']:has-text('Veo 3.1 - Quality')",),
+    VideoModel.VEO_3_1_LITE: ("[role='menuitem']:text-is('volume_upVeo 3.1 - Lite')",),
+    VideoModel.VEO_3_1_LITE_LOWER_PRIORITY: ("[role='menuitem']:has-text('[Lower Priority]')",),
 }
 
 # Image-attach for I2V (SOT flow-editor-map.json + live verification).
@@ -698,8 +701,8 @@ class VideoGenerationMixin:
         """Open the model picker and select `model`. Non-fatal on miss (Flow's
         default model applies) but logged at WARNING — picking the wrong model
         changes credit cost, so a miss is a real signal, not noise."""
-        option_sel = VIDEO_MODEL_OPTION_SELECTORS.get(model)
-        if option_sel is None:
+        option_sels = VIDEO_MODEL_OPTION_SELECTORS.get(model)
+        if not option_sels:
             log.warning("ui_automation_video.model_unknown", model=model.value)
             return
         trigger = await VideoGenerationMixin._probe_selector_cascade(
@@ -719,7 +722,7 @@ class VideoGenerationMixin:
         option = await VideoGenerationMixin._probe_selector_cascade(
             page,
             "model_option",
-            (option_sel,),
+            option_sels,
         )
         if option is None:
             log.warning(

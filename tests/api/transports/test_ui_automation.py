@@ -2076,21 +2076,155 @@ class TestSelectorLocaleInvariance:
             )
 
     def test_launch_args_no_lang_en_us(self) -> None:
-        """--lang=en-US must not appear in UiAutomationTransport launch args.
+        """--lang=en-US must not appear in UiAutomationTransport executable code.
 
-        IMAGE_MODEL_OPTION_SELECTORS uses locale-stable product names; FLOW_URL's
-        ``?hl=en`` parameter locks the Flow SPA to English for the session, making
-        --lang=en-US redundant (issue #94 / issue #24 Phase 5).
+        Filters comment lines so future documentation comments (e.g. "# Note:
+        --lang=en-US was removed in PR #127") don't trip this guard.
+        IMAGE_MODEL_OPTION_SELECTORS uses locale-stable product names; locale is
+        controlled by the ``locale=`` Playwright kwarg (issue #94 / issue #24 Phase 5).
         """
         import inspect
 
         from gflow_cli.api.transports import ui_automation
 
-        source = inspect.getsource(ui_automation)
-        assert "--lang=en-US" not in source, (
-            "--lang=en-US was re-introduced into the launch args; "
+        non_comment_lines = [
+            line
+            for line in inspect.getsource(ui_automation).splitlines()
+            if not line.lstrip().startswith("#")
+        ]
+        assert "--lang=en-US" not in "\n".join(non_comment_lines), (
+            "--lang=en-US was re-introduced into executable code; "
             "IMAGE_MODEL_OPTION_SELECTORS must not require it (issue #94)"
         )
+
+
+def _make_model_page_mock(
+    *,
+    trigger_visible: bool = True,
+    selector_side_effects: list[list[Exception | None]] | None = None,
+) -> MagicMock:
+    """Build a page mock for _select_image_model tests.
+
+    selector_side_effects: per-call list of exceptions (or None for success)
+    that page.locator(...).first.wait_for raises. Index 0 = first selector tried.
+    """
+    page = MagicMock()
+    trigger_loc = MagicMock()
+    trigger_loc.first = trigger_loc
+    trigger_loc.wait_for = AsyncMock(
+        side_effect=None if trigger_visible else Exception("trigger not found")
+    )
+    trigger_loc.click = AsyncMock()
+
+    effects = selector_side_effects or [[None]]
+    call_index = [0]
+
+    def _locator(sel: str) -> MagicMock:
+        loc = MagicMock()
+        loc.first = loc
+        idx = call_index[0]
+        call_index[0] += 1
+        effect = effects[idx][0] if idx < len(effects) else None
+        loc.wait_for = AsyncMock(side_effect=effect)
+        loc.click = AsyncMock()
+        return loc
+
+    def _side_effect(sel: str) -> MagicMock:
+        if "arrow_drop_down" in sel:
+            return trigger_loc
+        return _locator(sel)
+
+    page.locator = MagicMock(side_effect=_side_effect)
+    page.wait_for_timeout = AsyncMock()
+    page.keyboard = MagicMock()
+    page.keyboard.press = AsyncMock()
+    return page
+
+
+class TestSelectImageModel:
+    """Unit tests for UiAutomationTransport._select_image_model cascade logic."""
+
+    @pytest.mark.asyncio
+    async def test_happy_path_first_selector_wins(self) -> None:
+        """First selector succeeds → model selected, log.info emitted, no Escape."""
+        page = _make_model_page_mock(selector_side_effects=[[None]])
+        with patch("gflow_cli.api.transports.ui_automation.log") as mock_log:
+            await UiAutomationTransport._select_image_model(page, Model.NARWHAL)
+        mock_log.info.assert_called_once()
+        call_kwargs = mock_log.info.call_args[0][0]
+        assert call_kwargs == "ui_automation.image_model_selected"
+        page.keyboard.press.assert_not_called()
+
+    @pytest.mark.asyncio
+    async def test_cascade_fallthrough_second_selector_wins(self) -> None:
+        """First selector times out, second succeeds → second selector used."""
+        from gflow_cli.api.transports.ui_automation import IMAGE_MODEL_OPTION_SELECTORS
+
+        page = MagicMock()
+        trigger_loc = MagicMock()
+        trigger_loc.first = trigger_loc
+        trigger_loc.wait_for = AsyncMock()
+        trigger_loc.click = AsyncMock()
+
+        call_count = [0]
+
+        def _locator(sel: str) -> MagicMock:
+            loc = MagicMock()
+            loc.first = loc
+            n = call_count[0]
+            call_count[0] += 1
+            loc.wait_for = AsyncMock(side_effect=Exception("timeout") if n == 0 else None)
+            loc.click = AsyncMock()
+            return loc
+
+        page.locator = MagicMock(
+            side_effect=lambda sel: trigger_loc if "arrow_drop_down" in sel else _locator(sel)
+        )
+        page.wait_for_timeout = AsyncMock()
+        page.keyboard = MagicMock()
+        page.keyboard.press = AsyncMock()
+
+        # Patch a model to have two selectors so the fallthrough is exercised.
+        two_sel = ("[role='menuitem']:has-text('MISS')", "[role='menuitem']:has-text('Imagen 4')")
+        patched = {**IMAGE_MODEL_OPTION_SELECTORS, Model.IMAGEN_3_5: two_sel}
+        with (
+            patch(
+                "gflow_cli.api.transports.ui_automation.IMAGE_MODEL_OPTION_SELECTORS",
+                patched,
+            ),
+            patch("gflow_cli.api.transports.ui_automation.log") as mock_log,
+        ):
+            await UiAutomationTransport._select_image_model(page, Model.IMAGEN_3_5)
+
+        mock_log.debug.assert_called_once()
+        mock_log.info.assert_called_once()
+        page.keyboard.press.assert_not_called()
+
+    @pytest.mark.asyncio
+    async def test_all_selectors_fail_logs_warning_and_presses_escape(self) -> None:
+        """All selectors raise → RuntimeError caught, warning logged, Escape pressed."""
+        page = _make_model_page_mock(selector_side_effects=[[Exception("timeout")]])
+        with patch("gflow_cli.api.transports.ui_automation.log") as mock_log:
+            await UiAutomationTransport._select_image_model(page, Model.GEM_PIX_2)
+        mock_log.warning.assert_called()
+        warned_event = mock_log.warning.call_args[0][0]
+        assert warned_event == "ui_automation.image_model_not_set"
+        page.keyboard.press.assert_called_once_with("Escape")
+
+    @pytest.mark.asyncio
+    async def test_unknown_model_logs_warning_and_returns(self) -> None:
+        """Model not in dict → early return with image_model_unknown warning."""
+        page = MagicMock()
+        page.wait_for_timeout = AsyncMock()
+        with patch("gflow_cli.api.transports.ui_automation.log") as mock_log:
+            with patch(
+                "gflow_cli.api.transports.ui_automation.IMAGE_MODEL_OPTION_SELECTORS",
+                {},
+            ):
+                await UiAutomationTransport._select_image_model(page, Model.NARWHAL)
+        mock_log.warning.assert_called_once()
+        assert mock_log.warning.call_args[0][0] == "ui_automation.image_model_unknown"
+        page.locator.assert_not_called()
 
 
 def _agent_loc(count: int) -> MagicMock:
