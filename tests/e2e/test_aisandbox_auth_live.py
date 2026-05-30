@@ -5,9 +5,10 @@ the ``Authorization: SAPISIDHASH`` header attached by ``_post_json`` it must
 now succeed. **Credit-free** — uploading an image asset spends no generation
 credit. This is the empirical confirmation the redacted HARs could not give.
 
-Opt-in: ``-m e2e`` (or ``-m e2e_auth``) + a verified profile via the
-``e2e_profile_dir`` fixture (``GFLOW_CLI_E2E_PROFILE``). ``asyncio_mode=auto``
-is set in pyproject.toml, so no ``@pytest.mark.asyncio`` is needed.
+Opt-in: ``-m e2e_auth`` + ``GFLOW_CLI_E2E_PROFILE=<logged-in profile>``. The
+test opts out of the autouse ``_isolate_settings`` home-redirect so the REAL
+profile resolves (keeping a throwaway DB), then resolves the profile inline.
+``asyncio_mode=auto`` is set in pyproject.toml, so no ``@pytest.mark.asyncio``.
 
 If this still 401s: the SAPISIDHASH origin or the cookie host filter is wrong.
 Re-run with ``GFLOW_CLI_LOG_REQUEST_HEADERS=1`` and diff the (redacted-safe)
@@ -18,6 +19,7 @@ Do NOT proceed to L1 until this is green.
 from __future__ import annotations
 
 import base64
+import os
 from pathlib import Path
 
 import pytest
@@ -35,14 +37,32 @@ _PNG_1X1 = base64.b64decode(
 
 
 async def test_rest_upload_image_authenticates_after_sapisidhash(
-    e2e_profile_dir: Path,
+    monkeypatch: pytest.MonkeyPatch,
     tmp_path: Path,
 ) -> None:
     """Issue #15: REST uploadImage previously 401'd; with SAPISIDHASH it must 200."""
+    # Opt out of the autouse ``_isolate_settings`` home-redirect so the REAL
+    # profile (carrying the live Flow session) resolves — but keep a throwaway
+    # DB so we never pollute the real catalog. See the real-env-opt-out trap.
+    from gflow_cli.config import reset_settings
+
+    monkeypatch.delenv("GFLOW_CLI_HOME", raising=False)
+    monkeypatch.setenv("GFLOW_CLI_DB_PATH", str(tmp_path / "e2e.db"))
+    reset_settings()
+
+    name = os.environ.get("GFLOW_CLI_E2E_PROFILE", "")
+    if not name:
+        pytest.skip("set GFLOW_CLI_E2E_PROFILE to a logged-in profile, then -m e2e_auth")
+    from gflow_cli.auth import profile_dir as _resolve_profile_dir
+
+    profile = _resolve_profile_dir(name)
+    if not profile.exists():
+        pytest.skip(f"profile not found: {profile} — run `gflow auth login --profile {name}`")
+
     img = tmp_path / "smoke.png"
     img.write_bytes(_PNG_1X1)
     async with FlowApiClient(
-        profile_dir=e2e_profile_dir,
+        profile_dir=profile,
         transport="evaluate_fetch",
     ) as client:
         project = await client.create_project(title="L0 SAPISIDHASH smoke")
