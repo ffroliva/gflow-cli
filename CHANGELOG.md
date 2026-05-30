@@ -30,6 +30,20 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   a defense-in-depth transport guard raises `ModelModeIncompatibilityError`
   (exit code 17) for direct `FlowApiClient` callers that bypass the CLI.
 
+- **`gflow video i2v` could still route to T2V even with a valid Veo model,
+  because the model-picker option `Veo 3.1 - Lite` was never selected (issue
+  #125, second path).** The picker selector was an exact-match
+  (`:text-is('volume_upVeo 3.1 - Lite')`) that hardcoded a Material Symbols
+  icon-ligature prefix; when it missed, `_select_video_model` warned and
+  continued, leaving Flow on `omni-flash` → the frames were dropped to T2V.
+  Fixes: (1) the selector is now a robust substring match
+  (`:has-text('Veo 3.1 - Lite'):not(:has-text('[Lower Priority]'))`); (2) for
+  i2v, a model-select miss is now FATAL — `_select_video_model(required=True)`
+  retries the picker then raises `VideoModelSelectionError` (exit code 18)
+  *before* any frame attach or submit, spending no credit; (3) a post-submit
+  backstop raises `WireFormatError` if an i2v request is still observed routing
+  to the T2V endpoint, so a "successful" T2V is never reported as i2v.
+
 - **Create-project generation failing when Flow's "Agent" composer mode is active.**
   Flow's newer editor adds an Agent toggle next to the prompt box; when it is on,
   the media-generation panel (the `crop_*` settings trigger, Image/Video mode

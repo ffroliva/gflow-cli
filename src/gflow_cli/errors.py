@@ -22,6 +22,7 @@ __all__ = [
     "RateLimitError",
     "SecurityError",
     "TransportTimeoutError",
+    "VideoModelSelectionError",
     "WafRejectionError",
     "WireFormatError",
 ]
@@ -287,6 +288,31 @@ class ModelModeIncompatibilityError(ConfigurationError):
     )
 
 
+class VideoModelSelectionError(ConfigurationError):
+    """Raised when the requested video model could not be selected in Flow's UI
+    for an i2v generation (issue #125).
+
+    The model picker option was not found (e.g. a selector drift / render race).
+    For i2v this is FATAL rather than a silent fallback: leaving Flow on its
+    default model (``omni-flash``) would drop the start/end frames and route to
+    T2V, charging a credit for a text-only video. Raised pre-submit by the
+    transport, so no credit is spent.
+
+    Distinct exit code 18 so scripted callers can branch on "the model UI failed"
+    (a retryable transport/selector issue) versus exit 17 "I picked an
+    incompatible model" (a request mistake).
+    """
+
+    problem_type = "https://gflow-cli.dev/errors/video-model-selection"
+    title = "Could not select the requested video model"
+    _default_remediation = (
+        "gflow could not select the requested model in Flow's editor (the model "
+        "picker option was not found). This is usually transient — retry the "
+        "command. If it persists, Flow's model-picker UI may have changed; please "
+        "report it referencing issue #125."
+    )
+
+
 class SecurityError(GFlowError):
     """Raised when a security boundary is violated (e.g. profile_dir outside HOME)."""
 
@@ -462,9 +488,11 @@ EXIT_CODE_MAP: dict[type[GFlowError], int] = {
     AuthMissingError: 8,
     TransportTimeoutError: 9,
     WafRejectionError: 10,
-    # ModelModeIncompatibilityError BEFORE ConfigurationError (subclass) so the
-    # isinstance walk lands on 17, not 11. Per [[exit-code-map-ordering-invariant-test-pitfall]].
+    # ModelModeIncompatibilityError + VideoModelSelectionError BEFORE
+    # ConfigurationError (their parent) so the isinstance walk lands on 17/18,
+    # not 11. Per [[exit-code-map-ordering-invariant-test-pitfall]].
     ModelModeIncompatibilityError: 17,
+    VideoModelSelectionError: 18,
     ConfigurationError: 11,
     AuthExpiredError: 3,
     RateLimitError: 4,

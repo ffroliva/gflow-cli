@@ -20,6 +20,7 @@ from gflow_cli.errors import (
     ProblemDetails,
     RateLimitError,
     TransportTimeoutError,
+    VideoModelSelectionError,
     WafRejectionError,
     WireFormatError,
 )
@@ -168,6 +169,15 @@ def test_model_mode_incompatibility_error_exit_code_17():
     assert isinstance(err, ConfigurationError)
     assert _exit_code_for(err) == 17
     assert EXIT_CODE_MAP[ModelModeIncompatibilityError] == 17
+
+
+def test_video_model_selection_error_exit_code_18():
+    """Issue #125: model-select UI failure for i2v gets exit 18 (transport
+    reliability), distinct from 17 (incompatible model) and 11 (config)."""
+    err = VideoModelSelectionError(detail="could not select veo-lite (issue #125)")
+    assert isinstance(err, ConfigurationError)
+    assert _exit_code_for(err) == 18
+    assert EXIT_CODE_MAP[VideoModelSelectionError] == 18
 
 
 def test_exit_code_map_ordering_invariant():
