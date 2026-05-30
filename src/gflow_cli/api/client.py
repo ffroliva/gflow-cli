@@ -422,9 +422,7 @@ class FlowApiClient:
         """
         sapisid = await self._ensure_sapisid()
         ts = int(time.time())
-        hash_value = compute_sapisidhash(
-            timestamp=ts, sapisid=sapisid, origin=_SAPISID_ORIGIN
-        )
+        hash_value = compute_sapisidhash(timestamp=ts, sapisid=sapisid, origin=_SAPISID_ORIGIN)
         return {
             "authorization": f"SAPISIDHASH {hash_value}",
             "origin": _SAPISID_ORIGIN,
