@@ -36,7 +36,12 @@ from gflow_cli.api.video import (
     operation_name_from_generate_response,
     parse_video_status,
 )
-from gflow_cli.errors import AuthExpiredError, WafRejectionError, WireFormatError
+from gflow_cli.errors import (
+    AuthExpiredError,
+    ModelModeIncompatibilityError,
+    WafRejectionError,
+    WireFormatError,
+)
 from gflow_cli.storage import AnyPath, storage_path, write_asset_async
 
 if TYPE_CHECKING:
@@ -1151,6 +1156,35 @@ class VideoGenerationMixin:
     ) -> VideoResult:
         """Serialized body of `generate_video` — runs under `self._generate_lock`
         (shared with `generate_images`: one Page, one DOM)."""
+        # Defense-in-depth model/mode guard (issue #125). Pure DTO check — runs
+        # BEFORE any browser interaction so a bad combination fails instantly
+        # with no DOM state mutated and no credit risk. The CLI Click Choice
+        # already blocks omni-flash for i2v, but direct FlowApiClient callers
+        # (e.g. gflow-cli-remotion) bypass Click; this is their safety net.
+        # omni-flash silently drops i2v frame refs at submit and routes to the
+        # T2V endpoint — see VideoModel.supports_i2v_interpolation.
+        if (
+            request.mode is Mode.I2V
+            and (request.start_image is not None or request.end_image is not None)
+            and request.model is not None
+            and not request.model.supports_i2v_interpolation()
+        ):
+            log.error(
+                "ui_automation_video.model_mode_rejected",
+                model=request.model.value,
+                mode=request.mode.name,
+                has_start_image=request.start_image is not None,
+                has_end_image=request.end_image is not None,
+                issue_ref="#125",
+            )
+            raise ModelModeIncompatibilityError(
+                detail=(
+                    f"{request.model.value!r} does not support image-to-video "
+                    f"interpolation; Flow silently drops the start/end frames "
+                    f"and produces a text-only video (issue #125)."
+                ),
+            )
+
         page: Page = self._page  # type: ignore[assignment]  # guarded in generate_video
 
         await self._enter_editor(page, out_dir)

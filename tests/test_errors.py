@@ -15,6 +15,7 @@ from gflow_cli.errors import (
     ContentPolicyError,
     FlowApiError,
     GFlowError,
+    ModelModeIncompatibilityError,
     NetworkError,
     ProblemDetails,
     RateLimitError,
@@ -148,10 +149,25 @@ def test_exit_code_map_synthetic_subclass_inherits_parent_code():
         (ContentPolicyError, 5),
         (NetworkError, 6),
         (WireFormatError, 7),
+        (ModelModeIncompatibilityError, 17),
     ],
 )
 def test_exit_code_map_per_class(exc_cls, expected_code):
     assert _exit_code_for(exc_cls(detail="x")) == expected_code
+
+
+def test_model_mode_incompatibility_error_exit_code_17():
+    """Issue #125: distinct exit code 17, NOT its parent ConfigurationError's 11.
+
+    The isinstance walk must hit ModelModeIncompatibilityError (registered
+    BEFORE ConfigurationError in EXIT_CODE_MAP) before falling through to the
+    parent — otherwise scripted callers can't branch on "incompatible
+    model/mode" vs a generic configuration error.
+    """
+    err = ModelModeIncompatibilityError(detail="omni-flash + i2v invalid")
+    assert isinstance(err, ConfigurationError)
+    assert _exit_code_for(err) == 17
+    assert EXIT_CODE_MAP[ModelModeIncompatibilityError] == 17
 
 
 def test_exit_code_map_ordering_invariant():
