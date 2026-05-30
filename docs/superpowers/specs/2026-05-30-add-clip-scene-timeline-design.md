@@ -1,7 +1,9 @@
 # Add Clip / Scenes Timeline — Design Spec
 
-> Status: **approved (design)** · Date: 2026-05-30 · Author: brainstorming session
-> Source evidence: `C:\Users\ffrol\Downloads\labs.google13.har` (Extend/interpolation), `labs.google15.har` (full Add Clip + crop)
+> Status: **approved (design), hardened by /gflow:predict (CAUTION 5/10) + /gflow:scenario** · Date: 2026-05-30 · Author: brainstorming session
+> Source evidence: `labs.google13.har` (Extend/interpolation), `labs.google15.har` (full Add Clip + crop), `labs.google16.har` (video upload)
+>
+> ⚠️ **Read §8 first.** The naive "all REST via `page.request`" premise is **wrong for `aisandbox-pa`**: those POSTs 401 without a SAPISIDHASH header (Issue #15). The work is gated on an **L0** auth fix — see §6 (roadmap) and §8 (analysis).
 
 ## 1. Goal
 
@@ -21,7 +23,7 @@ nav tab. A scene holds an ordered list of `sceneWorkflows` (clips). Two API surf
 - `videoFx.updateVideoOffset` → `{json:{mediaId,startOffset,endOffset}}` — **secondary/redundant** (stayed constant `0–8s` while the real trim moved). Skipped in v1; parity-optional backlog.
 - `media.getMediaUrlRedirect?name={mediaId}` → signed CDN URL (download/read-back only)
 
-**aisandbox** `aisandbox-pa.googleapis.com/v1/flow/…` (Bearer, `content-type: text/plain`, **no recaptcha, no credits**):
+**aisandbox** `aisandbox-pa.googleapis.com/v1/flow/…` (`content-type: text/plain`, **no recaptcha, no credits**, but **requires `Authorization: SAPISIDHASH` — see §8/L0; `page.request` 401s without it**):
 - `PATCH /v1/flowWorkflows/{workflowId}` — **commit**: `{workflow:{name,projectId,metadata:{primaryMediaId}},updateMask:"metadata.primaryMediaId"}`. Required before a workflow is placeable.
 - `POST /v1/flow/projects/{projectId}/scenes` → `{workflowIds:[...]}` (ordered; **repeat an id to duplicate a clip**) → `scene{sceneId, sceneWorkflows[]}`
 - `POST /v1/flow/scene/sceneWorkflows:update` → `{sceneId,projectId,sceneWorkflows:[{sceneId,workflow:{name:instanceId},sceneWorkflowMetadata:{startTime,endTime,position,totalDuration}}]}`
@@ -65,7 +67,16 @@ gflow scene show     --scene <sid>                              # read-back (ord
 ## 4. Architecture
 
 All additive; mirrors existing `client.py` patterns (`_post_json`, `_patch_json`, `_get`,
-`create_project`, `upload_image`, `archive_workflow`).
+`create_project`, `upload_image`).
+
+> **Transport binding & auth split (load-bearing).** REST helpers call `page.request.post/patch`
+> on a checked-out *authenticated browser Page* — so calls ride the logged-in Flow session
+> (cookies). BUT: **`labs.google` BFF** calls authenticate on cookies alone (`create_project`
+> proves this); **`aisandbox-pa` POSTs return 401** without an `Authorization: SAPISIDHASH`
+> header `_post_json` does not yet send (Issue #15; `ui_automation_video.py:9`). `archive_workflow`
+> is *defined but never called* — unproven, do **not** treat it as proof the pattern works on
+> aisandbox. Therefore `commit_workflow`/`create_scene`/`update_scene_workflows` (all aisandbox)
+> are **gated on L0** (§6). Video upload (L2) is on the BFF → likely works without SAPISIDHASH.
 
 **New module `api/scene.py`** — domain models (frozen dataclasses):
 - `SceneWorkflowMetadata(position: int, start_time: float, end_time: float, total_duration: float)`
@@ -75,7 +86,7 @@ All additive; mirrors existing `client.py` patterns (`_post_json`, `_patch_json`
   `from_create_response()` / `from_get_response()`.
 
 **New `client.py` methods** (no recaptcha, no credits):
-- `commit_workflow(workflow_id, project_id, primary_media_id)` → PATCH (twin of `archive_workflow`)
+- `commit_workflow(workflow_id, project_id, primary_media_id)` → PATCH (same shape as `archive_workflow`, different `updateMask`; **needs L0 SAPISIDHASH**)
 - `create_scene(project_id, workflow_ids)` → POST `/scenes` → `Scene`
 - `update_scene_workflows(scene_id, project_id, workflows)` → POST `sceneWorkflows:update`
 - `get_scene_workflows(scene_id)` → GET → `Scene`
@@ -112,13 +123,35 @@ recaptcha and spend nothing — only `batchAsyncGenerate*` costs).
 > (HAR only showed `uploadImage`). If absent, the e2e reuses an existing `workflowId` — equally
 > credit-free.
 
-## 6. Scope
+## 6. Scope — layered roadmap (re-sequenced after §8 analyses)
 
-**In:** create scene; ordering; per-clip trim; commit step; read-back; `gflow scene` group.
+- **L0 — GATING: wire SAPISIDHASH into `_post_json`/`_patch_json` for `aisandbox-pa` routes
+  (Issue #15).** Without it, every scene/commit call 401s. Scaffolding exists
+  (`api/transports/experimental/sapisidhash.py`, currently unwired). Complete Issue #15's 3
+  investigation gates first. This is the real first ship — it also fixes the standing i2v
+  upload 401. **Not optional.**
+- **L1 — `gflow scene` compose** (this spec §3–§5): create scene, ordering, per-clip trim,
+  commit, read-back. Credit-free once L0 lands.
+- **L2 — `gflow video upload`** (BFF `upload-video`, §5 research item resolved): 2-phase resumable
+  upload → `workflowServerId` directly placeable in a scene. Lower-risk than L1 (BFF auth proven).
+  Makes L1's e2e self-contained.
+- **L3 — backlog:** Extend (`batchAsyncGenerateVideoStartAndEndImage` + `veo_3_1_interpolation_lite`);
+  `updateVideoOffset` parity; scene edit/remove-clip/reorder; local ffmpeg stitch.
 
-**Backlog (out):** Extend (interpolation generation, `batchAsyncGenerateVideoStartAndEndImage` +
-`veo_3_1_interpolation_lite`, start+end keyframes); `updateVideoOffset` parity; scene
-edit/remove-clip/reorder; local ffmpeg stitch; library video upload (unless needed for e2e).
+### Cross-cutting must-haves (from §8 scenario — apply across L1/L2)
+- **Persistence = additive migration `0002`** (scene/timeline tables; current schema has no scene
+  tables) + a **non-blocking recorder** (a `DataStoreError` must never abort a free scene op —
+  warn + return 0). Store `projectId/sceneId/workflowId/mediaId/dimensions/trims/prompt/source`
+  for replay/retrieval (resolve bytes via `getMediaUrlRedirect?name={mediaId}`).
+- **Resource scope, explicit:** scenes + uploads are **project-bound** (`projectId` in path /
+  `x-upload-project-id`); media is **globally addressable** by `mediaId` (signed CDN URL). Surface
+  the distinction to the user; don't leave it implicit.
+- **Secret hygiene:** never log SAPISIDHASH / SAPISID / `Authorization`; `show_locals=False` on new
+  error renderers; redact in `WireFormatError` discovery payloads.
+- **SSRF allowlist** on replay/download host (`flow-content.google` / `*.googleapis.com`).
+- **Validate before network:** trim ranges (`0 ≤ start < end ≤ totalDuration`); upload file
+  magic-bytes + size cap (mirror `upload_image`). Map `aisandbox` 401 to a **distinct** error in
+  `EXIT_CODE_MAP` (not bare `AuthExpiredError`).
 
 ## 7. Decision rationale — why `gflow scene`, not `video add-clip`
 
@@ -132,3 +165,19 @@ edit/remove-clip/reorder; local ffmpeg stitch; library video upload (unless need
 
 The ergonomic "add-clip" verb is preserved as a subcommand of `scene` (and optional `video`
 alias) — correct noun, intuitive verb.
+
+## 8. Pre-implementation analyses (2026-05-30)
+
+**`/gflow:predict` → CAUTION (5/10).** Architecture fits the modular monolith and credit-free is
+real, but the proposal's "all REST via `page.request`, works like `archive_workflow`" premise is
+**false for `aisandbox-pa`** (401 / missing SAPISIDHASH — Issue #15, `ui_automation_video.py:9`,
+unwired `archive_workflow`). L1 sits entirely on aisandbox → gated on L0. Counter-intuitively L2
+(BFF) is lower-risk. Required mitigations: L0 SAPISIDHASH first; credit-free auth spike
+(`create_scene` → 200); additive migration + non-blocking recorder; upload validation + distinct
+401 error.
+
+**`/gflow:scenario` → must-cover (Critical/High):** aisandbox 401 path + distinct error mapping;
+secret redaction; `0002` migration + newer-schema `DataStoreError` guard; recorder never aborts a
+free op; `WireFormatError` (not crash) on missing `sceneId`/`workflowServerId`; SSRF allowlist on
+replay; trim-range + upload file-type/size validation. Skipped dimension worth noting: **D3
+selector drift is N/A — this is REST-only, no DOM** (a durability win).
