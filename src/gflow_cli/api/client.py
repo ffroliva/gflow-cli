@@ -419,7 +419,7 @@ class FlowApiClient:
             raise AuthMissingError(msg)
         resp = await ctx.request.get(_SESSION_API_URL)
         try:
-            data = json.loads(await resp.text())
+            parsed = json.loads(await resp.text())
         except json.JSONDecodeError as exc:
             raise AisandboxAuthError(
                 detail="non-JSON /auth/session response",
@@ -427,7 +427,8 @@ class FlowApiClient:
                 instance=_make_instance(),
                 route="auth/session",
             ) from exc
-        token = data.get("access_token") if isinstance(data, dict) else None
+        data = cast("dict[str, Any]", parsed) if isinstance(parsed, dict) else {}
+        token = data.get("access_token")
         if not token:
             raise AisandboxAuthError(
                 detail="no access_token in /fx/api/auth/session (session expired?)",
