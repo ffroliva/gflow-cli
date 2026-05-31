@@ -7,6 +7,21 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+### Added
+
+- **`gflow scene` command group (Add Clip / Scenes).** Compose ordered,
+  trimmable video clips into a Flow **Scene** over the credit-free aisandbox
+  REST surface (no reCAPTCHA, no credits):
+  - `gflow scene create --project <pid> <workflowId>[:<start>-<end>] [...]` —
+    compose a scene from one or more existing clips (repeat an id to duplicate;
+    optional per-clip trim in seconds).
+  - `gflow scene show --scene <sid> --project <pid>` — read back a scene's clip
+    order and trims.
+
+  Scene compositions are recorded locally (SQLite migration `0003`). The
+  append-to-existing-scene verb (`add-clip`) is deferred — see the project
+  backlog.
+
 ## [0.11.0] — 2026-05-31
 
 ### Changed
