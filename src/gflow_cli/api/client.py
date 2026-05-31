@@ -526,9 +526,7 @@ class FlowApiClient:
             finally:
                 self._checkin_page(page)
 
-        resp = await self._run_with_aisandbox_retry(
-            attempt, route=route, is_aisandbox=is_aisandbox
-        )
+        resp = await self._run_with_aisandbox_retry(attempt, route=route, is_aisandbox=is_aisandbox)
         text = await resp.text()
         _raise_for_non_retryable(resp, text, route=route)
         try:
@@ -570,9 +568,7 @@ class FlowApiClient:
             finally:
                 self._checkin_page(page)
 
-        resp = await self._run_with_aisandbox_retry(
-            attempt, route=route, is_aisandbox=is_aisandbox
-        )
+        resp = await self._run_with_aisandbox_retry(attempt, route=route, is_aisandbox=is_aisandbox)
         text = await resp.text()
         _raise_for_non_retryable(resp, text, route=route)
         try:
@@ -605,9 +601,7 @@ class FlowApiClient:
             finally:
                 self._checkin_page(page)
 
-        resp = await self._run_with_aisandbox_retry(
-            attempt, route=route, is_aisandbox=is_aisandbox
-        )
+        resp = await self._run_with_aisandbox_retry(attempt, route=route, is_aisandbox=is_aisandbox)
         text = await resp.text()
         _raise_for_non_retryable(resp, text, route=route)
         try:

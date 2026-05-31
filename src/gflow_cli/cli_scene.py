@@ -1,4 +1,5 @@
 """`gflow scene` — compose Flow Scenes (Add Clip). Credit-free REST."""
+
 from __future__ import annotations
 
 from dataclasses import dataclass
@@ -110,8 +111,7 @@ def _render(scene_obj: Scene) -> None:
             f"(of {m.total_duration:g}s)"
         )
     console.print(
-        f"[dim]Composed duration:[/dim] {composed:g}s  "
-        f"[dim]Clips:[/dim] {len(scene_obj.workflows)}"
+        f"[dim]Composed duration:[/dim] {composed:g}s  [dim]Clips:[/dim] {len(scene_obj.workflows)}"
     )
 
 
@@ -171,9 +171,7 @@ async def _run_create(
                     error=str(exc),
                     scene_id=scene_obj.scene_id,
                 )
-                console.print(
-                    f"[yellow]Scene created but not recorded locally:[/yellow] {exc}"
-                )
+                console.print(f"[yellow]Scene created but not recorded locally:[/yellow] {exc}")
     finally:
         recorder.close()
 
