@@ -25,7 +25,7 @@ These are non-negotiable. They override default agent behavior where conflicts e
 
 ## Routing rules
 
-- **Starting a feature?** Run `/gflow:plan` first to see the active phase scope and definition of done.
+- **Starting a feature?** Run `/gflow:status` to see the active phase scope, then `/gflow:predict` → `/gflow:scenario` → `/gflow:plan <feature>` to create a task checklist.
 - **Touching auth, reCAPTCHA, browser flow, or anything previously flagged?** Run `/gflow:known-issues` first.
 - **Cutting a release?** Run `/gflow:release` — it sequences `/gflow:changelog`, `/gflow:check`, `/gflow:doc-review`.
 - **Before any commit:** Run `/gflow:check` (or the Impeccable Routine in AGENTS.md), including the documentation link gate.

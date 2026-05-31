@@ -12,7 +12,7 @@ file timestamps to the checkout moment, so mtime is not a reliable
 plan; otherwise the root PLAN.md is the source of truth for the current phase.
 
 Output is intentionally compact: only the relevant chunk enters the agent's context.
-Run directly or via the /gflow:plan slash command.
+Run directly or via the /gflow:status, /gflow:next, or /gflow:active slash commands.
 """
 from __future__ import annotations
 

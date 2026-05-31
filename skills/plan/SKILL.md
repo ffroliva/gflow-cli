@@ -61,7 +61,7 @@ to `docs/superpowers/plans/<YYYY-MM-DD>-<feature-slug>/PLAN.md`.
 ```bash
 uv run python scripts/dev/active_plan.py
 ```
-Confirm the feature belongs to the active phase. Note any relevant ADRs from `PLAN.md`.
+Note the active phase name and its open tasks. Then read `PLAN.md` § "Phase status" and § "Decision log" directly to verify the proposed feature is within current scope and does not contradict an existing ADR. (The script shows the current task, not a backlog index — use `PLAN.md` for scope confirmation.)
 
 ### Phase 2 — Ask clarifying questions (only if not answerable from context)
 

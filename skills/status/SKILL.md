@@ -48,6 +48,9 @@ The single next unchecked task block. No header noise.
 **Return:** only the content from `--- Next task ---` onward. Drop the Plan / Title /
 Goal / Progress header lines entirely.
 
+If no `--- Next task ---` separator is present (root PLAN.md mode), return the full
+script output — the phase block is already task-level content.
+
 If the script output contains "All steps complete", say so and suggest:
 - `/gflow:changelog` to review unreleased changes
 - `/gflow:release` if the phase is fully done
@@ -65,7 +68,8 @@ Just which plan is active and its goal. No task detail.
 **Script invocation:** same as `status`.
 
 **Return:** only the header lines — Plan path, Title, Goal, Progress count.
-Stop before the `--- Next task ---` separator.
+- If the output contains `--- Next task ---`, stop before that separator.
+- If no separator is present (root PLAN.md mode — `_summarise_root_plan()` output), return the full output; it contains only orientation-level content with no task block.
 
 **When to call:**
 - Before `/gflow:predict` or `/gflow:scenario`: confirm the proposal fits the active scope
