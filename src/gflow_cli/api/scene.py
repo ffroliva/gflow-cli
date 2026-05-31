@@ -4,6 +4,7 @@ Wire times are protobuf-duration strings ("8s", "3.226666870s"). Trim lives in
 sceneWorkflowMetadata.startTime/endTime (NOT updateVideoOffset). position = order.
 Field paths are HAR-exact (samples/captured/12,14).
 """
+
 from __future__ import annotations
 
 import math
@@ -82,9 +83,7 @@ class Scene:
                         position=int(meta.get("position", 0)),
                         start_time=_duration_to_seconds(str(meta.get("startTime", "0s"))),
                         end_time=_duration_to_seconds(str(meta.get("endTime", "0s"))),
-                        total_duration=_duration_to_seconds(
-                            str(meta.get("totalDuration", "0s"))
-                        ),
+                        total_duration=_duration_to_seconds(str(meta.get("totalDuration", "0s"))),
                     ),
                 )
             )
@@ -106,9 +105,7 @@ class Scene:
             raise ValueError(msg) from e
 
     @classmethod
-    def from_get_response(
-        cls, data: dict[str, Any], *, scene_id: str, project_id: str
-    ) -> Scene:
+    def from_get_response(cls, data: dict[str, Any], *, scene_id: str, project_id: str) -> Scene:
         # fixture 14: {"sceneWorkflows":[...], "media":[...]}.
         try:
             return cls(
