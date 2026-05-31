@@ -54,9 +54,14 @@ async def test_scene_compose_is_credit_free(
 
         monkeypatch.setattr(client, "_post_json", _spy)
 
-        project = await client.create_project(title="scene e2e")
-        scene = await client.create_scene(project_id=project.project_id, workflow_ids=[wf, wf])
-        read_back = await client.get_scene_workflows(scene.scene_id, project_id=project.project_id)
+        # Workflows are project-scoped: compose in the clip's OWN project when given
+        # (GFLOW_CLI_E2E_SCENE_PROJECT_ID), else create a fresh project (works when the
+        # clip is freshly generated into it).
+        project_id = os.environ.get("GFLOW_CLI_E2E_SCENE_PROJECT_ID", "")
+        if not project_id:
+            project_id = (await client.create_project(title="scene e2e")).project_id
+        scene = await client.create_scene(project_id=project_id, workflow_ids=[wf, wf])
+        read_back = await client.get_scene_workflows(scene.scene_id, project_id=project_id)
 
     assert scene.scene_id, "create_scene returned a sceneId"
     assert len(read_back.workflows) == 2, "two clip instances (duplicate of one source)"
