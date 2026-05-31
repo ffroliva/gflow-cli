@@ -423,33 +423,26 @@ class OperationRecorder:
                     if local_path is not None
                     else "video/mp4"
                 )
+                # Persist on-disk path/bytes/hash only for genuinely local files
+                # (single-level conditionals so pyright narrows ``local_path``).
+                resolved_path = (
+                    local_path.resolve() if not is_cloud and local_path is not None else None
+                )
+                file_bytes = (
+                    _file_bytes(local_path) if not is_cloud and local_path is not None else None
+                )
+                file_sha256 = (
+                    _file_sha256(local_path) if not is_cloud and local_path is not None else None
+                )
                 repo.upsert_local_file(
                     LocalFileRecord(
                         id=_new_id(),
                         profile_name=profile_name,
                         asset_id=asset_lookup.id,
-                        path=(
-                            None
-                            if is_cloud
-                            else local_path.resolve()
-                            if local_path is not None
-                            else None
-                        ),
+                        path=resolved_path,
                         media_type=media_type,
-                        bytes=(
-                            None
-                            if is_cloud
-                            else _file_bytes(local_path)
-                            if local_path is not None
-                            else None
-                        ),
-                        sha256=(
-                            None
-                            if is_cloud
-                            else _file_sha256(local_path)
-                            if local_path is not None
-                            else None
-                        ),
+                        bytes=file_bytes,
+                        sha256=file_sha256,
                         storage_provider=(
                             cloud_storage_info.provider if cloud_storage_info else None
                         ),
