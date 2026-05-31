@@ -8,6 +8,8 @@ This directory ships installable agent skill docs for `gflow-cli`. Each `SKILL.m
 | predict | [`predict/SKILL.md`](predict/SKILL.md) | 1.0 |
 | scenario | [`scenario/SKILL.md`](scenario/SKILL.md) | — |
 | pr-council-review | [`pr-council-review/SKILL.md`](pr-council-review/SKILL.md) | 2.1 |
+| plan | [`plan/SKILL.md`](plan/SKILL.md) | 1.0 |
+| status | [`status/SKILL.md`](status/SKILL.md) | 1.0 |
 
 ## gflow-cli skill
 
@@ -20,6 +22,14 @@ This directory ships installable agent skill docs for `gflow-cli`. Each `SKILL.m
 ## scenario skill
 
 [`scenario/SKILL.md`](scenario/SKILL.md) — 12-dimension edge-case explorer tuned to gflow-cli's known failure surfaces (WAF/reCAPTCHA scoring, Playwright selector drift, auth token lifecycle, batch resume idempotency, SQLite data layer, RFC 9457 error propagation, cross-platform paths, observability contract). Produces a severity-ranked scenario table and BDD `Scenario:` blocks. Invoke via `/gflow:scenario <feature>` after a predict GO/CAUTION, before writing the PLAN.md task spec.
+
+## plan skill
+
+[`plan/SKILL.md`](plan/SKILL.md) — creates a structured task-by-task implementation plan for a feature and writes it to `docs/superpowers/plans/<date>-<slug>/PLAN.md`. Gathers predict/scenario context, asks ≤3 clarifying questions, decomposes into atomic committable tasks with step + test checklists. Invoke via `/gflow:plan <feature>` after a predict GO/CAUTION verdict.
+
+## status skill
+
+[`status/SKILL.md`](status/SKILL.md) — three variants for surfacing plan state at different detail levels: `status` (full state: plan path, goal, progress, next task), `next` (next task only), `active` (plan identity only). All variants run `scripts/dev/active_plan.py`. Invoke via `/gflow:status`, `/gflow:next`, or `/gflow:active`.
 
 ### Install for Claude Code
 
