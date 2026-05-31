@@ -1,5 +1,11 @@
 # L0 — SAPISIDHASH auth for aisandbox-pa REST Implementation Plan
 
+> ⚠️ **SUPERSEDED 2026-05-31** by [`2026-05-31-l0-bearer-pivot.md`](2026-05-31-l0-bearer-pivot.md).
+> The SAPISIDHASH hypothesis was **disproven by live verification**: `aisandbox-pa`
+> authenticates with `Authorization: Bearer ya29.<oauth>` (fetched from
+> `GET /fx/api/auth/session`), not SAPISIDHASH. This plan is kept only as a record of
+> the investigation — **do not implement it.** See the bearer-pivot plan for the shipped design.
+
 > **For agentic workers:** REQUIRED SUB-SKILL: Use superpowers:subagent-driven-development (recommended) or superpowers:executing-plans to implement this plan task-by-task. Steps use checkbox (`- [ ]`) syntax for tracking.
 
 **Goal:** Make `page.request` POST/PATCH/GET calls to `aisandbox-pa.googleapis.com` authenticate (fixing the HTTP 401 of Issue #15) by attaching an `Authorization: SAPISIDHASH <ts>_<sha1>` header computed from the live browser session's `SAPISID` cookie.
