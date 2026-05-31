@@ -28,7 +28,6 @@ from playwright.async_api import BrowserContext, Page, Playwright, async_playwri
 
 from gflow_cli.api import routes
 from gflow_cli.api._retry import parse_retry_after, post_with_retry
-from gflow_cli.api._sapisidhash import compute_sapisidhash
 from gflow_cli.api.dto import AssetInfo, GeneratedImage, ProjectInfo
 from gflow_cli.api.recaptcha import TokenMinter
 from gflow_cli.api.transports import make_transport
@@ -86,11 +85,26 @@ MAX_IMAGE_BYTES = 20 * 1024 * 1024  # 20 MB
 # aisandbox-pa rejects application/json — see samples/captured/*.json.
 _AISANDBOX_CONTENT_TYPE = "text/plain;charset=UTF-8"
 
-# aisandbox-pa POSTs return 401 to page.request unless an Authorization:
-# SAPISIDHASH header is attached (Issue #15). The labs.google BFF authenticates
-# on session cookies alone, so the header is scoped to this host only.
+# aisandbox-pa POSTs return 401 to page.request unless an Authorization: Bearer
+# <access_token> is attached — the SPA's OAuth2 token, fetched from the BFF
+# session endpoint (cookie-auth). The labs.google BFF itself authenticates on
+# cookies alone, so the Bearer header is scoped to the aisandbox host only.
 _AISANDBOX_HOST = "aisandbox-pa.googleapis.com"
-_SAPISID_ORIGIN = "https://labs.google"
+_LABS_ORIGIN = "https://labs.google"
+_SESSION_API_URL = "https://labs.google/fx/api/auth/session"
+
+
+def _parse_iso_to_epoch(value: object) -> float:
+    """Parse an ISO-8601 timestamp (e.g. ``/auth/session``'s ``expires``) to
+    epoch seconds. Falls back to ``now + 55min`` when absent/unparseable so the
+    token cache keeps a horizon (the 401 refresh-retry is the safety net).
+    """
+    if isinstance(value, str):
+        try:
+            return datetime.fromisoformat(value.replace("Z", "+00:00")).timestamp()
+        except ValueError:
+            pass
+    return time.time() + 3300.0
 
 
 def _is_supported_image_header(header: bytes) -> bool:
@@ -156,10 +170,11 @@ class FlowApiClient:
         self._transport_input: FlowTransportStrategy | str | None = transport
         self.transport: FlowTransportStrategy | None = None
         self._owns_transport: bool = False
-        # SAPISID cookie value, read lazily from the live browser context and
-        # cached for the session. Used to compute the SAPISIDHASH auth header
-        # for aisandbox-pa REST calls (Issue #15). Re-read on a 401.
-        self._sapisid: str | None = None
+        # OAuth2 access token for aisandbox-pa REST calls, fetched lazily from
+        # the BFF session endpoint and cached against its expiry. Re-fetched on
+        # a 401. (page.request sends cookies but not the SPA's Bearer token.)
+        self._access_token: str | None = None
+        self._access_token_exp: float = 0.0  # epoch seconds; 0 = unknown/expired
         self._pw: Playwright | None = None
         self._context: BrowserContext | None = None
         # Per-worker Page pool (Phase 4 T2). All Pages live inside ONE
@@ -380,57 +395,63 @@ class FlowApiClient:
 
     @staticmethod
     def _is_aisandbox_url(url: str) -> bool:
-        """True for aisandbox-pa REST URLs, which require SAPISIDHASH auth.
+        """True for aisandbox-pa REST URLs, which require Bearer-token auth.
 
         BFF (labs.google) URLs authenticate on cookies alone — never matched.
         """
         return _AISANDBOX_HOST in url
 
-    async def _read_sapisid_from_context(self) -> str:
-        """Read the SAPISID cookie from the LIVE browser context.
+    async def _fetch_access_token(self) -> tuple[str, float]:
+        """Fetch the OAuth2 access token from the BFF session endpoint.
 
-        Playwright returns HttpOnly cookie values decrypted from the running
-        browser — unlike reading the on-disk SQLite DB, which fails on Windows
-        (DPAPI-encrypted; see transports/experimental/sapisidhash.py).
+        Uses ``self._context.request`` (the BrowserContext APIRequestContext) —
+        NOT a checked-out Page — because this runs from inside a ``_post_json``
+        ``attempt()`` that already holds a Page; a nested checkout deadlocks a
+        size-1 pool. The request carries the session cookies, so the BFF returns
+        the SPA's current ``access_token`` (a ``ya29.`` Bearer).
+
+        Returns ``(token, expiry_epoch_seconds)``.
         """
-        # Read from the shared BrowserContext jar DIRECTLY — never via a
-        # checked-out Page. This runs from inside a _post_json attempt() that
-        # already holds a Page; checking out a second one deadlocks a size-1
-        # pool (caught by the live smoke 2026-05-31). Cookies live at the
-        # Context level, so a Page is unnecessary anyway.
         ctx = self._context
         if ctx is None:
-            msg = "SAPISID read needs an active browser context (use within `async with client`)."
+            msg = "access-token fetch needs an active browser context."
             raise AuthMissingError(msg)
-        cookies = await ctx.cookies("https://www.google.com")
-        for cookie in cookies:
-            value = cookie.get("value")
-            if cookie.get("name") == "SAPISID" and value:
-                return str(value)
-        msg = (
-            "SAPISID cookie not present in the browser session. "
-            "Run `gflow auth login --profile <name>`."
-        )
-        raise AuthMissingError(msg)
+        resp = await ctx.request.get(_SESSION_API_URL)
+        try:
+            data = json.loads(await resp.text())
+        except json.JSONDecodeError as exc:
+            raise AisandboxAuthError(
+                detail="non-JSON /auth/session response",
+                status=resp.status,
+                instance=_make_instance(),
+                route="auth/session",
+            ) from exc
+        token = data.get("access_token") if isinstance(data, dict) else None
+        if not token:
+            raise AisandboxAuthError(
+                detail="no access_token in /fx/api/auth/session (session expired?)",
+                status=resp.status,
+                instance=_make_instance(),
+                route="auth/session",
+            )
+        return str(token), _parse_iso_to_epoch(data.get("expires"))
 
-    async def _ensure_sapisid(self) -> str:
-        """Lazily read + cache SAPISID for the session."""
-        if self._sapisid is None:
-            self._sapisid = await self._read_sapisid_from_context()
-        return self._sapisid
+    async def _ensure_access_token(self) -> str:
+        """Return a cached access token, (re)fetching when missing or near expiry."""
+        if self._access_token is None or time.time() >= self._access_token_exp - 60:
+            self._access_token, self._access_token_exp = await self._fetch_access_token()
+        return self._access_token
 
     async def _aisandbox_auth_headers(self) -> dict[str, str]:
-        """Build the SAPISIDHASH Authorization header for an aisandbox call.
+        """Build the Bearer Authorization header for an aisandbox call.
 
-        Timestamp is recomputed every call (freshness signal); SAPISID is
-        long-lived and cached. NEVER log the returned values.
+        aisandbox-pa authenticates with the SPA's OAuth2 access token, not
+        cookies. NEVER log the returned values.
         """
-        sapisid = await self._ensure_sapisid()
-        ts = int(time.time())
-        hash_value = compute_sapisidhash(timestamp=ts, sapisid=sapisid, origin=_SAPISID_ORIGIN)
+        token = await self._ensure_access_token()
         return {
-            "authorization": f"SAPISIDHASH {hash_value}",
-            "origin": _SAPISID_ORIGIN,
+            "authorization": f"Bearer {token}",
+            "origin": _LABS_ORIGIN,
         }
 
     async def _post_json(
@@ -478,13 +499,13 @@ class FlowApiClient:
 
         resp = await self._run_with_retry(attempt, route=route)
         if is_aisandbox and resp.status == 401:
-            # Cookie may have rotated mid-session — re-read SAPISID once and retry.
-            self._sapisid = None
-            await self._ensure_sapisid()
+            # Token may have expired mid-session — re-fetch once and retry.
+            self._access_token = None
+            await self._ensure_access_token()
             resp = await self._run_with_retry(attempt, route=route)
             if resp.status == 401:
                 raise AisandboxAuthError(
-                    detail="aisandbox-pa returned 401 after SAPISID refresh",
+                    detail="aisandbox-pa returned 401 after token refresh",
                     status=401,
                     instance=_make_instance(),
                     route=route,
@@ -532,13 +553,13 @@ class FlowApiClient:
 
         resp = await self._run_with_retry(attempt, route=route)
         if is_aisandbox and resp.status == 401:
-            # Cookie may have rotated mid-session — re-read SAPISID once and retry.
-            self._sapisid = None
-            await self._ensure_sapisid()
+            # Token may have expired mid-session — re-fetch once and retry.
+            self._access_token = None
+            await self._ensure_access_token()
             resp = await self._run_with_retry(attempt, route=route)
             if resp.status == 401:
                 raise AisandboxAuthError(
-                    detail="aisandbox-pa returned 401 after SAPISID refresh",
+                    detail="aisandbox-pa returned 401 after token refresh",
                     status=401,
                     instance=_make_instance(),
                     route=route,
