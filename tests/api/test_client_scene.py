@@ -1,4 +1,11 @@
+import base64 as _base64
+from types import SimpleNamespace
+
+import pytest
+
 from gflow_cli.api.client import FlowApiClient
+from gflow_cli.api.scene import ConcatInput
+from gflow_cli.errors import SceneConcatError, TransportTimeoutError
 
 
 class _FakeResp:
@@ -129,17 +136,18 @@ async def test_get_scene_workflows_reads_back_sorted():
 
 # --- concatenate_scene (server-side extended-video render) ------------------
 
-import base64 as _base64
-from types import SimpleNamespace
-
-import pytest
-
-from gflow_cli.api.scene import ConcatInput
-from gflow_cli.errors import SceneConcatError, TransportTimeoutError
-
 # Minimal valid MP4 head: bytes[4:8] == b"ftyp".
 _FAKE_MP4 = b"\x00\x00\x00\x18ftypisom\x00\x00\x00\x00mp42"
 _FAKE_MP4_B64 = _base64.b64encode(_FAKE_MP4).decode()
+
+_CONCAT_OP = _FakeResp(200, '{"operation": {"operation": {"name": "jobs/j1"}}}')
+_ACTIVE = _FakeResp(200, '{"status": "MEDIA_GENERATION_STATUS_ACTIVE"}')
+
+
+def _ok(encoded):
+    """A SUCCESSFUL concat-status response carrying the given base64 video."""
+    body = '{"status": "MEDIA_GENERATION_STATUS_SUCCESSFUL", "encodedVideo": "' + encoded + '"}'
+    return _FakeResp(200, body)
 
 
 class _SeqRequest:
@@ -174,48 +182,60 @@ _INPUTS = [ConcatInput(media_id="m1", length=8.0, start=0.0, end=8.0)]
 
 
 async def test_concatenate_scene_writes_extended_mp4(tmp_path):
-    resps = [
-        _FakeResp(200, '{"operation": {"operation": {"name": "jobs/j1"}}}'),
-        _FakeResp(200, '{"status": "MEDIA_GENERATION_STATUS_ACTIVE"}'),
-        _FakeResp(200, f'{{"status": "MEDIA_GENERATION_STATUS_SUCCESSFUL", "encodedVideo": "{_FAKE_MP4_B64}"}}'),
-    ]
-    c = _client_seq(resps, tmp_path)
+    c = _client_seq([_CONCAT_OP, _ACTIVE, _ok(_FAKE_MP4_B64)], tmp_path)
     out = tmp_path / "extended.mp4"
     target = await c.concatenate_scene(_INPUTS, out_path=out, poll_interval=0)
     assert str(target) == str(out)
     assert out.read_bytes() == _FAKE_MP4
-    # concat POST first, then 2 status polls
+    # concat POST first, then status polls
     urls = [u for _, u, _ in c._page.request.calls]
     assert urls[0].endswith(":runVideoFxConcatenation")
     assert all(u.endswith(":runVideoFxCheckConcatenationStatus") for u in urls[1:])
 
 
 async def test_concatenate_scene_raises_on_failed_status(tmp_path):
-    resps = [
-        _FakeResp(200, '{"operation": {"operation": {"name": "jobs/j1"}}}'),
-        _FakeResp(200, '{"status": "MEDIA_GENERATION_STATUS_FAILED"}'),
-    ]
-    c = _client_seq(resps, tmp_path)
+    failed = _FakeResp(200, '{"status": "MEDIA_GENERATION_STATUS_FAILED"}')
+    c = _client_seq([_CONCAT_OP, failed], tmp_path)
     with pytest.raises(SceneConcatError):
         await c.concatenate_scene(_INPUTS, out_path=tmp_path / "x.mp4", poll_interval=0)
 
 
 async def test_concatenate_scene_times_out(tmp_path):
-    resps = [
-        _FakeResp(200, '{"operation": {"operation": {"name": "jobs/j1"}}}'),
-        _FakeResp(200, '{"status": "MEDIA_GENERATION_STATUS_ACTIVE"}'),
-    ]
-    c = _client_seq(resps, tmp_path)
+    c = _client_seq([_CONCAT_OP, _ACTIVE], tmp_path)
     with pytest.raises(TransportTimeoutError):
-        await c.concatenate_scene(_INPUTS, out_path=tmp_path / "x.mp4", poll_interval=0, timeout_s=0)
+        await c.concatenate_scene(
+            _INPUTS, out_path=tmp_path / "x.mp4", poll_interval=0, timeout_s=0
+        )
 
 
 async def test_concatenate_scene_rejects_non_mp4(tmp_path):
     not_mp4 = _base64.b64encode(b"\x00\x00\x00\x18NOPEnope1234").decode()
-    resps = [
-        _FakeResp(200, '{"operation": {"operation": {"name": "jobs/j1"}}}'),
-        _FakeResp(200, f'{{"status": "MEDIA_GENERATION_STATUS_SUCCESSFUL", "encodedVideo": "{not_mp4}"}}'),
-    ]
-    c = _client_seq(resps, tmp_path)
+    c = _client_seq([_CONCAT_OP, _ok(not_mp4)], tmp_path)
     with pytest.raises(SceneConcatError):
+        await c.concatenate_scene(_INPUTS, out_path=tmp_path / "x.mp4", poll_interval=0)
+
+
+async def test_concatenate_scene_rejects_empty_inputs(tmp_path):
+    c = _client_seq([], tmp_path)
+    with pytest.raises(ValueError, match="at least one clip"):
+        await c.concatenate_scene([], out_path=tmp_path / "x.mp4")
+
+
+async def test_concatenate_scene_raises_when_success_has_no_video(tmp_path):
+    c = _client_seq([_CONCAT_OP, _ok("")], tmp_path)
+    with pytest.raises(SceneConcatError, match="no encodedVideo"):
+        await c.concatenate_scene(_INPUTS, out_path=tmp_path / "x.mp4", poll_interval=0)
+
+
+async def test_concatenate_scene_enforces_size_cap(tmp_path, monkeypatch):
+    monkeypatch.setattr("gflow_cli.api.client.MAX_CONCAT_B64_LEN", 4)
+    c = _client_seq([_CONCAT_OP, _ok(_FAKE_MP4_B64)], tmp_path)
+    with pytest.raises(SceneConcatError, match="size cap"):
+        await c.concatenate_scene(_INPUTS, out_path=tmp_path / "x.mp4", poll_interval=0)
+
+
+async def test_concatenate_scene_rejects_undecodable_base64(tmp_path):
+    # 5 base64 chars -> invalid length -> binascii.Error (ValueError subclass)
+    c = _client_seq([_CONCAT_OP, _ok("AAAAA")], tmp_path)
+    with pytest.raises(SceneConcatError, match="undecodable"):
         await c.concatenate_scene(_INPUTS, out_path=tmp_path / "x.mp4", poll_interval=0)

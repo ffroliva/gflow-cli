@@ -252,8 +252,9 @@ class SceneConcatError(FlowApiError):
 
     Distinct from a poll timeout (which raises ``TransportTimeoutError``, exit 9):
     this is a terminal ``MEDIA_GENERATION_STATUS_FAILED`` / unexpected status from
-    ``runVideoFxCheckConcatenationStatus``. The error detail is built from
-    ``status``/``outputUri`` ONLY — never the ~20MB inline ``encodedVideo``.
+    ``runVideoFxCheckConcatenationStatus`` (or an undecodable / non-MP4 payload).
+    The error detail is built from the ``status`` ONLY — never the ~20MB inline
+    ``encodedVideo``.
     """
 
     problem_type = "https://gflow-cli.dev/errors/scene-concat"
