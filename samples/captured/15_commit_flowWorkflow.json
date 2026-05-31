@@ -1,0 +1,6 @@
+{
+  "url": "https://aisandbox-pa.googleapis.com/v1/flowWorkflows/b031dc4e-959f-43f2-b207-587e9e4a3c67",
+  "method": "PATCH",
+  "request_body": "{\"workflow\":{\"name\":\"b031dc4e-959f-43f2-b207-587e9e4a3c67\",\"projectId\":\"bbe915a0-9537-4f7d-b339-87356cd4ed3f\",\"metadata\":{\"primaryMediaId\":\"b4c98f0a-b55e-47d4-9938-b709ecc007f1\"}},\"updateMask\":\"metadata.primaryMediaId\"}",
+  "response_body": "{\n  \"name\": \"b031dc4e-959f-43f2-b207-587e9e4a3c67\",\n  \"metadata\": {\n    \"displayName\": \"5am club members wake up early…\",\n    \"createTime\": \"2026-05-30T17:59:02.636723Z\",\n    \"primaryMediaId\": \"b4c98f0a-b55e-47d4-9938-b709ecc007f1\",\n    \"batchId\": \"c6457b3a-58a7-4b25-83fd-1aea7df06e16\",\n    \"updateTime\": \"2026-05-30T17:59:05.499693Z\"\n  },\n  \"projectId\": \"bbe915a0-9537-4f7d-b339-87356cd4ed3f\"\n}\n"
+}

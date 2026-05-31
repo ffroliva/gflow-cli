@@ -2,7 +2,9 @@
 
 > **For agentic workers:** REQUIRED SUB-SKILL: Use superpowers:subagent-driven-development (recommended) or superpowers:executing-plans to implement this plan task-by-task. Steps use checkbox (`- [ ]`) syntax for tracking.
 
-**Goal:** Ship Google Flow's "Add Clip" as a new `gflow scene` command group (`create` / `add-clip` / `show`) that composes ordered, trimmable video clips into a Scene via the credit-free aisandbox-pa REST surface, with local persistence.
+**Goal:** Ship Google Flow's "Add Clip" as a new `gflow scene` command group (`create` + `show`) that composes ordered, trimmable video clips into a Scene via the credit-free aisandbox-pa REST surface, with local persistence.
+
+> **Council revision (2026-05-31):** `add-clip` (append-to-existing-scene) is **descoped to backlog** — the `labs.google15.har` evidence proves Flow's "Add Clip" is a single `POST /scenes` with the full source-clip list, and clips are cloned to fresh instance ids whose **source id is unrecoverable** from any create/get response. A faithful append-to-`<sid>` has no wire path until we capture the real "open saved scene → add clip" exchange. L1 therefore ships `create` (which IS Add Clip: composes N clips, duplicates allowed) + `show`. Task 0 fixtures are already captured (`samples/captured/12-15`), so all parser field paths below are HAR-exact, not provisional.
 
 **Architecture:** Additive on the existing `FlowApiClient` REST helpers. L0 already made aisandbox **POST/PATCH** auth transparent (`_post_json`/`_patch_json` auto-inject `Authorization: Bearer ya29` + 401-refresh-retry via `_run_with_aisandbox_retry`). This plan adds the one missing piece — an aisandbox-aware **GET** helper (`_get_json`) — plus 4 client methods, frozen-dataclass domain models in `api/scene.py`, a new `gflow scene` CLI group, and a persistence layer (migration `0003` + two tables + recorder method). Scene ops carry **no reCAPTCHA and spend no credits**, so the whole flow is e2e-testable for free. This is class ① of the REST-path capability matrix.
 
@@ -41,6 +43,8 @@
 ---
 
 ## Task 0: Capture ground-truth scene wire shapes from the HAR
+
+> **DONE during planning (2026-05-31).** All four fixtures are already extracted, redacted (leak-scan CLEAN), and committed. The executor can SKIP this task unless regenerating. The steps below document how they were produced. The parsers in Tasks 2 & 7 are written against these exact shapes (no provisional accessors remain).
 
 **Files:**
 - Create: `samples/captured/12_create_scene.json`, `13_sceneWorkflows_update.json`, `14_get_scene_workflows.json`, `15_commit_flowWorkflow.json`
@@ -255,6 +259,11 @@ def _seconds_to_duration(value: float) -> str:
     Whole seconds -> "8s"; fractional -> 9 fractional digits "3.226666870s"
     (matches Flow's wire form). Trailing-zero nanos are preserved at 9 digits.
     """
+    import math
+
+    if not math.isfinite(value) or value < 0:
+        msg = f"duration must be finite and non-negative, got {value!r}"
+        raise ValueError(msg)
     if value == int(value):
         return f"{int(value)}s"
     return f"{value:.9f}s"
@@ -285,6 +294,7 @@ class SceneWorkflowMetadata:
 class SceneWorkflow:
     workflow_id: str  # the scene-INSTANCE id (clone), not the source clip id
     metadata: SceneWorkflowMetadata
+    media_id: str | None = None  # primaryMediaId of this instance (from read-back)
 
     def to_wire(self, *, scene_id: str) -> dict[str, Any]:
         return {
@@ -302,14 +312,22 @@ class Scene:
 
     @staticmethod
     def _parse_workflows(entries: list[dict[str, Any]]) -> tuple[SceneWorkflow, ...]:
+        # HAR-EXACT (samples/captured/12,14): each entry is
+        #   {"workflow":{"name":<instanceId>,"metadata":{"primaryMediaId":...}},
+        #    "sceneId":..., "sceneWorkflowMetadata":{position?,totalDuration,startTime,endTime,mediaType}}
+        # CRITICAL: Flow OMITS "position" when it is 0 (see fixture 12/14), and the
+        # GET read-back returns entries in REVERSED order. Default absent position
+        # to 0 (NOT the enumerate index) or positions collide. Then sort by position.
         out: list[SceneWorkflow] = []
-        for i, e in enumerate(entries):
+        for e in entries:
+            wf = e.get("workflow", {}) or {}
             meta = e.get("sceneWorkflowMetadata", {}) or {}
             out.append(
                 SceneWorkflow(
-                    workflow_id=str(e.get("workflow", {}).get("name", "")),
+                    workflow_id=str(wf.get("name", "")),
+                    media_id=(wf.get("metadata", {}) or {}).get("primaryMediaId"),
                     metadata=SceneWorkflowMetadata(
-                        position=int(meta.get("position", i)),
+                        position=int(meta.get("position", 0)),
                         start_time=_duration_to_seconds(str(meta.get("startTime", "0s"))),
                         end_time=_duration_to_seconds(str(meta.get("endTime", "0s"))),
                         total_duration=_duration_to_seconds(str(meta.get("totalDuration", "0s"))),
@@ -321,12 +339,14 @@ class Scene:
 
     @classmethod
     def from_create_response(cls, data: dict[str, Any], *, project_id: str) -> Scene:
+        # HAR-EXACT (fixture 12): sceneId lives under data["scene"]["sceneId"];
+        # the clip list is a TOP-LEVEL sibling data["sceneWorkflows"] (NOT nested
+        # inside "scene").
         try:
-            scene = data["scene"] if "scene" in data else data
             return cls(
-                scene_id=str(scene["sceneId"]),
+                scene_id=str(data["scene"]["sceneId"]),
                 project_id=project_id,
-                workflows=cls._parse_workflows(scene.get("sceneWorkflows", []) or []),
+                workflows=cls._parse_workflows(data.get("sceneWorkflows", []) or []),
             )
         except (KeyError, TypeError) as e:
             msg = f"unexpected create-scene response shape: {e}"
@@ -334,6 +354,7 @@ class Scene:
 
     @classmethod
     def from_get_response(cls, data: dict[str, Any], *, scene_id: str, project_id: str) -> Scene:
+        # HAR-EXACT (fixture 14): {"sceneWorkflows":[...], "media":[...]}.
         try:
             return cls(
                 scene_id=scene_id,
@@ -786,7 +807,7 @@ class OperationKind(StrEnum):
     I2V = "i2v"
     R2V = "r2v"
     SCENE_CREATE = "scene_create"
-    SCENE_ADD_CLIP = "scene_add_clip"
+    # SCENE_ADD_CLIP deferred with the add-clip command (see backlog)
 
 
 @dataclass(frozen=True)
@@ -834,7 +855,7 @@ git commit -m "feat(scene): add 0003 scene tables + Scene/SceneClip records + Op
 - Modify: `src/gflow_cli/data/repository.py`
 - Test: `tests/data/test_scene_persistence.py`
 
-> Mirror the existing `upsert_*` style (parametrized SQL, `_now_utc_iso()` default for `created_at`, `INSERT ... ON CONFLICT`). `replace_scene_clips` deletes then re-inserts the clip rows for a scene so re-running `update_scene_workflows` is idempotent.
+> Mirror the existing `upsert_*` style EXACTLY: writes go through `with self._store.transaction(immediate=True) as conn:` (NOT bare `conn.execute()+commit()`), the timestamp helper is **`_utc_now()`** (repository.py:28 — NOT `_now_iso`; do not confuse with the recorder's `_now_utc_iso()`), reads use `self._store.conn.execute(...)`, access the store via the public `self._store`. `replace_scene_clips` deletes then re-inserts the clip rows for a scene so re-running is idempotent. Confirm the exact `transaction(...)` signature against an existing `upsert_*` method before writing.
 
 - [ ] **Step 1: Write the failing test**
 
@@ -874,11 +895,11 @@ def test_upsert_scene_and_replace_clips_roundtrip(tmp_path):
 
 - [ ] **Step 2: Run — expect FAIL** (`AttributeError: ... 'upsert_scene'`).
 
-- [ ] **Step 3: Implement in `repository.py`** (use the module's existing `_now_iso`/timestamp helper — check the top of `repository.py` for its name; the snippet below assumes `_now_iso()`, rename to match)
+- [ ] **Step 3: Implement in `repository.py`** (use the module's existing `_now_iso`/timestamp helper — check the top of `repository.py` for its name; the snippet below assumes `_utc_now()`, rename to match)
 
 ```python
     def upsert_scene(self, record: SceneRecord) -> SceneRecord:
-        created = record.created_at or _now_iso()
+        created = record.created_at or _utc_now()
         self.store.conn.execute(
             """
             INSERT INTO scenes (id, profile_name, flow_project_id, flow_scene_id,
@@ -904,7 +925,7 @@ def test_upsert_scene_and_replace_clips_roundtrip(tmp_path):
             VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
             """,
             [(c.id, scene_id, c.position, c.flow_instance_workflow_id, c.flow_source_workflow_id,
-              c.flow_media_id, c.start_time, c.end_time, c.total_duration, c.created_at or _now_iso())
+              c.flow_media_id, c.start_time, c.end_time, c.total_duration, c.created_at or _utc_now())
              for c in clips],
         )
         conn.commit()
@@ -987,12 +1008,15 @@ def test_record_scene_persists_scene_clips_and_operation(tmp_path):
         profile_name: str,
         profile_dir: Path,
         scene: Scene,
-        operation_kind: OperationKind,
+        operation_kind: OperationKind = OperationKind.SCENE_CREATE,
+        source_workflow_ids: list[str] | None = None,
         source: str = "composed",
     ) -> None:
-        from gflow_cli.api.scene import Scene as _Scene  # noqa: F401 (type clarity)
-
+        """Persist a composed scene. `source_workflow_ids` (submission order) is
+        zipped by position onto the sorted instances so the source clip is
+        retained; the source id is NOT recoverable from the read-back alone."""
         repo = self.repository
+        src_by_pos = source_workflow_ids or []
         repo.upsert_profile(profile_name, profile_dir)
         repo.upsert_project(
             ProjectRecord(
@@ -1003,8 +1027,7 @@ def test_record_scene_persists_scene_clips_and_operation(tmp_path):
                 source="generated",
             ),
         )
-        total = max((w.metadata.end_time - w.metadata.start_time for w in scene.workflows), default=0.0)
-        # actual composed duration = sum of visible clip lengths
+        # composed duration = sum of visible clip lengths (end - start)
         total = sum((w.metadata.end_time - w.metadata.start_time) for w in scene.workflows)
         scene_row_id = _new_id()
         repo.upsert_scene(
@@ -1025,13 +1048,15 @@ def test_record_scene_persists_scene_clips_and_operation(tmp_path):
                     scene_id=scene_row_id,
                     position=w.metadata.position,
                     flow_instance_workflow_id=w.workflow_id,
-                    flow_source_workflow_id=None,
-                    flow_media_id=None,
+                    flow_source_workflow_id=(
+                        src_by_pos[idx] if idx < len(src_by_pos) else None
+                    ),
+                    flow_media_id=w.media_id,
                     start_time=w.metadata.start_time,
                     end_time=w.metadata.end_time,
                     total_duration=w.metadata.total_duration,
                 )
-                for w in scene.workflows
+                for idx, w in enumerate(scene.workflows)
             ],
         )
         op_id = _new_id()
@@ -1040,7 +1065,7 @@ def test_record_scene_persists_scene_clips_and_operation(tmp_path):
                 id=op_id,
                 profile_name=profile_name,
                 flow_project_id=scene.project_id,
-                command="scene create" if operation_kind is OperationKind.SCENE_CREATE else "scene add-clip",
+                command="scene create",
                 mode=operation_kind,
                 status=OperationStatus.SUCCEEDED,
                 flow_operation_id=None,
@@ -1070,14 +1095,14 @@ git commit -m "feat(scene): add OperationRecorder.record_scene"
 
 ---
 
-## Task 11: CLI — `gflow scene` group (`create` / `add-clip` / `show`)
+## Task 11: CLI — `gflow scene` group (`create` + `show`)
 
 **Files:**
 - Create: `src/gflow_cli/cli_scene.py`
 - Modify: `src/gflow_cli/cli.py`
 - Test: `tests/cli/test_cli_scene.py`
 
-> Three commands. `create` and `add-clip` parse `clipRef[:start-end]`, validate trims **before** any network call, run the full lifecycle (commit→create/append→update→read-back), render the result, then record (non-blocking). `show` is read-only. Model the command/`asyncio.run`/recorder wiring on `cli_image.py:_run_upload`. clipRef = raw `workflowId` (no data-layer resolution in v1).
+> Two commands (add-clip descoped — see council revision at top). `create` parses each `clipRef[:start-end]`, validates trims **before** any network call, runs the lifecycle (create_scene → if trims, update → read-back), renders, then records (non-blocking). `show` is read-only. Model the command/`asyncio.run`/recorder wiring on `cli_image.py:_run_upload`. clipRef = raw `workflowId` (no data-layer resolution in v1). **Note:** `create` assumes the source `workflowId`s are already committed (true for existing library clips); `client.commit_workflow` exists for the not-yet-committed case but is NOT wired into v1 (backlog — needs the per-clip `primaryMediaId`, which raw-workflowId input doesn't carry).
 
 - [ ] **Step 1: Write failing tests — clipRef parsing + trim validation (pure logic, no browser)**
 
@@ -1124,9 +1149,9 @@ from gflow_cli.api.scene import SceneWorkflow, SceneWorkflowMetadata
 from gflow_cli.config import get_settings
 from gflow_cli.data.models import OperationKind
 from gflow_cli.data.recorder import OperationRecorder
-from gflow_cli.errors import DataStoreError
-# Reuse the shared profile/dir/error helpers used by the other cli_* modules.
-from gflow_cli.cli_image import _make_provider_dir, _resolve_profile, run_with_handlers
+# Shared profile/dir/error helpers are DEFINED in _cli_helpers (cli_image re-exports
+# them). Import from the canonical home. Confirm the exact names before relying on them.
+from gflow_cli._cli_helpers import _make_provider_dir, _resolve_profile, run_with_handlers
 
 console = Console()
 log = structlog.get_logger(__name__)
@@ -1185,25 +1210,6 @@ def create(project_id: str, clip_refs: tuple[str, ...], profile: str | None) -> 
     )
 
 
-@scene.command("add-clip")
-@click.option("--scene", "scene_id", required=True, help="Existing scene id.")
-@click.option("--project", "project_id", required=True, help="Flow project id.")
-@click.argument("clip_ref", required=True)
-@click.option("--profile", default=None)
-def add_clip(scene_id: str, project_id: str, clip_ref: str, profile: str | None) -> None:
-    """Append one CLIP_REF (workflowId[:start-end]) to an existing scene."""
-    ref = _parse_clip_ref(clip_ref)
-    profile_name = _resolve_profile(profile)
-    pdir = _make_provider_dir(profile_name)
-    settings = get_settings()
-    run_with_handlers(
-        lambda: _run_add_clip(profile_name=profile_name, profile_dir=pdir,
-                              headless=settings.headless, scene_id=scene_id,
-                              project_id=project_id, ref=ref),
-        cli_command="scene add-clip",
-    )
-
-
 @scene.command("show")
 @click.option("--scene", "scene_id", required=True)
 @click.option("--project", "project_id", required=True)
@@ -1234,15 +1240,18 @@ async def _run_create(*, profile_name, profile_dir: Path, headless, project_id, 
     recorder = OperationRecorder.open(get_settings())
     try:
         async with FlowApiClient(profile_dir=profile_dir, headless=headless) as client:
-            scene_obj = await client.create_scene(
-                project_id=project_id, workflow_ids=[r.workflow_id for r in refs]
-            )
+            source_ids = [r.workflow_id for r in refs]
+            scene_obj = await client.create_scene(project_id=project_id, workflow_ids=source_ids)
             scene_obj = await _apply_trims(client, scene_obj, project_id, refs)
             _render(scene_obj)
             try:
                 recorder.record_scene(profile_name=profile_name, profile_dir=profile_dir,
-                                      scene=scene_obj, operation_kind=OperationKind.SCENE_CREATE)
-            except DataStoreError as exc:
+                                      scene=scene_obj, operation_kind=OperationKind.SCENE_CREATE,
+                                      source_workflow_ids=source_ids)
+            except Exception as exc:  # noqa: BLE001 — never abort a completed free op
+                # Post-success persistence MUST NOT fail the command (recorder-safety
+                # contract). DataStoreError is expected; catch broader so an unexpected
+                # bug can't discard an already-composed scene.
                 log.warning("scene.persist_failed_after_success", error=str(exc), scene_id=scene_obj.scene_id)
                 console.print(f"[yellow]Scene created but not recorded locally:[/yellow] {exc}")
     finally:
@@ -1253,7 +1262,10 @@ async def _apply_trims(client, scene_obj, project_id, refs):
     """Map trims from refs onto the created instances by position, validate vs
     the instance's totalDuration, then update + read back."""
     updated: list[SceneWorkflow] = []
-    for w, ref in zip(scene_obj.workflows, refs, strict=False):
+    # create returns one instance per submitted workflowId, in submission order
+    # (and _parse_workflows sorts by position == submission order); so refs[i]
+    # aligns with workflows[i]. strict=True fails loudly if that ever breaks.
+    for w, ref in zip(scene_obj.workflows, refs, strict=True):
         total = w.metadata.total_duration
         start = ref.start if ref.start is not None else 0.0
         end = ref.end if ref.end is not None else total
@@ -1266,32 +1278,12 @@ async def _apply_trims(client, scene_obj, project_id, refs):
     return await client.get_scene_workflows(scene_obj.scene_id, project_id=project_id)
 
 
-async def _run_add_clip(*, profile_name, profile_dir: Path, headless, scene_id, project_id, ref) -> None:
-    recorder = OperationRecorder.open(get_settings())
-    try:
-        async with FlowApiClient(profile_dir=profile_dir, headless=headless) as client:
-            current = await client.get_scene_workflows(scene_id, project_id=project_id)
-            existing_sources = [w.workflow_id for w in current.workflows]
-            await client.create_scene(project_id=project_id,
-                                      workflow_ids=[*existing_sources, ref.workflow_id])
-            scene_obj = await client.get_scene_workflows(scene_id, project_id=project_id)
-            _render(scene_obj)
-            try:
-                recorder.record_scene(profile_name=profile_name, profile_dir=profile_dir,
-                                      scene=scene_obj, operation_kind=OperationKind.SCENE_ADD_CLIP)
-            except DataStoreError as exc:
-                log.warning("scene.persist_failed_after_success", error=str(exc), scene_id=scene_id)
-                console.print(f"[yellow]Clip added but not recorded locally:[/yellow] {exc}")
-    finally:
-        recorder.close()
-
-
 async def _run_show(*, profile_dir: Path, headless, scene_id, project_id) -> None:
     async with FlowApiClient(profile_dir=profile_dir, headless=headless) as client:
         _render(await client.get_scene_workflows(scene_id, project_id=project_id))
 ```
 
-> **Implementation note for the executor:** confirm the exact names of the shared CLI helpers (`_resolve_profile`, `_make_provider_dir`, `run_with_handlers`) in `cli_image.py` before importing — if any is private/named differently, either import the real name or lift a tiny shared helper into a `cli_common.py`. Also re-confirm the `add-clip` semantics against the Task 0 `/scenes` capture: the protocol says scenes are composed by POSTing the full ordered `workflowIds` list, so append = re-create with the existing instances' SOURCE ids + the new one. If the HAR shows a dedicated append endpoint, prefer it.
+> **Implementation note for the executor:** the shared CLI helpers (`_resolve_profile`, `_make_provider_dir`, `run_with_handlers`) live in `gflow_cli/_cli_helpers.py` (confirmed by council D2 at `_cli_helpers.py:145/205/228`). Confirm exact names before relying on them. The broad `except Exception` around `record_scene` is intentional (recorder-safety: a completed free op must never be failed by a persistence bug) — ruff may want a `# noqa: BLE001`, already included.
 
 - [ ] **Step 4: Run the pure-logic tests — expect PASS**
 
@@ -1315,7 +1307,7 @@ from gflow_cli.cli import main
 def test_scene_group_registered():
     res = CliRunner().invoke(main, ["scene", "--help"])
     assert res.exit_code == 0
-    assert "create" in res.output and "add-clip" in res.output and "show" in res.output
+    assert "create" in res.output and "show" in res.output
 ```
 
 - [ ] **Step 7: Run — expect PASS, then commit**
@@ -1342,10 +1334,12 @@ git commit -m "feat(scene): add gflow scene CLI group (create/add-clip/show)"
     "e2e_scene: scene/timeline compose (Add Clip) — zero credits, no reCAPTCHA",
 ```
 
-- [ ] **Step 2: Add `e2e_scene` to the required sub-marker set in `tests/test_marker_registry.py`**
+- [ ] **Step 2: Add `e2e_scene` to the `_COST_SUB_MARKERS` frozenset in `tests/test_marker_registry.py`** (the real symbol — `tests/test_marker_registry.py:33-35`; there is no separate "required set")
 
 ```python
+_COST_SUB_MARKERS = frozenset(
     {"e2e_auth", "e2e_image", "e2e_video", "e2e_batch", "e2e_data", "e2e_scene"}
+)
 ```
 
 - [ ] **Step 3: Run the marker-registry test — expect PASS**
@@ -1458,14 +1452,29 @@ Expected: PASS — proves the scene composes and spends zero credits on the real
 
 ---
 
-## Self-Review (completed during planning)
+## Self-Review (planning + council pass 2026-05-31)
 
-**Spec coverage:** §3 CLI surface → Tasks 1,2,11. §4 architecture (scene.py, 4 client methods, routes, cli) → Tasks 1–7,11. §4 `_get_json` gap → Task 3. §5 testing (unit + credit-free e2e + zero-generate assertion) → Tasks 2,7,12. §6 persistence (migration + non-blocking recorder) → Tasks 8,9,10 + non-blocking wiring in Task 11. §6 trim validation pre-network → Task 11 (`_validate_trim`). §6 distinct 401 error → already exists (`AisandboxAuthError`, L0) — no task needed, noted in invariants. §6 secret hygiene → invariants + Task 0 Step 3 redaction gate. All three commands → Task 11. Raw-workflowId-only → Task 11 (`_parse_clip_ref`).
+**Spec coverage:** §3 CLI surface (`create`+`show`; add-clip descoped, see top) → Tasks 11. §4 architecture (scene.py, 4 client methods, routes, cli) → Tasks 1–7,11. §4 `_get_json` gap → Task 3. §5 testing (unit + credit-free e2e + zero-generate assertion) → Tasks 2,7,12. §6 persistence (migration + non-blocking recorder) → Tasks 8,9,10 + non-blocking wiring in Task 11. §6 trim validation pre-network → Task 11 (`_validate_trim`). §6 distinct 401 error → already exists (`AisandboxAuthError`, L0). §6 secret hygiene → invariants + Task 0 redaction (leak-scan CLEAN). Raw-workflowId-only → Task 11 (`_parse_clip_ref`).
 
-**Deviations from spec, by design:** (1) migration is **0003** not 0002 (0002 taken). (2) No new `EXIT_CODE_MAP` entry — L0 already shipped `AisandboxAuthError`. (3) SSRF allowlist on read-back download: **not exercised by L1** — `get_scene_workflows` hits a fixed aisandbox host (not a user-supplied URL), and L1 ships no media-download command; deferred to L2 where uploads/downloads land. Flagged for council.
+**Deviations from spec, by design / evidence:** (1) migration is **0003** not 0002 (0002 taken). (2) No new `EXIT_CODE_MAP` entry — L0 already shipped `AisandboxAuthError`. (3) SSRF allowlist: not exercised by L1 (no user-supplied URL; `get_scene_workflows` hits a fixed host with a regex-validated scene_id) — deferred to L2. (4) **`add-clip` descoped to backlog** — HAR-confirmed: clips are cloned to instance ids with no recoverable source id, so faithful append-to-existing has no wire path until a new capture. (5) `commit_workflow` shipped as a client method + unit test but NOT wired into the v1 `create` CLI (existing library clips are already committed; uncommitted-clip wiring needs a per-clip media id → backlog).
 
-**Known uncertainty (council, please weigh):** exact create/get **response** field paths are pinned only at Task 0 (HAR extraction). Tasks 2 & 7 parsers encode the protocol-memory shape and are verified against the captured fixtures during implementation; if the HAR nesting differs, the `from_*` accessors adjust with no signature change.
+**Council outcome (D1🟡 D2🟡 D3🟡 D4🟢 D5🟡):** all MUST-FIX and SHOULD-FIX applied. Parser field paths are now HAR-EXACT (fixtures committed): `sceneWorkflows` is a top-level sibling of `scene`; `position` defaults to 0 (Flow omits it at 0 and read-back reverses order). Repository uses `_utc_now()` + `transaction(immediate=True)`. `record_scene` retains source+media ids. `_COST_SUB_MARKERS` is the real marker symbol. Recorder call catches broadly (post-success safety).
 
-**Placeholder scan:** none — every code step carries real code; the two "confirm helper name / response path" notes are verification instructions, not deferred work.
+**Placeholder scan:** none — every code step carries real code; remaining notes are verification instructions, not deferred work.
 
-**Type consistency:** `Scene`/`SceneWorkflow`/`SceneWorkflowMetadata` field names consistent across Tasks 2,5,6,7,10,11. `SceneRecord`/`SceneClipRecord` consistent across Tasks 8,9,10. `OperationKind.SCENE_CREATE`/`SCENE_ADD_CLIP` consistent across Tasks 8,10,11.
+**Type consistency:** `Scene`/`SceneWorkflow`(+`media_id`)/`SceneWorkflowMetadata` consistent across Tasks 2,5,6,7,10,11. `SceneRecord`/`SceneClipRecord` consistent across Tasks 8,9,10. `OperationKind.SCENE_CREATE` consistent across Tasks 8,10,11.
+
+---
+
+## Backlog (deferred from L1 — tracked for continuation)
+
+Ordered roughly by readiness. Each is a follow-up plan/PR once L1 lands.
+
+1. **`scene add-clip` (append-to-existing-scene)** — BLOCKED on evidence. Needs a fresh HAR capture of "open a saved scene → Add Clip" to discover the real append mechanism (re-`POST /scenes` with full source list? a dedicated endpoint? `sceneWorkflows:update` with a new entry?). The source workflow id is NOT recoverable from create/get responses, so either Flow tracks it server-side or the user must re-supply sources. Re-add `OperationKind.SCENE_ADD_CLIP` when implemented. Capture via the live-capture collab workflow.
+2. **`commit_workflow` CLI wiring** — wire commit into `scene create` for not-yet-committed source clips (freshly generated, no `primaryMediaId` set). Requires resolving each `workflowId`→`primaryMediaId` (from the data layer or a workflow GET). v1 assumes already-committed library clips.
+3. **`scene` edit / remove-clip / reorder** — mutate an existing scene's order/trims via `sceneWorkflows:update` (read-modify-write on the instance list).
+4. **`updateVideoOffset` parity** — the redundant BFF call Flow also fires (`videoFx.updateVideoOffset`, HAR entries 9/12/15). Constant `0–8s` in the capture; likely a no-op for our purposes but worth a parity pass.
+5. **L2 — `gflow video upload`** — 2-phase resumable BFF upload → placeable `workflowServerId`; makes scene e2e self-contained (no need for a pre-existing clip). SSRF allowlist on download lands here. See `flow-video-upload-protocol`.
+6. **L3 — Extend (interpolation)** — `batchAsyncGenerateVideoStartAndEndImage` + `veo_3_1_interpolation_lite` (start+end keyframes). Spends credits + reCAPTCHA (class ② of the capability matrix → hybrid transport).
+7. **clipRef ergonomics** — accept a gflow data-row id / prior-run `mediaId` and resolve to a `workflowId` (deferred from the v1 raw-workflowId decision).
+8. **Local stitch (out of scope, noted)** — single concatenated MP4 via ffmpeg. Deliberately NOT a gflow feature (faithful-Flow-parity only); documented so it isn't re-proposed.
