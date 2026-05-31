@@ -1,9 +1,10 @@
-"""E2E smoke for the L0 SAPISIDHASH fix (Issue #15).
+"""E2E smoke for the L0 aisandbox Bearer-auth fix (Issue #15).
 
 A REST ``uploadImage`` previously returned HTTP 401 to ``page.request``; with
-the ``Authorization: SAPISIDHASH`` header attached by ``_post_json`` it must
-now succeed. **Credit-free** — uploading an image asset spends no generation
-credit. This is the empirical confirmation the redacted HARs could not give.
+the ``Authorization: Bearer <access_token>`` header attached by ``_post_json``
+(token fetched from ``GET /fx/api/auth/session``) it must now succeed.
+**Credit-free** — uploading an image asset spends no generation credit. This is
+the empirical confirmation the redacted HARs could not give.
 
 Opt-in: ``-m e2e_auth`` + ``GFLOW_CLI_E2E_PROFILE=<logged-in profile>``. The
 test opts out of the autouse ``_isolate_settings`` home-redirect so the REAL
@@ -65,7 +66,7 @@ async def test_rest_upload_image_authenticates_after_sapisidhash(
         profile_dir=profile,
         transport="evaluate_fetch",
     ) as client:
-        project = await client.create_project(title="L0 SAPISIDHASH smoke")
+        project = await client.create_project(title="L0 Bearer auth smoke")
         asset = await client.upload_image(project.project_id, img)
         # A non-empty asset id => uploadImage authenticated (no 401 / AisandboxAuthError).
         assert asset.name, "uploadImage returned an asset id => SAPISIDHASH accepted"

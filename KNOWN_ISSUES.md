@@ -65,16 +65,20 @@ a different 401** — it occurs on a profile that *is* verified and *can* create
 projects, specifically on the `aisandbox-pa.googleapis.com` generation
 endpoint, a different surface from the `labs.google` tRPC API.
 
-> **Related — L0 SAPISIDHASH (`feature/scene-add-clip`, 2026-05-31):** the
-> `aisandbox-pa` 401 is a missing `Authorization: SAPISIDHASH` header. The
-> `gflow scene` groundwork wired this header into the **`page.request` REST
+> **Related — L0 aisandbox Bearer auth (`feature/scene-add-clip`, 2026-05-31):**
+> the `aisandbox-pa` 401 is NOT a SAPISIDHASH issue — live verification proved
+> the real header is **`Authorization: Bearer ya29.<oauth>`** (the SPA's OAuth2
+> access token, fetched from `GET /fx/api/auth/session`). `page.request` 401s
+> because it sends cookies but not that token. The `gflow scene` groundwork now
+> fetches+caches the token and attaches the Bearer to the **`page.request` REST
 > path** (`_post_json` / `_patch_json`, host-scoped to `aisandbox-pa`) so
 > `uploadImage` / `scenes` / `commit` authenticate — see
-> [`docs/superpowers/plans/2026-05-30-l0-sapisidhash-aisandbox-auth.md`](docs/superpowers/plans/2026-05-30-l0-sapisidhash-aisandbox-auth.md).
-> Unit + integration tests are green; the live REST-`uploadImage`-200 proof is
-> opt-in (`tests/e2e/test_aisandbox_auth_live.py`) and **pending confirmation**.
-> The same header is the likely fix for the `evaluate_fetch` generation 401
-> above — a follow-up, not yet applied to that transport.
+> [`docs/superpowers/plans/2026-05-31-l0-bearer-pivot.md`](docs/superpowers/plans/2026-05-31-l0-bearer-pivot.md).
+> **Live-verified 2026-05-31:** REST `uploadImage` returns 200
+> (`tests/e2e/test_aisandbox_auth_live.py`, credit-free).
+> **Liberating follow-up:** the same Bearer likely unlocks the `evaluate_fetch`
+> generation 401 above (and REST generation generally, modulo reCAPTCHA) —
+> deferred, not yet applied to that transport.
 
 **Scope.** The 401 affects every image-generation path uniformly on the
 `evaluate_fetch` transport (the live one): `test_e2e_single_image_gen` (C2,
