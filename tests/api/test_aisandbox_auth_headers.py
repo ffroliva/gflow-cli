@@ -37,9 +37,7 @@ class _FakeContext:
 def test_is_aisandbox_url_discriminates_host():
     c = _make_client()
     assert c._is_aisandbox_url("https://aisandbox-pa.googleapis.com/v1/flow/x")
-    assert not c._is_aisandbox_url(
-        "https://labs.google/fx/api/trpc/project.createProject"
-    )
+    assert not c._is_aisandbox_url("https://labs.google/fx/api/trpc/project.createProject")
 
 
 @pytest.mark.unit
