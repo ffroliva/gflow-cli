@@ -17,6 +17,11 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
     optional per-clip trim in seconds).
   - `gflow scene show --scene <sid> --project <pid>` — read back a scene's clip
     order and trims.
+  - `gflow scene create … --output extended.mp4` — render the composed scene
+    into a single **extended video** via Flow's server-side concatenation
+    (`runVideoFxConcatenation`) — credit-free, no reCAPTCHA, **no ffmpeg**. The
+    combined MP4 is fetched inline and written locally (or to the configured
+    cloud `storage_uri`). `--force` overwrites an existing output.
 
   Scene compositions are recorded locally (SQLite migration `0003`). The
   append-to-existing-scene verb (`add-clip`) is deferred — see the project

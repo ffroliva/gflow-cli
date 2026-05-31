@@ -60,11 +60,65 @@ class SceneWorkflow:
         }
 
 
+def _seconds_to_nanos(value: float) -> str:
+    """Serialize seconds as an integer-nanoseconds string (concat `length`)."""
+    if not math.isfinite(value) or value < 0:
+        msg = f"length must be finite and non-negative, got {value!r}"
+        raise ValueError(msg)
+    return str(int(round(value * 1_000_000_000)))
+
+
+@dataclass(frozen=True)
+class ConcatInput:
+    """One clip in a server-side concatenation request (runVideoFxConcatenation).
+
+    ``media_id`` is the scene-clip's ``primaryMediaId`` (from the create
+    response). ``length`` is the clip's full duration; ``start``/``end`` are the
+    trim offsets within it (visible length = end - start).
+    """
+
+    media_id: str
+    length: float
+    start: float
+    end: float
+
+    def to_wire(self) -> dict[str, Any]:
+        return {
+            "mediaGenerationId": self.media_id,
+            "length": _seconds_to_nanos(self.length),
+            "startTimeOffset": _seconds_to_duration(self.start),
+            "endTimeOffset": _seconds_to_duration(self.end),
+        }
+
+
 @dataclass(frozen=True)
 class Scene:
     scene_id: str
     project_id: str
     workflows: tuple[SceneWorkflow, ...]
+
+    def to_concat_inputs(self) -> tuple[ConcatInput, ...]:
+        """Build the ordered concat inputs from this scene's clips.
+
+        Workflows are already position-sorted by the parser. Each clip MUST
+        carry a ``media_id`` (``primaryMediaId``) — Flow's concat addresses
+        media, not workflow instances. Raises ``ValueError`` if any is missing.
+        """
+        inputs: list[ConcatInput] = []
+        for w in self.workflows:
+            if not w.media_id:
+                msg = f"clip {w.workflow_id!r} has no media_id; cannot concatenate"
+                raise ValueError(msg)
+            m = w.metadata
+            inputs.append(
+                ConcatInput(
+                    media_id=w.media_id,
+                    length=m.total_duration,
+                    start=m.start_time,
+                    end=m.end_time if m.end_time > 0 else m.total_duration,
+                )
+            )
+        return tuple(inputs)
 
     @staticmethod
     def _parse_workflows(entries: list[dict[str, Any]]) -> tuple[SceneWorkflow, ...]:

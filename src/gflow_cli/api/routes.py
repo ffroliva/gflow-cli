@@ -66,6 +66,13 @@ EDITOR_BOOTSTRAP_URL = "https://labs.google/fx/tools/flow?hl=en"
 # Scene / Add Clip (aisandbox-pa) ------------------------------------------
 SCENE_WORKFLOWS_UPDATE = f"{FLOW_API_BASE}/flow/scene/sceneWorkflows:update"
 
+# Server-side concatenation (the "Baixar"/download action): stitches a scene's
+# clips into ONE extended MP4 server-side — credit-free, no ffmpeg. Top-level
+# `/v1:` methods (NOT under /flow/…), same colon-method shape as GENERATE_VIDEO.
+# The combined MP4 is returned inline as base64 in the status `encodedVideo`.
+RUN_VIDEO_FX_CONCATENATION = f"{FLOW_API_BASE}:runVideoFxConcatenation"
+RUN_VIDEO_FX_CHECK_CONCATENATION_STATUS = f"{FLOW_API_BASE}:runVideoFxCheckConcatenationStatus"
+
 # Reuse the project-id allowlist shape for scene/workflow ids (UUID-like, path-interpolated).
 _SCENE_ID_RE = re.compile(r"^[A-Za-z0-9\-]{1,128}$")
 
@@ -93,8 +100,7 @@ def scene_workflows_url(scene_id: str, project_id: str) -> str:
         msg = f"Invalid project_id: {project_id!r}"
         raise ValueError(msg)
     return (
-        f"{FLOW_API_BASE}/flow/scene/{scene_id}/workflows"
-        f"?sceneId={scene_id}&projectId={project_id}"
+        f"{FLOW_API_BASE}/flow/scene/{scene_id}/workflows?sceneId={scene_id}&projectId={project_id}"
     )
 
 
