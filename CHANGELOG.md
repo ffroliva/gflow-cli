@@ -7,6 +7,8 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+## [0.11.0] — 2026-05-31
+
 ### Changed
 
 - **`gflow video i2v` default model is now `veo-lite`** (was: inherit Flow's
@@ -55,6 +57,15 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   the panel by clicking the toggle off. Detection is locale-invariant and uses no
   UI text and no `aria-` attribute (`button:has(span.content)` plus the absence of
   the locale-stable `crop_*` trigger), so it works in every Flow UI language.
+
+- **`gflow image t2i` / `i2i` model selection hardened for non-English Flow UIs
+  (issue #94).** `IMAGE_MODEL_OPTION_SELECTORS` is now a selector *cascade*
+  (consistent with every other selector group) instead of a single exact-match
+  string, so `_select_image_model` no longer silently fails to select the
+  requested model when Flow's menu markup shifts. The redundant `--lang=en-US`
+  Chromium launch arg was removed — Flow's branded model names ("Nano Banana 2",
+  "Nano Banana Pro", "Imagen 4") are not localised and `FLOW_URL`'s `?hl=en`
+  already locks the SPA to English, so the override was a no-op.
 
 ## [0.10.0] — 2026-05-29
 
@@ -1258,7 +1269,8 @@ shell-script template that branches on these codes.
 
 First skeleton. Not functional end-to-end yet.
 
-[Unreleased]: https://github.com/ffroliva/gflow-cli/compare/v0.10.0...HEAD
+[Unreleased]: https://github.com/ffroliva/gflow-cli/compare/v0.11.0...HEAD
+[0.11.0]: https://github.com/ffroliva/gflow-cli/compare/v0.10.0...v0.11.0
 [0.10.0]: https://github.com/ffroliva/gflow-cli/compare/v0.9.1...v0.10.0
 [0.9.1]: https://github.com/ffroliva/gflow-cli/compare/v0.9.0...v0.9.1
 [0.9.0]: https://github.com/ffroliva/gflow-cli/compare/v0.8.1...v0.9.0
