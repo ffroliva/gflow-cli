@@ -181,3 +181,9 @@ secret redaction; `0002` migration + newer-schema `DataStoreError` guard; record
 free op; `WireFormatError` (not crash) on missing `sceneId`/`workflowServerId`; SSRF allowlist on
 replay; trim-range + upload file-type/size validation. Skipped dimension worth noting: **D3
 selector drift is N/A — this is REST-only, no DOM** (a durability win).
+
+**L0 outcome (2026-05-31):** the live smoke disproved the SAPISIDHASH hypothesis — `aisandbox-pa`
+authenticates with `Authorization: Bearer ya29.<oauth>` fetched from `GET /fx/api/auth/session`.
+L0 pivoted to the Bearer mechanism (`docs/superpowers/plans/2026-05-31-l0-bearer-pivot.md`) and is
+**live-verified credit-free** (REST `uploadImage` → 200). The SAPISIDHASH infra (header injection,
+401 refresh-retry, `AisandboxAuthError`, deadlock-safe `BrowserContext` read) was reused intact.
