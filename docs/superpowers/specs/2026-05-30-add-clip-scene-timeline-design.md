@@ -133,10 +133,11 @@ recaptcha and spend nothing — only `batchAsyncGenerate*` costs).
   aisandbox URLs and inject `Authorization: Bearer ya29` (fetched/cached from
   `GET /fx/api/auth/session`) + 401-refresh-retry. Live-verified credit-free (`uploadImage` → 200),
   council-cleared. The SAPISIDHASH hypothesis was disproven live; infra reused intact (§8).
-- **L1 — `gflow scene` compose** (this spec §3–§5): create scene, ordering, per-clip trim,
-  commit, read-back — **all three commands** (`create`/`add-clip`/`show`). Credit-free. Adds a
-  `_get_json` aisandbox helper for read-back. **Persistence (migration `0002` + non-blocking
-  recorder) is IN scope for L1** (see cross-cutting must-haves below).
+- **L1 — `gflow scene` compose ✅ IMPLEMENTED 2026-05-31** (plan `docs/superpowers/plans/2026-05-31-l1-scene-compose.md`):
+  ships **`create` + `show`** (add-clip descoped — no faithful wire path, see top note). Added
+  `_get_json` aisandbox helper, `api/scene.py` models, 4 client methods, `cli_scene.py`, and
+  persistence (**migration `0003`** — `0002` was already taken by cloud-storage — + non-blocking
+  recorder). Credit-free; opt-in `e2e_scene` test. Unit + data + cli suites green; ruff + pyright clean.
 - **L2 — `gflow video upload`** (BFF `upload-video`, §5 research item resolved): 2-phase resumable
   upload → `workflowServerId` directly placeable in a scene. Lower-risk than L1 (BFF auth proven).
   Makes L1's e2e self-contained.
