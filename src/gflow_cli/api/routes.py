@@ -62,3 +62,33 @@ def batch_generate_images_url(project_id: str) -> str:
 # Bootstrap URL — the Flow editor page. The persistent context navigates here
 # once before making API calls so Google's cookies + reCAPTCHA JS are loaded.
 EDITOR_BOOTSTRAP_URL = "https://labs.google/fx/tools/flow?hl=en"
+
+# Scene / Add Clip (aisandbox-pa) ------------------------------------------
+SCENE_WORKFLOWS_UPDATE = f"{FLOW_API_BASE}/flow/scene/sceneWorkflows:update"
+
+# Reuse the project-id allowlist shape for scene/workflow ids (UUID-like, path-interpolated).
+_SCENE_ID_RE = re.compile(r"^[A-Za-z0-9\-]{1,128}$")
+
+
+def scenes_url(project_id: str) -> str:
+    """POST target that composes a scene from ordered workflowIds."""
+    if not _PROJECT_ID_RE.fullmatch(project_id):
+        msg = f"Invalid project_id: {project_id!r}"
+        raise ValueError(msg)
+    return f"{FLOW_API_BASE}/flow/projects/{project_id}/scenes"
+
+
+def scene_workflows_url(scene_id: str) -> str:
+    """GET target for scene read-back (order + trims + media)."""
+    if not _SCENE_ID_RE.fullmatch(scene_id):
+        msg = f"Invalid scene_id: {scene_id!r}"
+        raise ValueError(msg)
+    return f"{FLOW_API_BASE}/flow/scene/{scene_id}/workflows"
+
+
+def flow_workflow_url(workflow_id: str) -> str:
+    """PATCH target to commit a workflow's primaryMediaId before placement."""
+    if not _SCENE_ID_RE.fullmatch(workflow_id):
+        msg = f"Invalid workflow_id: {workflow_id!r}"
+        raise ValueError(msg)
+    return f"{ARCHIVE_WORKFLOW_BASE}/{workflow_id}"
