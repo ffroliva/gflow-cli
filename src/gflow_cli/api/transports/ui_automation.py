@@ -61,16 +61,24 @@ FLOW_URL = "https://labs.google/fx/tools/flow?hl=en"
 _PROJECT_URL_FRAGMENT = "/project/"
 
 # Image model picker (SOT flow-editor-map.json). Same arrow_drop_down trigger as
-# video; options matched by product name (NOT localized — but the editor must be
-# in English, forced via the --lang=en-US launch arg). 'Nano Banana 2' is not a
-# substring of 'Nano Banana Pro', so has-text is unambiguous across the three.
+# video; options matched by product name.  Cascade discipline: Tier 1 (structural
+# / ARIA) before Tier 2 (text).  The product names "Nano Banana 2", "Nano Banana
+# Pro", and "Imagen 4" are Google-branded model identifiers that Flow does not
+# localise across locales — the has-text() entries are therefore locale-stable.
+# Primary locale control is ``locale=locale_env`` in launch_persistent_context
+# (Playwright kwarg — persists across all in-session navigations including
+# /project/<uuid> deep-links that drop the ?hl= param).  FLOW_URL's ``?hl=en``
+# reinforces English on the initial load.  'Nano Banana 2' is not a substring of
+# 'Nano Banana Pro', so has-text is unambiguous across the three.
+# Tier 1 (structural) slots are reserved for data-* / aria-* anchors once a DOM
+# probe via scripts/dev/capture_locale_invariants.py confirms stable attributes.
 IMAGE_MODEL_PICKER_TRIGGER = (
     "button[aria-haspopup='menu']:has(i.google-symbols:text-is('arrow_drop_down'))"
 )
-IMAGE_MODEL_OPTION_SELECTORS: dict[Model, str] = {
-    Model.NARWHAL: "[role='menuitem']:has-text('Nano Banana 2')",
-    Model.GEM_PIX_2: "[role='menuitem']:has-text('Nano Banana Pro')",
-    Model.IMAGEN_3_5: "[role='menuitem']:has-text('Imagen 4')",
+IMAGE_MODEL_OPTION_SELECTORS: dict[Model, tuple[str, ...]] = {
+    Model.NARWHAL: ("[role='menuitem']:has-text('Nano Banana 2')",),
+    Model.GEM_PIX_2: ("[role='menuitem']:has-text('Nano Banana Pro')",),
+    Model.IMAGEN_3_5: ("[role='menuitem']:has-text('Imagen 4')",),
 }
 
 # Image-mode tab inside the mode-switch dropdown.  Selectors are tried in
@@ -586,19 +594,6 @@ class UiAutomationTransport(VideoGenerationMixin):
                 args=[
                     "--disable-blink-features=AutomationControlled",
                     "--password-store=basic",
-                    # locale="en-US" only sets Accept-Language; Chrome still picks
-                    # its UI language from the profile/system and Flow then serves
-                    # /fx/<locale>/ with a localized editor.  --lang forces the UI
-                    # to English so the image model-picker product names (e.g.
-                    # "Nano Banana 2") in IMAGE_MODEL_OPTION_SELECTORS are rendered
-                    # consistently — those selectors use English has-text() matches
-                    # against product names that Google may localise.
-                    # ONBOARDING_SELECTORS, _attach_frame, NEW_PROJECT_SELECTORS,
-                    # and SUBMIT_BUTTON_SELECTORS are all structural/icon-first and
-                    # no longer require this arg.  Dropping it entirely is deferred
-                    # until IMAGE_MODEL_OPTION_SELECTORS is converted to a
-                    # locale-invariant anchor (issue #24 Phase 4 follow-up).
-                    "--lang=en-US",
                 ],
             )
             # Hide the automation flag so reCAPTCHA Enterprise doesn't score
@@ -993,8 +988,8 @@ class UiAutomationTransport(VideoGenerationMixin):
         this the generation uses Flow's UI-default model and ``--model`` is a
         no-op. Non-fatal on miss (logged at WARNING — the wrong model has a real
         cost/quality impact, so a miss is a genuine signal)."""
-        option_sel = IMAGE_MODEL_OPTION_SELECTORS.get(model)
-        if option_sel is None:
+        option_sels = IMAGE_MODEL_OPTION_SELECTORS.get(model)
+        if not option_sels:
             log.warning("ui_automation.image_model_unknown", model=model.value)
             return
         try:
@@ -1002,11 +997,22 @@ class UiAutomationTransport(VideoGenerationMixin):
             await trigger.wait_for(state="visible", timeout=4000)
             await trigger.click()
             await page.wait_for_timeout(500)
-            option = page.locator(option_sel).first
-            await option.wait_for(state="visible", timeout=4000)
-            await option.click()
-            await page.wait_for_timeout(500)
-            log.info("ui_automation.image_model_selected", model=model.value)
+            for sel in option_sels:
+                try:
+                    loc = page.locator(sel).first
+                    await loc.wait_for(state="visible", timeout=4000)
+                    await loc.click()
+                    await page.wait_for_timeout(500)
+                    log.info("ui_automation.image_model_selected", model=model.value, via=sel)
+                    return
+                except Exception as sel_err:
+                    log.debug(
+                        "ui_automation.image_model_selector_miss",
+                        sel=sel,
+                        error=str(sel_err)[:120],
+                    )
+                    continue
+            raise RuntimeError(f"no visible option matched for model {model.value!r}")
         except Exception as e:
             log.warning(
                 "ui_automation.image_model_not_set",
