@@ -454,6 +454,34 @@ class FlowApiClient:
             "origin": _LABS_ORIGIN,
         }
 
+    async def _run_with_aisandbox_retry(
+        self,
+        attempt: Any,
+        *,
+        route: str,
+        is_aisandbox: bool,
+    ) -> Any:
+        """Run ``attempt`` under the retry policy; on an aisandbox 401, re-fetch
+        the access token once and retry, then raise ``AisandboxAuthError``.
+
+        Shared by ``_post_json`` and ``_patch_json`` so the auth-refresh policy
+        lives in one place.
+        """
+        resp = await self._run_with_retry(attempt, route=route)
+        if is_aisandbox and resp.status == 401:
+            # Token may have expired mid-session — re-fetch once and retry.
+            self._access_token = None
+            await self._ensure_access_token()
+            resp = await self._run_with_retry(attempt, route=route)
+            if resp.status == 401:
+                raise AisandboxAuthError(
+                    detail="aisandbox-pa returned 401 after token refresh",
+                    status=401,
+                    instance=_make_instance(),
+                    route=route,
+                )
+        return resp
+
     async def _post_json(
         self,
         url: str,
@@ -497,19 +525,9 @@ class FlowApiClient:
             finally:
                 self._checkin_page(page)
 
-        resp = await self._run_with_retry(attempt, route=route)
-        if is_aisandbox and resp.status == 401:
-            # Token may have expired mid-session — re-fetch once and retry.
-            self._access_token = None
-            await self._ensure_access_token()
-            resp = await self._run_with_retry(attempt, route=route)
-            if resp.status == 401:
-                raise AisandboxAuthError(
-                    detail="aisandbox-pa returned 401 after token refresh",
-                    status=401,
-                    instance=_make_instance(),
-                    route=route,
-                )
+        resp = await self._run_with_aisandbox_retry(
+            attempt, route=route, is_aisandbox=is_aisandbox
+        )
         text = await resp.text()
         _raise_for_non_retryable(resp, text, route=route)
         try:
@@ -551,19 +569,9 @@ class FlowApiClient:
             finally:
                 self._checkin_page(page)
 
-        resp = await self._run_with_retry(attempt, route=route)
-        if is_aisandbox and resp.status == 401:
-            # Token may have expired mid-session — re-fetch once and retry.
-            self._access_token = None
-            await self._ensure_access_token()
-            resp = await self._run_with_retry(attempt, route=route)
-            if resp.status == 401:
-                raise AisandboxAuthError(
-                    detail="aisandbox-pa returned 401 after token refresh",
-                    status=401,
-                    instance=_make_instance(),
-                    route=route,
-                )
+        resp = await self._run_with_aisandbox_retry(
+            attempt, route=route, is_aisandbox=is_aisandbox
+        )
         text = await resp.text()
         _raise_for_non_retryable(resp, text, route=route)
         try:
