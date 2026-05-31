@@ -3,7 +3,7 @@
 > Status: **approved (design), hardened by /gflow:predict (CAUTION 5/10) + /gflow:scenario** · Date: 2026-05-30 · Author: brainstorming session
 > Source evidence: `labs.google13.har` (Extend/interpolation), `labs.google15.har` (full Add Clip + crop), `labs.google16.har` (video upload)
 >
-> ⚠️ **Read §8 first.** The naive "all REST via `page.request`" premise is **wrong for `aisandbox-pa`**: those POSTs 401 without a SAPISIDHASH header (Issue #15). The work is gated on an **L0** auth fix — see §6 (roadmap) and §8 (analysis).
+> ⚠️ **Read §8 first.** The naive "all REST via `page.request`" premise is **wrong for `aisandbox-pa`**: those POSTs 401 without an `Authorization: Bearer ya29` token (Issue #15). **SAPISIDHASH mentions in the body below are a disproven hypothesis — the live-verified mechanism is the Bearer token; see §8.** The work is gated on an **L0** auth fix — see §6 (roadmap) and §8 (analysis).
 
 ## 1. Goal
 
