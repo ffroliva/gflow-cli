@@ -28,7 +28,7 @@ If you can help unblock a pure HTTP transport (especially for video generation, 
 - Copy `.env.template` to `.env.local`; never commit `.env.local`. It documents every env var.
 - Output goes to `./tmp/` for scripts/tests or `$GFLOW_CLI_OUTPUT_DIR` for CLI outputs (defaults to `./out/`).
 - One-time auth: `gflow auth login --browser chrome`. The `--browser chrome` flag is mandatory; the CLI fails fast on other strategies.
-- Use `/gflow:plan` to see the active phase before starting work; `/gflow:known-issues` before touching auth or reCAPTCHA code paths.
+- Use `/gflow:status` to see the current task before starting work; `/gflow:known-issues` before touching auth or reCAPTCHA code paths.
 
 ## Testing instructions — The Impeccable Routine
 
@@ -89,7 +89,7 @@ The SkillOpt harness at `scripts/dev/skillopt/` measures how accurately each ski
 - **Mandates & routing rules** → [docs/AGENT_GUIDE.md](docs/AGENT_GUIDE.md)
 - **Full docs index** → [docs/INDEX.md](docs/INDEX.md)
 - **Known issues** (read before touching auth / reCAPTCHA) → [KNOWN_ISSUES.md](KNOWN_ISSUES.md)
-- **Active phase & backlog** → [PLAN.md](PLAN.md) or run `/gflow:plan`
+- **Current task** → `/gflow:status` · **Create a feature plan** → `/gflow:plan <feature>` · **Full roadmap** → [PLAN.md](PLAN.md)
 - **Release protocol** → [RELEASE.md](RELEASE.md)
 
 ## Claude Code-specific notes

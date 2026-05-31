@@ -42,12 +42,15 @@ Slash commands for Claude Code, stored in `.claude/commands/gflow/`. All prefixe
 | Command | Purpose | Call when… |
 |---|---|---|
 | `/gflow:check` | Hygiene + auto-fix lint/format + type/test report | Before every commit |
-| `/gflow:plan` | Show current phase scope, sequence, and definition of done | Starting a feature or unsure what's in scope |
+| `/gflow:status [feature]` | Full state: active plan, progress, next unchecked task | Starting a session; after completing a task |
+| `/gflow:next [feature]` | Next unchecked task only — no context noise | Quick "what do I do right now?" |
+| `/gflow:active` | Which plan is active and its goal — no task detail | Before predict/scenario; quick orientation |
+| `/gflow:plan <feature>` | Create a task-by-task implementation plan → writes `docs/superpowers/plans/` | After predict GO/CAUTION; when a backlog item needs a concrete breakdown |
 | `/gflow:known-issues` | Surface open and mitigated issues | Before touching auth, reCAPTCHA, or previously-flagged code |
 | `/gflow:changelog` | Show `[Unreleased]` entries + last tagged release | Need a quick picture of recent work |
 | `/gflow:release` | Full release flow (calls `/gflow:changelog` + `/gflow:check`) | Cutting a new version |
 | `/gflow:predict <proposal>` | 5-persona pre-implementation analysis → GO / CAUTION / STOP | Before any high-stakes design decision (new transport, auth change, selector redesign, schema migration) |
-| `/gflow:scenario <feature>` | 12-dimension edge-case explorer → severity-ranked scenario table + BDD skeleton | After predict GO/CAUTION; before writing the PLAN.md task spec |
+| `/gflow:scenario <feature>` | 12-dimension edge-case explorer → severity-ranked scenario table + BDD skeleton | After predict GO/CAUTION; before `/gflow:plan` |
 
 **Governance:** commands are executable docs — they decay like any doc. When a phase advances or a file path changes, update the relevant command in the same commit. `/gflow:release` includes a staleness review step.
 
