@@ -35,9 +35,10 @@ class _FakePage:
         self.context = None
 
 
-def _client_with_page(page, sapisid="FAKE_SAPISID"):
+def _client_with_page(page, token="ya29.TOK"):
     c = FlowApiClient.__new__(FlowApiClient)
-    c._sapisid = sapisid
+    c._access_token = token
+    c._access_token_exp = 9_999_999_999.0  # far future → no re-fetch
 
     async def checkout():
         return page
@@ -49,16 +50,14 @@ def _client_with_page(page, sapisid="FAKE_SAPISID"):
 
 @pytest.mark.integration
 @pytest.mark.asyncio
-async def test_post_json_attaches_sapisidhash_for_aisandbox(monkeypatch):
-    monkeypatch.setattr("gflow_cli.api.client.time.time", lambda: 1700000000.0)
+async def test_post_json_attaches_bearer_for_aisandbox():
     page = _FakePage([200])
     c = _client_with_page(page)
     await c._post_json(
         "https://aisandbox-pa.googleapis.com/v1/flow/projects/p/scenes",
         {"workflowIds": []},
     )
-    sent = page.request.calls[0]["headers"]
-    assert sent["authorization"].startswith("SAPISIDHASH 1700000000_")
+    assert page.request.calls[0]["headers"]["authorization"] == "Bearer ya29.TOK"
 
 
 @pytest.mark.integration
@@ -76,30 +75,30 @@ async def test_post_json_does_not_attach_auth_for_bff():
 
 @pytest.mark.integration
 @pytest.mark.asyncio
-async def test_post_json_refreshes_sapisid_on_401_then_raises(monkeypatch):
-    monkeypatch.setattr("gflow_cli.api.client.time.time", lambda: 1700000000.0)
-    page = _FakePage([401, 401])  # 401, refresh, still 401
+async def test_post_json_refetches_token_on_401_then_raises():
+    page = _FakePage([401, 401])  # 401, re-fetch token, still 401
     c = _client_with_page(page)
-    refreshed = {"n": 0}
+    refetched = {"n": 0}
 
-    async def fake_read():
-        refreshed["n"] += 1
-        return "ROTATED_SAPISID"
+    async def fake_fetch():
+        refetched["n"] += 1
+        return ("ya29.NEW", 9_999_999_999.0)
 
-    c._read_sapisid_from_context = fake_read  # type: ignore[method-assign]
+    c._fetch_access_token = fake_fetch  # type: ignore[method-assign]
     with pytest.raises(AisandboxAuthError):
         await c._post_json(
             "https://aisandbox-pa.googleapis.com/v1/flow/projects/p/scenes",
             {"workflowIds": []},
         )
-    assert refreshed["n"] == 1  # re-read exactly once
+    assert refetched["n"] == 1  # re-fetched exactly once
     assert len(page.request.calls) == 2  # original + one retry
+    # second attempt used the refreshed token
+    assert page.request.calls[1]["headers"]["authorization"] == "Bearer ya29.NEW"
 
 
 @pytest.mark.integration
 @pytest.mark.asyncio
-async def test_patch_json_attaches_sapisidhash_for_aisandbox(monkeypatch):
-    monkeypatch.setattr("gflow_cli.api.client.time.time", lambda: 1700000000.0)
+async def test_patch_json_attaches_bearer_for_aisandbox():
     page = _FakePage([200])
     page.request = _FakeRequestPatch([200])
     c = _client_with_page(page)
@@ -107,4 +106,4 @@ async def test_patch_json_attaches_sapisidhash_for_aisandbox(monkeypatch):
         "https://aisandbox-pa.googleapis.com/v1/flowWorkflows/wf-1",
         {"workflow": {"name": "wf-1"}, "updateMask": "metadata.primaryMediaId"},
     )
-    assert page.request.calls[0]["headers"]["authorization"].startswith("SAPISIDHASH ")
+    assert page.request.calls[0]["headers"]["authorization"] == "Bearer ya29.TOK"
