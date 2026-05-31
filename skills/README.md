@@ -21,7 +21,7 @@ This directory ships installable agent skill docs for `gflow-cli`. Each `SKILL.m
 
 ## scenario skill
 
-[`scenario/SKILL.md`](scenario/SKILL.md) — 12-dimension edge-case explorer tuned to gflow-cli's known failure surfaces (WAF/reCAPTCHA scoring, Playwright selector drift, auth token lifecycle, batch resume idempotency, SQLite data layer, RFC 9457 error propagation, cross-platform paths, observability contract). Produces a severity-ranked scenario table and BDD `Scenario:` blocks. Invoke via `/gflow:scenario <feature>` after a predict GO/CAUTION, before writing the PLAN.md task spec.
+[`scenario/SKILL.md`](scenario/SKILL.md) — 12-dimension edge-case explorer tuned to gflow-cli's known failure surfaces (WAF/reCAPTCHA scoring, Playwright selector drift, auth token lifecycle, batch resume idempotency, SQLite data layer, RFC 9457 error propagation, cross-platform paths, observability contract). Produces a severity-ranked scenario table and BDD `Scenario:` blocks. Invoke via `/gflow:scenario <feature>` after a predict GO/CAUTION, before `/gflow:plan <feature>`.
 
 ## plan skill
 
