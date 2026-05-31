@@ -30,6 +30,7 @@ from gflow_cli.api import routes
 from gflow_cli.api._retry import parse_retry_after, post_with_retry
 from gflow_cli.api.dto import AssetInfo, GeneratedImage, ProjectInfo
 from gflow_cli.api.recaptcha import TokenMinter
+from gflow_cli.api.scene import Scene, SceneWorkflow
 from gflow_cli.api.transports import make_transport
 from gflow_cli.api.transports.base import FlowTransportStrategy, VideoCapableTransport
 from gflow_cli.config import Settings
@@ -579,6 +580,47 @@ class FlowApiClient:
         except json.JSONDecodeError:
             return {}
 
+    async def _get_json(
+        self,
+        url: str,
+        *,
+        route_name: str | None = None,
+    ) -> Any:
+        """GET a JSON body with retry + aisandbox Bearer auth + typed errors.
+
+        Mirrors _post_json for the read side: aisandbox-pa GETs require the
+        Bearer token. 401 -> single token-refresh-retry via the shared helper.
+        """
+        logger.debug("get_json", url=url)
+        route = route_name or url
+        is_aisandbox = self._is_aisandbox_url(url)
+
+        async def attempt() -> Any:
+            page = await self._checkout_page()
+            try:
+                headers: dict[str, str] = {}
+                if is_aisandbox:
+                    headers.update(await self._aisandbox_auth_headers())
+                return await page.request.get(url, headers=headers, timeout=30_000)
+            finally:
+                self._checkin_page(page)
+
+        resp = await self._run_with_aisandbox_retry(
+            attempt, route=route, is_aisandbox=is_aisandbox
+        )
+        text = await resp.text()
+        _raise_for_non_retryable(resp, text, route=route)
+        try:
+            return json.loads(text)
+        except json.JSONDecodeError as e:
+            raise WireFormatError(
+                detail=f"non-JSON response: {text[:200]}",
+                status=resp.status,
+                instance=_make_instance(),
+                route=route,
+                discovery=_build_wire_format_discovery(resp, text, route),
+            ) from e
+
     async def _run_with_retry(self, attempt: Any, *, route: str) -> Any:
         """Execute ``attempt()`` under the tenacity retry policy.
 
@@ -790,6 +832,58 @@ class FlowApiClient:
             "updateMask": "metadata.archived",
         }
         await self._patch_json(url, body)
+
+    async def commit_workflow(
+        self, workflow_id: str, *, project_id: str, primary_media_id: str
+    ) -> None:
+        """Commit a workflow's primaryMediaId so it can be placed in a scene.
+
+        PATCH /v1/flowWorkflows/{id}, updateMask metadata.primaryMediaId.
+        Auth handled by the _patch_json Bearer path.
+        """
+        body = {
+            "workflow": {
+                "name": workflow_id,
+                "projectId": project_id,
+                "metadata": {"primaryMediaId": primary_media_id},
+            },
+            "updateMask": "metadata.primaryMediaId",
+        }
+        await self._patch_json(
+            routes.flow_workflow_url(workflow_id), body, route_name="commitWorkflow"
+        )
+
+    async def create_scene(self, *, project_id: str, workflow_ids: list[str]) -> Scene:
+        """Compose a scene from an ordered list of source workflowIds.
+
+        POST /v1/flow/projects/{pid}/scenes. Repeat an id to clone a clip.
+        """
+        data = await self._post_json(
+            routes.scenes_url(project_id),
+            {"workflowIds": list(workflow_ids)},
+            route_name="createScene",
+        )
+        return Scene.from_create_response(data, project_id=project_id)
+
+    async def update_scene_workflows(
+        self, *, scene_id: str, project_id: str, workflows: list[SceneWorkflow]
+    ) -> None:
+        """Set per-clip order + trim. POST /v1/flow/scene/sceneWorkflows:update."""
+        body = {
+            "sceneId": scene_id,
+            "projectId": project_id,
+            "sceneWorkflows": [w.to_wire(scene_id=scene_id) for w in workflows],
+        }
+        await self._post_json(
+            routes.SCENE_WORKFLOWS_UPDATE, body, route_name="updateSceneWorkflows"
+        )
+
+    async def get_scene_workflows(self, scene_id: str, *, project_id: str) -> Scene:
+        """Read back a scene's clips (order + trims). GET via _get_json."""
+        data = await self._get_json(
+            routes.scene_workflows_url(scene_id), route_name="getSceneWorkflows"
+        )
+        return Scene.from_get_response(data, scene_id=scene_id, project_id=project_id)
 
     async def _mint_recaptcha_token(self, action: str) -> str:
         """Mint a single-use reCAPTCHA Enterprise token via the client's Page.
