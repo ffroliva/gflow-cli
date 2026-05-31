@@ -32,6 +32,9 @@ from gflow_cli.errors import DataStoreError
 
 console = Console()
 
+# DataStoreError ``route`` tag for `gflow data media` lookups (dedupe S1192).
+_ROUTE_DATA_MEDIA = "data.media"
+
 
 # ---------------------------------------------------------------------------
 # Helpers for `gflow data list` output
@@ -264,7 +267,7 @@ async def _run_media(*, profile: str | None, media_id: str) -> None:
                 if scoped is None:
                     raise DataStoreError(
                         detail=f"No local media record found: {media_id} (profile={profile!r})",
-                        route="data.media",
+                        route=_ROUTE_DATA_MEDIA,
                     )
                 return scoped
 
@@ -272,7 +275,7 @@ async def _run_media(*, profile: str | None, media_id: str) -> None:
             if not matches:
                 raise DataStoreError(
                     detail=f"No local media record found: {media_id}",
-                    route="data.media",
+                    route=_ROUTE_DATA_MEDIA,
                 )
             if len(matches) > 1:
                 candidates = sorted({f"{m.profile_name} ({m.kind.value})" for m in matches})
@@ -281,7 +284,7 @@ async def _run_media(*, profile: str | None, media_id: str) -> None:
                         f"Media {media_id!r} exists under multiple profiles: "
                         f"{candidates}. Pass --profile NAME to disambiguate."
                     ),
-                    route="data.media",
+                    route=_ROUTE_DATA_MEDIA,
                 )
             return matches[0]
 
