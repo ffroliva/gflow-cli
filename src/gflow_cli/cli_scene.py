@@ -65,7 +65,12 @@ def scene() -> None:
 @click.option("--profile", default=None, help="Profile name (overrides default).")
 def create(project_id: str, clip_refs: tuple[str, ...], profile: str | None) -> None:
     """Compose a new scene from CLIP_REFS (each: workflowId[:start-end])."""
-    refs = [_parse_clip_ref(t) for t in clip_refs]
+    try:
+        refs = [_parse_clip_ref(t) for t in clip_refs]
+    except ValueError as e:
+        # Surface malformed clipRefs as a Click usage error (exit 2) instead of
+        # an uncaught traceback, matching the rest of the CLI's argument errors.
+        raise click.BadParameter(str(e), param_hint="CLIP_REFS") from e
     profile_name = _resolve_profile(profile)
     pdir = _make_provider_dir(profile_name)
     settings = get_settings()
@@ -82,9 +87,9 @@ def create(project_id: str, clip_refs: tuple[str, ...], profile: str | None) -> 
 
 
 @scene.command("show")
-@click.option("--scene", "scene_id", required=True)
-@click.option("--project", "project_id", required=True)
-@click.option("--profile", default=None)
+@click.option("--scene", "scene_id", required=True, help="Scene id to read back.")
+@click.option("--project", "project_id", required=True, help="Flow project id.")
+@click.option("--profile", default=None, help="Profile name (overrides default).")
 def show(scene_id: str, project_id: str, profile: str | None) -> None:
     """Read back a scene's clip order and trims."""
     profile_name = _resolve_profile(profile)

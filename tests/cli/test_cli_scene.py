@@ -31,3 +31,19 @@ def test_scene_group_registered():
     res = CliRunner().invoke(main, ["scene", "--help"])
     assert res.exit_code == 0
     assert "create" in res.output and "show" in res.output
+
+
+def test_create_bad_clip_ref_is_usage_error_not_traceback():
+    # A malformed clipRef must surface as a Click usage error (exit 2), not an
+    # uncaught ValueError traceback (exit 1). Parse fails before any Flow work.
+    res = CliRunner().invoke(main, ["scene", "create", "--project", "p-1", "wf-123:5-3"])
+    assert res.exit_code == 2
+    assert "CLIP_REFS" in res.output
+    assert not isinstance(res.exception, ValueError)
+
+
+def test_show_help_lists_option_descriptions():
+    res = CliRunner().invoke(main, ["scene", "show", "--help"])
+    assert res.exit_code == 0
+    assert "Scene id to read back." in res.output
+    assert "Flow project id." in res.output
