@@ -1,6 +1,18 @@
 ---
 name: gflow-cli
+version: "1.1"
+skillopt_epoch: 0
 description: Use when the user wants to drive Google Flow (Veo image-to-video, Veo text-to-video, Imagen / Nano Banana image generation) from the terminal or a script — including text-to-video, image-to-video, image-to-image, batch video pipelines, or burning Flow Ultra/Pro credits programmatically. The CLI is `gflow` (or `flow`); install with `uv tool install gflow-cli` or run ad-hoc with `uvx --from gflow-cli gflow ...`. Bypasses the web UI entirely after a one-time browser sign-in.
+optimization_notes: |
+  Known weak spots for the SkillOpt training loop (targets for epoch 1+):
+  - Wrong subcommand: agents emit 'gflow video generate' / 'gflow video create' instead of 'gflow video t2v' or 'gflow video i2v'
+  - Wrong output flag: '--output PATH' instead of '-o PATH'
+  - Prerequisite gap: Playwright Chromium install step skipped on fresh machines
+  - Profile parallelism anti-pattern: two generations launched on the same profile in parallel (crashes Chromium)
+  - reCAPTCHA direction inverted: agents suggest GFLOW_CLI_HEADLESS=true to fix detection; correct fix is =false
+  - UUID reuse: agents call 'gflow image upload' again for an already-uploaded UUID instead of passing it directly to --ref
+  - Model alias confusion: '--model imagen' / '--model quality' instead of '--model image4' / '--model nano2'
+  - Auth recovery: agents suggest 'gflow auth refresh' / 'gflow auth renew' which do not exist; correct command is 'gflow auth login'
 ---
 
 # gflow-cli skill
@@ -153,6 +165,25 @@ asyncio.run(make_clip(Path("in.png"), "Push-in", Path("out.mp4")))
 - **Same profile can't run in parallel.** Chromium refuses two persistent contexts on the same profile dir; use different `--profile` names for parallel work.
 - **Respect Google's [Generative AI Prohibited Use Policy](https://policies.google.com/terms/generative-ai/use-policy).** Don't generate content that would get the user's Google account banned.
 
+## Known agent failure modes
+
+Documented errors agents commonly make — negative examples for the SkillOpt training loop:
+
+| Mistake | Correct behaviour |
+|---|---|
+| `gflow video generate` or `gflow video create` | `gflow video t2v` (text→video) or `gflow video i2v` (image→video) |
+| `--output PATH` on any video/image command | `-o PATH` (short flag) or `--out DIR` (image output dir) |
+| `gflow auth` bare or `gflow login` to sign in | `gflow auth login` — bare `gflow auth` only lists profiles |
+| `gflow auth refresh` / `gflow auth renew` (don't exist) | `gflow auth login` to refresh a stale or expired session |
+| `playwright install` or `playwright install --all` | `uvx --from gflow-cli playwright install chromium` (Chromium only, ~150 MB) |
+| Running two generations on the same `--profile` in parallel | Use different `--profile` names — Chromium refuses two persistent contexts on the same dir |
+| `GFLOW_CLI_HEADLESS=true` to fix reCAPTCHA failures | `GFLOW_CLI_HEADLESS=false` — headless mode *causes* bot-detection, not prevents it |
+| Calling `gflow image upload` again for an already-uploaded UUID | Pass the UUID directly to `--ref UUID` — no re-upload needed |
+| `--model imagen` / `--model quality` / `--model high` | `--model image4` (Imagen 3.5), `--model nano-pro` (Gem Pix 2), `--model nano2` (Narwhal) |
+| Python: `client = FlowApiClient(...)` then method calls | Must use `async with FlowApiClient(...) as client:` — it's an async context manager |
+| Python: `from gflow_cli import FlowApiClient` | `from gflow_cli.api.client import FlowApiClient` |
+| Piping `gflow video t2v` output into a shell loop for batch | Use `gflow video batch manifest.tsv` — the CLI has a native batch runner |
+
 ## Disclaimer
 
-gflow-cli is **not affiliated with Google**. Reverse-engineered, alpha-stage (v0.3.0a1), may break. Read the [DISCLAIMER](https://github.com/ffroliva/gflow-cli/blob/main/DISCLAIMER.md) before deploying in any sensitive setting.
+gflow-cli is **not affiliated with Google**. Reverse-engineered, unofficial; may break when Google changes Flow's private API. Read the [DISCLAIMER](https://github.com/ffroliva/gflow-cli/blob/main/DISCLAIMER.md) before deploying in any sensitive setting.

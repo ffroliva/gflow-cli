@@ -38,6 +38,7 @@ from gflow_cli.api.transports import make_transport
 from gflow_cli.api.transports.experimental.bearer import BearerTransport
 from gflow_cli.api.transports.experimental.sapisidhash import SapisidhashTransport
 from gflow_cli.api.transports.ui_automation import UiAutomationTransport
+from gflow_cli.api.transports.ui_automation_video import COMPOSER_AGENT_TOGGLE_SELECTOR
 from gflow_cli.api.video import (
     Aspect,
     GenerateVideoRequest,
@@ -175,13 +176,20 @@ async def test_e2e_i2i_local_ref_attach(
 # ---------------------------------------------------------------------------
 
 
-# Defaults are tuned for minimum credit spend: omni-flash, 4 s duration, count=1,
+# Defaults are tuned for minimum credit spend: veo-lite, 4 s duration, count=1,
 # landscape. Override via env for variation (per [[e2e-tests-parameterize]]).
+# NOTE: the i2v default is veo-lite (NOT omni-flash) — omni-flash silently
+# drops the start/end frames and routes to T2V (issue #125). Using omni-flash
+# here previously made this test a false positive: frame_attached + terminal
+# success both held while the actual output was a text-only video.
 _E2E_VIDEO_ASPECT_ENV = "GFLOW_CLI_E2E_VIDEO_ASPECT"
 _E2E_VIDEO_MODEL_ENV = "GFLOW_CLI_E2E_VIDEO_MODEL"
 _E2E_VIDEO_DURATION_ENV = "GFLOW_CLI_E2E_VIDEO_DURATION"
 _I2V_POLL_TIMEOUT_S = 600.0
 _I2V_PROMPT = "the subject moves gently in a calm scene, cinematic"
+# The generate request MUST route here — the start+end frame endpoint. If it
+# lands on batchAsyncGenerateVideoText, the frames were dropped (issue #125).
+_I2V_EXPECTED_GENERATE_URL_SUBSTR = "batchAsyncGenerateVideoStartAndEndImage"
 
 
 def _i2v_aspect() -> Aspect:
@@ -194,7 +202,8 @@ def _i2v_aspect() -> Aspect:
 
 
 def _i2v_model() -> VideoModel | None:
-    raw = os.environ.get(_E2E_VIDEO_MODEL_ENV, "omni-flash").strip().lower()
+    # veo-lite default (issue #125): omni-flash does not support i2v.
+    raw = os.environ.get(_E2E_VIDEO_MODEL_ENV, "veo-lite").strip().lower()
     return VideoModel.from_cli(raw)
 
 
@@ -288,6 +297,32 @@ async def test_e2e_i2v_start_end_frame_attach(
     assert slots == {"Start", "End"}, (
         f"expected frame_attached for {{Start, End}}, got {slots!r}; "
         f"all events: {[e['event'] for e in install_log_capture.entries]}"
+    )
+
+    # 4. Frame-routing contract (issue #125 — the assertion this test was
+    #    missing). frame_attached fires even when Flow drops the refs and routes
+    #    to T2V, so it cannot prove the frames reached Veo. The captured generate
+    #    request URL is the only proof: it MUST be the StartAndEndImage endpoint,
+    #    NOT batchAsyncGenerateVideoText. And the model/mode guard must NOT have
+    #    fired (a valid veo-lite + i2v combination).
+    rejected = [
+        e
+        for e in install_log_capture.entries
+        if e["event"] == "ui_automation_video.model_mode_rejected"
+    ]
+    assert not rejected, f"model_mode_rejected fired unexpectedly: {rejected!r}"
+    generate_events = [
+        e
+        for e in install_log_capture.entries
+        if e["event"] == "ui_automation_video.generate_captured"
+    ]
+    assert generate_events, "no ui_automation_video.generate_captured event was emitted"
+    gen_url = str(generate_events[-1].get("url", ""))
+    assert _I2V_EXPECTED_GENERATE_URL_SUBSTR in gen_url, (
+        f"i2v generate request routed to {gen_url!r}; expected it to contain "
+        f"{_I2V_EXPECTED_GENERATE_URL_SUBSTR!r}. If it landed on "
+        f"batchAsyncGenerateVideoText, the start/end frames were dropped "
+        f"(issue #125 regression)."
     )
 
 
@@ -479,3 +514,110 @@ async def test_e2e_health_check_false_after_close(e2e_profile_dir: Path) -> None
     assert await client.health_check() is False, (
         "health_check() must return False (not raise) on a closed client"
     )
+
+
+# ---------------------------------------------------------------------------
+# Agent composer mode recovery (create-project gen panel) — zero credits
+# ---------------------------------------------------------------------------
+
+
+@pytest.mark.asyncio
+@pytest.mark.e2e_auth
+async def test_e2e_agent_mode_recovered_before_mode_switch(
+    monkeypatch: pytest.MonkeyPatch,
+    install_log_capture: structlog.testing.LogCapture,
+) -> None:
+    """Flow's "Agent" composer mode no longer breaks the generate path.
+
+    Flow's newer editor adds an Agent toggle next to the prompt box. When Agent
+    mode is active the whole media-generation panel — including the ``crop_*``
+    settings trigger that ``_switch_to_image_mode`` / ``_switch_to_video_mode``
+    probe — is removed from the DOM, so the mode switch used to raise
+    "mode-switch dropdown trigger not found" and create-project generation
+    failed. ``_exit_agent_mode`` (called at the top of the mode switch) must
+    re-mount the panel.
+
+    This reproduces the bug on the **real DOM** then proves the fix: enter a
+    fresh project, force Agent mode on (panel disappears), call
+    ``_switch_to_image_mode``, and assert the ``crop_*`` trigger is back. Costs
+    **zero credits** — no generation is submitted; it stops once the panel is
+    confirmed re-mounted (the exact precondition the generate path needs).
+
+    Skips on accounts whose Flow UI predates the Agent toggle (older editor).
+    """
+    # Undo the autouse `_isolate_settings` fixture (tests/conftest.py) so profile
+    # lookup resolves to the user's real platformdirs path where the live Chrome
+    # session lives — the `e2e_profile_dir` fixture is pinned to tmp by isolation.
+    import os
+
+    from gflow_cli.auth import profile_dir as _resolve_profile_dir
+    from gflow_cli.config import reset_settings
+
+    monkeypatch.delenv("GFLOW_CLI_HOME", raising=False)
+    monkeypatch.delenv("GFLOW_CLI_DB_PATH", raising=False)
+    reset_settings()
+
+    name = os.environ.get("GFLOW_CLI_E2E_PROFILE", "").strip()
+    if not name:
+        pytest.skip("set GFLOW_CLI_E2E_PROFILE to a logged-in profile name")
+    profile = _resolve_profile_dir(name)
+    if not profile.exists():
+        pytest.skip(f"profile dir not found: {profile}")
+
+    transport = UiAutomationTransport()
+    try:
+        await transport.setup(profile)
+        page = transport._page  # noqa: SLF001 — e2e drives the transport's live page
+        assert page is not None, "setup() must acquire a page"
+
+        # Fresh project so the composer is in its default editor state. Mirror
+        # the real generate path: enter the editor, dismiss any changelog overlay
+        # that can cover the composer (#26), and wait for the prompt box to mount.
+        # The editor SPA renders incrementally after the /project/ URL nav (the
+        # same reason _wait_video_editor_ready exists), and the Agent pill mounts
+        # a beat after the prompt box, so poll generously for it before deciding
+        # the account lacks the toggle — otherwise the test false-skips flakily.
+        await transport._enter_editor(page)  # noqa: SLF001
+        await transport._dismiss_blocking_overlays(page)  # noqa: SLF001
+        await transport._wait_video_editor_ready(page)  # noqa: SLF001
+
+        toggle = page.locator(COMPOSER_AGENT_TOGGLE_SELECTOR)
+        try:
+            await toggle.first.wait_for(state="attached", timeout=15000)
+        except Exception:
+            pytest.skip("Flow account has no Agent composer toggle (older editor UI)")
+
+        # Uniqueness on the real DOM (PR #124 must-fix): the scoped selector must
+        # resolve to exactly one element, so the ``.first`` the production helper
+        # uses can never pick the wrong button. Only a real browser can evaluate
+        # the Playwright :has()/:text() selector, so it is asserted here.
+        count = await toggle.count()
+        assert count == 1, (
+            f"COMPOSER_AGENT_TOGGLE_SELECTOR must match exactly one element; got {count}"
+        )
+
+        # Reproduce: force Agent mode ON so the media panel is removed. Clicking
+        # the pill from media mode enters Agent mode; if it is already on, the
+        # crop_* trigger is already gone.
+        if await transport._media_panel_present(page):  # noqa: SLF001
+            await toggle.first.click()
+            await page.wait_for_timeout(700)
+        assert not await transport._media_panel_present(page), (  # noqa: SLF001
+            "could not reproduce Agent mode — crop_* trigger still present after "
+            "toggling the Agent pill; the toggle semantics may have changed"
+        )
+
+        # The fix: switching to image mode must first exit Agent mode, which
+        # re-mounts the media panel and makes the crop_* trigger probe succeed.
+        await transport._switch_to_image_mode(page)  # noqa: SLF001
+
+        assert await transport._media_panel_present(page), (  # noqa: SLF001
+            "media panel did not re-mount after _switch_to_image_mode — "
+            "_exit_agent_mode failed to leave Agent mode"
+        )
+        events = [e["event"] for e in install_log_capture.entries]
+        assert "ui_automation_video.exited_agent_mode" in events, (
+            f"expected an 'exited_agent_mode' event proving the fix ran; captured events: {events}"
+        )
+    finally:
+        await transport.teardown()
