@@ -958,7 +958,14 @@ class FlowApiClient:
                 ),
                 route="runVideoFxConcatenation",
             )
-        video_bytes = base64.b64decode(encoded)
+        try:
+            video_bytes = base64.b64decode(encoded)
+        except ValueError as e:  # binascii.Error subclasses ValueError
+            # Don't include the (undecodable) body in the message.
+            raise SceneConcatError(
+                detail="concatenation returned undecodable video data",
+                route="runVideoFxCheckConcatenationStatus",
+            ) from e
         del encoded, status_resp  # drop the ~20MB+ payload promptly
         if video_bytes[4:8] != b"ftyp":
             raise SceneConcatError(detail="concatenation output is not a valid MP4")
