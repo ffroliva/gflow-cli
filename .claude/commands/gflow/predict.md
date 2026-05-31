@@ -16,4 +16,10 @@ The skill at `skills/predict/SKILL.md` runs five independent expert personas
 (Architect · Security/reCAPTCHA · Performance/Playwright · CLI UX · Devil's Advocate),
 resolves conflicts, and returns a GO / CAUTION / STOP verdict with a confidence score.
 
-**Pair with `/gflow:scenario`** after a GO or CAUTION to enumerate edge cases before EXECUTE.
+**Typical workflow after a GO or CAUTION:**
+```
+/gflow:scenario <feature>   →  edge cases + BDD skeleton
+/gflow:plan <feature>       →  writes PLAN.md task checklist
+/gflow:status               →  surfaces next task during execution
+/gflow:check                →  before each commit
+```

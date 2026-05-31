@@ -212,4 +212,4 @@ already-completed items on resume.
 - **Claude Code:** invoke via `/gflow:plan <feature>` (thin wrapper around this skill).
 - **Cursor / Aider / Codex:** paste this file into your context and call `plan <feature>`.
 - **Gemini CLI:** include in system context before asking for a plan.
-- **SkillOpt harness:** `python scripts/dev/skillopt/harness.py --skill plan` (once the task dataset is extended).
+- **SkillOpt harness:** not yet usable — task dataset not yet populated for this skill.
