@@ -12,7 +12,10 @@ This directory holds **internal maintainer workflows** that are bundled with the
 └── commands/              ← repo-local slash commands
     └── gflow/             ← `/gflow:*` namespace (avoids collision with built-ins)
         ├── check.md       ← `/gflow:check` — hygiene + ruff + pyright + pytest
-        ├── plan.md        ← `/gflow:plan` — show active phase / superpowers plan
+        ├── status.md      ← `/gflow:status` — full plan state (file, goal, progress, next task)
+        ├── next.md        ← `/gflow:next` — next unchecked task only
+        ├── active.md      ← `/gflow:active` — which plan is active, goal only
+        ├── plan.md        ← `/gflow:plan <feature>` — create a task-by-task implementation plan
         ├── known-issues.md← `/gflow:known-issues` — open/mitigated items
         ├── changelog.md   ← `/gflow:changelog` — [Unreleased] + last tagged
         └── release.md     ← `/gflow:release` — full release flow (signed tags)

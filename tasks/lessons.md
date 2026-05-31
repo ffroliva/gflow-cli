@@ -295,7 +295,7 @@ _End. Convert stable rules from this file into `project_conventions.md` once the
 
 ### L24 — INDEX.md is worth loading at session start; heavy docs are not
 
-**Rule:** INDEX.md is a small routing table (~37 lines) — cheap enough to load at every session start. It enables lazy loading of everything else. PLAN.md, KNOWN_ISSUES.md, and CHANGELOG.md are loaded on demand via `/gflow:plan`, `/gflow:known-issues`, and `/gflow:changelog`. Loading all four upfront burns tokens on sessions where only one is needed.
+**Rule:** INDEX.md is a small routing table (~37 lines) — cheap enough to load at every session start. It enables lazy loading of everything else. PLAN.md, KNOWN_ISSUES.md, and CHANGELOG.md are loaded on demand via `/gflow:status`, `/gflow:known-issues`, and `/gflow:changelog`. (Note: `/gflow:plan <feature>` is the plan-creator command; `/gflow:status` is the plan-reader.) Loading all four upfront burns tokens on sessions where only one is needed.
 
 **Source:** This session.
 
