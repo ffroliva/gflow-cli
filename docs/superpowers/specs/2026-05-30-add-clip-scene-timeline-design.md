@@ -3,7 +3,9 @@
 > Status: **approved (design), hardened by /gflow:predict (CAUTION 5/10) + /gflow:scenario** · Date: 2026-05-30 · Author: brainstorming session
 > Source evidence: `labs.google13.har` (Extend/interpolation), `labs.google15.har` (full Add Clip + crop), `labs.google16.har` (video upload)
 >
-> ⚠️ **Read §8 first.** The naive "all REST via `page.request`" premise is **wrong for `aisandbox-pa`**: those POSTs 401 without an `Authorization: Bearer ya29` token (Issue #15). **SAPISIDHASH mentions in the body below are a disproven hypothesis — the live-verified mechanism is the Bearer token; see §8.** The work is gated on an **L0** auth fix — see §6 (roadmap) and §8 (analysis).
+> ⚠️ **Read §8 first.** The naive "all REST via `page.request`" premise is **wrong for `aisandbox-pa`**: those calls 401 without an `Authorization: Bearer ya29` token. **SAPISIDHASH mentions in the body below are a disproven hypothesis — the live-verified mechanism is the Bearer token; see §8.** **L0 is DONE (2026-05-31):** `_post_json`/`_patch_json` now auto-detect aisandbox URLs and inject the Bearer header + 401-refresh-retry transparently. L1 POST/PATCH auth is therefore free; only **GET** still lacks an aisandbox-aware helper (media GETs use raw `page.request.get`) — L1 must add a `_get_json` helper for `get_scene_workflows`.
+>
+> **L1 decisions locked (2026-05-31):** (a) persistence — migration `0002` + non-blocking recorder — **IN scope for L1**; (b) ship **all three** commands (`create`/`add-clip`/`show`); (c) `<clipRef>` = **raw `workflowId` only** in v1.
 
 ## 1. Goal
 
@@ -23,7 +25,7 @@ nav tab. A scene holds an ordered list of `sceneWorkflows` (clips). Two API surf
 - `videoFx.updateVideoOffset` → `{json:{mediaId,startOffset,endOffset}}` — **secondary/redundant** (stayed constant `0–8s` while the real trim moved). Skipped in v1; parity-optional backlog.
 - `media.getMediaUrlRedirect?name={mediaId}` → signed CDN URL (download/read-back only)
 
-**aisandbox** `aisandbox-pa.googleapis.com/v1/flow/…` (`content-type: text/plain`, **no recaptcha, no credits**, but **requires `Authorization: SAPISIDHASH` — see §8/L0; `page.request` 401s without it**):
+**aisandbox** `aisandbox-pa.googleapis.com/v1/flow/…` (`content-type: text/plain`, **no recaptcha, no credits**, **requires `Authorization: Bearer ya29` — handled transparently by L0 for POST/PATCH; GET needs a new `_get_json` helper**):
 - `PATCH /v1/flowWorkflows/{workflowId}` — **commit**: `{workflow:{name,projectId,metadata:{primaryMediaId}},updateMask:"metadata.primaryMediaId"}`. Required before a workflow is placeable.
 - `POST /v1/flow/projects/{projectId}/scenes` → `{workflowIds:[...]}` (ordered; **repeat an id to duplicate a clip**) → `scene{sceneId, sceneWorkflows[]}`
 - `POST /v1/flow/scene/sceneWorkflows:update` → `{sceneId,projectId,sceneWorkflows:[{sceneId,workflow:{name:instanceId},sceneWorkflowMetadata:{startTime,endTime,position,totalDuration}}]}`
@@ -61,22 +63,24 @@ gflow scene show     --scene <sid>                              # read-back (ord
 - Optional thin `gflow video add-clip` alias forwarding to `scene add-clip` (discoverability).
 - Output: `sceneId`, ordered clip list with resolved trims, composed duration.
 
-> Open ergonomics question deferred to planning: whether `<clipRef>` should *also* accept a gflow
-> data-layer row id / prior-run `mediaId` and resolve it to a `workflowId`. v1 = raw `workflowId`.
+> **Resolved (2026-05-31): v1 = raw `workflowId` only.** Accepting a gflow data-layer row id /
+> prior-run `mediaId` and resolving it to a `workflowId` is a deferred ergonomic add (backlog).
 
 ## 4. Architecture
 
 All additive; mirrors existing `client.py` patterns (`_post_json`, `_patch_json`, `_get`,
 `create_project`, `upload_image`).
 
-> **Transport binding & auth split (load-bearing).** REST helpers call `page.request.post/patch`
-> on a checked-out *authenticated browser Page* — so calls ride the logged-in Flow session
-> (cookies). BUT: **`labs.google` BFF** calls authenticate on cookies alone (`create_project`
-> proves this); **`aisandbox-pa` POSTs return 401** without an `Authorization: SAPISIDHASH`
-> header `_post_json` does not yet send (Issue #15; `ui_automation_video.py:9`). `archive_workflow`
-> is *defined but never called* — unproven, do **not** treat it as proof the pattern works on
-> aisandbox. Therefore `commit_workflow`/`create_scene`/`update_scene_workflows` (all aisandbox)
-> are **gated on L0** (§6). Video upload (L2) is on the BFF → likely works without SAPISIDHASH.
+> **Transport binding & auth split (load-bearing, post-L0).** REST helpers call
+> `page.request.{post,patch,get}` on a checked-out *authenticated browser Page* — so calls ride
+> the logged-in Flow session (cookies). **`labs.google` BFF** calls authenticate on cookies alone
+> (`create_project` proves this). **`aisandbox-pa` calls require `Authorization: Bearer ya29`** —
+> L0 (DONE) made this transparent: `_post_json`/`_patch_json` detect aisandbox URLs via
+> `_is_aisandbox_url`, inject the Bearer via `_aisandbox_auth_headers`, and 401-refresh-retry via
+> `_run_with_aisandbox_retry`. So `commit_workflow`/`create_scene`/`update_scene_workflows`
+> (POST/PATCH) get auth for free. **The one gap: there is no aisandbox-aware GET helper** — the
+> existing media GETs call raw `page.request.get`. `get_scene_workflows` (GET) must add a
+> `_get_json` helper applying the same Bearer + 401-retry treatment.
 
 **New module `api/scene.py`** — domain models (frozen dataclasses):
 - `SceneWorkflowMetadata(position: int, start_time: float, end_time: float, total_duration: float)`
@@ -86,10 +90,10 @@ All additive; mirrors existing `client.py` patterns (`_post_json`, `_patch_json`
   `from_create_response()` / `from_get_response()`.
 
 **New `client.py` methods** (no recaptcha, no credits):
-- `commit_workflow(workflow_id, project_id, primary_media_id)` → PATCH (same shape as `archive_workflow`, different `updateMask`; **needs L0 SAPISIDHASH**)
-- `create_scene(project_id, workflow_ids)` → POST `/scenes` → `Scene`
-- `update_scene_workflows(scene_id, project_id, workflows)` → POST `sceneWorkflows:update`
-- `get_scene_workflows(scene_id)` → GET → `Scene`
+- `commit_workflow(workflow_id, project_id, primary_media_id)` → PATCH (same shape as `archive_workflow`, different `updateMask`; auth free via L0)
+- `create_scene(project_id, workflow_ids)` → POST `/scenes` → `Scene` (auth free via L0)
+- `update_scene_workflows(scene_id, project_id, workflows)` → POST `sceneWorkflows:update` (auth free via L0)
+- `get_scene_workflows(scene_id)` → GET → `Scene` (**needs new `_get_json` aisandbox helper**)
 
 **`routes.py`** — add `SCENES` (`/v1/flow/projects/{}/scenes`), `SCENE_WORKFLOWS_UPDATE`
 (`/v1/flow/scene/sceneWorkflows:update`), `scene_workflows_url(scene_id)`.
@@ -125,13 +129,14 @@ recaptcha and spend nothing — only `batchAsyncGenerate*` costs).
 
 ## 6. Scope — layered roadmap (re-sequenced after §8 analyses)
 
-- **L0 — GATING: wire SAPISIDHASH into `_post_json`/`_patch_json` for `aisandbox-pa` routes
-  (Issue #15).** Without it, every scene/commit call 401s. Scaffolding exists
-  (`api/transports/experimental/sapisidhash.py`, currently unwired). Complete Issue #15's 3
-  investigation gates first. This is the real first ship — it also fixes the standing i2v
-  upload 401. **Not optional.**
+- **L0 — DONE (2026-05-31): aisandbox-pa Bearer auth.** `_post_json`/`_patch_json` auto-detect
+  aisandbox URLs and inject `Authorization: Bearer ya29` (fetched/cached from
+  `GET /fx/api/auth/session`) + 401-refresh-retry. Live-verified credit-free (`uploadImage` → 200),
+  council-cleared. The SAPISIDHASH hypothesis was disproven live; infra reused intact (§8).
 - **L1 — `gflow scene` compose** (this spec §3–§5): create scene, ordering, per-clip trim,
-  commit, read-back. Credit-free once L0 lands.
+  commit, read-back — **all three commands** (`create`/`add-clip`/`show`). Credit-free. Adds a
+  `_get_json` aisandbox helper for read-back. **Persistence (migration `0002` + non-blocking
+  recorder) is IN scope for L1** (see cross-cutting must-haves below).
 - **L2 — `gflow video upload`** (BFF `upload-video`, §5 research item resolved): 2-phase resumable
   upload → `workflowServerId` directly placeable in a scene. Lower-risk than L1 (BFF auth proven).
   Makes L1's e2e self-contained.
