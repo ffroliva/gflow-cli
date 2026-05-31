@@ -5,6 +5,7 @@ Welcome to the `gflow-cli` documentation. This index is the routing layer: it te
 | Doc | Purpose | Read when… |
 |---|---|---|
 | [README](../README.md) | Project overview, install, quick start | First time landing on the repo |
+| [docs/DEMOS.md](DEMOS.md) | Gallery of `gflow` in action (terminal + split-screen Flow recordings) | You want to see what gflow looks like running |
 | [AGENTS.md](../AGENTS.md) | Universal coding-agent spec — Cursor / Codex / Aider / Gemini CLI / Jules / etc. | Any AI coding agent enters the repo |
 | [llms.txt](../llms.txt) | LLM-readable summary (llmstxt.org format) | A user pastes context about gflow into ChatGPT / Claude / Gemini |
 | [docs/PROJECT_STATUS.md](PROJECT_STATUS.md) | Full milestone history + lifecycle policy | Auditing where the project is in its lifecycle |
@@ -31,6 +32,8 @@ Welcome to the `gflow-cli` documentation. This index is the routing layer: it te
 | **[docs/SECURITY.md](SECURITY.md)** | What secrets are stored where, threat model, hardening | Audit, code review, multi-user machines |
 | **[docs/DATA_LAYER.md](DATA_LAYER.md)** | Local SQLite catalog: goals, schema, recording flow, redaction, `gflow data` CLI, migrations, extension guide | Anything touching `gflow_cli.data`, debugging missing rows, building I2V/repair tooling, auditing what is stored |
 | **[tasks/lessons.md](../tasks/lessons.md)** | Running notebook of patterns + reviewer findings, dated and traced to commits | Starting a new phase; debugging "why did the council flag this?" |
+| **[skills/README.md](../skills/README.md)** | Installable agent skill docs (gflow-cli, predict, pr-council-review, scenario) — cross-tool portable Markdown consumed by Claude Code, Cursor, Codex, Gemini CLI, Aider, etc. | Any agent wanting to use gflow-cli correctly |
+| **[scripts/dev/skillopt/README.md](../scripts/dev/skillopt/README.md)** | SkillOpt mock harness — rollout→score loop for measuring and improving skill doc accuracy across multiple LLM providers | Measuring a skill edit's impact; comparing Claude vs GPT-4o vs Gemini on gflow tasks |
 
 ## Agent commands
 
@@ -72,6 +75,9 @@ Slash commands for Claude Code, stored in `.claude/commands/gflow/`. All prefixe
 **"Where can I look up a media ID I generated yesterday?"** → [DATA_LAYER § Querying the data layer](DATA_LAYER.md#querying-the-data-layer)
 **"How do I stop gflow from storing my prompts?"** → [DATA_LAYER § Privacy and redaction](DATA_LAYER.md#privacy-and-redaction)
 **"What does exit code 16 mean and how do I recover?"** → [DATA_LAYER § Persistence-failure handling](DATA_LAYER.md#persistence-failure-handling)
+**"How do I use this project's skills in Cursor / Codex / Gemini CLI / Aider?"** → [skills/README.md](../skills/README.md#use-with-other-agents)
+**"How do I benchmark a skill doc against real tasks?"** → [scripts/dev/skillopt/README.md](../scripts/dev/skillopt/README.md)
+**"How do I compare Claude vs GPT-4o vs Gemini on gflow tasks?"** → `python scripts/dev/skillopt/harness.py --provider openai --model gpt-4o` (see [skillopt README](../scripts/dev/skillopt/README.md))
 **"How do I report a security issue?"** → [SECURITY § Reporting](SECURITY.md#reporting)
 **"What branch do I work on? How do I name it?"** → [DEVELOPMENT § Branching model](DEVELOPMENT.md#branching-model)
 **"How do I handle an external GitHub PR?"** → [GITHUB § Scenario Matrix](GITHUB.md#scenario-matrix)
@@ -86,7 +92,7 @@ Slash commands for Claude Code, stored in `.claude/commands/gflow/`. All prefixe
 **"A gflow command hangs / fails — where do I start?"** → [DEBUGGING § Quick reference](DEBUGGING.md#quick-reference)
 **"Flow's UI broke a selector — how do I diagnose it?"** → [DEBUGGING § Inspecting Flow's live UI](DEBUGGING.md#inspecting-flows-live-ui)
 **"What does each `ui_automation.*` log event mean?"** → [DEBUGGING § Listener & HTTP-layer debugging](DEBUGGING.md#listener--http-layer-debugging)
-**"What was actually live-verified for the latest release?"** → [LIVE_VERIFICATION_v0.10.0](LIVE_VERIFICATION_v0.10.0.md) · prior: [v0.9.1](LIVE_VERIFICATION_v0.9.1.md) · [v0.9.0](LIVE_VERIFICATION_v0.9.0.md) · [v0.8.1](LIVE_VERIFICATION_v0.8.1.md) · [v0.7.0](LIVE_VERIFICATION_v0.7.0.md)
+**"What was actually live-verified for the latest release?"** → [LIVE_VERIFICATION_v0.11.0](LIVE_VERIFICATION_v0.11.0.md) · prior: [v0.10.0](LIVE_VERIFICATION_v0.10.0.md) · [v0.9.1](LIVE_VERIFICATION_v0.9.1.md) · [v0.9.0](LIVE_VERIFICATION_v0.9.0.md) · [v0.8.1](LIVE_VERIFICATION_v0.8.1.md)
 **"What was live-verified for the data layer (PR #58)?"** → [LIVE_VERIFICATION_data_layer](LIVE_VERIFICATION_data_layer.md) — 1 Imagen + 1 Veo credit on denon82, 6-layer ledger (file + magic + Pillow + DB rows + CLI round-trip + structlog)
 **"What was live-verified for the video-download feature (#29)?"** → [LIVE_VERIFICATION_video_download](LIVE_VERIFICATION_video_download.md)
 **"What is the jitter matrix evidence for `gflow image batch`?"** → [`LIVE_VERIFICATION_image_batch.md`](LIVE_VERIFICATION_image_batch.md) — jitter matrix evidence for `gflow image batch` (always-same-project mode)

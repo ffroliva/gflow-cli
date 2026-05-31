@@ -15,10 +15,12 @@ from gflow_cli.errors import (
     ContentPolicyError,
     FlowApiError,
     GFlowError,
+    ModelModeIncompatibilityError,
     NetworkError,
     ProblemDetails,
     RateLimitError,
     TransportTimeoutError,
+    VideoModelSelectionError,
     WafRejectionError,
     WireFormatError,
 )
@@ -148,10 +150,34 @@ def test_exit_code_map_synthetic_subclass_inherits_parent_code():
         (ContentPolicyError, 5),
         (NetworkError, 6),
         (WireFormatError, 7),
+        (ModelModeIncompatibilityError, 17),
     ],
 )
 def test_exit_code_map_per_class(exc_cls, expected_code):
     assert _exit_code_for(exc_cls(detail="x")) == expected_code
+
+
+def test_model_mode_incompatibility_error_exit_code_17():
+    """Issue #125: distinct exit code 17, NOT its parent ConfigurationError's 11.
+
+    The isinstance walk must hit ModelModeIncompatibilityError (registered
+    BEFORE ConfigurationError in EXIT_CODE_MAP) before falling through to the
+    parent — otherwise scripted callers can't branch on "incompatible
+    model/mode" vs a generic configuration error.
+    """
+    err = ModelModeIncompatibilityError(detail="omni-flash + i2v invalid")
+    assert isinstance(err, ConfigurationError)
+    assert _exit_code_for(err) == 17
+    assert EXIT_CODE_MAP[ModelModeIncompatibilityError] == 17
+
+
+def test_video_model_selection_error_exit_code_18():
+    """Issue #125: model-select UI failure for i2v gets exit 18 (transport
+    reliability), distinct from 17 (incompatible model) and 11 (config)."""
+    err = VideoModelSelectionError(detail="could not select veo-lite (issue #125)")
+    assert isinstance(err, ConfigurationError)
+    assert _exit_code_for(err) == 18
+    assert EXIT_CODE_MAP[VideoModelSelectionError] == 18
 
 
 def test_exit_code_map_ordering_invariant():

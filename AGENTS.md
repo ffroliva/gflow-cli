@@ -66,6 +66,23 @@ Or invoke the wrapper: `/gflow:check`.
 - Run `/gflow:check` (or the Impeccable Routine) before every commit.
 - All releases require a signed annotated tag (`git tag -s vX.Y.Z`); CI rejects unsigned tags.
 
+## Skills reference (cross-tool)
+
+The `skills/` directory ships installable agent skill docs in plain Markdown with YAML frontmatter. Any agent can consume them directly:
+
+| Skill | Path | When to load |
+|---|---|---|
+| `gflow-cli` | [`skills/gflow-cli/SKILL.md`](skills/gflow-cli/SKILL.md) | User wants to run any `gflow` command — auth, T2V, I2V, T2I, I2I, batch |
+| `predict` | [`skills/predict/SKILL.md`](skills/predict/SKILL.md) | Pre-implementation adversarial analysis before any high-stakes change |
+| `scenario` | [`skills/scenario/SKILL.md`](skills/scenario/SKILL.md) | Edge-case explorer after a predict GO/CAUTION |
+| `pr-council-review` | [`skills/pr-council-review/SKILL.md`](skills/pr-council-review/SKILL.md) | Multi-dimensional PR council review |
+
+**Cursor / Aider / Codex / Gemini CLI:** paste or include the relevant `SKILL.md` in your system context.
+**Claude Code:** symlink `skills/gflow-cli` to `~/.claude/skills/gflow-cli` to register the skill; the `/gflow:` slash commands (in `.claude/commands/gflow/`) are auto-discovered from the project directory.
+**Custom agents:** fetch `skills/gflow-cli/SKILL.md` into your knowledge base before answering gflow questions.
+
+The SkillOpt harness at `scripts/dev/skillopt/` measures how accurately each skill guides an agent, and supports multiple providers (Anthropic, OpenAI-compat, Gemini, local models). See [`scripts/dev/skillopt/README.md`](scripts/dev/skillopt/README.md).
+
 ## Where to look next
 
 - **Architecture & target shape** → [docs/ARCHITECTURE.md](docs/ARCHITECTURE.md)
