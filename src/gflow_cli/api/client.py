@@ -30,7 +30,7 @@ from gflow_cli.api import routes
 from gflow_cli.api._retry import parse_retry_after, post_with_retry
 from gflow_cli.api.dto import AssetInfo, GeneratedImage, ProjectInfo
 from gflow_cli.api.recaptcha import TokenMinter
-from gflow_cli.api.scene import Scene, SceneWorkflow
+from gflow_cli.api.scene import ConcatInput, Scene, SceneWorkflow
 from gflow_cli.api.transports import make_transport
 from gflow_cli.api.transports.base import FlowTransportStrategy, VideoCapableTransport
 from gflow_cli.config import Settings
@@ -43,6 +43,8 @@ from gflow_cli.errors import (
     FlowApiError,  # re-exported via gflow_cli.api.__init__
     NetworkError,
     RateLimitError,
+    SceneConcatError,
+    TransportTimeoutError,
     WireFormatError,
 )
 from gflow_cli.paths import adjust_key_extension
@@ -82,6 +84,11 @@ logger = structlog.get_logger(__name__)
 # by `upload_image` to reject oversize files BEFORE reading them into memory —
 # protects this process from OOM and the remote endpoint from DoS-shaped traffic.
 MAX_IMAGE_BYTES = 20 * 1024 * 1024  # 20 MB
+
+# Server-side concat returns the combined MP4 inline as base64 in `encodedVideo`
+# (~1.27 MB base64 per second of video). Cap before b64decode to avoid OOM on a
+# pathologically long scene; ~350 MB base64 ≈ 260 MB MP4 ≈ a ~4.5-min scene.
+MAX_CONCAT_B64_LEN = 350 * 1024 * 1024
 
 # aisandbox-pa rejects application/json — see samples/captured/*.json.
 _AISANDBOX_CONTENT_TYPE = "text/plain;charset=UTF-8"
@@ -879,6 +886,97 @@ class FlowApiClient:
             routes.scene_workflows_url(scene_id, project_id), route_name="getSceneWorkflows"
         )
         return Scene.from_get_response(data, scene_id=scene_id, project_id=project_id)
+
+    async def concatenate_scene(
+        self,
+        inputs: list[ConcatInput],
+        *,
+        out_path: Path,
+        poll_interval: float = 3.0,
+        timeout_s: float = 180.0,
+    ) -> AnyPath:
+        """Render a scene's clips into ONE extended MP4 via Flow's server-side
+        concatenation. Credit-free, no reCAPTCHA, no ffmpeg.
+
+        Pipeline: ``POST runVideoFxConcatenation`` → poll
+        ``runVideoFxCheckConcatenationStatus`` (each poll is its own
+        ``_post_json``, so the Page pool is free during the ``asyncio.sleep`` —
+        no nested checkout, no deadlock) until ``MEDIA_GENERATION_STATUS_SUCCESSFUL``.
+        The combined MP4 is returned inline as base64 in ``encodedVideo``.
+
+        Writes to ``out_path`` (or the configured cloud ``storage_uri``) and
+        returns the write target. Raises ``SceneConcatError`` if the job fails
+        or returns no/invalid video, ``TransportTimeoutError`` on poll timeout.
+        """
+        if not inputs:
+            msg = "concatenate_scene requires at least one clip"
+            raise ValueError(msg)
+        op = await self._post_json(
+            routes.RUN_VIDEO_FX_CONCATENATION,
+            {"inputVideos": [i.to_wire() for i in inputs]},
+            route_name="runVideoFxConcatenation",
+        )
+        operation = op.get("operation")
+        logger.info("scene.concat_started", clips=len(inputs))
+
+        deadline = time.monotonic() + timeout_s
+        encoded = ""
+        while True:
+            status_resp = await self._post_json(
+                routes.RUN_VIDEO_FX_CHECK_CONCATENATION_STATUS,
+                {"operation": operation},
+                route_name="runVideoFxCheckConcatenationStatus",
+            )
+            status = str(status_resp.get("status", ""))
+            if status == "MEDIA_GENERATION_STATUS_SUCCESSFUL":
+                encoded = str(status_resp.get("encodedVideo") or "")
+                break
+            if status and status != "MEDIA_GENERATION_STATUS_ACTIVE":
+                # FAILED / unspecified — detail from status ONLY, never encodedVideo.
+                logger.warning("scene.concat_failed", status=status)
+                raise SceneConcatError(
+                    detail=f"concatenation job status: {status}",
+                    route="runVideoFxCheckConcatenationStatus",
+                )
+            if time.monotonic() >= deadline:
+                raise TransportTimeoutError(
+                    f"scene concatenation did not finish within {timeout_s:.0f}s"
+                )
+            await asyncio.sleep(poll_interval)
+
+        if not encoded:
+            raise SceneConcatError(
+                detail="concatenation succeeded but returned no encodedVideo",
+                route="runVideoFxCheckConcatenationStatus",
+            )
+        if len(encoded) > MAX_CONCAT_B64_LEN:
+            # Reject before decode — never log the body (mitigation: no 20MB+ in logs).
+            raise SceneConcatError(
+                detail=(
+                    f"concatenated video exceeds the {MAX_CONCAT_B64_LEN // (1024 * 1024)} MB "
+                    "size cap; compose fewer/shorter clips"
+                ),
+                route="runVideoFxConcatenation",
+            )
+        video_bytes = base64.b64decode(encoded)
+        del encoded, status_resp  # drop the ~20MB+ payload promptly
+        if video_bytes[4:8] != b"ftyp":
+            raise SceneConcatError(detail="concatenation output is not a valid MP4")
+        logger.info("scene.concat_completed", bytes=len(video_bytes))
+
+        # Write via the same storage_uri-aware path as download_image.
+        storage_uri = self.settings.storage_uri
+        if storage_uri:
+            try:
+                key = out_path.relative_to(self.settings.output_dir).as_posix()
+            except ValueError:
+                key = out_path.name
+            target: AnyPath = storage_path(storage_uri, self.settings.output_dir, key)
+        else:
+            out_path.parent.mkdir(parents=True, exist_ok=True)
+            target = out_path
+        await write_asset_async(target, video_bytes)
+        return target
 
     async def _mint_recaptcha_token(self, action: str) -> str:
         """Mint a single-use reCAPTCHA Enterprise token via the client's Page.
