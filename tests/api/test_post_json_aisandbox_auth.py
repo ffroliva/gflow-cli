@@ -107,3 +107,25 @@ async def test_patch_json_attaches_bearer_for_aisandbox():
         {"workflow": {"name": "wf-1"}, "updateMask": "metadata.primaryMediaId"},
     )
     assert page.request.calls[0]["headers"]["authorization"] == "Bearer ya29.TOK"
+
+
+@pytest.mark.integration
+@pytest.mark.asyncio
+async def test_post_json_refetches_token_on_401_then_succeeds():
+    page = _FakePage([401, 200])  # 401, re-fetch token, retry → 200
+    c = _client_with_page(page)
+    refetched = {"n": 0}
+
+    async def fake_fetch():
+        refetched["n"] += 1
+        return ("ya29.NEW", 9_999_999_999.0)
+
+    c._fetch_access_token = fake_fetch  # type: ignore[method-assign]
+    result = await c._post_json(
+        "https://aisandbox-pa.googleapis.com/v1/flow/projects/p/scenes",
+        {"workflowIds": []},
+    )
+    assert result == {}  # 200 body parsed, no AisandboxAuthError
+    assert refetched["n"] == 1  # re-fetched exactly once
+    assert len(page.request.calls) == 2  # original 401 + successful retry
+    assert page.request.calls[1]["headers"]["authorization"] == "Bearer ya29.NEW"
