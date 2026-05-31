@@ -4,9 +4,9 @@
 
 ## Current release
 
-**v0.10.0 — alpha.** Image (T2I / I2I / upload) + Video T2V / I2V / R2V live end-to-end on the `ui_automation` transport against live Pro/Ultra accounts, with a video `--model` picker (5 Veo models) and `--duration` / `--count`. New in v0.10.0: machine-readable `--json` output across every generation command (`image t2i/i2i`, `video t2v/i2v/r2v`, `auth list`) plus a `gflow models` catalog command, so worker schedulers can drive the CLI without scraping Rich tables; per-model reference-image caps for `i2i` and `r2v` (with Veo 3.1 Quality correctly rejecting R2V); Google-account identity persisted to every profile on disk with auto-rename of the first-run `default` profile to the email local-part (issue #92); external cloud storage to S3 / MinIO / GCS via `GFLOW_CLI_STORAGE_URI`; a `gflow data prune` maintenance command and aggregated asset listing; and a structlog→stderr fix that keeps stdout pure JSON. Only video `batch` (manifest runner) is still queued for Phase B — use a shell for-loop until then ([USAGE](USAGE.md#gflow-video-batch)). Three earlier HTTP transport strategies live under `src/gflow_cli/api/transports/experimental/` (`evaluate_fetch` / `bearer` / `sapisidhash`); the production path is `ui_automation`.
+**v0.11.0 — alpha.** v0.11.0 is a reliability release — it repairs `gflow video i2v` (on v0.10.0 every i2v run silently produced text-to-video output that ignored the start/end frames, issue #125), fixes create-project generation under Flow's "Agent" composer mode, and hardens image-model selection for non-English Flow UIs (#94). The v0.10.0 feature baseline stands: Image (T2I / I2I / upload) + Video T2V / I2V / R2V live end-to-end on the `ui_automation` transport against live Pro/Ultra accounts, with a video `--model` picker (5 Veo models) and `--duration` / `--count`. New in v0.10.0: machine-readable `--json` output across every generation command (`image t2i/i2i`, `video t2v/i2v/r2v`, `auth list`) plus a `gflow models` catalog command, so worker schedulers can drive the CLI without scraping Rich tables; per-model reference-image caps for `i2i` and `r2v` (with Veo 3.1 Quality correctly rejecting R2V); Google-account identity persisted to every profile on disk with auto-rename of the first-run `default` profile to the email local-part (issue #92); external cloud storage to S3 / MinIO / GCS via `GFLOW_CLI_STORAGE_URI`; a `gflow data prune` maintenance command and aggregated asset listing; and a structlog→stderr fix that keeps stdout pure JSON. Only video `batch` (manifest runner) is still queued for Phase B — use a shell for-loop until then ([USAGE](USAGE.md#gflow-video-batch)). Three earlier HTTP transport strategies live under `src/gflow_cli/api/transports/experimental/` (`evaluate_fetch` / `bearer` / `sapisidhash`); the production path is `ui_automation`.
 
-**Develop (unreleased, post-v0.10.0):** *(empty — develop is the staging branch for the next release).*
+**Develop (unreleased, post-v0.11.0):** *(empty — develop is the staging branch for the next release).*
 
 ## Milestone history
 
@@ -46,6 +46,9 @@
 | External cloud storage (S3 / MinIO / GCS) via `GFLOW_CLI_STORAGE_URI` | ✅ done (v0.10.0) |
 | `gflow data prune` + aggregated asset listing (`--all-copies`) + cross-profile count fixes (#111, #113) | ✅ done (v0.10.0) |
 | Layered cost-stratified e2e test strategy (`e2e_auth`/`e2e_image`/`e2e_video`/`e2e_batch`/`e2e_data`/`smoke`) | ✅ done (v0.10.0) |
+| `gflow video i2v` routes to the Veo i2v endpoint (no silent T2V fallback) + `veo-lite` default (issue #125) | ✅ done (v0.11.0) |
+| Create-project generation works under Flow's "Agent" composer mode | ✅ done (v0.11.0) |
+| Image-model selection hardened for non-English Flow UIs (selector cascade, #94) | ✅ done (v0.11.0) |
 | `gflow video batch` (TSV manifest) on `ui_automation` | ⏳ Phase B |
 | Persistence layer (stay-mounted batch sessions across project boundaries) | ⏳ Phase B |
 | Provider abstraction for official Veo 3.1 API | ⏳ planned |
