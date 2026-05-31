@@ -22,6 +22,7 @@ class OperationKind(StrEnum):
     T2V = "t2v"
     I2V = "i2v"
     R2V = "r2v"
+    SCENE_CREATE = "scene_create"
 
 
 class OperationStatus(StrEnum):
@@ -154,6 +155,31 @@ class LocalFileRecord:
     sha256: str | None
     storage_provider: str | None = None  # "gcs" | "s3" | None (= local)
     cloud_uri: str | None = None  # gs://bucket/key or s3://bucket/key
+    created_at: str | None = None
+
+
+@dataclass(frozen=True)
+class SceneRecord:
+    id: str
+    profile_name: str
+    flow_project_id: str
+    flow_scene_id: str
+    total_duration: float | None
+    source: str
+    created_at: str | None = None
+
+
+@dataclass(frozen=True)
+class SceneClipRecord:
+    id: str
+    scene_id: str
+    position: int
+    flow_instance_workflow_id: str
+    flow_source_workflow_id: str | None
+    flow_media_id: str | None
+    start_time: float
+    end_time: float
+    total_duration: float
     created_at: str | None = None
 
 
