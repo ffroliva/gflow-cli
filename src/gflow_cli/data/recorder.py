@@ -15,6 +15,8 @@ from gflow_cli.data.models import (
     OperationRecord,
     OperationStatus,
     ProjectRecord,
+    SceneClipRecord,
+    SceneRecord,
 )
 from gflow_cli.data.redaction import PromptMode, prompt_fields, redact_metadata
 from gflow_cli.data.repository import DataRepository
@@ -25,6 +27,7 @@ if TYPE_CHECKING:
 
     from gflow_cli.api.dto import AssetInfo, GeneratedImage, ProjectInfo
     from gflow_cli.api.image import GenerateImageRequest
+    from gflow_cli.api.scene import Scene
     from gflow_cli.api.video import GenerateVideoRequest, VideoResult, VideoStarted
     from gflow_cli.config import Settings
     from gflow_cli.storage import CloudStorageInfo
@@ -266,6 +269,86 @@ class OperationRecorder:
                     cloud_uri=cloud_info.uri if cloud_info else None,
                 ),
             )
+
+    # ------------------------------------------------------------------
+    # Scenes
+    # ------------------------------------------------------------------
+
+    def record_scene(
+        self,
+        *,
+        profile_name: str,
+        profile_dir: Path,
+        scene: Scene,
+        operation_kind: OperationKind = OperationKind.SCENE_CREATE,
+        source_workflow_ids: list[str] | None = None,
+        source: str = "composed",
+    ) -> None:
+        """Persist a composed scene. source_workflow_ids (submission order) is
+        zipped by position onto the sorted instances; the source id is NOT
+        recoverable from read-back alone."""
+        repo = self.repository
+        src_by_pos = source_workflow_ids or []
+        repo.upsert_profile(profile_name, profile_dir)
+        repo.upsert_project(
+            ProjectRecord(
+                id=_new_id(),
+                profile_name=profile_name,
+                flow_project_id=scene.project_id,
+                title=None,
+                source="generated",
+            ),
+        )
+        total = sum((w.metadata.end_time - w.metadata.start_time) for w in scene.workflows)
+        scene_row_id = _new_id()
+        repo.upsert_scene(
+            SceneRecord(
+                id=scene_row_id,
+                profile_name=profile_name,
+                flow_project_id=scene.project_id,
+                flow_scene_id=scene.scene_id,
+                total_duration=total,
+                source=source,
+            ),
+        )
+        repo.replace_scene_clips(
+            scene_row_id,
+            [
+                SceneClipRecord(
+                    id=_new_id(),
+                    scene_id=scene_row_id,
+                    position=w.metadata.position,
+                    flow_instance_workflow_id=w.workflow_id,
+                    flow_source_workflow_id=(src_by_pos[idx] if idx < len(src_by_pos) else None),
+                    flow_media_id=w.media_id,
+                    start_time=w.metadata.start_time,
+                    end_time=w.metadata.end_time,
+                    total_duration=w.metadata.total_duration,
+                )
+                for idx, w in enumerate(scene.workflows)
+            ],
+        )
+        op_id = _new_id()
+        repo.insert_operation(
+            OperationRecord(
+                id=op_id,
+                profile_name=profile_name,
+                flow_project_id=scene.project_id,
+                command="scene create",
+                mode=operation_kind,
+                status=OperationStatus.SUCCEEDED,
+                flow_operation_id=None,
+                flow_batch_id=None,
+                prompt=None,
+                prompt_hash=None,
+                prompt_redacted=False,
+                model=None,
+                aspect_ratio=None,
+                error_type=None,
+                error_detail=None,
+            ),
+        )
+        repo.update_operation_status(op_id, OperationStatus.SUCCEEDED, _now_utc_iso(), None, None)
 
     # ------------------------------------------------------------------
     # Video — started / completed

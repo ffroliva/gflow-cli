@@ -17,6 +17,8 @@ from gflow_cli.data.models import (
     OperationRecord,
     OperationStatus,
     ProjectRecord,
+    SceneClipRecord,
+    SceneRecord,
     SeedImage,
 )
 from gflow_cli.errors import DataIntegrityError
@@ -339,6 +341,129 @@ class DataRepository:
                 )
         except sqlite3.IntegrityError as exc:
             raise DataIntegrityError(detail=str(exc), route="data.link_operation_asset") from exc
+
+    # ------------------------------------------------------------------
+    # Scenes
+    # ------------------------------------------------------------------
+
+    def upsert_scene(self, record: SceneRecord) -> SceneRecord:
+        created_at = record.created_at or _utc_now()
+        try:
+            with self._store.transaction(immediate=True):
+                self._store.conn.execute(
+                    """
+                    INSERT INTO scenes(
+                        id, profile_name, flow_project_id, flow_scene_id,
+                        total_duration, source, created_at
+                    )
+                    VALUES (?, ?, ?, ?, ?, ?, ?)
+                    ON CONFLICT(profile_name, flow_scene_id) DO UPDATE SET
+                        total_duration = excluded.total_duration,
+                        source = excluded.source
+                    """,
+                    (
+                        record.id,
+                        record.profile_name,
+                        record.flow_project_id,
+                        record.flow_scene_id,
+                        record.total_duration,
+                        record.source,
+                        created_at,
+                    ),
+                )
+        except sqlite3.IntegrityError as exc:
+            raise DataIntegrityError(detail=str(exc), route="data.upsert_scene") from exc
+        return cast("SceneRecord", dataclasses.replace(record, created_at=created_at))  # pyright: ignore[reportUnnecessaryCast]
+
+    def replace_scene_clips(self, scene_id: str, clips: list[SceneClipRecord]) -> None:
+        rows = [
+            (
+                c.id,
+                scene_id,
+                c.position,
+                c.flow_instance_workflow_id,
+                c.flow_source_workflow_id,
+                c.flow_media_id,
+                c.start_time,
+                c.end_time,
+                c.total_duration,
+                c.created_at or _utc_now(),
+            )
+            for c in clips
+        ]
+        try:
+            with self._store.transaction(immediate=True):
+                self._store.conn.execute(
+                    "DELETE FROM scene_clips WHERE scene_id = ?",
+                    (scene_id,),
+                )
+                self._store.conn.executemany(
+                    """
+                    INSERT INTO scene_clips(
+                        id, scene_id, position, flow_instance_workflow_id,
+                        flow_source_workflow_id, flow_media_id,
+                        start_time, end_time, total_duration, created_at
+                    )
+                    VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+                    """,
+                    rows,
+                )
+        except sqlite3.IntegrityError as exc:
+            raise DataIntegrityError(detail=str(exc), route="data.replace_scene_clips") from exc
+
+    def get_scene_by_flow_scene_id(
+        self,
+        profile_name: str,
+        flow_scene_id: str,
+    ) -> SceneRecord | None:
+        row = self._store.conn.execute(
+            """
+            SELECT id, profile_name, flow_project_id, flow_scene_id,
+                   total_duration, source, created_at
+            FROM scenes
+            WHERE profile_name = ? AND flow_scene_id = ?
+            """,
+            (profile_name, flow_scene_id),
+        ).fetchone()
+        if row is None:
+            return None
+        return SceneRecord(
+            id=str(row["id"]),
+            profile_name=str(row["profile_name"]),
+            flow_project_id=str(row["flow_project_id"]),
+            flow_scene_id=str(row["flow_scene_id"]),
+            total_duration=row["total_duration"],
+            source=str(row["source"]),
+            created_at=row["created_at"],
+        )
+
+    def get_scene_clips(self, scene_id: str) -> list[SceneClipRecord]:
+        rows = self._store.conn.execute(
+            """
+            SELECT id, scene_id, position, flow_instance_workflow_id,
+                   flow_source_workflow_id, flow_media_id,
+                   start_time, end_time, total_duration, created_at
+            FROM scene_clips
+            WHERE scene_id = ?
+            ORDER BY position
+            """,
+            (scene_id,),
+        ).fetchall()
+        return [
+            SceneClipRecord(
+                id=str(row["id"]),
+                scene_id=str(row["scene_id"]),
+                position=int(row["position"]),
+                flow_instance_workflow_id=str(row["flow_instance_workflow_id"]),
+                flow_source_workflow_id=row["flow_source_workflow_id"],
+                flow_media_id=row["flow_media_id"],
+                start_time=row["start_time"],
+                end_time=row["end_time"],
+                total_duration=row["total_duration"],
+                created_at=row["created_at"],
+            )
+            for row in rows
+        ]
 
     # ------------------------------------------------------------------
     # Local files
