@@ -142,7 +142,8 @@ COMPOSER_AGENT_TOGGLE_SELECTOR = (
 # ``left_panel_close`` ligature. Locale-invariant (Material Symbols ligatures,
 # not UI text) and aria-free, same discipline as the pill selector above.
 AGENT_CHAT_PANEL_CLOSE_SELECTOR = (
-    "div:has(button:has(i:text-is('edit_square'))) button:has(i:text-is('close'))"
+    "div:has(button:has(i.google-symbols:text-is('edit_square'))) "
+    "button:has(i.google-symbols:text-is('close'))"
 )
 
 # Timing for the Agent-exit loop. The clicks are force=True (immediate), so the
@@ -151,6 +152,10 @@ AGENT_CHAT_PANEL_CLOSE_SELECTOR = (
 # pill) before the loop re-checks ``crop_*``.
 _AGENT_CLICK_TIMEOUT_MS = 1500
 _AGENT_SETTLE_MS = 500
+# Iteration cap for the Agent-exit loop. At most a couple of transitions are
+# expected (chat-panel close → pill reveal → pill click); the cap is a backstop
+# against a pathological flip-flop, not a value tuned to a specific shape.
+_AGENT_EXIT_MAX_ITERS = 3
 # Output-count + duration tabs are selected by aria-label text in
 # `_set_output_count` / `_select_video_duration` — NOT by id-suffix: the count
 # tab '-trigger-4' and the duration tab '-trigger-4' (4s) share a suffix, so an
@@ -650,7 +655,7 @@ class VideoGenerationMixin:
             # Bounded loop: dismissing the chat panel can reveal the pill, which
             # then needs its own click — at most a couple of transitions. The cap
             # is a backstop against a pathological flip-flop.
-            for _ in range(3):
+            for _ in range(_AGENT_EXIT_MAX_ITERS):
                 if await VideoGenerationMixin._media_panel_present(page):
                     break
                 # Shape 2 first: the chat side-panel suppresses the pill entirely,
@@ -675,6 +680,10 @@ class VideoGenerationMixin:
                     break
                 pill = page.locator(COMPOSER_AGENT_TOGGLE_SELECTOR).first
                 if await pill.count() > 0:
+                    # force=True for the same reason as the chat-close above: the
+                    # composer can still be settling from the panel dismissal, which
+                    # stalls Playwright's actionability check; the pill is present and
+                    # the click lands. Timeout is just a safety cap on a forced click.
                     await pill.click(force=True, timeout=_AGENT_CLICK_TIMEOUT_MS)
                     await page.wait_for_timeout(_AGENT_SETTLE_MS)
                     acted = True
