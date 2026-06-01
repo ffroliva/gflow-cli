@@ -23,9 +23,9 @@ import sys
 from pathlib import Path
 
 import pytest
-from gflow_cli.media import extract_last_frame
 
 from gflow_cli.errors import FrameExtractionError
+from gflow_cli.media import extract_last_frame
 
 # ``av`` is an OPTIONAL extra (``gflow-cli[chain]``). The happy-path tests that
 # synthesise a real mp4 require it; skip them (rather than fail) when it is not
