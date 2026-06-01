@@ -62,15 +62,44 @@ def scene() -> None:
 @scene.command("create")
 @click.option("--project", "project_id", required=True, help="Flow project id.")
 @click.argument("clip_refs", nargs=-1, required=True)
+@click.option(
+    "--output",
+    "-o",
+    "output",
+    type=click.Path(dir_okay=False, path_type=Path),
+    default=None,
+    help="Render the composed scene into a single extended .mp4 at this path "
+    "(server-side, credit-free; takes up to ~3 min). Without it, only the "
+    "Flow scene is composed (no local file).",
+)
+@click.option("--force", is_flag=True, default=False, help="Overwrite --output if it exists.")
 @click.option("--profile", default=None, help="Profile name (overrides default).")
-def create(project_id: str, clip_refs: tuple[str, ...], profile: str | None) -> None:
-    """Compose a new scene from CLIP_REFS (each: workflowId[:start-end])."""
+def create(
+    project_id: str,
+    clip_refs: tuple[str, ...],
+    output: Path | None,
+    force: bool,
+    profile: str | None,
+) -> None:
+    """Compose a new scene from CLIP_REFS (each: workflowId[:start-end]).
+
+    With --output, also renders the scene into one extended .mp4 via Flow's
+    server-side concatenation (credit-free, no ffmpeg).
+    """
     try:
         refs = [_parse_clip_ref(t) for t in clip_refs]
     except ValueError as e:
         # Surface malformed clipRefs as a Click usage error (exit 2) instead of
         # an uncaught traceback, matching the rest of the CLI's argument errors.
         raise click.BadParameter(str(e), param_hint="CLIP_REFS") from e
+    if output is not None:
+        output = output.expanduser()
+        if output.suffix.lower() != ".mp4":
+            console.print(f"[yellow]--output has no .mp4 suffix; using[/yellow] {output}.mp4")
+            output = output.with_suffix(".mp4")
+        if output.exists() and not force:
+            msg = f"{output} already exists; pass --force to overwrite."
+            raise click.UsageError(msg)
     profile_name = _resolve_profile(profile)
     pdir = _make_provider_dir(profile_name)
     settings = get_settings()
@@ -81,6 +110,7 @@ def create(project_id: str, clip_refs: tuple[str, ...], profile: str | None) -> 
             headless=settings.headless,
             project_id=project_id,
             refs=refs,
+            output=output,
         ),
         cli_command="scene create",
     )
@@ -154,6 +184,7 @@ async def _run_create(
     headless: bool,
     project_id: str,
     refs: list[ClipRef],
+    output: Path | None = None,
 ) -> None:
     recorder = OperationRecorder.open(get_settings())
     try:
@@ -162,8 +193,12 @@ async def _run_create(
             scene_obj = await client.create_scene(project_id=project_id, workflow_ids=source_ids)
             scene_obj = await _apply_trims(client, scene_obj, project_id, refs)
             _render(scene_obj)
+            # Persist the compose FIRST (non-blocking) so a render failure below
+            # is recoverable: the clips' media ids + trims are in the catalog and
+            # the extended video can be re-rendered without re-composing.
+            scene_row_id: str | None = None
             try:
-                recorder.record_scene(
+                scene_row_id = recorder.record_scene(
                     profile_name=profile_name,
                     profile_dir=profile_dir,
                     scene=scene_obj,
@@ -177,6 +212,24 @@ async def _run_create(
                     scene_id=scene_obj.scene_id,
                 )
                 console.print(f"[yellow]Scene created but not recorded locally:[/yellow] {exc}")
+            if output is not None:
+                # Server-side concat into ONE extended .mp4 (credit-free, no ffmpeg).
+                # If this raises, the compose above is already persisted.
+                inputs = list(scene_obj.to_concat_inputs())
+                with console.status("[bold]Rendering extended video…[/bold] (up to ~3 min)"):
+                    target = await client.concatenate_scene(inputs, out_path=output)
+                console.print(f"[bold green]Wrote extended video:[/bold green] {target}")
+                if scene_row_id is not None:
+                    try:
+                        recorder.record_scene_output(
+                            scene_row_id=scene_row_id, output_path=str(target)
+                        )
+                    except Exception as exc:  # noqa: BLE001 — never fail a completed render
+                        log.warning(
+                            "scene.persist_output_failed",
+                            error=str(exc),
+                            scene_id=scene_obj.scene_id,
+                        )
     finally:
         recorder.close()
 

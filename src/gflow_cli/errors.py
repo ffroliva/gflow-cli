@@ -21,6 +21,7 @@ __all__ = [
     "NetworkError",
     "ProblemDetails",
     "RateLimitError",
+    "SceneConcatError",
     "SecurityError",
     "TransportTimeoutError",
     "VideoModelSelectionError",
@@ -244,6 +245,24 @@ class WireFormatError(FlowApiError):
             remediation_hint=remediation_hint,
         )
         self.discovery = discovery or {}
+
+
+class SceneConcatError(FlowApiError):
+    """Raised when Flow's server-side scene concatenation job FAILS.
+
+    Distinct from a poll timeout (which raises ``TransportTimeoutError``, exit 9):
+    this is a terminal ``MEDIA_GENERATION_STATUS_FAILED`` / unexpected status from
+    ``runVideoFxCheckConcatenationStatus`` (or an undecodable / non-MP4 payload).
+    The error detail is built from the ``status`` ONLY — never the ~20MB inline
+    ``encodedVideo``.
+    """
+
+    problem_type = "https://gflow-cli.dev/errors/scene-concat"
+    title = "Scene concatenation failed"
+    _default_remediation = (
+        "Flow's server-side concatenation job did not succeed. Retry the "
+        "compose; if it persists, check the clips are valid video workflows."
+    )
 
 
 class TransportTimeoutError(GFlowError):
@@ -517,5 +536,6 @@ EXIT_CODE_MAP: dict[type[GFlowError], int] = {
     ContentPolicyError: 5,
     NetworkError: 6,
     WireFormatError: 7,
+    SceneConcatError: 19,
     # FlowApiError omitted — falls through to default 1
 }

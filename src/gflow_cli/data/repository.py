@@ -354,9 +354,9 @@ class DataRepository:
                     """
                     INSERT INTO scenes(
                         id, profile_name, flow_project_id, flow_scene_id,
-                        total_duration, source, created_at
+                        total_duration, source, output_path, created_at
                     )
-                    VALUES (?, ?, ?, ?, ?, ?, ?)
+                    VALUES (?, ?, ?, ?, ?, ?, ?, ?)
                     ON CONFLICT(profile_name, flow_scene_id) DO UPDATE SET
                         total_duration = excluded.total_duration,
                         source = excluded.source
@@ -368,12 +368,29 @@ class DataRepository:
                         record.flow_scene_id,
                         record.total_duration,
                         record.source,
+                        record.output_path,
                         created_at,
                     ),
                 )
         except sqlite3.IntegrityError as exc:
             raise DataIntegrityError(detail=str(exc), route="data.upsert_scene") from exc
         return cast("SceneRecord", dataclasses.replace(record, created_at=created_at))  # pyright: ignore[reportUnnecessaryCast]
+
+    def set_scene_output(self, scene_id: str, output_path: str) -> None:
+        """Record the rendered extended-video path on an existing scene row.
+
+        Called after a successful server-side concat (the compose was already
+        persisted by ``upsert_scene``), so a render failure never loses the
+        compose and a later retry can re-attach the output.
+        """
+        try:
+            with self._store.transaction(immediate=True):
+                self._store.conn.execute(
+                    "UPDATE scenes SET output_path = ? WHERE id = ?",
+                    (output_path, scene_id),
+                )
+        except sqlite3.IntegrityError as exc:
+            raise DataIntegrityError(detail=str(exc), route="data.set_scene_output") from exc
 
     def replace_scene_clips(self, scene_id: str, clips: list[SceneClipRecord]) -> None:
         rows = [
@@ -419,7 +436,7 @@ class DataRepository:
         row = self._store.conn.execute(
             """
             SELECT id, profile_name, flow_project_id, flow_scene_id,
-                   total_duration, source, created_at
+                   total_duration, source, output_path, created_at
             FROM scenes
             WHERE profile_name = ? AND flow_scene_id = ?
             """,
@@ -434,6 +451,7 @@ class DataRepository:
             flow_scene_id=str(row["flow_scene_id"]),
             total_duration=row["total_duration"],
             source=str(row["source"]),
+            output_path=row["output_path"],
             created_at=row["created_at"],
         )
 
