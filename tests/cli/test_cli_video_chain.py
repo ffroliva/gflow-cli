@@ -12,9 +12,25 @@ from pathlib import Path
 from typing import Any
 from unittest.mock import AsyncMock, MagicMock, patch
 
+import pytest
+import structlog
 from click.testing import CliRunner
 
 from gflow_cli.cli_video import video
+
+
+@pytest.fixture(autouse=True)
+def _route_logs_to_capture(
+    install_log_capture: structlog.testing.LogCapture,
+) -> None:
+    """Route structlog into the shared LogCapture (not stdout) for every test here.
+
+    Without it, the warning-level ``chain_link_failed`` event the CLI emits on the
+    ``--json`` partial path renders to stdout and breaks the "single parseable JSON
+    document" assertion when this file runs in isolation. It only passed before
+    because an earlier test in a broader run happened to configure capture first —
+    a test-order dependency, now made deterministic.
+    """
 
 
 def _manifest(tmp_path: Path, n: int) -> Path:
