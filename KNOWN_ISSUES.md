@@ -461,6 +461,93 @@ sample is captured.
 
 ---
 
+### `gflow video chain` re-exposes the i2v→t2v silent-route risk (issue #125)
+
+- **Status:** Mitigated · **Severity:** Medium · **Affects:** `gflow video chain` (Unreleased)
+
+Every chain link after the first is an image-to-video (I2V) generation seeded by
+the previous clip's last frame. The same silent-route defect that affects
+`gflow video i2v` ([issue #125](https://github.com/ffroliva/gflow-cli/issues/125))
+applies here: if the chosen model can't do i2v interpolation, Flow drops the
+seed frame and routes the request to the plain text-to-video endpoint
+(`batchAsyncGenerateVideoText`) — burning a credit for a text-only clip that
+breaks continuity, with no error from Flow.
+
+**Mitigation (two layers):**
+1. **Model pin.** `omni-flash` (the only model known to silently drop frames) is
+   removed from the chain `--model` choices, and the orchestrator rejects any
+   model whose `supports_i2v_interpolation()` is false **before any spend**
+   (`ModelModeIncompatibilityError`, exit 17).
+2. **Per-link wire-route abort.** For each seeded link the transport inspects the
+   captured generate-response URL; if it observes `batchAsyncGenerateVideoText`
+   for an i2v link it raises `WireFormatError` (logged
+   `ui_automation_video.i2v_routed_to_t2v`, issue #125) rather than reporting a
+   fake success. The chain aborts and preserves every link completed before the
+   failure (`ChainPartialError`).
+
+**Workaround:** stick to the Veo 3.1 models (`veo-lite` / `veo-fast` /
+`veo-quality` / `veo-lite-lp`); these are the only accepted chain models.
+
+---
+
+### `gflow video chain` continuity caveat — black / fade-out final frame
+
+- **Status:** Open · **Severity:** Low · **Affects:** `gflow video chain` (Unreleased)
+
+Chain seeds each link with the **last frame** of the previous clip. If a clip
+fades to black (or to a near-empty frame) at its very end — common with
+cinematic prompts — the extracted seed frame is mostly black, so the next link
+starts from black and continuity visibly breaks.
+
+**Workaround:** pass `--seed-offset MS` to extract the seed frame a few hundred
+milliseconds **before** end-of-file, skipping the fade. For example
+`--seed-offset 200` seeds from 200 ms before EOF. Tune per the fade length of
+your prompts.
+
+---
+
+### `gflow video chain` outputs N clips, not one file — auto-concat is deferred
+
+- **Status:** Open (by design) · **Severity:** Low · **Affects:** `gflow video chain` (Unreleased)
+
+A chain produces **N separate mp4s** (one per link), not a single stitched
+video. Auto-concatenation is deferred: Flow's server-side concatenation
+(`runVideoFxConcatenation`, used by `gflow scene`) is **project-scoped** — every
+clip must live in the same Flow project to be concatenated. But chain links are
+*generated* sequentially and generation cannot pin all links to one shared
+project, so there is no clip set the concat endpoint could combine at the end of
+a chain run.
+
+**Workaround:** stitch the link clips into one file with `gflow scene`
+(server-side, credit-free, no ffmpeg) after the chain completes. The chain
+prints its `chain_id` and a reminder to do this on success.
+
+**Roadmap:** wiring chain links into a single Flow project so the chain can
+auto-concat its own output is under consideration — tracked as backlog.
+
+---
+
+### `gflow video chain --resume-from` re-seeds the first resumed link as T2V
+
+- **Status:** Open · **Severity:** Low · **Affects:** `gflow video chain` (Unreleased)
+
+`--resume-from <chain-id>` skips links already paid for in a prior run (they are
+**not** re-billed) and continues from the first incomplete link. However, the
+first resumed link is generated as a **text-to-video** link, not seeded from the
+last frame of the last completed link — there is no cross-run seed-frame
+hand-off yet. The resume is **credit-safe** (no double-billing), but visual
+continuity restarts at the resume point: the first resumed clip will not flow
+seamlessly from the clip before it.
+
+**Workaround:** if seamless continuity across a resume boundary matters, re-run
+the affected tail of the chain from scratch rather than resuming, or stitch with
+`gflow scene` and accept the cut at the resume boundary.
+
+**Roadmap:** persist and re-extract the boundary seed frame so a resumed link can
+continue as a seeded I2V generation — tracked as backlog.
+
+---
+
 ## Mitigated
 
 ### Auth verification depends on Google's NextAuth session endpoint
