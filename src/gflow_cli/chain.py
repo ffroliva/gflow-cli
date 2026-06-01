@@ -180,6 +180,7 @@ async def run_chain(
         if index > 0 and jitter > 0:
             await asyncio.sleep(random.uniform(0.0, jitter))  # noqa: S311 — cadence, not crypto
 
+        _log.info("chain_link_started", index=index, total_links=len(links))
         link_model = spec.model if spec.model is not None else model
         is_i2v = index > 0
         req = GenerateVideoRequest(
