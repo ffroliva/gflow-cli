@@ -93,8 +93,7 @@ def scene_workflows_url(scene_id: str, project_id: str) -> str:
         msg = f"Invalid project_id: {project_id!r}"
         raise ValueError(msg)
     return (
-        f"{FLOW_API_BASE}/flow/scene/{scene_id}/workflows"
-        f"?sceneId={scene_id}&projectId={project_id}"
+        f"{FLOW_API_BASE}/flow/scene/{scene_id}/workflows?sceneId={scene_id}&projectId={project_id}"
     )
 
 
