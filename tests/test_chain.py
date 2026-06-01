@@ -85,17 +85,15 @@ def _make_client(results: list[VideoResult]) -> MagicMock:
     is irrelevant; we still ``touch`` it to mimic a completed download.
     """
     client = MagicMock(name="FlowApiClient")
+    results_iter = iter(results)
 
     async def _gen(*, req: GenerateVideoRequest, **_: Any) -> VideoResult:
-        idx = _gen.call_index
-        _gen.call_index += 1
-        result = results[idx]
+        result = next(results_iter)
         if result.local_path is not None:
             result.local_path.parent.mkdir(parents=True, exist_ok=True)
             result.local_path.write_bytes(b"\x00\x00\x00\x18ftypmp42fake-clip")
         return result
 
-    _gen.call_index = 0
     client.generate_video = AsyncMock(side_effect=_gen)
     return client
 
@@ -233,10 +231,12 @@ async def test_aborts_on_wire_format_error_preserving_partial_results(tmp_path: 
     the failure. The failing link and any later links are NOT generated."""
     good = _ok_result("m0", tmp_path / "link0.mp4")
     client = MagicMock(name="FlowApiClient")
+    calls = 0
 
     async def _gen(*, req: GenerateVideoRequest, **_: Any) -> VideoResult:
-        idx = _gen.call_index
-        _gen.call_index += 1
+        nonlocal calls
+        idx = calls
+        calls += 1
         if idx == 0:
             assert good.local_path is not None
             good.local_path.write_bytes(b"\x00\x00\x00\x18ftypmp42")
@@ -247,7 +247,6 @@ async def test_aborts_on_wire_format_error_preserving_partial_results(tmp_path: 
             discovery={"route_name": "batchAsyncGenerateVideoText"},
         )
 
-    _gen.call_index = 0
     client.generate_video = AsyncMock(side_effect=_gen)
 
     specs = [
