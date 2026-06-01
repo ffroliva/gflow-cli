@@ -399,6 +399,101 @@ videos won't appear together in your Flow gallery. The files on disk are
 identical to what `batch` would produce. The same pattern works for
 `gflow video i2v <image> "<prompt>"` and `gflow video r2v "<prompt>" --ref <img>`.
 
+## `gflow video chain`
+
+Render a JSONL manifest of *links* into one continuous last-frame I2V chain.
+Link 0 is a text-to-video (T2V) generation; every later link is an
+image-to-video (I2V) generation **seeded by the extracted last frame of the
+previous clip**, giving visual continuity with no server-side stitching.
+
+> ⚠️ **Costs N credits — one per link.** A chain is N sequential paid Veo
+> generations. Run `--dry-run` first to print the plan and the credit estimate
+> without spending anything. The cost-confirmation prompt is shown unless you
+> pass `-y` / `--yes`.
+
+> **Requires the `chain` extra.** The last-frame extractor decodes the previous
+> clip with [PyAV](https://pyav.org/) (no system ffmpeg needed). Install it
+> with:
+>
+> ```bash
+> pip install 'gflow-cli[chain]'
+> # or:  uv tool install 'gflow-cli[chain]'
+> ```
+
+```text
+gflow video chain MANIFEST [OPTIONS]
+
+Arguments:
+  MANIFEST                  JSONL manifest, one link per line. [required]
+
+Options:
+  --model [veo-lite|veo-fast|veo-quality|veo-lite-lp]
+                            Veo 3.1 model for every link.    [default: veo-lite]
+  --max-links INTEGER       Cap link count; error (exit 11) if the manifest
+                            has more links than this.
+  -y, --yes                 Skip the per-credit cost confirmation prompt.
+  --dry-run                 Resolve the manifest, print the plan + credit cost,
+                            and spend nothing.
+  --resume-from CHAIN_ID    Resume a prior chain by its id; already-paid links
+                            are skipped (not re-billed).
+  --jitter FLOAT            Random 0..JITTER second pause between links
+                            (anti-bot cadence).               [default: 0.0]
+  --seed-offset INTEGER     Extract the seed frame this many ms before EOF
+                            (fade-to-black guard).            [default: 0]
+  --aspect [9:16|16:9]      Uniform aspect for every link.    [default: 9:16]
+  --profile NAME            Profile name (overrides default).
+  --out-dir DIR             Directory for the link mp4s + seed frames.
+  --json                    Emit a machine-readable JSON result.
+```
+
+> **`omni-flash` is rejected.** Only the Veo 3.1 family supports i2v
+> interpolation. `omni-flash` silently drops the seed frame and routes to
+> text-to-video (issue #125), which would break every seeded link, so it is not
+> an accepted `--model` for `chain`. The chain also aborts a link loudly (rather
+> than reporting a fake success) if a generation is observed routing to the
+> text-only endpoint — see [KNOWN_ISSUES](../KNOWN_ISSUES.md).
+
+### JSONL manifest format
+
+One JSON object per line. Only `prompt` is required; `model` / `duration` /
+`aspect` are optional per-link overrides (omit to inherit the chain default).
+Blank lines and `#`-prefixed comment lines are skipped.
+
+```jsonl
+{"prompt": "a lone wolf on a snowy ridge at dawn, cinematic", "model": "veo-lite", "duration": 4, "aspect": "16:9"}
+{"prompt": "it lifts its head and turns to face the camera"}
+{"prompt": "it bounds down the slope toward the valley"}
+```
+
+The chain enforces a **uniform aspect** across links for continuity, so the
+chain-level `--aspect` is applied to every link (a per-link `aspect` override in
+the manifest is currently informational).
+
+### Output — N clips, not one file
+
+Each link is saved as its own mp4 (plus a `linkN_lastframe.jpg` seed frame
+between links) under `--out-dir` (or the default output dir). **Stitching the
+clips into a single video is a separate step — use `gflow scene` to
+concatenate them server-side.** Chain does not auto-concat: see the
+*deferred auto-concat* entry in
+[KNOWN_ISSUES](../KNOWN_ISSUES.md) for why.
+
+**Examples:**
+
+```bash
+# Preview the plan + credit cost — spends nothing
+gflow video chain story.jsonl --dry-run
+
+# Generate the chain (one credit per link), no confirmation prompt
+gflow video chain story.jsonl --model veo-fast --aspect 16:9 --yes
+
+# Resume a chain that died partway — already-paid links are skipped
+gflow video chain story.jsonl --resume-from 1f2e3d4c-...
+
+# Seed 150 ms before EOF to dodge a fade-to-black final frame
+gflow video chain story.jsonl --seed-offset 150 --yes
+```
+
 ## `gflow data list`
 
 Read-only browse over the local SQLite catalog. Shipped in v0.9.0.

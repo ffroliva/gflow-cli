@@ -23,6 +23,25 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ### Added
 
+- **`gflow video chain` — last-frame I2V chaining.** Render a JSONL manifest of
+  *links* into one continuous sequence: link 0 is a text-to-video generation,
+  and every later link is an image-to-video generation **seeded by the extracted
+  last frame of the previous clip**, giving visual continuity with no
+  server-side stitching. Each link is a sequential paid Veo generation (**one
+  credit per link**); a cost-confirmation gate (`-y`/`--yes` to skip),
+  `--dry-run` plan preview, `--max-links` cap (exit 11), and
+  `--resume-from <chain-id>` (skips already-paid links, no re-billing) make the
+  spend explicit and recoverable. Per-link wire-route checking aborts loudly if
+  Flow drops the seed frame and routes an i2v link to the text-only endpoint
+  (issue #125), so a misroute can never be reported as a successful chain.
+  Only the Veo 3.1 models (`veo-lite`/`veo-fast`/`veo-quality`/`veo-lite-lp`)
+  are accepted; `omni-flash` is rejected. Chain links are recorded locally
+  (SQLite migration `0005`) to drive `--resume-from`. The frame extractor uses
+  PyAV via a new optional **`[chain]`** extra (`pip install 'gflow-cli[chain]'`)
+  — no system ffmpeg required. Each link is saved as its own mp4; concatenating
+  the clips into one file is a separate step — use `gflow scene` (auto-concat is
+  deferred, see [KNOWN_ISSUES.md](KNOWN_ISSUES.md)).
+
 - **`gflow scene` command group (Add Clip / Scenes).** Compose ordered,
   trimmable video clips into a Flow **Scene** over the credit-free aisandbox
   REST surface (no reCAPTCHA, no credits):
