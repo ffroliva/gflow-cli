@@ -14,8 +14,19 @@ def test_scenes_url_rejects_injection():
 
 
 def test_scene_workflows_url():
-    url = routes.scene_workflows_url("scene-abc")
-    assert url == "https://aisandbox-pa.googleapis.com/v1/flow/scene/scene-abc/workflows"
+    # Flow requires BOTH sceneId + projectId query params or the GET returns {}.
+    url = routes.scene_workflows_url("scene-abc", "proj-123")
+    assert url == (
+        "https://aisandbox-pa.googleapis.com/v1/flow/scene/scene-abc/workflows"
+        "?sceneId=scene-abc&projectId=proj-123"
+    )
+
+
+def test_scene_workflows_url_rejects_injection():
+    with pytest.raises(ValueError):
+        routes.scene_workflows_url("../evil", "proj-123")
+    with pytest.raises(ValueError):
+        routes.scene_workflows_url("scene-abc", "../evil")
 
 
 def test_scene_workflows_update_url_is_constant():
