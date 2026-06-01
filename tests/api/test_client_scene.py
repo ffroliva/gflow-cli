@@ -120,6 +120,8 @@ async def test_get_scene_workflows_reads_back_sorted():
     c = _client_with(page)
     scene = await c.get_scene_workflows("scene-x", project_id="proj-1")
     method, url, _ = page.request.calls[-1]
-    assert method == "GET" and url.endswith("/scene/scene-x/workflows")
+    # read-back requires BOTH sceneId + projectId query params (else Flow returns {})
+    assert method == "GET"
+    assert url.endswith("/scene/scene-x/workflows?sceneId=scene-x&projectId=proj-1")
     assert [w.workflow_id for w in scene.workflows] == ["inst-1", "inst-2"]
     assert scene.workflows[1].metadata.start_time == 3.2

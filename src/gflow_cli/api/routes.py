@@ -78,12 +78,23 @@ def scenes_url(project_id: str) -> str:
     return f"{FLOW_API_BASE}/flow/projects/{project_id}/scenes"
 
 
-def scene_workflows_url(scene_id: str) -> str:
-    """GET target for scene read-back (order + trims + media)."""
+def scene_workflows_url(scene_id: str, project_id: str) -> str:
+    """GET target for scene read-back (order + trims + media).
+
+    Flow requires BOTH ``sceneId`` and ``projectId`` as query params; without
+    them the endpoint returns ``{}`` (empty). Confirmed from labs.google18.har
+    (entries 54/58). Both ids pass the strict allowlist regex (alphanumeric +
+    hyphen only), so direct interpolation into the query string is injection-safe.
+    """
     if not _SCENE_ID_RE.fullmatch(scene_id):
         msg = f"Invalid scene_id: {scene_id!r}"
         raise ValueError(msg)
-    return f"{FLOW_API_BASE}/flow/scene/{scene_id}/workflows"
+    if not _PROJECT_ID_RE.fullmatch(project_id):
+        msg = f"Invalid project_id: {project_id!r}"
+        raise ValueError(msg)
+    return (
+        f"{FLOW_API_BASE}/flow/scene/{scene_id}/workflows?sceneId={scene_id}&projectId={project_id}"
+    )
 
 
 def flow_workflow_url(workflow_id: str) -> str:

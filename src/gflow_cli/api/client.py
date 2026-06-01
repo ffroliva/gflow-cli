@@ -876,7 +876,7 @@ class FlowApiClient:
     async def get_scene_workflows(self, scene_id: str, *, project_id: str) -> Scene:
         """Read back a scene's clips (order + trims). GET via _get_json."""
         data = await self._get_json(
-            routes.scene_workflows_url(scene_id), route_name="getSceneWorkflows"
+            routes.scene_workflows_url(scene_id, project_id), route_name="getSceneWorkflows"
         )
         return Scene.from_get_response(data, scene_id=scene_id, project_id=project_id)
 
