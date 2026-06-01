@@ -55,13 +55,15 @@ if TYPE_CHECKING:
     from pathlib import Path
 
     from gflow_cli.api.client import FlowApiClient
-    from gflow_cli.api.video import VideoResult
+    from gflow_cli.api.video import VideoResult, VideoStartedCallback
 
 __all__ = [
     "ChainLinkResult",
     "ChainLinkSpec",
     "ChainRecorder",
     "FrameExtractor",
+    "LinkCompletedHook",
+    "LinkStartedHook",
     "run_chain",
 ]
 
@@ -124,6 +126,32 @@ class ChainRecorder(Protocol):
     def record_chain_link(self, result: ChainLinkResult) -> None: ...
 
 
+class LinkStartedHook(Protocol):
+    """Factory producing the per-link ``on_started`` forwarded into the transport.
+
+    Called with the link's :class:`GenerateVideoRequest` BEFORE generation; the
+    returned :data:`~gflow_cli.api.video.VideoStartedCallback` (or ``None``) is
+    handed to ``generate_video(on_started=...)`` so the CLI can record the link
+    in the ``videos`` catalog the moment the transport reports it started. The
+    per-link ``request`` is threaded so the catalog row matches the link's mode
+    (link 0 T2V, links N I2V).
+    """
+
+    def __call__(self, request: GenerateVideoRequest) -> VideoStartedCallback | None: ...
+
+
+class LinkCompletedHook(Protocol):
+    """Hook called AFTER each link's clip is downloaded.
+
+    Receives the link's own request + result so the CLI can finalize the
+    ``videos`` catalog row. The implementation MUST absorb its own persistence
+    failures (a post-success error must never abort the already-paid chain); the
+    orchestrator does not guard the call.
+    """
+
+    def __call__(self, request: GenerateVideoRequest, result: VideoResult) -> None: ...
+
+
 async def run_chain(
     *,
     client: FlowApiClient,
@@ -132,6 +160,8 @@ async def run_chain(
     model: VideoModel,
     extractor: FrameExtractor = extract_last_frame,
     recorder: ChainRecorder | None = None,
+    on_link_started: LinkStartedHook | None = None,
+    on_link_completed: LinkCompletedHook | None = None,
     aspect: Aspect = Aspect.PORTRAIT,
     seed_offset_ms: int = 0,
     jitter: float = 0.0,
@@ -149,7 +179,16 @@ async def run_chain(
             before any generation.
         extractor: Last-frame extractor (defaults to ``extract_last_frame``),
             run off the event loop via ``asyncio.to_thread``.
-        recorder: Optional persistence hook called BEFORE extraction per link.
+        recorder: Optional chain-correlation persistence hook called BEFORE
+            extraction per link (records the link into the chain table).
+        on_link_started: Optional factory producing the per-link ``on_started``
+            forwarded into ``generate_video``; lets the CLI record each link in
+            the ``videos`` catalog the moment the transport reports it started.
+            Threaded with the link's own request (link 0 T2V, links N I2V).
+        on_link_completed: Optional hook called AFTER each link's clip is
+            downloaded, with the link's own request + result, so the CLI can
+            finalize the catalog row. The hook MUST absorb its own persistence
+            failures; the orchestrator does not guard it.
         aspect: Uniform aspect applied to every link (continuity requirement).
         seed_offset_ms: Passed to the extractor — select a frame this many ms
             before EOF (the fade-to-black mitigation).
@@ -192,8 +231,13 @@ async def run_chain(
             start_image=prev_frame if is_i2v else None,
         )
 
+        link_on_started = on_link_started(req) if on_link_started is not None else None
+
         try:
-            result: VideoResult = await client.generate_video(req=req)
+            result: VideoResult = await client.generate_video(
+                req=req,
+                on_started=link_on_started,
+            )
         except (WireFormatError, WafRejectionError) as exc:
             _log.warning(
                 "chain_link_aborted",
@@ -234,6 +278,13 @@ async def run_chain(
         )
         if recorder is not None:
             recorder.record_chain_link(link_result)
+
+        # Catalog the link in the `videos` table (parity with t2v/i2v). Uses the
+        # link's OWN request (link 0 T2V, links N I2V) + result so the row mode
+        # matches. The hook absorbs its own DataStoreError so a post-success
+        # persistence failure never aborts the already-paid chain.
+        if on_link_completed is not None:
+            on_link_completed(req, result)
 
         if frame_path is not None:
             prev_frame = await asyncio.to_thread(

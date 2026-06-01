@@ -166,6 +166,98 @@ def test_chain_happy_path_calls_run_chain_with_links_and_recorder(tmp_path: Path
     assert kwargs["model"] is VideoModel.VEO_3_1_LITE
 
 
+def test_chain_wires_operation_recorder_and_records_each_link(tmp_path: Path) -> None:
+    """The chain command opens an OperationRecorder and records EVERY link into
+    the `videos` catalog (parity with t2v/i2v): record_started_video (forwarded
+    as on_started into the transport) + record_completed_video per link, each
+    with that link's own request (link 0 T2V, link 1 I2V).
+
+    Uses the REAL run_chain so the per-link hooks actually fire; only the
+    transport (FlowApiClient.generate_video) is mocked, so no network/credits.
+    """
+    from gflow_cli.api.video import (
+        GenerateVideoRequest,
+        Mode,
+        VideoResult,
+        VideoStarted,
+        VideoStatus,
+    )
+
+    runner = CliRunner()
+    manifest = _manifest(tmp_path, 2)
+    p_resolve, p_provider, p_rec, _ = _patches(tmp_path)
+
+    # Mock OperationRecorder (the catalog recorder).
+    op_recorder = MagicMock()
+
+    # Mock the transport client: generate_video downloads a clip + invokes the
+    # forwarded on_started, then returns a successful VideoResult per link.
+    media_ids = iter(["m0", "m1"])
+
+    async def _gen(*, req: GenerateVideoRequest, on_started: Any = None, **_: Any) -> VideoResult:
+        media_id = next(media_ids)
+        clip = tmp_path / f"{media_id}.mp4"
+        clip.write_bytes(b"\x00\x00\x00\x18ftypmp42")
+        if on_started is not None:
+            on_started(VideoStarted(media_id=media_id, project_id="proj", flow_operation_id="op"))
+        return VideoResult(
+            status=VideoStatus(media_id=media_id, status="MEDIA_GENERATION_STATUS_SUCCESSFUL"),
+            local_path=clip,
+            project_id="proj",
+            flow_operation_id="op",
+        )
+
+    fake_client = MagicMock()
+    fake_client.__aenter__ = AsyncMock(return_value=fake_client)
+    fake_client.__aexit__ = AsyncMock(return_value=None)
+    fake_client.generate_video = AsyncMock(side_effect=_gen)
+
+    # Avoid real frame extraction (no ffmpeg / real mp4): stub the extractor.
+    # The CLI does not pass `extractor=`, so run_chain falls back to its
+    # def-time default kwdefault — patch that binding directly.
+    from gflow_cli.chain import run_chain as _real_run_chain
+
+    def _fake_extract(src: Path, dst: Path, *, offset_ms: int = 0) -> Path:
+        dst.write_bytes(b"\xff\xd8\xff\xd9")
+        return dst
+
+    assert _real_run_chain.__kwdefaults__ is not None
+    with (
+        p_resolve,
+        p_provider,
+        p_rec,
+        patch("gflow_cli.cli_video.FlowApiClient", return_value=fake_client),
+        patch("gflow_cli.cli_video.OperationRecorder.open", return_value=op_recorder),
+        patch.dict(_real_run_chain.__kwdefaults__, {"extractor": _fake_extract}),
+    ):
+        result = runner.invoke(video, ["chain", str(manifest), "--yes"])
+
+    assert result.exit_code == 0, result.output
+
+    # An OperationRecorder was opened and closed.
+    op_recorder.close.assert_called()
+
+    # record_started_video fired once per link, each with the link's own request.
+    assert op_recorder.record_started_video.call_count == 2
+    started_modes = [
+        c.kwargs["request"].mode for c in op_recorder.record_started_video.call_args_list
+    ]
+    assert started_modes == [Mode.T2V, Mode.I2V]
+
+    # record_completed_video fired once per link, each with the link's own request.
+    assert op_recorder.record_completed_video.call_count == 2
+    completed_modes = [
+        c.kwargs["request"].mode for c in op_recorder.record_completed_video.call_args_list
+    ]
+    assert completed_modes == [Mode.T2V, Mode.I2V]
+    # The completed result carries the link's downloaded clip.
+    completed_media = [
+        c.kwargs["result"].status.media_id
+        for c in op_recorder.record_completed_video.call_args_list
+    ]
+    assert completed_media == ["m0", "m1"]
+
+
 def test_chain_partial_error_exits_21_with_resume_hint(tmp_path: Path) -> None:
     runner = CliRunner()
     manifest = _manifest(tmp_path, 3)

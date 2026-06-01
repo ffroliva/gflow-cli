@@ -346,7 +346,7 @@ async def _run_chain(
     from pathlib import Path as _Path
 
     from gflow_cli import chain as chain_mod
-    from gflow_cli.api.video import Aspect
+    from gflow_cli.api.video import Aspect, GenerateVideoRequest, VideoResult, VideoStarted
     from gflow_cli.chain import ChainLinkSpec
     from gflow_cli.chain_manifest import parse_chain_manifest
     from gflow_cli.data.chain_repo import ChainLinkRecorder
@@ -428,6 +428,59 @@ async def _run_chain(
         profile_dir=profile_dir,
         chain_id=chain_id,
     )
+    # Catalog recorder: records each chain link into the `videos` catalog
+    # (parity with t2v/i2v), so `gflow data list videos` / `gflow data media`
+    # surface chain clips. Distinct from the chain-correlation `recorder` above.
+    catalog_recorder = OperationRecorder.open(settings)
+
+    def _on_link_started(request: GenerateVideoRequest) -> Any:
+        """Build the per-link ``on_started`` forwarded into ``generate_video``.
+
+        Threaded with the link's OWN request (link 0 T2V, links N I2V) so the
+        catalog row mode matches. The recorder call is wrapped in
+        try/except DataStoreError because it runs INSIDE the transport, where an
+        uncaught exception would abort the PAID generation.
+        """
+
+        def on_started(started: VideoStarted) -> None:
+            try:
+                catalog_recorder.record_started_video(
+                    profile_name=profile_name,
+                    profile_dir=profile_dir,
+                    request=request,
+                    started=started,
+                )
+            except DataStoreError as exc:
+                _warn_persistence_failed_after_success(
+                    exc=exc,
+                    flow_media_id=started.media_id,
+                    local_path=None,
+                )
+
+        return on_started
+
+    def _on_link_completed(request: GenerateVideoRequest, result: VideoResult) -> None:
+        """Finalize the catalog row for a downloaded link. A post-success
+        persistence failure WARNS but never aborts the already-paid chain."""
+        try:
+            catalog_recorder.record_completed_video(
+                profile_name=profile_name,
+                _profile_dir=profile_dir,
+                request=request,
+                result=result,
+                cloud_storage_info=(
+                    cloud_info_from_path(result.local_path)
+                    if result.local_path is not None
+                    else None
+                ),
+            )
+        except DataStoreError as exc:
+            _warn_persistence_failed_after_success(
+                exc=exc,
+                flow_media_id=result.status.media_id,
+                local_path=result.local_path,
+            )
+
     total_links = len(remaining_links)
     partial = False
     completed_paths: list[Path] = []
@@ -443,6 +496,8 @@ async def _run_chain(
                     out_dir=resolved_out_dir,
                     model=resolved_model,
                     recorder=recorder,
+                    on_link_started=_on_link_started,
+                    on_link_completed=_on_link_completed,
                     aspect=aspect_enum,
                     seed_offset_ms=seed_offset,
                     jitter=jitter,
@@ -479,6 +534,7 @@ async def _run_chain(
                 raise
     finally:
         recorder.close()
+        catalog_recorder.close()
 
     if as_json:
         json_output.emit(
