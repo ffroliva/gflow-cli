@@ -128,6 +128,29 @@ COMPOSER_AGENT_TOGGLE_SELECTOR = (
     "div:has(div[role='textbox'][data-slate-editor='true'])"
     ":has(button:has(i:text('arrow_forward'))) button:has(span.content)"
 )
+
+# Agent CHAT side-panel close (X). Flow's even-newer editor sometimes promotes
+# Agent mode from the in-composer pill (above) to a full chat panel docked on the
+# right ("Untitled session", "What would you like to do?") — it appears on some
+# project opens and not others. While that panel is up, the in-composer pill is
+# NOT in the DOM at all, so the pill selector matches nothing; the panel must be
+# dismissed first (its X), after which the pill reappears (usually still active)
+# and the normal pill path takes over. The panel header carries a New-session
+# button (``edit_square`` icon) next to its close (``close`` icon); we anchor on
+# that pairing so we hit the panel's X and not some other ``close`` icon on the
+# page. ``:text-is`` is EXACT — ``:text('close')`` would also match the sidebar's
+# ``left_panel_close`` ligature. Locale-invariant (Material Symbols ligatures,
+# not UI text) and aria-free, same discipline as the pill selector above.
+AGENT_CHAT_PANEL_CLOSE_SELECTOR = (
+    "div:has(button:has(i:text-is('edit_square'))) button:has(i:text-is('close'))"
+)
+
+# Timing for the Agent-exit loop. The clicks are force=True (immediate), so the
+# click timeout is only a safety cap, not a wait we expect to spend. The settle
+# pause lets Flow re-render the composer (pill → media panel, or panel-close →
+# pill) before the loop re-checks ``crop_*``.
+_AGENT_CLICK_TIMEOUT_MS = 1500
+_AGENT_SETTLE_MS = 500
 # Output-count + duration tabs are selected by aria-label text in
 # `_set_output_count` / `_select_video_duration` — NOT by id-suffix: the count
 # tab '-trigger-4' and the duration tab '-trigger-4' (4s) share a suffix, so an
@@ -590,47 +613,89 @@ class VideoGenerationMixin:
     async def _exit_agent_mode(page: Page) -> bool:
         """Ensure the composer is in media (Image/Video) mode, not Agent mode.
 
-        When Flow's composer is in "Agent" mode the media-generation panel is
-        absent (see :data:`COMPOSER_AGENT_TOGGLE_SELECTOR`), which makes
-        :meth:`_switch_to_image_mode`, :meth:`_switch_to_video_mode`, and
-        ``_configure_generation_settings`` fail to find their ``crop_*`` trigger.
-        This presses the Agent pill toggle off to re-mount the panel.
+        Flow's "Agent" mode hides the media-generation panel — the ``crop_*``
+        settings trigger that :meth:`_switch_to_image_mode`,
+        :meth:`_switch_to_video_mode`, and ``_configure_generation_settings``
+        probe disappears — so generation fails with "mode-switch dropdown trigger
+        not found". Agent mode shows up in TWO shapes, and which one appears on a
+        given project open is non-deterministic (Flow A/B):
+
+        1. **In-composer pill** (:data:`COMPOSER_AGENT_TOGGLE_SELECTOR`) — an
+           ``Agent`` toggle next to the prompt; clicking it returns to media mode.
+        2. **Chat side-panel** (:data:`AGENT_CHAT_PANEL_CLOSE_SELECTOR`) — a docked
+           "Untitled session" chat on the right; while it is up the pill is not in
+           the DOM at all, so it must be dismissed (its X) first, after which the
+           pill reappears (usually still active) and step 1 applies.
+
+        This drives a small fixed-iteration loop: while the media panel is absent,
+        dismiss whichever Agent affordance is present (chat panel first, then
+        pill) and re-check. The loop is keyed on the OUTCOME (``crop_*`` is back),
+        never on assuming which control exists — so it covers pill-only,
+        panel-only, panel-then-pill, and neither (older UI) without special-casing.
 
         Returns ``True`` only when it actually brought the media panel back,
-        ``False`` otherwise (already in media mode, the toggle is absent on an
-        older UI, or the click did not re-mount the panel). Best-effort,
-        locale-invariant, and never raises — a DOM probe failure must not abort
-        generation.
+        ``False`` otherwise (already in media mode, nothing to act on, or the
+        clicks did not re-mount the panel). Best-effort, locale-invariant
+        (Material Symbols ligatures + structural anchors, no UI text, no ARIA),
+        and never raises — a DOM probe failure must not abort generation.
         """
         try:
             # Common case: the media panel is already mounted → media mode,
-            # nothing to do. This keeps the helper a cheap no-op on every normal
-            # generation and avoids touching the toggle unnecessarily.
+            # nothing to do. Cheap no-op on every normal generation.
             if await VideoGenerationMixin._media_panel_present(page):
                 return False
-            # Panel absent → we are in Agent mode: click the pill (located by its
-            # structural span.content child) to turn Agent off and re-mount the
-            # panel. No ARIA state and no localized label is read — the panel
-            # absence above already established the mode, so the toggle only has
-            # to be found. Works in every Flow UI language.
-            toggle = page.locator(COMPOSER_AGENT_TOGGLE_SELECTOR).first
-            if await toggle.count() == 0:
-                return False  # toggle not present (older UI) → leave as-is
-            await toggle.click()
-            await page.wait_for_timeout(700)
-            # Defensive: confirm the click actually re-mounted the panel instead
-            # of blindly trusting it. The pill is a binary toggle, so if the
-            # panel was absent for some other reason — or a future Flow change
-            # flips the click direction — the crop_* trigger stays missing. Don't
-            # claim a false "exited"; warn and let the caller's own trigger probe
-            # fail loudly (with a screenshot) so the real cause surfaces.
+
+            acted = False
+            clicked_pill = False
+            # Bounded loop: dismissing the chat panel can reveal the pill, which
+            # then needs its own click — at most a couple of transitions. The cap
+            # is a backstop against a pathological flip-flop.
+            for _ in range(3):
+                if await VideoGenerationMixin._media_panel_present(page):
+                    break
+                # Shape 2 first: the chat side-panel suppresses the pill entirely,
+                # so it must go before the pill can be found. Closing it is
+                # self-terminating (the X is gone afterwards), so it is safe to
+                # revisit across iterations.
+                chat_close = page.locator(AGENT_CHAT_PANEL_CLOSE_SELECTOR).first
+                if await chat_close.count() > 0:
+                    # force=True: the panel mounts with an entry animation that can
+                    # leave Playwright's actionability check waiting; the element is
+                    # present and the click lands regardless. The short timeout is
+                    # just a safety cap — a forced click is effectively immediate.
+                    await chat_close.click(force=True, timeout=_AGENT_CLICK_TIMEOUT_MS)
+                    await page.wait_for_timeout(_AGENT_SETTLE_MS)
+                    acted = True
+                    continue
+                # Shape 1: the in-composer pill. It is a binary toggle, so click it
+                # AT MOST ONCE — clicking again would just turn Agent mode back on.
+                # If one click doesn't re-mount the panel, stop and let the caller's
+                # own trigger probe fail loudly rather than flip-flopping.
+                if clicked_pill:
+                    break
+                pill = page.locator(COMPOSER_AGENT_TOGGLE_SELECTOR).first
+                if await pill.count() > 0:
+                    await pill.click(force=True, timeout=_AGENT_CLICK_TIMEOUT_MS)
+                    await page.wait_for_timeout(_AGENT_SETTLE_MS)
+                    acted = True
+                    clicked_pill = True
+                    continue
+                # Neither affordance present and panel still absent — nothing this
+                # helper can do (older UI, or an unrecognised Agent shape).
+                break
+
             if await VideoGenerationMixin._media_panel_present(page):
-                log.info("ui_automation_video.exited_agent_mode")
+                if acted:
+                    log.info("ui_automation_video.exited_agent_mode")
                 return True
-            log.warning(
-                "ui_automation_video.exit_agent_mode_no_panel",
-                note="clicked the composer toggle but the media panel did not re-mount",
-            )
+            if acted:
+                # We clicked something but the panel never came back — don't claim
+                # a false "exited"; warn and let the caller's own trigger probe
+                # fail loudly (with a screenshot) so the real cause surfaces.
+                log.warning(
+                    "ui_automation_video.exit_agent_mode_no_panel",
+                    note="dismissed Agent affordance(s) but the media panel did not re-mount",
+                )
             return False
         except Exception as e:  # noqa: BLE001 — best-effort, never fatal
             log.debug("ui_automation_video.agent_toggle_probe_failed", error=str(e)[:80])
