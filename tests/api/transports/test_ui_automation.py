@@ -2227,13 +2227,67 @@ class TestSelectImageModel:
         page.locator.assert_not_called()
 
 
-def _agent_loc(count: int) -> MagicMock:
-    """A Playwright-locator mock with a fixed ``.count()`` and chainable ``.first``."""
-    loc = MagicMock()
-    loc.first = loc
-    loc.count = AsyncMock(return_value=count)
-    loc.click = AsyncMock()
-    return loc
+def _exit_agent_page(initial: dict) -> tuple[MagicMock, dict]:
+    """Build a stateful page mock for ``_exit_agent_mode``.
+
+    ``initial`` seeds a mutable DOM state dict with keys ``crop`` / ``pill`` /
+    ``chat`` (each an element count). The click handlers mutate that state to
+    model Flow's real transitions, so the helper's loop is exercised against a
+    DOM that actually changes shape:
+
+    * clicking the **chat-close** removes the chat panel and reveals the pill
+      (``chat`` → 0, ``pill`` → 1), matching the live behaviour;
+    * clicking the **pill** re-mounts the media panel (``crop`` → 1).
+
+    Override either transition by passing ``crop_after_pill`` /
+    ``pill_after_chat`` / ``chat_after_chat`` in ``initial``. Returns
+    ``(page, state)`` so a test can assert final counts + click tallies (the
+    state dict also accrues ``pill_clicks`` / ``chat_clicks``).
+    """
+    from gflow_cli.api.transports.ui_automation_video import (
+        AGENT_CHAT_PANEL_CLOSE_SELECTOR,
+        COMPOSER_AGENT_TOGGLE_SELECTOR,
+    )
+
+    state = {
+        "crop": 0,
+        "pill": 0,
+        "chat": 0,
+        "pill_clicks": 0,
+        "chat_clicks": 0,
+        "crop_after_pill": 1,
+        "pill_after_chat": 1,
+        "chat_after_chat": 0,
+        **initial,
+    }
+
+    async def _pill_click(*_a, **_k) -> None:
+        state["pill_clicks"] += 1
+        state["crop"] = state["crop_after_pill"]
+
+    async def _chat_click(*_a, **_k) -> None:
+        state["chat_clicks"] += 1
+        state["chat"] = state["chat_after_chat"]
+        state["pill"] = state["pill_after_chat"]
+
+    def _loc(key: str, on_click=None) -> MagicMock:
+        loc = MagicMock()
+        loc.first = loc
+        loc.count = AsyncMock(side_effect=lambda: state[key])
+        loc.click = AsyncMock(side_effect=on_click) if on_click else AsyncMock()
+        return loc
+
+    def locator(sel: str) -> MagicMock:
+        if sel == COMPOSER_AGENT_TOGGLE_SELECTOR:
+            return _loc("pill", _pill_click)
+        if sel == AGENT_CHAT_PANEL_CLOSE_SELECTOR:
+            return _loc("chat", _chat_click)
+        return _loc("crop")  # any MODE_SWITCH_TRIGGER_SELECTORS probe
+
+    page = AsyncMock()
+    page.locator = MagicMock(side_effect=locator)
+    page.wait_for_timeout = AsyncMock()
+    return page, state
 
 
 class TestExitAgentMode:
@@ -2272,80 +2326,100 @@ class TestExitAgentMode:
         assert "data-slate-editor" in sel
         assert sel.strip() != "button:has(span.content)"
 
+    def test_chat_close_selector_is_locale_safe_and_aria_free(self) -> None:
+        """The chat-panel close selector is structural — no UI text, no ARIA.
+
+        It anchors on the panel header's New-session (``edit_square``) + close
+        (``close``) Material Symbols ligatures, using ``:text-is`` (EXACT) so it
+        does NOT also match the sidebar's ``left_panel_close`` ligature. No
+        localized text and no ``aria-`` attribute (same discipline as the pill).
+        """
+        from gflow_cli.api.transports.ui_automation_video import (
+            AGENT_CHAT_PANEL_CLOSE_SELECTOR,
+        )
+
+        sel = AGENT_CHAT_PANEL_CLOSE_SELECTOR
+        assert "aria-" not in sel
+        assert ":has-text(" not in sel
+        assert "text-matches" not in sel
+        # Exact icon-ligature matches only (avoids left_panel_close substring).
+        assert ":text-is('edit_square')" in sel
+        assert ":text-is('close')" in sel
+        assert ":text('close')" not in sel  # would over-match left_panel_close
+
     @pytest.mark.asyncio
     async def test_noop_when_media_panel_present(self) -> None:
         """The crop_* media-settings trigger is mounted → media mode already, so
-        the helper returns False and never touches the toggle (common path)."""
-        page = AsyncMock()
-        page.locator = MagicMock(return_value=_agent_loc(1))  # crop trigger present
-        page.wait_for_timeout = AsyncMock()
+        the helper returns False and never touches any toggle (common path)."""
+        page, state = _exit_agent_page({"crop": 1, "pill": 1, "chat": 0})
 
         switched = await UiAutomationTransport._exit_agent_mode(page)
 
         assert switched is False
         page.wait_for_timeout.assert_not_awaited()
+        assert state["pill_clicks"] == 0
+        assert state["chat_clicks"] == 0
 
     @pytest.mark.asyncio
-    async def test_clicks_toggle_and_confirms_panel_remounts(self) -> None:
-        """Panel absent + pill present → click the pill; once the crop_* panel
-        comes back, return True (this is the Agent-mode bug being fixed)."""
-        page = AsyncMock()
-        state = {"clicked": False}
-
-        toggle = MagicMock()
-        toggle.first = toggle
-        toggle.count = AsyncMock(return_value=1)
-        toggle.click = AsyncMock(side_effect=lambda: state.__setitem__("clicked", True))
-
-        def _crop_loc() -> MagicMock:
-            loc = MagicMock()
-            loc.first = loc
-            # crop_* trigger is absent until the toggle is clicked (Agent off).
-            loc.count = AsyncMock(return_value=1 if state["clicked"] else 0)
-            return loc
-
-        def locator(sel: str) -> MagicMock:
-            return toggle if sel == COMPOSER_AGENT_TOGGLE_SELECTOR else _crop_loc()
-
-        page.locator = MagicMock(side_effect=locator)
-        page.wait_for_timeout = AsyncMock()
+    async def test_clicks_pill_and_confirms_panel_remounts(self) -> None:
+        """State B (pill active): panel absent + pill present → click the pill
+        once; when crop_* comes back, return True."""
+        page, state = _exit_agent_page(
+            {"crop": 0, "pill": 1, "chat": 0, "crop_after_pill": 1},
+        )
 
         switched = await UiAutomationTransport._exit_agent_mode(page)
 
         assert switched is True
-        toggle.click.assert_awaited_once()
+        assert state["pill_clicks"] == 1
+        assert state["chat_clicks"] == 0
 
     @pytest.mark.asyncio
-    async def test_returns_false_when_panel_does_not_remount(self) -> None:
-        """Panel absent + pill present, but clicking does NOT bring the crop_*
-        trigger back → return False (no false "exited" claim) and warn, rather
-        than blindly reporting success."""
-        page = AsyncMock()
-        toggle = _agent_loc(1)
+    async def test_closes_chat_panel_then_clicks_revealed_pill(self) -> None:
+        """State A (chat side-panel): panel absent, pill NOT in DOM, chat X
+        present → close the chat (reveals the pill), then click the pill →
+        crop_* returns. Covers the panel-then-pill transition in one call."""
+        page, state = _exit_agent_page(
+            {
+                "crop": 0,
+                "pill": 0,  # pill suppressed while chat panel is up
+                "chat": 1,
+                "pill_after_chat": 1,  # closing chat reveals the pill
+                "chat_after_chat": 0,
+                "crop_after_pill": 1,  # clicking the pill re-mounts the panel
+            },
+        )
 
-        def locator(sel: str) -> MagicMock:
-            # Toggle present; crop_* trigger never appears (before OR after click).
-            return toggle if sel == COMPOSER_AGENT_TOGGLE_SELECTOR else _agent_loc(0)
+        switched = await UiAutomationTransport._exit_agent_mode(page)
 
-        page.locator = MagicMock(side_effect=locator)
-        page.wait_for_timeout = AsyncMock()
+        assert switched is True
+        assert state["chat_clicks"] == 1
+        assert state["pill_clicks"] == 1
+
+    @pytest.mark.asyncio
+    async def test_pill_clicked_at_most_once_when_panel_never_remounts(self) -> None:
+        """State B but the click does NOT re-mount the panel → click the pill
+        exactly ONCE (never flip-flop the binary toggle) and return False."""
+        page, state = _exit_agent_page(
+            {"crop": 0, "pill": 1, "chat": 0, "crop_after_pill": 0},
+        )
 
         switched = await UiAutomationTransport._exit_agent_mode(page)
 
         assert switched is False
-        toggle.click.assert_awaited_once()
+        assert state["pill_clicks"] == 1  # NOT 2/3 — no flip-flop
 
     @pytest.mark.asyncio
-    async def test_noop_when_no_toggle_present(self) -> None:
-        """Crop trigger absent AND no pill toggle (older UI) → clean no-op."""
-        page = AsyncMock()
-        page.locator = MagicMock(return_value=_agent_loc(0))  # nothing present
-        page.wait_for_timeout = AsyncMock()
+    async def test_noop_when_no_affordance_present(self) -> None:
+        """Crop absent AND no pill AND no chat panel (older UI / unknown shape)
+        → clean no-op, nothing clicked, returns False."""
+        page, state = _exit_agent_page({"crop": 0, "pill": 0, "chat": 0})
 
         switched = await UiAutomationTransport._exit_agent_mode(page)
 
         assert switched is False
-        page.wait_for_timeout.assert_not_awaited()
+        assert state["pill_clicks"] == 0
+        assert state["chat_clicks"] == 0
 
     @pytest.mark.asyncio
     async def test_never_raises_on_probe_error(self) -> None:

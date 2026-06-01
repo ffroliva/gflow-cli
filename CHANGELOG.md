@@ -7,6 +7,20 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+### Fixed
+
+- **Create-project generation failing when Flow opens the Agent _chat panel_.**
+  A follow-up to the earlier Agent-pill fix: Flow now also surfaces Agent mode as
+  a docked chat side-panel ("Untitled session") on some project opens, and while
+  it is up the in-composer Agent pill is absent from the DOM — so the pill-only
+  recovery could not find anything to click and generation still failed with
+  "mode-switch dropdown trigger not found". `_exit_agent_mode` now handles both
+  Agent shapes in one pass: it dismisses the chat panel (locale-stable, aria-free
+  structural close anchor) which reveals the pill, then turns the pill off,
+  looping until the media panel re-mounts. Keyed on the outcome (`crop_*` is
+  back), so it covers pill-only, panel-only, and panel-then-pill without assuming
+  which control is present.
+
 ### Added
 
 - **`gflow scene` command group (Add Clip / Scenes).** Compose ordered,
