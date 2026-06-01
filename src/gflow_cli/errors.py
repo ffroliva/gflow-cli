@@ -1,5 +1,6 @@
 from __future__ import annotations
 
+from pathlib import Path
 from typing import Any, TypedDict
 
 __all__ = [
@@ -10,12 +11,14 @@ __all__ = [
     "AuthMissingError",
     "BatchIntegrityError",
     "BatchPartialError",
+    "ChainPartialError",
     "ConfigurationError",
     "ContentPolicyError",
     "DataIntegrityError",
     "DataMigrationError",
     "DataStoreError",
     "FlowApiError",
+    "FrameExtractionError",
     "GFlowError",
     "ModelModeIncompatibilityError",
     "NetworkError",
@@ -511,10 +514,71 @@ class DataIntegrityError(DataStoreError):
     title = "Data integrity error"
 
 
+class FrameExtractionError(GFlowError):
+    """Raised when the video-chain last-frame extractor cannot produce a frame.
+
+    Covers both the missing-optional-dependency case (PyAV / ``av`` not
+    installed because the ``chain`` extra was skipped) and an undecodable /
+    truncated input video. The remediation points at the install extra so an
+    operator hitting the missing-dependency path can self-serve.
+    """
+
+    problem_type = "https://gflow-cli.dev/errors/frame-extraction"
+    title = "Last-frame extraction failed"
+    _default_remediation = (
+        "Could not extract the last frame of the clip. Install the chain extra: "
+        "pip install 'gflow-cli[chain]' (provides PyAV). If already installed, the "
+        "input video may be truncated or undecodable."
+    )
+
+
+class ChainPartialError(GFlowError):
+    """Raised when a sequential video chain fails mid-way after earlier links
+    already produced ready-on-disk clips.
+
+    Mirrors ``BatchPartialError`` but for the video chain: ``partial_results``
+    carries the ``Path`` of each completed link so the already-paid-for clips
+    are surfaced rather than lost. The default is an empty (but present) list —
+    a chain that fails before its first link completes is still a valid partial
+    with zero results, NEVER ``None``.
+    """
+
+    problem_type = "https://gflow-cli.dev/errors/chain-partial"
+    title = "Video chain partially failed"
+    _default_remediation = (
+        "An earlier link in the chain succeeded but a later one failed. The "
+        "completed clips are preserved; re-run with --resume-from to continue "
+        "from the first failed link instead of regenerating the whole chain."
+    )
+
+    def __init__(
+        self,
+        detail: str = "",
+        *,
+        status: int | None = None,
+        instance: str | None = None,
+        route: str = "",
+        remediation_hint: str | None = None,
+        partial_results: list[Path] | None = None,
+        cause: Exception | None = None,
+    ) -> None:
+        super().__init__(
+            detail,
+            status=status,
+            instance=instance,
+            route=route,
+            remediation_hint=remediation_hint,
+        )
+        self.partial_results: list[Path] = partial_results if partial_results is not None else []
+        self.cause = cause
+
+
 # EXIT_CODE_MAP — most-specific class FIRST per isinstance walk semantics.
 # Subclasses inherit their parent's exit code if they don't have their own
 # entry. New entries MUST go BEFORE their parent class in this dict.
 EXIT_CODE_MAP: dict[type[GFlowError], int] = {
+    ChainPartialError: 21,
+    FrameExtractionError: 20,
     DataMigrationError: 16,
     DataIntegrityError: 16,
     DataStoreError: 16,
