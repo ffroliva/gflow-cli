@@ -48,6 +48,10 @@ s3 = [
     "universal_pathlib>=0.2.5",
     "s3fs>=2024.2.0",
 ]
+# Video-chain extra — PyAV for the last-frame extractor (no system ffmpeg needed).
+chain = [
+    "av>=12",
+]
 
 [project.scripts]
 gflow = "gflow_cli.cli:main"
