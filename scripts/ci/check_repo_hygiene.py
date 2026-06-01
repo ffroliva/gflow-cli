@@ -15,6 +15,7 @@ Run in CI:
 Run as pre-commit hook (see .pre-commit-config.yaml):
     - id: repo-hygiene
 """
+
 from __future__ import annotations
 
 import re
@@ -63,6 +64,18 @@ SOURCE_DENYLIST: list[tuple[re.Pattern[str], str]] = [
 ]
 
 SCAN_DIRS = ["scripts", "src", "tests"]
+
+# ---------------------------------------------------------------------------
+# 3. Branch-naming advisory
+#    AGENTS.md mandates conventional branch prefixes. This is ADVISORY only:
+#    it warns but never fails the gate. Rationale: it no-ops in CI (pull_request
+#    checks out a detached HEAD → "HEAD"), and automation platforms (Claude Code
+#    on the web, dependabot) create branches the contributor cannot rename, so a
+#    hard block would break those workflows. Normal contributors still get the
+#    nudge on their dev machine.
+# ---------------------------------------------------------------------------
+BRANCH_PREFIX_RE = re.compile(r"^(feature|bugfix|hotfix|chore|docs|test|release)/")
+_PROTECTED_OR_DETACHED = frozenset({"main", "develop", "HEAD"})
 
 
 # ---------------------------------------------------------------------------
@@ -113,6 +126,37 @@ def _check_sources() -> list[str]:
     return violations
 
 
+def _current_branch() -> str | None:
+    try:
+        result = subprocess.run(
+            ["git", "rev-parse", "--abbrev-ref", "HEAD"],
+            capture_output=True,
+            text=True,
+            check=True,
+            cwd=ROOT,
+        )
+    except (subprocess.CalledProcessError, OSError):
+        return None
+    return result.stdout.strip() or None
+
+
+def _check_branch_name(branch: str | None) -> list[str]:
+    """Advisory branch-name check. Returns warnings, never errors.
+
+    No-ops on an unresolved branch, a detached HEAD ("HEAD"), and the protected
+    `main` / `develop` branches. Callers MUST treat the result as advisory and
+    keep it out of the exit-1 error list.
+    """
+    if branch is None or branch in _PROTECTED_OR_DETACHED:
+        return []
+    if BRANCH_PREFIX_RE.match(branch):
+        return []
+    return [
+        f"  BRANCH    {branch!r}  ← non-conventional name; prefer one of: "
+        "feature/ bugfix/ hotfix/ chore/ docs/ test/ release/ (advisory)"
+    ]
+
+
 def main() -> int:
     print("── repo hygiene check ───────────────────────────────────────")
     errors: list[str] = []
@@ -120,6 +164,13 @@ def main() -> int:
     tracked = _git_ls_files()
     errors += _check_tracked(tracked)
     errors += _check_sources()
+
+    # Advisory: warn on non-conventional branch names but never fail the gate.
+    warnings = _check_branch_name(_current_branch())
+    if warnings:
+        print("\n⚠️  advisory (non-blocking):")
+        for w in warnings:
+            print(w)
 
     if errors:
         print(f"\n❌  {len(errors)} violation(s):\n")
