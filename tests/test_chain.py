@@ -291,6 +291,65 @@ async def test_rejects_non_interpolation_model_up_front(tmp_path: Path) -> None:
     client.generate_video.assert_not_awaited()
 
 
+async def test_per_link_recording_hooks_threaded_with_own_request(tmp_path: Path) -> None:
+    """run_chain forwards the per-link ``on_started`` into generate_video and
+    calls ``on_link_completed`` once per link — each with that link's OWN request
+    (link 0 T2V, link 1 I2V). This is the catalog-persistence wiring the CLI uses
+    to record every chain link in the ``videos`` table (parity with t2v/i2v).
+    """
+    results = [
+        _ok_result("m0", tmp_path / "link0.mp4"),
+        _ok_result("m1", tmp_path / "link1.mp4"),
+    ]
+    client = _make_client(results)
+
+    # on_link_started is a factory: given the link's request, it returns the
+    # ``on_started`` callback forwarded into generate_video. Track which request
+    # each factory call saw and return a distinct sentinel per link.
+    started_requests: list[GenerateVideoRequest] = []
+    sentinels: dict[int, Any] = {}
+
+    def _on_link_started(request: GenerateVideoRequest) -> Any:
+        idx = len(started_requests)
+        started_requests.append(request)
+        sentinel = object()
+        sentinels[idx] = sentinel
+        return sentinel
+
+    completed: list[tuple[GenerateVideoRequest, VideoResult]] = []
+
+    def _on_link_completed(request: GenerateVideoRequest, result: VideoResult) -> None:
+        completed.append((request, result))
+
+    await run_chain(
+        client=client,
+        links=_two_link_specs(),
+        out_dir=tmp_path,
+        model=VideoModel.VEO_3_1_LITE,
+        extractor=_fake_extractor([]),
+        on_link_started=_on_link_started,
+        on_link_completed=_on_link_completed,
+    )
+
+    # The factory ran once per link, with that link's own request (correct mode).
+    assert len(started_requests) == 2
+    assert started_requests[0].mode is Mode.T2V
+    assert started_requests[1].mode is Mode.I2V
+
+    # generate_video received each link's on_started sentinel (per-link, in order).
+    forwarded = [c.kwargs.get("on_started") for c in client.generate_video.await_args_list]
+    assert forwarded == [sentinels[0], sentinels[1]]
+
+    # on_link_completed fired once per link, with the SAME per-link request that
+    # was sent to generate_video and the matching result.
+    assert len(completed) == 2
+    sent_reqs = [c.kwargs["req"] for c in client.generate_video.await_args_list]
+    assert completed[0][0] is sent_reqs[0]
+    assert completed[1][0] is sent_reqs[1]
+    assert completed[0][1] is results[0]
+    assert completed[1][1] is results[1]
+
+
 async def test_aspect_propagates_to_every_link(tmp_path: Path) -> None:
     """The chain-level aspect is applied to each generated link (continuity
     requires a uniform aspect across the sequence)."""
