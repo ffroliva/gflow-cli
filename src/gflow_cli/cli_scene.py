@@ -193,14 +193,12 @@ async def _run_create(
             scene_obj = await client.create_scene(project_id=project_id, workflow_ids=source_ids)
             scene_obj = await _apply_trims(client, scene_obj, project_id, refs)
             _render(scene_obj)
-            if output is not None:
-                # Server-side concat into ONE extended .mp4 (credit-free, no ffmpeg).
-                inputs = list(scene_obj.to_concat_inputs())
-                with console.status("[bold]Rendering extended video…[/bold] (up to ~3 min)"):
-                    target = await client.concatenate_scene(inputs, out_path=output)
-                console.print(f"[bold green]Wrote extended video:[/bold green] {target}")
+            # Persist the compose FIRST (non-blocking) so a render failure below
+            # is recoverable: the clips' media ids + trims are in the catalog and
+            # the extended video can be re-rendered without re-composing.
+            scene_row_id: str | None = None
             try:
-                recorder.record_scene(
+                scene_row_id = recorder.record_scene(
                     profile_name=profile_name,
                     profile_dir=profile_dir,
                     scene=scene_obj,
@@ -214,6 +212,24 @@ async def _run_create(
                     scene_id=scene_obj.scene_id,
                 )
                 console.print(f"[yellow]Scene created but not recorded locally:[/yellow] {exc}")
+            if output is not None:
+                # Server-side concat into ONE extended .mp4 (credit-free, no ffmpeg).
+                # If this raises, the compose above is already persisted.
+                inputs = list(scene_obj.to_concat_inputs())
+                with console.status("[bold]Rendering extended video…[/bold] (up to ~3 min)"):
+                    target = await client.concatenate_scene(inputs, out_path=output)
+                console.print(f"[bold green]Wrote extended video:[/bold green] {target}")
+                if scene_row_id is not None:
+                    try:
+                        recorder.record_scene_output(
+                            scene_row_id=scene_row_id, output_path=str(target)
+                        )
+                    except Exception as exc:  # noqa: BLE001 — never fail a completed render
+                        log.warning(
+                            "scene.persist_output_failed",
+                            error=str(exc),
+                            scene_id=scene_obj.scene_id,
+                        )
     finally:
         recorder.close()
 
