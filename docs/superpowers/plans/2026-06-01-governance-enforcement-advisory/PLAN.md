@@ -24,6 +24,13 @@ scored 5/10; the council cut the steering-YAML duplication, the gameable proof-l
 hard-block, and the generated governance doc, and validated the reshaped advisory
 scope against the reference implementation's own behavior.
 
+**Branch-review verdict:** GO — ~9/10 post-fix (`/gflow:branch-review`, 4-dimension
+council on SHA `70c1f5b`, 2026-06-01). Fixes folded in: `git diff ..` two-dot
+(D1 must-fix), `fetch-depth: 0` (D1), real `_check_material_list_sync()` since
+doc-links can't guard constant↔prose parity (D2/D3), exact same-repo `if:` guard +
+least-privilege `permissions:` + pinned actions (D3), non-blocking caveat + conscious
+`--block-on` deferral (D3/D4).
+
 **Reference grounding:** Modeled on `kdeath83/ai-dlc-governance-orchestrator`'s
 *actual* enforcement, read from source: its risk gate **classifies always, blocks
 only on opt-in `--block-on=material`, and delegates real blocking to branch
@@ -39,7 +46,7 @@ advisory-by-default — so this lower-stakes CLI goes no harder.
 | High | Generated `GOVERNANCE.md` decays + adds an 8th entry doc (Contributor-UX 9) | Static section in `docs/AGENT_GUIDE.md` + `docs/INDEX.md` routing row only. |
 | High | "tests must change when src changes" → 20–30% false positives (DX 9/10) | Traceability is a **report-only signal**, never a gate. Refactor/docstring/deletion diffs exempt by construction (no enforcement). |
 | Medium | `T20` false-positives on sanctioned `console.print` / test-debug prints | `T20` flags only builtin `print()`; `console.print` is an attribute call (unaffected). `tests/**` per-file-ignore for `T20`. |
-| Medium | Materiality path list forks from `pr-council-review` §1 → divergence | Single canonical list lives in `check_materiality.py`; doc table + skill cross-reference it. One place to update; doc-link check guards the reference. |
+| Medium | Materiality path list forks from `pr-council-review` §1 → divergence | Single canonical `MATERIAL_PATHS` constant lives in `check_materiality.py`. A dedicated `_check_material_list_sync()` hygiene check (Task 5) asserts `pr-council-review` §1 mentions every entry — `check_doc_links.py` only validates Markdown links, NOT constant↔prose parity, so the sync needs its own check. |
 | Medium | Forked-PR token is read-only → can't post a comment | Primary surface is `$GITHUB_STEP_SUMMARY` (works on forks, no token). PR comment is best-effort, same-repo only. |
 | Low | Branch-naming check breaks in detached HEAD / CI / tags | `_check_branch_name()` no-ops when HEAD is detached or branch is `main`/`develop`/`HEAD`. |
 
@@ -156,6 +163,8 @@ CHANGELOG.md
 - [ ] `test_remediation_is_tool_agnostic` — report text mentions `/gflow:predict` AND `skills/predict/SKILL.md` AND a human path.
 - [ ] `test_plan_reference_signal` — branch with a `docs/superpowers/plans/...` reference reports the traceability checkbox checked.
 - [ ] `test_no_block_when_tests_absent` — touched `src/` without test changes → signal reported, exit still 0.
+- [ ] `test_remediation_is_executable_by_non_claude` — strengthen: remediation gives a concrete step that does NOT depend on a `/gflow` command (read `skills/predict/SKILL.md`), so Cursor/Codex/Gemini/human contributors can comply.
+- [ ] `test_material_list_sync_catches_drift` — adding a fake path to `MATERIAL_PATHS` makes `_check_material_list_sync()` fail with an actionable message.
 
 ---
 
@@ -167,11 +176,13 @@ CHANGELOG.md
 - `scripts/ci/check_materiality.py` — new
 
 **Steps:**
-- [ ] Compute touched paths from `git diff --name-only <base>...HEAD` (base defaults to `origin/develop`; overridable via arg/env).
-- [ ] Classify each path with the canonical material list (the single source; `pr-council-review` §1 and the doc table reference *this*).
-- [ ] Build a markdown report: material paths found, recommended gates (`/gflow:predict`, `/gflow:pr-council-review`), tool-agnostic remediation, and the report-only traceability checklist (plan referenced? touched-src test changes present?).
+- [ ] Define `MATERIAL_PATHS` as the single canonical module constant.
+- [ ] Compute touched paths from `git diff --name-only <base>..HEAD` (**two dots** — `<base>..HEAD` is "files changed on this branch vs base"; **three dots is a symmetric diff** that wrongly pulls in `develop`'s post-fork changes). Base defaults to `origin/develop`; overridable via arg/env.
+- [ ] Classify each path against `MATERIAL_PATHS` (the single source; `pr-council-review` §1 and the doc table reference *this*).
+- [ ] Build a markdown report: material paths found, recommended gates (`/gflow:predict`, `/gflow:pr-council-review`), tool-agnostic remediation (must include a non-`/gflow` path: "read `skills/predict/SKILL.md`"), and the report-only traceability checklist (plan referenced? touched-src test changes present?).
 - [ ] Print to stdout; if `$GITHUB_STEP_SUMMARY` is set, append there too.
 - [ ] **Always `sys.exit(0)`** — this is advisory.
+- [ ] Add `_check_material_list_sync()` (here or in `check_repo_hygiene.py`): assert every `MATERIAL_PATHS` entry appears in `skills/pr-council-review/SKILL.md` §1; fail with "Material path list drifted — update pr-council-review §1". Wire into the Task 8 gate set.
 - [ ] Run `/gflow:check`.
 
 **Tests:** Task 4 tests pass green.
@@ -186,10 +197,12 @@ CHANGELOG.md
 - `.github/workflows/governance-advisory.yml` — new
 
 **Steps:**
-- [ ] Trigger on `pull_request`; `permissions:` read-only contents (no extra write scope needed for the summary surface).
-- [ ] Fetch base ref; run `uv run python scripts/ci/check_materiality.py`.
-- [ ] Primary surface = `$GITHUB_STEP_SUMMARY` (works on forks). Optional best-effort PR comment guarded to same-repo PRs only.
-- [ ] Job must not be a required status check; it cannot fail the merge.
+- [ ] Trigger on `pull_request` (forked-PR safe — fork code never receives secrets; see `docs/GITHUB.md`). Do NOT use `pull_request_target`.
+- [ ] Checkout with `actions/checkout@v6` **and `fetch-depth: 0`** (shallow clones may omit `origin/develop`, breaking `git diff origin/develop..HEAD`). No other third-party actions — keep the supply-chain surface minimal.
+- [ ] Declare least-privilege `permissions:` — `contents: read` by default. Add `pull-requests: write` ONLY if the optional comment step is included.
+- [ ] Run `uv run python scripts/ci/check_materiality.py`; primary surface = `$GITHUB_STEP_SUMMARY` (works on forks, needs no token).
+- [ ] Optional best-effort PR comment guarded to same-repo PRs with the exact pattern the sonar job uses: `github.event.pull_request.head.repo.full_name == github.repository`.
+- [ ] Job must not be added to branch protection / required checks; combined with `sys.exit(0)` it cannot fail the merge.
 
 **Tests:**
 - [ ] Self-verify: the PR for *this* plan touches no material `src/` paths, so the job summary should classify it routine — confirm on the live PR.
@@ -213,6 +226,13 @@ CHANGELOG.md
       (T20, branch-naming, coverage floor, doc-links, signed tags) vs advisory
       (materiality + traceability), and how non-Claude agents satisfy each gate
       (read the SKILL.md; produce the deliverable).
+- [ ] Add a **"Non-blocking signals"** caveat: materiality + traceability are
+      informational only and NEVER block merge; only the machine-enforced gates do.
+      Prevents misreading the advisory job as a hard gate.
+- [ ] Add a **conscious-deferral** note: hard enforcement (a `--block-on=material`
+      flag + branch-protection) is deliberately deferred, matching the reference
+      implementation's opt-in design — not an omission. Reserve the hook point in
+      `check_materiality.py`.
 - [ ] Add the coverage table; cross-reference `skills/pr-council-review/SKILL.md` §1
       as the canonical priority weights.
 - [ ] Add the `docs/INDEX.md` routing row.
@@ -232,7 +252,7 @@ CHANGELOG.md
 
 **Steps:**
 - [ ] `/gflow:check` green (ruff incl. T20 / format / pyright / pytest ≥ 80%).
-- [ ] `check_repo_hygiene.py` + `check_doc_links.py` green.
+- [ ] `check_repo_hygiene.py` (incl. branch-naming + `_check_material_list_sync()`) + `check_doc_links.py` green.
 - [ ] CHANGELOG `[Unreleased]`: branch-naming check, T20 print-ban, advisory
       materiality+traceability job, governance docs.
 
@@ -246,5 +266,6 @@ CHANGELOG.md
 - [ ] Docs updated (`docs/AGENT_GUIDE.md`, `docs/INDEX.md`, `AGENTS.md`)
 - [ ] New CI checks have unit tests; advisory job verified non-blocking on the live PR
 - [ ] No new top-level doc; no `steering.yml`; no gameable proof-label; no hard block
+- [ ] Conscious deferral of `--block-on`/branch-protection documented (not an omission)
 - [ ] No `# TODO` in diff without a tracked issue link
-- [ ] LLM council (`/gflow:branch-review`) run before implementation begins (per session flow)
+- [x] LLM council (`/gflow:branch-review`) run before implementation begins — GO, fixes folded in
