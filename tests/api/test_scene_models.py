@@ -1,7 +1,14 @@
 import json
 import pathlib
 
-from gflow_cli.api.scene import Scene, SceneWorkflow, SceneWorkflowMetadata
+import pytest
+
+from gflow_cli.api.scene import (
+    ConcatInput,
+    Scene,
+    SceneWorkflow,
+    SceneWorkflowMetadata,
+)
 
 _FIXTURES = pathlib.Path(__file__).parents[2] / "samples" / "captured"
 
@@ -52,3 +59,62 @@ def test_scene_from_get_response_parses_order_and_trims():
     scene = Scene.from_get_response(data, scene_id="scene-x", project_id="proj-1")
     positions = [w.metadata.position for w in scene.workflows]
     assert positions == sorted(positions)
+
+
+def test_concat_input_to_wire_uses_nanoseconds_and_offsets():
+    ci = ConcatInput(media_id="m1", length=8.0, start=0.0, end=8.0)
+    wire = ci.to_wire()
+    assert wire == {
+        "mediaGenerationId": "m1",
+        "length": "8000000000",  # nanoseconds
+        "startTimeOffset": "0s",
+        "endTimeOffset": "8s",
+    }
+
+
+def test_concat_input_fractional_length_rounds_to_nanos():
+    ci = ConcatInput(media_id="m1", length=3.2, start=0.0, end=3.2)
+    assert ci.to_wire()["length"] == "3200000000"
+
+
+def test_scene_to_concat_inputs_maps_media_and_trims():
+    scene = Scene(
+        scene_id="s1",
+        project_id="p1",
+        workflows=(
+            SceneWorkflow(
+                "inst-1",
+                SceneWorkflowMetadata(position=0, start_time=0.0, end_time=8.0, total_duration=8.0),
+                media_id="media-a",
+            ),
+            SceneWorkflow(
+                "inst-2",
+                SceneWorkflowMetadata(position=1, start_time=2.0, end_time=6.0, total_duration=8.0),
+                media_id="media-b",
+            ),
+        ),
+    )
+    inputs = scene.to_concat_inputs()
+    assert [i.media_id for i in inputs] == ["media-a", "media-b"]
+    assert inputs[1].to_wire() == {
+        "mediaGenerationId": "media-b",
+        "length": "8000000000",
+        "startTimeOffset": "2s",
+        "endTimeOffset": "6s",
+    }
+
+
+def test_scene_to_concat_inputs_raises_when_media_id_missing():
+    scene = Scene(
+        scene_id="s1",
+        project_id="p1",
+        workflows=(
+            SceneWorkflow(
+                "inst-1",
+                SceneWorkflowMetadata(position=0, start_time=0.0, end_time=8.0, total_duration=8.0),
+                media_id=None,
+            ),
+        ),
+    )
+    with pytest.raises(ValueError, match="media_id"):
+        scene.to_concat_inputs()

@@ -10,6 +10,8 @@ set in pyproject, so no ``@pytest.mark.asyncio`` is needed.
 from __future__ import annotations
 
 import os
+import shutil
+import subprocess
 from pathlib import Path
 from typing import Any
 
@@ -63,6 +65,39 @@ async def test_scene_compose_is_credit_free(
         scene = await client.create_scene(project_id=project_id, workflow_ids=[wf, wf])
         read_back = await client.get_scene_workflows(scene.scene_id, project_id=project_id)
 
+        # Full pipeline: render the scene into ONE extended .mp4 server-side.
+        out = tmp_path / "extended.mp4"
+        target = await client.concatenate_scene(scene.to_concat_inputs(), out_path=out)
+
     assert scene.scene_id, "create_scene returned a sceneId"
     assert len(read_back.workflows) == 2, "two clip instances (duplicate of one source)"
     assert generate_calls == [], f"scene compose must spend ZERO credits; saw {generate_calls}"
+
+    # The combined extended video exists and is a real MP4.
+    written = Path(str(target))
+    assert written.exists() and written.stat().st_size > 0
+    head = written.read_bytes()[:12]
+    assert head[4:8] == b"ftyp", f"not an MP4: {head!r}"
+
+    # Duration should ~= the sum of the composed clips' trimmed lengths.
+    expected = sum(w.metadata.end_time - w.metadata.start_time for w in read_back.workflows)
+    ffprobe = shutil.which("ffprobe")
+    if ffprobe:
+        dur = float(
+            subprocess.run(
+                [
+                    ffprobe,
+                    "-v",
+                    "error",
+                    "-show_entries",
+                    "format=duration",
+                    "-of",
+                    "default=noprint_wrappers=1:nokey=1",
+                    str(written),
+                ],
+                capture_output=True,
+                text=True,
+                check=True,
+            ).stdout.strip()
+        )
+        assert abs(dur - expected) <= 1.0, f"extended duration {dur}s != expected ~{expected}s"
