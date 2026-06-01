@@ -23,6 +23,15 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ### Added
 
+- **In-project governance enforcement (advisory-first).** Made the AI-driven
+  development flow followable and partly machine-enforced in-repo, modeled on the
+  reference AI-DLC governance orchestrator's advisory-by-default behavior:
+  ruff `T20` now bans raw `print()` in `src/`; an advisory branch-naming check and a
+  non-blocking materiality + traceability classifier (`scripts/ci/check_materiality.py`
+  + `governance-advisory.yml`) recommend `/gflow:predict` + council review when
+  sensitive paths (`auth/`, `api/transports/`, `data/`, `recaptcha`) are touched,
+  without ever blocking a merge. Documented in
+  [`docs/AGENT_GUIDE.md` § Governance & Enforcement](docs/AGENT_GUIDE.md#governance--enforcement).
 - **`gflow scene` command group (Add Clip / Scenes).** Compose ordered,
   trimmable video clips into a Flow **Scene** over the credit-free aisandbox
   REST surface (no reCAPTCHA, no credits):
