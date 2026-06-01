@@ -56,6 +56,8 @@ Slash commands for Claude Code, stored in `.claude/commands/gflow/`. All prefixe
 
 ## Topic shortcuts
 
+**"What's the governance flow, and which paths require predict/council?"** → [AGENT_GUIDE § Governance & Enforcement](AGENT_GUIDE.md#governance--enforcement)
+**"Why did the materiality advisory flag my PR?"** → [AGENT_GUIDE § Materiality coverage](AGENT_GUIDE.md#materiality-coverage-path--recommended-gate)
 **"I just installed gflow — how do I get to my first video?"** → [USER_GUIDE § Journey 1](USER_GUIDE.md#journey-1--first-time-setup-10-minutes)
 **"How do I render 20 clips overnight with concurrency?"** → [USER_GUIDE § Journey 3](USER_GUIDE.md#journey-3--batch-video-with-concurrency)
 **"How much will this batch cost me in Veo credits?"** → [USER_GUIDE § Journey 10](USER_GUIDE.md#journey-10--budgeting-credits-before-a-batch-run)
