@@ -2346,6 +2346,11 @@ class TestExitAgentMode:
         assert ":text-is('edit_square')" in sel
         assert ":text-is('close')" in sel
         assert ":text('close')" not in sel  # would over-match left_panel_close
+        # Both icons are qualified to the Material Symbols font (``google-symbols``),
+        # matching the rest of the module's ligature discipline so a bare
+        # ``<i>close</i>`` text node outside the icon font can never match (#139).
+        assert "i.google-symbols:text-is('edit_square')" in sel
+        assert "i.google-symbols:text-is('close')" in sel
 
     @pytest.mark.asyncio
     async def test_noop_when_media_panel_present(self) -> None:
