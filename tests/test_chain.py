@@ -47,7 +47,6 @@ from typing import Any
 from unittest.mock import AsyncMock, MagicMock
 
 import pytest
-from gflow_cli.chain import ChainLinkSpec, run_chain
 
 from gflow_cli.api.video import (
     Aspect,
@@ -57,6 +56,7 @@ from gflow_cli.api.video import (
     VideoResult,
     VideoStatus,
 )
+from gflow_cli.chain import ChainLinkSpec, run_chain
 from gflow_cli.errors import (
     ChainPartialError,
     ModelModeIncompatibilityError,
