@@ -98,8 +98,51 @@ def test_record_scene_persists_scene_clips_and_operation(tmp_path):
     repo = rec.repository
     got = repo.get_scene_by_flow_scene_id("p", "scene-x")
     assert got is not None
+    assert got.output_path is None  # compose-only until a render is recorded
     saved = repo.get_scene_clips(got.id)
     assert len(saved) == 2
     assert saved[0].flow_source_workflow_id == "wf-a"
     assert saved[0].flow_media_id == "m1"
     rec.close()
+
+
+def test_record_scene_returns_row_id_and_output_roundtrip(tmp_path):
+    rec = OperationRecorder(
+        DataRepository(DataStore.open(tmp_path / "t.db")), prompt_mode=_PROMPT_MODE
+    )
+    one_clip = SceneWorkflow("inst-1", SceneWorkflowMetadata(0, 0.0, 8.0, 8.0), media_id="m1")
+    scene = Scene(scene_id="scene-y", project_id="proj-1", workflows=(one_clip,))
+    scene_row_id = rec.record_scene(profile_name="p", profile_dir=tmp_path, scene=scene)
+    assert isinstance(scene_row_id, str) and scene_row_id
+    # extended-video output is attached AFTER concat (record-before-render order)
+    rec.record_scene_output(scene_row_id=scene_row_id, output_path="/out/extended.mp4")
+    got = rec.repository.get_scene_by_flow_scene_id("p", "scene-y")
+    assert got is not None and got.id == scene_row_id
+    assert got.output_path == "/out/extended.mp4"
+    rec.close()
+
+
+def test_set_scene_output_survives_recompose(tmp_path):
+    # A re-compose (same flow_scene_id, new row id) must NOT clobber a previously
+    # recorded extended-video output_path — output is only set via set_scene_output.
+    repo = _repo(tmp_path)
+
+    def _rec(rid, dur):
+        return SceneRecord(
+            id=rid,
+            profile_name="p",
+            flow_project_id="proj-1",
+            flow_scene_id="scene-z",
+            total_duration=dur,
+            source="composed",
+        )
+
+    sid = str(uuid.uuid4())
+    repo.upsert_scene(_rec(sid, 8.0))
+    repo.set_scene_output(sid, "/out/extended.mp4")
+    repo.upsert_scene(_rec(str(uuid.uuid4()), 9.0))  # re-compose, no --output
+    got = repo.get_scene_by_flow_scene_id("p", "scene-z")
+    assert got is not None
+    assert got.output_path == "/out/extended.mp4"  # preserved
+    assert got.total_duration == 9.0  # but compose fields updated
+    repo.store.close()

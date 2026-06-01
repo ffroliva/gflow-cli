@@ -283,8 +283,9 @@ class OperationRecorder:
         operation_kind: OperationKind = OperationKind.SCENE_CREATE,
         source_workflow_ids: list[str] | None = None,
         source: str = "composed",
-    ) -> None:
-        """Persist a composed scene. source_workflow_ids (submission order) is
+    ) -> str:
+        """Persist a composed scene; returns the local scene row id (for a later
+        :meth:`record_scene_output`). source_workflow_ids (submission order) is
         zipped by position onto the sorted instances; the source id is NOT
         recoverable from read-back alone."""
         repo = self.repository
@@ -349,6 +350,13 @@ class OperationRecorder:
             ),
         )
         repo.update_operation_status(op_id, OperationStatus.SUCCEEDED, _now_utc_iso(), None, None)
+        return scene_row_id
+
+    def record_scene_output(self, *, scene_row_id: str, output_path: str) -> None:
+        """Attach the rendered extended-video path to a scene already recorded
+        by :meth:`record_scene`. Called after a successful server-side concat so
+        a render failure never loses the compose record."""
+        self.repository.set_scene_output(scene_row_id, output_path)
 
     # ------------------------------------------------------------------
     # Video — started / completed

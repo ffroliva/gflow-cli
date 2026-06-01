@@ -23,9 +23,11 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
     combined MP4 is fetched inline and written locally (or to the configured
     cloud `storage_uri`). `--force` overwrites an existing output.
 
-  Scene compositions are recorded locally (SQLite migration `0003`). The
-  append-to-existing-scene verb (`add-clip`) is deferred — see the project
-  backlog.
+  Scene compositions are recorded locally (SQLite migration `0003`) — including
+  each clip's media id + trims, and the rendered extended-video path (migration
+  `0004`) — so a compose survives a later render failure and the output is
+  discoverable for recovery. The append-to-existing-scene verb (`add-clip`) is
+  deferred — see the project backlog.
 
 ## [0.11.0] — 2026-05-31
 
