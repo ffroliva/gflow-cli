@@ -11,6 +11,7 @@ __all__ = [
     "AuthMissingError",
     "BatchIntegrityError",
     "BatchPartialError",
+    "ChainManifestError",
     "ChainPartialError",
     "ConfigurationError",
     "ContentPolicyError",
@@ -571,6 +572,28 @@ class ChainPartialError(GFlowError):
         )
         self.partial_results: list[Path] = partial_results if partial_results is not None else []
         self.cause = cause
+
+
+class ChainManifestError(ConfigurationError):
+    """Raised when a chain manifest file cannot be parsed into chain links.
+
+    A configuration/input error (bad JSON, missing ``prompt``, unknown model
+    alias, non-int duration, invalid aspect, or an empty manifest). The
+    ``detail`` cites the offending line number where applicable. Inherits
+    ``ConfigurationError``'s exit code (11) via the EXIT_CODE_MAP isinstance
+    walk — no dedicated code is needed because, like other configuration
+    mistakes, it is a "fix your input and re-run" failure.
+    """
+
+    problem_type = "https://gflow-cli.dev/errors/chain-manifest"
+    title = "Chain manifest is invalid"
+    _default_remediation = (
+        "Fix the chain manifest: it is a JSONL file with one JSON object per "
+        'line, each requiring a non-empty "prompt"; optional per-link overrides '
+        'are "model", "duration" (int), and "aspect" (9:16 | 16:9 | 1:1). '
+        "Blank lines and lines starting with # are ignored, but at least one "
+        "valid link is required."
+    )
 
 
 # EXIT_CODE_MAP — most-specific class FIRST per isinstance walk semantics.
