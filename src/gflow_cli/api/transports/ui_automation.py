@@ -24,6 +24,7 @@ from urllib.parse import urlparse
 
 import structlog
 
+from gflow_cli.api.character import CharacterImageRequest
 from gflow_cli.api.dto import BatchSubmissionResult, GeneratedImage
 from gflow_cli.api.image import Aspect, GenerateImageRequest, Model
 from gflow_cli.api.transports._common import extract_project_id
@@ -2112,7 +2113,7 @@ class UiAutomationTransport(VideoGenerationMixin):
         *,
         project_id: str,
         entity_id: str,
-        request: GenerateImageRequest,
+        request: CharacterImageRequest,
         image_reference_index: int,
         locale: str,
     ) -> tuple[list[GeneratedImage], list[dict[str, Any]]]:
@@ -2152,7 +2153,7 @@ class UiAutomationTransport(VideoGenerationMixin):
         *,
         project_id: str,
         entity_id: str,
-        request: GenerateImageRequest,
+        request: CharacterImageRequest,
         image_reference_index: int,
         locale: str,
     ) -> tuple[list[GeneratedImage], list[dict[str, Any]]]:
@@ -2168,12 +2169,28 @@ class UiAutomationTransport(VideoGenerationMixin):
         )
         await self._dismiss_blocking_overlays(page, out_dir)
 
-        aspect_cli = _aspect_cli_from_enum(request.aspect)
+        # CharacterImageRequest carries CLI-string aspect/model (not domain
+        # enums).  ``aspect`` is already in the "9:16"/"16:9" form the settings
+        # panel wants — pass it through directly (do NOT route through
+        # _aspect_cli_from_enum, which keys on the Aspect enum).  ``model`` is a
+        # friendly CLI alias ("narwhal"); convert it to the Model enum with the
+        # canonical Model.from_cli, falling back to None (→ Flow default,
+        # confirmed NARWHAL) on an unknown alias so an odd --model never crashes
+        # the run.  Character generation is always exactly one image per slot.
+        try:
+            model = Model.from_cli(request.model)
+        except ValueError:
+            log.warning(
+                "ui_automation.character_model_alias_unknown",
+                model=request.model,
+                fallback="flow_default",
+            )
+            model = None
         await self._configure_generation_settings(
             page,
-            aspect_cli,
-            request.count,
-            model=request.model,
+            request.aspect,
+            1,
+            model=model,
         )
 
         # Slot-add: face (index 0) needs no interaction; body/accessories do.
@@ -2187,7 +2204,7 @@ class UiAutomationTransport(VideoGenerationMixin):
             await self._send_prompt(page, request.prompt, out_dir)
             responses = await self._await_captured(
                 captured,
-                expected_count=request.count,
+                expected_count=1,
                 submit_time=submit_time,
             )
         finally:
