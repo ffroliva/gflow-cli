@@ -230,6 +230,7 @@ class TestGenerateCharacterImages:
         t._dismiss_blocking_overlays = _rec("dismiss_overlays")  # type: ignore[attr-defined]
         t._configure_generation_settings = _rec("configure")  # type: ignore[attr-defined]
         t._send_prompt = _rec("send_prompt")  # type: ignore[attr-defined]
+        t._submit_body_prompt = _rec("submit_body_prompt")  # type: ignore[attr-defined]
         t._click_character_slot_add = _rec("slot_add")  # type: ignore[attr-defined]
 
         # _attach_batch_response_listener is sync — seed it with the fixture response.
@@ -265,7 +266,8 @@ class TestGenerateCharacterImages:
 
     @pytest.mark.asyncio
     async def test_slot_0_does_not_click_slot_add(self) -> None:
-        """Face slot (index 0): slot-add interaction must NOT fire."""
+        """Face slot (index 0): slot-add interaction must NOT fire and the
+        face path uses _send_prompt (raw prompt), NOT the body template path."""
         fixture = _load_fixture()
         t, order = self._build_transport_with_recorder(fixture=fixture)
         req = GenerateImageRequest(
@@ -280,12 +282,20 @@ class TestGenerateCharacterImages:
         )
 
         assert "slot_add" not in order, f"slot_add must not fire for index 0; order={order}"
+        assert "send_prompt" in order, f"face slot must use _send_prompt; order={order}"
+        assert "submit_body_prompt" not in order, (
+            f"face slot must NOT use the body template path; order={order}"
+        )
+        # The raw face prompt is sent verbatim (no template substitution).
+        t._send_prompt.assert_awaited_once()  # type: ignore[attr-defined]
+        assert t._send_prompt.call_args.args[1] == "portrait of a heroine"  # type: ignore[attr-defined]
         assert len(images) >= 1
         assert len(workflows) >= 1
 
     @pytest.mark.asyncio
-    async def test_slot_1_fires_slot_add_before_send_prompt(self) -> None:
-        """Body slot (index 1): slot-add must fire before send_prompt."""
+    async def test_slot_1_fires_slot_add_before_body_prompt(self) -> None:
+        """Body slot (index 1): slot-add must fire before the body template
+        submit, and the body path uses _submit_body_prompt (NOT _send_prompt)."""
         fixture = _load_fixture()
         t, order = self._build_transport_with_recorder(fixture=fixture)
         req = GenerateImageRequest(
@@ -300,9 +310,16 @@ class TestGenerateCharacterImages:
         )
 
         assert "slot_add" in order, f"slot_add must fire for index 1; order={order}"
+        assert "submit_body_prompt" in order, (
+            f"body slot must use _submit_body_prompt; order={order}"
+        )
+        assert "send_prompt" not in order, (
+            f"body slot must NOT use the generic _send_prompt (it would clear "
+            f"Flow's pre-filled triptych template); order={order}"
+        )
         slot_idx = order.index("slot_add")
-        send_idx = order.index("send_prompt")
-        assert slot_idx < send_idx, f"slot_add must precede send_prompt; order={order}"
+        body_idx = order.index("submit_body_prompt")
+        assert slot_idx < body_idx, f"slot_add must precede body submit; order={order}"
         assert len(images) >= 1
 
     @pytest.mark.asyncio
@@ -646,3 +663,170 @@ class TestClickCharacterSlotAddSelector:
         await t._click_character_slot_add(page)  # type: ignore[attr-defined]
 
         assert not decoy.clicked, "no icon-only candidate → nothing clicked"
+
+
+# ---------------------------------------------------------------------------
+# Tests: _submit_body_prompt — triptych template placeholder substitution
+# ---------------------------------------------------------------------------
+
+
+class _FakePromptBox:
+    """A fake Slate prompt box that returns a fixed (pre-filled) inner_text.
+
+    Records ``inserted`` — the text passed to ``keyboard.insert_text`` — so
+    tests can assert on the SUBMITTED text (template with the placeholder
+    substituted, or the raw description on the fallback path).
+    """
+
+    def __init__(self, *, inner_text: str) -> None:
+        self._inner_text = inner_text
+        self.first = self
+        self.wait_for = AsyncMock()
+        self.click = AsyncMock()
+
+    async def inner_text(self) -> str:
+        return self._inner_text
+
+
+def _make_body_prompt_page(*, prefilled: str) -> tuple[MagicMock, _FakePromptBox, list[str]]:
+    """Fake page whose prompt-box selector resolves to a pre-filled box.
+
+    Returns ``(page, box, inserted)`` where ``inserted`` collects every
+    ``keyboard.insert_text`` argument (the SUBMITTED text), and the submit
+    button selectors all match so ``_click_submit`` clicks (no Enter fallback).
+    """
+    from gflow_cli.api.transports.ui_automation import (
+        PROMPT_INPUT_SELECTORS,
+        SUBMIT_BUTTON_SELECTORS,
+    )
+
+    box = _FakePromptBox(inner_text=prefilled)
+    inserted: list[str] = []
+
+    page = MagicMock()
+    page.url = "https://labs.google/fx/pt/tools/flow/project/p1/character/e1"
+    page.wait_for_timeout = AsyncMock()
+    page.screenshot = AsyncMock(return_value=b"")
+    page.keyboard = MagicMock()
+    page.keyboard.press = AsyncMock()
+    page.keyboard.insert_text = AsyncMock(side_effect=lambda txt: inserted.append(txt))
+
+    prompt_sel = PROMPT_INPUT_SELECTORS[0]
+    submit_sels = set(SUBMIT_BUTTON_SELECTORS)
+
+    def _locator(sel: str) -> Any:
+        if sel == prompt_sel:
+            return box
+        loc = MagicMock()
+        loc.first = loc
+        if sel in submit_sels:
+            loc.wait_for = AsyncMock()
+        else:
+            loc.wait_for = AsyncMock(side_effect=Exception("not visible"))
+        loc.click = AsyncMock()
+        return loc
+
+    page.locator = MagicMock(side_effect=_locator)
+    return page, box, inserted
+
+
+class TestSubmitBodyPrompt:
+    """Placeholder-substitution logic — the load-bearing behavior of the fix."""
+
+    @pytest.mark.asyncio
+    async def test_substitutes_first_bracketed_placeholder(self) -> None:
+        """The submitted text equals Flow's template with the bracketed
+        placeholder replaced by the body description (triptych preserved).
+
+        A NON-Portuguese placeholder is used to prove the substitution is
+        language-agnostic (regex-driven, not a hardcoded literal).
+        """
+        template = (
+            "Full-body triptych from three angles: front, side (3/4), and back. "
+            "High resolution, uniform studio lighting, solid white background. "
+            "[DESCRIBE BODY AND CLOTHES]"
+        )
+        page, _box, inserted = _make_body_prompt_page(prefilled=template)
+        t = _make_transport(page=page)
+
+        await t._submit_body_prompt(page, "red raincoat, rubber boots")  # type: ignore[attr-defined]
+
+        expected = template.replace("[DESCRIBE BODY AND CLOTHES]", "red raincoat, rubber boots")
+        assert inserted == [expected], (
+            f"submitted text must be the templated string; got {inserted}"
+        )
+        # Triptych instruction preserved; placeholder gone.
+        assert "front, side (3/4), and back" in inserted[0]
+        assert "[DESCRIBE BODY AND CLOTHES]" not in inserted[0]
+        assert "red raincoat, rubber boots" in inserted[0]
+
+    @pytest.mark.asyncio
+    async def test_substitutes_only_first_placeholder(self) -> None:
+        """If the template somehow has two bracketed tokens, only the first is
+        replaced (the regex never crosses a ``]``)."""
+        template = "Triptych ... [FIRST] keep [SECOND]"
+        page, _box, inserted = _make_body_prompt_page(prefilled=template)
+        t = _make_transport(page=page)
+
+        await t._submit_body_prompt(page, "DESC")  # type: ignore[attr-defined]
+
+        assert inserted == ["Triptych ... DESC keep [SECOND]"]
+
+    @pytest.mark.asyncio
+    async def test_portuguese_template_substitution(self) -> None:
+        """The real live-observed Portuguese template substitutes correctly."""
+        template = (
+            "Tríptico de corpo inteiro em três ângulos diferentes: de frente, "
+            "visualização lateral (3/4) e de costas. Alta resolução, iluminação "
+            "de estúdio uniforme, proporções anatômicas consistentes em todos os "
+            "ângulos, fundo branco sólido. [DESCREVA O CORPO E A ROUPA]"
+        )
+        page, _box, inserted = _make_body_prompt_page(prefilled=template)
+        t = _make_transport(page=page)
+
+        await t._submit_body_prompt(page, "capa de chuva vermelha")  # type: ignore[attr-defined]
+
+        assert inserted[0].endswith("fundo branco sólido. capa de chuva vermelha")
+        assert "[DESCREVA O CORPO E A ROUPA]" not in inserted[0]
+        assert inserted[0].startswith("Tríptico de corpo inteiro")
+
+    @pytest.mark.asyncio
+    async def test_fallback_when_no_placeholder(self, monkeypatch: Any) -> None:
+        """No ``[...]`` in the box → submit the raw description + warn.
+
+        The warning is asserted by spying on the module logger's ``warning``
+        (robust regardless of structlog's global stdout-rendering state, which
+        varies under the full suite).
+        """
+        from gflow_cli.api.transports import ui_automation as _uia
+
+        warnings: list[str] = []
+        monkeypatch.setattr(
+            _uia.log,
+            "warning",
+            lambda event, **_kw: warnings.append(event),
+        )
+
+        page, _box, inserted = _make_body_prompt_page(
+            prefilled="Some template with no bracketed placeholder at all."
+        )
+        t = _make_transport(page=page)
+
+        await t._submit_body_prompt(page, "just the body description")  # type: ignore[attr-defined]
+
+        assert inserted == ["just the body description"], (
+            f"fallback must submit the raw description; got {inserted}"
+        )
+        assert "ui_automation.body_template_placeholder_missing" in warnings, (
+            f"the missing-placeholder warning must be logged; got {warnings}"
+        )
+
+    @pytest.mark.asyncio
+    async def test_fallback_when_box_empty(self) -> None:
+        """An empty box (no template at all) falls back to the raw description."""
+        page, _box, inserted = _make_body_prompt_page(prefilled="")
+        t = _make_transport(page=page)
+
+        await t._submit_body_prompt(page, "body desc")  # type: ignore[attr-defined]
+
+        assert inserted == ["body desc"]

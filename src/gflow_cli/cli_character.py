@@ -39,7 +39,15 @@ def character() -> None:
 @click.option("--project", "project_id", required=True, help="Flow project id.")
 @click.option("--name", required=True, help="Display name for the new character.")
 @click.option("--face-prompt", required=True, help="Prompt for the face reference image.")
-@click.option("--body-prompt", default=None, help="Prompt for the body reference image (optional).")
+@click.option(
+    "--body-prompt",
+    default=None,
+    help=(
+        "Body/clothing DESCRIPTION (optional). Inserted into Flow's pre-filled "
+        "triptych template, which renders front/side/back in a single image — "
+        "this is a description of the body and outfit, not a full prompt."
+    ),
+)
 @click.option("--voice", default=None, help="Preset voice id (e.g. gacrux).")
 @click.option("--personality", default=None, help="Personality notes for the character.")
 @click.option("--aspect", default="9:16", show_default=True, help="Image aspect ratio.")
