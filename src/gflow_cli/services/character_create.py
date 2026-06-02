@@ -141,6 +141,10 @@ async def character_create(
     # Mutable working lists (extended as each slot completes)
     workflow_ids: list[str] = list(prior_wf_ids)
     media_ids: list[str] = list(prior_media_ids)
+    # Local on-disk path of each downloaded reference image, in slot order.
+    # Slots reused from a recovered run start as None (their image may already
+    # be on disk from the prior run; we do NOT re-generate/re-download it).
+    image_paths: list[str | None] = [None for _ in prior_wf_ids]
 
     try:
         # ------------------------------------------------------------------
@@ -149,7 +153,7 @@ async def character_create(
         face_done = len(workflow_ids) >= 1
         if not face_done:
             _face_result = cast(
-                tuple[str, str],
+                tuple[str, str, "str | Path | None"],
                 await client.generate_character_image(  # type: ignore[attr-defined]
                     project_id=project_id,
                     entity_id=entity_id,
@@ -160,9 +164,11 @@ async def character_create(
             )
             wf0: str = _face_result[0]
             m0: str = _face_result[1]
+            p0 = _face_result[2]
             await client.commit_workflow(wf0, project_id=project_id, primary_media_id=m0)  # type: ignore[attr-defined]
             workflow_ids.append(wf0)
             media_ids.append(m0)
+            image_paths.append(str(p0) if p0 is not None else None)
             # Persist partial state immediately (crash-safe before body)
             recorder.record_character_partial(
                 row_id=row_id,
@@ -194,7 +200,7 @@ async def character_create(
                     face_media_id=face_media_id,
                 )
                 _body_result = cast(
-                    tuple[str, str],
+                    tuple[str, str, "str | Path | None"],
                     await client.generate_character_image(  # type: ignore[attr-defined]
                         project_id=project_id,
                         entity_id=entity_id,
@@ -205,9 +211,11 @@ async def character_create(
                 )
                 wf1: str = _body_result[0]
                 m1: str = _body_result[1]
+                p1 = _body_result[2]
                 await client.commit_workflow(wf1, project_id=project_id, primary_media_id=m1)  # type: ignore[attr-defined]
                 workflow_ids.append(wf1)
                 media_ids.append(m1)
+                image_paths.append(str(p1) if p1 is not None else None)
                 # Persist again with both slots
                 recorder.record_character_partial(
                     row_id=row_id,
@@ -251,6 +259,7 @@ async def character_create(
             primary_media_ids=media_ids,
             voice=voice,
             personality=personality,
+            image_paths=image_paths,
         )
         log.info("character_create.completed", entity_id=entity_id, name=name)
         log.info(
@@ -286,4 +295,5 @@ async def character_create(
         primary_media_ids=tuple(media_ids),
         name=name,
         voice=voice,
+        image_paths=tuple(image_paths),
     )

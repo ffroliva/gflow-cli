@@ -217,7 +217,7 @@ def _incomplete_prior_face(saga_state: dict[str, Any]) -> None:
     client.create_entity = AsyncMock(return_value=_ENTITY_ID)
     # If the face were (wrongly) re-generated, this is the call that would fire
     # and spend a second credit. We assert it stays at 0 calls.
-    client.generate_character_image = AsyncMock(return_value=(_WORKFLOW_ID, _MEDIA_ID))
+    client.generate_character_image = AsyncMock(return_value=(_WORKFLOW_ID, _MEDIA_ID, None))
     client.commit_workflow = AsyncMock(return_value=None)
     client.patch_entity = AsyncMock(return_value=None)
 

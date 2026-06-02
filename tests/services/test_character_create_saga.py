@@ -52,8 +52,8 @@ BODY_REQ = CharacterImageRequest(prompt="a fantasy body", model="nano2")
 def _make_client(
     *,
     entity_id: str = ENTITY_ID,
-    face_result: tuple[str, str] = (WF0, M0),
-    body_result: tuple[str, str] = (WF1, M1),
+    face_result: tuple[str, str, str | None] = (WF0, M0, "/tmp/face_slot0.png"),
+    body_result: tuple[str, str, str | None] = (WF1, M1, "/tmp/body_slot1.png"),
     generate_side_effect: Exception | None = None,
 ) -> MagicMock:
     client = MagicMock()
@@ -148,13 +148,14 @@ async def test_happy_face_only_call_order() -> None:
         personality=None,
     )
 
-    # record_completed called once
+    # record_completed called once, with the downloaded face image path
     recorder.record_character_completed.assert_called_once_with(
         row_id=ROW_ID,
         workflow_ids=[WF0],
         primary_media_ids=[M0],
         voice=None,
         personality=None,
+        image_paths=["/tmp/face_slot0.png"],
     )
 
     # Result DTO is correct
@@ -165,6 +166,8 @@ async def test_happy_face_only_call_order() -> None:
     assert result.primary_media_ids == (M0,)
     assert result.name == NAME
     assert result.voice is None
+    # The downloaded local image path is threaded into the result (face = slot 0)
+    assert result.image_paths == ("/tmp/face_slot0.png",)
 
 
 # ---------------------------------------------------------------------------
@@ -232,12 +235,12 @@ async def test_body_generate_starts_after_face_commit() -> None:
         req: CharacterImageRequest,
         image_reference_index: int,
         locale: str,
-    ) -> tuple[str, str]:
+    ) -> tuple[str, str, str | None]:
         if image_reference_index == 0:
             call_order.append("generate_face")
-            return (WF0, M0)
+            return (WF0, M0, "/tmp/face_slot0.png")
         call_order.append("generate_body")
-        return (WF1, M1)
+        return (WF1, M1, "/tmp/body_slot1.png")
 
     async def _commit(wf_id: str, *, project_id: str, primary_media_id: str) -> None:
         if wf_id == WF0:
@@ -307,7 +310,7 @@ async def test_recovery_skips_face_when_already_recorded() -> None:
     """Prior crash after face-commit: entity + face already in the row."""
     client = _make_client()
     # Only one return value needed: the body generate
-    client.generate_character_image = AsyncMock(return_value=(WF1, M1))
+    client.generate_character_image = AsyncMock(return_value=(WF1, M1, "/tmp/body_slot1.png"))
     recorder = _make_recorder()
     recorder.repository.find_incomplete_character = MagicMock(
         return_value={
@@ -381,9 +384,9 @@ async def test_wire_format_error_on_body_preserves_face_partial() -> None:
         route="test",
     )
 
-    async def _generate_side_effect(**kwargs: object) -> tuple[str, str]:
+    async def _generate_side_effect(**kwargs: object) -> tuple[str, str, str | None]:
         if kwargs.get("image_reference_index") == 0:
-            return (WF0, M0)
+            return (WF0, M0, "/tmp/face_slot0.png")
         raise exc
 
     client = MagicMock()
@@ -435,4 +438,5 @@ async def test_voice_and_personality_forwarded() -> None:
         primary_media_ids=[M0],
         voice="kore",
         personality="brave and kind",
+        image_paths=["/tmp/face_slot0.png"],
     )

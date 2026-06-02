@@ -169,7 +169,15 @@ class CharacterImageRequest:
 
 @dataclass(frozen=True)
 class CharacterCreateResult:
-    """Result DTO returned after a successful character-creation workflow completes."""
+    """Result DTO returned after a successful character-creation workflow completes.
+
+    ``image_paths`` holds the LOCAL file path of each generated reference image
+    (slot 0 = face, slot 1 = body), in slot order.  An entry is ``None`` when the
+    image could not be downloaded (e.g. the captured response carried no
+    downloadable URL) or when the slot was reused from a prior recovered run.
+    These are always local on-disk (or cloud) paths — never the signed CDN
+    ``fifeUrl`` (scenario #16).
+    """
 
     entity_id: str
     project_id: str
@@ -177,6 +185,7 @@ class CharacterCreateResult:
     primary_media_ids: tuple[str, ...]
     name: str
     voice: str | None = None
+    image_paths: tuple[str | None, ...] = ()
 
 
 # ---------------------------------------------------------------------------

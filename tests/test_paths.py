@@ -21,6 +21,24 @@ class TestDefaultRoots:
         assert "gflow-cli" in str(out).lower()
 
 
+class TestCharacterOutputPath:
+    def test_layout_and_naming(self) -> None:
+        out = Path("/root")
+        on = date(2026, 1, 2)
+        p = paths.character_output_path(out, entity_id="abc-123", slot=0, on=on)
+        assert p == Path("/root/characters/2026-01-02/character_abc-123_slot0.png")
+
+    def test_slot_index_in_name(self) -> None:
+        p = paths.character_output_path(Path("/root"), entity_id="e", slot=1, on=date(2026, 1, 2))
+        assert p.name == "character_e_slot1.png"
+
+    def test_rejects_unsafe_entity_id(self) -> None:
+        import pytest
+
+        with pytest.raises(ValueError, match="Unsafe"):
+            paths.character_output_path(Path("/root"), entity_id="../../etc", slot=0)
+
+
 class TestProfileSubdir:
     def test_under_home(self) -> None:
         home = Path("/x/gflow-cli")

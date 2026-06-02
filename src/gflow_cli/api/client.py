@@ -50,7 +50,7 @@ from gflow_cli.errors import (
     WafRejectionError,
     WireFormatError,
 )
-from gflow_cli.paths import adjust_key_extension
+from gflow_cli.paths import adjust_key_extension, character_output_path
 from gflow_cli.storage import AnyPath, storage_path, write_asset_async
 
 if TYPE_CHECKING:
@@ -1399,14 +1399,22 @@ class FlowApiClient:
         req: CharacterImageRequest,
         image_reference_index: int = 0,
         locale: str = "en-US",
-    ) -> tuple[str, str]:
+    ) -> tuple[str, str, AnyPath | None]:
         """Generate a character reference image via the UI transport and return
-        ``(workflow_id, primary_media_id)``.
+        ``(workflow_id, primary_media_id, local_path)``.
 
         All generation is UI-driven (Option B passive capture) — this method
         NEVER posts directly to a generation REST endpoint.  The transport's
         ``generate_character_images`` is the only call that may trigger network
         I/O.
+
+        The generated image is downloaded INSIDE this client boundary using the
+        signed ``fifeUrl`` carried by the captured response.  That signed URL is
+        used ONLY for the download and is NEVER returned to the caller or logged
+        in cleartext — the saga/recorder/DB only ever see the local file path and
+        stable ids (scenario #16).  When the captured response carries no
+        downloadable image, ``local_path`` is ``None`` (a warning is logged) and
+        the method still returns the ids so the saga can proceed.
 
         Args:
             project_id: Flow project that owns the character entity.
@@ -1419,8 +1427,10 @@ class FlowApiClient:
                 in the correct language.  Defaults to ``"en-US"``.
 
         Returns:
-            ``(workflow_id, primary_media_id)`` — both are stable ids extracted
-            from the first returned workflow.  Neither value is a signed URL.
+            ``(workflow_id, primary_media_id, local_path)`` — the two stable ids
+            extracted from the first returned workflow plus the LOCAL path the
+            generated image was downloaded to (``None`` if it could not be
+            downloaded).  No value is a signed URL.
 
         Raises:
             RuntimeError: transport is ``None`` (client not entered / not set up).
@@ -1464,13 +1474,37 @@ class FlowApiClient:
         workflow_id: str = cast(str, wf["name"])
         media_id: str = cast(str, wf["metadata"]["primaryMediaId"])
 
+        # ------------------------------------------------------------------
+        # Download the generated image INSIDE the client boundary.
+        # The signed fifeUrl lives on images[0]; it is used ONLY for the
+        # download here and is NEVER returned to the saga or logged in
+        # cleartext (scenario #16). The caller receives only the local path.
+        # ------------------------------------------------------------------
+        local_path: AnyPath | None = None
+        image: GeneratedImage | None = _images[0] if _images else None
+        if image is not None and image.fife_url:
+            out_path = character_output_path(
+                self.settings.output_dir,
+                entity_id=entity_id,
+                slot=image_reference_index,
+            )
+            local_path = await self.download_image(image, out_path)
+        else:
+            logger.warning(
+                "character.image_no_download_url",
+                entity_id=entity_id,
+                workflow_id=workflow_id,
+                slot=image_reference_index,
+            )
+
         logger.info(
             "character.image_generated",
             entity_id=entity_id,
             workflow_id=workflow_id,
             slot=image_reference_index,
+            saved=local_path is not None,
         )
-        return workflow_id, media_id
+        return workflow_id, media_id, local_path
 
 
 def _default_project_title() -> str:

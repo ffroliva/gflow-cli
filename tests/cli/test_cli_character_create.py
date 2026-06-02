@@ -34,6 +34,7 @@ def _make_result(
     workflow_ids: tuple[str, ...] = ("wf-face-1",),
     primary_media_ids: tuple[str, ...] = ("media-face-1",),
     voice: str | None = None,
+    image_paths: tuple[str | None, ...] = (),
 ) -> CharacterCreateResult:
     return CharacterCreateResult(
         entity_id=entity_id,
@@ -42,6 +43,7 @@ def _make_result(
         workflow_ids=workflow_ids,
         primary_media_ids=primary_media_ids,
         voice=voice,
+        image_paths=image_paths,
     )
 
 
@@ -156,6 +158,85 @@ def test_create_json_output(tmp_path: Path) -> None:
     assert char["entity_id"] == "entity-abc"
     assert char["workflow_ids"] == ["wf-face-1"]
     assert char["primary_media_ids"] == ["media-face-1"]
+
+
+# ---------------------------------------------------------------------------
+# Saved image paths — printed in human output AND emitted in --json
+# ---------------------------------------------------------------------------
+
+
+def _invoke_create_with_paths(
+    tmp_path: Path,
+    image_paths: tuple[str | None, ...],
+    *,
+    extra_args: list[str] | None = None,
+) -> str:
+    """Run `character create` with a stubbed saga result carrying image_paths.
+
+    Returns the CLI output.
+    """
+    result = _make_result(
+        workflow_ids=("wf-face-1", "wf-body-1"),
+        primary_media_ids=("media-face-1", "media-body-1"),
+        image_paths=image_paths,
+    )
+    mock_settings = MagicMock()
+    mock_settings.headless = True
+    mock_settings.resolved_db_path.return_value = tmp_path / "gflow.db"
+    mock_settings.history_prompts = "hash"
+
+    mock_recorder = MagicMock()
+    mock_client_cm = MagicMock()
+    mock_client_cm.__aenter__ = AsyncMock(return_value=AsyncMock())
+    mock_client_cm.__aexit__ = AsyncMock(return_value=False)
+
+    with (
+        patch(_GET_SETTINGS, return_value=mock_settings),
+        patch(_RESOLVE_PROFILE, return_value="default"),
+        patch(_MAKE_PROVIDER_DIR, return_value=tmp_path / "profiles" / "default"),
+        patch(_CLIENT, return_value=mock_client_cm),
+        patch(_RECORDER_OPEN, return_value=mock_recorder),
+        patch(_SAGA, new=AsyncMock(return_value=result)),
+    ):
+        runner = CliRunner()
+        cli_result = runner.invoke(
+            character,
+            [
+                "create",
+                "--project",
+                "proj-1",
+                "--name",
+                "Knight",
+                "--face-prompt",
+                "knight face",
+                *(extra_args or []),
+            ],
+            catch_exceptions=False,
+        )
+    assert cli_result.exit_code == 0, cli_result.output
+    return cli_result.output
+
+
+def test_create_prints_saved_image_paths_human(tmp_path: Path) -> None:
+    """Human output shows `face: <path>` and `body: <path>` for saved images."""
+    face_p = str(tmp_path / "characters" / "character_e_slot0.png")
+    body_p = str(tmp_path / "characters" / "character_e_slot1.png")
+    output = _invoke_create_with_paths(tmp_path, (face_p, body_p))
+    assert "face:" in output
+    assert "body:" in output
+    # Rich may soft-wrap long paths across lines; collapse whitespace before
+    # matching so the assertion is independent of terminal width.
+    collapsed = "".join(output.split())
+    assert "".join(face_p.split()) in collapsed
+    assert "".join(body_p.split()) in collapsed
+
+
+def test_create_json_includes_image_paths(tmp_path: Path) -> None:
+    """--json emits an `image_paths` array (local paths only)."""
+    face_p = str(tmp_path / "characters" / "character_e_slot0.png")
+    output = _invoke_create_with_paths(tmp_path, (face_p, None), extra_args=["--json"])
+    parsed = json.loads(output)
+    assert parsed["character"]["image_paths"] == [face_p, None]
 
 
 # ---------------------------------------------------------------------------
