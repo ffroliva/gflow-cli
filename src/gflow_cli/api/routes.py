@@ -115,3 +115,15 @@ def flow_workflow_url(workflow_id: str) -> str:
         msg = f"Invalid workflow_id: {workflow_id!r}"
         raise ValueError(msg)
     return f"{ARCHIVE_WORKFLOW_BASE}/{workflow_id}"
+
+
+def character_editor_url(locale: str, project_id: str, entity_id: str) -> str:
+    """Build the user-facing Flow character editor URL for a given entity.
+
+    Returns the browser-navigable page URL (not an API endpoint) at which the
+    Flow UI renders the character editor for *entity_id* inside *project_id*,
+    localised to *locale* (e.g. ``"en"``, ``"pt"``).
+
+    Pattern: ``https://labs.google/{locale}/tools/flow/project/{project_id}/character/{entity_id}``
+    """
+    return f"{LABS_BASE}/{locale}/tools/flow/project/{project_id}/character/{entity_id}"
