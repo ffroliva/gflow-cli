@@ -45,6 +45,7 @@ from gflow_cli.errors import (
     RateLimitError,
     SceneConcatError,
     TransportTimeoutError,
+    WafRejectionError,
     WireFormatError,
 )
 from gflow_cli.paths import adjust_key_extension
@@ -1313,8 +1314,17 @@ def _raise_for_non_retryable(resp: Any, body_text: str, *, route: str) -> None:
     if resp.status < 400:
         return
     instance = _make_instance()
-    if resp.status in (401, 403):
+    if resp.status == 401:
         raise AuthExpiredError(
+            detail=f"HTTP {resp.status}",
+            status=resp.status,
+            instance=instance,
+            route=route,
+        )
+    if resp.status == 403:
+        # 403 on a Flow route is the reCAPTCHA/WAF wall, NOT auth expiry
+        # (direct-REST generation is 403-walled — see docs/CHARACTER.md §11).
+        raise WafRejectionError(
             detail=f"HTTP {resp.status}",
             status=resp.status,
             instance=instance,
