@@ -10,9 +10,11 @@ from rich.console import Console
 
 from gflow_cli import json_output
 from gflow_cli._cli_helpers import _make_provider_dir, _resolve_profile, run_with_handlers
-from gflow_cli.api.character import VOICES, Character
+from gflow_cli.api.character import VOICES, Character, CharacterCreateResult, CharacterImageRequest
 from gflow_cli.api.client import FlowApiClient
 from gflow_cli.config import get_settings
+from gflow_cli.data.recorder import OperationRecorder
+from gflow_cli.services.character_create import character_create
 
 console = Console()
 log = structlog.get_logger(__name__)
@@ -26,6 +28,138 @@ log = structlog.get_logger(__name__)
 @click.group()
 def character() -> None:
     """Manage Flow Character entities for a project."""
+
+
+# ---------------------------------------------------------------------------
+# create
+# ---------------------------------------------------------------------------
+
+
+@character.command("create")
+@click.option("--project", "project_id", required=True, help="Flow project id.")
+@click.option("--name", required=True, help="Display name for the new character.")
+@click.option("--face-prompt", required=True, help="Prompt for the face reference image.")
+@click.option("--body-prompt", default=None, help="Prompt for the body reference image (optional).")
+@click.option("--voice", default=None, help="Preset voice id (e.g. gacrux).")
+@click.option("--personality", default=None, help="Personality notes for the character.")
+@click.option("--aspect", default="9:16", show_default=True, help="Image aspect ratio.")
+@click.option("--model", default="narwhal", show_default=True, help="Image generation model.")
+@click.option("--profile", default=None, help="Profile name (overrides default).")
+@click.option("--locale", default="en-US", show_default=True, help="BCP-47 locale.")
+@click.option("--json", "as_json", is_flag=True, default=False, help="Emit JSON output.")
+def create(
+    project_id: str,
+    name: str,
+    face_prompt: str,
+    body_prompt: str | None,
+    voice: str | None,
+    personality: str | None,
+    aspect: str,
+    model: str,
+    profile: str | None,
+    locale: str,
+    as_json: bool,
+) -> None:
+    """Create a new Character entity in a project.
+
+    Generates face (and optionally body) reference images, then persists and
+    patches the entity.  Uses the persist-before-spend saga so a crashed run
+    is recoverable.
+    """
+    profile_name = _resolve_profile(profile)
+    pdir = _make_provider_dir(profile_name)
+    settings = get_settings()
+    run_with_handlers(
+        lambda: _run_create(
+            profile_name=profile_name,
+            profile_dir=pdir,
+            headless=settings.headless,
+            project_id=project_id,
+            name=name,
+            face_prompt=face_prompt,
+            body_prompt=body_prompt,
+            voice=voice,
+            personality=personality,
+            aspect=aspect,
+            model=model,
+            locale=locale,
+            as_json=as_json,
+            settings=settings,
+        ),
+        cli_command="character create",
+        as_json=as_json,
+    )
+
+
+async def _run_create(
+    *,
+    profile_name: str,
+    profile_dir: Path,
+    headless: bool,
+    project_id: str,
+    name: str,
+    face_prompt: str,
+    body_prompt: str | None,
+    voice: str | None,
+    personality: str | None,
+    aspect: str,
+    model: str,
+    locale: str,
+    as_json: bool,
+    settings: object,
+) -> None:
+    face = CharacterImageRequest(
+        prompt=face_prompt,
+        aspect=aspect,
+        model=model,
+        image_reference_index=0,
+    )
+    body: CharacterImageRequest | None = None
+    if body_prompt is not None:
+        body = CharacterImageRequest(
+            prompt=body_prompt,
+            aspect=aspect,
+            model=model,
+            image_reference_index=1,
+        )
+
+    async with FlowApiClient(profile_dir=profile_dir, headless=headless) as client:
+        recorder = OperationRecorder.open(settings)  # type: ignore[arg-type]
+        try:
+            result: CharacterCreateResult = await character_create(
+                client,
+                recorder,
+                profile_name=profile_name,
+                profile_dir=profile_dir,
+                project_id=project_id,
+                name=name,
+                face=face,
+                body=body,
+                voice=voice,
+                personality=personality,
+                locale=locale,
+            )
+        finally:
+            recorder.close()
+
+    if as_json:
+        json_output.emit(
+            {
+                "status": "ok",
+                "character": {
+                    "entity_id": result.entity_id,
+                    "project_id": result.project_id,
+                    "name": result.name,
+                    "workflow_ids": list(result.workflow_ids),
+                    "primary_media_ids": list(result.primary_media_ids),
+                    "voice": result.voice,
+                },
+            }
+        )
+    else:
+        console.print(f"[bold green]Character created:[/bold green] {result.entity_id}")
+        for wf_id in result.workflow_ids:
+            console.print(f"  workflow: {wf_id}")
 
 
 # ---------------------------------------------------------------------------
