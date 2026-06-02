@@ -1332,6 +1332,65 @@ class FlowApiClient:
             )
         return match[0]
 
+    async def patch_entity(
+        self,
+        *,
+        project_id: str,
+        entity_id: str,
+        display_name: str,
+        workflow_ids: list[str],
+        voice: str | None = None,
+        personality: str | None = None,
+    ) -> None:
+        """Update a CHARACTER entity's display name, image references, and optional
+        voice/personality fields via Bearer PATCH to ``flow/entities``.
+
+        Maps to ``PATCH .../flow/entities``.  Bearer auth (aisandbox).
+        FREE — no reCAPTCHA, no credit.
+
+        Only the fields supplied are written; absent optional fields are omitted
+        from both the request body and the ``updateMask``.
+        """
+        character_info: dict[str, Any] = {
+            "imageReferences": [{"workflowId": w} for w in workflow_ids],
+        }
+        update_mask_parts = [
+            "entityInfo.displayName",
+            "entityInfo.characterInfo.imageReferences",
+        ]
+
+        if personality is not None:
+            character_info["personalityNotes"] = personality
+            update_mask_parts.append("entityInfo.characterInfo.personalityNotes")
+
+        if voice is not None:
+            character_info["audioReferences"] = [{"presetVoiceId": voice}]
+            update_mask_parts.append("entityInfo.characterInfo.audioReferences")
+
+        entity_info: dict[str, Any] = {
+            "displayName": display_name,
+            "characterInfo": character_info,
+        }
+        body: dict[str, Any] = {
+            "entity": {
+                "projectId": project_id,
+                "entityId": entity_id,
+                "entityInfo": entity_info,
+            },
+            "updateMask": ",".join(update_mask_parts),
+        }
+        await self._patch_json(
+            routes.FLOW_ENTITIES_URL,
+            body,
+            route_name="patchEntity",
+        )
+        logger.debug(
+            "character.entity_patched",
+            project_id=project_id,
+            entity_id=entity_id,
+            workflow_count=len(workflow_ids),
+        )
+
 
 def _default_project_title() -> str:
     return datetime.now().strftime("gflow-cli %b %d, %I:%M %p")
