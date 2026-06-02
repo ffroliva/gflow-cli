@@ -132,6 +132,11 @@ async def character_create(
             row_id=row_id,
             entity_id=entity_id,
         )
+        log.info(
+            "character.create_started",
+            project_id=project_id,
+            entity_id=entity_id,
+        )
 
     # Mutable working lists (extended as each slot completes)
     workflow_ids: list[str] = list(prior_wf_ids)
@@ -248,6 +253,11 @@ async def character_create(
             personality=personality,
         )
         log.info("character_create.completed", entity_id=entity_id, name=name)
+        log.info(
+            "character.create_completed",
+            entity_id=entity_id,
+            workflow_count=len(workflow_ids),
+        )
 
     except Exception as exc:
         # Record FAILED while preserving any partial workflow/media ids already
