@@ -2003,6 +2003,257 @@ class UiAutomationTransport(VideoGenerationMixin):
         return results
 
     # ------------------------------------------------------------------
+    # Character editor — navigation + passive-capture entry (T4)
+    # ------------------------------------------------------------------
+
+    # Selector for the character editor's Slate prompt textbox — used as the
+    # "editor mounted" readiness anchor.  This IS PROMPT_INPUT_SELECTORS[0];
+    # duplicated here as a named constant so the character-editor path is
+    # self-documenting without importing the tuple.
+    _CHARACTER_EDITOR_READY_SELECTOR = 'div[role="textbox"][data-slate-editor="true"]'
+
+    # Slot-add button for character image slots 1+ (body / accessories).
+    # The character editor renders TWO ``add_2`` buttons; the slot-add is the
+    # second one (index 1, 0-based) — the first is the "+ New project" CTA
+    # inherited from the gallery shell (not visible inside the editor, but
+    # structurally present in the DOM).  We disambiguate by nth(1) within all
+    # ``add_2``-bearing buttons.
+    _CHARACTER_SLOT_ADD_SELECTOR = "button:has(i.google-symbols:text('add_2'))"
+
+    async def _enter_character_editor(
+        self,
+        page: Any,
+        *,
+        project_id: str,
+        entity_id: str,
+        locale: str,
+    ) -> None:
+        """Navigate to the Flow character editor for an existing entity.
+
+        Does NOT create a new project — navigates directly to the existing
+        project's character editor URL via ``page.goto``.
+
+        Readiness gate: waits for the prompt textbox
+        (``div[role=textbox][data-slate-editor='true']``) to become visible,
+        confirming the Slate editor has mounted.  Overlays are dismissed
+        after navigation so they don't block subsequent interactions.
+        """
+        from gflow_cli.api import routes
+
+        url = routes.character_editor_url(locale, project_id, entity_id)
+        log.info(
+            "ui_automation.entering_character_editor",
+            url=url,
+            project_id=project_id,
+            entity_id=entity_id,
+        )
+        await page.goto(url, wait_until="domcontentloaded", timeout=45_000)
+        await self._dismiss_blocking_overlays(page, self._out_dir)
+
+        # Wait for the Slate editor to mount — the prompt textbox is the
+        # reliable "editor ready" anchor for the character editor surface.
+        try:
+            await page.locator(self._CHARACTER_EDITOR_READY_SELECTOR).first.wait_for(
+                state="visible",
+                timeout=20_000,
+            )
+        except Exception as exc:
+            shot = await _capture_debug_screenshot(
+                page,
+                self._out_dir,
+                "debug_character_editor_not_ready.png",
+            )
+            msg = (
+                f"Character editor not ready: prompt textbox not visible "
+                f"within 20 s. URL: {page.url}. Screenshot: {shot}"
+            )
+            raise RuntimeError(msg) from exc
+
+        log.info("ui_automation.character_editor_ready", url=page.url)
+
+    @staticmethod
+    def _workflows_from_responses(
+        responses: list[dict[str, Any]],
+    ) -> list[dict[str, Any]]:
+        """Extract workflow metadata from captured batchGenerateImages responses.
+
+        Returns a flat list of workflow dicts, each containing at minimum:
+        ``name``, ``metadata`` (with ``primaryMediaId``), ``projectId``, and
+        ``parentEntityId``.  The ``parentEntityId`` field binds the generation
+        result to the character entity.
+
+        Only workflow entries present in 200-status responses are returned;
+        error responses are silently skipped (``_images_from_responses`` already
+        raises on 401/403 before this is called).
+        """
+        workflows: list[dict[str, Any]] = []
+        for response in responses:
+            if response.get("status") != 200:
+                continue
+            body: dict[str, Any] = cast("dict[str, Any]", response.get("body") or {})
+            raw_workflows = body.get("workflows", [])
+            if not isinstance(raw_workflows, list):
+                continue
+            for wf_raw in cast("list[Any]", raw_workflows):
+                if not isinstance(wf_raw, dict):
+                    continue
+                wf: dict[str, Any] = cast("dict[str, Any]", wf_raw)
+                # Only surface workflows that carry the character-binding field.
+                if "parentEntityId" not in wf:
+                    log.debug(
+                        "ui_automation.workflow_missing_parent_entity_id",
+                        workflow_name=wf.get("name"),
+                    )
+                workflows.append(wf)
+        return workflows
+
+    async def generate_character_images(
+        self,
+        *,
+        project_id: str,
+        entity_id: str,
+        request: GenerateImageRequest,
+        image_reference_index: int,
+        locale: str,
+    ) -> tuple[list[GeneratedImage], list[dict[str, Any]]]:
+        """Navigate to the character editor and generate images via passive capture.
+
+        Reuses the same generate lock, listener, and parse helpers as the
+        image-generation path — the difference is that we navigate to an
+        EXISTING project's character editor (not a new project), and we
+        return workflow metadata alongside the images so the caller can bind
+        results to the character entity via ``parentEntityId``.
+
+        ``image_reference_index``:
+          - 0 → face slot (no slot-add interaction needed; the slot is
+            already active in the character editor).
+          - >= 1 → body / accessory slot; a click on the ``add_2`` slot-add
+            button is required before submitting the prompt.
+
+        Returns ``(images, workflows)`` where each ``workflows`` entry carries
+        at minimum ``name``, ``metadata.primaryMediaId``, ``projectId``, and
+        ``parentEntityId``.
+        """
+        if not self._setup_done or self._page is None:
+            msg = "UiAutomationTransport.setup() must be called before generate_character_images()"
+            raise RuntimeError(msg)
+
+        async with self._generate_lock:
+            return await self._generate_character_images_locked(
+                project_id=project_id,
+                entity_id=entity_id,
+                request=request,
+                image_reference_index=image_reference_index,
+                locale=locale,
+            )
+
+    async def _generate_character_images_locked(
+        self,
+        *,
+        project_id: str,
+        entity_id: str,
+        request: GenerateImageRequest,
+        image_reference_index: int,
+        locale: str,
+    ) -> tuple[list[GeneratedImage], list[dict[str, Any]]]:
+        """Serialized body of generate_character_images — called under _generate_lock."""
+        page: Any = self._page  # type: ignore[assignment]  # guard in caller
+        out_dir = self._out_dir
+
+        await self._enter_character_editor(
+            page,
+            project_id=project_id,
+            entity_id=entity_id,
+            locale=locale,
+        )
+        await self._dismiss_blocking_overlays(page, out_dir)
+
+        aspect_cli = _aspect_cli_from_enum(request.aspect)
+        await self._configure_generation_settings(
+            page,
+            aspect_cli,
+            request.count,
+            model=request.model,
+        )
+
+        # Slot-add: face (index 0) needs no interaction; body/accessories do.
+        if image_reference_index >= 1:
+            await self._click_character_slot_add(page, out_dir)
+
+        # Attach listener BEFORE submit to eliminate the race condition.
+        captured, detach = self._attach_batch_response_listener(page, project_id=project_id)
+        submit_time = time.monotonic()
+        try:
+            await self._send_prompt(page, request.prompt, out_dir)
+            responses = await self._await_captured(
+                captured,
+                expected_count=request.count,
+                submit_time=submit_time,
+            )
+        finally:
+            detach()
+
+        images, first_error_status, first_error_route = _images_from_responses(responses)
+
+        if first_error_status is not None and not images:
+            raise WireFormatError(
+                detail=f"batchGenerateImages returned HTTP {first_error_status}",
+                status=first_error_status,
+                route=first_error_route,
+            )
+
+        if not images:
+            from gflow_cli.errors import ContentPolicyError
+
+            raise ContentPolicyError(
+                detail="batchGenerateImages returned 200 but no parseable media items",
+                route=first_error_route or "",
+            )
+
+        workflows = self._workflows_from_responses(responses)
+        return images, workflows
+
+    async def _click_character_slot_add(
+        self,
+        page: Any,
+        out_dir: Any = None,
+    ) -> None:
+        """Click the slot-add (``add_2``) button for character image slots >= 1.
+
+        The character editor renders up to two ``add_2``-bearing buttons: the
+        slot-add button for the body/accessories slot is the second one
+        (``nth(1)``).  This is structurally disambiguated by position — the
+        first ``add_2`` is the gallery's "+ New project" CTA which is not
+        visible inside the deep-linked character editor, but is still present
+        in the DOM shadow.  ``nth(1)`` is therefore safe as long as the
+        character editor URL is active.
+
+        Non-fatal: a miss is logged at WARNING so generation can proceed
+        (the prompt will apply to whichever slot is currently active).
+        """
+        try:
+            btn = page.locator(self._CHARACTER_SLOT_ADD_SELECTOR).nth(1)
+            await btn.wait_for(state="visible", timeout=5_000)
+            await btn.click()
+            await page.wait_for_timeout(400)
+            log.info(
+                "ui_automation.character_slot_add_clicked",
+                image_reference_index=1,
+                selector=self._CHARACTER_SLOT_ADD_SELECTOR,
+            )
+        except Exception as exc:
+            shot = await _capture_debug_screenshot(page, out_dir, "debug_character_slot_add.png")
+            log.warning(
+                "ui_automation.character_slot_add_failed",
+                error=str(exc)[:120],
+                screenshot=str(shot),
+                note=(
+                    "slot-add button not found; prompt will be submitted "
+                    "to the currently-active slot"
+                ),
+            )
+
+    # ------------------------------------------------------------------
     # Protocol — refresh_auth (unit 3.10) + teardown (unit 3.11)
     # ------------------------------------------------------------------
 
