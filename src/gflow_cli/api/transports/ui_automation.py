@@ -185,6 +185,17 @@ SUBMIT_BUTTON_SELECTORS = (
     "button:has-text('arrow_forward')",
 )
 
+# Body-slot triptych template placeholder.  When the character slot-add ("+")
+# is clicked, Flow pre-fills the new prompt box with a localized triptych
+# template (front/side/back) carrying a SINGLE bracketed placeholder where the
+# body/clothing description belongs, e.g. "... [DESCREVA O CORPO E A ROUPA]".
+# This regex is LANGUAGE-AGNOSTIC ([[flow-locale-leak-icon-ligatures]]): it
+# matches any non-empty ``[...]`` token regardless of locale, so it works
+# whatever language Flow renders the template in.  ``[^\]]*`` is non-greedy by
+# construction (it cannot cross a ``]``), so only the FIRST bracketed token is
+# substituted.
+_BODY_TEMPLATE_PLACEHOLDER_RE = re.compile(r"\[[^\]]*\]")
+
 # "+ New project" CTA selectors.  Cascade discipline: structural / icon-first
 # (locale-stable) before localised text fallbacks spanning all 14 supported
 # locales.  The ``add_2`` Material Symbols ligature is locale-invariant — the
@@ -864,6 +875,49 @@ class UiAutomationTransport(VideoGenerationMixin):
     # Internal helpers — prompt submission (unit 3.5)
     # ------------------------------------------------------------------
 
+    async def _locate_prompt_box(
+        self,
+        page: Page,
+        out_dir: Path | None = None,
+    ) -> Any:
+        """Locate the visible Slate prompt box via :data:`PROMPT_INPUT_SELECTORS`.
+
+        Returns the first visible locator (``.first`` of the matching
+        selector). On no-match, writes a debug screenshot to ``out_dir``
+        (if provided) and raises ``RuntimeError``.
+        """
+        for selector in PROMPT_INPUT_SELECTORS:
+            try:
+                loc = page.locator(selector).first
+                await loc.wait_for(state="visible", timeout=10_000)
+                log.info("ui_automation.prompt_input_found", selector=selector)
+                return loc
+            except Exception:
+                continue
+
+        shot_path = await _capture_debug_screenshot(page, out_dir, "debug_prompt_not_found.png")
+        msg = f"Prompt input not found in Flow UI. URL: {page.url}. Screenshot: {shot_path}"
+        raise RuntimeError(msg)
+
+    async def _click_submit(self, page: Page) -> None:
+        """Submit the active prompt via the ``arrow_forward`` button.
+
+        Tries :data:`SUBMIT_BUTTON_SELECTORS` in priority order; falls back
+        to pressing Enter if no submit button is visible.
+        """
+        for sel in SUBMIT_BUTTON_SELECTORS:
+            try:
+                btn = page.locator(sel).first
+                await btn.wait_for(state="visible", timeout=2_000)
+                await btn.click()
+                log.info("ui_automation.prompt_submitted", via=sel)
+                return
+            except Exception:
+                continue
+
+        log.info("ui_automation.prompt_submitted", via="enter_key_fallback")
+        await page.keyboard.press("Enter")
+
     async def _send_prompt(
         self,
         page: Page,
@@ -882,23 +936,7 @@ class UiAutomationTransport(VideoGenerationMixin):
         On input-not-found, a debug screenshot is written to ``out_dir``
         (if provided) and ``RuntimeError`` is raised.
         """
-        input_box = None
-        for selector in PROMPT_INPUT_SELECTORS:
-            try:
-                loc = page.locator(selector).first
-                await loc.wait_for(state="visible", timeout=10_000)
-                input_box = loc
-                log.info("ui_automation.prompt_input_found", selector=selector)
-                break
-            except Exception:
-                continue
-
-        if input_box is None:
-            shot_path = await _capture_debug_screenshot(page, out_dir, "debug_prompt_not_found.png")
-            msg = f"Prompt input not found in Flow UI. URL: {page.url}. Screenshot: {shot_path}"
-            raise RuntimeError(
-                msg,
-            )
+        input_box = await self._locate_prompt_box(page, out_dir)
 
         await input_box.click()
         await page.keyboard.press("Control+A")
@@ -908,18 +946,78 @@ class UiAutomationTransport(VideoGenerationMixin):
         await page.keyboard.insert_text(prompt_text)
         await page.wait_for_timeout(500)
 
-        for sel in SUBMIT_BUTTON_SELECTORS:
-            try:
-                btn = page.locator(sel).first
-                await btn.wait_for(state="visible", timeout=2_000)
-                await btn.click()
-                log.info("ui_automation.prompt_submitted", via=sel)
-                return
-            except Exception:
-                continue
+        await self._click_submit(page)
 
-        log.info("ui_automation.prompt_submitted", via="enter_key_fallback")
-        await page.keyboard.press("Enter")
+    async def _submit_body_prompt(
+        self,
+        page: Page,
+        body_description: str,
+        out_dir: Path | None = None,
+    ) -> None:
+        """Insert ``body_description`` into Flow's pre-filled triptych template.
+
+        After clicking the character slot-add ("+"), Flow's JS pre-fills the
+        new prompt box with a triptych template containing a bracketed
+        placeholder, e.g. (Portuguese)::
+
+            "Tríptico de corpo inteiro em três ângulos diferentes: ...
+             fundo branco sólido. [DESCREVA O CORPO E A ROUPA]"
+
+        The ``[...]`` placeholder is where the body/clothing description goes;
+        ONE generation then yields all three angles (front/side/back) as a
+        single triptych image.  The previous body path called ``_send_prompt``,
+        which CLEARED the box and so destroyed Flow's template.
+
+        This helper instead:
+
+        1. Reads the box's current (pre-filled) text.
+        2. If the text contains a bracketed placeholder matching
+           :data:`_BODY_TEMPLATE_PLACEHOLDER_RE` (language-agnostic — NOT the
+           Portuguese literal), substitutes the FIRST such placeholder with
+           ``body_description``, preserving Flow's triptych instruction.
+        3. If NO placeholder is found (template absent / different Flow
+           version), falls back to ``body_description`` alone (the legacy
+           behavior) and logs ``ui_automation.body_template_placeholder_missing``.
+        4. Clears the box and types the computed full string, then submits.
+
+        Logs ``ui_automation.body_prompt_templated`` with ``template_used``.
+        """
+        input_box = await self._locate_prompt_box(page, out_dir)
+
+        # Read the pre-filled template. contenteditable Slate boxes expose
+        # their text via inner_text(); fall back to text_content() if a
+        # particular locator type lacks inner_text.
+        prefilled = ""
+        try:
+            prefilled = (await input_box.inner_text()) or ""
+        except Exception:
+            try:
+                prefilled = (await input_box.text_content()) or ""
+            except Exception:
+                prefilled = ""
+
+        match = _BODY_TEMPLATE_PLACEHOLDER_RE.search(prefilled)
+        template_used = match is not None
+        if template_used:
+            # Replace ONLY the first bracketed placeholder, preserving the rest
+            # of Flow's template verbatim.
+            placeholder = match.group(0)  # type: ignore[union-attr]
+            submitted_text = prefilled.replace(placeholder, body_description, 1)
+        else:
+            log.warning(
+                "ui_automation.body_template_placeholder_missing",
+                prefilled_len=len(prefilled),
+            )
+            submitted_text = body_description
+
+        await input_box.click()
+        await page.keyboard.press("Control+A")
+        await page.keyboard.press("Delete")
+        await page.keyboard.insert_text(submitted_text)
+        await page.wait_for_timeout(500)
+
+        log.info("ui_automation.body_prompt_templated", template_used=template_used)
+        await self._click_submit(page)
 
     # ------------------------------------------------------------------
     # Internal helpers — generation settings (aspect ratio + count)
@@ -2216,14 +2314,21 @@ class UiAutomationTransport(VideoGenerationMixin):
         )
 
         # Slot-add: face (index 0) needs no interaction; body/accessories do.
-        if image_reference_index >= 1:
+        # Clicking slot-add pre-fills the new prompt box with Flow's triptych
+        # template, so the body path substitutes the bracketed placeholder
+        # instead of overwriting the whole box.
+        is_body_slot = image_reference_index >= 1
+        if is_body_slot:
             await self._click_character_slot_add(page, out_dir)
 
         # Attach listener BEFORE submit to eliminate the race condition.
         captured, detach = self._attach_batch_response_listener(page, project_id=project_id)
         submit_time = time.monotonic()
         try:
-            await self._send_prompt(page, request.prompt, out_dir)
+            if is_body_slot:
+                await self._submit_body_prompt(page, request.prompt, out_dir)
+            else:
+                await self._send_prompt(page, request.prompt, out_dir)
             responses = await self._await_captured(
                 captured,
                 expected_count=1,
