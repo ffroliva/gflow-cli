@@ -18,6 +18,7 @@ import structlog
 
 __all__ = [
     "Character",
+    "CharacterCreateResult",
     "CharacterImageRequest",
     "VOICES",
     "parse_characters",
@@ -109,6 +110,20 @@ class CharacterImageRequest:
     aspect: str = "9:16"
     model: str = "narwhal"
     image_reference_index: int = 0
+    face_media_id: str | None = None
+    """mediaId of the face reference image for body-slot reference generation."""
+
+
+@dataclass(frozen=True)
+class CharacterCreateResult:
+    """Result DTO returned after a successful character-creation workflow completes."""
+
+    entity_id: str
+    project_id: str
+    workflow_ids: tuple[str, ...]
+    primary_media_ids: tuple[str, ...]
+    name: str
+    voice: str | None = None
 
 
 # ---------------------------------------------------------------------------
