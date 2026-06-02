@@ -7,7 +7,7 @@ import json
 from click.testing import CliRunner
 
 from gflow_cli import cli_character
-from gflow_cli.api.character import VOICES, Character
+from gflow_cli.api.character import VOICE_NAMES, VOICES, Character
 from gflow_cli.cli import main
 from gflow_cli.errors import ConfigurationError
 
@@ -230,9 +230,12 @@ def test_show_id_and_name_mutually_exclusive():
 def test_voices_lists_known_presets():
     res = CliRunner().invoke(main, ["character", "voices"])
     assert res.exit_code == 0
-    # Check a few known preset ids
-    assert "gacrux" in res.output
-    assert "aoede" in res.output
+    # Check a few known canonical (Capitalized) voice names
+    assert "Gacrux" in res.output
+    assert "Aoede" in res.output
+    # Human output includes the descriptor and sample URL
+    assert "sample:" in res.output
+    assert "https://gstatic.com/aitestkitchen/voices/samples/" in res.output
 
 
 def test_voices_json_parses_and_contains_known_presets():
@@ -241,15 +244,22 @@ def test_voices_json_parses_and_contains_known_presets():
     data = json.loads(res.output)
     assert data["status"] == "ok"
     assert isinstance(data["voices"], list)
-    assert "gacrux" in data["voices"]
-    assert "zephyr" in data["voices"]
+    assert len(data["voices"]) == 29
+    names = {v["name"] for v in data["voices"]}
+    assert "Gacrux" in names
+    assert "Zephyr" in names
+    # Each entry carries name / description / sample_url
+    first = data["voices"][0]
+    assert set(first.keys()) == {"name", "description", "sample_url"}
+    assert first["sample_url"].endswith(f"/{first['name']}.wav")
 
 
 def test_voices_json_matches_voices_constant():
     res = CliRunner().invoke(main, ["character", "voices", "--json"])
     assert res.exit_code == 0
     data = json.loads(res.output)
-    assert set(data["voices"]) == set(VOICES)
+    assert tuple(v["name"] for v in data["voices"]) == VOICE_NAMES
+    assert len(data["voices"]) == len(VOICES)
 
 
 # ---------------------------------------------------------------------------

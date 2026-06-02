@@ -342,9 +342,9 @@ def test_create_wire_format_error_exits_nonzero(tmp_path: Path) -> None:
 # ---------------------------------------------------------------------------
 
 
-def test_create_voice_passed_to_saga(tmp_path: Path) -> None:
-    """--voice gacrux is forwarded to character_create as voice kwarg."""
-    result = _make_result(voice="gacrux")
+def _invoke_with_voice(tmp_path: Path, voice_arg: str) -> tuple[int, str, object]:
+    """Run create with the given --voice; return (exit_code, output, voice kwarg)."""
+    result = _make_result(voice="Gacrux")
     mock_settings = MagicMock()
     mock_settings.headless = True
     mock_settings.resolved_db_path.return_value = tmp_path / "gflow.db"
@@ -375,14 +375,40 @@ def test_create_voice_passed_to_saga(tmp_path: Path) -> None:
                 "--face-prompt",
                 "knight",
                 "--voice",
-                "gacrux",
+                voice_arg,
             ],
-            catch_exceptions=False,
         )
+    voice_kwarg = mock_saga.call_args.kwargs["voice"] if mock_saga.call_args is not None else None
+    return cli_result.exit_code, cli_result.output, voice_kwarg
 
-    assert cli_result.exit_code == 0, cli_result.output
-    call_kwargs = mock_saga.call_args.kwargs
-    assert call_kwargs["voice"] == "gacrux"
+
+def test_create_voice_passed_to_saga(tmp_path: Path) -> None:
+    """--voice Charon (canonical) is forwarded to character_create unchanged."""
+    code, _out, voice = _invoke_with_voice(tmp_path, "Charon")
+    assert code == 0
+    assert voice == "Charon"
+
+
+def test_create_voice_normalizes_lowercase(tmp_path: Path) -> None:
+    """--voice charon (lowercase) normalizes to the canonical 'Charon'."""
+    code, _out, voice = _invoke_with_voice(tmp_path, "charon")
+    assert code == 0
+    assert voice == "Charon"
+
+
+def test_create_voice_case_insensitive_mixed(tmp_path: Path) -> None:
+    """--voice cHaRoN (mixed case) normalizes to 'Charon'."""
+    code, _out, voice = _invoke_with_voice(tmp_path, "cHaRoN")
+    assert code == 0
+    assert voice == "Charon"
+
+
+def test_create_unknown_voice_rejected(tmp_path: Path) -> None:
+    """An unknown voice fails with a non-zero exit and a helpful message."""
+    code, out, _voice = _invoke_with_voice(tmp_path, "notavoice")
+    assert code != 0
+    # Language-agnostic guidance points at the voices command
+    assert "gflow character voices" in out
 
 
 # ---------------------------------------------------------------------------

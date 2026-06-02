@@ -7,7 +7,14 @@ import re
 
 import pytest
 
-from gflow_cli.api.character import Character, CharacterImageRequest, parse_characters
+from gflow_cli.api.character import (
+    VOICE_NAMES,
+    VOICES,
+    Character,
+    CharacterImageRequest,
+    Voice,
+    parse_characters,
+)
 
 # ---------------------------------------------------------------------------
 # parse_characters
@@ -346,3 +353,50 @@ def test_character_create_result_voice_defaults_none() -> None:
         name="Ana",
     )
     assert r.voice is None
+
+
+# ---------------------------------------------------------------------------
+# Voice catalog — 29 named Gemini voices
+# ---------------------------------------------------------------------------
+
+
+def test_voices_has_29_entries() -> None:
+    assert len(VOICES) == 29
+
+
+def test_voice_sample_url_pattern() -> None:
+    assert (
+        Voice("Sulafat").sample_url
+        == "https://gstatic.com/aitestkitchen/voices/samples/Sulafat.wav"
+    )
+
+
+def test_voice_names_contains_known_voices() -> None:
+    assert "Charon" in VOICE_NAMES
+    assert "Sulafat" in VOICE_NAMES
+    assert "Achernar" in VOICE_NAMES
+
+
+def test_voice_names_are_capitalized() -> None:
+    for name in VOICE_NAMES:
+        assert name[0].isupper(), f"voice name not Capitalized: {name!r}"
+        assert name == name.strip()
+
+
+def test_voice_names_match_voices() -> None:
+    assert VOICE_NAMES == tuple(v.name for v in VOICES)
+
+
+def test_voices_each_have_a_sample_url() -> None:
+    for v in VOICES:
+        assert v.sample_url == f"https://gstatic.com/aitestkitchen/voices/samples/{v.name}.wav"
+
+
+def test_voice_description_optional() -> None:
+    assert Voice("Solo").description is None
+
+
+def test_voice_is_frozen() -> None:
+    v = Voice("Charon", "Male, informative, lower pitch")
+    with pytest.raises((AttributeError, TypeError)):
+        v.name = "Mutated"  # type: ignore[misc]
