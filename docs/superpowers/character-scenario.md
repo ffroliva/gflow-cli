@@ -53,6 +53,23 @@ video `--character` + data layer. Transport: structural ops REST; **generation i
 | 26 | D11 | `--character` repeated >max refs Flow allows | Low | cap + clear error (multi-ref limit unknown — probe) | Unit |
 | 27 | D3 | model picker ligature differs char-editor (`arrow_drop_down`) vs normal (`crop_16_9`) | Low | handle both; selector test | Integration |
 
+## Phase-2 implemented coverage (2026-06-02)
+
+Covered by shipped unit/BDD tests (live-e2e still owed for the starred ones — Task 12):
+
+| # | Test(s) | Notes |
+|---|---|---|
+| 1 | `tests/services/test_character_gen_no_direct_post.py` | char-gen routes ONLY through UI passive-capture |
+| 3 / 4 | `tests/services/test_character_create_saga.py`, `tests/data/test_find_incomplete_character.py`, `tests/features/test_character_create_steps.py` (BDD resume) | persist-before-spend recovery; resume skips recorded slots ★ live |
+| 5 | `test_generate_character_image_rejects_foreign_workflow` (`tests/api/test_client_generate_character.py`) + saga binding test | `parentEntityId == entityId` guard before any PATCH ★ live |
+| 15 / 16 | `tests/services/test_character_create_redaction.py`, `tests/data/test_recorder_character.py` | personality hashed in redacted mode; no signed `fifeUrl` persisted |
+| 18 | `tests/cli/test_cli_character_create.py` (accented) | UTF-8 `--personality`/`--face-prompt` round-trip ★ live |
+| 21 | transport-None guard in `generate_character_image` | real headed Chrome-strategy guard at `__aenter__` deferred to ★ live e2e |
+| 22 | saga sequential test (`tests/services/test_character_create_saga.py`) | face→body sequential, never gathered |
+
+★ = also requires the Task-12 live e2e on denon82 (real wire binding / mid-saga crash recovery / non-EN
+locale selectors). Mocked-transport coverage is necessary but not sufficient ([[e2e-exposes-synthetic-fixture-bugs]]).
+
 ## Must-cover before merge (Critical + High) → PLAN acceptance criteria
 
 1. **#1/#5** char-gen routes ONLY through UI passive-capture, and the resulting workflow's `parentEntityId == entityId` is asserted before any PATCH (guards the spike-v1 404 + the reCAPTCHA wall).
