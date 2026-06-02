@@ -63,6 +63,11 @@ def batch_generate_images_url(project_id: str) -> str:
 # once before making API calls so Google's cookies + reCAPTCHA JS are loaded.
 EDITOR_BOOTSTRAP_URL = "https://labs.google/fx/tools/flow?hl=en"
 
+# Character entities (tRPC + aisandbox Bearer REST) ------------------------
+CREATE_ENTITY_URL = f"{LABS_TRPC_BASE}/flow.createEntity"
+PROJECT_INITIAL_DATA_URL = f"{LABS_TRPC_BASE}/flow.projectInitialData"
+FLOW_ENTITIES_URL = f"{FLOW_API_BASE}/flow/entities"
+
 # Scene / Add Clip (aisandbox-pa) ------------------------------------------
 SCENE_WORKFLOWS_UPDATE = f"{FLOW_API_BASE}/flow/scene/sceneWorkflows:update"
 

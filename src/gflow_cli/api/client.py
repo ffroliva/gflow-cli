@@ -21,13 +21,14 @@ import time
 from dataclasses import replace as _dc_replace
 from datetime import datetime
 from typing import TYPE_CHECKING, Any, Self, cast
-from urllib.parse import urlsplit, urlunsplit
+from urllib.parse import quote, urlsplit, urlunsplit
 
 import structlog
 from playwright.async_api import BrowserContext, Page, Playwright, async_playwright
 
 from gflow_cli.api import routes
 from gflow_cli.api._retry import parse_retry_after, post_with_retry
+from gflow_cli.api.character import Character, parse_characters
 from gflow_cli.api.dto import AssetInfo, GeneratedImage, ProjectInfo
 from gflow_cli.api.recaptcha import TokenMinter
 from gflow_cli.api.scene import ConcatInput, Scene, SceneWorkflow
@@ -39,6 +40,7 @@ from gflow_cli.errors import (
     AuthExpiredError,
     AuthMissingError,
     BrowserSessionClosedError,
+    ConfigurationError,
     ContentPolicyError,
     FlowApiError,  # re-exported via gflow_cli.api.__init__
     NetworkError,
@@ -140,6 +142,51 @@ def _is_supported_image_header(header: bytes) -> bool:
     if header[:4] == b"RIFF" and header[8:12] == b"WEBP":
         return True
     return header[:6] in (b"GIF87a", b"GIF89a")
+
+
+def _unwrap_trpc(data: Any) -> dict[str, Any]:
+    """Unwrap the tRPC envelope ``result.data.json`` and return the inner dict.
+
+    Only the standard tRPC v10 shape is accepted:
+    ``{"result": {"data": {"json": {...}}}}``.
+
+    A no-``"json"``-key shape was considered but has no observed evidence in
+    any captured HAR for createEntity or projectInitialData (see
+    ``docs/CHARACTER_RECON.md`` and ``scripts/dev/character_create_spike.py``).
+    Responses without ``"json"`` therefore surface as
+    :class:`~gflow_cli.errors.WireFormatError` rather than being silently
+    accepted.
+
+    Raises :class:`~gflow_cli.errors.WireFormatError` when the envelope is
+    malformed or when the extracted payload is not a dict.
+    """
+    if not isinstance(data, dict):
+        raise WireFormatError(
+            detail=f"tRPC response is not a dict; got {type(data).__name__}",
+            route="tRPC",
+        )
+    data_dict = cast("dict[str, Any]", data)
+    result = data_dict.get("result")
+    if not isinstance(result, dict):
+        raise WireFormatError(
+            detail="tRPC reply missing 'result' dict",
+            route="tRPC",
+        )
+    result_dict = cast("dict[str, Any]", result)
+    data_obj = result_dict.get("data")
+    if not isinstance(data_obj, dict):
+        raise WireFormatError(
+            detail="tRPC reply missing result.data dict",
+            route="tRPC",
+        )
+    data_obj_dict = cast("dict[str, Any]", data_obj)
+    inner: Any = data_obj_dict.get("json")
+    if not isinstance(inner, dict):
+        raise WireFormatError(
+            detail=f"tRPC reply missing result.data.json dict; got {type(inner).__name__}",
+            route="tRPC",
+        )
+    return cast("dict[str, Any]", inner)
 
 
 class FlowApiClient:
@@ -1203,6 +1250,87 @@ class FlowApiClient:
         except Exception:
             logger.debug("health_check_failed", exc_info=True)
             return False
+
+    # --- Character entity API (issue #145) -----------------------------------
+
+    async def create_entity(self, project_id: str) -> str:
+        """Mint a fresh CHARACTER entity for *project_id*. Returns the new entityId.
+
+        Maps to ``POST .../trpc/flow.createEntity``.  Session-cookie auth
+        (``application/json`` content-type, same as ``createProject``).
+        FREE — no reCAPTCHA, no credit.
+        """
+        body = {"json": {"projectId": project_id}}
+        data = await self._post_json(
+            routes.CREATE_ENTITY_URL,
+            body,
+            content_type="application/json",
+            route_name="createEntity",
+        )
+        payload = _unwrap_trpc(data)
+        entity_id = payload.get("entityId")
+        if not entity_id:
+            raise WireFormatError(
+                detail=f"createEntity returned no entityId; keys={sorted(payload)}",
+                route="createEntity",
+            )
+        logger.debug("character.entity_created", project_id=project_id, entity_id=entity_id)
+        return str(entity_id)
+
+    async def list_characters(self, project_id: str) -> list[Character]:
+        """Return all CHARACTER entities in *project_id*.
+
+        Maps to ``GET .../trpc/flow.projectInitialData?input=…``.
+        Session-cookie auth.  FREE — no reCAPTCHA, no credit.
+        """
+        trpc_input = json.dumps({"json": {"projectId": project_id}}, separators=(",", ":"))
+        url = f"{routes.PROJECT_INITIAL_DATA_URL}?input={quote(trpc_input, safe='')}"
+        data = await self._get_json(url, route_name="projectInitialData")
+        chars = parse_characters(_unwrap_trpc(data))
+        logger.debug("character.list_fetched", project_id=project_id, count=len(chars))
+        return chars
+
+    async def get_character(
+        self,
+        project_id: str,
+        *,
+        entity_id: str | None = None,
+        name: str | None = None,
+    ) -> Character:
+        """Fetch a single :class:`Character` by ``entity_id`` or ``name``.
+
+        Raises :class:`~gflow_cli.errors.ConfigurationError` when:
+        * no character matches (``entity_id`` / ``name`` not found), or
+        * multiple characters share the same ``name`` (ambiguous).
+
+        Exactly one of ``entity_id`` or ``name`` must be supplied.
+
+        Note: ``name`` matching is case-sensitive (exact ``display_name`` equality)
+        in Phase 1.
+        """
+        if entity_id is None and name is None:
+            msg = "Provide either entity_id or name"
+            raise ValueError(msg)
+        chars = await self.list_characters(project_id)
+        if entity_id is not None:
+            match = [c for c in chars if c.entity_id == entity_id]
+        else:
+            match = [c for c in chars if c.display_name == name]
+        if not match:
+            lookup = entity_id if entity_id is not None else repr(name)
+            raise ConfigurationError(
+                detail=f"character not found: {lookup}",
+                route="projectInitialData",
+                remediation_hint="Run `gflow character list` to see available characters.",
+            )
+        if len(match) > 1:
+            ids = ", ".join(c.entity_id for c in match)
+            raise ConfigurationError(
+                detail=f"ambiguous character name {name!r} matches multiple entities: {ids}",
+                route="projectInitialData",
+                remediation_hint="Use --entity-id to select one character unambiguously.",
+            )
+        return match[0]
 
 
 def _default_project_title() -> str:
