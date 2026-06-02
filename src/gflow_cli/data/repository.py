@@ -291,6 +291,50 @@ class DataRepository:
                 (status.value, completed_at, error_type, error_detail, operation_id),
             )
 
+    def set_operation_metadata(
+        self,
+        operation_id: str,
+        metadata_json: dict[str, object],
+    ) -> None:
+        """Write (or overwrite) the metadata_json column for an operation row."""
+        with self._store.transaction(immediate=True):
+            self._store.conn.execute(
+                "UPDATE operations SET metadata_json = ? WHERE id = ?",
+                (json.dumps(metadata_json, sort_keys=True), operation_id),
+            )
+
+    def update_operation_metadata(
+        self,
+        operation_id: str,
+        *,
+        status: OperationStatus,
+        completed_at: str | None,
+        prompt: str | None,
+        prompt_hash: str | None,
+        prompt_redacted: bool,
+        metadata_json: dict[str, object],
+    ) -> None:
+        """Update status, prompt fields, and metadata_json in a single write."""
+        with self._store.transaction(immediate=True):
+            self._store.conn.execute(
+                """
+                UPDATE operations
+                SET status = ?, completed_at = ?,
+                    prompt = ?, prompt_hash = ?, prompt_redacted = ?,
+                    metadata_json = ?
+                WHERE id = ?
+                """,
+                (
+                    status.value,
+                    completed_at,
+                    prompt,
+                    prompt_hash,
+                    int(bool(prompt_redacted)),
+                    json.dumps(metadata_json, sort_keys=True),
+                    operation_id,
+                ),
+            )
+
     def get_operation_for_output_asset(
         self,
         profile_name: str,
