@@ -223,7 +223,7 @@ flow exists but is **out of scope for v1**. `gflow character create --voice <id>
 
 | Command | Maps to |
 |---|---|
-| `gflow character create --project <id> --name <name> --face-prompt … [--body-prompt …] [--voice <id>] [--personality …] [--aspect 9:16] [--model narwhal] [--profile …] [--locale en-US] [--json]` *(VERIFIED — shipped option names)* | createEntity → gen face (slot 0) → commit_workflow → optional gen body (slot 1) → commit_workflow → patch_entity, via the persist-before-spend saga (§4) |
+| `gflow character create --project <id> --name <name> --face-prompt … [--body-prompt …] [--voice <id>] [--personality …] [--model nano2\|nanopro] [--profile …] [--locale en-US] [--json]` *(VERIFIED — shipped option names; characters have NO aspect-ratio control)* | createEntity → gen face (slot 0) → commit_workflow → optional gen body (slot 1) → commit_workflow → patch_entity, via the persist-before-spend saga (§4) |
 | `gflow character list` | projectInitialData → entities[CHARACTER] |
 | `gflow character show --project <id> (--id <entityId> \| --name <displayName>)` | projectInitialData (single); name collision → exit 11 with disambiguation hint |
 | `gflow character voices [--json]` | list valid `presetVoiceId`s (language-agnostic discovery; mirrors `gflow models --json`) |
@@ -389,7 +389,7 @@ The `/gflow:plan` exit criteria must list each scenario as a named, covered test
 
 | Area | Scenarios that must be covered |
 |---|---|
-| **create** | face-only; face→body (chained `imageInputs`, sequential); `--voice`; `--personality`; all options; fresh-entity per run; **persist-before-spend recovery** (fail after createEntity / after gen / after workflow PATCH → recoverable, no orphan credit loss); invalid `--project` (404→exit 11); invalid `--voice` (exit 11 with valid set); invalid `--model`/`--aspect` (Click Choice → exit 2); expired session (exit 8 `AuthExpired`) |
+| **create** | face-only; face→body (chained `imageInputs`, sequential); `--voice`; `--personality`; all options; fresh-entity per run; **persist-before-spend recovery** (fail after createEntity / after gen / after workflow PATCH → recoverable, no orphan credit loss); invalid `--project` (404→exit 11); invalid `--voice` (exit 11 with valid set); invalid `--model` (Click Choice nano2/nanopro → exit 2; characters have no `--aspect`); expired session (exit 8 `AuthExpired`) |
 | **list** | empty project; N characters; `--json`; non-character entities excluded |
 | **show** | by `--id`; by `--name`; **name collision** → exit 11 + disambiguation; not-found → exit 11; `--json` |
 | **voices** | `voices`; `voices --json`; `--voice` validated against this set (language-agnostic, no localized strings) |

@@ -100,6 +100,8 @@ def test_create_happy_face_only(tmp_path: Path) -> None:
     assert isinstance(call_kwargs["face"], CharacterImageRequest)
     assert call_kwargs["face"].prompt == "knight"
     assert call_kwargs["face"].image_reference_index == 0
+    # Default model alias is nano2 (Nano Banana 2).
+    assert call_kwargs["face"].model == "nano2"
     assert call_kwargs["body"] is None
     assert call_kwargs["project_id"] == "proj-1"
     assert call_kwargs["name"] == "Knight"
@@ -403,3 +405,102 @@ def test_create_missing_required_options() -> None:
     # Missing --face-prompt
     r3 = runner.invoke(character, ["create", "--project", "P", "--name", "X"])
     assert r3.exit_code == 2
+
+
+# ---------------------------------------------------------------------------
+# Model / aspect surface — characters have no ratio; model is a 2-value Choice
+# ---------------------------------------------------------------------------
+
+
+def test_create_aspect_option_removed() -> None:
+    """--aspect no longer exists — passing it is a Click usage error (exit 2)."""
+    runner = CliRunner()
+    r = runner.invoke(
+        character,
+        [
+            "create",
+            "--project",
+            "P",
+            "--name",
+            "X",
+            "--face-prompt",
+            "p",
+            "--aspect",
+            "9:16",
+        ],
+    )
+    assert r.exit_code == 2
+    assert "no such option" in r.output.lower()
+
+
+def test_create_model_choice_rejects_invalid() -> None:
+    """--model only accepts nano2 / nanopro; anything else is exit 2."""
+    runner = CliRunner()
+    r = runner.invoke(
+        character,
+        [
+            "create",
+            "--project",
+            "P",
+            "--name",
+            "X",
+            "--face-prompt",
+            "p",
+            "--model",
+            "narwhal",
+        ],
+    )
+    assert r.exit_code == 2
+    assert "invalid value" in r.output.lower() or "is not one of" in r.output.lower()
+
+
+def _invoke_with_model(tmp_path: Path, model_arg: str) -> tuple[int, CharacterImageRequest]:
+    """Run create with the given --model and return (exit_code, face request)."""
+    result = _make_result()
+    mock_settings = MagicMock()
+    mock_settings.headless = True
+    mock_settings.resolved_db_path.return_value = tmp_path / "gflow.db"
+    mock_settings.history_prompts = "hash"
+
+    mock_recorder = MagicMock()
+    mock_client_cm = MagicMock()
+    mock_client_cm.__aenter__ = AsyncMock(return_value=AsyncMock())
+    mock_client_cm.__aexit__ = AsyncMock(return_value=False)
+
+    with (
+        patch(_GET_SETTINGS, return_value=mock_settings),
+        patch(_RESOLVE_PROFILE, return_value="default"),
+        patch(_MAKE_PROVIDER_DIR, return_value=tmp_path / "profiles" / "default"),
+        patch(_CLIENT, return_value=mock_client_cm),
+        patch(_RECORDER_OPEN, return_value=mock_recorder),
+        patch(_SAGA, new=AsyncMock(return_value=result)) as mock_saga,
+    ):
+        runner = CliRunner()
+        cli_result = runner.invoke(
+            character,
+            [
+                "create",
+                "--project",
+                "proj-1",
+                "--name",
+                "Knight",
+                "--face-prompt",
+                "knight",
+                "--model",
+                model_arg,
+            ],
+            catch_exceptions=False,
+        )
+    return cli_result.exit_code, mock_saga.call_args.kwargs["face"]
+
+
+def test_create_model_nano2_reaches_saga(tmp_path: Path) -> None:
+    code, face = _invoke_with_model(tmp_path, "nano2")
+    assert code == 0
+    assert face.model == "nano2"
+
+
+def test_create_model_nanopro_reaches_saga(tmp_path: Path) -> None:
+    code, face = _invoke_with_model(tmp_path, "nanopro")
+    assert code == 0
+    assert face.model == "nanopro"

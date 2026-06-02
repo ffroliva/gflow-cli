@@ -272,22 +272,30 @@ def test_character_is_frozen() -> None:
 def test_character_image_request_defaults() -> None:
     req = CharacterImageRequest(prompt="A warrior woman")
     assert req.prompt == "A warrior woman"
-    assert req.aspect == "9:16"
-    assert req.model == "narwhal"
+    assert req.model == "nano2"
     assert req.image_reference_index == 0
+    # Characters have NO aspect-ratio control — the field must not exist.
+    assert not hasattr(req, "aspect")
 
 
 def test_character_image_request_custom_fields() -> None:
     req = CharacterImageRequest(
         prompt="Mystic mage",
-        aspect="9:16",
-        model="narwhal",
+        model="nanopro",
         image_reference_index=2,
     )
     assert req.prompt == "Mystic mage"
-    assert req.aspect == "9:16"
-    assert req.model == "narwhal"
+    assert req.model == "nanopro"
     assert req.image_reference_index == 2
+
+
+def test_character_models_mapping() -> None:
+    from gflow_cli.api.character import CHARACTER_MODELS
+
+    assert CHARACTER_MODELS == {
+        "nano2": "Nano Banana 2",
+        "nanopro": "Nano Banana Pro",
+    }
 
 
 def test_character_image_request_is_frozen() -> None:

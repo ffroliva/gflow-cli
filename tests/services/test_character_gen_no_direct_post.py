@@ -155,7 +155,7 @@ async def test_character_gen_routes_through_transport_not_direct_post(
     client.create_entity = AsyncMock(return_value=_ENTITY_ID)  # type: ignore[method-assign]
 
     recorder = _make_recorder()
-    face = CharacterImageRequest(prompt="a knight face", aspect="9:16", model="narwhal")
+    face = CharacterImageRequest(prompt="a knight face", model="nano2")
 
     result = await character_create(
         client,
