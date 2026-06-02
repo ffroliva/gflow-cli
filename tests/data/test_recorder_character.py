@@ -1,0 +1,209 @@
+"""Tests for OperationRecorder.record_character_started / record_character_completed.
+
+Uses a real temp-DB (no mocks) to exercise the full persist-before-spend +
+redaction contract described in Phase-2 Task 6 (issue #145).
+"""
+
+from __future__ import annotations
+
+import json
+from pathlib import Path
+
+from gflow_cli.data.recorder import OperationRecorder
+from gflow_cli.data.repository import DataRepository
+from gflow_cli.data.store import DataStore
+
+# ---------------------------------------------------------------------------
+# record_character_started
+# ---------------------------------------------------------------------------
+
+
+def test_record_character_started_inserts_started_row(tmp_path: Path) -> None:
+    """STARTED row is inserted before any credited operation."""
+    with DataStore.open(tmp_path / "gflow.db") as store:
+        recorder = OperationRecorder(DataRepository(store), prompt_mode="store")
+
+        row_id = recorder.record_character_started(
+            profile_name="default",
+            profile_dir=tmp_path / "profile_default",
+            project_id="flow-project-char-1",
+            entity_id="entity-abc-123",
+            name="My Character",
+        )
+
+        assert row_id, "must return a non-empty row id"
+
+        row = store.conn.execute(
+            "SELECT status, mode, flow_operation_id, metadata_json FROM operations WHERE id = ?",
+            (row_id,),
+        ).fetchone()
+        assert row is not None
+        assert row["status"] == "started"
+        assert row["mode"] == "character"
+        # entity_id stored in flow_operation_id AND in metadata_json
+        assert row["flow_operation_id"] == "entity-abc-123"
+        meta = json.loads(row["metadata_json"])
+        assert meta["entity_id"] == "entity-abc-123"
+        assert meta["name"] == "My Character"
+
+        # No asset links yet (no credited op)
+        links = store.conn.execute(
+            "SELECT * FROM operation_assets WHERE operation_id = ?",
+            (row_id,),
+        ).fetchall()
+        assert links == [], "no asset links should exist at STARTED time"
+
+
+# ---------------------------------------------------------------------------
+# record_character_completed
+# ---------------------------------------------------------------------------
+
+
+def test_record_character_completed_flips_to_succeeded(tmp_path: Path) -> None:
+    """STARTED row is updated to SUCCEEDED with workflow + media ids."""
+    with DataStore.open(tmp_path / "gflow.db") as store:
+        recorder = OperationRecorder(DataRepository(store), prompt_mode="store")
+
+        row_id = recorder.record_character_started(
+            profile_name="default",
+            profile_dir=tmp_path / "profile_default",
+            project_id="flow-project-char-1",
+            entity_id="entity-abc-123",
+            name="My Character",
+        )
+
+        recorder.record_character_completed(
+            row_id=row_id,
+            workflow_ids=["wf-1", "wf-2"],
+            primary_media_ids=["media-1"],
+        )
+
+        row = store.conn.execute(
+            "SELECT status, completed_at, metadata_json FROM operations WHERE id = ?",
+            (row_id,),
+        ).fetchone()
+        assert row["status"] == "succeeded"
+        assert row["completed_at"] is not None
+
+        meta = json.loads(row["metadata_json"])
+        assert meta["workflow_ids"] == ["wf-1", "wf-2"]
+        assert meta["primary_media_ids"] == ["media-1"]
+
+
+# ---------------------------------------------------------------------------
+# Scenario #15 — redaction: personality in "redacted" mode
+# ---------------------------------------------------------------------------
+
+
+def test_personality_redacted_in_redacted_mode(tmp_path: Path) -> None:
+    """In redacted mode, personality plaintext must NOT be stored anywhere; hash must be set."""
+    with DataStore.open(tmp_path / "gflow.db") as store:
+        recorder = OperationRecorder(DataRepository(store), prompt_mode="redacted")
+
+        row_id = recorder.record_character_started(
+            profile_name="default",
+            profile_dir=tmp_path / "profile_default",
+            project_id="flow-project-char-2",
+            entity_id="entity-pii-999",
+            name="PII Character",
+        )
+
+        recorder.record_character_completed(
+            row_id=row_id,
+            workflow_ids=["wf-x"],
+            primary_media_ids=["media-x"],
+            personality="Secret PII text",
+        )
+
+        row = store.conn.execute(
+            "SELECT prompt, prompt_hash, prompt_redacted, metadata_json"
+            " FROM operations WHERE id = ?",
+            (row_id,),
+        ).fetchone()
+
+        # Plaintext must be absent
+        assert row["prompt"] is None, "plaintext personality must not be stored in redacted mode"
+        assert row["prompt_hash"], "hash must be set"
+        assert row["prompt_redacted"] == 1, "prompt_redacted flag must be set"
+
+        # Also check metadata doesn't leak the plaintext
+        meta_str = row["metadata_json"] or ""
+        assert "Secret PII text" not in meta_str
+
+
+# ---------------------------------------------------------------------------
+# Scenario #15b — store mode: personality IS stored
+# ---------------------------------------------------------------------------
+
+
+def test_personality_stored_in_store_mode(tmp_path: Path) -> None:
+    """In store mode, personality plaintext is persisted."""
+    with DataStore.open(tmp_path / "gflow.db") as store:
+        recorder = OperationRecorder(DataRepository(store), prompt_mode="store")
+
+        row_id = recorder.record_character_started(
+            profile_name="default",
+            profile_dir=tmp_path / "profile_default",
+            project_id="flow-project-char-3",
+            entity_id="entity-store-1",
+            name="Store Character",
+        )
+
+        recorder.record_character_completed(
+            row_id=row_id,
+            workflow_ids=["wf-store"],
+            primary_media_ids=["media-store"],
+            personality="Friendly helpful assistant",
+        )
+
+        row = store.conn.execute(
+            "SELECT prompt, prompt_hash, prompt_redacted FROM operations WHERE id = ?",
+            (row_id,),
+        ).fetchone()
+
+        assert row["prompt"] == "Friendly helpful assistant"
+        assert row["prompt_hash"], "hash must also be set in store mode"
+        assert row["prompt_redacted"] == 0
+
+
+# ---------------------------------------------------------------------------
+# Scenario #16 — signed-URL redaction in media_metadata
+# ---------------------------------------------------------------------------
+
+
+def test_signed_url_stripped_from_media_metadata(tmp_path: Path) -> None:
+    """Signed URL params must never be stored in metadata (redact_metadata contract)."""
+    with DataStore.open(tmp_path / "gflow.db") as store:
+        recorder = OperationRecorder(DataRepository(store), prompt_mode="store")
+
+        row_id = recorder.record_character_started(
+            profile_name="default",
+            profile_dir=tmp_path / "profile_default",
+            project_id="flow-project-char-4",
+            entity_id="entity-url-1",
+            name="URL Character",
+        )
+
+        recorder.record_character_completed(
+            row_id=row_id,
+            workflow_ids=["wf-url"],
+            primary_media_ids=["media-url"],
+            media_metadata={
+                "fife_url": "https://x/i.png?signature=ABC&Expires=999",
+                "display_name": "character.png",
+            },
+        )
+
+        row = store.conn.execute(
+            "SELECT metadata_json FROM operations WHERE id = ?",
+            (row_id,),
+        ).fetchone()
+        meta_str = row["metadata_json"] or ""
+
+        # None of these signed-URL markers must appear in stored metadata
+        assert "signature=ABC" not in meta_str.lower()
+        assert "Expires=999" not in meta_str
+        assert "fifeUrl" not in meta_str
+        # The safe field should still be present
+        meta = json.loads(meta_str)
+        assert meta.get("media_metadata", {}).get("display_name") == "character.png"

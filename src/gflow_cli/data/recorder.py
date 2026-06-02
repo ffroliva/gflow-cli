@@ -540,3 +540,103 @@ class OperationRecorder:
                         cloud_uri=cloud_storage_info.uri if cloud_storage_info else None,
                     ),
                 )
+
+    # ------------------------------------------------------------------
+    # Character — started / completed (persist-before-spend saga)
+    # ------------------------------------------------------------------
+
+    def record_character_started(
+        self,
+        *,
+        profile_name: str,
+        profile_dir: Path,
+        project_id: str,
+        entity_id: str,
+        name: str,
+    ) -> str:
+        """Insert an OperationRecord(mode=CHARACTER, status=STARTED) BEFORE any
+        credited generation.  Stores ``entity_id`` and ``name`` in the new
+        ``metadata_json`` column so the row is recoverable after a crash.
+
+        Returns the operation row ``id`` for later update via
+        :meth:`record_character_completed`.
+        """
+        repo = self.repository
+
+        repo.upsert_profile(profile_name, profile_dir)
+        repo.upsert_project(
+            ProjectRecord(
+                id=_new_id(),
+                profile_name=profile_name,
+                flow_project_id=project_id,
+                title=None,
+                source="generated",
+            ),
+        )
+
+        op_id = _new_id()
+        repo.insert_operation(
+            OperationRecord(
+                id=op_id,
+                profile_name=profile_name,
+                flow_project_id=project_id,
+                command="character create",
+                mode=OperationKind.CHARACTER,
+                status=OperationStatus.STARTED,
+                flow_operation_id=entity_id,
+                flow_batch_id=None,
+                prompt=None,
+                prompt_hash=None,
+                prompt_redacted=False,
+                model=None,
+                aspect_ratio=None,
+                error_type=None,
+                error_detail=None,
+            ),
+        )
+        # Write entity_id + name into metadata_json immediately so a crash
+        # before record_character_completed still leaves a recoverable row.
+        repo.set_operation_metadata(op_id, {"entity_id": entity_id, "name": name})
+        return op_id
+
+    def record_character_completed(
+        self,
+        *,
+        row_id: str,
+        workflow_ids: list[str],
+        primary_media_ids: list[str],
+        voice: str | None = None,
+        personality: str | None = None,
+        media_metadata: dict[str, object] | None = None,
+    ) -> None:
+        """Update the STARTED row to SUCCEEDED.
+
+        * ``personality`` is routed through
+          :func:`~gflow_cli.data.redaction.prompt_fields` so that in
+          ``prompt_mode="redacted"`` mode no plaintext is stored.
+        * ``media_metadata`` is routed through
+          :func:`~gflow_cli.data.redaction.redact_metadata` so that signed URLs
+          (``signature=`` / ``Expires=`` / ``fifeUrl``) are never persisted.
+        """
+        repo = self.repository
+        pf = prompt_fields(personality, mode=self.prompt_mode)
+
+        # Collect safe metadata (workflow/media ids + optional redacted fields)
+        meta: dict[str, object] = {
+            "workflow_ids": workflow_ids,
+            "primary_media_ids": primary_media_ids,
+        }
+        if voice is not None:
+            meta["voice"] = voice
+        if media_metadata is not None:
+            meta["media_metadata"] = redact_metadata(media_metadata)
+
+        repo.update_operation_metadata(
+            row_id,
+            status=OperationStatus.SUCCEEDED,
+            completed_at=_now_utc_iso(),
+            prompt=pf.prompt,
+            prompt_hash=pf.prompt_hash,
+            prompt_redacted=pf.prompt_redacted,
+            metadata_json=meta,
+        )
