@@ -666,16 +666,17 @@ class TestClickCharacterSlotAddSelector:
 
 
 # ---------------------------------------------------------------------------
-# Tests: _submit_body_prompt — triptych template placeholder substitution
+# Tests: _submit_body_prompt — self-contained triptych prompt (locale-safe)
 # ---------------------------------------------------------------------------
 
 
 class _FakePromptBox:
-    """A fake Slate prompt box that returns a fixed (pre-filled) inner_text.
+    """A fake Slate prompt box pre-filled with some (Flow-template) text.
 
-    Records ``inserted`` — the text passed to ``keyboard.insert_text`` — so
-    tests can assert on the SUBMITTED text (template with the placeholder
-    substituted, or the raw description on the fallback path).
+    The pre-filled ``inner_text`` exists ONLY to prove the new behavior
+    REPLACES the box wholesale rather than reading/parsing it — the production
+    code no longer calls ``inner_text``. Records nothing itself; the page-level
+    ``inserted`` list captures the SUBMITTED text.
     """
 
     def __init__(self, *, inner_text: str) -> None:
@@ -731,102 +732,104 @@ def _make_body_prompt_page(*, prefilled: str) -> tuple[MagicMock, _FakePromptBox
 
 
 class TestSubmitBodyPrompt:
-    """Placeholder-substitution logic — the load-bearing behavior of the fix."""
+    """Self-contained triptych behavior — gflow's OWN prompt REPLACES Flow's box.
+
+    The body slot must submit ``_BODY_TRIPTYCH_PREAMBLE + body_description``
+    regardless of whatever Flow pre-filled the box with — it must NOT depend on
+    reading/parsing the pre-filled text (locale-safe, timing-safe).
+    """
 
     @pytest.mark.asyncio
-    async def test_substitutes_first_bracketed_placeholder(self) -> None:
-        """The submitted text equals Flow's template with the bracketed
-        placeholder replaced by the body description (triptych preserved).
+    async def test_submits_self_contained_prompt_replacing_prefill(self) -> None:
+        """The submitted text equals PREAMBLE + description, REPLACING whatever
+        Flow pre-filled the box with (here a localized Flow template string)."""
+        from gflow_cli.api.transports.ui_automation import _BODY_TRIPTYCH_PREAMBLE
 
-        A NON-Portuguese placeholder is used to prove the substitution is
-        language-agnostic (regex-driven, not a hardcoded literal).
-        """
-        template = (
-            "Full-body triptych from three angles: front, side (3/4), and back. "
-            "High resolution, uniform studio lighting, solid white background. "
-            "[DESCRIBE BODY AND CLOTHES]"
+        # The box is pre-filled with a (Portuguese) Flow template carrying a
+        # bracketed placeholder — none of which must leak into the submission.
+        flow_prefill = (
+            "Tríptico de corpo inteiro em três ângulos diferentes: de frente, "
+            "visualização lateral (3/4) e de costas. fundo branco sólido. "
+            "[DESCREVA O CORPO E A ROUPA]"
         )
-        page, _box, inserted = _make_body_prompt_page(prefilled=template)
+        page, _box, inserted = _make_body_prompt_page(prefilled=flow_prefill)
         t = _make_transport(page=page)
 
         await t._submit_body_prompt(page, "red raincoat, rubber boots")  # type: ignore[attr-defined]
 
-        expected = template.replace("[DESCRIBE BODY AND CLOTHES]", "red raincoat, rubber boots")
+        expected = _BODY_TRIPTYCH_PREAMBLE + "red raincoat, rubber boots"
         assert inserted == [expected], (
-            f"submitted text must be the templated string; got {inserted}"
+            f"submitted text must be the self-contained triptych prompt + "
+            f"description, independent of the pre-fill; got {inserted}"
         )
-        # Triptych instruction preserved; placeholder gone.
-        assert "front, side (3/4), and back" in inserted[0]
-        assert "[DESCRIBE BODY AND CLOTHES]" not in inserted[0]
+        # None of Flow's pre-filled template leaked through.
+        assert "Tríptico" not in inserted[0]
+        assert "[DESCREVA O CORPO E A ROUPA]" not in inserted[0]
         assert "red raincoat, rubber boots" in inserted[0]
 
     @pytest.mark.asyncio
-    async def test_substitutes_only_first_placeholder(self) -> None:
-        """If the template somehow has two bracketed tokens, only the first is
-        replaced (the regex never crosses a ``]``)."""
-        template = "Triptych ... [FIRST] keep [SECOND]"
-        page, _box, inserted = _make_body_prompt_page(prefilled=template)
-        t = _make_transport(page=page)
+    async def test_triptych_instruction_always_present(self) -> None:
+        """The front/side/back triptych instruction is guaranteed in the
+        submitted prompt regardless of what the box was pre-filled with."""
+        # Pre-fill the box with an empty string AND a totally different language
+        # template across two runs — the triptych instruction must appear both
+        # times because it comes from gflow, not from the box.
+        for prefill in ("", "Some unrelated localized template text."):
+            page, _box, inserted = _make_body_prompt_page(prefilled=prefill)
+            t = _make_transport(page=page)
 
-        await t._submit_body_prompt(page, "DESC")  # type: ignore[attr-defined]
+            await t._submit_body_prompt(page, "warrior outfit")  # type: ignore[attr-defined]
 
-        assert inserted == ["Triptych ... DESC keep [SECOND]"]
-
-    @pytest.mark.asyncio
-    async def test_portuguese_template_substitution(self) -> None:
-        """The real live-observed Portuguese template substitutes correctly."""
-        template = (
-            "Tríptico de corpo inteiro em três ângulos diferentes: de frente, "
-            "visualização lateral (3/4) e de costas. Alta resolução, iluminação "
-            "de estúdio uniforme, proporções anatômicas consistentes em todos os "
-            "ângulos, fundo branco sólido. [DESCREVA O CORPO E A ROUPA]"
-        )
-        page, _box, inserted = _make_body_prompt_page(prefilled=template)
-        t = _make_transport(page=page)
-
-        await t._submit_body_prompt(page, "capa de chuva vermelha")  # type: ignore[attr-defined]
-
-        assert inserted[0].endswith("fundo branco sólido. capa de chuva vermelha")
-        assert "[DESCREVA O CORPO E A ROUPA]" not in inserted[0]
-        assert inserted[0].startswith("Tríptico de corpo inteiro")
+            submitted = inserted[0]
+            assert "front, side (3/4), and back" in submitted, (
+                f"front/side/back triptych instruction must always be present; got {submitted!r}"
+            )
+            assert submitted.endswith("warrior outfit")
 
     @pytest.mark.asyncio
-    async def test_fallback_when_no_placeholder(self, monkeypatch: Any) -> None:
-        """No ``[...]`` in the box → submit the raw description + warn.
+    async def test_does_not_read_prefilled_text(self) -> None:
+        """The body path must NOT depend on reading/parsing the pre-filled box —
+        ``inner_text`` is never awaited by the production code."""
+        page, box, _inserted = _make_body_prompt_page(prefilled="anything")
+        # Replace inner_text with a spy that records if it was called.
+        called: list[bool] = []
 
-        The warning is asserted by spying on the module logger's ``warning``
-        (robust regardless of structlog's global stdout-rendering state, which
-        varies under the full suite).
-        """
-        from gflow_cli.api.transports import ui_automation as _uia
+        async def _spy() -> str:
+            called.append(True)
+            return "anything"
 
-        warnings: list[str] = []
-        monkeypatch.setattr(
-            _uia.log,
-            "warning",
-            lambda event, **_kw: warnings.append(event),
-        )
-
-        page, _box, inserted = _make_body_prompt_page(
-            prefilled="Some template with no bracketed placeholder at all."
-        )
-        t = _make_transport(page=page)
-
-        await t._submit_body_prompt(page, "just the body description")  # type: ignore[attr-defined]
-
-        assert inserted == ["just the body description"], (
-            f"fallback must submit the raw description; got {inserted}"
-        )
-        assert "ui_automation.body_template_placeholder_missing" in warnings, (
-            f"the missing-placeholder warning must be logged; got {warnings}"
-        )
-
-    @pytest.mark.asyncio
-    async def test_fallback_when_box_empty(self) -> None:
-        """An empty box (no template at all) falls back to the raw description."""
-        page, _box, inserted = _make_body_prompt_page(prefilled="")
+        box.inner_text = _spy  # type: ignore[method-assign]
         t = _make_transport(page=page)
 
         await t._submit_body_prompt(page, "body desc")  # type: ignore[attr-defined]
 
-        assert inserted == ["body desc"]
+        assert called == [], (
+            "production code must NOT read the pre-filled box text "
+            "(self-contained prompt is independent of the pre-fill)"
+        )
+
+    @pytest.mark.asyncio
+    async def test_logs_self_contained_template(self, monkeypatch: Any) -> None:
+        """``ui_automation.body_prompt_templated`` is logged with
+        ``template='self_contained'`` and a length — NO body text."""
+        from gflow_cli.api.transports import ui_automation as _uia
+
+        events: list[tuple[str, dict[str, Any]]] = []
+        monkeypatch.setattr(
+            _uia.log,
+            "info",
+            lambda event, **kw: events.append((event, kw)),
+        )
+
+        page, _box, _inserted = _make_body_prompt_page(prefilled="template")
+        t = _make_transport(page=page)
+
+        await t._submit_body_prompt(page, "red raincoat")  # type: ignore[attr-defined]
+
+        templated = [kw for ev, kw in events if ev == "ui_automation.body_prompt_templated"]
+        assert len(templated) == 1, f"templated event must be logged once; got {events}"
+        kw = templated[0]
+        assert kw.get("template") == "self_contained"
+        assert isinstance(kw.get("prompt_len"), int) and kw["prompt_len"] > 0
+        # No raw body text in the log payload.
+        assert "red raincoat" not in str(kw)
