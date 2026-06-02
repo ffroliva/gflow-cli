@@ -22,6 +22,8 @@ __all__ = [
     "CharacterCreateResult",
     "CharacterImageRequest",
     "VOICES",
+    "VOICE_NAMES",
+    "Voice",
     "parse_characters",
 ]
 
@@ -39,35 +41,74 @@ CHARACTER_MODELS: dict[str, str] = {
 }
 
 # ---------------------------------------------------------------------------
-# Known preset voice ids for Gemini TTS.
-# These are the values observed in audioReferences[].presetVoiceId on the
-# wire.  Flow may expose a live-fetch endpoint in the future; until then this
-# tuple serves as a validation / completion aid.
-# TODO: check whether Flow exposes a /v1/voices (or equivalent) endpoint and
-#       replace this static list with a live fetch if so.
+# Gemini voice catalog for Character TTS.
+#
+# The canonical voice id is the Capitalized UI display name as shown in Flow's
+# voice library (e.g. "Sulafat", "Charon").  This is the same token used in the
+# sample-audio URL pattern, so the canonical id round-trips to a playable sample
+# (see :attr:`Voice.sample_url`).
+#
+# NOTE: a prior live run sent a LOWERCASE id ("charon") and it persisted, but
+# whether Flow applies the voice from a lowercase id vs the Capitalized canonical
+# form is UNVERIFIED — we adopt the Capitalized form as canonical per the UI.
+#
+# TODO(backlog): fetch the live voice list from Flow's API; confirm wire-case for
+#       presetVoiceId; support voice creation ("Criar nova voz").
 # ---------------------------------------------------------------------------
-VOICES: tuple[str, ...] = (
-    "aoede",
-    "callirrhoe",
-    "charon",
-    "despina",
-    "enceladus",
-    "fenrir",
-    "gacrux",
-    "iapetus",
-    "kore",
-    "leda",
-    "orus",
-    "puck",
-    "rasalgethi",
-    "sadachbia",
-    "sadaltager",
-    "schedar",
-    "sulafat",
-    "umbriel",
-    "vindemiatrix",
-    "zephyr",
+
+
+@dataclass(frozen=True)
+class Voice:
+    """A Gemini TTS voice from Flow's character voice library.
+
+    ``name`` is the canonical voice id — the Capitalized UI display name — which
+    also drives the sample-audio URL.  ``description`` is the short UI descriptor
+    (gender / tone / pitch); it may be ``None`` when not captured.
+    """
+
+    name: str
+    description: str | None = None
+
+    @property
+    def sample_url(self) -> str:
+        """gstatic sample-audio URL for this voice (Capitalized name)."""
+        return f"https://gstatic.com/aitestkitchen/voices/samples/{self.name}.wav"
+
+
+VOICES: tuple[Voice, ...] = (
+    Voice("Achernar", "Female, soft, high pitch"),
+    Voice("Achird", "Male, friendly, mid pitch"),
+    Voice("Algenib", "Male, gravelly, low pitch"),
+    Voice("Algieba", "Male, easy-going, mid-low pitch"),
+    Voice("Alnilam", "Male, firm, mid-low pitch"),
+    Voice("Aoede", "Female, breezy, mid pitch"),
+    Voice("Autonoe", "Female, bright, mid pitch"),
+    Voice("Callirrhoe", "Female, easy-going, mid pitch"),
+    Voice("Charon", "Male, informative, lower pitch"),
+    Voice("Despina", "Female, smooth, mid pitch"),  # descriptor unverified
+    Voice("Erinome", "Female, clear, mid pitch"),
+    Voice("Fenrir", "Male, excitable, younger pitch"),
+    Voice("Gacrux", "Female, mature, mid pitch"),
+    Voice("Iapetus", "Male, clear, mid-low pitch"),
+    Voice("Kore", "Female, firm, mid pitch"),
+    Voice("Laomedeia", "Female, upbeat, mid-high pitch"),
+    Voice("Leda", "Female, youthful, mid-high pitch"),
+    Voice("Orus", "Male, firm, mid-low pitch"),
+    Voice("Puck", "Male, upbeat, mid pitch"),
+    Voice("Pulcherrima", "Ungendered, forward, mid-high pitch"),
+    Voice("Rasalgethi", "Male, informative, mid pitch"),
+    Voice("Sadachbia", "Male, lively, low pitch"),
+    Voice("Sadaltager", "Male, knowledgeable, mid pitch"),
+    Voice("Schedar", "Male, even, mid-low pitch"),
+    Voice("Sulafat", "Female, warm, mid pitch"),
+    Voice("Umbriel", "Male, smooth, lower pitch"),
+    Voice("Vindemiatrix", "Female, gentle, mid pitch"),
+    Voice("Zephyr", "Female, bright, mid-high pitch"),
+    Voice("Zubenelgenubi", "Male, casual, mid-low pitch"),
 )
+
+# Convenience tuple of just the canonical names — for validation / back-compat.
+VOICE_NAMES: tuple[str, ...] = tuple(v.name for v in VOICES)
 
 
 # ---------------------------------------------------------------------------

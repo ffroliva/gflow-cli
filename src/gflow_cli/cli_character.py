@@ -10,7 +10,12 @@ from rich.console import Console
 
 from gflow_cli import json_output
 from gflow_cli._cli_helpers import _make_provider_dir, _resolve_profile, run_with_handlers
-from gflow_cli.api.character import VOICES, Character, CharacterCreateResult, CharacterImageRequest
+from gflow_cli.api.character import (
+    VOICES,
+    Character,
+    CharacterCreateResult,
+    CharacterImageRequest,
+)
 from gflow_cli.api.client import FlowApiClient
 from gflow_cli.config import get_settings
 from gflow_cli.data.recorder import OperationRecorder
@@ -18,6 +23,33 @@ from gflow_cli.services.character_create import character_create
 
 console = Console()
 log = structlog.get_logger(__name__)
+
+
+# ---------------------------------------------------------------------------
+# Voice validation
+# ---------------------------------------------------------------------------
+
+
+def _normalize_voice(value: str | None) -> str | None:
+    """Validate ``value`` against the voice catalog case-insensitively.
+
+    Returns the canonical Capitalized voice name (so ``charon`` and ``Charon``
+    both normalize to ``"Charon"``), or ``None`` when ``value`` is ``None``.
+
+    Raises:
+        click.BadParameter: when ``value`` is not a known voice. The message is
+            language-agnostic and points at ``gflow character voices``.
+    """
+    if value is None:
+        return None
+    by_lower = {v.name.lower(): v.name for v in VOICES}
+    canonical = by_lower.get(value.strip().lower())
+    if canonical is None:
+        raise click.BadParameter(
+            f"unknown voice: {value!r} — run `gflow character voices` for valid names",
+            param_hint="--voice",
+        )
+    return canonical
 
 
 # ---------------------------------------------------------------------------
@@ -49,7 +81,11 @@ def character() -> None:
         "a description of the body and outfit, not a full prompt."
     ),
 )
-@click.option("--voice", default=None, help="Preset voice id (e.g. gacrux).")
+@click.option(
+    "--voice",
+    default=None,
+    help="Preset voice name (e.g. Charon); case-insensitive. See `gflow character voices`.",
+)
 @click.option("--personality", default=None, help="Personality notes for the character.")
 @click.option(
     "--model",
@@ -79,6 +115,7 @@ def create(
     patches the entity.  Uses the persist-before-spend saga so a crashed run
     is recoverable.
     """
+    voice = _normalize_voice(voice)
     profile_name = _resolve_profile(profile)
     pdir = _make_provider_dir(profile_name)
     settings = get_settings()
@@ -279,12 +316,22 @@ async def _run_show(
 @character.command("voices")
 @click.option("--json", "as_json", is_flag=True, default=False, help="Emit JSON output.")
 def voices(as_json: bool) -> None:
-    """List preset voice ids available for Character TTS."""
+    """List preset voices available for Character TTS."""
     if as_json:
-        json_output.emit({"status": "ok", "voices": list(VOICES)})
+        json_output.emit(
+            {
+                "status": "ok",
+                "voices": [
+                    {"name": v.name, "description": v.description, "sample_url": v.sample_url}
+                    for v in VOICES
+                ],
+            }
+        )
     else:
+        width = max(len(v.name) for v in VOICES)
         for v in VOICES:
-            console.print(v)
+            desc = v.description or "-"
+            console.print(f"{v.name:<{width}}  {desc}  (sample: {v.sample_url})")
 
 
 # ---------------------------------------------------------------------------
