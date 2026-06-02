@@ -29,6 +29,23 @@ consistently from shot to shot. This is the feature requested in #145.
 `gflow` exposes this as a first-class command group, `gflow character`, plus a `--character` reuse flag on
 generation commands.
 
+### 1.1 How it works (plain language)
+
+`gflow character create` builds a character in **two credited generation steps**, kept visually consistent by
+seeding the second step with the first:
+
+1. **Face (slot 0).** gflow submits your `--face-prompt` and Flow generates the **face** image. This becomes
+   the character's first reference image.
+2. **Body (slot 1).** gflow clicks the editor's slot-add ("+") button, which **auto-attaches the just-generated
+   face image as the reference seed** for the new slot. gflow then submits its **own self-contained
+   front/side/back triptych prompt** (it wraps your `--body-prompt` body/outfit description). Because the face
+   is attached as the seed, a **single credited generation** produces all three body angles — front, side, and
+   back — that match the face.
+
+The result: two generations (face + body-triptych), the body kept on-model by the face seed. Everything else —
+naming the character, setting the voice/personality, and saving — is free metadata (REST), not generation. See
+§4 for the full saga and §6.2 for the wire payload.
+
 ### Why this, not Avatar (#123)
 Flow's **Avatar/likeness** (`referenceLikenesses`) is verified-identity + region gated —
 `GET /v1/flow/likeness:checkEligibility` returns `{"ineligibilityReasons":["REGION"]}` for our accounts, so
@@ -154,6 +171,10 @@ sequenceDiagram
   ```
   plus `useNewMedia:true`. **`entityContext` is what binds the generation to the character** — the server then
   stamps the new workflow's `parentEntityId` and auto-links it into the entity's `imageReferences[slot]`.
+  > **Wire-vs-CLI caveat:** `imageModelName` (`"NARWHAL"`) and `imageAspectRatio` are Flow's internal
+  > `batchGenerateImages` endpoint fields (recon), **NOT the gflow CLI surface** — `gflow character create`
+  > exposes only `--model nano2|nanopro` and has **no aspect-ratio control**.
+
   `imageReferenceIndex`: **0 = face, 1 = body**, etc. `imageInputs`: empty for a fresh slot; `REFERENCE`
   (= the face mediaId) when generating the body; `BASE_IMAGE`+`REFERENCE` when *refining* an existing slot
   (refinements also carry `clientContext.workflowId` to reuse that slot's workflow).
@@ -440,6 +461,13 @@ table → test mapping):
 `parentEntityId == entityId` against Flow's wire, mid-saga crash recovery against the real DB, and the
 slot-add `.nth(1)` + picker-include structural selectors under a non-EN locale.
 
+## 13.1 Known issues
+
+> **Editor shows "Untitled Character":** gflow sets the character name via `entityInfo.displayName`
+> (REST PATCH), which is correct in the API and in `gflow character show` / `list`. Flow's character *editor*
+> view has a separate title widget that gflow does not populate, so the editor may cosmetically display
+> "Untitled Character". **Display-only** — the entity name is correct everywhere else.
+
 ## 14. Backlog — not yet implemented
 
 The following are explicitly **out of the shipped scope** and tracked for future work:
@@ -464,3 +492,9 @@ The following are explicitly **out of the shipped scope** and tracked for future
 - **`gflow character rm` / `gflow image --character`.** The entity **delete** verb and the **image-path**
   reuse (`referenceEntities` on the image endpoint) are uncaptured — deferred until their wire shapes are
   reverse-engineered.
+- **Set the Flow editor title field** so the editor isn't "Untitled Character" (see [§13.1 Known issues](#131-known-issues)).
+  Investigate either the UI title box (with a Ctrl+A merge-bug workaround) or finding the dedicated title
+  field/endpoint that the editor widget reads from, distinct from `entityInfo.displayName`.
+- **Saga code-quality refactor (non-blocking; Sonar duplication/complexity).** Extract a `_run_slot` helper for
+  the duplicated face/body blocks in the create saga, and return a small DTO from `generate_character_image`
+  instead of a 3-tuple cast.
