@@ -11,6 +11,11 @@
 > **v1 scope (post-predict):** `create` + `list` + `show` + `gflow video --character`. Deferred to v2:
 > `gflow image --character` (image reuse path uncaptured) and `gflow character rm` (delete verb uncaptured).
 
+> **Phase-2 status (2026-06-02, LIVE-VERIFIED):** the create saga + character-editor UI generation are
+> implemented and spike-verified. This section's selectors, editor URL, generation protocol (Option B),
+> `flow/entities` PATCH, and the create CLI are now **VERIFIED against shipped code**, not guesses. Remaining
+> live-only coverage (binding / recovery / UTF-8 e2e) is Task 12 — see §13.
+
 ## 1. What it is
 
 A **Character** is a reusable, project-scoped identity in Google Flow: a named subject with one or more
@@ -63,29 +68,49 @@ reCAPTCHA browser path and consume credits; all structural operations are free R
 Auth model per [[aisandbox-rest-needs-sapisidhash]]: aisandbox REST wants `Authorization: Bearer ya29…`
 (from `GET /fx/api/auth/session`); tRPC calls ride the labs.google session cookies.
 
-## 4. Sequence — create a character
+## 4. Sequence — create a character (VERIFIED, Phase-2)
+
+The shipped saga lives in `services/character_create.py::character_create` and is **persist-before-spend +
+crash-recoverable**: the recorder writes a `STARTED` row (carrying `entityId`) *before* any credited
+generation, records each slot as it completes (`record_character_partial`), and only flips to `SUCCEEDED`
+after the entity is saved. On a crash anywhere after `createEntity`, the next run detects the incomplete row
+(`find_incomplete_character`), reuses the `entityId`, and skips any slot whose ids are already recorded — no
+orphan double-charge. Generation rides Flow's own page JS in the **character editor** (Option B,
+passive-capture); the structural calls are direct REST.
 
 ```mermaid
 sequenceDiagram
-  participant CLI as gflow
+  participant CLI as gflow character create
+  participant SAGA as character_create saga
+  participant REC as recorder (SQLite)
   participant BFF as labs.google (tRPC)
-  participant API as aisandbox-pa (REST)
-  participant GEN as Flow gen (reCAPTCHA, browser)
-  CLI->>BFF: POST flow.createEntity {projectId}
-  BFF-->>CLI: { entityId, entityType:CHARACTER, characterInfo:{} }
-  Note over CLI,GEN: gen into the EXISTING projectId, tool=PINHOLE,\nmediaGenerationContext.entityContext{entityId, characterSlot.imageReferenceIndex:0}
-  CLI->>GEN: flowMedia:batchGenerateImages (face, slot 0)
-  GEN-->>CLI: media[mediaId], workflows[workflowId, parentEntityId]  %% server auto-links imageReferences[0]
-  opt body (slot 1) / refinement
-    CLI->>GEN: flowMedia:batchGenerateImages (entityContext slot 1; imageInputs REFERENCE=face)
-    GEN-->>CLI: media, workflow (auto-linked imageReferences[1])
+  participant API as aisandbox-pa (Bearer REST)
+  participant UI as Flow character editor (UI passive-capture, reCAPTCHA)
+  CLI->>SAGA: create(project, name, face_prompt, [body_prompt, voice, personality])
+  SAGA->>BFF: client.create_entity(projectId)         %% free REST
+  BFF-->>SAGA: entityId (entityType=CHARACTER)
+  SAGA->>REC: record_character_started(entityId)      %% persist-before-spend gate
+  SAGA->>UI: generate_character_image(slot 0=face)    %% credit; navigates /fx/{locale}/…/character/{entityId}
+  UI-->>SAGA: media[mediaId], workflows[workflowId, parentEntityId]
+  Note over SAGA: GUARD — reject if workflows[0].parentEntityId != entityId (WireFormatError)
+  SAGA->>API: commit_workflow(wf0, primaryMediaId=m0) %% PATCH flowWorkflows — free REST
+  SAGA->>REC: record_character_partial(face slot)
+  opt body_prompt given
+    SAGA->>UI: generate_character_image(slot 1=body; imageInputs REFERENCE=face)  %% credit, SEQUENTIAL
+    UI-->>SAGA: media, workflow (parentEntityId guard re-checked)
+    SAGA->>API: commit_workflow(wf1, primaryMediaId=m1)
+    SAGA->>REC: record_character_partial(body slot)
   end
-  opt choose primary within a refined slot
-    CLI->>API: PATCH flowWorkflows/{workflowId} {metadata.primaryMediaId}
-  end
-  CLI->>API: PATCH flow/entities {displayName, characterInfo{personalityNotes, audioReferences}}
-  API-->>CLI: entity (imageReferences already populated by entityContext gen)
+  SAGA->>API: patch_entity {displayName, characterInfo{personalityNotes, audioReferences, imageReferences}}  %% free REST
+  API-->>SAGA: persisted entity
+  SAGA->>REC: record_character_completed(SUCCEEDED)
+  SAGA-->>CLI: CharacterCreateResult {entityId, workflowIds, voice, personality}
 ```
+
+> **VERIFIED 2026-06-02:** `workflows[0].parentEntityId == entityId` is the **binding invariant** —
+> `client.generate_character_image` raises `WireFormatError` if the captured workflow's `parentEntityId` does
+> not equal the requested `entityId` (guards both the spike-v1 wrong-project 404 and a foreign workflow). Face
+> and body are **sequential**, never `gather`'d (a true data dependency: body references the face mediaId).
 
 ## 5. Sequence — reuse a character (R2V)
 
@@ -129,8 +154,20 @@ sequenceDiagram
   `imageReferenceIndex`: **0 = face, 1 = body**, etc. `imageInputs`: empty for a fresh slot; `REFERENCE`
   (= the face mediaId) when generating the body; `BASE_IMAGE`+`REFERENCE` when *refining* an existing slot
   (refinements also carry `clientContext.workflowId` to reuse that slot's workflow).
-- **Out** `media[{ name(mediaId), image{ generatedImage{ fifeUrl, mediaGenerationId, modelNameType }, dimensions } }]`,
-  `workflows[{ name(workflowId), metadata{ displayName, primaryMediaId, batchId }, projectId, parentEntityId }]`
+- **Out** (VERIFIED 2026-06-02 — `flowMedia:batchGenerateImages` returns **HTTP 200**, no 403, when driven
+  through Flow's own JS in the character editor):
+  ```json
+  { "media": [ { "name": "<mediaId>", "workflowId": "<workflowId>",
+      "image": { "generatedImage": { "seed": 826730, "mediaGenerationId": "<id>", "prompt": "<text>",
+                   "modelNameType": "NARWHAL", "fifeUrl": "<signed>" }, "dimensions": {} } } ],
+    "workflows": [ { "name": "<workflowId>",
+      "metadata": { "displayName": "<name>", "primaryMediaId": "<mediaId>", "batchId": "<uuid>",
+                    "createTime": "…", "updateTime": "…" },
+      "projectId": "<projectId>", "parentEntityId": "<entityId>" } ] }
+  ```
+  **`workflows[0].parentEntityId == entityId` is the binding invariant** — `client.generate_character_image`
+  raises `WireFormatError` otherwise. The signed `fifeUrl` is **never persisted** (the client returns only ids
+  — mediaId/workflowId — to the saga; structural by construction).
 
 > ⚠️ **This request must be issued by Flow's own page JS — not by us.** Two spikes (2026-06-02) fixed the
 > bounds: (1) gflow's `generate_image` clicks "new project" + omits `entityContext` → workflow lands in the
@@ -143,8 +180,8 @@ sequenceDiagram
 ### 6.3 `PATCH flowWorkflows/{workflowId}`
 - **In** `{ "workflow": { "name", "projectId", "metadata": { "primaryMediaId" } }, "updateMask": "metadata.primaryMediaId" }`
 
-### 6.4 `PATCH flow/entities` (save)
-- **In**
+### 6.4 `PATCH flow/entities` (save) — VERIFIED 2026-06-02
+- **In** (LIVE-VERIFIED request shape; `updateMask` is a comma-joined path list)
   ```json
   { "entity": { "projectId", "entityId",
       "entityInfo": { "displayName": "Denidra",
@@ -153,7 +190,8 @@ sequenceDiagram
           "imageReferences": [ { "workflowId": "…" } ] } } },
     "updateMask": "entityInfo.displayName,entityInfo.characterInfo.personalityNotes,entityInfo.characterInfo.audioReferences,entityInfo.characterInfo.imageReferences" }
   ```
-- **Out** the persisted `entity` (echoes `entityInfo`, `createTime`, `updateTime`).
+- **Out** (VERIFIED) the persisted `entity`, echoing
+  `{ entity: { projectId, entityId, entityInfo: { entityType:"CHARACTER", displayName, characterInfo }, createTime, updateTime } }`.
 
 ### 6.5 `flow.projectInitialData` (list/show)
 - **Out** `result.data.json.projectContents.entities[]`, each:
@@ -185,7 +223,7 @@ flow exists but is **out of scope for v1**. `gflow character create --voice <id>
 
 | Command | Maps to |
 |---|---|
-| `gflow character create <name> --face-prompt … [--body-prompt …] [--voice <id>] [--personality …] [--aspect …] [--model nano-banana-2]` | createEntity → gen → PATCH workflow → PATCH entity |
+| `gflow character create --project <id> --name <name> --face-prompt … [--body-prompt …] [--voice <id>] [--personality …] [--aspect 9:16] [--model narwhal] [--profile …] [--locale en-US] [--json]` *(VERIFIED — shipped option names)* | createEntity → gen face (slot 0) → commit_workflow → optional gen body (slot 1) → commit_workflow → patch_entity, via the persist-before-spend saga (§4) |
 | `gflow character list` | projectInitialData → entities[CHARACTER] |
 | `gflow character show --project <id> (--id <entityId> \| --name <displayName>)` | projectInitialData (single); name collision → exit 11 with disambiguation hint |
 | `gflow character voices [--json]` | list valid `presetVoiceId`s (language-agnostic discovery; mirrors `gflow models --json`) |
@@ -211,10 +249,12 @@ never hard-code wire names in user-facing help — see [[cli-model-aliases-verif
 - **Credit safety.** Only steps in §3 marked *Credits = yes* spend; **persist-before-spend** (record
   `entityId` + workflow rows before the credited gen) and verify per the verification ledger. Structural REST
   ops are free and idempotent-ish (PATCH with updateMask).
-- **Privacy / redaction.** `personalityNotes` is free-text PII → treat as prompt-equivalent (route through the
-  same redaction as prompts). Persist `mediaId`/`workflowId`, **never signed `fifeUrl`s**; assert no
-  `signature=` URL reaches the DB. Reuse `_post_json`'s redaction wrapper on the new tRPC/REST calls
-  (`show_locals=False`).
+- **Privacy / redaction (VERIFIED).** `personalityNotes` is free-text PII → routed through the recorder's
+  `prompt_fields(..., mode=prompt_mode)` so redacted mode (`GFLOW_CLI_HISTORY_PROMPTS=redacted`) **hashes** it
+  exactly like a prompt (`data/recorder.py` + `data/redaction.py`). The signed `fifeUrl` is **never persisted**
+  — `client.generate_character_image` returns only ids (mediaId/workflowId) to the saga, so no `signature=`/
+  `Expires=` URL can reach a DB row (structural guarantee, not just a strip). Reuse `_post_json`'s redaction
+  wrapper on the new tRPC/REST calls (`show_locals=False`).
 - **Data layer.** Persist `entityId`, `workflowId`s, `primaryMediaId`s, voice, personality so a character is
   recoverable and reusable across sessions (mirrors the scene persistence + migration pattern).
 - **Docs are first-class.** This document is the living spec; update it in the same PR as any behavioural
@@ -297,37 +337,44 @@ never hard-code wire names in user-facing help — see [[cli-model-aliases-verif
   - **Cost reality:** the feature is UI-automation-heavy (new character-editor + picker selectors), not the
     "mostly REST" earlier framing. Structural metadata is REST; the value-generating steps are UI.
 
-## 12. UI-automation selectors (Option B) — captured 2026-06-02
+## 12. UI-automation selectors (Option B) — VERIFIED 2026-06-02
 
-Language-agnostic (ligature/structural) selectors from live DOM dumps (denon82, project `96e81f06`,
-`scripts/dev/dump_character_selectors.js`). Flow renders in the profile locale, so **never match on
-localized text** — use Material-Symbol ligatures (`i.google-symbols:text-is('<lig>')`) or structure.
+Language-agnostic (ligature/structural) selectors. Flow renders in the profile locale, so **never match on
+localized text** — use Material-Symbol ligatures (`i.google-symbols:text('<lig>')`) or structure. Rows marked
+**VERIFIED** are confirmed against the shipped `api/transports/ui_automation.py` + spike DOM dumps (denon82).
 
-**Create flow needs UI only for image generation.** After REST `createEntity`, navigate directly to
-`/{locale}/tools/flow/project/{projectId}/character/{entityId}` (the URL context makes Flow set
-`entityContext` on the generation) and reuse gflow's existing prompt + submit machinery. Name / voice /
-personality are REST `PATCH flow/entities`. So the only *new* selectors are the slot-add and the picker's
-include button.
+**Editor URL (VERIFIED — `/fx/` prefix required).** After REST `createEntity`, the character-editor path is
+
+```
+https://labs.google/fx/{locale}/tools/flow/project/{projectId}/character/{entityId}
+```
+
+Built by `routes.character_editor_url(locale, projectId, entityId)`. The **`/fx/` prefix is load-bearing** —
+without it Flow 404s (caught by spike T-A; the fix sourced the URL from `LABS_FX_BASE`). Navigating to this
+URL (not the new-project flow) is what makes Flow's JS set `entityContext` on the generation. Name / voice /
+personality are REST `PATCH flow/entities`. The only *new* generation selectors are the prompt/submit (already
+owned by gflow) and the slot-add.
 
 | Purpose | Selector | Conf. |
 |---|---|---|
+| Editor-ready anchor | the prompt textbox becoming visible: `div[role=textbox][data-slate-editor='true']` (`_CHARACTER_EDITOR_READY_SELECTOR`) | **VERIFIED** |
+| Prompt box (char editor) | `div[role=textbox][data-slate-editor='true']` (== `PROMPT_INPUT_SELECTORS[0]`) | **VERIFIED** |
+| Generate / submit | `arrow_forward` google-symbols button: `button:has(i.google-symbols:text('arrow_forward'))` (== `SUBMIT_BUTTON_SELECTORS`) | **VERIFIED** |
+| Name field | `input[placeholder]` — localized placeholder; **do NOT rely on the text** (structural: it is the editor's lone placeholdered input) | **VERIFIED** |
+| Personality field | the panel `textarea` (localized placeholder) — **prefer REST PATCH** | **VERIFIED** |
+| Slot 0 image (face) | aria-label `"Imagem do personagem 1"` — **localized**, note only (do not load-bear on the text) | med (localized) |
+| **Slot-add (body / slot 1)** | `add_2` google-symbols ligature; the editor has **TWO** `add_2` buttons → slot-add is **`.nth(1)`** (`_CHARACTER_SLOT_ADD_SELECTOR = "button:has(i.google-symbols:text('add_2'))"`). The **first** `add_2` is the gallery "+ New project" CTA → positional disambiguation. ⚠️ confirm `.nth(1)` in the live body-gen e2e (Task 12). | **VERIFIED** (selector) / ⚠️ ordering |
+| Model picker (char editor) | `button[aria-haspopup='menu']:has(i.google-symbols:text-is('arrow_drop_down'))` *(normal editor uses `crop_16_9`)* | **VERIFIED** |
+| Voice picker | `voice_selection` google-symbols ligature | **VERIFIED** (ligature) |
 | Personagens nav (project) | `button:has(i.google-symbols:text-is('accessibility_new'))` (cards are `div[role=button]`; tag disambiguates) | high |
-| Open a character card | `div[role=button]:has(i.google-symbols:text-is('accessibility_new')):has-text('<name>')` — or skip the grid: nav to `/character/{entityId}` | high |
-| Prompt box (char editor) | `div[role=textbox][data-slate-editor='true']` *(gflow already has this)* | high |
-| Generate / submit | `button:has(i.google-symbols:text-is('arrow_forward'))` *(gflow already has this)* | high |
-| Model picker (char editor) | `button:has(i.google-symbols:text-is('arrow_drop_down'))` near the model chip *(normal editor uses `crop_16_9`)* | med |
-| Personality field | the panel `textarea` (placeholder `Descreva…`) — **prefer REST PATCH** | high |
-| Delete character (rm, v2) | `button:has(i.google-symbols:text-is('delete'))` ("Excluir personagem") | high |
-| Existing slot thumb | `div[role=button]` ("Imagem do personagem N") | med |
-| **Slot-add (body/extra)** | `div[role=button]` with NO thumbnail (last in slot row) — **no ligature → structural anchor needed** | low ⚠️ |
+| Delete character (rm, v2) | `button:has(i.google-symbols:text-is('delete'))` | high |
 | Picker tab → Personagens | `[role=dialog] button[role=tab]:has(i.google-symbols:text-is('accessibility_new'))` | high |
-| Picker character option | `[role=dialog] [role=option]` (character rows; image rows differ) → pick by `:has-text('<name>')` | med |
-| **Picker "Incluir no comando"** | primary `button` in the dialog footer — **no ligature → structural anchor (last/primary dialog button)** | low ⚠️ |
+| **Picker "include in command"** | primary `button` in the dialog footer — **no ligature → structural anchor (last/primary dialog button)**; only appears *after* an option is selected | low ⚠️ |
 
-⚠️ **Open structural-selector tasks:** the slot-add and the picker include button have no ligature and only
-localized text — derive a structural anchor (DOM position / dialog-footer primary) during TDD; do NOT match
-their text. Also still uncaptured: the "Novo personagem" grid card (not needed — we nav to `/character/{id}`
-after REST create) and the picker include button only appears *after* an option is selected.
+⚠️ **Documented risk (Task-12 e2e):** the slot-add `.nth(1)` ordering and the picker include button (no
+ligature, localized text only) are positional/structural anchors that must be confirmed under a live non-EN
+locale. Slot 0's `"Imagem do personagem N"` aria-label is **localized** — used as a note, never as a
+load-bearing selector.
 
 Shared chrome already automated by gflow (reuse as-is): `add_2` (+/Criar add-media → opens picker),
 `arrow_forward` (submit), the Slate prompt box, model dropdown, `check`/Concluir.
@@ -353,3 +400,26 @@ The `/gflow:plan` exit criteria must list each scenario as a named, covered test
 
 Live-tier e2e (credit-spending: create, video reuse) gated behind explicit opt-in env and run on denon82 per
 the verification ledger (file count + dims + structlog invariants + read-back), not just mocked transports.
+
+### Phase-2 coverage status (2026-06-02)
+
+Now covered by shipped unit/BDD tests (see `docs/superpowers/character-scenario.md` for the full scenario
+table → test mapping):
+
+- #1 — char-gen never direct-POSTs: `tests/services/test_character_gen_no_direct_post.py`
+- #3/#4 — persist-before-spend recovery: saga recovery tests + BDD resume
+  (`tests/services/test_character_create_saga.py`, `tests/data/test_find_incomplete_character.py`,
+  `tests/features/test_character_create_steps.py`)
+- #5 — `parentEntityId` binding guard: `test_generate_character_image_rejects_foreign_workflow`
+  (`tests/api/test_client_generate_character.py`) + saga binding test
+- #15/#16 — redaction (personality hashed, no signed URL): `tests/services/test_character_create_redaction.py`
+  + recorder tests (`tests/data/test_recorder_character.py`)
+- #18 — accented `--personality`/`--face-prompt` round-trip: CLI accented test
+  (`tests/cli/test_cli_character_create.py`)
+- #21 — transport-None guard (`generate_character_image` raises when `transport is None`); the **real** headed
+  Chrome-strategy guard at `__aenter__` is deferred to live e2e (Task 12)
+- #22 — face→body sequential (never gathered): saga sequential test
+
+**Remaining LIVE-e2e-only (Task 12):** the live binding/recovery/UTF-8 e2e on denon82 — real
+`parentEntityId == entityId` against Flow's wire, mid-saga crash recovery against the real DB, and the
+slot-add `.nth(1)` + picker-include structural selectors under a non-EN locale.
