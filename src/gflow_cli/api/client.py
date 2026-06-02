@@ -28,7 +28,7 @@ from playwright.async_api import BrowserContext, Page, Playwright, async_playwri
 
 from gflow_cli.api import routes
 from gflow_cli.api._retry import parse_retry_after, post_with_retry
-from gflow_cli.api.character import Character, parse_characters
+from gflow_cli.api.character import Character, CharacterImageRequest, parse_characters
 from gflow_cli.api.dto import AssetInfo, GeneratedImage, ProjectInfo
 from gflow_cli.api.recaptcha import TokenMinter
 from gflow_cli.api.scene import ConcatInput, Scene, SceneWorkflow
@@ -1391,6 +1391,87 @@ class FlowApiClient:
             workflow_count=len(workflow_ids),
         )
 
+    async def generate_character_image(
+        self,
+        *,
+        project_id: str,
+        entity_id: str,
+        req: CharacterImageRequest,
+        image_reference_index: int = 0,
+        locale: str = "en-US",
+    ) -> tuple[str, str]:
+        """Generate a character reference image via the UI transport and return
+        ``(workflow_id, primary_media_id)``.
+
+        All generation is UI-driven (Option B passive capture) — this method
+        NEVER posts directly to a generation REST endpoint.  The transport's
+        ``generate_character_images`` is the only call that may trigger network
+        I/O.
+
+        Args:
+            project_id: Flow project that owns the character entity.
+            entity_id: The CHARACTER entity whose editor will be driven.
+            req: :class:`~gflow_cli.api.character.CharacterImageRequest` DTO
+                (prompt, aspect, model, face_media_id, …).
+            image_reference_index: 0-based slot index for the character image
+                reference (0 = face/first slot).
+            locale: BCP-47 locale forwarded to the UI transport so Flow renders
+                in the correct language.  Defaults to ``"en-US"``.
+
+        Returns:
+            ``(workflow_id, primary_media_id)`` — both are stable ids extracted
+            from the first returned workflow.  Neither value is a signed URL.
+
+        Raises:
+            RuntimeError: transport is ``None`` (client not entered / not set up).
+            :class:`~gflow_cli.errors.WireFormatError`: the returned workflow's
+                ``parentEntityId`` does not match ``entity_id`` (foreign workflow
+                guard, scenario #5), or no workflows were returned.
+        """
+        if self.transport is None:
+            msg = (
+                "FlowApiClient.transport is None — call generate_character_image "
+                "inside 'async with client' with a Chrome-strategy profile"
+            )
+            raise RuntimeError(msg)
+
+        _raw = await self.transport.generate_character_images(  # type: ignore[attr-defined]
+            project_id=project_id,
+            entity_id=entity_id,
+            request=req,
+            image_reference_index=image_reference_index,
+            locale=locale,
+        )
+        _images, workflows = cast(
+            "tuple[list[GeneratedImage], list[dict[str, Any]]]",
+            _raw,
+        )
+
+        if not workflows:
+            raise WireFormatError(
+                detail="generate_character_images returned no workflows",
+                route="generateCharacterImage",
+            )
+
+        wf: dict[str, Any] = workflows[0]
+        parent: str | None = wf.get("parentEntityId")
+        if parent != entity_id:
+            raise WireFormatError(
+                detail=f"workflow parentEntityId {parent!r} != entity {entity_id!r}",
+                route="generateCharacterImage",
+            )
+
+        workflow_id: str = cast(str, wf["name"])
+        media_id: str = cast(str, wf["metadata"]["primaryMediaId"])
+
+        logger.info(
+            "character.image_generated",
+            entity_id=entity_id,
+            workflow_id=workflow_id,
+            slot=image_reference_index,
+        )
+        return workflow_id, media_id
+
 
 def _default_project_title() -> str:
     return datetime.now().strftime("gflow-cli %b %d, %I:%M %p")
@@ -1494,7 +1575,8 @@ def _raise_for_non_retryable(resp: Any, body_text: str, *, route: str) -> None:
     ranges should have been raised inside the retry loop and never reach
     here. Side-effect-only: raises on 4xx, returns silently on 2xx.
 
-    * 401/403 → :class:`AuthExpiredError`
+    * 401 → :class:`AuthExpiredError`
+    * 403 → :class:`WafRejectionError` (reCAPTCHA/WAF wall, not auth expiry)
     * other 4xx → :class:`WireFormatError` with discovery payload so
       ``grep error_class=WireFormatError`` reveals what was unexpected.
     """
