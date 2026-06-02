@@ -23,6 +23,36 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ### Added
 
+- **`gflow character` command group — reusable Flow Character entities (#145).**
+  Mint a project-scoped **Character** (a named subject with reference images, an
+  optional voice, and an optional personality) so the same subject appears
+  consistently across generations:
+  - `gflow character create --project <pid> --name <name> --face-prompt "…"
+    [--body-prompt "…"] [--voice <Name>] [--personality "…"]
+    [--model nano2|nanopro]` — two-step generation: a **face** reference (slot 0),
+    then a self-contained **front/side/back triptych body** (slot 1) seeded by the
+    generated face. gflow injects its own triptych instruction, so one body
+    generation yields all three angles. Characters have **no aspect-ratio
+    control** and exactly two models — `nano2` (Nano Banana 2, default) and
+    `nanopro` (Nano Banana Pro). Generated images are **downloaded** to local (or
+    cloud) storage; the signed `fifeUrl` is used only at download and never
+    persisted.
+  - `gflow character list --project <pid>` — list every Character in a project.
+  - `gflow character show --project <pid> (--id <entityId> | --name <name>)` —
+    show one Character; an ambiguous `--name` exits 11.
+  - `gflow character voices` — list the 29-name Gemini voice catalog
+    (name / description / sample-url); `--voice` is validated case-insensitively.
+
+  The credited generation rides Flow's own page JS in the character editor
+  (Option B, UI passive-capture — a self-assembled direct POST is reCAPTCHA-403
+  walled); the structural calls (createEntity, workflow/entity PATCH,
+  projectInitialData) are credit-free REST. Creation runs as a
+  **persist-before-spend, crash-recoverable saga**: the `entityId` and each
+  completed slot are recorded before/as credits are spent, so a crashed run
+  resumes without orphaning a paid generation or double-charging. Live-verified
+  end-to-end on 2026-06-02 (face + triptych body, both bound, downloaded, read
+  back). See [docs/CHARACTER.md](docs/CHARACTER.md).
+
 - **`gflow video chain` — last-frame I2V chaining.** Render a JSONL manifest of
   *links* into one continuous sequence: link 0 is a text-to-video generation,
   and every later link is an image-to-video generation **seeded by the extracted

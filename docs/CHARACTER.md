@@ -1,6 +1,6 @@
 # Characters — feature spec & system design
 
-> **Status:** design (reverse-engineering complete) · **Issue:** [#145](https://github.com/ffroliva/gflow-cli/issues/145) · **Branch:** `feature/character-creation`
+> **Status:** SHIPPED (live-verified 2026-06-02) · **Issue:** [#145](https://github.com/ffroliva/gflow-cli/issues/145) · **Branch:** `feature/character-creation`
 > **Living document.** Evolve this as the feature and Flow's API evolve. Raw capture provenance lives in
 > [`CHARACTER_RECON.md`](CHARACTER_RECON.md); the cross-feature decision lens is
 > [the REST-path capability matrix](#capability--cost).
@@ -8,13 +8,16 @@
 > built **greenfield off `develop`, NOT stacked on #123** (that branch is CONFLICTING and likeness-specific;
 > see [Design decisions](#11-design-decisions-post-predict)).
 
-> **v1 scope (post-predict):** `create` + `list` + `show` + `gflow video --character`. Deferred to v2:
-> `gflow image --character` (image reuse path uncaptured) and `gflow character rm` (delete verb uncaptured).
+> **Shipped scope:** `gflow character create` + `list` + `show` + `voices`. The reuse path
+> `gflow video --character` (Phase 3), `gflow image --character`, and `gflow character rm` are **not yet
+> implemented** — see [Backlog](#14-backlog--not-yet-implemented).
 
-> **Phase-2 status (2026-06-02, LIVE-VERIFIED):** the create saga + character-editor UI generation are
-> implemented and spike-verified. This section's selectors, editor URL, generation protocol (Option B),
-> `flow/entities` PATCH, and the create CLI are now **VERIFIED against shipped code**, not guesses. Remaining
-> live-only coverage (binding / recovery / UTF-8 e2e) is Task 12 — see §13.
+> **Status (2026-06-02, LIVE-VERIFIED):** the create saga + character-editor UI generation are **shipped**
+> and verified end-to-end on denon82 (face + front/side/back triptych body, both reference slots bound,
+> images downloaded, character read back). This document's selectors, editor URL, generation protocol
+> (Option B), `flow/entities` PATCH, and the CLI surface are **VERIFIED against shipped code**, not guesses.
+> The `nanopro` model picker is wired best-effort (non-fatal) and pending an explicit live confirmation — see
+> [Backlog](#14-backlog--not-yet-implemented).
 
 ## 1. What it is
 
@@ -39,7 +42,7 @@ Project
     ├── displayName                          # "Denidra"
     ├── characterInfo
     │   ├── personalityNotes                 # free text; guides behaviour when prompt is silent
-    │   ├── audioReferences[] { presetVoiceId }   # voice, e.g. "gacrux" (lowercased preset name)
+    │   ├── audioReferences[] { presetVoiceId }   # voice, e.g. "Charon" (canonical = Capitalized UI name; see §7)
     │   └── imageReferences[]  { workflowId }     # face, body, … → each Workflow has a primaryMediaId
     └── thumbnailMediaId                      # the cover image
 ```
@@ -215,21 +218,33 @@ sequenceDiagram
 
 ## 7. Voices
 
-A preset library (Gemini-TTS names) is offered in the UI, previewed as `<Name>.wav` and persisted as a
-lowercased `presetVoiceId` (e.g. `gacrux`, `aoede`, `charon`, `kore`, `callirrhoe`, …). A "create new voice"
-flow exists but is **out of scope for v1**. `gflow character create --voice <id>` sets `audioReferences`.
+A preset library of **29 Gemini-TTS voices** is offered in the UI (`api/character.py::VOICES`).
+`gflow character voices [--json]` lists them — each with a short descriptor and a preview **sample URL**
+following the pattern `https://gstatic.com/aitestkitchen/voices/samples/{Name}.wav`.
+
+The canonical voice id is the **Capitalized UI display name** (e.g. `Charon`, `Sulafat`, `Gacrux`) — the same
+token that drives the sample URL, so a canonical id round-trips to a playable sample.
+`gflow character create --voice <Name>` validates the value **case-insensitively** (so `charon` and `Charon`
+both normalize to the canonical `Charon`) and sets `audioReferences[].presetVoiceId` via the entity PATCH.
+
+> **Wire-case caveat (open):** a prior live run sent a **lowercase** id (`"charon"`) and Flow persisted it,
+> but whether Flow applies the voice from a lowercase id vs the Capitalized canonical form is **UNVERIFIED**.
+> gflow adopts the Capitalized form as canonical per the UI. The voice list is currently a **hardcoded
+> constant**; fetching the live list from Flow's voice API and confirming the `presetVoiceId` wire-case are
+> tracked in the [Backlog](#14-backlog--not-yet-implemented). A "create new voice" flow ("Criar nova voz")
+> exists in the UI but is **not yet implemented**.
 
 ## 8. Proposed CLI surface
 
 | Command | Maps to |
 |---|---|
-| `gflow character create --project <id> --name <name> --face-prompt … [--body-prompt …] [--voice <id>] [--personality …] [--model nano2\|nanopro] [--profile …] [--locale en-US] [--json]` *(VERIFIED — shipped option names; characters have NO aspect-ratio control)* | createEntity → gen face (slot 0) → commit_workflow → optional gen body (slot 1) → commit_workflow → patch_entity, via the persist-before-spend saga (§4) |
-| `gflow character list` | projectInitialData → entities[CHARACTER] |
-| `gflow character show --project <id> (--id <entityId> \| --name <displayName>)` | projectInitialData (single); name collision → exit 11 with disambiguation hint |
-| `gflow character voices [--json]` | list valid `presetVoiceId`s (language-agnostic discovery; mirrors `gflow models --json`) |
-| `gflow video … --character <id>` *(repeatable → multi-ref)* | `referenceEntities` on `video:batchAsyncGenerateVideoReferenceImages` |
-| `gflow character rm <id>` | **v2** — entity delete verb uncaptured |
-| `gflow image … --character <id>` | **v2** — image-path `referenceEntities` uncaptured |
+| `gflow character create --project <id> --name <name> --face-prompt … [--body-prompt …] [--voice <Name>] [--personality …] [--model nano2\|nanopro] [--profile …] [--locale en-US] [--json]` *(VERIFIED — shipped option names; characters have NO aspect-ratio control)* | createEntity → gen face (slot 0) → commit_workflow → optional gen body (slot 1) → commit_workflow → patch_entity, via the persist-before-spend saga (§4). `--body-prompt` is a **body/outfit DESCRIPTION** — gflow wraps it in a self-contained **front/side/back triptych** instruction and seeds it with the generated face (auto-attached as the slot-add reference), so one body generation yields all three angles. Generated images are **downloaded** to storage; the result reports each slot's local path. |
+| `gflow character list --project <id> [--json]` | projectInitialData → entities[CHARACTER] |
+| `gflow character show --project <id> (--id <entityId> \| --name <displayName>) [--json]` | projectInitialData (single); name collision → exit 11 with disambiguation hint |
+| `gflow character voices [--json]` | list the 29 preset voices (name / description / sample-url); language-agnostic discovery, mirrors `gflow models --json` |
+| `gflow video … --character <id>` *(repeatable → multi-ref)* | **not yet implemented** (Phase 3) — `referenceEntities` on `video:batchAsyncGenerateVideoReferenceImages` |
+| `gflow character rm <id>` | **not yet implemented** — entity delete verb uncaptured |
+| `gflow image … --character <id>` | **not yet implemented** — image-path `referenceEntities` uncaptured |
 
 All commands take **`--project <id>` (required)** — every endpoint (`createEntity`, `projectInitialData`,
 reuse) is project-scoped; mirrors `gflow scene` / `gflow data` ergonomics. Use `--id`/`--name` flags, never a
@@ -262,11 +277,12 @@ never hard-code wire names in user-facing help — see [[cli-model-aliases-verif
 
 ## 10. Open items
 
-- Confirm `gflow image --character` uses `referenceEntities` on the image path (video confirmed).
-- Capture the entity **delete** verb for `gflow character rm`.
-- Custom-voice creation (`Criar nova voz`) — future.
-- The optional creation-agent (`flowCreationAgent/sessions`, `flow.generateCharacterPrompt` archetypes) is
-  not required for the scripted path; consider an `--archetype` convenience later.
+See [§14 Backlog — not yet implemented](#14-backlog--not-yet-implemented) for the consolidated list. In
+short: `gflow video --character` reuse (Phase 3), `gflow image --character`, `gflow character rm`, live voice
+listing + `presetVoiceId` wire-case confirmation, custom-voice creation, `nanopro` picker live confirmation,
+and extra body angles. The optional creation-agent (`flowCreationAgent/sessions`,
+`flow.generateCharacterPrompt` archetypes) is not required for the scripted path; consider an `--archetype`
+convenience later.
 
 ## 11. Design decisions (post-predict)
 
@@ -423,3 +439,28 @@ table → test mapping):
 **Remaining LIVE-e2e-only (Task 12):** the live binding/recovery/UTF-8 e2e on denon82 — real
 `parentEntityId == entityId` against Flow's wire, mid-saga crash recovery against the real DB, and the
 slot-add `.nth(1)` + picker-include structural selectors under a non-EN locale.
+
+## 14. Backlog — not yet implemented
+
+The following are explicitly **out of the shipped scope** and tracked for future work:
+
+- **Voice listing via the live API.** The 29-voice catalog is currently a **hardcoded constant**
+  (`api/character.py::VOICES`). A future feature should fetch the live voice list from Flow's voice API
+  (endpoint TBD) so the catalog cannot drift from what Flow actually offers. As part of this, **confirm the
+  wire-case of `presetVoiceId`** — a prior live run sent lowercase `"charon"` and Flow persisted it, but the
+  canonical UI form is Capitalized `"Charon"`; it is unverified which form Flow actually *applies* the voice
+  from.
+- **Voice creation** ("Criar nova voz" in the UI). A future `gflow character voice create`-style command to
+  mint a custom voice rather than only selecting a preset.
+- **Model-picker live confirmation.** `--model nanopro` is wired **best-effort / non-fatal** (a picker miss
+  warns and continues rather than failing); an explicit live run is needed to confirm `nanopro` is actually
+  selected in the character editor.
+- **`gflow video --character` (Phase 3).** Reuse a character in a video generation via `referenceEntities`
+  on `video:batchAsyncGenerateVideoReferenceImages` (repeatable → multi-reference). Wire protocol is captured
+  (§5, §6.6) but the command is **not yet built**.
+- **Extra body angles beyond the built-in triptych.** The shipped body slot generates a single front/side/back
+  triptych. Generating additional angles/poses (e.g. re-feeding the front view as a reference seed for a new
+  slot) is a future enhancement.
+- **`gflow character rm` / `gflow image --character`.** The entity **delete** verb and the **image-path**
+  reuse (`referenceEntities` on the image endpoint) are uncaptured — deferred until their wire shapes are
+  reverse-engineered.
