@@ -294,3 +294,47 @@ def test_character_image_request_is_frozen() -> None:
     req = CharacterImageRequest(prompt="x")
     with pytest.raises((AttributeError, TypeError)):
         req.prompt = "mutated"  # type: ignore[misc]
+
+
+def test_character_image_request_carries_face_media_id() -> None:
+    from gflow_cli.api.character import CharacterImageRequest
+
+    req = CharacterImageRequest(prompt="a knight", image_reference_index=1, face_media_id="m-face")
+    assert req.face_media_id == "m-face"
+    assert req.image_reference_index == 1
+
+
+def test_character_image_request_face_media_id_defaults_none() -> None:
+    from gflow_cli.api.character import CharacterImageRequest
+
+    assert CharacterImageRequest(prompt="x").face_media_id is None
+
+
+def test_character_create_result_fields() -> None:
+    from gflow_cli.api.character import CharacterCreateResult
+
+    r = CharacterCreateResult(
+        entity_id="e1",
+        project_id="p",
+        workflow_ids=("w1",),
+        primary_media_ids=("m1",),
+        name="Ana",
+        voice="gacrux",
+    )
+    assert r.entity_id == "e1"
+    assert r.workflow_ids == ("w1",)
+    assert r.primary_media_ids == ("m1",)
+    assert r.voice == "gacrux"
+
+
+def test_character_create_result_voice_defaults_none() -> None:
+    from gflow_cli.api.character import CharacterCreateResult
+
+    r = CharacterCreateResult(
+        entity_id="e",
+        project_id="p",
+        workflow_ids=(),
+        primary_media_ids=(),
+        name="Ana",
+    )
+    assert r.voice is None
