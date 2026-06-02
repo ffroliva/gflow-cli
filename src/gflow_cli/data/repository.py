@@ -844,6 +844,60 @@ class DataRepository:
         return result
 
     # ------------------------------------------------------------------
+    # Character recovery
+    # ------------------------------------------------------------------
+
+    def find_incomplete_character(
+        self,
+        flow_project_id: str,
+        name: str,
+    ) -> dict[str, object] | None:
+        """Return the most-recent STARTED CHARACTER operation for (project, name).
+
+        Used by the create saga to detect a prior crash so it can resume
+        without re-spending credits.  Returns a plain dict with keys::
+
+            row_id           – operations.id (used to update the row later)
+            entity_id        – flow_operation_id (the entityId already created)
+            workflow_ids     – list[str] already recorded (may be empty)
+            primary_media_ids – list[str] already recorded (may be empty)
+
+        Returns ``None`` when no incomplete row exists for the given project
+        and character name.
+        """
+        import json as _json
+
+        row = self._store.conn.execute(
+            """
+            SELECT id, flow_operation_id, metadata_json
+            FROM operations
+            WHERE flow_project_id = ?
+              AND mode = 'character'
+              AND status = 'started'
+              AND json_extract(metadata_json, '$.name') = ?
+            ORDER BY started_at DESC
+            LIMIT 1
+            """,
+            (flow_project_id, name),
+        ).fetchone()
+        if row is None:
+            return None
+        meta: dict[str, object] = {}
+        if row["metadata_json"]:
+            try:
+                meta = _json.loads(row["metadata_json"])
+            except (ValueError, TypeError):
+                meta = {}
+        workflow_ids: list[str] = list(meta.get("workflow_ids") or [])  # type: ignore[arg-type]
+        primary_media_ids: list[str] = list(meta.get("primary_media_ids") or [])  # type: ignore[arg-type]
+        return {
+            "row_id": str(row["id"]),
+            "entity_id": str(row["flow_operation_id"]),
+            "workflow_ids": workflow_ids,
+            "primary_media_ids": primary_media_ids,
+        }
+
+    # ------------------------------------------------------------------
     # Helpers
     # ------------------------------------------------------------------
 

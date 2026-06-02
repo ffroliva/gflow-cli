@@ -599,6 +599,39 @@ class OperationRecorder:
         repo.set_operation_metadata(op_id, {"entity_id": entity_id, "name": name})
         return op_id
 
+    def record_character_partial(
+        self,
+        *,
+        row_id: str,
+        workflow_ids: list[str],
+        primary_media_ids: list[str],
+    ) -> None:
+        """Merge newly-recorded workflow/media ids into a STARTED row.
+
+        Called after each individual commit_workflow so that a crash between
+        face-gen and body-gen leaves the row with the face ids already
+        persisted — recovery can then skip the face slot.
+
+        The row stays in STARTED status; only ``metadata_json`` is updated.
+        """
+        import json as _json
+
+        repo = self.repository
+        # Read current metadata, merge in new ids.
+        row = repo.store.conn.execute(
+            "SELECT metadata_json FROM operations WHERE id = ?",
+            (row_id,),
+        ).fetchone()
+        meta: dict[str, object] = {}
+        if row and row["metadata_json"]:
+            try:
+                meta = _json.loads(row["metadata_json"])
+            except (ValueError, TypeError):
+                meta = {}
+        meta["workflow_ids"] = workflow_ids
+        meta["primary_media_ids"] = primary_media_ids
+        repo.set_operation_metadata(row_id, meta)
+
     def record_character_completed(
         self,
         *,
