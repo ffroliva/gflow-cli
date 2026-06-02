@@ -1,0 +1,355 @@
+# Characters — feature spec & system design
+
+> **Status:** design (reverse-engineering complete) · **Issue:** [#145](https://github.com/ffroliva/gflow-cli/issues/145) · **Branch:** `feature/character-creation`
+> **Living document.** Evolve this as the feature and Flow's API evolve. Raw capture provenance lives in
+> [`CHARACTER_RECON.md`](CHARACTER_RECON.md); the cross-feature decision lens is
+> [the REST-path capability matrix](#capability--cost).
+> **Credit:** pattern-references @kittinan's avatar PR #123 (attach-flow idiom + CLI scaffolding shape) — but
+> built **greenfield off `develop`, NOT stacked on #123** (that branch is CONFLICTING and likeness-specific;
+> see [Design decisions](#11-design-decisions-post-predict)).
+
+> **v1 scope (post-predict):** `create` + `list` + `show` + `gflow video --character`. Deferred to v2:
+> `gflow image --character` (image reuse path uncaptured) and `gflow character rm` (delete verb uncaptured).
+
+## 1. What it is
+
+A **Character** is a reusable, project-scoped identity in Google Flow: a named subject with one or more
+reference images (e.g. face + full-body), an optional **voice**, and an optional **personality**. Once a
+character exists, it can be **reused** across generations in the same project so the same subject appears
+consistently from shot to shot. This is the feature requested in #145.
+
+`gflow` exposes this as a first-class command group, `gflow character`, plus a `--character` reuse flag on
+generation commands.
+
+### Why this, not Avatar (#123)
+Flow's **Avatar/likeness** (`referenceLikenesses`) is verified-identity + region gated —
+`GET /v1/flow/likeness:checkEligibility` returns `{"ineligibilityReasons":["REGION"]}` for our accounts, so
+it is **held**. **Characters** are broadly available and are the consistency primitive most users actually need.
+
+## 2. Domain model
+
+```
+Project
+└── Entity (entityType = CHARACTER)         # the Character; id = entityId, lives at /project/{projectId}/character/{entityId}
+    ├── displayName                          # "Denidra"
+    ├── characterInfo
+    │   ├── personalityNotes                 # free text; guides behaviour when prompt is silent
+    │   ├── audioReferences[] { presetVoiceId }   # voice, e.g. "gacrux" (lowercased preset name)
+    │   └── imageReferences[]  { workflowId }     # face, body, … → each Workflow has a primaryMediaId
+    └── thumbnailMediaId                      # the cover image
+```
+
+A Character references **Workflows**, not raw media. Each reference image is the *primary media* of a
+generation **Workflow** (`workflow.metadata.primaryMediaId`), and the Workflow is bound to the Character via
+`workflow.parentEntityId`. This indirection lets a reference image be re-rolled without breaking the link.
+
+## 3. Capability & cost
+
+Per the REST-path capability matrix, the feature is a **hybrid**: only the two *generative* calls require the
+reCAPTCHA browser path and consume credits; all structural operations are free REST.
+
+| Operation | Endpoint | Transport | reCAPTCHA | Credits |
+|---|---|---|---|---|
+| Mint character | `POST /fx/api/trpc/flow.createEntity` | tRPC (session) | no | no |
+| Generate reference image | `POST /v1/projects/{projectId}/flowMedia:batchGenerateImages` | **Flow UI (passive-capture)** — direct POST is 403-walled | **yes** | **yes** |
+| Set primary image | `PATCH /v1/flowWorkflows/{workflowId}` | Bearer REST | no | no |
+| Save character | `PATCH /v1/flow/entities` | Bearer REST | no | no |
+| List / show | `GET /fx/api/trpc/flow.projectInitialData` | tRPC (session) | no | no |
+| Reuse in video | `POST /v1/video:batchAsyncGenerateVideoReferenceImages` | **Flow UI (passive-capture)** — reCAPTCHA-gated | **yes** | **yes** |
+| Poll reuse status | `POST /v1/video:batchCheckAsyncVideoGenerationStatus` | Bearer REST | no | no |
+| (optional) Archetype prompt | `POST /fx/api/trpc/flow.generateCharacterPrompt` | tRPC (session) | no | no |
+| (context) Eligibility | `GET /v1/flow/likeness:checkEligibility` | Bearer REST | no | no |
+
+Auth model per [[aisandbox-rest-needs-sapisidhash]]: aisandbox REST wants `Authorization: Bearer ya29…`
+(from `GET /fx/api/auth/session`); tRPC calls ride the labs.google session cookies.
+
+## 4. Sequence — create a character
+
+```mermaid
+sequenceDiagram
+  participant CLI as gflow
+  participant BFF as labs.google (tRPC)
+  participant API as aisandbox-pa (REST)
+  participant GEN as Flow gen (reCAPTCHA, browser)
+  CLI->>BFF: POST flow.createEntity {projectId}
+  BFF-->>CLI: { entityId, entityType:CHARACTER, characterInfo:{} }
+  Note over CLI,GEN: gen into the EXISTING projectId, tool=PINHOLE,\nmediaGenerationContext.entityContext{entityId, characterSlot.imageReferenceIndex:0}
+  CLI->>GEN: flowMedia:batchGenerateImages (face, slot 0)
+  GEN-->>CLI: media[mediaId], workflows[workflowId, parentEntityId]  %% server auto-links imageReferences[0]
+  opt body (slot 1) / refinement
+    CLI->>GEN: flowMedia:batchGenerateImages (entityContext slot 1; imageInputs REFERENCE=face)
+    GEN-->>CLI: media, workflow (auto-linked imageReferences[1])
+  end
+  opt choose primary within a refined slot
+    CLI->>API: PATCH flowWorkflows/{workflowId} {metadata.primaryMediaId}
+  end
+  CLI->>API: PATCH flow/entities {displayName, characterInfo{personalityNotes, audioReferences}}
+  API-->>CLI: entity (imageReferences already populated by entityContext gen)
+```
+
+## 5. Sequence — reuse a character (R2V)
+
+```mermaid
+sequenceDiagram
+  participant CLI as gflow
+  participant GEN as Flow gen (reCAPTCHA)
+  participant API as aisandbox-pa
+  CLI->>GEN: video:batchAsyncGenerateVideoReferenceImages\n requests[].referenceEntities:[{entityId}]
+  GEN-->>CLI: { workflows[], media[], remainingCredits }
+  loop until done
+    CLI->>API: video:batchCheckAsyncVideoGenerationStatus
+    API-->>CLI: status / mediaId
+  end
+```
+
+## 6. Payloads (I/O)
+
+### 6.1 `flow.createEntity`
+- **In** `{ "json": { "projectId": "<uuid>" } }`
+- **Out** `{ result.data.json: { projectId, entityId, entityInfo:{ entityType:"CHARACTER", displayName:"Untitled Character", characterInfo:{} }, createTime, updateTime } }`
+
+### 6.2 `flowMedia:batchGenerateImages` (character reference image)
+- **In** (per request item):
+  ```json
+  { "imageModelName": "NARWHAL", "imageAspectRatio": "IMAGE_ASPECT_RATIO_LANDSCAPE",
+    "structuredPrompt": { "parts": [ { "text": "<prompt>" } ] }, "seed": 826730,
+    "imageInputs": [ { "imageInputType": "IMAGE_INPUT_TYPE_BASE_IMAGE", "name": "<mediaId>" },
+                     { "imageInputType": "IMAGE_INPUT_TYPE_REFERENCE", "name": "<mediaId>" } ] }
+  ```
+  wrapped with `clientContext{ recaptchaContext{token}, projectId, tool:"PINHOLE", sessionId }` **where
+  `projectId` is the character's existing project** (NOT a new one), and:
+  ```json
+  "mediaGenerationContext": {
+    "batchId": "<uuid>",
+    "entityContext": { "entityId": "<characterId>", "characterSlot": { "imageReferenceIndex": 0 } }
+  }
+  ```
+  plus `useNewMedia:true`. **`entityContext` is what binds the generation to the character** — the server then
+  stamps the new workflow's `parentEntityId` and auto-links it into the entity's `imageReferences[slot]`.
+  `imageReferenceIndex`: **0 = face, 1 = body**, etc. `imageInputs`: empty for a fresh slot; `REFERENCE`
+  (= the face mediaId) when generating the body; `BASE_IMAGE`+`REFERENCE` when *refining* an existing slot
+  (refinements also carry `clientContext.workflowId` to reuse that slot's workflow).
+- **Out** `media[{ name(mediaId), image{ generatedImage{ fifeUrl, mediaGenerationId, modelNameType }, dimensions } }]`,
+  `workflows[{ name(workflowId), metadata{ displayName, primaryMediaId, batchId }, projectId, parentEntityId }]`
+
+> ⚠️ **This request must be issued by Flow's own page JS — not by us.** Two spikes (2026-06-02) fixed the
+> bounds: (1) gflow's `generate_image` clicks "new project" + omits `entityContext` → workflow lands in the
+> wrong project (`flowWorkflows` PATCH 404'd); (2) a self-assembled direct POST with our own minted reCAPTCHA
+> token → **HTTP 403** (the reCAPTCHA wall — [[rest-path-capability-matrix]]; body shape matched the real HAR,
+> only the token differed). **Decision (§11): drive generation through the character editor UI** (existing
+> project → Personagens → new character → generate) so Flow's JS sets `entityContext` + passes the WAF, and
+> gflow passive-captures `media[]`/`workflows[]`. The structural ops below stay direct-REST.
+
+### 6.3 `PATCH flowWorkflows/{workflowId}`
+- **In** `{ "workflow": { "name", "projectId", "metadata": { "primaryMediaId" } }, "updateMask": "metadata.primaryMediaId" }`
+
+### 6.4 `PATCH flow/entities` (save)
+- **In**
+  ```json
+  { "entity": { "projectId", "entityId",
+      "entityInfo": { "displayName": "Denidra",
+        "characterInfo": { "personalityNotes": "…",
+          "audioReferences": [ { "presetVoiceId": "gacrux" } ],
+          "imageReferences": [ { "workflowId": "…" } ] } } },
+    "updateMask": "entityInfo.displayName,entityInfo.characterInfo.personalityNotes,entityInfo.characterInfo.audioReferences,entityInfo.characterInfo.imageReferences" }
+  ```
+- **Out** the persisted `entity` (echoes `entityInfo`, `createTime`, `updateTime`).
+
+### 6.5 `flow.projectInitialData` (list/show)
+- **Out** `result.data.json.projectContents.entities[]`, each:
+  `{ projectId, entityId, entityInfo{ entityType:"CHARACTER", displayName, characterInfo{ imageReferences, audioReferences, personalityNotes } }, thumbnailMediaId, thumbnailDimensions, createTime, updateTime }`
+
+### 6.6 `video:batchAsyncGenerateVideoReferenceImages` (reuse)
+- **In** (per request item):
+  ```json
+  { "aspectRatio": "VIDEO_ASPECT_RATIO_PORTRAIT",
+    "textInput": { "structuredPrompt": { "parts": [ { "text": "<prompt>" } ] } },
+    "videoModelKey": "abra_r2v_10s", "seed": 3952, "metadata": {},
+    "referenceImages": [ { "mediaId", "imageUsageType": "IMAGE_USAGE_TYPE_ASSET" } ],
+    "referenceEntities": [ { "entityId" } ] }
+  ```
+  wrapped with `mediaGenerationContext{ batchId, audioFailurePreference:"BLOCK_SILENCED_VIDEOS" }`,
+  `clientContext{ projectId, tool:"PINHOLE", userPaygateTier, sessionId, recaptchaContext{token} }`,
+  `useV2ModelConfig:true`. **`referenceEntities` is a list → multiple characters per generation
+  (`VIDEO_MODEL_CAPABILITY_MULTI_REFERENCE`).**
+- **Out** `{ remainingCredits, workflows[], media[] }`; resolve final asset by polling
+  `video:batchCheckAsyncVideoGenerationStatus`.
+
+## 7. Voices
+
+A preset library (Gemini-TTS names) is offered in the UI, previewed as `<Name>.wav` and persisted as a
+lowercased `presetVoiceId` (e.g. `gacrux`, `aoede`, `charon`, `kore`, `callirrhoe`, …). A "create new voice"
+flow exists but is **out of scope for v1**. `gflow character create --voice <id>` sets `audioReferences`.
+
+## 8. Proposed CLI surface
+
+| Command | Maps to |
+|---|---|
+| `gflow character create <name> --face-prompt … [--body-prompt …] [--voice <id>] [--personality …] [--aspect …] [--model nano-banana-2]` | createEntity → gen → PATCH workflow → PATCH entity |
+| `gflow character list` | projectInitialData → entities[CHARACTER] |
+| `gflow character show --project <id> (--id <entityId> \| --name <displayName>)` | projectInitialData (single); name collision → exit 11 with disambiguation hint |
+| `gflow character voices [--json]` | list valid `presetVoiceId`s (language-agnostic discovery; mirrors `gflow models --json`) |
+| `gflow video … --character <id>` *(repeatable → multi-ref)* | `referenceEntities` on `video:batchAsyncGenerateVideoReferenceImages` |
+| `gflow character rm <id>` | **v2** — entity delete verb uncaptured |
+| `gflow image … --character <id>` | **v2** — image-path `referenceEntities` uncaptured |
+
+All commands take **`--project <id>` (required)** — every endpoint (`createEntity`, `projectInitialData`,
+reuse) is project-scoped; mirrors `gflow scene` / `gflow data` ergonomics. Use `--id`/`--name` flags, never a
+positional `<id|name>`. Exit codes are **reused** (not-found → 11 `ConfigurationError`; reuse poll-timeout →
+9 `TransportTimeoutError`, with the `entityId` surfaced in the hint so the paid image isn't re-spent).
+
+Model aliases resolve via the existing picker (`nano-banana-2 → NARWHAL`, `omni-flash/r2v → abra_r2v_10s`);
+never hard-code wire names in user-facing help — see [[cli-model-aliases-verify-in-docs]].
+
+## 9. Design constraints (first-class)
+
+- **Language-agnostic.** No localized UI text in any code path. The structural calls are REST (language
+  independent by construction). The single browser-bound step (image/video generation) reuses gflow's
+  existing reCAPTCHA transport and **must** select via Material-Symbol ligatures / structural roles, never
+  localized strings — Flow renders in the Chrome profile language ([[flow-locale-leak-icon-ligatures]]).
+- **Real-browser auth.** Generation requires a Chrome-strategy profile ([[real-browser-auth-mandatory]]).
+- **Credit safety.** Only steps in §3 marked *Credits = yes* spend; **persist-before-spend** (record
+  `entityId` + workflow rows before the credited gen) and verify per the verification ledger. Structural REST
+  ops are free and idempotent-ish (PATCH with updateMask).
+- **Privacy / redaction.** `personalityNotes` is free-text PII → treat as prompt-equivalent (route through the
+  same redaction as prompts). Persist `mediaId`/`workflowId`, **never signed `fifeUrl`s**; assert no
+  `signature=` URL reaches the DB. Reuse `_post_json`'s redaction wrapper on the new tRPC/REST calls
+  (`show_locals=False`).
+- **Data layer.** Persist `entityId`, `workflowId`s, `primaryMediaId`s, voice, personality so a character is
+  recoverable and reusable across sessions (mirrors the scene persistence + migration pattern).
+- **Docs are first-class.** This document is the living spec; update it in the same PR as any behavioural
+  change. Indexed in [`docs/INDEX.md`](INDEX.md).
+
+## 10. Open items
+
+- Confirm `gflow image --character` uses `referenceEntities` on the image path (video confirmed).
+- Capture the entity **delete** verb for `gflow character rm`.
+- Custom-voice creation (`Criar nova voz`) — future.
+- The optional creation-agent (`flowCreationAgent/sessions`, `flow.generateCharacterPrompt` archetypes) is
+  not required for the scripted path; consider an `--archetype` convenience later.
+
+## 11. Design decisions (post-predict)
+
+`/gflow:predict` verdict **CAUTION (6/10)** — feasible, no STOP; mitigations folded in here.
+
+- **Greenfield, not stacked on PR #123.** #123 is CONFLICTING and likeness-specific (`use_avatar`,
+  `referenceLikenesses`, Avatar-tab clicks). Retargeting it costs more than building fresh off `develop`.
+  We pattern-reference its attach idiom + CLI shape and credit @kittinan, but do not branch from it.
+- **Own DTOs + saga in a service layer.** Add `api/character.py` frozen DTOs (mirroring `api/scene.py`) and a
+  dedicated character-image request DTO — do **not** overload `GenerateImageRequest` with an entity flag. The
+  4-step create saga (createEntity → gen → PATCH workflow → PATCH entity) lives in a service function that
+  takes the client as a dependency, **not** in `cli_character.py` (testable without a browser; pre-stages the
+  hexagonal handler layer).
+- **Reuse existing poll infra.** The reuse path is async (submit + poll `batchCheckAsyncVideoGenerationStatus`)
+  but the in-tree `concatenate_scene` / `_poll_video_status` loop + `CHECK_VIDEO_STATUS` route already
+  implement this. Factor a shared `_poll_until(...)` helper rather than a second poll loop. This is **not**
+  blocked on the pending fire-and-forget design.
+- **Transport split:** structural ops (`flow.createEntity`, `projectInitialData` via tRPC session;
+  `flowWorkflows`/`flow/entities` PATCH via Bearer REST) are Page-safe (each `_post_json`/`_patch_json`
+  checks a Page in/out per round-trip — no deadlock). Generation/reuse rides the existing reCAPTCHA browser
+  transport (costs credits). face→body gen is a true data dependency → **sequential**, never `gather`'d.
+- **Data layer:** migration adds `OperationKind.CHARACTER`; persist `entityId`, `workflowId`s,
+  `primaryMediaId`s, voice, personality. Model shallowly (raw ids) — the schema is reverse-engineered from one
+  capture and may drift.
+- **Validation gate:** before production code, a `scripts/dev/` spike runs the full create→persist loop on
+  denon82 (≈1 credit) and asserts the character read-back carries `imageReferences[workflowId]`.
+- **Spike result (2026-06-02, 1 credit):** `createEntity` ✅ live. Generation step **disproved the
+  `generate_image` reuse assumption** — it created a new project and the `flowWorkflows` PATCH 404'd. Root
+  cause + fix captured in §6.2 (`entityContext` + existing-project gen). Orphans from the run: empty entity
+  `fbad10fb…` in project `96e81f06…` + throwaway project `108069e2…` (1 image) — delete when convenient.
+- **~~Transport decision = Option A (direct REST gen)~~ — SUPERSEDED by Option B below. Kept for provenance only; do NOT implement (the 403 spike disproved it — the `generate_character_image`/`_build_character_batch_body` direct-POST design in this bullet is dead).** gflow already owns every
+  primitive decoupled from new-project navigation: `_mint_recaptcha_token` (project-agnostic — mints
+  `grecaptcha.enterprise.execute` on any loaded Flow page), `_post_json` (aisandbox Bearer + 401-refresh),
+  `routes.batch_generate_images_url(existing_projectId)`; `experimental/bearer.py` already proves the direct
+  `batchGenerateImages` POST returns `media[]`/`workflows[]`. `generate_image` is unusable because it
+  **passive-captures** Flow's own JS request (can't inject `entityContext`) and force-clicks "+ New project".
+  → Build:
+  - `api/character.py`: frozen `CharacterImageRequest` DTO + `_build_character_batch_body(...)` extending the
+    image body with per-request `seed`, `imageInputs` (BASE/REFERENCE), optional `clientContext.workflowId`
+    (refine), and `mediaGenerationContext.entityContext={entityId, characterSlot:{imageReferenceIndex:N}}` +
+    `useNewMedia:true`. Do **not** overload `image.py::_build_batch_generate_images_body`.
+  - `client.generate_character_image(*, project_id, entity_id, req, image_reference_index, recaptcha_action="imageGeneration")`
+    → mint token, POST via `_post_json`, parse `workflows[].{name,parentEntityId}` + `media[].name`; then
+    `commit_workflow` (primary) + `_patch_json` `flow/entities` (name/voice/personality).
+  - **Risk to validate:** a self-assembled POST with our own minted token may score differently on
+    reCAPTCHA/WAF than Flow's native JS call → the corrected 1-credit spike asserts `workflows[0].parentEntityId
+    == entityId` AND `projectId == existing` (not new) AND read-back `imageReferences[0].workflowId`.
+- **❌ Option A REJECTED — generation is reCAPTCHA-walled (spike v2, 2026-06-02, 0 credits).** The
+  self-assembled `batchGenerateImages` POST returned **HTTP 403** (createEntity ✅, reCAPTCHA mint ✅). Our
+  request body shape matched the real successful HAR exactly; the only difference is the reCAPTCHA token —
+  a `TokenMinter` token scores too low / wrong-context vs Flow's native page-JS token. This confirms
+  [[rest-path-capability-matrix]]: **generation is never browser-free; Bearer fixed the 401, not the reCAPTCHA
+  wall.** No credit spent (403 before generation). **A retry won't help** — the token can't be made WAF-valid
+  outside Flow's own JS.
+- **✅ Decision = Option B (UI-driven generation; structural ops stay REST).** Generation (character image
+  create AND video reuse) **must** ride Flow's native UI so Flow's JS issues the WAF-valid request, which
+  gflow passive-captures — identical mechanism to the existing `generate_image`/`generate_video`. Revised
+  transport map:
+  - **Structural (direct REST):** `flow.createEntity` ✅, `PATCH flowWorkflows` ✅, `PATCH flow/entities` ✅,
+    `projectInitialData` ✅ (all proven / non-generative — no reCAPTCHA).
+  - **Generative (UI automation, passive-capture):** character image gen must be driven **in the character
+    editor of the existing project** (navigate to project → Personagens → new character → set prompt →
+    generate) so Flow's JS sets `entityContext` and passes the WAF; gflow captures `media[]`/`workflows[]`
+    from the response. Reuse gflow's prompt-submit + response-capture machinery (`ui_automation.py`), but in
+    the character-editor context (NOT the new-project flow). Video `--character` reuse = resource picker
+    (`Pesquisar recursos` → Personagens → *Incluir no comando*) → generate; mirrors #123 `_attach_likeness`.
+    All selectors **ligature/structural only** (language-agnostic).
+  - **Cost reality:** the feature is UI-automation-heavy (new character-editor + picker selectors), not the
+    "mostly REST" earlier framing. Structural metadata is REST; the value-generating steps are UI.
+
+## 12. UI-automation selectors (Option B) — captured 2026-06-02
+
+Language-agnostic (ligature/structural) selectors from live DOM dumps (denon82, project `96e81f06`,
+`scripts/dev/dump_character_selectors.js`). Flow renders in the profile locale, so **never match on
+localized text** — use Material-Symbol ligatures (`i.google-symbols:text-is('<lig>')`) or structure.
+
+**Create flow needs UI only for image generation.** After REST `createEntity`, navigate directly to
+`/{locale}/tools/flow/project/{projectId}/character/{entityId}` (the URL context makes Flow set
+`entityContext` on the generation) and reuse gflow's existing prompt + submit machinery. Name / voice /
+personality are REST `PATCH flow/entities`. So the only *new* selectors are the slot-add and the picker's
+include button.
+
+| Purpose | Selector | Conf. |
+|---|---|---|
+| Personagens nav (project) | `button:has(i.google-symbols:text-is('accessibility_new'))` (cards are `div[role=button]`; tag disambiguates) | high |
+| Open a character card | `div[role=button]:has(i.google-symbols:text-is('accessibility_new')):has-text('<name>')` — or skip the grid: nav to `/character/{entityId}` | high |
+| Prompt box (char editor) | `div[role=textbox][data-slate-editor='true']` *(gflow already has this)* | high |
+| Generate / submit | `button:has(i.google-symbols:text-is('arrow_forward'))` *(gflow already has this)* | high |
+| Model picker (char editor) | `button:has(i.google-symbols:text-is('arrow_drop_down'))` near the model chip *(normal editor uses `crop_16_9`)* | med |
+| Personality field | the panel `textarea` (placeholder `Descreva…`) — **prefer REST PATCH** | high |
+| Delete character (rm, v2) | `button:has(i.google-symbols:text-is('delete'))` ("Excluir personagem") | high |
+| Existing slot thumb | `div[role=button]` ("Imagem do personagem N") | med |
+| **Slot-add (body/extra)** | `div[role=button]` with NO thumbnail (last in slot row) — **no ligature → structural anchor needed** | low ⚠️ |
+| Picker tab → Personagens | `[role=dialog] button[role=tab]:has(i.google-symbols:text-is('accessibility_new'))` | high |
+| Picker character option | `[role=dialog] [role=option]` (character rows; image rows differ) → pick by `:has-text('<name>')` | med |
+| **Picker "Incluir no comando"** | primary `button` in the dialog footer — **no ligature → structural anchor (last/primary dialog button)** | low ⚠️ |
+
+⚠️ **Open structural-selector tasks:** the slot-add and the picker include button have no ligature and only
+localized text — derive a structural anchor (DOM position / dialog-footer primary) during TDD; do NOT match
+their text. Also still uncaptured: the "Novo personagem" grid card (not needed — we nav to `/character/{id}`
+after REST create) and the picker include button only appears *after* an option is selected.
+
+Shared chrome already automated by gflow (reuse as-is): `add_2` (+/Criar add-media → opens picker),
+`arrow_forward` (submit), the Slate prompt box, model dropdown, `check`/Concluir.
+
+## 13. Definition of Done — full e2e scenario coverage
+
+**`gflow character` is not done until a full e2e suite covers every scenario below.** Unit tests (TDD,
+mocked transports) and the spike are necessary but not sufficient — live e2e is the only thing that has
+caught synthetic-fixture bugs here (the scene read-back `{}` bug survived 753 unit tests). Built on the e2e
+cost-stratification framework (markers + `GFLOW_CLI_E2E_RUN_*` opt-ins; credit-spending tests parameterized).
+The `/gflow:plan` exit criteria must list each scenario as a named, covered test.
+
+| Area | Scenarios that must be covered |
+|---|---|
+| **create** | face-only; face→body (chained `imageInputs`, sequential); `--voice`; `--personality`; all options; fresh-entity per run; **persist-before-spend recovery** (fail after createEntity / after gen / after workflow PATCH → recoverable, no orphan credit loss); invalid `--project` (404→exit 11); invalid `--voice` (exit 11 with valid set); invalid `--model`/`--aspect` (Click Choice → exit 2); expired session (exit 8 `AuthExpired`) |
+| **list** | empty project; N characters; `--json`; non-character entities excluded |
+| **show** | by `--id`; by `--name`; **name collision** → exit 11 + disambiguation; not-found → exit 11; `--json` |
+| **voices** | `voices`; `voices --json`; `--voice` validated against this set (language-agnostic, no localized strings) |
+| **video `--character`** | single character; **multiple `--character`** (multi-ref); character + `--ref` asset image; async submit→poll success; **poll timeout → exit 9 with `entityId` in hint** (so the paid asset isn't re-spent); invalid character id → exit 11 |
+| **data layer** | persist `entityId`/`workflowId`s/`primaryMediaId`/voice/personality; recovery after crash; **redaction**: `personalityNotes` redacted under `GFLOW_CLI_HISTORY_PROMPTS=redacted`; **no signed `fifeUrl`/`signature=` in any DB row** |
+| **cross-platform / i18n** | non-EN Flow locale (ligature/structural selectors only); accented `--personality`/`--face-prompt` round-trip (PYTHONUTF8); Windows/macOS/Linux paths |
+| **observability** | each saga step emits a structlog event; `entityId` surfaced on every failure for recovery |
+
+Live-tier e2e (credit-spending: create, video reuse) gated behind explicit opt-in env and run on denon82 per
+the verification ledger (file count + dims + structlog invariants + read-back), not just mocked transports.
