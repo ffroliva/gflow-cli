@@ -185,16 +185,15 @@ SUBMIT_BUTTON_SELECTORS = (
     "button:has-text('arrow_forward')",
 )
 
-# Body-slot triptych template placeholder.  When the character slot-add ("+")
-# is clicked, Flow pre-fills the new prompt box with a localized triptych
-# template (front/side/back) carrying a SINGLE bracketed placeholder where the
-# body/clothing description belongs, e.g. "... [DESCREVA O CORPO E A ROUPA]".
-# This regex is LANGUAGE-AGNOSTIC ([[flow-locale-leak-icon-ligatures]]): it
-# matches any non-empty ``[...]`` token regardless of locale, so it works
-# whatever language Flow renders the template in.  ``[^\]]*`` is non-greedy by
-# construction (it cannot cross a ``]``), so only the FIRST bracketed token is
-# substituted.
-_BODY_TEMPLATE_PLACEHOLDER_RE = re.compile(r"\[[^\]]*\]")
+# Self-contained, locale-independent triptych instruction for body generation.
+# Live-verified 2026-06-02: produces a consistent front/side/back body image in ONE
+# generation, seeded by the auto-attached face reference. We replace Flow's own
+# (localized) pre-filled template with this rather than depending on reading/parsing it.
+_BODY_TRIPTYCH_PREAMBLE = (
+    "Full-body triptych in three angles: front, side (3/4), and back. "
+    "High resolution, uniform studio lighting, consistent anatomical proportions "
+    "across all angles, solid white background. "
+)
 
 # "+ New project" CTA selectors.  Cascade discipline: structural / icon-first
 # (locale-stable) before localised text fallbacks spanning all 14 supported
@@ -954,69 +953,48 @@ class UiAutomationTransport(VideoGenerationMixin):
         body_description: str,
         out_dir: Path | None = None,
     ) -> None:
-        """Insert ``body_description`` into Flow's pre-filled triptych template.
+        """Submit a self-contained triptych body prompt, REPLACING Flow's template.
 
-        After clicking the character slot-add ("+"), Flow's JS pre-fills the
-        new prompt box with a triptych template containing a bracketed
-        placeholder, e.g. (Portuguese)::
+        After clicking the character slot-add ("+"), Flow's JS pre-fills the new
+        prompt box with its own (localized) triptych template and auto-attaches
+        the generated face as a reference.  Rather than reading and parsing that
+        localized template, this helper ignores whatever the box was pre-filled
+        with and replaces the entire box with gflow's OWN self-contained,
+        locale-independent triptych instruction
+        (:data:`_BODY_TRIPTYCH_PREAMBLE`) followed by the body/clothing
+        description.
 
-            "Tríptico de corpo inteiro em três ângulos diferentes: ...
-             fundo branco sólido. [DESCREVA O CORPO E A ROUPA]"
+        Live-verified 2026-06-02: this is MORE robust than the bracket-
+        substitution approach — it does not depend on Flow's template appearing,
+        the box timing, the bracket existing, or the UI locale.  The face
+        reference is still auto-attached by the slot-add ("+") click (Flow's JS),
+        independent of the text box.
 
-        The ``[...]`` placeholder is where the body/clothing description goes;
         ONE generation then yields all three angles (front/side/back) as a
-        single triptych image.  The previous body path called ``_send_prompt``,
-        which CLEARED the box and so destroyed Flow's template.
+        single triptych image, seeded by the auto-attached face reference.
 
-        This helper instead:
-
-        1. Reads the box's current (pre-filled) text.
-        2. If the text contains a bracketed placeholder matching
-           :data:`_BODY_TEMPLATE_PLACEHOLDER_RE` (language-agnostic — NOT the
-           Portuguese literal), substitutes the FIRST such placeholder with
-           ``body_description``, preserving Flow's triptych instruction.
-        3. If NO placeholder is found (template absent / different Flow
-           version), falls back to ``body_description`` alone (the legacy
-           behavior) and logs ``ui_automation.body_template_placeholder_missing``.
-        4. Clears the box and types the computed full string, then submits.
-
-        Logs ``ui_automation.body_prompt_templated`` with ``template_used``.
+        Logs ``ui_automation.body_prompt_templated`` with ``template`` and the
+        submitted length (NO body text).
         """
         input_box = await self._locate_prompt_box(page, out_dir)
 
-        # Read the pre-filled template. contenteditable Slate boxes expose
-        # their text via inner_text(); fall back to text_content() if a
-        # particular locator type lacks inner_text.
-        prefilled = ""
-        try:
-            prefilled = (await input_box.inner_text()) or ""
-        except Exception:
-            try:
-                prefilled = (await input_box.text_content()) or ""
-            except Exception:
-                prefilled = ""
+        full_prompt = _BODY_TRIPTYCH_PREAMBLE + body_description
 
-        match = _BODY_TEMPLATE_PLACEHOLDER_RE.search(prefilled)
-        template_used = match is not None
-        if template_used:
-            # Replace ONLY the first bracketed placeholder, preserving the rest
-            # of Flow's template verbatim.
-            placeholder = match.group(0)  # type: ignore[union-attr]
-            submitted_text = prefilled.replace(placeholder, body_description, 1)
-        else:
-            log.warning(
-                "ui_automation.body_template_placeholder_missing",
-                prefilled_len=len(prefilled),
-            )
-            submitted_text = body_description
-
+        # Clear Flow's pre-filled (localized) template and replace it wholesale
+        # with our self-contained triptych prompt. Slate.js needs real keyboard
+        # events — select-all + Delete + insert_text, the same path _send_prompt
+        # uses.
         await input_box.click()
         await page.keyboard.press("Control+A")
         await page.keyboard.press("Delete")
-        await page.keyboard.insert_text(submitted_text)
+        await page.keyboard.insert_text(full_prompt)
         await page.wait_for_timeout(500)
 
-        log.info("ui_automation.body_prompt_templated", template_used=template_used)
+        log.info(
+            "ui_automation.body_prompt_templated",
+            template="self_contained",
+            prompt_len=len(full_prompt),
+        )
         await self._click_submit(page)
 
     # ------------------------------------------------------------------
@@ -2314,9 +2292,11 @@ class UiAutomationTransport(VideoGenerationMixin):
         )
 
         # Slot-add: face (index 0) needs no interaction; body/accessories do.
-        # Clicking slot-add pre-fills the new prompt box with Flow's triptych
-        # template, so the body path substitutes the bracketed placeholder
-        # instead of overwriting the whole box.
+        # Clicking slot-add auto-attaches the generated face as a reference (Flow's
+        # JS) and pre-fills the new prompt box with Flow's localized triptych
+        # template. The body path REPLACES that box with gflow's own
+        # self-contained triptych prompt (locale-safe), independent of the
+        # auto-attached face reference.
         is_body_slot = image_reference_index >= 1
         if is_body_slot:
             await self._click_character_slot_add(page, out_dir)

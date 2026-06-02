@@ -43,9 +43,10 @@ def character() -> None:
     "--body-prompt",
     default=None,
     help=(
-        "Body/clothing DESCRIPTION (optional). Inserted into Flow's pre-filled "
-        "triptych template, which renders front/side/back in a single image — "
-        "this is a description of the body and outfit, not a full prompt."
+        "Body/clothing DESCRIPTION (optional). gflow wraps it in a "
+        "self-contained front/side/back triptych instruction and seeds it with "
+        "the generated face, so one generation yields all three angles. This is "
+        "a description of the body and outfit, not a full prompt."
     ),
 )
 @click.option("--voice", default=None, help="Preset voice id (e.g. gacrux).")
