@@ -521,3 +521,128 @@ class TestCharacterImageRequestFieldContract:
         assert config_spy.call_args.kwargs["model"] is None, (
             "unknown alias must fall back to model=None (Flow default), not crash"
         )
+
+
+# ---------------------------------------------------------------------------
+# Tests: _click_character_slot_add selector logic (live-DOM grounded)
+# ---------------------------------------------------------------------------
+
+
+class _FakeCandidate:
+    """One ``add_2``-bearing ``[role=button]`` candidate in the fake editor DOM.
+
+    Records whether it was clicked.  ``inner_text`` returns the candidate's
+    accessible text — icon-only candidates reduce to exactly ``"add_2"``; the
+    decoy carries a hidden label so its inner_text is longer.
+    """
+
+    def __init__(self, *, inner_text: str, visible: bool = True) -> None:
+        self._inner_text = inner_text
+        self._visible = visible
+        self.clicked = False
+        self.click = AsyncMock(side_effect=self._record_click)
+        if visible:
+            self.wait_for = AsyncMock()
+        else:
+            self.wait_for = AsyncMock(side_effect=Exception("not visible"))
+
+    async def _record_click(self, *_a: Any, **_kw: Any) -> None:
+        self.clicked = True
+
+    async def inner_text(self) -> str:
+        return self._inner_text
+
+
+class _FakeSlotLocator:
+    """Fake locator over the slot-add candidate list.
+
+    Models the live DOM: index 0 is the icon-only slot-add ``[role=button]``
+    (inner_text == ``"add_2"``), index 1 is the decoy ``<button>`` whose hidden
+    text label lengthens its inner_text.  This is the inverse of the old
+    ``.nth(1)`` heuristic — a correct implementation MUST pick index 0 here, so
+    the old code (which clicked nth(1)) would fail this test.
+    """
+
+    def __init__(self, candidates: list[_FakeCandidate]) -> None:
+        self._candidates = candidates
+        # ``.first`` is the readiness anchor — wires to candidate 0.
+        self.first = candidates[0] if candidates else _FakeCandidate(inner_text="")
+
+    async def count(self) -> int:
+        return len(self._candidates)
+
+    def nth(self, n: int) -> _FakeCandidate:
+        return self._candidates[n]
+
+
+def _make_slot_add_page(candidates: list[_FakeCandidate]) -> MagicMock:
+    """Fake page whose slot-add selector resolves to ``candidates``.
+
+    Any other locator returns a benign MagicMock so unrelated calls don't crash.
+    """
+    page = MagicMock()
+    page.url = "https://labs.google/fx/pt/tools/flow/project/p1/character/e1"
+    page.wait_for_timeout = AsyncMock()
+    page.screenshot = AsyncMock(return_value=b"")
+
+    slot_sel = UiAutomationTransport._CHARACTER_SLOT_ADD_SELECTOR
+    slot_loc = _FakeSlotLocator(candidates)
+
+    def _locator(sel: str) -> Any:
+        if sel == slot_sel:
+            return slot_loc
+        other = MagicMock()
+        other.first = other
+        other.wait_for = AsyncMock()
+        other.click = AsyncMock()
+        return other
+
+    page.locator = MagicMock(side_effect=_locator)
+    return page
+
+
+class TestClickCharacterSlotAddSelector:
+    """Proves the icon-only ``[role=button]`` is chosen, not ``.nth(1)``."""
+
+    @pytest.mark.asyncio
+    async def test_clicks_icon_only_candidate_not_decoy(self) -> None:
+        # Live-DOM order: [0] = icon-only slot-add, [1] = labeled decoy button.
+        icon_only = _FakeCandidate(inner_text="add_2")
+        # Decoy: <i>add_2</i> + hidden <span> label → inner_text has extra text.
+        decoy = _FakeCandidate(inner_text="add_2 Adicionar imagem do personagem")
+        page = _make_slot_add_page([icon_only, decoy])
+        t = _make_transport(page=page)
+
+        await t._click_character_slot_add(page)  # type: ignore[attr-defined]
+
+        assert icon_only.clicked, "the icon-only slot-add [role=button] must be clicked"
+        assert not decoy.clicked, (
+            "the labeled decoy must NOT be clicked; the old .nth(1) heuristic "
+            "would have clicked it (it is at index 1)"
+        )
+
+    @pytest.mark.asyncio
+    async def test_picks_icon_only_when_decoy_is_first(self) -> None:
+        # Robustness: even if the decoy renders FIRST, inner_text filtering wins
+        # (pure positional .nth(0) or .nth(1) would both be wrong here).
+        decoy = _FakeCandidate(inner_text="add_2 some hidden label")
+        icon_only = _FakeCandidate(inner_text="add_2")
+        page = _make_slot_add_page([decoy, icon_only])
+        t = _make_transport(page=page)
+
+        await t._click_character_slot_add(page)  # type: ignore[attr-defined]
+
+        assert icon_only.clicked, "must select the icon-only candidate by inner_text, not position"
+        assert not decoy.clicked, "labeled decoy must never be clicked"
+
+    @pytest.mark.asyncio
+    async def test_no_icon_only_candidate_is_non_fatal(self) -> None:
+        # Only a labeled decoy present → no icon-only match → log + skip, no raise.
+        decoy = _FakeCandidate(inner_text="add_2 label")
+        page = _make_slot_add_page([decoy])
+        t = _make_transport(page=page)
+
+        # MUST NOT raise — best-effort slot-add.
+        await t._click_character_slot_add(page)  # type: ignore[attr-defined]
+
+        assert not decoy.clicked, "no icon-only candidate → nothing clicked"

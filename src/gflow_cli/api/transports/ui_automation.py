@@ -2014,12 +2014,34 @@ class UiAutomationTransport(VideoGenerationMixin):
     _CHARACTER_EDITOR_READY_SELECTOR = 'div[role="textbox"][data-slate-editor="true"]'
 
     # Slot-add button for character image slots 1+ (body / accessories).
-    # The character editor renders TWO ``add_2`` buttons; the slot-add is the
-    # second one (index 1, 0-based) — the first is the "+ New project" CTA
-    # inherited from the gallery shell (not visible inside the editor, but
-    # structurally present in the DOM).  We disambiguate by nth(1) within all
-    # ``add_2``-bearing buttons.
-    _CHARACTER_SLOT_ADD_SELECTOR = "button:has(i.google-symbols:text('add_2'))"
+    #
+    # Live DOM evidence (2026-06-02 spike, character editor with slot 0 filled)
+    # disproved the old ``button:has(...).nth(1)`` heuristic.  Two ``add_2``
+    # ligatures exist in the editor DOM and they are STRUCTURALLY DISTINCT:
+    #
+    #   1. Slot-add (the target):  ``<div role="button"
+    #      aria-label="Adicionar imagem do personagem"><i ...>add_2</i></div>``
+    #      — a ``[role=button]`` div whose ONLY accessible content is the
+    #      ``add_2`` icon (icon-only; no visible/sibling text-label span).
+    #   2. The decoy:  ``<button type="button" aria-haspopup="dialog">
+    #      <i ...>add_2</i><span style="...clip...">…</span></button>`` — a real
+    #      ``<button>`` carrying a sibling ``<span>`` text label.
+    #
+    # The old ``button:has(i.google-symbols:text('add_2'))`` selector did not
+    # even MATCH the slot-add (it is a ``div[role=button]``, not ``<button>``);
+    # ``.nth(1)`` of that locator landed on the wrong control entirely.
+    #
+    # Robust, language-agnostic discriminator: the slot-add is the ``add_2``
+    # icon hosted in a ``[role=button]`` whose stripped ``inner_text`` is EXACTLY
+    # the ligature ``"add_2"`` (icon-only).  The decoy's hidden label makes its
+    # inner_text longer, so it is excluded.  The localised aria-label
+    # ("Adicionar imagem do personagem") is NEVER the primary anchor — see
+    # [[flow-locale-leak-icon-ligatures]] — it may only serve as a positional
+    # hint.  ``text-is`` (exact match) is used so partial-ligature collisions
+    # (e.g. ``add_2_box``) cannot match.
+    _CHARACTER_SLOT_ADD_SELECTOR = "[role='button']:has(i.google-symbols:text-is('add_2'))"
+    # The exact ligature an icon-only slot-add candidate's inner_text reduces to.
+    _CHARACTER_SLOT_ADD_LIGATURE = "add_2"
 
     async def _enter_character_editor(
         self,
@@ -2237,26 +2259,59 @@ class UiAutomationTransport(VideoGenerationMixin):
     ) -> None:
         """Click the slot-add (``add_2``) button for character image slots >= 1.
 
-        The character editor renders up to two ``add_2``-bearing buttons: the
-        slot-add button for the body/accessories slot is the second one
-        (``nth(1)``).  This is structurally disambiguated by position — the
-        first ``add_2`` is the gallery's "+ New project" CTA which is not
-        visible inside the deep-linked character editor, but is still present
-        in the DOM shadow.  ``nth(1)`` is therefore safe as long as the
-        character editor URL is active.
+        Live DOM evidence (2026-06-02 spike) showed the character editor renders
+        two ``add_2`` ligatures that are STRUCTURALLY distinct (see the
+        ``_CHARACTER_SLOT_ADD_SELECTOR`` constant for the full DOM): the slot-add
+        target is a ``[role=button]`` whose accessible content is icon-ONLY,
+        while the decoy is a ``<button>`` that also carries a hidden text-label
+        ``<span>``.  The previous ``.nth(1)`` heuristic was wrong — it indexed
+        into a ``<button>``-only locator that never even matched the slot-add
+        div.
+
+        Selection logic (language-agnostic):
+
+        1. Locate every ``[role=button]`` that hosts an ``add_2`` icon.
+        2. Keep only the icon-ONLY candidates — those whose stripped
+           ``inner_text`` is exactly the ``add_2`` ligature.  The decoy's hidden
+           label lengthens its inner_text, excluding it.
+        3. If exactly one icon-only candidate remains, click it.  If several
+           remain, prefer the first (the slot-add renders adjacent to the
+           character image slots, ahead of any other icon-only ``add_2``).
+
+        The localised ``aria-label`` is intentionally NOT part of the predicate
+        ([[flow-locale-leak-icon-ligatures]]); the icon-only test is the anchor.
 
         Non-fatal: a miss is logged at WARNING so generation can proceed
         (the prompt will apply to whichever slot is currently active).
         """
         try:
-            btn = page.locator(self._CHARACTER_SLOT_ADD_SELECTOR).nth(1)
-            await btn.wait_for(state="visible", timeout=5_000)
-            await btn.click()
+            loc = page.locator(self._CHARACTER_SLOT_ADD_SELECTOR)
+            await loc.first.wait_for(state="visible", timeout=5_000)
+            total = await loc.count()
+            chosen = None
+            chosen_index = -1
+            for i in range(total):
+                cand = loc.nth(i)
+                try:
+                    raw = await cand.inner_text()
+                except Exception:
+                    continue
+                # Icon-only ⇔ the accessible text reduces to just the ligature.
+                # The decoy carries a hidden label span → longer inner_text.
+                if raw.strip() == self._CHARACTER_SLOT_ADD_LIGATURE:
+                    chosen = cand
+                    chosen_index = i
+                    break
+            if chosen is None:
+                raise RuntimeError(f"no icon-only add_2 [role=button] among {total} candidate(s)")
+            await chosen.click()
             await page.wait_for_timeout(400)
             log.info(
                 "ui_automation.character_slot_add_clicked",
                 image_reference_index=1,
                 selector=self._CHARACTER_SLOT_ADD_SELECTOR,
+                candidates=total,
+                chosen_index=chosen_index,
             )
         except Exception as exc:
             shot = await _capture_debug_screenshot(page, out_dir, "debug_character_slot_add.png")
