@@ -76,10 +76,8 @@ class DataRepository:
                         id, profile_name, flow_project_id, title, source, created_at
                     )
                     VALUES (?, ?, ?, ?, ?, ?)
-                    ON CONFLICT(id) DO UPDATE SET
-                        profile_name = excluded.profile_name,
-                        flow_project_id = excluded.flow_project_id,
-                        title = excluded.title,
+                    ON CONFLICT(profile_name, flow_project_id) DO UPDATE SET
+                        title = COALESCE(excluded.title, projects.title),
                         source = excluded.source
                     """,
                     (

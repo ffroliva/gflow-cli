@@ -54,6 +54,51 @@ def test_record_character_started_inserts_started_row(tmp_path: Path) -> None:
         assert links == [], "no asset links should exist at STARTED time"
 
 
+def test_record_character_started_twice_same_project_succeeds(tmp_path: Path) -> None:
+    """Two characters in the SAME already-recorded Flow project must both record.
+
+    Live regression: the second call crashed with ``UNIQUE constraint failed:
+    projects.profile_name, projects.flow_project_id`` because ``upsert_project``
+    conflicted on ``id`` (a fresh random id) instead of the natural key. This
+    test reproduces the exact field failure (2nd character, same project).
+    """
+    with DataStore.open(tmp_path / "gflow.db") as store:
+        recorder = OperationRecorder(DataRepository(store), prompt_mode="store")
+
+        row_id_1 = recorder.record_character_started(
+            profile_name="default",
+            profile_dir=tmp_path / "profile_default",
+            project_id="flow-project-shared",
+            entity_id="entity-1",
+            name="Character One",
+        )
+        # Second character, SAME project — must NOT raise DataIntegrityError.
+        row_id_2 = recorder.record_character_started(
+            profile_name="default",
+            profile_dir=tmp_path / "profile_default",
+            project_id="flow-project-shared",
+            entity_id="entity-2",
+            name="Character Two",
+        )
+
+        assert row_id_1 and row_id_2
+        assert row_id_1 != row_id_2
+
+        # Two operation rows.
+        op_count = store.conn.execute(
+            "SELECT COUNT(*) AS n FROM operations WHERE flow_project_id = ?",
+            ("flow-project-shared",),
+        ).fetchone()["n"]
+        assert op_count == 2
+
+        # Exactly one project row for the shared natural key.
+        proj_count = store.conn.execute(
+            "SELECT COUNT(*) AS n FROM projects WHERE profile_name = ? AND flow_project_id = ?",
+            ("default", "flow-project-shared"),
+        ).fetchone()["n"]
+        assert proj_count == 1
+
+
 # ---------------------------------------------------------------------------
 # record_character_completed
 # ---------------------------------------------------------------------------
