@@ -137,7 +137,7 @@ class TestGenerateCharacterImage:
         client = _client_with_transport(tmp_path, transport)
 
         req = CharacterImageRequest(prompt="portrait of an adult character")
-        workflow_id, media_id = await client.generate_character_image(
+        workflow_id, media_id, local_path = await client.generate_character_image(
             project_id=_PROJECT_ID,
             entity_id=_ENTITY_ID,
             req=req,
@@ -147,6 +147,8 @@ class TestGenerateCharacterImage:
         # Correct return values extracted from fixture
         assert workflow_id == _WORKFLOW_ID
         assert media_id == _PRIMARY_MEDIA_ID
+        # No images in the default fake transport → nothing to download → None
+        assert local_path is None
 
         # Scenario #1: transport WAS called via the UI path
         assert len(transport.calls) == 1
@@ -186,6 +188,123 @@ class TestGenerateCharacterImage:
         )
 
         assert transport.calls[0]["locale"] == "en-US"
+
+
+_SIGNED_FIFE_URL = (
+    "https://lh3.googleusercontent.com/flow-content/abc123"
+    "=w1024-h1024?Expires=9999999999&Signature=SECRETSIGNATURE_DEADBEEF"
+)
+
+
+def _make_generated_image(fife_url: str = _SIGNED_FIFE_URL) -> GeneratedImage:
+    """A GeneratedImage carrying a signed CDN URL (slot 0 / face)."""
+    return GeneratedImage(
+        media_name=_PRIMARY_MEDIA_ID,
+        workflow_id=_WORKFLOW_ID,
+        seed=42,
+        prompt="portrait",
+        model_name_type="NARWHAL",
+        aspect_ratio="IMAGE_ASPECT_RATIO_PORTRAIT",
+        fife_url=fife_url,
+        dimensions=(1024, 1024),
+    )
+
+
+class TestGenerateCharacterImageDownload:
+    """The generated image is downloaded INSIDE the client; only the local path
+    (never the signed fifeUrl) is returned to the caller (scenario #16)."""
+
+    async def test_downloads_first_image_and_returns_local_path(self, tmp_path: Path) -> None:
+        """generate_character_image downloads images[0] via download_image and
+        returns the saved local path as the 3rd tuple element."""
+        image = _make_generated_image()
+        transport = _FakeCharTransport(images=[image])
+        client = _client_with_transport(tmp_path, transport)
+
+        saved = tmp_path / "characters" / "character_x_slot0.png"
+        download_calls: list[tuple[GeneratedImage, Path]] = []
+
+        async def _fake_download(img: GeneratedImage, out_path: Path) -> Path:
+            download_calls.append((img, out_path))
+            return saved
+
+        client.download_image = _fake_download  # type: ignore[method-assign]
+
+        req = CharacterImageRequest(prompt="portrait")
+        workflow_id, media_id, local_path = await client.generate_character_image(
+            project_id=_PROJECT_ID,
+            entity_id=_ENTITY_ID,
+            req=req,
+            image_reference_index=0,
+        )
+
+        assert workflow_id == _WORKFLOW_ID
+        assert media_id == _PRIMARY_MEDIA_ID
+        # The local saved path is returned — NOT the signed URL.
+        assert local_path == saved
+
+        # download_image was called once with the image carrying the fife_url.
+        assert len(download_calls) == 1
+        called_img, called_out = download_calls[0]
+        assert called_img is image
+        # The slot index is encoded in the output filename.
+        assert "slot0" in called_out.name
+
+    async def test_signed_url_never_returned_to_caller(self, tmp_path: Path) -> None:
+        """The signed fifeUrl must NEVER appear in the returned tuple — only the
+        download_image call (inside the client) ever sees it (scenario #16)."""
+        image = _make_generated_image()
+        transport = _FakeCharTransport(images=[image])
+        client = _client_with_transport(tmp_path, transport)
+
+        saved = tmp_path / "characters" / "character_x_slot0.png"
+
+        async def _fake_download(img: GeneratedImage, out_path: Path) -> Path:  # noqa: ARG001
+            return saved
+
+        client.download_image = _fake_download  # type: ignore[method-assign]
+
+        req = CharacterImageRequest(prompt="portrait")
+        result = await client.generate_character_image(
+            project_id=_PROJECT_ID,
+            entity_id=_ENTITY_ID,
+            req=req,
+            image_reference_index=0,
+        )
+
+        # No element of the returned tuple is (or contains) the signed URL.
+        for element in result:
+            assert "Signature=" not in str(element)
+            assert "Expires=" not in str(element)
+            assert _SIGNED_FIFE_URL not in str(element)
+
+    async def test_no_image_returns_none_path_and_does_not_crash(self, tmp_path: Path) -> None:
+        """When the transport returns no images, local_path is None (warning
+        logged) and the ids still flow through — no crash."""
+        transport = _FakeCharTransport(images=[])
+        client = _client_with_transport(tmp_path, transport)
+
+        download_called = False
+
+        async def _fake_download(img: GeneratedImage, out_path: Path) -> Path:  # noqa: ARG001
+            nonlocal download_called
+            download_called = True
+            return tmp_path / "never.png"
+
+        client.download_image = _fake_download  # type: ignore[method-assign]
+
+        req = CharacterImageRequest(prompt="portrait")
+        workflow_id, media_id, local_path = await client.generate_character_image(
+            project_id=_PROJECT_ID,
+            entity_id=_ENTITY_ID,
+            req=req,
+            image_reference_index=0,
+        )
+
+        assert workflow_id == _WORKFLOW_ID
+        assert media_id == _PRIMARY_MEDIA_ID
+        assert local_path is None
+        assert download_called is False, "download_image must not be called with no image"
 
 
 class TestGenerateCharacterImageEntityGuard:

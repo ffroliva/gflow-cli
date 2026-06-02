@@ -51,14 +51,16 @@ FACE_REQ = CharacterImageRequest(prompt="a test face", model="nano2")
 # ---------------------------------------------------------------------------
 
 
-def _make_client(entity_id: str = ENTITY_ID) -> MagicMock:
-    """Minimal async client mock; generate returns safe (wf_id, media_id) only."""
+def _make_client(entity_id: str = ENTITY_ID, *, face_path: str | None = None) -> MagicMock:
+    """Minimal async client mock; generate returns safe (wf_id, media_id, path) only.
+
+    The 3rd element is a LOCAL file path (or None) — never a signed CDN URL.
+    That's the Scenario-#16 guarantee at the client boundary: the signed fifeUrl
+    is consumed inside the client (during download) and never surfaces here.
+    """
     client = MagicMock()
     client.create_entity = AsyncMock(return_value=entity_id)
-    # generate_character_image intentionally returns ONLY (workflow_id, media_id).
-    # The signed fifeUrl lives in the raw gen response but is NEVER surfaced by
-    # this return type — that's the Scenario-#16 guarantee at the client boundary.
-    client.generate_character_image = AsyncMock(return_value=(WF0, M0))
+    client.generate_character_image = AsyncMock(return_value=(WF0, M0, face_path))
     client.commit_workflow = AsyncMock(return_value=None)
     client.patch_entity = AsyncMock(return_value=None)
     return client
@@ -204,6 +206,49 @@ async def test_signed_url_never_reaches_recorder(tmp_path: Path) -> None:
         meta = json.loads(meta_str)
         assert WF0 in meta.get("workflow_ids", []), "workflow_id must be recorded"
         assert M0 in meta.get("primary_media_ids", []), "media_id must be recorded"
+
+
+# ---------------------------------------------------------------------------
+# Scenario #16 (download) — local image path persisted, signed URL never
+# ---------------------------------------------------------------------------
+
+
+@pytest.mark.asyncio
+async def test_downloaded_image_path_persisted_no_signed_url(tmp_path: Path) -> None:
+    """The downloaded LOCAL image path is persisted as a local_files row; the
+    signed CDN URL is never stored anywhere in the DB (scenario #16).
+
+    The client returns only (wf_id, media_id, local_path) — a local path, not a
+    signed URL — so the saga records the on-disk artifact while the DB stays free
+    of any ``Signature=`` / ``Expires=`` / ``fifeUrl`` marker.
+    """
+    face_file = tmp_path / "characters" / "character_face_slot0.png"
+    face_file.parent.mkdir(parents=True, exist_ok=True)
+    face_file.write_bytes(b"\x89PNG\r\n\x1a\nFAKE")
+
+    with DataStore.open(tmp_path / "gflow.db") as store:
+        recorder = OperationRecorder(DataRepository(store), prompt_mode="store")
+        client = _make_client(face_path=str(face_file))
+
+        await character_create(client, recorder, **_saga_kwargs(tmp_path))
+
+        # A local_files row exists pointing at the downloaded on-disk image.
+        lf_rows = store.conn.execute(
+            "SELECT path FROM local_files WHERE path IS NOT NULL"
+        ).fetchall()
+        paths = [r["path"] for r in lf_rows]
+        assert any(str(face_file.resolve()) == p for p in paths), (
+            f"downloaded image path not persisted; got {paths}"
+        )
+
+        # No signed-URL markers anywhere in the DB (operations + assets).
+        dump = ""
+        for tbl in ("operations", "assets", "local_files"):
+            for row in store.conn.execute(f"SELECT * FROM {tbl}").fetchall():
+                dump += json.dumps([str(v) for v in tuple(row)])
+        assert "signature=" not in dump.lower(), "signature= must not appear in DB"
+        assert "Expires=" not in dump, "Expires= must not appear in DB"
+        assert "fifeUrl" not in dump, "fifeUrl must not appear in DB"
 
 
 # ---------------------------------------------------------------------------

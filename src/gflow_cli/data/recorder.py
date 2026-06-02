@@ -641,6 +641,7 @@ class OperationRecorder:
         voice: str | None = None,
         personality: str | None = None,
         media_metadata: dict[str, object] | None = None,
+        image_paths: list[str | None] | None = None,
     ) -> None:
         """Update the STARTED row to SUCCEEDED.
 
@@ -650,6 +651,11 @@ class OperationRecorder:
         * ``media_metadata`` is routed through
           :func:`~gflow_cli.data.redaction.redact_metadata` so that signed URLs
           (``signature=`` / ``Expires=`` / ``fifeUrl``) are never persisted.
+        * ``image_paths`` is the LOCAL on-disk path of each downloaded reference
+          image (slot order, parallel to ``primary_media_ids``).  Each non-None
+          path is persisted as an asset + local-file row so the character's
+          images are queryable like generated images/videos.  These are always
+          local file paths — never a signed CDN URL (scenario #16).
         """
         repo = self.repository
         pf = prompt_fields(personality, mode=self.prompt_mode)
@@ -673,3 +679,83 @@ class OperationRecorder:
             prompt_redacted=pf.prompt_redacted,
             metadata_json=meta,
         )
+
+        # Persist each downloaded reference image as an asset + local-file row.
+        if image_paths:
+            self._record_character_local_files(
+                row_id=row_id,
+                workflow_ids=workflow_ids,
+                primary_media_ids=primary_media_ids,
+                image_paths=image_paths,
+            )
+
+    def _record_character_local_files(
+        self,
+        *,
+        row_id: str,
+        workflow_ids: list[str],
+        primary_media_ids: list[str],
+        image_paths: list[str | None],
+    ) -> None:
+        """Upsert an asset + local-file row for each downloaded character image.
+
+        Only local file paths are stored — never a signed CDN URL (scenario
+        #16).  Slots whose path is ``None`` (not downloaded / recovered) are
+        skipped.  The operation row's ``profile_name`` and ``flow_project_id``
+        are looked up from the existing STARTED/SUCCEEDED row.
+        """
+        from pathlib import Path as _Path
+
+        repo = self.repository
+        op_row = repo.store.conn.execute(
+            "SELECT profile_name, flow_project_id FROM operations WHERE id = ?",
+            (row_id,),
+        ).fetchone()
+        if op_row is None:
+            return
+        profile_name = op_row["profile_name"]
+        project_id = op_row["flow_project_id"]
+
+        op_asset_index = 0
+        for slot, path_str in enumerate(image_paths):
+            if path_str is None:
+                continue
+            media_id = primary_media_ids[slot] if slot < len(primary_media_ids) else ""
+            workflow_id = workflow_ids[slot] if slot < len(workflow_ids) else None
+            path = _Path(path_str)
+            media_type = mimetypes.guess_type(path.name)[0] or "image/png"
+            asset_id = _new_id()
+            repo.upsert_asset(
+                AssetRecord(
+                    id=asset_id,
+                    profile_name=profile_name,
+                    flow_project_id=project_id,
+                    flow_media_id=media_id,
+                    flow_workflow_id=workflow_id,
+                    flow_media_generation_id=None,
+                    kind=AssetKind.IMAGE,
+                    status="ready",
+                    model=None,
+                    aspect_ratio=None,
+                    width=None,
+                    height=None,
+                    duration_seconds=None,
+                    seed=None,
+                    metadata_json={},
+                ),
+            )
+            repo.link_operation_asset(row_id, asset_id, OperationAssetRole.OUTPUT, op_asset_index)
+            op_asset_index += 1
+            repo.upsert_local_file(
+                LocalFileRecord(
+                    id=_new_id(),
+                    profile_name=profile_name,
+                    asset_id=asset_id,
+                    path=path.resolve(),
+                    media_type=media_type,
+                    bytes=_file_bytes(path),
+                    sha256=_file_sha256(path),
+                    storage_provider=None,
+                    cloud_uri=None,
+                ),
+            )

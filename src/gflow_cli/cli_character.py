@@ -199,6 +199,7 @@ async def _run_create(
                     "workflow_ids": list(result.workflow_ids),
                     "primary_media_ids": list(result.primary_media_ids),
                     "voice": result.voice,
+                    "image_paths": [str(p) if p is not None else None for p in result.image_paths],
                 },
             }
         )
@@ -206,6 +207,11 @@ async def _run_create(
         console.print(f"[bold green]Character created:[/bold green] {result.entity_id}")
         for wf_id in result.workflow_ids:
             console.print(f"  workflow: {wf_id}")
+        # Human-readable saved-image lines (slot 0 = face, slot 1 = body).
+        slot_labels = ("face", "body")
+        for slot, path in enumerate(result.image_paths):
+            label = slot_labels[slot] if slot < len(slot_labels) else f"slot{slot}"
+            console.print(f"  {label}: {path if path is not None else '(not saved)'}")
 
 
 # ---------------------------------------------------------------------------
