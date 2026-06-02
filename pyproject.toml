@@ -112,6 +112,7 @@ markers = [
     "e2e_batch: spends multiple Imagen credits via batch generation",
     "e2e_data: verifies data-layer (SQLite) persistence — combines with e2e_image or e2e_video",
     "e2e_scene: scene/timeline compose (Add Clip) — zero credits, no reCAPTCHA",
+    "e2e_character: Character entity create (face/body image-gen + entity patch) — spends Imagen credits; opt-in via GFLOW_CLI_E2E_RUN_CHARACTER",
     "smoke: golden-path live test (1 Imagen credit); opt-in via GFLOW_CLI_E2E_PROFILE",
 ]
 
