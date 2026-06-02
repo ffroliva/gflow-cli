@@ -43,7 +43,7 @@ NAME = "E2E Character"
 WF0 = "wf-e2e-face"
 M0 = "media-e2e-face"
 
-FACE_REQ = CharacterImageRequest(prompt="a test face", aspect="9:16", model="narwhal")
+FACE_REQ = CharacterImageRequest(prompt="a test face", model="nano2")
 
 
 # ---------------------------------------------------------------------------

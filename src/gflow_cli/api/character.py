@@ -17,6 +17,7 @@ from typing import Any
 import structlog
 
 __all__ = [
+    "CHARACTER_MODELS",
     "Character",
     "CharacterCreateResult",
     "CharacterImageRequest",
@@ -25,6 +26,17 @@ __all__ = [
 ]
 
 log = structlog.get_logger(__name__)
+
+# ---------------------------------------------------------------------------
+# Character models — the editor exposes EXACTLY two.
+# Maps the friendly CLI alias to the model's UI display name (used by the
+# UI-automation model picker).  Product names are not localized, so matching
+# the option by display text across locales is acceptable.
+# ---------------------------------------------------------------------------
+CHARACTER_MODELS: dict[str, str] = {
+    "nano2": "Nano Banana 2",
+    "nanopro": "Nano Banana Pro",
+}
 
 # ---------------------------------------------------------------------------
 # Known preset voice ids for Gemini TTS.
@@ -95,11 +107,12 @@ class CharacterImageRequest:
     directly — generation is UI-driven.  This DTO carries the parameters that
     the CLI layer needs to drive the UI automation and to record the request.
 
-    ``aspect`` and ``model`` are kept as plain strings (matching how the CLI
-    receives them from Click options) rather than the image-module enums, so
-    that this module stays dependency-free and importable without pulling in
-    the full image pipeline.  Conversion to wire-enum values is the caller's
-    responsibility.
+    Characters have NO aspect-ratio control (the editor exposes no ratio
+    picker), so this DTO carries no ``aspect`` field.  ``model`` is the friendly
+    CLI alias (``"nano2"`` / ``"nanopro"``, see :data:`CHARACTER_MODELS`) kept as
+    a plain string — matching how the CLI receives it from a Click option — so
+    that this module stays dependency-free and importable without pulling in the
+    full image pipeline.
 
     ``image_reference_index`` is the 0-based index of the existing character
     image reference that will be used as the style anchor (0 = first / only
@@ -107,8 +120,7 @@ class CharacterImageRequest:
     """
 
     prompt: str
-    aspect: str = "9:16"
-    model: str = "narwhal"
+    model: str = "nano2"
     image_reference_index: int = 0
     face_media_id: str | None = None
     """mediaId of the face reference image for body-slot reference generation."""

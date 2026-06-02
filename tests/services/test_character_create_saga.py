@@ -45,8 +45,8 @@ WF1 = "wf-body-1"
 M1 = "media-body-1"
 ROW_ID = "row-001"
 
-FACE_REQ = CharacterImageRequest(prompt="a fantasy face", aspect="9:16", model="narwhal")
-BODY_REQ = CharacterImageRequest(prompt="a fantasy body", aspect="9:16", model="narwhal")
+FACE_REQ = CharacterImageRequest(prompt="a fantasy face", model="nano2")
+BODY_REQ = CharacterImageRequest(prompt="a fantasy body", model="nano2")
 
 
 def _make_client(

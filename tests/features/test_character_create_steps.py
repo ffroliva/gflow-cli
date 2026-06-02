@@ -243,7 +243,7 @@ def _incomplete_prior_face(saga_state: dict[str, Any]) -> None:
 def _run_saga_resume(saga_state: dict[str, Any]) -> None:
     client = saga_state["client"]
     recorder = saga_state["recorder"]
-    face = CharacterImageRequest(prompt="a face", aspect="9:16", model="narwhal")
+    face = CharacterImageRequest(prompt="a face", model="nano2")
 
     saga_state["saga_result"] = asyncio.run(
         character_create(

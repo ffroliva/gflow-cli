@@ -24,7 +24,7 @@ from urllib.parse import urlparse
 
 import structlog
 
-from gflow_cli.api.character import CharacterImageRequest
+from gflow_cli.api.character import CHARACTER_MODELS, CharacterImageRequest
 from gflow_cli.api.dto import BatchSubmissionResult, GeneratedImage
 from gflow_cli.api.image import Aspect, GenerateImageRequest, Model
 from gflow_cli.api.transports._common import extract_project_id
@@ -2119,6 +2119,100 @@ class UiAutomationTransport(VideoGenerationMixin):
     # The exact ligature an icon-only slot-add candidate's inner_text reduces to.
     _CHARACTER_SLOT_ADD_LIGATURE = "add_2"
 
+    # Character-editor model picker.  The editor shows a model chip ("🍌 Nano
+    # Banana 2") with an ``arrow_drop_down`` ligature; clicking it opens a menu
+    # whose options are the product names.  Product names ("Nano Banana 2" /
+    # "Nano Banana Pro") are NOT localized, so text matching is acceptable here.
+    #
+    # ⚠️ NOT yet spiked from the live DOM — this is a reasonable best-effort
+    # selector cascade, live-confirmed later.  A failed pick is NON-FATAL:
+    # generation proceeds with Flow's default model.
+    _CHARACTER_MODEL_PICKER_TRIGGER_SELECTORS = (
+        "button:has(i.google-symbols:text-is('arrow_drop_down'))",
+        "[role='button']:has(i.google-symbols:text-is('arrow_drop_down'))",
+    )
+
+    async def _select_character_model(
+        self,
+        page: Any,
+        model_alias: str,
+        out_dir: Any = None,
+    ) -> None:
+        """Best-effort select the character model via the editor's model picker.
+
+        ``model_alias`` is the friendly CLI alias (``"nano2"`` / ``"nanopro"``);
+        it is mapped through :data:`CHARACTER_MODELS` to the UI display name.
+
+        If the requested model is the DEFAULT (``nano2`` / "Nano Banana 2") the
+        picker is left untouched — it is already selected, so an extra click is
+        wasteful and risks closing nothing useful.
+
+        Otherwise the dropdown is opened (the element bearing the
+        ``arrow_drop_down`` ligature near the model chip) and the option whose
+        visible text contains the display name is clicked.
+
+        NON-FATAL: if the alias is unknown, or the dropdown / option cannot be
+        found, a warning is logged and generation proceeds with Flow's default
+        model.  The picker DOM is not yet spiked — see the selector constants.
+        """
+        display_name = CHARACTER_MODELS.get(model_alias.lower())
+        if display_name is None:
+            log.warning(
+                "ui_automation.character_model_picker_not_found",
+                model=model_alias,
+                reason="unknown_alias",
+            )
+            return
+
+        # nano2 / "Nano Banana 2" is the editor default — already selected.
+        default_display = CHARACTER_MODELS["nano2"]
+        if display_name == default_display:
+            log.info(
+                "ui_automation.character_model_selected",
+                model=display_name,
+                via="default_no_click",
+            )
+            return
+
+        try:
+            opened = False
+            for trig_sel in self._CHARACTER_MODEL_PICKER_TRIGGER_SELECTORS:
+                try:
+                    trigger = page.locator(trig_sel).first
+                    await trigger.wait_for(state="visible", timeout=4000)
+                    await trigger.click()
+                    await page.wait_for_timeout(400)
+                    opened = True
+                    break
+                except Exception:
+                    continue
+            if not opened:
+                raise RuntimeError("model-picker trigger not found")
+
+            option_sel = f":has-text('{display_name}')"
+            option = page.locator(option_sel).first
+            await option.wait_for(state="visible", timeout=4000)
+            await option.click()
+            await page.wait_for_timeout(400)
+            log.info(
+                "ui_automation.character_model_selected",
+                model=display_name,
+                via=option_sel,
+            )
+        except Exception as e:
+            log.warning(
+                "ui_automation.character_model_picker_not_found",
+                model=model_alias,
+                display_name=display_name,
+                error=str(e)[:120],
+                note="Flow default model applies",
+            )
+            await _capture_debug_screenshot(page, out_dir, "debug_character_model_picker.png")
+            try:
+                await page.keyboard.press("Escape")
+            except Exception:
+                pass
+
     async def _enter_character_editor(
         self,
         page: Any,
@@ -2267,29 +2361,15 @@ class UiAutomationTransport(VideoGenerationMixin):
         )
         await self._dismiss_blocking_overlays(page, out_dir)
 
-        # CharacterImageRequest carries CLI-string aspect/model (not domain
-        # enums).  ``aspect`` is already in the "9:16"/"16:9" form the settings
-        # panel wants — pass it through directly (do NOT route through
-        # _aspect_cli_from_enum, which keys on the Aspect enum).  ``model`` is a
-        # friendly CLI alias ("narwhal"); convert it to the Model enum with the
-        # canonical Model.from_cli, falling back to None (→ Flow default,
-        # confirmed NARWHAL) on an unknown alias so an odd --model never crashes
-        # the run.  Character generation is always exactly one image per slot.
-        try:
-            model = Model.from_cli(request.model)
-        except ValueError:
-            log.warning(
-                "ui_automation.character_model_alias_unknown",
-                model=request.model,
-                fallback="flow_default",
-            )
-            model = None
-        await self._configure_generation_settings(
-            page,
-            request.aspect,
-            1,
-            model=model,
-        )
+        # Characters have NO aspect-ratio control and NO per-generation settings
+        # panel (the live editor renders neither — the old
+        # _configure_generation_settings call only ever logged
+        # ``gen_settings_panel_not_found`` and skipped).  Model selection uses
+        # the editor's OWN model dropdown instead.  ``request.model`` is the
+        # friendly CLI alias ("nano2" / "nanopro").  Best-effort, non-fatal:
+        # a failed pick proceeds with Flow's default model.  Character
+        # generation is always exactly one image per slot.
+        await self._select_character_model(page, request.model, out_dir)
 
         # Slot-add: face (index 0) needs no interaction; body/accessories do.
         # Clicking slot-add auto-attaches the generated face as a reference (Flow's

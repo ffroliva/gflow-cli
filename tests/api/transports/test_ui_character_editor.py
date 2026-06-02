@@ -228,7 +228,7 @@ class TestGenerateCharacterImages:
 
         t._enter_character_editor = _rec("enter_character_editor")  # type: ignore[attr-defined]
         t._dismiss_blocking_overlays = _rec("dismiss_overlays")  # type: ignore[attr-defined]
-        t._configure_generation_settings = _rec("configure")  # type: ignore[attr-defined]
+        t._select_character_model = _rec("select_model")  # type: ignore[attr-defined]
         t._send_prompt = _rec("send_prompt")  # type: ignore[attr-defined]
         t._submit_body_prompt = _rec("submit_body_prompt")  # type: ignore[attr-defined]
         t._click_character_slot_add = _rec("slot_add")  # type: ignore[attr-defined]
@@ -398,38 +398,31 @@ class TestGenerateCharacterImages:
 
 
 class TestCharacterImageRequestFieldContract:
-    """Lock the wire between ``CharacterImageRequest`` and the settings panel.
+    """Lock the wire between ``CharacterImageRequest`` and model selection.
 
-    The live crash was ``'CharacterImageRequest' object has no attribute
-    'count'``: ``_generate_character_images_locked`` was written against
-    ``GenerateImageRequest`` (``.count``; enum ``.aspect``/``.model``) but the
-    real caller (``client.generate_character_images``) passes a
-    ``CharacterImageRequest`` (no ``.count``; CLI-*string* ``.aspect``/
-    ``.model``).  All 942 prior tests missed it because they (a) passed a
-    ``GenerateImageRequest`` and (b) mocked ``_configure_generation_settings``
-    away — so the real ``request.count`` / ``request.aspect`` access never ran.
+    Characters have NO aspect-ratio control and NO per-generation settings
+    panel — only the editor's own model picker.  ``_generate_character_images_locked``
+    must drive a REAL ``CharacterImageRequest`` (no ``.count``, no ``.aspect``)
+    without AttributeError, calling ``_select_character_model`` with the request's
+    model alias and ``_await_captured`` with the per-slot ``expected_count`` of 1.
 
-    These tests build a REAL ``CharacterImageRequest`` and DO NOT mock
-    ``_configure_generation_settings`` away — they replace it with a spy that
-    records the exact arguments the locked method computes, forcing the real
-    attribute access (``request.aspect``, ``request.model``) and the real
-    ``Model.from_cli`` conversion to execute.
+    These tests build a REAL ``CharacterImageRequest`` and replace
+    ``_select_character_model`` with a spy, forcing the real attribute access to
+    execute (a stray ``request.aspect`` / ``request.count`` would raise).
     """
 
     @staticmethod
-    def _build_transport_with_config_spy(
+    def _build_transport_with_model_spy(
         *,
         fixture: dict[str, Any],
         project_id: str = "proj-1",
     ) -> tuple[UiAutomationTransport, AsyncMock, list[Any]]:
-        """Wire a transport where ``_configure_generation_settings`` is a SPY.
+        """Wire a transport where ``_select_character_model`` is a SPY.
 
-        Returns ``(transport, config_spy, await_count_calls)`` where
-        ``config_spy`` records every ``(args, kwargs)`` it was called with and
+        Returns ``(transport, model_spy, await_count_calls)`` where ``model_spy``
+        records every ``(args, kwargs)`` it was called with and
         ``await_count_calls`` collects the ``expected_count`` passed to
-        ``_await_captured`` (the second real consumer of the per-slot count).
-        Only the Playwright/browser-touching steps are stubbed; the panel
-        config "skips gracefully" because the spy never touches a browser.
+        ``_await_captured``.  Only Playwright/browser-touching steps are stubbed.
         """
         t = UiAutomationTransport()
         t._setup_done = True  # type: ignore[attr-defined]
@@ -442,11 +435,10 @@ class TestCharacterImageRequestFieldContract:
         t._send_prompt = AsyncMock()  # type: ignore[attr-defined]
         t._click_character_slot_add = AsyncMock()  # type: ignore[attr-defined]
 
-        # The SPY: real signature is _configure_generation_settings(page,
-        # aspect_cli, count, *, model=..., ...).  We record everything and
-        # return None — no browser, "skips gracefully".
-        config_spy = AsyncMock(return_value=None)
-        t._configure_generation_settings = config_spy  # type: ignore[attr-defined]
+        # The SPY: real signature is _select_character_model(page, model_alias,
+        # out_dir).  Record everything and return None — no browser touched.
+        model_spy = AsyncMock(return_value=None)
+        t._select_character_model = model_spy  # type: ignore[attr-defined]
 
         captured_response = _make_captured_response(fixture, project_id=project_id)
         await_count_calls: list[Any] = []
@@ -470,22 +462,21 @@ class TestCharacterImageRequestFieldContract:
 
         t._attach_batch_response_listener = MagicMock(side_effect=_attach)  # type: ignore[attr-defined]
 
-        return t, config_spy, await_count_calls
+        return t, model_spy, await_count_calls
 
     @pytest.mark.asyncio
-    async def test_does_not_raise_attribute_error_and_translates_fields(self) -> None:
-        """The live crash repro: a REAL CharacterImageRequest must drive the
-        locked method without AttributeError, and the settings panel must
-        receive the CLI aspect string, count=1, and a Model enum (not a raw
-        CharacterImageRequest string attribute)."""
+    async def test_drives_model_picker_without_attribute_error(self) -> None:
+        """A REAL CharacterImageRequest (no .count, no .aspect) must drive the
+        locked method without AttributeError; _select_character_model receives
+        the request's model alias and _await_captured the per-slot count 1."""
         fixture = _load_fixture()
-        t, config_spy, await_count_calls = self._build_transport_with_config_spy(fixture=fixture)
+        t, model_spy, await_count_calls = self._build_transport_with_model_spy(fixture=fixture)
 
-        # REAL DTO — CLI-string aspect/model, NO .count attribute at all.
-        req = CharacterImageRequest(prompt="x", aspect="9:16", model="narwhal")
+        # REAL DTO — CLI alias model, NO .count and NO .aspect attributes.
+        req = CharacterImageRequest(prompt="x", model="nanopro")
         assert not hasattr(req, "count"), "guard: CharacterImageRequest must NOT have .count"
+        assert not hasattr(req, "aspect"), "guard: CharacterImageRequest must NOT have .aspect"
 
-        # MUST NOT raise AttributeError('CharacterImageRequest' ... 'count').
         images, workflows = await t.generate_character_images(
             project_id="proj-1",
             entity_id="e1",
@@ -494,50 +485,136 @@ class TestCharacterImageRequestFieldContract:
             locale="pt",
         )
 
-        # _configure_generation_settings(page, aspect_cli, count, *, model=...)
-        config_spy.assert_called_once()
-        call = config_spy.call_args
-        # positional: (page, aspect_cli, count)
-        aspect_cli = call.args[1]
-        count = call.args[2]
-        model = call.kwargs["model"]
-
-        assert aspect_cli == "9:16", f"CLI aspect string must pass through; got {aspect_cli!r}"
-        assert count == 1, f"character gen is exactly one image per slot; got {count!r}"
-        assert model is Model.NARWHAL, (
-            f"model must be the Model enum from Model.from_cli('narwhal'); "
-            f"got {model!r} (a raw string means the old GenerateImageRequest path)"
-        )
-        assert not isinstance(model, str) or isinstance(model, Model), (
-            "model must NOT be the raw CharacterImageRequest.model string"
+        # _select_character_model(page, model_alias, out_dir)
+        model_spy.assert_called_once()
+        call = model_spy.call_args
+        model_alias = call.args[1]
+        assert model_alias == "nanopro", (
+            f"the request's model alias must reach _select_character_model; got {model_alias!r}"
         )
 
-        # _await_captured must also receive the per-slot count of 1.
+        # _await_captured must receive the per-slot count of 1 (hardcoded).
         assert await_count_calls == [1], (
             f"expected_count passed to _await_captured must be 1; got {await_count_calls!r}"
         )
         assert len(images) >= 1
         assert len(workflows) >= 1
 
-    @pytest.mark.asyncio
-    async def test_unknown_model_alias_falls_back_to_none(self) -> None:
-        """An unknown --model alias must NOT crash; model selection is skipped
-        (model=None → Flow default), honoring best-effort settings."""
-        fixture = _load_fixture()
-        t, config_spy, _ = self._build_transport_with_config_spy(fixture=fixture)
 
-        req = CharacterImageRequest(prompt="x", aspect="9:16", model="totally-unknown-model")
-        # MUST NOT raise ValueError from Model.from_cli.
-        await t.generate_character_images(
-            project_id="proj-1",
-            entity_id="e1",
-            request=req,
-            image_reference_index=0,
-            locale="pt",
-        )
-        assert config_spy.call_args.kwargs["model"] is None, (
-            "unknown alias must fall back to model=None (Flow default), not crash"
-        )
+# ---------------------------------------------------------------------------
+# Tests: _select_character_model — editor model picker (best-effort, non-fatal)
+# ---------------------------------------------------------------------------
+
+
+class _FakeMenuOption:
+    """A clickable model-menu option."""
+
+    def __init__(self, *, visible: bool = True) -> None:
+        self.clicked = False
+        self.first = self
+        self.click = AsyncMock(side_effect=self._record)
+        if visible:
+            self.wait_for = AsyncMock()
+        else:
+            self.wait_for = AsyncMock(side_effect=Exception("not visible"))
+
+    async def _record(self, *_a: Any, **_kw: Any) -> None:
+        self.clicked = True
+
+
+class _FakeTrigger:
+    """The arrow_drop_down dropdown trigger."""
+
+    def __init__(self, *, visible: bool = True) -> None:
+        self.clicked = False
+        self.first = self
+        self.click = AsyncMock(side_effect=self._record)
+        if visible:
+            self.wait_for = AsyncMock()
+        else:
+            self.wait_for = AsyncMock(side_effect=Exception("not visible"))
+
+    async def _record(self, *_a: Any, **_kw: Any) -> None:
+        self.clicked = True
+
+
+def _make_model_picker_page(
+    *,
+    trigger_visible: bool = True,
+    option_visible: bool = True,
+) -> tuple[MagicMock, _FakeTrigger, _FakeMenuOption]:
+    """Fake page wiring the model-picker trigger + the Nano Banana Pro option."""
+    trigger = _FakeTrigger(visible=trigger_visible)
+    option = _FakeMenuOption(visible=option_visible)
+
+    trigger_sels = set(UiAutomationTransport._CHARACTER_MODEL_PICKER_TRIGGER_SELECTORS)
+
+    page = MagicMock()
+    page.url = "https://labs.google/fx/pt/tools/flow/project/p1/character/e1"
+    page.wait_for_timeout = AsyncMock()
+    page.screenshot = AsyncMock(return_value=b"")
+    page.keyboard = MagicMock()
+    page.keyboard.press = AsyncMock()
+
+    def _locator(sel: str) -> Any:
+        if sel in trigger_sels:
+            return trigger
+        if "Nano Banana Pro" in sel:
+            return option
+        loc = MagicMock()
+        loc.first = loc
+        loc.wait_for = AsyncMock(side_effect=Exception("not visible"))
+        loc.click = AsyncMock()
+        return loc
+
+    page.locator = MagicMock(side_effect=_locator)
+    return page, trigger, option
+
+
+class TestSelectCharacterModel:
+    @pytest.mark.asyncio
+    async def test_nano2_default_does_not_click_dropdown(self) -> None:
+        """nano2 (the default) must be a no-op — no dropdown trigger click."""
+        page, trigger, option = _make_model_picker_page()
+        t = _make_transport(page=page)
+
+        await t._select_character_model(page, "nano2", None)  # type: ignore[attr-defined]
+
+        assert not trigger.clicked, "default model must NOT open the dropdown"
+        assert not option.clicked
+
+    @pytest.mark.asyncio
+    async def test_nanopro_opens_dropdown_and_clicks_option(self) -> None:
+        """nanopro must open the dropdown and click the Nano Banana Pro option."""
+        page, trigger, option = _make_model_picker_page()
+        t = _make_transport(page=page)
+
+        await t._select_character_model(page, "nanopro", None)  # type: ignore[attr-defined]
+
+        assert trigger.clicked, "nanopro must open the model dropdown"
+        assert option.clicked, "the Nano Banana Pro option must be clicked"
+
+    @pytest.mark.asyncio
+    async def test_picker_not_found_is_non_fatal(self) -> None:
+        """If neither the trigger nor the option is found, no exception escapes."""
+        page, trigger, option = _make_model_picker_page(trigger_visible=False)
+        t = _make_transport(page=page)
+
+        # MUST NOT raise — best-effort model selection.
+        await t._select_character_model(page, "nanopro", None)  # type: ignore[attr-defined]
+
+        assert not option.clicked, "no trigger → no option click"
+
+    @pytest.mark.asyncio
+    async def test_unknown_alias_is_non_fatal_no_click(self) -> None:
+        """An unknown alias must NOT crash and must not touch the dropdown."""
+        page, trigger, option = _make_model_picker_page()
+        t = _make_transport(page=page)
+
+        await t._select_character_model(page, "totally-unknown", None)  # type: ignore[attr-defined]
+
+        assert not trigger.clicked
+        assert not option.clicked
 
 
 # ---------------------------------------------------------------------------

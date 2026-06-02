@@ -51,8 +51,13 @@ def character() -> None:
 )
 @click.option("--voice", default=None, help="Preset voice id (e.g. gacrux).")
 @click.option("--personality", default=None, help="Personality notes for the character.")
-@click.option("--aspect", default="9:16", show_default=True, help="Image aspect ratio.")
-@click.option("--model", default="narwhal", show_default=True, help="Image generation model.")
+@click.option(
+    "--model",
+    type=click.Choice(["nano2", "nanopro"], case_sensitive=False),
+    default="nano2",
+    show_default=True,
+    help="Character model: nano2 (Nano Banana 2, default) or nanopro (Nano Banana Pro).",
+)
 @click.option("--profile", default=None, help="Profile name (overrides default).")
 @click.option("--locale", default="en-US", show_default=True, help="BCP-47 locale.")
 @click.option("--json", "as_json", is_flag=True, default=False, help="Emit JSON output.")
@@ -63,7 +68,6 @@ def create(
     body_prompt: str | None,
     voice: str | None,
     personality: str | None,
-    aspect: str,
     model: str,
     profile: str | None,
     locale: str,
@@ -89,7 +93,6 @@ def create(
             body_prompt=body_prompt,
             voice=voice,
             personality=personality,
-            aspect=aspect,
             model=model,
             locale=locale,
             as_json=as_json,
@@ -111,7 +114,6 @@ async def _run_create(
     body_prompt: str | None,
     voice: str | None,
     personality: str | None,
-    aspect: str,
     model: str,
     locale: str,
     as_json: bool,
@@ -119,7 +121,6 @@ async def _run_create(
 ) -> None:
     face = CharacterImageRequest(
         prompt=face_prompt,
-        aspect=aspect,
         model=model,
         image_reference_index=0,
     )
@@ -127,7 +128,6 @@ async def _run_create(
     if body_prompt is not None:
         body = CharacterImageRequest(
             prompt=body_prompt,
-            aspect=aspect,
             model=model,
             image_reference_index=1,
         )
