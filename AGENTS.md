@@ -8,7 +8,8 @@ Supported tools that auto-discover this file: Cursor, Codex, Aider, Jules, Devin
 
 - Unofficial Python CLI for [Google Flow](https://labs.google/fx/tools/flow) — drives Veo (image-to-video, text-to-video) and Imagen (text-to-image) generations from the terminal by reverse-engineering Flow's private REST API at `aisandbox-pa.googleapis.com`.
 - Python 3.11+ · `uv`-managed · `hatchling` builds · Playwright Chromium transport · `pyright` strict · `ruff` · `pytest`.
-- Single-package modular monolith. Top-level modules under `src/gflow_cli/`: `api/`, `auth/`, `browser_manager.py`, `cli.py`, `_cli_helpers.py`, `cli_data.py`, `cli_image.py`, `cli_run.py`, `cli_video.py`, `config.py`, `data/`, `errors.py`, `exceptions.py`, `image_batch.py`, `manifest.py`, `observability.py`, `paths.py`, `profile_store.py`.
+- Single-package modular monolith. Top-level modules under `src/gflow_cli/`: `api/`, `auth/`, `browser_manager.py`, `cli.py`, `_cli_helpers.py`, `cli_character.py`, `cli_data.py`, `cli_image.py`, `cli_models.py`, `cli_run.py`, `cli_scene.py`, `cli_video.py`, `config.py`, `data/`, `errors.py`, `exceptions.py`, `image_batch.py`, `manifest.py`, `observability.py`, `paths.py`, `profile_store.py`.
+- Command surface: `gflow auth`, `gflow image` (t2i/i2i/upload), `gflow video` (t2v/i2v/r2v/batch/chain), `gflow character` (create/list/show/voices — reusable project-scoped Flow Character entities), `gflow scene` (create/show — Add Clip / Scenes, with `create --output` for credit-free server-side extended video), and `gflow data` (catalog queries).
 - Requires a Google AI Ultra or Pro subscription with Flow access. All generations bill against the user's own Google account.
 
 ## Headed-browser dependency (architectural reality)
@@ -28,7 +29,7 @@ If you can help unblock a pure HTTP transport (especially for video generation, 
 - Copy `.env.template` to `.env.local`; never commit `.env.local`. It documents every env var.
 - Output goes to `./tmp/` for scripts/tests or `$GFLOW_CLI_OUTPUT_DIR` for CLI outputs (defaults to `./out/`).
 - One-time auth: `gflow auth login --browser chrome`. The `--browser chrome` flag is mandatory; the CLI fails fast on other strategies.
-- Use `/gflow:plan` to see the active phase before starting work; `/gflow:known-issues` before touching auth or reCAPTCHA code paths.
+- Use `/gflow:status` to see the current task before starting work; `/gflow:known-issues` before touching auth or reCAPTCHA code paths.
 
 ## Testing instructions — The Impeccable Routine
 
@@ -55,7 +56,7 @@ Or invoke the wrapper: `/gflow:check`.
 
 - Type hints everywhere; `pyright` strict on `src/gflow_cli`.
 - Structured logging only (`structlog`) — **never** raw `print()` or `import logging` in `src/`.
-- Errors as RFC 9457 Problem Details with stable per-class exit codes (3–16, where 16 is the `DataStoreError` family from `gflow_cli.data`). See `src/gflow_cli/errors.py::EXIT_CODE_MAP` for the complete mapping.
+- Errors as RFC 9457 Problem Details with stable per-class exit codes (3–21, e.g. 16 is the `DataStoreError` family, 19 `SceneConcatError`, 20 `FrameExtractionError`, 21 `ChainPartialError`). See `src/gflow_cli/errors.py::EXIT_CODE_MAP` for the complete mapping.
 - 100-char line length, `ruff` configured. Imports sorted by `ruff` (isort rules).
 
 ## PR instructions
@@ -89,7 +90,7 @@ The SkillOpt harness at `scripts/dev/skillopt/` measures how accurately each ski
 - **Mandates & routing rules** → [docs/AGENT_GUIDE.md](docs/AGENT_GUIDE.md)
 - **Full docs index** → [docs/INDEX.md](docs/INDEX.md)
 - **Known issues** (read before touching auth / reCAPTCHA) → [KNOWN_ISSUES.md](KNOWN_ISSUES.md)
-- **Active phase & backlog** → [PLAN.md](PLAN.md) or run `/gflow:plan`
+- **Current task** → `/gflow:status` · **Create a feature plan** → `/gflow:plan <feature>` · **Full roadmap** → [PLAN.md](PLAN.md)
 - **Release protocol** → [RELEASE.md](RELEASE.md)
 
 ## Claude Code-specific notes

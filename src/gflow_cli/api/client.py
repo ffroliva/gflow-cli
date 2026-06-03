@@ -17,31 +17,40 @@ import asyncio
 import base64
 import json
 import os
+import time
 from dataclasses import replace as _dc_replace
 from datetime import datetime
 from typing import TYPE_CHECKING, Any, Self, cast
-from urllib.parse import urlsplit, urlunsplit
+from urllib.parse import quote, urlsplit, urlunsplit
 
 import structlog
 from playwright.async_api import BrowserContext, Page, Playwright, async_playwright
 
 from gflow_cli.api import routes
 from gflow_cli.api._retry import parse_retry_after, post_with_retry
+from gflow_cli.api.character import Character, CharacterImageRequest, parse_characters
 from gflow_cli.api.dto import AssetInfo, GeneratedImage, ProjectInfo
 from gflow_cli.api.recaptcha import TokenMinter
+from gflow_cli.api.scene import ConcatInput, Scene, SceneWorkflow
 from gflow_cli.api.transports import make_transport
 from gflow_cli.api.transports.base import FlowTransportStrategy, VideoCapableTransport
 from gflow_cli.config import Settings
 from gflow_cli.errors import (
+    AisandboxAuthError,
     AuthExpiredError,
+    AuthMissingError,
     BrowserSessionClosedError,
+    ConfigurationError,
     ContentPolicyError,
     FlowApiError,  # re-exported via gflow_cli.api.__init__
     NetworkError,
     RateLimitError,
+    SceneConcatError,
+    TransportTimeoutError,
+    WafRejectionError,
     WireFormatError,
 )
-from gflow_cli.paths import adjust_key_extension
+from gflow_cli.paths import adjust_key_extension, character_output_path
 from gflow_cli.storage import AnyPath, storage_path, write_asset_async
 
 if TYPE_CHECKING:
@@ -79,8 +88,34 @@ logger = structlog.get_logger(__name__)
 # protects this process from OOM and the remote endpoint from DoS-shaped traffic.
 MAX_IMAGE_BYTES = 20 * 1024 * 1024  # 20 MB
 
+# Server-side concat returns the combined MP4 inline as base64 in `encodedVideo`
+# (~1.27 MB base64 per second of video). Cap before b64decode to avoid OOM on a
+# pathologically long scene; ~350 MB base64 ≈ 260 MB MP4 ≈ a ~4.5-min scene.
+MAX_CONCAT_B64_LEN = 350 * 1024 * 1024
+
 # aisandbox-pa rejects application/json — see samples/captured/*.json.
 _AISANDBOX_CONTENT_TYPE = "text/plain;charset=UTF-8"
+
+# aisandbox-pa POSTs return 401 to page.request unless an Authorization: Bearer
+# <access_token> is attached — the SPA's OAuth2 token, fetched from the BFF
+# session endpoint (cookie-auth). The labs.google BFF itself authenticates on
+# cookies alone, so the Bearer header is scoped to the aisandbox host only.
+_AISANDBOX_HOST = "aisandbox-pa.googleapis.com"
+_LABS_ORIGIN = "https://labs.google"
+_SESSION_API_URL = "https://labs.google/fx/api/auth/session"
+
+
+def _parse_iso_to_epoch(value: object) -> float:
+    """Parse an ISO-8601 timestamp (e.g. ``/auth/session``'s ``expires``) to
+    epoch seconds. Falls back to ``now + 55min`` when absent/unparseable so the
+    token cache keeps a horizon (the 401 refresh-retry is the safety net).
+    """
+    if isinstance(value, str):
+        try:
+            return datetime.fromisoformat(value.replace("Z", "+00:00")).timestamp()
+        except ValueError:
+            pass
+    return time.time() + 3300.0
 
 
 def _is_supported_image_header(header: bytes) -> bool:
@@ -107,6 +142,51 @@ def _is_supported_image_header(header: bytes) -> bool:
     if header[:4] == b"RIFF" and header[8:12] == b"WEBP":
         return True
     return header[:6] in (b"GIF87a", b"GIF89a")
+
+
+def _unwrap_trpc(data: Any) -> dict[str, Any]:
+    """Unwrap the tRPC envelope ``result.data.json`` and return the inner dict.
+
+    Only the standard tRPC v10 shape is accepted:
+    ``{"result": {"data": {"json": {...}}}}``.
+
+    A no-``"json"``-key shape was considered but has no observed evidence in
+    any captured HAR for createEntity or projectInitialData (see
+    ``docs/CHARACTER_RECON.md`` and ``scripts/dev/character_create_spike.py``).
+    Responses without ``"json"`` therefore surface as
+    :class:`~gflow_cli.errors.WireFormatError` rather than being silently
+    accepted.
+
+    Raises :class:`~gflow_cli.errors.WireFormatError` when the envelope is
+    malformed or when the extracted payload is not a dict.
+    """
+    if not isinstance(data, dict):
+        raise WireFormatError(
+            detail=f"tRPC response is not a dict; got {type(data).__name__}",
+            route="tRPC",
+        )
+    data_dict = cast("dict[str, Any]", data)
+    result = data_dict.get("result")
+    if not isinstance(result, dict):
+        raise WireFormatError(
+            detail="tRPC reply missing 'result' dict",
+            route="tRPC",
+        )
+    result_dict = cast("dict[str, Any]", result)
+    data_obj = result_dict.get("data")
+    if not isinstance(data_obj, dict):
+        raise WireFormatError(
+            detail="tRPC reply missing result.data dict",
+            route="tRPC",
+        )
+    data_obj_dict = cast("dict[str, Any]", data_obj)
+    inner: Any = data_obj_dict.get("json")
+    if not isinstance(inner, dict):
+        raise WireFormatError(
+            detail=f"tRPC reply missing result.data.json dict; got {type(inner).__name__}",
+            route="tRPC",
+        )
+    return cast("dict[str, Any]", inner)
 
 
 class FlowApiClient:
@@ -146,6 +226,11 @@ class FlowApiClient:
         self._transport_input: FlowTransportStrategy | str | None = transport
         self.transport: FlowTransportStrategy | None = None
         self._owns_transport: bool = False
+        # OAuth2 access token for aisandbox-pa REST calls, fetched lazily from
+        # the BFF session endpoint and cached against its expiry. Re-fetched on
+        # a 401. (page.request sends cookies but not the SPA's Bearer token.)
+        self._access_token: str | None = None
+        self._access_token_exp: float = 0.0  # epoch seconds; 0 = unknown/expired
         self._pw: Playwright | None = None
         self._context: BrowserContext | None = None
         # Per-worker Page pool (Phase 4 T2). All Pages live inside ONE
@@ -364,6 +449,96 @@ class FlowApiClient:
 
     # --- private HTTP helpers --------------------------------------------
 
+    @staticmethod
+    def _is_aisandbox_url(url: str) -> bool:
+        """True for aisandbox-pa REST URLs, which require Bearer-token auth.
+
+        BFF (labs.google) URLs authenticate on cookies alone — never matched.
+        """
+        return _AISANDBOX_HOST in url
+
+    async def _fetch_access_token(self) -> tuple[str, float]:
+        """Fetch the OAuth2 access token from the BFF session endpoint.
+
+        Uses ``self._context.request`` (the BrowserContext APIRequestContext) —
+        NOT a checked-out Page — because this runs from inside a ``_post_json``
+        ``attempt()`` that already holds a Page; a nested checkout deadlocks a
+        size-1 pool. The request carries the session cookies, so the BFF returns
+        the SPA's current ``access_token`` (a ``ya29.`` Bearer).
+
+        Returns ``(token, expiry_epoch_seconds)``.
+        """
+        ctx = self._context
+        if ctx is None:
+            msg = "access-token fetch needs an active browser context."
+            raise AuthMissingError(msg)
+        resp = await ctx.request.get(_SESSION_API_URL)
+        try:
+            parsed = json.loads(await resp.text())
+        except json.JSONDecodeError as exc:
+            raise AisandboxAuthError(
+                detail="non-JSON /auth/session response",
+                status=resp.status,
+                instance=_make_instance(),
+                route="auth/session",
+            ) from exc
+        data = cast("dict[str, Any]", parsed) if isinstance(parsed, dict) else {}
+        token = data.get("access_token")
+        if not token:
+            raise AisandboxAuthError(
+                detail="no access_token in /fx/api/auth/session (session expired?)",
+                status=resp.status,
+                instance=_make_instance(),
+                route="auth/session",
+            )
+        return str(token), _parse_iso_to_epoch(data.get("expires"))
+
+    async def _ensure_access_token(self) -> str:
+        """Return a cached access token, (re)fetching when missing or near expiry."""
+        if self._access_token is None or time.time() >= self._access_token_exp - 60:
+            self._access_token, self._access_token_exp = await self._fetch_access_token()
+        return self._access_token
+
+    async def _aisandbox_auth_headers(self) -> dict[str, str]:
+        """Build the Bearer Authorization header for an aisandbox call.
+
+        aisandbox-pa authenticates with the SPA's OAuth2 access token, not
+        cookies. NEVER log the returned values.
+        """
+        token = await self._ensure_access_token()
+        return {
+            "authorization": f"Bearer {token}",
+            "origin": _LABS_ORIGIN,
+        }
+
+    async def _run_with_aisandbox_retry(
+        self,
+        attempt: Any,
+        *,
+        route: str,
+        is_aisandbox: bool,
+    ) -> Any:
+        """Run ``attempt`` under the retry policy; on an aisandbox 401, re-fetch
+        the access token once and retry, then raise ``AisandboxAuthError``.
+
+        Shared by ``_post_json`` and ``_patch_json`` so the auth-refresh policy
+        lives in one place.
+        """
+        resp = await self._run_with_retry(attempt, route=route)
+        if is_aisandbox and resp.status == 401:
+            # Token may have expired mid-session — re-fetch once and retry.
+            self._access_token = None
+            await self._ensure_access_token()
+            resp = await self._run_with_retry(attempt, route=route)
+            if resp.status == 401:
+                raise AisandboxAuthError(
+                    detail="aisandbox-pa returned 401 after token refresh",
+                    status=401,
+                    instance=_make_instance(),
+                    route=route,
+                )
+        return resp
+
     async def _post_json(
         self,
         url: str,
@@ -389,25 +564,25 @@ class FlowApiClient:
         # holds regardless. Redact before logging.
         logger.debug("post_json", url=url, body=_redact_for_log(body_str)[:300])
         route = route_name or url
+        is_aisandbox = self._is_aisandbox_url(url)
 
         async def attempt() -> Any:
             page = await self._checkout_page()
             try:
+                headers = {"content-type": content_type}
+                if is_aisandbox:
+                    headers.update(await self._aisandbox_auth_headers())
                 if os.environ.get("GFLOW_CLI_LOG_REQUEST_HEADERS") == "1":
                     logger.info(
                         "request_headers",
                         url=url,
-                        headers=_redact_headers_for_log({"content-type": content_type}),
+                        headers=_redact_headers_for_log(headers),
                     )
-                return await page.request.post(
-                    url,
-                    data=body_str,
-                    headers={"content-type": content_type},
-                )
+                return await page.request.post(url, data=body_str, headers=headers)
             finally:
                 self._checkin_page(page)
 
-        resp = await self._run_with_retry(attempt, route=route)
+        resp = await self._run_with_aisandbox_retry(attempt, route=route, is_aisandbox=is_aisandbox)
         text = await resp.text()
         _raise_for_non_retryable(resp, text, route=route)
         try:
@@ -431,31 +606,70 @@ class FlowApiClient:
         body_str = json.dumps(body)
         logger.debug("patch_json", url=url, body=body_str[:300])
         route = route_name or url
+        is_aisandbox = self._is_aisandbox_url(url)
 
         async def attempt() -> Any:
             page = await self._checkout_page()
             try:
+                headers = {"content-type": _AISANDBOX_CONTENT_TYPE}
+                if is_aisandbox:
+                    headers.update(await self._aisandbox_auth_headers())
                 if os.environ.get("GFLOW_CLI_LOG_REQUEST_HEADERS") == "1":
                     logger.info(
                         "request_headers",
                         url=url,
-                        headers=_redact_headers_for_log({"content-type": _AISANDBOX_CONTENT_TYPE}),
+                        headers=_redact_headers_for_log(headers),
                     )
-                return await page.request.patch(
-                    url,
-                    data=body_str,
-                    headers={"content-type": _AISANDBOX_CONTENT_TYPE},
-                )
+                return await page.request.patch(url, data=body_str, headers=headers)
             finally:
                 self._checkin_page(page)
 
-        resp = await self._run_with_retry(attempt, route=route)
+        resp = await self._run_with_aisandbox_retry(attempt, route=route, is_aisandbox=is_aisandbox)
         text = await resp.text()
         _raise_for_non_retryable(resp, text, route=route)
         try:
             return json.loads(text) if text else {}
         except json.JSONDecodeError:
             return {}
+
+    async def _get_json(
+        self,
+        url: str,
+        *,
+        route_name: str | None = None,
+    ) -> Any:
+        """GET a JSON body with retry + aisandbox Bearer auth + typed errors.
+
+        Mirrors _post_json for the read side: aisandbox-pa GETs require the
+        Bearer token. 401 -> single token-refresh-retry via the shared helper.
+        """
+        logger.debug("get_json", url=url)
+        route = route_name or url
+        is_aisandbox = self._is_aisandbox_url(url)
+
+        async def attempt() -> Any:
+            page = await self._checkout_page()
+            try:
+                headers: dict[str, str] = {}
+                if is_aisandbox:
+                    headers.update(await self._aisandbox_auth_headers())
+                return await page.request.get(url, headers=headers, timeout=30_000)
+            finally:
+                self._checkin_page(page)
+
+        resp = await self._run_with_aisandbox_retry(attempt, route=route, is_aisandbox=is_aisandbox)
+        text = await resp.text()
+        _raise_for_non_retryable(resp, text, route=route)
+        try:
+            return json.loads(text)
+        except json.JSONDecodeError as e:
+            raise WireFormatError(
+                detail=f"non-JSON response: {text[:200]}",
+                status=resp.status,
+                instance=_make_instance(),
+                route=route,
+                discovery=_build_wire_format_discovery(resp, text, route),
+            ) from e
 
     async def _run_with_retry(self, attempt: Any, *, route: str) -> Any:
         """Execute ``attempt()`` under the tenacity retry policy.
@@ -668,6 +882,156 @@ class FlowApiClient:
             "updateMask": "metadata.archived",
         }
         await self._patch_json(url, body)
+
+    async def commit_workflow(
+        self, workflow_id: str, *, project_id: str, primary_media_id: str
+    ) -> None:
+        """Commit a workflow's primaryMediaId so it can be placed in a scene.
+
+        PATCH /v1/flowWorkflows/{id}, updateMask metadata.primaryMediaId.
+        Auth handled by the _patch_json Bearer path.
+        """
+        body = {
+            "workflow": {
+                "name": workflow_id,
+                "projectId": project_id,
+                "metadata": {"primaryMediaId": primary_media_id},
+            },
+            "updateMask": "metadata.primaryMediaId",
+        }
+        await self._patch_json(
+            routes.flow_workflow_url(workflow_id), body, route_name="commitWorkflow"
+        )
+
+    async def create_scene(self, *, project_id: str, workflow_ids: list[str]) -> Scene:
+        """Compose a scene from an ordered list of source workflowIds.
+
+        POST /v1/flow/projects/{pid}/scenes. Repeat an id to clone a clip.
+        """
+        data = await self._post_json(
+            routes.scenes_url(project_id),
+            {"workflowIds": list(workflow_ids)},
+            route_name="createScene",
+        )
+        return Scene.from_create_response(data, project_id=project_id)
+
+    async def update_scene_workflows(
+        self, *, scene_id: str, project_id: str, workflows: list[SceneWorkflow]
+    ) -> None:
+        """Set per-clip order + trim. POST /v1/flow/scene/sceneWorkflows:update."""
+        body = {
+            "sceneId": scene_id,
+            "projectId": project_id,
+            "sceneWorkflows": [w.to_wire(scene_id=scene_id) for w in workflows],
+        }
+        await self._post_json(
+            routes.SCENE_WORKFLOWS_UPDATE, body, route_name="updateSceneWorkflows"
+        )
+
+    async def get_scene_workflows(self, scene_id: str, *, project_id: str) -> Scene:
+        """Read back a scene's clips (order + trims). GET via _get_json."""
+        data = await self._get_json(
+            routes.scene_workflows_url(scene_id, project_id), route_name="getSceneWorkflows"
+        )
+        return Scene.from_get_response(data, scene_id=scene_id, project_id=project_id)
+
+    async def concatenate_scene(
+        self,
+        inputs: list[ConcatInput],
+        *,
+        out_path: Path,
+        poll_interval: float = 3.0,
+        timeout_s: float = 180.0,
+    ) -> AnyPath:
+        """Render a scene's clips into ONE extended MP4 via Flow's server-side
+        concatenation. Credit-free, no reCAPTCHA, no ffmpeg.
+
+        Pipeline: ``POST runVideoFxConcatenation`` → poll
+        ``runVideoFxCheckConcatenationStatus`` (each poll is its own
+        ``_post_json``, so the Page pool is free during the ``asyncio.sleep`` —
+        no nested checkout, no deadlock) until ``MEDIA_GENERATION_STATUS_SUCCESSFUL``.
+        The combined MP4 is returned inline as base64 in ``encodedVideo``.
+
+        Writes to ``out_path`` (or the configured cloud ``storage_uri``) and
+        returns the write target. Raises ``SceneConcatError`` if the job fails
+        or returns no/invalid video, ``TransportTimeoutError`` on poll timeout.
+        """
+        if not inputs:
+            msg = "concatenate_scene requires at least one clip"
+            raise ValueError(msg)
+        op = await self._post_json(
+            routes.RUN_VIDEO_FX_CONCATENATION,
+            {"inputVideos": [i.to_wire() for i in inputs]},
+            route_name="runVideoFxConcatenation",
+        )
+        operation = op.get("operation")
+        logger.info("scene.concat_started", clips=len(inputs))
+
+        deadline = time.monotonic() + timeout_s
+        encoded = ""
+        while True:
+            status_resp = await self._post_json(
+                routes.RUN_VIDEO_FX_CHECK_CONCATENATION_STATUS,
+                {"operation": operation},
+                route_name="runVideoFxCheckConcatenationStatus",
+            )
+            status = str(status_resp.get("status", ""))
+            if status == "MEDIA_GENERATION_STATUS_SUCCESSFUL":
+                encoded = str(status_resp.get("encodedVideo") or "")
+                break
+            if status and status != "MEDIA_GENERATION_STATUS_ACTIVE":
+                # FAILED / unspecified — detail from status ONLY, never encodedVideo.
+                logger.warning("scene.concat_failed", status=status)
+                raise SceneConcatError(
+                    detail=f"concatenation job status: {status}",
+                    route="runVideoFxCheckConcatenationStatus",
+                )
+            if time.monotonic() >= deadline:
+                raise TransportTimeoutError(
+                    f"scene concatenation did not finish within {timeout_s:.0f}s"
+                )
+            await asyncio.sleep(poll_interval)
+
+        if not encoded:
+            raise SceneConcatError(
+                detail="concatenation succeeded but returned no encodedVideo",
+                route="runVideoFxCheckConcatenationStatus",
+            )
+        if len(encoded) > MAX_CONCAT_B64_LEN:
+            # Reject before decode — never log the body (mitigation: no 20MB+ in logs).
+            raise SceneConcatError(
+                detail=(
+                    f"concatenated video exceeds the {MAX_CONCAT_B64_LEN // (1024 * 1024)} MB "
+                    "size cap; compose fewer/shorter clips"
+                ),
+                route="runVideoFxConcatenation",
+            )
+        try:
+            video_bytes = base64.b64decode(encoded)
+        except ValueError as e:  # binascii.Error subclasses ValueError
+            # Don't include the (undecodable) body in the message.
+            raise SceneConcatError(
+                detail="concatenation returned undecodable video data",
+                route="runVideoFxCheckConcatenationStatus",
+            ) from e
+        del encoded, status_resp  # drop the ~20MB+ payload promptly
+        if video_bytes[4:8] != b"ftyp":
+            raise SceneConcatError(detail="concatenation output is not a valid MP4")
+        logger.info("scene.concat_completed", bytes=len(video_bytes))
+
+        # Write via the same storage_uri-aware path as download_image.
+        storage_uri = self.settings.storage_uri
+        if storage_uri:
+            try:
+                key = out_path.relative_to(self.settings.output_dir).as_posix()
+            except ValueError:
+                key = out_path.name
+            target: AnyPath = storage_path(storage_uri, self.settings.output_dir, key)
+        else:
+            out_path.parent.mkdir(parents=True, exist_ok=True)
+            target = out_path
+        await write_asset_async(target, video_bytes)
+        return target
 
     async def _mint_recaptcha_token(self, action: str) -> str:
         """Mint a single-use reCAPTCHA Enterprise token via the client's Page.
@@ -887,6 +1251,261 @@ class FlowApiClient:
             logger.debug("health_check_failed", exc_info=True)
             return False
 
+    # --- Character entity API (issue #145) -----------------------------------
+
+    async def create_entity(self, project_id: str) -> str:
+        """Mint a fresh CHARACTER entity for *project_id*. Returns the new entityId.
+
+        Maps to ``POST .../trpc/flow.createEntity``.  Session-cookie auth
+        (``application/json`` content-type, same as ``createProject``).
+        FREE — no reCAPTCHA, no credit.
+        """
+        body = {"json": {"projectId": project_id}}
+        data = await self._post_json(
+            routes.CREATE_ENTITY_URL,
+            body,
+            content_type="application/json",
+            route_name="createEntity",
+        )
+        payload = _unwrap_trpc(data)
+        entity_id = payload.get("entityId")
+        if not entity_id:
+            raise WireFormatError(
+                detail=f"createEntity returned no entityId; keys={sorted(payload)}",
+                route="createEntity",
+            )
+        logger.debug("character.entity_created", project_id=project_id, entity_id=entity_id)
+        return str(entity_id)
+
+    async def list_characters(self, project_id: str) -> list[Character]:
+        """Return all CHARACTER entities in *project_id*.
+
+        Maps to ``GET .../trpc/flow.projectInitialData?input=…``.
+        Session-cookie auth.  FREE — no reCAPTCHA, no credit.
+        """
+        trpc_input = json.dumps({"json": {"projectId": project_id}}, separators=(",", ":"))
+        url = f"{routes.PROJECT_INITIAL_DATA_URL}?input={quote(trpc_input, safe='')}"
+        data = await self._get_json(url, route_name="projectInitialData")
+        chars = parse_characters(_unwrap_trpc(data))
+        logger.debug("character.list_fetched", project_id=project_id, count=len(chars))
+        return chars
+
+    async def get_character(
+        self,
+        project_id: str,
+        *,
+        entity_id: str | None = None,
+        name: str | None = None,
+    ) -> Character:
+        """Fetch a single :class:`Character` by ``entity_id`` or ``name``.
+
+        Raises :class:`~gflow_cli.errors.ConfigurationError` when:
+        * no character matches (``entity_id`` / ``name`` not found), or
+        * multiple characters share the same ``name`` (ambiguous).
+
+        Exactly one of ``entity_id`` or ``name`` must be supplied.
+
+        Note: ``name`` matching is case-sensitive (exact ``display_name`` equality)
+        in Phase 1.
+        """
+        if entity_id is None and name is None:
+            msg = "Provide either entity_id or name"
+            raise ValueError(msg)
+        chars = await self.list_characters(project_id)
+        if entity_id is not None:
+            match = [c for c in chars if c.entity_id == entity_id]
+        else:
+            match = [c for c in chars if c.display_name == name]
+        if not match:
+            lookup = entity_id if entity_id is not None else repr(name)
+            raise ConfigurationError(
+                detail=f"character not found: {lookup}",
+                route="projectInitialData",
+                remediation_hint="Run `gflow character list` to see available characters.",
+            )
+        if len(match) > 1:
+            ids = ", ".join(c.entity_id for c in match)
+            raise ConfigurationError(
+                detail=f"ambiguous character name {name!r} matches multiple entities: {ids}",
+                route="projectInitialData",
+                remediation_hint="Use --entity-id to select one character unambiguously.",
+            )
+        return match[0]
+
+    async def patch_entity(
+        self,
+        *,
+        project_id: str,
+        entity_id: str,
+        display_name: str,
+        workflow_ids: list[str],
+        voice: str | None = None,
+        personality: str | None = None,
+    ) -> None:
+        """Update a CHARACTER entity's display name, image references, and optional
+        voice/personality fields via Bearer PATCH to ``flow/entities``.
+
+        Maps to ``PATCH .../flow/entities``.  Bearer auth (aisandbox).
+        FREE — no reCAPTCHA, no credit.
+
+        Only the fields supplied are written; absent optional fields are omitted
+        from both the request body and the ``updateMask``.
+        """
+        character_info: dict[str, Any] = {
+            "imageReferences": [{"workflowId": w} for w in workflow_ids],
+        }
+        update_mask_parts = [
+            "entityInfo.displayName",
+            "entityInfo.characterInfo.imageReferences",
+        ]
+
+        if personality is not None:
+            character_info["personalityNotes"] = personality
+            update_mask_parts.append("entityInfo.characterInfo.personalityNotes")
+
+        if voice is not None:
+            character_info["audioReferences"] = [{"presetVoiceId": voice}]
+            update_mask_parts.append("entityInfo.characterInfo.audioReferences")
+
+        entity_info: dict[str, Any] = {
+            "displayName": display_name,
+            "characterInfo": character_info,
+        }
+        body: dict[str, Any] = {
+            "entity": {
+                "projectId": project_id,
+                "entityId": entity_id,
+                "entityInfo": entity_info,
+            },
+            "updateMask": ",".join(update_mask_parts),
+        }
+        await self._patch_json(
+            routes.FLOW_ENTITIES_URL,
+            body,
+            route_name="patchEntity",
+        )
+        logger.debug(
+            "character.entity_patched",
+            project_id=project_id,
+            entity_id=entity_id,
+            workflow_count=len(workflow_ids),
+        )
+
+    async def generate_character_image(
+        self,
+        *,
+        project_id: str,
+        entity_id: str,
+        req: CharacterImageRequest,
+        image_reference_index: int = 0,
+        locale: str = "en-US",
+    ) -> tuple[str, str, AnyPath | None]:
+        """Generate a character reference image via the UI transport and return
+        ``(workflow_id, primary_media_id, local_path)``.
+
+        All generation is UI-driven (Option B passive capture) — this method
+        NEVER posts directly to a generation REST endpoint.  The transport's
+        ``generate_character_images`` is the only call that may trigger network
+        I/O.
+
+        The generated image is downloaded INSIDE this client boundary using the
+        signed ``fifeUrl`` carried by the captured response.  That signed URL is
+        used ONLY for the download and is NEVER returned to the caller or logged
+        in cleartext — the saga/recorder/DB only ever see the local file path and
+        stable ids (scenario #16).  When the captured response carries no
+        downloadable image, ``local_path`` is ``None`` (a warning is logged) and
+        the method still returns the ids so the saga can proceed.
+
+        Args:
+            project_id: Flow project that owns the character entity.
+            entity_id: The CHARACTER entity whose editor will be driven.
+            req: :class:`~gflow_cli.api.character.CharacterImageRequest` DTO
+                (prompt, aspect, model, face_media_id, …).
+            image_reference_index: 0-based slot index for the character image
+                reference (0 = face/first slot).
+            locale: BCP-47 locale forwarded to the UI transport so Flow renders
+                in the correct language.  Defaults to ``"en-US"``.
+
+        Returns:
+            ``(workflow_id, primary_media_id, local_path)`` — the two stable ids
+            extracted from the first returned workflow plus the LOCAL path the
+            generated image was downloaded to (``None`` if it could not be
+            downloaded).  No value is a signed URL.
+
+        Raises:
+            RuntimeError: transport is ``None`` (client not entered / not set up).
+            :class:`~gflow_cli.errors.WireFormatError`: the returned workflow's
+                ``parentEntityId`` does not match ``entity_id`` (foreign workflow
+                guard, scenario #5), or no workflows were returned.
+        """
+        if self.transport is None:
+            msg = (
+                "FlowApiClient.transport is None — call generate_character_image "
+                "inside 'async with client' with a Chrome-strategy profile"
+            )
+            raise RuntimeError(msg)
+
+        _raw = await self.transport.generate_character_images(  # type: ignore[attr-defined]
+            project_id=project_id,
+            entity_id=entity_id,
+            request=req,
+            image_reference_index=image_reference_index,
+            locale=locale,
+        )
+        _images, workflows = cast(
+            "tuple[list[GeneratedImage], list[dict[str, Any]]]",
+            _raw,
+        )
+
+        if not workflows:
+            raise WireFormatError(
+                detail="generate_character_images returned no workflows",
+                route="generateCharacterImage",
+            )
+
+        wf: dict[str, Any] = workflows[0]
+        parent: str | None = wf.get("parentEntityId")
+        if parent != entity_id:
+            raise WireFormatError(
+                detail=f"workflow parentEntityId {parent!r} != entity {entity_id!r}",
+                route="generateCharacterImage",
+            )
+
+        workflow_id: str = cast(str, wf["name"])
+        media_id: str = cast(str, wf["metadata"]["primaryMediaId"])
+
+        # ------------------------------------------------------------------
+        # Download the generated image INSIDE the client boundary.
+        # The signed fifeUrl lives on images[0]; it is used ONLY for the
+        # download here and is NEVER returned to the saga or logged in
+        # cleartext (scenario #16). The caller receives only the local path.
+        # ------------------------------------------------------------------
+        local_path: AnyPath | None = None
+        image: GeneratedImage | None = _images[0] if _images else None
+        if image is not None and image.fife_url:
+            out_path = character_output_path(
+                self.settings.output_dir,
+                entity_id=entity_id,
+                slot=image_reference_index,
+            )
+            local_path = await self.download_image(image, out_path)
+        else:
+            logger.warning(
+                "character.image_no_download_url",
+                entity_id=entity_id,
+                workflow_id=workflow_id,
+                slot=image_reference_index,
+            )
+
+        logger.info(
+            "character.image_generated",
+            entity_id=entity_id,
+            workflow_id=workflow_id,
+            slot=image_reference_index,
+            saved=local_path is not None,
+        )
+        return workflow_id, media_id, local_path
+
 
 def _default_project_title() -> str:
     return datetime.now().strftime("gflow-cli %b %d, %I:%M %p")
@@ -990,15 +1609,25 @@ def _raise_for_non_retryable(resp: Any, body_text: str, *, route: str) -> None:
     ranges should have been raised inside the retry loop and never reach
     here. Side-effect-only: raises on 4xx, returns silently on 2xx.
 
-    * 401/403 → :class:`AuthExpiredError`
+    * 401 → :class:`AuthExpiredError`
+    * 403 → :class:`WafRejectionError` (reCAPTCHA/WAF wall, not auth expiry)
     * other 4xx → :class:`WireFormatError` with discovery payload so
       ``grep error_class=WireFormatError`` reveals what was unexpected.
     """
     if resp.status < 400:
         return
     instance = _make_instance()
-    if resp.status in (401, 403):
+    if resp.status == 401:
         raise AuthExpiredError(
+            detail=f"HTTP {resp.status}",
+            status=resp.status,
+            instance=instance,
+            route=route,
+        )
+    if resp.status == 403:
+        # 403 on a Flow route is the reCAPTCHA/WAF wall, NOT auth expiry
+        # (direct-REST generation is 403-walled — see docs/CHARACTER.md §11).
+        raise WafRejectionError(
             detail=f"HTTP {resp.status}",
             status=resp.status,
             instance=instance,

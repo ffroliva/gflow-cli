@@ -23,9 +23,20 @@ These are non-negotiable. They override default agent behavior where conflicts e
 - **Back-merge `main → develop` after every release.** See the `release-back-merge-gap-recovery` runbook in agent memory.
 - **Enforce model-dependent reference caps.** Flow's R2V (reference-to-video) and I2I (image-to-image) reference image caps are model-dependent (Omni=7, Veo Lite/Fast=3, Quality=0). These MUST be enforced at both the Domain layer (`GenerateVideoRequest`) and the CLI layer. Use `reference_cap_for(model)` and include event-based tripwires in E2E tests.
 
+## Command surfaces
+
+The `gflow` CLI exposes these command groups (full reference in [docs/USAGE.md](USAGE.md)):
+
+- `gflow auth` — one-time Chrome login, status, logout.
+- `gflow image` — `t2i` / `i2i` / `upload` (Imagen / Nano Banana).
+- `gflow video` — `t2v` / `i2v` / `r2v` / `batch`, plus `chain` (last-frame I2V chaining from a JSONL manifest; link 0 is t2v, later links are i2v seeded by the previous clip's last frame; veo models only).
+- `gflow character` — `create` / `list` / `show` / `voices`: reusable, project-scoped Flow Character entities (a named subject with reference images, optional voice and personality) for consistent subjects across generations. See [docs/CHARACTER.md](CHARACTER.md).
+- `gflow scene` — `create` / `show`: compose ordered clips into a scene; `create --output` renders a credit-free server-side extended video via `runVideoFxConcatenation` (no local ffmpeg).
+- `gflow data` — query the local SQLite catalog.
+
 ## Routing rules
 
-- **Starting a feature?** Run `/gflow:plan` first to see the active phase scope and definition of done.
+- **Starting a feature?** Run `/gflow:status` to see the active phase scope, then `/gflow:predict` → `/gflow:scenario` → `/gflow:plan <feature>` to create a task checklist.
 - **Touching auth, reCAPTCHA, browser flow, or anything previously flagged?** Run `/gflow:known-issues` first.
 - **Cutting a release?** Run `/gflow:release` — it sequences `/gflow:changelog`, `/gflow:check`, `/gflow:doc-review`.
 - **Before any commit:** Run `/gflow:check` (or the Impeccable Routine in AGENTS.md), including the documentation link gate.
