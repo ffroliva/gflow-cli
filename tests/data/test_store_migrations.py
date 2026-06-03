@@ -26,7 +26,7 @@ def test_open_creates_schema_and_migration_row(tmp_path: Path) -> None:
     db = tmp_path / "gflow.db"
     with DataStore.open(db) as store:
         rows = store.conn.execute("SELECT version FROM schema_migrations").fetchall()
-        assert [row["version"] for row in rows] == ["0001", "0002", "0003", "0004", "0005"]
+        assert [row["version"] for row in rows] == ["0001", "0002", "0003", "0004", "0005", "0006"]
         assert store.conn.execute("PRAGMA foreign_keys").fetchone()[0] == 1
         assert store.conn.execute("PRAGMA busy_timeout").fetchone()[0] == 5000
         assert store.conn.execute("PRAGMA journal_mode").fetchone()[0].lower() == "wal"

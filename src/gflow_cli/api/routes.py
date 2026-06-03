@@ -12,6 +12,9 @@ import re
 FLOW_API_BASE = "https://aisandbox-pa.googleapis.com/v1"
 LABS_TRPC_BASE = "https://labs.google/fx/api/trpc"
 LABS_BASE = "https://labs.google"
+# User-facing Flow UI base — note the `/fx` segment (matches real editor URLs,
+# e.g. https://labs.google/fx/pt/tools/flow/project/<pid>). Verified via Phase-2 spike T-A.
+LABS_FX_BASE = "https://labs.google/fx"
 
 # Strict allowlist for Google project IDs interpolated into URL paths.
 # Alphanumeric + hyphen, 1-128 chars. Closes URL-injection vectors:
@@ -63,6 +66,11 @@ def batch_generate_images_url(project_id: str) -> str:
 # once before making API calls so Google's cookies + reCAPTCHA JS are loaded.
 EDITOR_BOOTSTRAP_URL = "https://labs.google/fx/tools/flow?hl=en"
 
+# Character entities (tRPC + aisandbox Bearer REST) ------------------------
+CREATE_ENTITY_URL = f"{LABS_TRPC_BASE}/flow.createEntity"
+PROJECT_INITIAL_DATA_URL = f"{LABS_TRPC_BASE}/flow.projectInitialData"
+FLOW_ENTITIES_URL = f"{FLOW_API_BASE}/flow/entities"
+
 # Scene / Add Clip (aisandbox-pa) ------------------------------------------
 SCENE_WORKFLOWS_UPDATE = f"{FLOW_API_BASE}/flow/scene/sceneWorkflows:update"
 
@@ -110,3 +118,15 @@ def flow_workflow_url(workflow_id: str) -> str:
         msg = f"Invalid workflow_id: {workflow_id!r}"
         raise ValueError(msg)
     return f"{ARCHIVE_WORKFLOW_BASE}/{workflow_id}"
+
+
+def character_editor_url(locale: str, project_id: str, entity_id: str) -> str:
+    """Build the user-facing Flow character editor URL for a given entity.
+
+    Returns the browser-navigable page URL (not an API endpoint) at which the
+    Flow UI renders the character editor for *entity_id* inside *project_id*,
+    localised to *locale* (e.g. ``"en"``, ``"pt"``).
+
+    Pattern: ``https://labs.google/fx/{locale}/tools/flow/project/{project_id}/character/{entity_id}``
+    """
+    return f"{LABS_FX_BASE}/{locale}/tools/flow/project/{project_id}/character/{entity_id}"

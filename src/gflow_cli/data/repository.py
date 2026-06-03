@@ -76,10 +76,8 @@ class DataRepository:
                         id, profile_name, flow_project_id, title, source, created_at
                     )
                     VALUES (?, ?, ?, ?, ?, ?)
-                    ON CONFLICT(id) DO UPDATE SET
-                        profile_name = excluded.profile_name,
-                        flow_project_id = excluded.flow_project_id,
-                        title = excluded.title,
+                    ON CONFLICT(profile_name, flow_project_id) DO UPDATE SET
+                        title = COALESCE(excluded.title, projects.title),
                         source = excluded.source
                     """,
                     (
@@ -289,6 +287,50 @@ class DataRepository:
                 WHERE id = ?
                 """,
                 (status.value, completed_at, error_type, error_detail, operation_id),
+            )
+
+    def set_operation_metadata(
+        self,
+        operation_id: str,
+        metadata_json: dict[str, object],
+    ) -> None:
+        """Write (or overwrite) the metadata_json column for an operation row."""
+        with self._store.transaction(immediate=True):
+            self._store.conn.execute(
+                "UPDATE operations SET metadata_json = ? WHERE id = ?",
+                (json.dumps(metadata_json, sort_keys=True), operation_id),
+            )
+
+    def update_operation_metadata(
+        self,
+        operation_id: str,
+        *,
+        status: OperationStatus,
+        completed_at: str | None,
+        prompt: str | None,
+        prompt_hash: str | None,
+        prompt_redacted: bool,
+        metadata_json: dict[str, object],
+    ) -> None:
+        """Update status, prompt fields, and metadata_json in a single write."""
+        with self._store.transaction(immediate=True):
+            self._store.conn.execute(
+                """
+                UPDATE operations
+                SET status = ?, completed_at = ?,
+                    prompt = ?, prompt_hash = ?, prompt_redacted = ?,
+                    metadata_json = ?
+                WHERE id = ?
+                """,
+                (
+                    status.value,
+                    completed_at,
+                    prompt,
+                    prompt_hash,
+                    int(bool(prompt_redacted)),
+                    json.dumps(metadata_json, sort_keys=True),
+                    operation_id,
+                ),
             )
 
     def get_operation_for_output_asset(
@@ -798,6 +840,60 @@ class DataRepository:
                 ),
             )
         return result
+
+    # ------------------------------------------------------------------
+    # Character recovery
+    # ------------------------------------------------------------------
+
+    def find_incomplete_character(
+        self,
+        flow_project_id: str,
+        name: str,
+    ) -> dict[str, object] | None:
+        """Return the most-recent STARTED CHARACTER operation for (project, name).
+
+        Used by the create saga to detect a prior crash so it can resume
+        without re-spending credits.  Returns a plain dict with keys::
+
+            row_id           – operations.id (used to update the row later)
+            entity_id        – flow_operation_id (the entityId already created)
+            workflow_ids     – list[str] already recorded (may be empty)
+            primary_media_ids – list[str] already recorded (may be empty)
+
+        Returns ``None`` when no incomplete row exists for the given project
+        and character name.
+        """
+        import json as _json
+
+        row = self._store.conn.execute(
+            """
+            SELECT id, flow_operation_id, metadata_json
+            FROM operations
+            WHERE flow_project_id = ?
+              AND mode = 'character'
+              AND status = 'started'
+              AND json_extract(metadata_json, '$.name') = ?
+            ORDER BY started_at DESC
+            LIMIT 1
+            """,
+            (flow_project_id, name),
+        ).fetchone()
+        if row is None:
+            return None
+        meta: dict[str, object] = {}
+        if row["metadata_json"]:
+            try:
+                meta = _json.loads(row["metadata_json"])
+            except (ValueError, TypeError):
+                meta = {}
+        workflow_ids: list[str] = list(meta.get("workflow_ids") or [])  # type: ignore[arg-type]
+        primary_media_ids: list[str] = list(meta.get("primary_media_ids") or [])  # type: ignore[arg-type]
+        return {
+            "row_id": str(row["id"]),
+            "entity_id": str(row["flow_operation_id"]),
+            "workflow_ids": workflow_ids,
+            "primary_media_ids": primary_media_ids,
+        }
 
     # ------------------------------------------------------------------
     # Helpers

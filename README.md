@@ -22,6 +22,7 @@
 For Google AI Ultra / Pro subscribers with Veo credits and batch workloads:
 
 - **Burn credits efficiently** — `for p in $(cat prompts.txt); do gflow image t2i "$p"; done` _(image batching, plus `gflow video t2v`/`i2v`/`r2v`, all ship today)_
+- **Reuse a subject across shots** — `gflow character create` mints a Flow **Character** (face + body reference) so the same person appears consistently from generation to generation
 - **Build pipelines** — wire Veo into your content automation, AI video stack, or batch experiments
 - **Stay in the terminal** — no Chromium UI, no clicking through dialogs (after a one-time `gflow auth login`)
 
@@ -41,6 +42,8 @@ gflow auth login --browser chrome
 gflow image t2i "a hot air balloon over Tokyo at sunrise"
 # or:
 gflow video t2v "Slow cinematic push-in on a sunlit forest clearing" --aspect 16:9
+# or mint a reusable Character (face + body reference):
+gflow character create --project <id> --name "Aria" --face-prompt "..." --body-prompt "..."
 ```
 
 Outputs land under `$GFLOW_CLI_OUTPUT_DIR` unless
@@ -72,6 +75,7 @@ Reproduce the recording: [`scripts/record_demo.ps1`](scripts/record_demo.ps1) (W
 |---|---|
 | 🎯 **Getting started** | [User Guide](docs/USER_GUIDE.md) · [Usage](docs/USAGE.md) · [Configuration](docs/CONFIGURATION.md) |
 | **Storage & catalog** | [External Storage](docs/EXTERNAL_STORAGE.md) · [Data Layer](docs/DATA_LAYER.md) |
+| 🎭 **Characters** | [Characters](docs/CHARACTER.md) — reusable subjects (`gflow character`) |
 | 🔐 **Auth & sessions** | [Authentication](docs/AUTHENTICATION.md) · [Known issues](KNOWN_ISSUES.md) |
 | 🏗️ **Internals** | [Architecture](docs/ARCHITECTURE.md) · [Security](docs/SECURITY.md) · [Debugging](docs/DEBUGGING.md) |
 | 📦 **Releases** | [Changelog](CHANGELOG.md) · [Roadmap](ROADMAP.md) · [Release protocol](RELEASE.md) · [Project status](docs/PROJECT_STATUS.md) |

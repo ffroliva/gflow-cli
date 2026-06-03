@@ -26,7 +26,7 @@ from gflow_cli.api.client import FlowApiClient, FlowApiError
 from gflow_cli.api.dto import GeneratedImage
 from gflow_cli.api.image import Aspect, GenerateImageRequest
 from gflow_cli.config import Settings
-from gflow_cli.errors import ContentPolicyError, WireFormatError
+from gflow_cli.errors import ContentPolicyError, WafRejectionError, WireFormatError
 
 # Realistic mock response distilled from samples/captured/06_batchGenerateImages.json
 _FAKE_FIFE_URL = "https://flow-content.google/image/abc-123?Expires=1778380305&Signature=XYZ"
@@ -416,8 +416,8 @@ class TestDownloadImage:
     async def test_download_image_raises_on_4xx(
         self, client: FlowApiClient, tmp_path: Path
     ) -> None:
-        """A 4xx response surfaces as FlowApiError, like the existing
-        download() method does."""
+        """A 403 response surfaces as WafRejectionError (reCAPTCHA/WAF wall,
+        not auth expiry — see docs/CHARACTER.md §11)."""
 
         async def fake_request_get(url, **kwargs):
             resp = MagicMock()
@@ -428,7 +428,7 @@ class TestDownloadImage:
 
         client._page.request.get = AsyncMock(side_effect=fake_request_get)
 
-        with pytest.raises(FlowApiError) as exc_info:
+        with pytest.raises(WafRejectionError) as exc_info:
             await client.download_image(_make_image(), tmp_path / "out.png")
 
         assert exc_info.value.status == 403
@@ -452,7 +452,7 @@ class TestDownloadImage:
             "https://flow-content.google/image/abc-123"
             "?Expires=1778380305&Signature=DEADBEEFSECRET&KeyPair=KP"
         )
-        with pytest.raises(FlowApiError) as exc_info:
+        with pytest.raises(WafRejectionError) as exc_info:
             await client.download_image(_make_image(fife_url=signed), tmp_path / "out.png")
 
         # The exception's structured route must not carry sensitive query bits.

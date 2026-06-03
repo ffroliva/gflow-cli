@@ -63,6 +63,9 @@ samples/*.captured.json # sandbox-recorded API exchanges may contain PII
 test_assets/smoke_*/
 test_assets/debug_*/
 
+# Phase-2 live-spike capture outputs — NEVER commit (may contain real API payloads)
+scripts/dev/_spike_out/
+
 # Live Flow traffic captures — NEVER commit (contain real Bearer tokens / API keys).
 # Diagnostic scripts MUST default-write here, NOT to samples/captured/.
 # Sanitised reference samples (no secrets) can still live under samples/captured/.
