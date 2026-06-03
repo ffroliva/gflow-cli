@@ -84,6 +84,7 @@ weights live in [`skills/pr-council-review/SKILL.md`](../skills/pr-council-revie
 | Path | Why material | Recommended gate |
 |---|---|---|
 | `src/gflow_cli/auth/`, `recaptcha` | Google anti-bot / auth lifecycle | predict (security persona) + council |
+| `src/gflow_cli/api/client.py`, `_sapisidhash.py` | Auth-token plumbing (Bearer / access-token / SAPISID) outside `auth/`; surfaced as a coverage gap by `scripts/dev/materiality_backtest.py` (3 historical fixes) | predict (security persona) + council |
 | `src/gflow_cli/api/transports/` | Highest-risk transport surface; live-verify | predict + council (live-verify) |
 | `src/gflow_cli/data/` | SQLite migration / data-loss risk | predict + council (migration safety) |
 
