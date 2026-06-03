@@ -23,6 +23,7 @@ class OperationKind(StrEnum):
     I2V = "i2v"
     R2V = "r2v"
     SCENE_CREATE = "scene_create"
+    CHARACTER = "character"
 
 
 class OperationStatus(StrEnum):
