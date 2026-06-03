@@ -74,10 +74,12 @@ module list + command surface + exit-code range 3→21, `llms.txt`, `skills/gflo
 
 ## Post-tag evidence
 
-_To be filled after the tag is pushed and the release workflow publishes:_
+Verified 2026-06-03 after the tag push:
 
-- [ ] CI `Release` workflow run — completed / success
-- [ ] GitHub Release published (`gh release view v0.12.0`)
-- [ ] PyPI shows `gflow-cli 0.12.0`
-- [ ] `pip install gflow-cli==0.12.0` in a clean venv imports and reports the right version
-- [ ] `main → develop` back-merge completed
+- [x] CI `Release` workflow run — **completed / success** (run `26876149496`: Verify-signed-tag → Verify-version-match → Build → **Publish to PyPI** → Create GitHub Release, all green, with digital attestations).
+- [x] GitHub Release published — `gh release view v0.12.0`: not draft, not prerelease, published 2026-06-03 (<https://github.com/ffroliva/gflow-cli/releases/tag/v0.12.0>).
+- [x] PyPI shows `gflow-cli 0.12.0` — `pypi.org/pypi/gflow-cli/json` → `info.version == 0.12.0`, present in `releases`.
+- [x] **Clean-venv install of the published package** — fresh venv, `pip install gflow-cli==0.12.0` from PyPI: `import gflow_cli` → `0.12.0`; `gflow --version` → `gflow, version 0.12.0`; `gflow models` renders the catalog. Confirms the published artifact is importable and the console entry point works.
+- [x] `main → develop` back-merge completed — `git rev-list --count origin/develop..origin/main == 0` (branches aligned).
+
+> **Not yet done (deliberate):** a live *generation* smoke with the published 0.12.0 (1 Imagen credit) and the paid `video chain` / `character create` e2e runs remain opt-in credit spends — `tests/e2e/test_{chain,character_create,scene_compose}*.py` exist but are gated. The character + scene paths were live-verified during their feature builds (2026-06-02 and the scene PRs); a published-package generation smoke is the strongest remaining proof and is tracked as a follow-up.
