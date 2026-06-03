@@ -7,20 +7,6 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
-### Fixed
-
-- **Create-project generation failing when Flow opens the Agent _chat panel_.**
-  A follow-up to the earlier Agent-pill fix: Flow now also surfaces Agent mode as
-  a docked chat side-panel ("Untitled session") on some project opens, and while
-  it is up the in-composer Agent pill is absent from the DOM — so the pill-only
-  recovery could not find anything to click and generation still failed with
-  "mode-switch dropdown trigger not found". `_exit_agent_mode` now handles both
-  Agent shapes in one pass: it dismisses the chat panel (locale-stable, aria-free
-  structural close anchor) which reveals the pill, then turns the pill off,
-  looping until the media panel re-mounts. Keyed on the outcome (`crop_*` is
-  back), so it covers pill-only, panel-only, and panel-then-pill without assuming
-  which control is present.
-
 ### Added
 
 - **In-project governance enforcement (advisory-first).** Made the AI-driven
@@ -39,6 +25,74 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   [`docs/GOVERNANCE_BENCHMARK.md`](docs/GOVERNANCE_BENCHMARK.md); the gate itself is
   described in
   [`docs/AGENT_GUIDE.md` § Governance & Enforcement](docs/AGENT_GUIDE.md#governance--enforcement).
+
+## [0.12.0] — 2026-06-03
+
+### Fixed
+
+- **Create-project generation failing when Flow opens the Agent _chat panel_.**
+  A follow-up to the earlier Agent-pill fix: Flow now also surfaces Agent mode as
+  a docked chat side-panel ("Untitled session") on some project opens, and while
+  it is up the in-composer Agent pill is absent from the DOM — so the pill-only
+  recovery could not find anything to click and generation still failed with
+  "mode-switch dropdown trigger not found". `_exit_agent_mode` now handles both
+  Agent shapes in one pass: it dismisses the chat panel (locale-stable, aria-free
+  structural close anchor) which reveals the pill, then turns the pill off,
+  looping until the media panel re-mounts. Keyed on the outcome (`crop_*` is
+  back), so it covers pill-only, panel-only, and panel-then-pill without assuming
+  which control is present.
+
+### Added
+
+- **`gflow character` command group — reusable Flow Character entities (#145).**
+  Mint a project-scoped **Character** (a named subject with reference images, an
+  optional voice, and an optional personality) so the same subject appears
+  consistently across generations:
+  - `gflow character create --project <pid> --name <name> --face-prompt "…"
+    [--body-prompt "…"] [--voice <Name>] [--personality "…"]
+    [--model nano2|nanopro]` — two-step generation: a **face** reference (slot 0),
+    then a self-contained **front/side/back triptych body** (slot 1) seeded by the
+    generated face. gflow injects its own triptych instruction, so one body
+    generation yields all three angles. Characters have **no aspect-ratio
+    control** and exactly two models — `nano2` (Nano Banana 2, default) and
+    `nanopro` (Nano Banana Pro). Generated images are **downloaded** to local (or
+    cloud) storage; the signed `fifeUrl` is used only at download and never
+    persisted.
+  - `gflow character list --project <pid>` — list every Character in a project.
+  - `gflow character show --project <pid> (--id <entityId> | --name <name>)` —
+    show one Character; an ambiguous `--name` exits 11.
+  - `gflow character voices` — list the 29-name Gemini voice catalog
+    (name / description / sample-url); `--voice` is validated case-insensitively.
+
+  The credited generation rides Flow's own page JS in the character editor
+  (Option B, UI passive-capture — a self-assembled direct POST is reCAPTCHA-403
+  walled); the structural calls (createEntity, workflow/entity PATCH,
+  projectInitialData) are credit-free REST. Creation runs as a
+  **persist-before-spend, crash-recoverable saga**: the `entityId` and each
+  completed slot are recorded before/as credits are spent, so a crashed run
+  resumes without orphaning a paid generation or double-charging. Live-verified
+  end-to-end on 2026-06-02 (face + triptych body, both bound, downloaded, read
+  back). See [docs/CHARACTER.md](docs/CHARACTER.md).
+
+- **`gflow video chain` — last-frame I2V chaining.** Render a JSONL manifest of
+  *links* into one continuous sequence: link 0 is a text-to-video generation,
+  and every later link is an image-to-video generation **seeded by the extracted
+  last frame of the previous clip**, giving visual continuity with no
+  server-side stitching. Each link is a sequential paid Veo generation (**one
+  credit per link**); a cost-confirmation gate (`-y`/`--yes` to skip),
+  `--dry-run` plan preview, `--max-links` cap (exit 11), and
+  `--resume-from <chain-id>` (skips already-paid links, no re-billing) make the
+  spend explicit and recoverable. Per-link wire-route checking aborts loudly if
+  Flow drops the seed frame and routes an i2v link to the text-only endpoint
+  (issue #125), so a misroute can never be reported as a successful chain.
+  Only the Veo 3.1 models (`veo-lite`/`veo-fast`/`veo-quality`/`veo-lite-lp`)
+  are accepted; `omni-flash` is rejected. Chain links are recorded locally
+  (SQLite migration `0005`) to drive `--resume-from`. The frame extractor uses
+  PyAV via a new optional **`[chain]`** extra (`pip install 'gflow-cli[chain]'`)
+  — no system ffmpeg required. Each link is saved as its own mp4; concatenating
+  the clips into one file is a separate step — use `gflow scene` (auto-concat is
+  deferred, see [KNOWN_ISSUES.md](KNOWN_ISSUES.md)).
+
 - **`gflow scene` command group (Add Clip / Scenes).** Compose ordered,
   trimmable video clips into a Flow **Scene** over the credit-free aisandbox
   REST surface (no reCAPTCHA, no credits):
@@ -1321,7 +1375,8 @@ shell-script template that branches on these codes.
 
 First skeleton. Not functional end-to-end yet.
 
-[Unreleased]: https://github.com/ffroliva/gflow-cli/compare/v0.11.0...HEAD
+[Unreleased]: https://github.com/ffroliva/gflow-cli/compare/v0.12.0...HEAD
+[0.12.0]: https://github.com/ffroliva/gflow-cli/compare/v0.11.0...v0.12.0
 [0.11.0]: https://github.com/ffroliva/gflow-cli/compare/v0.10.0...v0.11.0
 [0.10.0]: https://github.com/ffroliva/gflow-cli/compare/v0.9.1...v0.10.0
 [0.9.1]: https://github.com/ffroliva/gflow-cli/compare/v0.9.0...v0.9.1

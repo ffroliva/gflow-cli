@@ -23,6 +23,7 @@ class OperationKind(StrEnum):
     I2V = "i2v"
     R2V = "r2v"
     SCENE_CREATE = "scene_create"
+    CHARACTER = "character"
 
 
 class OperationStatus(StrEnum):
@@ -183,6 +184,29 @@ class SceneClipRecord:
     start_time: float
     end_time: float
     total_duration: float
+    created_at: str | None = None
+
+
+@dataclass(frozen=True)
+class ChainLinkRecord:
+    """One persisted link of a sequential last-frame I2V chain.
+
+    ``seed_frame_path`` is the last-frame JPEG extracted to seed the NEXT link;
+    it is ``None`` when the clip is recorded but extraction has not yet run
+    (record-before-extract) and also for the final link (which seeds nothing).
+    A resume query distinguishes the two by ``link_index`` vs the chain length.
+    """
+
+    id: str
+    profile_name: str
+    chain_id: str
+    link_index: int
+    flow_project_id: str | None
+    flow_media_id: str
+    flow_operation_id: str | None
+    prompt: str | None
+    local_path: str
+    seed_frame_path: str | None = None
     created_at: str | None = None
 
 

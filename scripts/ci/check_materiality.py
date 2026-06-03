@@ -118,8 +118,9 @@ def build_report(material: list[str], routine: list[str], signals: dict[str, boo
 def _check_material_list_sync(skill_text: str) -> list[str]:
     """Assert every MATERIAL_PATHS token appears in the SKILL.md prose.
 
-    Returns warning strings (empty == in sync). Advisory by design, but wired
-    into the hygiene gate so drift is caught.
+    Returns warning strings (empty == in sync). Advisory by design; drift is
+    caught by the unit test ``test_material_list_sync_*`` (not the hygiene gate
+    — ``check_repo_hygiene.py`` does not call this).
     """
     missing = [tok for tok in MATERIAL_PATHS if tok.rstrip("/") not in skill_text]
     if not missing:
