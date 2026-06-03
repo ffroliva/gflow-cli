@@ -131,6 +131,7 @@ This repo is actively developed with Claude Code (see [CLAUDE.md](../CLAUDE.md))
 ## See also
 
 - [CONTRIBUTING.md](../CONTRIBUTING.md) — TDD, quality gates, how to add a route, commit style
+- [docs/GOVERNANCE_BENCHMARK.md](GOVERNANCE_BENCHMARK.md) — calibrating the advisory materiality gate (false-positive / coverage backtest)
 - [docs/GITHUB.md](GITHUB.md) — GitHub PR triage, external fork handling, SonarCloud scenarios
 - [RELEASE.md](../RELEASE.md) — release checklist, PyPI/GitHub publishing, tag protocol
 - [CHANGELOG.md](../CHANGELOG.md) — version history

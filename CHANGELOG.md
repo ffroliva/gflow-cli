@@ -7,6 +7,25 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+### Added
+
+- **In-project governance enforcement (advisory-first).** Made the AI-driven
+  development flow followable and partly machine-enforced in-repo, modeled on the
+  reference AI-DLC governance orchestrator's advisory-by-default behavior:
+  ruff `T20` now bans raw `print()` in `src/`; an advisory branch-naming check and a
+  non-blocking materiality + traceability classifier (`scripts/ci/check_materiality.py`
+  + `governance-advisory.yml`) recommend `/gflow:predict` + council review when
+  sensitive paths (`auth/`, `api/transports/`, `api/client.py`, `_sapisidhash.py`,
+  `data/`, `recaptcha`) are touched, without ever blocking a merge. A
+  history-replay backtest (`scripts/dev/materiality_backtest.py`) calibrates the
+  gate — it measured a 1.1% false-positive rate (vs. a 20-30% estimate) and
+  raised fix-coverage from 61% to 74% by surfacing auth-token plumbing that lived
+  outside `auth/`. The backtest is a first-class, repeatable artifact (`--json`
+  mode, a monthly `governance-benchmark.yml` dashboard job) fully documented in
+  [`docs/GOVERNANCE_BENCHMARK.md`](docs/GOVERNANCE_BENCHMARK.md); the gate itself is
+  described in
+  [`docs/AGENT_GUIDE.md` § Governance & Enforcement](docs/AGENT_GUIDE.md#governance--enforcement).
+
 ## [0.12.0] — 2026-06-03
 
 ### Fixed

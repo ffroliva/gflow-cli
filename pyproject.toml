@@ -78,7 +78,14 @@ line-length = 100
 target-version = "py311"
 
 [tool.ruff.lint]
-select = ["E", "F", "W", "I", "B", "UP", "N"]
+# T20 (flake8-print) bans builtin `print()` in src/ — AGENTS.md mandates structlog
+# only. `console.print()` (rich) is an attribute call and is unaffected. Tests and
+# CLI scripts legitimately print, so they are exempted via per-file-ignores below.
+select = ["E", "F", "W", "I", "B", "UP", "N", "T20"]
+
+[tool.ruff.lint.per-file-ignores]
+"tests/**" = ["T20"]
+"scripts/**" = ["T20"]
 
 [tool.pyright]
 include = ["src", "tests"]

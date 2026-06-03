@@ -1,0 +1,33 @@
+name: Governance advisory
+
+# Non-blocking governance signal: classifies touched paths (material vs routine)
+# and surfaces a recommendation to run /gflow:predict + council review. It NEVER
+# fails the build and is NOT a required check — mirrors the reference AI-DLC
+# orchestrator's advisory-by-default risk gate. Hard enforcement (--block-on +
+# branch protection) is a conscious, documented deferral.
+
+on:
+  pull_request:
+
+# Least privilege: the script writes to $GITHUB_STEP_SUMMARY (no token needed).
+# read-only is sufficient; we do not post comments (which forks cannot do).
+permissions:
+  contents: read
+
+jobs:
+  materiality:
+    name: Materiality + traceability (advisory)
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v6
+        with:
+          fetch-depth: 0 # full history so `git diff origin/<base>..HEAD` resolves
+
+      - name: Install uv
+        uses: astral-sh/setup-uv@v7
+
+      - name: Classify touched paths (advisory, never blocks)
+        run: |
+          git fetch --no-tags origin "${{ github.base_ref }}" || true
+          uv run python scripts/ci/check_materiality.py \
+            --base "origin/${{ github.base_ref }}"
