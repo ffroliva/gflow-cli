@@ -29,8 +29,12 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   ruff `T20` now bans raw `print()` in `src/`; an advisory branch-naming check and a
   non-blocking materiality + traceability classifier (`scripts/ci/check_materiality.py`
   + `governance-advisory.yml`) recommend `/gflow:predict` + council review when
-  sensitive paths (`auth/`, `api/transports/`, `data/`, `recaptcha`) are touched,
-  without ever blocking a merge. Documented in
+  sensitive paths (`auth/`, `api/transports/`, `api/client.py`, `_sapisidhash.py`,
+  `data/`, `recaptcha`) are touched, without ever blocking a merge. A
+  history-replay backtest (`scripts/dev/materiality_backtest.py`) calibrates the
+  gate — it measured a 1.1% false-positive rate (vs. a 20-30% estimate) and
+  raised fix-coverage from 61% to 74% by surfacing auth-token plumbing that lived
+  outside `auth/`. Documented in
   [`docs/AGENT_GUIDE.md` § Governance & Enforcement](docs/AGENT_GUIDE.md#governance--enforcement).
 - **`gflow scene` command group (Add Clip / Scenes).** Compose ordered,
   trimmable video clips into a Flow **Scene** over the credit-free aisandbox
