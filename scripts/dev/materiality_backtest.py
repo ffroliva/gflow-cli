@@ -31,6 +31,7 @@ reported here is a conservative LOWER bound.
 from __future__ import annotations
 
 import argparse
+import json
 import re
 import subprocess
 import sys
@@ -189,14 +190,32 @@ def collect_records(rng: str, limit: int | None) -> list[Record]:
     return records
 
 
+def to_json(metrics: dict[str, object], rng: str) -> str:
+    """Machine-readable metrics (Record objects flattened to sha/subject).
+
+    Stable shape for regression checks / CI snapshotting.
+    """
+    out: dict[str, object] = {"range": rng}
+    for key, value in metrics.items():
+        if key.endswith("_examples"):
+            assert isinstance(value, list)
+            out[key] = [{"sha": r.sha, "subject": r.subject} for r in value]
+        else:
+            out[key] = value
+    return json.dumps(out, indent=2, sort_keys=True)
+
+
 def main(argv: list[str] | None = None) -> int:
     parser = argparse.ArgumentParser(description="Backtest the materiality gate.")
     parser.add_argument("--range", default="HEAD", help="git revision range")
     parser.add_argument("--limit", type=int, default=None, help="max commits")
+    parser.add_argument(
+        "--json", action="store_true", help="emit machine-readable JSON instead of Markdown"
+    )
     args = parser.parse_args(argv)
 
-    records = collect_records(args.range, args.limit)
-    print(build_report(summarize(records), args.range))
+    metrics = summarize(collect_records(args.range, args.limit))
+    print(to_json(metrics, args.range) if args.json else build_report(metrics, args.range))
     return 0
 
 

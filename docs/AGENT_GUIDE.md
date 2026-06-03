@@ -94,6 +94,15 @@ The materiality and traceability surfaces are **informational only** — they ne
 the build and are not required checks. They guide behaviour; only the hard gates above
 block a merge. Do not read the advisory job's red/green as a merge gate.
 
+### Calibrating the gate (is it worth the friction?)
+
+The material-path list is **measured, not asserted**.
+[`docs/GOVERNANCE_BENCHMARK.md`](GOVERNANCE_BENCHMARK.md) documents a history-replay
+backtest (`scripts/dev/materiality_backtest.py`) that scores the gate on two axes —
+false-positive friction and fix-coverage — and the loop for acting on the numbers.
+Current baseline: **1.1% false positives, 73.7% fix-coverage**. Re-run it before
+changing `MATERIAL_PATHS`.
+
 ### Conscious deferral
 
 Hard enforcement of the material-path gate (an opt-in `--block-on=material` flag plus a

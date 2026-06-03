@@ -34,7 +34,10 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   history-replay backtest (`scripts/dev/materiality_backtest.py`) calibrates the
   gate — it measured a 1.1% false-positive rate (vs. a 20-30% estimate) and
   raised fix-coverage from 61% to 74% by surfacing auth-token plumbing that lived
-  outside `auth/`. Documented in
+  outside `auth/`. The backtest is a first-class, repeatable artifact (`--json`
+  mode, a monthly `governance-benchmark.yml` dashboard job) fully documented in
+  [`docs/GOVERNANCE_BENCHMARK.md`](docs/GOVERNANCE_BENCHMARK.md); the gate itself is
+  described in
   [`docs/AGENT_GUIDE.md` § Governance & Enforcement](docs/AGENT_GUIDE.md#governance--enforcement).
 - **`gflow scene` command group (Add Clip / Scenes).** Compose ordered,
   trimmable video clips into a Flow **Scene** over the credit-free aisandbox
