@@ -28,6 +28,17 @@ Commands:
     i2v                         Generate a video from a start (+ optional end) frame + prompt.
     r2v                         Generate a video from reference images + prompt.
     batch                       Run a TSV manifest of video generations.
+    chain                       Render a JSONL manifest as a last-frame I2V chain.
+
+  scene     Compose Flow Scenes (Add Clip) — credit-free REST.
+    create                      Compose ordered, trimmable clips into a scene (optional extended .mp4).
+    show                        Read back a scene's clip order and trims.
+
+  character Manage Flow Character entities for a project (#145).
+    create                      Generate a reusable character (paid face + body refs).
+    list                        List the characters in a project.
+    show                        Show one character by --id or --name.
+    voices                      List the preset Gemini voices for character TTS.
 
   data      Local provenance database (read-only queries).
     media MEDIA_ID              Show stored record for a Flow media ID.
@@ -493,6 +504,139 @@ gflow video chain story.jsonl --resume-from 1f2e3d4c-...
 # Seed 150 ms before EOF to dodge a fade-to-black final frame
 gflow video chain story.jsonl --seed-offset 150 --yes
 ```
+
+## `gflow scene`
+
+Compose ordered, trimmable video clips into a Flow **Scene** (the "Add Clip"
+timeline). This is a **credit-free, reCAPTCHA-free** REST path: it arranges
+*existing* clips (e.g. the per-link mp4s from `gflow video chain`) — it does not
+generate anything. Each clip is referenced by its **workflow id**, optionally
+trimmed with a `start-end` window in seconds.
+
+### `gflow scene create`
+
+```text
+gflow scene create CLIP_REFS... [OPTIONS]
+
+Arguments:
+  CLIP_REFS...              One or more clips, in order. Each is
+                            `workflowId[:start-end]` (trim in seconds, start<end).
+                            [required]
+
+Options:
+  --project PROJECT_ID      Flow project id.                          [required]
+  -o, --output PATH         Render the composed scene into ONE extended .mp4 at
+                            PATH (server-side, credit-free, no local ffmpeg).
+                            Without it, only the Flow scene is composed (no file).
+  --force                   Overwrite --output if it already exists.
+  --profile NAME            Profile name (overrides default).
+```
+
+With `--output`, gflow calls Flow's server-side `runVideoFxConcatenation` to
+stitch the clips into a single extended video. The render is **credit-free** and
+needs **no local ffmpeg** — Flow returns the encoded video inline (base64) and
+gflow writes it to PATH (a `.mp4` suffix is enforced; takes up to ~3 min). The
+compose is **persisted to the local catalog before** the render, so a render
+failure is recoverable without re-composing. A non-`.mp4` `--output` is
+rewritten to `.mp4`; an existing file errors unless `--force` is passed.
+
+**Examples:**
+
+```bash
+# Compose three chain clips into a scene (no local file)
+gflow scene create wf-aaa wf-bbb wf-ccc --project proj-123
+
+# Same, but also render one extended .mp4 (credit-free, server-side)
+gflow scene create wf-aaa wf-bbb wf-ccc --project proj-123 --output story.mp4
+
+# Trim the middle clip to its 2.0–6.5s window before concatenating
+gflow scene create wf-aaa wf-bbb:2.0-6.5 wf-ccc --project proj-123 -o story.mp4 --force
+```
+
+### `gflow scene show`
+
+```text
+gflow scene show --scene SCENE_ID --project PROJECT_ID [--profile NAME]
+
+Options:
+  --scene SCENE_ID          Scene id to read back.                     [required]
+  --project PROJECT_ID      Flow project id.                           [required]
+  --profile NAME            Profile name (overrides default).
+```
+
+Reads a scene back and prints each clip's position, workflow id, trim window,
+source duration, and the composed total duration.
+
+## `gflow character`
+
+Create and manage reusable **Flow Character entities** — project-scoped,
+broadly-available identities you can reuse across generations (#145). Full
+design + wire protocol: [CHARACTER](CHARACTER.md). Every subcommand takes
+`--project <id>` (required); use `--id`/`--name` flags, never a positional.
+
+### `gflow character create`
+
+> ⚠️ **Costs credits.** `create` runs **two paid image generations**: a face
+> reference (slot 0), then a front/side/back triptych body (slot 1) seeded by
+> that face. It runs as a **persist-before-spend, crash-recoverable saga** — the
+> entity id and workflow rows are recorded before the credited generation, so a
+> crashed run is recoverable. Generation requires a Chrome-strategy profile.
+
+```text
+gflow character create [OPTIONS]
+
+Options:
+  --project PROJECT_ID      Flow project id.                           [required]
+  --name NAME               Display name for the new character.        [required]
+  --face-prompt TEXT        Prompt for the face reference image.       [required]
+  --body-prompt TEXT        Body/outfit DESCRIPTION (not a full prompt). gflow
+                            wraps it in a self-contained front/side/back triptych
+                            instruction seeded by the generated face, so one
+                            generation yields all three angles. Omit to skip the
+                            body step.
+  --voice NAME              Preset voice (e.g. Charon); case-insensitive,
+                            validated against `gflow character voices`.
+  --personality TEXT        Personality notes for the character.
+  --model [nano2|nanopro]   nano2 = Nano Banana 2 (default);
+                            nanopro = Nano Banana Pro.            [default: nano2]
+  --profile NAME            Profile name (overrides default).
+  --locale TEXT             BCP-47 locale.                       [default: en-US]
+  --json                    Emit a machine-readable JSON result.
+```
+
+There is **no aspect-ratio control** for characters. Generated images are
+**downloaded** to local (or cloud) storage; the signed `fifeUrl` is used only at
+download time and never persisted. The result reports the entity id, the bound
+workflow ids, and each saved slot's local path (face, body).
+
+### `gflow character list`
+
+```text
+gflow character list --project PROJECT_ID [--json] [--profile NAME]
+```
+
+Lists every Character entity in a project (name, entity id, voice, reference
+count).
+
+### `gflow character show`
+
+```text
+gflow character show --project PROJECT_ID (--id ENTITY_ID | --name NAME) [--json] [--profile NAME]
+```
+
+Shows one character's detail (entity id, project, voice, personality, reference
+workflow ids). Provide **exactly one** of `--id` or `--name`. An ambiguous
+`--name` (multiple characters share it) exits with code **11**.
+
+### `gflow character voices`
+
+```text
+gflow character voices [--json]
+```
+
+Lists the **29 preset Gemini voices** available for character TTS — each with a
+name, description, and sample URL. These names are what `--voice` validates
+against (case-insensitively) on `gflow character create`.
 
 ## `gflow data list`
 

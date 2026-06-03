@@ -255,14 +255,20 @@ both normalize to the canonical `Charon`) and sets `audioReferences[].presetVoic
 > tracked in the [Backlog](#14-backlog--not-yet-implemented). A "create new voice" flow ("Criar nova voz")
 > exists in the UI but is **not yet implemented**.
 
-## 8. Proposed CLI surface
+## 8. CLI surface (shipped v0.12.0)
+
+The `create` / `list` / `show` / `voices` commands below are **shipped and
+live-verified in v0.12.0** (the user-facing reference lives in
+[USAGE § `gflow character`](USAGE.md#gflow-character)). The `gflow video --character`
+reuse path, `gflow image --character`, and `gflow character rm` remain
+**backlog** (rows marked *not yet implemented*).
 
 | Command | Maps to |
 |---|---|
-| `gflow character create --project <id> --name <name> --face-prompt … [--body-prompt …] [--voice <Name>] [--personality …] [--model nano2\|nanopro] [--profile …] [--locale en-US] [--json]` *(VERIFIED — shipped option names; characters have NO aspect-ratio control)* | createEntity → gen face (slot 0) → commit_workflow → optional gen body (slot 1) → commit_workflow → patch_entity, via the persist-before-spend saga (§4). `--body-prompt` is a **body/outfit DESCRIPTION** — gflow wraps it in a self-contained **front/side/back triptych** instruction and seeds it with the generated face (auto-attached as the slot-add reference), so one body generation yields all three angles. Generated images are **downloaded** to storage; the result reports each slot's local path. |
-| `gflow character list --project <id> [--json]` | projectInitialData → entities[CHARACTER] |
-| `gflow character show --project <id> (--id <entityId> \| --name <displayName>) [--json]` | projectInitialData (single); name collision → exit 11 with disambiguation hint |
-| `gflow character voices [--json]` | list the 29 preset voices (name / description / sample-url); language-agnostic discovery, mirrors `gflow models --json` |
+| `gflow character create --project <id> --name <name> --face-prompt … [--body-prompt …] [--voice <Name>] [--personality …] [--model nano2\|nanopro] [--profile …] [--locale en-US] [--json]` *(SHIPPED v0.12.0 — shipped option names; characters have NO aspect-ratio control)* | createEntity → gen face (slot 0) → commit_workflow → optional gen body (slot 1) → commit_workflow → patch_entity, via the persist-before-spend saga (§4). `--body-prompt` is a **body/outfit DESCRIPTION** — gflow wraps it in a self-contained **front/side/back triptych** instruction and seeds it with the generated face (auto-attached as the slot-add reference), so one body generation yields all three angles. Generated images are **downloaded** to storage; the result reports each slot's local path. |
+| `gflow character list --project <id> [--json]` *(SHIPPED v0.12.0)* | projectInitialData → entities[CHARACTER] |
+| `gflow character show --project <id> (--id <entityId> \| --name <displayName>) [--json]` *(SHIPPED v0.12.0)* | projectInitialData (single); name collision → exit 11 with disambiguation hint |
+| `gflow character voices [--json]` *(SHIPPED v0.12.0)* | list the 29 preset voices (name / description / sample-url); language-agnostic discovery, mirrors `gflow models --json` |
 | `gflow video … --character <id>` *(repeatable → multi-ref)* | **not yet implemented** (Phase 3) — `referenceEntities` on `video:batchAsyncGenerateVideoReferenceImages` |
 | `gflow character rm <id>` | **not yet implemented** — entity delete verb uncaptured |
 | `gflow image … --character <id>` | **not yet implemented** — image-path `referenceEntities` uncaptured |

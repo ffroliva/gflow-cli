@@ -26,6 +26,9 @@ The user wants to:
 - Generate one or many Veo videos from text prompts (T2V) or from start-image + motion prompt (I2V)
 - Generate one or many Imagen / Nano Banana images from text (T2I) or from prompt + reference images (I2I)
 - Build a batch pipeline for video generations
+- Create a reusable, project-scoped Flow **Character** (a named subject with reference images, optional voice + personality) for consistent subjects across generations (`gflow character`)
+- Compose ordered clips into a **scene** and optionally render a credit-free server-side extended video (`gflow scene`)
+- Stitch a multi-clip story where each clip is seeded by the previous clip's last frame (`gflow video chain`)
 - Use their Google AI Ultra or Pro Flow credits via script instead of clicking through the UI
 - Automate Flow inside a content pipeline, AI video production stack, or research project
 
@@ -67,6 +70,21 @@ gflow image i2i "<prompt>" --ref PATH_OR_UUID [--ref ...] [...same as t2i]
 gflow video t2v "<prompt>" [-o out.mp4] [--aspect ...] [--seed N]
 gflow video i2v <image> "<prompt>" [-o out.mp4] [...same as t2v]
 gflow video batch <manifest.tsv> [--out-dir DIR]
+gflow video chain <manifest.jsonl> [--out-dir DIR] [--dry-run] \
+                  [--max-links N] [--resume-from N]   # last-frame I2V chaining; veo models only
+
+# Characters (reusable, project-scoped subjects)
+gflow character create --project <id> --name "<name>" --face-prompt "<prompt>" \
+                       [--body-prompt "<prompt>"] [--voice <id>] [--personality "<text>"] \
+                       [--model {nano2|nanopro}]
+gflow character list --project <id>
+gflow character show <character-id> --project <id>
+gflow character voices                                    # list the Gemini voice catalog
+
+# Scenes (Add Clip / compose ordered clips)
+gflow scene create --project <id> <clip-id> [<clip-id> ...] \
+                   [-o extended.mp4]                       # --output = credit-free server-side concat
+gflow scene show <scene-id> --project <id>
 ```
 
 Every subcommand accepts `--profile <name>` (per-subcommand, not global) to drive multiple Google accounts side-by-side.
@@ -120,6 +138,36 @@ done
 # manifest.tsv columns: start_image \t prompt \t end_image? \t aspect? \t output_path?
 # Empty start_image = T2V; lines starting with `# ` are comments.
 gflow video batch ./manifest.tsv --out-dir ./out/
+```
+
+### Create a reusable Character for consistent subjects
+
+```bash
+# A Character is a named, project-scoped subject reused across generations.
+gflow character create --project "$PROJECT_ID" --name "Joaquim" \
+  --face-prompt "weathered fisherman, grey beard, kind eyes" \
+  --body-prompt "tall, broad-shouldered, wearing a navy wool sweater" \
+  --voice <voice-id> --model nano2
+gflow character voices            # discover valid --voice ids first
+gflow character list --project "$PROJECT_ID"
+```
+
+See [`docs/CHARACTER.md`](https://github.com/ffroliva/gflow-cli/blob/main/docs/CHARACTER.md) for the full domain model, wire protocol, and the crash-recoverable persist-before-spend saga.
+
+### Compose clips into an extended video (credit-free)
+
+```bash
+# Concatenate ordered clips server-side via runVideoFxConcatenation — no local ffmpeg, no credits.
+gflow scene create --project "$PROJECT_ID" "$CLIP_A" "$CLIP_B" -o extended.mp4
+```
+
+### Chain clips by last frame (story stitching)
+
+```bash
+# manifest.jsonl: one JSON object per line. Link 0 = t2v; later links = i2v seeded by the
+# previous clip's last frame. One credit per link. veo models only.
+gflow video chain ./story.jsonl --out-dir ./out/ --dry-run   # preview the plan first
+gflow video chain ./story.jsonl --out-dir ./out/             # then run for real
 ```
 
 ### Use as a Python library
