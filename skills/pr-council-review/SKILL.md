@@ -48,6 +48,7 @@ Rank with these heuristics (highest priority first):
 | `isDraft == false` AND CI all-green | +3 | Ready to merge once approved — highest ROI |
 | Touched path includes `src/gflow_cli/api/transports/` | +2 | UI-automation is the highest-risk surface (memory `[[pr-must-verify-on-affected-surface]]`) |
 | Touched path includes `src/gflow_cli/auth/` or `recaptcha` | +2 | Auth changes need security-deep-dive |
+| Touched path includes `src/gflow_cli/api/client.py` or `src/gflow_cli/api/_sapisidhash.py` | +2 | Auth-token plumbing (Bearer / access-token / SAPISID) — lives outside `auth/` but is security-material; backtest found 3 historical fixes here |
 | Touched path includes `src/gflow_cli/data/` | +2 | Migration safety + #86 hygiene history |
 | Older than 7 days (stale risk) | +1 | Conflict risk grows with age |
 | `additions + deletions <= 300` | +1 | Small PRs ship faster |
