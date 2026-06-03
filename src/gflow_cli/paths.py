@@ -96,6 +96,27 @@ def video_output_path(
     return output_dir / "videos" / on.isoformat() / f"{validate_job_id(job_id)}.mp4"
 
 
+def character_output_path(
+    output_dir: Path,
+    *,
+    entity_id: str,
+    slot: int,
+    on: date | None = None,
+) -> Path:
+    """`<output_dir>/characters/<YYYY-MM-DD>/character_<entity_id>_slot<slot>.png`.
+
+    The ``.png`` suffix is an initial guess — Flow's fife CDN may return JPEG or
+    WebP bytes.  Callers download bytes to this path (the extension is corrected
+    in-flight by :func:`adjust_key_extension`).  ``entity_id`` is validated as a
+    safe id so a tampered/unexpected value cannot escape the output directory.
+    """
+    on = on or date.today()
+    safe_entity = validate_job_id(entity_id)
+    return (
+        output_dir / "characters" / on.isoformat() / f"character_{safe_entity}_slot{int(slot)}.png"
+    )
+
+
 def image_output_path(
     output_dir: Path,
     *,

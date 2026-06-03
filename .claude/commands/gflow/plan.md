@@ -1,39 +1,22 @@
 ---
-description: Show the active plan — next task if a superpowers plan is running, current phase otherwise.
+description: Create a structured task-by-task implementation plan for a feature and write it to docs/superpowers/plans/.
 ---
 
-# `/gflow:plan` — Active plan
+# `/gflow:plan <feature>` — Create a feature plan
 
-## Steps
+**Read `skills/plan/SKILL.md` and follow its protocol now**, passing `$ARGUMENTS` as the feature description.
 
-**1. Check conversation context.**
+> Do **not** call `Skill(skill="plan")` — the repo's `skills/*/SKILL.md` files are plain Markdown, not registered as Skill-tool-invocable. Read the file directly instead.
 
-Has the user mentioned a specific feature or invoked the write-plan skill in this session?
-If yes, note the feature name (e.g. `shell-multi-prompt`, `image-mvp`, `phase-4-hardening`).
+The skill at `skills/plan/SKILL.md` gathers predict/scenario context, asks ≤3
+clarifying questions, decomposes the feature into atomic committable tasks with
+step + test checklists, and writes `docs/superpowers/plans/<date>-<slug>/PLAN.md`.
 
-**2. Run the discovery script.**
-
-With a feature name identified in step 1:
-```bash
-uv run python scripts/dev/active_plan.py --feature <feature-name>
+**Typical workflow:**
 ```
-
-Without a feature name (uses most-recent superpowers plan, falls back to PLAN.md):
-```bash
-uv run python scripts/dev/active_plan.py
+/gflow:predict <proposal>   →  GO / CAUTION / STOP
+/gflow:scenario <feature>   →  edge cases + BDD skeleton
+/gflow:plan <feature>       →  writes PLAN.md  ← this command
+/gflow:status               →  surfaces next task
+/gflow:check                →  before each commit
 ```
-
-**3. Return the output verbatim.**
-
-The script already filters to the relevant block. Do not read additional files.
-
-## What the script returns
-
-- **Superpowers plan active:** file path, title, goal, progress (X/N steps), and the next unchecked task block
-- **No superpowers plan:** the first incomplete phase from `PLAN.md` (scope, sequence, definition of done)
-
-## When to call
-
-- When starting a task and unsure what's in scope
-- When the user asks "what are we working on?" or "what's next?"
-- Before adding a feature, to check it belongs to the current scope

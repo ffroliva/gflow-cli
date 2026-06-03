@@ -38,7 +38,10 @@ from gflow_cli.api.transports import make_transport
 from gflow_cli.api.transports.experimental.bearer import BearerTransport
 from gflow_cli.api.transports.experimental.sapisidhash import SapisidhashTransport
 from gflow_cli.api.transports.ui_automation import UiAutomationTransport
-from gflow_cli.api.transports.ui_automation_video import COMPOSER_AGENT_TOGGLE_SELECTOR
+from gflow_cli.api.transports.ui_automation_video import (
+    AGENT_CHAT_PANEL_CLOSE_SELECTOR,
+    COMPOSER_AGENT_TOGGLE_SELECTOR,
+)
 from gflow_cli.api.video import (
     Aspect,
     GenerateVideoRequest,
@@ -618,6 +621,95 @@ async def test_e2e_agent_mode_recovered_before_mode_switch(
         events = [e["event"] for e in install_log_capture.entries]
         assert "ui_automation_video.exited_agent_mode" in events, (
             f"expected an 'exited_agent_mode' event proving the fix ran; captured events: {events}"
+        )
+    finally:
+        await transport.teardown()
+
+
+@pytest.mark.asyncio
+@pytest.mark.e2e_auth
+async def test_e2e_agent_chat_panel_recovered_before_mode_switch(
+    monkeypatch: pytest.MonkeyPatch,
+    install_log_capture: structlog.testing.LogCapture,
+) -> None:
+    """Flow's Agent **chat side-panel** shape no longer breaks the generate path.
+
+    Besides the in-composer pill, Flow sometimes promotes Agent mode to a docked
+    chat panel ("Untitled session") on the right. While it is up the in-composer
+    pill is not in the DOM at all, so the pill-only recovery cannot find it — the
+    panel must be dismissed (its X) first, after which the pill reappears and is
+    clicked. ``_exit_agent_mode`` now handles both shapes in one call.
+
+    This reproduces the chat-panel shape on the **real DOM** (open Agent, then
+    its expand control) and proves ``_switch_to_image_mode`` recovers: the chat
+    panel is gone and the ``crop_*`` media trigger is back. **Zero credits.**
+
+    Skips on accounts whose Flow UI lacks the Agent toggle or the chat-panel
+    expand control (older editor).
+    """
+    import os
+
+    from gflow_cli.auth import profile_dir as _resolve_profile_dir
+    from gflow_cli.config import reset_settings
+
+    monkeypatch.delenv("GFLOW_CLI_HOME", raising=False)
+    monkeypatch.delenv("GFLOW_CLI_DB_PATH", raising=False)
+    reset_settings()
+
+    name = os.environ.get("GFLOW_CLI_E2E_PROFILE", "").strip()
+    if not name:
+        pytest.skip("set GFLOW_CLI_E2E_PROFILE to a logged-in profile name")
+    profile = _resolve_profile_dir(name)
+    if not profile.exists():
+        pytest.skip(f"profile dir not found: {profile}")
+
+    transport = UiAutomationTransport()
+    try:
+        await transport.setup(profile)
+        page = transport._page  # noqa: SLF001
+        assert page is not None, "setup() must acquire a page"
+
+        await transport._enter_editor(page)  # noqa: SLF001
+        await transport._dismiss_blocking_overlays(page)  # noqa: SLF001
+        await transport._wait_video_editor_ready(page)  # noqa: SLF001
+
+        pill = page.locator(COMPOSER_AGENT_TOGGLE_SELECTOR)
+        try:
+            await pill.first.wait_for(state="attached", timeout=15000)
+        except Exception:
+            pytest.skip("Flow account has no Agent composer toggle (older editor UI)")
+
+        # Reproduce the chat-panel shape: enter Agent mode (pill), then promote it
+        # to the docked chat panel via the composer's expand control.
+        if await transport._media_panel_present(page):  # noqa: SLF001
+            await pill.first.click()
+            await page.wait_for_timeout(700)
+        expand = page.locator("button:has(i:text-is('expand_content'))").first
+        if await expand.count() == 0:
+            pytest.skip("Flow account has no Agent chat-panel expand control")
+        await expand.click(force=True)
+        await page.wait_for_timeout(1300)
+
+        # Confirm we actually reproduced State A: media panel absent AND the chat
+        # panel's close (X) is present (so the pill path alone would be stuck).
+        assert not await transport._media_panel_present(page), (  # noqa: SLF001
+            "could not reproduce Agent mode — crop_* trigger still present"
+        )
+        chat_close = page.locator(AGENT_CHAT_PANEL_CLOSE_SELECTOR)
+        if await chat_close.count() == 0:
+            pytest.skip("Agent chat panel did not open (no close X) on this build")
+
+        # The fix: switching to image mode must close the chat panel AND turn the
+        # revealed pill off, re-mounting the media panel.
+        await transport._switch_to_image_mode(page)  # noqa: SLF001
+
+        assert await transport._media_panel_present(page), (  # noqa: SLF001
+            "media panel did not re-mount — chat-panel exit path failed"
+        )
+        assert await chat_close.count() == 0, "agent chat panel still open after recovery"
+        events = [e["event"] for e in install_log_capture.entries]
+        assert "ui_automation_video.exited_agent_mode" in events, (
+            f"expected an 'exited_agent_mode' event; captured events: {events}"
         )
     finally:
         await transport.teardown()

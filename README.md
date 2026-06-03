@@ -22,6 +22,7 @@
 For Google AI Ultra / Pro subscribers with Veo credits and batch workloads:
 
 - **Burn credits efficiently** — `for p in $(cat prompts.txt); do gflow image t2i "$p"; done` _(image batching, plus `gflow video t2v`/`i2v`/`r2v`, all ship today)_
+- **Reuse a subject across shots** — `gflow character create` mints a Flow **Character** (face + body reference) so the same person appears consistently from generation to generation
 - **Build pipelines** — wire Veo into your content automation, AI video stack, or batch experiments
 - **Stay in the terminal** — no Chromium UI, no clicking through dialogs (after a one-time `gflow auth login`)
 
@@ -41,6 +42,8 @@ gflow auth login --browser chrome
 gflow image t2i "a hot air balloon over Tokyo at sunrise"
 # or:
 gflow video t2v "Slow cinematic push-in on a sunlit forest clearing" --aspect 16:9
+# or mint a reusable Character (face + body reference):
+gflow character create --project <id> --name "Aria" --face-prompt "..." --body-prompt "..."
 ```
 
 Outputs land under `$GFLOW_CLI_OUTPUT_DIR` unless
@@ -72,6 +75,7 @@ Reproduce the recording: [`scripts/record_demo.ps1`](scripts/record_demo.ps1) (W
 |---|---|
 | 🎯 **Getting started** | [User Guide](docs/USER_GUIDE.md) · [Usage](docs/USAGE.md) · [Configuration](docs/CONFIGURATION.md) |
 | **Storage & catalog** | [External Storage](docs/EXTERNAL_STORAGE.md) · [Data Layer](docs/DATA_LAYER.md) |
+| 🎭 **Characters** | [Characters](docs/CHARACTER.md) — reusable subjects (`gflow character`) |
 | 🔐 **Auth & sessions** | [Authentication](docs/AUTHENTICATION.md) · [Known issues](KNOWN_ISSUES.md) |
 | 🏗️ **Internals** | [Architecture](docs/ARCHITECTURE.md) · [Security](docs/SECURITY.md) · [Debugging](docs/DEBUGGING.md) |
 | 📦 **Releases** | [Changelog](CHANGELOG.md) · [Roadmap](ROADMAP.md) · [Release protocol](RELEASE.md) · [Project status](docs/PROJECT_STATUS.md) |
@@ -110,7 +114,7 @@ gflow CLI  →  Provider (interchangeable)  →  Flow (ui_automation) / Mock (te
 
 ## Project status
 
-**v0.11.0 — alpha.** Image (T2I / I2I / upload) + Video T2V / I2V / R2V live end-to-end on `ui_automation`, with a video `--model` picker (5 Veo models) + `--duration` / `--count`. v0.11.0 is a reliability release: it repairs `gflow video i2v` — on v0.10.0 every i2v run silently produced text-to-video output that ignored the start/end frames (issue #125) — fixes create-project generation when Flow's "Agent" composer mode is active, and hardens image-model selection for non-English Flow UIs (#94). New in v0.10.0: `--json` output across every generation command (`image t2i/i2i`, `video t2v/i2v/r2v`, `auth list`) plus a `gflow models` catalog so worker schedulers can drive the CLI machine-to-machine; per-model reference-image caps for `i2i`/`r2v`; profile Google-account identity persisted to disk (with auto-rename of the first-run `default` profile); external cloud storage (S3 / MinIO / GCS) via `GFLOW_CLI_STORAGE_URI`; and a `gflow data prune` maintenance command. Only video `batch` (manifest runner) is still queued for Phase B — use a shell for-loop until then ([USAGE](docs/USAGE.md#gflow-video-batch)). Full milestone history → [docs/PROJECT_STATUS.md](docs/PROJECT_STATUS.md). Changelog → [CHANGELOG.md](CHANGELOG.md). Where the project is heading → [ROADMAP.md](ROADMAP.md).
+**v0.12.0 — alpha.** Three new capabilities. **`gflow character`** mints reusable, project-scoped Flow **Character** entities — a named subject with reference images, an optional voice, and an optional personality — so the same subject stays consistent across generations (`create` / `list` / `show` / `voices`, #145). **`gflow scene`** composes ordered clips into a scene and renders a credit-free, server-side **extended video** (no local ffmpeg). **`gflow video chain`** links last-frame image-to-video clips from a JSONL manifest into one continuous sequence. This release also fixes create-project generation when Flow surfaces Agent mode as a docked chat panel. Baseline: Image (T2I / I2I / upload) + Video T2V / I2V / R2V live end-to-end on `ui_automation`, with a video `--model` picker (5 Veo models) + `--duration` / `--count` (v0.11.0 repaired `gflow video i2v`, issue #125, and hardened image-model selection for non-English Flow UIs, #94; v0.10.0 added `--json` across every generation command, a `gflow models` catalog, per-model reference caps, persisted profile identity, external S3 / MinIO / GCS storage, and `gflow data prune`). Only video `batch` (manifest runner) is still queued for Phase B — use a shell for-loop until then ([USAGE](docs/USAGE.md#gflow-video-batch)). Full milestone history → [docs/PROJECT_STATUS.md](docs/PROJECT_STATUS.md). Changelog → [CHANGELOG.md](CHANGELOG.md). Where the project is heading → [ROADMAP.md](ROADMAP.md).
 
 ## License & legal
 

@@ -1,0 +1,54 @@
+{
+  "media": [
+    {
+      "name": "542e49ba-183b-4db9-812f-73c841c10673",
+      "workflowId": "fed25ab9-30c3-4819-b2d2-a0c6a0e13241",
+      "image": {
+        "generatedImage": {
+          "seed": 429176,
+          "mediaGenerationId": "CAMSJDU4MGE2YmJmLWQ0MzMtNDE1My04MGI5LTE4NDJiNWE1NjBlYRokMDhmZmE5MTQtN2NkNi00ZjYzLThkYzItMWYyOGNkZWY2YjY2IgNDQUUqJDU0MmU0OWJhLTE4M2ItNGRiOS04MTJmLTczYzg0MWMxMDY3Mw",
+          "mediaVisibility": "PRIVATE",
+          "prompt": "portrait of a fictional adult character, studio lighting, neutral grey background",
+          "modelNameType": "NARWHAL",
+          "workflowId": "fed25ab9-30c3-4819-b2d2-a0c6a0e13241",
+          "fifeUrl": "<redacted:url>",
+          "aspectRatio": "IMAGE_ASPECT_RATIO_LANDSCAPE",
+          "requestData": {
+            "promptInputs": [
+              {
+                "textInput": "portrait of a fictional adult character, studio lighting, neutral grey background",
+                "structuredPrompt": {
+                  "parts": [
+                    {
+                      "text": "portrait of a fictional adult character, studio lighting, neutral grey background"
+                    }
+                  ]
+                }
+              }
+            ],
+            "imageGenerationRequestData": {}
+          },
+          "mediaId": "542e49ba-183b-4db9-812f-73c841c10673"
+        },
+        "dimensions": {
+          "width": 1376,
+          "height": 768
+        }
+      }
+    }
+  ],
+  "workflows": [
+    {
+      "name": "fed25ab9-30c3-4819-b2d2-a0c6a0e13241",
+      "metadata": {
+        "displayName": "Portrait of adult character",
+        "createTime": "2026-06-02T14:37:29.382884Z",
+        "primaryMediaId": "542e49ba-183b-4db9-812f-73c841c10673",
+        "batchId": "cfbe1689-1bf7-43f3-8013-d64673b45726",
+        "updateTime": "2026-06-02T14:37:46.488220Z"
+      },
+      "projectId": "580a6bbf-d433-4153-80b9-1842b5a560ea",
+      "parentEntityId": "d73ef41a-5fa0-4cef-af3f-ee9f8b20390f"
+    }
+  ]
+}

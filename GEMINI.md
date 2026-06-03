@@ -11,7 +11,8 @@
 1. Read **[AGENTS.md](AGENTS.md)** — universal rules every agent must follow.
 2. Read **[docs/INDEX.md](docs/INDEX.md)** — routing layer for all project docs and commands.
 3. Pull deeper context on demand:
-   - Starting a feature → `/gflow:plan`
+   - Current task / where we left off → `/gflow:status`
+   - Starting a new feature → `/gflow:predict` → `/gflow:scenario` → `/gflow:plan <feature>`
    - Touching auth or reCAPTCHA → `/gflow:known-issues`
    - Cutting a release → `/gflow:release`
    - Before any commit → `/gflow:check`
@@ -24,4 +25,4 @@
 
 ## Active phase
 
-See [PLAN.md](PLAN.md) or run `/gflow:plan` for the current detailed plan.
+See [PLAN.md](PLAN.md) or run `/gflow:status` for current task. Run `/gflow:plan <feature>` to create a new feature plan.
