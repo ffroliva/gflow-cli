@@ -76,3 +76,15 @@ def test_build_report_contains_both_axes() -> None:
     report = bt.build_report(bt.summarize([_rec("a", "fix", True, True)]), "HEAD")
     assert "Axis 1" in report and "Axis 2" in report
     assert "false-positive rate" in report.lower()
+
+
+# --- json mode -------------------------------------------------------------
+def test_to_json_is_valid_and_flattens_records() -> None:
+    import json
+
+    metrics = bt.summarize([_rec("abc123", "fix", False, False)])  # one out-of-material fix
+    payload = json.loads(bt.to_json(metrics, "origin/main..HEAD"))
+    assert payload["range"] == "origin/main..HEAD"
+    assert payload["coverage_pct"] == 0.0
+    # Record objects must be flattened to JSON-serializable dicts.
+    assert payload["coverage_gap_examples"] == [{"sha": "abc123", "subject": "fix: subj"}]
