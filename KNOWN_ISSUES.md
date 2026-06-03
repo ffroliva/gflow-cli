@@ -463,7 +463,7 @@ sample is captured.
 
 ### `gflow video chain` re-exposes the i2v→t2v silent-route risk (issue #125)
 
-- **Status:** Mitigated · **Severity:** Medium · **Affects:** `gflow video chain` (Unreleased)
+- **Status:** Mitigated · **Severity:** Medium · **Affects:** `gflow video chain` (v0.12.0)
 
 Every chain link after the first is an image-to-video (I2V) generation seeded by
 the previous clip's last frame. The same silent-route defect that affects
@@ -492,7 +492,7 @@ breaks continuity, with no error from Flow.
 
 ### `gflow video chain` continuity caveat — black / fade-out final frame
 
-- **Status:** Open · **Severity:** Low · **Affects:** `gflow video chain` (Unreleased)
+- **Status:** Open · **Severity:** Low · **Affects:** `gflow video chain` (v0.12.0)
 
 Chain seeds each link with the **last frame** of the previous clip. If a clip
 fades to black (or to a near-empty frame) at its very end — common with
@@ -508,7 +508,7 @@ your prompts.
 
 ### `gflow video chain` outputs N clips, not one file — auto-concat is deferred
 
-- **Status:** Open (by design) · **Severity:** Low · **Affects:** `gflow video chain` (Unreleased)
+- **Status:** Open (by design) · **Severity:** Low · **Affects:** `gflow video chain` (v0.12.0)
 
 A chain produces **N separate mp4s** (one per link), not a single stitched
 video. Auto-concatenation is deferred: Flow's server-side concatenation
@@ -529,7 +529,7 @@ auto-concat its own output is under consideration — tracked as backlog.
 
 ### `gflow video chain --resume-from` re-seeds the first resumed link as T2V
 
-- **Status:** Open · **Severity:** Low · **Affects:** `gflow video chain` (Unreleased)
+- **Status:** Open · **Severity:** Low · **Affects:** `gflow video chain` (v0.12.0)
 
 `--resume-from <chain-id>` skips links already paid for in a prior run (they are
 **not** re-billed) and continues from the first incomplete link. However, the
