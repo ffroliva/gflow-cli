@@ -11,6 +11,7 @@ from gflow_cli.data.models import (
     AssetKind,
     AssetLookup,
     AssetRecord,
+    ChainLinkRecord,
     LocalFileRecord,
     OperationAssetRole,
     OperationKind,
@@ -75,10 +76,8 @@ class DataRepository:
                         id, profile_name, flow_project_id, title, source, created_at
                     )
                     VALUES (?, ?, ?, ?, ?, ?)
-                    ON CONFLICT(id) DO UPDATE SET
-                        profile_name = excluded.profile_name,
-                        flow_project_id = excluded.flow_project_id,
-                        title = excluded.title,
+                    ON CONFLICT(profile_name, flow_project_id) DO UPDATE SET
+                        title = COALESCE(excluded.title, projects.title),
                         source = excluded.source
                     """,
                     (
@@ -290,6 +289,50 @@ class DataRepository:
                 (status.value, completed_at, error_type, error_detail, operation_id),
             )
 
+    def set_operation_metadata(
+        self,
+        operation_id: str,
+        metadata_json: dict[str, object],
+    ) -> None:
+        """Write (or overwrite) the metadata_json column for an operation row."""
+        with self._store.transaction(immediate=True):
+            self._store.conn.execute(
+                "UPDATE operations SET metadata_json = ? WHERE id = ?",
+                (json.dumps(metadata_json, sort_keys=True), operation_id),
+            )
+
+    def update_operation_metadata(
+        self,
+        operation_id: str,
+        *,
+        status: OperationStatus,
+        completed_at: str | None,
+        prompt: str | None,
+        prompt_hash: str | None,
+        prompt_redacted: bool,
+        metadata_json: dict[str, object],
+    ) -> None:
+        """Update status, prompt fields, and metadata_json in a single write."""
+        with self._store.transaction(immediate=True):
+            self._store.conn.execute(
+                """
+                UPDATE operations
+                SET status = ?, completed_at = ?,
+                    prompt = ?, prompt_hash = ?, prompt_redacted = ?,
+                    metadata_json = ?
+                WHERE id = ?
+                """,
+                (
+                    status.value,
+                    completed_at,
+                    prompt,
+                    prompt_hash,
+                    int(bool(prompt_redacted)),
+                    json.dumps(metadata_json, sort_keys=True),
+                    operation_id,
+                ),
+            )
+
     def get_operation_for_output_asset(
         self,
         profile_name: str,
@@ -478,6 +521,92 @@ class DataRepository:
                 start_time=row["start_time"],
                 end_time=row["end_time"],
                 total_duration=row["total_duration"],
+                created_at=row["created_at"],
+            )
+            for row in rows
+        ]
+
+    # ------------------------------------------------------------------
+    # Chain links
+    # ------------------------------------------------------------------
+
+    def upsert_chain_link(self, record: ChainLinkRecord) -> ChainLinkRecord:
+        """Persist one chain link, keyed by (profile_name, chain_id, link_index).
+
+        Idempotent: re-recording the same link (e.g. a resumed run that reaches
+        an already-completed link) overwrites the prior row in place rather than
+        raising. ``seed_frame_path`` is updated too, so attaching the extracted
+        seed frame after the clip was recorded is a plain re-upsert.
+        """
+        created_at = record.created_at or _utc_now()
+        try:
+            with self._store.transaction(immediate=True):
+                self._store.conn.execute(
+                    """
+                    INSERT INTO chain_links(
+                        id, profile_name, chain_id, link_index,
+                        flow_project_id, flow_media_id, flow_operation_id,
+                        prompt, local_path, seed_frame_path, created_at
+                    )
+                    VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+                    ON CONFLICT(profile_name, chain_id, link_index) DO UPDATE SET
+                        flow_project_id = excluded.flow_project_id,
+                        flow_media_id = excluded.flow_media_id,
+                        flow_operation_id = excluded.flow_operation_id,
+                        prompt = excluded.prompt,
+                        local_path = excluded.local_path,
+                        seed_frame_path = excluded.seed_frame_path
+                    """,
+                    (
+                        record.id,
+                        record.profile_name,
+                        record.chain_id,
+                        record.link_index,
+                        record.flow_project_id,
+                        record.flow_media_id,
+                        record.flow_operation_id,
+                        record.prompt,
+                        record.local_path,
+                        record.seed_frame_path,
+                        created_at,
+                    ),
+                )
+        except sqlite3.IntegrityError as exc:
+            raise DataIntegrityError(detail=str(exc), route="data.upsert_chain_link") from exc
+        return cast("ChainLinkRecord", dataclasses.replace(record, created_at=created_at))  # pyright: ignore[reportUnnecessaryCast]
+
+    def completed_chain_links(self, profile_name: str, chain_id: str) -> list[ChainLinkRecord]:
+        """Return the recorded links of ``chain_id`` whose clip is on disk.
+
+        Ordered by ``link_index``. A returned link with ``seed_frame_path`` set
+        is fully done (clip + seed frame); one with ``seed_frame_path is None``
+        needs its seed frame re-extracted before the next link can be seeded
+        (unless it is the final link). ``--resume-from`` consumes this to decide
+        the restart point without re-paying for completed clips.
+        """
+        rows = self._store.conn.execute(
+            """
+            SELECT id, profile_name, chain_id, link_index,
+                   flow_project_id, flow_media_id, flow_operation_id,
+                   prompt, local_path, seed_frame_path, created_at
+            FROM chain_links
+            WHERE profile_name = ? AND chain_id = ?
+            ORDER BY link_index
+            """,
+            (profile_name, chain_id),
+        ).fetchall()
+        return [
+            ChainLinkRecord(
+                id=str(row["id"]),
+                profile_name=str(row["profile_name"]),
+                chain_id=str(row["chain_id"]),
+                link_index=int(row["link_index"]),
+                flow_project_id=row["flow_project_id"],
+                flow_media_id=str(row["flow_media_id"]),
+                flow_operation_id=row["flow_operation_id"],
+                prompt=row["prompt"],
+                local_path=str(row["local_path"]),
+                seed_frame_path=row["seed_frame_path"],
                 created_at=row["created_at"],
             )
             for row in rows
@@ -711,6 +840,60 @@ class DataRepository:
                 ),
             )
         return result
+
+    # ------------------------------------------------------------------
+    # Character recovery
+    # ------------------------------------------------------------------
+
+    def find_incomplete_character(
+        self,
+        flow_project_id: str,
+        name: str,
+    ) -> dict[str, object] | None:
+        """Return the most-recent STARTED CHARACTER operation for (project, name).
+
+        Used by the create saga to detect a prior crash so it can resume
+        without re-spending credits.  Returns a plain dict with keys::
+
+            row_id           – operations.id (used to update the row later)
+            entity_id        – flow_operation_id (the entityId already created)
+            workflow_ids     – list[str] already recorded (may be empty)
+            primary_media_ids – list[str] already recorded (may be empty)
+
+        Returns ``None`` when no incomplete row exists for the given project
+        and character name.
+        """
+        import json as _json
+
+        row = self._store.conn.execute(
+            """
+            SELECT id, flow_operation_id, metadata_json
+            FROM operations
+            WHERE flow_project_id = ?
+              AND mode = 'character'
+              AND status = 'started'
+              AND json_extract(metadata_json, '$.name') = ?
+            ORDER BY started_at DESC
+            LIMIT 1
+            """,
+            (flow_project_id, name),
+        ).fetchone()
+        if row is None:
+            return None
+        meta: dict[str, object] = {}
+        if row["metadata_json"]:
+            try:
+                meta = _json.loads(row["metadata_json"])
+            except (ValueError, TypeError):
+                meta = {}
+        workflow_ids: list[str] = list(meta.get("workflow_ids") or [])  # type: ignore[arg-type]
+        primary_media_ids: list[str] = list(meta.get("primary_media_ids") or [])  # type: ignore[arg-type]
+        return {
+            "row_id": str(row["id"]),
+            "entity_id": str(row["flow_operation_id"]),
+            "workflow_ids": workflow_ids,
+            "primary_media_ids": primary_media_ids,
+        }
 
     # ------------------------------------------------------------------
     # Helpers

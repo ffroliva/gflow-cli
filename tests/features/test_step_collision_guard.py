@@ -9,6 +9,8 @@ from __future__ import annotations
 def test_step_modules_coexist() -> None:
     import tests.features.test_auth_steps as auth_steps
     import tests.features.test_image_steps as image_steps
+    import tests.features.test_video_chain_steps as video_chain_steps
 
     assert auth_steps is not None
     assert image_steps is not None
+    assert video_chain_steps is not None

@@ -1,0 +1,13 @@
+{
+  "entity": {
+    "projectId": "580a6bbf-d433-4153-80b9-1842b5a560ea",
+    "entityId": "d73ef41a-5fa0-4cef-af3f-ee9f8b20390f",
+    "entityInfo": {
+      "entityType": "CHARACTER",
+      "displayName": "Spike Test",
+      "characterInfo": {}
+    },
+    "createTime": "2026-06-02T14:33:22.306556Z",
+    "updateTime": "2026-06-02T14:36:51.871092Z"
+  }
+}

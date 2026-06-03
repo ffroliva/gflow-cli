@@ -52,12 +52,23 @@ def emit(payload: dict[str, Any]) -> None:
     click.echo(json.dumps(payload, indent=2))
 
 
-def _exit_code(exc: GFlowError) -> int:
-    """Mirror ``_cli_helpers._exit_code_for`` — most-specific class wins."""
+def exit_code_for(exc: GFlowError) -> int:
+    """Mirror ``_cli_helpers._exit_code_for`` — most-specific class wins.
+
+    Public so command modules that emit their own ``--json`` payload (e.g.
+    ``video chain`` on a :class:`~gflow_cli.errors.ChainPartialError`) can exit
+    with the same mapped code the shared handler would have used, without
+    re-raising through the handler (which would emit a second JSON document).
+    """
     for cls, code in EXIT_CODE_MAP.items():
         if isinstance(exc, cls):
             return code
     return 1
+
+
+# Backwards-compatible private alias (kept for the existing error path call
+# sites in this module).
+_exit_code = exit_code_for
 
 
 def error_payload(exc: GFlowError) -> dict[str, Any]:
