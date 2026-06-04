@@ -9,7 +9,7 @@ Supported tools that auto-discover this file: Cursor, Codex, Aider, Jules, Devin
 - Unofficial Python CLI for [Google Flow](https://labs.google/fx/tools/flow) — drives Veo (image-to-video, text-to-video) and Imagen (text-to-image) generations from the terminal by reverse-engineering Flow's private REST API at `aisandbox-pa.googleapis.com`.
 - Python 3.11+ · `uv`-managed · `hatchling` builds · Playwright Chromium transport · `pyright` strict · `ruff` · `pytest`.
 - Single-package modular monolith. Top-level modules under `src/gflow_cli/`: `api/`, `auth/`, `browser_manager.py`, `cli.py`, `_cli_helpers.py`, `cli_character.py`, `cli_data.py`, `cli_image.py`, `cli_models.py`, `cli_run.py`, `cli_scene.py`, `cli_video.py`, `config.py`, `data/`, `errors.py`, `exceptions.py`, `image_batch.py`, `manifest.py`, `observability.py`, `paths.py`, `profile_store.py`.
-- Command surface: `gflow auth`, `gflow image` (t2i/i2i/upload), `gflow video` (t2v/i2v/r2v/batch/chain), `gflow character` (create/list/show/voices — reusable project-scoped Flow Character entities), `gflow scene` (create/show — Add Clip / Scenes, with `create --output` for credit-free server-side extended video), and `gflow data` (catalog queries).
+- Command surface: `gflow auth`, `gflow image` (t2i/i2i/upload), `gflow video` (t2v/i2v/r2v/batch/chain), `gflow character` (create/list/show/rm/voices — reusable project-scoped Flow Character entities), `gflow scene` (create/show — Add Clip / Scenes, with `create --output` for credit-free server-side extended video), and `gflow data` (catalog queries).
 - Requires a Google AI Ultra or Pro subscription with Flow access. All generations bill against the user's own Google account.
 
 ## Headed-browser dependency (architectural reality)
