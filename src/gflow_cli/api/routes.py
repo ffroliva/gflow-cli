@@ -125,8 +125,15 @@ def character_editor_url(locale: str, project_id: str, entity_id: str) -> str:
 
     Returns the browser-navigable page URL (not an API endpoint) at which the
     Flow UI renders the character editor for *entity_id* inside *project_id*,
-    localised to *locale* (e.g. ``"en"``, ``"pt"``).
+    localised to *locale*.
 
-    Pattern: ``https://labs.google/fx/{locale}/tools/flow/project/{project_id}/character/{entity_id}``
+    *locale* may be a full BCP-47 tag (e.g. ``"en-US"``, ``"pt-BR"``). Flow's UI
+    only routes under the *short* primary-subtag segment — the full tag 404s
+    (issue #153) — so the tag is reduced to its lower-cased primary subtag
+    (``"en-US" -> "en"``, ``"pt-BR" -> "pt"``); already-short inputs pass
+    through unchanged.
+
+    Pattern: ``https://labs.google/fx/{seg}/tools/flow/project/{project_id}/character/{entity_id}``
     """
-    return f"{LABS_FX_BASE}/{locale}/tools/flow/project/{project_id}/character/{entity_id}"
+    segment = locale.split("-", 1)[0].lower()
+    return f"{LABS_FX_BASE}/{segment}/tools/flow/project/{project_id}/character/{entity_id}"
