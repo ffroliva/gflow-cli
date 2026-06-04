@@ -103,7 +103,7 @@ Slash commands for Claude Code, stored in `.claude/commands/gflow/`. All prefixe
 **"A gflow command hangs / fails — where do I start?"** → [DEBUGGING § Quick reference](DEBUGGING.md#quick-reference)
 **"Flow's UI broke a selector — how do I diagnose it?"** → [DEBUGGING § Inspecting Flow's live UI](DEBUGGING.md#inspecting-flows-live-ui)
 **"What does each `ui_automation.*` log event mean?"** → [DEBUGGING § Listener & HTTP-layer debugging](DEBUGGING.md#listener--http-layer-debugging)
-**"What was actually live-verified for the latest release?"** → [LIVE_VERIFICATION_v0.12.0](LIVE_VERIFICATION_v0.12.0.md) · prior: [v0.11.0](LIVE_VERIFICATION_v0.11.0.md) · [v0.10.0](LIVE_VERIFICATION_v0.10.0.md) · [v0.9.1](LIVE_VERIFICATION_v0.9.1.md) · [v0.9.0](LIVE_VERIFICATION_v0.9.0.md) · [v0.8.1](LIVE_VERIFICATION_v0.8.1.md)
+**"What was actually live-verified for the latest release?"** → [LIVE_VERIFICATION_v0.13.0](LIVE_VERIFICATION_v0.13.0.md) · prior: [v0.12.0](LIVE_VERIFICATION_v0.12.0.md) · [v0.11.0](LIVE_VERIFICATION_v0.11.0.md) · [v0.10.0](LIVE_VERIFICATION_v0.10.0.md) · [v0.9.1](LIVE_VERIFICATION_v0.9.1.md)
 **"What was live-verified for the data layer (PR #58)?"** → [LIVE_VERIFICATION_data_layer](LIVE_VERIFICATION_data_layer.md) — 1 Imagen + 1 Veo credit on denon82, 6-layer ledger (file + magic + Pillow + DB rows + CLI round-trip + structlog)
 **"What was live-verified for the video-download feature (#29)?"** → [LIVE_VERIFICATION_video_download](LIVE_VERIFICATION_video_download.md)
 **"What is the jitter matrix evidence for `gflow image batch`?"** → [`LIVE_VERIFICATION_image_batch.md`](LIVE_VERIFICATION_image_batch.md) — jitter matrix evidence for `gflow image batch` (always-same-project mode)
