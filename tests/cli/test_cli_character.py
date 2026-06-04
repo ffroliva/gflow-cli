@@ -280,6 +280,51 @@ def test_rm_id_and_name_mutually_exclusive():
     assert "mutually exclusive" in res.output
 
 
+def test_rm_by_name_deletes(monkeypatch):
+    """--name --yes resolves the character by display name and deletes it."""
+    deleted: list = []
+    _patch(monkeypatch, get_result=_CHAR_A, deleted=deleted)
+    res = CliRunner().invoke(
+        main,
+        ["character", "rm", "--project", "proj-1", "--name", "Alpha", "--yes"],
+        catch_exceptions=False,
+    )
+    assert res.exit_code == 0
+    assert "Deleted" in res.output
+    assert "Alpha" in res.output
+    assert deleted == [("proj-1", ["eid-alpha"])]
+
+
+def test_rm_confirm_abort_does_not_delete(monkeypatch):
+    """Answering 'n' at the confirm prompt aborts (click.Abort → exit 130) and deletes nothing."""
+    deleted: list = []
+    _patch(monkeypatch, get_result=_CHAR_A, deleted=deleted)
+    res = CliRunner().invoke(
+        main,
+        ["character", "rm", "--project", "proj-1", "--id", "eid-alpha"],
+        input="n\n",
+    )
+    # run_with_handlers maps click.Abort to 130 (the conventional SIGINT code).
+    assert res.exit_code == 130
+    assert deleted == []
+
+
+def test_rm_ambiguous_name_exits_11(monkeypatch):
+    """ConfigurationError (ambiguous name) during resolution must map to exit 11."""
+    exc = ConfigurationError(
+        detail="ambiguous character name 'Dup' matches multiple entities: eid-1, eid-2",
+        route="projectInitialData",
+    )
+    deleted: list = []
+    _patch(monkeypatch, get_exc=exc, deleted=deleted)
+    res = CliRunner().invoke(
+        main,
+        ["character", "rm", "--project", "proj-1", "--name", "Dup"],
+    )
+    assert res.exit_code == 11
+    assert deleted == []
+
+
 # ---------------------------------------------------------------------------
 # character voices
 # ---------------------------------------------------------------------------
