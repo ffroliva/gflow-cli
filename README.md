@@ -17,6 +17,7 @@
 >
 > 🌐 **Headed-browser today.** gflow drives Flow via a persistent Playwright Chromium profile — Google's auth + reCAPTCHA gates currently require it. See [Architecture & current limitations](#architecture--current-limitations) for the contributor opportunity.
 
+
 ## Why gflow-cli?
 
 For Google AI Ultra / Pro subscribers with Veo credits and batch workloads:
@@ -73,13 +74,14 @@ Reproduce the recording: [`scripts/record_demo.ps1`](scripts/record_demo.ps1) (W
 
 | Topic | Read |
 |---|---|
-| 🎯 **Getting started** | [User Guide](docs/USER_GUIDE.md) · [Usage](docs/USAGE.md) · [Configuration](docs/CONFIGURATION.md) |
+| 🎯 **Getting started** | [User Guide](docs/USER_GUIDE.md) · [Usage](docs/USAGE.md) · [Configuration](docs/CONFIGURATION.md)) |
 | **Storage & catalog** | [External Storage](docs/EXTERNAL_STORAGE.md) · [Data Layer](docs/DATA_LAYER.md) |
 | 🎭 **Characters** | [Characters](docs/CHARACTER.md) — reusable subjects (`gflow character`) |
 | 🔐 **Auth & sessions** | [Authentication](docs/AUTHENTICATION.md) · [Known issues](KNOWN_ISSUES.md) |
-| 🏗️ **Internals** | [Architecture](docs/ARCHITECTURE.md) · [Security](docs/SECURITY.md) · [Debugging](docs/DEBUGGING.md) |
+| 🏗️ **Internals** | [Architecture](docs/ARCHITECTURE.md) · [Security](docs/SECURITY.md) · [Debugging](docs/DEBUGGING.md) |  
 | 📦 **Releases** | [Changelog](CHANGELOG.md) · [Roadmap](ROADMAP.md) · [Release protocol](RELEASE.md) · [Project status](docs/PROJECT_STATUS.md) |
 | 🤝 **Contributing** | [Contributing](CONTRIBUTING.md) · [Development](docs/DEVELOPMENT.md) · [GitHub workflow](docs/GITHUB.md) |
+
 
 ## For AI agents & LLMs
 

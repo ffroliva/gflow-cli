@@ -35,8 +35,9 @@ from pathlib import Path
 
 import pytest
 import structlog
+from click.testing import CliRunner
 
-from gflow_cli.cli_video import _run_i2v
+from gflow_cli.cli_video import video
 
 # ---------------------------------------------------------------------------
 # Module-level marker — every test in this file is e2e + e2e_video (opt-in,
@@ -81,9 +82,28 @@ def _make_png(path: Path) -> Path:
 # ---------------------------------------------------------------------------
 
 
-@pytest.mark.asyncio
-async def test_e2e_i2v_initial_frame_flag(
+@pytest.fixture
+def unisolated_home(monkeypatch: pytest.MonkeyPatch) -> Path:
+    """Fixture that temporarily restores the real GFLOW_CLI_HOME for the test.
+
+    Allows CliRunner-based tests to find real Chromium profiles.
+    """
+    from gflow_cli.config import Settings, reset_settings
+
+    # Resolve real home
+    with monkeypatch.context() as m:
+        m.delenv("GFLOW_CLI_HOME", raising=False)
+        real_home = Settings().home
+
+    monkeypatch.setenv("GFLOW_CLI_HOME", str(real_home))
+    reset_settings()
+    yield real_home
+    reset_settings()
+
+
+def test_e2e_i2v_initial_frame_flag(
     e2e_profile_dir: Path,
+    unisolated_home: Path,
     tmp_path: Path,
     install_log_capture: structlog.testing.LogCapture,
 ) -> None:
@@ -92,27 +112,45 @@ async def test_e2e_i2v_initial_frame_flag(
     Confirms that the flag rename does not silently fall back to T2V: the
     ``ui_automation_video.frame_attached`` event must fire at least once
     (analogous to the assertion in ``test_e2e_i2v_start_end_frame_attach``).
+
+    This test uses CliRunner to verify the Click-layer "swap logic" in a real
+    environment.
     """
     start = _make_png(tmp_path / "initial_frame.png")
+    out_dir = tmp_path / "out"
+    out_dir.mkdir(exist_ok=True)
 
     profile_name = os.environ["GFLOW_CLI_E2E_PROFILE"]
-    await _run_i2v(
-        profile_name=profile_name,
-        profile_dir=e2e_profile_dir,
-        image=str(start),
-        prompt=_PROMPT,
-        aspect="9:16",
-        out_dir=tmp_path / "out",
-        model=None,
-        duration=4,
-        count=1,
+    runner = CliRunner()
+    result = runner.invoke(
+        video,
+        [
+            "i2v",
+            "--initial-frame",
+            str(start),
+            _PROMPT,
+            "--aspect",
+            "9:16",
+            "--out-dir",
+            str(out_dir),
+            "--duration",
+            "4",
+            "--count",
+            "1",
+            "--profile",
+            profile_name,
+        ],
     )
 
-    mp4_files = list((tmp_path / "out").glob("*.mp4"))
+    assert result.exit_code == 0, result.output
+
+    mp4_files = list(out_dir.glob("*.mp4"))
     assert mp4_files, "expected at least one mp4 in out_dir"
 
     frame_attached_events = [
-        e for e in install_log_capture.entries if e.get("event") == "frame_attached"
+        e
+        for e in install_log_capture.entries
+        if e.get("event") == "ui_automation_video.frame_attached"
     ]
     assert frame_attached_events, (
         "frame_attached event never fired — initial frame may have been silently dropped "
@@ -120,9 +158,9 @@ async def test_e2e_i2v_initial_frame_flag(
     )
 
 
-@pytest.mark.asyncio
-async def test_e2e_i2v_positional_back_compat(
+def test_e2e_i2v_positional_back_compat(
     e2e_profile_dir: Path,
+    unisolated_home: Path,
     tmp_path: Path,
 ) -> None:
     """I2V-FLAG-2: positional IMAGE form still works after the flag rename.
@@ -132,19 +170,31 @@ async def test_e2e_i2v_positional_back_compat(
     rely on the positional convention.
     """
     start = _make_png(tmp_path / "start.png")
+    out_dir = tmp_path / "out"
+    out_dir.mkdir(exist_ok=True)
 
     profile_name = os.environ["GFLOW_CLI_E2E_PROFILE"]
-    await _run_i2v(
-        profile_name=profile_name,
-        profile_dir=e2e_profile_dir,
-        image=str(start),
-        prompt=_PROMPT,
-        aspect="9:16",
-        out_dir=tmp_path / "out",
-        model=None,
-        duration=4,
-        count=1,
+    runner = CliRunner()
+    result = runner.invoke(
+        video,
+        [
+            "i2v",
+            str(start),
+            _PROMPT,
+            "--aspect",
+            "9:16",
+            "--out-dir",
+            str(out_dir),
+            "--duration",
+            "4",
+            "--count",
+            "1",
+            "--profile",
+            profile_name,
+        ],
     )
 
-    mp4_files = list((tmp_path / "out").glob("*.mp4"))
+    assert result.exit_code == 0, result.output
+
+    mp4_files = list(out_dir.glob("*.mp4"))
     assert mp4_files, "expected at least one mp4 — positional back-compat path is broken"

@@ -67,7 +67,7 @@ See [AUTHENTICATION § Commands](AUTHENTICATION.md#commands).
 
 ## `gflow image upload`
 
-Upload a local PNG/JPEG/WebP/GIF into a fresh Flow project and print the asset UUID + dimensions Flow inferred. The UUID is what later subcommands (`gflow image i2i --ref UUID`, `gflow video i2v`) accept as a starting frame.
+Upload a local PNG/JPEG/WebP/GIF into a fresh Flow project and print the asset UUID + dimensions Flow inferred. The UUID is what later subcommands (`gflow image i2i --ref UUID`, `video i2v`) accept as an initial frame.
 
 ```text
 gflow image upload PATH [OPTIONS]
@@ -882,19 +882,17 @@ The bundled `examples/sample_config.json` produces three images at three aspect 
 mkdir -p out
 for img in ./inputs/*.png; do
   name=$(basename "$img" .png)
-  gflow video i2v "$img" "Cinematic push-in" -o "out/${name}.mp4"
+  gflow video i2v "$img" "Cinematic push-in" --out-dir out
 done
 ```
-
 PowerShell:
 
 ```powershell
 New-Item -ItemType Directory -Force -Path out | Out-Null
 Get-ChildItem ./inputs/*.png | ForEach-Object {
-    gflow video i2v $_.FullName "Cinematic push-in" -o "out/$($_.BaseName).mp4"
+    gflow video i2v $_.FullName "Cinematic push-in" --out-dir out
 }
 ```
-
 ### Fan out an image prompt 4-way
 
 ```bash
@@ -967,9 +965,10 @@ jq 'select(.event == "error_raised") | .error_class' events.jsonl
 Branch in shell scripts — capture the exit code **before** the `if`/`case` consumes it:
 
 ```bash
-gflow video i2v ./in.png "test" -o out.mp4
+gflow video i2v ./initial.png "test" --out-dir out
 rc=$?
 if [ "$rc" -ne 0 ]; then
+
   case "$rc" in
     2)   echo "Bad CLI usage (missing arg, bad flag)"; exit 1 ;;
     3)   echo "Auth expired — run: gflow auth login"; exit 1 ;;
