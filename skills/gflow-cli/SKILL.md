@@ -79,6 +79,7 @@ gflow character create --project <id> --name "<name>" --face-prompt "<prompt>" \
                        [--model {nano2|nanopro}]
 gflow character list --project <id>
 gflow character show <character-id> --project <id>
+gflow character rm --project <id> (--id <character-id> | --name "<name>") [--yes]   # delete (FREE)
 gflow character voices                                    # list the Gemini voice catalog
 
 # Scenes (Add Clip / compose ordered clips)

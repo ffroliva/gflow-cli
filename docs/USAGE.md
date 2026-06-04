@@ -38,6 +38,7 @@ Commands:
     create                      Generate a reusable character (paid face + body refs).
     list                        List the characters in a project.
     show                        Show one character by --id or --name.
+    rm                          Delete a character by --id or --name (FREE).
     voices                      List the preset Gemini voices for character TTS.
 
   data      Local provenance database (read-only queries).
@@ -627,6 +628,17 @@ gflow character show --project PROJECT_ID (--id ENTITY_ID | --name NAME) [--json
 Shows one character's detail (entity id, project, voice, personality, reference
 workflow ids). Provide **exactly one** of `--id` or `--name`. An ambiguous
 `--name` (multiple characters share it) exits with code **11**.
+
+### `gflow character rm`
+
+```text
+gflow character rm --project PROJECT_ID (--id ENTITY_ID | --name NAME) [--yes] [--json] [--profile NAME]
+```
+
+Deletes a Character by `--id` or `--name`. Provide **exactly one** of `--id` or
+`--name`. Prompts for confirmation unless `--yes` (or `--json`) is supplied; an
+ambiguous `--name` (multiple characters share it) exits with code **11**.
+**FREE** — no reCAPTCHA, no credit (`POST flow:batchDeleteAssets`).
 
 ### `gflow character voices`
 

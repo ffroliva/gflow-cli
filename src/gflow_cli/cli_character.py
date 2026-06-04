@@ -315,6 +315,86 @@ async def _run_show(
 
 
 # ---------------------------------------------------------------------------
+# rm
+# ---------------------------------------------------------------------------
+
+
+@character.command("rm")
+@click.option("--project", "project_id", required=True, help="Flow project id.")
+@click.option("--id", "entity_id", default=None, help="Character entity id.")
+@click.option("--name", "name", default=None, help="Character display name (exact match).")
+@click.option("--yes", "-y", "assume_yes", is_flag=True, default=False, help="Skip confirmation.")
+@click.option("--json", "as_json", is_flag=True, default=False, help="Emit JSON output.")
+@click.option("--profile", default=None, help="Profile name (overrides default).")
+def rm(
+    project_id: str,
+    entity_id: str | None,
+    name: str | None,
+    assume_yes: bool,
+    as_json: bool,
+    profile: str | None,
+) -> None:
+    """Delete a Character by --id or --name.
+
+    Exactly one of --id or --name must be supplied.  An ambiguous name (multiple
+    characters share it) exits with code 11; use --id to disambiguate.  FREE —
+    no reCAPTCHA, no credit.
+    """
+    if entity_id is None and name is None:
+        raise click.UsageError("Provide either --id or --name.")
+    if entity_id is not None and name is not None:
+        raise click.UsageError("--id and --name are mutually exclusive.")
+    profile_name = _resolve_profile(profile)
+    pdir = _make_provider_dir(profile_name)
+    settings = get_settings()
+    run_with_handlers(
+        lambda: _run_rm(
+            profile_dir=pdir,
+            headless=settings.headless,
+            project_id=project_id,
+            entity_id=entity_id,
+            name=name,
+            assume_yes=assume_yes,
+            as_json=as_json,
+        ),
+        cli_command="character rm",
+        as_json=as_json,
+    )
+
+
+async def _run_rm(
+    *,
+    profile_dir: Path,
+    headless: bool,
+    project_id: str,
+    entity_id: str | None,
+    name: str | None,
+    assume_yes: bool,
+    as_json: bool,
+) -> None:
+    async with FlowApiClient(profile_dir=profile_dir, headless=headless) as client:
+        char = await client.get_character(project_id, entity_id=entity_id, name=name)
+        if not assume_yes and not as_json:
+            click.confirm(
+                f"Delete character {char.display_name!r} ({char.entity_id})?",
+                abort=True,
+            )
+        await client.delete_characters(project_id, [char.entity_id])
+    if as_json:
+        json_output.emit(
+            {
+                "status": "ok",
+                "deleted": {
+                    "entity_id": char.entity_id,
+                    "display_name": char.display_name,
+                },
+            }
+        )
+    else:
+        click.echo(f"Deleted character {char.display_name!r} ({char.entity_id}).")
+
+
+# ---------------------------------------------------------------------------
 # voices
 # ---------------------------------------------------------------------------
 

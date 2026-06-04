@@ -9,6 +9,12 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ### Added
 
+- **`gflow character rm` — delete a Character entity (#150).**
+  `gflow character rm --project <id> (--id <entityId> | --name <name>) [-y/--yes] [--json]`
+  deletes a Character via `POST flow:batchDeleteAssets` (Bearer; **FREE** — no
+  reCAPTCHA, no credit). Resolves by id or exact name (ambiguous name exits
+  **11**); prompts for confirmation unless `--yes`/`--json`.
+
 - **In-project governance enforcement (advisory-first).** Made the AI-driven
   development flow followable and partly machine-enforced in-repo, modeled on the
   reference AI-DLC governance orchestrator's advisory-by-default behavior:
