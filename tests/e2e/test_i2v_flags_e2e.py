@@ -68,9 +68,7 @@ def _make_png(path: Path) -> Path:
     ihdr_data = b"IHDR" + struct.pack(">IIBBBBB", 1, 1, 8, 2, 0, 0, 0)
     ihdr = struct.pack(">I", 13) + ihdr_data + _crc(ihdr_data)
     idat_raw = b"\x00\xff\xff\xff"
-    import zlib as _zlib
-
-    idat_data = b"IDAT" + _zlib.compress(idat_raw)
+    idat_data = b"IDAT" + zlib.compress(idat_raw)
     idat = struct.pack(">I", len(idat_data) - 4) + idat_data + _crc(idat_data)
     iend_data = b"IEND"
     iend = struct.pack(">I", 0) + iend_data + _crc(iend_data)

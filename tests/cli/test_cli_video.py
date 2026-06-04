@@ -693,6 +693,18 @@ def test_i2v_no_image_raises_usage_error(tmp_path: Path) -> None:
     assert result.exit_code != 0, result.output
 
 
+def test_i2v_positional_image_nonexistent_raises_bad_parameter(tmp_path: Path) -> None:
+    """Positional IMAGE that isn't a real file raises BadParameter."""
+    runner = CliRunner()
+    with (
+        patch("gflow_cli.cli_video._resolve_profile", return_value="default"),
+        patch("gflow_cli.cli_video._make_provider_dir", return_value=tmp_path),
+    ):
+        result = runner.invoke(video, ["i2v", "not_a_file.png", "motion prompt"])
+    assert result.exit_code != 0, result.output
+    assert "not_a_file.png" in result.output
+
+
 def test_i2v_end_frame_flag(tmp_path: Path) -> None:
     """--end-frame sets end_image on the GenerateVideoRequest."""
     import asyncio
