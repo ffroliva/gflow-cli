@@ -60,6 +60,11 @@ if TYPE_CHECKING:
     from gflow_cli.api.image import GenerateImageRequest
     from gflow_cli.api.video import GenerateVideoRequest, VideoResult, VideoStartedCallback
 
+# Shorthand for an untyped JSON-ish string-keyed mapping (request/response
+# bodies, launch kwargs, etc.). A single definition avoids the duplicated-literal
+# smell (SonarCloud S1192) from repeating the bare mapping type across the module.
+JsonObject = dict[str, Any]
+
 # Marker substring used by Playwright when a Page/Context/Browser is closed.
 # Stable across recent Playwright versions; we match on message text to avoid
 # importing from ``playwright._impl._errors`` (private API).
@@ -145,7 +150,7 @@ def _is_supported_image_header(header: bytes) -> bool:
     return header[:6] in (b"GIF87a", b"GIF89a")
 
 
-def _unwrap_trpc(data: Any) -> dict[str, Any]:
+def _unwrap_trpc(data: Any) -> JsonObject:
     """Unwrap the tRPC envelope ``result.data.json`` and return the inner dict.
 
     Only the standard tRPC v10 shape is accepted:
@@ -166,28 +171,28 @@ def _unwrap_trpc(data: Any) -> dict[str, Any]:
             detail=f"tRPC response is not a dict; got {type(data).__name__}",
             route="tRPC",
         )
-    data_dict = cast("dict[str, Any]", data)
+    data_dict = cast("JsonObject", data)
     result = data_dict.get("result")
     if not isinstance(result, dict):
         raise WireFormatError(
             detail="tRPC reply missing 'result' dict",
             route="tRPC",
         )
-    result_dict = cast("dict[str, Any]", result)
+    result_dict = cast("JsonObject", result)
     data_obj = result_dict.get("data")
     if not isinstance(data_obj, dict):
         raise WireFormatError(
             detail="tRPC reply missing result.data dict",
             route="tRPC",
         )
-    data_obj_dict = cast("dict[str, Any]", data_obj)
+    data_obj_dict = cast("JsonObject", data_obj)
     inner: Any = data_obj_dict.get("json")
     if not isinstance(inner, dict):
         raise WireFormatError(
             detail=f"tRPC reply missing result.data.json dict; got {type(inner).__name__}",
             route="tRPC",
         )
-    return cast("dict[str, Any]", inner)
+    return cast("JsonObject", inner)
 
 
 class FlowApiClient:
@@ -268,7 +273,7 @@ class FlowApiClient:
             raise
         return self
 
-    def _persistent_context_kwargs(self) -> dict[str, Any]:
+    def _persistent_context_kwargs(self) -> JsonObject:
         """Keyword arguments for the persistent browser-context launch.
 
         Extracted as an overridable seam so out-of-core tooling (e.g. a
@@ -497,7 +502,7 @@ class FlowApiClient:
                 instance=_make_instance(),
                 route="auth/session",
             ) from exc
-        data = cast("dict[str, Any]", parsed) if isinstance(parsed, dict) else {}
+        data = cast("JsonObject", parsed) if isinstance(parsed, dict) else {}
         token = data.get("access_token")
         if not token:
             raise AisandboxAuthError(
@@ -557,7 +562,7 @@ class FlowApiClient:
     async def _post_json(
         self,
         url: str,
-        body: dict[str, Any],
+        body: JsonObject,
         *,
         content_type: str = _AISANDBOX_CONTENT_TYPE,
         route_name: str | None = None,
@@ -614,7 +619,7 @@ class FlowApiClient:
     async def _patch_json(
         self,
         url: str,
-        body: dict[str, Any],
+        body: JsonObject,
         *,
         route_name: str | None = None,
     ) -> Any:
@@ -1366,7 +1371,7 @@ class FlowApiClient:
         Only the fields supplied are written; absent optional fields are omitted
         from both the request body and the ``updateMask``.
         """
-        character_info: dict[str, Any] = {
+        character_info: JsonObject = {
             "imageReferences": [{"workflowId": w} for w in workflow_ids],
         }
         update_mask_parts = [
@@ -1382,11 +1387,11 @@ class FlowApiClient:
             character_info["audioReferences"] = [{"presetVoiceId": voice}]
             update_mask_parts.append("entityInfo.characterInfo.audioReferences")
 
-        entity_info: dict[str, Any] = {
+        entity_info: JsonObject = {
             "displayName": display_name,
             "characterInfo": character_info,
         }
-        body: dict[str, Any] = {
+        body: JsonObject = {
             "entity": {
                 "projectId": project_id,
                 "entityId": entity_id,
@@ -1468,7 +1473,7 @@ class FlowApiClient:
             locale=locale,
         )
         _images, workflows = cast(
-            "tuple[list[GeneratedImage], list[dict[str, Any]]]",
+            "tuple[list[GeneratedImage], list[JsonObject]]",
             _raw,
         )
 
@@ -1478,7 +1483,7 @@ class FlowApiClient:
                 route="generateCharacterImage",
             )
 
-        wf: dict[str, Any] = workflows[0]
+        wf: JsonObject = workflows[0]
         parent: str | None = wf.get("parentEntityId")
         if parent != entity_id:
             raise WireFormatError(
@@ -1578,7 +1583,7 @@ def _make_instance() -> str:
     return f"gflow:error:{correlation}"
 
 
-def _build_wire_format_discovery(resp: Any, body_text: str, route: str) -> dict[str, Any]:
+def _build_wire_format_discovery(resp: Any, body_text: str, route: str) -> JsonObject:
     """Build the RFC 9457 ``discovery`` payload for a :class:`WireFormatError`.
 
     Shared between the JSON-parse-failure raise site (``_post_json``,
@@ -1599,7 +1604,7 @@ def _build_wire_format_discovery(resp: Any, body_text: str, route: str) -> dict[
     try:
         parsed = json.loads(body_text) if content_type.startswith("application/json") else None
         if isinstance(parsed, dict):
-            top_keys = sorted(cast("dict[str, Any]", parsed).keys())
+            top_keys = sorted(cast("JsonObject", parsed).keys())
     except ValueError:  # json.JSONDecodeError is a ValueError subclass
         top_keys = []
     # SECURITY: redact BEFORE truncating to 200 chars. If we truncated first,
@@ -1678,13 +1683,13 @@ def _redact_for_log(body_str: str) -> str:
     if not isinstance(parsed, dict):
         return body_str
 
-    parsed_dict = cast("dict[str, Any]", parsed)
+    parsed_dict = cast("JsonObject", parsed)
     _redact_in_client_context(parsed_dict.get("clientContext"))
     requests_list = parsed_dict.get("requests")
     if isinstance(requests_list, list):
         for item in cast("list[Any]", requests_list):
             if isinstance(item, dict):
-                _redact_in_client_context(cast("dict[str, Any]", item).get("clientContext"))
+                _redact_in_client_context(cast("JsonObject", item).get("clientContext"))
 
     return json.dumps(parsed_dict)
 
@@ -1707,9 +1712,9 @@ def _redact_in_client_context(client_context: Any) -> None:
     if present. No-op for any non-dict shape."""
     if not isinstance(client_context, dict):
         return
-    ctx_dict = cast("dict[str, Any]", client_context)
+    ctx_dict = cast("JsonObject", client_context)
     recaptcha = ctx_dict.get("recaptchaContext")
     if isinstance(recaptcha, dict):
-        recaptcha_dict = cast("dict[str, Any]", recaptcha)
+        recaptcha_dict = cast("JsonObject", recaptcha)
         if "token" in recaptcha_dict:
             recaptcha_dict["token"] = "<redacted>"
