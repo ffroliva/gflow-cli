@@ -60,6 +60,7 @@ _POLL_TIMEOUT_S = 600.0
 
 def _make_png(path: Path) -> Path:
     """Write a minimal 1×1 white PNG to *path* and return it."""
+
     def _crc(data: bytes) -> bytes:
         return struct.pack(">I", zlib.crc32(data) & 0xFFFFFFFF)
 
@@ -68,6 +69,7 @@ def _make_png(path: Path) -> Path:
     ihdr = struct.pack(">I", 13) + ihdr_data + _crc(ihdr_data)
     idat_raw = b"\x00\xff\xff\xff"
     import zlib as _zlib
+
     idat_data = b"IDAT" + _zlib.compress(idat_raw)
     idat = struct.pack(">I", len(idat_data) - 4) + idat_data + _crc(idat_data)
     iend_data = b"IEND"
