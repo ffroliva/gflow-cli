@@ -1391,6 +1391,29 @@ class FlowApiClient:
             workflow_count=len(workflow_ids),
         )
 
+    async def delete_characters(self, project_id: str, entity_ids: list[str]) -> None:
+        """Delete one or more CHARACTER entities from *project_id*.
+
+        Maps to ``POST .../v1/flow:batchDeleteAssets`` with body
+        ``{"projectId": …, "entityIds": [...]}``.  Bearer auth (aisandbox).
+        FREE — no reCAPTCHA, no credit.  Reverse-engineered from the editor's
+        "Excluir personagem" button (scripts/dev/spike_char_delete.py).
+        """
+        if not entity_ids:
+            msg = "entity_ids must be non-empty"
+            raise ValueError(msg)
+        body = {"projectId": project_id, "entityIds": list(entity_ids)}
+        await self._post_json(
+            routes.BATCH_DELETE_ASSETS_URL,
+            body,
+            route_name="batchDeleteAssets",
+        )
+        logger.debug(
+            "character.entities_deleted",
+            project_id=project_id,
+            count=len(entity_ids),
+        )
+
     async def generate_character_image(
         self,
         *,

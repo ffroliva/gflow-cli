@@ -8,8 +8,8 @@
 > built **greenfield off `develop`, NOT stacked on #123** (that branch is CONFLICTING and likeness-specific;
 > see [Design decisions](#11-design-decisions-post-predict)).
 
-> **Shipped scope:** `gflow character create` + `list` + `show` + `voices`. The reuse path
-> `gflow video --character` (Phase 3), `gflow image --character`, and `gflow character rm` are **not yet
+> **Shipped scope:** `gflow character create` + `list` + `show` + `voices` + `rm`. The reuse path
+> `gflow video --character` (Phase 3) and `gflow image --character` are **not yet
 > implemented** — see [Backlog](#14-backlog--not-yet-implemented).
 
 > **Status (2026-06-02, LIVE-VERIFIED):** the create saga + character-editor UI generation are **shipped**
@@ -260,8 +260,8 @@ both normalize to the canonical `Charon`) and sets `audioReferences[].presetVoic
 The `create` / `list` / `show` / `voices` commands below are **shipped and
 live-verified in v0.12.0** (the user-facing reference lives in
 [USAGE § `gflow character`](USAGE.md#gflow-character)). The `gflow video --character`
-reuse path, `gflow image --character`, and `gflow character rm` remain
-**backlog** (rows marked *not yet implemented*).
+reuse path and `gflow image --character` remain **backlog** (rows marked *not
+yet implemented*). `gflow character rm` is **shipped** (see the table below).
 
 | Command | Maps to |
 |---|---|
@@ -270,7 +270,7 @@ reuse path, `gflow image --character`, and `gflow character rm` remain
 | `gflow character show --project <id> (--id <entityId> \| --name <displayName>) [--json]` *(SHIPPED v0.12.0)* | projectInitialData (single); name collision → exit 11 with disambiguation hint |
 | `gflow character voices [--json]` *(SHIPPED v0.12.0)* | list the 29 preset voices (name / description / sample-url); language-agnostic discovery, mirrors `gflow models --json` |
 | `gflow video … --character <id>` *(repeatable → multi-ref)* | **not yet implemented** (Phase 3) — `referenceEntities` on `video:batchAsyncGenerateVideoReferenceImages` |
-| `gflow character rm <id>` | **not yet implemented** — entity delete verb uncaptured |
+| `gflow character rm` (`--id`/`--name`) | **Shipped (#150)** — `POST flow:batchDeleteAssets` (Bearer; FREE — no reCAPTCHA/credit) |
 | `gflow image … --character <id>` | **not yet implemented** — image-path `referenceEntities` uncaptured |
 
 All commands take **`--project <id>` (required)** — every endpoint (`createEntity`, `projectInitialData`,
@@ -305,7 +305,7 @@ never hard-code wire names in user-facing help — see [[cli-model-aliases-verif
 ## 10. Open items
 
 See [§14 Backlog — not yet implemented](#14-backlog--not-yet-implemented) for the consolidated list. In
-short: `gflow video --character` reuse (Phase 3), `gflow image --character`, `gflow character rm`, live voice
+short: `gflow video --character` reuse (Phase 3), `gflow image --character`, live voice
 listing + `presetVoiceId` wire-case confirmation, custom-voice creation, `nanopro` picker live confirmation,
 and extra body angles. The optional creation-agent (`flowCreationAgent/sessions`,
 `flow.generateCharacterPrompt` archetypes) is not required for the scripted path; consider an `--archetype`
@@ -495,9 +495,8 @@ The following are explicitly **out of the shipped scope** and tracked for future
 - **Extra body angles beyond the built-in triptych.** The shipped body slot generates a single front/side/back
   triptych. Generating additional angles/poses (e.g. re-feeding the front view as a reference seed for a new
   slot) is a future enhancement.
-- **`gflow character rm` / `gflow image --character`.** The entity **delete** verb and the **image-path**
-  reuse (`referenceEntities` on the image endpoint) are uncaptured — deferred until their wire shapes are
-  reverse-engineered.
+- **`gflow image --character`.** The **image-path** reuse (`referenceEntities` on the image endpoint) is
+  uncaptured — deferred until its wire shape is reverse-engineered. (`gflow character rm` is now shipped, #150.)
 - **Set the Flow editor title field** so the editor isn't "Untitled Character" (see [§13.1 Known issues](#131-known-issues)).
   Investigate either the UI title box (with a Ctrl+A merge-bug workaround) or finding the dedicated title
   field/endpoint that the editor widget reads from, distinct from `entityInfo.displayName`.
