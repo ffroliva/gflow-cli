@@ -31,6 +31,7 @@ from __future__ import annotations
 import os
 import struct
 import zlib
+from collections.abc import Iterator
 from pathlib import Path
 
 import pytest
@@ -38,8 +39,6 @@ import structlog
 from click.testing import CliRunner
 
 from gflow_cli.cli_video import video
-
-from typing import Iterator
 
 # ---------------------------------------------------------------------------
 # Module-level marker — every test in this file is e2e + e2e_video (opt-in,
