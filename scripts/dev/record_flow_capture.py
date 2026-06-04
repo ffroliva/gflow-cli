@@ -26,6 +26,7 @@ import subprocess
 import sys
 import tempfile
 from pathlib import Path
+from typing import Any
 
 _HERE = Path(__file__).resolve().parent
 if str(_HERE) not in sys.path:
@@ -50,6 +51,71 @@ _FACE_EVENTS = {
     "character_create.face_done",
     "character_create.face_skipped_already_recorded",
 }
+
+# Language-agnostic editor name-input locator (proven by the #151 recon spikes):
+# tag the topmost visible, editable text <input> with data-gflow-title. The editor
+# title is decoupled from displayName (#151) — typed text shows on screen but does
+# NOT persist, which is exactly what a promo recording needs (display only).
+_FIND_NAME_INPUT_JS = r"""
+() => {
+  const vis = (el) => {
+    const r = el.getBoundingClientRect();
+    return r.width > 0 && r.height > 0 && el.offsetParent !== null;
+  };
+  const cands = Array.from(document.querySelectorAll('input')).filter((el) => {
+    const t = (el.getAttribute('type') || 'text').toLowerCase();
+    if (['hidden', 'search', 'checkbox', 'radio', 'file', 'range', 'color'].includes(t))
+      return false;
+    if (el.readOnly || el.disabled) return false;
+    if (!vis(el)) return false;
+    if ((el.getAttribute('role') || '').toLowerCase() === 'searchbox') return false;
+    return true;
+  });
+  cands.sort((a, b) => a.getBoundingClientRect().top - b.getBoundingClientRect().top);
+  if (cands.length) cands[0].setAttribute('data-gflow-title', '1');
+  return { count: cands.length };
+}
+"""
+
+# React-controlled inputs ignore plain value sets; set via the native setter then
+# dispatch input/change so React's onChange fires (fallback when keyboard typing
+# does not register on the controlled input).
+_NATIVE_SET_JS = r"""
+(value) => {
+  const el = document.querySelector('[data-gflow-title]');
+  if (!el) return false;
+  const setter = Object.getOwnPropertyDescriptor(
+    window.HTMLInputElement.prototype, 'value'
+  ).set;
+  setter.call(el, value);
+  el.dispatchEvent(new Event('input', { bubbles: true }));
+  el.dispatchEvent(new Event('change', { bubbles: true }));
+  return true;
+}
+"""
+
+
+async def _type_name_for_display(page: Any, name: str) -> None:
+    """Type *name* into the editor name input for ON-SCREEN display in the video.
+
+    Language-agnostic (tags the topmost editable text input structurally — no
+    localized placeholder). Display-only: the editor title is decoupled from
+    displayName (#151) and will not persist, which is irrelevant to the video.
+    Degrades gracefully if the input cannot be found.
+    """
+    found = await page.evaluate(_FIND_NAME_INPUT_JS)
+    if not found.get("count"):
+        step("warn", "editor name input not found — skipping display typing", prefix="rec")
+        return
+    loc = page.locator("[data-gflow-title]").first
+    await loc.click()
+    await page.keyboard.press("Control+A")
+    await page.keyboard.press("Delete")
+    await page.keyboard.type(name, delay=80)  # slow enough to read on screen
+    if (await loc.input_value()) != name:
+        await page.evaluate(_NATIVE_SET_JS, name)  # React-controlled fallback
+    await page.wait_for_timeout(1500)  # hold so the typed name is readable
+    step("name", f"typed {name!r} into editor name input (display-only)", prefix="rec")
 
 
 def _transcode(src: Path, dst: Path) -> None:
@@ -80,7 +146,7 @@ def _verify_image_path(event_names: set[str]) -> str | None:
 
 
 async def _run(
-    *, profile: str, profile_dir: Path, face_prompt: str, locale: str, out_path: Path
+    *, profile: str, profile_dir: Path, name: str, face_prompt: str, locale: str, out_path: Path
 ) -> int:
     from structlog.testing import capture_logs
 
@@ -112,10 +178,14 @@ async def _run(
                     profile_name=profile,
                     profile_dir=profile_dir,
                     project_id=proj.project_id,
-                    name="Marina",
+                    name=name,
                     face=face,
                     locale=locale,
                 )
+            # Promo polish: type the name into the editor for ON-SCREEN display
+            # (display-only; the editor title is decoupled from displayName per
+            # #151, so it won't persist — irrelevant to the recorded video).
+            await _type_name_for_display(client._page, name)
     finally:
         recorder.close()
 
@@ -145,6 +215,9 @@ def main(argv: list[str] | None = None) -> int:
         description="Record gflow's real character-create flow (image/free)."
     )
     ap.add_argument("--profile", required=True, help="Flow profile name (chrome-strategy).")
+    ap.add_argument(
+        "--name", default="Marina", help="Character name (typed into the editor for display)."
+    )
     ap.add_argument("--face-prompt", default=_DEFAULT_FACE, help="Face reference prompt.")
     ap.add_argument(
         "--locale",
@@ -159,6 +232,7 @@ def main(argv: list[str] | None = None) -> int:
         _run(
             profile=args.profile,
             profile_dir=profile_dir,
+            name=args.name,
             face_prompt=args.face_prompt,
             locale=args.locale,
             out_path=out_path,

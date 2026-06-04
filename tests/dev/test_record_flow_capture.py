@@ -8,6 +8,7 @@ the gated live run.
 
 from __future__ import annotations
 
+import asyncio
 import sys
 from pathlib import Path
 
@@ -70,6 +71,18 @@ def test_main_dispatches_run_with_parsed_args(
     rc = rfc.main(["--profile", "promo", "--out", str(out)])
     assert rc == 0
     assert captured["profile"] == "promo"
+    assert captured["name"] == "Marina"  # genuine default
     assert captured["locale"] == "en-US"  # genuine default; normalized by #153 fix
     assert captured["out_path"] == out
     assert captured["profile_dir"] == tmp_path / "profiles" / "promo"
+
+
+def test_type_name_for_display_skips_when_no_input() -> None:
+    """When the editor name input can't be located, the helper degrades
+    gracefully — no exception, no typing attempt."""
+
+    class _FakePage:
+        async def evaluate(self, _js: str, *_args: object) -> dict[str, int]:
+            return {"count": 0}
+
+    asyncio.run(rfc._type_name_for_display(_FakePage(), "Marina"))
