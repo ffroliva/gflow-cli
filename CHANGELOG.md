@@ -7,6 +7,52 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+## [0.13.0] — 2026-06-04
+
+### Added
+
+- **`gflow character rm` — delete a Character entity (#150).**
+  `gflow character rm --project <id> (--id <entityId> | --name <name>) [-y/--yes] [--json]`
+  deletes a Character via `POST flow:batchDeleteAssets` (Bearer; **FREE** — no
+  reCAPTCHA, no credit). Resolves by id or exact name (ambiguous name exits
+  **11**); prompts for confirmation unless `--yes`/`--json`.
+
+- **In-project governance enforcement (advisory-first).** Made the AI-driven
+  development flow followable and partly machine-enforced in-repo, modeled on the
+  reference AI-DLC governance orchestrator's advisory-by-default behavior:
+  ruff `T20` now bans raw `print()` in `src/`; an advisory branch-naming check and a
+  non-blocking materiality + traceability classifier (`scripts/ci/check_materiality.py`
+  + `governance-advisory.yml`) recommend `/gflow:predict` + council review when
+  sensitive paths (`auth/`, `api/transports/`, `api/client.py`, `_sapisidhash.py`,
+  `data/`, `recaptcha`) are touched, without ever blocking a merge. A
+  history-replay backtest (`scripts/dev/materiality_backtest.py`) calibrates the
+  gate — it measured a 1.1% false-positive rate (vs. a 20-30% estimate) and
+  raised fix-coverage from 61% to 74% by surfacing auth-token plumbing that lived
+  outside `auth/`. The backtest is a first-class, repeatable artifact (`--json`
+  mode, a monthly `governance-benchmark.yml` dashboard job) fully documented in
+  [`docs/GOVERNANCE_BENCHMARK.md`](docs/GOVERNANCE_BENCHMARK.md); the gate itself is
+  described in
+  [`docs/AGENT_GUIDE.md` § Governance & Enforcement](docs/AGENT_GUIDE.md#governance--enforcement).
+
+### Changed
+
+- **`gflow video i2v` frame flags aligned with Flow UI terminology (#122).**
+  `--initial-frame FILE` is the new canonical flag for the start image (matches
+  Flow's "initial frame" label). `--end-frame FILE` replaces `--end-image` as the
+  canonical end-frame flag. `--end-image` is kept as a **deprecated alias** (emits
+  `DeprecationWarning`; will be removed in a future minor release). The positional
+  `IMAGE` argument remains supported for back-compatibility.
+
+### Fixed
+
+- **Character editor 404 on non-English locales (#153).** `gflow character`'s
+  editor URL interpolated the locale verbatim, so the genuine default BCP-47
+  `en-US` produced `/fx/en-US/…`, which 404s the Flow character editor (only the
+  short primary subtag is a valid `/fx/<seg>/` segment). `character_editor_url`
+  now normalizes a BCP-47 tag to its lower-cased short segment (`en-US → en`,
+  `pt-BR → pt`), so the tool stays language-agnostic with the real default
+  locale.
+
 ## [0.12.0] — 2026-06-03
 
 ### Fixed
@@ -644,7 +690,7 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 - `gflow image batch` now actually shares one Flow project across all
   prompts in a batch. Previously the `--same-project=1` flag was a no-op
   at the `ui_automation` transport layer; each prompt landed in its own
-  Flow project. ([spec](docs/superpowers/specs/2026-05-22-stay-mounted-batch-session-design.md))
+  Flow project.
 - `gflow image t2i -n N` now makes one transport call using Flow's native
   xN count selector instead of fanning out N parallel single-image
   submissions. Closes [#14](https://github.com/ffroliva/gflow-cli/issues/14) part 1.
@@ -1356,7 +1402,8 @@ shell-script template that branches on these codes.
 
 First skeleton. Not functional end-to-end yet.
 
-[Unreleased]: https://github.com/ffroliva/gflow-cli/compare/v0.12.0...HEAD
+[Unreleased]: https://github.com/ffroliva/gflow-cli/compare/v0.13.0...HEAD
+[0.13.0]: https://github.com/ffroliva/gflow-cli/compare/v0.12.0...v0.13.0
 [0.12.0]: https://github.com/ffroliva/gflow-cli/compare/v0.11.0...v0.12.0
 [0.11.0]: https://github.com/ffroliva/gflow-cli/compare/v0.10.0...v0.11.0
 [0.10.0]: https://github.com/ffroliva/gflow-cli/compare/v0.9.1...v0.10.0
