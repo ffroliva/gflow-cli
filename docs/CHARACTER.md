@@ -270,7 +270,7 @@ yet implemented*). `gflow character rm` is **shipped** (see the table below).
 | `gflow character show --project <id> (--id <entityId> \| --name <displayName>) [--json]` *(SHIPPED v0.12.0)* | projectInitialData (single); name collision → exit 11 with disambiguation hint |
 | `gflow character voices [--json]` *(SHIPPED v0.12.0)* | list the 29 preset voices (name / description / sample-url); language-agnostic discovery, mirrors `gflow models --json` |
 | `gflow video … --character <id>` *(repeatable → multi-ref)* | **not yet implemented** (Phase 3) — `referenceEntities` on `video:batchAsyncGenerateVideoReferenceImages` |
-| `gflow character rm` (`--id`/`--name`) | **Shipped (#150)** — `POST flow:batchDeleteAssets` (Bearer; FREE — no reCAPTCHA/credit) |
+| `gflow character rm` (`--id`/`--name`) | **Shipped v0.13.0 (#150)** — `POST flow:batchDeleteAssets` (Bearer; FREE — no reCAPTCHA/credit) |
 | `gflow image … --character <id>` | **not yet implemented** — image-path `referenceEntities` uncaptured |
 
 All commands take **`--project <id>` (required)** — every endpoint (`createEntity`, `projectInitialData`,
