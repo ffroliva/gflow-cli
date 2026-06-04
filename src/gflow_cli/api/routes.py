@@ -70,6 +70,11 @@ EDITOR_BOOTSTRAP_URL = "https://labs.google/fx/tools/flow?hl=en"
 CREATE_ENTITY_URL = f"{LABS_TRPC_BASE}/flow.createEntity"
 PROJECT_INITIAL_DATA_URL = f"{LABS_TRPC_BASE}/flow.projectInitialData"
 FLOW_ENTITIES_URL = f"{FLOW_API_BASE}/flow/entities"
+# Delete CHARACTER entities (aisandbox Bearer REST). Body:
+# ``{"projectId": <pid>, "entityIds": [<id>, ...]}``. FREE — no reCAPTCHA/credit.
+# Reverse-engineered 2026-06-04 from the editor's "Excluir personagem" button
+# (scripts/dev/spike_char_delete.py); live-verified the entity disappears.
+BATCH_DELETE_ASSETS_URL = f"{FLOW_API_BASE}/flow:batchDeleteAssets"
 
 # Scene / Add Clip (aisandbox-pa) ------------------------------------------
 SCENE_WORKFLOWS_UPDATE = f"{FLOW_API_BASE}/flow/scene/sceneWorkflows:update"
@@ -125,8 +130,15 @@ def character_editor_url(locale: str, project_id: str, entity_id: str) -> str:
 
     Returns the browser-navigable page URL (not an API endpoint) at which the
     Flow UI renders the character editor for *entity_id* inside *project_id*,
-    localised to *locale* (e.g. ``"en"``, ``"pt"``).
+    localised to *locale*.
 
-    Pattern: ``https://labs.google/fx/{locale}/tools/flow/project/{project_id}/character/{entity_id}``
+    *locale* may be a full BCP-47 tag (e.g. ``"en-US"``, ``"pt-BR"``). Flow's UI
+    only routes under the *short* primary-subtag segment — the full tag 404s
+    (issue #153) — so the tag is reduced to its lower-cased primary subtag
+    (``"en-US" -> "en"``, ``"pt-BR" -> "pt"``); already-short inputs pass
+    through unchanged.
+
+    Pattern: ``https://labs.google/fx/{seg}/tools/flow/project/{project_id}/character/{entity_id}``
     """
-    return f"{LABS_FX_BASE}/{locale}/tools/flow/project/{project_id}/character/{entity_id}"
+    segment = locale.strip().split("-", 1)[0].lower() or "en"
+    return f"{LABS_FX_BASE}/{segment}/tools/flow/project/{project_id}/character/{entity_id}"

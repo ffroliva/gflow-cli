@@ -1,6 +1,6 @@
 ---
 name: gflow-cli
-version: "1.1"
+version: "1.2"
 skillopt_epoch: 0
 description: Use when the user wants to drive Google Flow (Veo image-to-video, Veo text-to-video, Imagen / Nano Banana image generation) from the terminal or a script — including text-to-video, image-to-video, image-to-image, batch video pipelines, or burning Flow Ultra/Pro credits programmatically. The CLI is `gflow` (or `flow`); install with `uv tool install gflow-cli` or run ad-hoc with `uvx --from gflow-cli gflow ...`. Bypasses the web UI entirely after a one-time browser sign-in.
 optimization_notes: |
@@ -23,7 +23,7 @@ optimization_notes: |
 
 The user wants to:
 
-- Generate one or many Veo videos from text prompts (T2V) or from start-image + motion prompt (I2V)
+- Generate one or many Veo videos from text prompts (T2V) or from initial frame + motion prompt (I2V)
 - Generate one or many Imagen / Nano Banana images from text (T2I) or from prompt + reference images (I2I)
 - Build a batch pipeline for video generations
 - Create a reusable, project-scoped Flow **Character** (a named subject with reference images, optional voice + personality) for consistent subjects across generations (`gflow character`)
@@ -67,8 +67,8 @@ gflow image t2i "<prompt>" [--model {nano2|nano-pro|image4}] \
 gflow image i2i "<prompt>" --ref PATH_OR_UUID [--ref ...] [...same as t2i]
 
 # Video generation (Veo 3.1)
-gflow video t2v "<prompt>" [-o out.mp4] [--aspect ...] [--seed N]
-gflow video i2v <image> "<prompt>" [-o out.mp4] [...same as t2v]
+gflow video t2v "<prompt>" [--out-dir DIR] [--aspect ...] [--seed N]
+gflow video i2v --initial-frame <image> "<prompt>" [--out-dir DIR] [...same as t2v]
 gflow video batch <manifest.tsv> [--out-dir DIR]
 gflow video chain <manifest.jsonl> [--out-dir DIR] [--dry-run] \
                   [--max-links N] [--resume-from N]   # last-frame I2V chaining; veo models only
@@ -79,6 +79,7 @@ gflow character create --project <id> --name "<name>" --face-prompt "<prompt>" \
                        [--model {nano2|nanopro}]
 gflow character list --project <id>
 gflow character show <character-id> --project <id>
+gflow character rm --project <id> (--id <character-id> | --name "<name>") [--yes]   # delete (FREE)
 gflow character voices                                    # list the Gemini voice catalog
 
 # Scenes (Add Clip / compose ordered clips)
@@ -116,10 +117,10 @@ UUID=$(gflow image upload hero.png | awk '/Asset UUID:/ {print $3}')
 gflow image i2i "stylize this asset" --ref "$UUID"
 ```
 
-### Single clip from start image
+### Single clip from initial frame
 
 ```bash
-gflow video i2v ./input.png "Slow cinematic push-in, soft golden light at sunset" -o out.mp4
+gflow video i2v --initial-frame ./input.png "Slow cinematic push-in, soft golden light at sunset" --out-dir outputs
 ```
 
 ### Batch from a directory of inputs (bash)
@@ -128,15 +129,15 @@ gflow video i2v ./input.png "Slow cinematic push-in, soft golden light at sunset
 mkdir -p out
 for img in ./inputs/*.png; do
   name=$(basename "$img" .png)
-  gflow video i2v "$img" "Cinematic push-in" -o "out/${name}.mp4"
+  gflow video i2v --initial-frame "$img" "Cinematic push-in" --out-dir out
 done
 ```
 
 ### Batch via a TSV manifest
 
 ```bash
-# manifest.tsv columns: start_image \t prompt \t end_image? \t aspect? \t output_path?
-# Empty start_image = T2V; lines starting with `# ` are comments.
+# manifest.tsv columns: initial_frame \t prompt \t end_frame? \t aspect? \t output_path?
+# Empty initial_frame = T2V; lines starting with `# ` are comments.
 gflow video batch ./manifest.tsv --out-dir ./out/
 ```
 

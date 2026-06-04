@@ -33,13 +33,14 @@ from gflow_cli.api.character import CharacterCreateResult, CharacterImageRequest
 if TYPE_CHECKING:
     from pathlib import Path
 
+    from gflow_cli.api.client import FlowApiClient
     from gflow_cli.data.recorder import OperationRecorder
 
 log = structlog.get_logger(__name__)
 
 
 async def character_create(
-    client: object,
+    client: FlowApiClient,
     recorder: OperationRecorder,
     *,
     profile_name: str,
@@ -57,8 +58,7 @@ async def character_create(
     Parameters
     ----------
     client:
-        A :class:`~gflow_cli.client.FlowClient` instance (typed as ``object``
-        here to avoid a circular import at the service layer).
+        A :class:`~gflow_cli.api.client.FlowApiClient` instance.
     recorder:
         An :class:`~gflow_cli.data.recorder.OperationRecorder` instance.
     profile_name:
@@ -122,7 +122,7 @@ async def character_create(
             profile_name=profile_name,
             profile_dir=profile_dir,
             project_id=project_id,
-            entity_id=cast(str, entity_id),
+            entity_id=entity_id,
             name=name,
         )
         prior_wf_ids = []
@@ -289,7 +289,7 @@ async def character_create(
         raise
 
     return CharacterCreateResult(
-        entity_id=cast(str, entity_id),
+        entity_id=entity_id,
         project_id=project_id,
         workflow_ids=tuple(workflow_ids),
         primary_media_ids=tuple(media_ids),

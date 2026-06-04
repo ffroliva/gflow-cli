@@ -10,6 +10,7 @@ Welcome to the `gflow-cli` documentation. This index is the routing layer: it te
 | [llms.txt](../llms.txt) | LLM-readable summary (llmstxt.org format) | A user pastes context about gflow into ChatGPT / Claude / Gemini |
 | [docs/PROJECT_STATUS.md](PROJECT_STATUS.md) | Full milestone history + lifecycle policy | Auditing where the project is in its lifecycle |
 | [docs/AGENT_GUIDE.md](AGENT_GUIDE.md) | Mandates and routing rules for AI agents (companion to AGENTS.md) | A coding agent needs the longer non-negotiable rules |
+| [docs/GOVERNANCE_BENCHMARK.md](GOVERNANCE_BENCHMARK.md) | How the advisory materiality gate is measured (false-positive / coverage backtest) and calibrated | You're changing `MATERIAL_PATHS` or auditing whether the governance gate earns its friction |
 | [CLAUDE.md](../CLAUDE.md) | Claude Code's session memory hub (Claude-Code-specific protocol; delegates universal rules to AGENTS.md) | First time Claude Code opens the repo |
 | [PLAN.md](../PLAN.md) | Implementation plan (DDD / CQRS / phases / ADRs) | You want the architectural intent and roadmap |
 | [RELEASE.md](../RELEASE.md) | Release checklist, prerelease policy, PyPI/GitHub publishing protocol | Cutting or auditing a release |
@@ -57,11 +58,13 @@ Slash commands for Claude Code, stored in `.claude/commands/gflow/`. All prefixe
 
 ## Topic shortcuts
 
+**"What's the governance flow, and which paths require predict/council?"** → [AGENT_GUIDE § Governance & Enforcement](AGENT_GUIDE.md#governance--enforcement)
+**"Why did the materiality advisory flag my PR?"** → [AGENT_GUIDE § Materiality coverage](AGENT_GUIDE.md#materiality-coverage-path--recommended-gate)
 **"I just installed gflow — how do I get to my first video?"** → [USER_GUIDE § Journey 1](USER_GUIDE.md#journey-1--first-time-setup-10-minutes)
 **"How do I render 20 clips overnight with concurrency?"** → [USER_GUIDE § Journey 3](USER_GUIDE.md#journey-3--batch-video-with-concurrency)
 **"How much will this batch cost me in Veo credits?"** → [USER_GUIDE § Journey 10](USER_GUIDE.md#journey-10--budgeting-credits-before-a-batch-run)
 **"How do I feed gflow outputs into ffmpeg / a pipeline?"** → [USER_GUIDE § Journey 11](USER_GUIDE.md#journey-11--wiring-gflow-outputs-into-a-downstream-pipeline)
-**"How do I chain clips into one continuous video (last-frame I2V)?"** → [USAGE § `gflow video chain`](USAGE.md#gflow-video-chain)
+**"How do I chain clips into one continuous video (initial-frame I2V)?"** → [USAGE § `gflow video chain`](USAGE.md#gflow-video-chain)
 **"How do I stitch existing clips into one extended .mp4 (credit-free, no ffmpeg)?"** → [USAGE § `gflow scene`](USAGE.md#gflow-scene)
 **"How do I create a reusable character (face + body) I can reuse across generations?"** → [USAGE § `gflow character`](USAGE.md#gflow-character) · design: [CHARACTER](CHARACTER.md)
 **"What preset voices can a character use?"** → run `gflow character voices` — see [USAGE § `gflow character voices`](USAGE.md#gflow-character-voices)
@@ -100,7 +103,7 @@ Slash commands for Claude Code, stored in `.claude/commands/gflow/`. All prefixe
 **"A gflow command hangs / fails — where do I start?"** → [DEBUGGING § Quick reference](DEBUGGING.md#quick-reference)
 **"Flow's UI broke a selector — how do I diagnose it?"** → [DEBUGGING § Inspecting Flow's live UI](DEBUGGING.md#inspecting-flows-live-ui)
 **"What does each `ui_automation.*` log event mean?"** → [DEBUGGING § Listener & HTTP-layer debugging](DEBUGGING.md#listener--http-layer-debugging)
-**"What was actually live-verified for the latest release?"** → [LIVE_VERIFICATION_v0.12.0](LIVE_VERIFICATION_v0.12.0.md) · prior: [v0.11.0](LIVE_VERIFICATION_v0.11.0.md) · [v0.10.0](LIVE_VERIFICATION_v0.10.0.md) · [v0.9.1](LIVE_VERIFICATION_v0.9.1.md) · [v0.9.0](LIVE_VERIFICATION_v0.9.0.md) · [v0.8.1](LIVE_VERIFICATION_v0.8.1.md)
+**"What was actually live-verified for the latest release?"** → [LIVE_VERIFICATION_v0.13.0](LIVE_VERIFICATION_v0.13.0.md) · prior: [v0.12.0](LIVE_VERIFICATION_v0.12.0.md) · [v0.11.0](LIVE_VERIFICATION_v0.11.0.md) · [v0.10.0](LIVE_VERIFICATION_v0.10.0.md) · [v0.9.1](LIVE_VERIFICATION_v0.9.1.md)
 **"What was live-verified for the data layer (PR #58)?"** → [LIVE_VERIFICATION_data_layer](LIVE_VERIFICATION_data_layer.md) — 1 Imagen + 1 Veo credit on denon82, 6-layer ledger (file + magic + Pillow + DB rows + CLI round-trip + structlog)
 **"What was live-verified for the video-download feature (#29)?"** → [LIVE_VERIFICATION_video_download](LIVE_VERIFICATION_video_download.md)
 **"What is the jitter matrix evidence for `gflow image batch`?"** → [`LIVE_VERIFICATION_image_batch.md`](LIVE_VERIFICATION_image_batch.md) — jitter matrix evidence for `gflow image batch` (always-same-project mode)
