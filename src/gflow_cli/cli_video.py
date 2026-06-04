@@ -6,6 +6,7 @@
 
 from __future__ import annotations
 
+import warnings
 from pathlib import Path
 from typing import Any
 
@@ -176,7 +177,7 @@ async def _run_i2v(
     prompt: str,
     aspect: str,
     out_dir: Path | None,
-    end_image: str | None = None,
+    end_frame: str | None = None,
     model: str | None = None,
     duration: int | None = None,
     count: int = 1,
@@ -215,7 +216,7 @@ async def _run_i2v(
         duration=duration,
         count=count,
         start_image=Path(image),
-        end_image=Path(end_image) if end_image else None,
+        end_image=Path(end_frame) if end_frame else None,
     )
     await _generate_and_report(
         request,
@@ -668,28 +669,43 @@ def t2v(
 
 @video.command(
     "i2v",
-    short_help="Generate a video from a start image + motion prompt.",
+    short_help="Generate a video from an initial frame + motion prompt.",
     help=(
-        "Image-to-video: animate a start image with a motion prompt (Veo).\n\n"
+        "Image-to-video: animate an initial frame with a motion prompt (Veo).\n\n"
         "Only the Veo 3.1 models support i2v interpolation; omni-flash is NOT "
-        "accepted here because Flow silently drops the start/end frames and "
+        "accepted here because Flow silently drops the initial and end frames and "
         "falls back to text-to-video (issue #125). Omit --model to use "
         "veo-lite (the default i2v model).\n\n"
         "\b\n"
         "Examples:\n"
-        '  gflow video i2v hero.png "slow cinematic push-in"\n'
-        '  gflow video i2v hero.png "pan left" --end-image last.png --aspect 16:9\n'
-        '  gflow video i2v cat.png "it leaps" --model veo-quality --duration 8\n'
+        '  gflow video i2v --initial-frame hero.png "slow cinematic push-in"\n'
+        '  gflow video i2v --initial-frame hero.png --end-frame last.png "pan left" --aspect 16:9\n'
+        '  gflow video i2v hero.png "it leaps" --model veo-quality --duration 8\n'
     ),
 )
-@click.argument("image")
-@click.argument("prompt")
+@click.argument("image", required=False, default=None)
+@click.argument("prompt", required=False, default=None)
 @click.option(
-    "--end-image",
-    "end_image",
+    "--initial-frame",
+    "initial_frame",
     default=None,
     type=click.Path(exists=True, dir_okay=False, path_type=str),
-    help="Optional end frame — Flow interpolates start -> end.",
+    help="Initial frame to animate (canonical form of the positional IMAGE argument).",
+)
+@click.option(
+    "--end-frame",
+    "end_frame",
+    default=None,
+    type=click.Path(exists=True, dir_okay=False, path_type=str),
+    help="Optional end frame — Flow interpolates initial frame -> end frame.",
+)
+@click.option(
+    "--end-image",
+    "end_image_deprecated",
+    default=None,
+    hidden=True,
+    type=click.Path(exists=True, dir_okay=False, path_type=str),
+    help="Deprecated: use --end-frame.",
 )
 @click.option(
     "--aspect",
@@ -735,9 +751,11 @@ def t2v(
     help="Emit a machine-readable JSON result instead of Rich output.",
 )
 def i2v(
-    image: str,
-    prompt: str,
-    end_image: str | None,
+    image: str | None,
+    prompt: str | None,
+    initial_frame: str | None,
+    end_frame: str | None,
+    end_image_deprecated: str | None,
     aspect: str,
     model: str | None,
     duration: str | None,
@@ -746,16 +764,45 @@ def i2v(
     out_dir: Path | None,
     as_json: bool,
 ) -> None:
-    """Generate a video from a start IMAGE + motion PROMPT."""
+    """Generate a video from an initial frame + motion PROMPT."""
+    # Click fills positional arguments left-to-right (greedy). When --initial-frame
+    # is used without a positional IMAGE, the sole remaining positional (the PROMPT
+    # text) lands in the `image` slot and `prompt` is None. Detect and swap.
+    if initial_frame is not None and prompt is None and image is not None:
+        resolved_prompt = image
+        resolved_image = initial_frame
+    elif prompt is not None:
+        resolved_image = initial_frame or image
+        resolved_prompt = prompt
+        if resolved_image is None:
+            raise click.UsageError(
+                "Provide an initial frame via --initial-frame or as the first positional argument."
+            )
+    else:
+        raise click.UsageError(
+            "Missing arguments. Provide PROMPT and an initial frame"
+            " (via --initial-frame or as a positional argument)."
+        )
+
+    if end_image_deprecated is not None:
+        warnings.warn(
+            "--end-image is deprecated and will be removed in a future release;"
+            " use --end-frame instead.",
+            DeprecationWarning,
+            stacklevel=2,
+        )
+        if end_frame is None:
+            end_frame = end_image_deprecated
+
     profile_name = _resolve_profile(profile)
     provider_dir = _make_provider_dir(profile_name)
     run_with_handlers(
         lambda: _run_i2v(
             profile_name=profile_name,
             profile_dir=provider_dir,
-            image=image,
-            prompt=prompt,
-            end_image=end_image,
+            image=resolved_image,
+            prompt=resolved_prompt,
+            end_frame=end_frame,
             aspect=aspect,
             model=model,
             duration=int(duration) if duration is not None else None,

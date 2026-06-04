@@ -580,3 +580,175 @@ def test_i2v_run_rejects_omni_flash_from_stale_config(tmp_path: Path) -> None:
             assert "#125" in (e.detail or "")
         else:
             raise AssertionError("expected ModelModeIncompatibilityError")
+
+
+# ---------------------------------------------------------------------------
+# i2v flag rename: --initial-frame / --end-frame (issue #122).
+# ---------------------------------------------------------------------------
+
+
+def test_i2v_positional_image_back_compat(tmp_path: Path) -> None:
+    """Positional IMAGE argument still works after the --initial-frame rename."""
+    import asyncio
+
+    from gflow_cli.api.video import VideoModel
+    from gflow_cli.cli_video import _run_i2v
+
+    captured: dict[str, object] = {}
+
+    async def _capture(request: object, **_kwargs: object) -> None:
+        captured["request"] = request
+
+    start = tmp_path / "start.png"
+    start.write_bytes(b"\x89PNG\r\n\x1a\n")
+
+    with patch("gflow_cli.cli_video._generate_and_report", new=_capture):
+        asyncio.run(
+            _run_i2v(
+                profile_name="default",
+                profile_dir=tmp_path,
+                image=str(start),
+                prompt="rise up",
+                aspect="9:16",
+                out_dir=None,
+            )
+        )
+
+    request = captured["request"]
+    assert request.model is VideoModel.VEO_3_1_LITE  # type: ignore[attr-defined]
+    assert request.start_image == start  # type: ignore[attr-defined]
+
+
+def test_i2v_initial_frame_flag(tmp_path: Path) -> None:
+    """--initial-frame sets the start image correctly."""
+    runner = CliRunner()
+    start = tmp_path / "hero.png"
+    start.write_bytes(b"\x89PNG\r\n\x1a\n")
+
+    with (
+        patch("gflow_cli.cli_video._resolve_profile", return_value="default"),
+        patch("gflow_cli.cli_video._make_provider_dir", return_value=tmp_path),
+        patch("gflow_cli.cli_video.run_with_handlers"),
+    ):
+        result = runner.invoke(
+            video,
+            ["i2v", "--initial-frame", str(start), "slow push-in"],
+        )
+    assert result.exit_code == 0, result.output
+
+
+def test_i2v_initial_frame_takes_precedence_over_positional(tmp_path: Path) -> None:
+    """When both --initial-frame and positional IMAGE are given, --initial-frame wins."""
+    import asyncio
+
+    from gflow_cli.cli_video import _run_i2v
+
+    captured: dict[str, object] = {}
+
+    async def _capture(request: object, **_kwargs: object) -> None:
+        captured["request"] = request
+
+    flag_img = tmp_path / "flag.png"
+    flag_img.write_bytes(b"\x89PNG\r\n\x1a\n")
+
+    runner = CliRunner()
+    positional_img = tmp_path / "positional.png"
+    positional_img.write_bytes(b"\x89PNG\r\n\x1a\n")
+
+    with (
+        patch("gflow_cli.cli_video._resolve_profile", return_value="default"),
+        patch("gflow_cli.cli_video._make_provider_dir", return_value=tmp_path),
+        patch("gflow_cli.cli_video.run_with_handlers"),
+    ):
+        result = runner.invoke(
+            video,
+            ["i2v", str(positional_img), "--initial-frame", str(flag_img), "prompt"],
+        )
+    assert result.exit_code == 0, result.output
+
+
+def test_i2v_no_image_raises_usage_error(tmp_path: Path) -> None:
+    """Omitting both the positional IMAGE and --initial-frame is a usage error."""
+    runner = CliRunner()
+    with (
+        patch("gflow_cli.cli_video._resolve_profile", return_value="default"),
+        patch("gflow_cli.cli_video._make_provider_dir", return_value=tmp_path),
+    ):
+        # Single positional with no --initial-frame → prompt slot never filled → error
+        result = runner.invoke(video, ["i2v", "some motion prompt"])
+    assert result.exit_code != 0, result.output
+
+
+def test_i2v_end_frame_flag(tmp_path: Path) -> None:
+    """--end-frame sets end_image on the GenerateVideoRequest."""
+    import asyncio
+
+    from gflow_cli.cli_video import _run_i2v
+
+    captured: dict[str, object] = {}
+
+    async def _capture(request: object, **_kwargs: object) -> None:
+        captured["request"] = request
+
+    start = tmp_path / "start.png"
+    end = tmp_path / "end.png"
+    start.write_bytes(b"\x89PNG\r\n\x1a\n")
+    end.write_bytes(b"\x89PNG\r\n\x1a\n")
+
+    with patch("gflow_cli.cli_video._generate_and_report", new=_capture):
+        asyncio.run(
+            _run_i2v(
+                profile_name="default",
+                profile_dir=tmp_path,
+                image=str(start),
+                prompt="pan left",
+                aspect="9:16",
+                out_dir=None,
+                end_frame=str(end),
+            )
+        )
+
+    request = captured["request"]
+    assert request.end_image == end  # type: ignore[attr-defined]
+
+
+def test_i2v_end_image_deprecated_emits_warning(tmp_path: Path) -> None:
+    """--end-image emits DeprecationWarning and is treated as --end-frame."""
+    import warnings
+
+    start = tmp_path / "start.png"
+    end = tmp_path / "end.png"
+    start.write_bytes(b"\x89PNG\r\n\x1a\n")
+    end.write_bytes(b"\x89PNG\r\n\x1a\n")
+
+    runner = CliRunner()
+    with (
+        patch("gflow_cli.cli_video._resolve_profile", return_value="default"),
+        patch("gflow_cli.cli_video._make_provider_dir", return_value=tmp_path),
+        patch("gflow_cli.cli_video.run_with_handlers"),
+        warnings.catch_warnings(record=True) as w,
+    ):
+        warnings.simplefilter("always")
+        result = runner.invoke(
+            video,
+            ["i2v", str(start), "pan left", "--end-image", str(end)],
+        )
+
+    assert result.exit_code == 0, result.output
+    deprecation_warnings = [x for x in w if issubclass(x.category, DeprecationWarning)]
+    assert any("--end-image" in str(x.message) for x in deprecation_warnings)
+    assert any("--end-frame" in str(x.message) for x in deprecation_warnings)
+
+
+def test_i2v_help_uses_initial_end_frame_wording() -> None:
+    """Help text uses 'initial frame' / 'end frame'; must not contain 'start image'."""
+    runner = CliRunner()
+    result = runner.invoke(video, ["i2v", "--help"])
+    assert result.exit_code == 0
+    help_text = result.output.lower()
+    assert "initial frame" in help_text
+    assert "end frame" in help_text
+    assert "start image" not in help_text
+    assert "--initial-frame" in result.output
+    assert "--end-frame" in result.output
+    assert "--end-image" not in result.output  # deprecated flag is hidden
