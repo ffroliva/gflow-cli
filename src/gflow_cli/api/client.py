@@ -34,6 +34,7 @@ from gflow_cli.api.recaptcha import TokenMinter
 from gflow_cli.api.scene import ConcatInput, Scene, SceneWorkflow
 from gflow_cli.api.transports import make_transport
 from gflow_cli.api.transports.base import FlowTransportStrategy, VideoCapableTransport
+from gflow_cli.browser_manager import channel_for_profile
 from gflow_cli.config import Settings
 from gflow_cli.errors import (
     AisandboxAuthError,
@@ -267,6 +268,29 @@ class FlowApiClient:
             raise
         return self
 
+    def _persistent_context_kwargs(self) -> dict[str, Any]:
+        """Keyword arguments for the persistent browser-context launch.
+
+        Extracted as an overridable seam so out-of-core tooling (e.g. a
+        dev-scoped recording subclass that adds ``record_video_dir``) can
+        augment the launch without any recording/test concern living in this
+        core path. The returned dict is identical to the previous inline call.
+        """
+        return {
+            "user_data_dir": str(self.profile_dir),
+            "headless": self.headless,
+            "viewport": {"width": 1280, "height": 720},
+            "locale": "en-US",
+            "extra_http_headers": {"Accept-Language": "en-US,en;q=0.9"},
+            "channel": channel_for_profile(self.profile_dir),
+            "ignore_default_args": [
+                "--enable-automation",
+                "--no-sandbox",
+                "--password-store=basic",
+            ],
+            "args": ["--disable-blink-features=AutomationControlled"],
+        }
+
     async def _enter_setup(self) -> None:
         """Body of __aenter__ after the Playwright driver starts.
 
@@ -275,17 +299,8 @@ class FlowApiClient:
         """
         # Invariant: __aenter__ sets self._pw immediately before calling us.
         assert self._pw is not None
-        from gflow_cli.browser_manager import channel_for_profile
-
         self._context = await self._pw.chromium.launch_persistent_context(
-            user_data_dir=str(self.profile_dir),
-            headless=self.headless,
-            viewport={"width": 1280, "height": 720},
-            locale="en-US",
-            extra_http_headers={"Accept-Language": "en-US,en;q=0.9"},
-            channel=channel_for_profile(self.profile_dir),
-            ignore_default_args=["--enable-automation", "--no-sandbox", "--password-store=basic"],
-            args=["--disable-blink-features=AutomationControlled"],
+            **self._persistent_context_kwargs()
         )
         # Hide the automation flag so reCAPTCHA Enterprise doesn't score
         # the session as a bot — navigator.webdriver=true causes low-score
