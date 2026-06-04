@@ -4,9 +4,9 @@
 
 ## Current release
 
-**v0.12.0 — alpha.** A feature release adding three new command surfaces. **`gflow character`** mints reusable, project-scoped Flow **Character** entities — a named subject with reference images, an optional voice, and an optional personality — so the same subject appears consistently across generations (`create` / `list` / `show` / `voices`, #145); creation runs as a persist-before-spend, crash-recoverable saga and was live-verified end-to-end (face + triptych body, downloaded, read back). **`gflow scene`** composes ordered clips into a scene (Add Clip / Scenes) and renders a credit-free, server-side **extended video** via `runVideoFxConcatenation` (no local ffmpeg). **`gflow video chain`** renders a JSONL manifest of links into one continuous sequence — link 0 is a t2v generation, each later link an i2v seeded by the previous clip's extracted last frame (one credit per link; `--dry-run`, `--max-links`, `--resume-from`). This release also fixes create-project generation when Flow surfaces Agent mode as a docked chat panel. The v0.11.0/v0.10.0 baseline stands: Image (T2I / I2I / upload) + Video T2V / I2V / R2V live end-to-end on the `ui_automation` transport against live Pro/Ultra accounts, with a video `--model` picker (5 Veo models) and `--duration` / `--count`; machine-readable `--json` across every generation command plus a `gflow models` catalog; per-model reference-image caps for `i2i` and `r2v`; Google-account identity persisted per profile (issue #92); external cloud storage to S3 / MinIO / GCS via `GFLOW_CLI_STORAGE_URI`; and a `gflow data prune` maintenance command. Only video `batch` (manifest runner) is still queued for Phase B — use a shell for-loop until then ([USAGE](USAGE.md#gflow-video-batch)). Three earlier HTTP transport strategies live under `src/gflow_cli/api/transports/experimental/` (`evaluate_fetch` / `bearer` / `sapisidhash`); the production path is `ui_automation`.
+**v0.13.0 — alpha.** High-fidelity CLI hardening and term alignment. **`gflow video i2v`** now uses the canonical `--initial-frame` and `--end-frame` flags (matching Flow's UI labels), with robust Click greedy-fill protection and positional backward compatibility. **In-project governance** (ruff T20, materiality classification) is now active to harden the AI-driven development flow. This release also refactors the **`character_create` saga** for improved type safety and documentation. Live-verified end-to-end on 2026-06-04 with the new flags and interpolation paths.
 
-**Develop (unreleased, post-v0.12.0):** *(empty — develop is the staging branch for the next release).*
+**Develop (unreleased, post-v0.13.0):** *(empty — develop is the staging branch for the next release).*
 
 ## Milestone history
 
@@ -49,6 +49,9 @@
 | `gflow video i2v` routes to the Veo i2v endpoint (no silent T2V fallback) + `veo-lite` default (issue #125) | ✅ done (v0.11.0) |
 | Create-project generation works under Flow's "Agent" composer mode | ✅ done (v0.11.0) |
 | Image-model selection hardened for non-English Flow UIs (selector cascade, #94) | ✅ done (v0.11.0) |
+| `gflow character rm` — free character deletion (#150) | ✅ done (v0.13.0) |
+| Align I2V CLI flags with Flow UI Labels (`--initial-frame`) (#122) | ✅ done (v0.13.0) |
+| In-project governance (ruff T20, materiality Classifier) | ✅ done (v0.13.0) |
 | `gflow character` — reusable Flow Character entities (`create`/`list`/`show`/`voices`), persist-before-spend saga (#145) | ✅ done (v0.12.0) |
 | `gflow scene` — Add Clip / Scenes compose + credit-free server-side extended video (`runVideoFxConcatenation`) | ✅ done (v0.12.0) |
 | `gflow video chain` — last-frame I2V chaining from a JSONL manifest (`--dry-run`/`--max-links`/`--resume-from`) | ✅ done (v0.12.0) |
