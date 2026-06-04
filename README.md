@@ -74,7 +74,7 @@ Reproduce the recording: [`scripts/record_demo.ps1`](scripts/record_demo.ps1) (W
 
 | Topic | Read |
 |---|---|
-| 🎯 **Getting started** | [User Guide](docs/USER_GUIDE.md) · [Usage](docs/USAGE.md) · [Configuration](docs/CONFIGURATION.md)) |
+| 🎯 **Getting started** | [User Guide](docs/USER_GUIDE.md) · [Usage](docs/USAGE.md) · [Configuration](docs/CONFIGURATION.md) |
 | **Storage & catalog** | [External Storage](docs/EXTERNAL_STORAGE.md) · [Data Layer](docs/DATA_LAYER.md) |
 | 🎭 **Characters** | [Characters](docs/CHARACTER.md) — reusable subjects (`gflow character`) |
 | 🔐 **Auth & sessions** | [Authentication](docs/AUTHENTICATION.md) · [Known issues](KNOWN_ISSUES.md) |
