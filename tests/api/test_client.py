@@ -284,11 +284,15 @@ async def test_enter_setup_routes_launch_through_kwargs_seam(
         return kwargs
 
     monkeypatch.setattr(FlowApiClient, "_persistent_context_kwargs", spy)
-    async with FlowApiClient(profile_dir=tmp_path, transport=fake):
-        pass
-    # Consulted exactly once during setup -> the launch routes through the seam.
-    # A future re-inline of the dict would drop this to 0.
+    launch_mock = None
+    async with FlowApiClient(profile_dir=tmp_path, transport=fake) as client:
+        launch_mock = client._pw.chromium.launch_persistent_context
+    # The seam was consulted exactly once AND the launch was invoked with its
+    # exact output. A re-inlined / stale dict at the call site fails the kwargs
+    # equality here, not merely the consult count.
     assert len(seam_calls) == 1
+    assert launch_mock is not None
+    assert launch_mock.call_args.kwargs == seam_calls[0]
 
 
 @pytest.mark.asyncio

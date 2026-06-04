@@ -58,6 +58,10 @@ _FACE_EVENTS = {
 # NOT persist, which is exactly what a promo recording needs (display only).
 _FIND_NAME_INPUT_JS = r"""
 () => {
+  // Idempotent: drop any prior tag so [data-gflow-title] stays single-valued.
+  document
+    .querySelectorAll('[data-gflow-title]')
+    .forEach((el) => el.removeAttribute('data-gflow-title'));
   const vis = (el) => {
     const r = el.getBoundingClientRect();
     return r.width > 0 && r.height > 0 && el.offsetParent !== null;
@@ -155,59 +159,82 @@ async def _run(
     # Isolate the data store AND the image output dir so the real catalog/gallery
     # are never touched; force concurrency=1 so exactly one .webm is produced.
     tmp_root = Path(tempfile.mkdtemp(prefix="rec-iso-"))
-    os.environ["GFLOW_CLI_DB_PATH"] = str(tmp_root / "catalog.db")
-    os.environ["GFLOW_CLI_OUTPUT_DIR"] = str(tmp_root / "out")
-    os.environ["GFLOW_CLI_CONCURRENCY"] = "1"
-    settings = Settings()  # re-reads the env vars set above
-
-    face = CharacterImageRequest(prompt=face_prompt)
-    recorder = OperationRecorder.open(settings)
+    iso_env = {
+        "GFLOW_CLI_DB_PATH": str(tmp_root / "catalog.db"),
+        "GFLOW_CLI_OUTPUT_DIR": str(tmp_root / "out"),
+        "GFLOW_CLI_CONCURRENCY": "1",
+    }
+    saved_env = {k: os.environ.get(k) for k in iso_env}
+    cap: list[Any] = []  # bound even if context entry raises early
     try:
-        async with RecordingFlowApiClient(
-            profile_dir=profile_dir,
-            headless=False,
-            settings=settings,
-            record_video_dir=rec_dir,
-        ) as client:
-            proj = await client.create_project(title="gflow character — live demo")
-            step("rec", f"project={proj.project_id} — running real character_create", prefix="rec")
-            with capture_logs() as cap:
-                await character_create(
-                    client,
-                    recorder,
-                    profile_name=profile,
-                    profile_dir=profile_dir,
-                    project_id=proj.project_id,
-                    name=name,
-                    face=face,
-                    locale=locale,
+        os.environ.update(iso_env)
+        settings = Settings()  # re-reads the isolated env vars set above
+        face = CharacterImageRequest(prompt=face_prompt)
+        recorder = OperationRecorder.open(settings)
+        try:
+            async with RecordingFlowApiClient(
+                profile_dir=profile_dir,
+                headless=False,
+                settings=settings,
+                record_video_dir=rec_dir,
+            ) as client:
+                proj = await client.create_project(title="gflow character — live demo")
+                step(
+                    "rec",
+                    f"project={proj.project_id} — running real character_create",
+                    prefix="rec",
                 )
-            # Promo polish: type the name into the editor for ON-SCREEN display
-            # (display-only; the editor title is decoupled from displayName per
-            # #151, so it won't persist — irrelevant to the recorded video).
-            await _type_name_for_display(client._page, name)
+                with capture_logs() as cap:
+                    await character_create(
+                        client,
+                        recorder,
+                        profile_name=profile,
+                        profile_dir=profile_dir,
+                        project_id=proj.project_id,
+                        name=name,
+                        face=face,
+                        locale=locale,
+                    )
+                # Promo polish: type the name into the editor for ON-SCREEN display
+                # (display-only; the editor title is decoupled from displayName per
+                # #151, so it won't persist — irrelevant to the recorded video).
+                # Use the slot-0 page directly (not the deprecated _page alias).
+                await _type_name_for_display(client._pages[0], name)
+        finally:
+            recorder.close()
+
+        # Image-not-video guard (council hardening): prove the real image path ran.
+        err = _verify_image_path({e.get("event", "") for e in cap})
+        if err is not None:
+            step("ERR", err, prefix="rec")
+            return 1
+        step("ok", "image path verified via character_create structlog events", prefix="rec")
+
+        # Context closed -> webm finalized. Expect EXACTLY ONE webm (concurrency=1).
+        webms = sorted(rec_dir.glob("*.webm"), key=lambda p: p.stat().st_mtime, reverse=True)
+        if not webms:
+            step("ERR", "no .webm produced", prefix="rec")
+            return 1
+        if len(webms) > 1:
+            step(
+                "ERR",
+                f"{len(webms)} webms produced (expected 1) — refusing to guess",
+                prefix="rec",
+            )
+            return 1
+        _transcode(webms[0], out_path)
+        shutil.rmtree(rec_dir, ignore_errors=True)
+        step("done", f"recorded -> {out_path}", prefix="rec")
+        return 0
     finally:
-        recorder.close()
-
-    # Image-not-video guard (council hardening): prove the real image path ran.
-    err = _verify_image_path({e.get("event", "") for e in cap})
-    if err is not None:
-        step("ERR", err, prefix="rec")
-        return 1
-    step("ok", "image path verified via character_create structlog events", prefix="rec")
-
-    # Context closed -> webm finalized. Expect EXACTLY ONE webm (concurrency=1).
-    webms = sorted(rec_dir.glob("*.webm"), key=lambda p: p.stat().st_mtime, reverse=True)
-    if not webms:
-        step("ERR", "no .webm produced", prefix="rec")
-        return 1
-    if len(webms) > 1:
-        step("ERR", f"{len(webms)} webms produced (expected 1) — refusing to guess", prefix="rec")
-        return 1
-    _transcode(webms[0], out_path)
-    shutil.rmtree(rec_dir, ignore_errors=True)
-    step("done", f"recorded -> {out_path}", prefix="rec")
-    return 0
+        # Restore the process env and remove the throwaway isolation dir so the
+        # driver is reentrant and leaves no catalog.db behind.
+        for key, prev in saved_env.items():
+            if prev is None:
+                os.environ.pop(key, None)
+            else:
+                os.environ[key] = prev
+        shutil.rmtree(tmp_root, ignore_errors=True)
 
 
 def main(argv: list[str] | None = None) -> int:

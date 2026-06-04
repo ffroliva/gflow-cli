@@ -33,3 +33,9 @@ def test_character_editor_url_normalizes_bcp47_region():
 def test_character_editor_url_lowercases_segment():
     # Case-insensitive: "EN-us" -> "/fx/en/".
     assert "/fx/en/tools/flow/" in routes.character_editor_url("EN-us", "p", "e")
+
+
+def test_character_editor_url_empty_locale_falls_back_to_en():
+    # A degenerate/empty tag must not produce a double-slash URL (/fx//...).
+    assert "/fx/en/tools/flow/" in routes.character_editor_url("", "p", "e")
+    assert "/fx/en/tools/flow/" in routes.character_editor_url("-US", "p", "e")
