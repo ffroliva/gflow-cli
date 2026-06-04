@@ -112,7 +112,8 @@ What happens:
 gflow video t2v "a steam locomotive at dusk" \
     --aspect 16:9 \
     --seed 4242 \
-    -o ./out/locomotive.mp4
+    --out-dir ./out
+
 ```
 
 `--seed` is the only knob for reproducibility — same seed + prompt + model = same output (within Veo's tolerance).
@@ -128,10 +129,10 @@ You want to render 20 clips overnight from a TSV manifest.
 Five tab-separated columns, all but `prompt` optional:
 
 ```
-# columns: start_image  prompt  end_image  aspect  output_path
-	a kite over a beach		16:9	clips/kite.mp4
-./hero.png	a hot air balloon takes off				clips/balloon.mp4
-	a candle flickering in a window		1:1	clips/candle.mp4
+# columns: initial_frame  prompt  end_frame  aspect  output_dir
+	a kite over a beach		16:9	out/
+./hero.png	a hot air balloon takes off				out/
+	a candle flickering in a window		1:1	out/
 ```
 
 `parse_manifest` treats every non-blank, non-`#`-prefixed line as data — **there is no header row.** The column-name line above is `#`-prefixed so the parser skips it. To leave a column blank, write nothing between the tabs.
@@ -155,9 +156,9 @@ GFLOW_CLI_CONCURRENCY=4 gflow video batch manifest.tsv --out-dir ./out
 **Soft-fail-and-continue (workaround):** if you'd rather have one bad row not torpedo the rest, drive each row from a shell loop instead of `gflow video batch`:
 
 ```bash
-while IFS=$'\t' read -r start prompt _ aspect out; do
+while IFS=$'\t' read -r initial prompt _ aspect out; do
     [ -z "$prompt" ] || [ "${prompt:0:1}" = "#" ] && continue
-    gflow video i2v "$start" "$prompt" -o "$out" || echo "skipped: $out (exit $?)"
+    gflow video i2v "$initial" "$prompt" --out-dir "$out" || echo "skipped: $out (exit $?)"
 done < manifest.tsv
 ```
 

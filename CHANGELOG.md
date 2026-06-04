@@ -32,6 +32,15 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   described in
   [`docs/AGENT_GUIDE.md` § Governance & Enforcement](docs/AGENT_GUIDE.md#governance--enforcement).
 
+### Changed
+
+- **`gflow video i2v` frame flags aligned with Flow UI terminology (#122).**
+  `--initial-frame FILE` is the new canonical flag for the start image (matches
+  Flow's "initial frame" label). `--end-frame FILE` replaces `--end-image` as the
+  canonical end-frame flag. `--end-image` is kept as a **deprecated alias** (emits
+  `DeprecationWarning`; will be removed in a future minor release). The positional
+  `IMAGE` argument remains supported for back-compatibility.
+
 ### Fixed
 
 - **Character editor 404 on non-English locales (#153).** `gflow character`'s
@@ -679,7 +688,7 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 - `gflow image batch` now actually shares one Flow project across all
   prompts in a batch. Previously the `--same-project=1` flag was a no-op
   at the `ui_automation` transport layer; each prompt landed in its own
-  Flow project. ([spec](docs/superpowers/specs/2026-05-22-stay-mounted-batch-session-design.md))
+  Flow project.
 - `gflow image t2i -n N` now makes one transport call using Flow's native
   xN count selector instead of fanning out N parallel single-image
   submissions. Closes [#14](https://github.com/ffroliva/gflow-cli/issues/14) part 1.

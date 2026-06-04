@@ -64,7 +64,7 @@ Slash commands for Claude Code, stored in `.claude/commands/gflow/`. All prefixe
 **"How do I render 20 clips overnight with concurrency?"** → [USER_GUIDE § Journey 3](USER_GUIDE.md#journey-3--batch-video-with-concurrency)
 **"How much will this batch cost me in Veo credits?"** → [USER_GUIDE § Journey 10](USER_GUIDE.md#journey-10--budgeting-credits-before-a-batch-run)
 **"How do I feed gflow outputs into ffmpeg / a pipeline?"** → [USER_GUIDE § Journey 11](USER_GUIDE.md#journey-11--wiring-gflow-outputs-into-a-downstream-pipeline)
-**"How do I chain clips into one continuous video (last-frame I2V)?"** → [USAGE § `gflow video chain`](USAGE.md#gflow-video-chain)
+**"How do I chain clips into one continuous video (initial-frame I2V)?"** → [USAGE § `gflow video chain`](USAGE.md#gflow-video-chain)
 **"How do I stitch existing clips into one extended .mp4 (credit-free, no ffmpeg)?"** → [USAGE § `gflow scene`](USAGE.md#gflow-scene)
 **"How do I create a reusable character (face + body) I can reuse across generations?"** → [USAGE § `gflow character`](USAGE.md#gflow-character) · design: [CHARACTER](CHARACTER.md)
 **"What preset voices can a character use?"** → run `gflow character voices` — see [USAGE § `gflow character voices`](USAGE.md#gflow-character-voices)
