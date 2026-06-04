@@ -39,10 +39,11 @@ _CHAR_B = Character(
 class _FakeClient:
     """Minimal async-CM stub for FlowApiClient covering character methods."""
 
-    def __init__(self, *, list_result=None, get_result=None, get_exc=None, **_kw):
+    def __init__(self, *, list_result=None, get_result=None, get_exc=None, deleted=None, **_kw):
         self._list_result = list_result if list_result is not None else []
         self._get_result = get_result
         self._get_exc = get_exc
+        self._deleted = deleted if deleted is not None else []
 
     async def __aenter__(self):
         return self
@@ -65,8 +66,11 @@ class _FakeClient:
         assert self._get_result is not None
         return self._get_result
 
+    async def delete_characters(self, project_id: str, entity_ids: list[str]) -> None:
+        self._deleted.append((project_id, list(entity_ids)))
 
-def _patch(monkeypatch, *, list_result=None, get_result=None, get_exc=None):
+
+def _patch(monkeypatch, *, list_result=None, get_result=None, get_exc=None, deleted=None):
     """Patch FlowApiClient + profile/settings helpers inside cli_character."""
     monkeypatch.setattr(
         cli_character,
@@ -75,6 +79,7 @@ def _patch(monkeypatch, *, list_result=None, get_result=None, get_exc=None):
             list_result=list_result,
             get_result=get_result,
             get_exc=get_exc,
+            deleted=deleted,
             **kw,
         ),
     )
@@ -217,6 +222,59 @@ def test_show_id_and_name_mutually_exclusive():
     res = CliRunner().invoke(
         main,
         ["character", "show", "--project", "proj-1", "--id", "x", "--name", "y"],
+    )
+    assert res.exit_code == 2
+    assert "mutually exclusive" in res.output
+
+
+# ---------------------------------------------------------------------------
+# character rm
+# ---------------------------------------------------------------------------
+
+
+def test_rm_by_id_deletes(monkeypatch):
+    """--id --yes → resolves the character, deletes it, prints confirmation."""
+    deleted: list = []
+    _patch(monkeypatch, get_result=_CHAR_A, deleted=deleted)
+    res = CliRunner().invoke(
+        main,
+        ["character", "rm", "--project", "proj-1", "--id", "eid-alpha", "--yes"],
+        catch_exceptions=False,
+    )
+    assert res.exit_code == 0
+    assert "Deleted" in res.output
+    assert "Alpha" in res.output
+    assert deleted == [("proj-1", ["eid-alpha"])]
+
+
+def test_rm_json_output(monkeypatch):
+    """--json emits the deleted entity and skips the interactive confirm."""
+    deleted: list = []
+    _patch(monkeypatch, get_result=_CHAR_A, deleted=deleted)
+    res = CliRunner().invoke(
+        main,
+        ["character", "rm", "--project", "proj-1", "--id", "eid-alpha", "--json"],
+        catch_exceptions=False,
+    )
+    assert res.exit_code == 0
+    data = json.loads(res.output)
+    assert data["status"] == "ok"
+    assert data["deleted"]["entity_id"] == "eid-alpha"
+    assert deleted == [("proj-1", ["eid-alpha"])]
+
+
+def test_rm_requires_id_or_name():
+    """Neither --id nor --name → usage error (exit 2)."""
+    res = CliRunner().invoke(main, ["character", "rm", "--project", "proj-1"])
+    assert res.exit_code == 2
+    assert "--id" in res.output or "--name" in res.output
+
+
+def test_rm_id_and_name_mutually_exclusive():
+    """Both --id and --name → mutual-exclusion usage error (exit 2)."""
+    res = CliRunner().invoke(
+        main,
+        ["character", "rm", "--project", "proj-1", "--id", "x", "--name", "y"],
     )
     assert res.exit_code == 2
     assert "mutually exclusive" in res.output

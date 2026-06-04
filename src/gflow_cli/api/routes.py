@@ -70,6 +70,11 @@ EDITOR_BOOTSTRAP_URL = "https://labs.google/fx/tools/flow?hl=en"
 CREATE_ENTITY_URL = f"{LABS_TRPC_BASE}/flow.createEntity"
 PROJECT_INITIAL_DATA_URL = f"{LABS_TRPC_BASE}/flow.projectInitialData"
 FLOW_ENTITIES_URL = f"{FLOW_API_BASE}/flow/entities"
+# Delete CHARACTER entities (aisandbox Bearer REST). Body:
+# ``{"projectId": <pid>, "entityIds": [<id>, ...]}``. FREE — no reCAPTCHA/credit.
+# Reverse-engineered 2026-06-04 from the editor's "Excluir personagem" button
+# (scripts/dev/spike_char_delete.py); live-verified the entity disappears.
+BATCH_DELETE_ASSETS_URL = f"{FLOW_API_BASE}/flow:batchDeleteAssets"
 
 # Scene / Add Clip (aisandbox-pa) ------------------------------------------
 SCENE_WORKFLOWS_UPDATE = f"{FLOW_API_BASE}/flow/scene/sceneWorkflows:update"
