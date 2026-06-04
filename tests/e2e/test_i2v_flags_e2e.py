@@ -39,6 +39,8 @@ from click.testing import CliRunner
 
 from gflow_cli.cli_video import video
 
+from typing import Iterator
+
 # ---------------------------------------------------------------------------
 # Module-level marker — every test in this file is e2e + e2e_video (opt-in,
 # credit-bearing). Never collected by a plain ``pytest`` invocation.
@@ -83,7 +85,7 @@ def _make_png(path: Path) -> Path:
 
 
 @pytest.fixture
-def unisolated_home(monkeypatch: pytest.MonkeyPatch) -> Path:
+def unisolated_home(monkeypatch: pytest.MonkeyPatch) -> Iterator[Path]:
     """Fixture that temporarily restores the real GFLOW_CLI_HOME for the test.
 
     Allows CliRunner-based tests to find real Chromium profiles.
@@ -198,3 +200,58 @@ def test_e2e_i2v_positional_back_compat(
 
     mp4_files = list(out_dir.glob("*.mp4"))
     assert mp4_files, "expected at least one mp4 — positional back-compat path is broken"
+
+
+def test_e2e_i2v_start_end_frame_flags(
+    e2e_profile_dir: Path,
+    unisolated_home: Path,
+    tmp_path: Path,
+    install_log_capture: structlog.testing.LogCapture,
+) -> None:
+    """I2V-FLAG-3: both ``--initial-frame`` and ``--end-frame`` together.
+
+    Verifies the full interpolation CLI path: ``gflow video i2v --initial-frame <a>
+    --end-frame <b> "prompt"``. The ``ui_automation_video.frame_attached`` event
+    must fire TWICE (one per slot).
+    """
+    start = _make_png(tmp_path / "start.png")
+    end = _make_png(tmp_path / "end.png")
+    out_dir = tmp_path / "out"
+    out_dir.mkdir(exist_ok=True)
+
+    profile_name = os.environ["GFLOW_CLI_E2E_PROFILE"]
+    runner = CliRunner()
+    result = runner.invoke(
+        video,
+        [
+            "i2v",
+            "--initial-frame",
+            str(start),
+            "--end-frame",
+            str(end),
+            _PROMPT,
+            "--aspect",
+            "16:9",
+            "--out-dir",
+            str(out_dir),
+            "--duration",
+            "4",
+            "--profile",
+            profile_name,
+        ],
+    )
+
+    assert result.exit_code == 0, result.output
+
+    mp4_files = list(out_dir.glob("*.mp4"))
+    assert mp4_files, "expected a downloaded mp4 for start+end interpolation"
+
+    frame_attached_events = [
+        e
+        for e in install_log_capture.entries
+        if e.get("event") == "ui_automation_video.frame_attached"
+    ]
+    # One for start, one for end.
+    assert len(frame_attached_events) >= 2, (
+        f"expected at least 2 frame_attached events, got {len(frame_attached_events)}"
+    )

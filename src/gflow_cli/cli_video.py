@@ -780,11 +780,17 @@ def i2v(
             )
         # Validate the positional IMAGE path manually (click.Path can't be used on this
         # argument because the positional slot doubles as PROMPT text in the swap branch).
-        if initial_frame is None and not Path(resolved_image).is_file():
-            raise click.BadParameter(
-                f"Path '{resolved_image}' does not exist or is a directory.",
-                param_hint="'IMAGE'",
-            )
+        if initial_frame is None:
+            resolved_image_path = Path(resolved_image)
+            if not resolved_image_path.is_file():
+                raise click.BadParameter(
+                    f"Path '{resolved_image}' does not exist or is a directory.",
+                    param_hint="'IMAGE'",
+                )
+            resolved_image = str(resolved_image_path.resolve())
+        else:
+            # Also normalize --initial-frame if passed as flag
+            resolved_image = str(Path(resolved_image).resolve())
     else:
         raise click.UsageError(
             "Missing arguments. Provide PROMPT and an initial frame"
