@@ -639,15 +639,6 @@ def test_i2v_initial_frame_flag(tmp_path: Path) -> None:
 
 def test_i2v_initial_frame_takes_precedence_over_positional(tmp_path: Path) -> None:
     """When both --initial-frame and positional IMAGE are given, --initial-frame wins."""
-    import asyncio
-
-    from gflow_cli.cli_video import _run_i2v
-
-    captured: dict[str, object] = {}
-
-    async def _capture(request: object, **_kwargs: object) -> None:
-        captured["request"] = request
-
     flag_img = tmp_path / "flag.png"
     flag_img.write_bytes(b"\x89PNG\r\n\x1a\n")
 
