@@ -778,6 +778,13 @@ def i2v(
             raise click.UsageError(
                 "Provide an initial frame via --initial-frame or as the first positional argument."
             )
+        # Validate the positional IMAGE path manually (click.Path can't be used on this
+        # argument because the positional slot doubles as PROMPT text in the swap branch).
+        if initial_frame is None and not Path(resolved_image).is_file():
+            raise click.BadParameter(
+                f"Path '{resolved_image}' does not exist or is a directory.",
+                param_hint="'IMAGE'",
+            )
     else:
         raise click.UsageError(
             "Missing arguments. Provide PROMPT and an initial frame"
@@ -789,7 +796,7 @@ def i2v(
             "--end-image is deprecated and will be removed in a future release;"
             " use --end-frame instead.",
             DeprecationWarning,
-            stacklevel=2,
+            stacklevel=1,
         )
         if end_frame is None:
             end_frame = end_image_deprecated

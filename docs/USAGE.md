@@ -25,7 +25,7 @@ Commands:
 
   video     Video generation (Veo via Flow).
     t2v                         Generate a video from a text prompt.
-    i2v                         Generate a video from a start (+ optional end) frame + prompt.
+    i2v                         Generate a video from an initial frame + motion prompt.
     r2v                         Generate a video from reference images + prompt.
     batch                       Run a TSV manifest of video generations.
     chain                       Render a JSONL manifest as a last-frame I2V chain.
@@ -337,25 +337,30 @@ gflow video t2v "A neon city timelapse" --model omni-flash --duration 10 --count
 
 ## `gflow video i2v`
 
-Generate a video from a START frame (+ optional END frame) and a motion prompt.
+Generate a video from an INITIAL frame (+ optional END frame) and a motion prompt.
 Each image is a local PNG/JPEG; it is bound into the editor's frame slot via the
-media dialog, then Flow fires `batchAsyncGenerateVideoStartImage` (start only) or
-`…StartAndEndImage` (start+end interpolation).
+media dialog, then Flow fires `batchAsyncGenerateVideoStartImage` (initial only) or
+`…StartAndEndImage` (initial+end interpolation).
 
 ```text
-gflow video i2v IMAGE PROMPT [--end-image LAST] [--model] [--duration] [--count] [--aspect] [...]
+gflow video i2v --initial-frame INITIAL [--end-frame LAST] PROMPT [--model] [--duration] [--count] [--aspect] [...]
+
+# Back-compat positional form (still supported):
+gflow video i2v IMAGE PROMPT [--end-frame LAST] [...]
 
 Arguments:
-  IMAGE   Local start frame (PNG/JPEG). [required]
-  PROMPT  Motion prompt.                [required]
+  PROMPT  Motion prompt.  [required]
 
 Options:
-  --end-image PATH  Optional end frame — Flow interpolates start -> end.
+  --initial-frame PATH  Initial frame to animate. Canonical form; replaces the positional IMAGE.
+  --end-frame PATH      Optional end frame — Flow interpolates initial frame -> end frame.
 ```
 
 ```bash
+gflow video i2v --initial-frame ./hero.png "Slow camera arc, soft golden light"
+gflow video i2v --initial-frame ./first.png --end-frame ./last.png "morph between scenes" --model veo-quality
+# Back-compat positional form:
 gflow video i2v ./hero.png "Slow camera arc, soft golden light"
-gflow video i2v ./first.png "morph between scenes" --end-image ./last.png --model veo-quality
 ```
 
 ## `gflow video r2v`
