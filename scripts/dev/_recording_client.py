@@ -18,10 +18,6 @@ if _SRC.exists() and str(_SRC) not in sys.path:
 
 from gflow_cli.api.client import FlowApiClient  # noqa: E402
 
-# Match the base persistent context viewport (client.py) so the recorded frame
-# is 1:1 with what the automation sees.
-_VIDEO_SIZE = {"width": 1280, "height": 720}
-
 
 class RecordingFlowApiClient(FlowApiClient):
     """``FlowApiClient`` that records its browser context to ``record_video_dir``.
@@ -38,5 +34,7 @@ class RecordingFlowApiClient(FlowApiClient):
     def _persistent_context_kwargs(self) -> dict[str, Any]:
         kwargs = super()._persistent_context_kwargs()
         kwargs["record_video_dir"] = str(self._record_video_dir)
-        kwargs["record_video_size"] = dict(_VIDEO_SIZE)
+        # Track the base viewport so the recorded frame is always 1:1 with what
+        # the automation sees (no parallel size constant to drift).
+        kwargs["record_video_size"] = dict(kwargs["viewport"])
         return kwargs
