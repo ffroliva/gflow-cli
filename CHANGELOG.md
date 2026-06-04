@@ -32,6 +32,16 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   described in
   [`docs/AGENT_GUIDE.md` § Governance & Enforcement](docs/AGENT_GUIDE.md#governance--enforcement).
 
+### Fixed
+
+- **Character editor 404 on non-English locales (#153).** `gflow character`'s
+  editor URL interpolated the locale verbatim, so the genuine default BCP-47
+  `en-US` produced `/fx/en-US/…`, which 404s the Flow character editor (only the
+  short primary subtag is a valid `/fx/<seg>/` segment). `character_editor_url`
+  now normalizes a BCP-47 tag to its lower-cased short segment (`en-US → en`,
+  `pt-BR → pt`), so the tool stays language-agnostic with the real default
+  locale.
+
 ## [0.12.0] — 2026-06-03
 
 ### Fixed
