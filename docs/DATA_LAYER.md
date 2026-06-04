@@ -456,8 +456,6 @@ These are tracked in [`PLAN.md`](../PLAN.md) under the data-layer phase backlog.
 
 ## See also
 
-- [Spec](superpowers/specs/2026-05-24-data-layer-design.md) — original design document with goals, non-goals, and architectural rationale.
-- [Plan](superpowers/plans/2026-05-24-data-layer.md) — task-by-task implementation plan.
 - [`CONFIGURATION.md`](CONFIGURATION.md) — env-var reference.
 - [`EXTERNAL_STORAGE.md`](EXTERNAL_STORAGE.md) — S3, MinIO, and GCS output configuration.
 - [`USAGE.md`](USAGE.md) — `gflow data media` command reference.
