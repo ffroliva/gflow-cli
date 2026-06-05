@@ -2,22 +2,17 @@
 
 from __future__ import annotations
 
-import json
 from pathlib import Path
 
 import pytest
 
 from gflow_cli.errors import ConfigurationError
 from gflow_cli.movie_manifest import (
-    AssemblyDef,
-    CharacterDef,
     CharacterState,
     MovieManifest,
     MovieState,
-    SceneDef,
     SceneState,
 )
-
 
 # ---------------------------------------------------------------------------
 # Helpers
