@@ -29,9 +29,7 @@ def _write_toml(path: Path, content: str) -> Path:
     return path
 
 
-def _make_video_result(
-    *, succeeded: bool = True, flow_op_id: str | None = "op-1"
-) -> MagicMock:
+def _make_video_result(*, succeeded: bool = True, flow_op_id: str | None = "op-1") -> MagicMock:
     r = MagicMock()
     r.status.media_id = "media-1"
     r.status.succeeded = succeeded
@@ -222,19 +220,13 @@ class TestMovieRunValidation:
 
 
 class TestMovieRunLive:
-    def test_live_path_resolves_profile_and_calls_run_with_handlers(
-        self, tmp_path: Path
-    ) -> None:
+    def test_live_path_resolves_profile_and_calls_run_with_handlers(self, tmp_path: Path) -> None:
         runner = CliRunner()
         manifest = _write_toml(tmp_path / "movie.toml", _VALID_MANIFEST)
 
         with (
-            patch(
-                "gflow_cli.cli_movie._resolve_profile", return_value="default"
-            ) as mock_resolve,
-            patch(
-                "gflow_cli.cli_movie._make_provider_dir", return_value=tmp_path / "profile"
-            ),
+            patch("gflow_cli.cli_movie._resolve_profile", return_value="default") as mock_resolve,
+            patch("gflow_cli.cli_movie._make_provider_dir", return_value=tmp_path / "profile"),
             patch("gflow_cli.cli_movie.run_with_handlers") as mock_run,
         ):
             result = runner.invoke(cli_main, ["movie", "run", str(manifest)])
@@ -296,9 +288,7 @@ class TestCollectRefs:
 
         scene = SceneDef(title="S", type="r2v", prompt="x", characters=("Alice", "Bob"))
         state = MovieState(title="T", project="p")
-        state.characters["Alice"] = CharacterState(
-            entity_id="a", image_paths=["/a_face.png"]
-        )
+        state.characters["Alice"] = CharacterState(entity_id="a", image_paths=["/a_face.png"])
         state.characters["Bob"] = CharacterState(
             entity_id="b", image_paths=["/b_face.png", "/b_body.png"]
         )
@@ -560,9 +550,7 @@ class TestRunMovieOrchestrator:
             scenes=(SceneDef(title="S", type="t2v", prompt="x"),),
         )
         state = MovieState(title="T", project="p")
-        state.characters["Alice"] = CharacterState(
-            entity_id="ent-1", image_paths=["/face.png"]
-        )
+        state.characters["Alice"] = CharacterState(entity_id="ent-1", image_paths=["/face.png"])
         state_path = tmp_path / "state.json"
         mock_create = AsyncMock()
 
@@ -607,9 +595,7 @@ class TestCreateCharacter:
         mock_result.entity_id = "ent-1"
         mock_result.image_paths = [Path("/face.png"), None]
 
-        with patch(
-            "gflow_cli.cli_movie.character_create", new=AsyncMock(return_value=mock_result)
-        ):
+        with patch("gflow_cli.cli_movie.character_create", new=AsyncMock(return_value=mock_result)):
             await _create_character(
                 client=MagicMock(),
                 recorder=MagicMock(),
@@ -629,9 +615,7 @@ class TestCreateCharacter:
     async def test_with_body_prompt_saves_both_paths(self, tmp_path: Path) -> None:
         from gflow_cli.cli_movie import _create_character
 
-        char_def = CharacterDef(
-            name="Bob", face_prompt="grey beard", body_prompt="casual jacket"
-        )
+        char_def = CharacterDef(name="Bob", face_prompt="grey beard", body_prompt="casual jacket")
         state = MovieState(title="T", project="p")
         state_path = tmp_path / "state.json"
 
@@ -639,9 +623,7 @@ class TestCreateCharacter:
         mock_result.entity_id = "ent-2"
         mock_result.image_paths = [Path("/bob_face.png"), Path("/bob_body.png")]
 
-        with patch(
-            "gflow_cli.cli_movie.character_create", new=AsyncMock(return_value=mock_result)
-        ):
+        with patch("gflow_cli.cli_movie.character_create", new=AsyncMock(return_value=mock_result)):
             await _create_character(
                 client=MagicMock(),
                 recorder=MagicMock(),
