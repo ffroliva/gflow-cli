@@ -750,7 +750,7 @@ wheels = [
 
 [[package]]
 name = "gflow-cli"
-version = "0.12.0"
+version = "0.13.0"
 source = { editable = "." }
 dependencies = [
     { name = "click" },
