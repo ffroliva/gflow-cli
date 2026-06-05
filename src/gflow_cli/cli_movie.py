@@ -432,7 +432,15 @@ async def _create_character(
         face=face,
         body=body,
     )
-    image_paths: list[str | None] = [str(p) if p is not None else None for p in result.image_paths]
+    image_paths: list[str | None] = []
+    for p in result.image_paths:
+        if p is None:
+            image_paths.append(None)
+        elif hasattr(p, "as_posix"):
+            image_paths.append(p.as_posix())
+        else:
+            image_paths.append(str(p))
+
     state.characters[char_def.name] = CharacterState(
         entity_id=result.entity_id,
         image_paths=image_paths,
