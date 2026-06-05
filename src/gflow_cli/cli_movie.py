@@ -326,8 +326,10 @@ async def _run_movie(
                     console.print(
                         f"  [dim]Scene {scene_def.title!r} — already generated, skipping.[/dim]"
                     )
-                    if scene_state.flow_operation_id:
-                        completed_scene_ids.append(scene_state.flow_operation_id)
+                    # Use flow_operation_id if available, fallback to media_id
+                    sid = scene_state.flow_operation_id or scene_state.media_id
+                    if sid:
+                        completed_scene_ids.append(sid)
                     if scene_state.local_path:
                         completed_local_paths.append(Path(scene_state.local_path))
                     continue
@@ -359,8 +361,10 @@ async def _run_movie(
                     )
                     state.save(state_path)
                     console.print(f"    saved: {video_result.local_path}")
-                    if video_result.flow_operation_id:
-                        completed_scene_ids.append(video_result.flow_operation_id)
+                    # Use flow_operation_id if available, fallback to media_id
+                    sid = video_result.flow_operation_id or video_result.status.media_id
+                    if sid:
+                        completed_scene_ids.append(sid)
                     if video_result.local_path:
                         completed_local_paths.append(video_result.local_path)
 
