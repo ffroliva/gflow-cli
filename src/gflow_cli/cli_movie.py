@@ -16,6 +16,7 @@ A dry-run (``--dry-run``) prints the plan and credit estimate without spending.
 
 from __future__ import annotations
 
+import asyncio
 import sys
 from pathlib import Path
 from typing import Any
@@ -339,11 +340,11 @@ async def _run_movie(
                 )
                 refs = _collect_refs(scene_def, state)
 
-                # reCAPTCHA cooldown
-                if completed_scene_ids:
-                    await asyncio.sleep(5)
-
                 try:
+                    # reCAPTCHA cooldown between scenes — inside the try so any
+                    # failure here is handled per-scene and never aborts the run.
+                    if completed_scene_ids:
+                        await asyncio.sleep(5)
 
                     video_result = await _generate_scene(
                         client=client,
