@@ -1162,3 +1162,47 @@ git commit -m "feat(movie): compose prompts, generate-only + handoff, --stitch p
 **Placeholder scan:** No "TBD"/"handle edge cases"; every code step has full code. The only soft spot (`len(dialogue) > 2` soft-warning) is intentionally permissive per spec §6.1 and emitted upstream.
 
 **Type consistency:** `StyleSpec`/`Character`/`Scene`/`DialogueLine`/`compose_prompt`/`build_handoff`/`FRAMING` names are identical across Tasks 1-6 and the spec. `MovieManifest(style=, characters: dict, scenes: tuple, continuity=, schema_version=)` is consistent between Task 4 (definition) and Tasks 5-6 (usage). `SceneState` fields unchanged from `movie_manifest.py`. Resume key `scene.id` used consistently in Tasks 4 and 6.
+
+---
+
+## ⚠️ Council Review Fixes (MUST apply — these SUPERSEDE conflicting task text above)
+
+A 4-lens plan-review council audited this plan against the live codebase. Apply these corrections while executing.
+
+**C0 — Commit hygiene (all tasks):** The worktree root has untracked stray files (`movie.toml`, `clips*.txt`, `debug_*.py`, `get_ids.py`). **Never `git add -A` / `git add .`** — stage only the exact files each task lists. Test fixtures must be written under `tmp_path`, never the repo root.
+
+**C1 — Sequencing:** `src/gflow_cli/composition.py` does not exist yet. Tasks 1-3 create it; Task 4's tests therefore only fail "for the stated parser reason" once Tasks 1-3 are done. Execute strictly Task 1 → 6 in order.
+
+**C2 — Task 3 golden strings (BLOCKER): the implementation is canonical; the goldens were wrong.** `_sentence()` capitalizes the first letter of EVERY slot including ACTION. So fix the two assertions to match the impl:
+- `test_minimal_action_only`: `assert out == "Walks on the beach."` (capital W).
+- `test_full_canonical_order_and_precedence`: the expected string begins `"Stands on the shore. "` (capital S). Everything after the first word is already capitalized in the golden, so only these two leading words change.
+Do **not** change `_sentence`; the capitalized output is the contract.
+
+**C3 — Task 5 `jsonschema` dependency (do unconditionally):** `jsonschema` is NOT currently a dependency. Add `jsonschema>=4` to `[dependency-groups].dev` in `pyproject.toml`, then `.venv/Scripts/python.exe -m pip install jsonschema`, before running the handoff test.
+
+**C4 — Task 5 honor `GFLOW_CLI_HISTORY_PROMPTS` (spec §7.4 — was missing):** `build_handoff` must support prompt redaction without importing settings (keep it pure). Add a param `include_prompts: bool = True`; when `False`, each clip's `prompt` is omitted (set to `None`). The orchestrator (Task 6) computes `include_prompts = (get_settings().history_prompts == "store")` and passes it. Add a test:
+```python
+def test_build_handoff_redacts_prompt_when_disabled(tmp_path) -> None:
+    h = build_handoff(_FakeManifest(), _fake_state(), out_dir=Path("/out/x"), include_prompts=False)
+    assert h["clips"][0]["prompt"] is None
+```
+(Update the `build_handoff` signature in Task 5 Step 4 to `build_handoff(manifest, state, *, out_dir, version="0.14.0", include_prompts=True)` and gate the per-clip `"prompt"` value on it. The clip dict was not shown emitting `prompt` in Step 4 — add `"prompt": (composed_or_scene_prompt if include_prompts else None)` to the clip dict, sourcing the prompt the orchestrator stored on `SceneState` or recomputing via `compose_prompt`. Simplest: store the composed prompt on `SceneState` in Task 6 and read it here.)
+
+**C5 — Task 6 PIN the `_generate_scene` signature (removes the fork; P2 depends on this exact shape):**
+Compose the prompt AND (in P2) resolve references in `_run_movie`; pass them in. Freeze:
+```python
+async def _generate_scene(
+    *, client, recorder, scene: "Scene", prompt: str,
+    reference_entities: tuple[str, ...] = (), reference_audio: str | None = None,
+    profile_name, profile_dir, out_dir, project_id=None,
+): ...
+```
+In P1, `_run_movie` calls it with `prompt=compose_prompt(manifest.style, scene, manifest.characters)` and `reference_entities=()` (text identity). P2 fills `reference_entities`/`reference_audio`.
+
+**C6 — Task 6 REMOVE the old I2V branch and `_collect_refs`:** the new `Scene` has no `.type`, `.initial_frame`, `.end_frame`, `.count`-driven I2V. In `_generate_scene`, set `mode = Mode.R2V if scene.characters else Mode.T2V` (no I2V path — i2v/chaining is backlog). Delete the old `elif mode == Mode.I2V ...` block (it references removed fields → would `AttributeError`). Delete `_collect_refs` (it branches on `scene_def.type`) and its tests (`TestCollectRefs` in `tests/cli/test_cli_movie.py`).
+
+**C7 — Task 4 & 6 ENUMERATE the breaking tests to update IN THIS PLAN (blast radius is exactly two files):**
+- `tests/cli/test_movie_manifest.py`: rewrite all assertions to the new schema (`scene.id`/`action`/`framing`; new error messages `framing`/`speaker`/`per-character`; `MovieManifest(style=, characters={...}, scenes=(...))`).
+- `tests/cli/test_cli_movie.py`: migrate **every** `TestRunMovieOrchestrator` test AND the two P0-added tests (`test_two_scene_run_does_not_crash_on_cooldown`, `test_resume_generates_first_new_scene`) from `SceneDef(title=, type=, prompt=)` / `MovieManifest(characters=())` to `Scene(id=, action=, ...)` / `MovieManifest(style=StyleSpec(), characters={}, scenes=(Scene(...),))`. Delete `TestCollectRefs` (per C6). Update the `import` line (drop `CharacterDef, SceneDef`; add `from gflow_cli.composition import Character, Scene, StyleSpec`).
+
+**C8 — Task 6 PRESERVE the existing dry-run credit estimate:** the current `run` command already has `--dry-run` + `_print_plan` (with "Estimated credits"). Keep them; just update `_print_plan` to the new `Scene` fields (`scene.id`, `scene.framing`, `scene.characters`). The existing `--continue-on-error/--fail-fast` flag also already exists — keep it (satisfies spec §11).
