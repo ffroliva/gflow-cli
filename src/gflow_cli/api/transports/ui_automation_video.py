@@ -1183,12 +1183,16 @@ class VideoGenerationMixin:
         self,
         *,
         request: GenerateVideoRequest,
+        project_id: str | None = None,
         out_dir: Path | None = None,
         poll_timeout_s: float = 600.0,
         download: bool = True,
         on_started: VideoStartedCallback | None = None,
     ) -> VideoResult:
         """Generate ONE video by driving the Flow editor UI (T2V / I2V / R2V).
+
+        If ``project_id`` is provided, navigates to that project. Otherwise
+        creates a new one.
 
         Returns a `VideoResult` carrying both the terminal `VideoStatus` and the
         on-disk `local_path` (``None`` when ``download=False`` or the generation
@@ -1218,10 +1222,11 @@ class VideoGenerationMixin:
         async with self._generate_lock:
             return await self._generate_video_locked(
                 request,
-                out_dir,
-                poll_timeout_s,
-                download,
-                on_started,
+                project_id=project_id,
+                out_dir=out_dir,
+                poll_timeout_s=poll_timeout_s,
+                download=download,
+                on_started=on_started,
             )
 
     @staticmethod
@@ -1288,6 +1293,8 @@ class VideoGenerationMixin:
     async def _generate_video_locked(
         self,
         request: GenerateVideoRequest,
+        *,
+        project_id: str | None = None,
         out_dir: Path | None,
         poll_timeout_s: float,
         download: bool,
@@ -1342,7 +1349,7 @@ class VideoGenerationMixin:
 
         page: Page = self._page  # type: ignore[assignment]  # guarded in generate_video
 
-        await self._enter_editor(page, out_dir)
+        await self._enter_editor(page, out_dir, project_id=project_id)
         await VideoGenerationMixin._wait_video_editor_ready(page)
         # Dismiss any Flow changelog / "What's new" overlay that may be on top
         # of the editor before we click into mode-switch / settings / submit (#26).
@@ -1411,6 +1418,7 @@ class VideoGenerationMixin:
         status_captured, status_handler = VideoGenerationMixin._attach_status_response_listener(
             page,
         )
+        generate_resp: dict[str, Any] = {}
         try:
             await self._send_prompt(page, request.prompt, out_dir)
 
