@@ -130,7 +130,7 @@ def _dialogue_block(scene: Scene, characters: Mapping[str, Character]) -> str:
         v = voice_for(d)
         who = f"{d.speaker} ({v})" if v else d.speaker
         return f'{who} says: "{esc(d.line)}"'
-    rows = []
+    rows: list[str] = []
     for d in lines:
         v = voice_for(d)
         who = f"{d.speaker} ({v})" if v else d.speaker
