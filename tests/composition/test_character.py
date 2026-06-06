@@ -1,6 +1,6 @@
 import pytest
 
-from gflow_cli.composition import Character, StyleSpec
+from gflow_cli.composition import FRAMING, Character, DialogueLine, Scene, StyleSpec
 
 
 def test_style_spec_all_optional() -> None:
@@ -27,3 +27,17 @@ def test_character_resolve_unknown_variant_raises() -> None:
 def test_character_resolve_variant_no_appearance() -> None:
     c = Character(name="Stickman", variants={"white": "solid white lines"})
     assert c.resolve_variant("white") == "solid white lines"
+
+
+def test_framing_vocabulary_members() -> None:
+    assert "close-up" in FRAMING and "wide" in FRAMING and "establishing" in FRAMING
+
+
+def test_scene_defaults() -> None:
+    s = Scene(id="s1", action="walks")
+    assert s.characters == () and s.dialogue == () and s.aspect == "16:9"
+
+
+def test_dialogue_line() -> None:
+    d = DialogueLine(speaker="Stickman", line="hi", voice="warm")
+    assert d.speaker == "Stickman" and d.line == "hi" and d.voice == "warm"
