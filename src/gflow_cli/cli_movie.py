@@ -602,6 +602,7 @@ async def _generate_scene(
         model=model,
         duration=scene.duration,
         count=scene.count,
+        reference_entities=reference_entities,
     )
 
     def on_started(started: VideoStarted) -> None:

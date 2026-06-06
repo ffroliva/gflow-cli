@@ -245,7 +245,7 @@ class GenerateVideoRequest:
                 msg = "I2V request requires start_image"
                 raise ValueError(msg)
             if self.reference_images or self.reference_entities:
-                msg = "I2V request must not carry reference_images"
+                msg = "I2V request must not carry reference_images or reference_entities"
                 raise ValueError(msg)
         if self.mode is Mode.R2V:
             if not self.reference_images and not self.reference_entities:
