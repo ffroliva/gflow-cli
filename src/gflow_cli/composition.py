@@ -9,7 +9,8 @@ the reusable seam a future second consumer (e.g. remotion) can import.
 from __future__ import annotations
 
 from dataclasses import dataclass, field
-from typing import Mapping
+from pathlib import Path
+from typing import Any, Mapping, cast
 
 
 @dataclass(frozen=True)
@@ -206,3 +207,100 @@ def compose_prompt(
         parts.append(f"Avoid: {', '.join(negs)}.")
 
     return " ".join(p for p in parts if p)
+
+
+def build_handoff(
+    manifest: Any,
+    state: Any,
+    *,
+    out_dir: Path,
+    version: str = "0.14.0",
+    include_prompts: bool = True,
+) -> dict[str, Any]:
+    """Project a completed/partial movie run into the versioned handoff manifest.
+
+    Pure: derives entirely from ``manifest`` (MovieManifest) + ``state``
+    (MovieState). Paths are made relative to ``out_dir`` and POSIX-normalized.
+    Flow-internal ids go under ``x_gflow``. No signed URLs / tokens / PII ever
+    enter the output. When ``include_prompts`` is ``False`` each clip's
+    ``prompt`` is set to ``None`` (honors GFLOW_CLI_HISTORY_PROMPTS upstream).
+    """
+    out = Path(out_dir)
+
+    def rel(p: str | None) -> str | None:
+        if not p:
+            return None
+        path = Path(p)
+        try:
+            return path.relative_to(out).as_posix()
+        except ValueError:
+            return path.name
+
+    style_fields = cast("dict[str, Any]", vars(manifest.style))
+    style_out: dict[str, Any] = {k: v for k, v in style_fields.items() if v}
+
+    chars_out: list[dict[str, Any]] = []
+    for c in manifest.characters.values():
+        chars_out.append(
+            {
+                "name": c.name,
+                "identity": c.identity,
+                "voice": c.voice,
+                "x_gflow": {},  # entity_id added in P2
+            }
+        )
+
+    clips: list[dict[str, Any]] = []
+    total = 0.0
+    for index, scene in enumerate(manifest.scenes):
+        ss = state.scenes.get(scene.id)
+        status = ss.status if ss else "failed"
+        dur = float(scene.duration) if scene.duration else None
+        if dur:
+            total += dur
+
+        prompt_val: str | None = None
+        if include_prompts:
+            stored = getattr(ss, "prompt", None) if ss else None
+            prompt_val = stored or compose_prompt(manifest.style, scene, manifest.characters)
+
+        clips.append(
+            {
+                "id": scene.id,
+                "index": index,
+                "file": rel(ss.local_path) if ss else None,
+                "duration_seconds": dur,
+                "framing": scene.framing,
+                "characters": list(scene.characters),
+                "consistency_method": "text",  # P2 sets entity/degraded
+                "dialogue": [
+                    {"speaker": d.speaker, "line": d.line, "voice": d.voice}
+                    for d in scene.dialogue
+                ],
+                "prompt": prompt_val,
+                "status": status,
+                "x_gflow": {
+                    k: v
+                    for k, v in (
+                        ("media_id", ss.media_id if ss else None),
+                        ("operation_id", ss.flow_operation_id if ss else None),
+                        ("project_id", manifest.project),
+                    )
+                    if v
+                },
+            }
+        )
+
+    return {
+        "schema_version": 1,
+        "generator": {"name": "gflow-cli", "version": version},
+        "movie": {
+            "title": manifest.title,
+            "output_dir": ".",
+            "total_duration_seconds": total,
+        },
+        "style": style_out,
+        "characters": chars_out,
+        "clips": clips,
+        "stitch": {"performed": False, "output": None},
+    }
