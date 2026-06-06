@@ -997,7 +997,10 @@ class TestI2vT2vRoutingBackstop:
 
 class TestAttachCharacterEntities:
     @pytest.mark.asyncio
-    async def test_attach_character_entities_uses_personagens_and_include(self) -> None:
+    async def test_attach_character_entities_searches_by_name_and_includes(self) -> None:
+        """_attach_character_entities fills the search box with the display name
+        (not a UUID) and clicks 'Incluir no comando'.  The Personagens tab is NOT
+        clicked first — live e2e (2026-06-06) showed it removes the search input."""
         page = MagicMock()
         loc = MagicMock()
         loc.first = loc
@@ -1010,9 +1013,12 @@ class TestAttachCharacterEntities:
         await VideoGenerationMixin._attach_character_entities(page, ["Stickman"], out_dir=None)
 
         selectors = " ".join(str(c.args[0]) for c in page.locator.call_args_list)
-        assert "accessibility_new" in selectors   # Personagens tab
+        # The search box is used to surface the character tile by name.
         assert "add-menu-input" in selectors      # search box
+        assert "Stickman" in selectors            # name used in tile selector
         assert "Incluir no comando" in selectors  # include button
+        # The Personagens tab must NOT be clicked first (it removes the search input).
+        assert "accessibility_new" not in selectors
 
 
 class TestAssertEntitiesAttached:

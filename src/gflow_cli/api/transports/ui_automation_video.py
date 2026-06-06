@@ -1166,13 +1166,18 @@ class VideoGenerationMixin:
             await add.wait_for(state="visible", timeout=8000)
             await add.click()
             await page.wait_for_timeout(800)
-            await page.locator(PICKER_PERSONAGENS_TAB).first.click()
-            await page.wait_for_timeout(400)
-            await page.locator(PICKER_SEARCH_INPUT).first.fill(name)
-            await page.wait_for_timeout(600)
+            # Search on the default (Recentes/Tudo) view — the search box is
+            # present there and surfaces character resources by name. Clicking the
+            # Personagens tab FIRST removes the search input (live e2e 2026-06-06),
+            # so we search directly instead of switching tabs.
+            search = page.locator(PICKER_SEARCH_INPUT).first
+            await search.wait_for(state="visible", timeout=15000)
+            await search.fill(name)
+            await page.wait_for_timeout(900)
             tile = page.locator(
                 f"button:has-text('{name}'), [role='option']:has-text('{name}')"
             ).first
+            await tile.wait_for(state="visible", timeout=8000)
             await tile.click()
             await page.wait_for_timeout(300)
             await page.locator(PICKER_INCLUDE_BUTTON).first.click()
@@ -1499,7 +1504,9 @@ class VideoGenerationMixin:
         elif request.mode is Mode.R2V:
             if request.reference_entities:
                 await VideoGenerationMixin._attach_character_entities(
-                    page, list(request.reference_entities), out_dir=out_dir
+                    page,
+                    list(request.reference_entity_names or request.reference_entities),
+                    out_dir=out_dir,
                 )
             if request.reference_images:
                 await VideoGenerationMixin._attach_references(
