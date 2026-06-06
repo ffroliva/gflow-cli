@@ -968,6 +968,11 @@ class UiAutomationTransport(VideoGenerationMixin):
         wins. The text input is cleared first (Slate.js requires real
         keyboard events — ``.fill()`` bypasses onChange handlers).
 
+        A staged R2V character entity is NOT affected by the clear: 'Incluir no
+        comando' stages it in a separate references drawer, not as a chip inside
+        this prompt box (verified 2026-06-06), so the entity still rides the
+        submit.
+
         Submission is preferred via the Create button; if no submit
         button is visible, Enter is pressed as a fallback.
 

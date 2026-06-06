@@ -294,6 +294,18 @@ PICKER_VOZES_TAB = (
     " button:has(i.google-symbols:text-is('voice_selection'))"
 )
 PICKER_INCLUDE_BUTTON = "button:has-text('Incluir no comando')"
+# Context-menu 'Incluir no comando' shown on RIGHT-CLICK of a Personagens entity
+# tile. This is what stages a `referenceEntity` (the inline Tudo button instead
+# stages a `referenceImage` of the thumbnail). Verified 2026-06-06.
+PICKER_CONTEXT_INCLUDE = (
+    "[role='menuitem']:has-text('Incluir no comando'),"
+    " button:has-text('Incluir no comando')"
+)
+# The picker grid is virtualised (react-virtuoso): off-screen tiles are not in
+# the DOM. When the target entity tile is not initially rendered, scroll the grid
+# in steps until it appears (or we exhaust the attempts).
+PICKER_GRID_SCROLL_ATTEMPTS = 12
+PICKER_GRID_SCROLL_DELTA_PX = 500
 VIDEO_SUBMODE_SELECTORS: dict[str, tuple[str, ...]] = {
     # I2V — "frames" (start + optional end frame). Icon: crop_free.
     "frames": (
@@ -1150,39 +1162,88 @@ class VideoGenerationMixin:
             log.info("ui_automation_video.reference_attached", index=i)
 
     @staticmethod
+    async def _scroll_picker_grid(page: Page, delta_px: int = PICKER_GRID_SCROLL_DELTA_PX) -> None:
+        """Wheel-scroll the open resource picker down one step. The Tudo grid is
+        virtualised, so off-screen tiles are absent from the DOM until scrolled
+        into view. Hover the dialog first so the wheel targets the grid."""
+        dialog = page.locator("[role='dialog']").last
+        try:
+            await dialog.hover(timeout=2000)
+        except Exception:  # noqa: BLE001 - hover is best-effort; wheel still scrolls
+            pass
+        await page.mouse.wheel(0, delta_px)
+        await page.wait_for_timeout(350)
+
+    @staticmethod
+    async def _find_picker_entity_tile(page: Page, entity_id: str) -> Locator:
+        """Locate the Personagens-tab tile for a character entity. Each tile is
+        keyed by the entity id as `data-tile-id="fe_id_<entityId>"` (exact — no
+        display-name ambiguity). Scroll the grid until it renders, then return
+        the locator (the caller still waits for visibility)."""
+        tile = page.locator(f"[data-tile-id='fe_id_{entity_id}']").first
+        for _ in range(PICKER_GRID_SCROLL_ATTEMPTS):
+            if await tile.count():
+                break
+            await VideoGenerationMixin._scroll_picker_grid(page)
+        return tile
+
+    @staticmethod
     async def _attach_character_entities(
         page: Page,
-        names: list[str],
+        entities: list[tuple[str, str]],
         *,
         out_dir: Path | None,
     ) -> None:
-        """R2V: attach each named character via the resource picker
-        (Personagens -> select -> 'Incluir no comando'), injecting referenceEntities.
-        Runs on the open composer page in references sub-mode. Selection is by
-        display name; the submit-time backstop verifies the right entity rode.
+        """R2V: attach each character as a `referenceEntity` via the resource
+        picker's Personagens tab.
+
+        Mechanism (verified credit-free via route-abort payload capture,
+        2026-06-06): open 'Add Media' -> Personagens tab -> RIGHT-CLICK the entity
+        tile -> context-menu 'Incluir no comando'. This stages
+        `referenceEntities:[{entityId}]` on the submit payload. A LEFT-click on a
+        Tudo-tab tile + the inline 'Incluir' button instead stages a plain
+        `referenceImage` (the character thumbnail) — which the submit backstop
+        (`_assert_entities_attached`) correctly rejects. A plain left-click on the
+        Personagens tile navigates into the character editor (it is an
+        `<a href=.../character/...>`), hence the right-click.
+
+        `entities` is a list of `(entity_id, display_name)` pairs. Tiles are
+        addressed by entity id (`data-tile-id="fe_id_<entityId>"`), so selection
+        is unambiguous even when several characters share a display name.
         """
-        for name in names:
+        for entity_id, name in entities:
             add = page.locator(ADD_MEDIA_BUTTON).first
             await add.wait_for(state="visible", timeout=8000)
             await add.click()
             await page.wait_for_timeout(800)
-            # Search on the default (Recentes/Tudo) view — the search box is
-            # present there and surfaces character resources by name. Clicking the
-            # Personagens tab FIRST removes the search input (live e2e 2026-06-06),
-            # so we search directly instead of switching tabs.
-            search = page.locator(PICKER_SEARCH_INPUT).first
-            await search.wait_for(state="visible", timeout=15000)
-            await search.fill(name)
-            await page.wait_for_timeout(900)
-            tile = page.locator(
-                f"button:has-text('{name}'), [role='option']:has-text('{name}')"
-            ).first
+            ptab = page.locator(PICKER_PERSONAGENS_TAB).first
+            await ptab.wait_for(state="visible", timeout=8000)
+            await ptab.click()
+            await page.wait_for_timeout(700)
+            tile = await VideoGenerationMixin._find_picker_entity_tile(page, entity_id)
             await tile.wait_for(state="visible", timeout=8000)
-            await tile.click()
-            await page.wait_for_timeout(300)
-            await page.locator(PICKER_INCLUDE_BUTTON).first.click()
+            await tile.scroll_into_view_if_needed(timeout=8000)
+            await tile.click(button="right")
+            await page.wait_for_timeout(400)
+            include = page.locator(PICKER_CONTEXT_INCLUDE).first
+            try:
+                await include.wait_for(state="visible", timeout=8000)
+            except Exception as e:
+                shot = await _capture_debug_screenshot(
+                    page, out_dir, "debug_entity_ctx_menu.png"
+                )
+                msg = (
+                    f"character {name!r} ({entity_id}) context-menu 'Incluir no "
+                    f"comando' did not appear after right-click. Screenshot: {shot}"
+                )
+                raise RuntimeError(msg) from e
+            await include.click()
             await page.wait_for_timeout(600)
-            log.info("ui_automation_video.character_entity_attached", name=name)
+            log.info(
+                "ui_automation_video.character_entity_attached",
+                name=name,
+                entity_id=entity_id,
+            )
 
     @staticmethod
     async def _attach_reference_audio(
@@ -1211,17 +1272,37 @@ class VideoGenerationMixin:
 
     @staticmethod
     def _assert_entities_attached(generate_resp: dict[str, Any], *, expected: list[str]) -> None:
-        """Defense-in-depth: confirm referenceEntities actually rode the wire.
+        """Defense-in-depth: confirm the character entities actually rode the wire.
 
-        REST transports silently drop unknown DTO fields; a UI miss would degrade
-        to a text/image-only clip reported as success. Raise loudly instead.
+        A UI attach miss would degrade to a text/image-only clip reported as a
+        success. Raise loudly instead.
+
+        The captured SUBMIT *response* echoes the accepted entities at:
+
+            media[].mediaMetadata.requestData.videoGenerationRequestData
+                  .videoGenerationEntityInputs[].entityId
+
+        NOT ``requests[].referenceEntities`` — that is the *request* shape; the
+        response re-keys it (verified against a live capture, 2026-06-06; an
+        earlier version checked the request path against the response body and
+        false-rejected every successful entity generation). The request-shape
+        path is still accepted so the check also works against a request body.
         """
         if not expected:
             return
         body = cast("dict[str, Any]", generate_resp.get("body") or {})
-        reqs = cast("list[dict[str, Any]]", body.get("requests") or [])
         got: list[str] = []
-        for r in reqs:
+        # Response shape (the live one): media[] -> ...videoGenerationEntityInputs.
+        for media in cast("list[dict[str, Any]]", body.get("media") or []):
+            meta = cast("dict[str, Any]", media.get("mediaMetadata") or {})
+            req_data = cast("dict[str, Any]", meta.get("requestData") or {})
+            vgrd = cast("dict[str, Any]", req_data.get("videoGenerationRequestData") or {})
+            for e in cast("list[dict[str, Any]]", vgrd.get("videoGenerationEntityInputs") or []):
+                entity_id = cast("str | None", e.get("entityId"))
+                if entity_id:
+                    got.append(entity_id)
+        # Request shape (fallback): requests[].referenceEntities.
+        for r in cast("list[dict[str, Any]]", body.get("requests") or []):
             for e in cast("list[dict[str, Any]]", r.get("referenceEntities") or []):
                 entity_id = cast("str | None", e.get("entityId"))
                 if entity_id:
@@ -1230,8 +1311,9 @@ class VideoGenerationMixin:
         if missing:
             raise WireFormatError(
                 detail=(
-                    f"referenceEntities not in submit payload (expected {expected}, "
-                    f"got {got}); entity attach failed - refusing to report success"
+                    f"character entities not echoed in submit response (expected "
+                    f"{expected}, got {got}); entity attach failed - refusing to "
+                    f"report success"
                 ),
                 route="video:batchAsyncGenerateVideoReferenceImages",
             )
@@ -1503,9 +1585,14 @@ class VideoGenerationMixin:
                 )
         elif request.mode is Mode.R2V:
             if request.reference_entities:
+                names = request.reference_entity_names or request.reference_entities
+                entities = [
+                    (entity_id, names[i] if i < len(names) else entity_id)
+                    for i, entity_id in enumerate(request.reference_entities)
+                ]
                 await VideoGenerationMixin._attach_character_entities(
                     page,
-                    list(request.reference_entity_names or request.reference_entities),
+                    entities,
                     out_dir=out_dir,
                 )
             if request.reference_images:
