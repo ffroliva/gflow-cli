@@ -127,6 +127,7 @@ markers = [
 dev = [
     "av>=12",
     "detect-secrets>=1.5.0",
+    "jsonschema>=4",
     "numpy>=1.24",
     "pillow>=12.2.0",
     "pyright>=1.1.409",

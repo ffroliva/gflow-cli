@@ -394,6 +394,7 @@ class SceneState:
     flow_operation_id: str | None
     local_path: str | None
     status: str  # "completed" | "failed"
+    prompt: str | None = None  # composed Veo prompt (for handoff projection)
 
     def to_dict(self) -> dict[str, object]:
         return {
@@ -401,17 +402,20 @@ class SceneState:
             "flow_operation_id": self.flow_operation_id,
             "local_path": self.local_path,
             "status": self.status,
+            "prompt": self.prompt,
         }
 
     @classmethod
     def from_dict(cls, d: dict[str, object]) -> SceneState:
         raw_op_id = d.get("flow_operation_id")
         raw_path = d.get("local_path")
+        raw_prompt = d.get("prompt")
         return cls(
             media_id=str(d.get("media_id") or ""),
             flow_operation_id=str(raw_op_id) if isinstance(raw_op_id, str) else None,
             local_path=str(raw_path) if isinstance(raw_path, str) else None,
             status=str(d.get("status") or "completed"),
+            prompt=str(raw_prompt) if isinstance(raw_prompt, str) else None,
         )
 
 
