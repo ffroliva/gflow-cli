@@ -8,9 +8,10 @@ the reusable seam a future second consumer (e.g. remotion) can import.
 
 from __future__ import annotations
 
+from collections.abc import Mapping
 from dataclasses import dataclass, field
 from pathlib import Path
-from typing import Any, Mapping, cast
+from typing import Any, cast
 
 
 @dataclass(frozen=True)
@@ -161,7 +162,9 @@ def compose_prompt(
         c = characters.get(name)
         if c is None:
             continue
-        subj = c.resolve_variant(scene.variant) if len(scene.characters) == 1 else (c.appearance or "")
+        subj = (
+            c.resolve_variant(scene.variant) if len(scene.characters) == 1 else (c.appearance or "")
+        )
         if subj:
             subjects.append(subj)
     if subjects:
@@ -274,8 +277,7 @@ def build_handoff(
                 "characters": list(scene.characters),
                 "consistency_method": "text",  # P2 sets entity/degraded
                 "dialogue": [
-                    {"speaker": d.speaker, "line": d.line, "voice": d.voice}
-                    for d in scene.dialogue
+                    {"speaker": d.speaker, "line": d.line, "voice": d.voice} for d in scene.dialogue
                 ],
                 "prompt": prompt_val,
                 "status": status,

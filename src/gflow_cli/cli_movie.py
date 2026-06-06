@@ -1,23 +1,29 @@
 """`gflow movie` — produce a multi-scene AI movie from a movie.toml project file.
 
-Orchestrates three phases in a single browser session:
+A movie.toml describes a film with a global ``[style]``, reusable
+``[[characters]]`` (text identity in P1), and an ordered list of ``[[scenes]]``
+where **one scene = one clip = one generation**. The runner:
 
-  1. **Characters** — create any :class:`CharacterDef` not yet present in the
-     run-state file (``<manifest>-state.json``), reusing existing ones on resume.
-  2. **Scenes** — generate each :class:`SceneDef` using the appropriate mode
-     (t2v / r2v / i2v).  For ``r2v`` scenes the character's face + body images
-     are auto-injected as ``--ref`` inputs.
-  3. **Assembly hint** — print a ready-to-run ``gflow scene create`` command to
-     stitch all completed clips, or execute it automatically when
-     ``[assemble] output = "..."`` is set in the manifest.
+  1. Composes each scene's Veo prompt deterministically from the style +
+     characters + scene fields (see :mod:`gflow_cli.composition`).
+  2. Generates each clip in order (T2V, or R2V when the scene names characters),
+     persisting crash-recoverable state keyed on ``scene.id``.
+  3. Writes a versioned ``<stem>-handoff.json`` manifest (a pure projection of
+     the run state) that a downstream editor / assembler can consume.
 
-A dry-run (``--dry-run``) prints the plan and credit estimate without spending.
+By default the run is **generate-only**. Pass ``--stitch`` for an optional
+ffmpeg hard-concat *preview* (no transitions, not a deliverable). A dry-run
+(``--dry-run``) prints the plan and credit estimate without spending.
 """
 
 from __future__ import annotations
 
 import asyncio
+import json
+import shutil
+import subprocess
 import sys
+import tempfile
 from pathlib import Path
 from typing import Any
 
@@ -26,22 +32,18 @@ import structlog
 from rich.console import Console
 
 from gflow_cli._cli_helpers import _make_provider_dir, _resolve_profile, run_with_handlers
-from gflow_cli.api.character import CharacterImageRequest
 from gflow_cli.api.client import FlowApiClient
 from gflow_cli.api.video import Aspect, GenerateVideoRequest, Mode, VideoModel, VideoStarted
+from gflow_cli.composition import Scene, build_handoff, compose_prompt
 from gflow_cli.config import get_settings
 from gflow_cli.data.recorder import OperationRecorder
 from gflow_cli.errors import ConfigurationError, DataStoreError
 from gflow_cli.movie_manifest import (
-    CharacterDef,
-    CharacterState,
     MovieManifest,
     MovieState,
-    SceneDef,
     SceneState,
 )
 from gflow_cli.paths import resolve_batch_output_dir
-from gflow_cli.services.character_create import character_create
 from gflow_cli.storage import cloud_info_from_path
 
 console = Console()
@@ -52,45 +54,51 @@ log = structlog.get_logger(__name__)
 # ---------------------------------------------------------------------------
 
 _TEMPLATE = """\
-# movie.toml — gflow movie project
+# movie.toml — gflow movie project (scene = clip)
 # Run with: gflow movie run movie.toml
+schema_version = 1
 title = "My Short Film"
 project = "YOUR_FLOW_PROJECT_ID"
 output_dir = "./out/my-movie"  # optional
 
+[style]
+look = "cinematic, shallow depth of field"
+palette = "warm golden tones"
+negative = "no text, no watermark"
+
 [[characters]]
 name = "Alice"
-face_prompt = "Young woman with curly red hair, green eyes, warm smile"
-body_prompt = "Athletic build, casual jeans and light jacket"  # optional
-model = "nano2"  # nano2 (default) or nanopro
+appearance = "Young woman with curly red hair, green eyes, warm smile"
+voice = "alnilam"  # optional voice preset (P2)
+  [characters.variants]
+  silhouette = "shown only in silhouette"
 
 [[scenes]]
-title = "Establishing Shot"
-type = "t2v"
-prompt = "Futuristic city skyline at golden hour, cinematic wide shot"
+id = "establishing"
+action = "A futuristic city skyline at golden hour"
+framing = "establishing"
 aspect = "16:9"
 duration = 8
 model = "veo-lite"
 
 [[scenes]]
-title = "Character Arrives"
-type = "r2v"
-prompt = "Alice walks through a busy futuristic plaza, looking around with wonder"
+id = "arrival"
+action = "walks through a busy futuristic plaza, looking around with wonder"
+framing = "wide"
 characters = ["Alice"]
 aspect = "16:9"
 duration = 8
 
 [[scenes]]
-title = "Close-Up"
-type = "r2v"
-prompt = "Close-up of Alice's face as she smiles with excitement"
+id = "close-up"
+action = "smiles with excitement"
+framing = "close-up"
 characters = ["Alice"]
+speaker = "Alice"
+line = "We made it!"
 aspect = "16:9"
 duration = 6
 model = "veo-quality"
-
-[assemble]
-output = "./out/my-movie/final.mp4"
 """
 
 # ---------------------------------------------------------------------------
@@ -114,7 +122,7 @@ def movie() -> None:
 def template(output: Path, force: bool) -> None:
     """Write a starter movie.toml to OUTPUT (default: ./movie.toml).
 
-    Edit the file to define your characters and scenes, then run:
+    Edit the file to define your style, characters, and scenes, then run:
 
     \b
       gflow movie run movie.toml
@@ -161,25 +169,37 @@ def template(output: Path, force: bool) -> None:
         "--fail-fast stops immediately."
     ),
 )
+@click.option(
+    "--stitch",
+    is_flag=True,
+    default=False,
+    help=(
+        "After generating, hard-concat all clips into one PREVIEW mp4 "
+        "(ffmpeg, no transitions). Not a deliverable."
+    ),
+)
 def run(
     manifest_path: Path,
     profile: str | None,
     out_dir_override: Path | None,
     dry_run: bool,
     continue_on_error: bool,
+    stitch: bool,
 ) -> None:
-    """Execute a movie.toml — create characters and generate all scenes.
+    """Execute a movie.toml — compose prompts and generate every scene.
 
-    On the first run every character and scene is created from scratch.
-    On subsequent runs the sibling <manifest>-state.json is consulted and
-    already-completed steps are skipped, making the command safe to re-run
-    after a crash or interruption.
+    On the first run every scene is generated from scratch. On subsequent runs
+    the sibling <manifest>-state.json is consulted (keyed on scene.id) and
+    already-completed scenes are skipped, making the command safe to re-run
+    after a crash or interruption. A versioned handoff manifest is always
+    written at the end.
 
     \b
     Examples:
       gflow movie run movie.toml
       gflow movie run movie.toml --dry-run
       gflow movie run movie.toml --fail-fast --out-dir ./out/film1
+      gflow movie run movie.toml --stitch
     """
     manifest_path = manifest_path.expanduser().resolve()
     try:
@@ -215,6 +235,7 @@ def run(
             profile_dir=pdir,
             out_dir=out_dir,
             continue_on_error=continue_on_error,
+            stitch=stitch,
         ),
         cli_command="movie run",
     )
@@ -236,39 +257,31 @@ def _print_header(manifest: MovieManifest, *, out_dir: Path, dry_run: bool) -> N
 def _print_plan(manifest: MovieManifest, state: MovieState) -> None:
     console.print("\n[bold]Plan:[/bold]")
 
-    # Characters
+    # Characters (text identity in P1 — no credits)
     if manifest.characters:
         console.print("\n  Characters:")
-        char_credits = 0
-        for c in manifest.characters:
-            done = c.name in state.characters
-            slots = 2 if c.body_prompt else 1
-            char_credits += 0 if done else slots
-            status = "[dim]skip (exists)[/dim]" if done else f"{slots} credit(s)"
-            console.print(f"    {c.name!r}  {status}")
+        for name, c in manifest.characters.items():
+            console.print(f"    {name!r}  [dim]({c.identity})[/dim]")
     else:
         console.print("\n  Characters: [dim]none[/dim]")
-        char_credits = 0
 
     # Scenes
     console.print("\n  Scenes:")
     scene_credits = 0
     for s in manifest.scenes:
-        done_state = state.scenes.get(s.title)
+        done_state = state.scenes.get(s.id)
         done = done_state is not None and done_state.status == "completed"
-        cost = 0 if done else s.count
+        cost = 0 if done else 1
         scene_credits += cost
+        mode = "r2v" if s.characters else "t2v"
         refs = f"  refs=[{', '.join(s.characters)}]" if s.characters else ""
-        status = "[dim]skip (done)[/dim]" if done else f"{cost} credit(s)"
+        framing_tag = f"  {s.framing}" if s.framing else ""
         model_tag = f"  {s.model}" if s.model else ""
         dur_tag = f"  {s.duration}s" if s.duration else ""
-        console.print(f"    [{s.type}] {s.title!r}{model_tag}{dur_tag}{refs}  {status}")
+        status = "[dim]skip (done)[/dim]" if done else f"{cost} credit(s)"
+        console.print(f"    [{mode}] {s.id!r}{framing_tag}{model_tag}{dur_tag}{refs}  {status}")
 
-    total = char_credits + scene_credits
-    console.print(f"\n  Estimated credits: ~{total}")
-
-    if manifest.assemble and manifest.assemble.output:
-        console.print(f"\n  Assembly → {manifest.assemble.output}")
+    console.print(f"\n  Estimated credits: ~{scene_credits}")
 
 
 # ---------------------------------------------------------------------------
@@ -285,78 +298,53 @@ async def _run_movie(
     profile_dir: Path,
     out_dir: Path,
     continue_on_error: bool,
+    stitch: bool = False,
 ) -> None:
     settings = get_settings()
     recorder = OperationRecorder.open(settings)
+    include_prompts = getattr(settings, "history_prompts", "store") == "store"
+
+    completed_local_paths: list[Path] = []
 
     try:
         async with FlowApiClient(profile_dir=profile_dir, out_dir=out_dir) as client:
             # ------------------------------------------------------------------
-            # Phase 1: Characters
+            # Scenes — one scene = one clip = one generation
             # ------------------------------------------------------------------
-            if manifest.characters:
-                console.print("\n[bold]Phase 1 — Characters[/bold]")
-            for char_def in manifest.characters:
-                if char_def.name in state.characters:
-                    console.print(
-                        f"  [dim]Character {char_def.name!r} — already created, skipping.[/dim]"
-                    )
-                    continue
-                console.print(f"\n  Creating character [bold]{char_def.name}[/bold]…")
-                await _create_character(
-                    client=client,
-                    recorder=recorder,
-                    char_def=char_def,
-                    project_id=manifest.project,
-                    profile_name=profile_name,
-                    profile_dir=profile_dir,
-                    state=state,
-                    state_path=state_path,
-                )
+            console.print("\n[bold]Scenes[/bold]")
+            generated_any = False
 
-            # ------------------------------------------------------------------
-            # Phase 2: Scenes
-            # ------------------------------------------------------------------
-            console.print("\n[bold]Phase 2 — Scenes[/bold]")
-            completed_scene_ids: list[str] = []
-            completed_local_paths: list[Path] = []
-
-            for scene_def in manifest.scenes:
-                scene_state = state.scenes.get(scene_def.title)
+            for scene in manifest.scenes:
+                scene_state = state.scenes.get(scene.id)
                 if scene_state is not None and scene_state.status == "completed":
-                    console.print(
-                        f"  [dim]Scene {scene_def.title!r} — already generated, skipping.[/dim]"
-                    )
-                    # Use flow_operation_id if available, fallback to media_id
-                    sid = scene_state.flow_operation_id or scene_state.media_id
-                    if sid:
-                        completed_scene_ids.append(sid)
+                    console.print(f"  [dim]Scene {scene.id!r} — already generated, skipping.[/dim]")
                     if scene_state.local_path:
                         completed_local_paths.append(Path(scene_state.local_path))
+                    generated_any = True
                     continue
 
-                console.print(
-                    f"\n  Generating scene [bold]{scene_def.title!r}[/bold] ({scene_def.type})…"
-                )
-                refs = _collect_refs(scene_def, state)
+                console.print(f"\n  Generating scene [bold]{scene.id!r}[/bold]…")
+                prompt = compose_prompt(manifest.style, scene, manifest.characters)
 
                 try:
                     # reCAPTCHA cooldown between scenes — inside the try so any
                     # failure here is handled per-scene and never aborts the run.
-                    if completed_scene_ids:
+                    if generated_any:
                         await asyncio.sleep(5)
 
                     video_result = await _generate_scene(
                         client=client,
                         recorder=recorder,
-                        scene_def=scene_def,
-                        refs=refs,
+                        scene=scene,
+                        prompt=prompt,
+                        reference_entities=(),  # P1 text identity; P2 fills these
+                        reference_audio=None,
                         profile_name=profile_name,
                         profile_dir=profile_dir,
                         out_dir=out_dir,
                         project_id=manifest.project,
                     )
-                    state.scenes[scene_def.title] = SceneState(
+                    state.scenes[scene.id] = SceneState(
                         media_id=video_result.status.media_id,
                         flow_operation_id=video_result.flow_operation_id,
                         local_path=(
@@ -365,28 +353,27 @@ async def _run_movie(
                             else None
                         ),
                         status="completed",
+                        prompt=prompt,
                     )
                     state.save(state_path)
                     console.print(f"    saved: {video_result.local_path}")
-                    # Use flow_operation_id if available, fallback to media_id
-                    sid = video_result.flow_operation_id or video_result.status.media_id
-                    if sid:
-                        completed_scene_ids.append(sid)
                     if video_result.local_path:
                         completed_local_paths.append(video_result.local_path)
+                    generated_any = True
 
                 except Exception as exc:
                     log.error(
                         "movie.scene_failed",
-                        title=scene_def.title,
+                        scene_id=scene.id,
                         error=str(exc),
                         exc_info=True,
                     )
-                    state.scenes[scene_def.title] = SceneState(
+                    state.scenes[scene.id] = SceneState(
                         media_id="",
                         flow_operation_id=None,
                         local_path=None,
                         status="failed",
+                        prompt=prompt,
                     )
                     state.save(state_path)
                     if continue_on_error:
@@ -396,71 +383,28 @@ async def _run_movie(
 
     finally:
         recorder.close()
+        # Always write the handoff manifest (pure projection of run state).
+        handoff = build_handoff(manifest, state, out_dir=out_dir, include_prompts=include_prompts)
+        handoff_path = state_path.with_name(state_path.stem.replace("-state", "") + "-handoff.json")
+        handoff_path.parent.mkdir(parents=True, exist_ok=True)
+        handoff_path.write_text(json.dumps(handoff, indent=2, ensure_ascii=False), encoding="utf-8")
+        console.print(f"  handoff: {handoff_path}")
 
-    _print_summary(
-        manifest=manifest,
-        completed_scene_ids=completed_scene_ids,
-        completed_local_paths=completed_local_paths,
-    )
+    _print_summary(manifest=manifest, completed_local_paths=completed_local_paths)
 
-
-# ---------------------------------------------------------------------------
-# Character creation helper
-# ---------------------------------------------------------------------------
-
-
-async def _create_character(
-    *,
-    client: FlowApiClient,
-    recorder: OperationRecorder,
-    char_def: CharacterDef,
-    project_id: str,
-    profile_name: str,
-    profile_dir: Path,
-    state: MovieState,
-    state_path: Path,
-) -> None:
-    face = CharacterImageRequest(
-        prompt=char_def.face_prompt,
-        model=char_def.model,
-        image_reference_index=0,
-    )
-    body: CharacterImageRequest | None = None
-    if char_def.body_prompt is not None:
-        body = CharacterImageRequest(
-            prompt=char_def.body_prompt,
-            model=char_def.model,
-            image_reference_index=1,
-        )
-
-    result = await character_create(
-        client,
-        recorder,
-        profile_name=profile_name,
-        profile_dir=profile_dir,
-        project_id=project_id,
-        name=char_def.name,
-        face=face,
-        body=body,
-    )
-    image_paths: list[str | None] = []
-    for p in result.image_paths:
-        if p is None:
-            image_paths.append(None)
-        elif hasattr(p, "as_posix"):
-            image_paths.append(p.as_posix())
+    if stitch:
+        completed = [
+            Path(s.local_path)
+            for s in state.scenes.values()
+            if s.status == "completed" and s.local_path
+        ]
+        if len(completed) >= 2:
+            preview = out_dir / "preview.mp4"
+            _ffmpeg_concat(completed, preview)
+            if preview.exists():
+                console.print(f"  [dim]stitch preview:[/dim] {preview}")
         else:
-            image_paths.append(str(p))
-
-    state.characters[char_def.name] = CharacterState(
-        entity_id=result.entity_id,
-        image_paths=image_paths,
-    )
-    state.save(state_path)
-    console.print(f"    entity_id: {result.entity_id}")
-    for slot, p in enumerate(image_paths):
-        label = "face" if slot == 0 else "body" if slot == 1 else f"slot{slot}"
-        console.print(f"    {label}: {p or '(unavailable)'}")
+            console.print("  [dim]stitch skipped — need ≥2 completed clips.[/dim]")
 
 
 # ---------------------------------------------------------------------------
@@ -468,53 +412,44 @@ async def _create_character(
 # ---------------------------------------------------------------------------
 
 
-def _collect_refs(scene_def: SceneDef, state: MovieState) -> list[str]:
-    """Return face + body image paths for all characters named in *scene_def*."""
-    refs: list[str] = []
-    if scene_def.type != "r2v":
-        return refs
-    for char_name in scene_def.characters:
-        char_info = state.characters.get(char_name)
-        if char_info is None:
-            log.warning("movie.character_not_in_state", name=char_name)
-            continue
-        for p in char_info.image_paths:
-            if p is not None:
-                refs.append(p)
-    return refs
-
-
 async def _generate_scene(
     *,
     client: FlowApiClient,
     recorder: OperationRecorder,
-    scene_def: SceneDef,
-    refs: list[str],
+    scene: Scene,
+    prompt: str,
+    reference_entities: tuple[str, ...] = (),
+    reference_audio: str | None = None,
     profile_name: str,
     profile_dir: Path,
     out_dir: Path,
     project_id: str | None = None,
 ) -> Any:
-    mode = Mode(scene_def.type)
-    aspect = Aspect.from_cli(scene_def.aspect)
-    model = VideoModel.from_cli(scene_def.model)
+    """Generate one clip for *scene* using the pre-composed *prompt*.
 
-    kwargs: dict[str, Any] = {
-        "prompt": scene_def.prompt,
-        "mode": mode,
-        "aspect": aspect,
-        "model": model,
-        "duration": scene_def.duration,
-        "count": scene_def.count,
-    }
-    if mode == Mode.R2V and refs:
-        kwargs["reference_images"] = tuple(Path(r) for r in refs)
-    elif mode == Mode.I2V and scene_def.initial_frame:
-        kwargs["start_image"] = Path(scene_def.initial_frame)
-        if scene_def.end_frame:
-            kwargs["end_image"] = Path(scene_def.end_frame)
+    Signature is pinned (P2 fills ``reference_entities`` / ``reference_audio``).
+    Mode is R2V when the scene names characters AND references are present;
+    in P1 identity is text (no references), so character scenes still submit as
+    T2V with the character description embedded in the composed prompt. P2 adds
+    ``reference_entities`` which flips these scenes to R2V.
+    """
+    del reference_audio  # reserved for P2 (native identity / voice)
 
-    request = GenerateVideoRequest(**kwargs)
+    # R2V needs at least one reference (image or, in P2, entity). P1 has none,
+    # so a named-character scene degrades to T2V (text identity in the prompt).
+    use_r2v = bool(scene.characters) and bool(reference_entities)
+    mode = Mode.R2V if use_r2v else Mode.T2V
+    aspect = Aspect.from_cli(scene.aspect)
+    model = VideoModel.from_cli(scene.model)
+
+    request = GenerateVideoRequest(
+        prompt=prompt,
+        mode=mode,
+        aspect=aspect,
+        model=model,
+        duration=scene.duration,
+        count=scene.count,
+    )
 
     def on_started(started: VideoStarted) -> None:
         try:
@@ -561,6 +496,50 @@ async def _generate_scene(
 
 
 # ---------------------------------------------------------------------------
+# Stitch preview (ffmpeg hard-concat — NOT a deliverable)
+# ---------------------------------------------------------------------------
+
+
+def _ffmpeg_concat(clips: list[Path], out: Path) -> None:
+    """Hard-concat *clips* into *out* via the ffmpeg concat demuxer (stream copy).
+
+    Skips with a warning if ffmpeg is not on PATH — the preview is non-essential.
+    """
+    ffmpeg = shutil.which("ffmpeg")
+    if not ffmpeg:
+        log.warning("movie.stitch_skipped_no_ffmpeg")
+        console.print("  [yellow]stitch skipped — ffmpeg not found on PATH.[/yellow]")
+        return
+    out.parent.mkdir(parents=True, exist_ok=True)
+    with tempfile.NamedTemporaryFile("w", suffix=".txt", delete=False, encoding="utf-8") as f:
+        for c in clips:
+            f.write(f"file '{c.as_posix()}'\n")
+        listfile = f.name
+    try:
+        subprocess.run(  # noqa: S603 — ffmpeg path from shutil.which, args fixed
+            [
+                ffmpeg,
+                "-y",
+                "-f",
+                "concat",
+                "-safe",
+                "0",
+                "-i",
+                listfile,
+                "-c",
+                "copy",
+                str(out),
+            ],
+            check=True,
+        )
+    finally:
+        try:
+            Path(listfile).unlink()
+        except OSError:
+            pass
+
+
+# ---------------------------------------------------------------------------
 # Post-run summary
 # ---------------------------------------------------------------------------
 
@@ -568,7 +547,6 @@ async def _generate_scene(
 def _print_summary(
     *,
     manifest: MovieManifest,
-    completed_scene_ids: list[str],
     completed_local_paths: list[Path],
 ) -> None:
     total = len(manifest.scenes)
@@ -583,18 +561,3 @@ def _print_summary(
         console.print("\n  Completed clips:")
         for p in completed_local_paths:
             console.print(f"    {p}")
-
-    if len(completed_scene_ids) > 1:
-        clip_refs = " ".join(completed_scene_ids)
-        assemble_cmd = f"gflow scene create --project {manifest.project} {clip_refs}"
-        if manifest.assemble and manifest.assemble.output:
-            assemble_cmd += f" -o {manifest.assemble.output}"
-        console.print("\n  [dim]Stitch all clips into one file:[/dim]")
-        console.print(f"  [bold]{assemble_cmd}[/bold]")
-    elif len(completed_scene_ids) == 1:
-        console.print("\n  [dim]Only one scene — no stitching needed.[/dim]")
-    else:
-        console.print(
-            "\n  [yellow]No workflow IDs captured — "
-            "use `gflow scene create` manually with the clip workflow IDs.[/yellow]"
-        )

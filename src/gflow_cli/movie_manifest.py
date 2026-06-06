@@ -204,9 +204,7 @@ def _parse_character(data: object, idx: int) -> Character:
     variants_raw = d.get("variants", {})
     if not isinstance(variants_raw, dict):
         raise ConfigurationError(f"characters[{idx}].variants must be a table.")
-    variants = {
-        str(k): str(v) for k, v in cast("dict[str, object]", variants_raw).items()
-    }
+    variants = {str(k): str(v) for k, v in cast("dict[str, object]", variants_raw).items()}
 
     model = d.get("model", "nano2")
     if not isinstance(model, str) or model not in _VALID_CHARACTER_MODELS:
@@ -223,9 +221,7 @@ def _parse_character(data: object, idx: int) -> Character:
 
     face_prompt = opt("face_prompt")
     if identity == "entity" and not face_prompt:
-        raise ConfigurationError(
-            f"characters[{idx}] identity='entity' requires face_prompt."
-        )
+        raise ConfigurationError(f"characters[{idx}] identity='entity' requires face_prompt.")
 
     return Character(
         name=name.strip(),
@@ -287,9 +283,7 @@ def _parse_scene(
 
     if speaker is not None:
         if speaker not in chars:
-            raise ConfigurationError(
-                f"scenes[{idx}].speaker {speaker!r} not in characters."
-            )
+            raise ConfigurationError(f"scenes[{idx}].speaker {speaker!r} not in characters.")
         if not isinstance(line, str) or not line.strip():
             raise ConfigurationError(f"scenes[{idx}].line must be a non-empty string.")
         dialogue.append(DialogueLine(speaker=str(speaker), line=line.strip()))
