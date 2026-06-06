@@ -52,3 +52,49 @@ class Character:
                 raise ValueError(msg)
             parts.append(self.variants[name])
         return ", ".join(parts)
+
+
+FRAMING: frozenset[str] = frozenset(
+    {
+        "establishing",
+        "wide",
+        "full",
+        "medium",
+        "medium-close",
+        "close-up",
+        "extreme-close-up",
+        "over-the-shoulder",
+        "POV",
+    }
+)
+
+
+@dataclass(frozen=True)
+class DialogueLine:
+    """One spoken line, attributed to a character present in the scene."""
+
+    speaker: str
+    line: str
+    voice: str | None = None
+
+
+@dataclass(frozen=True)
+class Scene:
+    """One scene = one clip = one generation."""
+
+    id: str
+    action: str = ""
+    title: str | None = None
+    setting: str | None = None
+    framing: str | None = None  # member of FRAMING
+    camera: str | None = None
+    lighting: str | None = None
+    mood: str | None = None
+    negative: str | None = None
+    characters: tuple[str, ...] = ()
+    variant: str | None = None
+    dialogue: tuple[DialogueLine, ...] = ()
+    duration: int | None = None
+    model: str | None = None
+    aspect: str = "16:9"
+    count: int = 1
