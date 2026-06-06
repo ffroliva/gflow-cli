@@ -683,6 +683,37 @@ class TestGenerateScene:
 
         assert result is mock_result
 
+    async def test_entity_scene_passes_entities_to_request(self, tmp_path: Path) -> None:
+        """_generate_scene forwards reference_entities to GenerateVideoRequest
+        and sets mode=R2V when entities are present (spec §8 / regression guard
+        for the 'entities accepted but not wired to DTO' bug)."""
+        from gflow_cli.api.video import Mode
+        from gflow_cli.cli_movie import _generate_scene
+
+        scene = Scene(id="s", action="stands tall", characters=("Hero",))
+        mock_client = AsyncMock()
+        mock_client.generate_video.return_value = _make_video_result()
+
+        with patch("gflow_cli.cli_movie.cloud_info_from_path", return_value=None):
+            await _generate_scene(
+                client=mock_client,
+                recorder=MagicMock(),
+                scene=scene,
+                prompt="Hero stands tall.",
+                reference_entities=("ent-9",),
+                profile_name="default",
+                profile_dir=tmp_path / "profile",
+                out_dir=tmp_path / "out",
+            )
+
+        call_kwargs = mock_client.generate_video.call_args.kwargs
+        req = call_kwargs["req"]
+        assert req.reference_entities == ("ent-9",), (
+            "reference_entities must be forwarded to GenerateVideoRequest "
+            "so the transport can attach entity references"
+        )
+        assert req.mode is Mode.R2V, "entity scene must flip to R2V mode"
+
 
 # ---------------------------------------------------------------------------
 # _ffmpeg_concat / --stitch

@@ -8,7 +8,7 @@ from pathlib import Path
 import jsonschema
 
 from gflow_cli.composition import Character, Scene, StyleSpec, build_handoff
-from gflow_cli.movie_manifest import MovieState, SceneState
+from gflow_cli.movie_manifest import CharacterState, MovieState, SceneState
 
 # Resolve the schema relative to the repo root (cwd-independent).
 _SCHEMA_PATH = (
@@ -95,3 +95,38 @@ def test_build_handoff_reflects_entity_consistency_method(tmp_path: Path) -> Non
     assert h["clips"][0]["consistency_method"] == "entity"
     schema = json.loads(_SCHEMA_PATH.read_text(encoding="utf-8"))
     jsonschema.validate(h, schema)  # entity must be a valid schema enum value
+
+
+class _EntityManifest:
+    """Manifest with one entity-identity character (has entity_id in state)."""
+
+    title = "T"
+    project = "p"
+    style = StyleSpec()
+    characters = {
+        "Hero": Character(name="Hero", identity="entity", face_prompt="heroic face", voice="alnilam")
+    }
+    scenes = (Scene(id="s1", action="walks", characters=("Hero",), duration=8),)
+
+
+def test_build_handoff_character_entity_id_in_x_gflow(tmp_path: Path) -> None:
+    """build_handoff populates x_gflow.entity_id for entity-identity characters
+    whose entity_id is recorded in state (spec §7)."""
+    state = MovieState(title="T", project="p")
+    state.characters["Hero"] = CharacterState(entity_id="ent-abc", image_paths=[])
+    state.scenes["s1"] = SceneState(
+        media_id="m", flow_operation_id="op", local_path="/out/s1.mp4", status="completed"
+    )
+    h = build_handoff(_EntityManifest(), state, out_dir=Path("/out"))
+    char = h["characters"][0]
+    assert char["name"] == "Hero"
+    assert char["x_gflow"]["entity_id"] == "ent-abc"
+
+
+def test_build_handoff_character_no_entity_id_when_not_created(tmp_path: Path) -> None:
+    """build_handoff omits entity_id when the character was never created
+    (text-identity chars, or entity chars not yet run)."""
+    state = MovieState(title="T", project="p")
+    h = build_handoff(_FakeManifest(), state, out_dir=Path("/out/x"))
+    char = h["characters"][0]
+    assert "entity_id" not in char["x_gflow"]

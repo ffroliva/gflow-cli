@@ -244,12 +244,16 @@ def build_handoff(
 
     chars_out: list[dict[str, Any]] = []
     for c in manifest.characters.values():
+        x_gflow_char: dict[str, Any] = {}
+        cstate = state.characters.get(c.name)
+        if cstate is not None and cstate.entity_id:
+            x_gflow_char["entity_id"] = cstate.entity_id
         chars_out.append(
             {
                 "name": c.name,
                 "identity": c.identity,
                 "voice": c.voice,
-                "x_gflow": {},  # entity_id added in P2
+                "x_gflow": x_gflow_char,
             }
         )
 
