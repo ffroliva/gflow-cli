@@ -32,17 +32,20 @@ import structlog
 from rich.console import Console
 
 from gflow_cli._cli_helpers import _make_provider_dir, _resolve_profile, run_with_handlers
+from gflow_cli.api.character import CharacterImageRequest
 from gflow_cli.api.client import FlowApiClient
 from gflow_cli.api.video import Aspect, GenerateVideoRequest, Mode, VideoModel, VideoStarted
-from gflow_cli.composition import Scene, build_handoff, compose_prompt
+from gflow_cli.composition import Character, Scene, build_handoff, compose_prompt
 from gflow_cli.config import get_settings
 from gflow_cli.data.recorder import OperationRecorder
-from gflow_cli.errors import ConfigurationError, DataStoreError
+from gflow_cli.errors import ConfigurationError, DataStoreError, WireFormatError
 from gflow_cli.movie_manifest import (
+    CharacterState,
     MovieManifest,
     MovieState,
     SceneState,
 )
+from gflow_cli.services.character_create import character_create
 from gflow_cli.paths import resolve_batch_output_dir
 from gflow_cli.storage import cloud_info_from_path
 
@@ -309,6 +312,33 @@ async def _run_movie(
     try:
         async with FlowApiClient(profile_dir=profile_dir, out_dir=out_dir) as client:
             # ------------------------------------------------------------------
+            # Phase 1: Characters — create native (entity-identity) characters.
+            # text-identity characters need no creation; they are folded into
+            # the composed prompt. entity-identity characters become a Flow
+            # CHARACTER entity (face + optional body + optional embedded voice)
+            # whose id is later attached as a reference to R2V scenes.
+            # ------------------------------------------------------------------
+            entity_chars = [
+                c
+                for c in manifest.characters.values()
+                if c.identity == "entity" and c.name not in state.characters
+            ]
+            if entity_chars:
+                console.print("\n[bold]Characters[/bold]")
+            for char in entity_chars:
+                console.print(f"\n  Creating character [bold]{char.name}[/bold]…")
+                await _create_character(
+                    client=client,
+                    recorder=recorder,
+                    char=char,
+                    project_id=manifest.project,
+                    profile_name=profile_name,
+                    profile_dir=profile_dir,
+                    state=state,
+                    state_path=state_path,
+                )
+
+            # ------------------------------------------------------------------
             # Scenes — one scene = one clip = one generation
             # ------------------------------------------------------------------
             console.print("\n[bold]Scenes[/bold]")
@@ -326,7 +356,19 @@ async def _run_movie(
                 console.print(f"\n  Generating scene [bold]{scene.id!r}[/bold]…")
                 prompt = compose_prompt(manifest.style, scene, manifest.characters)
 
+                # reference_entities is resolved inside the try so a pre-flight
+                # ConfigurationError (missing entity_id) is handled per-scene by
+                # the continue-on-error / fail-fast policy like any other failure.
+                reference_entities: tuple[str, ...] = ()
+
                 try:
+                    # Resolve native (entity-identity) characters to their created
+                    # entity ids. FAIL LOUD when an entity character has no
+                    # entity_id in state — never silently drop the reference
+                    # (council C4). reference_audio stays None: embedded-voice-on-
+                    # entity is the preferred path (the entity carries the voice).
+                    reference_entities = _resolve_entities(scene, manifest, state)
+
                     # reCAPTCHA cooldown between scenes — inside the try so any
                     # failure here is handled per-scene and never aborts the run.
                     if generated_any:
@@ -337,7 +379,7 @@ async def _run_movie(
                         recorder=recorder,
                         scene=scene,
                         prompt=prompt,
-                        reference_entities=(),  # P1 text identity; P2 fills these
+                        reference_entities=reference_entities,
                         reference_audio=None,
                         profile_name=profile_name,
                         profile_dir=profile_dir,
@@ -354,6 +396,7 @@ async def _run_movie(
                         ),
                         status="completed",
                         prompt=prompt,
+                        consistency_method="entity" if reference_entities else "text",
                     )
                     state.save(state_path)
                     console.print(f"    saved: {video_result.local_path}")
@@ -368,12 +411,21 @@ async def _run_movie(
                         error=str(exc),
                         exc_info=True,
                     )
+                    # An entity scene whose wire backstop (WireFormatError) tripped
+                    # but the run continued is recorded as "degraded" (entity path
+                    # attempted, identity not honored); everything else is "text".
+                    failed_method = (
+                        "degraded"
+                        if reference_entities and isinstance(exc, WireFormatError)
+                        else "text"
+                    )
                     state.scenes[scene.id] = SceneState(
                         media_id="",
                         flow_operation_id=None,
                         local_path=None,
                         status="failed",
                         prompt=prompt,
+                        consistency_method=failed_method,
                     )
                     state.save(state_path)
                     if continue_on_error:
@@ -405,6 +457,107 @@ async def _run_movie(
                 console.print(f"  [dim]stitch preview:[/dim] {preview}")
         else:
             console.print("  [dim]stitch skipped — need ≥2 completed clips.[/dim]")
+
+
+# ---------------------------------------------------------------------------
+# Character creation helper (entity identity)
+# ---------------------------------------------------------------------------
+
+
+async def _create_character(
+    *,
+    client: FlowApiClient,
+    recorder: OperationRecorder,
+    char: Character,
+    project_id: str,
+    profile_name: str,
+    profile_dir: Path,
+    state: MovieState,
+    state_path: Path,
+) -> None:
+    """Create one native (entity-identity) character and persist its state.
+
+    Builds the face (slot 0) and optional body (slot 1) image requests, runs
+    the persist-before-spend ``character_create`` saga (forwarding the
+    manifest character's ``voice`` so it is embedded on the entity — the
+    preferred identity-carrying path, council C2), then records the resulting
+    ``entity_id`` + downloaded image paths to the crash-recoverable run state
+    immediately (persist-before-spend discipline).
+    """
+    # identity == "entity" guarantees a face_prompt (validated in the manifest
+    # parser), so this is never None for the characters we create here.
+    face = CharacterImageRequest(
+        prompt=char.face_prompt or "",
+        model=char.model,
+        image_reference_index=0,
+    )
+    body: CharacterImageRequest | None = None
+    if char.body_prompt:
+        body = CharacterImageRequest(
+            prompt=char.body_prompt,
+            model=char.model,
+            image_reference_index=1,
+        )
+
+    result = await character_create(
+        client,
+        recorder,
+        profile_name=profile_name,
+        profile_dir=profile_dir,
+        project_id=project_id,
+        name=char.name,
+        face=face,
+        body=body,
+        voice=char.voice,
+    )
+
+    image_paths: list[str | None] = []
+    for p in result.image_paths:
+        if p is None:
+            image_paths.append(None)
+        elif hasattr(p, "as_posix"):
+            image_paths.append(p.as_posix())  # type: ignore[union-attr]
+        else:
+            image_paths.append(str(p))
+
+    state.characters[char.name] = CharacterState(
+        entity_id=result.entity_id,
+        image_paths=image_paths,
+    )
+    state.save(state_path)
+    console.print(f"    entity_id: {result.entity_id}")
+    for slot, p in enumerate(image_paths):
+        label = "face" if slot == 0 else "body" if slot == 1 else f"slot{slot}"
+        console.print(f"    {label}: {p or '(unavailable)'}")
+
+
+def _resolve_entities(
+    scene: Scene,
+    manifest: MovieManifest,
+    state: MovieState,
+) -> tuple[str, ...]:
+    """Resolve a scene's entity-identity characters to their created entity ids.
+
+    For each character named by *scene* whose manifest identity is ``"entity"``,
+    look up its ``entity_id`` in the run state.  Raises :class:`ConfigurationError`
+    (pre-flight fail-loud) if an entity-identity character was never created —
+    the reference is never silently dropped (council C4).  text-identity
+    characters contribute no entities (they are folded into the prompt).
+    """
+    entities: list[str] = []
+    for name in scene.characters:
+        char = manifest.characters.get(name)
+        if char is None or char.identity != "entity":
+            continue
+        cstate = state.characters.get(name)
+        if cstate is None or not cstate.entity_id:
+            msg = (
+                f"Scene {scene.id!r} references entity-identity character {name!r} "
+                "but no entity was created for it (missing entity_id in run state)."
+            )
+            raise ConfigurationError(msg)
+        entities.append(cstate.entity_id)
+    return tuple(entities)
 
 
 # ---------------------------------------------------------------------------

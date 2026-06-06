@@ -12,6 +12,7 @@ from click.testing import CliRunner
 from gflow_cli.cli import main as cli_main
 from gflow_cli.composition import Character, Scene, StyleSpec
 from gflow_cli.movie_manifest import (
+    CharacterState,
     MovieManifest,
     MovieState,
     SceneState,
@@ -710,3 +711,156 @@ class TestStitch:
         argv = mock_run.call_args.args[0]
         assert argv[0] == "/usr/bin/ffmpeg"
         assert "concat" in argv
+
+
+# ---------------------------------------------------------------------------
+# P2: native (entity) identity wiring
+# ---------------------------------------------------------------------------
+
+
+class TestEntityIdentity:
+    async def test_entity_scene_passes_reference_entities(self, tmp_path: Path) -> None:
+        """A scene naming an entity-identity character (entity_id pre-seeded in
+        state) flips to the entity path: _generate_scene is awaited with the
+        resolved entity id."""
+        from gflow_cli.cli_movie import _run_movie
+
+        manifest = _manifest(
+            characters={
+                "Hero": Character(
+                    name="Hero",
+                    identity="entity",
+                    face_prompt="a heroic face",
+                    voice="Charon",
+                )
+            },
+            scenes=(Scene(id="s", action="stands tall", characters=("Hero",)),),
+        )
+        state = MovieState(title="T", project="p")
+        # Pre-seed the created entity so no creation phase runs.
+        state.characters["Hero"] = CharacterState(entity_id="ent-9", image_paths=[])
+        state_path = tmp_path / "m-state.json"
+        gen = AsyncMock(return_value=_make_video_result())
+
+        with (
+            patch("gflow_cli.cli_movie.get_settings"),
+            patch("gflow_cli.cli_movie.OperationRecorder") as rec,
+            patch("gflow_cli.cli_movie.FlowApiClient", return_value=_mock_client_cm()),
+            patch("gflow_cli.cli_movie._generate_scene", new=gen),
+            patch("asyncio.sleep", new=AsyncMock()),
+        ):
+            rec.open.return_value = MagicMock()
+            await _run_movie(
+                manifest=manifest,
+                state=state,
+                state_path=state_path,
+                profile_name="default",
+                profile_dir=tmp_path / "p",
+                out_dir=tmp_path / "out",
+                continue_on_error=True,
+            )
+
+        gen.assert_awaited_once()
+        assert gen.call_args.kwargs["reference_entities"] == ("ent-9",)
+        assert gen.call_args.kwargs["reference_audio"] is None
+        assert state.scenes["s"].consistency_method == "entity"
+
+    async def test_missing_entity_id_fails_loud(self, tmp_path: Path) -> None:
+        """An entity-identity character with no created entity_id in state must
+        fail loud (not silently drop the reference). Under fail-fast the
+        ConfigurationError propagates out of the run."""
+        from gflow_cli.cli_movie import _run_movie
+        from gflow_cli.errors import ConfigurationError
+
+        manifest = _manifest(
+            characters={
+                "Hero": Character(name="Hero", identity="entity", face_prompt="a face")
+            },
+            scenes=(Scene(id="s", action="x", characters=("Hero",)),),
+        )
+        state = MovieState(title="T", project="p")  # no entity created for Hero
+        state_path = tmp_path / "m-state.json"
+
+        with (  # noqa: SIM117
+            patch("gflow_cli.cli_movie.get_settings"),
+            patch("gflow_cli.cli_movie.OperationRecorder") as rec,
+            patch("gflow_cli.cli_movie.FlowApiClient", return_value=_mock_client_cm()),
+            patch("gflow_cli.cli_movie._create_character", new=AsyncMock()),
+            patch("gflow_cli.cli_movie._generate_scene", new=AsyncMock()) as gen,
+            patch("asyncio.sleep", new=AsyncMock()),
+            pytest.raises(ConfigurationError, match="entity"),
+        ):
+            rec.open.return_value = MagicMock()
+            await _run_movie(
+                manifest=manifest,
+                state=state,
+                state_path=state_path,
+                profile_name="default",
+                profile_dir=tmp_path / "p",
+                out_dir=tmp_path / "out",
+                continue_on_error=False,  # fail-fast: re-raise
+            )
+        gen.assert_not_awaited()  # never generated with a dropped reference
+
+    async def test_creation_phase_forwards_voice(self, tmp_path: Path) -> None:
+        """The Phase-1 creation loop calls character_create forwarding the
+        manifest character's embedded voice (council C2)."""
+        from gflow_cli.api.character import CharacterCreateResult
+        from gflow_cli.cli_movie import _run_movie
+
+        manifest = _manifest(
+            characters={
+                "Hero": Character(
+                    name="Hero",
+                    identity="entity",
+                    face_prompt="a heroic face",
+                    body_prompt="a heroic body",
+                    voice="alnilam",
+                )
+            },
+            scenes=(Scene(id="s", action="x", characters=("Hero",)),),
+        )
+        state = MovieState(title="T", project="p")
+        state_path = tmp_path / "m-state.json"
+
+        create_mock = AsyncMock(
+            return_value=CharacterCreateResult(
+                entity_id="ent-new",
+                project_id="p",
+                workflow_ids=(),
+                primary_media_ids=(),
+                name="Hero",
+                voice="alnilam",
+                image_paths=("/out/face.png", "/out/body.png"),
+            )
+        )
+
+        with (
+            patch("gflow_cli.cli_movie.get_settings"),
+            patch("gflow_cli.cli_movie.OperationRecorder") as rec,
+            patch("gflow_cli.cli_movie.FlowApiClient", return_value=_mock_client_cm()),
+            patch("gflow_cli.cli_movie.character_create", new=create_mock),
+            patch(
+                "gflow_cli.cli_movie._generate_scene",
+                new=AsyncMock(return_value=_make_video_result()),
+            ),
+            patch("asyncio.sleep", new=AsyncMock()),
+        ):
+            rec.open.return_value = MagicMock()
+            await _run_movie(
+                manifest=manifest,
+                state=state,
+                state_path=state_path,
+                profile_name="default",
+                profile_dir=tmp_path / "p",
+                out_dir=tmp_path / "out",
+                continue_on_error=True,
+            )
+
+        create_mock.assert_awaited_once()
+        assert create_mock.call_args.kwargs["voice"] == "alnilam"
+        assert create_mock.call_args.kwargs["name"] == "Hero"
+        # Body prompt present -> a body request was built.
+        assert create_mock.call_args.kwargs["body"] is not None
+        # Entity id was persisted to state for downstream scene resolution.
+        assert state.characters["Hero"].entity_id == "ent-new"
