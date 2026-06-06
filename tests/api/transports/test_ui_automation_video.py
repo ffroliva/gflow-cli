@@ -996,32 +996,92 @@ class TestI2vT2vRoutingBackstop:
 
 
 class TestAttachCharacterEntities:
-    @pytest.mark.asyncio
-    async def test_attach_character_entities_searches_by_name_and_includes(self) -> None:
-        """_attach_character_entities fills the search box with the display name
-        (not a UUID) and clicks 'Incluir no comando'.  The Personagens tab is NOT
-        clicked first — live e2e (2026-06-06) showed it removes the search input."""
+    @staticmethod
+    def _picker_page() -> MagicMock:
+        """A page whose every locator is selected + already rendered (count=1)."""
         page = MagicMock()
         loc = MagicMock()
         loc.first = loc
+        loc.last = loc
         loc.click = AsyncMock()
+        loc.hover = AsyncMock()
         loc.wait_for = AsyncMock()
-        loc.fill = AsyncMock()
+        loc.scroll_into_view_if_needed = AsyncMock()
+        loc.count = AsyncMock(return_value=1)
         page.locator.return_value = loc
         page.wait_for_timeout = AsyncMock()
+        page.mouse = MagicMock()
+        page.mouse.wheel = AsyncMock()
+        return page
 
-        await VideoGenerationMixin._attach_character_entities(page, ["Stickman"], out_dir=None)
+    @pytest.mark.asyncio
+    async def test_attach_right_clicks_personagens_entity_tile(self) -> None:
+        """A character is staged as a referenceEntity via: Personagens tab ->
+        RIGHT-CLICK the `data-tile-id=fe_id_<entityId>` tile -> context-menu
+        'Incluir no comando'. The tile is addressed by entity id (not name), and
+        the click MUST be a right-click (a left-click navigates to the editor)."""
+        page = self._picker_page()
+
+        await VideoGenerationMixin._attach_character_entities(
+            page, [("ent-123", "Stickman")], out_dir=None
+        )
 
         selectors = " ".join(str(c.args[0]) for c in page.locator.call_args_list)
-        # The search box is used to surface the character tile by name.
-        assert "add-menu-input" in selectors      # search box
-        assert "Stickman" in selectors            # name used in tile selector
-        assert "Incluir no comando" in selectors  # include button
-        # The Personagens tab must NOT be clicked first (it removes the search input).
-        assert "accessibility_new" not in selectors
+        assert "accessibility_new" in selectors          # Personagens tab
+        assert "fe_id_ent-123" in selectors              # tile keyed by entity id
+        assert "Incluir no comando" in selectors         # context-menu action
+        assert "add-menu-input" not in selectors         # NOT the prompt box
+        # The selection click is a right-click (button='right').
+        right_clicks = [
+            c for c in page.locator.return_value.click.call_args_list
+            if c.kwargs.get("button") == "right"
+        ]
+        assert right_clicks, "expected a right-click on the entity tile"
+
+    @pytest.mark.asyncio
+    async def test_attach_raises_when_context_menu_absent(self) -> None:
+        """If the right-click context menu never shows 'Incluir no comando', the
+        attach fails loudly (with a screenshot) instead of silently dropping the
+        entity — the submit backstop must never see an empty referenceEntities."""
+        page = self._picker_page()
+        # wait_for succeeds for add-media / Personagens tab / tile, then raises on
+        # the context-menu include item (the menu never appeared).
+        page.locator.return_value.wait_for = AsyncMock(
+            side_effect=[None, None, None, TimeoutError("boom")]
+        )
+        page.screenshot = AsyncMock()
+
+        with pytest.raises(RuntimeError, match="Incluir no comando"):
+            await VideoGenerationMixin._attach_character_entities(
+                page, [("ent-123", "Stickman")], out_dir=None
+            )
 
 
 class TestAssertEntitiesAttached:
+    @staticmethod
+    def _live_response(entity_id: str) -> dict[str, object]:
+        """The real SUBMIT response shape — the entity is echoed under
+        media[].mediaMetadata.requestData.videoGenerationRequestData
+        .videoGenerationEntityInputs (NOT requests[].referenceEntities)."""
+        return {
+            "url": "video:batchAsyncGenerateVideoReferenceImages",
+            "status": 200,
+            "body": {
+                "media": [
+                    {
+                        "name": "vid-1",
+                        "mediaMetadata": {
+                            "requestData": {
+                                "videoGenerationRequestData": {
+                                    "videoGenerationEntityInputs": [{"entityId": entity_id}],
+                                }
+                            }
+                        },
+                    }
+                ]
+            },
+        }
+
     def test_backstop_raises_when_entity_missing_from_payload(self) -> None:
         from gflow_cli.api.transports.ui_automation_video import VideoGenerationMixin
         from gflow_cli.errors import WireFormatError
@@ -1029,14 +1089,23 @@ class TestAssertEntitiesAttached:
         captured = {
             "url": "video:batchAsyncGenerateVideoReferenceImages",
             "status": 200,
-            "body": {"requests": [{"referenceImages": [{"mediaId": "x"}]}]},  # no referenceEntities!
+            # a real response with NO entity inputs (text/image-only generation).
+            "body": {"media": [{"mediaMetadata": {"requestData": {}}}]},
         }
-        with pytest.raises(WireFormatError, match="referenceEntities"):
+        with pytest.raises(WireFormatError, match="entity attach failed"):
             VideoGenerationMixin._assert_entities_attached(captured, expected=["ent-1"])
 
-    def test_backstop_passes_when_entity_present(self) -> None:
+    def test_backstop_passes_on_live_response_shape(self) -> None:
         from gflow_cli.api.transports.ui_automation_video import VideoGenerationMixin
 
+        # should NOT raise — entity echoed at the real response path.
+        VideoGenerationMixin._assert_entities_attached(
+            self._live_response("ent-1"), expected=["ent-1"]
+        )
+
+    def test_backstop_accepts_request_shape_fallback(self) -> None:
+        from gflow_cli.api.transports.ui_automation_video import VideoGenerationMixin
+
+        # request-body shape (referenceEntities) is also accepted.
         captured = {"body": {"requests": [{"referenceEntities": [{"entityId": "ent-1"}]}]}}
-        # should NOT raise
         VideoGenerationMixin._assert_entities_attached(captured, expected=["ent-1"])
