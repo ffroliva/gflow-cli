@@ -684,9 +684,11 @@ class TestGenerateScene:
         assert result is mock_result
 
     async def test_entity_scene_passes_entities_to_request(self, tmp_path: Path) -> None:
-        """_generate_scene forwards reference_entities to GenerateVideoRequest
-        and sets mode=R2V when entities are present (spec §8 / regression guard
-        for the 'entities accepted but not wired to DTO' bug)."""
+        """_generate_scene forwards reference_entities AND reference_entity_names
+        to GenerateVideoRequest and sets mode=R2V when entities are present
+        (spec §8 / regression guard for the 'entities accepted but not wired to
+        DTO' bug, and the live-e2e bug where the picker searched by UUID instead
+        of display name)."""
         from gflow_cli.api.video import Mode
         from gflow_cli.cli_movie import _generate_scene
 
@@ -701,6 +703,7 @@ class TestGenerateScene:
                 scene=scene,
                 prompt="Hero stands tall.",
                 reference_entities=("ent-9",),
+                reference_entity_names=("Stickman",),
                 profile_name="default",
                 profile_dir=tmp_path / "profile",
                 out_dir=tmp_path / "out",
@@ -711,6 +714,10 @@ class TestGenerateScene:
         assert req.reference_entities == ("ent-9",), (
             "reference_entities must be forwarded to GenerateVideoRequest "
             "so the transport can attach entity references"
+        )
+        assert req.reference_entity_names == ("Stickman",), (
+            "reference_entity_names must be forwarded to GenerateVideoRequest "
+            "so the UI picker selects tiles by display name, not UUID"
         )
         assert req.mode is Mode.R2V, "entity scene must flip to R2V mode"
 
@@ -793,6 +800,10 @@ class TestEntityIdentity:
 
         gen.assert_awaited_once()
         assert gen.call_args.kwargs["reference_entities"] == ("ent-9",)
+        assert gen.call_args.kwargs["reference_entity_names"] == ("Hero",), (
+            "_run_movie must pass character display names so the UI picker "
+            "can select tiles by name instead of UUID"
+        )
         assert gen.call_args.kwargs["reference_audio"] is None
         assert state.scenes["s"].consistency_method == "entity"
 

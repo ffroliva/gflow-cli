@@ -356,10 +356,12 @@ async def _run_movie(
                 console.print(f"\n  Generating scene [bold]{scene.id!r}[/bold]…")
                 prompt = compose_prompt(manifest.style, scene, manifest.characters)
 
-                # reference_entities is resolved inside the try so a pre-flight
-                # ConfigurationError (missing entity_id) is handled per-scene by
-                # the continue-on-error / fail-fast policy like any other failure.
+                # reference_entities / reference_entity_names are resolved inside
+                # the try so a pre-flight ConfigurationError (missing entity_id)
+                # is handled per-scene by the continue-on-error / fail-fast
+                # policy like any other failure.
                 reference_entities: tuple[str, ...] = ()
+                reference_entity_names: tuple[str, ...] = ()
 
                 try:
                     # Resolve native (entity-identity) characters to their created
@@ -368,6 +370,10 @@ async def _run_movie(
                     # (council C4). reference_audio stays None: embedded-voice-on-
                     # entity is the preferred path (the entity carries the voice).
                     reference_entities = _resolve_entities(scene, manifest, state)
+
+                    # Build the parallel display-name list so the UI picker can
+                    # select tiles by name instead of UUID (live e2e fix).
+                    reference_entity_names = _resolve_entity_names(scene, manifest)
 
                     # reCAPTCHA cooldown between scenes — inside the try so any
                     # failure here is handled per-scene and never aborts the run.
@@ -380,6 +386,7 @@ async def _run_movie(
                         scene=scene,
                         prompt=prompt,
                         reference_entities=reference_entities,
+                        reference_entity_names=reference_entity_names,
                         reference_audio=None,
                         profile_name=profile_name,
                         profile_dir=profile_dir,
@@ -560,6 +567,27 @@ def _resolve_entities(
     return tuple(entities)
 
 
+def _resolve_entity_names(
+    scene: Scene,
+    manifest: MovieManifest,
+) -> tuple[str, ...]:
+    """Return the display names of entity-identity characters named by *scene*.
+
+    Parallel to :func:`_resolve_entities` — produces the same characters in the
+    same order, but returns the character *name* (display name) rather than the
+    entity id.  These names are passed to the UI picker so it can select tiles
+    by their visible label instead of a UUID (which the picker never displays).
+    text-identity characters are excluded (they produce no entity reference).
+    """
+    names: list[str] = []
+    for name in scene.characters:
+        char = manifest.characters.get(name)
+        if char is None or char.identity != "entity":
+            continue
+        names.append(name)
+    return tuple(names)
+
+
 # ---------------------------------------------------------------------------
 # Scene generation helper
 # ---------------------------------------------------------------------------
@@ -572,6 +600,7 @@ async def _generate_scene(
     scene: Scene,
     prompt: str,
     reference_entities: tuple[str, ...] = (),
+    reference_entity_names: tuple[str, ...] = (),
     reference_audio: str | None = None,
     profile_name: str,
     profile_dir: Path,
@@ -603,6 +632,7 @@ async def _generate_scene(
         duration=scene.duration,
         count=scene.count,
         reference_entities=reference_entities,
+        reference_entity_names=reference_entity_names,
     )
 
     def on_started(started: VideoStarted) -> None:
