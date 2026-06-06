@@ -455,3 +455,29 @@ class TestMovieState:
         state.save(path)
         loaded = MovieState.load(path, title="T", project="p")
         assert loaded.scenes["scene-x"].status == "failed"
+
+    def test_scene_state_consistency_method_round_trips(self, tmp_path: Path) -> None:
+        path = tmp_path / "s.json"
+        state = MovieState(title="T", project="p")
+        state.scenes["s1"] = SceneState(
+            media_id="m",
+            flow_operation_id="op",
+            local_path="/out/v.mp4",
+            status="completed",
+            consistency_method="entity",
+        )
+        state.save(path)
+        loaded = MovieState.load(path, title="T", project="p")
+        assert loaded.scenes["s1"].consistency_method == "entity"
+
+    def test_scene_state_consistency_method_defaults_for_old_file(self, tmp_path: Path) -> None:
+        # A pre-P2 state file with no consistency_method key loads as "text".
+        path = tmp_path / "old-state.json"
+        path.write_text(
+            '{"version": 2, "title": "T", "project": "p", "characters": {}, '
+            '"scenes": {"s1": {"media_id": "m", "flow_operation_id": null, '
+            '"local_path": null, "status": "completed"}}}',
+            encoding="utf-8",
+        )
+        loaded = MovieState.load(path, title="T", project="p")
+        assert loaded.scenes["s1"].consistency_method == "text"

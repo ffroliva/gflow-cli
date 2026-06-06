@@ -389,6 +389,7 @@ class SceneState:
     local_path: str | None
     status: str  # "completed" | "failed"
     prompt: str | None = None  # composed Veo prompt (for handoff projection)
+    consistency_method: str = "text"  # "text" | "entity" | "degraded" (P2)
 
     def to_dict(self) -> dict[str, object]:
         return {
@@ -397,6 +398,7 @@ class SceneState:
             "local_path": self.local_path,
             "status": self.status,
             "prompt": self.prompt,
+            "consistency_method": self.consistency_method,
         }
 
     @classmethod
@@ -404,12 +406,14 @@ class SceneState:
         raw_op_id = d.get("flow_operation_id")
         raw_path = d.get("local_path")
         raw_prompt = d.get("prompt")
+        raw_method = d.get("consistency_method", "text")
         return cls(
             media_id=str(d.get("media_id") or ""),
             flow_operation_id=str(raw_op_id) if isinstance(raw_op_id, str) else None,
             local_path=str(raw_path) if isinstance(raw_path, str) else None,
             status=str(d.get("status") or "completed"),
             prompt=str(raw_prompt) if isinstance(raw_prompt, str) else None,
+            consistency_method=str(raw_method) if isinstance(raw_method, str) else "text",
         )
 
 
