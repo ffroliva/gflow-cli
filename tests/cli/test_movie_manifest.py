@@ -6,7 +6,7 @@ from pathlib import Path
 
 import pytest
 
-from gflow_cli.composition import Character, Scene, StyleSpec
+from gflow_cli.composition import Scene, StyleSpec
 from gflow_cli.errors import ConfigurationError
 from gflow_cli.movie_manifest import (
     CharacterState,
@@ -221,16 +221,12 @@ class TestMovieManifestInvalid:
             MovieManifest.from_toml_path(path)
 
     def test_missing_title_raises(self, tmp_path: Path) -> None:
-        path = _write_toml(
-            tmp_path, 'project = "p"\n[[scenes]]\nid = "s"\naction = "x"\n'
-        )
+        path = _write_toml(tmp_path, 'project = "p"\n[[scenes]]\nid = "s"\naction = "x"\n')
         with pytest.raises(ConfigurationError, match="title"):
             MovieManifest.from_toml_path(path)
 
     def test_missing_project_raises(self, tmp_path: Path) -> None:
-        path = _write_toml(
-            tmp_path, 'title = "T"\n[[scenes]]\nid = "s"\naction = "x"\n'
-        )
+        path = _write_toml(tmp_path, 'title = "T"\n[[scenes]]\nid = "s"\naction = "x"\n')
         with pytest.raises(ConfigurationError, match="project"):
             MovieManifest.from_toml_path(path)
 
@@ -303,10 +299,7 @@ variant="white"
     def test_invalid_aspect_raises(self, tmp_path: Path) -> None:
         path = _write_toml(
             tmp_path,
-            (
-                'title = "T"\nproject = "p"\n'
-                '[[scenes]]\nid = "s"\naction = "x"\naspect = "4:3"\n'
-            ),
+            ('title = "T"\nproject = "p"\n[[scenes]]\nid = "s"\naction = "x"\naspect = "4:3"\n'),
         )
         with pytest.raises(ConfigurationError, match="aspect"):
             MovieManifest.from_toml_path(path)
@@ -314,10 +307,7 @@ variant="white"
     def test_invalid_duration_raises(self, tmp_path: Path) -> None:
         path = _write_toml(
             tmp_path,
-            (
-                'title = "T"\nproject = "p"\n'
-                '[[scenes]]\nid = "s"\naction = "x"\nduration = 7\n'
-            ),
+            ('title = "T"\nproject = "p"\n[[scenes]]\nid = "s"\naction = "x"\nduration = 7\n'),
         )
         with pytest.raises(ConfigurationError, match="duration"):
             MovieManifest.from_toml_path(path)

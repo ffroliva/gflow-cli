@@ -21,9 +21,7 @@ class _FakeManifest:
     project = "p"
     style = StyleSpec(look="ink", negative="no text")
     characters = {"Stickman": Character(name="Stickman", identity="text", voice="alnilam")}
-    scenes = (
-        Scene(id="s1", action="walks", framing="wide", characters=("Stickman",), duration=8),
-    )
+    scenes = (Scene(id="s1", action="walks", framing="wide", characters=("Stickman",), duration=8),)
 
 
 def _fake_state() -> MovieState:
@@ -64,9 +62,7 @@ def test_build_handoff_uses_stored_prompt(tmp_path: Path) -> None:
 
 
 def test_build_handoff_redacts_prompt_when_disabled(tmp_path: Path) -> None:
-    h = build_handoff(
-        _FakeManifest(), _fake_state(), out_dir=Path("/out/x"), include_prompts=False
-    )
+    h = build_handoff(_FakeManifest(), _fake_state(), out_dir=Path("/out/x"), include_prompts=False)
     assert h["clips"][0]["prompt"] is None
 
 
