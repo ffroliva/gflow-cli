@@ -283,6 +283,17 @@ ADD_TO_PROMPT_DIALOG = "[role='dialog'][data-state='open']"
 # dialog-popup combo is locale-free and unambiguous in the editor. Repeat up to
 # MAX_REFERENCE_IMAGES — the button persists to add the next reference.
 ADD_MEDIA_BUTTON = "button[aria-haspopup='dialog']:has(i.google-symbols:text-is('add_2'))"
+# Resource picker (spike-verified 2026-06-06, locale-agnostic via ligatures/id).
+PICKER_SEARCH_INPUT = "#add-menu-input"
+PICKER_PERSONAGENS_TAB = (
+    "[role='tab']:has(i.google-symbols:text-is('accessibility_new')),"
+    " button:has(i.google-symbols:text-is('accessibility_new'))"
+)
+PICKER_VOZES_TAB = (
+    "[role='tab']:has(i.google-symbols:text-is('voice_selection')),"
+    " button:has(i.google-symbols:text-is('voice_selection'))"
+)
+PICKER_INCLUDE_BUTTON = "button:has-text('Incluir no comando')"
 VIDEO_SUBMODE_SELECTORS: dict[str, tuple[str, ...]] = {
     # I2V — "frames" (start + optional end frame). Icon: crop_free.
     "frames": (
@@ -1137,6 +1148,61 @@ class VideoGenerationMixin:
             )
             attached += 1
             log.info("ui_automation_video.reference_attached", index=i)
+
+    @staticmethod
+    async def _attach_character_entities(
+        page: Page,
+        names: list[str],
+        *,
+        out_dir: Path | None,
+    ) -> None:
+        """R2V: attach each named character via the resource picker
+        (Personagens -> select -> 'Incluir no comando'), injecting referenceEntities.
+        Runs on the open composer page in references sub-mode. Selection is by
+        display name; the submit-time backstop verifies the right entity rode.
+        """
+        for name in names:
+            add = page.locator(ADD_MEDIA_BUTTON).first
+            await add.wait_for(state="visible", timeout=8000)
+            await add.click()
+            await page.wait_for_timeout(800)
+            await page.locator(PICKER_PERSONAGENS_TAB).first.click()
+            await page.wait_for_timeout(400)
+            await page.locator(PICKER_SEARCH_INPUT).first.fill(name)
+            await page.wait_for_timeout(600)
+            tile = page.locator(
+                f"button:has-text('{name}'), [role='option']:has-text('{name}')"
+            ).first
+            await tile.click()
+            await page.wait_for_timeout(300)
+            await page.locator(PICKER_INCLUDE_BUTTON).first.click()
+            await page.wait_for_timeout(600)
+            log.info("ui_automation_video.character_entity_attached", name=name)
+
+    @staticmethod
+    async def _attach_reference_audio(
+        page: Page,
+        voice_id: str,
+        *,
+        out_dir: Path | None,
+    ) -> None:
+        """R2V: attach a voice resource via the Vozes picker -> 'Incluir no comando'."""
+        add = page.locator(ADD_MEDIA_BUTTON).first
+        await add.wait_for(state="visible", timeout=8000)
+        await add.click()
+        await page.wait_for_timeout(800)
+        await page.locator(PICKER_VOZES_TAB).first.click()
+        await page.wait_for_timeout(400)
+        await page.locator(PICKER_SEARCH_INPUT).first.fill(voice_id)
+        await page.wait_for_timeout(600)
+        tile = page.locator(
+            f"button:has-text('{voice_id}'), [role='option']:has-text('{voice_id}')"
+        ).first
+        await tile.click()
+        await page.wait_for_timeout(300)
+        await page.locator(PICKER_INCLUDE_BUTTON).first.click()
+        await page.wait_for_timeout(600)
+        log.info("ui_automation_video.reference_audio_attached", voice=voice_id)
 
     @staticmethod
     async def _select_video_aspect(page: Page, aspect: Aspect) -> None:
