@@ -6,6 +6,7 @@ from pathlib import Path
 
 import pytest
 
+from gflow_cli.composition import Character, Scene, StyleSpec
 from gflow_cli.errors import ConfigurationError
 from gflow_cli.movie_manifest import (
     CharacterState,
@@ -30,47 +31,53 @@ title = "Test Film"
 project = "proj-abc"
 
 [[scenes]]
-title = "Scene 1"
-type = "t2v"
-prompt = "A quiet forest at dawn"
+id = "s1"
+action = "A quiet forest at dawn"
 """
 
 _FULL_TOML = """\
+schema_version = 1
 title = "Full Film"
 project = "proj-xyz"
 output_dir = "./out/full"
 
+[style]
+look = "ink"
+negative = "no text"
+
 [[characters]]
 name = "Alice"
-face_prompt = "Young woman with red curly hair"
-body_prompt = "Casual jeans and jacket"
-model = "nano2"
+appearance = "red curly hair"
+voice = "alnilam"
+  [characters.variants]
+  white = "solid white"
 
 [[characters]]
 name = "Bob"
-face_prompt = "Middle-aged man with grey beard"
+appearance = "grey beard"
 
 [[scenes]]
-title = "Intro"
-type = "t2v"
-prompt = "Establishing shot"
+id = "intro"
+action = "Establishing shot"
+framing = "wide"
 aspect = "16:9"
 duration = 8
 model = "veo-lite"
-count = 1
 
 [[scenes]]
-title = "Alice Arrives"
-type = "r2v"
-prompt = "Alice walks in"
+id = "alice-arrives"
+action = "Alice walks in"
 characters = ["Alice"]
+variant = "white"
+speaker = "Alice"
+line = "Hi"
 aspect = "16:9"
 duration = 6
 
 [[scenes]]
-title = "Close-up"
-type = "r2v"
-prompt = "Alice smiles"
+id = "close-up"
+action = "Alice and Bob smile"
+framing = "close-up"
 characters = ["Alice", "Bob"]
 
 [assemble]
@@ -89,67 +96,113 @@ class TestMovieManifestValid:
         m = MovieManifest.from_toml_path(path)
         assert m.title == "Test Film"
         assert m.project == "proj-abc"
+        assert isinstance(m.style, StyleSpec)
         assert len(m.characters) == 0
         assert len(m.scenes) == 1
-        assert m.scenes[0].title == "Scene 1"
-        assert m.scenes[0].type == "t2v"
+        assert m.scenes[0].id == "s1"
+        assert m.scenes[0].action == "A quiet forest at dawn"
         assert m.scenes[0].aspect == "16:9"
-        assert m.scenes[0].count == 1
         assert m.assemble is None
         assert m.output_dir is None
+        assert m.continuity == "independent"
 
     def test_full_parses(self, tmp_path: Path) -> None:
         path = _write_toml(tmp_path, _FULL_TOML)
         m = MovieManifest.from_toml_path(path)
         assert m.title == "Full Film"
         assert m.output_dir == "./out/full"
+        assert m.style.look == "ink"
+        assert m.style.negative == "no text"
         assert len(m.characters) == 2
-        assert m.characters[0].name == "Alice"
-        assert m.characters[0].body_prompt == "Casual jeans and jacket"
-        assert m.characters[1].name == "Bob"
-        assert m.characters[1].body_prompt is None
+        assert m.characters["Alice"].appearance == "red curly hair"
+        assert m.characters["Alice"].voice == "alnilam"
+        assert m.characters["Alice"].variants["white"] == "solid white"
+        assert m.characters["Bob"].appearance == "grey beard"
         assert len(m.scenes) == 3
         assert m.scenes[1].characters == ("Alice",)
+        assert m.scenes[1].variant == "white"
+        assert m.scenes[1].dialogue[0].speaker == "Alice"
+        assert m.scenes[1].dialogue[0].line == "Hi"
         assert m.scenes[2].characters == ("Alice", "Bob")
         assert m.assemble is not None
         assert m.assemble.output == "./out/full/final.mp4"
 
+    def test_parse_full_scene_clip_manifest(self, tmp_path: Path) -> None:
+        m = MovieManifest.from_toml_path(
+            _write_toml(
+                tmp_path,
+                """
+schema_version = 1
+title = "T"
+project = "p"
+
+[style]
+look = "ink"
+negative = "no text"
+
+[[characters]]
+name = "Stickman"
+appearance = "round head"
+voice = "alnilam"
+  [characters.variants]
+  white = "solid white"
+
+[[scenes]]
+id = "s1"
+framing = "wide"
+action = "walks"
+characters = ["Stickman"]
+variant = "white"
+speaker = "Stickman"
+line = "Hi"
+duration = 8
+""",
+            )
+        )
+        assert isinstance(m.style, StyleSpec) and m.style.look == "ink"
+        assert m.characters["Stickman"].voice == "alnilam"
+        assert m.characters["Stickman"].variants["white"] == "solid white"
+        s = m.scenes[0]
+        assert isinstance(s, Scene) and s.id == "s1" and s.framing == "wide"
+        assert s.characters == ("Stickman",) and s.variant == "white"
+        assert s.dialogue[0].speaker == "Stickman" and s.dialogue[0].line == "Hi"
+
     def test_scene_defaults(self, tmp_path: Path) -> None:
         path = _write_toml(
             tmp_path,
-            'title = "T"\nproject = "p"\n[[scenes]]\ntitle = "S"\ntype = "t2v"\nprompt = "x"\n',
+            'title = "T"\nproject = "p"\n[[scenes]]\nid = "s"\naction = "x"\n',
         )
         s = MovieManifest.from_toml_path(path).scenes[0]
         assert s.aspect == "16:9"
         assert s.duration is None
         assert s.model is None
-        assert s.count == 1
         assert s.characters == ()
+        assert s.dialogue == ()
 
     def test_character_model_defaults_to_nano2(self, tmp_path: Path) -> None:
         path = _write_toml(
             tmp_path,
             (
                 'title = "T"\nproject = "p"\n'
-                '[[characters]]\nname = "X"\nface_prompt = "y"\n'
-                '[[scenes]]\ntitle = "S"\ntype = "t2v"\nprompt = "z"\n'
+                '[[characters]]\nname = "X"\nappearance = "y"\n'
+                '[[scenes]]\nid = "s"\naction = "z"\n'
             ),
         )
-        c = MovieManifest.from_toml_path(path).characters[0]
+        c = MovieManifest.from_toml_path(path).characters["X"]
         assert c.model == "nano2"
 
-    def test_i2v_with_initial_frame(self, tmp_path: Path) -> None:
+    def test_entity_identity_with_face_prompt(self, tmp_path: Path) -> None:
         path = _write_toml(
             tmp_path,
             (
                 'title = "T"\nproject = "p"\n'
-                '[[scenes]]\ntitle = "S"\ntype = "i2v"\n'
-                'prompt = "x"\ninitial_frame = "/tmp/frame.png"\n'
+                '[[characters]]\nname = "X"\nidentity = "entity"\nface_prompt = "a face"\n'
+                '[[scenes]]\nid = "s"\naction = "z"\n'
             ),
         )
-        s = MovieManifest.from_toml_path(path).scenes[0]
-        assert s.initial_frame == "/tmp/frame.png"
-        assert s.end_frame is None
+        c = MovieManifest.from_toml_path(path).characters["X"]
+        assert c.identity == "entity"
+        assert c.face_prompt == "a face"
 
 
 # ---------------------------------------------------------------------------
@@ -169,14 +222,14 @@ class TestMovieManifestInvalid:
 
     def test_missing_title_raises(self, tmp_path: Path) -> None:
         path = _write_toml(
-            tmp_path, 'project = "p"\n[[scenes]]\ntitle = "S"\ntype = "t2v"\nprompt = "x"\n'
+            tmp_path, 'project = "p"\n[[scenes]]\nid = "s"\naction = "x"\n'
         )
         with pytest.raises(ConfigurationError, match="title"):
             MovieManifest.from_toml_path(path)
 
     def test_missing_project_raises(self, tmp_path: Path) -> None:
         path = _write_toml(
-            tmp_path, 'title = "T"\n[[scenes]]\ntitle = "S"\ntype = "t2v"\nprompt = "x"\n'
+            tmp_path, 'title = "T"\n[[scenes]]\nid = "s"\naction = "x"\n'
         )
         with pytest.raises(ConfigurationError, match="project"):
             MovieManifest.from_toml_path(path)
@@ -186,20 +239,73 @@ class TestMovieManifestInvalid:
         with pytest.raises(ConfigurationError, match="scene"):
             MovieManifest.from_toml_path(path)
 
-    def test_invalid_scene_type_raises(self, tmp_path: Path) -> None:
+    def test_missing_action_raises(self, tmp_path: Path) -> None:
         path = _write_toml(
             tmp_path,
-            'title = "T"\nproject = "p"\n[[scenes]]\ntitle = "S"\ntype = "xyz"\nprompt = "x"\n',
+            'title = "T"\nproject = "p"\n[[scenes]]\nid = "s"\n',
         )
-        with pytest.raises(ConfigurationError, match="type"):
+        with pytest.raises(ConfigurationError, match="action"):
             MovieManifest.from_toml_path(path)
+
+    def test_unknown_framing_rejected(self, tmp_path: Path) -> None:
+        with pytest.raises(ConfigurationError, match="framing"):
+            MovieManifest.from_toml_path(
+                _write_toml(
+                    tmp_path,
+                    'title="T"\nproject="p"\n[[scenes]]\nid="s"\nframing="zoomy"\naction="x"\n',
+                )
+            )
+
+    def test_speaker_must_be_in_characters(self, tmp_path: Path) -> None:
+        with pytest.raises(ConfigurationError, match="speaker"):
+            MovieManifest.from_toml_path(
+                _write_toml(
+                    tmp_path,
+                    """
+title="T"
+project="p"
+[[characters]]
+name="A"
+appearance="a"
+[[scenes]]
+id="s"
+action="x"
+characters=["A"]
+speaker="B"
+line="hi"
+""",
+                )
+            )
+
+    def test_shorthand_rejected_for_multi_character(self, tmp_path: Path) -> None:
+        with pytest.raises(ConfigurationError, match="per-character"):
+            MovieManifest.from_toml_path(
+                _write_toml(
+                    tmp_path,
+                    """
+title="T"
+project="p"
+[[characters]]
+name="A"
+appearance="a"
+[[characters]]
+name="B"
+appearance="b"
+[[scenes]]
+id="s"
+action="x"
+characters=["A","B"]
+variant="white"
+""",
+                )
+            )
 
     def test_invalid_aspect_raises(self, tmp_path: Path) -> None:
         path = _write_toml(
             tmp_path,
             (
                 'title = "T"\nproject = "p"\n'
-                '[[scenes]]\ntitle = "S"\ntype = "t2v"\nprompt = "x"\naspect = "4:3"\n'
+                '[[scenes]]\nid = "s"\naction = "x"\naspect = "4:3"\n'
             ),
         )
         with pytest.raises(ConfigurationError, match="aspect"):
@@ -210,21 +316,10 @@ class TestMovieManifestInvalid:
             tmp_path,
             (
                 'title = "T"\nproject = "p"\n'
-                '[[scenes]]\ntitle = "S"\ntype = "t2v"\nprompt = "x"\nduration = 7\n'
+                '[[scenes]]\nid = "s"\naction = "x"\nduration = 7\n'
             ),
         )
         with pytest.raises(ConfigurationError, match="duration"):
-            MovieManifest.from_toml_path(path)
-
-    def test_count_out_of_range_raises(self, tmp_path: Path) -> None:
-        path = _write_toml(
-            tmp_path,
-            (
-                'title = "T"\nproject = "p"\n'
-                '[[scenes]]\ntitle = "S"\ntype = "t2v"\nprompt = "x"\ncount = 5\n'
-            ),
-        )
-        with pytest.raises(ConfigurationError, match="count"):
             MovieManifest.from_toml_path(path)
 
     def test_duplicate_character_name_raises(self, tmp_path: Path) -> None:
@@ -232,21 +327,21 @@ class TestMovieManifestInvalid:
             tmp_path,
             (
                 'title = "T"\nproject = "p"\n'
-                '[[characters]]\nname = "Alice"\nface_prompt = "x"\n'
-                '[[characters]]\nname = "Alice"\nface_prompt = "y"\n'
-                '[[scenes]]\ntitle = "S"\ntype = "t2v"\nprompt = "z"\n'
+                '[[characters]]\nname = "Alice"\nappearance = "x"\n'
+                '[[characters]]\nname = "Alice"\nappearance = "y"\n'
+                '[[scenes]]\nid = "s"\naction = "z"\n'
             ),
         )
         with pytest.raises(ConfigurationError, match="Duplicate character"):
             MovieManifest.from_toml_path(path)
 
-    def test_duplicate_scene_title_raises(self, tmp_path: Path) -> None:
+    def test_duplicate_scene_id_raises(self, tmp_path: Path) -> None:
         path = _write_toml(
             tmp_path,
             (
                 'title = "T"\nproject = "p"\n'
-                '[[scenes]]\ntitle = "S"\ntype = "t2v"\nprompt = "x"\n'
-                '[[scenes]]\ntitle = "S"\ntype = "t2v"\nprompt = "y"\n'
+                '[[scenes]]\nid = "s"\naction = "x"\n'
+                '[[scenes]]\nid = "s"\naction = "y"\n'
             ),
         )
         with pytest.raises(ConfigurationError, match="Duplicate scene"):
@@ -257,19 +352,23 @@ class TestMovieManifestInvalid:
             tmp_path,
             (
                 'title = "T"\nproject = "p"\n'
-                '[[scenes]]\ntitle = "S"\ntype = "r2v"\nprompt = "x"\n'
+                '[[scenes]]\nid = "s"\naction = "x"\n'
                 'characters = ["Ghost"]\n'
             ),
         )
         with pytest.raises(ConfigurationError, match="unknown character"):
             MovieManifest.from_toml_path(path)
 
-    def test_i2v_missing_initial_frame_raises(self, tmp_path: Path) -> None:
+    def test_entity_identity_without_face_prompt_raises(self, tmp_path: Path) -> None:
         path = _write_toml(
             tmp_path,
-            'title = "T"\nproject = "p"\n[[scenes]]\ntitle = "S"\ntype = "i2v"\nprompt = "x"\n',
+            (
+                'title = "T"\nproject = "p"\n'
+                '[[characters]]\nname = "X"\nidentity = "entity"\n'
+                '[[scenes]]\nid = "s"\naction = "z"\n'
+            ),
         )
-        with pytest.raises(ConfigurationError, match="initial_frame"):
+        with pytest.raises(ConfigurationError, match="face_prompt"):
             MovieManifest.from_toml_path(path)
 
     def test_invalid_character_model_raises(self, tmp_path: Path) -> None:
@@ -277,11 +376,23 @@ class TestMovieManifestInvalid:
             tmp_path,
             (
                 'title = "T"\nproject = "p"\n'
-                '[[characters]]\nname = "X"\nface_prompt = "y"\nmodel = "imagen4"\n'
-                '[[scenes]]\ntitle = "S"\ntype = "t2v"\nprompt = "z"\n'
+                '[[characters]]\nname = "X"\nappearance = "y"\nmodel = "imagen4"\n'
+                '[[scenes]]\nid = "s"\naction = "z"\n'
             ),
         )
         with pytest.raises(ConfigurationError, match="model"):
+            MovieManifest.from_toml_path(path)
+
+    def test_unknown_variant_rejected(self, tmp_path: Path) -> None:
+        path = _write_toml(
+            tmp_path,
+            (
+                'title = "T"\nproject = "p"\n'
+                '[[characters]]\nname = "A"\nappearance = "a"\n'
+                '[[scenes]]\nid = "s"\naction = "x"\ncharacters = ["A"]\nvariant = "blue"\n'
+            ),
+        )
+        with pytest.raises(ConfigurationError, match="variant"):
             MovieManifest.from_toml_path(path)
 
 
@@ -297,6 +408,9 @@ class TestMovieState:
         assert state.characters == {}
         assert state.scenes == {}
 
+    def test_version_is_2(self) -> None:
+        assert MovieState.VERSION == 2
+
     def test_save_and_reload(self, tmp_path: Path) -> None:
         path = tmp_path / "movie-state.json"
         state = MovieState(title="T", project="p")
@@ -304,7 +418,7 @@ class TestMovieState:
             entity_id="ent-1",
             image_paths=["/path/to/face.png", None],
         )
-        state.scenes["Scene 1"] = SceneState(
+        state.scenes["s1"] = SceneState(
             media_id="media-1",
             flow_operation_id="op-1",
             local_path="/out/video.mp4",
@@ -317,10 +431,10 @@ class TestMovieState:
         assert "Alice" in loaded.characters
         assert loaded.characters["Alice"].entity_id == "ent-1"
         assert loaded.characters["Alice"].image_paths == ["/path/to/face.png", None]
-        assert "Scene 1" in loaded.scenes
-        assert loaded.scenes["Scene 1"].media_id == "media-1"
-        assert loaded.scenes["Scene 1"].flow_operation_id == "op-1"
-        assert loaded.scenes["Scene 1"].status == "completed"
+        assert "s1" in loaded.scenes
+        assert loaded.scenes["s1"].media_id == "media-1"
+        assert loaded.scenes["s1"].flow_operation_id == "op-1"
+        assert loaded.scenes["s1"].status == "completed"
 
     def test_corrupted_state_file_returns_empty(self, tmp_path: Path) -> None:
         path = tmp_path / "movie-state.json"
@@ -342,7 +456,7 @@ class TestMovieState:
     def test_scene_state_failed_status(self, tmp_path: Path) -> None:
         path = tmp_path / "s.json"
         state = MovieState(title="T", project="p")
-        state.scenes["Scene X"] = SceneState(
+        state.scenes["scene-x"] = SceneState(
             media_id="",
             flow_operation_id=None,
             local_path=None,
@@ -350,4 +464,4 @@ class TestMovieState:
         )
         state.save(path)
         loaded = MovieState.load(path, title="T", project="p")
-        assert loaded.scenes["Scene X"].status == "failed"
+        assert loaded.scenes["scene-x"].status == "failed"

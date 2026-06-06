@@ -15,19 +15,18 @@ from __future__ import annotations
 
 import json
 import tomllib
-from dataclasses import dataclass, field
+from dataclasses import dataclass
 from pathlib import Path
 from typing import cast
 
+from gflow_cli.composition import FRAMING, Character, DialogueLine, Scene, StyleSpec
 from gflow_cli.errors import ConfigurationError
 
 __all__ = [
     "AssemblyDef",
-    "CharacterDef",
     "CharacterState",
     "MovieManifest",
     "MovieState",
-    "SceneDef",
     "SceneState",
 ]
 
@@ -35,7 +34,6 @@ __all__ = [
 # Allowed values
 # ---------------------------------------------------------------------------
 
-_VALID_SCENE_TYPES: frozenset[str] = frozenset({"t2v", "r2v", "i2v"})
 _VALID_VIDEO_ASPECTS: frozenset[str] = frozenset({"9:16", "16:9", "1:1"})
 _VALID_DURATIONS: frozenset[int] = frozenset({4, 6, 8, 10})
 _VALID_CHARACTER_MODELS: frozenset[str] = frozenset({"nano2", "nanopro"})
@@ -47,32 +45,6 @@ _VALID_CHARACTER_MODELS: frozenset[str] = frozenset({"nano2", "nanopro"})
 
 
 @dataclass(frozen=True)
-class CharacterDef:
-    """One named character to be created (or reused) in the Flow project."""
-
-    name: str
-    face_prompt: str
-    body_prompt: str | None = None
-    model: str = "nano2"
-
-
-@dataclass(frozen=True)
-class SceneDef:
-    """One scene in the movie."""
-
-    title: str
-    type: str  # "t2v" | "r2v" | "i2v"
-    prompt: str
-    characters: tuple[str, ...] = field(default_factory=tuple)
-    aspect: str = "16:9"
-    duration: int | None = None
-    model: str | None = None
-    count: int = 1
-    initial_frame: str | None = None  # i2v only
-    end_frame: str | None = None  # i2v only (optional)
-
-
-@dataclass(frozen=True)
 class AssemblyDef:
     """Optional assembly step — render all scenes into one .mp4."""
 
@@ -81,14 +53,17 @@ class AssemblyDef:
 
 @dataclass(frozen=True)
 class MovieManifest:
-    """Validated, immutable representation of a movie.toml file."""
+    """Validated, immutable representation of a movie.toml file (scene = clip)."""
 
     title: str
     project: str
-    characters: tuple[CharacterDef, ...]
-    scenes: tuple[SceneDef, ...]
+    style: StyleSpec
+    characters: dict[str, Character]  # keyed by name
+    scenes: tuple[Scene, ...]
+    continuity: str = "independent"
     assemble: AssemblyDef | None = None
     output_dir: str | None = None
+    schema_version: int = 1
 
     @classmethod
     def from_toml_path(cls, path: Path) -> MovieManifest:
@@ -119,16 +94,22 @@ class MovieManifest:
         if output_dir is not None and not isinstance(output_dir, str):
             raise ConfigurationError("'output_dir' must be a string.")
 
+        schema_version = data.get("schema_version", 1)
+        if not isinstance(schema_version, int):
+            raise ConfigurationError("'schema_version' must be an integer.")
+
+        style = _parse_style(data.get("style"))
+
         chars_raw = data.get("characters", [])
         if not isinstance(chars_raw, list):
             raise ConfigurationError("'characters' must be a TOML array.")
         chars_list = cast("list[object]", chars_raw)
-        characters = tuple(_parse_character(c, i) for i, c in enumerate(chars_list))
-        char_names: set[str] = set()
-        for c in characters:
-            if c.name in char_names:
-                raise ConfigurationError(f"Duplicate character name: {c.name!r}")
-            char_names.add(c.name)
+        characters: dict[str, Character] = {}
+        for i, c in enumerate(chars_list):
+            parsed = _parse_character(c, i)
+            if parsed.name in characters:
+                raise ConfigurationError(f"Duplicate character name: {parsed.name!r}")
+            characters[parsed.name] = parsed
 
         scenes_raw = data.get("scenes", [])
         if not isinstance(scenes_raw, list):
@@ -136,12 +117,23 @@ class MovieManifest:
         if not scenes_raw:
             raise ConfigurationError("At least one [[scenes]] entry is required.")
         scenes_list = cast("list[object]", scenes_raw)
-        scenes = tuple(_parse_scene(s, i, char_names) for i, s in enumerate(scenes_list))
-        title_names: set[str] = set()
+        char_names = set(characters)
+        scenes = tuple(
+            _parse_scene(s, i, char_names, characters) for i, s in enumerate(scenes_list)
+        )
+        scene_ids: set[str] = set()
         for s in scenes:
-            if s.title in title_names:
-                raise ConfigurationError(f"Duplicate scene title: {s.title!r}")
-            title_names.add(s.title)
+            if s.id in scene_ids:
+                raise ConfigurationError(f"Duplicate scene id: {s.id!r}")
+            scene_ids.add(s.id)
+
+        continuity = "independent"
+        movie_raw = data.get("movie")
+        if isinstance(movie_raw, dict):
+            raw_cont = cast("dict[str, object]", movie_raw).get("continuity", "independent")
+            if not isinstance(raw_cont, str):
+                raise ConfigurationError("movie.continuity must be a string.")
+            continuity = raw_cont
 
         assemble: AssemblyDef | None = None
         assemble_raw = data.get("assemble")
@@ -157,10 +149,13 @@ class MovieManifest:
         return cls(
             title=title.strip(),
             project=project.strip(),
+            style=style,
             characters=characters,
             scenes=scenes,
+            continuity=continuity,
             assemble=assemble,
             output_dir=output_dir,
+            schema_version=schema_version,
         )
 
 
@@ -169,7 +164,31 @@ class MovieManifest:
 # ---------------------------------------------------------------------------
 
 
-def _parse_character(data: object, idx: int) -> CharacterDef:
+def _parse_style(data: object) -> StyleSpec:
+    if data is None:
+        return StyleSpec()
+    if not isinstance(data, dict):
+        raise ConfigurationError("[style] must be a TOML table.")
+    d = cast("dict[str, object]", data)
+
+    def s(key: str) -> str | None:
+        v = d.get(key)
+        if v is not None and not isinstance(v, str):
+            raise ConfigurationError(f"style.{key} must be a string.")
+        return v.strip() if isinstance(v, str) else None
+
+    return StyleSpec(
+        look=s("look"),
+        palette=s("palette"),
+        environment=s("environment"),
+        camera=s("camera"),
+        lighting=s("lighting"),
+        mood=s("mood"),
+        negative=s("negative"),
+    )
+
+
+def _parse_character(data: object, idx: int) -> Character:
     if not isinstance(data, dict):
         raise ConfigurationError(f"characters[{idx}] must be a TOML table.")
     d = cast("dict[str, object]", data)
@@ -178,107 +197,163 @@ def _parse_character(data: object, idx: int) -> CharacterDef:
     if not isinstance(name, str) or not name.strip():
         raise ConfigurationError(f"characters[{idx}].name must be a non-empty string.")
 
-    face_prompt = d.get("face_prompt")
-    if not isinstance(face_prompt, str) or not face_prompt.strip():
-        raise ConfigurationError(f"characters[{idx}].face_prompt must be a non-empty string.")
+    identity = d.get("identity", "text")
+    if identity not in ("text", "entity"):
+        raise ConfigurationError(f"characters[{idx}].identity must be 'text' or 'entity'.")
 
-    body_prompt = d.get("body_prompt")
-    if body_prompt is not None and not isinstance(body_prompt, str):
-        raise ConfigurationError(f"characters[{idx}].body_prompt must be a string.")
+    variants_raw = d.get("variants", {})
+    if not isinstance(variants_raw, dict):
+        raise ConfigurationError(f"characters[{idx}].variants must be a table.")
+    variants = {
+        str(k): str(v) for k, v in cast("dict[str, object]", variants_raw).items()
+    }
 
-    raw_model = d.get("model", "nano2")
-    if not isinstance(raw_model, str) or raw_model not in _VALID_CHARACTER_MODELS:
+    model = d.get("model", "nano2")
+    if not isinstance(model, str) or model not in _VALID_CHARACTER_MODELS:
         raise ConfigurationError(
             f"characters[{idx}].model must be one of "
-            f"{sorted(_VALID_CHARACTER_MODELS)} (got {raw_model!r})."
+            f"{sorted(_VALID_CHARACTER_MODELS)} (got {model!r})."
         )
 
-    return CharacterDef(
+    def opt(key: str) -> str | None:
+        v = d.get(key)
+        if v is not None and not isinstance(v, str):
+            raise ConfigurationError(f"characters[{idx}].{key} must be a string.")
+        return v.strip() if isinstance(v, str) else None
+
+    face_prompt = opt("face_prompt")
+    if identity == "entity" and not face_prompt:
+        raise ConfigurationError(
+            f"characters[{idx}] identity='entity' requires face_prompt."
+        )
+
+    return Character(
         name=name.strip(),
-        face_prompt=face_prompt.strip(),
-        body_prompt=body_prompt.strip() if isinstance(body_prompt, str) else None,
-        model=raw_model,
+        appearance=opt("appearance"),
+        identity=str(identity),
+        voice=opt("voice"),
+        variants=variants,
+        face_prompt=face_prompt,
+        body_prompt=opt("body_prompt"),
+        model=str(model),
     )
 
 
-def _parse_scene(data: object, idx: int, char_names: set[str]) -> SceneDef:
+def _parse_scene(
+    data: object,
+    idx: int,
+    char_names: set[str],
+    characters: dict[str, Character],
+) -> Scene:
     if not isinstance(data, dict):
         raise ConfigurationError(f"scenes[{idx}] must be a TOML table.")
     d = cast("dict[str, object]", data)
 
-    title = d.get("title")
-    if not isinstance(title, str) or not title.strip():
-        raise ConfigurationError(f"scenes[{idx}].title must be a non-empty string.")
+    sid = d.get("id")
+    if not isinstance(sid, str) or not sid.strip():
+        raise ConfigurationError(f"scenes[{idx}].id must be a non-empty string.")
 
-    scene_type = d.get("type")
-    if not isinstance(scene_type, str) or scene_type not in _VALID_SCENE_TYPES:
+    action = d.get("action")
+    if not isinstance(action, str) or not action.strip():
+        raise ConfigurationError(f"scenes[{idx}].action must be a non-empty string.")
+
+    framing = d.get("framing")
+    if framing is not None and framing not in FRAMING:
         raise ConfigurationError(
-            f"scenes[{idx}].type must be one of {sorted(_VALID_SCENE_TYPES)} (got {scene_type!r})."
+            f"scenes[{idx}].framing must be one of {sorted(FRAMING)} (got {framing!r})."
         )
-
-    prompt = d.get("prompt")
-    if not isinstance(prompt, str) or not prompt.strip():
-        raise ConfigurationError(f"scenes[{idx}].prompt must be a non-empty string.")
 
     chars_raw = d.get("characters", [])
     if not isinstance(chars_raw, list):
-        raise ConfigurationError(f"scenes[{idx}].characters must be a TOML array.")
-    char_names_in_scene: list[str] = []
-    for char_name in cast("list[object]", chars_raw):
-        if not isinstance(char_name, str):
-            raise ConfigurationError(f"scenes[{idx}].characters entries must be strings.")
-        if char_name not in char_names:
-            raise ConfigurationError(
-                f"scenes[{idx}] references unknown character {char_name!r}. "
-                f"Defined: {sorted(char_names)!r}"
-            )
-        char_names_in_scene.append(char_name)
+        raise ConfigurationError(f"scenes[{idx}].characters must be an array.")
+    chars: list[str] = []
+    for cn in cast("list[object]", chars_raw):
+        if not isinstance(cn, str) or cn not in char_names:
+            raise ConfigurationError(f"scenes[{idx}] references unknown character {cn!r}.")
+        chars.append(cn)
 
-    raw_aspect = d.get("aspect", "16:9")
-    if not isinstance(raw_aspect, str) or raw_aspect not in _VALID_VIDEO_ASPECTS:
+    # Dialogue: shorthand (speaker/line) for single-char scenes, else per-character table.
+    dialogue: list[DialogueLine] = []
+    speaker = d.get("speaker")
+    line = d.get("line")
+    variant = d.get("variant")
+    per_char = d.get("characters_detail")  # optional [[scenes.characters_detail]] table list
+
+    if (speaker is not None or line is not None or variant is not None) and len(chars) > 1:
         raise ConfigurationError(
-            f"scenes[{idx}].aspect must be one of "
-            f"{sorted(_VALID_VIDEO_ASPECTS)} (got {raw_aspect!r})."
+            f"scenes[{idx}]: speaker/line/variant shorthand is invalid with >1 character; "
+            "use per-character [[scenes.characters_detail]] entries."
+        )
+
+    if speaker is not None:
+        if speaker not in chars:
+            raise ConfigurationError(
+                f"scenes[{idx}].speaker {speaker!r} not in characters."
+            )
+        if not isinstance(line, str) or not line.strip():
+            raise ConfigurationError(f"scenes[{idx}].line must be a non-empty string.")
+        dialogue.append(DialogueLine(speaker=str(speaker), line=line.strip()))
+
+    if isinstance(per_char, list):
+        for e in cast("list[object]", per_char):
+            if not isinstance(e, dict):
+                continue
+            ed = cast("dict[str, object]", e)
+            nm = ed.get("name")
+            ln = ed.get("line")
+            if nm not in chars:
+                raise ConfigurationError(
+                    f"scenes[{idx}].characters_detail name {nm!r} not in characters."
+                )
+            if isinstance(ln, str) and ln.strip():
+                dialogue.append(DialogueLine(speaker=str(nm), line=ln.strip()))
+
+    # Validate shorthand variant exists for the (single) character.
+    if isinstance(variant, str) and len(chars) == 1:
+        ch = characters.get(chars[0])
+        if ch is not None and variant not in ch.variants:
+            raise ConfigurationError(
+                f"scenes[{idx}].variant {variant!r} is not a variant of "
+                f"character {chars[0]!r} (defined: {sorted(ch.variants)!r})."
+            )
+
+    aspect = d.get("aspect", "16:9")
+    if not isinstance(aspect, str) or aspect not in _VALID_VIDEO_ASPECTS:
+        raise ConfigurationError(
+            f"scenes[{idx}].aspect must be one of {sorted(_VALID_VIDEO_ASPECTS)}."
         )
 
     duration = d.get("duration")
-    if duration is not None:
-        if not isinstance(duration, int) or duration not in _VALID_DURATIONS:
-            raise ConfigurationError(
-                f"scenes[{idx}].duration must be one of "
-                f"{sorted(_VALID_DURATIONS)} seconds (got {duration!r})."
-            )
+    if duration is not None and duration not in _VALID_DURATIONS:
+        raise ConfigurationError(
+            f"scenes[{idx}].duration must be one of {sorted(_VALID_DURATIONS)}."
+        )
 
-    raw_model = d.get("model")
-    if raw_model is not None and not isinstance(raw_model, str):
+    model = d.get("model")
+    if model is not None and not isinstance(model, str):
         raise ConfigurationError(f"scenes[{idx}].model must be a string.")
-    scene_model: str | None = raw_model if isinstance(raw_model, str) else None
 
-    count = d.get("count", 1)
-    if not isinstance(count, int) or not (1 <= count <= 4):
-        raise ConfigurationError(f"scenes[{idx}].count must be an integer 1–4 (got {count!r}).")
+    def opt(key: str) -> str | None:
+        v = d.get(key)
+        return v.strip() if isinstance(v, str) else None
 
-    initial_frame = d.get("initial_frame")
-    end_frame = d.get("end_frame")
-    if initial_frame is not None and not isinstance(initial_frame, str):
-        raise ConfigurationError(f"scenes[{idx}].initial_frame must be a string path.")
-    if end_frame is not None and not isinstance(end_frame, str):
-        raise ConfigurationError(f"scenes[{idx}].end_frame must be a string path.")
-
-    if scene_type == "i2v" and not initial_frame:
-        raise ConfigurationError(f"scenes[{idx}] (type=i2v) requires 'initial_frame'.")
-
-    return SceneDef(
-        title=title.strip(),
-        type=scene_type,
-        prompt=prompt.strip(),
-        characters=tuple(char_names_in_scene),
-        aspect=raw_aspect,
+    return Scene(
+        id=sid.strip(),
+        action=action.strip(),
+        title=opt("title"),
+        setting=opt("setting"),
+        framing=str(framing) if framing else None,
+        camera=opt("camera"),
+        lighting=opt("lighting"),
+        mood=opt("mood"),
+        negative=opt("negative"),
+        characters=tuple(chars),
+        variant=str(variant) if isinstance(variant, str) else None,
+        dialogue=tuple(dialogue),
         duration=duration if isinstance(duration, int) else None,
-        model=scene_model,
-        count=count,
-        initial_frame=initial_frame if isinstance(initial_frame, str) else None,
-        end_frame=end_frame if isinstance(end_frame, str) else None,
+        model=model if isinstance(model, str) else None,
+        aspect=str(aspect),
+        count=1,
     )
 
 
@@ -347,7 +422,7 @@ class MovieState:
     so that a re-run can skip already-completed characters and scenes.
     """
 
-    VERSION = 1
+    VERSION = 2
 
     def __init__(self, *, title: str, project: str) -> None:
         self.title = title
