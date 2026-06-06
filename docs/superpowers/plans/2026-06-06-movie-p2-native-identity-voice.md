@@ -566,3 +566,47 @@ git commit -m "test(movie): live e2e gate — entity identity + voice consistenc
 **Placeholder scan:** The transport selectors are concrete (spike-captured). The two soft spots — exact enum identifiers in `api/video.py` (Task 1) and the precise `_generate_scene`/`_create_character` signatures (Tasks 3,5) — are flagged with "check the source / match the actual signature" because they depend on P1's final shape; every code block is otherwise complete. The e2e (Task 7) intentionally includes a human gallery-confirmation step (credit-spending live verification can't be fully automated).
 
 **Type consistency:** `reference_entities: tuple[str,...]`, `reference_audio: str | None` are identical across Tasks 1,3,5. `_attach_character_entities(page, names: list[str], *, out_dir)` and `_assert_entities_attached(generate_resp, *, expected)` signatures match between definition (Tasks 2-3) and call sites (Task 3). `set_character_voice(*, project_id, entity_id, preset_voice_id)` consistent Tasks 4. `consistency_method` values `{text, entity, degraded}` match the spec §7 / handoff schema (P1 Task 5).
+
+---
+
+## ⚠️ Council Review Fixes (MUST apply — these SUPERSEDE conflicting task text above)
+
+A 4-lens plan-review council audited this plan against the live codebase. Apply these corrections while executing.
+
+**C0 — Commit hygiene:** Never `git add -A`/`.` — stage only the files each task lists (the worktree root has untracked stray files). Fixtures under `tmp_path` only.
+
+**C1 — Task 1 retarget the edit (BLOCKER): the R2V validation is NOT in `__post_init__`.** In `src/gflow_cli/api/video.py`, `__post_init__` (line ~202) only dispatches to helpers. Apply the changes in:
+- `_validate_mode_symmetry` (lines ~248-254): the current R2V check `if not self.reference_images: raise ValueError("R2V request requires at least one reference image")` → change to require images OR entities and **use this exact message** (the Task 1 test asserts `match="reference_images or reference_entities"`):
+  ```python
+  if not self.reference_images and not self.reference_entities:
+      msg = "R2V request requires reference_images or reference_entities"
+      raise ValueError(msg)
+  ```
+  Also add `or self.reference_entities` to the I2V "must not carry references" rejection in the same method.
+- `_validate_r2v_caps` (lines ~256-275): count entities + images against the per-model cap and **use a message containing `reference cap`** (the test asserts `match="reference cap"`):
+  ```python
+  total_refs = len(self.reference_images) + len(self.reference_entities)
+  if self.model is not None:
+      cap = reference_cap_for(self.model)
+      if total_refs > cap:
+          msg = f"reference cap exceeded: {total_refs} refs (images+entities) > {cap} for {self.model.value}"
+          raise ValueError(msg)
+  ```
+Enum names are verified real: `Aspect.LANDSCAPE`, `Mode.R2V`, `VideoModel.VEO_3_1_LITE` (cap=3), `reference_cap_for`, `MAX_REFERENCE_IMAGES`. Drop the "adjust if different" hedge in the Task 1 test.
+
+**C2 — Task 4 is REDUNDANT: voice-embed already exists. Replace it.** `client.patch_entity(*, project_id, entity_id, ..., voice=None, ...)` (`api/client.py:~1359`) ALREADY writes `entityInfo.characterInfo.audioReferences=[{presetVoiceId: voice}]`, and `services/character_create.py` ALREADY accepts `voice` (line ~52) and calls `patch_entity(..., voice=voice)` (line ~244) + returns it in `CharacterCreateResult`. So do NOT add `set_character_voice`. The real gap is one wire-up:
+- P1's `Character` already has a `voice` field. In `cli_movie._create_character` (`cli_movie.py:~411-444`), the `character_create(...)` call (line ~435) does NOT pass `voice` — add `voice=char_def.voice`.
+- Replace the Task 4 test with one asserting `_create_character` forwards the manifest character's `voice` into `character_create` (patch `gflow_cli.cli_movie.character_create` with an `AsyncMock`, assert it was awaited with `voice="alnilam"`).
+
+**C3 — Task 5 PIN `consistency_method` persistence to a `SceneState` field (not a side map).** In `movie_manifest.py`:
+- Add `consistency_method: str = "text"` to `SceneState`.
+- Include it in `to_dict()` and `from_dict()` (`.get("consistency_method", "text")`). `MovieState.VERSION` is already 2 (P1); old files load via the `.get` default.
+- The orchestrator sets it when building `SceneState` after a successful generate (`"entity"` if entities attached + backstop passed; `"text"` otherwise; `"degraded"` only if the backstop raised but `--continue-on-error` kept going).
+- `build_handoff` reads `ss.consistency_method` (replacing P1's hardcoded `"text"`).
+- Add a `SceneState` round-trip test asserting `consistency_method` survives `to_dict`→`from_dict`.
+
+**C4 — Task 5 `_generate_scene` target is now fixed (per P1 C5):** it receives `reference_entities`/`reference_audio` kwargs. `_run_movie` resolves them: for each scene character with `identity=="entity"`, look up `state.characters[name].entity_id` (pre-flight **fail loud** if missing — `raise ConfigurationError`/mark scene failed, replacing the old silent drop), collect into `reference_entities`; resolve voice → `reference_audio` only if the entity was NOT created with an embedded voice (embedded is preferred — see C2). The test in Task 5 Step 1 should assert `_generate_scene` is awaited with `reference_entities=("ent-9",)`.
+
+**C5 — Task 7 live e2e MUST opt out of the autouse settings-isolation fixture.** `tests/conftest.py::_isolate_settings` is autouse and forces `GFLOW_CLI_HOME`/`GFLOW_CLI_DB_PATH` to throwaway tmp dirs — a live run would hit an empty catalog/wrong profile (memory: `test-isolation-real-env-opt-out`, PR #114). The e2e must `monkeypatch.delenv("GFLOW_CLI_HOME", raising=False)` + `delenv("GFLOW_CLI_DB_PATH", raising=False)` + call `reset_settings()` so it resolves the real `denon82` profile. Add an explicit **numbered prerequisite step**: create a voiced character entity first (credit-spending) before the 2-scene run. **Human-gated:** a headless subagent CANNOT run Task 7 (Google auth/reCAPTCHA rejects bundled Chromium) — the user runs it + confirms in the gallery; do not let a subagent invoke it.
+
+**C6 — Human-gated vs subagent-safe (for the executor):** Tasks 1, 3 (unit tests mock the page/capture), 4, 5 are subagent-safe/headless. Task 2 is subagent-safe to WRITE (selectors are spike-captured) but cannot be live-verified without a browser. Task 6 Step 2 (voice-list spike) and Task 7 (e2e) are **headed + supervised** — the user runs them (`PYTHONUTF8=1`, ASCII-only prints).
