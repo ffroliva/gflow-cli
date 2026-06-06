@@ -617,6 +617,51 @@ class TestRunMovieOrchestrator:
         assert state.scenes["S1"].status == "completed"
         assert state.scenes["S2"].status == "completed"
 
+    async def test_resume_generates_first_new_scene(self, tmp_path: Path) -> None:
+        """Regression: on resume, the first NEW scene must generate (not crash
+        on the cooldown triggered by the resumed completed scene)."""
+        from gflow_cli.cli_movie import _run_movie
+
+        manifest = MovieManifest(
+            title="T",
+            project="p",
+            characters=(),
+            scenes=(
+                SceneDef(title="S1", type="t2v", prompt="x"),
+                SceneDef(title="S2", type="t2v", prompt="y"),
+            ),
+        )
+        state = MovieState(title="T", project="p")
+        state.scenes["S1"] = SceneState(
+            media_id="m",
+            flow_operation_id="op-old",
+            local_path="/out/v.mp4",
+            status="completed",
+        )
+        state_path = tmp_path / "state.json"
+        gen = AsyncMock(return_value=_make_video_result())
+
+        with (
+            patch("gflow_cli.cli_movie.get_settings"),
+            patch("gflow_cli.cli_movie.OperationRecorder") as mock_recorder_cls,
+            patch("gflow_cli.cli_movie.FlowApiClient", return_value=_mock_client_cm()),
+            patch("gflow_cli.cli_movie._generate_scene", new=gen),
+            patch("asyncio.sleep", new=AsyncMock()),
+        ):
+            mock_recorder_cls.open.return_value = MagicMock()
+            await _run_movie(
+                manifest=manifest,
+                state=state,
+                state_path=state_path,
+                profile_name="default",
+                profile_dir=tmp_path / "profile",
+                out_dir=tmp_path / "out",
+                continue_on_error=True,
+            )
+
+        gen.assert_awaited_once()  # S1 skipped, S2 generated
+        assert state.scenes["S2"].status == "completed"
+
 
 # ---------------------------------------------------------------------------
 # _create_character
