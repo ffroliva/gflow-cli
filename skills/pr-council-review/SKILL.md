@@ -1,5 +1,6 @@
 ---
 name: pr-council-review
+version: "2.1"
 description: Multi-dimensional LLM council review of an open PR (default) or a local feature branch (§ 8 branch mode, invoked via `/gflow:branch-review`). Five baseline dimensions (correctness, quality, security, tests, memory-hygiene) plus adaptive dimensions per surface (transports / data / CLI / docs / auth / BDD / scripts / release-gate). Each agent invokes specialized skills (security-review, code-review, verify) for its dimension. Reads files via `git show <sha>:<path>` to avoid stale-working-tree false positives. Cross-tool portable.
 ---
 
@@ -47,6 +48,7 @@ Rank with these heuristics (highest priority first):
 | `isDraft == false` AND CI all-green | +3 | Ready to merge once approved — highest ROI |
 | Touched path includes `src/gflow_cli/api/transports/` | +2 | UI-automation is the highest-risk surface (memory `[[pr-must-verify-on-affected-surface]]`) |
 | Touched path includes `src/gflow_cli/auth/` or `recaptcha` | +2 | Auth changes need security-deep-dive |
+| Touched path includes `src/gflow_cli/api/client.py` or `src/gflow_cli/api/_sapisidhash.py` | +2 | Auth-token plumbing (Bearer / access-token / SAPISID) — lives outside `auth/` but is security-material; backtest found 3 historical fixes here |
 | Touched path includes `src/gflow_cli/data/` | +2 | Migration safety + #86 hygiene history |
 | Older than 7 days (stale risk) | +1 | Conflict risk grows with age |
 | `additions + deletions <= 300` | +1 | Small PRs ship faster |

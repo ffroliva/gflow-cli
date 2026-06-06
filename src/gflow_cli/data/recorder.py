@@ -15,6 +15,8 @@ from gflow_cli.data.models import (
     OperationRecord,
     OperationStatus,
     ProjectRecord,
+    SceneClipRecord,
+    SceneRecord,
 )
 from gflow_cli.data.redaction import PromptMode, prompt_fields, redact_metadata
 from gflow_cli.data.repository import DataRepository
@@ -25,6 +27,7 @@ if TYPE_CHECKING:
 
     from gflow_cli.api.dto import AssetInfo, GeneratedImage, ProjectInfo
     from gflow_cli.api.image import GenerateImageRequest
+    from gflow_cli.api.scene import Scene
     from gflow_cli.api.video import GenerateVideoRequest, VideoResult, VideoStarted
     from gflow_cli.config import Settings
     from gflow_cli.storage import CloudStorageInfo
@@ -268,6 +271,94 @@ class OperationRecorder:
             )
 
     # ------------------------------------------------------------------
+    # Scenes
+    # ------------------------------------------------------------------
+
+    def record_scene(
+        self,
+        *,
+        profile_name: str,
+        profile_dir: Path,
+        scene: Scene,
+        operation_kind: OperationKind = OperationKind.SCENE_CREATE,
+        source_workflow_ids: list[str] | None = None,
+        source: str = "composed",
+    ) -> str:
+        """Persist a composed scene; returns the local scene row id (for a later
+        :meth:`record_scene_output`). source_workflow_ids (submission order) is
+        zipped by position onto the sorted instances; the source id is NOT
+        recoverable from read-back alone."""
+        repo = self.repository
+        src_by_pos = source_workflow_ids or []
+        repo.upsert_profile(profile_name, profile_dir)
+        repo.upsert_project(
+            ProjectRecord(
+                id=_new_id(),
+                profile_name=profile_name,
+                flow_project_id=scene.project_id,
+                title=None,
+                source="generated",
+            ),
+        )
+        total = sum((w.metadata.end_time - w.metadata.start_time) for w in scene.workflows)
+        scene_row_id = _new_id()
+        repo.upsert_scene(
+            SceneRecord(
+                id=scene_row_id,
+                profile_name=profile_name,
+                flow_project_id=scene.project_id,
+                flow_scene_id=scene.scene_id,
+                total_duration=total,
+                source=source,
+            ),
+        )
+        repo.replace_scene_clips(
+            scene_row_id,
+            [
+                SceneClipRecord(
+                    id=_new_id(),
+                    scene_id=scene_row_id,
+                    position=w.metadata.position,
+                    flow_instance_workflow_id=w.workflow_id,
+                    flow_source_workflow_id=(src_by_pos[idx] if idx < len(src_by_pos) else None),
+                    flow_media_id=w.media_id,
+                    start_time=w.metadata.start_time,
+                    end_time=w.metadata.end_time,
+                    total_duration=w.metadata.total_duration,
+                )
+                for idx, w in enumerate(scene.workflows)
+            ],
+        )
+        op_id = _new_id()
+        repo.insert_operation(
+            OperationRecord(
+                id=op_id,
+                profile_name=profile_name,
+                flow_project_id=scene.project_id,
+                command="scene create",
+                mode=operation_kind,
+                status=OperationStatus.SUCCEEDED,
+                flow_operation_id=None,
+                flow_batch_id=None,
+                prompt=None,
+                prompt_hash=None,
+                prompt_redacted=False,
+                model=None,
+                aspect_ratio=None,
+                error_type=None,
+                error_detail=None,
+            ),
+        )
+        repo.update_operation_status(op_id, OperationStatus.SUCCEEDED, _now_utc_iso(), None, None)
+        return scene_row_id
+
+    def record_scene_output(self, *, scene_row_id: str, output_path: str) -> None:
+        """Attach the rendered extended-video path to a scene already recorded
+        by :meth:`record_scene`. Called after a successful server-side concat so
+        a render failure never loses the compose record."""
+        self.repository.set_scene_output(scene_row_id, output_path)
+
+    # ------------------------------------------------------------------
     # Video — started / completed
     # Note: Task 7 will introduce a proper "started video" DTO; for now
     # we accept primitive kwargs. Task 8 will wire this through callers.
@@ -423,36 +514,248 @@ class OperationRecorder:
                     if local_path is not None
                     else "video/mp4"
                 )
+                # Persist on-disk path/bytes/hash only for genuinely local files
+                # (single-level conditionals so pyright narrows ``local_path``).
+                resolved_path = (
+                    local_path.resolve() if not is_cloud and local_path is not None else None
+                )
+                file_bytes = (
+                    _file_bytes(local_path) if not is_cloud and local_path is not None else None
+                )
+                file_sha256 = (
+                    _file_sha256(local_path) if not is_cloud and local_path is not None else None
+                )
                 repo.upsert_local_file(
                     LocalFileRecord(
                         id=_new_id(),
                         profile_name=profile_name,
                         asset_id=asset_lookup.id,
-                        path=(
-                            None
-                            if is_cloud
-                            else local_path.resolve()
-                            if local_path is not None
-                            else None
-                        ),
+                        path=resolved_path,
                         media_type=media_type,
-                        bytes=(
-                            None
-                            if is_cloud
-                            else _file_bytes(local_path)
-                            if local_path is not None
-                            else None
-                        ),
-                        sha256=(
-                            None
-                            if is_cloud
-                            else _file_sha256(local_path)
-                            if local_path is not None
-                            else None
-                        ),
+                        bytes=file_bytes,
+                        sha256=file_sha256,
                         storage_provider=(
                             cloud_storage_info.provider if cloud_storage_info else None
                         ),
                         cloud_uri=cloud_storage_info.uri if cloud_storage_info else None,
                     ),
                 )
+
+    # ------------------------------------------------------------------
+    # Character — started / completed (persist-before-spend saga)
+    # ------------------------------------------------------------------
+
+    def record_character_started(
+        self,
+        *,
+        profile_name: str,
+        profile_dir: Path,
+        project_id: str,
+        entity_id: str,
+        name: str,
+    ) -> str:
+        """Insert an OperationRecord(mode=CHARACTER, status=STARTED) BEFORE any
+        credited generation.  Stores ``entity_id`` and ``name`` in the new
+        ``metadata_json`` column so the row is recoverable after a crash.
+
+        Returns the operation row ``id`` for later update via
+        :meth:`record_character_completed`.
+        """
+        repo = self.repository
+
+        repo.upsert_profile(profile_name, profile_dir)
+        repo.upsert_project(
+            ProjectRecord(
+                id=_new_id(),
+                profile_name=profile_name,
+                flow_project_id=project_id,
+                title=None,
+                source="generated",
+            ),
+        )
+
+        op_id = _new_id()
+        repo.insert_operation(
+            OperationRecord(
+                id=op_id,
+                profile_name=profile_name,
+                flow_project_id=project_id,
+                command="character create",
+                mode=OperationKind.CHARACTER,
+                status=OperationStatus.STARTED,
+                flow_operation_id=entity_id,
+                flow_batch_id=None,
+                prompt=None,
+                prompt_hash=None,
+                prompt_redacted=False,
+                model=None,
+                aspect_ratio=None,
+                error_type=None,
+                error_detail=None,
+            ),
+        )
+        # Write entity_id + name into metadata_json immediately so a crash
+        # before record_character_completed still leaves a recoverable row.
+        repo.set_operation_metadata(op_id, {"entity_id": entity_id, "name": name})
+        return op_id
+
+    def record_character_partial(
+        self,
+        *,
+        row_id: str,
+        workflow_ids: list[str],
+        primary_media_ids: list[str],
+    ) -> None:
+        """Merge newly-recorded workflow/media ids into a STARTED row.
+
+        Called after each individual commit_workflow so that a crash between
+        face-gen and body-gen leaves the row with the face ids already
+        persisted — recovery can then skip the face slot.
+
+        The row stays in STARTED status; only ``metadata_json`` is updated.
+        """
+        import json as _json
+
+        repo = self.repository
+        # Read current metadata, merge in new ids.
+        row = repo.store.conn.execute(
+            "SELECT metadata_json FROM operations WHERE id = ?",
+            (row_id,),
+        ).fetchone()
+        meta: dict[str, object] = {}
+        if row and row["metadata_json"]:
+            try:
+                meta = _json.loads(row["metadata_json"])
+            except (ValueError, TypeError):
+                meta = {}
+        meta["workflow_ids"] = workflow_ids
+        meta["primary_media_ids"] = primary_media_ids
+        repo.set_operation_metadata(row_id, meta)
+
+    def record_character_completed(
+        self,
+        *,
+        row_id: str,
+        workflow_ids: list[str],
+        primary_media_ids: list[str],
+        voice: str | None = None,
+        personality: str | None = None,
+        media_metadata: dict[str, object] | None = None,
+        image_paths: list[str | None] | None = None,
+    ) -> None:
+        """Update the STARTED row to SUCCEEDED.
+
+        * ``personality`` is routed through
+          :func:`~gflow_cli.data.redaction.prompt_fields` so that in
+          ``prompt_mode="redacted"`` mode no plaintext is stored.
+        * ``media_metadata`` is routed through
+          :func:`~gflow_cli.data.redaction.redact_metadata` so that signed URLs
+          (``signature=`` / ``Expires=`` / ``fifeUrl``) are never persisted.
+        * ``image_paths`` is the LOCAL on-disk path of each downloaded reference
+          image (slot order, parallel to ``primary_media_ids``).  Each non-None
+          path is persisted as an asset + local-file row so the character's
+          images are queryable like generated images/videos.  These are always
+          local file paths — never a signed CDN URL (scenario #16).
+        """
+        repo = self.repository
+        pf = prompt_fields(personality, mode=self.prompt_mode)
+
+        # Collect safe metadata (workflow/media ids + optional redacted fields)
+        meta: dict[str, object] = {
+            "workflow_ids": workflow_ids,
+            "primary_media_ids": primary_media_ids,
+        }
+        if voice is not None:
+            meta["voice"] = voice
+        if media_metadata is not None:
+            meta["media_metadata"] = redact_metadata(media_metadata)
+
+        repo.update_operation_metadata(
+            row_id,
+            status=OperationStatus.SUCCEEDED,
+            completed_at=_now_utc_iso(),
+            prompt=pf.prompt,
+            prompt_hash=pf.prompt_hash,
+            prompt_redacted=pf.prompt_redacted,
+            metadata_json=meta,
+        )
+
+        # Persist each downloaded reference image as an asset + local-file row.
+        if image_paths:
+            self._record_character_local_files(
+                row_id=row_id,
+                workflow_ids=workflow_ids,
+                primary_media_ids=primary_media_ids,
+                image_paths=image_paths,
+            )
+
+    def _record_character_local_files(
+        self,
+        *,
+        row_id: str,
+        workflow_ids: list[str],
+        primary_media_ids: list[str],
+        image_paths: list[str | None],
+    ) -> None:
+        """Upsert an asset + local-file row for each downloaded character image.
+
+        Only local file paths are stored — never a signed CDN URL (scenario
+        #16).  Slots whose path is ``None`` (not downloaded / recovered) are
+        skipped.  The operation row's ``profile_name`` and ``flow_project_id``
+        are looked up from the existing STARTED/SUCCEEDED row.
+        """
+        from pathlib import Path as _Path
+
+        repo = self.repository
+        op_row = repo.store.conn.execute(
+            "SELECT profile_name, flow_project_id FROM operations WHERE id = ?",
+            (row_id,),
+        ).fetchone()
+        if op_row is None:
+            return
+        profile_name = op_row["profile_name"]
+        project_id = op_row["flow_project_id"]
+
+        op_asset_index = 0
+        for slot, path_str in enumerate(image_paths):
+            if path_str is None:
+                continue
+            media_id = primary_media_ids[slot] if slot < len(primary_media_ids) else ""
+            workflow_id = workflow_ids[slot] if slot < len(workflow_ids) else None
+            path = _Path(path_str)
+            media_type = mimetypes.guess_type(path.name)[0] or "image/png"
+            asset_id = _new_id()
+            repo.upsert_asset(
+                AssetRecord(
+                    id=asset_id,
+                    profile_name=profile_name,
+                    flow_project_id=project_id,
+                    flow_media_id=media_id,
+                    flow_workflow_id=workflow_id,
+                    flow_media_generation_id=None,
+                    kind=AssetKind.IMAGE,
+                    status="ready",
+                    model=None,
+                    aspect_ratio=None,
+                    width=None,
+                    height=None,
+                    duration_seconds=None,
+                    seed=None,
+                    metadata_json={},
+                ),
+            )
+            repo.link_operation_asset(row_id, asset_id, OperationAssetRole.OUTPUT, op_asset_index)
+            op_asset_index += 1
+            repo.upsert_local_file(
+                LocalFileRecord(
+                    id=_new_id(),
+                    profile_name=profile_name,
+                    asset_id=asset_id,
+                    path=path.resolve(),
+                    media_type=media_type,
+                    bytes=_file_bytes(path),
+                    sha256=_file_sha256(path),
+                    storage_provider=None,
+                    cloud_uri=None,
+                ),
+            )

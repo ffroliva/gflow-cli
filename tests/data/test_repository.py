@@ -129,7 +129,14 @@ def test_operation_asset_position_is_unique(tmp_path: Path) -> None:
             repo.link_operation_asset(operation.id, asset_two.id, OperationAssetRole.INPUT, 0)
 
 
-def test_upsert_project_natural_key_conflict_raises_data_integrity_error(tmp_path: Path) -> None:
+def test_upsert_project_natural_key_conflict_is_idempotent(tmp_path: Path) -> None:
+    """A second upsert with the same (profile_name, flow_project_id) but a
+    fresh random ``id`` must dedupe on the natural key instead of crashing.
+
+    Regression for the live ``UNIQUE constraint failed:
+    projects.profile_name, projects.flow_project_id`` bug that blocked any
+    second operation in an already-recorded project.
+    """
     with DataStore.open(tmp_path / "gflow.db") as store:
         repo = DataRepository(store)
         repo.upsert_profile("default", Path("C:/profiles/default"))
@@ -142,16 +149,65 @@ def test_upsert_project_natural_key_conflict_raises_data_integrity_error(tmp_pat
                 source="generated",
             )
         )
-        with pytest.raises(DataIntegrityError):
-            repo.upsert_project(
-                ProjectRecord(
-                    id="project-b",
-                    profile_name="default",
-                    flow_project_id="flow-project-1",
-                    title="B",
-                    source="generated",
-                )
+
+        # Second upsert: same natural key, DIFFERENT (fresh) id. Must NOT raise.
+        repo.upsert_project(
+            ProjectRecord(
+                id="project-b",
+                profile_name="default",
+                flow_project_id="flow-project-1",
+                title="B",
+                source="generated",
             )
+        )
+
+        rows = store.conn.execute(
+            "SELECT id, title FROM projects WHERE profile_name = ? AND flow_project_id = ?",
+            ("default", "flow-project-1"),
+        ).fetchall()
+        # Exactly one project row for the natural key.
+        assert len(rows) == 1
+        # The original row id is preserved (natural-key dedupe, not a new row).
+        assert rows[0]["id"] == "project-a"
+        # Mutable field (title) is updated on repeat.
+        assert rows[0]["title"] == "B"
+
+
+def test_upsert_project_repeat_preserves_existing_title_when_none(tmp_path: Path) -> None:
+    """A repeat upsert that passes ``title=None`` must NOT clobber an existing
+    non-null title (COALESCE keeps the stored value)."""
+    with DataStore.open(tmp_path / "gflow.db") as store:
+        repo = DataRepository(store)
+        repo.upsert_profile("default", Path("C:/profiles/default"))
+        repo.upsert_project(
+            ProjectRecord(
+                id="project-a",
+                profile_name="default",
+                flow_project_id="flow-project-1",
+                title="Original Title",
+                source="generated",
+            )
+        )
+        repo.upsert_project(
+            ProjectRecord(
+                id="project-b",
+                profile_name="default",
+                flow_project_id="flow-project-1",
+                title=None,
+                source="recorded",
+            )
+        )
+
+        row = store.conn.execute(
+            "SELECT id, title, source, created_at FROM projects "
+            "WHERE profile_name = ? AND flow_project_id = ?",
+            ("default", "flow-project-1"),
+        ).fetchone()
+        assert row["id"] == "project-a"
+        # Existing non-null title preserved despite the None on repeat.
+        assert row["title"] == "Original Title"
+        # Mutable source still updated.
+        assert row["source"] == "recorded"
 
 
 def test_upsert_asset_natural_key_conflict_raises_data_integrity_error(tmp_path: Path) -> None:

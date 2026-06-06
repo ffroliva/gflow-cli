@@ -1,6 +1,6 @@
 # gflow-cli
 
-> Unofficial Python CLI for Google Flow — drives Veo (image-to-video, text-to-video, reference-to-video) and Imagen (text-to-image) generations from the terminal by reverse-engineering Flow's private REST API at aisandbox-pa.googleapis.com. Requires a Google AI Ultra or Pro subscription with Flow access. Uses Playwright Chromium under the hood (one-time real-Chrome auth, then a persistent Chrome session driven via ui_automation). Production-stable for image generation and video T2V/I2V/R2V with a `--model`/`--duration`/`--count` picker; only `gflow video batch` (manifest runner) is still queued for Phase B — use a shell for-loop in the meantime. Keeps a local SQLite catalog of every generation, queryable via `gflow data list {projects,images,videos,profiles}`. MIT licensed, not affiliated with Google.
+> Unofficial Python CLI for Google Flow — drives Veo (image-to-video, text-to-video, reference-to-video) and Imagen (text-to-image) generations from the terminal by reverse-engineering Flow's private REST API at aisandbox-pa.googleapis.com. Requires a Google AI Ultra or Pro subscription with Flow access. Uses Playwright Chromium under the hood (one-time real-Chrome auth, then a persistent Chrome session driven via ui_automation). Production-stable for image generation and video T2V/I2V/R2V with a `--model`/`--duration`/`--count` picker; only `gflow video batch` (manifest runner) is still queued for Phase B — use a shell for-loop in the meantime. Also ships `gflow character` (create/list/show/rm/voices — reusable, project-scoped Flow Character entities for consistent subjects across generations), `gflow scene` (create/show — compose ordered clips into a scene; `create --output` renders a credit-free server-side extended video), and `gflow video chain` (last-frame I2V chaining from a JSONL manifest). Keeps a local SQLite catalog of every generation, queryable via `gflow data list {projects,images,videos,profiles}`. MIT licensed, not affiliated with Google.
 
 This file is forward-staged for a future docs site at https://ffroliva.github.io/gflow-cli/llms.txt and is also usable today by LLM agents that read the repo directly.
 
@@ -15,6 +15,7 @@ This file is forward-staged for a future docs site at https://ffroliva.github.io
 - [External Storage](https://github.com/ffroliva/gflow-cli/blob/main/docs/EXTERNAL_STORAGE.md): S3, MinIO, and Google Cloud Storage output setup.
 - [Known Issues](https://github.com/ffroliva/gflow-cli/blob/main/KNOWN_ISSUES.md): Open + mitigated issues with workarounds.
 - [Data Layer](https://github.com/ffroliva/gflow-cli/blob/main/docs/DATA_LAYER.md): Local SQLite catalog schema and the `gflow data list` query CLI.
+- [Characters](https://github.com/ffroliva/gflow-cli/blob/main/docs/CHARACTER.md): The `gflow character` command group — reusable, project-scoped Flow Character entities (reference images, optional voice, optional personality).
 - [Roadmap](https://github.com/ffroliva/gflow-cli/blob/main/ROADMAP.md): Themed milestones through v1.0.
 
 ## For AI coding agents

@@ -226,9 +226,44 @@ gflow video t2v "..." --out-dir ./out/
 
 # Video batch: --out-dir overrides the videos/<date>/ root
 gflow video batch ./manifest.tsv --out-dir ./batch-out/
+
+# Video chain: --out-dir holds the per-link mp4s + seed frames
+gflow video chain ./story.jsonl --out-dir ./chain-out/ --yes
 ```
 
 For images, `--out DIR` writes flat as `<DIR>/<media_name>_<n>.png` — file paths are not accepted (rename after the fact if needed). For videos, `--out-dir DIR` controls the local output directory.
+
+## `gflow video chain` flags
+
+`gflow video chain` (last-frame I2V chaining — see
+[USAGE § gflow video chain](USAGE.md#gflow-video-chain)) is configured entirely
+by command-line flags; it adds **no new environment variables**. It reuses
+`GFLOW_CLI_OUTPUT_DIR` (default output root), `GFLOW_CLI_PROFILE`,
+`GFLOW_CLI_DB_PATH` (chain links are recorded for `--resume-from`), and
+`GFLOW_CLI_TIMEOUT_SECONDS` (per-link generation ceiling — the chain waits for
+each link in turn, so total wallclock is the sum of all link waits).
+
+| Flag | Default | Notes |
+|---|---|---|
+| `--model` | `veo-lite` | `veo-lite` / `veo-fast` / `veo-quality` / `veo-lite-lp`. `omni-flash` is rejected — it can't seed i2v links (issue #125). |
+| `--max-links N` | unset | Cap link count; exit 11 (`ConfigurationError`) if the manifest has more. A spend guardrail. |
+| `-y` / `--yes` | off | Skip the per-credit cost confirmation prompt. |
+| `--dry-run` | off | Print the plan + credit estimate and spend nothing. |
+| `--resume-from CHAIN_ID` | unset | Resume a prior chain by its id; already-paid links are skipped (not re-billed). |
+| `--jitter F` | `0.0` | Random `0..F` second pause **between** links (anti-bot cadence; never before link 0). |
+| `--seed-offset MS` | `0` | Extract the seed frame this many ms before EOF (fade-to-black guard). |
+| `--aspect` | `9:16` | `9:16` / `16:9`. Applied uniformly to every link (continuity requirement). |
+| `--out-dir DIR` | output root | Directory for the link mp4s + `linkN_lastframe.jpg` seed frames. |
+| `--profile NAME` | default profile | Per-subcommand profile override. |
+| `--json` | off | Emit a machine-readable JSON result. |
+
+The last-frame extractor needs the **`chain` optional extra** (PyAV — no system
+ffmpeg required):
+
+```bash
+pip install 'gflow-cli[chain]'
+# or:  uv tool install 'gflow-cli[chain]'
+```
 
 Per-call local output flags are not intended as bucket-prefix controls. For
 predictable external storage keys, set the bucket prefix in

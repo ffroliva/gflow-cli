@@ -1,6 +1,6 @@
 [project]
 name = "gflow-cli"
-version = "0.10.0"
+version = "0.13.0"
 description = "Unofficial CLI for Google Flow — drive Veo image-to-video generations from the terminal."
 readme = "README.md"
 license = { file = "LICENSE" }
@@ -33,8 +33,13 @@ dependencies = [
 dev = [
     "pytest>=8.0.0",
     "pytest-asyncio>=0.23.0",
-    "ruff>=0.5.0",
+    "ruff>=0.15.15",
     "pyright>=1.1.0",
+    # video-chain: the last-frame extractor (media.py) decodes with PyAV, and its
+    # tests build synthetic mp4 fixtures with numpy. Declared here so the dev/CI
+    # env actually runs tests/test_media.py instead of importorskip-skipping it.
+    "av>=12",
+    "numpy>=1.24",
 ]
 # Cloud storage extras — install only one at a time.
 # aiobotocore and boto3 pin conflicting botocore versions; avoid mixing [s3]
@@ -47,6 +52,10 @@ gcs = [
 s3 = [
     "universal_pathlib>=0.2.5",
     "s3fs>=2024.2.0",
+]
+# Video-chain extra — PyAV for the last-frame extractor (no system ffmpeg needed).
+chain = [
+    "av>=12",
 ]
 
 [project.scripts]
@@ -69,7 +78,14 @@ line-length = 100
 target-version = "py311"
 
 [tool.ruff.lint]
-select = ["E", "F", "W", "I", "B", "UP", "N"]
+# T20 (flake8-print) bans builtin `print()` in src/ — AGENTS.md mandates structlog
+# only. `console.print()` (rich) is an attribute call and is unaffected. Tests and
+# CLI scripts legitimately print, so they are exempted via per-file-ignores below.
+select = ["E", "F", "W", "I", "B", "UP", "N", "T20"]
+
+[tool.ruff.lint.per-file-ignores]
+"tests/**" = ["T20"]
+"scripts/**" = ["T20"]
 
 [tool.pyright]
 include = ["src", "tests"]
@@ -102,18 +118,22 @@ markers = [
     "e2e_video: spends Veo credits (text-to-video or image-to-video) — slowest",
     "e2e_batch: spends multiple Imagen credits via batch generation",
     "e2e_data: verifies data-layer (SQLite) persistence — combines with e2e_image or e2e_video",
+    "e2e_scene: scene/timeline compose (Add Clip) — zero credits, no reCAPTCHA",
+    "e2e_character: Character entity create (face/body image-gen + entity patch) — spends Imagen credits; opt-in via GFLOW_CLI_E2E_RUN_CHARACTER",
     "smoke: golden-path live test (1 Imagen credit); opt-in via GFLOW_CLI_E2E_PROFILE",
 ]
 
 [dependency-groups]
 dev = [
+    "av>=12",
     "detect-secrets>=1.5.0",
+    "numpy>=1.24",
     "pillow>=12.2.0",
     "pyright>=1.1.409",
     "pytest-asyncio>=1.3.0",
     "pytest-bdd>=8.1.0",
     "pytest-cov>=7.1.0",
-    "ruff>=0.15.12",
+    "ruff==0.15.15",
 ]
 # Container-based integration tests — requires Docker daemon.
 # Install: uv sync --group containers

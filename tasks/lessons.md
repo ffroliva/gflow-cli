@@ -295,7 +295,7 @@ _End. Convert stable rules from this file into `project_conventions.md` once the
 
 ### L24 — INDEX.md is worth loading at session start; heavy docs are not
 
-**Rule:** INDEX.md is a small routing table (~37 lines) — cheap enough to load at every session start. It enables lazy loading of everything else. PLAN.md, KNOWN_ISSUES.md, and CHANGELOG.md are loaded on demand via `/gflow:plan`, `/gflow:known-issues`, and `/gflow:changelog`. Loading all four upfront burns tokens on sessions where only one is needed.
+**Rule:** INDEX.md is a small routing table (~37 lines) — cheap enough to load at every session start. It enables lazy loading of everything else. PLAN.md, KNOWN_ISSUES.md, and CHANGELOG.md are loaded on demand via `/gflow:status`, `/gflow:known-issues`, and `/gflow:changelog`. (Note: `/gflow:plan <feature>` is the plan-creator command; `/gflow:status` is the plan-reader.) Loading all four upfront burns tokens on sessions where only one is needed.
 
 **Source:** This session.
 
@@ -306,3 +306,27 @@ _End. Convert stable rules from this file into `project_conventions.md` once the
 **Rule:** Add entries to `[Unreleased]` in the same commit as the user-visible change (during development). `/gflow:release` owns the migration: moving `[Unreleased]` to a versioned section. Never accumulate all entries at release time — the diff is meaningless and defeats `git blame` on the changelog.
 
 **Source:** This session. Reinforces L15.
+
+---
+
+### L26 — Escape the Setup Loop (Loop Braking)
+
+**Rule:** If a test fails or skips 3 consecutive times with "Environment/Setup" errors, the agent MUST immediately stop retry attempts via CLI flags or environment variables and pivot to Source Research mode (analyzing `conftest.py` and fixture resolution logic). Retrying the same command with trivial variations is a signal of an unproductive "loop" and wastes context.
+
+**Source:** The v0.13.0 release session (fixing E2E profile resolution skips).
+
+---
+
+### L27 — Async Testing (CliRunner vs. Asyncio Nesting)
+
+**Rule:** Click command functions that call `asyncio.run()` (which is standard for all `gflow` generation commands via `run_with_handlers`) must be tested using synchronous test functions and `CliRunner.invoke()`. Never use `@pytest.mark.asyncio` for these tests, as nesting `asyncio.run()` within an existing test-driven event loop causes `RuntimeError: coroutine was never awaited` crashes.
+
+**Source:** The v0.13.0 release session (refactoring `test_i2v_flags_e2e.py`).
+
+---
+
+### L28 — E2E Isolation (The `unisolated_home` Fixture)
+
+**Rule:** Use the `unisolated_home` fixture in E2E/Smoke tests that must resolve real Chromium profiles from the host system. This fixture explicitly uses `monkeypatch` to restore the real `GFLOW_CLI_HOME` to satisfy security boundary checks, while preserving the temporary `GFLOW_CLI_DB_PATH` isolation for safety. Do not use scattered, imperative `os.environ` or `monkeypatch` calls.
+
+**Source:** The v0.13.0 release session.

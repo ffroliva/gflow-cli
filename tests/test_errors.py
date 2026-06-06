@@ -11,14 +11,18 @@ from gflow_cli.errors import (
     AuthBrowserRejectedError,
     AuthExpiredError,
     AuthMissingError,
+    ChainPartialError,
     ConfigurationError,
     ContentPolicyError,
     FlowApiError,
+    FrameExtractionError,
     GFlowError,
+    ModelModeIncompatibilityError,
     NetworkError,
     ProblemDetails,
     RateLimitError,
     TransportTimeoutError,
+    VideoModelSelectionError,
     WafRejectionError,
     WireFormatError,
 )
@@ -148,10 +152,34 @@ def test_exit_code_map_synthetic_subclass_inherits_parent_code():
         (ContentPolicyError, 5),
         (NetworkError, 6),
         (WireFormatError, 7),
+        (ModelModeIncompatibilityError, 17),
     ],
 )
 def test_exit_code_map_per_class(exc_cls, expected_code):
     assert _exit_code_for(exc_cls(detail="x")) == expected_code
+
+
+def test_model_mode_incompatibility_error_exit_code_17():
+    """Issue #125: distinct exit code 17, NOT its parent ConfigurationError's 11.
+
+    The isinstance walk must hit ModelModeIncompatibilityError (registered
+    BEFORE ConfigurationError in EXIT_CODE_MAP) before falling through to the
+    parent — otherwise scripted callers can't branch on "incompatible
+    model/mode" vs a generic configuration error.
+    """
+    err = ModelModeIncompatibilityError(detail="omni-flash + i2v invalid")
+    assert isinstance(err, ConfigurationError)
+    assert _exit_code_for(err) == 17
+    assert EXIT_CODE_MAP[ModelModeIncompatibilityError] == 17
+
+
+def test_video_model_selection_error_exit_code_18():
+    """Issue #125: model-select UI failure for i2v gets exit 18 (transport
+    reliability), distinct from 17 (incompatible model) and 11 (config)."""
+    err = VideoModelSelectionError(detail="could not select veo-lite (issue #125)")
+    assert isinstance(err, ConfigurationError)
+    assert _exit_code_for(err) == 18
+    assert EXIT_CODE_MAP[VideoModelSelectionError] == 18
 
 
 def test_exit_code_map_ordering_invariant():
@@ -368,3 +396,45 @@ def test_exceptions_module_is_alias_for_errors() -> None:
     assert _exceptions.ContentPolicyError is _errors.ContentPolicyError
     assert _exceptions.EXIT_CODE_MAP is _errors.EXIT_CODE_MAP
     assert _exceptions.ProblemDetails is _errors.ProblemDetails
+
+
+# ---------- Video-chain error classes (Task 1 / Task 3) ----------
+
+
+def test_frame_extraction_error_exit_code_20() -> None:
+    """FrameExtractionError -> exit code 20 (current max is 19, so 20 is free).
+
+    Raised by the PyAV last-frame extractor when ``av`` is missing or the input
+    is undecodable; carries an install-hint remediation."""
+    err = FrameExtractionError(detail="av not installed")
+    assert _exit_code_for(err) == 20
+    assert EXIT_CODE_MAP[FrameExtractionError] == 20
+    assert isinstance(err, GFlowError)
+    # Has a remediation hint (the install-the-extra guidance).
+    assert err.remediation_hint != ""
+
+
+def test_chain_partial_error_exit_code_21_and_partial_results() -> None:
+    """ChainPartialError -> exit code 21, carrying the Paths of completed links.
+
+    Mirrors BatchPartialError but for the sequential video chain: a mid-chain
+    failure must surface the already-paid-for clips so they are not lost."""
+    from pathlib import Path
+
+    completed = [Path("link0.mp4"), Path("link1.mp4")]
+    err = ChainPartialError(
+        detail="link 2 routed to t2v",
+        partial_results=completed,
+    )
+    assert _exit_code_for(err) == 21
+    assert EXIT_CODE_MAP[ChainPartialError] == 21
+    assert err.partial_results == completed
+    assert all(isinstance(p, Path) for p in err.partial_results)
+    assert isinstance(err, GFlowError)
+
+
+def test_chain_partial_error_partial_results_defaults_empty() -> None:
+    """A ChainPartialError raised before any link completes carries an empty
+    (but present) ``partial_results`` list — never None."""
+    err = ChainPartialError(detail="first link failed")
+    assert err.partial_results == []

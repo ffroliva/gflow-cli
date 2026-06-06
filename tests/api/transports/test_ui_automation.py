@@ -25,11 +25,16 @@ from gflow_cli.api.transports.ui_automation import (
     _ONBOARDING_STRUCTURAL_SELECTORS,  # noqa: PLC2701
     _ONBOARDING_TEXT_SELECTORS,  # noqa: PLC2701
     FLOW_URL,
+    IMAGE_MODEL_OPTION_SELECTORS,
     NEW_PROJECT_SELECTORS,
     ONBOARDING_SELECTORS,
     SUBMIT_BUTTON_SELECTORS,
     UiAutomationTransport,
     _count_tabs_locator,  # noqa: PLC2701
+)
+from gflow_cli.api.transports.ui_automation_video import (
+    COMPOSER_AGENT_TOGGLE_SELECTOR,
+    VideoGenerationMixin,
 )
 from gflow_cli.errors import ContentPolicyError, WafRejectionError
 
@@ -2043,3 +2048,519 @@ class TestSelectorLocaleInvariance:
             assert "[aria-label*='Project'" not in sel, (
                 f"English-only aria-label in NEW_PROJECT_SELECTORS: {sel!r}"
             )
+
+    def test_image_model_option_selectors_are_tuples(self) -> None:
+        """Every model entry in IMAGE_MODEL_OPTION_SELECTORS must be a non-empty tuple."""
+        from gflow_cli.api.image import Model
+
+        for model in (Model.NARWHAL, Model.GEM_PIX_2, Model.IMAGEN_3_5):
+            sels = IMAGE_MODEL_OPTION_SELECTORS.get(model)
+            assert sels is not None, f"Missing entry for {model!r}"
+            assert isinstance(sels, tuple), f"Entry for {model!r} must be a tuple, got {type(sels)}"
+            assert len(sels) > 0, f"Selector tuple for {model!r} must not be empty"
+
+    def test_image_model_option_selectors_no_duplicates(self) -> None:
+        """No duplicate selectors within any model's cascade."""
+        for model, sels in IMAGE_MODEL_OPTION_SELECTORS.items():
+            assert len(sels) == len(set(sels)), (
+                f"Duplicate selectors in IMAGE_MODEL_OPTION_SELECTORS[{model!r}]: {sels}"
+            )
+
+    def test_image_model_option_selectors_all_models_covered(self) -> None:
+        """All three image models must have selector entries."""
+        from gflow_cli.api.image import Model
+
+        for model in (Model.NARWHAL, Model.GEM_PIX_2, Model.IMAGEN_3_5):
+            assert model in IMAGE_MODEL_OPTION_SELECTORS, (
+                f"{model!r} missing from IMAGE_MODEL_OPTION_SELECTORS"
+            )
+
+    def test_launch_args_no_lang_en_us(self) -> None:
+        """--lang=en-US must not appear in UiAutomationTransport executable code.
+
+        Filters comment lines so future documentation comments (e.g. "# Note:
+        --lang=en-US was removed in PR #127") don't trip this guard.
+        IMAGE_MODEL_OPTION_SELECTORS uses locale-stable product names; locale is
+        controlled by the ``locale=`` Playwright kwarg (issue #94 / issue #24 Phase 5).
+        """
+        import inspect
+
+        from gflow_cli.api.transports import ui_automation
+
+        non_comment_lines = [
+            line
+            for line in inspect.getsource(ui_automation).splitlines()
+            if not line.lstrip().startswith("#")
+        ]
+        assert "--lang=en-US" not in "\n".join(non_comment_lines), (
+            "--lang=en-US was re-introduced into executable code; "
+            "IMAGE_MODEL_OPTION_SELECTORS must not require it (issue #94)"
+        )
+
+
+def _make_model_page_mock(
+    *,
+    trigger_visible: bool = True,
+    selector_side_effects: list[list[Exception | None]] | None = None,
+) -> MagicMock:
+    """Build a page mock for _select_image_model tests.
+
+    selector_side_effects: per-call list of exceptions (or None for success)
+    that page.locator(...).first.wait_for raises. Index 0 = first selector tried.
+    """
+    page = MagicMock()
+    trigger_loc = MagicMock()
+    trigger_loc.first = trigger_loc
+    trigger_loc.wait_for = AsyncMock(
+        side_effect=None if trigger_visible else Exception("trigger not found")
+    )
+    trigger_loc.click = AsyncMock()
+
+    effects = selector_side_effects or [[None]]
+    call_index = [0]
+
+    def _locator(sel: str) -> MagicMock:
+        loc = MagicMock()
+        loc.first = loc
+        idx = call_index[0]
+        call_index[0] += 1
+        effect = effects[idx][0] if idx < len(effects) else None
+        loc.wait_for = AsyncMock(side_effect=effect)
+        loc.click = AsyncMock()
+        return loc
+
+    def _side_effect(sel: str) -> MagicMock:
+        if "arrow_drop_down" in sel:
+            return trigger_loc
+        return _locator(sel)
+
+    page.locator = MagicMock(side_effect=_side_effect)
+    page.wait_for_timeout = AsyncMock()
+    page.keyboard = MagicMock()
+    page.keyboard.press = AsyncMock()
+    return page
+
+
+class TestSelectImageModel:
+    """Unit tests for UiAutomationTransport._select_image_model cascade logic."""
+
+    @pytest.mark.asyncio
+    async def test_happy_path_first_selector_wins(self) -> None:
+        """First selector succeeds → model selected, log.info emitted, no Escape."""
+        page = _make_model_page_mock(selector_side_effects=[[None]])
+        with patch("gflow_cli.api.transports.ui_automation.log") as mock_log:
+            await UiAutomationTransport._select_image_model(page, Model.NARWHAL)
+        mock_log.info.assert_called_once()
+        call_kwargs = mock_log.info.call_args[0][0]
+        assert call_kwargs == "ui_automation.image_model_selected"
+        page.keyboard.press.assert_not_called()
+
+    @pytest.mark.asyncio
+    async def test_cascade_fallthrough_second_selector_wins(self) -> None:
+        """First selector times out, second succeeds → second selector used."""
+        from gflow_cli.api.transports.ui_automation import IMAGE_MODEL_OPTION_SELECTORS
+
+        page = MagicMock()
+        trigger_loc = MagicMock()
+        trigger_loc.first = trigger_loc
+        trigger_loc.wait_for = AsyncMock()
+        trigger_loc.click = AsyncMock()
+
+        call_count = [0]
+
+        def _locator(sel: str) -> MagicMock:
+            loc = MagicMock()
+            loc.first = loc
+            n = call_count[0]
+            call_count[0] += 1
+            loc.wait_for = AsyncMock(side_effect=Exception("timeout") if n == 0 else None)
+            loc.click = AsyncMock()
+            return loc
+
+        page.locator = MagicMock(
+            side_effect=lambda sel: trigger_loc if "arrow_drop_down" in sel else _locator(sel)
+        )
+        page.wait_for_timeout = AsyncMock()
+        page.keyboard = MagicMock()
+        page.keyboard.press = AsyncMock()
+
+        # Patch a model to have two selectors so the fallthrough is exercised.
+        two_sel = ("[role='menuitem']:has-text('MISS')", "[role='menuitem']:has-text('Imagen 4')")
+        patched = {**IMAGE_MODEL_OPTION_SELECTORS, Model.IMAGEN_3_5: two_sel}
+        with (
+            patch(
+                "gflow_cli.api.transports.ui_automation.IMAGE_MODEL_OPTION_SELECTORS",
+                patched,
+            ),
+            patch("gflow_cli.api.transports.ui_automation.log") as mock_log,
+        ):
+            await UiAutomationTransport._select_image_model(page, Model.IMAGEN_3_5)
+
+        mock_log.debug.assert_called_once()
+        mock_log.info.assert_called_once()
+        page.keyboard.press.assert_not_called()
+
+    @pytest.mark.asyncio
+    async def test_all_selectors_fail_logs_warning_and_presses_escape(self) -> None:
+        """All selectors raise → RuntimeError caught, warning logged, Escape pressed."""
+        page = _make_model_page_mock(selector_side_effects=[[Exception("timeout")]])
+        with patch("gflow_cli.api.transports.ui_automation.log") as mock_log:
+            await UiAutomationTransport._select_image_model(page, Model.GEM_PIX_2)
+        mock_log.warning.assert_called()
+        warned_event = mock_log.warning.call_args[0][0]
+        assert warned_event == "ui_automation.image_model_not_set"
+        page.keyboard.press.assert_called_once_with("Escape")
+
+    @pytest.mark.asyncio
+    async def test_unknown_model_logs_warning_and_returns(self) -> None:
+        """Model not in dict → early return with image_model_unknown warning."""
+        page = MagicMock()
+        page.wait_for_timeout = AsyncMock()
+        with patch("gflow_cli.api.transports.ui_automation.log") as mock_log:
+            with patch(
+                "gflow_cli.api.transports.ui_automation.IMAGE_MODEL_OPTION_SELECTORS",
+                {},
+            ):
+                await UiAutomationTransport._select_image_model(page, Model.NARWHAL)
+        mock_log.warning.assert_called_once()
+        assert mock_log.warning.call_args[0][0] == "ui_automation.image_model_unknown"
+        page.locator.assert_not_called()
+
+
+def _exit_agent_page(initial: dict) -> tuple[MagicMock, dict]:
+    """Build a stateful page mock for ``_exit_agent_mode``.
+
+    ``initial`` seeds a mutable DOM state dict with keys ``crop`` / ``pill`` /
+    ``chat`` (each an element count). The click handlers mutate that state to
+    model Flow's real transitions, so the helper's loop is exercised against a
+    DOM that actually changes shape:
+
+    * clicking the **chat-close** removes the chat panel and reveals the pill
+      (``chat`` → 0, ``pill`` → 1), matching the live behaviour;
+    * clicking the **pill** re-mounts the media panel (``crop`` → 1).
+
+    Override either transition by passing ``crop_after_pill`` /
+    ``pill_after_chat`` / ``chat_after_chat`` in ``initial``. Returns
+    ``(page, state)`` so a test can assert final counts + click tallies (the
+    state dict also accrues ``pill_clicks`` / ``chat_clicks``).
+    """
+    from gflow_cli.api.transports.ui_automation_video import (
+        AGENT_CHAT_PANEL_CLOSE_SELECTOR,
+        COMPOSER_AGENT_TOGGLE_SELECTOR,
+    )
+
+    state = {
+        "crop": 0,
+        "pill": 0,
+        "chat": 0,
+        "pill_clicks": 0,
+        "chat_clicks": 0,
+        "crop_after_pill": 1,
+        "pill_after_chat": 1,
+        "chat_after_chat": 0,
+        **initial,
+    }
+
+    async def _pill_click(*_a, **_k) -> None:
+        state["pill_clicks"] += 1
+        state["crop"] = state["crop_after_pill"]
+
+    async def _chat_click(*_a, **_k) -> None:
+        state["chat_clicks"] += 1
+        state["chat"] = state["chat_after_chat"]
+        state["pill"] = state["pill_after_chat"]
+
+    def _loc(key: str, on_click=None) -> MagicMock:
+        loc = MagicMock()
+        loc.first = loc
+        loc.count = AsyncMock(side_effect=lambda: state[key])
+        loc.click = AsyncMock(side_effect=on_click) if on_click else AsyncMock()
+        return loc
+
+    def locator(sel: str) -> MagicMock:
+        if sel == COMPOSER_AGENT_TOGGLE_SELECTOR:
+            return _loc("pill", _pill_click)
+        if sel == AGENT_CHAT_PANEL_CLOSE_SELECTOR:
+            return _loc("chat", _chat_click)
+        return _loc("crop")  # any MODE_SWITCH_TRIGGER_SELECTORS probe
+
+    page = AsyncMock()
+    page.locator = MagicMock(side_effect=locator)
+    page.wait_for_timeout = AsyncMock()
+    return page, state
+
+
+class TestExitAgentMode:
+    """``_exit_agent_mode`` restores the media panel when Flow's composer is in
+    "Agent" mode — without matching any localized UI string or aria attribute
+    (issue #24 locale discipline + the aria-selector pushback in past reviews)."""
+
+    def test_toggle_selector_is_locale_safe_aria_free_and_scoped(self) -> None:
+        """The toggle selector is locale-safe, aria-free, AND scoped to the composer.
+
+        Guards the three review concerns at once:
+
+        * **Locale (issue #24):** no visible-text match (``:has-text`` /
+          ``:text-is`` / ``text-matches``) and the literal label "Agent" never
+          appears — it is translated per Flow locale. The only ``:text(...)`` is
+          ``arrow_forward``, a Material Symbols icon ligature, which is
+          locale-invariant (same technique the module uses for ``crop_*``).
+        * **No ARIA:** aria-* anchors were rejected in past reviews; none here.
+        * **Scoped (PR #124 must-fix):** the pill is matched only inside the
+          composer holding the Slate prompt box, so ``.first`` cannot grab an
+          unrelated ``span.content`` button added elsewhere in a future build.
+        """
+        sel = COMPOSER_AGENT_TOGGLE_SELECTOR
+        # Structural pill marker.
+        assert "span.content" in sel
+        # Locale-safe: no aria, no visible-text engines, no literal label.
+        assert "aria-" not in sel
+        assert ":has-text(" not in sel
+        assert ":text-is(" not in sel
+        assert "text-matches" not in sel
+        assert "Agent" not in sel and "agent" not in sel
+        # The only :text() permitted is the locale-invariant icon ligature.
+        assert sel.count(":text(") == 1
+        assert ":text('arrow_forward')" in sel
+        # Scoped to the prompt-box composer — not the bare global selector.
+        assert "data-slate-editor" in sel
+        assert sel.strip() != "button:has(span.content)"
+
+    def test_chat_close_selector_is_locale_safe_and_aria_free(self) -> None:
+        """The chat-panel close selector is structural — no UI text, no ARIA.
+
+        It anchors on the panel header's New-session (``edit_square``) + close
+        (``close``) Material Symbols ligatures, using ``:text-is`` (EXACT) so it
+        does NOT also match the sidebar's ``left_panel_close`` ligature. No
+        localized text and no ``aria-`` attribute (same discipline as the pill).
+        """
+        from gflow_cli.api.transports.ui_automation_video import (
+            AGENT_CHAT_PANEL_CLOSE_SELECTOR,
+        )
+
+        sel = AGENT_CHAT_PANEL_CLOSE_SELECTOR
+        assert "aria-" not in sel
+        assert ":has-text(" not in sel
+        assert "text-matches" not in sel
+        # Exact icon-ligature matches only (avoids left_panel_close substring).
+        assert ":text-is('edit_square')" in sel
+        assert ":text-is('close')" in sel
+        assert ":text('close')" not in sel  # would over-match left_panel_close
+        # Both icons are qualified to the Material Symbols font (``google-symbols``),
+        # matching the rest of the module's ligature discipline so a bare
+        # ``<i>close</i>`` text node outside the icon font can never match (#139).
+        assert "i.google-symbols:text-is('edit_square')" in sel
+        assert "i.google-symbols:text-is('close')" in sel
+
+    @pytest.mark.asyncio
+    async def test_noop_when_media_panel_present(self) -> None:
+        """The crop_* media-settings trigger is mounted → media mode already, so
+        the helper returns False and never touches any toggle (common path)."""
+        page, state = _exit_agent_page({"crop": 1, "pill": 1, "chat": 0})
+
+        switched = await UiAutomationTransport._exit_agent_mode(page)
+
+        assert switched is False
+        page.wait_for_timeout.assert_not_awaited()
+        assert state["pill_clicks"] == 0
+        assert state["chat_clicks"] == 0
+
+    @pytest.mark.asyncio
+    async def test_clicks_pill_and_confirms_panel_remounts(self) -> None:
+        """State B (pill active): panel absent + pill present → click the pill
+        once; when crop_* comes back, return True."""
+        page, state = _exit_agent_page(
+            {"crop": 0, "pill": 1, "chat": 0, "crop_after_pill": 1},
+        )
+
+        switched = await UiAutomationTransport._exit_agent_mode(page)
+
+        assert switched is True
+        assert state["pill_clicks"] == 1
+        assert state["chat_clicks"] == 0
+
+    @pytest.mark.asyncio
+    async def test_closes_chat_panel_then_clicks_revealed_pill(self) -> None:
+        """State A (chat side-panel): panel absent, pill NOT in DOM, chat X
+        present → close the chat (reveals the pill), then click the pill →
+        crop_* returns. Covers the panel-then-pill transition in one call."""
+        page, state = _exit_agent_page(
+            {
+                "crop": 0,
+                "pill": 0,  # pill suppressed while chat panel is up
+                "chat": 1,
+                "pill_after_chat": 1,  # closing chat reveals the pill
+                "chat_after_chat": 0,
+                "crop_after_pill": 1,  # clicking the pill re-mounts the panel
+            },
+        )
+
+        switched = await UiAutomationTransport._exit_agent_mode(page)
+
+        assert switched is True
+        assert state["chat_clicks"] == 1
+        assert state["pill_clicks"] == 1
+
+    @pytest.mark.asyncio
+    async def test_pill_clicked_at_most_once_when_panel_never_remounts(self) -> None:
+        """State B but the click does NOT re-mount the panel → click the pill
+        exactly ONCE (never flip-flop the binary toggle) and return False."""
+        page, state = _exit_agent_page(
+            {"crop": 0, "pill": 1, "chat": 0, "crop_after_pill": 0},
+        )
+
+        switched = await UiAutomationTransport._exit_agent_mode(page)
+
+        assert switched is False
+        assert state["pill_clicks"] == 1  # NOT 2/3 — no flip-flop
+
+    @pytest.mark.asyncio
+    async def test_noop_when_no_affordance_present(self) -> None:
+        """Crop absent AND no pill AND no chat panel (older UI / unknown shape)
+        → clean no-op, nothing clicked, returns False."""
+        page, state = _exit_agent_page({"crop": 0, "pill": 0, "chat": 0})
+
+        switched = await UiAutomationTransport._exit_agent_mode(page)
+
+        assert switched is False
+        assert state["pill_clicks"] == 0
+        assert state["chat_clicks"] == 0
+
+    @pytest.mark.asyncio
+    async def test_never_raises_on_probe_error(self) -> None:
+        """A DOM probe failure is swallowed (best-effort) and returns False —
+        a transient editor error must not abort generation."""
+        page = AsyncMock()
+        page.locator = MagicMock(side_effect=RuntimeError("execution context destroyed"))
+
+        switched = await UiAutomationTransport._exit_agent_mode(page)
+
+        assert switched is False
+
+    def test_scope_excludes_a_decoy_span_content_button_outside_composer(self) -> None:
+        """Structural guard for the PR #124 must-fix: the scoped selector must
+        match the Agent pill *inside the composer* and exclude a
+        ``button > span.content`` that lives elsewhere on the page (a future Flow
+        build could add one in the header/sidebar).
+
+        Playwright's ``:has()`` / ``:text()`` pseudo-classes can only be resolved
+        by a real browser (covered live by the e2e's ``count() == 1`` assert), so
+        this pins the same invariant the selector encodes against a hand-written
+        DOM using the stdlib parser — no browser, runs in CI. It confirms exactly
+        one ``span.content`` button sits within the element that holds BOTH the
+        Slate prompt box and the ``arrow_forward`` submit (the composer), while a
+        decoy in the page header is seen as outside.
+        """
+        from html.parser import HTMLParser
+
+        html = (
+            '<header><button><span class="content">Sidebar</span></button></header>'
+            '<div class="composer">'
+            '<div role="textbox" data-slate-editor="true"></div>'
+            '<button><span class="content">Agent</span></button>'
+            '<button><i class="google-symbols">arrow_forward</i></button>'
+            "</div>"
+        )
+
+        class _Counter(HTMLParser):
+            def __init__(self) -> None:
+                super().__init__()
+                self.depth = 0
+                self.composer_depth: int | None = None
+                self.in_button = 0
+                self.cur_has_span_content = False
+                self.cur_in_composer = False
+                self.pill_in_composer = 0
+                self.pill_outside = 0
+
+            def handle_starttag(self, tag: str, attrs: list[tuple[str, str | None]]) -> None:
+                a = dict(attrs)
+                self.depth += 1
+                if tag == "div" and a.get("class") == "composer":
+                    self.composer_depth = self.depth
+                if tag == "button":
+                    self.in_button += 1
+                    self.cur_has_span_content = False
+                    self.cur_in_composer = (
+                        self.composer_depth is not None and self.depth > self.composer_depth
+                    )
+                if tag == "span" and self.in_button and "content" in (a.get("class") or "").split():
+                    self.cur_has_span_content = True
+
+            def handle_endtag(self, tag: str) -> None:
+                if tag == "button" and self.in_button:
+                    if self.cur_has_span_content:
+                        if self.cur_in_composer:
+                            self.pill_in_composer += 1
+                        else:
+                            self.pill_outside += 1
+                    self.in_button -= 1
+                if tag == "div" and self.depth == self.composer_depth:
+                    self.composer_depth = None
+                self.depth -= 1
+
+        counter = _Counter()
+        counter.feed(html)
+
+        assert counter.pill_in_composer == 1, "expected one span.content pill inside the composer"
+        assert counter.pill_outside == 1, "the header decoy must be seen as outside the composer"
+        # The production selector is the scoped form that achieves this.
+        assert "data-slate-editor" in COMPOSER_AGENT_TOGGLE_SELECTOR
+        assert "arrow_forward" in COMPOSER_AGENT_TOGGLE_SELECTOR
+
+
+class TestModeSwitchExitsAgentFirst:
+    """Both mode switches must call ``_exit_agent_mode`` BEFORE probing for the
+    ``crop_*`` trigger — otherwise an Agent-mode composer (panel removed) makes
+    the trigger probe fail. The image path is exercised live by the e2e; these
+    cheap mock tests pin the call-site ordering for BOTH paths in CI (PR #124)."""
+
+    @pytest.mark.asyncio
+    async def test_switch_to_image_mode_exits_agent_first(self) -> None:
+        page = AsyncMock()
+        page.keyboard = AsyncMock()
+        order: list[str] = []
+
+        async def _exit(_p: object) -> bool:
+            order.append("exit_agent")
+            return True
+
+        async def _probe(_p: object, _label: str, _sels: object) -> MagicMock:
+            order.append("probe")
+            trigger = MagicMock()
+            trigger.click = AsyncMock()
+            return trigger
+
+        # The mode switches reference the helpers on VideoGenerationMixin
+        # directly (the base class), so patch there — patching the subclass would
+        # not intercept the base-class lookup.
+        with (
+            patch.object(VideoGenerationMixin, "_exit_agent_mode", new=_exit),
+            patch.object(VideoGenerationMixin, "_probe_selector_cascade", new=_probe),
+        ):
+            await UiAutomationTransport._switch_to_image_mode(page)
+
+        assert order and order[0] == "exit_agent", f"expected exit_agent first, got {order}"
+
+    @pytest.mark.asyncio
+    async def test_switch_to_video_mode_exits_agent_first(self) -> None:
+        page = AsyncMock()
+        order: list[str] = []
+
+        async def _exit(_p: object) -> bool:
+            order.append("exit_agent")
+            return True
+
+        async def _probe(_p: object, _label: str, _sels: object) -> MagicMock:
+            order.append("probe")
+            loc = MagicMock()
+            loc.click = AsyncMock()
+            return loc
+
+        with (
+            patch.object(VideoGenerationMixin, "_exit_agent_mode", new=_exit),
+            patch.object(VideoGenerationMixin, "_probe_selector_cascade", new=_probe),
+        ):
+            await UiAutomationTransport._switch_to_video_mode(page, out_dir=None)
+
+        assert order and order[0] == "exit_agent", f"expected exit_agent first, got {order}"

@@ -24,6 +24,7 @@ from urllib.parse import urlparse
 
 import structlog
 
+from gflow_cli.api.character import CHARACTER_MODELS, CharacterImageRequest
 from gflow_cli.api.dto import BatchSubmissionResult, GeneratedImage
 from gflow_cli.api.image import Aspect, GenerateImageRequest, Model
 from gflow_cli.api.transports._common import extract_project_id
@@ -61,16 +62,24 @@ FLOW_URL = "https://labs.google/fx/tools/flow?hl=en"
 _PROJECT_URL_FRAGMENT = "/project/"
 
 # Image model picker (SOT flow-editor-map.json). Same arrow_drop_down trigger as
-# video; options matched by product name (NOT localized — but the editor must be
-# in English, forced via the --lang=en-US launch arg). 'Nano Banana 2' is not a
-# substring of 'Nano Banana Pro', so has-text is unambiguous across the three.
+# video; options matched by product name.  Cascade discipline: Tier 1 (structural
+# / ARIA) before Tier 2 (text).  The product names "Nano Banana 2", "Nano Banana
+# Pro", and "Imagen 4" are Google-branded model identifiers that Flow does not
+# localise across locales — the has-text() entries are therefore locale-stable.
+# Primary locale control is ``locale=locale_env`` in launch_persistent_context
+# (Playwright kwarg — persists across all in-session navigations including
+# /project/<uuid> deep-links that drop the ?hl= param).  FLOW_URL's ``?hl=en``
+# reinforces English on the initial load.  'Nano Banana 2' is not a substring of
+# 'Nano Banana Pro', so has-text is unambiguous across the three.
+# Tier 1 (structural) slots are reserved for data-* / aria-* anchors once a DOM
+# probe via scripts/dev/capture_locale_invariants.py confirms stable attributes.
 IMAGE_MODEL_PICKER_TRIGGER = (
     "button[aria-haspopup='menu']:has(i.google-symbols:text-is('arrow_drop_down'))"
 )
-IMAGE_MODEL_OPTION_SELECTORS: dict[Model, str] = {
-    Model.NARWHAL: "[role='menuitem']:has-text('Nano Banana 2')",
-    Model.GEM_PIX_2: "[role='menuitem']:has-text('Nano Banana Pro')",
-    Model.IMAGEN_3_5: "[role='menuitem']:has-text('Imagen 4')",
+IMAGE_MODEL_OPTION_SELECTORS: dict[Model, tuple[str, ...]] = {
+    Model.NARWHAL: ("[role='menuitem']:has-text('Nano Banana 2')",),
+    Model.GEM_PIX_2: ("[role='menuitem']:has-text('Nano Banana Pro')",),
+    Model.IMAGEN_3_5: ("[role='menuitem']:has-text('Imagen 4')",),
 }
 
 # Image-mode tab inside the mode-switch dropdown.  Selectors are tried in
@@ -174,6 +183,16 @@ SUBMIT_BUTTON_SELECTORS = (
     "button:has(i.google-symbols:text('arrow_forward'))",
     "button:has(i:text('arrow_forward'))",
     "button:has-text('arrow_forward')",
+)
+
+# Self-contained, locale-independent triptych instruction for body generation.
+# Live-verified 2026-06-02: produces a consistent front/side/back body image in ONE
+# generation, seeded by the auto-attached face reference. We replace Flow's own
+# (localized) pre-filled template with this rather than depending on reading/parsing it.
+_BODY_TRIPTYCH_PREAMBLE = (
+    "Full-body triptych in three angles: front, side (3/4), and back. "
+    "High resolution, uniform studio lighting, consistent anatomical proportions "
+    "across all angles, solid white background. "
 )
 
 # "+ New project" CTA selectors.  Cascade discipline: structural / icon-first
@@ -586,19 +605,6 @@ class UiAutomationTransport(VideoGenerationMixin):
                 args=[
                     "--disable-blink-features=AutomationControlled",
                     "--password-store=basic",
-                    # locale="en-US" only sets Accept-Language; Chrome still picks
-                    # its UI language from the profile/system and Flow then serves
-                    # /fx/<locale>/ with a localized editor.  --lang forces the UI
-                    # to English so the image model-picker product names (e.g.
-                    # "Nano Banana 2") in IMAGE_MODEL_OPTION_SELECTORS are rendered
-                    # consistently — those selectors use English has-text() matches
-                    # against product names that Google may localise.
-                    # ONBOARDING_SELECTORS, _attach_frame, NEW_PROJECT_SELECTORS,
-                    # and SUBMIT_BUTTON_SELECTORS are all structural/icon-first and
-                    # no longer require this arg.  Dropping it entirely is deferred
-                    # until IMAGE_MODEL_OPTION_SELECTORS is converted to a
-                    # locale-invariant anchor (issue #24 Phase 4 follow-up).
-                    "--lang=en-US",
                 ],
             )
             # Hide the automation flag so reCAPTCHA Enterprise doesn't score
@@ -832,6 +838,10 @@ class UiAutomationTransport(VideoGenerationMixin):
         The dropdown is closed afterwards (via :kbd:`Escape`) so the caller's
         :meth:`_configure_generation_settings` can open it fresh.
         """
+        # New Flow UI: if the composer is in Agent mode the generation panel is
+        # absent — switch back to media mode first so the trigger probe below
+        # can find the crop_* dropdown.
+        await VideoGenerationMixin._exit_agent_mode(page)
         trigger = await VideoGenerationMixin._probe_selector_cascade(
             page,
             "mode_switch_trigger",
@@ -864,6 +874,49 @@ class UiAutomationTransport(VideoGenerationMixin):
     # Internal helpers — prompt submission (unit 3.5)
     # ------------------------------------------------------------------
 
+    async def _locate_prompt_box(
+        self,
+        page: Page,
+        out_dir: Path | None = None,
+    ) -> Any:
+        """Locate the visible Slate prompt box via :data:`PROMPT_INPUT_SELECTORS`.
+
+        Returns the first visible locator (``.first`` of the matching
+        selector). On no-match, writes a debug screenshot to ``out_dir``
+        (if provided) and raises ``RuntimeError``.
+        """
+        for selector in PROMPT_INPUT_SELECTORS:
+            try:
+                loc = page.locator(selector).first
+                await loc.wait_for(state="visible", timeout=10_000)
+                log.info("ui_automation.prompt_input_found", selector=selector)
+                return loc
+            except Exception:
+                continue
+
+        shot_path = await _capture_debug_screenshot(page, out_dir, "debug_prompt_not_found.png")
+        msg = f"Prompt input not found in Flow UI. URL: {page.url}. Screenshot: {shot_path}"
+        raise RuntimeError(msg)
+
+    async def _click_submit(self, page: Page) -> None:
+        """Submit the active prompt via the ``arrow_forward`` button.
+
+        Tries :data:`SUBMIT_BUTTON_SELECTORS` in priority order; falls back
+        to pressing Enter if no submit button is visible.
+        """
+        for sel in SUBMIT_BUTTON_SELECTORS:
+            try:
+                btn = page.locator(sel).first
+                await btn.wait_for(state="visible", timeout=2_000)
+                await btn.click()
+                log.info("ui_automation.prompt_submitted", via=sel)
+                return
+            except Exception:
+                continue
+
+        log.info("ui_automation.prompt_submitted", via="enter_key_fallback")
+        await page.keyboard.press("Enter")
+
     async def _send_prompt(
         self,
         page: Page,
@@ -882,23 +935,7 @@ class UiAutomationTransport(VideoGenerationMixin):
         On input-not-found, a debug screenshot is written to ``out_dir``
         (if provided) and ``RuntimeError`` is raised.
         """
-        input_box = None
-        for selector in PROMPT_INPUT_SELECTORS:
-            try:
-                loc = page.locator(selector).first
-                await loc.wait_for(state="visible", timeout=10_000)
-                input_box = loc
-                log.info("ui_automation.prompt_input_found", selector=selector)
-                break
-            except Exception:
-                continue
-
-        if input_box is None:
-            shot_path = await _capture_debug_screenshot(page, out_dir, "debug_prompt_not_found.png")
-            msg = f"Prompt input not found in Flow UI. URL: {page.url}. Screenshot: {shot_path}"
-            raise RuntimeError(
-                msg,
-            )
+        input_box = await self._locate_prompt_box(page, out_dir)
 
         await input_box.click()
         await page.keyboard.press("Control+A")
@@ -908,18 +945,57 @@ class UiAutomationTransport(VideoGenerationMixin):
         await page.keyboard.insert_text(prompt_text)
         await page.wait_for_timeout(500)
 
-        for sel in SUBMIT_BUTTON_SELECTORS:
-            try:
-                btn = page.locator(sel).first
-                await btn.wait_for(state="visible", timeout=2_000)
-                await btn.click()
-                log.info("ui_automation.prompt_submitted", via=sel)
-                return
-            except Exception:
-                continue
+        await self._click_submit(page)
 
-        log.info("ui_automation.prompt_submitted", via="enter_key_fallback")
-        await page.keyboard.press("Enter")
+    async def _submit_body_prompt(
+        self,
+        page: Page,
+        body_description: str,
+        out_dir: Path | None = None,
+    ) -> None:
+        """Submit a self-contained triptych body prompt, REPLACING Flow's template.
+
+        After clicking the character slot-add ("+"), Flow's JS pre-fills the new
+        prompt box with its own (localized) triptych template and auto-attaches
+        the generated face as a reference.  Rather than reading and parsing that
+        localized template, this helper ignores whatever the box was pre-filled
+        with and replaces the entire box with gflow's OWN self-contained,
+        locale-independent triptych instruction
+        (:data:`_BODY_TRIPTYCH_PREAMBLE`) followed by the body/clothing
+        description.
+
+        Live-verified 2026-06-02: this is MORE robust than the bracket-
+        substitution approach — it does not depend on Flow's template appearing,
+        the box timing, the bracket existing, or the UI locale.  The face
+        reference is still auto-attached by the slot-add ("+") click (Flow's JS),
+        independent of the text box.
+
+        ONE generation then yields all three angles (front/side/back) as a
+        single triptych image, seeded by the auto-attached face reference.
+
+        Logs ``ui_automation.body_prompt_templated`` with ``template`` and the
+        submitted length (NO body text).
+        """
+        input_box = await self._locate_prompt_box(page, out_dir)
+
+        full_prompt = _BODY_TRIPTYCH_PREAMBLE + body_description
+
+        # Clear Flow's pre-filled (localized) template and replace it wholesale
+        # with our self-contained triptych prompt. Slate.js needs real keyboard
+        # events — select-all + Delete + insert_text, the same path _send_prompt
+        # uses.
+        await input_box.click()
+        await page.keyboard.press("Control+A")
+        await page.keyboard.press("Delete")
+        await page.keyboard.insert_text(full_prompt)
+        await page.wait_for_timeout(500)
+
+        log.info(
+            "ui_automation.body_prompt_templated",
+            template="self_contained",
+            prompt_len=len(full_prompt),
+        )
+        await self._click_submit(page)
 
     # ------------------------------------------------------------------
     # Internal helpers — generation settings (aspect ratio + count)
@@ -989,8 +1065,8 @@ class UiAutomationTransport(VideoGenerationMixin):
         this the generation uses Flow's UI-default model and ``--model`` is a
         no-op. Non-fatal on miss (logged at WARNING — the wrong model has a real
         cost/quality impact, so a miss is a genuine signal)."""
-        option_sel = IMAGE_MODEL_OPTION_SELECTORS.get(model)
-        if option_sel is None:
+        option_sels = IMAGE_MODEL_OPTION_SELECTORS.get(model)
+        if not option_sels:
             log.warning("ui_automation.image_model_unknown", model=model.value)
             return
         try:
@@ -998,11 +1074,22 @@ class UiAutomationTransport(VideoGenerationMixin):
             await trigger.wait_for(state="visible", timeout=4000)
             await trigger.click()
             await page.wait_for_timeout(500)
-            option = page.locator(option_sel).first
-            await option.wait_for(state="visible", timeout=4000)
-            await option.click()
-            await page.wait_for_timeout(500)
-            log.info("ui_automation.image_model_selected", model=model.value)
+            for sel in option_sels:
+                try:
+                    loc = page.locator(sel).first
+                    await loc.wait_for(state="visible", timeout=4000)
+                    await loc.click()
+                    await page.wait_for_timeout(500)
+                    log.info("ui_automation.image_model_selected", model=model.value, via=sel)
+                    return
+                except Exception as sel_err:
+                    log.debug(
+                        "ui_automation.image_model_selector_miss",
+                        sel=sel,
+                        error=str(sel_err)[:120],
+                    )
+                    continue
+            raise RuntimeError(f"no visible option matched for model {model.value!r}")
         except Exception as e:
             log.warning(
                 "ui_automation.image_model_not_set",
@@ -1999,6 +2086,417 @@ class UiAutomationTransport(VideoGenerationMixin):
             )
 
         return results
+
+    # ------------------------------------------------------------------
+    # Character editor — navigation + passive-capture entry (T4)
+    # ------------------------------------------------------------------
+
+    # Selector for the character editor's Slate prompt textbox — used as the
+    # "editor mounted" readiness anchor.  This IS PROMPT_INPUT_SELECTORS[0];
+    # duplicated here as a named constant so the character-editor path is
+    # self-documenting without importing the tuple.
+    _CHARACTER_EDITOR_READY_SELECTOR = 'div[role="textbox"][data-slate-editor="true"]'
+
+    # Slot-add button for character image slots 1+ (body / accessories).
+    #
+    # Live DOM evidence (2026-06-02 spike, character editor with slot 0 filled)
+    # disproved the old ``button:has(...).nth(1)`` heuristic.  Two ``add_2``
+    # ligatures exist in the editor DOM and they are STRUCTURALLY DISTINCT:
+    #
+    #   1. Slot-add (the target):  ``<div role="button"
+    #      aria-label="Adicionar imagem do personagem"><i ...>add_2</i></div>``
+    #      — a ``[role=button]`` div whose ONLY accessible content is the
+    #      ``add_2`` icon (icon-only; no visible/sibling text-label span).
+    #   2. The decoy:  ``<button type="button" aria-haspopup="dialog">
+    #      <i ...>add_2</i><span style="...clip...">…</span></button>`` — a real
+    #      ``<button>`` carrying a sibling ``<span>`` text label.
+    #
+    # The old ``button:has(i.google-symbols:text('add_2'))`` selector did not
+    # even MATCH the slot-add (it is a ``div[role=button]``, not ``<button>``);
+    # ``.nth(1)`` of that locator landed on the wrong control entirely.
+    #
+    # Robust, language-agnostic discriminator: the slot-add is the ``add_2``
+    # icon hosted in a ``[role=button]`` whose stripped ``inner_text`` is EXACTLY
+    # the ligature ``"add_2"`` (icon-only).  The decoy's hidden label makes its
+    # inner_text longer, so it is excluded.  The localised aria-label
+    # ("Adicionar imagem do personagem") is NEVER the primary anchor — see
+    # [[flow-locale-leak-icon-ligatures]] — it may only serve as a positional
+    # hint.  ``text-is`` (exact match) is used so partial-ligature collisions
+    # (e.g. ``add_2_box``) cannot match.
+    _CHARACTER_SLOT_ADD_SELECTOR = "[role='button']:has(i.google-symbols:text-is('add_2'))"
+    # The exact ligature an icon-only slot-add candidate's inner_text reduces to.
+    _CHARACTER_SLOT_ADD_LIGATURE = "add_2"
+
+    # Character-editor model picker.  The editor shows a model chip ("🍌 Nano
+    # Banana 2") with an ``arrow_drop_down`` ligature; clicking it opens a menu
+    # whose options are the product names.  Product names ("Nano Banana 2" /
+    # "Nano Banana Pro") are NOT localized, so text matching is acceptable here.
+    #
+    # ⚠️ NOT yet spiked from the live DOM — this is a reasonable best-effort
+    # selector cascade, live-confirmed later.  A failed pick is NON-FATAL:
+    # generation proceeds with Flow's default model.
+    _CHARACTER_MODEL_PICKER_TRIGGER_SELECTORS = (
+        "button:has(i.google-symbols:text-is('arrow_drop_down'))",
+        "[role='button']:has(i.google-symbols:text-is('arrow_drop_down'))",
+    )
+
+    async def _select_character_model(
+        self,
+        page: Any,
+        model_alias: str,
+        out_dir: Any = None,
+    ) -> None:
+        """Best-effort select the character model via the editor's model picker.
+
+        ``model_alias`` is the friendly CLI alias (``"nano2"`` / ``"nanopro"``);
+        it is mapped through :data:`CHARACTER_MODELS` to the UI display name.
+
+        If the requested model is the DEFAULT (``nano2`` / "Nano Banana 2") the
+        picker is left untouched — it is already selected, so an extra click is
+        wasteful and risks closing nothing useful.
+
+        Otherwise the dropdown is opened (the element bearing the
+        ``arrow_drop_down`` ligature near the model chip) and the option whose
+        visible text contains the display name is clicked.
+
+        NON-FATAL: if the alias is unknown, or the dropdown / option cannot be
+        found, a warning is logged and generation proceeds with Flow's default
+        model.  The picker DOM is not yet spiked — see the selector constants.
+        """
+        display_name = CHARACTER_MODELS.get(model_alias.lower())
+        if display_name is None:
+            log.warning(
+                "ui_automation.character_model_picker_not_found",
+                model=model_alias,
+                reason="unknown_alias",
+            )
+            return
+
+        # nano2 / "Nano Banana 2" is the editor default — already selected.
+        default_display = CHARACTER_MODELS["nano2"]
+        if display_name == default_display:
+            log.info(
+                "ui_automation.character_model_selected",
+                model=display_name,
+                via="default_no_click",
+            )
+            return
+
+        try:
+            opened = False
+            for trig_sel in self._CHARACTER_MODEL_PICKER_TRIGGER_SELECTORS:
+                try:
+                    trigger = page.locator(trig_sel).first
+                    await trigger.wait_for(state="visible", timeout=4000)
+                    await trigger.click()
+                    await page.wait_for_timeout(400)
+                    opened = True
+                    break
+                except Exception:
+                    continue
+            if not opened:
+                raise RuntimeError("model-picker trigger not found")
+
+            option_sel = f":has-text('{display_name}')"
+            option = page.locator(option_sel).first
+            await option.wait_for(state="visible", timeout=4000)
+            await option.click()
+            await page.wait_for_timeout(400)
+            log.info(
+                "ui_automation.character_model_selected",
+                model=display_name,
+                via=option_sel,
+            )
+        except Exception as e:
+            log.warning(
+                "ui_automation.character_model_picker_not_found",
+                model=model_alias,
+                display_name=display_name,
+                error=str(e)[:120],
+                note="Flow default model applies",
+            )
+            await _capture_debug_screenshot(page, out_dir, "debug_character_model_picker.png")
+            try:
+                await page.keyboard.press("Escape")
+            except Exception:
+                pass
+
+    async def _enter_character_editor(
+        self,
+        page: Any,
+        *,
+        project_id: str,
+        entity_id: str,
+        locale: str,
+    ) -> None:
+        """Navigate to the Flow character editor for an existing entity.
+
+        Does NOT create a new project — navigates directly to the existing
+        project's character editor URL via ``page.goto``.
+
+        Readiness gate: waits for the prompt textbox
+        (``div[role=textbox][data-slate-editor='true']``) to become visible,
+        confirming the Slate editor has mounted.  Overlays are dismissed
+        after navigation so they don't block subsequent interactions.
+        """
+        from gflow_cli.api import routes
+
+        url = routes.character_editor_url(locale, project_id, entity_id)
+        log.info(
+            "ui_automation.entering_character_editor",
+            url=url,
+            project_id=project_id,
+            entity_id=entity_id,
+        )
+        await page.goto(url, wait_until="domcontentloaded", timeout=45_000)
+        await self._dismiss_blocking_overlays(page, self._out_dir)
+
+        # Wait for the Slate editor to mount — the prompt textbox is the
+        # reliable "editor ready" anchor for the character editor surface.
+        try:
+            await page.locator(self._CHARACTER_EDITOR_READY_SELECTOR).first.wait_for(
+                state="visible",
+                timeout=20_000,
+            )
+        except Exception as exc:
+            shot = await _capture_debug_screenshot(
+                page,
+                self._out_dir,
+                "debug_character_editor_not_ready.png",
+            )
+            msg = (
+                f"Character editor not ready: prompt textbox not visible "
+                f"within 20 s. URL: {page.url}. Screenshot: {shot}"
+            )
+            raise RuntimeError(msg) from exc
+
+        log.info("ui_automation.character_editor_ready", url=page.url)
+
+    @staticmethod
+    def _workflows_from_responses(
+        responses: list[dict[str, Any]],
+    ) -> list[dict[str, Any]]:
+        """Extract workflow metadata from captured batchGenerateImages responses.
+
+        Returns a flat list of workflow dicts, each containing at minimum:
+        ``name``, ``metadata`` (with ``primaryMediaId``), ``projectId``, and
+        ``parentEntityId``.  The ``parentEntityId`` field binds the generation
+        result to the character entity.
+
+        Only workflow entries present in 200-status responses are returned;
+        error responses are silently skipped (``_images_from_responses`` already
+        raises on 401/403 before this is called).
+        """
+        workflows: list[dict[str, Any]] = []
+        for response in responses:
+            if response.get("status") != 200:
+                continue
+            body: dict[str, Any] = cast("dict[str, Any]", response.get("body") or {})
+            raw_workflows = body.get("workflows", [])
+            if not isinstance(raw_workflows, list):
+                continue
+            for wf_raw in cast("list[Any]", raw_workflows):
+                if not isinstance(wf_raw, dict):
+                    continue
+                wf: dict[str, Any] = cast("dict[str, Any]", wf_raw)
+                # Only surface workflows that carry the character-binding field.
+                if "parentEntityId" not in wf:
+                    log.debug(
+                        "ui_automation.workflow_missing_parent_entity_id",
+                        workflow_name=wf.get("name"),
+                    )
+                workflows.append(wf)
+        return workflows
+
+    async def generate_character_images(
+        self,
+        *,
+        project_id: str,
+        entity_id: str,
+        request: CharacterImageRequest,
+        image_reference_index: int,
+        locale: str,
+    ) -> tuple[list[GeneratedImage], list[dict[str, Any]]]:
+        """Navigate to the character editor and generate images via passive capture.
+
+        Reuses the same generate lock, listener, and parse helpers as the
+        image-generation path — the difference is that we navigate to an
+        EXISTING project's character editor (not a new project), and we
+        return workflow metadata alongside the images so the caller can bind
+        results to the character entity via ``parentEntityId``.
+
+        ``image_reference_index``:
+          - 0 → face slot (no slot-add interaction needed; the slot is
+            already active in the character editor).
+          - >= 1 → body / accessory slot; a click on the ``add_2`` slot-add
+            button is required before submitting the prompt.
+
+        Returns ``(images, workflows)`` where each ``workflows`` entry carries
+        at minimum ``name``, ``metadata.primaryMediaId``, ``projectId``, and
+        ``parentEntityId``.
+        """
+        if not self._setup_done or self._page is None:
+            msg = "UiAutomationTransport.setup() must be called before generate_character_images()"
+            raise RuntimeError(msg)
+
+        async with self._generate_lock:
+            return await self._generate_character_images_locked(
+                project_id=project_id,
+                entity_id=entity_id,
+                request=request,
+                image_reference_index=image_reference_index,
+                locale=locale,
+            )
+
+    async def _generate_character_images_locked(
+        self,
+        *,
+        project_id: str,
+        entity_id: str,
+        request: CharacterImageRequest,
+        image_reference_index: int,
+        locale: str,
+    ) -> tuple[list[GeneratedImage], list[dict[str, Any]]]:
+        """Serialized body of generate_character_images — called under _generate_lock."""
+        page: Any = self._page  # type: ignore[assignment]  # guard in caller
+        out_dir = self._out_dir
+
+        await self._enter_character_editor(
+            page,
+            project_id=project_id,
+            entity_id=entity_id,
+            locale=locale,
+        )
+        await self._dismiss_blocking_overlays(page, out_dir)
+
+        # Characters have NO aspect-ratio control and NO per-generation settings
+        # panel (the live editor renders neither — the old
+        # _configure_generation_settings call only ever logged
+        # ``gen_settings_panel_not_found`` and skipped).  Model selection uses
+        # the editor's OWN model dropdown instead.  ``request.model`` is the
+        # friendly CLI alias ("nano2" / "nanopro").  Best-effort, non-fatal:
+        # a failed pick proceeds with Flow's default model.  Character
+        # generation is always exactly one image per slot.
+        await self._select_character_model(page, request.model, out_dir)
+
+        # Slot-add: face (index 0) needs no interaction; body/accessories do.
+        # Clicking slot-add auto-attaches the generated face as a reference (Flow's
+        # JS) and pre-fills the new prompt box with Flow's localized triptych
+        # template. The body path REPLACES that box with gflow's own
+        # self-contained triptych prompt (locale-safe), independent of the
+        # auto-attached face reference.
+        is_body_slot = image_reference_index >= 1
+        if is_body_slot:
+            await self._click_character_slot_add(page, out_dir)
+
+        # Attach listener BEFORE submit to eliminate the race condition.
+        captured, detach = self._attach_batch_response_listener(page, project_id=project_id)
+        submit_time = time.monotonic()
+        try:
+            if is_body_slot:
+                await self._submit_body_prompt(page, request.prompt, out_dir)
+            else:
+                await self._send_prompt(page, request.prompt, out_dir)
+            responses = await self._await_captured(
+                captured,
+                expected_count=1,
+                submit_time=submit_time,
+            )
+        finally:
+            detach()
+
+        images, first_error_status, first_error_route = _images_from_responses(responses)
+
+        if first_error_status is not None and not images:
+            raise WireFormatError(
+                detail=f"batchGenerateImages returned HTTP {first_error_status}",
+                status=first_error_status,
+                route=first_error_route,
+            )
+
+        if not images:
+            from gflow_cli.errors import ContentPolicyError
+
+            raise ContentPolicyError(
+                detail="batchGenerateImages returned 200 but no parseable media items",
+                route=first_error_route or "",
+            )
+
+        workflows = self._workflows_from_responses(responses)
+        return images, workflows
+
+    async def _click_character_slot_add(
+        self,
+        page: Any,
+        out_dir: Any = None,
+    ) -> None:
+        """Click the slot-add (``add_2``) button for character image slots >= 1.
+
+        Live DOM evidence (2026-06-02 spike) showed the character editor renders
+        two ``add_2`` ligatures that are STRUCTURALLY distinct (see the
+        ``_CHARACTER_SLOT_ADD_SELECTOR`` constant for the full DOM): the slot-add
+        target is a ``[role=button]`` whose accessible content is icon-ONLY,
+        while the decoy is a ``<button>`` that also carries a hidden text-label
+        ``<span>``.  The previous ``.nth(1)`` heuristic was wrong — it indexed
+        into a ``<button>``-only locator that never even matched the slot-add
+        div.
+
+        Selection logic (language-agnostic):
+
+        1. Locate every ``[role=button]`` that hosts an ``add_2`` icon.
+        2. Keep only the icon-ONLY candidates — those whose stripped
+           ``inner_text`` is exactly the ``add_2`` ligature.  The decoy's hidden
+           label lengthens its inner_text, excluding it.
+        3. If exactly one icon-only candidate remains, click it.  If several
+           remain, prefer the first (the slot-add renders adjacent to the
+           character image slots, ahead of any other icon-only ``add_2``).
+
+        The localised ``aria-label`` is intentionally NOT part of the predicate
+        ([[flow-locale-leak-icon-ligatures]]); the icon-only test is the anchor.
+
+        Non-fatal: a miss is logged at WARNING so generation can proceed
+        (the prompt will apply to whichever slot is currently active).
+        """
+        try:
+            loc = page.locator(self._CHARACTER_SLOT_ADD_SELECTOR)
+            await loc.first.wait_for(state="visible", timeout=5_000)
+            total = await loc.count()
+            chosen = None
+            chosen_index = -1
+            for i in range(total):
+                cand = loc.nth(i)
+                try:
+                    raw = await cand.inner_text()
+                except Exception:
+                    continue
+                # Icon-only ⇔ the accessible text reduces to just the ligature.
+                # The decoy carries a hidden label span → longer inner_text.
+                if raw.strip() == self._CHARACTER_SLOT_ADD_LIGATURE:
+                    chosen = cand
+                    chosen_index = i
+                    break
+            if chosen is None:
+                raise RuntimeError(f"no icon-only add_2 [role=button] among {total} candidate(s)")
+            await chosen.click()
+            await page.wait_for_timeout(400)
+            log.info(
+                "ui_automation.character_slot_add_clicked",
+                image_reference_index=1,
+                selector=self._CHARACTER_SLOT_ADD_SELECTOR,
+                candidates=total,
+                chosen_index=chosen_index,
+            )
+        except Exception as exc:
+            shot = await _capture_debug_screenshot(page, out_dir, "debug_character_slot_add.png")
+            log.warning(
+                "ui_automation.character_slot_add_failed",
+                error=str(exc)[:120],
+                screenshot=str(shot),
+                note=(
+                    "slot-add button not found; prompt will be submitted "
+                    "to the currently-active slot"
+                ),
+            )
 
     # ------------------------------------------------------------------
     # Protocol — refresh_auth (unit 3.10) + teardown (unit 3.11)

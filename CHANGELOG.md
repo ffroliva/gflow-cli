@@ -7,6 +7,199 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+## [0.13.0] — 2026-06-04
+
+### Added
+
+- **`gflow character rm` — delete a Character entity (#150).**
+  `gflow character rm --project <id> (--id <entityId> | --name <name>) [-y/--yes] [--json]`
+  deletes a Character via `POST flow:batchDeleteAssets` (Bearer; **FREE** — no
+  reCAPTCHA, no credit). Resolves by id or exact name (ambiguous name exits
+  **11**); prompts for confirmation unless `--yes`/`--json`.
+
+- **In-project governance enforcement (advisory-first).** Made the AI-driven
+  development flow followable and partly machine-enforced in-repo, modeled on the
+  reference AI-DLC governance orchestrator's advisory-by-default behavior:
+  ruff `T20` now bans raw `print()` in `src/`; an advisory branch-naming check and a
+  non-blocking materiality + traceability classifier (`scripts/ci/check_materiality.py`
+  + `governance-advisory.yml`) recommend `/gflow:predict` + council review when
+  sensitive paths (`auth/`, `api/transports/`, `api/client.py`, `_sapisidhash.py`,
+  `data/`, `recaptcha`) are touched, without ever blocking a merge. A
+  history-replay backtest (`scripts/dev/materiality_backtest.py`) calibrates the
+  gate — it measured a 1.1% false-positive rate (vs. a 20-30% estimate) and
+  raised fix-coverage from 61% to 74% by surfacing auth-token plumbing that lived
+  outside `auth/`. The backtest is a first-class, repeatable artifact (`--json`
+  mode, a monthly `governance-benchmark.yml` dashboard job) fully documented in
+  [`docs/GOVERNANCE_BENCHMARK.md`](docs/GOVERNANCE_BENCHMARK.md); the gate itself is
+  described in
+  [`docs/AGENT_GUIDE.md` § Governance & Enforcement](docs/AGENT_GUIDE.md#governance--enforcement).
+
+### Changed
+
+- **`gflow video i2v` frame flags aligned with Flow UI terminology (#122).**
+  `--initial-frame FILE` is the new canonical flag for the start image (matches
+  Flow's "initial frame" label). `--end-frame FILE` replaces `--end-image` as the
+  canonical end-frame flag. `--end-image` is kept as a **deprecated alias** (emits
+  `DeprecationWarning`; will be removed in a future minor release). The positional
+  `IMAGE` argument remains supported for back-compatibility.
+
+### Fixed
+
+- **Character editor 404 on non-English locales (#153).** `gflow character`'s
+  editor URL interpolated the locale verbatim, so the genuine default BCP-47
+  `en-US` produced `/fx/en-US/…`, which 404s the Flow character editor (only the
+  short primary subtag is a valid `/fx/<seg>/` segment). `character_editor_url`
+  now normalizes a BCP-47 tag to its lower-cased short segment (`en-US → en`,
+  `pt-BR → pt`), so the tool stays language-agnostic with the real default
+  locale.
+
+## [0.12.0] — 2026-06-03
+
+### Fixed
+
+- **Create-project generation failing when Flow opens the Agent _chat panel_.**
+  A follow-up to the earlier Agent-pill fix: Flow now also surfaces Agent mode as
+  a docked chat side-panel ("Untitled session") on some project opens, and while
+  it is up the in-composer Agent pill is absent from the DOM — so the pill-only
+  recovery could not find anything to click and generation still failed with
+  "mode-switch dropdown trigger not found". `_exit_agent_mode` now handles both
+  Agent shapes in one pass: it dismisses the chat panel (locale-stable, aria-free
+  structural close anchor) which reveals the pill, then turns the pill off,
+  looping until the media panel re-mounts. Keyed on the outcome (`crop_*` is
+  back), so it covers pill-only, panel-only, and panel-then-pill without assuming
+  which control is present.
+
+### Added
+
+- **`gflow character` command group — reusable Flow Character entities (#145).**
+  Mint a project-scoped **Character** (a named subject with reference images, an
+  optional voice, and an optional personality) so the same subject appears
+  consistently across generations:
+  - `gflow character create --project <pid> --name <name> --face-prompt "…"
+    [--body-prompt "…"] [--voice <Name>] [--personality "…"]
+    [--model nano2|nanopro]` — two-step generation: a **face** reference (slot 0),
+    then a self-contained **front/side/back triptych body** (slot 1) seeded by the
+    generated face. gflow injects its own triptych instruction, so one body
+    generation yields all three angles. Characters have **no aspect-ratio
+    control** and exactly two models — `nano2` (Nano Banana 2, default) and
+    `nanopro` (Nano Banana Pro). Generated images are **downloaded** to local (or
+    cloud) storage; the signed `fifeUrl` is used only at download and never
+    persisted.
+  - `gflow character list --project <pid>` — list every Character in a project.
+  - `gflow character show --project <pid> (--id <entityId> | --name <name>)` —
+    show one Character; an ambiguous `--name` exits 11.
+  - `gflow character voices` — list the 29-name Gemini voice catalog
+    (name / description / sample-url); `--voice` is validated case-insensitively.
+
+  The credited generation rides Flow's own page JS in the character editor
+  (Option B, UI passive-capture — a self-assembled direct POST is reCAPTCHA-403
+  walled); the structural calls (createEntity, workflow/entity PATCH,
+  projectInitialData) are credit-free REST. Creation runs as a
+  **persist-before-spend, crash-recoverable saga**: the `entityId` and each
+  completed slot are recorded before/as credits are spent, so a crashed run
+  resumes without orphaning a paid generation or double-charging. Live-verified
+  end-to-end on 2026-06-02 (face + triptych body, both bound, downloaded, read
+  back). See [docs/CHARACTER.md](docs/CHARACTER.md).
+
+- **`gflow video chain` — last-frame I2V chaining.** Render a JSONL manifest of
+  *links* into one continuous sequence: link 0 is a text-to-video generation,
+  and every later link is an image-to-video generation **seeded by the extracted
+  last frame of the previous clip**, giving visual continuity with no
+  server-side stitching. Each link is a sequential paid Veo generation (**one
+  credit per link**); a cost-confirmation gate (`-y`/`--yes` to skip),
+  `--dry-run` plan preview, `--max-links` cap (exit 11), and
+  `--resume-from <chain-id>` (skips already-paid links, no re-billing) make the
+  spend explicit and recoverable. Per-link wire-route checking aborts loudly if
+  Flow drops the seed frame and routes an i2v link to the text-only endpoint
+  (issue #125), so a misroute can never be reported as a successful chain.
+  Only the Veo 3.1 models (`veo-lite`/`veo-fast`/`veo-quality`/`veo-lite-lp`)
+  are accepted; `omni-flash` is rejected. Chain links are recorded locally
+  (SQLite migration `0005`) to drive `--resume-from`. The frame extractor uses
+  PyAV via a new optional **`[chain]`** extra (`pip install 'gflow-cli[chain]'`)
+  — no system ffmpeg required. Each link is saved as its own mp4; concatenating
+  the clips into one file is a separate step — use `gflow scene` (auto-concat is
+  deferred, see [KNOWN_ISSUES.md](KNOWN_ISSUES.md)).
+
+- **`gflow scene` command group (Add Clip / Scenes).** Compose ordered,
+  trimmable video clips into a Flow **Scene** over the credit-free aisandbox
+  REST surface (no reCAPTCHA, no credits):
+  - `gflow scene create --project <pid> <workflowId>[:<start>-<end>] [...]` —
+    compose a scene from one or more existing clips (repeat an id to duplicate;
+    optional per-clip trim in seconds).
+  - `gflow scene show --scene <sid> --project <pid>` — read back a scene's clip
+    order and trims.
+  - `gflow scene create … --output extended.mp4` — render the composed scene
+    into a single **extended video** via Flow's server-side concatenation
+    (`runVideoFxConcatenation`) — credit-free, no reCAPTCHA, **no ffmpeg**. The
+    combined MP4 is fetched inline and written locally (or to the configured
+    cloud `storage_uri`). `--force` overwrites an existing output.
+
+  Scene compositions are recorded locally (SQLite migration `0003`) — including
+  each clip's media id + trims, and the rendered extended-video path (migration
+  `0004`) — so a compose survives a later render failure and the output is
+  discoverable for recovery. The append-to-existing-scene verb (`add-clip`) is
+  deferred — see the project backlog.
+
+## [0.11.0] — 2026-05-31
+
+### Changed
+
+- **`gflow video i2v` default model is now `veo-lite`** (was: inherit Flow's
+  last-used model, which was typically `omni-flash`). The Veo 3.1 family is
+  the only model line that supports i2v interpolation; `omni-flash` is now
+  rejected for any i2v invocation (start-only or start+end) and has been
+  removed from the i2v `--model` choices. Because `--duration 10` is
+  omni-flash-only, the i2v `--duration` choices are now `[4|6|8]`. `omni-flash`
+  (and `--duration 10`) remain valid for `gflow video t2v` and `gflow video r2v`.
+  See issue #125.
+
+### Fixed
+
+- **`gflow video i2v` silently produced text-to-video output, ignoring the
+  start/end frames (issue #125).** When the model was `omni-flash` (Flow's
+  last-used default in most sessions), Flow's frontend dropped the bound
+  start/end frame references at submit time and routed every call to
+  `batchAsyncGenerateVideoText` with `image_inputs: null` — charging a credit
+  for a pure text-to-video generation that had no visual relationship to the
+  supplied frames. **Every i2v paid run on v0.10.0 before this fix produced
+  T2V output regardless of the start/end frames.** Fix: `omni-flash` is
+  dropped from the i2v `--model` choices and the i2v default is now `veo-lite`;
+  a defense-in-depth transport guard raises `ModelModeIncompatibilityError`
+  (exit code 17) for direct `FlowApiClient` callers that bypass the CLI.
+
+- **`gflow video i2v` could still route to T2V even with a valid Veo model,
+  because the model-picker option `Veo 3.1 - Lite` was never selected (issue
+  #125, second path).** The picker selector was an exact-match
+  (`:text-is('volume_upVeo 3.1 - Lite')`) that hardcoded a Material Symbols
+  icon-ligature prefix; when it missed, `_select_video_model` warned and
+  continued, leaving Flow on `omni-flash` → the frames were dropped to T2V.
+  Fixes: (1) the selector is now a robust substring match
+  (`:has-text('Veo 3.1 - Lite'):not(:has-text('[Lower Priority]'))`); (2) for
+  i2v, a model-select miss is now FATAL — `_select_video_model(required=True)`
+  retries the picker then raises `VideoModelSelectionError` (exit code 18)
+  *before* any frame attach or submit, spending no credit; (3) a post-submit
+  backstop raises `WireFormatError` if an i2v request is still observed routing
+  to the T2V endpoint, so a "successful" T2V is never reported as i2v.
+
+- **Create-project generation failing when Flow's "Agent" composer mode is active.**
+  Flow's newer editor adds an Agent toggle next to the prompt box; when it is on,
+  the media-generation panel (the `crop_*` settings trigger, Image/Video mode
+  tablist, and count/model controls) is removed from the DOM, so the UI-automation
+  transport raised "mode-switch dropdown trigger not found". `_switch_to_image_mode`
+  and `_switch_to_video_mode` now call `_exit_agent_mode()` first, which re-mounts
+  the panel by clicking the toggle off. Detection is locale-invariant and uses no
+  UI text and no `aria-` attribute (`button:has(span.content)` plus the absence of
+  the locale-stable `crop_*` trigger), so it works in every Flow UI language.
+
+- **`gflow image t2i` / `i2i` model selection hardened for non-English Flow UIs
+  (issue #94).** `IMAGE_MODEL_OPTION_SELECTORS` is now a selector *cascade*
+  (consistent with every other selector group) instead of a single exact-match
+  string, so `_select_image_model` no longer silently fails to select the
+  requested model when Flow's menu markup shifts. The redundant `--lang=en-US`
+  Chromium launch arg was removed — Flow's branded model names ("Nano Banana 2",
+  "Nano Banana Pro", "Imagen 4") are not localised and `FLOW_URL`'s `?hl=en`
+  already locks the SPA to English, so the override was a no-op.
+
 ## [0.10.0] — 2026-05-29
 
 ### Fixed
@@ -497,7 +690,7 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 - `gflow image batch` now actually shares one Flow project across all
   prompts in a batch. Previously the `--same-project=1` flag was a no-op
   at the `ui_automation` transport layer; each prompt landed in its own
-  Flow project. ([spec](docs/superpowers/specs/2026-05-22-stay-mounted-batch-session-design.md))
+  Flow project.
 - `gflow image t2i -n N` now makes one transport call using Flow's native
   xN count selector instead of fanning out N parallel single-image
   submissions. Closes [#14](https://github.com/ffroliva/gflow-cli/issues/14) part 1.
@@ -1209,7 +1402,10 @@ shell-script template that branches on these codes.
 
 First skeleton. Not functional end-to-end yet.
 
-[Unreleased]: https://github.com/ffroliva/gflow-cli/compare/v0.10.0...HEAD
+[Unreleased]: https://github.com/ffroliva/gflow-cli/compare/v0.13.0...HEAD
+[0.13.0]: https://github.com/ffroliva/gflow-cli/compare/v0.12.0...v0.13.0
+[0.12.0]: https://github.com/ffroliva/gflow-cli/compare/v0.11.0...v0.12.0
+[0.11.0]: https://github.com/ffroliva/gflow-cli/compare/v0.10.0...v0.11.0
 [0.10.0]: https://github.com/ffroliva/gflow-cli/compare/v0.9.1...v0.10.0
 [0.9.1]: https://github.com/ffroliva/gflow-cli/compare/v0.9.0...v0.9.1
 [0.9.0]: https://github.com/ffroliva/gflow-cli/compare/v0.8.1...v0.9.0

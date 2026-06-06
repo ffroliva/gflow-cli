@@ -65,6 +65,29 @@ class VideoModel(StrEnum):
             )
         return _VIDEO_MODEL_FROM_CLI[key]
 
+    def supports_i2v_interpolation(self) -> bool:
+        """Whether this model supports image-to-video with start (and optional
+        end) frame references.
+
+        Verified empirically (issue #125, 2026-05-30) via the
+        ``scripts/dev/capture_i2v_intercept_submit.py`` probe with
+        ``page.route(..., abort)``: ``OMNI_FLASH`` causes Flow's frontend to
+        silently drop frame refs at submit and route to
+        ``batchAsyncGenerateVideoText`` with ``image_inputs: null``. The four
+        ``VEO_3_1_*`` variants preserve the refs and route to
+        ``batchAsyncGenerateVideoStartImage`` /
+        ``batchAsyncGenerateVideoStartAndEndImage``.
+        """
+        return self is not VideoModel.OMNI_FLASH
+
+
+# Default model for ``gflow video i2v`` and direct ``FlowApiClient.generate_video``
+# callers when ``model`` is omitted and the request carries a start/end frame.
+# ``omni_flash`` is excluded because it silently drops frame refs at submit
+# time (issue #125). ``veo_3_1_lite`` is the cheapest interpolation-capable
+# model, matching the price tier ``omni_flash`` previously occupied for t2v.
+I2V_DEFAULT_MODEL: VideoModel = VideoModel.VEO_3_1_LITE
+
 
 # Module-level alias map — friendly CLI strings -> VideoModel. Hoisted out of
 # `VideoModel.from_cli` (defined after the class so the members resolve) so

@@ -43,22 +43,31 @@ _E2E_PROFILE_ENV = "GFLOW_CLI_E2E_PROFILE"
 
 
 @pytest.fixture
-def e2e_profile_dir() -> Path:
+def e2e_profile_dir(monkeypatch: pytest.MonkeyPatch) -> Path:
     """Resolve the authenticated Chromium profile from ``GFLOW_CLI_E2E_PROFILE``.
 
     Skips the test when the env var is unset or the profile directory is absent.
     Use this fixture in every e2e test that needs a live authenticated session
     instead of the inlined ``_profile_dir()`` helper.
+
+    Note: This fixture temporarily unsets ``GFLOW_CLI_HOME`` to resolve the real
+    user data directory, bypassing the isolation from ``_isolate_settings``.
     """
-    name = os.environ.get(_E2E_PROFILE_ENV, "")
+    name = os.environ.get(_E2E_PROFILE_ENV, "").strip()
     if not name:
         pytest.skip(
             f"E2E tests require {_E2E_PROFILE_ENV} — set it to a logged-in "
             "profile name and re-run with -m e2e"
         )
-    from gflow_cli.auth import profile_dir as _resolve_profile_dir
 
-    candidate = _resolve_profile_dir(name)
+    from gflow_cli.config import Settings
+
+    # Resolve real home by bypassing the isolation env var
+    with monkeypatch.context() as m:
+        m.delenv("GFLOW_CLI_HOME", raising=False)
+        real_settings = Settings()
+        candidate = real_settings.profile_subdir(name)
+
     if not candidate.exists():
         pytest.skip(
             f"Profile directory not found: {candidate}. "

@@ -25,9 +25,21 @@ Commands:
 
   video     Video generation (Veo via Flow).
     t2v                         Generate a video from a text prompt.
-    i2v                         Generate a video from a start (+ optional end) frame + prompt.
+    i2v                         Generate a video from an initial frame + motion prompt.
     r2v                         Generate a video from reference images + prompt.
     batch                       Run a TSV manifest of video generations.
+    chain                       Render a JSONL manifest as a last-frame I2V chain.
+
+  scene     Compose Flow Scenes (Add Clip) — credit-free REST.
+    create                      Compose ordered, trimmable clips into a scene (optional extended .mp4).
+    show                        Read back a scene's clip order and trims.
+
+  character Manage Flow Character entities for a project (#145).
+    create                      Generate a reusable character (paid face + body refs).
+    list                        List the characters in a project.
+    show                        Show one character by --id or --name.
+    rm                          Delete a character by --id or --name (FREE).
+    voices                      List the preset Gemini voices for character TTS.
 
   data      Local provenance database (read-only queries).
     media MEDIA_ID              Show stored record for a Flow media ID.
@@ -55,7 +67,7 @@ See [AUTHENTICATION § Commands](AUTHENTICATION.md#commands).
 
 ## `gflow image upload`
 
-Upload a local PNG/JPEG/WebP/GIF into a fresh Flow project and print the asset UUID + dimensions Flow inferred. The UUID is what later subcommands (`gflow image i2i --ref UUID`, `gflow video i2v`) accept as a starting frame.
+Upload a local PNG/JPEG/WebP/GIF into a fresh Flow project and print the asset UUID + dimensions Flow inferred. The UUID is what later subcommands (`gflow image i2i --ref UUID`, `video i2v`) accept as an initial frame.
 
 ```text
 gflow image upload PATH [OPTIONS]
@@ -301,6 +313,13 @@ All prompts in a batch share one Flow project. The editor is opened once; each p
 > `--count INTEGER` (1–4; >1 multiplies credit cost), `--aspect [9:16|16:9]`,
 > `--profile NAME`, `--out-dir DIR` (default `tmp/`). The mp4 lands at
 > `<out-dir>/<media_id>.mp4`.
+>
+> **`i2v` is narrower (issue #125):** `omni-flash` does NOT support image-to-video
+> interpolation — Flow silently drops the start/end frames and produces a
+> text-only video — so it is **not** an accepted `--model` for `i2v`. The `i2v`
+> choices are `[veo-lite|veo-fast|veo-quality|veo-lite-lp]` and the **default is
+> `veo-lite`** (not Flow's UI default). `--duration` for `i2v` is `[4|6|8]` (10s
+> is omni-flash-only). `t2v` and `r2v` keep the full shared set above.
 
 ## `gflow video t2v`
 
@@ -318,25 +337,30 @@ gflow video t2v "A neon city timelapse" --model omni-flash --duration 10 --count
 
 ## `gflow video i2v`
 
-Generate a video from a START frame (+ optional END frame) and a motion prompt.
+Generate a video from an INITIAL frame (+ optional END frame) and a motion prompt.
 Each image is a local PNG/JPEG; it is bound into the editor's frame slot via the
-media dialog, then Flow fires `batchAsyncGenerateVideoStartImage` (start only) or
-`…StartAndEndImage` (start+end interpolation).
+media dialog, then Flow fires `batchAsyncGenerateVideoStartImage` (initial only) or
+`…StartAndEndImage` (initial+end interpolation).
 
 ```text
-gflow video i2v IMAGE PROMPT [--end-image LAST] [--model] [--duration] [--count] [--aspect] [...]
+gflow video i2v --initial-frame INITIAL [--end-frame LAST] PROMPT [--model] [--duration] [--count] [--aspect] [...]
+
+# Back-compat positional form (still supported):
+gflow video i2v IMAGE PROMPT [--end-frame LAST] [...]
 
 Arguments:
-  IMAGE   Local start frame (PNG/JPEG). [required]
-  PROMPT  Motion prompt.                [required]
+  PROMPT  Motion prompt.  [required]
 
 Options:
-  --end-image PATH  Optional end frame — Flow interpolates start -> end.
+  --initial-frame PATH  Initial frame to animate. Canonical form; replaces the positional IMAGE.
+  --end-frame PATH      Optional end frame — Flow interpolates initial frame -> end frame.
 ```
 
 ```bash
+gflow video i2v --initial-frame ./hero.png "Slow camera arc, soft golden light"
+gflow video i2v --initial-frame ./first.png --end-frame ./last.png "morph between scenes" --model veo-quality
+# Back-compat positional form:
 gflow video i2v ./hero.png "Slow camera arc, soft golden light"
-gflow video i2v ./first.png "morph between scenes" --end-image ./last.png --model veo-quality
 ```
 
 ## `gflow video r2v`
@@ -391,6 +415,245 @@ generation re-mints a reCAPTCHA (a few extra seconds per shot) and the
 videos won't appear together in your Flow gallery. The files on disk are
 identical to what `batch` would produce. The same pattern works for
 `gflow video i2v <image> "<prompt>"` and `gflow video r2v "<prompt>" --ref <img>`.
+
+## `gflow video chain`
+
+Render a JSONL manifest of *links* into one continuous last-frame I2V chain.
+Link 0 is a text-to-video (T2V) generation; every later link is an
+image-to-video (I2V) generation **seeded by the extracted last frame of the
+previous clip**, giving visual continuity with no server-side stitching.
+
+> ⚠️ **Costs N credits — one per link.** A chain is N sequential paid Veo
+> generations. Run `--dry-run` first to print the plan and the credit estimate
+> without spending anything. The cost-confirmation prompt is shown unless you
+> pass `-y` / `--yes`.
+
+> **Requires the `chain` extra.** The last-frame extractor decodes the previous
+> clip with [PyAV](https://pyav.org/) (no system ffmpeg needed). Install it
+> with:
+>
+> ```bash
+> pip install 'gflow-cli[chain]'
+> # or:  uv tool install 'gflow-cli[chain]'
+> ```
+
+```text
+gflow video chain MANIFEST [OPTIONS]
+
+Arguments:
+  MANIFEST                  JSONL manifest, one link per line. [required]
+
+Options:
+  --model [veo-lite|veo-fast|veo-quality|veo-lite-lp]
+                            Veo 3.1 model for every link.    [default: veo-lite]
+  --max-links INTEGER       Cap link count; error (exit 11) if the manifest
+                            has more links than this.
+  -y, --yes                 Skip the per-credit cost confirmation prompt.
+  --dry-run                 Resolve the manifest, print the plan + credit cost,
+                            and spend nothing.
+  --resume-from CHAIN_ID    Resume a prior chain by its id; already-paid links
+                            are skipped (not re-billed).
+  --jitter FLOAT            Random 0..JITTER second pause between links
+                            (anti-bot cadence).               [default: 0.0]
+  --seed-offset INTEGER     Extract the seed frame this many ms before EOF
+                            (fade-to-black guard).            [default: 0]
+  --aspect [9:16|16:9]      Uniform aspect for every link.    [default: 9:16]
+  --profile NAME            Profile name (overrides default).
+  --out-dir DIR             Directory for the link mp4s + seed frames.
+  --json                    Emit a machine-readable JSON result.
+```
+
+> **`omni-flash` is rejected.** Only the Veo 3.1 family supports i2v
+> interpolation. `omni-flash` silently drops the seed frame and routes to
+> text-to-video (issue #125), which would break every seeded link, so it is not
+> an accepted `--model` for `chain`. The chain also aborts a link loudly (rather
+> than reporting a fake success) if a generation is observed routing to the
+> text-only endpoint — see [KNOWN_ISSUES](../KNOWN_ISSUES.md).
+
+### JSONL manifest format
+
+One JSON object per line. Only `prompt` is required; `model` / `duration` /
+`aspect` are optional per-link overrides (omit to inherit the chain default).
+Blank lines and `#`-prefixed comment lines are skipped.
+
+```jsonl
+{"prompt": "a lone wolf on a snowy ridge at dawn, cinematic", "model": "veo-lite", "duration": 4, "aspect": "16:9"}
+{"prompt": "it lifts its head and turns to face the camera"}
+{"prompt": "it bounds down the slope toward the valley"}
+```
+
+The chain enforces a **uniform aspect** across links for continuity, so the
+chain-level `--aspect` is applied to every link (a per-link `aspect` override in
+the manifest is currently informational).
+
+### Output — N clips, not one file
+
+Each link is saved as its own mp4 (plus a `linkN_lastframe.jpg` seed frame
+between links) under `--out-dir` (or the default output dir). **Stitching the
+clips into a single video is a separate step — use `gflow scene` to
+concatenate them server-side.** Chain does not auto-concat: see the
+*deferred auto-concat* entry in
+[KNOWN_ISSUES](../KNOWN_ISSUES.md) for why.
+
+**Examples:**
+
+```bash
+# Preview the plan + credit cost — spends nothing
+gflow video chain story.jsonl --dry-run
+
+# Generate the chain (one credit per link), no confirmation prompt
+gflow video chain story.jsonl --model veo-fast --aspect 16:9 --yes
+
+# Resume a chain that died partway — already-paid links are skipped
+gflow video chain story.jsonl --resume-from 1f2e3d4c-...
+
+# Seed 150 ms before EOF to dodge a fade-to-black final frame
+gflow video chain story.jsonl --seed-offset 150 --yes
+```
+
+## `gflow scene`
+
+Compose ordered, trimmable video clips into a Flow **Scene** (the "Add Clip"
+timeline). This is a **credit-free, reCAPTCHA-free** REST path: it arranges
+*existing* clips (e.g. the per-link mp4s from `gflow video chain`) — it does not
+generate anything. Each clip is referenced by its **workflow id**, optionally
+trimmed with a `start-end` window in seconds.
+
+### `gflow scene create`
+
+```text
+gflow scene create CLIP_REFS... [OPTIONS]
+
+Arguments:
+  CLIP_REFS...              One or more clips, in order. Each is
+                            `workflowId[:start-end]` (trim in seconds, start<end).
+                            [required]
+
+Options:
+  --project PROJECT_ID      Flow project id.                          [required]
+  -o, --output PATH         Render the composed scene into ONE extended .mp4 at
+                            PATH (server-side, credit-free, no local ffmpeg).
+                            Without it, only the Flow scene is composed (no file).
+  --force                   Overwrite --output if it already exists.
+  --profile NAME            Profile name (overrides default).
+```
+
+With `--output`, gflow calls Flow's server-side `runVideoFxConcatenation` to
+stitch the clips into a single extended video. The render is **credit-free** and
+needs **no local ffmpeg** — Flow returns the encoded video inline (base64) and
+gflow writes it to PATH (a `.mp4` suffix is enforced; takes up to ~3 min). The
+compose is **persisted to the local catalog before** the render, so a render
+failure is recoverable without re-composing. A non-`.mp4` `--output` is
+rewritten to `.mp4`; an existing file errors unless `--force` is passed.
+
+**Examples:**
+
+```bash
+# Compose three chain clips into a scene (no local file)
+gflow scene create wf-aaa wf-bbb wf-ccc --project proj-123
+
+# Same, but also render one extended .mp4 (credit-free, server-side)
+gflow scene create wf-aaa wf-bbb wf-ccc --project proj-123 --output story.mp4
+
+# Trim the middle clip to its 2.0–6.5s window before concatenating
+gflow scene create wf-aaa wf-bbb:2.0-6.5 wf-ccc --project proj-123 -o story.mp4 --force
+```
+
+### `gflow scene show`
+
+```text
+gflow scene show --scene SCENE_ID --project PROJECT_ID [--profile NAME]
+
+Options:
+  --scene SCENE_ID          Scene id to read back.                     [required]
+  --project PROJECT_ID      Flow project id.                           [required]
+  --profile NAME            Profile name (overrides default).
+```
+
+Reads a scene back and prints each clip's position, workflow id, trim window,
+source duration, and the composed total duration.
+
+## `gflow character`
+
+Create and manage reusable **Flow Character entities** — project-scoped,
+broadly-available identities you can reuse across generations (#145). Full
+design + wire protocol: [CHARACTER](CHARACTER.md). Every subcommand takes
+`--project <id>` (required); use `--id`/`--name` flags, never a positional.
+
+### `gflow character create`
+
+> ⚠️ **Costs credits.** `create` runs **two paid image generations**: a face
+> reference (slot 0), then a front/side/back triptych body (slot 1) seeded by
+> that face. It runs as a **persist-before-spend, crash-recoverable saga** — the
+> entity id and workflow rows are recorded before the credited generation, so a
+> crashed run is recoverable. Generation requires a Chrome-strategy profile.
+
+```text
+gflow character create [OPTIONS]
+
+Options:
+  --project PROJECT_ID      Flow project id.                           [required]
+  --name NAME               Display name for the new character.        [required]
+  --face-prompt TEXT        Prompt for the face reference image.       [required]
+  --body-prompt TEXT        Body/outfit DESCRIPTION (not a full prompt). gflow
+                            wraps it in a self-contained front/side/back triptych
+                            instruction seeded by the generated face, so one
+                            generation yields all three angles. Omit to skip the
+                            body step.
+  --voice NAME              Preset voice (e.g. Charon); case-insensitive,
+                            validated against `gflow character voices`.
+  --personality TEXT        Personality notes for the character.
+  --model [nano2|nanopro]   nano2 = Nano Banana 2 (default);
+                            nanopro = Nano Banana Pro.            [default: nano2]
+  --profile NAME            Profile name (overrides default).
+  --locale TEXT             BCP-47 locale.                       [default: en-US]
+  --json                    Emit a machine-readable JSON result.
+```
+
+There is **no aspect-ratio control** for characters. Generated images are
+**downloaded** to local (or cloud) storage; the signed `fifeUrl` is used only at
+download time and never persisted. The result reports the entity id, the bound
+workflow ids, and each saved slot's local path (face, body).
+
+### `gflow character list`
+
+```text
+gflow character list --project PROJECT_ID [--json] [--profile NAME]
+```
+
+Lists every Character entity in a project (name, entity id, voice, reference
+count).
+
+### `gflow character show`
+
+```text
+gflow character show --project PROJECT_ID (--id ENTITY_ID | --name NAME) [--json] [--profile NAME]
+```
+
+Shows one character's detail (entity id, project, voice, personality, reference
+workflow ids). Provide **exactly one** of `--id` or `--name`. An ambiguous
+`--name` (multiple characters share it) exits with code **11**.
+
+### `gflow character rm`
+
+```text
+gflow character rm --project PROJECT_ID (--id ENTITY_ID | --name NAME) [--yes] [--json] [--profile NAME]
+```
+
+Deletes a Character by `--id` or `--name`. Provide **exactly one** of `--id` or
+`--name`. Prompts for confirmation unless `--yes` (or `--json`) is supplied; an
+ambiguous `--name` (multiple characters share it) exits with code **11**.
+**FREE** — no reCAPTCHA, no credit (`POST flow:batchDeleteAssets`).
+
+### `gflow character voices`
+
+```text
+gflow character voices [--json]
+```
+
+Lists the **29 preset Gemini voices** available for character TTS — each with a
+name, description, and sample URL. These names are what `--voice` validates
+against (case-insensitively) on `gflow character create`.
 
 ## `gflow data list`
 
@@ -619,19 +882,17 @@ The bundled `examples/sample_config.json` produces three images at three aspect 
 mkdir -p out
 for img in ./inputs/*.png; do
   name=$(basename "$img" .png)
-  gflow video i2v "$img" "Cinematic push-in" -o "out/${name}.mp4"
+  gflow video i2v "$img" "Cinematic push-in" --out-dir out
 done
 ```
-
 PowerShell:
 
 ```powershell
 New-Item -ItemType Directory -Force -Path out | Out-Null
 Get-ChildItem ./inputs/*.png | ForEach-Object {
-    gflow video i2v $_.FullName "Cinematic push-in" -o "out/$($_.BaseName).mp4"
+    gflow video i2v $_.FullName "Cinematic push-in" --out-dir out
 }
 ```
-
 ### Fan out an image prompt 4-way
 
 ```bash
@@ -679,6 +940,8 @@ shell scripts can branch on the failure mode without parsing stderr.
 | `13` | `SecurityError`       | Unsafe local profile or secret handling blocked   | Follow the error's safety guidance                         |
 | `14` | `AuthBrowserRejectedError` | Google rejected the login browser             | `gflow auth login --browser chrome`                        |
 | `16` | `DataStoreError`      | Local database cannot be opened, a migration failed, or the DB schema is newer than the installed gflow-cli | See below                                  |
+| `17` | `ModelModeIncompatibilityError` | The chosen video model can't do the requested mode (e.g. `--model omni-flash` with an `i2v` start/end frame — issue #125) | Use `--model veo-lite` (or veo-fast / veo-quality / veo-lite-lp) for `i2v` |
+| `18` | `VideoModelSelectionError` | gflow could not select the requested video model in Flow's editor for an `i2v` run (model-picker option not found) | Usually transient — retry; if it persists, Flow's model-picker UI changed (report referencing #125) |
 | `130`| SIGINT                | User-interrupted (Ctrl-C)                        | —                                                          |
 
 **Exit code 16 — data store / migration error.** Fires when:
@@ -702,9 +965,10 @@ jq 'select(.event == "error_raised") | .error_class' events.jsonl
 Branch in shell scripts — capture the exit code **before** the `if`/`case` consumes it:
 
 ```bash
-gflow video i2v ./in.png "test" -o out.mp4
+gflow video i2v ./initial.png "test" --out-dir out
 rc=$?
 if [ "$rc" -ne 0 ]; then
+
   case "$rc" in
     2)   echo "Bad CLI usage (missing arg, bad flag)"; exit 1 ;;
     3)   echo "Auth expired — run: gflow auth login"; exit 1 ;;

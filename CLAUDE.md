@@ -11,7 +11,8 @@
 1. Read **[AGENTS.md](AGENTS.md)** — universal rules every agent must follow.
 2. Read **[docs/INDEX.md](docs/INDEX.md)** — routing layer for all project docs and commands.
 3. Pull deeper context on demand:
-   - Starting a feature → `/gflow:plan`
+   - Current task / where we left off → `/gflow:status`
+   - Starting a new feature → `/gflow:predict` → `/gflow:scenario` → `/gflow:plan <feature>`
    - Touching auth or reCAPTCHA → `/gflow:known-issues`
    - Cutting a release → `/gflow:release`
    - Before any commit → `/gflow:check`
@@ -22,6 +23,20 @@
 - Skills under `skills/` are auto-discoverable; `gflow-cli` ships its own at [`skills/gflow-cli/SKILL.md`](skills/gflow-cli/SKILL.md).
 - Auto-memory at `~/.claude/projects/C--development-github-gflow-cli/memory/MEMORY.md` carries cross-session feedback and project state.
 
+## MCP GitHub tool — PR body rule (non-negotiable)
+
+When calling `mcp__github__create_pull_request` or `mcp__github__update_pull_request`, the `body` parameter **must be a plain string**. Shell heredoc syntax (`$(cat <<'EOF' ... EOF)`) is **never valid** here — MCP tool parameters are JSON, not shell; the heredoc is not evaluated and appears literally in the PR description.
+
+```
+# WRONG — produces literal "$(cat <<'EOF'" in the PR body:
+body: "$(cat <<'EOF'\n## Summary\n...\nEOF\n)"
+
+# CORRECT — plain multiline string:
+body: "## Summary\n\n- Item 1\n- Item 2\n\n## Test plan\n- [ ] ..."
+```
+
+The heredoc pattern (`$(cat <<'EOF' ... EOF)`) is only valid inside a `Bash` tool call because the **shell** evaluates it there. In every MCP tool parameter it is a literal string. This mistake has recurred across multiple PRs — treat this rule as a hard blocker before every PR creation or update.
+
 ## Active phase
 
-See [PLAN.md](PLAN.md) or run `/gflow:plan` for the current detailed plan.
+See [PLAN.md](PLAN.md) or run `/gflow:status` for current task. Run `/gflow:plan <feature>` to create a new feature plan.

@@ -1,26 +1,34 @@
 from __future__ import annotations
 
+from pathlib import Path
 from typing import Any, TypedDict
 
 __all__ = [
     "EXIT_CODE_MAP",
+    "AisandboxAuthError",
     "AuthExpiredError",
     "AuthLoginTimeoutError",
     "AuthMissingError",
     "BatchIntegrityError",
     "BatchPartialError",
+    "ChainManifestError",
+    "ChainPartialError",
     "ConfigurationError",
     "ContentPolicyError",
     "DataIntegrityError",
     "DataMigrationError",
     "DataStoreError",
     "FlowApiError",
+    "FrameExtractionError",
     "GFlowError",
+    "ModelModeIncompatibilityError",
     "NetworkError",
     "ProblemDetails",
     "RateLimitError",
+    "SceneConcatError",
     "SecurityError",
     "TransportTimeoutError",
+    "VideoModelSelectionError",
     "WafRejectionError",
     "WireFormatError",
 ]
@@ -137,6 +145,23 @@ class AuthExpiredError(FlowApiError):
     _default_remediation = "Run `gflow auth login --profile <name>` to refresh the session."
 
 
+class AisandboxAuthError(AuthExpiredError):
+    """aisandbox-pa REST returned 401 even after a fresh SAPISIDHASH.
+
+    Distinct from the generic AuthExpiredError so callers (and the scene
+    feature) can catch the aisandbox-specific auth failure, while still
+    mapping to exit code 3 via the EXIT_CODE_MAP isinstance walk (no own
+    entry needed — it inherits AuthExpiredError's code).
+    """
+
+    problem_type = "https://gflow-cli.dev/errors/aisandbox-auth"
+    title = "aisandbox-pa authentication failed"
+    _default_remediation = (
+        "SAPISID cookie missing, expired, or unreadable. "
+        "Re-run `gflow auth login --profile <name>` and retry."
+    )
+
+
 class RateLimitError(FlowApiError):
     problem_type = "https://gflow-cli.dev/errors/rate-limit"
     title = "Rate limit or quota hit"
@@ -226,6 +251,24 @@ class WireFormatError(FlowApiError):
         self.discovery = discovery or {}
 
 
+class SceneConcatError(FlowApiError):
+    """Raised when Flow's server-side scene concatenation job FAILS.
+
+    Distinct from a poll timeout (which raises ``TransportTimeoutError``, exit 9):
+    this is a terminal ``MEDIA_GENERATION_STATUS_FAILED`` / unexpected status from
+    ``runVideoFxCheckConcatenationStatus`` (or an undecodable / non-MP4 payload).
+    The error detail is built from the ``status`` ONLY — never the ~20MB inline
+    ``encodedVideo``.
+    """
+
+    problem_type = "https://gflow-cli.dev/errors/scene-concat"
+    title = "Scene concatenation failed"
+    _default_remediation = (
+        "Flow's server-side concatenation job did not succeed. Retry the "
+        "compose; if it persists, check the clips are valid video workflows."
+    )
+
+
 class TransportTimeoutError(GFlowError):
     """Raised when a transport strategy hangs > 30s on a single API call."""
 
@@ -256,6 +299,58 @@ class ConfigurationError(GFlowError):
     _default_remediation = (
         "Check that the transport name is registered via make_transport(). "
         "Run `gflow config list-transports` to see available strategies."
+    )
+
+
+class ModelModeIncompatibilityError(ConfigurationError):
+    """Raised when the chosen video model is incompatible with the requested
+    generation mode (issue #125).
+
+    The canonical case: ``omni-flash`` does NOT support i2v interpolation
+    (start or start+end frames). Flow's frontend silently drops the frame
+    refs at submit time and routes the request to the T2V endpoint,
+    charging a credit for a generation that ignores the supplied images
+    entirely. This error is raised pre-submit by both the CLI (Click
+    callback) and the transport (defense-in-depth for direct
+    ``FlowApiClient`` callers that bypass the CLI), preventing the
+    silent credit-burn.
+
+    Distinct exit code 17 (not Click's exit 2, not generic exit 1) so
+    scripted callers can branch on "I picked an incompatible
+    model/mode" without parsing stderr.
+    """
+
+    problem_type = "https://gflow-cli.dev/errors/model-mode-incompatibility"
+    title = "Model is incompatible with the requested generation mode"
+    _default_remediation = (
+        "The selected video model does not support this generation mode. "
+        "For i2v with a start or end frame, use --model veo-lite (or "
+        "veo-fast / veo-quality / veo-lite-lp). See issue #125."
+    )
+
+
+class VideoModelSelectionError(ConfigurationError):
+    """Raised when the requested video model could not be selected in Flow's UI
+    for an i2v generation (issue #125).
+
+    The model picker option was not found (e.g. a selector drift / render race).
+    For i2v this is FATAL rather than a silent fallback: leaving Flow on its
+    default model (``omni-flash``) would drop the start/end frames and route to
+    T2V, charging a credit for a text-only video. Raised pre-submit by the
+    transport, so no credit is spent.
+
+    Distinct exit code 18 so scripted callers can branch on "the model UI failed"
+    (a retryable transport/selector issue) versus exit 17 "I picked an
+    incompatible model" (a request mistake).
+    """
+
+    problem_type = "https://gflow-cli.dev/errors/video-model-selection"
+    title = "Could not select the requested video model"
+    _default_remediation = (
+        "gflow could not select the requested model in Flow's editor (the model "
+        "picker option was not found). This is usually transient — retry the "
+        "command. If it persists, Flow's model-picker UI may have changed; please "
+        "report it referencing issue #125."
     )
 
 
@@ -420,10 +515,93 @@ class DataIntegrityError(DataStoreError):
     title = "Data integrity error"
 
 
+class FrameExtractionError(GFlowError):
+    """Raised when the video-chain last-frame extractor cannot produce a frame.
+
+    Covers both the missing-optional-dependency case (PyAV / ``av`` not
+    installed because the ``chain`` extra was skipped) and an undecodable /
+    truncated input video. The remediation points at the install extra so an
+    operator hitting the missing-dependency path can self-serve.
+    """
+
+    problem_type = "https://gflow-cli.dev/errors/frame-extraction"
+    title = "Last-frame extraction failed"
+    _default_remediation = (
+        "Could not extract the last frame of the clip. Install the chain extra: "
+        "pip install 'gflow-cli[chain]' (provides PyAV). If already installed, the "
+        "input video may be truncated or undecodable."
+    )
+
+
+class ChainPartialError(GFlowError):
+    """Raised when a sequential video chain fails mid-way after earlier links
+    already produced ready-on-disk clips.
+
+    Mirrors ``BatchPartialError`` but for the video chain: ``partial_results``
+    carries the ``Path`` of each completed link so the already-paid-for clips
+    are surfaced rather than lost. The default is an empty (but present) list —
+    a chain that fails before its first link completes is still a valid partial
+    with zero results, NEVER ``None``.
+    """
+
+    problem_type = "https://gflow-cli.dev/errors/chain-partial"
+    title = "Video chain partially failed"
+    _default_remediation = (
+        "An earlier link in the chain succeeded but a later one failed. The "
+        "completed clips are preserved; re-run with --resume-from to continue "
+        "from the first failed link instead of regenerating the whole chain."
+    )
+
+    def __init__(
+        self,
+        detail: str = "",
+        *,
+        status: int | None = None,
+        instance: str | None = None,
+        route: str = "",
+        remediation_hint: str | None = None,
+        partial_results: list[Path] | None = None,
+        cause: Exception | None = None,
+    ) -> None:
+        super().__init__(
+            detail,
+            status=status,
+            instance=instance,
+            route=route,
+            remediation_hint=remediation_hint,
+        )
+        self.partial_results: list[Path] = partial_results if partial_results is not None else []
+        self.cause = cause
+
+
+class ChainManifestError(ConfigurationError):
+    """Raised when a chain manifest file cannot be parsed into chain links.
+
+    A configuration/input error (bad JSON, missing ``prompt``, unknown model
+    alias, non-int duration, invalid aspect, or an empty manifest). The
+    ``detail`` cites the offending line number where applicable. Inherits
+    ``ConfigurationError``'s exit code (11) via the EXIT_CODE_MAP isinstance
+    walk — no dedicated code is needed because, like other configuration
+    mistakes, it is a "fix your input and re-run" failure.
+    """
+
+    problem_type = "https://gflow-cli.dev/errors/chain-manifest"
+    title = "Chain manifest is invalid"
+    _default_remediation = (
+        "Fix the chain manifest: it is a JSONL file with one JSON object per "
+        'line, each requiring a non-empty "prompt"; optional per-link overrides '
+        'are "model", "duration" (int), and "aspect" (9:16 | 16:9 | 1:1). '
+        "Blank lines and lines starting with # are ignored, but at least one "
+        "valid link is required."
+    )
+
+
 # EXIT_CODE_MAP — most-specific class FIRST per isinstance walk semantics.
 # Subclasses inherit their parent's exit code if they don't have their own
 # entry. New entries MUST go BEFORE their parent class in this dict.
 EXIT_CODE_MAP: dict[type[GFlowError], int] = {
+    ChainPartialError: 21,
+    FrameExtractionError: 20,
     DataMigrationError: 16,
     DataIntegrityError: 16,
     DataStoreError: 16,
@@ -434,11 +612,17 @@ EXIT_CODE_MAP: dict[type[GFlowError], int] = {
     AuthMissingError: 8,
     TransportTimeoutError: 9,
     WafRejectionError: 10,
+    # ModelModeIncompatibilityError + VideoModelSelectionError BEFORE
+    # ConfigurationError (their parent) so the isinstance walk lands on 17/18,
+    # not 11. Per [[exit-code-map-ordering-invariant-test-pitfall]].
+    ModelModeIncompatibilityError: 17,
+    VideoModelSelectionError: 18,
     ConfigurationError: 11,
     AuthExpiredError: 3,
     RateLimitError: 4,
     ContentPolicyError: 5,
     NetworkError: 6,
     WireFormatError: 7,
+    SceneConcatError: 19,
     # FlowApiError omitted — falls through to default 1
 }

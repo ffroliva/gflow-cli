@@ -265,6 +265,37 @@ async def test_client_with_preinitialized_transport_does_not_own_lifecycle(
 
 
 @pytest.mark.asyncio
+async def test_enter_setup_routes_launch_through_kwargs_seam(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    """__aenter__ must launch the persistent context via the
+    _persistent_context_kwargs() seam, not a stale inline dict, so a dev-scoped
+    recording subclass override actually takes effect. The pin test alone cannot
+    catch a re-inlined call site; this can."""
+    monkeypatch.delenv("GFLOW_CLI_TRANSPORT", raising=False)
+    _patch_playwright(monkeypatch)
+    fake = _FakeTransport()
+    seam_calls: list[object] = []
+    original = FlowApiClient._persistent_context_kwargs
+
+    def spy(self: FlowApiClient) -> dict[str, object]:
+        kwargs = original(self)
+        seam_calls.append(kwargs)
+        return kwargs
+
+    monkeypatch.setattr(FlowApiClient, "_persistent_context_kwargs", spy)
+    launch_mock = None
+    async with FlowApiClient(profile_dir=tmp_path, transport=fake) as client:
+        launch_mock = client._pw.chromium.launch_persistent_context
+    # The seam was consulted exactly once AND the launch was invoked with its
+    # exact output. A re-inlined / stale dict at the call site fails the kwargs
+    # equality here, not merely the consult count.
+    assert len(seam_calls) == 1
+    assert launch_mock is not None
+    assert launch_mock.call_args.kwargs == seam_calls[0]
+
+
+@pytest.mark.asyncio
 async def test_client_with_string_transport_owns_lifecycle(
     tmp_path: Path, monkeypatch: pytest.MonkeyPatch
 ) -> None:

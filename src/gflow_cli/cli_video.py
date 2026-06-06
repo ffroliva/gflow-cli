@@ -6,6 +6,7 @@
 
 from __future__ import annotations
 
+import warnings
 from pathlib import Path
 from typing import Any
 
@@ -20,14 +21,7 @@ from gflow_cli._cli_helpers import (
     run_with_handlers,
 )
 from gflow_cli.api.client import FlowApiClient
-from gflow_cli.api.video import (
-    Aspect,
-    GenerateVideoRequest,
-    Mode,
-    VideoModel,
-    VideoStarted,
-    reference_cap_for,
-)
+from gflow_cli.api.video import VideoModel, reference_cap_for
 from gflow_cli.config import get_settings
 from gflow_cli.data.recorder import OperationRecorder
 from gflow_cli.errors import DataStoreError
@@ -73,6 +67,8 @@ async def _generate_and_report(
     ok/fail status as the exit code) instead of the Rich lines; a failed
     generation still emits its JSON payload and then exits 1.
     """
+    from gflow_cli.api.video import VideoStarted
+
     if not as_json:
         console.print("[dim]Generating video — this takes ~2 minutes…[/dim]")
     settings = get_settings()
@@ -153,6 +149,7 @@ async def _run_t2v(
     count: int = 1,
     as_json: bool = False,
 ) -> None:
+    from gflow_cli.api.video import Aspect, GenerateVideoRequest, Mode, VideoModel
 
     request = GenerateVideoRequest(
         prompt=prompt,
@@ -180,22 +177,46 @@ async def _run_i2v(
     prompt: str,
     aspect: str,
     out_dir: Path | None,
-    end_image: str | None = None,
+    end_frame: str | None = None,
     model: str | None = None,
     duration: int | None = None,
     count: int = 1,
     as_json: bool = False,
 ) -> None:
+    from gflow_cli.api.video import (
+        I2V_DEFAULT_MODEL,
+        Aspect,
+        GenerateVideoRequest,
+        Mode,
+        VideoModel,
+    )
+    from gflow_cli.errors import ModelModeIncompatibilityError
+
+    # Resolve the model with i2v-specific defaulting + validation. The Click
+    # Choice already excludes omni-flash, but a stale `--config` JSON or a
+    # direct programmatic call can still smuggle it in. omni-flash silently
+    # drops the start/end frames at submit and routes to T2V (issue #125), so
+    # reject it here before any paid call.
+    resolved_model = VideoModel.from_cli(model)
+    if resolved_model is None:
+        resolved_model = I2V_DEFAULT_MODEL
+    elif not resolved_model.supports_i2v_interpolation():
+        msg = (
+            f"{resolved_model.value!r} does not support image-to-video "
+            f"interpolation; Flow silently drops the start/end frames and "
+            f"produces a text-only video (issue #125)."
+        )
+        raise ModelModeIncompatibilityError(detail=msg)
 
     request = GenerateVideoRequest(
         prompt=prompt,
         mode=Mode.I2V,
         aspect=Aspect.from_cli(aspect),
-        model=VideoModel.from_cli(model),
+        model=resolved_model,
         duration=duration,
         count=count,
         start_image=Path(image),
-        end_image=Path(end_image) if end_image else None,
+        end_image=Path(end_frame) if end_frame else None,
     )
     await _generate_and_report(
         request,
@@ -221,6 +242,7 @@ async def _run_r2v(
     use_avatar: bool = False,
     as_json: bool = False,
 ) -> None:
+    from gflow_cli.api.video import Aspect, GenerateVideoRequest, Mode, VideoModel
 
     request = GenerateVideoRequest(
         prompt=prompt,
@@ -254,6 +276,7 @@ async def _run_avatar_video(
     count: int = 1,
     as_json: bool = False,
 ) -> None:
+    from gflow_cli.api.video import Aspect, GenerateVideoRequest, Mode, VideoModel
 
     request = GenerateVideoRequest(
         prompt=prompt,
@@ -277,6 +300,318 @@ async def _run_avatar_video(
 async def _run_batch(**kwargs: Any) -> None:  # pragma: no cover
     console.print(_BATCH_UNAVAILABLE)
     raise SystemExit(1)
+
+
+def _resolve_chain_model(model: str | None) -> VideoModel:
+    """Resolve + validate the chain-level ``--model`` BEFORE any spend.
+
+    A chain renders link 0 as T2V and every later link as I2V seeded by the
+    previous clip's last frame, so the model MUST support i2v interpolation.
+    ``omni-flash`` silently drops the start frame at submit and routes to T2V
+    (issue #125), which would break continuity AND burn a credit per link — so
+    reject it at the CLI boundary with ``ModelModeIncompatibilityError`` (exit
+    17). The Click ``Choice`` already excludes ``omni-flash``; this guard also
+    covers a direct programmatic call or a future alias.
+    """
+    from gflow_cli.api.video import I2V_DEFAULT_MODEL
+    from gflow_cli.errors import ModelModeIncompatibilityError
+
+    resolved = VideoModel.from_cli(model)
+    if resolved is None:
+        return I2V_DEFAULT_MODEL
+    if not resolved.supports_i2v_interpolation():
+        msg = (
+            f"{resolved.value!r} does not support image-to-video interpolation; "
+            f"a chain seeds every link after the first with the previous clip's "
+            f"last frame, and Flow silently drops that frame for this model "
+            f"(issue #125). Use a Veo 3.1 model."
+        )
+        raise ModelModeIncompatibilityError(detail=msg)
+    return resolved
+
+
+def _print_chain_plan(
+    *,
+    links: Any,
+    model: VideoModel,
+    aspect: str,
+    skipped: int,
+    chain_id: str,
+) -> None:
+    """Render the resolved plan (used by --dry-run and the pre-spend summary)."""
+    from gflow_cli.chain import ChainLinkSpec
+
+    typed_links: list[ChainLinkSpec] = list(links)
+    remaining = len(typed_links) - skipped
+    console.print(f"[bold]Chain plan[/bold] ([dim]{chain_id}[/dim])")
+    console.print(
+        f"  {len(typed_links)} link(s), aspect {aspect}, model {model.value}"
+        + (f" — {skipped} already completed, {remaining} to generate" if skipped else "")
+    )
+    console.print(f"  [yellow]Estimated cost: {remaining} credit(s)[/yellow] (one per link)")
+    for idx, spec in enumerate(typed_links):
+        mode = "t2v" if idx == 0 else "i2v"
+        link_model = spec.model.value if spec.model is not None else model.value
+        status = " [dim](done)[/dim]" if idx < skipped else ""
+        console.print(f"  [{idx}] {mode} · {link_model} · {spec.prompt!r}{status}")
+
+
+async def _run_chain(
+    *,
+    profile_name: str,
+    profile_dir: Path,
+    manifest: str,
+    model: str | None,
+    aspect: str,
+    out_dir: Path | None,
+    max_links: int | None,
+    resume_from: str | None,
+    jitter: float,
+    seed_offset: int,
+    yes: bool,
+    dry_run: bool,
+    as_json: bool,
+) -> None:
+    """Drive a sequential last-frame I2V chain from a JSONL manifest.
+
+    The cost gate (``--yes`` / confirm), ``--max-links`` cap, ``--dry-run``
+    short-circuit, and ``--resume-from`` skip-paid-links logic all run BEFORE a
+    client is created so a rejected/dry run spends nothing and opens no browser.
+    """
+    import uuid
+    from pathlib import Path as _Path
+
+    from gflow_cli import chain as chain_mod
+    from gflow_cli.api.video import Aspect, GenerateVideoRequest, VideoResult, VideoStarted
+    from gflow_cli.chain import ChainLinkSpec
+    from gflow_cli.chain_manifest import parse_chain_manifest
+    from gflow_cli.data.chain_repo import ChainLinkRecorder
+    from gflow_cli.errors import ChainManifestError
+
+    resolved_model = _resolve_chain_model(model)
+    aspect_enum = Aspect.from_cli(aspect)
+
+    links: list[ChainLinkSpec] = parse_chain_manifest(_Path(manifest))
+
+    if max_links is not None and len(links) > max_links:
+        msg = (
+            f"chain manifest has {len(links)} link(s) but --max-links is "
+            f"{max_links}; raise the cap or trim the manifest before spending."
+        )
+        raise ChainManifestError(msg)
+
+    settings = get_settings()
+
+    # Resume: bind the prior chain_id, query already-paid links, skip them so
+    # they are NOT regenerated (no re-billing). A fresh run mints a new id.
+    skipped = 0
+    if resume_from is not None:
+        chain_id = resume_from
+        probe = ChainLinkRecorder.open(
+            settings,
+            profile_name=profile_name,
+            profile_dir=profile_dir,
+            chain_id=chain_id,
+        )
+        try:
+            skipped = len(probe.completed_links())
+        finally:
+            probe.close()
+        if skipped >= len(links):
+            console.print(
+                f"[green]Chain {chain_id} already complete[/green] "
+                f"({skipped}/{len(links)} links); nothing to do."
+            )
+            return
+    else:
+        chain_id = str(uuid.uuid4())
+
+    remaining_links = links[skipped:]
+    cost = len(remaining_links)
+
+    if dry_run:
+        _print_chain_plan(
+            links=links,
+            model=resolved_model,
+            aspect=aspect,
+            skipped=skipped,
+            chain_id=chain_id,
+        )
+        console.print("[dim]--dry-run: no credits spent, no clips generated.[/dim]")
+        return
+
+    if not as_json:
+        _print_chain_plan(
+            links=links,
+            model=resolved_model,
+            aspect=aspect,
+            skipped=skipped,
+            chain_id=chain_id,
+        )
+
+    if not yes:
+        click.confirm(
+            f"Generate {cost} chain link(s) for ~{cost} credit(s)?",
+            abort=True,
+        )
+
+    resolved_out_dir = out_dir if out_dir is not None else settings.output_dir
+    resolved_out_dir.mkdir(parents=True, exist_ok=True)
+
+    recorder = ChainLinkRecorder.open(
+        settings,
+        profile_name=profile_name,
+        profile_dir=profile_dir,
+        chain_id=chain_id,
+    )
+    # Catalog recorder: records each chain link into the `videos` catalog
+    # (parity with t2v/i2v), so `gflow data list videos` / `gflow data media`
+    # surface chain clips. Distinct from the chain-correlation `recorder` above.
+    catalog_recorder = OperationRecorder.open(settings)
+
+    def _on_link_started(request: GenerateVideoRequest) -> Any:
+        """Build the per-link ``on_started`` forwarded into ``generate_video``.
+
+        Threaded with the link's OWN request (link 0 T2V, links N I2V) so the
+        catalog row mode matches. The recorder call is wrapped in
+        try/except DataStoreError because it runs INSIDE the transport, where an
+        uncaught exception would abort the PAID generation.
+        """
+
+        def on_started(started: VideoStarted) -> None:
+            try:
+                catalog_recorder.record_started_video(
+                    profile_name=profile_name,
+                    profile_dir=profile_dir,
+                    request=request,
+                    started=started,
+                )
+            except DataStoreError as exc:
+                _warn_persistence_failed_after_success(
+                    exc=exc,
+                    flow_media_id=started.media_id,
+                    local_path=None,
+                )
+
+        return on_started
+
+    def _on_link_completed(request: GenerateVideoRequest, result: VideoResult) -> None:
+        """Finalize the catalog row for a downloaded link. A post-success
+        persistence failure WARNS but never aborts the already-paid chain."""
+        try:
+            catalog_recorder.record_completed_video(
+                profile_name=profile_name,
+                _profile_dir=profile_dir,
+                request=request,
+                result=result,
+                cloud_storage_info=(
+                    cloud_info_from_path(result.local_path)
+                    if result.local_path is not None
+                    else None
+                ),
+            )
+        except DataStoreError as exc:
+            _warn_persistence_failed_after_success(
+                exc=exc,
+                flow_media_id=result.status.media_id,
+                local_path=result.local_path,
+            )
+
+    total_links = len(remaining_links)
+    partial = False
+    completed_paths: list[Path] = []
+    results: list[Any] = []
+    try:
+        from gflow_cli.errors import ChainPartialError
+
+        async with FlowApiClient(profile_dir=profile_dir, out_dir=resolved_out_dir) as client:
+            try:
+                results = await chain_mod.run_chain(
+                    client=client,
+                    links=remaining_links,
+                    out_dir=resolved_out_dir,
+                    model=resolved_model,
+                    recorder=recorder,
+                    on_link_started=_on_link_started,
+                    on_link_completed=_on_link_completed,
+                    aspect=aspect_enum,
+                    seed_offset_ms=seed_offset,
+                    jitter=jitter,
+                )
+            except ChainPartialError as exc:
+                partial = True
+                completed_paths = list(exc.partial_results)
+                logger.warning(
+                    "chain_link_failed",
+                    chain_id=chain_id,
+                    total_links=total_links,
+                    completed=len(completed_paths),
+                )
+                if as_json:
+                    # Emit the chain-shaped payload (carries the partial flag +
+                    # completed clip paths) and exit directly with the mapped
+                    # code. Re-raising here would let run_with_handlers emit a
+                    # SECOND, error-shaped JSON document on stdout — two
+                    # concatenated objects no json.loads can parse.
+                    import sys as _sys
+
+                    json_output.emit(
+                        _chain_json(
+                            chain_id=chain_id,
+                            results=results,
+                            partial=True,
+                            completed_paths=completed_paths,
+                        )
+                    )
+                    # recorder.close() runs in the finally below.
+                    _sys.exit(json_output.exit_code_for(exc))
+                # Non-json: re-raise so the shared handler maps
+                # ChainPartialError -> exit 21 and prints the resume hint.
+                raise
+    finally:
+        recorder.close()
+        catalog_recorder.close()
+
+    if as_json:
+        json_output.emit(
+            _chain_json(
+                chain_id=chain_id,
+                results=results,
+                partial=partial,
+                completed_paths=[r.local_path for r in results],
+            )
+        )
+        return
+
+    console.print(f"[bold green]Chain complete:[/bold green] {len(results)} link(s)")
+    for r in results:
+        console.print(f"  [{r.index}] {r.local_path}")
+    console.print(f"[dim]Stitch into one file with `gflow scene` (chain_id {chain_id}).[/dim]")
+
+
+def _chain_json(
+    *,
+    chain_id: str,
+    results: list[Any],
+    partial: bool,
+    completed_paths: list[Path],
+) -> dict[str, Any]:
+    """Machine-readable chain result payload."""
+    return {
+        "status": "fail" if partial else "ok",
+        "command": "video chain",
+        "chain_id": chain_id,
+        "partial": partial,
+        "links": [
+            {
+                "index": r.index,
+                "media_id": r.media_id,
+                "local_path": str(r.local_path),
+            }
+            for r in results
+        ],
+        "completed_paths": [str(p) for p in completed_paths],
+    }
 
 
 @click.group()
@@ -369,24 +704,43 @@ def t2v(
 
 @video.command(
     "i2v",
-    short_help="Generate a video from a start image + motion prompt.",
+    short_help="Generate a video from an initial frame + motion prompt.",
     help=(
-        "Image-to-video: animate a start image with a motion prompt (Veo).\n\n"
+        "Image-to-video: animate an initial frame with a motion prompt (Veo).\n\n"
+        "Only the Veo 3.1 models support i2v interpolation; omni-flash is NOT "
+        "accepted here because Flow silently drops the initial and end frames and "
+        "falls back to text-to-video (issue #125). Omit --model to use "
+        "veo-lite (the default i2v model).\n\n"
         "\b\n"
         "Examples:\n"
-        '  gflow video i2v hero.png "slow cinematic push-in"\n'
-        '  gflow video i2v hero.png "pan left" --end-image last.png --aspect 16:9\n'
-        '  gflow video i2v cat.png "it leaps" --model veo-quality --duration 8\n'
+        '  gflow video i2v --initial-frame hero.png "slow cinematic push-in"\n'
+        '  gflow video i2v --initial-frame hero.png --end-frame last.png "pan left" --aspect 16:9\n'
+        '  gflow video i2v hero.png "it leaps" --model veo-quality --duration 8\n'
     ),
 )
-@click.argument("image")
-@click.argument("prompt")
+@click.argument("image", required=False, default=None)
+@click.argument("prompt", required=False, default=None)
 @click.option(
-    "--end-image",
-    "end_image",
+    "--initial-frame",
+    "initial_frame",
     default=None,
     type=click.Path(exists=True, dir_okay=False, path_type=str),
-    help="Optional end frame — Flow interpolates start -> end.",
+    help="Initial frame to animate (canonical form of the positional IMAGE argument).",
+)
+@click.option(
+    "--end-frame",
+    "end_frame",
+    default=None,
+    type=click.Path(exists=True, dir_okay=False, path_type=str),
+    help="Optional end frame — Flow interpolates initial frame -> end frame.",
+)
+@click.option(
+    "--end-image",
+    "end_image_deprecated",
+    default=None,
+    hidden=True,
+    type=click.Path(exists=True, dir_okay=False, path_type=str),
+    help="Deprecated: use --end-frame.",
 )
 @click.option(
     "--aspect",
@@ -398,14 +752,17 @@ def t2v(
 @click.option(
     "--model",
     default=None,
-    type=click.Choice(["omni-flash", "veo-lite", "veo-fast", "veo-quality", "veo-lite-lp"]),
-    help="Veo model. Omit to use Flow's current default.",
+    # omni-flash is intentionally absent: it does not support i2v
+    # interpolation and silently routes to T2V (issue #125). Use a Veo 3.1
+    # model. Omitting --model resolves to veo-lite (I2V_DEFAULT_MODEL).
+    type=click.Choice(["veo-lite", "veo-fast", "veo-quality", "veo-lite-lp"]),
+    help="Veo 3.1 model. Omit to use veo-lite (the default i2v model).",
 )
 @click.option(
     "--duration",
     default=None,
-    type=click.Choice(["4", "6", "8", "10"]),
-    help="Clip length in seconds. 10 requires --model omni-flash.",
+    type=click.Choice(["4", "6", "8"]),
+    help="Clip length in seconds (i2v supports 4/6/8; 10 is omni-flash-only).",
 )
 @click.option(
     "--count",
@@ -429,9 +786,11 @@ def t2v(
     help="Emit a machine-readable JSON result instead of Rich output.",
 )
 def i2v(
-    image: str,
-    prompt: str,
-    end_image: str | None,
+    image: str | None,
+    prompt: str | None,
+    initial_frame: str | None,
+    end_frame: str | None,
+    end_image_deprecated: str | None,
     aspect: str,
     model: str | None,
     duration: str | None,
@@ -440,16 +799,58 @@ def i2v(
     out_dir: Path | None,
     as_json: bool,
 ) -> None:
-    """Generate a video from a start IMAGE + motion PROMPT."""
+    """Generate a video from an initial frame + motion PROMPT."""
+    # Click fills positional arguments left-to-right (greedy). When --initial-frame
+    # is used without a positional IMAGE, the sole remaining positional (the PROMPT
+    # text) lands in the `image` slot and `prompt` is None. Detect and swap.
+    if initial_frame is not None and prompt is None and image is not None:
+        resolved_prompt = image
+        resolved_image = initial_frame
+    elif prompt is not None:
+        resolved_image = initial_frame or image
+        resolved_prompt = prompt
+        if resolved_image is None:
+            raise click.UsageError(
+                "Provide an initial frame via --initial-frame or as the first positional argument."
+            )
+        # Validate the positional IMAGE path manually (click.Path can't be used on this
+        # argument because the positional slot doubles as PROMPT text in the swap branch).
+        if initial_frame is None:
+            resolved_image_path = Path(resolved_image)
+            if not resolved_image_path.is_file():
+                raise click.BadParameter(
+                    f"Path '{resolved_image}' does not exist or is a directory.",
+                    param_hint="'IMAGE'",
+                )
+            resolved_image = str(resolved_image_path.resolve())
+        else:
+            # Also normalize --initial-frame if passed as flag
+            resolved_image = str(Path(resolved_image).resolve())
+    else:
+        raise click.UsageError(
+            "Missing arguments. Provide PROMPT and an initial frame"
+            " (via --initial-frame or as a positional argument)."
+        )
+
+    if end_image_deprecated is not None:
+        warnings.warn(
+            "--end-image is deprecated and will be removed in a future release;"
+            " use --end-frame instead.",
+            DeprecationWarning,
+            stacklevel=1,
+        )
+        if end_frame is None:
+            end_frame = end_image_deprecated
+
     profile_name = _resolve_profile(profile)
     provider_dir = _make_provider_dir(profile_name)
     run_with_handlers(
         lambda: _run_i2v(
             profile_name=profile_name,
             profile_dir=provider_dir,
-            image=image,
-            prompt=prompt,
-            end_image=end_image,
+            image=resolved_image,
+            prompt=resolved_prompt,
+            end_frame=end_frame,
             aspect=aspect,
             model=model,
             duration=int(duration) if duration is not None else None,
@@ -582,6 +983,140 @@ def r2v(
             as_json=as_json,
         ),
         cli_command="video r2v",
+        as_json=as_json,
+    )
+
+
+@video.command(
+    "chain",
+    short_help="Render a manifest of links into one continuous I2V chain.",
+    help=(
+        "Sequential last-frame chain: link 0 is text-to-video, every later link "
+        "is image-to-video seeded by the previous clip's last frame, giving "
+        "visual continuity with no server-side stitching.\n\n"
+        "COSTS N CREDITS — one per link in the manifest (minus links already "
+        "completed when you --resume-from). Use --dry-run first to print the "
+        "plan and the credit estimate without spending anything.\n\n"
+        "Only Veo 3.1 models are accepted (omni-flash silently drops the seed "
+        "frame and routes to text-to-video, issue #125). The MANIFEST is a JSONL "
+        'file: one JSON object per line, each with a required "prompt" and '
+        'optional "model"/"duration"/"aspect" overrides.\n\n'
+        "Each link is saved as its own mp4. Stitching the clips into a single "
+        "file is a follow-up step — use `gflow scene`.\n\n"
+        "\b\n"
+        "Examples:\n"
+        "  gflow video chain story.jsonl --dry-run\n"
+        "  gflow video chain story.jsonl --model veo-fast --yes\n"
+        "  gflow video chain story.jsonl --resume-from <chain-id>\n"
+    ),
+)
+@click.argument("manifest")
+@click.option(
+    "--model",
+    default="veo-lite",
+    show_default=True,
+    # omni-flash is intentionally absent: it does not support i2v interpolation
+    # and silently routes to T2V (issue #125), which would break every seeded
+    # link in the chain. Use a Veo 3.1 model.
+    type=click.Choice(["veo-lite", "veo-fast", "veo-quality", "veo-lite-lp"]),
+    help="Veo 3.1 model for every link. omni-flash is rejected (no i2v seeding).",
+)
+@click.option(
+    "--max-links",
+    "max_links",
+    default=None,
+    type=click.IntRange(1, None),
+    help="Cap the number of links; error (exit 11) if the manifest has more.",
+)
+@click.option(
+    "--yes",
+    "-y",
+    "yes",
+    is_flag=True,
+    help="Skip the cost confirmation prompt (each link costs one credit).",
+)
+@click.option(
+    "--dry-run",
+    "dry_run",
+    is_flag=True,
+    help="Resolve the manifest and print the plan + credit cost; spend nothing.",
+)
+@click.option(
+    "--resume-from",
+    "resume_from",
+    default=None,
+    help="Resume a prior chain by its chain id; already-paid links are skipped.",
+)
+@click.option(
+    "--jitter",
+    default=0.0,
+    show_default=True,
+    type=click.FloatRange(0.0, None),
+    help="Random 0..JITTER second pause between links (anti-bot cadence).",
+)
+@click.option(
+    "--seed-offset",
+    "seed_offset",
+    default=0,
+    show_default=True,
+    type=click.IntRange(0, None),
+    help="Extract the seed frame this many ms before EOF (fade-to-black guard).",
+)
+@click.option(
+    "--aspect",
+    default="9:16",
+    show_default=True,
+    type=click.Choice(["9:16", "16:9"]),
+    help="Uniform aspect ratio for every link (continuity requirement).",
+)
+@click.option("--profile", default=None, help="Profile name (overrides default).")
+@click.option(
+    "--out-dir",
+    "out_dir",
+    default=None,
+    type=click.Path(file_okay=False, path_type=Path),
+    help="Directory to save the link mp4s + seed frames. Defaults to the output dir.",
+)
+@click.option(
+    "--json",
+    "as_json",
+    is_flag=True,
+    help="Emit a machine-readable JSON result instead of Rich output.",
+)
+def chain(
+    manifest: str,
+    model: str | None,
+    max_links: int | None,
+    yes: bool,
+    dry_run: bool,
+    resume_from: str | None,
+    jitter: float,
+    seed_offset: int,
+    aspect: str,
+    profile: str | None,
+    out_dir: Path | None,
+    as_json: bool,
+) -> None:
+    """Render the chain MANIFEST (one continuous last-frame I2V sequence)."""
+    profile_name = _resolve_profile(profile)
+    provider_dir = _make_provider_dir(profile_name)
+    run_with_handlers(
+        lambda: _run_chain(
+            profile_name=profile_name,
+            profile_dir=provider_dir,
+            manifest=manifest,
+            model=model,
+            aspect=aspect,
+            out_dir=out_dir,
+            max_links=max_links,
+            resume_from=resume_from,
+            jitter=jitter,
+            seed_offset=seed_offset,
+            yes=yes,
+            dry_run=dry_run,
+            as_json=as_json,
+        ),
+        cli_command="video chain",
         as_json=as_json,
     )
 

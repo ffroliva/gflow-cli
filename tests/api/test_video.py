@@ -38,6 +38,30 @@ class TestVideoModelEnum:
         with pytest.raises(ValueError, match="Unknown video model"):
             VideoModel.from_cli("sora")
 
+    def test_omni_flash_does_not_support_i2v_interpolation(self) -> None:
+        # Issue #125: omni-flash silently drops i2v frame refs at submit.
+        assert VideoModel.OMNI_FLASH.supports_i2v_interpolation() is False
+
+    @pytest.mark.parametrize(
+        "model",
+        [
+            VideoModel.VEO_3_1_LITE,
+            VideoModel.VEO_3_1_FAST,
+            VideoModel.VEO_3_1_QUALITY,
+            VideoModel.VEO_3_1_LITE_LOWER_PRIORITY,
+        ],
+    )
+    def test_veo_3_1_models_support_i2v_interpolation(self, model: VideoModel) -> None:
+        assert model.supports_i2v_interpolation() is True
+
+    def test_i2v_default_model_is_veo_lite(self) -> None:
+        from gflow_cli.api.video import I2V_DEFAULT_MODEL
+
+        assert I2V_DEFAULT_MODEL is VideoModel.VEO_3_1_LITE
+        # The default MUST itself support i2v — guards against a future edit
+        # that points the default at an incompatible model.
+        assert I2V_DEFAULT_MODEL.supports_i2v_interpolation() is True
+
 
 class TestVideoRequestNewFields:
     def test_defaults(self) -> None:
