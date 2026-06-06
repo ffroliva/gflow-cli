@@ -33,7 +33,7 @@ class Character:
     appearance: str | None = None
     identity: str = "text"  # "text" | "entity"
     voice: str | None = None  # voice resource id / preset name (P2)
-    variants: Mapping[str, str] = field(default_factory=dict)
+    variants: Mapping[str, str] = field(default_factory=dict[str, str])
     face_prompt: str | None = None  # entity path (P2)
     body_prompt: str | None = None  # entity path (P2)
     model: str = "nano2"
