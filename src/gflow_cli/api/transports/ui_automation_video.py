@@ -1205,6 +1205,33 @@ class VideoGenerationMixin:
         log.info("ui_automation_video.reference_audio_attached", voice=voice_id)
 
     @staticmethod
+    def _assert_entities_attached(generate_resp: dict[str, Any], *, expected: list[str]) -> None:
+        """Defense-in-depth: confirm referenceEntities actually rode the wire.
+
+        REST transports silently drop unknown DTO fields; a UI miss would degrade
+        to a text/image-only clip reported as success. Raise loudly instead.
+        """
+        if not expected:
+            return
+        body = cast("dict[str, Any]", generate_resp.get("body") or {})
+        reqs = cast("list[dict[str, Any]]", body.get("requests") or [])
+        got: list[str] = []
+        for r in reqs:
+            for e in cast("list[dict[str, Any]]", r.get("referenceEntities") or []):
+                entity_id = cast("str | None", e.get("entityId"))
+                if entity_id:
+                    got.append(entity_id)
+        missing = [e for e in expected if e not in got]
+        if missing:
+            raise WireFormatError(
+                detail=(
+                    f"referenceEntities not in submit payload (expected {expected}, "
+                    f"got {got}); entity attach failed - refusing to report success"
+                ),
+                route="video:batchAsyncGenerateVideoReferenceImages",
+            )
+
+    @staticmethod
     async def _select_video_aspect(page: Page, aspect: Aspect) -> None:
         """Click the aspect-ratio tab for `aspect` in the open mode dropdown.
         Non-fatal on miss — generation proceeds with Flow's default ratio."""
@@ -1470,11 +1497,20 @@ class VideoGenerationMixin:
                     out_dir=out_dir,
                 )
         elif request.mode is Mode.R2V:
-            await VideoGenerationMixin._attach_references(
-                page,
-                list(request.reference_images),
-                out_dir=out_dir,
-            )
+            if request.reference_entities:
+                await VideoGenerationMixin._attach_character_entities(
+                    page, list(request.reference_entities), out_dir=out_dir
+                )
+            if request.reference_images:
+                await VideoGenerationMixin._attach_references(
+                    page,
+                    list(request.reference_images),
+                    out_dir=out_dir,
+                )
+            if request.reference_audio:
+                await VideoGenerationMixin._attach_reference_audio(
+                    page, request.reference_audio, out_dir=out_dir
+                )
 
         # Attach BOTH listeners synchronously BEFORE the prompt is submitted so
         # neither the generate response nor an early status poll is missed.
@@ -1515,6 +1551,11 @@ class VideoGenerationMixin:
                         ),
                         route=_T2V_GENERATE_ROUTE,
                     )
+
+            if request.reference_entities:
+                VideoGenerationMixin._assert_entities_attached(
+                    generate_resp, expected=list(request.reference_entities)
+                )
 
             media_name, flow_operation_id = VideoGenerationMixin._parse_generate_response(
                 generate_resp,

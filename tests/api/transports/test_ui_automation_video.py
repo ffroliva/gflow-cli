@@ -1013,3 +1013,24 @@ class TestAttachCharacterEntities:
         assert "accessibility_new" in selectors   # Personagens tab
         assert "add-menu-input" in selectors      # search box
         assert "Incluir no comando" in selectors  # include button
+
+
+class TestAssertEntitiesAttached:
+    def test_backstop_raises_when_entity_missing_from_payload(self) -> None:
+        from gflow_cli.api.transports.ui_automation_video import VideoGenerationMixin
+        from gflow_cli.errors import WireFormatError
+
+        captured = {
+            "url": "video:batchAsyncGenerateVideoReferenceImages",
+            "status": 200,
+            "body": {"requests": [{"referenceImages": [{"mediaId": "x"}]}]},  # no referenceEntities!
+        }
+        with pytest.raises(WireFormatError, match="referenceEntities"):
+            VideoGenerationMixin._assert_entities_attached(captured, expected=["ent-1"])
+
+    def test_backstop_passes_when_entity_present(self) -> None:
+        from gflow_cli.api.transports.ui_automation_video import VideoGenerationMixin
+
+        captured = {"body": {"requests": [{"referenceEntities": [{"entityId": "ent-1"}]}]}}
+        # should NOT raise
+        VideoGenerationMixin._assert_entities_attached(captured, expected=["ent-1"])
