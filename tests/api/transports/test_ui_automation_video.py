@@ -993,3 +993,23 @@ class TestI2vT2vRoutingBackstop:
         req = GenerateVideoRequest(prompt="x", mode=Mode.T2V)
         result = await transport.generate_video(request=req, download=False)
         assert result.status.succeeded is True
+
+
+class TestAttachCharacterEntities:
+    @pytest.mark.asyncio
+    async def test_attach_character_entities_uses_personagens_and_include(self) -> None:
+        page = MagicMock()
+        loc = MagicMock()
+        loc.first = loc
+        loc.click = AsyncMock()
+        loc.wait_for = AsyncMock()
+        loc.fill = AsyncMock()
+        page.locator.return_value = loc
+        page.wait_for_timeout = AsyncMock()
+
+        await VideoGenerationMixin._attach_character_entities(page, ["Stickman"], out_dir=None)
+
+        selectors = " ".join(str(c.args[0]) for c in page.locator.call_args_list)
+        assert "accessibility_new" in selectors   # Personagens tab
+        assert "add-menu-input" in selectors      # search box
+        assert "Incluir no comando" in selectors  # include button
