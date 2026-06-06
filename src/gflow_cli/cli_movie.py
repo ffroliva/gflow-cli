@@ -339,7 +339,12 @@ async def _run_movie(
                 )
                 refs = _collect_refs(scene_def, state)
 
+                # reCAPTCHA cooldown
+                if completed_scene_ids:
+                    await asyncio.sleep(5)
+
                 try:
+
                     video_result = await _generate_scene(
                         client=client,
                         recorder=recorder,
@@ -348,6 +353,7 @@ async def _run_movie(
                         profile_name=profile_name,
                         profile_dir=profile_dir,
                         out_dir=out_dir,
+                        project_id=manifest.project,
                     )
                     state.scenes[scene_def.title] = SceneState(
                         media_id=video_result.status.media_id,
@@ -486,6 +492,7 @@ async def _generate_scene(
     profile_name: str,
     profile_dir: Path,
     out_dir: Path,
+    project_id: str | None = None,
 ) -> Any:
     mode = Mode(scene_def.type)
     aspect = Aspect.from_cli(scene_def.aspect)
@@ -521,6 +528,7 @@ async def _generate_scene(
 
     result = await client.generate_video(
         req=request,
+        project_id=project_id,
         out_dir=out_dir,
         download=True,
         on_started=on_started,
