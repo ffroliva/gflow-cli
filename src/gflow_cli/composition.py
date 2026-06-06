@@ -275,7 +275,9 @@ def build_handoff(
                 "duration_seconds": dur,
                 "framing": scene.framing,
                 "characters": list(scene.characters),
-                "consistency_method": "text",  # P2 sets entity/degraded
+                "consistency_method": (
+                    getattr(ss, "consistency_method", "text") if ss else "text"
+                ),
                 "dialogue": [
                     {"speaker": d.speaker, "line": d.line, "voice": d.voice} for d in scene.dialogue
                 ],

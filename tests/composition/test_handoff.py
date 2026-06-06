@@ -81,3 +81,17 @@ def test_build_handoff_missing_scene_state_is_failed(tmp_path: Path) -> None:
     assert h["clips"][0]["file"] is None
     schema = json.loads(_SCHEMA_PATH.read_text(encoding="utf-8"))
     jsonschema.validate(h, schema)
+
+
+def test_build_handoff_consistency_method_defaults_to_text(tmp_path: Path) -> None:
+    h = build_handoff(_FakeManifest(), _fake_state(), out_dir=Path("/out/x"))
+    assert h["clips"][0]["consistency_method"] == "text"
+
+
+def test_build_handoff_reflects_entity_consistency_method(tmp_path: Path) -> None:
+    state = _fake_state()
+    state.scenes["s1"].consistency_method = "entity"
+    h = build_handoff(_FakeManifest(), state, out_dir=Path("/out/x"))
+    assert h["clips"][0]["consistency_method"] == "entity"
+    schema = json.loads(_SCHEMA_PATH.read_text(encoding="utf-8"))
+    jsonschema.validate(h, schema)  # entity must be a valid schema enum value
