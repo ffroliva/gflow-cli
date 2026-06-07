@@ -45,8 +45,8 @@ from gflow_cli.movie_manifest import (
     MovieState,
     SceneState,
 )
-from gflow_cli.services.character_create import character_create
 from gflow_cli.paths import resolve_batch_output_dir
+from gflow_cli.services.character_create import character_create
 from gflow_cli.storage import cloud_info_from_path
 
 console = Console()

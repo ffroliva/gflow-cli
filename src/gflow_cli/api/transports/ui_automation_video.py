@@ -298,8 +298,7 @@ PICKER_INCLUDE_BUTTON = "button:has-text('Incluir no comando')"
 # tile. This is what stages a `referenceEntity` (the inline Tudo button instead
 # stages a `referenceImage` of the thumbnail). Verified 2026-06-06.
 PICKER_CONTEXT_INCLUDE = (
-    "[role='menuitem']:has-text('Incluir no comando'),"
-    " button:has-text('Incluir no comando')"
+    "[role='menuitem']:has-text('Incluir no comando'), button:has-text('Incluir no comando')"
 )
 # The picker grid is virtualised (react-virtuoso): off-screen tiles are not in
 # the DOM. When the target entity tile is not initially rendered, scroll the grid
@@ -397,7 +396,9 @@ class VideoGenerationMixin:
 
     if TYPE_CHECKING:
 
-        async def _enter_editor(self, page: Page, out_dir: Path | None = None) -> None: ...
+        async def _enter_editor(
+            self, page: Page, out_dir: Path | None = None, *, project_id: str | None = None
+        ) -> None: ...
         async def _send_prompt(
             self,
             page: Page,
@@ -1229,9 +1230,7 @@ class VideoGenerationMixin:
             try:
                 await include.wait_for(state="visible", timeout=8000)
             except Exception as e:
-                shot = await _capture_debug_screenshot(
-                    page, out_dir, "debug_entity_ctx_menu.png"
-                )
+                shot = await _capture_debug_screenshot(page, out_dir, "debug_entity_ctx_menu.png")
                 msg = (
                     f"character {name!r} ({entity_id}) context-menu 'Incluir no "
                     f"comando' did not appear after right-click. Screenshot: {shot}"
@@ -1538,7 +1537,8 @@ class VideoGenerationMixin:
 
         # Capture project_id from the editor URL as soon as we have it —
         # needed for VideoStarted provenance and recorded before the generate request.
-        project_id: str | None = extract_project_id(page.url)
+        # Falls back to the caller-supplied id when the URL carries none.
+        project_id = extract_project_id(page.url) or project_id
 
         # All settings-panel selections happen while the panel is open: model
         # (gates the 10s duration), sub-mode tab, aspect, count, duration.

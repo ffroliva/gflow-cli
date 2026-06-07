@@ -104,7 +104,9 @@ class _EntityManifest:
     project = "p"
     style = StyleSpec()
     characters = {
-        "Hero": Character(name="Hero", identity="entity", face_prompt="heroic face", voice="alnilam")
+        "Hero": Character(
+            name="Hero", identity="entity", face_prompt="heroic face", voice="alnilam"
+        )
     }
     scenes = (Scene(id="s1", action="walks", characters=("Hero",), duration=8),)
 

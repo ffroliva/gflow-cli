@@ -30,7 +30,9 @@ def test_full_canonical_order_and_precedence() -> None:
         variant="silhouette",
     )
     chars = _chars(
-        Character(name="Stickman", appearance="round head", variants={"silhouette": "black silhouette"})
+        Character(
+            name="Stickman", appearance="round head", variants={"silhouette": "black silhouette"}
+        )
     )
     out = compose_prompt(style, scene, chars)
     assert out == (

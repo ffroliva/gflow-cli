@@ -1027,13 +1027,14 @@ class TestAttachCharacterEntities:
         )
 
         selectors = " ".join(str(c.args[0]) for c in page.locator.call_args_list)
-        assert "accessibility_new" in selectors          # Personagens tab
-        assert "fe_id_ent-123" in selectors              # tile keyed by entity id
-        assert "Incluir no comando" in selectors         # context-menu action
-        assert "add-menu-input" not in selectors         # NOT the prompt box
+        assert "accessibility_new" in selectors  # Personagens tab
+        assert "fe_id_ent-123" in selectors  # tile keyed by entity id
+        assert "Incluir no comando" in selectors  # context-menu action
+        assert "add-menu-input" not in selectors  # NOT the prompt box
         # The selection click is a right-click (button='right').
         right_clicks = [
-            c for c in page.locator.return_value.click.call_args_list
+            c
+            for c in page.locator.return_value.click.call_args_list
             if c.kwargs.get("button") == "right"
         ]
         assert right_clicks, "expected a right-click on the entity tile"

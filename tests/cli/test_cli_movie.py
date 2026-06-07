@@ -815,9 +815,7 @@ class TestEntityIdentity:
         from gflow_cli.errors import ConfigurationError
 
         manifest = _manifest(
-            characters={
-                "Hero": Character(name="Hero", identity="entity", face_prompt="a face")
-            },
+            characters={"Hero": Character(name="Hero", identity="entity", face_prompt="a face")},
             scenes=(Scene(id="s", action="x", characters=("Hero",)),),
         )
         state = MovieState(title="T", project="p")  # no entity created for Hero
