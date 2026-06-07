@@ -1213,6 +1213,7 @@ class FlowApiClient:
         self,
         *,
         req: GenerateVideoRequest,
+        project_id: str | None = None,
         out_dir: Path | None = None,
         poll_timeout_s: float = 600.0,
         download: bool = True,
@@ -1238,14 +1239,17 @@ class FlowApiClient:
             raise RuntimeError(
                 msg,
             )
+
         try:
             return await self.transport.generate_video(
                 request=req,
+                project_id=project_id,
                 out_dir=out_dir,
                 poll_timeout_s=poll_timeout_s,
                 download=download,
                 on_started=on_started,
             )
+
         except Exception as e:
             if _is_target_closed(e):
                 raise BrowserSessionClosedError from e
