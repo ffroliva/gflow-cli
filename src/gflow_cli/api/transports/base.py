@@ -76,6 +76,7 @@ class VideoCapableTransport(Protocol):
         self,
         *,
         request: GenerateVideoRequest,
+        project_id: str | None = None,
         out_dir: Path | None,
         poll_timeout_s: float,
         download: bool,

@@ -456,6 +456,7 @@ class _VideoCapableFakeTransport(_FakeTransport):
         self,
         *,
         request: object,
+        project_id: object = None,
         out_dir: object,
         poll_timeout_s: float,
         download: bool,
