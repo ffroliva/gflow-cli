@@ -7,6 +7,38 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+## [0.14.0] — 2026-06-07
+
+### Added
+
+- **`gflow movie` — multi-scene, character-consistent video generation.** A TOML
+  manifest (`gflow movie template` / `gflow movie run`) drives a sequence of clips
+  that reuse a single Flow CHARACTER entity (reference-to-video) so the same face
+  and voice carry across every scene. Generate-only by default; `--stitch`
+  produces an ffmpeg preview concat; runs are crash-resumable via the sibling
+  `<manifest>-state.json`; a versioned handoff manifest is written for downstream
+  composition (e.g. Remotion). Deterministic prompt assembly (`composition.py`),
+  scene = clip.
+- **`docs/MOVIE.md`** — manifest format, the run lifecycle (the headed browser is
+  required through generate → poll → download), the character-entity attach
+  mechanism, and the best-effort consistency model.
+- Dev utilities: `scripts/dev/make_project.py` (create a Flow project) and
+  `scripts/dev/patch_character.py` (rename / set voice + personality on an entity).
+
+### Fixed
+
+- **R2V character reuse now actually rides the wire.** The entity is attached via
+  the resource picker's **Personagens tab → right-click → "Incluir no comando"**
+  (which stages `referenceEntities`; a left-click on the Tudo tile only stages the
+  thumbnail as a `referenceImage`). The submit backstop now reads the response's
+  real `media[].mediaMetadata.requestData.videoGenerationRequestData.videoGenerationEntityInputs`
+  path instead of the request-shape `requests[].referenceEntities` — which had
+  false-rejected every successful entity generation. `omni-flash` R2V verified to
+  carry the entity.
+- Cleared pre-existing type/test debt: `pyright src` is clean again (the missing
+  `project_id` parameter was added to the `VideoCapableTransport` protocol and the
+  `_enter_editor` type stub); regenerated `uv.lock` (jsonschema dev dependency).
+
 ## [0.13.0] — 2026-06-04
 
 ### Added
@@ -1402,7 +1434,8 @@ shell-script template that branches on these codes.
 
 First skeleton. Not functional end-to-end yet.
 
-[Unreleased]: https://github.com/ffroliva/gflow-cli/compare/v0.13.0...HEAD
+[Unreleased]: https://github.com/ffroliva/gflow-cli/compare/v0.14.0...HEAD
+[0.14.0]: https://github.com/ffroliva/gflow-cli/compare/v0.13.0...v0.14.0
 [0.13.0]: https://github.com/ffroliva/gflow-cli/compare/v0.12.0...v0.13.0
 [0.12.0]: https://github.com/ffroliva/gflow-cli/compare/v0.11.0...v0.12.0
 [0.11.0]: https://github.com/ffroliva/gflow-cli/compare/v0.10.0...v0.11.0
