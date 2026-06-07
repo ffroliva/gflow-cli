@@ -59,6 +59,7 @@ async def _run(
     entity_id: str,
     gesture: str,
     full: bool,
+    model: str,
     locale: str,
     out_path: Path,
 ) -> int:
@@ -92,12 +93,14 @@ async def _run(
             await VideoGenerationMixin._switch_to_video_mode(page, out_dir=None)  # noqa: SLF001
             if full:
                 # Replicate _generate_video_locked's settings sequence (model ->
-                # submode -> aspect -> count -> duration -> Escape) to isolate
-                # whether it is what drops the entity in the real flow.
+                # submode -> aspect -> count -> duration -> Escape) for the chosen
+                # model — used to verify a model (e.g. omni-flash) preserves the
+                # referenceEntities on submit.
                 from gflow_cli.api.video import Aspect, VideoModel
 
+                vmodel = VideoModel.from_cli(model)
                 await VideoGenerationMixin._select_video_model(  # noqa: SLF001
-                    page, VideoModel.VEO_3_1_LITE, out_dir=None, required=False
+                    page, vmodel, out_dir=None, required=False
                 )
             await VideoGenerationMixin._switch_video_sub_mode(page, "references", out_dir=None)  # noqa: SLF001
             if full:
@@ -140,7 +143,9 @@ async def _run(
                     "el => el.outerHTML.slice(0, 4000)"
                 )
                 (out_dir / "P1_promptbox_after_include.html").write_text(box_html, encoding="utf-8")
-                print(f"[pay] promptbox chip-ish? {'fe_id_' in box_html or 'data-entity' in box_html}")
+                print(
+                    f"[pay] promptbox chip-ish? {'fe_id_' in box_html or 'data-entity' in box_html}"
+                )
             except Exception as e:  # noqa: BLE001
                 print(f"[pay] promptbox capture failed: {e}")
 
@@ -172,12 +177,15 @@ async def _run(
         try:
             body = json.loads(pd)
             reqs = body.get("requests") or []
-            ents, imgs = [], []
+            ents, imgs, keys = [], [], []
             for r in reqs:
                 ents += [e.get("entityId") for e in (r.get("referenceEntities") or [])]
                 imgs += [i.get("mediaId") for i in (r.get("referenceImages") or [])]
+                if r.get("videoModelKey"):
+                    keys.append(r.get("videoModelKey"))
             result["referenceEntities"] = ents
             result["referenceImages"] = imgs
+            result["videoModelKeys"] = keys
             result["route"] = (captured.get("url") or "").split("/")[-1]
         except Exception as e:  # noqa: BLE001
             result["parse_error"] = f"{type(e).__name__}: {e}"
@@ -187,14 +195,20 @@ async def _run(
     print(f"[pay] route={result.get('route')} captured={result['captured']}", flush=True)
     print(f"[pay] referenceEntities = {result.get('referenceEntities')}", flush=True)
     print(f"[pay] referenceImages   = {result.get('referenceImages')}", flush=True)
+    print(f"[pay] videoModelKeys    = {result.get('videoModelKeys')}", flush=True)
     return 0
 
 
 def main(argv: list[str] | None = None) -> int:
-    p = argparse.ArgumentParser(description="Verify referenceEntities ride (0 credits, route-abort).")
+    p = argparse.ArgumentParser(
+        description="Verify referenceEntities ride (0 credits, route-abort)."
+    )
     p.add_argument("--profile", default=os.environ.get("GFLOW_CLI_PROFILE", "denon82"))
     p.add_argument("--project", required=True)
-    p.add_argument("--thumb", required=True, help="thumbnail_media_id of the target character")
+    p.add_argument("--thumb", default="", help="thumbnail_media_id (tudo-include gesture only)")
+    p.add_argument(
+        "--model", default="veo-lite", help="model alias to select in --full (e.g. omni-flash)"
+    )
     p.add_argument("--name", default="Stickman")
     p.add_argument("--entity-id", dest="entity_id", default="", help="entityId for fe_id_ tile")
     p.add_argument(
@@ -208,7 +222,9 @@ def main(argv: list[str] | None = None) -> int:
     args = p.parse_args(argv)
 
     profile_dir = resolve_profile_dir(args.profile)
-    out_path = Path(args.out) if args.out else default_out_path("spike_movie_attach_payload", ".json")
+    out_path = (
+        Path(args.out) if args.out else default_out_path("spike_movie_attach_payload", ".json")
+    )
     step("--", f"profile={args.profile} project={args.project} thumb={args.thumb}", prefix="pay")
     try:
         return asyncio.run(
@@ -220,6 +236,7 @@ def main(argv: list[str] | None = None) -> int:
                 entity_id=args.entity_id,
                 gesture=args.gesture,
                 full=args.full,
+                model=args.model,
                 locale=args.locale,
                 out_path=out_path,
             )

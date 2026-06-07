@@ -210,9 +210,7 @@ async def _run(
             # --- State C: click the exact-name option -----------------------
             # The character tile is the role=option whose NAME LABEL is exactly
             # `name` (image tiles read e.g. 'Stickman with round head').
-            tile = page.locator(
-                f"[role='option']:has(div:text-is('{name}'))"
-            ).first
+            tile = page.locator(f"[role='option']:has(div:text-is('{name}'))").first
             try:
                 await tile.wait_for(state="visible", timeout=8000)
                 await tile.click()
@@ -297,13 +295,17 @@ def main(argv: list[str] | None = None) -> int:
     p.add_argument("--profile", default=os.environ.get("GFLOW_CLI_PROFILE", "denon82"))
     p.add_argument("--project", required=True)
     p.add_argument("--name", default="Stickman", help="character display name to select")
-    p.add_argument("--thumb", default=None, help="thumbnail_media_id of the target entity (State E)")
+    p.add_argument(
+        "--thumb", default=None, help="thumbnail_media_id of the target entity (State E)"
+    )
     p.add_argument("--locale", default="pt")
     p.add_argument("--out", default=None)
     args = p.parse_args(argv)
 
     profile_dir = resolve_profile_dir(args.profile)
-    out_path = Path(args.out) if args.out else default_out_path("spike_movie_picker_select", ".json")
+    out_path = (
+        Path(args.out) if args.out else default_out_path("spike_movie_picker_select", ".json")
+    )
     step("--", f"profile={args.profile} project={args.project} name={args.name}", prefix="pick")
     try:
         return asyncio.run(
