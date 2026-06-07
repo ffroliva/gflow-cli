@@ -1,0 +1,59 @@
+{
+  "$schema": "http://json-schema.org/draft-07/schema#",
+  "title": "gflow movie handoff manifest",
+  "type": "object",
+  "required": ["schema_version", "generator", "movie", "clips"],
+  "additionalProperties": true,
+  "properties": {
+    "schema_version": { "const": 1 },
+    "generator": {
+      "type": "object",
+      "required": ["name", "version"],
+      "properties": { "name": { "type": "string" }, "version": { "type": "string" } }
+    },
+    "movie": {
+      "type": "object",
+      "required": ["title"],
+      "properties": {
+        "title": { "type": "string" },
+        "output_dir": { "type": "string" },
+        "total_duration_seconds": { "type": "number" }
+      }
+    },
+    "style": { "type": "object" },
+    "characters": {
+      "type": "array",
+      "items": {
+        "type": "object",
+        "required": ["name", "identity"],
+        "properties": {
+          "name": { "type": "string" },
+          "identity": { "enum": ["text", "entity"] },
+          "voice": { "type": ["string", "null"] },
+          "x_gflow": { "type": "object" }
+        }
+      }
+    },
+    "clips": {
+      "type": "array",
+      "items": {
+        "type": "object",
+        "required": ["id", "index", "file", "status"],
+        "properties": {
+          "id": { "type": "string" },
+          "index": { "type": "integer", "minimum": 0 },
+          "file": { "type": ["string", "null"], "pattern": "^[^\\\\]*$" },
+          "duration_seconds": { "type": ["number", "null"] },
+          "framing": { "type": ["string", "null"] },
+          "characters": { "type": "array", "items": { "type": "string" } },
+          "consistency_method": { "enum": ["text", "entity", "degraded"] },
+          "dialogue": { "type": "array" },
+          "prompt": { "type": ["string", "null"] },
+          "status": { "enum": ["completed", "failed"] },
+          "x_gflow": { "type": "object" }
+        }
+      }
+    },
+    "stitch": { "type": "object" }
+  }
+}

@@ -283,6 +283,28 @@ ADD_TO_PROMPT_DIALOG = "[role='dialog'][data-state='open']"
 # dialog-popup combo is locale-free and unambiguous in the editor. Repeat up to
 # MAX_REFERENCE_IMAGES — the button persists to add the next reference.
 ADD_MEDIA_BUTTON = "button[aria-haspopup='dialog']:has(i.google-symbols:text-is('add_2'))"
+# Resource picker (spike-verified 2026-06-06, locale-agnostic via ligatures/id).
+PICKER_SEARCH_INPUT = "#add-menu-input"
+PICKER_PERSONAGENS_TAB = (
+    "[role='tab']:has(i.google-symbols:text-is('accessibility_new')),"
+    " button:has(i.google-symbols:text-is('accessibility_new'))"
+)
+PICKER_VOZES_TAB = (
+    "[role='tab']:has(i.google-symbols:text-is('voice_selection')),"
+    " button:has(i.google-symbols:text-is('voice_selection'))"
+)
+PICKER_INCLUDE_BUTTON = "button:has-text('Incluir no comando')"
+# Context-menu 'Incluir no comando' shown on RIGHT-CLICK of a Personagens entity
+# tile. This is what stages a `referenceEntity` (the inline Tudo button instead
+# stages a `referenceImage` of the thumbnail). Verified 2026-06-06.
+PICKER_CONTEXT_INCLUDE = (
+    "[role='menuitem']:has-text('Incluir no comando'), button:has-text('Incluir no comando')"
+)
+# The picker grid is virtualised (react-virtuoso): off-screen tiles are not in
+# the DOM. When the target entity tile is not initially rendered, scroll the grid
+# in steps until it appears (or we exhaust the attempts).
+PICKER_GRID_SCROLL_ATTEMPTS = 12
+PICKER_GRID_SCROLL_DELTA_PX = 500
 VIDEO_SUBMODE_SELECTORS: dict[str, tuple[str, ...]] = {
     # I2V — "frames" (start + optional end frame). Icon: crop_free.
     "frames": (
@@ -374,7 +396,9 @@ class VideoGenerationMixin:
 
     if TYPE_CHECKING:
 
-        async def _enter_editor(self, page: Page, out_dir: Path | None = None) -> None: ...
+        async def _enter_editor(
+            self, page: Page, out_dir: Path | None = None, *, project_id: str | None = None
+        ) -> None: ...
         async def _send_prompt(
             self,
             page: Page,
@@ -1139,6 +1163,161 @@ class VideoGenerationMixin:
             log.info("ui_automation_video.reference_attached", index=i)
 
     @staticmethod
+    async def _scroll_picker_grid(page: Page, delta_px: int = PICKER_GRID_SCROLL_DELTA_PX) -> None:
+        """Wheel-scroll the open resource picker down one step. The Tudo grid is
+        virtualised, so off-screen tiles are absent from the DOM until scrolled
+        into view. Hover the dialog first so the wheel targets the grid."""
+        dialog = page.locator("[role='dialog']").last
+        try:
+            await dialog.hover(timeout=2000)
+        except Exception:  # noqa: BLE001 - hover is best-effort; wheel still scrolls
+            pass
+        await page.mouse.wheel(0, delta_px)
+        await page.wait_for_timeout(350)
+
+    @staticmethod
+    async def _find_picker_entity_tile(page: Page, entity_id: str) -> Locator:
+        """Locate the Personagens-tab tile for a character entity. Each tile is
+        keyed by the entity id as `data-tile-id="fe_id_<entityId>"` (exact — no
+        display-name ambiguity). Scroll the grid until it renders, then return
+        the locator (the caller still waits for visibility)."""
+        tile = page.locator(f"[data-tile-id='fe_id_{entity_id}']").first
+        for _ in range(PICKER_GRID_SCROLL_ATTEMPTS):
+            if await tile.count():
+                break
+            await VideoGenerationMixin._scroll_picker_grid(page)
+        return tile
+
+    @staticmethod
+    async def _attach_character_entities(
+        page: Page,
+        entities: list[tuple[str, str]],
+        *,
+        out_dir: Path | None,
+    ) -> None:
+        """R2V: attach each character as a `referenceEntity` via the resource
+        picker's Personagens tab.
+
+        Mechanism (verified credit-free via route-abort payload capture,
+        2026-06-06): open 'Add Media' -> Personagens tab -> RIGHT-CLICK the entity
+        tile -> context-menu 'Incluir no comando'. This stages
+        `referenceEntities:[{entityId}]` on the submit payload. A LEFT-click on a
+        Tudo-tab tile + the inline 'Incluir' button instead stages a plain
+        `referenceImage` (the character thumbnail) — which the submit backstop
+        (`_assert_entities_attached`) correctly rejects. A plain left-click on the
+        Personagens tile navigates into the character editor (it is an
+        `<a href=.../character/...>`), hence the right-click.
+
+        `entities` is a list of `(entity_id, display_name)` pairs. Tiles are
+        addressed by entity id (`data-tile-id="fe_id_<entityId>"`), so selection
+        is unambiguous even when several characters share a display name.
+        """
+        for entity_id, name in entities:
+            add = page.locator(ADD_MEDIA_BUTTON).first
+            await add.wait_for(state="visible", timeout=8000)
+            await add.click()
+            await page.wait_for_timeout(800)
+            ptab = page.locator(PICKER_PERSONAGENS_TAB).first
+            await ptab.wait_for(state="visible", timeout=8000)
+            await ptab.click()
+            await page.wait_for_timeout(700)
+            tile = await VideoGenerationMixin._find_picker_entity_tile(page, entity_id)
+            await tile.wait_for(state="visible", timeout=8000)
+            await tile.scroll_into_view_if_needed(timeout=8000)
+            await tile.click(button="right")
+            await page.wait_for_timeout(400)
+            include = page.locator(PICKER_CONTEXT_INCLUDE).first
+            try:
+                await include.wait_for(state="visible", timeout=8000)
+            except Exception as e:
+                shot = await _capture_debug_screenshot(page, out_dir, "debug_entity_ctx_menu.png")
+                msg = (
+                    f"character {name!r} ({entity_id}) context-menu 'Incluir no "
+                    f"comando' did not appear after right-click. Screenshot: {shot}"
+                )
+                raise RuntimeError(msg) from e
+            await include.click()
+            await page.wait_for_timeout(600)
+            log.info(
+                "ui_automation_video.character_entity_attached",
+                name=name,
+                entity_id=entity_id,
+            )
+
+    @staticmethod
+    async def _attach_reference_audio(
+        page: Page,
+        voice_id: str,
+        *,
+        out_dir: Path | None,
+    ) -> None:
+        """R2V: attach a voice resource via the Vozes picker -> 'Incluir no comando'."""
+        add = page.locator(ADD_MEDIA_BUTTON).first
+        await add.wait_for(state="visible", timeout=8000)
+        await add.click()
+        await page.wait_for_timeout(800)
+        await page.locator(PICKER_VOZES_TAB).first.click()
+        await page.wait_for_timeout(400)
+        await page.locator(PICKER_SEARCH_INPUT).first.fill(voice_id)
+        await page.wait_for_timeout(600)
+        tile = page.locator(
+            f"button:has-text('{voice_id}'), [role='option']:has-text('{voice_id}')"
+        ).first
+        await tile.click()
+        await page.wait_for_timeout(300)
+        await page.locator(PICKER_INCLUDE_BUTTON).first.click()
+        await page.wait_for_timeout(600)
+        log.info("ui_automation_video.reference_audio_attached", voice=voice_id)
+
+    @staticmethod
+    def _assert_entities_attached(generate_resp: dict[str, Any], *, expected: list[str]) -> None:
+        """Defense-in-depth: confirm the character entities actually rode the wire.
+
+        A UI attach miss would degrade to a text/image-only clip reported as a
+        success. Raise loudly instead.
+
+        The captured SUBMIT *response* echoes the accepted entities at:
+
+            media[].mediaMetadata.requestData.videoGenerationRequestData
+                  .videoGenerationEntityInputs[].entityId
+
+        NOT ``requests[].referenceEntities`` — that is the *request* shape; the
+        response re-keys it (verified against a live capture, 2026-06-06; an
+        earlier version checked the request path against the response body and
+        false-rejected every successful entity generation). The request-shape
+        path is still accepted so the check also works against a request body.
+        """
+        if not expected:
+            return
+        body = cast("dict[str, Any]", generate_resp.get("body") or {})
+        got: list[str] = []
+        # Response shape (the live one): media[] -> ...videoGenerationEntityInputs.
+        for media in cast("list[dict[str, Any]]", body.get("media") or []):
+            meta = cast("dict[str, Any]", media.get("mediaMetadata") or {})
+            req_data = cast("dict[str, Any]", meta.get("requestData") or {})
+            vgrd = cast("dict[str, Any]", req_data.get("videoGenerationRequestData") or {})
+            for e in cast("list[dict[str, Any]]", vgrd.get("videoGenerationEntityInputs") or []):
+                entity_id = cast("str | None", e.get("entityId"))
+                if entity_id:
+                    got.append(entity_id)
+        # Request shape (fallback): requests[].referenceEntities.
+        for r in cast("list[dict[str, Any]]", body.get("requests") or []):
+            for e in cast("list[dict[str, Any]]", r.get("referenceEntities") or []):
+                entity_id = cast("str | None", e.get("entityId"))
+                if entity_id:
+                    got.append(entity_id)
+        missing = [e for e in expected if e not in got]
+        if missing:
+            raise WireFormatError(
+                detail=(
+                    f"character entities not echoed in submit response (expected "
+                    f"{expected}, got {got}); entity attach failed - refusing to "
+                    f"report success"
+                ),
+                route="video:batchAsyncGenerateVideoReferenceImages",
+            )
+
+    @staticmethod
     async def _select_video_aspect(page: Page, aspect: Aspect) -> None:
         """Click the aspect-ratio tab for `aspect` in the open mode dropdown.
         Non-fatal on miss — generation proceeds with Flow's default ratio."""
@@ -1183,12 +1362,16 @@ class VideoGenerationMixin:
         self,
         *,
         request: GenerateVideoRequest,
+        project_id: str | None = None,
         out_dir: Path | None = None,
         poll_timeout_s: float = 600.0,
         download: bool = True,
         on_started: VideoStartedCallback | None = None,
     ) -> VideoResult:
         """Generate ONE video by driving the Flow editor UI (T2V / I2V / R2V).
+
+        If ``project_id`` is provided, navigates to that project. Otherwise
+        creates a new one.
 
         Returns a `VideoResult` carrying both the terminal `VideoStatus` and the
         on-disk `local_path` (``None`` when ``download=False`` or the generation
@@ -1218,10 +1401,11 @@ class VideoGenerationMixin:
         async with self._generate_lock:
             return await self._generate_video_locked(
                 request,
-                out_dir,
-                poll_timeout_s,
-                download,
-                on_started,
+                project_id=project_id,
+                out_dir=out_dir,
+                poll_timeout_s=poll_timeout_s,
+                download=download,
+                on_started=on_started,
             )
 
     @staticmethod
@@ -1288,6 +1472,8 @@ class VideoGenerationMixin:
     async def _generate_video_locked(
         self,
         request: GenerateVideoRequest,
+        *,
+        project_id: str | None = None,
         out_dir: Path | None,
         poll_timeout_s: float,
         download: bool,
@@ -1342,7 +1528,7 @@ class VideoGenerationMixin:
 
         page: Page = self._page  # type: ignore[assignment]  # guarded in generate_video
 
-        await self._enter_editor(page, out_dir)
+        await self._enter_editor(page, out_dir, project_id=project_id)
         await VideoGenerationMixin._wait_video_editor_ready(page)
         # Dismiss any Flow changelog / "What's new" overlay that may be on top
         # of the editor before we click into mode-switch / settings / submit (#26).
@@ -1351,7 +1537,8 @@ class VideoGenerationMixin:
 
         # Capture project_id from the editor URL as soon as we have it —
         # needed for VideoStarted provenance and recorded before the generate request.
-        project_id: str | None = extract_project_id(page.url)
+        # Falls back to the caller-supplied id when the URL carries none.
+        project_id = extract_project_id(page.url) or project_id
 
         # All settings-panel selections happen while the panel is open: model
         # (gates the 10s duration), sub-mode tab, aspect, count, duration.
@@ -1397,11 +1584,27 @@ class VideoGenerationMixin:
                     out_dir=out_dir,
                 )
         elif request.mode is Mode.R2V:
-            await VideoGenerationMixin._attach_references(
-                page,
-                list(request.reference_images),
-                out_dir=out_dir,
-            )
+            if request.reference_entities:
+                names = request.reference_entity_names or request.reference_entities
+                entities = [
+                    (entity_id, names[i] if i < len(names) else entity_id)
+                    for i, entity_id in enumerate(request.reference_entities)
+                ]
+                await VideoGenerationMixin._attach_character_entities(
+                    page,
+                    entities,
+                    out_dir=out_dir,
+                )
+            if request.reference_images:
+                await VideoGenerationMixin._attach_references(
+                    page,
+                    list(request.reference_images),
+                    out_dir=out_dir,
+                )
+            if request.reference_audio:
+                await VideoGenerationMixin._attach_reference_audio(
+                    page, request.reference_audio, out_dir=out_dir
+                )
 
         # Attach BOTH listeners synchronously BEFORE the prompt is submitted so
         # neither the generate response nor an early status poll is missed.
@@ -1411,6 +1614,7 @@ class VideoGenerationMixin:
         status_captured, status_handler = VideoGenerationMixin._attach_status_response_listener(
             page,
         )
+        generate_resp: dict[str, Any] = {}
         try:
             await self._send_prompt(page, request.prompt, out_dir)
 
@@ -1441,6 +1645,11 @@ class VideoGenerationMixin:
                         ),
                         route=_T2V_GENERATE_ROUTE,
                     )
+
+            if request.reference_entities:
+                VideoGenerationMixin._assert_entities_attached(
+                    generate_resp, expected=list(request.reference_entities)
+                )
 
             media_name, flow_operation_id = VideoGenerationMixin._parse_generate_response(
                 generate_resp,
