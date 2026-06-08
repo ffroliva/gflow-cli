@@ -14,6 +14,7 @@ from __future__ import annotations
 
 import asyncio
 import inspect
+import json
 from pathlib import Path
 from unittest.mock import AsyncMock, MagicMock, patch
 
@@ -31,6 +32,8 @@ from gflow_cli.api.transports.ui_automation import (
     SUBMIT_BUTTON_SELECTORS,
     UiAutomationTransport,
     _count_tabs_locator,  # noqa: PLC2701
+    _summarize_batch_request_body,  # noqa: PLC2701
+    _zip_entities,  # noqa: PLC2701
 )
 from gflow_cli.api.transports.ui_automation_video import (
     COMPOSER_AGENT_TOGGLE_SELECTOR,
@@ -1160,6 +1163,103 @@ class TestGenerateImages:
             await t.generate_images(project_id="x", request=_req())
 
         attach.assert_not_awaited()
+
+    @pytest.mark.asyncio
+    async def test_reference_entities_attached_via_character_picker(self) -> None:
+        """Character entity ids bind through the Personagens picker —
+        _generate_images_locked awaits the inherited _attach_character_entities
+        with (entity_id, name) pairs when request.reference_entities is set."""
+        t = UiAutomationTransport()
+        t._setup_done = True  # type: ignore[attr-defined]
+        t._page = MagicMock()  # type: ignore[attr-defined]
+        req = GenerateImageRequest(
+            prompt="stacky and drako",
+            model=Model.NARWHAL,
+            reference_entities=("ent-1", "ent-2"),
+            reference_entity_names=("Stacky",),  # fewer names than ids on purpose
+        )
+
+        with (
+            patch.object(t, "_enter_editor", new=AsyncMock()),
+            patch.object(t, "_send_prompt", new=AsyncMock()),
+            patch.object(t, "_attach_character_entities", new=AsyncMock()) as attach,
+            patch.object(t, "_await_captured", new=AsyncMock(return_value=[_flow_200_capture()])),
+        ):
+            await t.generate_images(project_id="x", request=req)
+
+        attach.assert_awaited_once()
+        call = attach.await_args
+        assert call is not None
+        # Pairs are (id, name) — name falls back to the id when no name is given.
+        assert list(call.args[1]) == [("ent-1", "Stacky"), ("ent-2", "ent-2")]
+
+    @pytest.mark.asyncio
+    async def test_without_reference_entities_skips_character_attach(self) -> None:
+        t = UiAutomationTransport()
+        t._setup_done = True  # type: ignore[attr-defined]
+        t._page = MagicMock()  # type: ignore[attr-defined]
+
+        with (
+            patch.object(t, "_enter_editor", new=AsyncMock()),
+            patch.object(t, "_send_prompt", new=AsyncMock()),
+            patch.object(t, "_attach_character_entities", new=AsyncMock()) as attach,
+            patch.object(t, "_await_captured", new=AsyncMock(return_value=[_flow_200_capture()])),
+        ):
+            await t.generate_images(project_id="x", request=_req())
+
+        attach.assert_not_awaited()
+
+
+class TestZipEntities:
+    def test_pairs_ids_with_names(self) -> None:
+        assert _zip_entities(("a", "b"), ("Stacky", "Drako")) == [("a", "Stacky"), ("b", "Drako")]
+
+    def test_name_falls_back_to_id_when_missing(self) -> None:
+        assert _zip_entities(("a", "b"), ("Stacky",)) == [("a", "Stacky"), ("b", "b")]
+
+    def test_empty(self) -> None:
+        assert _zip_entities((), ()) == []
+
+
+class TestSummarizeBatchRequestBody:
+    """The make-or-break spike reads this summary to learn whether the image
+    submit carries `referenceEntities` — without dumping i2i image bytes."""
+
+    def test_none_body(self) -> None:
+        assert _summarize_batch_request_body(None) == {"present": False}
+
+    def test_extracts_reference_entity_fields(self) -> None:
+        body = json.dumps(
+            {
+                "requests": [
+                    {
+                        "structuredPrompt": {"parts": [{"text": "x"}]},
+                        "referenceEntities": [{"entityId": "ent-1"}],
+                        "imageInputs": [],
+                    }
+                ]
+            }
+        )
+        out = _summarize_batch_request_body(body)
+        assert out["present"] is True
+        assert out["mentions_reference_entities"] is True
+        assert "referenceEntities" in out["request0_keys"]
+        assert out["reference_fields"]["referenceEntities"] == [{"entityId": "ent-1"}]
+
+    def test_no_reference_fields(self) -> None:
+        body = json.dumps(
+            {"requests": [{"structuredPrompt": {"parts": []}, "imageInputs": []}]}
+        )
+        out = _summarize_batch_request_body(body)
+        assert out["present"] is True
+        assert out["mentions_reference_entities"] is False
+        assert "reference_fields" not in out
+
+    def test_non_json_body_still_flags_substring(self) -> None:
+        out = _summarize_batch_request_body("garbage-not-json-referenceEntities")
+        assert out["present"] is True
+        assert out["mentions_reference_entities"] is True
+        assert "request0_keys" not in out
 
 
 # ---------------------------------------------------------------------------
