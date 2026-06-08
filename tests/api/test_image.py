@@ -241,6 +241,33 @@ class TestReferenceCap:
 
 
 class TestBuildBatchGenerateImagesBody:
+    def test_includes_reference_entities_when_present(self) -> None:
+        # Shape confirmed by the 2026-06-08 live capture: the image submit
+        # carries `referenceEntities: [{"entityId": <id>}]`.
+        built = _build_batch_generate_images_body(
+            GenerateImageRequest(prompt="x", reference_entities=("ent-1", "ent-2")),
+            project_id="P",
+            batch_id="B",
+            seed=1,
+            session_id="S",
+        )
+        assert built["requests"][0]["referenceEntities"] == [
+            {"entityId": "ent-1"},
+            {"entityId": "ent-2"},
+        ]
+
+    def test_omits_reference_entities_when_absent(self) -> None:
+        # No entities → the key must not appear (keeps plain t2i/i2i bodies
+        # byte-identical to the captured samples).
+        built = _build_batch_generate_images_body(
+            GenerateImageRequest(prompt="x"),
+            project_id="P",
+            batch_id="B",
+            seed=1,
+            session_id="S",
+        )
+        assert "referenceEntities" not in built["requests"][0]
+
     def test_matches_sample_06_t2i(self) -> None:
         sample = _load_sample("06_batchGenerateImages.json")
         sample_body = sample["request_body_parsed"]
