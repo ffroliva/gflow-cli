@@ -33,6 +33,7 @@ from gflow_cli._cli_helpers import (
     safe_path_text,
 )
 from gflow_cli.api.client import FlowApiClient
+from gflow_cli.api.dto import ProjectInfo
 from gflow_cli.api.image import Aspect, GenerateImageRequest, ImageRef, Model, reference_cap_for
 from gflow_cli.api.transports import transport_choices
 from gflow_cli.config import get_settings
@@ -145,6 +146,33 @@ def _classify_ref(ref: str) -> ImageRef | Path:
         raise click.UsageError(
             msg,
         ) from exc
+
+
+async def _resolve_project(
+    client: FlowApiClient,
+    *,
+    project_id: str | None,
+    title: str,
+    as_json: bool,
+) -> ProjectInfo:
+    """Resolve the project to generate in.
+
+    When ``project_id`` is given, generation runs in that EXISTING project (so
+    its locked entities/assets are visible) and no scratch project is created —
+    this is what ``--project`` buys. When it is ``None`` the historical behavior
+    holds: create a fresh ``gflow-cli ...`` project. Either way a
+    :class:`ProjectInfo` is returned so callers and the recorder share one shape.
+    """
+    if project_id is not None:
+        if not as_json:
+            console.print(f"  Project: [dim]{project_id}[/dim] [dim](existing)[/dim]")
+        return ProjectInfo(project_id=project_id, title=title)
+    if not as_json:
+        console.print(_CREATING_PROJECT_MSG)
+    project = await client.create_project(title=title)
+    if not as_json:
+        console.print(f"  Project: [dim]{project.project_id}[/dim]")
+    return project
 
 
 # ---------------------------------------------------------------------------
@@ -356,6 +384,16 @@ async def _run_upload(
     ),
 )
 @click.option(
+    "--project",
+    "project_id",
+    default=None,
+    help=(
+        "Generate in this existing Flow project id instead of creating a scratch "
+        "project. Required to reference locked entities/assets that live in a "
+        "specific project. Single-prompt only."
+    ),
+)
+@click.option(
     "--json",
     "as_json",
     is_flag=True,
@@ -372,11 +410,19 @@ def t2i(
     out: Path | None,
     profile: str | None,
     transport: str | None,
+    project_id: str | None,
     as_json: bool,
 ) -> None:
     """Generate image(s) from one or more text prompts."""
     is_multi_prompt = len(prompts) > 1 or prompts_file is not None or read_stdin
     _validate_t2i_input(prompts, prompts_file, read_stdin)
+
+    if is_multi_prompt and project_id is not None:
+        # The multi-prompt/batch path creates one shared project internally; a
+        # single explicit --project across many prompts isn't wired. Loop t2i
+        # one prompt at a time if you need every frame in the same project.
+        msg = "--project is single-prompt only; remove the extra prompts."
+        raise click.UsageError(msg)
 
     if is_multi_prompt and as_json:
         # --json is single-prompt only — the batch summary shape is rich-table
@@ -408,6 +454,7 @@ def t2i(
                 out=out,
                 output_root=settings.output_dir,
                 transport=transport,
+                project_id=project_id,
                 as_json=as_json,
             ),
             cli_command="image t2i",
@@ -557,6 +604,7 @@ async def _run_t2i(
     out: Path | None,
     output_root: Path,
     transport: str | None = None,
+    project_id: str | None = None,
     as_json: bool = False,
 ) -> None:
     settings = get_settings()
@@ -567,13 +615,12 @@ async def _run_t2i(
             headless=headless,
             transport=transport,
         ) as client:
-            if not as_json:
-                console.print(_CREATING_PROJECT_MSG)
             # Title is a `gflow-cli ...` prefix per project convention (post-rename a02684f).
             # cli_video.py's _run_t2v / _run_i2v don't currently set a title — tracked separately.
-            project = await client.create_project(title=_T2I_PROJECT_TITLE)
+            project = await _resolve_project(
+                client, project_id=project_id, title=_T2I_PROJECT_TITLE, as_json=as_json
+            )
             if not as_json:
-                console.print(f"  Project: [dim]{project.project_id}[/dim]")
                 console.print(
                     f"  Generating {count} image(s) ({req.model.value}, {req.aspect.value})...",
                 )
@@ -867,6 +914,16 @@ def batch(
     ),
 )
 @click.option(
+    "--project",
+    "project_id",
+    default=None,
+    help=(
+        "Generate in this existing Flow project id instead of creating a scratch "
+        "project. Required to reference locked entities/assets that live in a "
+        "specific project."
+    ),
+)
+@click.option(
     "--json",
     "as_json",
     is_flag=True,
@@ -881,6 +938,7 @@ def i2i(
     out: Path | None,
     profile: str | None,
     transport: str | None,
+    project_id: str | None,
     as_json: bool,
 ) -> None:
     """Generate image(s) from PROMPT + reference image(s) (image-to-image)."""
@@ -918,6 +976,7 @@ def i2i(
             out=out,
             output_root=settings.output_dir,
             transport=transport,
+            project_id=project_id,
             as_json=as_json,
         ),
         cli_command="image i2i",
@@ -938,6 +997,7 @@ async def _run_i2i(
     out: Path | None,
     output_root: Path,
     transport: str | None = None,
+    project_id: str | None = None,
     as_json: bool = False,
 ) -> None:
     settings = get_settings()
@@ -948,13 +1008,11 @@ async def _run_i2i(
             headless=headless,
             transport=transport,
         ) as client:
-            if not as_json:
-                console.print(_CREATING_PROJECT_MSG)
             # Title is a `gflow-cli ...` prefix per project convention (post-rename a02684f).
             # cli_video.py's _run_t2v / _run_i2v don't currently set a title — tracked separately.
-            project = await client.create_project(title="gflow-cli i2i")
-            if not as_json:
-                console.print(f"  Project: [dim]{project.project_id}[/dim]")
+            project = await _resolve_project(
+                client, project_id=project_id, title="gflow-cli i2i", as_json=as_json
+            )
 
             # Local-file refs are attached through the editor's media dialog by the
             # ui_automation transport (the REST uploadImage path 401s — see #15/#39).

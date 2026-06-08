@@ -987,3 +987,81 @@ class TestRecorderIntegration:
         # structlog warning must be emitted
         events = [e["event"] for e in cap.entries]
         assert "data.persistence_failed_after_success" in events
+
+
+class TestImageProjectFlag:
+    """`--project <id>` makes image gen run in an existing project (no scratch)."""
+
+    def test_i2i_uses_given_project(self, runner: CliRunner, tmp_path: Path) -> None:
+        # A UUID ref keeps _classify_ref off the filesystem.
+        uuid = "11111111-1111-1111-1111-111111111111"
+        client = _make_i2i_client()
+        out_dir = tmp_path / "out"
+
+        with (
+            patch("gflow_cli.cli_image.FlowApiClient", return_value=client),
+            patch("gflow_cli.cli_image._make_provider_dir", return_value=tmp_path / "prof"),
+            patch("gflow_cli.cli_image._resolve_profile", return_value="default"),
+        ):
+            from gflow_cli.cli import main
+
+            result = runner.invoke(
+                main,
+                ["image", "i2i", "stylize", "--ref", uuid, "--project", "PROJ123",
+                 "--out", str(out_dir)],
+                catch_exceptions=False,
+            )
+
+        assert result.exit_code == 0, result.output
+        # The given project is used verbatim and no scratch project is created.
+        client.create_project.assert_not_called()
+        call = client.generate_image.await_args
+        assert call is not None
+        assert call.kwargs["project_id"] == "PROJ123"
+
+    def test_t2i_uses_given_project(self, runner: CliRunner, tmp_path: Path) -> None:
+        client = _make_t2i_client()
+        out_dir = tmp_path / "out"
+
+        with (
+            patch("gflow_cli.cli_image.FlowApiClient", return_value=client),
+            patch("gflow_cli.cli_image._make_provider_dir", return_value=tmp_path / "prof"),
+            patch("gflow_cli.cli_image._resolve_profile", return_value="default"),
+        ):
+            from gflow_cli.cli import main
+
+            result = runner.invoke(
+                main,
+                ["image", "t2i", "a cat", "--project", "PROJ123", "--out", str(out_dir)],
+                catch_exceptions=False,
+            )
+
+        assert result.exit_code == 0, result.output
+        client.create_project.assert_not_called()
+        call = client.generate_image.await_args
+        assert call is not None
+        assert call.kwargs["project_id"] == "PROJ123"
+
+    def test_i2i_without_project_still_creates_scratch(
+        self, runner: CliRunner, tmp_path: Path
+    ) -> None:
+        # Backward-compat: omitting --project keeps the old create-a-project behavior.
+        uuid = "11111111-1111-1111-1111-111111111111"
+        client = _make_i2i_client()
+        out_dir = tmp_path / "out"
+
+        with (
+            patch("gflow_cli.cli_image.FlowApiClient", return_value=client),
+            patch("gflow_cli.cli_image._make_provider_dir", return_value=tmp_path / "prof"),
+            patch("gflow_cli.cli_image._resolve_profile", return_value="default"),
+        ):
+            from gflow_cli.cli import main
+
+            result = runner.invoke(
+                main,
+                ["image", "i2i", "stylize", "--ref", uuid, "--out", str(out_dir)],
+                catch_exceptions=False,
+            )
+
+        assert result.exit_code == 0, result.output
+        client.create_project.assert_awaited_once_with(title="gflow-cli i2i")
