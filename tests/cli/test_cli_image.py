@@ -1065,3 +1065,56 @@ class TestImageProjectFlag:
 
         assert result.exit_code == 0, result.output
         client.create_project.assert_awaited_once_with(title="gflow-cli i2i")
+
+
+class TestReferenceEntityFlag:
+    """`--reference-entity` / `--reference-entity-name` flow into the request."""
+
+    def test_i2i_reference_entity_flag(self, runner: CliRunner, tmp_path: Path) -> None:
+        uuid = "11111111-1111-1111-1111-111111111111"
+        client = _make_i2i_client()
+        out_dir = tmp_path / "out"
+
+        with (
+            patch("gflow_cli.cli_image.FlowApiClient", return_value=client),
+            patch("gflow_cli.cli_image._make_provider_dir", return_value=tmp_path / "prof"),
+            patch("gflow_cli.cli_image._resolve_profile", return_value="default"),
+        ):
+            from gflow_cli.cli import main
+
+            result = runner.invoke(
+                main,
+                ["image", "i2i", "stylize", "--ref", uuid, "--project", "P",
+                 "--reference-entity", "e1", "--reference-entity", "e2",
+                 "--out", str(out_dir)],
+                catch_exceptions=False,
+            )
+
+        assert result.exit_code == 0, result.output
+        req = client.generate_image.await_args.kwargs["req"]
+        assert req.reference_entities == ("e1", "e2")
+
+    def test_t2i_reference_entity_with_name(self, runner: CliRunner, tmp_path: Path) -> None:
+        client = _make_t2i_client()
+        out_dir = tmp_path / "out"
+
+        with (
+            patch("gflow_cli.cli_image.FlowApiClient", return_value=client),
+            patch("gflow_cli.cli_image._make_provider_dir", return_value=tmp_path / "prof"),
+            patch("gflow_cli.cli_image._resolve_profile", return_value="default"),
+        ):
+            from gflow_cli.cli import main
+
+            result = runner.invoke(
+                main,
+                ["image", "t2i", "a hero", "--project", "P",
+                 "--reference-entity", "ent-1",
+                 "--reference-entity-name", "Stacky",
+                 "--out", str(out_dir)],
+                catch_exceptions=False,
+            )
+
+        assert result.exit_code == 0, result.output
+        req = client.generate_image.await_args.kwargs["req"]
+        assert req.reference_entities == ("ent-1",)
+        assert req.reference_entity_names == ("Stacky",)

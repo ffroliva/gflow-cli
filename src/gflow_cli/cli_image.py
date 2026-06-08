@@ -394,6 +394,21 @@ async def _run_upload(
     ),
 )
 @click.option(
+    "--reference-entity",
+    "reference_entities",
+    multiple=True,
+    help=(
+        "Flow CHARACTER entity id to reference for consistency (repeatable). "
+        "The entity must live in the --project you target. Single-prompt only."
+    ),
+)
+@click.option(
+    "--reference-entity-name",
+    "reference_entity_names",
+    multiple=True,
+    help="Character display name paired with --reference-entity (UI picker fallback).",
+)
+@click.option(
     "--json",
     "as_json",
     is_flag=True,
@@ -411,17 +426,20 @@ def t2i(
     profile: str | None,
     transport: str | None,
     project_id: str | None,
+    reference_entities: tuple[str, ...],
+    reference_entity_names: tuple[str, ...],
     as_json: bool,
 ) -> None:
     """Generate image(s) from one or more text prompts."""
     is_multi_prompt = len(prompts) > 1 or prompts_file is not None or read_stdin
     _validate_t2i_input(prompts, prompts_file, read_stdin)
 
-    if is_multi_prompt and project_id is not None:
+    if is_multi_prompt and (project_id is not None or reference_entities):
         # The multi-prompt/batch path creates one shared project internally; a
-        # single explicit --project across many prompts isn't wired. Loop t2i
-        # one prompt at a time if you need every frame in the same project.
-        msg = "--project is single-prompt only; remove the extra prompts."
+        # single explicit --project / --reference-entity across many prompts isn't
+        # wired. Loop t2i one prompt at a time if you need every frame in the same
+        # project with the same characters.
+        msg = "--project / --reference-entity are single-prompt only; remove the extra prompts."
         raise click.UsageError(msg)
 
     if is_multi_prompt and as_json:
@@ -449,6 +467,8 @@ def t2i(
                     prompt=prompt,
                     aspect=Aspect.from_cli(aspect),
                     model=Model.from_cli(model),
+                    reference_entities=tuple(reference_entities),
+                    reference_entity_names=tuple(reference_entity_names),
                 ),
                 count=count,
                 out=out,
@@ -924,6 +944,21 @@ def batch(
     ),
 )
 @click.option(
+    "--reference-entity",
+    "reference_entities",
+    multiple=True,
+    help=(
+        "Flow CHARACTER entity id to reference for consistency (repeatable). "
+        "The entity must live in the --project you target."
+    ),
+)
+@click.option(
+    "--reference-entity-name",
+    "reference_entity_names",
+    multiple=True,
+    help="Character display name paired with --reference-entity (UI picker fallback).",
+)
+@click.option(
     "--json",
     "as_json",
     is_flag=True,
@@ -939,6 +974,8 @@ def i2i(
     profile: str | None,
     transport: str | None,
     project_id: str | None,
+    reference_entities: tuple[str, ...],
+    reference_entity_names: tuple[str, ...],
     as_json: bool,
 ) -> None:
     """Generate image(s) from PROMPT + reference image(s) (image-to-image)."""
@@ -954,8 +991,10 @@ def i2i(
     # GenerateImageRequest.__post_init__ enforces the same cap as an invariant.
     model_enum = Model.from_cli(model)
     cap = reference_cap_for(model_enum)
-    if len(classified_refs) > cap:
-        msg = f"{model} allows at most {cap} reference image(s); got {len(classified_refs)}."
+    # Image refs AND character entities share one per-model reference budget.
+    n_refs = len(classified_refs) + len(reference_entities)
+    if n_refs > cap:
+        msg = f"{model} allows at most {cap} reference(s); got {n_refs}."
         raise click.UsageError(
             msg,
         )
@@ -977,6 +1016,8 @@ def i2i(
             output_root=settings.output_dir,
             transport=transport,
             project_id=project_id,
+            reference_entities=tuple(reference_entities),
+            reference_entity_names=tuple(reference_entity_names),
             as_json=as_json,
         ),
         cli_command="image i2i",
@@ -998,6 +1039,8 @@ async def _run_i2i(
     output_root: Path,
     transport: str | None = None,
     project_id: str | None = None,
+    reference_entities: tuple[str, ...] = (),
+    reference_entity_names: tuple[str, ...] = (),
     as_json: bool = False,
 ) -> None:
     settings = get_settings()
@@ -1026,6 +1069,8 @@ async def _run_i2i(
                 model=model,
                 refs=uuid_refs,
                 ref_paths=local_ref_paths,
+                reference_entities=reference_entities,
+                reference_entity_names=reference_entity_names,
             )
 
             n_refs = len(uuid_refs) + len(local_ref_paths)
