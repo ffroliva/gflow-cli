@@ -307,6 +307,14 @@ def _build_batch_generate_images_body(
         # Always present — empty list for T2I, populated for I2I.
         "imageInputs": [r.to_wire() for r in req.refs],
     }
+    # Character entity references. Shape confirmed by live capture (2026-06-08):
+    # the image submit carries `referenceEntities: [{"entityId": <id>}]`. Added
+    # only when present so plain t2i/i2i bodies stay byte-identical to the
+    # captured samples. The ui_automation transport attaches entities via the
+    # Personagens picker and lets Flow's JS build this; non-UI transports rely
+    # on this serialization.
+    if req.reference_entities:
+        request["referenceEntities"] = [{"entityId": e} for e in req.reference_entities]
     return {
         "clientContext": cc,
         "mediaGenerationContext": {"batchId": batch_id},
