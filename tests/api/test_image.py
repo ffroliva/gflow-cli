@@ -166,6 +166,19 @@ class TestGenerateImageRequest:
         req = GenerateImageRequest(prompt="test", model=Model.NARWHAL, aspect=Aspect.PORTRAIT)
         assert req.recaptcha_token == ""
 
+    def test_accepts_reference_entities(self) -> None:
+        req = GenerateImageRequest(prompt="x", reference_entities=("ent-1", "ent-2"))
+        assert req.reference_entities == ("ent-1", "ent-2")
+
+    def test_accepts_reference_entity_names(self) -> None:
+        req = GenerateImageRequest(prompt="x", reference_entity_names=("Stacky", "Drako"))
+        assert req.reference_entity_names == ("Stacky", "Drako")
+
+    def test_reference_entities_default_empty(self) -> None:
+        req = GenerateImageRequest(prompt="x")
+        assert req.reference_entities == ()
+        assert req.reference_entity_names == ()
+
 
 class TestReferenceCap:
     def test_cap_values(self) -> None:
@@ -207,6 +220,24 @@ class TestReferenceCap:
             refs=tuple(ImageRef(f"ref-{i}") for i in range(MAX_IMAGE_REFERENCES)),
         )
         assert len(req.refs) == MAX_IMAGE_REFERENCES
+
+    def test_cap_counts_entities_with_image_refs(self) -> None:
+        # Character entities count toward the SAME per-model cap as image refs.
+        with pytest.raises(ValueError, match="at most 3"):
+            GenerateImageRequest(
+                prompt="mix",
+                model=Model.IMAGEN_3_5,
+                refs=(ImageRef("a"), ImageRef("b")),
+                reference_entities=("ent-1", "ent-2"),
+            )
+
+    def test_entities_within_cap_ok(self) -> None:
+        req = GenerateImageRequest(
+            prompt="ok",
+            model=Model.IMAGEN_3_5,
+            reference_entities=("ent-1", "ent-2", "ent-3"),
+        )
+        assert len(req.reference_entities) == 3
 
 
 class TestBuildBatchGenerateImagesBody:
