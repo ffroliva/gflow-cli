@@ -518,6 +518,67 @@ def _images_from_responses(
     return images, first_error_status, first_error_route
 
 
+def _zip_entities(
+    entity_ids: tuple[str, ...],
+    entity_names: tuple[str, ...],
+) -> list[tuple[str, str]]:
+    """Pair entity ids with display names for the Personagens picker.
+
+    The picker addresses tiles by id (``data-tile-id="fe_id_<id>"``); the name is
+    only a human label used in logs / error screenshots. When fewer names than
+    ids are given, the id stands in as its own name so the pairing never drops an
+    entity.
+    """
+    names = list(entity_names)
+    return [
+        (eid, names[i] if i < len(names) else eid)
+        for i, eid in enumerate(entity_ids)
+    ]
+
+
+def _summarize_batch_request_body(post_data: str | None) -> dict[str, Any]:
+    """Compact, byte-safe summary of an outgoing ``batchGenerateImages`` body.
+
+    This is the make-or-break signal for the entity-reference spike: it reveals
+    whether Flow's image submit carries a ``referenceEntities`` field after we
+    attach a character via the picker — WITHOUT logging the full body (i2i
+    bodies embed base64 image bytes that would flood the log and leak content).
+
+    Returns a dict with ``present``, ``mentions_reference_entities`` (cheap
+    substring probe that survives non-JSON bodies), and — when the body parses —
+    the keys of ``requests[0]`` plus any reference/entity-related fields verbatim
+    (those are small id lists, safe to surface).
+    """
+    if not post_data:
+        return {"present": False}
+    summary: dict[str, Any] = {
+        "present": True,
+        "bytes": len(post_data),
+        "mentions_reference_entities": "referenceEntit" in post_data,
+    }
+    try:
+        parsed: object = json.loads(post_data)
+    except (ValueError, TypeError):
+        return summary
+    if not isinstance(parsed, dict):
+        return summary
+    parsed_dict = cast("dict[str, Any]", parsed)
+    reqs = parsed_dict.get("requests")
+    if isinstance(reqs, list) and reqs and isinstance(reqs[0], dict):
+        first = cast("dict[str, Any]", reqs[0])
+        summary["request0_keys"] = sorted(first.keys())
+        ref_bits = {
+            k: v
+            for k, v in first.items()
+            if "reference" in k.lower() or "entity" in k.lower()
+        }
+        if ref_bits:
+            summary["reference_fields"] = ref_bits
+    else:
+        summary["top_keys"] = sorted(parsed_dict.keys())
+    return summary
+
+
 class UiAutomationTransport(VideoGenerationMixin):
     """D.2.4 — Playwright UI mimicry strategy.
 
@@ -1594,6 +1655,51 @@ class UiAutomationTransport(VideoGenerationMixin):
         return captured, detach
 
     @staticmethod
+    def _attach_batch_request_logger(
+        page: Page,
+        *,
+        project_id: str | None = None,
+    ) -> Callable[[], None]:
+        """Register a ``page.on('request', ...)`` that logs a compact summary of
+        each outgoing ``batchGenerateImages`` body.
+
+        The summary (see :func:`_summarize_batch_request_body`) surfaces whether
+        the submit carries ``referenceEntities`` — the entity-reference spike's
+        make-or-break signal — without dumping i2i image bytes. Returns an
+        idempotent detach fn, torn down alongside the response listener.
+        """
+
+        def on_request(request_obj: Any) -> None:
+            if "batchGenerateImages" not in request_obj.url:
+                return
+            try:
+                post_data = request_obj.post_data
+            except Exception:
+                post_data = None
+            log.info(
+                "ui_automation.batch_request_body",
+                url=request_obj.url,
+                filter_project_id=project_id,
+                summary=_summarize_batch_request_body(post_data),
+            )
+
+        page.on("request", on_request)
+
+        _detached = False
+
+        def detach() -> None:
+            nonlocal _detached
+            if _detached:
+                return
+            _detached = True
+            try:
+                page.remove_listener("request", on_request)
+            except Exception:
+                pass
+
+        return detach
+
+    @staticmethod
     async def _await_captured(
         captured: list[dict[str, Any]],
         timeout_s: float = 180.0,
@@ -1814,6 +1920,18 @@ class UiAutomationTransport(VideoGenerationMixin):
         if request.ref_paths:
             await self._attach_references(page, list(request.ref_paths), out_dir=out_dir)
 
+        # Entity references: attach locked CHARACTER entities via the Personagens
+        # picker (inherited from the video transport). The entity must live in the
+        # project we generate in (pass --project / project_id). Flow's JS then
+        # includes them on the submit; the request logger below records whether the
+        # outgoing batchGenerateImages carries `referenceEntities` (spike signal).
+        if request.reference_entities:
+            await self._attach_character_entities(
+                page,
+                _zip_entities(request.reference_entities, request.reference_entity_names),
+                out_dir=out_dir,
+            )
+
         # Attach the response listener SYNCHRONOUSLY before any prompt
         # action. asyncio.create_task is unsafe here: it defers the listener
         # registration until the new task gets event-loop scheduling, which
@@ -1821,6 +1939,9 @@ class UiAutomationTransport(VideoGenerationMixin):
         # attach/await eliminates that race. Project-ID filter prevents stale
         # responses from previously-visited projects accumulating in the list.
         captured, detach = self._attach_batch_response_listener(page, project_id=nav_project_id)
+        # Also log the OUTGOING request body summary so the entity-reference spike
+        # can read whether the submit carries `referenceEntities`.
+        req_log_detach = self._attach_batch_request_logger(page, project_id=nav_project_id)
         # Record submit_time BEFORE the click so the post-submit-time filter
         # in _await_captured can distinguish this prompt's responses from any
         # stale entries that arrived between listener attach and the click.
@@ -1835,6 +1956,7 @@ class UiAutomationTransport(VideoGenerationMixin):
             )
         finally:
             detach()
+            req_log_detach()
 
         # Collect images from ALL captured responses (Flow makes one API call
         # per image when count > 1).

@@ -83,6 +83,7 @@ def _make_fake_t2i(file_count: int):
         out: Path | None,
         output_root: Path,
         transport: str | None = None,
+        project_id: str | None = None,
         as_json: bool = False,
     ) -> None:
         # Honor ``count`` if the scenario set it; otherwise fall back to the
