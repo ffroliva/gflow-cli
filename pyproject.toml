@@ -33,7 +33,7 @@ dependencies = [
 dev = [
     "pytest>=8.0.0",
     "pytest-asyncio>=0.23.0",
-    "ruff>=0.15.15",
+    "ruff==0.15.16",
     "pyright>=1.1.0",
     # video-chain: the last-frame extractor (media.py) decodes with PyAV, and its
     # tests build synthetic mp4 fixtures with numpy. Declared here so the dev/CI
