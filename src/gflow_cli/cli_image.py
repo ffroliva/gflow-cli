@@ -475,7 +475,7 @@ async def _run_upload(
     is_flag=True,
     help="Emit a machine-readable JSON result instead of a Rich table.",
 )
-def t2i(  # NOSONAR(S107): Click command — every option is part of the CLI's public API
+def t2i(
     prompts: tuple[str, ...],
     prompts_file: Path | None,
     read_stdin: bool,
@@ -1063,7 +1063,7 @@ def i2i(
     )
 
 
-async def _run_i2i(  # NOSONAR(S107): mirrors the i2i command's option surface
+async def _run_i2i(
     *,
     profile_name: str,
     profile_dir: Path,
