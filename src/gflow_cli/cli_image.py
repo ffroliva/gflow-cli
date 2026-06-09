@@ -33,6 +33,7 @@ from gflow_cli._cli_helpers import (
     safe_path_text,
 )
 from gflow_cli.api.client import FlowApiClient
+from gflow_cli.api.dto import ProjectInfo
 from gflow_cli.api.image import Aspect, GenerateImageRequest, ImageRef, Model, reference_cap_for
 from gflow_cli.api.transports import transport_choices
 from gflow_cli.config import get_settings
@@ -91,6 +92,43 @@ _UUID_RE = re.compile(
 
 _CREATING_PROJECT_MSG = "  Creating project..."
 _T2I_PROJECT_TITLE = "gflow-cli t2i"
+_I2I_PROJECT_TITLE = "gflow-cli i2i"
+
+# Flow project / character-entity ids interpolated into navigation URLs and UI
+# selectors. Mirror routes._PROJECT_ID_RE so untrusted --project / --reference-entity
+# values are rejected at the CLI boundary (closes the page.goto + CSS-selector
+# injection gaps before the value ever reaches the browser).
+_FLOW_ID_RE = re.compile(r"^[A-Za-z0-9\-]{1,128}$")
+
+
+def _validate_project_id(
+    _ctx: click.Context, param: click.Parameter, value: str | None
+) -> str | None:
+    """Reject a --project id that isn't alphanumeric/hyphen (1-128 chars).
+
+    The value is interpolated into the editor navigation URL (`page.goto`) before
+    any other guard runs, so validate here at the boundary.
+    """
+    if value is not None and not _FLOW_ID_RE.fullmatch(value):
+        msg = "project id must be 1-128 chars of letters, digits, or hyphens."
+        raise click.BadParameter(msg, param=param)
+    return value
+
+
+def _validate_entity_ids(
+    _ctx: click.Context, param: click.Parameter, value: tuple[str, ...]
+) -> tuple[str, ...]:
+    """Reject any --reference-entity id that isn't alphanumeric/hyphen.
+
+    Entity ids are interpolated into a CSS selector (`data-tile-id='fe_id_<id>'`);
+    the allowlist also blocks quote/metacharacter selector-breakage.
+    """
+    for v in value:
+        if not _FLOW_ID_RE.fullmatch(v):
+            msg = f"invalid --reference-entity id {v!r}: expected 1-128 chars of [A-Za-z0-9-]."
+            raise click.BadParameter(msg, param=param)
+    return value
+
 
 console = Console()
 logger = structlog.get_logger(__name__)
@@ -145,6 +183,37 @@ def _classify_ref(ref: str) -> ImageRef | Path:
         raise click.UsageError(
             msg,
         ) from exc
+
+
+async def _resolve_project(
+    client: FlowApiClient,
+    *,
+    project_id: str | None,
+    title: str,
+    as_json: bool,
+) -> tuple[ProjectInfo, bool]:
+    """Resolve the project to generate in.
+
+    When ``project_id`` is given, generation runs in that EXISTING project (so
+    its locked entities/assets are visible) and no scratch project is created —
+    this is what ``--project`` buys. When it is ``None`` the historical behavior
+    holds: create a fresh ``gflow-cli ...`` project.
+
+    Returns ``(project, created)``. ``created`` is False for an existing
+    ``--project`` so the recorder does NOT overwrite that project's real title /
+    source in the local history DB (the synthesized ``title`` here is only a
+    placeholder for the created path).
+    """
+    if project_id is not None:
+        if not as_json:
+            console.print(f"  Project: [dim]{project_id}[/dim] [dim](existing)[/dim]")
+        return ProjectInfo(project_id=project_id, title=title), False
+    if not as_json:
+        console.print(_CREATING_PROJECT_MSG)
+    project = await client.create_project(title=title)
+    if not as_json:
+        console.print(f"  Project: [dim]{project.project_id}[/dim]")
+    return project, True
 
 
 # ---------------------------------------------------------------------------
@@ -356,6 +425,33 @@ async def _run_upload(
     ),
 )
 @click.option(
+    "--project",
+    "project_id",
+    default=None,
+    callback=_validate_project_id,
+    help=(
+        "Generate in this existing Flow project id instead of creating a scratch "
+        "project. Required to reference locked entities/assets that live in a "
+        "specific project. Single-prompt only."
+    ),
+)
+@click.option(
+    "--reference-entity",
+    "reference_entities",
+    multiple=True,
+    callback=_validate_entity_ids,
+    help=(
+        "Flow CHARACTER entity id to reference for consistency (repeatable). "
+        "The entity must live in the --project you target. Single-prompt only."
+    ),
+)
+@click.option(
+    "--reference-entity-name",
+    "reference_entity_names",
+    multiple=True,
+    help="Character display name paired with --reference-entity (UI picker fallback).",
+)
+@click.option(
     "--json",
     "as_json",
     is_flag=True,
@@ -372,11 +468,22 @@ def t2i(
     out: Path | None,
     profile: str | None,
     transport: str | None,
+    project_id: str | None,
+    reference_entities: tuple[str, ...],
+    reference_entity_names: tuple[str, ...],
     as_json: bool,
 ) -> None:
     """Generate image(s) from one or more text prompts."""
     is_multi_prompt = len(prompts) > 1 or prompts_file is not None or read_stdin
     _validate_t2i_input(prompts, prompts_file, read_stdin)
+
+    if is_multi_prompt and (project_id is not None or reference_entities):
+        # The multi-prompt/batch path creates one shared project internally; a
+        # single explicit --project / --reference-entity across many prompts isn't
+        # wired. Loop t2i one prompt at a time if you need every frame in the same
+        # project with the same characters.
+        msg = "--project / --reference-entity are single-prompt only; remove the extra prompts."
+        raise click.UsageError(msg)
 
     if is_multi_prompt and as_json:
         # --json is single-prompt only — the batch summary shape is rich-table
@@ -403,11 +510,14 @@ def t2i(
                     prompt=prompt,
                     aspect=Aspect.from_cli(aspect),
                     model=Model.from_cli(model),
+                    reference_entities=tuple(reference_entities),
+                    reference_entity_names=tuple(reference_entity_names),
                 ),
                 count=count,
                 out=out,
                 output_root=settings.output_dir,
                 transport=transport,
+                project_id=project_id,
                 as_json=as_json,
             ),
             cli_command="image t2i",
@@ -557,6 +667,7 @@ async def _run_t2i(
     out: Path | None,
     output_root: Path,
     transport: str | None = None,
+    project_id: str | None = None,
     as_json: bool = False,
 ) -> None:
     settings = get_settings()
@@ -567,13 +678,12 @@ async def _run_t2i(
             headless=headless,
             transport=transport,
         ) as client:
-            if not as_json:
-                console.print(_CREATING_PROJECT_MSG)
             # Title is a `gflow-cli ...` prefix per project convention (post-rename a02684f).
             # cli_video.py's _run_t2v / _run_i2v don't currently set a title — tracked separately.
-            project = await client.create_project(title=_T2I_PROJECT_TITLE)
+            project, project_created = await _resolve_project(
+                client, project_id=project_id, title=_T2I_PROJECT_TITLE, as_json=as_json
+            )
             if not as_json:
-                console.print(f"  Project: [dim]{project.project_id}[/dim]")
                 console.print(
                     f"  Generating {count} image(s) ({req.model.value}, {req.aspect.value})...",
                 )
@@ -615,6 +725,7 @@ async def _run_t2i(
                     profile_name=profile_name,
                     profile_dir=profile_dir,
                     project=project,
+                    project_created=project_created,
                     request=req,
                     images=images,
                     saved_paths=saved_paths,
@@ -867,6 +978,33 @@ def batch(
     ),
 )
 @click.option(
+    "--project",
+    "project_id",
+    default=None,
+    callback=_validate_project_id,
+    help=(
+        "Generate in this existing Flow project id instead of creating a scratch "
+        "project. Required to reference locked entities/assets that live in a "
+        "specific project."
+    ),
+)
+@click.option(
+    "--reference-entity",
+    "reference_entities",
+    multiple=True,
+    callback=_validate_entity_ids,
+    help=(
+        "Flow CHARACTER entity id to reference for consistency (repeatable). "
+        "The entity must live in the --project you target."
+    ),
+)
+@click.option(
+    "--reference-entity-name",
+    "reference_entity_names",
+    multiple=True,
+    help="Character display name paired with --reference-entity (UI picker fallback).",
+)
+@click.option(
     "--json",
     "as_json",
     is_flag=True,
@@ -881,6 +1019,9 @@ def i2i(
     out: Path | None,
     profile: str | None,
     transport: str | None,
+    project_id: str | None,
+    reference_entities: tuple[str, ...],
+    reference_entity_names: tuple[str, ...],
     as_json: bool,
 ) -> None:
     """Generate image(s) from PROMPT + reference image(s) (image-to-image)."""
@@ -896,8 +1037,10 @@ def i2i(
     # GenerateImageRequest.__post_init__ enforces the same cap as an invariant.
     model_enum = Model.from_cli(model)
     cap = reference_cap_for(model_enum)
-    if len(classified_refs) > cap:
-        msg = f"{model} allows at most {cap} reference image(s); got {len(classified_refs)}."
+    # Image refs AND character entities share one per-model reference budget.
+    n_refs = len(classified_refs) + len(reference_entities)
+    if n_refs > cap:
+        msg = f"{model} allows at most {cap} reference(s); got {n_refs}."
         raise click.UsageError(
             msg,
         )
@@ -918,6 +1061,9 @@ def i2i(
             out=out,
             output_root=settings.output_dir,
             transport=transport,
+            project_id=project_id,
+            reference_entities=tuple(reference_entities),
+            reference_entity_names=tuple(reference_entity_names),
             as_json=as_json,
         ),
         cli_command="image i2i",
@@ -938,6 +1084,9 @@ async def _run_i2i(
     out: Path | None,
     output_root: Path,
     transport: str | None = None,
+    project_id: str | None = None,
+    reference_entities: tuple[str, ...] = (),
+    reference_entity_names: tuple[str, ...] = (),
     as_json: bool = False,
 ) -> None:
     settings = get_settings()
@@ -948,13 +1097,11 @@ async def _run_i2i(
             headless=headless,
             transport=transport,
         ) as client:
-            if not as_json:
-                console.print(_CREATING_PROJECT_MSG)
             # Title is a `gflow-cli ...` prefix per project convention (post-rename a02684f).
             # cli_video.py's _run_t2v / _run_i2v don't currently set a title — tracked separately.
-            project = await client.create_project(title="gflow-cli i2i")
-            if not as_json:
-                console.print(f"  Project: [dim]{project.project_id}[/dim]")
+            project, project_created = await _resolve_project(
+                client, project_id=project_id, title=_I2I_PROJECT_TITLE, as_json=as_json
+            )
 
             # Local-file refs are attached through the editor's media dialog by the
             # ui_automation transport (the REST uploadImage path 401s — see #15/#39).
@@ -968,6 +1115,8 @@ async def _run_i2i(
                 model=model,
                 refs=uuid_refs,
                 ref_paths=local_ref_paths,
+                reference_entities=reference_entities,
+                reference_entity_names=reference_entity_names,
             )
 
             n_refs = len(uuid_refs) + len(local_ref_paths)
@@ -1015,6 +1164,7 @@ async def _run_i2i(
                     profile_name=profile_name,
                     profile_dir=profile_dir,
                     project=project,
+                    project_created=project_created,
                     request=req,
                     images=images,
                     saved_paths=saved_paths,
@@ -1041,7 +1191,7 @@ async def _run_i2i(
 
 def _print_i2i_summary(images: list[GeneratedImage], saved_paths: list[Path]) -> None:
     """Render a Rich table of generated images and where they landed."""
-    table = Table(title="gflow-cli i2i")
+    table = Table(title=_I2I_PROJECT_TITLE)
     table.add_column("media_name", overflow="fold")
     table.add_column("seed", justify="right")
     table.add_column("dimensions")

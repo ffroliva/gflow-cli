@@ -229,6 +229,14 @@ class GenerateImageRequest:
     # dialog by the ui_automation transport (the REST uploadImage path 401s).
     # The common i2i case; `refs` (pre-uploaded UUIDs) would need library-select.
     ref_paths: tuple[Path, ...] = ()
+    # Flow CHARACTER entity ids to reference (project-scoped, attached via the
+    # Add-Media → Personagens picker by the ui_automation transport). Entities
+    # keep generated subjects consistent with a locked character. They count
+    # toward the same per-model reference cap as image refs.
+    reference_entities: tuple[str, ...] = ()
+    # Optional display names paired with reference_entities (used by the UI
+    # picker when an id-keyed tile can't be located by id alone).
+    reference_entity_names: tuple[str, ...] = ()
     recaptcha_token: str = ""  # populated by caller right before send; "" means unminted
     # number of images to generate (1–4); UI transport uses this to set Flow's count tab
     count: int = 1
@@ -240,10 +248,10 @@ class GenerateImageRequest:
         if not 1 <= self.count <= 4:
             msg = f"GenerateImageRequest.count must be 1–4, got {self.count}"
             raise ValueError(msg)
-        n_refs = len(self.refs) + len(self.ref_paths)
+        n_refs = len(self.refs) + len(self.ref_paths) + len(self.reference_entities)
         cap = reference_cap_for(self.model)
         if n_refs > cap:
-            msg = f"{self.model.value} allows at most {cap} reference image(s); got {n_refs}"
+            msg = f"{self.model.value} allows at most {cap} reference(s); got {n_refs}"
             raise ValueError(
                 msg,
             )
@@ -299,6 +307,14 @@ def _build_batch_generate_images_body(
         # Always present — empty list for T2I, populated for I2I.
         "imageInputs": [r.to_wire() for r in req.refs],
     }
+    # Character entity references. Shape confirmed by live capture (2026-06-08):
+    # the image submit carries `referenceEntities: [{"entityId": <id>}]`. Added
+    # only when present so plain t2i/i2i bodies stay byte-identical to the
+    # captured samples. The ui_automation transport attaches entities via the
+    # Personagens picker and lets Flow's JS build this; non-UI transports rely
+    # on this serialization.
+    if req.reference_entities:
+        request["referenceEntities"] = [{"entityId": e} for e in req.reference_entities]
     return {
         "clientContext": cc,
         "mediaGenerationContext": {"batchId": batch_id},
