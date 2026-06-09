@@ -987,3 +987,292 @@ class TestRecorderIntegration:
         # structlog warning must be emitted
         events = [e["event"] for e in cap.entries]
         assert "data.persistence_failed_after_success" in events
+
+
+class TestImageProjectFlag:
+    """`--project <id>` makes image gen run in an existing project (no scratch)."""
+
+    def test_i2i_uses_given_project(self, runner: CliRunner, tmp_path: Path) -> None:
+        # A UUID ref keeps _classify_ref off the filesystem.
+        uuid = "11111111-1111-1111-1111-111111111111"
+        client = _make_i2i_client()
+        out_dir = tmp_path / "out"
+
+        with (
+            patch("gflow_cli.cli_image.FlowApiClient", return_value=client),
+            patch("gflow_cli.cli_image._make_provider_dir", return_value=tmp_path / "prof"),
+            patch("gflow_cli.cli_image._resolve_profile", return_value="default"),
+        ):
+            from gflow_cli.cli import main
+
+            result = runner.invoke(
+                main,
+                [
+                    "image",
+                    "i2i",
+                    "stylize",
+                    "--ref",
+                    uuid,
+                    "--project",
+                    "PROJ123",
+                    "--out",
+                    str(out_dir),
+                ],
+                catch_exceptions=False,
+            )
+
+        assert result.exit_code == 0, result.output
+        # The given project is used verbatim and no scratch project is created.
+        client.create_project.assert_not_called()
+        call = client.generate_image.await_args
+        assert call is not None
+        assert call.kwargs["project_id"] == "PROJ123"
+
+    def test_t2i_uses_given_project(self, runner: CliRunner, tmp_path: Path) -> None:
+        client = _make_t2i_client()
+        out_dir = tmp_path / "out"
+
+        with (
+            patch("gflow_cli.cli_image.FlowApiClient", return_value=client),
+            patch("gflow_cli.cli_image._make_provider_dir", return_value=tmp_path / "prof"),
+            patch("gflow_cli.cli_image._resolve_profile", return_value="default"),
+        ):
+            from gflow_cli.cli import main
+
+            result = runner.invoke(
+                main,
+                ["image", "t2i", "a cat", "--project", "PROJ123", "--out", str(out_dir)],
+                catch_exceptions=False,
+            )
+
+        assert result.exit_code == 0, result.output
+        client.create_project.assert_not_called()
+        call = client.generate_image.await_args
+        assert call is not None
+        assert call.kwargs["project_id"] == "PROJ123"
+
+    def test_i2i_without_project_still_creates_scratch(
+        self, runner: CliRunner, tmp_path: Path
+    ) -> None:
+        # Backward-compat: omitting --project keeps the old create-a-project behavior.
+        uuid = "11111111-1111-1111-1111-111111111111"
+        client = _make_i2i_client()
+        out_dir = tmp_path / "out"
+
+        with (
+            patch("gflow_cli.cli_image.FlowApiClient", return_value=client),
+            patch("gflow_cli.cli_image._make_provider_dir", return_value=tmp_path / "prof"),
+            patch("gflow_cli.cli_image._resolve_profile", return_value="default"),
+        ):
+            from gflow_cli.cli import main
+
+            result = runner.invoke(
+                main,
+                ["image", "i2i", "stylize", "--ref", uuid, "--out", str(out_dir)],
+                catch_exceptions=False,
+            )
+
+        assert result.exit_code == 0, result.output
+        client.create_project.assert_awaited_once_with(title="gflow-cli i2i")
+
+
+class TestReferenceEntityFlag:
+    """`--reference-entity` / `--reference-entity-name` flow into the request."""
+
+    def test_i2i_reference_entity_flag(self, runner: CliRunner, tmp_path: Path) -> None:
+        uuid = "11111111-1111-1111-1111-111111111111"
+        client = _make_i2i_client()
+        out_dir = tmp_path / "out"
+
+        with (
+            patch("gflow_cli.cli_image.FlowApiClient", return_value=client),
+            patch("gflow_cli.cli_image._make_provider_dir", return_value=tmp_path / "prof"),
+            patch("gflow_cli.cli_image._resolve_profile", return_value="default"),
+        ):
+            from gflow_cli.cli import main
+
+            result = runner.invoke(
+                main,
+                [
+                    "image",
+                    "i2i",
+                    "stylize",
+                    "--ref",
+                    uuid,
+                    "--project",
+                    "P",
+                    "--reference-entity",
+                    "e1",
+                    "--reference-entity",
+                    "e2",
+                    "--out",
+                    str(out_dir),
+                ],
+                catch_exceptions=False,
+            )
+
+        assert result.exit_code == 0, result.output
+        req = client.generate_image.await_args.kwargs["req"]
+        assert req.reference_entities == ("e1", "e2")
+
+    def test_t2i_reference_entity_with_name(self, runner: CliRunner, tmp_path: Path) -> None:
+        client = _make_t2i_client()
+        out_dir = tmp_path / "out"
+
+        with (
+            patch("gflow_cli.cli_image.FlowApiClient", return_value=client),
+            patch("gflow_cli.cli_image._make_provider_dir", return_value=tmp_path / "prof"),
+            patch("gflow_cli.cli_image._resolve_profile", return_value="default"),
+        ):
+            from gflow_cli.cli import main
+
+            result = runner.invoke(
+                main,
+                [
+                    "image",
+                    "t2i",
+                    "a hero",
+                    "--project",
+                    "P",
+                    "--reference-entity",
+                    "ent-1",
+                    "--reference-entity-name",
+                    "Stacky",
+                    "--out",
+                    str(out_dir),
+                ],
+                catch_exceptions=False,
+            )
+
+        assert result.exit_code == 0, result.output
+        req = client.generate_image.await_args.kwargs["req"]
+        assert req.reference_entities == ("ent-1",)
+        assert req.reference_entity_names == ("Stacky",)
+
+
+class TestImageIdValidation:
+    """--project / --reference-entity ids are validated at the CLI boundary
+    (they reach page.goto + a CSS selector)."""
+
+    def test_t2i_rejects_bad_project_id(self, runner: CliRunner) -> None:
+        from gflow_cli.cli import main
+
+        result = runner.invoke(
+            main, ["image", "t2i", "a cat", "--project", "bad/id"], catch_exceptions=False
+        )
+        assert result.exit_code == 2, result.output
+        assert "project id" in result.output.lower()
+
+    def test_i2i_rejects_bad_entity_id(self, runner: CliRunner) -> None:
+        from gflow_cli.cli import main
+
+        result = runner.invoke(
+            main,
+            [
+                "image",
+                "i2i",
+                "x",
+                "--ref",
+                "11111111-1111-1111-1111-111111111111",
+                "--reference-entity",
+                "bad id with spaces",
+            ],
+            catch_exceptions=False,
+        )
+        assert result.exit_code == 2, result.output
+        assert "reference-entity" in result.output.lower()
+
+
+class TestT2iEntityGuards:
+    """t2i restricts --project / --reference-entity to single-prompt mode."""
+
+    def test_multiprompt_with_project_errors(self, runner: CliRunner) -> None:
+        from gflow_cli.cli import main
+
+        result = runner.invoke(
+            main, ["image", "t2i", "a", "b", "--project", "P"], catch_exceptions=False
+        )
+        assert result.exit_code == 2, result.output
+        assert "single-prompt only" in result.output
+
+    def test_multiprompt_with_entity_errors(self, runner: CliRunner) -> None:
+        from gflow_cli.cli import main
+
+        result = runner.invoke(
+            main, ["image", "t2i", "a", "b", "--reference-entity", "e1"], catch_exceptions=False
+        )
+        assert result.exit_code == 2, result.output
+        assert "single-prompt only" in result.output
+
+
+class TestI2iCapCountsEntities:
+    def test_i2i_cap_counts_refs_plus_entities(self, runner: CliRunner) -> None:
+        # imagen4 caps at 3; 2 image refs + 2 entities = 4 → rejected at CLI.
+        from gflow_cli.cli import main
+
+        args = ["image", "i2i", "x", "--model", "imagen4"]
+        for u in (
+            "11111111-1111-1111-1111-111111111111",
+            "22222222-2222-2222-2222-222222222222",
+        ):
+            args += ["--ref", u]
+        args += ["--reference-entity", "ent-1", "--reference-entity", "ent-2"]
+        result = runner.invoke(main, args, catch_exceptions=False)
+        assert result.exit_code == 2, result.output
+        assert "at most 3" in result.output
+
+
+class TestProjectCreatedRecording:
+    """--project (existing) must NOT be recorded as a created project, so the
+    recorder won't overwrite the project's real title in the local DB."""
+
+    @staticmethod
+    def _fake_recorder(captured: dict) -> MagicMock:
+        rec = MagicMock()
+        rec.close = MagicMock()
+        rec.record_generated_images.side_effect = lambda **kw: captured.update(kw)
+        return rec
+
+    def test_existing_project_not_marked_created(self, runner: CliRunner, tmp_path: Path) -> None:
+        captured: dict = {}
+        client = _make_t2i_client()
+        with (
+            patch("gflow_cli.cli_image.FlowApiClient", return_value=client),
+            patch("gflow_cli.cli_image._make_provider_dir", return_value=tmp_path / "prof"),
+            patch("gflow_cli.cli_image._resolve_profile", return_value="default"),
+            patch(
+                "gflow_cli.cli_image.OperationRecorder.open",
+                return_value=self._fake_recorder(captured),
+            ),
+        ):
+            from gflow_cli.cli import main
+
+            result = runner.invoke(
+                main,
+                ["image", "t2i", "a cat", "--project", "PROJ123", "--out", str(tmp_path / "o")],
+                catch_exceptions=False,
+            )
+        assert result.exit_code == 0, result.output
+        assert captured.get("project_created") is False
+
+    def test_scratch_project_marked_created(self, runner: CliRunner, tmp_path: Path) -> None:
+        captured: dict = {}
+        client = _make_t2i_client()
+        with (
+            patch("gflow_cli.cli_image.FlowApiClient", return_value=client),
+            patch("gflow_cli.cli_image._make_provider_dir", return_value=tmp_path / "prof"),
+            patch("gflow_cli.cli_image._resolve_profile", return_value="default"),
+            patch(
+                "gflow_cli.cli_image.OperationRecorder.open",
+                return_value=self._fake_recorder(captured),
+            ),
+        ):
+            from gflow_cli.cli import main
+
+            result = runner.invoke(
+                main,
+                ["image", "t2i", "a cat", "--out", str(tmp_path / "o")],
+                catch_exceptions=False,
+            )
+        assert result.exit_code == 0, result.output
+        assert captured.get("project_created") is True
