@@ -18,7 +18,7 @@ import asyncio
 import re
 import sys
 from pathlib import Path
-from typing import TYPE_CHECKING
+from typing import TYPE_CHECKING, TypeVar
 
 import click
 import structlog
@@ -79,7 +79,11 @@ from gflow_cli.paths import image_output_path, resolve_batch_output_dir
 from gflow_cli.storage import cloud_info_from_path
 
 if TYPE_CHECKING:
+    from collections.abc import Callable
+
     from gflow_cli.api.dto import GeneratedImage
+
+_CmdFn = TypeVar("_CmdFn", bound="Callable[..., object]")
 
 # Case-insensitive 8-4-4-4-12 hex with hyphens — Flow's media UUIDs.
 # When a `--ref` value matches this regex it's treated as an already-uploaded
@@ -128,6 +132,46 @@ def _validate_entity_ids(
             msg = f"invalid --reference-entity id {v!r}: expected 1-128 chars of [A-Za-z0-9-]."
             raise click.BadParameter(msg, param=param)
     return value
+
+
+def _project_and_entity_options(*, single_prompt: bool) -> Callable[[_CmdFn], _CmdFn]:
+    """Shared `--project` / `--reference-entity` / `--reference-entity-name` options.
+
+    Applied to both `t2i` and `i2i` so the (identical) option definitions live in one
+    place. ``single_prompt`` appends the single-prompt-only note to t2i's help.
+    """
+    note = " Single-prompt only." if single_prompt else ""
+
+    def decorator(func: _CmdFn) -> _CmdFn:
+        func = click.option(
+            "--reference-entity-name",
+            "reference_entity_names",
+            multiple=True,
+            help="Character display name paired with --reference-entity (UI picker fallback).",
+        )(func)
+        func = click.option(
+            "--reference-entity",
+            "reference_entities",
+            multiple=True,
+            callback=_validate_entity_ids,
+            help=(
+                "Flow CHARACTER entity id to reference for consistency (repeatable). "
+                "The entity must live in the --project you target." + note
+            ),
+        )(func)
+        return click.option(
+            "--project",
+            "project_id",
+            default=None,
+            callback=_validate_project_id,
+            help=(
+                "Generate in this existing Flow project id instead of creating a scratch "
+                "project. Required to reference locked entities/assets that live in a "
+                "specific project." + note
+            ),
+        )(func)
+
+    return decorator
 
 
 console = Console()
@@ -424,40 +468,14 @@ async def _run_upload(
         "GFLOW_CLI_EXPERIMENTAL_TRANSPORTS=1 to enable evaluate_fetch/bearer/sapisidhash."
     ),
 )
-@click.option(
-    "--project",
-    "project_id",
-    default=None,
-    callback=_validate_project_id,
-    help=(
-        "Generate in this existing Flow project id instead of creating a scratch "
-        "project. Required to reference locked entities/assets that live in a "
-        "specific project. Single-prompt only."
-    ),
-)
-@click.option(
-    "--reference-entity",
-    "reference_entities",
-    multiple=True,
-    callback=_validate_entity_ids,
-    help=(
-        "Flow CHARACTER entity id to reference for consistency (repeatable). "
-        "The entity must live in the --project you target. Single-prompt only."
-    ),
-)
-@click.option(
-    "--reference-entity-name",
-    "reference_entity_names",
-    multiple=True,
-    help="Character display name paired with --reference-entity (UI picker fallback).",
-)
+@_project_and_entity_options(single_prompt=True)
 @click.option(
     "--json",
     "as_json",
     is_flag=True,
     help="Emit a machine-readable JSON result instead of a Rich table.",
 )
-def t2i(
+def t2i(  # NOSONAR(S107): Click command — every option is part of the CLI's public API
     prompts: tuple[str, ...],
     prompts_file: Path | None,
     read_stdin: bool,
@@ -977,33 +995,7 @@ def batch(
         "GFLOW_CLI_EXPERIMENTAL_TRANSPORTS=1 to enable evaluate_fetch/bearer/sapisidhash."
     ),
 )
-@click.option(
-    "--project",
-    "project_id",
-    default=None,
-    callback=_validate_project_id,
-    help=(
-        "Generate in this existing Flow project id instead of creating a scratch "
-        "project. Required to reference locked entities/assets that live in a "
-        "specific project."
-    ),
-)
-@click.option(
-    "--reference-entity",
-    "reference_entities",
-    multiple=True,
-    callback=_validate_entity_ids,
-    help=(
-        "Flow CHARACTER entity id to reference for consistency (repeatable). "
-        "The entity must live in the --project you target."
-    ),
-)
-@click.option(
-    "--reference-entity-name",
-    "reference_entity_names",
-    multiple=True,
-    help="Character display name paired with --reference-entity (UI picker fallback).",
-)
+@_project_and_entity_options(single_prompt=False)
 @click.option(
     "--json",
     "as_json",
@@ -1071,7 +1063,7 @@ def i2i(
     )
 
 
-async def _run_i2i(
+async def _run_i2i(  # NOSONAR(S107): mirrors the i2i command's option surface
     *,
     profile_name: str,
     profile_dir: Path,
