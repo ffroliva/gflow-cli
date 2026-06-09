@@ -36,6 +36,12 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   logger elides large reference-field values so Flow-built image bytes can't leak into
   logs.
 
+### Internal
+
+- Bump dev/CI `ruff` to `0.15.16` (both the `dev` extra and the `dependency-groups`
+  pin; supersedes Dependabot PR #165, which updated only the soft `>=` extra and not
+  the hard `==` group pin CI actually uses). `ruff check` / `format --check` clean.
+
 ## [0.14.0] — 2026-06-07
 
 ### Added
