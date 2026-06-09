@@ -48,6 +48,17 @@ def profile_subdir(home: Path, name: str) -> Path:
     return home / f"profile_{name}"
 
 
+def get_cookies_path(pdir: Path) -> Path:
+    for candidate in (
+        pdir / "Default" / "Network" / "Cookies",  # Chrome 130+ (new location)
+        pdir / "Default" / "Cookies",  # Chrome < 130 / legacy
+        pdir / "Cookies",  # Playwright bundled Chromium
+    ):
+        if candidate.exists():
+            return candidate
+    raise FileNotFoundError
+
+
 def config_file(home: Path) -> Path:
     """Where the per-user config TOML lives."""
     return home / "config.toml"

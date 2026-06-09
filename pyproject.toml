@@ -27,6 +27,7 @@ dependencies = [
     "platformdirs>=4.0.0",
     "structlog>=24.0.0",
     "tenacity>=8.2",
+    "browser-cookie3>=0.20.1",
 ]
 
 [project.optional-dependencies]

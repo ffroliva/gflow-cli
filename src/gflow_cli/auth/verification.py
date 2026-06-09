@@ -22,6 +22,7 @@ import structlog
 
 from gflow_cli.config import get_settings
 from gflow_cli.errors import SecurityError
+from gflow_cli.paths import get_cookies_path
 
 if TYPE_CHECKING:
     from pathlib import Path
@@ -212,6 +213,79 @@ async def verify_flow_session(
                 status_code, body = await _fetch_session(ctx)
             finally:
                 await ctx.close()
+    # Fail-closed: any failure here yields VERIFICATION_ERROR, never AUTHENTICATED.
+    except Exception as exc:
+        logger.warning("auth_flow_session_probe_error", source=source, error=type(exc).__name__)
+        return FlowSessionStatus(
+            outcome=FlowSessionOutcome.VERIFICATION_ERROR,
+            user_email=None,
+            source=source,
+        )
+
+    result = evaluate_session_response(
+        status_code,
+        body,
+        google_session=google_session,
+        source=source,
+    )
+    if result.outcome is FlowSessionOutcome.VERIFICATION_ERROR:
+        # Observable durability signal — distinguishes a moved/changed endpoint
+        # from a flaky link. The status code is safe to log; the body is not.
+        logger.warning(
+            "auth_flow_session_unexpected_response",
+            source=source,
+            status_code=status_code,
+        )
+    return result
+
+
+async def verify_flow_profile(
+    profile_dir: Path,
+    *,
+    source: str = "chrome",
+) -> FlowSessionStatus:
+    home = get_settings().home.resolve()
+    try:
+        profile_dir.resolve(strict=True).relative_to(home)
+    except (ValueError, OSError):
+        msg = f"Profile directory {profile_dir} is outside of GFLOW_CLI_HOME ({home})."
+        raise SecurityError(
+            msg,
+        ) from None
+
+    status_code: int
+    body: str
+    try:
+        # type: ignore[import-untyped]
+        import browser_cookie3  # pyright: ignore[reportMissingTypeStubs]
+        import httpx
+
+        cookies_file = get_cookies_path(profile_dir)
+        # Unable to get key for cookie decryption
+        key_file = profile_dir.joinpath(r"Local State")
+        _cookies = browser_cookie3.chrome(
+            cookie_file=cookies_file,
+            key_file=key_file if key_file.exists() else None,
+        )
+
+        google_session = any(c.name == "SAPISID" for c in _cookies)
+        headers = {
+            "accept": "*/*",
+            "accept-language": "ar,en-US;q=0.9,en;q=0.8",
+            "cache-control": "no-cache",
+            "pragma": "no-cache",
+            "referer": "https://labs.google/fx/ar/tools/flow",
+        }
+
+        async with httpx.AsyncClient(
+            cookies=_cookies,
+            headers=headers,
+            follow_redirects=True,
+        ) as client:
+            response = await client.get(SESSION_API_URL)
+            status_code = response.status_code
+            body = response.text
+
     # Fail-closed: any failure here yields VERIFICATION_ERROR, never AUTHENTICATED.
     except Exception as exc:
         logger.warning("auth_flow_session_probe_error", source=source, error=type(exc).__name__)
