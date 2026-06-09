@@ -10,6 +10,7 @@ from gflow_cli.auth.verification import (
     FlowSessionOutcome,
     FlowSessionStatus,  # noqa: F401 — imported to assert it's part of the public API
     evaluate_session_response,
+    verify_flow_profile,
     verify_flow_session,
 )
 from gflow_cli.errors import SecurityError
@@ -157,6 +158,21 @@ class TestVerifyFlowSession:
         ):
             mock_settings.return_value.home = gflow_home
             status = await verify_flow_session(profile, channel="chrome", source="chrome")
+        assert status.outcome is FlowSessionOutcome.AUTHENTICATED
+        assert status.user_email == "test.user@example.com"
+        mock_ctx.close.assert_awaited_once()
+
+    @pytest.mark.asyncio
+    async def test_authenticated_profile_httpx(self, gflow_home: Path) -> None:
+        profile = gflow_home / "profile_default"
+        profile.mkdir()
+        mock_ap, mock_ctx = _build_verify_mock(response_body=AUTHENTICATED_BODY)
+        with (
+            patch("gflow_cli.auth.verification.get_settings") as mock_settings,
+            patch("gflow_cli.auth.strategies.async_playwright", mock_ap),
+        ):
+            mock_settings.return_value.home = gflow_home
+            status = await verify_flow_profile(profile)
         assert status.outcome is FlowSessionOutcome.AUTHENTICATED
         assert status.user_email == "test.user@example.com"
         mock_ctx.close.assert_awaited_once()

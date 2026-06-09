@@ -263,7 +263,8 @@ async def verify_flow_profile(
         cookies_file = get_cookies_path(profile_dir)
         # Unable to get key for cookie decryption
         key_file = profile_dir.joinpath(r"Local State")
-        _cookies = browser_cookie3.chrome(
+
+        _cookies = browser_cookie3.chrome( # pyright: ignore[reportUnknownMemberType]
             cookie_file=cookies_file,
             key_file=key_file if key_file.exists() else None,
         )
