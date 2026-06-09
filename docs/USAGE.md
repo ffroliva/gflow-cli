@@ -131,6 +131,13 @@ Options:
                             Aspect ratio.                     [default: 9:16]
   -n, --count INTEGER       How many images to generate (1-4).  [default: 1]
   --out PATH                Output directory (see "Output paths" below).
+  --project ID              Generate in this EXISTING Flow project instead of a
+                            scratch project. Required to reference locked
+                            entities/assets in that project. Single-prompt only.
+  --reference-entity ID     Flow CHARACTER entity id to reference for character
+                            consistency (repeatable; must live in --project).
+                            Single-prompt only.
+  --reference-entity-name N Display name paired with --reference-entity.
   --profile NAME            Profile name (overrides default).
 ```
 
@@ -212,6 +219,10 @@ Options:
                             Aspect ratio.                     [default: 9:16]
   -n, --count INTEGER       How many images to generate (1-4).  [default: 1]
   --out PATH                Output directory (same semantics as t2i).
+  --project ID              Generate in this EXISTING Flow project (skip scratch).
+  --reference-entity ID     Flow CHARACTER entity id to reference (repeatable;
+                            must live in --project). Counts toward the ref cap.
+  --reference-entity-name N Display name paired with --reference-entity.
   --profile NAME            Profile name (overrides default).
 ```
 
@@ -247,6 +258,40 @@ A 2-image run produces files numbered `_1.png`, `_2.png`:
 ./variants/<media_name_a>_1.png
 ./variants/<media_name_b>_2.png
 ```
+
+## Character-consistent images (entity references)
+
+`--reference-entity` makes `image t2i`/`i2i` reference a locked Flow **CHARACTER
+entity** (minted via `gflow character create`) so the generated subject stays
+on-model across shots — no per-shot prompt wrangling or fragile image refs.
+
+How it works: entities are **project-scoped**, so you must generate **in the
+project that owns them** via `--project <id>` (this also means no throwaway
+scratch project is created). The CLI attaches each entity through the Flow editor's
+resource picker; the submit then carries `referenceEntities`, exactly like the
+video R2V path. Entities count toward the same per-model reference cap as `--ref`
+images. `--reference-entity` / `--project` are **single-prompt only**.
+
+For a *pure* character reference (no starting image) use `t2i` — `i2i` still
+requires at least one `--ref`.
+
+```bash
+# One locked character, consistent across runs (t2i = no image ref needed)
+gflow image t2i "Aria explores a neon market, full body" \
+  --project 7fa97443-… --reference-entity 8a77f8cb-… --reference-entity-name Aria \
+  --model nano2 --aspect 9:16 -n 3
+
+# Several characters in one scene (each --reference-entity repeatable)
+gflow image t2i "Aria and Drako meet at the gate" --project 7fa97443-… \
+  --reference-entity 8a77f8cb-… --reference-entity 4ed5cb7f-…
+
+# i2i: a starting image PLUS an entity for the character
+gflow image i2i "place this hero in a snowy pass" --ref hero.png \
+  --project 7fa97443-… --reference-entity 8a77f8cb-…
+```
+
+> Ids are validated at the CLI boundary (letters/digits/hyphens, ≤128 chars).
+> The entity must already exist in `--project` (see `gflow character create`).
 
 ## `gflow image batch`
 
