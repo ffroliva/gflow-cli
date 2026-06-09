@@ -318,6 +318,22 @@ VIDEO_SUBMODE_SELECTORS: dict[str, tuple[str, ...]] = {
     ),
 }
 
+
+def zip_entity_refs(
+    entity_ids: tuple[str, ...],
+    entity_names: tuple[str, ...],
+) -> list[tuple[str, str]]:
+    """Pair character entity ids with display names for the Personagens picker.
+
+    Tiles are addressed by id (``data-tile-id="fe_id_<id>"``); the name is only a
+    human label for logs/error screenshots. When fewer names than ids are given,
+    the id stands in as its own name so the pairing never drops an entity. Shared
+    by the image (`ui_automation`) and video (R2V) entity-attach paths.
+    """
+    names = list(entity_names)
+    return [(eid, names[i] if i < len(names) else eid) for i, eid in enumerate(entity_ids)]
+
+
 # The editor SPA's ready anchor — the Slate prompt textbox. The /project/ URL
 # nav fires before the UI mounts; this is the readiness gate (used by
 # _wait_video_editor_ready and asserted in its test).
@@ -1585,14 +1601,9 @@ class VideoGenerationMixin:
                 )
         elif request.mode is Mode.R2V:
             if request.reference_entities:
-                names = request.reference_entity_names or request.reference_entities
-                entities = [
-                    (entity_id, names[i] if i < len(names) else entity_id)
-                    for i, entity_id in enumerate(request.reference_entities)
-                ]
                 await VideoGenerationMixin._attach_character_entities(
                     page,
-                    entities,
+                    zip_entity_refs(request.reference_entities, request.reference_entity_names),
                     out_dir=out_dir,
                 )
             if request.reference_images:

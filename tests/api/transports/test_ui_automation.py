@@ -33,11 +33,11 @@ from gflow_cli.api.transports.ui_automation import (
     UiAutomationTransport,
     _count_tabs_locator,  # noqa: PLC2701
     _summarize_batch_request_body,  # noqa: PLC2701
-    _zip_entities,  # noqa: PLC2701
 )
 from gflow_cli.api.transports.ui_automation_video import (
     COMPOSER_AGENT_TOGGLE_SELECTOR,
     VideoGenerationMixin,
+    zip_entity_refs,
 )
 from gflow_cli.errors import ContentPolicyError, WafRejectionError
 
@@ -1212,13 +1212,16 @@ class TestGenerateImages:
 
 class TestZipEntities:
     def test_pairs_ids_with_names(self) -> None:
-        assert _zip_entities(("a", "b"), ("Stacky", "Drako")) == [("a", "Stacky"), ("b", "Drako")]
+        assert zip_entity_refs(("a", "b"), ("Stacky", "Drako")) == [
+            ("a", "Stacky"),
+            ("b", "Drako"),
+        ]
 
     def test_name_falls_back_to_id_when_missing(self) -> None:
-        assert _zip_entities(("a", "b"), ("Stacky",)) == [("a", "Stacky"), ("b", "b")]
+        assert zip_entity_refs(("a", "b"), ("Stacky",)) == [("a", "Stacky"), ("b", "b")]
 
     def test_empty(self) -> None:
-        assert _zip_entities((), ()) == []
+        assert zip_entity_refs((), ()) == []
 
 
 class TestSummarizeBatchRequestBody:
@@ -1247,9 +1250,7 @@ class TestSummarizeBatchRequestBody:
         assert out["reference_fields"]["referenceEntities"] == [{"entityId": "ent-1"}]
 
     def test_no_reference_fields(self) -> None:
-        body = json.dumps(
-            {"requests": [{"structuredPrompt": {"parts": []}, "imageInputs": []}]}
-        )
+        body = json.dumps({"requests": [{"structuredPrompt": {"parts": []}, "imageInputs": []}]})
         out = _summarize_batch_request_body(body)
         assert out["present"] is True
         assert out["mentions_reference_entities"] is False
@@ -1260,6 +1261,71 @@ class TestSummarizeBatchRequestBody:
         assert out["present"] is True
         assert out["mentions_reference_entities"] is True
         assert "request0_keys" not in out
+
+    def test_large_reference_field_is_elided_not_dumped(self) -> None:
+        # If Flow names an i2i image field `reference*`, its base64 bytes must NOT
+        # be logged verbatim — they get elided to a length marker.
+        big = "A" * 5000
+        body = json.dumps({"requests": [{"referenceImage": big, "imageInputs": []}]})
+        out = _summarize_batch_request_body(body)
+        assert out["reference_fields"]["referenceImage"] != big
+        assert "elided" in out["reference_fields"]["referenceImage"]
+
+
+class TestElideLargeValue:
+    def test_small_value_passes_through(self) -> None:
+        from gflow_cli.api.transports.ui_automation import _elide_large_value
+
+        v = [{"entityId": "ent-1"}]
+        assert _elide_large_value(v) == v
+
+    def test_large_value_is_elided(self) -> None:
+        from gflow_cli.api.transports.ui_automation import _elide_large_value
+
+        out = _elide_large_value("Z" * 5000)
+        assert isinstance(out, str) and "elided" in out
+
+
+class TestAttachBatchRequestLogger:
+    """The request-body logger must: fire only for batchGenerateImages, never let
+    a post_data failure break generation, and detach idempotently."""
+
+    class _Req:
+        def __init__(self, url: str, *, raises: bool = False, post: str | None = None) -> None:
+            self.url = url
+            self._raises = raises
+            self._post = post
+
+        @property
+        def post_data(self) -> str | None:
+            if self._raises:
+                raise RuntimeError("post_data unavailable")
+            return self._post
+
+    def test_registers_fires_safely_and_detaches_once(self) -> None:
+        page = MagicMock()
+        handlers: dict[str, object] = {}
+        page.on.side_effect = lambda event, fn: handlers.__setitem__(event, fn)
+
+        detach = UiAutomationTransport._attach_batch_request_logger(page, project_id="P")
+        on_request = handlers["request"]
+        assert callable(on_request)
+
+        # Non-matching URL: must early-return WITHOUT touching post_data (raises if touched).
+        on_request(self._Req("https://x/other", raises=True))
+        # Matching URL but post_data raises: must be swallowed (generation unaffected).
+        on_request(self._Req("https://x/flowMedia:batchGenerateImages", raises=True))
+        # Matching URL with a real body: must not raise.
+        on_request(
+            self._Req(
+                "https://x/flowMedia:batchGenerateImages",
+                post=json.dumps({"requests": [{"referenceEntities": [{"entityId": "e"}]}]}),
+            )
+        )
+
+        detach()
+        detach()  # idempotent
+        page.remove_listener.assert_called_once_with("request", on_request)
 
 
 # ---------------------------------------------------------------------------
