@@ -4,9 +4,9 @@
 
 ## Current release
 
-**v0.13.0 — alpha.** High-fidelity CLI hardening and term alignment. **`gflow video i2v`** now uses the canonical `--initial-frame` and `--end-frame` flags (matching Flow's UI labels), with robust Click greedy-fill protection and positional backward compatibility. **In-project governance** (ruff T20, materiality classification) is now active to harden the AI-driven development flow. This release also refactors the **`character_create` saga** for improved type safety and documentation. Live-verified end-to-end on 2026-06-04 with the new flags and interpolation paths.
+**v0.15.0 — alpha.** **Character-consistent images via entity references.** `gflow image t2i/i2i` can now reference locked Flow CHARACTER entities (`--reference-entity <id>`, repeatable) and generate in an existing project (`--project <id>`) where those entities live — entities attach through the editor's Personagens picker and ride the submit as `referenceEntities` (confirmed against the live API; the body builder serializes them for headless transports too). Live-verified 2026-06-08: a 3-frame Dragon-Hook smoke rendered drift-free with all three characters on-model. LLM-council-reviewed (security/correctness/dedup) before merge. Carries forward the v0.14.0 `gflow movie` line (multi-scene, character-consistent video).
 
-**Develop (unreleased, post-v0.13.0):** *(empty — develop is the staging branch for the next release).*
+**Develop (unreleased, post-v0.15.0):** *(empty — develop is the staging branch for the next release).*
 
 ## Milestone history
 
@@ -52,6 +52,8 @@
 | `gflow character rm` — free character deletion (#150) | ✅ done (v0.13.0) |
 | Align I2V CLI flags with Flow UI Labels (`--initial-frame`) (#122) | ✅ done (v0.13.0) |
 | In-project governance (ruff T20, materiality Classifier) | ✅ done (v0.13.0) |
+| `gflow movie` — multi-scene, character-consistent video from a TOML manifest (entity reuse, resumable, handoff manifest) | ✅ done (v0.14.0) |
+| `gflow image t2i/i2i` — reference locked CHARACTER entities (`--reference-entity`) + `--project` for character-consistent stills | ✅ done (v0.15.0) |
 | `gflow character` — reusable Flow Character entities (`create`/`list`/`show`/`voices`), persist-before-spend saga (#145) | ✅ done (v0.12.0) |
 | `gflow scene` — Add Clip / Scenes compose + credit-free server-side extended video (`runVideoFxConcatenation`) | ✅ done (v0.12.0) |
 | `gflow video chain` — last-frame I2V chaining from a JSONL manifest (`--dry-run`/`--max-links`/`--resume-from`) | ✅ done (v0.12.0) |
