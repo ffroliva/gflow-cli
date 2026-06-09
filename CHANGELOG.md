@@ -7,6 +7,41 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+## [0.15.0] — 2026-06-09
+
+### Added
+
+- **`gflow image` can reference locked CHARACTER entities** for character-consistent
+  stills. New `--reference-entity <id>` (repeatable) + `--reference-entity-name` on
+  `image t2i` / `i2i`, plus `--project <id>` to generate in an EXISTING project (where
+  the entities live) instead of a throwaway scratch project. Entities attach through
+  the editor's **Personagens picker** and ride the submit as `referenceEntities`
+  (confirmed against the live API); `_build_batch_generate_images_body` serializes them
+  so non-UI/headless transports get parity too. Entities count toward the per-model
+  reference cap. `--project` / `--reference-entity` are single-prompt only; for a pure
+  character reference use `t2i` (`i2i` still needs a `--ref`). See `docs/USAGE.md` →
+  "Character-consistent images (entity references)".
+
+### Fixed
+
+- `--project` no longer overwrites an existing project's stored title/source in the
+  local history DB (the recorder preserves the curated title for non-created projects).
+
+### Security
+
+- `--project` / `--reference-entity` ids are validated at the CLI boundary
+  (`[A-Za-z0-9-]{1,128}`), closing an unvalidated `page.goto` navigation path
+  (`project_editor_url` lacked the allowlist its sibling routes enforce) and a
+  CSS-selector injection vector (`data-tile-id='fe_id_<id>'`). The request-body debug
+  logger elides large reference-field values so Flow-built image bytes can't leak into
+  logs.
+
+### Internal
+
+- Bump dev/CI `ruff` to `0.15.16` (both the `dev` extra and the `dependency-groups`
+  pin; supersedes Dependabot PR #165, which updated only the soft `>=` extra and not
+  the hard `==` group pin CI actually uses). `ruff check` / `format --check` clean.
+
 ## [0.14.0] — 2026-06-07
 
 ### Added
@@ -1434,7 +1469,8 @@ shell-script template that branches on these codes.
 
 First skeleton. Not functional end-to-end yet.
 
-[Unreleased]: https://github.com/ffroliva/gflow-cli/compare/v0.14.0...HEAD
+[Unreleased]: https://github.com/ffroliva/gflow-cli/compare/v0.15.0...HEAD
+[0.15.0]: https://github.com/ffroliva/gflow-cli/compare/v0.14.0...v0.15.0
 [0.14.0]: https://github.com/ffroliva/gflow-cli/compare/v0.13.0...v0.14.0
 [0.13.0]: https://github.com/ffroliva/gflow-cli/compare/v0.12.0...v0.13.0
 [0.12.0]: https://github.com/ffroliva/gflow-cli/compare/v0.11.0...v0.12.0
