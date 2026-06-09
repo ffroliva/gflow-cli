@@ -92,6 +92,43 @@ _UUID_RE = re.compile(
 
 _CREATING_PROJECT_MSG = "  Creating project..."
 _T2I_PROJECT_TITLE = "gflow-cli t2i"
+_I2I_PROJECT_TITLE = "gflow-cli i2i"
+
+# Flow project / character-entity ids interpolated into navigation URLs and UI
+# selectors. Mirror routes._PROJECT_ID_RE so untrusted --project / --reference-entity
+# values are rejected at the CLI boundary (closes the page.goto + CSS-selector
+# injection gaps before the value ever reaches the browser).
+_FLOW_ID_RE = re.compile(r"^[A-Za-z0-9\-]{1,128}$")
+
+
+def _validate_project_id(
+    _ctx: click.Context, param: click.Parameter, value: str | None
+) -> str | None:
+    """Reject a --project id that isn't alphanumeric/hyphen (1-128 chars).
+
+    The value is interpolated into the editor navigation URL (`page.goto`) before
+    any other guard runs, so validate here at the boundary.
+    """
+    if value is not None and not _FLOW_ID_RE.fullmatch(value):
+        msg = "project id must be 1-128 chars of letters, digits, or hyphens."
+        raise click.BadParameter(msg, param=param)
+    return value
+
+
+def _validate_entity_ids(
+    _ctx: click.Context, param: click.Parameter, value: tuple[str, ...]
+) -> tuple[str, ...]:
+    """Reject any --reference-entity id that isn't alphanumeric/hyphen.
+
+    Entity ids are interpolated into a CSS selector (`data-tile-id='fe_id_<id>'`);
+    the allowlist also blocks quote/metacharacter selector-breakage.
+    """
+    for v in value:
+        if not _FLOW_ID_RE.fullmatch(v):
+            msg = f"invalid --reference-entity id {v!r}: expected 1-128 chars of [A-Za-z0-9-]."
+            raise click.BadParameter(msg, param=param)
+    return value
+
 
 console = Console()
 logger = structlog.get_logger(__name__)
@@ -154,25 +191,29 @@ async def _resolve_project(
     project_id: str | None,
     title: str,
     as_json: bool,
-) -> ProjectInfo:
+) -> tuple[ProjectInfo, bool]:
     """Resolve the project to generate in.
 
     When ``project_id`` is given, generation runs in that EXISTING project (so
     its locked entities/assets are visible) and no scratch project is created —
     this is what ``--project`` buys. When it is ``None`` the historical behavior
-    holds: create a fresh ``gflow-cli ...`` project. Either way a
-    :class:`ProjectInfo` is returned so callers and the recorder share one shape.
+    holds: create a fresh ``gflow-cli ...`` project.
+
+    Returns ``(project, created)``. ``created`` is False for an existing
+    ``--project`` so the recorder does NOT overwrite that project's real title /
+    source in the local history DB (the synthesized ``title`` here is only a
+    placeholder for the created path).
     """
     if project_id is not None:
         if not as_json:
             console.print(f"  Project: [dim]{project_id}[/dim] [dim](existing)[/dim]")
-        return ProjectInfo(project_id=project_id, title=title)
+        return ProjectInfo(project_id=project_id, title=title), False
     if not as_json:
         console.print(_CREATING_PROJECT_MSG)
     project = await client.create_project(title=title)
     if not as_json:
         console.print(f"  Project: [dim]{project.project_id}[/dim]")
-    return project
+    return project, True
 
 
 # ---------------------------------------------------------------------------
@@ -387,6 +428,7 @@ async def _run_upload(
     "--project",
     "project_id",
     default=None,
+    callback=_validate_project_id,
     help=(
         "Generate in this existing Flow project id instead of creating a scratch "
         "project. Required to reference locked entities/assets that live in a "
@@ -397,6 +439,7 @@ async def _run_upload(
     "--reference-entity",
     "reference_entities",
     multiple=True,
+    callback=_validate_entity_ids,
     help=(
         "Flow CHARACTER entity id to reference for consistency (repeatable). "
         "The entity must live in the --project you target. Single-prompt only."
@@ -637,7 +680,7 @@ async def _run_t2i(
         ) as client:
             # Title is a `gflow-cli ...` prefix per project convention (post-rename a02684f).
             # cli_video.py's _run_t2v / _run_i2v don't currently set a title — tracked separately.
-            project = await _resolve_project(
+            project, project_created = await _resolve_project(
                 client, project_id=project_id, title=_T2I_PROJECT_TITLE, as_json=as_json
             )
             if not as_json:
@@ -682,6 +725,7 @@ async def _run_t2i(
                     profile_name=profile_name,
                     profile_dir=profile_dir,
                     project=project,
+                    project_created=project_created,
                     request=req,
                     images=images,
                     saved_paths=saved_paths,
@@ -937,6 +981,7 @@ def batch(
     "--project",
     "project_id",
     default=None,
+    callback=_validate_project_id,
     help=(
         "Generate in this existing Flow project id instead of creating a scratch "
         "project. Required to reference locked entities/assets that live in a "
@@ -947,6 +992,7 @@ def batch(
     "--reference-entity",
     "reference_entities",
     multiple=True,
+    callback=_validate_entity_ids,
     help=(
         "Flow CHARACTER entity id to reference for consistency (repeatable). "
         "The entity must live in the --project you target."
@@ -1053,8 +1099,8 @@ async def _run_i2i(
         ) as client:
             # Title is a `gflow-cli ...` prefix per project convention (post-rename a02684f).
             # cli_video.py's _run_t2v / _run_i2v don't currently set a title — tracked separately.
-            project = await _resolve_project(
-                client, project_id=project_id, title="gflow-cli i2i", as_json=as_json
+            project, project_created = await _resolve_project(
+                client, project_id=project_id, title=_I2I_PROJECT_TITLE, as_json=as_json
             )
 
             # Local-file refs are attached through the editor's media dialog by the
@@ -1118,6 +1164,7 @@ async def _run_i2i(
                     profile_name=profile_name,
                     profile_dir=profile_dir,
                     project=project,
+                    project_created=project_created,
                     request=req,
                     images=images,
                     saved_paths=saved_paths,
@@ -1144,7 +1191,7 @@ async def _run_i2i(
 
 def _print_i2i_summary(images: list[GeneratedImage], saved_paths: list[Path]) -> None:
     """Render a Rich table of generated images and where they landed."""
-    table = Table(title="gflow-cli i2i")
+    table = Table(title=_I2I_PROJECT_TITLE)
     table.add_column("media_name", overflow="fold")
     table.add_column("seed", justify="right")
     table.add_column("dimensions")
