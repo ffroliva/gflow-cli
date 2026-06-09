@@ -31,6 +31,7 @@ from gflow_cli.api.transports._common import extract_project_id
 from gflow_cli.api.transports.ui_automation_video import (
     MODE_SWITCH_TRIGGER_SELECTORS,
     VideoGenerationMixin,
+    zip_entity_refs,
 )
 from gflow_cli.errors import (
     AuthExpiredError,
@@ -518,22 +519,25 @@ def _images_from_responses(
     return images, first_error_status, first_error_route
 
 
-def _zip_entities(
-    entity_ids: tuple[str, ...],
-    entity_names: tuple[str, ...],
-) -> list[tuple[str, str]]:
-    """Pair entity ids with display names for the Personagens picker.
+_REF_VALUE_MAX_CHARS = 512
 
-    The picker addresses tiles by id (``data-tile-id="fe_id_<id>"``); the name is
-    only a human label used in logs / error screenshots. When fewer names than
-    ids are given, the id stands in as its own name so the pairing never drops an
-    entity.
+
+def _elide_large_value(value: Any) -> Any:
+    """Return *value* verbatim when small, else a length-only redaction marker.
+
+    Guards the request-body logger against dumping large/secret payloads: if Flow
+    names an i2i image field `reference*`/`*entity*`, its base64 bytes would match
+    the reference-field filter and be logged in full. Small fields like
+    `referenceEntities` (a short list of `{entityId}`) pass through; anything
+    serializing beyond the cap is elided to a `<elided N chars>` marker.
     """
-    names = list(entity_names)
-    return [
-        (eid, names[i] if i < len(names) else eid)
-        for i, eid in enumerate(entity_ids)
-    ]
+    try:
+        serialized = json.dumps(value, default=str)
+    except (TypeError, ValueError):
+        return f"<unserializable {type(value).__name__}>"
+    if len(serialized) > _REF_VALUE_MAX_CHARS:
+        return f"<elided {len(serialized)} chars>"
+    return value
 
 
 def _summarize_batch_request_body(post_data: str | None) -> dict[str, Any]:
@@ -568,7 +572,7 @@ def _summarize_batch_request_body(post_data: str | None) -> dict[str, Any]:
         first = cast("dict[str, Any]", reqs[0])
         summary["request0_keys"] = sorted(first.keys())
         ref_bits = {
-            k: v
+            k: _elide_large_value(v)
             for k, v in first.items()
             if "reference" in k.lower() or "entity" in k.lower()
         }
@@ -1928,7 +1932,7 @@ class UiAutomationTransport(VideoGenerationMixin):
         if request.reference_entities:
             await self._attach_character_entities(
                 page,
-                _zip_entities(request.reference_entities, request.reference_entity_names),
+                zip_entity_refs(request.reference_entities, request.reference_entity_names),
                 out_dir=out_dir,
             )
 
