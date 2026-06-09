@@ -166,6 +166,19 @@ class TestGenerateImageRequest:
         req = GenerateImageRequest(prompt="test", model=Model.NARWHAL, aspect=Aspect.PORTRAIT)
         assert req.recaptcha_token == ""
 
+    def test_accepts_reference_entities(self) -> None:
+        req = GenerateImageRequest(prompt="x", reference_entities=("ent-1", "ent-2"))
+        assert req.reference_entities == ("ent-1", "ent-2")
+
+    def test_accepts_reference_entity_names(self) -> None:
+        req = GenerateImageRequest(prompt="x", reference_entity_names=("Stacky", "Drako"))
+        assert req.reference_entity_names == ("Stacky", "Drako")
+
+    def test_reference_entities_default_empty(self) -> None:
+        req = GenerateImageRequest(prompt="x")
+        assert req.reference_entities == ()
+        assert req.reference_entity_names == ()
+
 
 class TestReferenceCap:
     def test_cap_values(self) -> None:
@@ -208,8 +221,53 @@ class TestReferenceCap:
         )
         assert len(req.refs) == MAX_IMAGE_REFERENCES
 
+    def test_cap_counts_entities_with_image_refs(self) -> None:
+        # Character entities count toward the SAME per-model cap as image refs.
+        with pytest.raises(ValueError, match="at most 3"):
+            GenerateImageRequest(
+                prompt="mix",
+                model=Model.IMAGEN_3_5,
+                refs=(ImageRef("a"), ImageRef("b")),
+                reference_entities=("ent-1", "ent-2"),
+            )
+
+    def test_entities_within_cap_ok(self) -> None:
+        req = GenerateImageRequest(
+            prompt="ok",
+            model=Model.IMAGEN_3_5,
+            reference_entities=("ent-1", "ent-2", "ent-3"),
+        )
+        assert len(req.reference_entities) == 3
+
 
 class TestBuildBatchGenerateImagesBody:
+    def test_includes_reference_entities_when_present(self) -> None:
+        # Shape confirmed by the 2026-06-08 live capture: the image submit
+        # carries `referenceEntities: [{"entityId": <id>}]`.
+        built = _build_batch_generate_images_body(
+            GenerateImageRequest(prompt="x", reference_entities=("ent-1", "ent-2")),
+            project_id="P",
+            batch_id="B",
+            seed=1,
+            session_id="S",
+        )
+        assert built["requests"][0]["referenceEntities"] == [
+            {"entityId": "ent-1"},
+            {"entityId": "ent-2"},
+        ]
+
+    def test_omits_reference_entities_when_absent(self) -> None:
+        # No entities → the key must not appear (keeps plain t2i/i2i bodies
+        # byte-identical to the captured samples).
+        built = _build_batch_generate_images_body(
+            GenerateImageRequest(prompt="x"),
+            project_id="P",
+            batch_id="B",
+            seed=1,
+            session_id="S",
+        )
+        assert "referenceEntities" not in built["requests"][0]
+
     def test_matches_sample_06_t2i(self) -> None:
         sample = _load_sample("06_batchGenerateImages.json")
         sample_body = sample["request_body_parsed"]
