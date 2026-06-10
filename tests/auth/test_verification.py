@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 import json
+import sys
 from pathlib import Path
 from unittest.mock import AsyncMock, MagicMock, patch
 
@@ -166,16 +167,96 @@ class TestVerifyFlowSession:
     async def test_authenticated_profile_httpx(self, gflow_home: Path) -> None:
         profile = gflow_home / "profile_default"
         profile.mkdir()
-        mock_ap, mock_ctx = _build_verify_mock(response_body=AUTHENTICATED_BODY)
+
+        fake_bc3 = MagicMock()
+        fake_bc3.chrome.return_value = [MagicMock(name="SAPISID")]
+
+        fake_resp = MagicMock(status_code=200, text=AUTHENTICATED_BODY)
+        fake_client = MagicMock()
+        fake_client.__aenter__ = AsyncMock(return_value=fake_client)
+        fake_client.__aexit__ = AsyncMock(return_value=False)
+        fake_client.get = AsyncMock(return_value=fake_resp)
+
+        fake_httpx = MagicMock()
+        fake_httpx.AsyncClient.return_value = fake_client
+
         with (
             patch("gflow_cli.auth.verification.get_settings") as mock_settings,
-            patch("gflow_cli.auth.strategies.async_playwright", mock_ap),
+            patch(
+                "gflow_cli.auth.verification.get_cookies_path",
+                return_value=Path("/fake/Cookies"),
+            ),
+            patch.dict(sys.modules, {"browser_cookie3": fake_bc3, "httpx": fake_httpx}),
         ):
             mock_settings.return_value.home = gflow_home
             status = await verify_flow_profile(profile)
+
         assert status.outcome is FlowSessionOutcome.AUTHENTICATED
         assert status.user_email == "test.user@example.com"
-        mock_ctx.close.assert_awaited_once()
+
+    @pytest.mark.asyncio
+    async def test_profile_outside_home_raises_security_error_httpx(self, gflow_home: Path) -> None:
+        outside = gflow_home.parent / "outside_profile"
+        outside.mkdir()
+        with patch("gflow_cli.auth.verification.get_settings") as mock_settings:
+            mock_settings.return_value.home = gflow_home
+            with pytest.raises(SecurityError):
+                await verify_flow_profile(outside)
+
+    @pytest.mark.asyncio
+    async def test_verification_error_on_browser_cookie_permission_error(
+        self, gflow_home: Path
+    ) -> None:
+        profile = gflow_home / "profile_default"
+        profile.mkdir()
+
+        fake_bc3 = MagicMock()
+        fake_bc3.chrome.side_effect = PermissionError("Permission denied")
+
+        fake_httpx = MagicMock()
+
+        with (
+            patch("gflow_cli.auth.verification.get_settings") as mock_settings,
+            patch(
+                "gflow_cli.auth.verification.get_cookies_path",
+                return_value=Path("/fake/Cookies"),
+            ),
+            patch.dict(sys.modules, {"browser_cookie3": fake_bc3, "httpx": fake_httpx}),
+        ):
+            mock_settings.return_value.home = gflow_home
+            status = await verify_flow_profile(profile)
+
+        assert status.outcome is FlowSessionOutcome.VERIFICATION_ERROR
+
+    @pytest.mark.asyncio
+    async def test_verification_error_on_browser_cookie_decryption_error(
+        self, gflow_home: Path
+    ) -> None:
+        profile = gflow_home / "profile_default"
+        profile.mkdir()
+
+        # Define a mock exception mimicking browser_cookie3.BrowserCookieError
+        class BrowserCookieError(Exception):
+            pass
+
+        fake_bc3 = MagicMock()
+        fake_bc3.BrowserCookieError = BrowserCookieError
+        fake_bc3.chrome.side_effect = BrowserCookieError("Unable to get key for cookie decryption")
+
+        fake_httpx = MagicMock()
+
+        with (
+            patch("gflow_cli.auth.verification.get_settings") as mock_settings,
+            patch(
+                "gflow_cli.auth.verification.get_cookies_path",
+                return_value=Path("/fake/Cookies"),
+            ),
+            patch.dict(sys.modules, {"browser_cookie3": fake_bc3, "httpx": fake_httpx}),
+        ):
+            mock_settings.return_value.home = gflow_home
+            status = await verify_flow_profile(profile)
+
+        assert status.outcome is FlowSessionOutcome.VERIFICATION_ERROR
 
     @pytest.mark.asyncio
     async def test_google_session_only(self, gflow_home: Path) -> None:

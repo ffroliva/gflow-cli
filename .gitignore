@@ -89,4 +89,3 @@ worktrees/
 
 # Understand Anything (local knowledge graph)
 .understand-anything/
-uv.lock
