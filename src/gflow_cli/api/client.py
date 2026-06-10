@@ -293,7 +293,7 @@ class FlowApiClient:
                 "--no-sandbox",
                 "--password-store=basic",
             ],
-            "args": ["--disable-blink-features=AutomationControlled"],
+            "args": ["--disable-blink-features=AutomationControlled", "--disable-dev-shm-usage"],
         }
 
     async def _enter_setup(self) -> None:
