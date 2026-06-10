@@ -76,10 +76,12 @@ The `skills/` directory ships installable agent skill docs in plain Markdown wit
 | `gflow-cli` | [`skills/gflow-cli/SKILL.md`](skills/gflow-cli/SKILL.md) | User wants to run any `gflow` command — auth, T2V, I2V, T2I, I2I, batch |
 | `predict` | [`skills/predict/SKILL.md`](skills/predict/SKILL.md) | Pre-implementation adversarial analysis before any high-stakes change |
 | `scenario` | [`skills/scenario/SKILL.md`](skills/scenario/SKILL.md) | Edge-case explorer after a predict GO/CAUTION |
+| `plan` | [`skills/plan/SKILL.md`](skills/plan/SKILL.md) | Create a structured task-by-task implementation plan for a feature |
+| `status` | [`skills/status/SKILL.md`](skills/status/SKILL.md) | Show current plan state, progress, and next unchecked task |
 | `pr-council-review` | [`skills/pr-council-review/SKILL.md`](skills/pr-council-review/SKILL.md) | Multi-dimensional PR council review |
 
 **Cursor / Aider / Codex / Gemini CLI:** paste or include the relevant `SKILL.md` in your system context.
-**Claude Code:** symlink `skills/gflow-cli` to `~/.claude/skills/gflow-cli` to register the skill; the `/gflow:` slash commands (in `.claude/commands/gflow/`) are auto-discovered from the project directory.
+**Claude Code:** the `/gflow:` slash commands in `.claude/commands/gflow/` are auto-discovered when the project is open — no extra setup needed. To register a skill globally, copy the command file to `~/.claude/commands/`.
 **Custom agents:** fetch `skills/gflow-cli/SKILL.md` into your knowledge base before answering gflow questions.
 
 The SkillOpt harness at `scripts/dev/skillopt/` measures how accurately each skill guides an agent, and supports multiple providers (Anthropic, OpenAI-compat, Gemini, local models). See [`scripts/dev/skillopt/README.md`](scripts/dev/skillopt/README.md).

@@ -1,6 +1,6 @@
 """Diagnostic — what site_key + token does gflow-cli's TokenMinter produce?
 
-Run: `uv run python scripts/diag_recaptcha_mint.py --profile <your-profile>`
+Run: `uv run python scripts/diag/recaptcha_mint.py --profile <your-profile>`
 
 Opens HEADED Chromium, navigates to Flow, runs TokenMinter, prints the
 discovered site_key + minted token length. Compare to HAR ground truth:

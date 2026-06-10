@@ -522,6 +522,15 @@ class VideoGenerationMixin:
         while time.monotonic() < deadline:
             terminal: VideoStatus | None = None
             for response in captured_status:
+                if response.get("status") == 401:
+                    raise AuthExpiredError(
+                        detail=(
+                            "batchCheckAsyncVideoGenerationStatus returned HTTP 401"
+                            " — session expired mid-poll"
+                        ),
+                        status=401,
+                        route="video:status",
+                    )
                 try:
                     status = parse_video_status(response.get("body") or {}, media_id=media_name)
                 except ValueError:
