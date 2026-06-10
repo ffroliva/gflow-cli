@@ -37,6 +37,7 @@ Welcome to the `gflow-cli` documentation. This index is the routing layer: it te
 | **[tasks/lessons.md](../tasks/lessons.md)** | Running notebook of patterns + reviewer findings, dated and traced to commits | Starting a new phase; debugging "why did the council flag this?" |
 | **[skills/README.md](../skills/README.md)** | Installable agent skill docs (gflow-cli, predict, pr-council-review, scenario) — cross-tool portable Markdown consumed by Claude Code, Cursor, Codex, Gemini CLI, Aider, etc. | Any agent wanting to use gflow-cli correctly |
 | **[scripts/dev/skillopt/README.md](../scripts/dev/skillopt/README.md)** | SkillOpt mock harness — rollout→score loop for measuring and improving skill doc accuracy across multiple LLM providers | Measuring a skill edit's impact; comparing Claude vs GPT-4o vs Gemini on gflow tasks |
+| **[scripts/diag/README.md](../scripts/diag/README.md)** | Diagnostic investigation scripts — run against a live authenticated profile to capture wire samples, measure Chrome memory, or mint reCAPTCHA tokens | Running a one-off investigation against a live Flow session; establishing baseline measurements for issue #155 |
 
 ## Agent commands
 
@@ -93,6 +94,7 @@ Slash commands for Claude Code, stored in `.claude/commands/gflow/`. All prefixe
 **"How do I use this project's skills in Cursor / Codex / Gemini CLI / Aider?"** → [skills/README.md](../skills/README.md#use-with-other-agents)
 **"How do I benchmark a skill doc against real tasks?"** → [scripts/dev/skillopt/README.md](../scripts/dev/skillopt/README.md)
 **"How do I compare Claude vs GPT-4o vs Gemini on gflow tasks?"** → `python scripts/dev/skillopt/harness.py --provider openai --model gpt-4o` (see [skillopt README](../scripts/dev/skillopt/README.md))
+**"What does Chrome actually use in RAM during a generation?"** → run `uv run python scripts/diag/memory_profile.py --profile NAME` (see [scripts/diag/README.md](../scripts/diag/README.md))
 **"How do I report a security issue?"** → [SECURITY § Reporting](SECURITY.md#reporting)
 **"What branch do I work on? How do I name it?"** → [DEVELOPMENT § Branching model](DEVELOPMENT.md#branching-model)
 **"How do I handle an external GitHub PR?"** → [GITHUB § Scenario Matrix](GITHUB.md#scenario-matrix)
