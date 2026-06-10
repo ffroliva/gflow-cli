@@ -33,7 +33,10 @@ def test_persistent_context_kwargs_are_unchanged(tmp_path: Path) -> None:
         "--no-sandbox",
         "--password-store=basic",
     ]
-    assert kwargs["args"] == ["--disable-blink-features=AutomationControlled", "--disable-dev-shm-usage"]
+    assert kwargs["args"] == [
+        "--disable-blink-features=AutomationControlled",
+        "--disable-dev-shm-usage",
+    ]
     # channel is profile-derived; a marker-less tmp_path has no
     # .gflow_browser_strategy file, so channel_for_profile() returns None.
     assert kwargs["channel"] is None
@@ -67,5 +70,8 @@ async def test_ui_automation_setup_passes_disable_dev_shm_usage(tmp_path: Path) 
         await transport.setup(profile_dir=tmp_path)
 
     _call_kwargs = fake_chromium.launch_persistent_context.call_args
-    args_passed = _call_kwargs.kwargs.get("args", _call_kwargs.args[1] if len(_call_kwargs.args) > 1 else [])
+    args_passed = _call_kwargs.kwargs.get(
+        "args",
+        _call_kwargs.args[1] if len(_call_kwargs.args) > 1 else [],
+    )
     assert "--disable-dev-shm-usage" in args_passed

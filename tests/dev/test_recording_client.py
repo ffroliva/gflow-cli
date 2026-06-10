@@ -28,4 +28,7 @@ def test_recording_client_injects_video_and_preserves_base(tmp_path: Path) -> No
     # Base kwargs preserved untouched:
     assert kwargs["user_data_dir"] == str(tmp_path)
     assert kwargs["headless"] is True
-    assert kwargs["args"] == ["--disable-blink-features=AutomationControlled", "--disable-dev-shm-usage"]
+    assert kwargs["args"] == [
+        "--disable-blink-features=AutomationControlled",
+        "--disable-dev-shm-usage",
+    ]
