@@ -7,6 +7,14 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+### Changed
+
+- Added `--disable-dev-shm-usage` to Chrome launch args in both `FlowApiClient._persistent_context_kwargs()` and `UiAutomationTransport.setup()` — prevents OOM in Docker containers with the default 64 MB `/dev/shm` allocation; no effect on developer machines with adequate shared memory
+
+### Added
+
+- `scripts/diag/` directory — documented home for investigation scripts that require a live authenticated profile; includes `memory_profile.py` (Chrome process-tree RSS profiler for issue #155), `capture_flow_traffic.py`, and `recaptcha_mint.py` (both moved from `scripts/` root via git mv, history preserved)
+
 ## [0.15.0] — 2026-06-09
 
 ### Added
