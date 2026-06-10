@@ -10,6 +10,20 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 ### Added
 
 - Added `verify_flow_profile` in `gflow_cli.auth.verification` using `browser_cookie3` and `httpx` to verify sessions without launching a heavy Playwright browser.
+## [0.15.1] — 2026-06-10
+
+### Changed
+
+- Added `--disable-dev-shm-usage` to Chrome launch args in both `FlowApiClient._persistent_context_kwargs()` and `UiAutomationTransport.setup()` — prevents OOM in Docker containers with the default 64 MB `/dev/shm` allocation; no effect on developer machines with adequate shared memory
+- README Stats badges hardened against shields.io outages — GitHub-stat badges now pass `cacheSeconds=3600` (mitigates shields.io's shared GitHub token-pool exhaustion, the "Unable to select next GitHub token from pool" error) and the PyPI downloads badge moved from `img.shields.io/pypi/dm` to pepy.tech (pypistats rate-limits shields.io upstream)
+
+### Added
+
+- `scripts/diag/` directory — documented home for investigation scripts that require a live authenticated profile; includes `memory_profile.py` (Chrome process-tree RSS profiler for issue #155), `capture_flow_traffic.py`, and `recaptcha_mint.py` (both moved from `scripts/` root via git mv, history preserved)
+
+### Fixed
+
+- Video status poll now raises `AuthExpiredError` (exit 3) immediately on HTTP 401 from `batchCheckAsyncVideoGenerationStatus` instead of silently timing out after 600 s with a bare `TimeoutError` (exit 1) — session expiry is now detected mid-workflow, not only at login time (issue #156)
 
 ## [0.15.0] — 2026-06-09
 
@@ -1473,7 +1487,8 @@ shell-script template that branches on these codes.
 
 First skeleton. Not functional end-to-end yet.
 
-[Unreleased]: https://github.com/ffroliva/gflow-cli/compare/v0.15.0...HEAD
+[Unreleased]: https://github.com/ffroliva/gflow-cli/compare/v0.15.1...HEAD
+[0.15.1]: https://github.com/ffroliva/gflow-cli/compare/v0.15.0...v0.15.1
 [0.15.0]: https://github.com/ffroliva/gflow-cli/compare/v0.14.0...v0.15.0
 [0.14.0]: https://github.com/ffroliva/gflow-cli/compare/v0.13.0...v0.14.0
 [0.13.0]: https://github.com/ffroliva/gflow-cli/compare/v0.12.0...v0.13.0

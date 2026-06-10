@@ -132,13 +132,13 @@ gflow CLI  →  Provider (interchangeable)  →  Flow (ui_automation) / Mock (te
 
 ## Stats
 
-[![GitHub stars](https://img.shields.io/github/stars/ffroliva/gflow-cli?style=social)](https://github.com/ffroliva/gflow-cli/stargazers)
-[![GitHub forks](https://img.shields.io/github/forks/ffroliva/gflow-cli?style=social)](https://github.com/ffroliva/gflow-cli/network/members)
-[![GitHub watchers](https://img.shields.io/github/watchers/ffroliva/gflow-cli?style=social)](https://github.com/ffroliva/gflow-cli/watchers)
-[![GitHub issues](https://img.shields.io/github/issues/ffroliva/gflow-cli)](https://github.com/ffroliva/gflow-cli/issues)
-[![GitHub pull requests](https://img.shields.io/github/issues-pr/ffroliva/gflow-cli)](https://github.com/ffroliva/gflow-cli/pulls)
-[![GitHub last commit](https://img.shields.io/github/last-commit/ffroliva/gflow-cli)](https://github.com/ffroliva/gflow-cli/commits/main)
-[![GitHub repo size](https://img.shields.io/github/repo-size/ffroliva/gflow-cli)](https://github.com/ffroliva/gflow-cli)
-[![PyPI downloads](https://img.shields.io/pypi/dm/gflow-cli.svg)](https://pypi.org/project/gflow-cli/)
+[![GitHub stars](https://img.shields.io/github/stars/ffroliva/gflow-cli?style=social&cacheSeconds=3600)](https://github.com/ffroliva/gflow-cli/stargazers)
+[![GitHub forks](https://img.shields.io/github/forks/ffroliva/gflow-cli?style=social&cacheSeconds=3600)](https://github.com/ffroliva/gflow-cli/network/members)
+[![GitHub watchers](https://img.shields.io/github/watchers/ffroliva/gflow-cli?style=social&cacheSeconds=3600)](https://github.com/ffroliva/gflow-cli/watchers)
+[![GitHub issues](https://img.shields.io/github/issues/ffroliva/gflow-cli?cacheSeconds=3600)](https://github.com/ffroliva/gflow-cli/issues)
+[![GitHub pull requests](https://img.shields.io/github/issues-pr/ffroliva/gflow-cli?cacheSeconds=3600)](https://github.com/ffroliva/gflow-cli/pulls)
+[![GitHub last commit](https://img.shields.io/github/last-commit/ffroliva/gflow-cli?cacheSeconds=3600)](https://github.com/ffroliva/gflow-cli/commits/main)
+[![GitHub repo size](https://img.shields.io/github/repo-size/ffroliva/gflow-cli?cacheSeconds=3600)](https://github.com/ffroliva/gflow-cli)
+[![PyPI downloads](https://static.pepy.tech/badge/gflow-cli/month)](https://pepy.tech/project/gflow-cli)
 
 If `gflow-cli` saves you time, please ⭐ the repo — it is the cheapest way to support the project.
