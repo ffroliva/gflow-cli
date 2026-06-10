@@ -56,7 +56,7 @@ def get_cookies_path(pdir: Path) -> Path:
     ):
         if candidate.exists():
             return candidate
-    raise FileNotFoundError
+    raise FileNotFoundError(f"No Chrome Cookies file found under {pdir}")
 
 
 def config_file(home: Path) -> Path:
