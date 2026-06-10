@@ -12,6 +12,7 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 ### Changed
 
 - Added `--disable-dev-shm-usage` to Chrome launch args in both `FlowApiClient._persistent_context_kwargs()` and `UiAutomationTransport.setup()` — prevents OOM in Docker containers with the default 64 MB `/dev/shm` allocation; no effect on developer machines with adequate shared memory
+- README Stats badges hardened against shields.io outages — GitHub-stat badges now pass `cacheSeconds=3600` (mitigates shields.io's shared GitHub token-pool exhaustion, the "Unable to select next GitHub token from pool" error) and the PyPI downloads badge moved from `img.shields.io/pypi/dm` to pepy.tech (pypistats rate-limits shields.io upstream)
 
 ### Added
 
