@@ -37,6 +37,7 @@ Welcome to the `gflow-cli` documentation. This index is the routing layer: it te
 | **[tasks/lessons.md](../tasks/lessons.md)** | Running notebook of patterns + reviewer findings, dated and traced to commits | Starting a new phase; debugging "why did the council flag this?" |
 | **[skills/README.md](../skills/README.md)** | Installable agent skill docs (gflow-cli, predict, pr-council-review, scenario) — cross-tool portable Markdown consumed by Claude Code, Cursor, Codex, Gemini CLI, Aider, etc. | Any agent wanting to use gflow-cli correctly |
 | **[scripts/dev/skillopt/README.md](../scripts/dev/skillopt/README.md)** | SkillOpt mock harness — rollout→score loop for measuring and improving skill doc accuracy across multiple LLM providers | Measuring a skill edit's impact; comparing Claude vs GPT-4o vs Gemini on gflow tasks |
+| **[scripts/diag/README.md](../scripts/diag/README.md)** | Diagnostic investigation scripts — run against a live authenticated profile to capture wire samples, measure Chrome memory, or mint reCAPTCHA tokens | Running a one-off investigation against a live Flow session; establishing baseline measurements for issue #155 |
 
 ## Agent commands
 
@@ -54,6 +55,9 @@ Slash commands for Claude Code, stored in `.claude/commands/gflow/`. All prefixe
 | `/gflow:release` | Full release flow (calls `/gflow:changelog` + `/gflow:check`) | Cutting a new version |
 | `/gflow:predict <proposal>` | 5-persona pre-implementation analysis → GO / CAUTION / STOP | Before any high-stakes design decision (new transport, auth change, selector redesign, schema migration) |
 | `/gflow:scenario <feature>` | 12-dimension edge-case explorer → severity-ranked scenario table + BDD skeleton | After predict GO/CAUTION; before `/gflow:plan` |
+| `/gflow:pr-council-review [PR#]` | Multi-dimensional council review of an open PR (5 baseline + adaptive dimensions) | Before merging any non-trivial PR; mandatory for auth/transport/data changes |
+| `/gflow:branch-review` | Same council review run against the current local feature branch (no PR needed) | Pre-PR self-audit; after predict/scenario on a high-stakes branch |
+| `/gflow:doc-review` | Systematic council-driven audit of documentation completeness and drift | Before cutting a release; after major documentation changes |
 
 **Governance:** commands are executable docs — they decay like any doc. When a phase advances or a file path changes, update the relevant command in the same commit. `/gflow:release` includes a staleness review step.
 
@@ -90,6 +94,7 @@ Slash commands for Claude Code, stored in `.claude/commands/gflow/`. All prefixe
 **"How do I use this project's skills in Cursor / Codex / Gemini CLI / Aider?"** → [skills/README.md](../skills/README.md#use-with-other-agents)
 **"How do I benchmark a skill doc against real tasks?"** → [scripts/dev/skillopt/README.md](../scripts/dev/skillopt/README.md)
 **"How do I compare Claude vs GPT-4o vs Gemini on gflow tasks?"** → `python scripts/dev/skillopt/harness.py --provider openai --model gpt-4o` (see [skillopt README](../scripts/dev/skillopt/README.md))
+**"What does Chrome actually use in RAM during a generation?"** → run `uv run python scripts/diag/memory_profile.py --profile NAME` (see [scripts/diag/README.md](../scripts/diag/README.md))
 **"How do I report a security issue?"** → [SECURITY § Reporting](SECURITY.md#reporting)
 **"What branch do I work on? How do I name it?"** → [DEVELOPMENT § Branching model](DEVELOPMENT.md#branching-model)
 **"How do I handle an external GitHub PR?"** → [GITHUB § Scenario Matrix](GITHUB.md#scenario-matrix)
@@ -104,7 +109,7 @@ Slash commands for Claude Code, stored in `.claude/commands/gflow/`. All prefixe
 **"A gflow command hangs / fails — where do I start?"** → [DEBUGGING § Quick reference](DEBUGGING.md#quick-reference)
 **"Flow's UI broke a selector — how do I diagnose it?"** → [DEBUGGING § Inspecting Flow's live UI](DEBUGGING.md#inspecting-flows-live-ui)
 **"What does each `ui_automation.*` log event mean?"** → [DEBUGGING § Listener & HTTP-layer debugging](DEBUGGING.md#listener--http-layer-debugging)
-**"What was actually live-verified for the latest release?"** → [LIVE_VERIFICATION_v0.13.0](LIVE_VERIFICATION_v0.13.0.md) · prior: [v0.12.0](LIVE_VERIFICATION_v0.12.0.md) · [v0.11.0](LIVE_VERIFICATION_v0.11.0.md) · [v0.10.0](LIVE_VERIFICATION_v0.10.0.md) · [v0.9.1](LIVE_VERIFICATION_v0.9.1.md)
+**"What was actually live-verified for the latest release?"** → v0.15.0 / v0.14.x: no dedicated live-verification doc (CI + the v0.13.0 baseline). Latest doc: [LIVE_VERIFICATION_v0.13.0](LIVE_VERIFICATION_v0.13.0.md) · prior: [v0.12.0](LIVE_VERIFICATION_v0.12.0.md) · [v0.11.0](LIVE_VERIFICATION_v0.11.0.md) · [v0.10.0](LIVE_VERIFICATION_v0.10.0.md) · [v0.9.1](LIVE_VERIFICATION_v0.9.1.md)
 **"What was live-verified for the data layer (PR #58)?"** → [LIVE_VERIFICATION_data_layer](LIVE_VERIFICATION_data_layer.md) — 1 Imagen + 1 Veo credit on denon82, 6-layer ledger (file + magic + Pillow + DB rows + CLI round-trip + structlog)
 **"What was live-verified for the video-download feature (#29)?"** → [LIVE_VERIFICATION_video_download](LIVE_VERIFICATION_video_download.md)
 **"What is the jitter matrix evidence for `gflow image batch`?"** → [`LIVE_VERIFICATION_image_batch.md`](LIVE_VERIFICATION_image_batch.md) — jitter matrix evidence for `gflow image batch` (always-same-project mode)

@@ -677,6 +677,7 @@ class UiAutomationTransport(VideoGenerationMixin):
                 args=[
                     "--disable-blink-features=AutomationControlled",
                     "--password-store=basic",
+                    "--disable-dev-shm-usage",
                 ],
             )
             # Hide the automation flag so reCAPTCHA Enterprise doesn't score

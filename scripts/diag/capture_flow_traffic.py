@@ -4,7 +4,7 @@ Spec § 11 mentioned a captured wire sample (samples/captured/06_batchGenerateIm
 but the file doesn't exist. This script produces that ground truth — what
 headers does Flow's UI actually attach when it calls aisandbox-pa?
 
-Run: `uv run python scripts/diag_capture_flow_traffic.py --profile <your-profile>`
+Run: `uv run python scripts/diag/capture_flow_traffic.py --profile <your-profile>`
 
 Output goes to `tmp/captured/flow_outgoing_<utc>.jsonl` by default. **NEVER write
 captured traffic to `samples/captured/`** — those files contain live Bearer tokens
