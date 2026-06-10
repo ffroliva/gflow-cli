@@ -17,7 +17,7 @@ from gflow_cli.api.transports.ui_automation_video import (
     VideoGenerationMixin,
 )
 from gflow_cli.api.video import Aspect, GenerateVideoRequest, Mode, VideoModel, VideoStatus
-from gflow_cli.errors import WireFormatError
+from gflow_cli.errors import AuthExpiredError, WireFormatError
 
 
 def _make_listener_page() -> tuple[MagicMock, list]:
@@ -143,6 +143,31 @@ class TestPollVideoStatus:
         with pytest.raises(TimeoutError, match="no terminal status"):
             await VideoGenerationMixin._poll_video_status(
                 page, [], "m", timeout_s=0.2, poll_interval_s=0.05
+            )
+
+    @pytest.mark.asyncio
+    async def test_401_response_raises_auth_expired_error_immediately(self) -> None:
+        page = MagicMock()
+        captured = [
+            {"status": 401, "url": _STATUS_URL, "body": {}},
+        ]
+        with pytest.raises(AuthExpiredError, match="session expired mid-poll"):
+            await VideoGenerationMixin._poll_video_status(
+                page, captured, "m", timeout_s=60.0, poll_interval_s=0.05
+            )
+
+    @pytest.mark.asyncio
+    async def test_401_after_in_progress_raises_auth_expired_error(self) -> None:
+        page = MagicMock()
+        # Simulates session expiry mid-poll: some ACTIVE responses arrive first, then a 401
+        captured: list[dict[str, Any]] = [
+            _status_resp("m", "MEDIA_GENERATION_STATUS_SCHEDULED"),
+            _status_resp("m", "MEDIA_GENERATION_STATUS_ACTIVE"),
+            {"status": 401, "url": _STATUS_URL, "body": {}},
+        ]
+        with pytest.raises(AuthExpiredError, match="session expired mid-poll"):
+            await VideoGenerationMixin._poll_video_status(
+                page, captured, "m", timeout_s=60.0, poll_interval_s=0.05
             )
 
 
