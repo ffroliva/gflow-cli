@@ -7,6 +7,10 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+### Added
+
+- **`gflow image upscale <mediaId> --scale 2k|4k`** — upscale a platform-generated image to 2K or 4K (Flow's download-menu 1K/2K/4K options) and save it locally; credit-free. The owning project is resolved from the local catalog (or pass `--project` for images gflow didn't record). 4K requires a Flow Ultra subscription — a non-Ultra 4K request fails fast with exit code 22 (`UpscaleUnavailableError`) rather than a generic 403. Reverse-engineered wire documented in [docs/IMAGE_UPSCALE_RECON.md](docs/IMAGE_UPSCALE_RECON.md); live-verified end-to-end (issue #171)
+
 ## [0.15.1] — 2026-06-10
 
 ### Changed
