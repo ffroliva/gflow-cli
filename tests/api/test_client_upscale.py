@@ -24,6 +24,7 @@ if TYPE_CHECKING:
     from pathlib import Path
 
 _MEDIA_ID = "3a56bb5e-92a2-44f4-9992-3c6a9bf0cd14"
+_PROJECT_ID = "ffb768fb-cf2d-48b7-a135-92978667c37d"
 _PNG = b"\x89PNG\r\n\x1a\n" + b"\x00" * 32
 _PNG_B64 = base64.b64encode(_PNG).decode()
 
@@ -43,7 +44,10 @@ async def test_upsample_happy_2k_writes_png(tmp_path: Path) -> None:
     c = _client(tmp_path, post_return={"encodedImage": _PNG_B64})
 
     target = await c.upsample_image(
-        media_id=_MEDIA_ID, target_resolution=TargetResolution.RES_2K, out_path=out
+        media_id=_MEDIA_ID,
+        project_id=_PROJECT_ID,
+        target_resolution=TargetResolution.RES_2K,
+        out_path=out,
     )
 
     assert target.read_bytes() == _PNG
@@ -63,7 +67,10 @@ async def test_upsample_oversized_rejected_before_decode(tmp_path: Path) -> None
 
     with pytest.raises(WireFormatError, match="size cap"):
         await c.upsample_image(
-            media_id=_MEDIA_ID, target_resolution=TargetResolution.RES_2K, out_path=out
+            media_id=_MEDIA_ID,
+            project_id=_PROJECT_ID,
+            target_resolution=TargetResolution.RES_2K,
+            out_path=out,
         )
     assert not out.exists()  # rejected before any write
 
@@ -75,6 +82,7 @@ async def test_upsample_missing_encoded_image(tmp_path: Path) -> None:
     with pytest.raises(WireFormatError, match="missing encodedImage"):
         await c.upsample_image(
             media_id=_MEDIA_ID,
+            project_id=_PROJECT_ID,
             target_resolution=TargetResolution.RES_2K,
             out_path=tmp_path / "x.png",
         )
@@ -87,6 +95,7 @@ async def test_upsample_undecodable_base64(tmp_path: Path) -> None:
     with pytest.raises(WireFormatError, match="undecodable"):
         await c.upsample_image(
             media_id=_MEDIA_ID,
+            project_id=_PROJECT_ID,
             target_resolution=TargetResolution.RES_2K,
             out_path=tmp_path / "x.png",
         )
@@ -100,7 +109,10 @@ async def test_upsample_non_image_bytes_rejected(tmp_path: Path) -> None:
 
     with pytest.raises(WireFormatError, match="not a valid PNG/JPEG"):
         await c.upsample_image(
-            media_id=_MEDIA_ID, target_resolution=TargetResolution.RES_2K, out_path=out
+            media_id=_MEDIA_ID,
+            project_id=_PROJECT_ID,
+            target_resolution=TargetResolution.RES_2K,
+            out_path=out,
         )
     assert not out.exists()
 
@@ -113,6 +125,7 @@ async def test_upsample_4k_403_maps_to_unavailable(tmp_path: Path) -> None:
     with pytest.raises(UpscaleUnavailableError, match="Ultra"):
         await c.upsample_image(
             media_id=_MEDIA_ID,
+            project_id=_PROJECT_ID,
             target_resolution=TargetResolution.RES_4K,
             out_path=tmp_path / "x.png",
         )
@@ -128,6 +141,7 @@ async def test_upsample_2k_403_stays_waf(tmp_path: Path) -> None:
     with pytest.raises(WafRejectionError):
         await c.upsample_image(
             media_id=_MEDIA_ID,
+            project_id=_PROJECT_ID,
             target_resolution=TargetResolution.RES_2K,
             out_path=tmp_path / "x.png",
         )
@@ -141,7 +155,10 @@ async def test_upsample_encoded_image_never_logged(tmp_path: Path) -> None:
 
     with capture_logs() as logs:
         await c.upsample_image(
-            media_id=_MEDIA_ID, target_resolution=TargetResolution.RES_2K, out_path=out
+            media_id=_MEDIA_ID,
+            project_id=_PROJECT_ID,
+            target_resolution=TargetResolution.RES_2K,
+            out_path=out,
         )
 
     for entry in logs:

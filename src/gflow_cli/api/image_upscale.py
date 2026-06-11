@@ -26,18 +26,27 @@ from types import MappingProxyType
 from typing import Any
 
 __all__ = [
+    "DEFAULT_PAYGATE_TIER",
     "TargetResolution",
     "UpsampleImageRequest",
     "build_upsample_image_body",
 ]
 
-# Wire constant — same value the image-generation recaptchaContext uses.
+# Wire constants — same values the image-generation clientContext uses.
 _RECAPTCHA_APP_TYPE = "RECAPTCHA_APPLICATION_TYPE_WEB"
+_CLIENT_TOOL = "PINHOLE"
 
-# Strict UUID allowlist for the source mediaId. It is interpolated into the
-# request body (not a URL path), but validating up front rejects malformed input
-# before any reCAPTCHA mint or network call fires (scenario #9).
-_MEDIA_ID_RE = re.compile(
+# Client-reported telemetry the working UI call carries in clientContext. The
+# server enforces the REAL account tier independently (a non-Ultra 4K request
+# 403s regardless of this value — see UpscaleUnavailableError), so this is a
+# best-effort default, NOT a security control. Observed value on a Pro account.
+DEFAULT_PAYGATE_TIER = "PAYGATE_TIER_ONE"
+
+# Strict UUID allowlist for the source mediaId and the owning projectId. Both
+# are interpolated into the request body (not a URL path), but validating up
+# front rejects malformed input before any reCAPTCHA mint or network call fires
+# (scenario #9). Flow media + project ids are both 8-4-4-4-12 hex UUIDs.
+_UUID_RE = re.compile(
     r"^[0-9a-fA-F]{8}-[0-9a-fA-F]{4}-[0-9a-fA-F]{4}-[0-9a-fA-F]{4}-[0-9a-fA-F]{12}$"
 )
 
@@ -88,6 +97,11 @@ _RESOLUTION_FROM_CLI: MappingProxyType[str, TargetResolution] = MappingProxyType
 class UpsampleImageRequest:
     """Inputs for ONE image upscale.
 
+    ``project_id`` is the project that OWNS ``media_id`` — the live wire requires
+    it inside ``clientContext`` (a minimal body without it 403s even with a valid
+    reCAPTCHA token; confirmed by live smoke 2026-06-11). It is resolved from the
+    local catalog or an explicit ``--project`` before the request is built.
+
     ``recaptcha_token`` is populated by the caller right before send via
     ``dataclasses.replace(req, recaptcha_token=minted_token)`` — the empty-string
     default means "unminted", mirroring :class:`GenerateImageRequest`, so the
@@ -95,24 +109,39 @@ class UpsampleImageRequest:
     """
 
     media_id: str
+    project_id: str
     target_resolution: TargetResolution
     recaptcha_token: str = field(default="")
 
     def __post_init__(self) -> None:
-        if not _MEDIA_ID_RE.fullmatch(self.media_id):
+        if not _UUID_RE.fullmatch(self.media_id):
             msg = (
                 f"UpsampleImageRequest.media_id must be a bare UUID "
                 f"(8-4-4-4-12 hex, no whitespace); got {self.media_id!r}"
             )
             raise ValueError(msg)
+        if not _UUID_RE.fullmatch(self.project_id):
+            msg = (
+                f"UpsampleImageRequest.project_id must be a bare UUID "
+                f"(8-4-4-4-12 hex, no whitespace); got {self.project_id!r}"
+            )
+            raise ValueError(msg)
 
 
-def build_upsample_image_body(req: UpsampleImageRequest) -> dict[str, Any]:
+def build_upsample_image_body(
+    req: UpsampleImageRequest,
+    *,
+    session_id: str,
+    user_paygate_tier: str = DEFAULT_PAYGATE_TIER,
+) -> dict[str, Any]:
     """Build the JSON body for ``POST /v1/flow/upsampleImage``.
 
-    Mirrors the captured wire shape. The caller MUST attach a freshly minted
-    reCAPTCHA token via ``dataclasses.replace(req, recaptcha_token=token)`` before
-    calling this — a 403 is returned without a valid token (REST-only is dead).
+    Mirrors the captured working-call wire shape: the ``clientContext`` carries
+    ``recaptchaContext`` + ``projectId`` + ``sessionId`` + ``tool`` +
+    ``userPaygateTier`` (a minimal ``{recaptchaContext}`` body 403s — confirmed by
+    live smoke). The caller MUST attach a freshly minted reCAPTCHA token via
+    ``dataclasses.replace(req, recaptcha_token=token)`` before calling this —
+    a 403 is returned without a valid token (REST-only is dead).
     """
     return {
         "mediaId": req.media_id,
@@ -122,5 +151,9 @@ def build_upsample_image_body(req: UpsampleImageRequest) -> dict[str, Any]:
                 "token": req.recaptcha_token,
                 "applicationType": _RECAPTCHA_APP_TYPE,
             },
+            "projectId": req.project_id,
+            "sessionId": session_id,
+            "tool": _CLIENT_TOOL,
+            "userPaygateTier": user_paygate_tier,
         },
     }

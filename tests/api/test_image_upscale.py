@@ -19,6 +19,7 @@ from gflow_cli.api.image_upscale import (
 )
 
 _VALID_MEDIA_ID = "3a56bb5e-92a2-44f4-9992-3c6a9bf0cd14"
+_VALID_PROJECT_ID = "ffb768fb-cf2d-48b7-a135-92978667c37d"
 
 
 # ---------- TargetResolution.from_cli ----------
@@ -58,13 +59,21 @@ def test_target_resolution_rejects_unknown(bad: str) -> None:
 
 
 def test_request_is_frozen() -> None:
-    req = UpsampleImageRequest(media_id=_VALID_MEDIA_ID, target_resolution=TargetResolution.RES_2K)
+    req = UpsampleImageRequest(
+        media_id=_VALID_MEDIA_ID,
+        project_id=_VALID_PROJECT_ID,
+        target_resolution=TargetResolution.RES_2K,
+    )
     with pytest.raises(dataclasses.FrozenInstanceError):
         req.media_id = "x"  # type: ignore[misc]
 
 
 def test_request_recaptcha_token_defaults_unminted() -> None:
-    req = UpsampleImageRequest(media_id=_VALID_MEDIA_ID, target_resolution=TargetResolution.RES_4K)
+    req = UpsampleImageRequest(
+        media_id=_VALID_MEDIA_ID,
+        project_id=_VALID_PROJECT_ID,
+        target_resolution=TargetResolution.RES_4K,
+    )
     assert req.recaptcha_token == ""
 
 
@@ -80,12 +89,30 @@ def test_request_recaptcha_token_defaults_unminted() -> None:
     ],
 )
 def test_request_rejects_malformed_media_id(bad_id: str) -> None:
-    with pytest.raises(ValueError, match="mediaId|media_id|UUID"):
-        UpsampleImageRequest(media_id=bad_id, target_resolution=TargetResolution.RES_2K)
+    with pytest.raises(ValueError, match="media_id|UUID"):
+        UpsampleImageRequest(
+            media_id=bad_id,
+            project_id=_VALID_PROJECT_ID,
+            target_resolution=TargetResolution.RES_2K,
+        )
+
+
+@pytest.mark.parametrize("bad_pid", ["", "   ", "not-a-uuid", f" {_VALID_PROJECT_ID} "])
+def test_request_rejects_malformed_project_id(bad_pid: str) -> None:
+    with pytest.raises(ValueError, match="project_id|UUID"):
+        UpsampleImageRequest(
+            media_id=_VALID_MEDIA_ID,
+            project_id=bad_pid,
+            target_resolution=TargetResolution.RES_2K,
+        )
 
 
 def test_request_accepts_valid_uuid() -> None:
-    req = UpsampleImageRequest(media_id=_VALID_MEDIA_ID, target_resolution=TargetResolution.RES_2K)
+    req = UpsampleImageRequest(
+        media_id=_VALID_MEDIA_ID,
+        project_id=_VALID_PROJECT_ID,
+        target_resolution=TargetResolution.RES_2K,
+    )
     assert req.media_id == _VALID_MEDIA_ID
 
 
@@ -94,19 +121,33 @@ def test_request_accepts_valid_uuid() -> None:
 
 def test_body_shape() -> None:
     req = dataclasses.replace(
-        UpsampleImageRequest(media_id=_VALID_MEDIA_ID, target_resolution=TargetResolution.RES_2K),
+        UpsampleImageRequest(
+            media_id=_VALID_MEDIA_ID,
+            project_id=_VALID_PROJECT_ID,
+            target_resolution=TargetResolution.RES_2K,
+        ),
         recaptcha_token="tok-123",
     )
-    body = build_upsample_image_body(req)
+    body = build_upsample_image_body(req, session_id=";1781190457842")
     assert body["mediaId"] == _VALID_MEDIA_ID
     assert body["targetResolution"] == "UPSAMPLE_IMAGE_RESOLUTION_2K"
-    assert body["clientContext"]["recaptchaContext"]["token"] == "tok-123"
+    cc = body["clientContext"]
+    assert cc["recaptchaContext"]["token"] == "tok-123"
+    # The full clientContext the live wire requires (minimal body 403s).
+    assert cc["projectId"] == _VALID_PROJECT_ID
+    assert cc["sessionId"] == ";1781190457842"
+    assert cc["tool"] == "PINHOLE"
+    assert cc["userPaygateTier"] == "PAYGATE_TIER_ONE"
 
 
 def test_body_carries_4k_resolution() -> None:
     req = dataclasses.replace(
-        UpsampleImageRequest(media_id=_VALID_MEDIA_ID, target_resolution=TargetResolution.RES_4K),
+        UpsampleImageRequest(
+            media_id=_VALID_MEDIA_ID,
+            project_id=_VALID_PROJECT_ID,
+            target_resolution=TargetResolution.RES_4K,
+        ),
         recaptcha_token="tok",
     )
-    body = build_upsample_image_body(req)
+    body = build_upsample_image_body(req, session_id=";1")
     assert body["targetResolution"] == "UPSAMPLE_IMAGE_RESOLUTION_4K"
