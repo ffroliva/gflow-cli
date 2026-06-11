@@ -66,18 +66,18 @@ so the pt DOM answers whether (a) the Vozes "Incluir no comando" button carries 
 (b) the right-click context menu renders as `[role='menu'] > [role='menuitem']` in a portal.
 
 **Files:**
-- none committed (recon evidence noted in this PLAN.md and/or `_RECON` notes; reuse
-  `scripts/dev/dump_character_selectors.js` / `spike_movie_picker_select.py`)
+- `scripts/dev/spike_issue170_picker_locale_recon.py` — new credit-free recon harness (spike family)
 
 **Steps:**
-- [ ] Run the existing dump/spike harness against the resource picker on denon82 (headed real-Chrome profile, zero credits)
-- [ ] Record: context-menu container role + `data-state`, menuitem roles, exact ligature names (`add` expected)
-- [ ] Record: Vozes include button markup — icon ligature present? structural anchor available (dialog-footer primary button)?
-- [ ] Decide Tier 1 for `PICKER_INCLUDE_BUTTON` based on findings; note decision below
+- [x] Run the dump/spike harness against the resource picker on denon82 (headed real-Chrome profile, zero credits) — `scripts/dev/spike_issue170_picker_locale_recon.py`, run 2026-06-11 (`_spike_out/spike_issue170_picker_locale_recon_20260611_234140.json`)
+- [x] Record: context-menu container role + `data-state`, menuitem roles, exact ligature names (`add` expected)
+- [x] Record: Vozes include button markup — icon ligature present? structural anchor available (dialog-footer primary button)?
+- [x] Decide Tier 1 for `PICKER_INCLUDE_BUTTON` based on findings; note decision below
 
-**Recon findings (fill in):**
-- Context menu container/selector: _
-- Vozes include button Tier 1 anchor: _
+**Recon findings (verified live on denon82, pt-BR, 2026-06-11):**
+- Context menu: `<div role='menu' data-state='open'>` with 4 `[role='menuitem']` items, ligatures `add` («Incluir no comando»), `content_cut`, `content_copy`, `delete` — identical icon set to the ru report on #170. **Tier 1 for `PICKER_CONTEXT_INCLUDE`:** `[role='menu'][data-state='open'] [role='menuitem']:has(i.google-symbols:text-is('add'))` — `add` unique within the menu.
+- Vozes include button: **NO ligature icon** (text-only `<button>Incluir no comando</button>`), but it is the **lone iconless button inside the open picker dialog** (all other dialog buttons carry ligatures: tabs, `play_arrow` preview, `arrow_drop_down` sort). Same structural situation as the documented `ADD_TO_PROMPT_DIALOG` pattern. **Decision:** multi-locale text tier primary (pt/ru/en) + structural fallback (lone iconless dialog button).
+- Side observation: clicking a Vozes `[role='option']` closed the picker dialog outright — the include button shows for an already-selected resource state; `_attach_reference_audio`'s search-then-click-tile flow is unaffected.
 
 ---
 
