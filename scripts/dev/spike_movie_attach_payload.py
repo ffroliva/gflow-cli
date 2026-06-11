@@ -189,6 +189,16 @@ async def _run(
             result["referenceImages"] = imgs
             result["videoModelKeys"] = keys
             result["route"] = (captured.get("url") or "").split("/")[-1]
+            # Discovery aid (#170 follow-up): the wire shape may drift — record
+            # request keys + any entity/reference-ish field (elided, never raw
+            # image bytes) so an empty referenceEntities is diagnosable.
+            if reqs and isinstance(reqs[0], dict):
+                result["request0_keys"] = sorted(reqs[0].keys())
+                result["reference_like"] = {
+                    k: (v if len(json.dumps(v, default=str)) <= 600 else "<elided>")
+                    for k, v in reqs[0].items()
+                    if "entit" in k.lower() or "reference" in k.lower() or "input" in k.lower()
+                }
         except Exception as e:  # noqa: BLE001
             result["parse_error"] = f"{type(e).__name__}: {e}"
             result["post_data_head"] = pd[:500]
