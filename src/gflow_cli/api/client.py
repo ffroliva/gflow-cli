@@ -30,6 +30,11 @@ from gflow_cli.api import routes
 from gflow_cli.api._retry import parse_retry_after, post_with_retry
 from gflow_cli.api.character import Character, CharacterImageRequest, parse_characters
 from gflow_cli.api.dto import AssetInfo, GeneratedImage, ProjectInfo
+from gflow_cli.api.image_upscale import (
+    TargetResolution,
+    UpsampleImageRequest,
+    build_upsample_image_body,
+)
 from gflow_cli.api.recaptcha import TokenMinter
 from gflow_cli.api.scene import ConcatInput, Scene, SceneWorkflow
 from gflow_cli.api.transports import make_transport
@@ -48,6 +53,7 @@ from gflow_cli.errors import (
     RateLimitError,
     SceneConcatError,
     TransportTimeoutError,
+    UpscaleUnavailableError,
     WafRejectionError,
     WireFormatError,
 )
@@ -98,6 +104,11 @@ MAX_IMAGE_BYTES = 20 * 1024 * 1024  # 20 MB
 # (~1.27 MB base64 per second of video). Cap before b64decode to avoid OOM on a
 # pathologically long scene; ~350 MB base64 ≈ 260 MB MP4 ≈ a ~4.5-min scene.
 MAX_CONCAT_B64_LEN = 350 * 1024 * 1024
+
+# upsampleImage returns the upscaled image inline as base64 in `encodedImage`
+# (~3.8–5.1 MB observed for 2K). Cap before b64decode to avoid OOM on a
+# pathological 4K PNG; 50 MB base64 ≈ 37 MB decoded gives generous headroom.
+MAX_UPSAMPLE_B64_LEN = 50 * 1024 * 1024
 
 # aisandbox-pa rejects application/json — see samples/captured/*.json.
 _AISANDBOX_CONTENT_TYPE = "text/plain;charset=UTF-8"
@@ -1053,6 +1064,112 @@ class FlowApiClient:
         await write_asset_async(target, video_bytes)
         return target
 
+    async def upsample_image(
+        self,
+        *,
+        media_id: str,
+        target_resolution: TargetResolution,
+        out_path: Path,
+        recaptcha_action: str = "upsampleImage",
+    ) -> AnyPath:
+        """Upscale a platform-generated image to 2K/4K via Flow's ``upsampleImage``.
+
+        reCAPTCHA-gated (a Bearer-only call is 403-walled — REST is not viable),
+        so this mints a fresh single-use token, POSTs, and decodes the synchronous
+        ``{"encodedImage": <base64>}`` response (no async poll loop). Writes to
+        ``out_path`` (or the configured cloud ``storage_uri``) and returns the
+        target.
+
+        4K is Ultra-tier-gated: a 403 on a 4K request surfaces as
+        :class:`UpscaleUnavailableError` (exit 22, never auto-retried) rather than
+        :class:`WafRejectionError` — both are HTTP 403 on the wire, disambiguated
+        by the requested resolution. A 403 on a 2K request stays a WAF rejection.
+
+        The ~5 MB ``encodedImage`` base64 is NEVER logged; it is capped before
+        decode, validated by magic bytes, and dropped promptly after decode.
+        """
+        logger.info(
+            "image.upscale_started",
+            media_id=media_id,
+            resolution=target_resolution.name,
+        )
+        token = await self._mint_recaptcha_token(recaptcha_action)
+        req = _dc_replace(
+            UpsampleImageRequest(media_id=media_id, target_resolution=target_resolution),
+            recaptcha_token=token,
+        )
+        try:
+            resp = await self._post_json(
+                routes.UPSAMPLE_IMAGE,
+                build_upsample_image_body(req),
+                route_name="upsampleImage",
+            )
+        except WafRejectionError as exc:
+            # A 403 on a 4K request is almost certainly the Ultra-tier gate, not a
+            # WAF/fingerprint block. Surface the distinct error (exit 22) so callers
+            # can branch on "upgrade your plan" — and crucially, NEVER auto-retry it
+            # (a retry only inflates per-profile WAF heat and never succeeds).
+            if target_resolution is TargetResolution.RES_4K:
+                raise UpscaleUnavailableError(
+                    detail="4K upscale rejected (HTTP 403) — requires a Flow Ultra subscription",
+                    status=403,
+                    instance=_make_instance(),
+                    route="upsampleImage",
+                ) from exc
+            raise
+
+        resp_obj: JsonObject = cast("JsonObject", resp) if isinstance(resp, dict) else {}
+        encoded = str(resp_obj.get("encodedImage") or "")
+        if not encoded:
+            raise WireFormatError(
+                detail="upsampleImage response missing encodedImage",
+                instance=_make_instance(),
+                route="upsampleImage",
+                discovery={"keys": sorted(resp_obj)},
+            )
+        if len(encoded) > MAX_UPSAMPLE_B64_LEN:
+            # Reject before decode — never log the body (mitigation: no MBs in logs).
+            raise WireFormatError(
+                detail=(
+                    f"upscaled image exceeds the {MAX_UPSAMPLE_B64_LEN // (1024 * 1024)} MB "
+                    "size cap"
+                ),
+                route="upsampleImage",
+            )
+        try:
+            image_bytes = base64.b64decode(encoded)
+        except ValueError as exc:  # binascii.Error subclasses ValueError
+            raise WireFormatError(
+                detail="upsampleImage returned undecodable image data",
+                route="upsampleImage",
+            ) from exc
+        del encoded, resp  # drop the multi-MB payload promptly
+        if not _is_png_or_jpeg(image_bytes):
+            raise WireFormatError(
+                detail="upscaled output is not a valid PNG/JPEG",
+                route="upsampleImage",
+            )
+        logger.info(
+            "image.upscale_completed",
+            media_id=media_id,
+            resolution=target_resolution.name,
+            bytes=len(image_bytes),
+        )
+
+        storage_uri = self.settings.storage_uri
+        if storage_uri:
+            try:
+                key = out_path.relative_to(self.settings.output_dir).as_posix()
+            except ValueError:
+                key = out_path.name
+            target: AnyPath = storage_path(storage_uri, self.settings.output_dir, key)
+        else:
+            out_path.parent.mkdir(parents=True, exist_ok=True)
+            target = out_path
+        target = adjust_key_extension(target, image_bytes)
+        await write_asset_async(target, image_bytes)
+        return target
+
     async def _mint_recaptcha_token(self, action: str) -> str:
         """Mint a single-use reCAPTCHA Enterprise token via the client's Page.
 
@@ -1646,6 +1763,16 @@ def _build_wire_format_discovery(resp: Any, body_text: str, route: str) -> JsonO
         "top_level_keys": top_keys,
         "body_prefix_redacted": _redact_for_log(body_text)[:200],
     }
+
+
+def _is_png_or_jpeg(data: bytes) -> bool:
+    """True if *data* begins with a PNG or JPEG magic-byte signature.
+
+    Guards against writing a non-image payload (e.g. an error blob that decoded
+    as base64) to an image file. PNG: ``89 50 4E 47 0D 0A 1A 0A``; JPEG/JFIF:
+    ``FF D8 FF``.
+    """
+    return data[:8] == b"\x89PNG\r\n\x1a\n" or data[:3] == b"\xff\xd8\xff"
 
 
 def _raise_for_non_retryable(resp: Any, body_text: str, *, route: str) -> None:
