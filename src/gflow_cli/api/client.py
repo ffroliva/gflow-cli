@@ -1071,7 +1071,7 @@ class FlowApiClient:
         project_id: str,
         target_resolution: TargetResolution,
         out_path: Path,
-        recaptcha_action: str = "upsampleImage",
+        recaptcha_action: str = "IMAGE_GENERATION",
     ) -> AnyPath:
         """Upscale a platform-generated image to 2K/4K via Flow's ``upsampleImage``.
 
