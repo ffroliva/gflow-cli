@@ -28,6 +28,10 @@ _PROJECT_ID_RE = re.compile(r"^[A-Za-z0-9\-]{1,128}$")
 # Asset / media
 UPLOAD_IMAGE = f"{FLOW_API_BASE}/flow/uploadImage"
 
+# Image upscale (issue #171) — reCAPTCHA-gated POST; returns {"encodedImage": base64}
+# synchronously. mediaId + targetResolution ride the body (not the URL path).
+UPSAMPLE_IMAGE = f"{FLOW_API_BASE}/flow/upsampleImage"
+
 # Video generation (reCAPTCHA-required for GENERATE_VIDEO)
 GENERATE_VIDEO = f"{FLOW_API_BASE}/video:batchAsyncGenerateVideoText"
 CHECK_VIDEO_STATUS = f"{FLOW_API_BASE}/video:batchCheckAsyncVideoGenerationStatus"

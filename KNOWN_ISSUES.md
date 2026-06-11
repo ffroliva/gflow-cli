@@ -14,6 +14,22 @@ Living list of behaviour that's broken, surprising, or limited by design — alo
 
 ## Open
 
+### 4K image upscale requires a Flow Ultra subscription
+
+- **Status:** **Open** (by design — a Flow platform limit, not a gflow bug)
+- **Severity:** Low · **Affects:** `gflow image upscale --scale 4k` on non-Ultra accounts
+
+`gflow image upscale <mediaId> --scale 4k` returns **exit code 22**
+(`UpscaleUnavailableError`) on accounts below the Ultra tier — Flow gates 4K
+upscaling behind Ultra (the web UI shows an "Upgrade" button instead of a 4K
+option). The account tier is reported on the wire as `userPaygateTier` but is
+enforced server-side, so gflow cannot grant 4K locally.
+
+**Workaround:** use `--scale 2k` (available on all tiers), or upgrade the Flow
+account to Ultra. If you just upgraded, re-run `gflow auth login --profile <name>`
+to refresh the session before retrying 4K. Wire detail:
+[docs/IMAGE_UPSCALE_RECON.md](docs/IMAGE_UPSCALE_RECON.md) (#171).
+
 ### Image generation returns HTTP 401 — `aisandbox-pa` generation endpoint
 
 - **Status:** **RESOLVED in v0.7.0** — moved to [Resolved](#resolved) section
