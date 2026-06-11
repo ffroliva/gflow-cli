@@ -17,6 +17,7 @@ from __future__ import annotations
 import asyncio
 import re
 import sys
+from datetime import date
 from pathlib import Path
 from typing import TYPE_CHECKING, TypeVar
 
@@ -35,6 +36,7 @@ from gflow_cli._cli_helpers import (
 from gflow_cli.api.client import FlowApiClient
 from gflow_cli.api.dto import ProjectInfo
 from gflow_cli.api.image import Aspect, GenerateImageRequest, ImageRef, Model, reference_cap_for
+from gflow_cli.api.image_upscale import TargetResolution, UpsampleImageRequest
 from gflow_cli.api.transports import transport_choices
 from gflow_cli.config import get_settings
 from gflow_cli.data.recorder import OperationRecorder
@@ -377,6 +379,110 @@ async def _run_upload(
                 )
     finally:
         recorder.close()
+
+
+# ---------------------------------------------------------------------------
+# upscale subcommand
+# ---------------------------------------------------------------------------
+
+
+@image.command(
+    "upscale",
+    short_help="Upscale a platform-generated image to 2K or 4K.",
+    help=(
+        "Upscale a Flow-generated image to 2K or 4K and save it locally.\n\n"
+        "\b\n"
+        "Examples:\n"
+        "  gflow image upscale <mediaId> --scale 2k\n"
+        "  gflow image upscale <mediaId> --scale 4k --out ~/Downloads\n\n"
+        "MEDIA_ID is the UUID of a platform-generated image — find one with "
+        "`gflow data list images`. Only images Flow generated can be upscaled "
+        "(uploaded images are not supported). 4K requires a Flow Ultra "
+        "subscription; on other plans use --scale 2k."
+    ),
+)
+@click.argument("media_id")
+@click.option(
+    "--scale",
+    required=True,
+    help="Target resolution: 2k or 4k (4k is Ultra-only). 1k is the original.",
+)
+@click.option(
+    "--out",
+    "out_dir",
+    type=click.Path(file_okay=False, path_type=Path),
+    default=None,
+    help="Output directory (defaults to the configured gflow output dir).",
+)
+@click.option("--profile", default=None, help="Profile name (overrides default).")
+@click.option(
+    "--transport",
+    type=click.Choice(transport_choices(), case_sensitive=False),
+    default=None,
+    help="Override transport strategy (advanced).",
+)
+def upscale(
+    media_id: str,
+    scale: str,
+    out_dir: Path | None,
+    profile: str | None,
+    transport: str | None,
+) -> None:
+    """Upscale MEDIA_ID to the requested --scale and save it locally."""
+    # Validate BOTH inputs before launching the browser (fail fast, exit 2).
+    try:
+        resolution = TargetResolution.from_cli(scale)
+    except ValueError as exc:
+        raise click.BadParameter(str(exc), param_hint="--scale") from exc
+    try:
+        # Reuse the value object's UUID guard — rejects malformed ids before
+        # any reCAPTCHA mint or network call.
+        UpsampleImageRequest(media_id=media_id, target_resolution=resolution)
+    except ValueError as exc:
+        raise click.BadParameter(str(exc), param_hint="MEDIA_ID") from exc
+
+    profile_name = _resolve_profile(profile)
+    provider_dir = _make_provider_dir(profile_name)
+    settings = get_settings()
+    run_with_handlers(
+        lambda: _run_upscale(
+            profile_dir=provider_dir,
+            headless=settings.headless,
+            media_id=media_id,
+            resolution=resolution,
+            scale_label=scale.strip().lower(),
+            out_dir=out_dir,
+            transport=transport,
+        ),
+        cli_command="image upscale",
+    )
+
+
+async def _run_upscale(
+    *,
+    profile_dir: Path,
+    headless: bool,
+    media_id: str,
+    resolution: TargetResolution,
+    scale_label: str,
+    out_dir: Path | None,
+    transport: str | None = None,
+) -> None:
+    settings = get_settings()
+    output_root = out_dir if out_dir is not None else settings.output_dir
+    out_path = output_root / "images" / date.today().isoformat() / f"{media_id}_{scale_label}.png"
+    async with FlowApiClient(
+        profile_dir=profile_dir,
+        headless=headless,
+        transport=transport,
+    ) as client:
+        console.print(f"Upscaling [bold]{media_id}[/bold] to {scale_label.upper()}...")
+        target = await client.upsample_image(
+            media_id=media_id,
+            target_resolution=resolution,
+            out_path=out_path,
+        )
+        console.print(f"[bold green]Saved:[/bold green] {safe_path_text(target)}")
 
 
 # ---------------------------------------------------------------------------
