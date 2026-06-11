@@ -187,9 +187,9 @@ requested entity id, else raise `WireFormatError` (no silent text-only generatio
 - `docs/CHARACTER.md` / `docs/MOVIE.md` — replace "Incluir no comando" prose with locale-generic wording ("the include-in-prompt context-menu action") per docs-language-agnostic rule
 
 **Steps:**
-- [ ] KNOWN_ISSUES entry updated
-- [ ] CHANGELOG entry (note: predicted by `docs/superpowers/character-scenario.md:35`, fixture now added)
-- [ ] Localized UI strings scrubbed from user-facing docs (raw `_RECON.md` may keep them)
+- [x] KNOWN_ISSUES "locale-agnostic — Phase 5 complete" entry corrected with the #170 stragglers + fix summary
+- [x] CHANGELOG `[Unreleased]` Fixed entry — all three affected paths, typed error, telemetry, backstop, reporter credit
+- [x] Localized UI strings scrubbed from `docs/MOVIE.md` + `docs/CHARACTER.md` (raw `_RECON.md` keeps verbatim captions by design)
 
 ---
 
