@@ -58,7 +58,7 @@ class TestRealChromeStrategy:
             patch("gflow_cli.auth.real_chrome.find_chrome_executable", return_value=fake_chrome),
             patch("gflow_cli.auth.real_chrome.asyncio.create_subprocess_exec", mock_create),
             patch(
-                "gflow_cli.auth.real_chrome.verify_flow_session",
+                "gflow_cli.auth.real_chrome.verify_flow_profile",
                 AsyncMock(return_value=verified),
             ),
         ):
@@ -95,7 +95,7 @@ class TestRealChromeStrategy:
                 AsyncMock(return_value=mock_proc),
             ),
             patch(
-                "gflow_cli.auth.real_chrome.verify_flow_session",
+                "gflow_cli.auth.real_chrome.verify_flow_profile",
                 AsyncMock(return_value=verified),
             ),
         ):
@@ -140,7 +140,7 @@ class TestRealChromeStrategy:
                 AsyncMock(return_value=mock_proc),
             ),
             patch(
-                "gflow_cli.auth.real_chrome.verify_flow_session",
+                "gflow_cli.auth.real_chrome.verify_flow_profile",
                 AsyncMock(return_value=_status(outcome)),
             ),
         ):

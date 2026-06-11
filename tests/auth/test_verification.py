@@ -3,6 +3,7 @@ from __future__ import annotations
 import json
 import sys
 from pathlib import Path
+from types import SimpleNamespace
 from unittest.mock import AsyncMock, MagicMock, patch
 
 import pytest
@@ -169,7 +170,14 @@ class TestVerifyFlowSession:
         profile.mkdir()
 
         fake_bc3 = MagicMock()
-        fake_bc3.chrome.return_value = [MagicMock(name="SAPISID")]
+        fake_bc3.chrome.return_value = [
+            SimpleNamespace(name="SAPISID", value="google", domain=".google.com"),
+            SimpleNamespace(
+                name="__Secure-next-auth.session-token",
+                value="flow-session",
+                domain="labs.google",
+            ),
+        ]
 
         fake_resp = MagicMock(status_code=200, text=AUTHENTICATED_BODY)
         fake_client = MagicMock()
@@ -183,7 +191,7 @@ class TestVerifyFlowSession:
         with (
             patch("gflow_cli.auth.verification.get_settings") as mock_settings,
             patch(
-                "gflow_cli.auth.verification.get_cookies_path",
+                "gflow_cli.auth.cookies.get_cookies_path",
                 return_value=Path("/fake/Cookies"),
             ),
             patch.dict(sys.modules, {"browser_cookie3": fake_bc3, "httpx": fake_httpx}),
@@ -193,6 +201,9 @@ class TestVerifyFlowSession:
 
         assert status.outcome is FlowSessionOutcome.AUTHENTICATED
         assert status.user_email == "test.user@example.com"
+        _, client_kwargs = fake_httpx.AsyncClient.call_args
+        assert client_kwargs["cookies"] == {"__Secure-next-auth.session-token": "flow-session"}
+        assert client_kwargs["follow_redirects"] is False
 
     @pytest.mark.asyncio
     async def test_profile_outside_home_raises_security_error_httpx(self, gflow_home: Path) -> None:
@@ -202,6 +213,35 @@ class TestVerifyFlowSession:
             mock_settings.return_value.home = gflow_home
             with pytest.raises(SecurityError):
                 await verify_flow_profile(outside)
+
+    @pytest.mark.asyncio
+    async def test_missing_cookie_store_is_no_session(self, gflow_home: Path) -> None:
+        profile = gflow_home / "profile_default"
+        profile.mkdir()
+
+        fake_resp = MagicMock(status_code=200, text="{}")
+        fake_client = MagicMock()
+        fake_client.__aenter__ = AsyncMock(return_value=fake_client)
+        fake_client.__aexit__ = AsyncMock(return_value=False)
+        fake_client.get = AsyncMock(return_value=fake_resp)
+
+        fake_httpx = MagicMock()
+        fake_httpx.AsyncClient.return_value = fake_client
+
+        with (
+            patch("gflow_cli.auth.verification.get_settings") as mock_settings,
+            patch(
+                "gflow_cli.auth.cookies.get_cookies_path",
+                side_effect=FileNotFoundError,
+            ),
+            patch.dict(sys.modules, {"httpx": fake_httpx}),
+        ):
+            mock_settings.return_value.home = gflow_home
+            status = await verify_flow_profile(profile)
+
+        assert status.outcome is FlowSessionOutcome.NO_SESSION
+        _, client_kwargs = fake_httpx.AsyncClient.call_args
+        assert client_kwargs["cookies"] == {}
 
     @pytest.mark.asyncio
     async def test_verification_error_on_browser_cookie_permission_error(
@@ -218,7 +258,7 @@ class TestVerifyFlowSession:
         with (
             patch("gflow_cli.auth.verification.get_settings") as mock_settings,
             patch(
-                "gflow_cli.auth.verification.get_cookies_path",
+                "gflow_cli.auth.cookies.get_cookies_path",
                 return_value=Path("/fake/Cookies"),
             ),
             patch.dict(sys.modules, {"browser_cookie3": fake_bc3, "httpx": fake_httpx}),
@@ -227,6 +267,36 @@ class TestVerifyFlowSession:
             status = await verify_flow_profile(profile)
 
         assert status.outcome is FlowSessionOutcome.VERIFICATION_ERROR
+
+    @pytest.mark.asyncio
+    async def test_playwright_fallback_requires_chrome_marker(self, gflow_home: Path) -> None:
+        profile = gflow_home / "profile_default"
+        profile.mkdir()
+
+        class BrowserCookieError(Exception):
+            pass
+
+        fake_bc3 = MagicMock()
+        fake_bc3.BrowserCookieError = BrowserCookieError
+        fake_bc3.chrome.side_effect = BrowserCookieError("Unable to get key")
+
+        fake_httpx = MagicMock()
+        fake_async_playwright = MagicMock()
+
+        with (
+            patch("gflow_cli.auth.verification.get_settings") as mock_settings,
+            patch(
+                "gflow_cli.auth.cookies.get_cookies_path",
+                return_value=Path("/fake/Cookies"),
+            ),
+            patch.dict(sys.modules, {"browser_cookie3": fake_bc3, "httpx": fake_httpx}),
+            patch("gflow_cli.auth.strategies.async_playwright", fake_async_playwright),
+        ):
+            mock_settings.return_value.home = gflow_home
+            status = await verify_flow_profile(profile)
+
+        assert status.outcome is FlowSessionOutcome.VERIFICATION_ERROR
+        fake_async_playwright.assert_not_called()
 
     @pytest.mark.asyncio
     async def test_verification_error_on_browser_cookie_decryption_error(
@@ -248,7 +318,7 @@ class TestVerifyFlowSession:
         with (
             patch("gflow_cli.auth.verification.get_settings") as mock_settings,
             patch(
-                "gflow_cli.auth.verification.get_cookies_path",
+                "gflow_cli.auth.cookies.get_cookies_path",
                 return_value=Path("/fake/Cookies"),
             ),
             patch.dict(sys.modules, {"browser_cookie3": fake_bc3, "httpx": fake_httpx}),

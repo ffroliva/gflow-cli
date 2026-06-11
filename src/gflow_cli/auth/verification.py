@@ -22,7 +22,8 @@ import structlog
 
 from gflow_cli.config import get_settings
 from gflow_cli.errors import SecurityError
-from gflow_cli.paths import get_cookies_path
+
+from .cookies import get_chrome_cookie_snapshot
 
 if TYPE_CHECKING:
     from pathlib import Path
@@ -84,6 +85,18 @@ class FlowSessionStatus:
     @property
     def authenticated(self) -> bool:
         return self.outcome is FlowSessionOutcome.AUTHENTICATED
+
+
+def _validate_profile_in_home(profile_dir: Path) -> None:
+    """Raise SecurityError when a profile escapes GFLOW_CLI_HOME."""
+    home = get_settings().home.resolve()
+    try:
+        profile_dir.resolve(strict=True).relative_to(home)
+    except (ValueError, OSError):
+        msg = f"Profile directory {profile_dir} is outside of GFLOW_CLI_HOME ({home})."
+        raise SecurityError(
+            msg,
+        ) from None
 
 
 def evaluate_session_response(
@@ -184,14 +197,7 @@ async def verify_flow_session(
     `RealChromeStrategy.login`'s own pre-`mkdir` check deliberately stays
     `strict=False` — see the design spec §4.2.
     """
-    home = get_settings().home.resolve()
-    try:
-        profile_dir.resolve(strict=True).relative_to(home)
-    except (ValueError, OSError):
-        msg = f"Profile directory {profile_dir} is outside of GFLOW_CLI_HOME ({home})."
-        raise SecurityError(
-            msg,
-        ) from None
+    _validate_profile_in_home(profile_dir)
 
     # Lazy import — a top-level `from .strategies import ...` would create the
     # cycle strategies -> real_chrome -> verification -> strategies.
@@ -239,98 +245,19 @@ async def verify_flow_session(
     return result
 
 
-def _get_chrome_cookies3(profile_dir: Path) -> dict[str, str]:
-    """Fast path: extract cookies directly from the SQLite store via browser_cookie3.
-
-    Raises `PermissionError` on any decryption failure (DPAPI, AES-GCM MAC check,
-    etc.) so the caller can fall back to the Playwright path gracefully.
-    """
-    import browser_cookie3  # pyright: ignore[reportMissingTypeStubs]
-
-    cookies_file = get_cookies_path(profile_dir)
-    key_file = profile_dir.joinpath("Local State")
-
-    try:
-        cookies = browser_cookie3.chrome(  # pyright: ignore[reportUnknownMemberType]
-            cookie_file=cookies_file,
-            key_file=key_file if key_file.exists() else None,
-        )
-        return {
-            cookie.name: cookie.value
-            for cookie in cookies
-            if cookie.name and cookie.value is not None
-        }
-
-    except Exception as exc:
-        # browser_cookie3.BrowserCookieError: Unable to get key for cookie decryption
-        raise PermissionError(f"Failed to decrypt Chrome cookies: {exc}") from exc
-
-
-async def _get_chrome_cookies(profile_dir: Path, channel: str = "chrome") -> dict[str, str]:
-    """Slow-path: extract cookies via a headless Playwright context.
-
-    Used as fallback when DPAPI decryption fails (e.g. cookie DB encrypted by
-    a different Windows user or machine). Playwright reads the cookies through
-    the browser's own decryption path, bypassing DPAPI entirely.
-    """
-    # Lazy import — a top-level `from .strategies import ...` would create the
-    # cycle strategies -> real_chrome -> verification -> strategies.
-    from .strategies import async_playwright
-
-    async with async_playwright() as pw:
-        ctx = await pw.chromium.launch_persistent_context(
-            user_data_dir=str(profile_dir),
-            channel=channel,
-            headless=True,
-            args=["--password-store=basic"],
-        )
-        try:
-            cookies = await ctx.cookies()
-            return {
-                str(cookie.get("name")): str(cookie.get("value"))
-                for cookie in cookies
-                if cookie.get("name") and cookie.get("value") is not None
-            }
-        finally:
-            await ctx.close()
-
-
-async def get_chrome_cookies(profile_dir: Path, channel: str = "chrome") -> dict[str, str]:
-    """Return Chrome cookies as a name/value mapping suitable for httpx.
-
-    Strategy (fast → slow):
-    1. browser_cookie3 — direct SQLite read, no browser launch.
-    2. Playwright headless — fallback when DPAPI/AES-GCM decryption fails.
-    """
-    try:
-        return _get_chrome_cookies3(profile_dir=profile_dir)
-    except PermissionError:
-        logger.info("cookie_decryption_failed_falling_back_to_playwright", profile=str(profile_dir))
-        return await _get_chrome_cookies(profile_dir=profile_dir, channel=channel)
-
-
 async def verify_flow_profile(
     profile_dir: Path,
     *,
-    channel: str = "chrome",
     source: str = "chrome",
 ) -> FlowSessionStatus:
-    home = get_settings().home.resolve()
-    try:
-        profile_dir.resolve(strict=True).relative_to(home)
-    except (ValueError, OSError):
-        msg = f"Profile directory {profile_dir} is outside of GFLOW_CLI_HOME ({home})."
-        raise SecurityError(
-            msg,
-        ) from None
+    _validate_profile_in_home(profile_dir)
 
     status_code: int
     body: str
     try:
         import httpx
 
-        httpx_cookies = await get_chrome_cookies(profile_dir, channel=channel)
-        google_session = "SAPISID" in httpx_cookies
+        cookie_snapshot = await get_chrome_cookie_snapshot(profile_dir)
         headers = {
             "accept": "*/*",
             "cache-control": "no-cache",
@@ -339,9 +266,9 @@ async def verify_flow_profile(
         }
 
         async with httpx.AsyncClient(
-            cookies=httpx_cookies,
+            cookies=cookie_snapshot.httpx_cookies,
             headers=headers,
-            follow_redirects=True,
+            follow_redirects=False,
         ) as client:
             response = await client.get(SESSION_API_URL)
             status_code = response.status_code
@@ -359,7 +286,7 @@ async def verify_flow_profile(
     result = evaluate_session_response(
         status_code,
         body,
-        google_session=google_session,
+        google_session=cookie_snapshot.google_session,
         source=source,
     )
     if result.outcome is FlowSessionOutcome.VERIFICATION_ERROR:
