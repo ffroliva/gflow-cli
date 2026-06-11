@@ -119,18 +119,18 @@ tier telemetry. Updates the two pt-literal assertions.
 signatures (memory: BDD stubs break with TypeError when kwargs drift — update fakes in same commit).
 
 **Files:**
-- `tests/features/locale_picker_include.feature` — 4 scenarios
-- `tests/features/` step/conftest fakes — wire new steps
+- `tests/features/locale_picker_include.feature` — 3 scenarios
+- `tests/features/test_locale_picker_include_steps.py` — step bindings (seam: `cli_image._run_t2i`, per repo BDD convention)
 
-**Steps:**
-- [ ] Scenario: ru-locale attach succeeds via icon tier (asserts `character_entity_attached` + `referenceEntities` in captured payload)
-- [ ] Scenario: pt-BR regression guard (attach succeeds; tier event reports which tier matched)
-- [ ] Scenario: both tiers miss → locale-neutral typed failure + screenshot + dialog closed
-- [ ] Scenario: include click lands but entity never staged → `WireFormatError` before success is reported (drives Task 5)
-- [ ] Verify scenarios are red
+**Steps (adapted to the repo's BDD seam — mocked at `_run_t2i`, so locale/selector
+mechanics live in the Task-2 unit tests; BDD pins the CLI contract):**
+- [x] Scenario: t2i passes the reference entity through to the runner (exit 0, `req.reference_entities`/`_names` recorded, image written)
+- [x] Scenario: include-action timeout → typed `TransportTimeoutError`, exit 9, output contains the locale-neutral phrase and NOT the pt caption
+- [x] Scenario: submit backstop `WireFormatError` → exit 7, "File a bug" (drives Task 5)
+- [x] Scenarios pass by construction at this seam (stubs raise the typed errors) — they are regression contracts for the exit-code mapping discovered in Task 3: an untyped `RuntimeError` would surface as privacy-hashed "Unexpected error." exit 1, burying the remediation hint. **This upgraded the design: the attach failure must raise `TransportTimeoutError` (exit 9, instance `remediation_hint`), not RuntimeError** — Task-2 tests updated accordingly in the same commit.
 
-**Tests created (red):**
-- [ ] `locale_picker_include.feature` — 4 scenarios above
+**Tests created:**
+- [x] `locale_picker_include.feature` — 3 scenarios above (green at seam; unit red drives Task 4)
 
 ---
 
