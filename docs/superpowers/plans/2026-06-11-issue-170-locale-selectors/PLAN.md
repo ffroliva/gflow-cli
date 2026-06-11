@@ -90,20 +90,26 @@ tier telemetry. Updates the two pt-literal assertions.
 - `tests/api/transports/test_ui_automation_video.py` — new + updated tests
 
 **Steps:**
-- [ ] Replace `assert "Incluir no comando" in selectors` (≈ line 1057) with cascade-composition asserts: icon tier first, scoped to `[role='menu']`; pt/ru/en text tier follows
-- [ ] Replace `pytest.raises(RuntimeError, match="Incluir no comando")` (≈ line 1080) with a locale-neutral match (e.g. `"context-menu include action"`); assert message carries screenshot path + remediation hint, NOT the pt literal
-- [ ] Add ru-locale picker DOM fixture and a test that the cascade matches its menu item via the icon tier alone
-- [ ] Add test: failure path closes the picker dialog/menu before raising (no `[data-state='open']` dialog left)
-- [ ] Add test: `include_selector_tier` structlog event emitted with `tier` key on successful attach
-- [ ] Verify all new tests are red (`.venv/Scripts/python.exe -m pytest tests/api/transports/test_ui_automation_video.py -q`)
+- [x] Replace `assert "Incluir no comando" in selectors` with cascade-composition asserts: icon tier (`text-is('add')`) is what a fully-matching page uses
+- [x] Replace `pytest.raises(RuntimeError, match="Incluir no comando")` with a locale-neutral match (`"include action"`); assert message carries the entity id and NOT the pt literal
+- [x] ~~ru-locale DOM fixture~~ → replaced by the established `TestSelectorLocaleInvariance` string-pinning pattern (PR #127): Tier 1 locked verbatim + no-localized-text invariant; behavioral ru coverage lands in BDD (Task 3) and the reporter's live run (Task 7)
+- [x] Add test: failure path presses Escape before raising (no open dialog returns to the pool)
+- [x] Add test: `include_selector_tier` structlog event emitted with `tier` + `surface` keys on successful attach (both context-menu and Vozes surfaces)
+- [x] Verify all new tests are red — 12 failed as expected, 2026-06-11
+
+**Design contract pinned by the tests (Task 4 must implement):**
+- `PICKER_CONTEXT_INCLUDE: tuple[str, str]` — `("[role='menu'][data-state='open'] [role='menuitem']:has(i.google-symbols:text-is('add'))", "<menu-scoped pt/ru/en captions>")`
+- `PICKER_INCLUDE_BUTTON: tuple[str, str]` — `("<pt/ru/en button captions>", "[role='dialog'][data-state='open'] button:not(:has(i.google-symbols))")`
+- Tiers probed sequentially (a flat comma-join resolves in DOM order and can't report which tier matched); matched tier emitted as `ui_automation_video.include_selector_tier` (tier=icon|text|structural, surface=context_menu|vozes_button)
 
 **Tests created (red):**
-- [ ] `test_picker_context_include_cascade_icon_first_menu_scoped`
-- [ ] `test_picker_context_include_text_fallback_covers_pt_ru_en`
-- [ ] `test_attach_entity_failure_message_locale_neutral`
-- [ ] `test_attach_entity_failure_closes_picker_dialog`
-- [ ] `test_attach_entity_matches_ru_locale_fixture_via_icon_tier`
-- [ ] `test_attach_entity_logs_selector_tier`
+- [x] `TestPickerIncludeSelectorLocaleInvariance` — 7 static-invariant tests (tier shape, Tier-1 verbatim lock, no localized text in Tier 1, pt/ru/en coverage, menu/dialog scoping)
+- [x] `test_attach_right_clicks_personagens_entity_tile` — updated: icon tier drives the match
+- [x] `test_attach_logs_which_selector_tier_matched` — tier=icon, surface=context_menu
+- [x] `test_attach_raises_when_context_menu_absent` — locale-neutral message, carries entity id
+- [x] `test_attach_failure_closes_picker_before_raising` — Escape cleanup
+- [x] `TestAttachReferenceAudio::test_attach_audio_logs_selector_tier` — tier=text, surface=vozes_button
+- [x] `TestAttachReferenceAudio::test_attach_audio_raises_locale_neutral_when_button_absent`
 
 ---
 
