@@ -22,6 +22,7 @@ from gflow_cli.errors import (
     ProblemDetails,
     RateLimitError,
     TransportTimeoutError,
+    UpscaleUnavailableError,
     VideoModelSelectionError,
     WafRejectionError,
     WireFormatError,
@@ -180,6 +181,19 @@ def test_video_model_selection_error_exit_code_18():
     assert isinstance(err, ConfigurationError)
     assert _exit_code_for(err) == 18
     assert EXIT_CODE_MAP[VideoModelSelectionError] == 18
+
+
+def test_upscale_unavailable_error_exit_code_22():
+    """Issue #171: 4K upscale on a non-Ultra account (or otherwise unavailable
+    target resolution) gets a DISTINCT exit code 22, separate from WafRejectionError
+    (10) — even though both surface as HTTP 403 — so scripted callers can branch on
+    "upgrade your tier" vs "WAF blocked the request" without parsing stderr.
+    """
+    err = UpscaleUnavailableError(detail="4K requires an Ultra subscription", status=403)
+    assert isinstance(err, GFlowError)
+    assert not isinstance(err, WafRejectionError)
+    assert EXIT_CODE_MAP[UpscaleUnavailableError] == 22
+    assert next(code for cls, code in EXIT_CODE_MAP.items() if isinstance(err, cls)) == 22
 
 
 def test_exit_code_map_ordering_invariant():
