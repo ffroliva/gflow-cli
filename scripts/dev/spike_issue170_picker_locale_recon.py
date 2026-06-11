@@ -55,7 +55,8 @@ _ENTITY_TILE = "[data-tile-id^='fe_id_']"
 # derive a scoped Tier-1 selector without guessing the container shape.
 _DUMP_MENUS_JS = """
 () => {
-  const ICON = "i.google-symbols,.google-symbols,.material-symbols-outlined,.material-symbols-rounded";
+  const ICON = "i.google-symbols,.google-symbols," +
+    ".material-symbols-outlined,.material-symbols-rounded";
   const vis = (el) => { const r = el.getBoundingClientRect(); return r.width > 0 && r.height > 0; };
   const lig = (el) => { const i = el.querySelector(ICON); return i ? i.textContent.trim() : null; };
   const desc = (el) => ({
@@ -88,7 +89,8 @@ _DUMP_MENUS_JS = """
 # icon, aria, or position — is identifiable even if its caption is localized.
 _DUMP_BUTTONS_JS = """
 () => {
-  const ICON = "i.google-symbols,.google-symbols,.material-symbols-outlined,.material-symbols-rounded";
+  const ICON = "i.google-symbols,.google-symbols," +
+    ".material-symbols-outlined,.material-symbols-rounded";
   const vis = (el) => { const r = el.getBoundingClientRect(); return r.width > 0 && r.height > 0; };
   const lig = (el) => { const i = el.querySelector(ICON); return i ? i.textContent.trim() : null; };
   return [...document.querySelectorAll("button,[role='option']")].filter(vis).map((el) => ({

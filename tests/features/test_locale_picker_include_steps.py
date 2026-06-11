@@ -81,9 +81,7 @@ def _reset_settings_cache() -> Generator[None, None, None]:
 
 
 @given("the mocked t2i runner records the request and writes one image")
-def _mock_recording_runner(
-    monkeypatch: pytest.MonkeyPatch, runner_state: dict[str, Any]
-) -> None:
+def _mock_recording_runner(monkeypatch: pytest.MonkeyPatch, runner_state: dict[str, Any]) -> None:
     async def _fake_t2i(
         *,
         profile_name: str,
