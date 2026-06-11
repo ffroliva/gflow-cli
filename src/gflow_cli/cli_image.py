@@ -40,6 +40,8 @@ from gflow_cli.api.image_upscale import TargetResolution, UpsampleImageRequest
 from gflow_cli.api.transports import transport_choices
 from gflow_cli.config import get_settings
 from gflow_cli.data.recorder import OperationRecorder
+from gflow_cli.data.repository import DataRepository
+from gflow_cli.data.store import DataStore
 from gflow_cli.errors import ConfigurationError, DataStoreError
 from gflow_cli.image_batch import (
     ALLOWED_ASPECT_RATIOS as _ALLOWED_ASPECT_RATIOS,
@@ -414,6 +416,17 @@ async def _run_upload(
     default=None,
     help="Output directory (defaults to the configured gflow output dir).",
 )
+@click.option(
+    "--project",
+    "project_id",
+    default=None,
+    callback=_validate_project_id,
+    help=(
+        "Project that owns the image. Resolved from the local catalog when "
+        "omitted; pass it explicitly for images gflow didn't record (e.g. "
+        "generated in the web UI)."
+    ),
+)
 @click.option("--profile", default=None, help="Profile name (overrides default).")
 @click.option(
     "--transport",
@@ -425,23 +438,35 @@ def upscale(
     media_id: str,
     scale: str,
     out_dir: Path | None,
+    project_id: str | None,
     profile: str | None,
     transport: str | None,
 ) -> None:
     """Upscale MEDIA_ID to the requested --scale and save it locally."""
-    # Validate BOTH inputs before launching the browser (fail fast, exit 2).
+    # Validate scale + mediaId format before doing anything (fail fast, exit 2).
     try:
         resolution = TargetResolution.from_cli(scale)
     except ValueError as exc:
         raise click.BadParameter(str(exc), param_hint="--scale") from exc
-    try:
-        # Reuse the value object's UUID guard — rejects malformed ids before
-        # any reCAPTCHA mint or network call.
-        UpsampleImageRequest(media_id=media_id, target_resolution=resolution)
-    except ValueError as exc:
-        raise click.BadParameter(str(exc), param_hint="MEDIA_ID") from exc
+    if not _UUID_RE.fullmatch(media_id):
+        raise click.BadParameter(
+            "MEDIA_ID must be a bare UUID (8-4-4-4-12 hex).", param_hint="MEDIA_ID"
+        )
 
     profile_name = _resolve_profile(profile)
+    # Resolve the owning project (catalog lookup or explicit --project) BEFORE
+    # launching the browser — no reCAPTCHA mint is spent on an unresolvable id.
+    resolved_project = _resolve_upscale_project_id(
+        media_id=media_id, explicit=project_id, profile_name=profile_name
+    )
+    # Final guard: both ids must be well-formed UUIDs (the wire requires it).
+    try:
+        UpsampleImageRequest(
+            media_id=media_id, project_id=resolved_project, target_resolution=resolution
+        )
+    except ValueError as exc:
+        raise click.BadParameter(str(exc)) from exc
+
     provider_dir = _make_provider_dir(profile_name)
     settings = get_settings()
     run_with_handlers(
@@ -449,6 +474,7 @@ def upscale(
             profile_dir=provider_dir,
             headless=settings.headless,
             media_id=media_id,
+            project_id=resolved_project,
             resolution=resolution,
             scale_label=scale.strip().lower(),
             out_dir=out_dir,
@@ -458,11 +484,54 @@ def upscale(
     )
 
 
+def _lookup_project_in_catalog(media_id: str, profile_name: str) -> str | None:
+    """Return the owning projectId for *media_id* recorded under *profile_name*.
+
+    Scoped to the authenticated profile on purpose: a hit means THIS account
+    generated the image (ownership proof). Returns ``None`` if not recorded or
+    the catalog is unavailable — the caller then asks for an explicit --project.
+    """
+    try:
+        settings = get_settings()
+        with DataStore.open(settings.resolved_db_path()) as store:
+            asset = DataRepository(store).get_asset_by_flow_media_id(profile_name, media_id)
+    except DataStoreError:
+        return None
+    if asset is not None and asset.flow_project_id:
+        return asset.flow_project_id
+    return None
+
+
+def _resolve_upscale_project_id(*, media_id: str, explicit: str | None, profile_name: str) -> str:
+    """Resolve the owning project: explicit --project wins, else the catalog.
+
+    Fails fast with a usage error (exit 2) when neither yields a project, so no
+    browser/reCAPTCHA work is wasted.
+    """
+    cataloged = _lookup_project_in_catalog(media_id, profile_name)
+    if explicit is not None:
+        if cataloged is not None and cataloged != explicit:
+            console.print(
+                f"[yellow]Note:[/yellow] --project {explicit} differs from the catalog's "
+                f"{cataloged} for this media id; using --project as given."
+            )
+        return explicit
+    if cataloged is not None:
+        return cataloged
+    msg = (
+        f"Could not resolve the owning project for media {media_id!r} from the local "
+        f"catalog (profile {profile_name!r}). Pass --project <id> — find it in the Flow "
+        f"editor URL (…/project/<id>/…) or via `gflow data list images`."
+    )
+    raise click.UsageError(msg)
+
+
 async def _run_upscale(
     *,
     profile_dir: Path,
     headless: bool,
     media_id: str,
+    project_id: str,
     resolution: TargetResolution,
     scale_label: str,
     out_dir: Path | None,
@@ -479,6 +548,7 @@ async def _run_upscale(
         console.print(f"Upscaling [bold]{media_id}[/bold] to {scale_label.upper()}...")
         target = await client.upsample_image(
             media_id=media_id,
+            project_id=project_id,
             target_resolution=resolution,
             out_path=out_path,
         )

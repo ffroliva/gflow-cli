@@ -1068,6 +1068,7 @@ class FlowApiClient:
         self,
         *,
         media_id: str,
+        project_id: str,
         target_resolution: TargetResolution,
         out_path: Path,
         recaptcha_action: str = "upsampleImage",
@@ -1080,6 +1081,11 @@ class FlowApiClient:
         ``out_path`` (or the configured cloud ``storage_uri``) and returns the
         target.
 
+        ``project_id`` is the project that owns ``media_id`` — the live wire
+        requires it inside ``clientContext`` (a minimal body 403s even with a
+        valid token; confirmed by live smoke). The request is validated BEFORE the
+        reCAPTCHA mint so malformed ids fail fast without spending a token.
+
         4K is Ultra-tier-gated: a 403 on a 4K request surfaces as
         :class:`UpscaleUnavailableError` (exit 22, never auto-retried) rather than
         :class:`WafRejectionError` — both are HTTP 403 on the wire, disambiguated
@@ -1088,20 +1094,24 @@ class FlowApiClient:
         The ~5 MB ``encodedImage`` base64 is NEVER logged; it is capped before
         decode, validated by magic bytes, and dropped promptly after decode.
         """
+        # Construct (and validate media_id/project_id) BEFORE minting — fail fast.
+        base_req = UpsampleImageRequest(
+            media_id=media_id,
+            project_id=project_id,
+            target_resolution=target_resolution,
+        )
         logger.info(
             "image.upscale_started",
             media_id=media_id,
             resolution=target_resolution.name,
         )
         token = await self._mint_recaptcha_token(recaptcha_action)
-        req = _dc_replace(
-            UpsampleImageRequest(media_id=media_id, target_resolution=target_resolution),
-            recaptcha_token=token,
-        )
+        req = _dc_replace(base_req, recaptcha_token=token)
+        session_id = f";{int(time.time() * 1000)}"
         try:
             resp = await self._post_json(
                 routes.UPSAMPLE_IMAGE,
-                build_upsample_image_body(req),
+                build_upsample_image_body(req, session_id=session_id),
                 route_name="upsampleImage",
             )
         except WafRejectionError as exc:
