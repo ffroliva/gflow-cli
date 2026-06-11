@@ -142,16 +142,16 @@ mechanics live in the Task-2 unit tests; BDD pins the CLI contract):**
 - `src/gflow_cli/api/transports/ui_automation_video.py`
 
 **Steps:**
-- [ ] `PICKER_CONTEXT_INCLUDE` → Tier 1 `[role='menu'] [role='menuitem']:has(i.google-symbols:text-is('add'))` (exact container per Task 1 recon); Tier 2 menu-scoped text for `'Incluir no comando'`, `'Добавить в запрос'`, `'Add to prompt'`
-- [ ] `PICKER_INCLUDE_BUTTON` → per Task 1 recon: icon/structural Tier 1 if confirmed, else multi-locale text primary (document why in the constant's comment)
-- [ ] `_attach_character_entities`: locale-neutral error message ("context-menu include action did not appear…" + remediation hint + screenshot path); close picker dialog/menu (Escape + state check) before raising
-- [ ] `_attach_character_entities` / `_attach_reference_audio`: emit `ui_automation_video.include_selector_tier` (tier=icon|text) on success
-- [ ] Update docstrings/comments (mechanism notes reference the caption generically, not the pt string)
-- [ ] Task 2 unit tests green; BDD scenarios 1–3 green
+- [x] `PICKER_CONTEXT_INCLUDE` → Tier 1 `[role='menu'][data-state='open'] [role='menuitem']:has(i.google-symbols:text-is('add'))` (container per Task 1 recon); Tier 2 menu-scoped text for `'Incluir no comando'`, `'Добавить в запрос'`, `'Add to prompt'`
+- [x] `PICKER_INCLUDE_BUTTON` → multi-locale text primary + lone-iconless-dialog-button structural fallback (recon: no ligature on the button; rationale in the constant's comment)
+- [x] New `_resolve_include_action` helper: sequential tier probe, `include_selector_tier` event (tier + surface), screenshot + double-Escape cleanup + typed `TransportTimeoutError` with remediation hint on exhaustion — shared by both attach helpers
+- [x] Docstrings reference the caption generically; spike_movie_attach_payload.py updated for the tuple constant
+- [x] Task 2 unit tests green; BDD scenarios green (72 passed)
 
 **Tests:**
-- [ ] All Task 2 tests green
-- [ ] `pyright src` clean (whole tree — per repo gate)
+- [x] All Task 2 tests green (68 unit + 3 BDD + collision guard)
+- [x] `pyright src` clean (0 errors, whole tree, worktree venv)
+- [x] ruff check + format clean on all touched files
 
 ---
 

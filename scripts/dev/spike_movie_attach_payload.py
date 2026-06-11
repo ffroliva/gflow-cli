@@ -131,7 +131,9 @@ async def _run(
                 await tile.scroll_into_view_if_needed(timeout=8000)
                 await tile.click()
                 await page.wait_for_timeout(400)
-                include = page.locator(PICKER_INCLUDE_BUTTON).first
+                # PICKER_INCLUDE_BUTTON is a tier tuple since #170; the spike
+                # only needs "any tier matches", so a flat comma-join is fine.
+                include = page.locator(", ".join(PICKER_INCLUDE_BUTTON)).first
                 await include.wait_for(state="visible", timeout=8000)
                 await include.click()
                 await page.wait_for_timeout(800)
