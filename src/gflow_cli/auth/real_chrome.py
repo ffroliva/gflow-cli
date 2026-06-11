@@ -12,7 +12,7 @@ from gflow_cli.config import Settings, get_settings
 from gflow_cli.errors import AuthLoginTimeoutError, AuthMissingError, SecurityError
 
 from .base import AuthStrategy
-from .verification import FlowSessionOutcome, verify_flow_session
+from .verification import FlowSessionOutcome, verify_flow_profile
 
 if TYPE_CHECKING:
     from pathlib import Path
@@ -204,7 +204,15 @@ class RealChromeStrategy(AuthStrategy):
         await _await_chrome_close(proc, self._timeout_seconds)
         _console.print("\n[bold green]Browser closed.[/bold green] Verifying Flow session...")
 
-        status = await verify_flow_session(profile_dir, channel="chrome", source=self.name)
+        # Pre-write the Chrome marker so the verification fallback can use the
+        # same channel gate if browser-cookie3 decryption fails.
+        marker = profile_dir / ".gflow_browser_strategy"
+        marker.write_text("chrome", encoding="utf-8")
+        try:
+            status = await verify_flow_profile(profile_dir, source=self.name)
+        except Exception:
+            marker.unlink(missing_ok=True)
+            raise
         if status.authenticated:
             logger.info(
                 "auth_flow_session_verified",
@@ -214,11 +222,11 @@ class RealChromeStrategy(AuthStrategy):
             )
             # Marker read by browser_manager.channel_for_profile so FlowApiClient
             # selects the system Chrome channel. Load-bearing — must persist here.
-            (profile_dir / ".gflow_browser_strategy").write_text("chrome", encoding="utf-8")
             assert status.user_email, "AUTHENTICATED outcome must carry a non-empty user_email"
             (profile_dir / ".gflow_account").write_text(status.user_email, encoding="utf-8")
             _console.print(f"[green][OK] Flow session verified ({status.user_email}).[/green]")
         else:
+            marker.unlink(missing_ok=True)
             logger.warning(
                 "auth_flow_session_unverified",
                 strategy=self.name,
