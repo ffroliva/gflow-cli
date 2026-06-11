@@ -74,12 +74,12 @@ docs/USAGE.md, README.md, docs/INDEX.md, CHANGELOG.md
 - `src/gflow_cli/errors.py` — new class + map entry
 
 **Steps:**
-- [ ] Red test: `UpscaleUnavailableError` maps to 22; not equal to WAF 403 code
-- [ ] Add the class (RFC 9457 fields: type/title/status/detail/remediation_hint) + register in `EXIT_CODE_MAP`
-- [ ] Verify `test_exit_code_map_ordering_invariant` still passes (inheritance trap — see memory)
+- [x] Red test: `UpscaleUnavailableError` maps to 22; not equal to WAF 403 code
+- [x] Add the class (RFC 9457 fields: type/title/status/detail/remediation_hint) + register in `EXIT_CODE_MAP`
+- [x] Verify `test_exit_code_map_ordering_invariant` still passes (inheritance trap — see memory)
 
 **Tests created (red):**
-- [ ] `test_upscale_unavailable_exit_code` — exit 22, distinct from WAF/reCAPTCHA
+- [x] `test_upscale_unavailable_exit_code` — exit 22, distinct from WAF/reCAPTCHA
 
 ---
 
@@ -92,15 +92,15 @@ docs/USAGE.md, README.md, docs/INDEX.md, CHANGELOG.md
 - `src/gflow_cli/api/image.py` (or new `image_upscale.py`) — enum + dataclass + body builder
 
 **Steps:**
-- [ ] Red tests: `TargetResolution.from_cli("2k")` → enum; `"1k"`/`"8k"` rejected; request frozen
-- [ ] Add enum + `UpsampleImageRequest(media_id, target_resolution, recaptcha_token="")`
-- [ ] Body builder → `{mediaId, targetResolution, clientContext:{recaptchaContext:{token}}}`
-- [ ] mediaId UUID-allowlist validation (reject malformed before request)
+- [x] Red tests: `TargetResolution.from_cli("2k")` → enum; `"1k"`/`"8k"` rejected; request frozen
+- [x] Add enum + `UpsampleImageRequest(media_id, target_resolution, recaptcha_token="")`
+- [x] Body builder → `{mediaId, targetResolution, clientContext:{recaptchaContext:{token}}}`
+- [x] mediaId UUID-allowlist validation (reject malformed before request)
 
 **Tests created (red):**
-- [ ] `test_target_resolution_from_cli` / `test_target_resolution_rejects_1k_and_unknown`
-- [ ] `test_upsample_request_body_shape`
-- [ ] `test_media_id_uuid_validation`
+- [x] `test_target_resolution_from_cli` / `test_target_resolution_rejects_1k_and_unknown`
+- [x] `test_upsample_request_body_shape`
+- [x] `test_media_id_uuid_validation`
 
 ---
 
@@ -114,15 +114,15 @@ docs/USAGE.md, README.md, docs/INDEX.md, CHANGELOG.md
 - `src/gflow_cli/api/client.py` — `MAX_UPSAMPLE_B64_LEN = 50 * 1024 * 1024`; `upsample_image(...)`
 
 **Steps:**
-- [ ] Red tests for: 200 happy (decode → PNG/JPEG bytes written); response > cap → typed error before decode; missing `encodedImage` → `WireFormatError` (redacted); decoded bytes fail magic-byte → typed error
-- [ ] Red tests for 403 disambiguation: tier 403 → `UpscaleUnavailableError` (no retry); WAF 403 → existing `WafRejectionError`; expired-token 401 → existing refresh+single-retry
-- [ ] Red test: structlog capture asserts `encodedImage` value never present in any event
-- [ ] Add route + method; reuse `_mint_recaptcha_token("upscaleImage" or correct action)`; single Page checkout (no nested checkout — use `context.request` if aux call needed)
-- [ ] Decode mirrors `concatenate_scene` (cap → `b64decode` → magic-byte → `del encoded`)
-- [ ] Write via `paths.image_output_path` as `<mediaId>_<scale>.<ext>` (ext from magic byte)
+- [x] Red tests for: 200 happy (decode → PNG/JPEG bytes written); response > cap → typed error before decode; missing `encodedImage` → `WireFormatError` (redacted); decoded bytes fail magic-byte → typed error
+- [x] Red tests for 403 disambiguation: tier 403 → `UpscaleUnavailableError` (no retry); WAF 403 → existing `WafRejectionError`; expired-token 401 → existing refresh+single-retry
+- [x] Red test: structlog capture asserts `encodedImage` value never present in any event
+- [x] Add route + method; reuse `_mint_recaptcha_token("upscaleImage" or correct action)`; single Page checkout (no nested checkout — use `context.request` if aux call needed)
+- [x] Decode mirrors `concatenate_scene` (cap → `b64decode` → magic-byte → `del encoded`)
+- [x] Write via `paths.image_output_path` as `<mediaId>_<scale>.<ext>` (ext from magic byte)
 
 **Tests created (red):**
-- [ ] `test_upsample_happy_2k`, `test_upsample_oversized_rejected`, `test_upsample_missing_field`,
+- [x] `test_upsample_happy_2k`, `test_upsample_oversized_rejected`, `test_upsample_missing_field`,
       `test_upsample_non_image_bytes`, `test_upsample_4k_pro_403_no_retry`,
       `test_upsample_waf_403_distinct`, `test_upsample_encoded_image_never_logged`
 
@@ -137,13 +137,13 @@ docs/USAGE.md, README.md, docs/INDEX.md, CHANGELOG.md
 - `src/gflow_cli/cli_image.py` — `upscale` command
 
 **Steps:**
-- [ ] Red tests: happy invocation calls `upsample_image` with mapped enum; `--scale 8k` rejected by Click; `--scale 1k` rejected with "1k is the original" hint; malformed mediaId → usage error, no HTTP
-- [ ] Red test: 4K-on-Pro path surfaces exit 22 + Ultra-only remediation; no auto-retry
-- [ ] Implement command; emit `upscale_started/completed/unavailable` (stable keys); `--help` states platform-only + Ultra-only constraints + "find mediaId via `gflow data list images`"
-- [ ] Record the output asset via `OperationRecorder` honoring the redaction gate; wrap callback in try/except `DataStoreError`
+- [x] Red tests: happy invocation calls `upsample_image` with mapped enum; `--scale 8k` rejected by Click; `--scale 1k` rejected with "1k is the original" hint; malformed mediaId → usage error, no HTTP
+- [x] Red test: 4K-on-Pro path surfaces exit 22 + Ultra-only remediation; no auto-retry
+- [x] Implement command; emit `upscale_started/completed/unavailable` (stable keys); `--help` states platform-only + Ultra-only constraints + "find mediaId via `gflow data list images`"
+- [x] Record the output asset via `OperationRecorder` honoring the redaction gate; wrap callback in try/except `DataStoreError`
 
 **Tests created (red):**
-- [ ] `test_upscale_cli_happy`, `test_upscale_cli_scale_choice`, `test_upscale_cli_1k_rejected`,
+- [x] `test_upscale_cli_happy`, `test_upscale_cli_scale_choice`, `test_upscale_cli_1k_rejected`,
       `test_upscale_cli_bad_media_id`, `test_upscale_cli_4k_pro_exit22`
 
 ---
@@ -157,12 +157,12 @@ docs/USAGE.md, README.md, docs/INDEX.md, CHANGELOG.md
 - `tests/features/test_image_upscale_steps.py` — typed step defs (mirror signatures — see memory)
 
 **Steps:**
-- [ ] Add the four `/gflow:scenario` BDD scenarios as a feature file
-- [ ] Implement step defs against the real command; assert exit codes + redaction
-- [ ] All BDD green
+- [x] Add the four `/gflow:scenario` BDD scenarios as a feature file
+- [x] Implement step defs against the real command; assert exit codes + redaction
+- [x] All BDD green
 
 **Tests created:**
-- [ ] BDD: 2K happy, 4K/Pro exit 22, oversized rejected, malformed mediaId usage error
+- [x] BDD: 2K happy, 4K/Pro exit 22, oversized rejected, malformed mediaId usage error
 
 ---
 
@@ -177,9 +177,9 @@ docs/USAGE.md, README.md, docs/INDEX.md, CHANGELOG.md
 - `CHANGELOG.md` `[Unreleased]` — `feat(image): upscale to 2K/4K (#171)`
 
 **Steps:**
-- [ ] Write usage + constraints (platform-only, Ultra-only, credit-free expectation)
-- [ ] Index the recon doc; cross-link spikes
-- [ ] CHANGELOG entry referencing #171
+- [x] Write usage + constraints (platform-only, Ultra-only, credit-free expectation)
+- [x] Index the recon doc; cross-link spikes
+- [x] CHANGELOG entry referencing #171
 
 ---
 
@@ -188,19 +188,19 @@ docs/USAGE.md, README.md, docs/INDEX.md, CHANGELOG.md
 **What:** Green `/gflow:check`; open PR to `develop`.
 
 **Steps:**
-- [ ] `/gflow:check` green (ruff + format + `pyright src` + pytest ≥ 80% on changed dirs)
-- [ ] Live smoke (opt-in, supervised): one real 2K upscale on a known mediaId (credit-free) confirms wire still matches
-- [ ] PR `feature/image-upscale` → `develop`, `Closes #171`
+- [x] `/gflow:check` green (ruff + format + `pyright src` + pytest ≥ 80% on changed dirs)
+- [x] Live smoke (opt-in, supervised): one real 2K upscale on a known mediaId (credit-free) confirms wire still matches
+- [x] PR `feature/image-upscale` → `develop`, `Closes #171`
 
 ---
 
 ## Definition of done
 
-- [ ] All task steps checked off
-- [ ] `/gflow:check` green (ruff / format / pyright / pytest ≥ 80% coverage)
-- [ ] `CHANGELOG.md` `[Unreleased]` updated (`#171`)
-- [ ] Docs updated (`USAGE.md`, `README.md`, `INDEX.md`, `KNOWN_ISSUES.md`)
-- [ ] BDD feature covers all Critical + High scenarios from `/gflow:scenario`
-- [ ] `encodedImage` proven absent from logs (test) — Critical mitigation verified
-- [ ] 4K/Pro 403 → exit 22, no auto-retry — Critical mitigation verified
-- [ ] No `# TODO` in diff without a tracked issue link
+- [x] All task steps checked off
+- [x] `/gflow:check` green (ruff / format / pyright / pytest ≥ 80% coverage)
+- [x] `CHANGELOG.md` `[Unreleased]` updated (`#171`)
+- [x] Docs updated (`USAGE.md`, `README.md`, `INDEX.md`, `KNOWN_ISSUES.md`)
+- [x] BDD feature covers all Critical + High scenarios from `/gflow:scenario`
+- [x] `encodedImage` proven absent from logs (test) — Critical mitigation verified
+- [x] 4K/Pro 403 → exit 22, no auto-retry — Critical mitigation verified
+- [x] No `# TODO` in diff without a tracked issue link
