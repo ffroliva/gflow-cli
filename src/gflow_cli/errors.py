@@ -28,6 +28,7 @@ __all__ = [
     "SceneConcatError",
     "SecurityError",
     "TransportTimeoutError",
+    "UpscaleUnavailableError",
     "VideoModelSelectionError",
     "WafRejectionError",
     "WireFormatError",
@@ -354,6 +355,32 @@ class VideoModelSelectionError(ConfigurationError):
     )
 
 
+class UpscaleUnavailableError(GFlowError):
+    """Raised when an image upscale target resolution is unavailable for the account
+    (issue #171).
+
+    The canonical case: a non-Ultra (e.g. Pro) account requests ``--scale 4k``.
+    Flow's ``upsampleImage`` endpoint returns HTTP 403 for the tier gate, which is
+    indistinguishable on the wire from a WAF/fingerprint 403. The transport
+    disambiguates by context (the request was a 4K upscale, the session is valid,
+    reCAPTCHA was accepted) and raises THIS error rather than ``WafRejectionError``.
+
+    Distinct exit code 22 (not WAF's 10) so scripted callers can branch on
+    "upgrade your subscription" versus "the request was blocked / rotate profile".
+    The caller MUST NOT auto-retry a tier 403 — retrying only inflates per-profile
+    WAF heat without ever succeeding.
+    """
+
+    problem_type = "https://gflow-cli.dev/errors/upscale-unavailable"
+    title = "Image upscale unavailable for this account"
+    _default_remediation = (
+        "This upscale resolution is not available on your account. 4K upscaling "
+        "requires a Flow Ultra subscription — use --scale 2k, or upgrade your plan. "
+        "If you just upgraded, re-run `gflow auth login --profile <name>` to refresh "
+        "the session."
+    )
+
+
 class SecurityError(GFlowError):
     """Raised when a security boundary is violated (e.g. profile_dir outside HOME)."""
 
@@ -612,6 +639,10 @@ EXIT_CODE_MAP: dict[type[GFlowError], int] = {
     AuthMissingError: 8,
     TransportTimeoutError: 9,
     WafRejectionError: 10,
+    # UpscaleUnavailableError (issue #171): tier-gated 4K upscale 403, DISTINCT
+    # from WafRejectionError's 10 even though both are HTTP 403. Direct GFlowError
+    # subclass, so unconstrained by the ordering invariant.
+    UpscaleUnavailableError: 22,
     # ModelModeIncompatibilityError + VideoModelSelectionError BEFORE
     # ConfigurationError (their parent) so the isinstance walk lands on 17/18,
     # not 11. Per [[exit-code-map-ordering-invariant-test-pitfall]].
