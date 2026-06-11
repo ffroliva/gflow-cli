@@ -166,15 +166,14 @@ requested entity id, else raise `WireFormatError` (no silent text-only generatio
 - `tests/api/transports/test_ui_automation.py` — unit tests
 
 **Steps:**
-- [ ] Extract requested-vs-captured entity-id comparison from the captured submit body summary
-- [ ] Raise `WireFormatError` with discovery payload (redaction-safe — ids only, never body bytes) when any requested entity id is missing
-- [ ] Unit tests: missing-entity raises; present-entity passes; no-entities-requested path untouched
-- [ ] BDD scenario 4 green
+- [x] `_entity_ids_from_request_body` extracts `requests[].referenceEntities[].entityId` from the outgoing body (ids only, never body bytes)
+- [x] `_attach_batch_request_logger` grows an optional `sink` that collects `{url, entity_ids}` per captured submit
+- [x] `_assert_image_entities_attached` raises `WireFormatError` when any requested id is missing from every captured submit; logs `image_entities_attached` on success; wired into `_generate_images_locked` post-success, guarded by `request.reference_entities`
+- [x] Unit tests: extractor (valid/garbage/absent), sink collection, assert missing/empty/present, end-to-end wiring raise + pass (8 tests, red-first)
+- [x] BDD backstop scenario green; full image transport suite 155 passed; pyright src 0 errors; ruff clean
 
 **Tests:**
-- [ ] `test_image_submit_backstop_raises_when_entity_missing`
-- [ ] `test_image_submit_backstop_passes_when_entities_present`
-- [ ] `test_image_submit_backstop_inert_without_reference_entities`
+- [x] `TestImageEntityBackstop` — 8 tests (extractor, sink, assert, wiring)
 
 ---
 
