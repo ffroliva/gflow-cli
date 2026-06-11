@@ -198,9 +198,9 @@ requested entity id, else raise `WireFormatError` (no silent text-only generatio
 **What:** Prove both locales, run gates, open the PR.
 
 **Steps:**
-- [ ] Credit-free route-abort verification on denon82 (pt-BR): attach fires, captured payload carries `referenceEntities` (reuse `spike_movie_attach_payload.py` harness)
-- [ ] `/gflow:check` green (ruff lint + format, `pyright src`, scoped pytest; trust CI for full sweep)
-- [ ] `uv lock --check` (no dep changes expected — cheap guard)
+- [x] **Live verification GREEN on promo-denon82 (pt-BR, 2026-06-12, credit-free real `gflow image t2i --reference-entity`):** `include_selector_tier tier=icon` → `character_entity_attached` → submit carried `referenceEntities:[{entityId:814284ce-…}]` → backstop `image_entities_attached`. Full pipeline verified end-to-end.
+- [x] **Bonus: the new backstop caught a real Flow-side drift on denon82** — that account has a NEW full-page media-library UI (Add Media navigates instead of opening the picker dialog); the include click lands (selectors fine, old and new click the same element) but the staged entity does NOT ride the wire (`request0_keys` has no reference fields at all, video + image paths alike). Pre-PR this returned a silent text-only "success"; now it raises `WireFormatError` exit 7. → file as a separate issue (Flow library-UI A/B drift), out of #170 scope.
+- [x] Gates green: ruff check+format (touched files), `pyright src` 0 errors, `uv lock --check` clean, scoped sweep `tests/api/transports + tests/features` = 396 passed
 - [ ] PR from `bugfix/issue-170-locale-picker-selectors` → `develop`; body links #170 + SCENARIO.md; `Closes #170`
 - [ ] Post candidate-build instructions on #170 for the reporter's ru-locale test (their offer); reporter confirmation OR maintainer ru-profile run before merge
 - [ ] After reporter/ru confirmation: merge per branch workflow
