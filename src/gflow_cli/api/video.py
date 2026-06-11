@@ -205,6 +205,11 @@ class GenerateVideoRequest:
     # Avatar flag — UI automation clicks Avatar → Add to Prompt; Flow's JS handles the wire.
     # Valid on Mode.AVATAR (pure) and Mode.R2V (reference images + avatar).
     use_avatar: bool = False
+    reference_entities: tuple[str, ...] = ()  # R2V — Flow CHARACTER entity ids
+    reference_entity_names: tuple[
+        str, ...
+    ] = ()  # R2V — character DISPLAY names (UI picker selection)
+    reference_audio: str | None = None  # R2V — voice resource mediaId (e.g. "alnilam")
 
     def __post_init__(self) -> None:
         self._validate_prompt()
@@ -250,12 +255,12 @@ class GenerateVideoRequest:
             if self.start_image is None:
                 msg = "I2V request requires start_image"
                 raise ValueError(msg)
-            if self.reference_images:
-                msg = "I2V request must not carry reference_images"
+            if self.reference_images or self.reference_entities:
+                msg = "I2V request must not carry reference_images or reference_entities"
                 raise ValueError(msg)
         if self.mode is Mode.R2V:
-            if not self.reference_images:
-                msg = "R2V request requires at least one reference image"
+            if not self.reference_images and not self.reference_entities:
+                msg = "R2V request requires reference_images or reference_entities"
                 raise ValueError(msg)
             if self.start_image or self.end_image:
                 msg = "R2V request must not carry start/end images"
@@ -295,6 +300,13 @@ class GenerateVideoRequest:
                 raise ValueError(
                     msg,
                 )
+            total_refs = len(self.reference_images) + len(self.reference_entities)
+            if total_refs > cap:
+                msg = (
+                    f"reference cap exceeded: {total_refs} refs (images+entities) "
+                    f"> {cap} for {self.model.value}"
+                )
+                raise ValueError(msg)
 
     def _validate_seed(self) -> None:
         if self.seed is not None and not (0 <= self.seed <= 2**31 - 1):

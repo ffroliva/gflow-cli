@@ -7,6 +7,88 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+## [0.15.1] — 2026-06-10
+
+### Changed
+
+- Added `--disable-dev-shm-usage` to Chrome launch args in both `FlowApiClient._persistent_context_kwargs()` and `UiAutomationTransport.setup()` — prevents OOM in Docker containers with the default 64 MB `/dev/shm` allocation; no effect on developer machines with adequate shared memory
+- README Stats badges hardened against shields.io outages — GitHub-stat badges now pass `cacheSeconds=3600` (mitigates shields.io's shared GitHub token-pool exhaustion, the "Unable to select next GitHub token from pool" error) and the PyPI downloads badge moved from `img.shields.io/pypi/dm` to pepy.tech (pypistats rate-limits shields.io upstream)
+
+### Added
+
+- `scripts/diag/` directory — documented home for investigation scripts that require a live authenticated profile; includes `memory_profile.py` (Chrome process-tree RSS profiler for issue #155), `capture_flow_traffic.py`, and `recaptcha_mint.py` (both moved from `scripts/` root via git mv, history preserved)
+
+### Fixed
+
+- Video status poll now raises `AuthExpiredError` (exit 3) immediately on HTTP 401 from `batchCheckAsyncVideoGenerationStatus` instead of silently timing out after 600 s with a bare `TimeoutError` (exit 1) — session expiry is now detected mid-workflow, not only at login time (issue #156)
+
+## [0.15.0] — 2026-06-09
+
+### Added
+
+- **`gflow image` can reference locked CHARACTER entities** for character-consistent
+  stills. New `--reference-entity <id>` (repeatable) + `--reference-entity-name` on
+  `image t2i` / `i2i`, plus `--project <id>` to generate in an EXISTING project (where
+  the entities live) instead of a throwaway scratch project. Entities attach through
+  the editor's **Personagens picker** and ride the submit as `referenceEntities`
+  (confirmed against the live API); `_build_batch_generate_images_body` serializes them
+  so non-UI/headless transports get parity too. Entities count toward the per-model
+  reference cap. `--project` / `--reference-entity` are single-prompt only; for a pure
+  character reference use `t2i` (`i2i` still needs a `--ref`). See `docs/USAGE.md` →
+  "Character-consistent images (entity references)".
+
+### Fixed
+
+- `--project` no longer overwrites an existing project's stored title/source in the
+  local history DB (the recorder preserves the curated title for non-created projects).
+
+### Security
+
+- `--project` / `--reference-entity` ids are validated at the CLI boundary
+  (`[A-Za-z0-9-]{1,128}`), closing an unvalidated `page.goto` navigation path
+  (`project_editor_url` lacked the allowlist its sibling routes enforce) and a
+  CSS-selector injection vector (`data-tile-id='fe_id_<id>'`). The request-body debug
+  logger elides large reference-field values so Flow-built image bytes can't leak into
+  logs.
+
+### Internal
+
+- Bump dev/CI `ruff` to `0.15.16` (both the `dev` extra and the `dependency-groups`
+  pin; supersedes Dependabot PR #165, which updated only the soft `>=` extra and not
+  the hard `==` group pin CI actually uses). `ruff check` / `format --check` clean.
+
+## [0.14.0] — 2026-06-07
+
+### Added
+
+- **`gflow movie` — multi-scene, character-consistent video generation.** A TOML
+  manifest (`gflow movie template` / `gflow movie run`) drives a sequence of clips
+  that reuse a single Flow CHARACTER entity (reference-to-video) so the same face
+  and voice carry across every scene. Generate-only by default; `--stitch`
+  produces an ffmpeg preview concat; runs are crash-resumable via the sibling
+  `<manifest>-state.json`; a versioned handoff manifest is written for downstream
+  composition (e.g. Remotion). Deterministic prompt assembly (`composition.py`),
+  scene = clip.
+- **`docs/MOVIE.md`** — manifest format, the run lifecycle (the headed browser is
+  required through generate → poll → download), the character-entity attach
+  mechanism, and the best-effort consistency model.
+- Dev utilities: `scripts/dev/make_project.py` (create a Flow project) and
+  `scripts/dev/patch_character.py` (rename / set voice + personality on an entity).
+
+### Fixed
+
+- **R2V character reuse now actually rides the wire.** The entity is attached via
+  the resource picker's **Personagens tab → right-click → "Incluir no comando"**
+  (which stages `referenceEntities`; a left-click on the Tudo tile only stages the
+  thumbnail as a `referenceImage`). The submit backstop now reads the response's
+  real `media[].mediaMetadata.requestData.videoGenerationRequestData.videoGenerationEntityInputs`
+  path instead of the request-shape `requests[].referenceEntities` — which had
+  false-rejected every successful entity generation. `omni-flash` R2V verified to
+  carry the entity.
+- Cleared pre-existing type/test debt: `pyright src` is clean again (the missing
+  `project_id` parameter was added to the `VideoCapableTransport` protocol and the
+  `_enter_editor` type stub); regenerated `uv.lock` (jsonschema dev dependency).
+
 ## [0.13.0] — 2026-06-04
 
 ### Added
@@ -1402,7 +1484,10 @@ shell-script template that branches on these codes.
 
 First skeleton. Not functional end-to-end yet.
 
-[Unreleased]: https://github.com/ffroliva/gflow-cli/compare/v0.13.0...HEAD
+[Unreleased]: https://github.com/ffroliva/gflow-cli/compare/v0.15.1...HEAD
+[0.15.1]: https://github.com/ffroliva/gflow-cli/compare/v0.15.0...v0.15.1
+[0.15.0]: https://github.com/ffroliva/gflow-cli/compare/v0.14.0...v0.15.0
+[0.14.0]: https://github.com/ffroliva/gflow-cli/compare/v0.13.0...v0.14.0
 [0.13.0]: https://github.com/ffroliva/gflow-cli/compare/v0.12.0...v0.13.0
 [0.12.0]: https://github.com/ffroliva/gflow-cli/compare/v0.11.0...v0.12.0
 [0.11.0]: https://github.com/ffroliva/gflow-cli/compare/v0.10.0...v0.11.0

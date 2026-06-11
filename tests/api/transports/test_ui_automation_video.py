@@ -17,7 +17,7 @@ from gflow_cli.api.transports.ui_automation_video import (
     VideoGenerationMixin,
 )
 from gflow_cli.api.video import Aspect, GenerateVideoRequest, Mode, VideoModel, VideoStatus
-from gflow_cli.errors import WireFormatError
+from gflow_cli.errors import AuthExpiredError, WireFormatError
 
 
 def _make_listener_page() -> tuple[MagicMock, list]:
@@ -143,6 +143,31 @@ class TestPollVideoStatus:
         with pytest.raises(TimeoutError, match="no terminal status"):
             await VideoGenerationMixin._poll_video_status(
                 page, [], "m", timeout_s=0.2, poll_interval_s=0.05
+            )
+
+    @pytest.mark.asyncio
+    async def test_401_response_raises_auth_expired_error_immediately(self) -> None:
+        page = MagicMock()
+        captured = [
+            {"status": 401, "url": _STATUS_URL, "body": {}},
+        ]
+        with pytest.raises(AuthExpiredError, match="session expired mid-poll"):
+            await VideoGenerationMixin._poll_video_status(
+                page, captured, "m", timeout_s=60.0, poll_interval_s=0.05
+            )
+
+    @pytest.mark.asyncio
+    async def test_401_after_in_progress_raises_auth_expired_error(self) -> None:
+        page = MagicMock()
+        # Simulates session expiry mid-poll: some ACTIVE responses arrive first, then a 401
+        captured: list[dict[str, Any]] = [
+            _status_resp("m", "MEDIA_GENERATION_STATUS_SCHEDULED"),
+            _status_resp("m", "MEDIA_GENERATION_STATUS_ACTIVE"),
+            {"status": 401, "url": _STATUS_URL, "body": {}},
+        ]
+        with pytest.raises(AuthExpiredError, match="session expired mid-poll"):
+            await VideoGenerationMixin._poll_video_status(
+                page, captured, "m", timeout_s=60.0, poll_interval_s=0.05
             )
 
 
@@ -993,3 +1018,120 @@ class TestI2vT2vRoutingBackstop:
         req = GenerateVideoRequest(prompt="x", mode=Mode.T2V)
         result = await transport.generate_video(request=req, download=False)
         assert result.status.succeeded is True
+
+
+class TestAttachCharacterEntities:
+    @staticmethod
+    def _picker_page() -> MagicMock:
+        """A page whose every locator is selected + already rendered (count=1)."""
+        page = MagicMock()
+        loc = MagicMock()
+        loc.first = loc
+        loc.last = loc
+        loc.click = AsyncMock()
+        loc.hover = AsyncMock()
+        loc.wait_for = AsyncMock()
+        loc.scroll_into_view_if_needed = AsyncMock()
+        loc.count = AsyncMock(return_value=1)
+        page.locator.return_value = loc
+        page.wait_for_timeout = AsyncMock()
+        page.mouse = MagicMock()
+        page.mouse.wheel = AsyncMock()
+        return page
+
+    @pytest.mark.asyncio
+    async def test_attach_right_clicks_personagens_entity_tile(self) -> None:
+        """A character is staged as a referenceEntity via: Personagens tab ->
+        RIGHT-CLICK the `data-tile-id=fe_id_<entityId>` tile -> context-menu
+        'Incluir no comando'. The tile is addressed by entity id (not name), and
+        the click MUST be a right-click (a left-click navigates to the editor)."""
+        page = self._picker_page()
+
+        await VideoGenerationMixin._attach_character_entities(
+            page, [("ent-123", "Stickman")], out_dir=None
+        )
+
+        selectors = " ".join(str(c.args[0]) for c in page.locator.call_args_list)
+        assert "accessibility_new" in selectors  # Personagens tab
+        assert "fe_id_ent-123" in selectors  # tile keyed by entity id
+        assert "Incluir no comando" in selectors  # context-menu action
+        assert "add-menu-input" not in selectors  # NOT the prompt box
+        # The selection click is a right-click (button='right').
+        right_clicks = [
+            c
+            for c in page.locator.return_value.click.call_args_list
+            if c.kwargs.get("button") == "right"
+        ]
+        assert right_clicks, "expected a right-click on the entity tile"
+
+    @pytest.mark.asyncio
+    async def test_attach_raises_when_context_menu_absent(self) -> None:
+        """If the right-click context menu never shows 'Incluir no comando', the
+        attach fails loudly (with a screenshot) instead of silently dropping the
+        entity — the submit backstop must never see an empty referenceEntities."""
+        page = self._picker_page()
+        # wait_for succeeds for add-media / Personagens tab / tile, then raises on
+        # the context-menu include item (the menu never appeared).
+        page.locator.return_value.wait_for = AsyncMock(
+            side_effect=[None, None, None, TimeoutError("boom")]
+        )
+        page.screenshot = AsyncMock()
+
+        with pytest.raises(RuntimeError, match="Incluir no comando"):
+            await VideoGenerationMixin._attach_character_entities(
+                page, [("ent-123", "Stickman")], out_dir=None
+            )
+
+
+class TestAssertEntitiesAttached:
+    @staticmethod
+    def _live_response(entity_id: str) -> dict[str, object]:
+        """The real SUBMIT response shape — the entity is echoed under
+        media[].mediaMetadata.requestData.videoGenerationRequestData
+        .videoGenerationEntityInputs (NOT requests[].referenceEntities)."""
+        return {
+            "url": "video:batchAsyncGenerateVideoReferenceImages",
+            "status": 200,
+            "body": {
+                "media": [
+                    {
+                        "name": "vid-1",
+                        "mediaMetadata": {
+                            "requestData": {
+                                "videoGenerationRequestData": {
+                                    "videoGenerationEntityInputs": [{"entityId": entity_id}],
+                                }
+                            }
+                        },
+                    }
+                ]
+            },
+        }
+
+    def test_backstop_raises_when_entity_missing_from_payload(self) -> None:
+        from gflow_cli.api.transports.ui_automation_video import VideoGenerationMixin
+        from gflow_cli.errors import WireFormatError
+
+        captured = {
+            "url": "video:batchAsyncGenerateVideoReferenceImages",
+            "status": 200,
+            # a real response with NO entity inputs (text/image-only generation).
+            "body": {"media": [{"mediaMetadata": {"requestData": {}}}]},
+        }
+        with pytest.raises(WireFormatError, match="entity attach failed"):
+            VideoGenerationMixin._assert_entities_attached(captured, expected=["ent-1"])
+
+    def test_backstop_passes_on_live_response_shape(self) -> None:
+        from gflow_cli.api.transports.ui_automation_video import VideoGenerationMixin
+
+        # should NOT raise — entity echoed at the real response path.
+        VideoGenerationMixin._assert_entities_attached(
+            self._live_response("ent-1"), expected=["ent-1"]
+        )
+
+    def test_backstop_accepts_request_shape_fallback(self) -> None:
+        from gflow_cli.api.transports.ui_automation_video import VideoGenerationMixin
+
+        # request-body shape (referenceEntities) is also accepted.
+        captured = {"body": {"requests": [{"referenceEntities": [{"entityId": "ent-1"}]}]}}
+        VideoGenerationMixin._assert_entities_attached(captured, expected=["ent-1"])

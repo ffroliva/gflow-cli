@@ -31,6 +31,7 @@ from gflow_cli.api.transports._common import extract_project_id
 from gflow_cli.api.transports.ui_automation_video import (
     MODE_SWITCH_TRIGGER_SELECTORS,
     VideoGenerationMixin,
+    zip_entity_refs,
 )
 from gflow_cli.errors import (
     AuthExpiredError,
@@ -350,6 +351,13 @@ OVERLAY_CLOSE_BUTTON_SELECTORS = (
     "[role='dialog'] button:has(i:text('close'))",
     "[role='dialog'] button[aria-label*='close' i]",
     "button[data-dismiss]",
+    "button:has-text('See what's new')",
+)
+
+# Detectors for the "Welcome to Google Flow" splash screen.
+WELCOME_SCREEN_SELECTORS = (
+    "div:has-text('Welcome to Google Flow')",
+    "button:has-text('See what's new')",
 )
 
 
@@ -511,6 +519,70 @@ def _images_from_responses(
     return images, first_error_status, first_error_route
 
 
+_REF_VALUE_MAX_CHARS = 512
+
+
+def _elide_large_value(value: Any) -> Any:
+    """Return *value* verbatim when small, else a length-only redaction marker.
+
+    Guards the request-body logger against dumping large/secret payloads: if Flow
+    names an i2i image field `reference*`/`*entity*`, its base64 bytes would match
+    the reference-field filter and be logged in full. Small fields like
+    `referenceEntities` (a short list of `{entityId}`) pass through; anything
+    serializing beyond the cap is elided to a `<elided N chars>` marker.
+    """
+    try:
+        serialized = json.dumps(value, default=str)
+    except (TypeError, ValueError):
+        return f"<unserializable {type(value).__name__}>"
+    if len(serialized) > _REF_VALUE_MAX_CHARS:
+        return f"<elided {len(serialized)} chars>"
+    return value
+
+
+def _summarize_batch_request_body(post_data: str | None) -> dict[str, Any]:
+    """Compact, byte-safe summary of an outgoing ``batchGenerateImages`` body.
+
+    This is the make-or-break signal for the entity-reference spike: it reveals
+    whether Flow's image submit carries a ``referenceEntities`` field after we
+    attach a character via the picker — WITHOUT logging the full body (i2i
+    bodies embed base64 image bytes that would flood the log and leak content).
+
+    Returns a dict with ``present``, ``mentions_reference_entities`` (cheap
+    substring probe that survives non-JSON bodies), and — when the body parses —
+    the keys of ``requests[0]`` plus any reference/entity-related fields verbatim
+    (those are small id lists, safe to surface).
+    """
+    if not post_data:
+        return {"present": False}
+    summary: dict[str, Any] = {
+        "present": True,
+        "bytes": len(post_data),
+        "mentions_reference_entities": "referenceEntit" in post_data,
+    }
+    try:
+        parsed: object = json.loads(post_data)
+    except (ValueError, TypeError):
+        return summary
+    if not isinstance(parsed, dict):
+        return summary
+    parsed_dict = cast("dict[str, Any]", parsed)
+    reqs = parsed_dict.get("requests")
+    if isinstance(reqs, list) and reqs and isinstance(reqs[0], dict):
+        first = cast("dict[str, Any]", reqs[0])
+        summary["request0_keys"] = sorted(first.keys())
+        ref_bits = {
+            k: _elide_large_value(v)
+            for k, v in first.items()
+            if "reference" in k.lower() or "entity" in k.lower()
+        }
+        if ref_bits:
+            summary["reference_fields"] = ref_bits
+    else:
+        summary["top_keys"] = sorted(parsed_dict.keys())
+    return summary
+
+
 class UiAutomationTransport(VideoGenerationMixin):
     """D.2.4 — Playwright UI mimicry strategy.
 
@@ -605,6 +677,7 @@ class UiAutomationTransport(VideoGenerationMixin):
                 args=[
                     "--disable-blink-features=AutomationControlled",
                     "--password-store=basic",
+                    "--disable-dev-shm-usage",
                 ],
             )
             # Hide the automation flag so reCAPTCHA Enterprise doesn't score
@@ -705,40 +778,60 @@ class UiAutomationTransport(VideoGenerationMixin):
         Returns True if a dismissal action was taken, False if the page was
         clear (no overlay) or if dismissal could not be confirmed.
         """
-        # Step 1 — detect whether a changelog iframe is blocking the UI.
-        iframe_found = False
-        for sel in CHANGELOG_IFRAME_SELECTORS:
+        # Step 1 — detect whether a blocking overlay is present.
+        overlay_found = False
+        for sel in CHANGELOG_IFRAME_SELECTORS + WELCOME_SCREEN_SELECTORS:
             try:
                 if await page.locator(sel).first.is_visible(timeout=1500):
-                    iframe_found = True
+                    overlay_found = True
                     log.info("ui_automation.overlay_detected", selector=sel)
                     break
             except Exception:
                 continue
 
-        if not iframe_found:
+        if not overlay_found:
             return False
 
         # Step 2 — try explicit close buttons first.
+        # We try them both on the page AND inside any detected iframe.
         for close_sel in OVERLAY_CLOSE_BUTTON_SELECTORS:
             try:
+                # Try page level
                 loc = page.locator(close_sel).first
                 if await loc.is_visible(timeout=500):
                     await loc.click(force=True)
-                    await page.wait_for_timeout(500)
+                    await page.wait_for_timeout(1000)
                     log.info(
                         "ui_automation.overlay_dismissed",
                         selector=close_sel,
-                        method="close_button",
+                        method="close_button_page",
                     )
                     return True
             except Exception:
                 continue
 
-        # Step 3 — Escape fallback (regression test case: iframe present, no close button).
+        # Step 3 — try inside iframes.
+        for iframe_sel in CHANGELOG_IFRAME_SELECTORS:
+            try:
+                frame = page.frame_locator(iframe_sel).first
+                for close_sel in OVERLAY_CLOSE_BUTTON_SELECTORS:
+                    loc = frame.locator(close_sel).first
+                    if await loc.is_visible(timeout=500):
+                        await loc.click(force=True)
+                        await page.wait_for_timeout(1000)
+                        log.info(
+                            "ui_automation.overlay_dismissed",
+                            selector=close_sel,
+                            method="close_button_frame",
+                        )
+                        return True
+            except Exception:
+                continue
+
+        # Step 4 — Escape fallback (regression test case: iframe present, no close button).
         try:
             await page.keyboard.press("Escape")
-            await page.wait_for_timeout(500)
+            await page.wait_for_timeout(1000)
             log.info(
                 "ui_automation.overlay_dismissed",
                 selector="<none>",
@@ -756,30 +849,42 @@ class UiAutomationTransport(VideoGenerationMixin):
                 error=str(exc),
                 screenshot=str(shot_path),
                 note=(
-                    "A changelog iframe was detected but could not be dismissed — "
-                    "no close button found and Escape raised. Manual intervention "
-                    "may be needed (open Flow in Chrome, dismiss the 'What's new' "
-                    "popup, close Chrome cleanly)."
+                    "A blocking overlay was detected but could not be dismissed. "
+                    "Manual intervention may be needed."
                 ),
             )
             return False
 
-    async def _enter_editor(self, page: Page, out_dir: Path | None = None) -> None:
-        """Always create a fresh project — click "+ New project" on the gallery
-        and wait for ``/project/`` navigation.
+    async def _enter_editor(
+        self,
+        page: Page,
+        out_dir: Path | None = None,
+        *,
+        project_id: str | None = None,
+        locale: str = "en-US",
+    ) -> None:
+        """Create a fresh project OR navigate to an existing one.
 
-        When the URL already contains ``/project/`` (Flow's PWA restored the
-        previous project on browser launch), this navigates back to the
-        gallery first, then falls through to the "+ New project" click —
-        the alternative (returning early) would reuse the restored project
-        and accumulate images across CLI invocations.
+        If ``project_id`` is provided, navigates directly to that project's
+        editor URL. Otherwise clicks "+ New project" on the gallery and
+        waits for ``/project/`` navigation.
 
-        Tries each selector in :data:`NEW_PROJECT_SELECTORS` in order —
-        locale-stable icon-class first, localized text fallbacks after. On
-        total failure a debug screenshot is written to ``out_dir`` (if
-        provided) and ``RuntimeError`` is raised with the captured URL +
-        path.
+        When creating a new project and the URL already contains
+        ``/project/`` (Flow's PWA restored the previous project on browser
+        launch), this navigates back to the gallery first, then falls
+        through to the "+ New project" click — the alternative (returning
+        early) would reuse the restored project and accumulate images
+        across CLI invocations.
         """
+        from gflow_cli.api import routes
+
+        if project_id:
+            url = routes.project_editor_url(locale, project_id)
+            log.info("ui_automation.entering_existing_project", project_id=project_id, url=url)
+            await page.goto(url, wait_until="domcontentloaded", timeout=45_000)
+            await self._dismiss_blocking_overlays(page, out_dir)
+            return
+
         if _PROJECT_URL_FRAGMENT in page.url:
             # Flow's PWA restores the last-visited project URL on next browser
             # launch (persistent context). Returning early here would reuse the
@@ -929,12 +1034,20 @@ class UiAutomationTransport(VideoGenerationMixin):
         wins. The text input is cleared first (Slate.js requires real
         keyboard events — ``.fill()`` bypasses onChange handlers).
 
+        A staged R2V character entity is NOT affected by the clear: 'Incluir no
+        comando' stages it in a separate references drawer, not as a chip inside
+        this prompt box (verified 2026-06-06), so the entity still rides the
+        submit.
+
         Submission is preferred via the Create button; if no submit
         button is visible, Enter is pressed as a fallback.
 
         On input-not-found, a debug screenshot is written to ``out_dir``
         (if provided) and ``RuntimeError`` is raised.
         """
+        # Dismiss any overlays that might have appeared since entering the editor.
+        await self._dismiss_blocking_overlays(page, out_dir)
+
         input_box = await self._locate_prompt_box(page, out_dir)
 
         await input_box.click()
@@ -1547,6 +1660,51 @@ class UiAutomationTransport(VideoGenerationMixin):
         return captured, detach
 
     @staticmethod
+    def _attach_batch_request_logger(
+        page: Page,
+        *,
+        project_id: str | None = None,
+    ) -> Callable[[], None]:
+        """Register a ``page.on('request', ...)`` that logs a compact summary of
+        each outgoing ``batchGenerateImages`` body.
+
+        The summary (see :func:`_summarize_batch_request_body`) surfaces whether
+        the submit carries ``referenceEntities`` — the entity-reference spike's
+        make-or-break signal — without dumping i2i image bytes. Returns an
+        idempotent detach fn, torn down alongside the response listener.
+        """
+
+        def on_request(request_obj: Any) -> None:
+            if "batchGenerateImages" not in request_obj.url:
+                return
+            try:
+                post_data = request_obj.post_data
+            except Exception:
+                post_data = None
+            log.info(
+                "ui_automation.batch_request_body",
+                url=request_obj.url,
+                filter_project_id=project_id,
+                summary=_summarize_batch_request_body(post_data),
+            )
+
+        page.on("request", on_request)
+
+        _detached = False
+
+        def detach() -> None:
+            nonlocal _detached
+            if _detached:
+                return
+            _detached = True
+            try:
+                page.remove_listener("request", on_request)
+            except Exception:
+                pass
+
+        return detach
+
+    @staticmethod
     async def _await_captured(
         captured: list[dict[str, Any]],
         timeout_s: float = 180.0,
@@ -1707,45 +1865,38 @@ class UiAutomationTransport(VideoGenerationMixin):
     async def generate_images(
         self,
         *,
-        project_id: str | None,  # noqa: ARG002
+        project_id: str | None,
         request: GenerateImageRequest,
     ) -> list[GeneratedImage]:
         """Submit ``request.prompt`` through Flow's editor and return the
         generated images as DTOs.
 
-        ``project_id`` is accepted for Protocol parity but the UI flow
-        creates a new Flow project on each call (Flow's gallery → editor
-        navigation is the same surface a human uses). Downloading the
-        actual PNG bytes is the caller's responsibility; the DTOs carry
-        the ``fife_url`` which expires roughly 6 hours after generation.
+        If ``project_id`` is provided, navigates to that project. Otherwise
+        creates a new one.
 
         Raises ``RuntimeError`` if setup() has not been called, the
         ``batchGenerateImages`` response is non-200, or the response is
         200 but contains no image URLs.
         """
-        # project_id is accepted for Protocol parity; the UI transport creates
-        # its own Flow project on each call rather than reusing a supplied one.
         if not self._setup_done or self._page is None:
             msg = "UiAutomationTransport.setup() must be called before generate_images()"
             raise RuntimeError(
                 msg,
             )
         async with self._generate_lock:
-            return await self._generate_images_locked(request)
+            return await self._generate_images_locked(request, project_id=project_id)
 
     async def _generate_images_locked(
         self,
         request: GenerateImageRequest,
+        *,
+        project_id: str | None = None,
     ) -> list[GeneratedImage]:
-        """Serialized body of generate_images — called under self._generate_lock.
-
-        Extracts into a private method so the lock wrapper in generate_images
-        stays a single line, keeping the public method's intent clear.
-        """
+        """Serialized body of generate_images — called under self._generate_lock."""
         page: Page = self._page  # type: ignore[assignment]  # guard in caller
         out_dir = self._out_dir
 
-        await self._enter_editor(page, out_dir)
+        await self._enter_editor(page, out_dir, project_id=project_id)
         # Dismiss any Flow changelog / "What's new" overlay that may be on top
         # of the editor before we click into settings / submit (#26).
         await self._dismiss_blocking_overlays(page, out_dir)
@@ -1782,23 +1933,43 @@ class UiAutomationTransport(VideoGenerationMixin):
                 out_dir=out_dir,
             )
 
+        # Entity references: attach locked CHARACTER entities via the Personagens
+        # picker (inherited from the video transport). The entity must live in the
+        # project we generate in (pass --project / project_id). Flow's JS then
+        # includes them on the submit; the request logger below records whether the
+        # outgoing batchGenerateImages carries `referenceEntities` (spike signal).
+        if request.reference_entities:
+            await self._attach_character_entities(
+                page,
+                zip_entity_refs(request.reference_entities, request.reference_entity_names),
+                out_dir=out_dir,
+            )
+
         # Attach the response listener SYNCHRONOUSLY before any prompt
         # action. asyncio.create_task is unsafe here: it defers the listener
         # registration until the new task gets event-loop scheduling, which
         # could happen AFTER _send_prompt's click on a busy loop. Splitting
         # attach/await eliminates that race. Project-ID filter prevents stale
         # responses from previously-visited projects accumulating in the list.
-        captured, _detach = self._attach_batch_response_listener(page, project_id=nav_project_id)
+        captured, detach = self._attach_batch_response_listener(page, project_id=nav_project_id)
+        # Also log the OUTGOING request body summary so the entity-reference spike
+        # can read whether the submit carries `referenceEntities`.
+        req_log_detach = self._attach_batch_request_logger(page, project_id=nav_project_id)
         # Record submit_time BEFORE the click so the post-submit-time filter
         # in _await_captured can distinguish this prompt's responses from any
         # stale entries that arrived between listener attach and the click.
         submit_time = time.monotonic()
-        await self._send_prompt(page, request.prompt, out_dir)
-        responses = await self._await_captured(
-            captured,
-            expected_count=request.count,
-            submit_time=submit_time,
-        )
+        responses: list[dict[str, Any]] = []
+        try:
+            await self._send_prompt(page, request.prompt, out_dir)
+            responses = await self._await_captured(
+                captured,
+                expected_count=request.count,
+                submit_time=submit_time,
+            )
+        finally:
+            detach()
+            req_log_detach()
 
         # Collect images from ALL captured responses (Flow makes one API call
         # per image when count > 1).
@@ -2392,6 +2563,7 @@ class UiAutomationTransport(VideoGenerationMixin):
         # Attach listener BEFORE submit to eliminate the race condition.
         captured, detach = self._attach_batch_response_listener(page, project_id=project_id)
         submit_time = time.monotonic()
+        responses: list[dict[str, Any]] = []
         try:
             if is_body_slot:
                 await self._submit_body_prompt(page, request.prompt, out_dir)

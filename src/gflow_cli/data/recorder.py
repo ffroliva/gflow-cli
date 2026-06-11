@@ -176,16 +176,21 @@ class OperationRecorder:
         input_media_ids: list[str],
         operation_kind: str,
         cloud_storage_infos: list[CloudStorageInfo | None] | None = None,
+        project_created: bool = True,
     ) -> None:
         repo = self.repository
 
         repo.upsert_profile(profile_name, profile_dir)
+        # When generating into a pre-existing project (`--project`), `project.title`
+        # is only a placeholder — DON'T overwrite the project's real, user-curated
+        # title in the local history DB. Passing title=None lets upsert_project's
+        # COALESCE preserve whatever title is already stored.
         repo.upsert_project(
             ProjectRecord(
                 id=_new_id(),
                 profile_name=profile_name,
                 flow_project_id=project.project_id,
-                title=project.title,
+                title=project.title if project_created else None,
                 source="generated",
             ),
         )
