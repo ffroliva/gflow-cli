@@ -27,13 +27,33 @@ Same host + auth class as image generation (`batchGenerateImages`).
   "mediaId": "<source-image-uuid>",
   "targetResolution": "UPSAMPLE_IMAGE_RESOLUTION_2K",
   "clientContext": {
-    "recaptchaContext": { "token": "<reCAPTCHA-Enterprise-token>" }
+    "recaptchaContext": {
+      "token": "<reCAPTCHA-Enterprise-token>",
+      "applicationType": "RECAPTCHA_APPLICATION_TYPE_WEB"
+    },
+    "projectId": "<project-that-owns-the-media>",
+    "sessionId": ";<epoch_ms>",
+    "tool": "PINHOLE",
+    "userPaygateTier": "PAYGATE_TIER_ONE"
   }
 }
 ```
 - `targetResolution` enum: `UPSAMPLE_IMAGE_RESOLUTION_2K` | `UPSAMPLE_IMAGE_RESOLUTION_4K`.
   1K = original (no API call — gflow already has it).
-- `clientContext.recaptchaContext.token` — a freshly minted reCAPTCHA Enterprise token.
+- **The FULL `clientContext` is required.** A minimal `{recaptchaContext}` body returns
+  **403 even with a valid token** (confirmed by live smoke). All five fields are needed;
+  `projectId` (the project owning the media) is load-bearing.
+- `sessionId` format is `;<epoch_ms>` (e.g. `;1781190457842`), same as image generation.
+- `userPaygateTier` is **where the account tier surfaces on the wire** (`PAYGATE_TIER_ONE`
+  on a Pro account). It is client-reported telemetry — the server enforces the real tier
+  independently (a non-Ultra 4K request 403s regardless), so it is not a security control.
+
+### reCAPTCHA action — `IMAGE_GENERATION`
+The token MUST be minted with action **`IMAGE_GENERATION`** (uppercase). reCAPTCHA Enterprise
+scores by action; the guessed `"upsampleImage"` scored low and 403'd. Captured live by hooking
+`grecaptcha.enterprise.execute` (`scripts/dev/spike_image_upscale_recaptcha_action.py`). The
+site key is page-discovered, so it auto-matches; minting on the bootstrap page is fine — the
+action was the only gap. **Live-verified 2026-06-11**: a 2K upscale wrote a 3.8 MB JPEG.
 
 ### Response
 ```json
