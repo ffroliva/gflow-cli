@@ -19,7 +19,7 @@ from gflow_cli.api.transports.ui_automation_video import (
     VideoGenerationMixin,
 )
 from gflow_cli.api.video import Aspect, GenerateVideoRequest, Mode, VideoModel, VideoStatus
-from gflow_cli.errors import AuthExpiredError, WireFormatError
+from gflow_cli.errors import AuthExpiredError, TransportTimeoutError, WireFormatError
 
 
 def _make_listener_page() -> tuple[MagicMock, list]:
@@ -1148,8 +1148,10 @@ class TestAttachCharacterEntities:
     async def test_attach_raises_when_context_menu_absent(self) -> None:
         """If the right-click context menu never shows the include action (any
         tier), the attach fails loudly (with a screenshot) instead of silently
-        dropping the entity — and the message is locale-neutral (issue #170:
-        it used to embed the pt-BR caption)."""
+        dropping the entity — and the error is TYPED with a locale-neutral
+        message (issue #170: a RuntimeError embedding the pt-BR caption reached
+        the user only as a privacy-hashed 'Unexpected error.', burying the
+        remediation hint)."""
         page = self._picker_page()
         # wait_for succeeds for add-media / Personagens tab / tile, then raises
         # for every include tier probe (the menu item never appeared).
@@ -1157,13 +1159,15 @@ class TestAttachCharacterEntities:
             side_effect=[None, None, None] + [TimeoutError("boom")] * 4
         )
 
-        with pytest.raises(RuntimeError, match="include action") as excinfo:
+        with pytest.raises(TransportTimeoutError, match="include action") as excinfo:
             await VideoGenerationMixin._attach_character_entities(
                 page, [("ent-123", "Stickman")], out_dir=None
             )
         message = str(excinfo.value)
         assert "Incluir" not in message, "error message must be locale-neutral"
         assert "ent-123" in message
+        assert excinfo.value.remediation_hint, "expected a remediation hint"
+        assert "Incluir" not in excinfo.value.remediation_hint
 
     @pytest.mark.asyncio
     async def test_attach_failure_closes_picker_before_raising(self) -> None:
@@ -1175,7 +1179,7 @@ class TestAttachCharacterEntities:
             side_effect=[None, None, None] + [TimeoutError("boom")] * 4
         )
 
-        with pytest.raises(RuntimeError, match="include action"):
+        with pytest.raises(TransportTimeoutError, match="include action"):
             await VideoGenerationMixin._attach_character_entities(
                 page, [("ent-123", "Stickman")], out_dir=None
             )
@@ -1207,7 +1211,7 @@ class TestAttachReferenceAudio:
 
     @pytest.mark.asyncio
     async def test_attach_audio_raises_locale_neutral_when_button_absent(self) -> None:
-        """When no include-button tier matches, the failure is loud,
+        """When no include-button tier matches, the failure is loud, typed,
         locale-neutral, and leaves no open dialog behind."""
         page = TestAttachCharacterEntities._picker_page()
         # add-media wait succeeds; both include-button tier probes time out.
@@ -1215,7 +1219,7 @@ class TestAttachReferenceAudio:
             side_effect=[None] + [TimeoutError("boom")] * 4
         )
 
-        with pytest.raises(RuntimeError, match="include action") as excinfo:
+        with pytest.raises(TransportTimeoutError, match="include action") as excinfo:
             await VideoGenerationMixin._attach_reference_audio(page, "Alnilam", out_dir=None)
         message = str(excinfo.value)
         assert "Incluir" not in message, "error message must be locale-neutral"
