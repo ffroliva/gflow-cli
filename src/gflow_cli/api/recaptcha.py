@@ -10,7 +10,7 @@ FlowApiClient session.
 
 from __future__ import annotations
 
-from typing import Any, Protocol
+from typing import Any, Protocol, cast
 
 
 class _PageLike(Protocol):
@@ -77,9 +77,13 @@ async def discover_site_key(page: _PageLike) -> str:
 class TokenMinter:
     """Mint reCAPTCHA tokens. Caches the site key for the session."""
 
-    def __init__(self, page: _PageLike):
+    def __init__(self, page: _PageLike, *, mint_evaluate_kwargs: dict[str, Any] | None = None):
         self._page = page
         self._site_key: str | None = None
+        # Extra kwargs for the execute-mint ``page.evaluate`` call. Patchright
+        # needs ``isolated_context=False`` so the main-world ``grecaptcha`` global
+        # is visible; Playwright passes ``{}``. See gflow_cli.api._engine.
+        self._mint_evaluate_kwargs = mint_evaluate_kwargs or {}
 
     async def site_key(self) -> str:
         if self._site_key is None:
@@ -94,7 +98,11 @@ class TokenMinter:
         """
         site_key = await self.site_key()
         try:
-            token = await self._page.evaluate(_EXECUTE_JS, [site_key, action])
+            # Cast to a permissive callable so the optional patchright-only
+            # ``isolated_context`` kwarg type-checks — the _PageLike Protocol
+            # matches playwright's Page exactly and intentionally omits it.
+            evaluate = cast("Any", self._page.evaluate)
+            token = await evaluate(_EXECUTE_JS, [site_key, action], **self._mint_evaluate_kwargs)
         except Exception as exc:
             msg = (
                 f"reCAPTCHA evaluate failed for action={action!r}: {exc}. "

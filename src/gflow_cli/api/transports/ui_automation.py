@@ -688,7 +688,21 @@ class UiAutomationTransport(VideoGenerationMixin):
             log.info("ui_automation.setup_shared_page")
             return
 
-        if async_playwright is None:  # pragma: no cover — install-time guard
+        # Engine selection (standalone-context path; the shared-page path above
+        # already returned). Default playwright keeps the module symbol; only the
+        # opt-in patchright engine routes through the resolver.
+        from gflow_cli.api._engine import (
+            active_engine,
+            log_engine_selected,
+            resolve_async_playwright,
+        )
+        from gflow_cli.config import BrowserEngine
+
+        engine = active_engine()
+        log_engine_selected(engine)
+        if engine == BrowserEngine.PATCHRIGHT:
+            pw_factory = resolve_async_playwright(engine)
+        elif async_playwright is None:  # pragma: no cover — install-time guard
             msg = (
                 "Playwright is required for UiAutomationTransport. "
                 "Install via `uv sync` (it is a runtime dependency)."
@@ -696,9 +710,14 @@ class UiAutomationTransport(VideoGenerationMixin):
             raise RuntimeError(
                 msg,
             )
+        else:
+            pw_factory = async_playwright
 
-        pw_cm = async_playwright()
-        pw = await pw_cm.__aenter__()
+        pw_cm = pw_factory()
+        # The two engines (playwright | patchright) expose a structurally identical
+        # ``.chromium.launch_persistent_context`` surface; type as Any so this
+        # standalone path is engine-agnostic without per-engine stubs.
+        pw: Any = await pw_cm.__aenter__()
         try:
             import os
 
@@ -725,9 +744,10 @@ class UiAutomationTransport(VideoGenerationMixin):
             )
             self._pw_cm = pw_cm
             self._ctx = ctx
-            self._page = ctx.pages[0] if ctx.pages else await ctx.new_page()
+            page = cast("Page", ctx.pages[0] if ctx.pages else await ctx.new_page())
+            self._page = page
             try:
-                await self._page.goto(FLOW_URL, wait_until="networkidle", timeout=45_000)
+                await page.goto(FLOW_URL, wait_until="networkidle", timeout=45_000)
             except Exception as e:
                 log.warning("ui_automation.flow_initial_goto_failed", error=str(e))
             self._owns_playwright = True

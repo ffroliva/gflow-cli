@@ -27,6 +27,12 @@ import structlog
 from playwright.async_api import BrowserContext, Page, Playwright, async_playwright
 
 from gflow_cli.api import routes
+from gflow_cli.api._engine import (
+    active_engine,
+    log_engine_selected,
+    mint_evaluate_kwargs,
+    resolve_async_playwright,
+)
 from gflow_cli.api._retry import parse_retry_after, post_with_retry
 from gflow_cli.api.character import Character, CharacterImageRequest, parse_characters
 from gflow_cli.api.dto import AssetInfo, GeneratedImage, ProjectInfo
@@ -40,7 +46,7 @@ from gflow_cli.api.scene import ConcatInput, Scene, SceneWorkflow
 from gflow_cli.api.transports import make_transport
 from gflow_cli.api.transports.base import FlowTransportStrategy, VideoCapableTransport
 from gflow_cli.browser_manager import channel_for_profile
-from gflow_cli.config import Settings
+from gflow_cli.config import BrowserEngine, Settings
 from gflow_cli.errors import (
     AisandboxAuthError,
     AuthExpiredError,
@@ -271,7 +277,17 @@ class FlowApiClient:
         # ``page=`` kwarg so it can reuse the client's context instead of
         # opening a second Playwright process against the same profile dir
         # (which would conflict on the Chromium lockfile — spec § 5.4.4).
-        self._pw = await async_playwright().start()
+        # Engine selection: the default (playwright) path uses this module's
+        # ``async_playwright`` symbol unchanged — byte-identical behaviour and the
+        # existing test monkeypatches still apply. Only the opt-in patchright
+        # engine routes through the resolver (which raises a typed exit-24 error
+        # if the optional package is missing).
+        engine = active_engine()
+        log_engine_selected(engine)
+        if engine == BrowserEngine.PATCHRIGHT:
+            self._pw = await resolve_async_playwright(engine)().start()
+        else:
+            self._pw = await async_playwright().start()
         # Partial-setup leak guard: __aexit__ is NOT invoked when __aenter__
         # raises, so a launched persistent context (and its chrome process)
         # would leak and lock the profile dir — the next run then fails to
@@ -1194,7 +1210,10 @@ class FlowApiClient:
         """
         page = await self._checkout_page()
         try:
-            minter = TokenMinter(page)
+            # Patchright evaluates in an isolated world by default, where the
+            # page's main-world ``grecaptcha`` global is undefined; the resolver
+            # supplies ``isolated_context=False`` for patchright ({} for playwright).
+            minter = TokenMinter(page, mint_evaluate_kwargs=mint_evaluate_kwargs())
             return await minter.mint(action)
         finally:
             self._checkin_page(page)

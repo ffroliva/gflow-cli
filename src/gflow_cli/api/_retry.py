@@ -22,8 +22,6 @@ from __future__ import annotations
 import random
 from typing import TYPE_CHECKING, Any
 
-from playwright.async_api import Error as PlaywrightError
-from playwright.async_api import TimeoutError as PlaywrightTimeoutError
 from tenacity import (
     AsyncRetrying,
     RetryCallState,
@@ -32,6 +30,7 @@ from tenacity import (
 )
 from tenacity.wait import wait_base
 
+from gflow_cli.api._engine import retryable_engine_errors
 from gflow_cli.errors import NetworkError, RateLimitError
 
 if TYPE_CHECKING:
@@ -112,7 +111,10 @@ def _make_retrying(
         stop=stop_after_attempt(MAX_ATTEMPTS),
         wait=waiter,
         retry=retry_if_exception_type(
-            (NetworkError, RateLimitError, PlaywrightError, PlaywrightTimeoutError),
+            # Patchright raises its OWN Error/TimeoutError (distinct classes from
+            # playwright's), so retryable_engine_errors() unions both engines —
+            # otherwise a patchright transport hiccup would surface raw.
+            (NetworkError, RateLimitError, *retryable_engine_errors()),
         ),
         reraise=True,
     )
