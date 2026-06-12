@@ -49,3 +49,48 @@ def test_claude_automation_branch_is_advisory_not_error() -> None:
     out = hygiene._check_branch_name("claude/some-session")
     assert len(out) == 1
     assert "advisory" in out[0].lower()
+
+
+# ---------------------------------------------------------------------------
+# Root-doc allowlist (project-health audit, 2026-06): stray top-level *.md / *.py
+# files are blocked so shipped-PR reviews and session markers can't accumulate.
+# ---------------------------------------------------------------------------
+
+
+@pytest.mark.parametrize(
+    "stray",
+    ["PR162_MOVIE_CHARACTER_REVIEW.md", ".continue-here.md", "NOTES.py", "scratch.md"],
+)
+def test_stray_root_doc_is_flagged(stray: str) -> None:
+    out = hygiene._check_root_docs([stray])
+    assert len(out) == 1
+    assert stray in out[0]
+    assert "ROOT_DOC_ALLOWLIST" in out[0]
+
+
+@pytest.mark.parametrize("allowed", sorted(hygiene.ROOT_DOC_ALLOWLIST))
+def test_allowlisted_root_doc_passes(allowed: str) -> None:
+    assert hygiene._check_root_docs([allowed]) == []
+
+
+def test_nested_docs_are_never_flagged() -> None:
+    # Files under any directory are out of scope — only the repo root is policed.
+    nested = [
+        "docs/USAGE.md",
+        "docs/superpowers/plans/2026-06-12-issue-174-library-ui-attach/PLAN.md",
+        "src/gflow_cli/cli.py",
+        "tests/conftest.py",
+    ]
+    assert hygiene._check_root_docs(nested) == []
+
+
+def test_non_doc_root_files_are_ignored() -> None:
+    # Only *.md / *.py at root are policed; config/data files are out of scope.
+    others = ["pyproject.toml", "uv.lock", "docker-compose.yml", "llms.txt", "LICENSE"]
+    assert hygiene._check_root_docs(others) == []
+
+
+def test_real_tree_passes_root_doc_check() -> None:
+    # The live tracked tree must already satisfy the allowlist (guards against a
+    # regression landing a stray root doc that the gate would then start failing on).
+    assert hygiene._check_root_docs(hygiene._git_ls_files()) == []
