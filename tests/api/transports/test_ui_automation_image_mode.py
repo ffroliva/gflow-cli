@@ -18,6 +18,7 @@ from gflow_cli.api.transports.ui_automation import UiAutomationTransport
 from gflow_cli.api.transports.ui_automation_video import (
     MODE_SWITCH_TRIGGER_SELECTORS,
 )
+from gflow_cli.errors import UiSelectorDriftError
 
 
 def _cascade_page(visible: set[str]) -> MagicMock:
@@ -53,13 +54,13 @@ class TestSwitchToImageMode:
     @pytest.mark.asyncio
     async def test_raises_when_trigger_missing(self) -> None:
         page = _cascade_page(set())
-        with pytest.raises(RuntimeError, match="mode-switch"):
+        with pytest.raises(UiSelectorDriftError, match="mode_switch_trigger"):
             await UiAutomationTransport._switch_to_image_mode(page, out_dir=None)
 
     @pytest.mark.asyncio
     async def test_raises_when_image_tab_missing(self) -> None:
         page = _cascade_page({MODE_SWITCH_TRIGGER_SELECTORS[0]})
-        with pytest.raises(RuntimeError, match="Image tab"):
+        with pytest.raises(UiSelectorDriftError, match="Image tab"):
             await UiAutomationTransport._switch_to_image_mode(page, out_dir=None)
 
 
