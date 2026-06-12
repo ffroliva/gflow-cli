@@ -7,6 +7,22 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+### Added
+
+- `UiSelectorDriftError` (exit code 23): UI-automation selector-probe failures — e.g. the
+  mode-switch `crop_*` trigger missing from the Flow editor (issue #183) — now raise a typed
+  error carrying the probe name, the debug-screenshot path, and a remediation hint, instead
+  of an opaque "Unexpected error" (exit 1) whose message was hashed away in logs. Converted
+  probes: mode-switch trigger, Image/Video mode tabs, and video sub-mode tabs, in both the
+  image and video transports.
+
+### Fixed
+
+- `gflow image` commands (`t2i` / `i2i` / `upscale` / `upload`) now plumb their output
+  directory into the API client, so debug screenshots are actually captured on
+  UI-automation failures. Previously the transport's screenshot directory was never set on
+  the image path and drift errors reported `Screenshot: None` even with `--verbose`.
+
 ## [0.17.0] — 2026-06-12
 
 ### Added
