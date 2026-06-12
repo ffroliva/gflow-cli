@@ -214,6 +214,12 @@ async def verify_flow_session(
 ) -> FlowSessionStatus:
     """Headlessly probe `profile_dir` for a usable Flow app session.
 
+    NOTE: since PR #168, `verify_flow_profile` is the production entry point
+    (`RealChromeStrategy.login` calls it): it reads cookies straight from
+    Chrome's SQLite store via `browser_cookie3` and only launches Playwright
+    when that decryption fails. This function is the original full-Playwright
+    probe, retained for the tests and as a standalone verification primitive.
+
     Launches a headless persistent context on the profile, reads cookies, and
     calls the NextAuth session endpoint. Fail-closed: any failure — boundary
     violation aside — yields VERIFICATION_ERROR, never AUTHENTICATED.

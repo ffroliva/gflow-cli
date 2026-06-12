@@ -628,6 +628,15 @@ success. The expected authenticated response shape is pinned by the
 change surfaces there as a failing test. Start any investigation of a sudden
 `gflow auth login` verification failure at that fixture and `verification.py`.
 
+Since PR #168 the production entry point is `verify_flow_profile`, which reads
+the session cookie **directly from Chrome's SQLite store** via `browser_cookie3`
+(a no-browser fast path) and only falls back to launching Playwright when that
+decryption fails. This adds two more local surfaces to check when verification
+fails unexpectedly: a Windows **DPAPI decrypt failure** (cross-user / cross-machine
+key — surfaces as a `RuntimeError` that `auth/cookies.py` normalizes to
+`PermissionError` to trigger the Playwright fallback) and a **locked cookie DB**
+(Chrome still running holds an exclusive SQLite lock). Both degrade fail-closed.
+
 ---
 
 ## Resolved

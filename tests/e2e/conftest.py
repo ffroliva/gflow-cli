@@ -86,7 +86,7 @@ def e2e_profile_dir(monkeypatch: pytest.MonkeyPatch) -> Iterator[Path]:
 def e2e_nosession_profile() -> Iterator[Path]:
     """Yield a fresh, empty profile dir INSIDE the gflow home.
 
-    ``verify_flow_session`` enforces a boundary check that the profile dir
+    ``verify_flow_profile`` enforces a boundary check that the profile dir
     resolves inside ``GFLOW_CLI_HOME``, so a pytest ``tmp_path`` dir (system
     temp) cannot be used. The dir is UUID-named so it can never collide with a
     real ``profile_<name>`` dir, and is removed in teardown — ``ignore_errors=True``
