@@ -99,19 +99,19 @@ change. Reuses the `spike_movie_attach_payload.py` route-abort harness and
 - `scripts/dev/spike_issue174_library_ui_recon.py`
 
 **Steps:**
-- [ ] Phase A — variant detection: click Add Media, race `[role='dialog'][data-state='open']`
-      appearance vs URL change; record which won + timing
-- [ ] Phase B (new UI only) — gesture matrix, each with route-abort submit capture:
-      1. right-click include on Personagens tile → submit **from the floating quick-create
-         composer** on the library page
-      2. right-click include → navigate back to the editor → submit from the editor composer
-         (does staging survive navigation?)
-      3. any new "use in prompt"-style affordance discovered in the DOM dump
-- [ ] Phase C — DOM dump of the library page: sidebar items, tile structure
-      (`data-tile-id`?), floating composer, all ligature icons (locale-invariant anchors)
-- [ ] Capture asserts: request0 `referenceEntities` presence per gesture; JSON +
-      screenshots to `scripts/dev/_spike_out/` (local only — never committed; PII)
-- [ ] Windows: `PYTHONUTF8=1`; parameterize profile via env (memory: e2e scripts parameterize)
+- [x] Phase A — variant detection: click Add Media, poll `[role='dialog'][data-state='open']`
+      appearance vs URL change; record which won + timing (old-UI accounts exit here —
+      doubles as the rollout re-probe)
+- [x] Phase B (new UI only) — gesture matrix, each with route-abort submit capture
+      (`--gestures b1,b2`): b1 = include → submit from the floating quick-create composer;
+      b2 = include → navigate back to editor → submit (does staging survive navigation?);
+      gesture 3 (new affordances) is driven manually off the Phase C dump
+- [x] Phase C — DOM dump of the library page: nav/sidebar items, `data-tile-id` tiles,
+      composer candidates (slate textbox + sibling button ligatures), full ligature inventory
+- [x] Capture asserts: request0 `referenceEntities`/`request0_keys`/`reference_like` per
+      gesture; JSON + screenshots to `scripts/dev/_spike_out/` (local only — never committed)
+- [x] Windows: `PYTHONUTF8=1` documented in usage; profile via `GFLOW_CLI_PROFILE` env;
+      both video and image generate routes aborted (credit-free)
 
 **Tests:** none (dev spike script, excluded from coverage like existing `spike_*.py`).
 
