@@ -7,6 +7,24 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+## [0.18.0] — 2026-06-12
+
+### Added
+
+- `UiSelectorDriftError` (exit code 23): UI-automation selector-probe failures — e.g. the
+  mode-switch `crop_*` trigger missing from the Flow editor (issue #183) — now raise a typed
+  error carrying the probe name, the debug-screenshot path, and a remediation hint, instead
+  of an opaque "Unexpected error" (exit 1) whose message was hashed away in logs. Converted
+  probes: mode-switch trigger, Image/Video mode tabs, and video sub-mode tabs, in both the
+  image and video transports.
+
+### Fixed
+
+- `gflow image` commands (`t2i` / `i2i` / `upscale` / `upload`) now plumb their output
+  directory into the API client, so debug screenshots are actually captured on
+  UI-automation failures. Previously the transport's screenshot directory was never set on
+  the image path and drift errors reported `Screenshot: None` even with `--verbose`.
+
 ## [0.17.0] — 2026-06-12
 
 ### Added
@@ -1509,7 +1527,8 @@ shell-script template that branches on these codes.
 
 First skeleton. Not functional end-to-end yet.
 
-[Unreleased]: https://github.com/ffroliva/gflow-cli/compare/v0.17.0...HEAD
+[Unreleased]: https://github.com/ffroliva/gflow-cli/compare/v0.18.0...HEAD
+[0.18.0]: https://github.com/ffroliva/gflow-cli/compare/v0.17.0...v0.18.0
 [0.17.0]: https://github.com/ffroliva/gflow-cli/compare/v0.16.0...v0.17.0
 [0.16.0]: https://github.com/ffroliva/gflow-cli/compare/v0.15.1...v0.16.0
 [0.15.1]: https://github.com/ffroliva/gflow-cli/compare/v0.15.0...v0.15.1
