@@ -9,6 +9,7 @@ import uuid
 
 import click
 import structlog
+from pydantic import ValidationError as PydanticValidationError
 from rich.console import Console
 from rich.table import Table
 
@@ -98,7 +99,22 @@ def main(ctx: click.Context, verbose: bool) -> None:
     # 2. bind_contextvars() attaches process-scoped fields that flow through
     #    every event emitted in this invocation. We bind these ONLY here —
     #    binding inside async tasks risks cross-task leakage (spec C6).
-    settings = get_settings()
+    try:
+        settings = get_settings()
+    except PydanticValidationError as exc:
+        # A bad GFLOW_CLI_* value (e.g. an unknown browser_engine / provider /
+        # log_level) must fail with a clear config error (exit 11), not a raw
+        # pydantic traceback. Logging is not configured yet, so render directly.
+        from gflow_cli.errors import ConfigurationError
+
+        first = exc.errors()[0]
+        field = ".".join(str(p) for p in first.get("loc", ())) or "(unknown)"
+        console.print(
+            f"[red]{ConfigurationError.title}:[/red] "
+            f"GFLOW_CLI_{field.upper()} — {first.get('msg', 'invalid value')}"
+        )
+        console.print("[dim]Set a valid value, or unset it to use the default.[/dim]")
+        sys.exit(11)
     configure_logging(settings.log_format)
     structlog.contextvars.clear_contextvars()
     structlog.contextvars.bind_contextvars(
@@ -235,6 +251,10 @@ def auth_status(profile: str | None) -> None:
         )
     for k, v in s.items():
         console.print(f"  {k}: {v}")
+    # Surface the active browser engine so a two-engine setup is debuggable.
+    from gflow_cli.config import get_settings
+
+    console.print(f"  browser_engine: {get_settings().browser_engine}")
 
 
 @auth.command("list")

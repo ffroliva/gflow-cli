@@ -78,6 +78,20 @@ class Provider(StrEnum):
     OFFICIAL = "official"  # planned v0.3+ via googleapis/python-genai
 
 
+class BrowserEngine(StrEnum):
+    """Browser-automation engine backing the Playwright API.
+
+    PLAYWRIGHT is the default and the only engine the standard install ships.
+    PATCHRIGHT is an opt-in, drop-in patched Playwright (Chromium) that avoids
+    the ``Runtime.enable`` CDP leak for stronger reCAPTCHA-Enterprise evasion on
+    the headed path; it must be installed separately (``pip install patchright``)
+    and is NOT a headless unlock.
+    """
+
+    PLAYWRIGHT = "playwright"
+    PATCHRIGHT = "patchright"
+
+
 class Settings(BaseSettings):
     """All gflow-cli configuration. Build via `Settings()` (or `get_settings()`)."""
 
@@ -194,6 +208,17 @@ class Settings(BaseSettings):
             "requires headed Chrome — reCAPTCHA Enterprise rejects headless "
             "browsers with an immediate 403. Only set True in CI/CD environments "
             "that use a different transport (e.g. bearer/sapisidhash)."
+        ),
+    )
+    browser_engine: BrowserEngine = Field(
+        default=BrowserEngine.PLAYWRIGHT,
+        description=(
+            "Browser automation engine: 'playwright' (default) or 'patchright'. "
+            "Patchright is an OPT-IN, drop-in patched Playwright (Chromium) that "
+            "avoids the Runtime.enable CDP leak for stronger reCAPTCHA-Enterprise "
+            "evasion on the HEADED path. It must be installed separately "
+            "(`pip install patchright`) and is NOT a headless unlock — the default "
+            "stays playwright and is unaffected. Override via GFLOW_CLI_BROWSER_ENGINE."
         ),
     )
 

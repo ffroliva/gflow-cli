@@ -7,6 +7,19 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+### Added
+
+- **Opt-in Patchright browser engine** via `GFLOW_CLI_BROWSER_ENGINE=patchright`
+  (default `playwright`, unchanged). Patchright is a drop-in patched Playwright
+  (Chromium) that runs page evaluations in an isolated execution context to
+  avoid the `Runtime.enable` CDP leak, for stronger reCAPTCHA-Enterprise evasion
+  on the **headed** path. It is **not** a headless unlock and must be installed
+  separately: `pip install 'gflow-cli[patchright]'`. The default engine is
+  byte-identical to before. `gflow auth status` now reports the active engine.
+- `BrowserEngineUnavailableError` (exit code 24): selecting `patchright` without
+  the package installed now fails with a clear `pip install patchright`
+  remediation hint instead of a raw `ImportError` hashed to a generic exit 1.
+
 ## [0.18.0] — 2026-06-12
 
 ### Added
