@@ -662,8 +662,8 @@ Profiles created before this fix continue to work and display `unknown` in the
 account column. Re-running `gflow auth login` against an existing profile backfills
 the `.gflow_account` file.
 
-See [AUTHENTICATION.md § Profile naming](AUTHENTICATION.md#profile-naming) for the
-new naming convention and [AUTHENTICATION.md § gflow auth list](AUTHENTICATION.md#gflow-auth-list)
+See [AUTHENTICATION.md § Profile naming](docs/AUTHENTICATION.md#profile-naming) for the
+new naming convention and [AUTHENTICATION.md § gflow auth list](docs/AUTHENTICATION.md#gflow-auth-list)
 for the updated `--json` schema.
 
 ---
