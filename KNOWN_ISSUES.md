@@ -34,6 +34,11 @@ returning a text-only generation as success.
 **Add Media** — a small dialog means the old (working) UI; a navigation to a
 full-page library means the affected new UI.
 
+**Note:** the experiment appears to flap — the affected account observed on
+2026-06-12 00:13 was back on the old dialog UI by 12:48 the same day (variant
+probe, issue #174). If you hit exit 7 on entity attach, re-running later the
+same day may simply work again.
+
 **Workaround:** none yet on affected accounts — the attach gesture for the new
 UI is being reverse-engineered (recon plan in
 [docs/superpowers/plans/2026-06-12-issue-174-library-ui-attach/PLAN.md](docs/superpowers/plans/2026-06-12-issue-174-library-ui-attach/PLAN.md)).
