@@ -40,6 +40,7 @@ from gflow_cli.api.video import (
 from gflow_cli.errors import (
     AuthExpiredError,
     ModelModeIncompatibilityError,
+    TransportTimeoutError,
     VideoModelSelectionError,
     WafRejectionError,
     WireFormatError,
@@ -293,13 +294,37 @@ PICKER_VOZES_TAB = (
     "[role='tab']:has(i.google-symbols:text-is('voice_selection')),"
     " button:has(i.google-symbols:text-is('voice_selection'))"
 )
-PICKER_INCLUDE_BUTTON = "button:has-text('Incluir no comando')"
-# Context-menu 'Incluir no comando' shown on RIGHT-CLICK of a Personagens entity
+# Picker include button (Vozes flow). Issue #170: the original single pt-BR
+# has-text selector broke every non-Portuguese account — Flow renders in the
+# ACCOUNT language and `?hl=en` cannot override it. Recon (denon82 pt-BR,
+# 2026-06-11): the button carries NO ligature icon, so known localized captions
+# lead; the structural fallback is the LONE iconless button inside the open
+# picker dialog (every other dialog button has a ligature: tabs, `play_arrow`
+# preview, `arrow_drop_down` sort) — same situation as ADD_TO_PROMPT_DIALOG.
+# Tiers are probed sequentially (see _resolve_include_action), never flattened
+# into one comma list: comma lists resolve in DOM order, not tier priority.
+PICKER_INCLUDE_BUTTON: tuple[str, str] = (
+    "button:has-text('Incluir no comando'), button:has-text('Добавить в запрос'),"
+    " button:has-text('Add to prompt')",
+    "[role='dialog'][data-state='open'] button:not(:has(i.google-symbols))",
+)
+_INCLUDE_BUTTON_TIER_NAMES = ("text", "structural")
+# Context-menu include action shown on RIGHT-CLICK of a Personagens entity
 # tile. This is what stages a `referenceEntity` (the inline Tudo button instead
 # stages a `referenceImage` of the thumbnail). Verified 2026-06-06.
-PICKER_CONTEXT_INCLUDE = (
-    "[role='menuitem']:has-text('Incluir no comando'), button:has-text('Incluir no comando')"
+# Issue #170 + recon 2026-06-11 (pt-BR denon82, matching the ru report): the
+# menu is `div[role='menu'][data-state='open']` with menuitem ligatures
+# add / content_cut / content_copy / delete — `add` is unique within the menu,
+# so the icon tier is locale-free. The text tier keeps known captions, menu-
+# scoped so a user-named tile (e.g. a character called 'Add to prompt') can
+# never match.
+PICKER_CONTEXT_INCLUDE: tuple[str, str] = (
+    "[role='menu'][data-state='open'] [role='menuitem']:has(i.google-symbols:text-is('add'))",
+    "[role='menu'] [role='menuitem']:has-text('Incluir no comando'),"
+    " [role='menu'] [role='menuitem']:has-text('Добавить в запрос'),"
+    " [role='menu'] [role='menuitem']:has-text('Add to prompt')",
 )
+_CONTEXT_INCLUDE_TIER_NAMES = ("icon", "text")
 # The picker grid is virtualised (react-virtuoso): off-screen tiles are not in
 # the DOM. When the target entity tile is not initially rendered, scroll the grid
 # in steps until it appears (or we exhaust the attempts).
@@ -1214,6 +1239,60 @@ class VideoGenerationMixin:
         return tile
 
     @staticmethod
+    async def _resolve_include_action(
+        page: Page,
+        tiers: tuple[str, ...],
+        tier_names: tuple[str, ...],
+        *,
+        surface: str,
+        detail: str,
+        out_dir: Path | None,
+        screenshot_name: str,
+    ) -> Locator:
+        """Probe the include-action selector tiers IN ORDER; return the first
+        visible match.
+
+        Issue #170: a single localized has-text selector broke every
+        non-Portuguese account. Tiers are probed sequentially (not flattened
+        into one comma list — comma lists resolve in DOM order, not tier
+        priority) and the matched tier is logged so a dead locale-free tier
+        silently carried by the text fallback stays observable.
+
+        On exhaustion: capture a screenshot, press Escape twice (context menu
+        + picker dialog — a Page must never return to the pool with an open
+        overlay), and raise a typed, locale-neutral
+        :class:`TransportTimeoutError` so the CLI surfaces the remediation
+        hint with exit 9 instead of the privacy-hashed 'Unexpected error.'.
+        """
+        last_exc: Exception | None = None
+        for tier, selector in zip(tier_names, tiers, strict=True):
+            loc = page.locator(selector).first
+            try:
+                await loc.wait_for(state="visible", timeout=4000)
+            except Exception as e:  # noqa: BLE001 — try the next tier
+                last_exc = e
+                continue
+            log.info(
+                "ui_automation_video.include_selector_tier",
+                surface=surface,
+                tier=tier,
+            )
+            return loc
+        shot = await _capture_debug_screenshot(page, out_dir, screenshot_name)
+        await page.keyboard.press("Escape")
+        await page.keyboard.press("Escape")
+        raise TransportTimeoutError(
+            f"{detail} include action did not appear (no selector tier "
+            f"matched on surface {surface!r}). Screenshot: {shot}",
+            remediation_hint=(
+                "Flow's resource picker may have changed, or your account's "
+                "UI language is not yet covered by the selector fallbacks. "
+                "Report the visible menu/button captions (plus the screenshot) "
+                "at https://github.com/ffroliva/gflow-cli/issues."
+            ),
+        ) from last_exc
+
+    @staticmethod
     async def _attach_character_entities(
         page: Page,
         entities: list[tuple[str, str]],
@@ -1225,9 +1304,10 @@ class VideoGenerationMixin:
 
         Mechanism (verified credit-free via route-abort payload capture,
         2026-06-06): open 'Add Media' -> Personagens tab -> RIGHT-CLICK the entity
-        tile -> context-menu 'Incluir no comando'. This stages
+        tile -> the context-menu include action (`add`-ligature menu item; the
+        caption is localized, e.g. 'Incluir no comando' on pt-BR). This stages
         `referenceEntities:[{entityId}]` on the submit payload. A LEFT-click on a
-        Tudo-tab tile + the inline 'Incluir' button instead stages a plain
+        Tudo-tab tile + the inline include button instead stages a plain
         `referenceImage` (the character thumbnail) — which the submit backstop
         (`_assert_entities_attached`) correctly rejects. A plain left-click on the
         Personagens tile navigates into the character editor (it is an
@@ -1251,16 +1331,15 @@ class VideoGenerationMixin:
             await tile.scroll_into_view_if_needed(timeout=8000)
             await tile.click(button="right")
             await page.wait_for_timeout(400)
-            include = page.locator(PICKER_CONTEXT_INCLUDE).first
-            try:
-                await include.wait_for(state="visible", timeout=8000)
-            except Exception as e:
-                shot = await _capture_debug_screenshot(page, out_dir, "debug_entity_ctx_menu.png")
-                msg = (
-                    f"character {name!r} ({entity_id}) context-menu 'Incluir no "
-                    f"comando' did not appear after right-click. Screenshot: {shot}"
-                )
-                raise RuntimeError(msg) from e
+            include = await VideoGenerationMixin._resolve_include_action(
+                page,
+                PICKER_CONTEXT_INCLUDE,
+                _CONTEXT_INCLUDE_TIER_NAMES,
+                surface="context_menu",
+                detail=f"character {name!r} ({entity_id})",
+                out_dir=out_dir,
+                screenshot_name="debug_entity_ctx_menu.png",
+            )
             await include.click()
             await page.wait_for_timeout(600)
             log.info(
@@ -1276,7 +1355,7 @@ class VideoGenerationMixin:
         *,
         out_dir: Path | None,
     ) -> None:
-        """R2V: attach a voice resource via the Vozes picker -> 'Incluir no comando'."""
+        """R2V: attach a voice resource via the Vozes picker -> include button."""
         add = page.locator(ADD_MEDIA_BUTTON).first
         await add.wait_for(state="visible", timeout=8000)
         await add.click()
@@ -1290,7 +1369,16 @@ class VideoGenerationMixin:
         ).first
         await tile.click()
         await page.wait_for_timeout(300)
-        await page.locator(PICKER_INCLUDE_BUTTON).first.click()
+        include = await VideoGenerationMixin._resolve_include_action(
+            page,
+            PICKER_INCLUDE_BUTTON,
+            _INCLUDE_BUTTON_TIER_NAMES,
+            surface="vozes_button",
+            detail=f"voice {voice_id!r}",
+            out_dir=out_dir,
+            screenshot_name="debug_voice_include.png",
+        )
+        await include.click()
         await page.wait_for_timeout(600)
         log.info("ui_automation_video.reference_audio_attached", voice=voice_id)
 
