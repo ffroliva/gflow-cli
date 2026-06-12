@@ -19,7 +19,7 @@ from gflow_cli.api.transports.ui_automation_video import (
     VideoGenerationMixin,
 )
 from gflow_cli.api.video import Aspect, GenerateVideoRequest, Mode, VideoModel, VideoStatus
-from gflow_cli.errors import AuthExpiredError, TransportTimeoutError, WireFormatError
+from gflow_cli.errors import AuthExpiredError, TransportTimeoutError, UiSelectorDriftError, WireFormatError
 
 
 def _make_listener_page() -> tuple[MagicMock, list]:
@@ -227,7 +227,7 @@ class TestSwitchToVideoMode:
     @pytest.mark.asyncio
     async def test_raises_when_trigger_missing(self) -> None:
         page = _cascade_page(set())
-        with pytest.raises(RuntimeError, match="mode-switch"):
+        with pytest.raises(UiSelectorDriftError, match="mode_switch_trigger"):
             await VideoGenerationMixin._switch_to_video_mode(page, out_dir=None)
 
     @pytest.mark.asyncio
@@ -235,7 +235,7 @@ class TestSwitchToVideoMode:
         from gflow_cli.api.transports import ui_automation_video as mod
 
         page = _cascade_page({mod.MODE_SWITCH_TRIGGER_SELECTORS[0]})
-        with pytest.raises(RuntimeError, match="Video tab"):
+        with pytest.raises(UiSelectorDriftError, match="Video tab"):
             await VideoGenerationMixin._switch_to_video_mode(page, out_dir=None)
 
 
