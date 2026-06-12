@@ -7,6 +7,15 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+### Added
+
+- Added `verify_flow_profile` in `gflow_cli.auth.verification` using `browser_cookie3` and `httpx` to verify sessions directly from the Chrome cookie store (fast path), with a marker-gated Playwright fallback for encrypted/locked stores. `RealChromeStrategy` now writes the Chrome marker before verification (the fallback reads it) and, on failure, rolls back only a speculative write — a marker that legitimately pre-existed (a previously-verified chrome profile) survives a transient probe failure, and an interrupted verification never leaves an unverified profile claiming the chrome strategy. Cookie extraction is centralised in the new `gflow_cli.auth.cookies` module.
+
+### Fixed
+
+- `gflow_cli.auth.cookies._get_chrome_cookies3` now catches `RuntimeError` (Windows DPAPI failure — `RuntimeError('Failed to decrypt the cipher text with DPAPI')`) in addition to `browser_cookie3.BrowserCookieError`, and re-raises both as `PermissionError` so the Playwright fallback is triggered instead of propagating an unhandled exception.
+- `verify_flow_profile` now retries transient HTTP failures (429/503/504) and network errors up to `_MAX_ATTEMPTS` times with exponential backoff, matching the retry behaviour of the existing Playwright-based `verify_flow_session`.
+
 ### Changed
 
 - Entity-attach `WireFormatError` failures (exit 7) now carry a remediation hint pointing at Flow's new full-page media-library UI rollout ([#174](https://github.com/ffroliva/gflow-cli/issues/174)) — affected accounts can stage entities via the include action but the submit never carries `referenceEntities`; the error now explains how to tell which UI an account has and where to follow the fix, instead of the generic file-a-bug hint. Both backstops also emit an `entity_attach_context` discovery field (`video`/`image`) for drift telemetry. New KNOWN_ISSUES entry documents the rollout
