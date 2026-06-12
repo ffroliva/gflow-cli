@@ -302,6 +302,7 @@ async def verify_flow_profile(
             cookies=cookie_snapshot.httpx_cookies,
             headers=headers,
             follow_redirects=False,
+            timeout=15.0,
         ) as client:
             status_code, body = await _fetch_session_httpx(client)
 

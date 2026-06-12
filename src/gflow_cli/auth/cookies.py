@@ -101,7 +101,9 @@ def _get_chrome_cookies3(profile_dir: Path) -> ChromeCookieSnapshot:
         # browser-cookie3 raises RuntimeError('Failed to decrypt the cipher text with DPAPI')
         # from _crypt_unprotect_data on Windows when the DPAPI master key is unavailable.
         # Treat it identically to BrowserCookieError so the Playwright fallback is used.
-        raise PermissionError(f"Failed to decrypt Chrome cookies (DPAPI): {exc}") from exc
+        if "dpapi" in str(exc).lower():
+            raise PermissionError(f"Failed to decrypt Chrome cookies (DPAPI): {exc}") from exc
+        raise
 
     return ChromeCookieSnapshot(
         httpx_cookies=_name_value_cookies(cookies, flow_only=True),
@@ -155,8 +157,3 @@ async def get_chrome_cookie_snapshot(profile_dir: Path) -> ChromeCookieSnapshot:
     except PermissionError:
         logger.info("cookie_decryption_failed_falling_back_to_playwright", profile=str(profile_dir))
         return await _get_chrome_cookies_playwright(profile_dir=profile_dir)
-
-
-async def get_chrome_cookies(profile_dir: Path) -> dict[str, str]:
-    """Return only labs.google-scoped cookies suitable for httpx."""
-    return (await get_chrome_cookie_snapshot(profile_dir)).httpx_cookies
