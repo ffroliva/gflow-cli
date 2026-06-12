@@ -329,9 +329,7 @@ class TestVerifyFlowSession:
         assert status.outcome is FlowSessionOutcome.VERIFICATION_ERROR
 
     @pytest.mark.asyncio
-    async def test_dpapi_runtime_error_triggers_playwright_fallback(
-        self, gflow_home: Path
-    ) -> None:
+    async def test_dpapi_runtime_error_triggers_playwright_fallback(self, gflow_home: Path) -> None:
         """Regression for fix #1: RuntimeError('Failed to decrypt the cipher text with DPAPI')
 
         browser-cookie3==0.20.1 raises RuntimeError (not BrowserCookieError) from
@@ -389,7 +387,6 @@ class TestVerifyFlowSession:
         # DPAPI RuntimeError must trigger the Playwright fallback, yielding AUTHENTICATED.
         assert status.outcome is FlowSessionOutcome.AUTHENTICATED
         assert status.user_email == "test.user@example.com"
-
 
     @pytest.mark.asyncio
     async def test_httpx_retryable_status_retried_then_verification_error(
