@@ -1031,6 +1031,7 @@ shell scripts can branch on the failure mode without parsing stderr.
 | `21` | `ChainPartialError`   | A video chain stopped mid-way; earlier links completed | Resume from the last completed link shown in the error     |
 | `22` | `UpscaleUnavailableError` | 4K upscale is gated to Flow **Ultra** accounts (HTTP 403) | Use `--scale 2k`, or upgrade the Flow plan                |
 | `23` | `UiSelectorDriftError` | A Flow editor control could not be located — Google changed the frontend (issue #183) | Update gflow-cli; file a bug with the probe name + debug screenshot from the error message |
+| `24` | `BrowserEngineUnavailableError` | `GFLOW_CLI_BROWSER_ENGINE=patchright` but the engine is not installed | `pip install 'gflow-cli[patchright]'`, or unset `GFLOW_CLI_BROWSER_ENGINE` |
 | `130`| SIGINT                | User-interrupted (Ctrl-C)                        | —                                                          |
 
 **Exit code 16 — data store / migration error.** Fires when:
