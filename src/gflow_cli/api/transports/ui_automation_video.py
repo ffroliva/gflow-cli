@@ -325,6 +325,16 @@ PICKER_CONTEXT_INCLUDE: tuple[str, str] = (
     " [role='menu'] [role='menuitem']:has-text('Add to prompt')",
 )
 _CONTEXT_INCLUDE_TIER_NAMES = ("icon", "text")
+# Issue #174: Flow is A/B-rolling a full-page media-library UI where the
+# include action lands (a chip appears) but the staged entity never reaches
+# the submit. Both entity-attach backstops (video + image) point affected
+# users at the tracking issue instead of the generic file-a-bug hint.
+ENTITY_ATTACH_DRIFT_HINT = (
+    "If clicking 'Add Media' on this account opens a full-page media library "
+    "instead of a picker dialog, this is Flow's new library UI rollout, where "
+    "the include action no longer stages entities. Follow "
+    "https://github.com/ffroliva/gflow-cli/issues/174 for status and workarounds."
+)
 # The picker grid is virtualised (react-virtuoso): off-screen tiles are not in
 # the DOM. When the target entity tile is not initially rendered, scroll the grid
 # in steps until it appears (or we exhaust the attempts).
@@ -1428,6 +1438,8 @@ class VideoGenerationMixin:
                     f"report success"
                 ),
                 route="video:batchAsyncGenerateVideoReferenceImages",
+                remediation_hint=ENTITY_ATTACH_DRIFT_HINT,
+                discovery={"entity_attach_context": "video"},
             )
 
     @staticmethod
