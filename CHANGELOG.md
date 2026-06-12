@@ -7,6 +7,8 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+## [0.19.0] — 2026-06-12
+
 ### Added
 
 - **Opt-in Patchright browser engine** via `GFLOW_CLI_BROWSER_ENGINE=patchright`
@@ -19,6 +21,13 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 - `BrowserEngineUnavailableError` (exit code 24): selecting `patchright` without
   the package installed now fails with a clear `pip install patchright`
   remediation hint instead of a raw `ImportError` hashed to a generic exit 1.
+
+### Fixed
+
+- An invalid `GFLOW_CLI_*` enum value (e.g. a typo'd `GFLOW_CLI_BROWSER_ENGINE`,
+  `GFLOW_CLI_PROVIDER`, or `GFLOW_CLI_LOG_LEVEL`) now fails with a clean
+  configuration error and **exit code 11** naming the offending variable, instead
+  of leaking a raw pydantic `ValidationError` traceback and exiting 1.
 
 ## [0.18.0] — 2026-06-12
 
@@ -1540,7 +1549,8 @@ shell-script template that branches on these codes.
 
 First skeleton. Not functional end-to-end yet.
 
-[Unreleased]: https://github.com/ffroliva/gflow-cli/compare/v0.18.0...HEAD
+[Unreleased]: https://github.com/ffroliva/gflow-cli/compare/v0.19.0...HEAD
+[0.19.0]: https://github.com/ffroliva/gflow-cli/compare/v0.18.0...v0.19.0
 [0.18.0]: https://github.com/ffroliva/gflow-cli/compare/v0.17.0...v0.18.0
 [0.17.0]: https://github.com/ffroliva/gflow-cli/compare/v0.16.0...v0.17.0
 [0.16.0]: https://github.com/ffroliva/gflow-cli/compare/v0.15.1...v0.16.0
