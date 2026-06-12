@@ -14,6 +14,34 @@ Living list of behaviour that's broken, surprising, or limited by design — alo
 
 ## Open
 
+### Flow's new full-page media-library UI breaks entity attach (A/B rollout)
+
+- **Status:** **Open** — Flow-side staged rollout; tracked in
+  [#174](https://github.com/ffroliva/gflow-cli/issues/174)
+- **Severity:** High · **Affects:** `gflow image t2i --reference-entity` and
+  movie R2V entity attach on accounts that received the new UI, any locale
+
+Flow is A/B-rolling a new full-page media-library UI: clicking **Add Media**
+in the composer **navigates to a library page** (sidebar: All media /
+Characters / Scenes / Tools, with a floating quick-create composer) instead of
+opening the resource-picker dialog. On affected accounts the right-click
+include action still lands (a chip appears), **but the staged entity never
+reaches the submit** — the request carries no `referenceEntities`, so the
+submit backstops raise `WireFormatError` (**exit 7**) instead of silently
+returning a text-only generation as success.
+
+**How to tell which UI your account has:** in the Flow web editor, click
+**Add Media** — a small dialog means the old (working) UI; a navigation to a
+full-page library means the affected new UI.
+
+**Workaround:** none yet on affected accounts — the attach gesture for the new
+UI is being reverse-engineered (recon plan in
+[docs/superpowers/plans/2026-06-12-issue-174-library-ui-attach/PLAN.md](docs/superpowers/plans/2026-06-12-issue-174-library-ui-attach/PLAN.md)).
+If you have a second profile/account still on the old UI, entity attach works
+there. Follow [#174](https://github.com/ffroliva/gflow-cli/issues/174) for
+status; please report whether your account shows the dialog or the full-page
+library (plus your locale) on that issue.
+
 ### 4K image upscale requires a Flow Ultra subscription
 
 - **Status:** **Open** (by design — a Flow platform limit, not a gflow bug)

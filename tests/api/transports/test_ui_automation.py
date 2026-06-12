@@ -1416,6 +1416,19 @@ class TestImageEntityBackstop:
             expected=["ent-1", "ent-2"],
         )
 
+    def test_assert_error_carries_issue_174_hint_and_discovery(self) -> None:
+        """Issue #174: an attach miss on the new library UI must point the
+        user at the tracking issue (typed-error remediation hint) and tag
+        the surface in the discovery payload."""
+        from gflow_cli.errors import WireFormatError
+
+        with pytest.raises(WireFormatError) as exc_info:
+            UiAutomationTransport._assert_image_entities_attached([], expected=["ent-1"])
+        err = exc_info.value
+        assert "github.com/ffroliva/gflow-cli/issues/174" in err.remediation_hint
+        assert err.to_problem_details().get("remediation_hint") == err.remediation_hint
+        assert err.discovery == {"entity_attach_context": "image"}
+
     @pytest.mark.asyncio
     async def test_generate_images_raises_when_entities_never_rode_the_wire(self) -> None:
         """The wiring: entities requested + no captured submit carries them →

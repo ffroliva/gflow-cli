@@ -1281,3 +1281,18 @@ class TestAssertEntitiesAttached:
         # request-body shape (referenceEntities) is also accepted.
         captured = {"body": {"requests": [{"referenceEntities": [{"entityId": "ent-1"}]}]}}
         VideoGenerationMixin._assert_entities_attached(captured, expected=["ent-1"])
+
+    def test_backstop_error_carries_issue_174_hint_and_discovery(self) -> None:
+        """Issue #174: an attach miss on the new library UI must point the
+        user at the tracking issue (typed-error remediation hint) and tag
+        the surface in the discovery payload."""
+        from gflow_cli.api.transports.ui_automation_video import VideoGenerationMixin
+        from gflow_cli.errors import WireFormatError
+
+        captured = {"body": {"media": [{"mediaMetadata": {"requestData": {}}}]}}
+        with pytest.raises(WireFormatError) as exc_info:
+            VideoGenerationMixin._assert_entities_attached(captured, expected=["ent-1"])
+        err = exc_info.value
+        assert "github.com/ffroliva/gflow-cli/issues/174" in err.remediation_hint
+        assert err.to_problem_details().get("remediation_hint") == err.remediation_hint
+        assert err.discovery == {"entity_attach_context": "video"}
