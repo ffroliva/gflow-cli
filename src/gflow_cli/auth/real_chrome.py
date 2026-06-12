@@ -12,7 +12,7 @@ from gflow_cli.config import Settings, get_settings
 from gflow_cli.errors import AuthLoginTimeoutError, AuthMissingError, SecurityError
 
 from .base import AuthStrategy
-from .verification import FlowSessionOutcome, verify_flow_session
+from .verification import FlowSessionOutcome, verify_flow_profile
 
 if TYPE_CHECKING:
     from pathlib import Path
@@ -204,7 +204,29 @@ class RealChromeStrategy(AuthStrategy):
         await _await_chrome_close(proc, self._timeout_seconds)
         _console.print("\n[bold green]Browser closed.[/bold green] Verifying Flow session...")
 
-        status = await verify_flow_session(profile_dir, channel="chrome", source=self.name)
+        # Pre-write the Chrome marker so the verification fallback can use the
+        # same channel gate if browser-cookie3 decryption fails. The marker must
+        # exist DURING verification (the cookie-decrypt fallback reads it), so we
+        # cannot defer the write until success. Instead, only the speculative
+        # write is rolled back on failure: a marker that legitimately pre-existed
+        # (a previously-verified chrome profile) must survive a transient probe
+        # failure, or channel_for_profile would stop returning 'chrome' and
+        # FlowApiClient would downgrade to bundled Chromium on a real-Chrome
+        # profile (see [[real-browser-auth-mandatory]]).
+        marker = profile_dir / ".gflow_browser_strategy"
+        marker_preexisted = marker.exists()
+        marker.write_text("chrome", encoding="utf-8")
+        verified = False
+        try:
+            status = await verify_flow_profile(profile_dir, source=self.name)
+            verified = status.authenticated
+        finally:
+            # `finally` (not `except`) so an interrupt — KeyboardInterrupt /
+            # asyncio.CancelledError, both BaseException — also rolls back a
+            # speculative write and never leaves an unverified profile claiming
+            # the chrome strategy.
+            if not verified and not marker_preexisted:
+                marker.unlink(missing_ok=True)
         if status.authenticated:
             logger.info(
                 "auth_flow_session_verified",
@@ -214,7 +236,6 @@ class RealChromeStrategy(AuthStrategy):
             )
             # Marker read by browser_manager.channel_for_profile so FlowApiClient
             # selects the system Chrome channel. Load-bearing — must persist here.
-            (profile_dir / ".gflow_browser_strategy").write_text("chrome", encoding="utf-8")
             assert status.user_email, "AUTHENTICATED outcome must carry a non-empty user_email"
             (profile_dir / ".gflow_account").write_text(status.user_email, encoding="utf-8")
             _console.print(f"[green][OK] Flow session verified ({status.user_email}).[/green]")

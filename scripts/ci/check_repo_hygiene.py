@@ -3,7 +3,9 @@
 
 Fails (exit 1) if:
   1. Forbidden file types are tracked by git (images, CDP lock files, generated artefacts).
-  2. Any Python file in src/, tests/, or scripts/ contains hardcoded Windows absolute paths
+  2. A tracked top-level *.md / *.py file is outside ROOT_DOC_ALLOWLIST (stray
+     planning / review / session artefact at the repo root).
+  3. Any Python file in src/, tests/, or scripts/ contains hardcoded Windows absolute paths
      or writes output to test_assets/ instead of tmp/.
 
 Run manually:
@@ -66,6 +68,33 @@ SOURCE_DENYLIST: list[tuple[re.Pattern[str], str]] = [
 SCAN_DIRS = ["scripts", "src", "tests"]
 
 # ---------------------------------------------------------------------------
+# 2b. Root-level doc/script allowlist
+#    Tracked top-level *.md and *.py files must be in this set. Anything else is
+#    a stray planning / review / session artifact (e.g. a shipped-PR review doc
+#    or an agent session marker) that belongs in docs/, auto-memory, or nowhere.
+#    This is what would have caught PR162_MOVIE_CHARACTER_REVIEW.md and
+#    .continue-here.md before they were committed (project-health audit, 2026-06).
+#    Add a genuinely new canonical root doc here; route everything else into docs/.
+# ---------------------------------------------------------------------------
+ROOT_DOC_ALLOWLIST: frozenset[str] = frozenset(
+    {
+        "AGENTS.md",
+        "CHANGELOG.md",
+        "CLAUDE.md",
+        "CONFIGURATION.md",
+        "CONTRIBUTING.md",
+        "DISCLAIMER.md",
+        "GEMINI.md",
+        "KNOWN_ISSUES.md",
+        "PLAN.md",
+        "README.md",
+        "RELEASE.md",
+        "ROADMAP.md",
+        "conftest.py",  # root pytest conftest (basetemp + directory-based marker tagging)
+    }
+)
+
+# ---------------------------------------------------------------------------
 # 3. Branch-naming advisory
 #    AGENTS.md mandates conventional branch prefixes. This is ADVISORY only:
 #    it warns but never fails the gate. Rationale: it no-ops in CI (pull_request
@@ -101,6 +130,25 @@ def _check_tracked(files: list[str]) -> list[str]:
             if pattern.search(f):
                 violations.append(f"  TRACKED   {f!r:60s}  ← {label}")
                 break
+    return violations
+
+
+def _check_root_docs(files: list[str]) -> list[str]:
+    """Flag tracked top-level ``*.md`` / ``*.py`` files outside the allowlist.
+
+    Top-level = no ``/`` in the git path. Dotfiles like ``.continue-here.md`` are
+    included (they have no path separator and end in ``.md``).
+    """
+    violations: list[str] = []
+    for f in files:
+        if "/" in f:
+            continue
+        if f.endswith((".md", ".py")) and f not in ROOT_DOC_ALLOWLIST:
+            violations.append(
+                f"  ROOTDOC   {f!r:60s}  ← stray root doc/script; move it under docs/ "
+                "(or extract to memory and delete), or add it to ROOT_DOC_ALLOWLIST "
+                "in scripts/ci/check_repo_hygiene.py if it is a new canonical root doc"
+            )
     return violations
 
 
@@ -163,6 +211,7 @@ def main() -> int:
 
     tracked = _git_ls_files()
     errors += _check_tracked(tracked)
+    errors += _check_root_docs(tracked)
     errors += _check_sources()
 
     # Advisory: warn on non-conventional branch names but never fail the gate.
@@ -179,6 +228,8 @@ def main() -> int:
         print(
             "\nRemediation:\n"
             "  Tracked artefact  →  git rm --cached <file>  and add pattern to .gitignore\n"
+            "  Stray root doc    →  move under docs/ (or extract to memory + delete), or\n"
+            "                       add to ROOT_DOC_ALLOWLIST if it is a new canonical root doc\n"
             "  Hardcoded path    →  replace with auth.profile_dir(args.profile)\n"
             "  Output to test_assets/  →  change OUT to Path('tmp/...')\n"
         )

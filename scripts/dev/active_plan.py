@@ -18,7 +18,14 @@ from __future__ import annotations
 
 import argparse
 import re
+import sys
 from pathlib import Path
+
+# Windows consoles default to cp1252, which cannot encode the arrows/emoji
+# used in PLAN.md — reconfigure stdout so the script works without a
+# PYTHONUTF8=1 prefix (bit the /gflow:plan flow on 2026-06-11).
+if sys.stdout.encoding and sys.stdout.encoding.lower() not in ("utf-8", "utf8"):
+    sys.stdout.reconfigure(encoding="utf-8", errors="replace")  # type: ignore[union-attr]
 
 ROOT = Path(__file__).resolve().parents[2]
 SUPERPOWERS_DIR = ROOT / "docs" / "superpowers" / "plans"

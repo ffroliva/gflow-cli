@@ -14,6 +14,39 @@ Living list of behaviour that's broken, surprising, or limited by design — alo
 
 ## Open
 
+### Flow's new full-page media-library UI breaks entity attach (A/B rollout)
+
+- **Status:** **Open** — Flow-side staged rollout; tracked in
+  [#174](https://github.com/ffroliva/gflow-cli/issues/174)
+- **Severity:** High · **Affects:** `gflow image t2i --reference-entity` and
+  movie R2V entity attach on accounts that received the new UI, any locale
+
+Flow is A/B-rolling a new full-page media-library UI: clicking **Add Media**
+in the composer **navigates to a library page** (sidebar: All media /
+Characters / Scenes / Tools, with a floating quick-create composer) instead of
+opening the resource-picker dialog. On affected accounts the right-click
+include action still lands (a chip appears), **but the staged entity never
+reaches the submit** — the request carries no `referenceEntities`, so the
+submit backstops raise `WireFormatError` (**exit 7**) instead of silently
+returning a text-only generation as success.
+
+**How to tell which UI your account has:** in the Flow web editor, click
+**Add Media** — a small dialog means the old (working) UI; a navigation to a
+full-page library means the affected new UI.
+
+**Note:** the experiment appears to flap — the affected account observed on
+2026-06-12 00:13 was back on the old dialog UI by 12:48 the same day (variant
+probe, issue #174). If you hit exit 7 on entity attach, re-running later the
+same day may simply work again.
+
+**Workaround:** none yet on affected accounts — the attach gesture for the new
+UI is being reverse-engineered (recon plan in
+[docs/superpowers/plans/2026-06-12-issue-174-library-ui-attach/PLAN.md](docs/superpowers/plans/2026-06-12-issue-174-library-ui-attach/PLAN.md)).
+If you have a second profile/account still on the old UI, entity attach works
+there. Follow [#174](https://github.com/ffroliva/gflow-cli/issues/174) for
+status; please report whether your account shows the dialog or the full-page
+library (plus your locale) on that issue.
+
 ### 4K image upscale requires a Flow Ultra subscription
 
 - **Status:** **Open** (by design — a Flow platform limit, not a gflow bug)
@@ -595,6 +628,15 @@ success. The expected authenticated response shape is pinned by the
 change surfaces there as a failing test. Start any investigation of a sudden
 `gflow auth login` verification failure at that fixture and `verification.py`.
 
+Since PR #168 the production entry point is `verify_flow_profile`, which reads
+the session cookie **directly from Chrome's SQLite store** via `browser_cookie3`
+(a no-browser fast path) and only falls back to launching Playwright when that
+decryption fails. This adds two more local surfaces to check when verification
+fails unexpectedly: a Windows **DPAPI decrypt failure** (cross-user / cross-machine
+key — surfaces as a `RuntimeError` that `auth/cookies.py` normalizes to
+`PermissionError` to trigger the Playwright fallback) and a **locked cookie DB**
+(Chrome still running holds an exclusive SQLite lock). Both degrade fail-closed.
+
 ---
 
 ## Resolved
@@ -620,8 +662,8 @@ Profiles created before this fix continue to work and display `unknown` in the
 account column. Re-running `gflow auth login` against an existing profile backfills
 the `.gflow_account` file.
 
-See [AUTHENTICATION.md § Profile naming](AUTHENTICATION.md#profile-naming) for the
-new naming convention and [AUTHENTICATION.md § gflow auth list](AUTHENTICATION.md#gflow-auth-list)
+See [AUTHENTICATION.md § Profile naming](docs/AUTHENTICATION.md#profile-naming) for the
+new naming convention and [AUTHENTICATION.md § gflow auth list](docs/AUTHENTICATION.md#gflow-auth-list)
 for the updated `--json` schema.
 
 ---

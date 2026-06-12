@@ -29,6 +29,7 @@ from gflow_cli.api.dto import BatchSubmissionResult, GeneratedImage
 from gflow_cli.api.image import Aspect, GenerateImageRequest, Model
 from gflow_cli.api.transports._common import extract_project_id
 from gflow_cli.api.transports.ui_automation_video import (
+    ENTITY_ATTACH_DRIFT_HINT,
     MODE_SWITCH_TRIGGER_SELECTORS,
     VideoGenerationMixin,
     zip_entity_refs,
@@ -2066,6 +2067,8 @@ class UiAutomationTransport(VideoGenerationMixin):
                     f"never rode the wire"
                 ),
                 route="flowMedia:batchGenerateImages",
+                remediation_hint=ENTITY_ATTACH_DRIFT_HINT,
+                discovery={"entity_attach_context": "image"},
             )
         log.info("ui_automation.image_entities_attached", entity_ids=sorted(seen))
 
