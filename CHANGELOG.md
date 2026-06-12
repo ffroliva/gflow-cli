@@ -7,6 +7,10 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+### Changed
+
+- Entity-attach `WireFormatError` failures (exit 7) now carry a remediation hint pointing at Flow's new full-page media-library UI rollout ([#174](https://github.com/ffroliva/gflow-cli/issues/174)) — affected accounts can stage entities via the include action but the submit never carries `referenceEntities`; the error now explains how to tell which UI an account has and where to follow the fix, instead of the generic file-a-bug hint. Both backstops also emit an `entity_attach_context` discovery field (`video`/`image`) for drift telemetry. New KNOWN_ISSUES entry documents the rollout
+
 ## [0.16.0] — 2026-06-12
 
 ### Fixed
