@@ -16,6 +16,7 @@ import asyncio
 import inspect
 import json
 from pathlib import Path
+from typing import Any
 from unittest.mock import AsyncMock, MagicMock, patch
 
 import pytest
@@ -1179,10 +1180,21 @@ class TestGenerateImages:
             reference_entity_names=("Stacky",),  # fewer names than ids on purpose
         )
 
+        def _seeding_logger(page: Any, *, project_id: Any = None, sink: Any = None) -> Any:
+            # Feed the #170 submit backstop: pretend the captured submit
+            # carried both staged entities (the real logger fills the sink
+            # from outgoing batchGenerateImages bodies).
+            if sink is not None:
+                sink.append({"entity_ids": {"ent-1", "ent-2"}})
+            return lambda: None
+
         with (
             patch.object(t, "_enter_editor", new=AsyncMock()),
             patch.object(t, "_send_prompt", new=AsyncMock()),
             patch.object(t, "_attach_character_entities", new=AsyncMock()) as attach,
+            patch.object(
+                t, "_attach_batch_request_logger", new=MagicMock(side_effect=_seeding_logger)
+            ),
             patch.object(t, "_await_captured", new=AsyncMock(return_value=[_flow_200_capture()])),
         ):
             await t.generate_images(project_id="x", request=req)
@@ -1326,6 +1338,137 @@ class TestAttachBatchRequestLogger:
         detach()
         detach()  # idempotent
         page.remove_listener.assert_called_once_with("request", on_request)
+
+
+class TestImageEntityBackstop:
+    """Issue #170: when reference entities were requested, the captured
+    batchGenerateImages submit must carry them — otherwise a missed UI attach
+    silently degrades to a text-only generation reported as success (the
+    image path previously only LOGGED the summary; the video path has
+    _assert_entities_attached)."""
+
+    @pytest.fixture(autouse=True)
+    def _stub_image_mode_switch(self, monkeypatch: pytest.MonkeyPatch) -> None:
+        """Same orchestration stub as TestGenerateImages — mode-switch coverage
+        lives in test_ui_automation_image_mode.py."""
+        monkeypatch.setattr(UiAutomationTransport, "_switch_to_image_mode", AsyncMock())
+
+    def test_entity_ids_extracted_from_request_body(self) -> None:
+        from gflow_cli.api.transports.ui_automation import _entity_ids_from_request_body
+
+        body = json.dumps(
+            {
+                "requests": [
+                    {"referenceEntities": [{"entityId": "ent-1"}, {"entityId": "ent-2"}]},
+                    {"referenceEntities": [{"entityId": "ent-3"}]},
+                ]
+            }
+        )
+        assert _entity_ids_from_request_body(body) == {"ent-1", "ent-2", "ent-3"}
+
+    def test_entity_ids_empty_for_none_garbage_or_absent(self) -> None:
+        from gflow_cli.api.transports.ui_automation import _entity_ids_from_request_body
+
+        assert _entity_ids_from_request_body(None) == set()
+        assert _entity_ids_from_request_body("garbage-not-json") == set()
+        assert _entity_ids_from_request_body(json.dumps({"requests": [{}]})) == set()
+        assert _entity_ids_from_request_body(json.dumps({"requests": "nope"})) == set()
+
+    def test_request_logger_sink_collects_entity_ids(self) -> None:
+        page = MagicMock()
+        handlers: dict[str, object] = {}
+        page.on.side_effect = lambda event, fn: handlers.__setitem__(event, fn)
+        sink: list[dict[str, object]] = []
+
+        detach = UiAutomationTransport._attach_batch_request_logger(page, project_id="P", sink=sink)
+        on_request = handlers["request"]
+        assert callable(on_request)
+        on_request(
+            TestAttachBatchRequestLogger._Req(
+                "https://x/flowMedia:batchGenerateImages",
+                post=json.dumps({"requests": [{"referenceEntities": [{"entityId": "ent-1"}]}]}),
+            )
+        )
+        # Non-matching URLs never reach the sink.
+        on_request(TestAttachBatchRequestLogger._Req("https://x/other", post="{}"))
+        detach()
+
+        assert len(sink) == 1
+        assert sink[0]["entity_ids"] == {"ent-1"}
+
+    def test_assert_raises_when_entity_missing(self) -> None:
+        from gflow_cli.errors import WireFormatError
+
+        with pytest.raises(WireFormatError, match="referenceEntities"):
+            UiAutomationTransport._assert_image_entities_attached(
+                [{"entity_ids": set()}], expected=["ent-1"]
+            )
+
+    def test_assert_raises_when_nothing_was_captured(self) -> None:
+        from gflow_cli.errors import WireFormatError
+
+        with pytest.raises(WireFormatError, match="referenceEntities"):
+            UiAutomationTransport._assert_image_entities_attached([], expected=["ent-1"])
+
+    def test_assert_passes_when_entities_present_across_bodies(self) -> None:
+        UiAutomationTransport._assert_image_entities_attached(
+            [{"entity_ids": {"ent-1"}}, {"entity_ids": {"ent-2"}}],
+            expected=["ent-1", "ent-2"],
+        )
+
+    @pytest.mark.asyncio
+    async def test_generate_images_raises_when_entities_never_rode_the_wire(self) -> None:
+        """The wiring: entities requested + no captured submit carries them →
+        WireFormatError instead of returning images as a success."""
+        from gflow_cli.errors import WireFormatError
+
+        t = UiAutomationTransport()
+        t._setup_done = True  # type: ignore[attr-defined]
+        t._page = MagicMock()  # type: ignore[attr-defined]
+        req = GenerateImageRequest(
+            prompt="stacky",
+            model=Model.NARWHAL,
+            reference_entities=("ent-1",),
+            reference_entity_names=("Stacky",),
+        )
+
+        with (
+            patch.object(t, "_enter_editor", new=AsyncMock()),
+            patch.object(t, "_send_prompt", new=AsyncMock()),
+            patch.object(t, "_attach_character_entities", new=AsyncMock()),
+            patch.object(t, "_await_captured", new=AsyncMock(return_value=[_flow_200_capture()])),
+            pytest.raises(WireFormatError, match="referenceEntities"),
+        ):
+            await t.generate_images(project_id="x", request=req)
+
+    @pytest.mark.asyncio
+    async def test_generate_images_passes_when_submit_carries_entities(self) -> None:
+        t = UiAutomationTransport()
+        t._setup_done = True  # type: ignore[attr-defined]
+        t._page = MagicMock()  # type: ignore[attr-defined]
+        req = GenerateImageRequest(
+            prompt="stacky",
+            model=Model.NARWHAL,
+            reference_entities=("ent-1",),
+            reference_entity_names=("Stacky",),
+        )
+
+        def _seeding_logger(page: Any, *, project_id: Any = None, sink: Any = None) -> Any:
+            if sink is not None:
+                sink.append({"entity_ids": {"ent-1"}})
+            return lambda: None
+
+        with (
+            patch.object(t, "_enter_editor", new=AsyncMock()),
+            patch.object(t, "_send_prompt", new=AsyncMock()),
+            patch.object(t, "_attach_character_entities", new=AsyncMock()),
+            patch.object(
+                t, "_attach_batch_request_logger", new=MagicMock(side_effect=_seeding_logger)
+            ),
+            patch.object(t, "_await_captured", new=AsyncMock(return_value=[_flow_200_capture()])),
+        ):
+            images = await t.generate_images(project_id="x", request=req)
+        assert images
 
 
 # ---------------------------------------------------------------------------

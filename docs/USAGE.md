@@ -105,6 +105,44 @@ UUID=$(gflow image upload hero.png | awk '/Asset UUID:/ {print $3}')
 gflow image i2i "make it cinematic" --ref "$UUID"
 ```
 
+## `gflow image upscale`
+
+Upscale a **platform-generated** image to 2K or 4K (the same 1K/2K/4K options Flow's
+download menu offers) and save it locally. Uploaded images are not supported.
+
+```text
+gflow image upscale MEDIA_ID --scale 2k|4k [OPTIONS]
+
+Arguments:
+  MEDIA_ID                  UUID of a Flow-generated image (find one with
+                            `gflow data list images`).
+
+Options:
+  --scale [2k|4k]           Target resolution. 4k requires a Flow Ultra
+                            subscription; 1k is the original (no upscale).
+  --project ID              Project that owns the image. Resolved from the local
+                            catalog when omitted; pass it explicitly for images
+                            gflow didn't record (e.g. generated in the web UI).
+  --out PATH                Output directory (see "Output paths" below).
+  --profile NAME            Profile name (overrides default).
+```
+
+```bash
+# Upscale a previously generated image to 2K (project auto-resolved from the catalog)
+gflow image upscale 3a56bb5e-92a2-44f4-9992-3c6a9bf0cd14 --scale 2k
+
+# Upscale an image generated in the Flow web UI (not in the local catalog)
+gflow image upscale <mediaId> --scale 2k --project <projectId>
+```
+
+Notes:
+
+- **Credit-free** — upscaling is an image operation and spends no credits.
+- **4K is Ultra-only.** On a non-Ultra account a 4K request fails with exit code 22
+  (`UpscaleUnavailableError`) and a hint to use `--scale 2k` or upgrade.
+- The result is saved as `<output_dir>/images/<YYYY-MM-DD>/<mediaId>_<scale>.<ext>`
+  (extension matches the returned format — usually `.jpg`).
+
 ## `gflow image t2i`
 
 Generate 1–4 images from one text prompt, or run a shell-friendly batch of 1–50

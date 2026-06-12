@@ -14,6 +14,22 @@ Living list of behaviour that's broken, surprising, or limited by design — alo
 
 ## Open
 
+### 4K image upscale requires a Flow Ultra subscription
+
+- **Status:** **Open** (by design — a Flow platform limit, not a gflow bug)
+- **Severity:** Low · **Affects:** `gflow image upscale --scale 4k` on non-Ultra accounts
+
+`gflow image upscale <mediaId> --scale 4k` returns **exit code 22**
+(`UpscaleUnavailableError`) on accounts below the Ultra tier — Flow gates 4K
+upscaling behind Ultra (the web UI shows an "Upgrade" button instead of a 4K
+option). The account tier is reported on the wire as `userPaygateTier` but is
+enforced server-side, so gflow cannot grant 4K locally.
+
+**Workaround:** use `--scale 2k` (available on all tiers), or upgrade the Flow
+account to Ultra. If you just upgraded, re-run `gflow auth login --profile <name>`
+to refresh the session before retrying 4K. Wire detail:
+[docs/IMAGE_UPSCALE_RECON.md](docs/IMAGE_UPSCALE_RECON.md) (#171).
+
 ### Image generation returns HTTP 401 — `aisandbox-pa` generation endpoint
 
 - **Status:** **RESOLVED in v0.7.0** — moved to [Resolved](#resolved) section
@@ -332,7 +348,7 @@ issue and not blocked by any code change in this repo.
 
 ### `UiAutomationTransport` selectors locale-agnostic — issue #24 Phase 5 complete
 
-- **Status:** Resolved (pending owner live e2e on non-EN profile) · **Severity:** Low · **Tracking:** [issue #24](https://github.com/ffroliva/gflow-cli/issues/24), [issue #94](https://github.com/ffroliva/gflow-cli/issues/94)
+- **Status:** Resolved (pending owner live e2e on non-EN profile) · **Severity:** Low · **Tracking:** [issue #24](https://github.com/ffroliva/gflow-cli/issues/24), [issue #94](https://github.com/ffroliva/gflow-cli/issues/94), [issue #170](https://github.com/ffroliva/gflow-cli/issues/170)
 
   `--lang=en-US` removed in PR #127 (2026-05-30). All selector groups now use
   locale-stable anchors: `IMAGE_MODEL_OPTION_SELECTORS` and
@@ -342,6 +358,20 @@ issue and not blocked by any code change in this repo.
   Google-branded identifiers. Locale is controlled by the `locale=locale_env`
   Playwright kwarg (persists across all in-session navigations). Full resolution
   gate: live e2e with `gflow image t2i` (each model) on a non-EN Chrome profile.
+
+  **2026-06-12 correction (issue #170):** the "all selector groups" claim above
+  had two stragglers — `PICKER_INCLUDE_BUTTON` and `PICKER_CONTEXT_INCLUDE`
+  hardcoded the pt-BR caption "Incluir no comando", breaking
+  `--reference-entity` (image t2i), movie R2V entity attach, and Vozes voice
+  attach on every non-Portuguese account (Flow renders in the ACCOUNT language;
+  `?hl=en` cannot override it). Fixed by converting both constants to sequential
+  tier cascades — context-menu Tier 1 is the locale-free `add`-ligature menuitem
+  scoped to the open menu; the Vozes button has no ligature, so pt/ru/en text
+  leads with a lone-iconless-dialog-button structural fallback. The matched tier
+  is emitted as `ui_automation_video.include_selector_tier` (drift telemetry),
+  exhaustion raises typed `TransportTimeoutError` (exit 9) with a locale-neutral
+  remediation hint, and an image-side submit backstop now raises
+  `WireFormatError` when a requested entity never rode the wire.
 
 **Phase 2 progress (2026-05-25, develop / post-v0.8.1, unreleased):**
 
