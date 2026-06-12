@@ -37,13 +37,13 @@ from pathlib import Path
 
 import pytest
 
-from gflow_cli.config import get_settings
+from gflow_cli.config import get_settings, reset_settings
 
 _E2E_PROFILE_ENV = "GFLOW_CLI_E2E_PROFILE"
 
 
 @pytest.fixture
-def e2e_profile_dir(monkeypatch: pytest.MonkeyPatch) -> Path:
+def e2e_profile_dir(monkeypatch: pytest.MonkeyPatch) -> Iterator[Path]:
     """Resolve the authenticated Chromium profile from ``GFLOW_CLI_E2E_PROFILE``.
 
     Skips the test when the env var is unset or the profile directory is absent.
@@ -73,14 +73,20 @@ def e2e_profile_dir(monkeypatch: pytest.MonkeyPatch) -> Path:
             f"Profile directory not found: {candidate}. "
             f"Run `gflow auth login --profile {name}` to create it."
         )
-    return candidate
+
+    monkeypatch.setenv("GFLOW_CLI_HOME", str(real_settings.home))
+    reset_settings()
+    try:
+        yield candidate
+    finally:
+        reset_settings()
 
 
 @pytest.fixture
 def e2e_nosession_profile() -> Iterator[Path]:
     """Yield a fresh, empty profile dir INSIDE the gflow home.
 
-    ``verify_flow_session`` enforces a boundary check that the profile dir
+    ``verify_flow_profile`` enforces a boundary check that the profile dir
     resolves inside ``GFLOW_CLI_HOME``, so a pytest ``tmp_path`` dir (system
     temp) cannot be used. The dir is UUID-named so it can never collide with a
     real ``profile_<name>`` dir, and is removed in teardown — ``ignore_errors=True``

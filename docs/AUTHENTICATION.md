@@ -364,6 +364,27 @@ Run: gflow auth login --profile default
 
 Re-running `auth login` refreshes the cookies in place — no other state is lost.
 
+## Session verification (cookie-store fast path)
+
+Since v0.17.0, profile verification (run by `gflow auth login --browser chrome` after
+capture) is handled by `gflow_cli.auth.verification.verify_flow_profile`, which probes
+Flow's `/fx/api/auth/session` endpoint **directly from the Chrome cookie store** via
+`browser_cookie3` + `httpx` — no browser launch needed (contributed in PR #168 by
+@3mora2). Two hardening behaviors:
+
+- **Encrypted/locked store fallback** — if the cookie store can't be read (e.g.
+  Windows DPAPI decryption fails, or the store is locked by a running Chrome), the
+  verifier falls back to a marker-gated Playwright probe. The chrome marker is written
+  before verification so the fallback can find the profile; on failure only a
+  *speculative* marker write is rolled back — a previously-verified profile survives a
+  transient probe failure.
+- **Transient-error retry** — HTTP 429/503/504 and network errors retry with
+  exponential backoff before the verifier gives up.
+
+The outcome is the same `AUTHENTICATED` / no-session decision documented under
+[`gflow auth status`](#gflow-auth-status); only the transport is faster. Cookie
+extraction lives in `gflow_cli.auth.cookies`.
+
 ## Threat model & limits
 
 | Threat | Mitigation |

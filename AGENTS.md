@@ -56,7 +56,7 @@ Or invoke the wrapper: `/gflow:check`.
 
 - Type hints everywhere; `pyright` strict on `src/gflow_cli`.
 - Structured logging only (`structlog`) — **never** raw `print()` or `import logging` in `src/`.
-- Errors as RFC 9457 Problem Details with stable per-class exit codes (3–21, e.g. 16 is the `DataStoreError` family, 19 `SceneConcatError`, 20 `FrameExtractionError`, 21 `ChainPartialError`). See `src/gflow_cli/errors.py::EXIT_CODE_MAP` for the complete mapping.
+- Errors as RFC 9457 Problem Details with stable per-class exit codes (3–22, e.g. 16 is the `DataStoreError` family, 19 `SceneConcatError`, 20 `FrameExtractionError`, 21 `ChainPartialError`, 22 `UpscaleUnavailableError`). See `src/gflow_cli/errors.py::EXIT_CODE_MAP` for the complete mapping.
 - 100-char line length, `ruff` configured. Imports sorted by `ruff` (isort rules).
 
 ## PR instructions

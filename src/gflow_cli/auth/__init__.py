@@ -15,6 +15,7 @@ from __future__ import annotations
 from typing import TYPE_CHECKING
 
 from gflow_cli.config import get_settings
+from gflow_cli.paths import get_cookies_path
 
 from .factory import AuthStrategyFactory
 from .internal_chromium import InternalChromiumStrategy
@@ -63,15 +64,13 @@ async def login(name: str = "default", browser: str = "auto", headless: bool = F
 def status(name: str = "default") -> dict[str, object]:
     """Lightweight check — does the profile dir exist and have cookies file?"""
     pdir = profile_dir(name)
-    cookies_file: Path | None = None
-    for candidate in (
-        pdir / "Default" / "Network" / "Cookies",  # Chrome 130+ (new location)
-        pdir / "Default" / "Cookies",  # Chrome < 130 / legacy
-        pdir / "Cookies",  # Playwright bundled Chromium
-    ):
-        if candidate.exists():
-            cookies_file = candidate
-            break
+
+    cookies_file: Path | None
+    try:
+        cookies_file = get_cookies_path(pdir)
+    except FileNotFoundError:
+        cookies_file = None
+
     return {
         "profile": str(pdir),
         "exists": pdir.exists(),

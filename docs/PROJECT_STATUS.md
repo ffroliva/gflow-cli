@@ -4,9 +4,9 @@
 
 ## Current release
 
-**v0.15.0 — alpha.** **Character-consistent images via entity references.** `gflow image t2i/i2i` can now reference locked Flow CHARACTER entities (`--reference-entity <id>`, repeatable) and generate in an existing project (`--project <id>`) where those entities live — entities attach through the editor's Personagens picker and ride the submit as `referenceEntities` (confirmed against the live API; the body builder serializes them for headless transports too). Live-verified 2026-06-08: a 3-frame Dragon-Hook smoke rendered drift-free with all three characters on-model. LLM-council-reviewed (security/correctness/dedup) before merge. Carries forward the v0.14.0 `gflow movie` line (multi-scene, character-consistent video).
+**v0.17.0 — alpha.** **Cookie-store session verification.** `verify_flow_profile` (contributed by @3mora2, PR #168) verifies a Flow session directly from the Chrome cookie store via `browser_cookie3` + `httpx` — a fast path that skips launching a browser — with a marker-gated Playwright fallback for encrypted/locked stores (Windows DPAPI failures included) and retry/backoff on transient HTTP errors. Entity-attach `WireFormatError` failures (exit 7) now carry an issue-#174-aware remediation hint plus `entity_attach_context` drift telemetry. Live-verified 2026-06-12 ([evidence](LIVE_VERIFICATION_v0.17.0.md)). Carries forward v0.16.0 (locale-free picker include selectors #170, `gflow image upscale` #171) and v0.15.1 (Docker `/dev/shm` hardening, mid-workflow 401 detection).
 
-**Develop (unreleased, post-v0.15.0):** *(empty — develop is the staging branch for the next release).*
+**Develop (unreleased, post-v0.17.0):** *(empty — develop is the staging branch for the next release).*
 
 ## Milestone history
 
@@ -58,6 +58,11 @@
 | `gflow scene` — Add Clip / Scenes compose + credit-free server-side extended video (`runVideoFxConcatenation`) | ✅ done (v0.12.0) |
 | `gflow video chain` — last-frame I2V chaining from a JSONL manifest (`--dry-run`/`--max-links`/`--resume-from`) | ✅ done (v0.12.0) |
 | Create-project generation works under Flow's Agent docked chat panel | ✅ done (v0.12.0) |
+| Video status poll raises `AuthExpiredError` (exit 3) on mid-workflow 401 (#156) + Docker `/dev/shm` hardening | ✅ done (v0.15.1) |
+| Locale-free resource-picker include selectors — entity attach works on every account language (#170) | ✅ done (v0.16.0) |
+| `gflow image upscale <mediaId> --scale 2k\|4k` — credit-free download-menu upscale, 4K Ultra-gated (#171) | ✅ done (v0.16.0) |
+| Cookie-store session verification fast path (`verify_flow_profile`, PR #168) + Playwright fallback | ✅ done (v0.17.0) |
+| Entity-attach exit-7 remediation hint + `entity_attach_context` drift telemetry (#174 interim) | ✅ done (v0.17.0) |
 | `gflow video batch` (TSV manifest) on `ui_automation` | ⏳ Phase B |
 | Persistence layer (stay-mounted batch sessions across project boundaries) | ⏳ Phase B |
 | Provider abstraction for official Veo 3.1 API | ⏳ planned |
