@@ -1,0 +1,186 @@
+# Issue #174 — Library-UI Attach Drift Implementation Plan
+
+> **For agentic workers:** Run `/gflow:status --feature issue-174-library-ui-attach` to find the
+> next unchecked task. Implement one task at a time. Run `/gflow:check` before every commit.
+
+**Goal:** Restore entity attach (`gflow image t2i --reference-entity`, movie R2V) on accounts
+with Flow's new full-page media-library UI — recon-first, with implementation explicitly gated
+on recon findings.
+
+**Architecture:** No code-shape decision yet by design (predict: Devil's Advocate — the A/B may
+still be mutating; the fix may be a gesture/selector change, not a branch). If a branch proves
+necessary, it lands as a shared `_detect_add_media_variant(page) -> "dialog" | "navigate"` static
+helper on `VideoGenerationMixin` (race pattern: dialog-appears vs URL-changes, ~100–200 ms),
+called on **every** attach (A/B can flap per page-load), single checked-out Page only (size-1
+pool — never a 2nd checkout). The interim UX task touches only `errors.py` remediation text +
+`KNOWN_ISSUES.md`.
+
+**Predict verdict:** CAUTION — 7/10 (Architect 7.5 · Security 8 · Performance 7 · CLI UX 7 ·
+Devil's Advocate 7). Recon: unanimous GO. Implementation: gated on Task 4.
+
+**Scenario:** deferred to Task 4 — `/gflow:scenario` on an unknown gesture would be speculation;
+it runs once recon fixes the fix shape.
+
+**Risk register:**
+
+| Severity | Risk | Mitigation |
+|---|---|---|
+| High | Staging context may be scoped to the library page's floating quick-create composer — navigating back to the editor discards it | Recon explicitly tests submit **from the floating composer** AND the navigate-back-then-submit path |
+| High | WAF heat on denon82 (known-hot profile) from repeated spike runs | One disciplined recon run; no iterative debug loops; 24 h+ between reruns |
+| Medium | A/B may mutate or roll back mid-work — variant code becomes stale debt | Task 4 gate: re-probe rollout scope (denon82 + promo-denon82) before committing to implementation |
+| Medium | Affected users today get exit 7 with no context → duplicate bug reports on #174 | Task 1 ships the #174-aware remediation hint independently of the recon |
+| Medium | reCAPTCHA/WAF behaviour on full-page library navigation unknown | Recon observes; REST-side injection of `referenceEntities` is a dead end (reCAPTCHA-gated; server would reject unstaged data) |
+
+---
+
+## File structure
+
+### New files
+```
+scripts/dev/spike_issue174_library_ui_recon.py
+  Credit-free recon spike: dialog-vs-navigate detection, floating-composer submit
+  test, navigate-back submit test, library-page DOM dump, route-abort capture.
+tests/api/test_wire_format_remediation.py  (or extend existing errors tests)
+  Asserts the #174 remediation hint rides the typed WireFormatError.
+```
+
+### Modified files
+```
+src/gflow_cli/errors.py
+  Entity-attach WireFormatError remediation hint names the library-UI A/B + issue #174.
+KNOWN_ISSUES.md
+  New § Open entry for the library-UI A/B (probe: dialog opens vs page navigates).
+CHANGELOG.md
+  [Unreleased] entry for the remediation-hint change.
+src/gflow_cli/api/transports/ui_automation_video.py   (Task 4+, shape TBD)
+src/gflow_cli/api/transports/ui_automation.py          (Task 4+, shape TBD)
+```
+
+---
+
+## Task 1 — Interim UX: point exit-7 at issue #174 (committable now, no recon needed)
+
+**What:** Affected users hitting the PR #173 backstops get an actionable message instead of
+generic "file a bug".
+
+**Files:**
+- `src/gflow_cli/errors.py` — remediation hint on the entity-attach `WireFormatError` raises
+  (or per-raise `remediation_hint=` at the two raise sites)
+- `src/gflow_cli/api/transports/ui_automation_video.py:1424` — `_assert_entities_attached` raise
+- `src/gflow_cli/api/transports/ui_automation.py:~2062` — `_assert_image_entities_attached` raise
+- `KNOWN_ISSUES.md` — new § Open entry
+- `CHANGELOG.md` — `[Unreleased]`
+
+**Steps:**
+- [x] Add `remediation_hint` naming the new-library-UI A/B and linking
+      https://github.com/ffroliva/gflow-cli/issues/174 to both entity-attach raise sites
+      (`ENTITY_ATTACH_DRIFT_HINT` constant in `ui_automation_video.py`, imported image-side)
+- [x] Add `discovery={"entity_attach_context": "video" | "image"}` to the raises (telemetry)
+- [x] `KNOWN_ISSUES.md` § Open entry with the variant probe: "does Add Media open a
+      `[role='dialog']` or navigate to a full-page library?"
+- [x] `CHANGELOG.md` `[Unreleased]` entry
+
+**Tests:**
+- [x] Unit test: hint text rides the typed error and surfaces in `to_problem_details()`
+      (TDD red→green; one per surface: `test_backstop_error_carries_issue_174_hint_and_discovery`
+      / `test_assert_error_carries_issue_174_hint_and_discovery`)
+- [x] Existing backstop tests still green (tests/api/transports: 364 passed, 1 skipped;
+      pyright src 0 errors; ruff clean — 2026-06-12)
+
+---
+
+## Task 2 — Recon spike script (credit-free; no live run in this task)
+
+**What:** A purpose-built spike answering the make-or-break questions before any attach-code
+change. Reuses the `spike_movie_attach_payload.py` route-abort harness and
+`spike_issue170_picker_locale_recon.py` DOM-dump utilities.
+
+**Files:**
+- `scripts/dev/spike_issue174_library_ui_recon.py`
+
+**Steps:**
+- [x] Phase A — variant detection: click Add Media, poll `[role='dialog'][data-state='open']`
+      appearance vs URL change; record which won + timing (old-UI accounts exit here —
+      doubles as the rollout re-probe)
+- [x] Phase B (new UI only) — gesture matrix, each with route-abort submit capture
+      (`--gestures b1,b2`): b1 = include → submit from the floating quick-create composer;
+      b2 = include → navigate back to editor → submit (does staging survive navigation?);
+      gesture 3 (new affordances) is driven manually off the Phase C dump
+- [x] Phase C — DOM dump of the library page: nav/sidebar items, `data-tile-id` tiles,
+      composer candidates (slate textbox + sibling button ligatures), full ligature inventory
+- [x] Capture asserts: request0 `referenceEntities`/`request0_keys`/`reference_like` per
+      gesture; JSON + screenshots to `scripts/dev/_spike_out/` (local only — never committed)
+- [x] Windows: `PYTHONUTF8=1` documented in usage; profile via `GFLOW_CLI_PROFILE` env;
+      both video and image generate routes aborted (credit-free)
+
+**Tests:** none (dev spike script, excluded from coverage like existing `spike_*.py`).
+
+---
+
+## Task 3 — Run recon on denon82 + rollout re-probe (ONE run; owner-gated)
+
+**What:** Single disciplined live run. Requires the user's machine free (no other Chrome on the
+profile) — headed real-Chrome strategy mandatory.
+
+**Steps:**
+- [x] Run `spike_issue174_library_ui_recon.py` on **denon82** — 2026-06-12 12:48 (UTC+1):
+      **variant = `dialog` (12 ms)** — the account is BACK on the old picker-dialog UI; the
+      A/B has rolled back (or is flapping) since the 00:13 capture that opened #174. Gesture
+      matrix correctly self-skipped. Evidence: `scripts/dev/_spike_out/
+      spike_issue174_library_ui_20260612_124734.json` + `A_after_add_media.png` (local).
+- [x] Re-probe **promo-denon82**: SKIPPED — moot once denon82 itself reverted (both would show
+      dialog); WAF discipline says don't spend runs on a question with no remaining signal.
+- [x] Post findings to issue #174 (filtered: variant verdict + timing, no raw payloads)
+- [x] Findings recorded under Task 4
+
+**Verification:** the spike JSON shows, per gesture, whether `referenceEntities` rode the wire —
+on this run, Phase A exited before any gesture (old UI), which is itself the answer.
+
+---
+
+## Task 4 — GATE: decide the fix shape (no code until this is recorded)
+
+**What:** Convert recon findings into the implementation decision. Record the decision + date
+here, then run `/gflow:scenario issue-174-library-ui-attach` on the chosen shape and append
+implementation tasks below.
+
+**Decision matrix:**
+- **(a) Gesture fix** — a working new-UI gesture exists and the old code path can reach it with
+  selector/flow changes only → small PR, no variant branch.
+- **(b) Variant branch** — both UIs must coexist → `_detect_add_media_variant` helper (race
+  pattern, per-attach call), new-UI attach path, `ui_automation.library_ui_variant_detected`
+  structlog event, `GFLOW_CLI_LIBRARY_UI_VARIANT` env override (`auto|old|new`) for testing.
+- **(c) Hold** — A/B unstable or no working gesture found → KNOWN_ISSUES stays, re-probe in
+  N days; Task 1's hint carries users meanwhile.
+
+**Steps:**
+- [x] Decision recorded: **(c) HOLD** on 2026-06-12 — the A/B rolled back off denon82 within
+      ~12 h; there is no stable new-UI account to recon against, so building a variant branch
+      now would target a moving (currently absent) UI. Task 1's hint + KNOWN_ISSUES carry any
+      user the experiment re-touches; the spike is committed and ready the moment an affected
+      account reappears (re-probe denon82 in ~3–7 days or on the next exit-7 report with
+      `entity_attach_context` discovery telemetry).
+- [ ] `/gflow:scenario` — deferred with the hold (runs when an implementation shape exists)
+- [ ] Implementation tasks — deferred with the hold (re-open Task 4 when a stable new-UI
+      account is available; decision matrix above still applies)
+
+---
+
+## Out of scope
+
+- `abra_r2v_8s` default-model drift — separate bug; file its own issue (noted in #174).
+- Voice attach (`_attach_reference_audio`) new-UI path — follow-up unless recon shows the fix
+  is trivially shared.
+- REST-side `referenceEntities` injection — rejected by predict (reCAPTCHA-gated; dead end).
+
+---
+
+## Definition of done
+
+- [ ] Tasks 1–3 checked; Task 4 decision recorded with date
+- [ ] `/gflow:check` green (ruff / format / pyright `src` whole-tree / pytest ≥ 80% coverage)
+- [ ] `CHANGELOG.md` `[Unreleased]` updated (Task 1)
+- [ ] `KNOWN_ISSUES.md` entry live (Task 1)
+- [ ] Issue #174 updated with recon findings (Task 3)
+- [ ] Post-gate implementation tasks carry Critical + High scenario coverage from `/gflow:scenario`
+- [ ] No `# TODO` in diff without a tracked issue link
