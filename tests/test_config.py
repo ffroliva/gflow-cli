@@ -6,7 +6,14 @@ from pathlib import Path
 
 import pytest
 
-from gflow_cli.config import LogFormat, LogLevel, Provider, Settings, reset_settings
+from gflow_cli.config import (
+    BrowserEngine,
+    LogFormat,
+    LogLevel,
+    Provider,
+    Settings,
+    reset_settings,
+)
 
 
 @pytest.fixture(autouse=True)
@@ -160,3 +167,22 @@ class TestLegacyEnvShim:
             _migrate_legacy_env()
 
         assert not any(issubclass(w.category, DeprecationWarning) for w in caught)
+
+
+class TestBrowserEngine:
+    """GFLOW_CLI_BROWSER_ENGINE typed enum field (patchright opt-in)."""
+
+    def test_defaults_to_playwright(self, clean_env: None) -> None:
+        assert Settings().browser_engine == BrowserEngine.PLAYWRIGHT
+
+    def test_override_patchright(self, monkeypatch: pytest.MonkeyPatch) -> None:
+        monkeypatch.setenv("GFLOW_CLI_BROWSER_ENGINE", "patchright")
+        assert Settings().browser_engine == BrowserEngine.PATCHRIGHT
+
+    def test_invalid_value_raises(self, monkeypatch: pytest.MonkeyPatch) -> None:
+        from pydantic import ValidationError
+
+        # A typo must fail loudly at startup naming the field, not fall through.
+        monkeypatch.setenv("GFLOW_CLI_BROWSER_ENGINE", "patchwright")
+        with pytest.raises(ValidationError):
+            Settings()

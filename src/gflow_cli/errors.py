@@ -11,6 +11,7 @@ __all__ = [
     "AuthMissingError",
     "BatchIntegrityError",
     "BatchPartialError",
+    "BrowserEngineUnavailableError",
     "ChainManifestError",
     "ChainPartialError",
     "ConfigurationError",
@@ -301,6 +302,26 @@ class ConfigurationError(GFlowError):
     _default_remediation = (
         "Check that the transport name is registered via make_transport(). "
         "Run `gflow config list-transports` to see available strategies."
+    )
+
+
+class BrowserEngineUnavailableError(ConfigurationError):
+    """Raised when GFLOW_CLI_BROWSER_ENGINE selects an engine that is unavailable.
+
+    Two causes: the optional ``patchright`` package is not installed, or its
+    browser driver is missing. Caught at the engine-resolver seam and re-raised
+    here (never a raw ``ImportError``, which would be SHA-hashed to a generic
+    exit 1). Distinct exit code 24 (not ConfigurationError's 11) so scripted
+    callers can branch on "install the engine" versus a generic config mistake.
+    The remediation hint differs per cause and is supplied at the raise site.
+    """
+
+    problem_type = "https://gflow-cli.dev/errors/browser-engine-unavailable"
+    title = "Selected browser engine is unavailable"
+    _default_remediation = (
+        "The selected browser engine is unavailable. Install it with "
+        "`pip install patchright`, or unset GFLOW_CLI_BROWSER_ENGINE to use the "
+        "default playwright engine."
     )
 
 
@@ -679,6 +700,9 @@ EXIT_CODE_MAP: dict[type[GFlowError], int] = {
     # not 11. Per [[exit-code-map-ordering-invariant-test-pitfall]].
     ModelModeIncompatibilityError: 17,
     VideoModelSelectionError: 18,
+    # BrowserEngineUnavailableError (Patchright engine opt-in): BEFORE
+    # ConfigurationError (its parent) so the isinstance walk lands on 24, not 11.
+    BrowserEngineUnavailableError: 24,
     ConfigurationError: 11,
     AuthExpiredError: 3,
     RateLimitError: 4,
