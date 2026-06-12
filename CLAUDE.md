@@ -22,6 +22,7 @@
 - Slash commands live under `.claude/commands/gflow/` (all prefixed `/gflow:`).
 - Skills under `skills/` are auto-discoverable; `gflow-cli` ships its own at [`skills/gflow-cli/SKILL.md`](skills/gflow-cli/SKILL.md).
 - Auto-memory at `~/.claude/projects/C--development-github-gflow-cli/memory/MEMORY.md` carries cross-session feedback and project state.
+- **Worktrees:** the native `EnterWorktree` tool branches from `origin/main` (the default branch). Feature work integrates via `develop` — after entering a fresh worktree, immediately `git switch -c <type>/<name> origin/develop` and delete the auto-created `worktree-*` branch. On Windows, worktree removal can fail on a file lock (the worktree's `.venv`); `git worktree prune` + manual delete later is fine.
 
 ## MCP GitHub tool — PR body rule (non-negotiable)
 
