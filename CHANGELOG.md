@@ -9,7 +9,7 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ### Added
 
-- Added `verify_flow_profile` in `gflow_cli.auth.verification` using `browser_cookie3` and `httpx` to verify sessions directly from the Chrome cookie store (fast path), with a marker-gated Playwright fallback for encrypted/locked stores. `RealChromeStrategy` now writes the Chrome marker before verification and removes it on failure, so the Playwright fallback is correctly gated. Cookie extraction is centralised in the new `gflow_cli.auth.cookies` module.
+- Added `verify_flow_profile` in `gflow_cli.auth.verification` using `browser_cookie3` and `httpx` to verify sessions directly from the Chrome cookie store (fast path), with a marker-gated Playwright fallback for encrypted/locked stores. `RealChromeStrategy` now writes the Chrome marker before verification (the fallback reads it) and, on failure, rolls back only a speculative write — a marker that legitimately pre-existed (a previously-verified chrome profile) survives a transient probe failure, and an interrupted verification never leaves an unverified profile claiming the chrome strategy. Cookie extraction is centralised in the new `gflow_cli.auth.cookies` module.
 
 ### Fixed
 
