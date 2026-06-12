@@ -1,8 +1,8 @@
 #!/usr/bin/env python3
 r"""Issue #170 spike — Tier 1 (0 credits): picker include-action DOM recon.
 
-Answers the two recon questions blocking the locale-free selector fix
-(docs/superpowers/plans/2026-06-11-issue-170-locale-selectors/PLAN.md Task 1).
+Answers the two recon questions that blocked the locale-free selector fix
+(issue #170, shipped in v0.16.0 via PR #173).
 Ligature icons are locale-invariant, so a pt-BR account answers both:
 
   Q1. Right-click context menu on a Personagens entity tile — what container
