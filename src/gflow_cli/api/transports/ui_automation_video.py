@@ -41,6 +41,7 @@ from gflow_cli.errors import (
     AuthExpiredError,
     ModelModeIncompatibilityError,
     TransportTimeoutError,
+    UiSelectorDriftError,
     VideoModelSelectionError,
     WafRejectionError,
     WireFormatError,
@@ -394,6 +395,20 @@ async def _capture_debug_screenshot(page: Any, out_dir: Path | None, filename: s
     except Exception as e:
         log.debug("ui_automation_video.screenshot_capture_failed", error=str(e))
     return shot_path
+
+
+def selector_drift_detail(probe: str, what: str, shot: Path | None) -> str:
+    """Build a :class:`UiSelectorDriftError` detail string for a probe miss.
+
+    Shared by the image and video transports so the message shape stays
+    symmetric, and so the ``Screenshot:`` clause is omitted (rather than
+    rendering a literal ``None``) when no debug screenshot was captured —
+    the caller had no ``out_dir`` to write into.
+    """
+    detail = f"probe={probe}: {what}"
+    if shot is not None:
+        detail = f"{detail} Screenshot: {shot}"
+    return detail
 
 
 def _summarize_request_image_inputs(request: Any) -> dict[str, Any]:
@@ -811,9 +826,12 @@ class VideoGenerationMixin:
         )
         if trigger is None:
             shot = await _capture_debug_screenshot(page, out_dir, "debug_no_mode_trigger.png")
-            msg = f"mode-switch dropdown trigger not found on the Flow editor. Screenshot: {shot}"
-            raise RuntimeError(
-                msg,
+            raise UiSelectorDriftError(
+                selector_drift_detail(
+                    "mode_switch_trigger",
+                    "no matching element found on the Flow editor.",
+                    shot,
+                )
             )
         await trigger.click()
         await page.wait_for_timeout(800)
@@ -824,8 +842,13 @@ class VideoGenerationMixin:
         )
         if video_tab is None:
             shot = await _capture_debug_screenshot(page, out_dir, "debug_no_video_tab.png")
-            msg = f"Video tab not found in the mode dropdown. Screenshot: {shot}"
-            raise RuntimeError(msg)
+            raise UiSelectorDriftError(
+                selector_drift_detail(
+                    "video_mode_tab",
+                    "Video tab not found in the mode dropdown.",
+                    shot,
+                )
+            )
         await video_tab.click()
         await page.wait_for_timeout(1200)
         log.info("ui_automation_video.video_mode_entered")
@@ -996,9 +1019,12 @@ class VideoGenerationMixin:
         )
         if tab is None:
             shot = await _capture_debug_screenshot(page, out_dir, f"debug_no_submode_{sub}.png")
-            msg = f"video sub-mode tab {sub!r} not found on the Flow editor. Screenshot: {shot}"
-            raise RuntimeError(
-                msg,
+            raise UiSelectorDriftError(
+                selector_drift_detail(
+                    f"video_submode_{sub}",
+                    f"video sub-mode tab {sub!r} not found on the Flow editor.",
+                    shot,
+                )
             )
         await tab.click()
         await page.wait_for_timeout(900)
