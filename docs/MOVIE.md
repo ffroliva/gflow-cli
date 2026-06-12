@@ -100,10 +100,13 @@ attached by driving Flow's resource picker:
 1. Click **Add Media** in the composer (references sub-mode).
 2. Switch to the **Personagens** (Characters) tab.
 3. **Right-click** the entity tile — addressed by entity id as
-   `data-tile-id="fe_id_<entityId>"` — and choose **"Incluir no comando"** from
-   the context menu. *(A plain left-click navigates into the character editor;
-   the inline "Incluir" button on the **Tudo** tab attaches the character's
-   thumbnail as a plain image, not the entity.)*
+   `data-tile-id="fe_id_<entityId>"` — and choose the **include-in-prompt**
+   action from the context menu (the `add`-ligature menu item; its caption is
+   localized per account language, e.g. "Incluir no comando" on pt-BR or
+   "Добавить в запрос" on ru — selectors are locale-free since issue #170).
+   *(A plain left-click navigates into the character editor; the inline include
+   button on the **Tudo** tab attaches the character's thumbnail as a plain
+   image, not the entity.)*
 
 This puts `referenceEntities:[{entityId}]` on the
 `video:batchAsyncGenerateVideoReferenceImages` **request**. Flow's **response**
