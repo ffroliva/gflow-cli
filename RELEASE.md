@@ -68,28 +68,43 @@ python -m pip install --pre gflow-cli
    uv run pyright src
    uv run python -m pytest -q --cov=gflow_cli
    ```
-4. Update the version in:
+4. **Live-verify the release's user-facing features and record the evidence.**
+   **Required gate — do not skip.** Exercise each new/changed user-facing feature
+   against live Flow (credit-free wherever possible — image gen, entity attach,
+   upscale, and scene/timeline ops cost no Veo credits) and write the result to
+   `docs/LIVE_VERIFICATION_vX.Y.Z.md` using the 5-layer ledger (file count + magic
+   bytes + dimensions/shape + structlog invariants + user-confirmable artifact).
+   Then add it to the "what was live-verified" entry in `docs/INDEX.md`. Every
+   release v0.7.0→v0.13.0 had this doc; it lapsed for v0.14.0–v0.15.1 — that gap is
+   the reason this is now an explicit step. If a feature genuinely cannot be live-
+   verified this cycle, say so in the doc with the reason; never silently omit it.
+5. **Consolidate shipped planning artifacts.** Extract any durable patterns into
+   auto-memory, then remove the now-shipped `docs/superpowers/` plan / spec /
+   verification files (keep only in-flight work). Stale review docs and session
+   markers do not belong in the repo root. (Enforced by `check_repo_hygiene.py` —
+   see the root-doc allowlist.)
+6. Update the version in:
    - `pyproject.toml`
    - `src/gflow_cli/__init__.py`
    - any tests that assert the package version
-5. Move user-visible changes from `CHANGELOG.md` `[Unreleased]` into a dated
+7. Move user-visible changes from `CHANGELOG.md` `[Unreleased]` into a dated
    release section.
-6. Commit the release prep:
+8. Commit the release prep:
    ```bash
-   git add pyproject.toml src/gflow_cli/__init__.py CHANGELOG.md tests
+   git add pyproject.toml src/gflow_cli/__init__.py CHANGELOG.md tests docs
    git commit -m "chore(release): vX.Y.Z"
    ```
-7. Tag and push. **Must be a signed annotated tag** (`-s`) — `.github/workflows/release.yml` rejects unsigned or lightweight tags. Requires a GPG or SSH signing key registered with your GitHub account.
+9. Tag and push. **Must be a signed annotated tag** (`-s`) — `.github/workflows/release.yml` rejects unsigned or lightweight tags. Requires a GPG or SSH signing key registered with your GitHub account.
    ```bash
    git tag -s vX.Y.Z -m "vX.Y.Z"
    git push origin main
    git push origin vX.Y.Z
    ```
-8. Watch the release workflow:
-   <https://github.com/ffroliva/gflow-cli/actions/workflows/release.yml>
-9. Confirm the new version appears on:
-   - <https://pypi.org/project/gflow-cli/>
-   - <https://github.com/ffroliva/gflow-cli/releases>
+10. Watch the release workflow:
+    <https://github.com/ffroliva/gflow-cli/actions/workflows/release.yml>
+11. Confirm the new version appears on:
+    - <https://pypi.org/project/gflow-cli/>
+    - <https://github.com/ffroliva/gflow-cli/releases>
 
 ## Known Historical Quirk
 
