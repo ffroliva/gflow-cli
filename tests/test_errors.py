@@ -11,6 +11,7 @@ from gflow_cli.errors import (
     AuthBrowserRejectedError,
     AuthExpiredError,
     AuthMissingError,
+    BrowserEngineUnavailableError,
     ChainPartialError,
     ConfigurationError,
     ContentPolicyError,
@@ -480,6 +481,31 @@ def test_ui_selector_drift_error_problem_details() -> None:
     assert pd["type"] == "https://gflow-cli.dev/errors/ui-selector-drift"
     assert pd["title"] == "Flow UI selector drift"
     assert "image_mode_tab" in pd.get("detail", "")
+    assert "remediation_hint" in pd
+
+
+# ---------- BrowserEngineUnavailableError (patchright engine opt-in) ----------
+
+
+def test_browser_engine_unavailable_error_exit_code_24() -> None:
+    """BrowserEngineUnavailableError -> exit 24, and the isinstance walk lands on
+    24 (most-specific) rather than its ConfigurationError parent's 11."""
+    err = BrowserEngineUnavailableError(
+        detail="the 'patchright' package is not installed",
+        remediation_hint="Install it with `pip install patchright`.",
+    )
+    assert isinstance(err, ConfigurationError)
+    assert EXIT_CODE_MAP[BrowserEngineUnavailableError] == 24
+    # The ordering invariant must keep the subclass BEFORE its parent so this 24
+    # wins over ConfigurationError's 11 in the isinstance walk.
+    assert _exit_code_for(err) == 24
+
+
+def test_browser_engine_unavailable_error_problem_details() -> None:
+    err = BrowserEngineUnavailableError(detail="patchright missing")
+    pd = err.to_problem_details()
+    assert pd["type"] == "https://gflow-cli.dev/errors/browser-engine-unavailable"
+    assert pd["title"] == "Selected browser engine is unavailable"
     assert "remediation_hint" in pd
 
 
