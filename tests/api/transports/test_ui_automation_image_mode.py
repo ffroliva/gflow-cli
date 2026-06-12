@@ -9,6 +9,7 @@ otherwise an account whose last-used mode was Video silently routes
 
 from __future__ import annotations
 
+from pathlib import Path
 from unittest.mock import AsyncMock, MagicMock
 
 import pytest
@@ -62,6 +63,26 @@ class TestSwitchToImageMode:
         page = _cascade_page({MODE_SWITCH_TRIGGER_SELECTORS[0]})
         with pytest.raises(UiSelectorDriftError, match="Image tab"):
             await UiAutomationTransport._switch_to_image_mode(page, out_dir=None)
+
+    @pytest.mark.asyncio
+    async def test_trigger_miss_detail_carries_screenshot_path(self, tmp_path: Path) -> None:
+        # The screenshot path is the diagnostic payload issue-#183 reporters
+        # need — assert it survives into the user-visible detail.
+        page = _cascade_page(set())
+        page.screenshot = AsyncMock()
+        with pytest.raises(UiSelectorDriftError, match="debug_no_mode_trigger.png"):
+            await UiAutomationTransport._switch_to_image_mode(page, out_dir=tmp_path)
+        page.screenshot.assert_awaited()
+
+    @pytest.mark.asyncio
+    async def test_trigger_miss_detail_omits_screenshot_clause_without_out_dir(self) -> None:
+        # No out_dir → no capture; the detail must drop the clause entirely
+        # rather than render a literal "Screenshot: None".
+        page = _cascade_page(set())
+        with pytest.raises(UiSelectorDriftError) as excinfo:
+            await UiAutomationTransport._switch_to_image_mode(page, out_dir=None)
+        assert "Screenshot" not in str(excinfo.value)
+        assert "None" not in str(excinfo.value)
 
 
 class TestModeSwitchCallSite:
