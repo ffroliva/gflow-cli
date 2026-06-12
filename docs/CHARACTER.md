@@ -375,7 +375,8 @@ convenience later.
     generate) so Flow's JS sets `entityContext` and passes the WAF; gflow captures `media[]`/`workflows[]`
     from the response. Reuse gflow's prompt-submit + response-capture machinery (`ui_automation.py`), but in
     the character-editor context (NOT the new-project flow). Video `--character` reuse = resource picker
-    (`Pesquisar recursos` → Personagens → *Incluir no comando*) → generate; mirrors #123 `_attach_likeness`.
+    (search resources → Personagens → *include-in-prompt* context-menu action; captions are localized,
+    selectors locale-free since issue #170) → generate; mirrors #123 `_attach_likeness`.
     All selectors **ligature/structural only** (language-agnostic).
   - **Cost reality:** the feature is UI-automation-heavy (new character-editor + picker selectors), not the
     "mostly REST" earlier framing. Structural metadata is REST; the value-generating steps are UI.

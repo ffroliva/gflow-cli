@@ -583,6 +583,40 @@ def _summarize_batch_request_body(post_data: str | None) -> dict[str, Any]:
     return summary
 
 
+def _entity_ids_from_request_body(post_data: str | None) -> set[str]:
+    """Entity ids carried by an outgoing ``batchGenerateImages`` body.
+
+    Request shape (live-verified — issue #170 report + movie spike):
+    ``requests[].referenceEntities[].entityId``. Feeds the #170 submit
+    backstop: a UI attach miss must not degrade to a text-only generation
+    reported as success.
+    """
+    if not post_data:
+        return set()
+    try:
+        parsed: object = json.loads(post_data)
+    except (ValueError, TypeError):
+        return set()
+    if not isinstance(parsed, dict):
+        return set()
+    out: set[str] = set()
+    reqs = cast("dict[str, Any]", parsed).get("requests")
+    if not isinstance(reqs, list):
+        return out
+    for req in cast("list[Any]", reqs):
+        if not isinstance(req, dict):
+            continue
+        ents = cast("dict[str, Any]", req).get("referenceEntities")
+        if not isinstance(ents, list):
+            continue
+        for ent in cast("list[Any]", ents):
+            if isinstance(ent, dict):
+                entity_id = cast("dict[str, Any]", ent).get("entityId")
+                if isinstance(entity_id, str):
+                    out.add(entity_id)
+    return out
+
+
 class UiAutomationTransport(VideoGenerationMixin):
     """D.2.4 — Playwright UI mimicry strategy.
 
@@ -1664,6 +1698,7 @@ class UiAutomationTransport(VideoGenerationMixin):
         page: Page,
         *,
         project_id: str | None = None,
+        sink: list[dict[str, Any]] | None = None,
     ) -> Callable[[], None]:
         """Register a ``page.on('request', ...)`` that logs a compact summary of
         each outgoing ``batchGenerateImages`` body.
@@ -1672,6 +1707,10 @@ class UiAutomationTransport(VideoGenerationMixin):
         the submit carries ``referenceEntities`` — the entity-reference spike's
         make-or-break signal — without dumping i2i image bytes. Returns an
         idempotent detach fn, torn down alongside the response listener.
+
+        When *sink* is given, each matching request also appends
+        ``{"url", "entity_ids"}`` so the caller can enforce the #170 submit
+        backstop (:meth:`_assert_image_entities_attached`) after the run.
         """
 
         def on_request(request_obj: Any) -> None:
@@ -1687,6 +1726,13 @@ class UiAutomationTransport(VideoGenerationMixin):
                 filter_project_id=project_id,
                 summary=_summarize_batch_request_body(post_data),
             )
+            if sink is not None:
+                sink.append(
+                    {
+                        "url": request_obj.url,
+                        "entity_ids": _entity_ids_from_request_body(post_data),
+                    }
+                )
 
         page.on("request", on_request)
 
@@ -1944,9 +1990,12 @@ class UiAutomationTransport(VideoGenerationMixin):
         # attach/await eliminates that race. Project-ID filter prevents stale
         # responses from previously-visited projects accumulating in the list.
         captured, detach = self._attach_batch_response_listener(page, project_id=nav_project_id)
-        # Also log the OUTGOING request body summary so the entity-reference spike
-        # can read whether the submit carries `referenceEntities`.
-        req_log_detach = self._attach_batch_request_logger(page, project_id=nav_project_id)
+        # Also log the OUTGOING request body summary AND collect the entity ids
+        # it carries — the #170 submit backstop reads the sink after the run.
+        request_bodies: list[dict[str, Any]] = []
+        req_log_detach = self._attach_batch_request_logger(
+            page, project_id=nav_project_id, sink=request_bodies
+        )
         # Record submit_time BEFORE the click so the post-submit-time filter
         # in _await_captured can distinguish this prompt's responses from any
         # stale entries that arrived between listener attach and the click.
@@ -1979,7 +2028,46 @@ class UiAutomationTransport(VideoGenerationMixin):
                 detail="batchGenerateImages returned 200 but no parseable media items",
                 route=first_error_route or "",
             )
+        # Submit backstop (issue #170): the run is only a success if every
+        # requested character entity actually rode the wire. A missed UI attach
+        # (e.g. the include selector clicked the wrong element) would otherwise
+        # return a plain text-only generation as if it used the character.
+        if request.reference_entities:
+            self._assert_image_entities_attached(
+                request_bodies, expected=list(request.reference_entities)
+            )
         return images
+
+    @staticmethod
+    def _assert_image_entities_attached(
+        request_bodies: list[dict[str, Any]],
+        *,
+        expected: list[str],
+    ) -> None:
+        """Defense-in-depth mirror of the video path's _assert_entities_attached.
+
+        *request_bodies* is the sink filled by :meth:`_attach_batch_request_logger`
+        (one entry per captured outgoing ``batchGenerateImages`` body). Every
+        *expected* entity id must appear in at least one captured submit;
+        otherwise raise :class:`WireFormatError` — never report a text-only
+        generation as an entity-referenced success.
+        """
+        seen: set[str] = set()
+        for body in request_bodies:
+            ids = body.get("entity_ids")
+            if isinstance(ids, set):
+                seen |= cast("set[str]", ids)
+        missing = [e for e in expected if e not in seen]
+        if missing:
+            raise WireFormatError(
+                detail=(
+                    f"captured batchGenerateImages submit is missing "
+                    f"referenceEntities {missing} — the staged character "
+                    f"never rode the wire"
+                ),
+                route="flowMedia:batchGenerateImages",
+            )
+        log.info("ui_automation.image_entities_attached", entity_ids=sorted(seen))
 
     # ------------------------------------------------------------------
     # Public batch API — generate_images_batch (stay-mounted, v3-3)

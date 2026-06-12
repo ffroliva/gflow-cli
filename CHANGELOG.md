@@ -7,6 +7,10 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+### Fixed
+
+- **`--reference-entity` no longer fails on non-Portuguese Flow accounts** ([#170](https://github.com/ffroliva/gflow-cli/issues/170)) — the resource-picker include selectors hardcoded the pt-BR caption "Incluir no comando"; they are now locale-free tier cascades (context-menu `add`-ligature anchor + pt/ru/en text fallback), fixing `gflow image t2i --reference-entity`, movie R2V entity attach, and Vozes voice attach for every account language. Failures are now typed (`TransportTimeoutError`, exit 9) with a locale-neutral remediation hint, the matched selector tier is logged (`include_selector_tier`) for drift telemetry, and a new image-side submit backstop raises `WireFormatError` (exit 7) if a staged character never reaches the wire instead of silently returning a text-only generation. Thanks @papushin7987 for the live-verified report
+
 ### Added
 
 - **`gflow image upscale <mediaId> --scale 2k|4k`** — upscale a platform-generated image to 2K or 4K (Flow's download-menu 1K/2K/4K options) and save it locally; credit-free. The owning project is resolved from the local catalog (or pass `--project` for images gflow didn't record). 4K requires a Flow Ultra subscription — a non-Ultra 4K request fails fast with exit code 22 (`UpscaleUnavailableError`) rather than a generic 403. Reverse-engineered wire documented in [docs/IMAGE_UPSCALE_RECON.md](docs/IMAGE_UPSCALE_RECON.md); live-verified end-to-end (issue #171)
