@@ -180,6 +180,32 @@ async def _fetch_session(ctx: BrowserContext) -> tuple[int, str]:
     raise last_exc or RuntimeError("session probe produced no response")
 
 
+async def _fetch_session_httpx(client: Any) -> tuple[int, str]:
+    """Fetch /api/auth/session via httpx, retrying transient failures.
+
+    Mirrors `_fetch_session` exactly — same attempt count, same retryable
+    statuses, same exponential backoff — so the httpx fast path and the
+    Playwright path have identical durability characteristics. A single
+    transient 429/503/504 or network blip will not reject a valid login.
+    """
+    last_exc: Exception | None = None
+    for attempt in range(1, _MAX_ATTEMPTS + 1):
+        try:
+            resp = await client.get(SESSION_API_URL)
+            status_code: int = resp.status_code
+            body: str = resp.text
+        except Exception as exc:
+            last_exc = exc
+            if attempt == _MAX_ATTEMPTS:
+                raise
+        else:
+            if status_code not in _RETRYABLE_STATUSES or attempt == _MAX_ATTEMPTS:
+                return status_code, body
+        await asyncio.sleep(float(min(2 ** (attempt - 1), 8)))
+    # Unreachable — the loop always returns or raises by the final attempt.
+    raise last_exc or RuntimeError("session probe produced no response")
+
+
 async def verify_flow_session(
     profile_dir: Path,
     *,
@@ -250,6 +276,13 @@ async def verify_flow_profile(
     *,
     source: str = "chrome",
 ) -> FlowSessionStatus:
+    """Probe `profile_dir` for a usable Flow app session via the fast httpx path.
+
+    Reads Chrome cookies directly from the SQLite store using browser_cookie3
+    (falling back to a marker-gated Playwright context on decryption failure),
+    then calls the NextAuth session endpoint with up to `_MAX_ATTEMPTS` attempts.
+    Fail-closed: any failure yields VERIFICATION_ERROR, never AUTHENTICATED.
+    """
     _validate_profile_in_home(profile_dir)
 
     status_code: int
@@ -270,9 +303,7 @@ async def verify_flow_profile(
             headers=headers,
             follow_redirects=False,
         ) as client:
-            response = await client.get(SESSION_API_URL)
-            status_code = response.status_code
-            body = response.text
+            status_code, body = await _fetch_session_httpx(client)
 
     # Fail-closed: any failure here yields VERIFICATION_ERROR, never AUTHENTICATED.
     except Exception as exc:

@@ -72,6 +72,12 @@ def _get_chrome_cookies3(profile_dir: Path) -> ChromeCookieSnapshot:
 
     Raises `PermissionError` on browser-cookie3 decryption failures so callers
     can fall back to the Playwright browser path. Other errors are not masked.
+
+    On Windows, `browser-cookie3` may raise `RuntimeError` (specifically
+    ``'Failed to decrypt the cipher text with DPAPI'``) when the DPAPI master
+    key is inaccessible — e.g. running as a different user or in a sandboxed
+    environment. This is treated the same as `BrowserCookieError` and triggers
+    the Playwright fallback.
     """
     import browser_cookie3  # pyright: ignore[reportMissingTypeStubs]
 
@@ -91,6 +97,11 @@ def _get_chrome_cookies3(profile_dir: Path) -> ChromeCookieSnapshot:
         )
     except browser_cookie3.BrowserCookieError as exc:
         raise PermissionError(f"Failed to decrypt Chrome cookies: {exc}") from exc
+    except RuntimeError as exc:
+        # browser-cookie3 raises RuntimeError('Failed to decrypt the cipher text with DPAPI')
+        # from _crypt_unprotect_data on Windows when the DPAPI master key is unavailable.
+        # Treat it identically to BrowserCookieError so the Playwright fallback is used.
+        raise PermissionError(f"Failed to decrypt Chrome cookies (DPAPI): {exc}") from exc
 
     return ChromeCookieSnapshot(
         httpx_cookies=_name_value_cookies(cookies, flow_only=True),

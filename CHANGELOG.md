@@ -9,7 +9,14 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ### Added
 
-- Added `verify_flow_profile` in `gflow_cli.auth.verification` using `browser_cookie3` and `httpx` to verify sessions directly from the Chrome profile, with a Playwright fallback for encrypted cookie stores.
+- Added `verify_flow_profile` in `gflow_cli.auth.verification` using `browser_cookie3` and `httpx` to verify sessions directly from the Chrome cookie store (fast path), with a marker-gated Playwright fallback for encrypted/locked stores. `RealChromeStrategy` now writes the Chrome marker before verification and removes it on failure, so the Playwright fallback is correctly gated. Cookie extraction is centralised in the new `gflow_cli.auth.cookies` module.
+
+### Fixed
+
+- `gflow_cli.auth.cookies._get_chrome_cookies3` now catches `RuntimeError` (Windows DPAPI failure — `RuntimeError('Failed to decrypt the cipher text with DPAPI')`) in addition to `browser_cookie3.BrowserCookieError`, and re-raises both as `PermissionError` so the Playwright fallback is triggered instead of propagating an unhandled exception.
+- `verify_flow_profile` now retries transient HTTP failures (429/503/504) and network errors up to `_MAX_ATTEMPTS` times with exponential backoff, matching the retry behaviour of the existing Playwright-based `verify_flow_session`.
+
+
 ## [0.16.0] — 2026-06-12
 
 ### Fixed
