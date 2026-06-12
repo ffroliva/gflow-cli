@@ -332,8 +332,10 @@ _CONTEXT_INCLUDE_TIER_NAMES = ("icon", "text")
 ENTITY_ATTACH_DRIFT_HINT = (
     "If clicking 'Add Media' on this account opens a full-page media library "
     "instead of a picker dialog, this is Flow's new library UI rollout, where "
-    "the include action no longer stages entities. Follow "
-    "https://github.com/ffroliva/gflow-cli/issues/174 for status and workarounds."
+    "the include action no longer stages entities — follow "
+    "https://github.com/ffroliva/gflow-cli/issues/174 for status and progress. "
+    "Otherwise, file a bug at https://github.com/ffroliva/gflow-cli/issues "
+    "(do NOT include captured tokens or signed URLs)."
 )
 # The picker grid is virtualised (react-virtuoso): off-screen tiles are not in
 # the DOM. When the target entity tile is not initially rendered, scroll the grid

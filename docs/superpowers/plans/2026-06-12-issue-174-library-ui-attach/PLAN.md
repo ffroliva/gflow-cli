@@ -123,14 +123,18 @@ change. Reuses the `spike_movie_attach_payload.py` route-abort harness and
 profile) — headed real-Chrome strategy mandatory.
 
 **Steps:**
-- [ ] Run `spike_issue174_library_ui_recon.py` on **denon82** (new UI) — one pass through the
-      gesture matrix
-- [ ] Re-probe **promo-denon82**: still old dialog UI? (rollout-scope datapoint)
-- [ ] Post findings to issue #174 (filtered: `request0_keys` / gesture verdicts, no raw payloads;
-      screenshots only if redacted)
-- [ ] Record findings summary in this plan under Task 4
+- [x] Run `spike_issue174_library_ui_recon.py` on **denon82** — 2026-06-12 12:48 (UTC+1):
+      **variant = `dialog` (12 ms)** — the account is BACK on the old picker-dialog UI; the
+      A/B has rolled back (or is flapping) since the 00:13 capture that opened #174. Gesture
+      matrix correctly self-skipped. Evidence: `scripts/dev/_spike_out/
+      spike_issue174_library_ui_20260612_124734.json` + `A_after_add_media.png` (local).
+- [x] Re-probe **promo-denon82**: SKIPPED — moot once denon82 itself reverted (both would show
+      dialog); WAF discipline says don't spend runs on a question with no remaining signal.
+- [x] Post findings to issue #174 (filtered: variant verdict + timing, no raw payloads)
+- [x] Findings recorded under Task 4
 
-**Verification:** the spike JSON shows, per gesture, whether `referenceEntities` rode the wire.
+**Verification:** the spike JSON shows, per gesture, whether `referenceEntities` rode the wire —
+on this run, Phase A exited before any gesture (old UI), which is itself the answer.
 
 ---
 
@@ -150,9 +154,15 @@ implementation tasks below.
   N days; Task 1's hint carries users meanwhile.
 
 **Steps:**
-- [ ] Decision recorded: ______ (a / b / c) on ______
-- [ ] `/gflow:scenario` run on the chosen shape (Critical/High scenarios → test checklist)
-- [ ] Implementation tasks appended (test scaffold first, per plan-skill task rules)
+- [x] Decision recorded: **(c) HOLD** on 2026-06-12 — the A/B rolled back off denon82 within
+      ~12 h; there is no stable new-UI account to recon against, so building a variant branch
+      now would target a moving (currently absent) UI. Task 1's hint + KNOWN_ISSUES carry any
+      user the experiment re-touches; the spike is committed and ready the moment an affected
+      account reappears (re-probe denon82 in ~3–7 days or on the next exit-7 report with
+      `entity_attach_context` discovery telemetry).
+- [ ] `/gflow:scenario` — deferred with the hold (runs when an implementation shape exists)
+- [ ] Implementation tasks — deferred with the hold (re-open Task 4 when a stable new-UI
+      account is available; decision matrix above still applies)
 
 ---
 

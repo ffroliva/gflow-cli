@@ -64,6 +64,10 @@ _OPEN_DIALOG = "[role='dialog'][data-state='open']"
 _PROMPT_BOX = "div[role='textbox'][data-slate-editor='true']"
 _SUBMIT_BTN = "button:has(i.google-symbols:text('arrow_forward'))"
 _ENTITY_TILE_PREFIX = "[data-tile-id^='fe_id_']"
+# ADD_MEDIA_BUTTON requires aria-haspopup='dialog'; a new-UI account may drop
+# that attribute (the button navigates) — fall back to the bare icon anchor.
+_ADD_MEDIA_FALLBACK = "button:has(i.google-symbols:text-is('add_2'))"
+_SPIKE_PROMPT = "Stands on a clifftop at sunset, waves at the camera."
 # New-UI sidebar: Personagens entry carries the same accessibility_new
 # ligature as the old picker tab (locale-invariant) but may be an <a>.
 _LIBRARY_PERSONAGENS = (
@@ -167,6 +171,8 @@ async def _detect_variant(page: Any) -> dict[str, Any]:
     """
     url_before = page.url
     add = page.locator(ADD_MEDIA_BUTTON).first
+    if await add.count() == 0:
+        add = page.locator(_ADD_MEDIA_FALLBACK).first
     await add.wait_for(state="visible", timeout=8000)
     await add.click()
     t0 = time.monotonic()
@@ -268,9 +274,9 @@ async def _run(
             # ABORT — the request never reaches Google; no credit is charged.
             await route.abort()
 
-        for glob in _GEN_ROUTE_GLOBS:
-            await page.route(glob, _on_route)
         try:
+            for glob in _GEN_ROUTE_GLOBS:
+                await page.route(glob, _on_route)
             editor_url = routes.project_editor_url(locale, project_id)
             step("A", f"goto {editor_url}", prefix="174")
             await page.goto(editor_url, wait_until="domcontentloaded", timeout=45_000)
@@ -314,11 +320,7 @@ async def _run(
                         await page.wait_for_timeout(900)
                     stage = await _stage_entity(page, entity_id, out_dir, "B1")
                     cap = await _submit_and_capture(
-                        page,
-                        captured,
-                        out_dir,
-                        "B1",
-                        prompt="Stands on a clifftop at sunset, waves at the camera.",
+                        page, captured, out_dir, "B1", prompt=_SPIKE_PROMPT
                     )
                     result["gestures"]["b1_floating_composer"] = {"stage": stage, **cap}
                 except Exception as e:  # noqa: BLE001
@@ -354,12 +356,18 @@ async def _run(
                     await page.goto(editor_url, wait_until="domcontentloaded", timeout=45_000)
                     await page.wait_for_timeout(3_000)
                     await page.keyboard.press("Escape")
+                    # The remounted editor can land in agent/image mode — re-run
+                    # the mode-switch sequence or _PROMPT_BOX/_SUBMIT_BTN hit the
+                    # wrong composer and B2 reports a false "staging lost".
+                    await VideoGenerationMixin._exit_agent_mode(page)  # noqa: SLF001
+                    await VideoGenerationMixin._switch_to_video_mode(  # noqa: SLF001
+                        page, out_dir=None
+                    )
+                    await VideoGenerationMixin._switch_video_sub_mode(  # noqa: SLF001
+                        page, "references", out_dir=None
+                    )
                     cap = await _submit_and_capture(
-                        page,
-                        captured,
-                        out_dir,
-                        "B2",
-                        prompt="Stands on a clifftop at sunset, waves at the camera.",
+                        page, captured, out_dir, "B2", prompt=_SPIKE_PROMPT
                     )
                     result["gestures"]["b2_back_to_editor"] = {"stage": stage, **cap}
                 except Exception as e:  # noqa: BLE001
@@ -394,7 +402,11 @@ def main(argv: list[str] | None = None) -> int:
         description="Issue #174: recon the new library UI attach gesture (0 credits)."
     )
     p.add_argument("--profile", default=os.environ.get("GFLOW_CLI_PROFILE", "denon82"))
-    p.add_argument("--project", required=True)
+    p.add_argument(
+        "--project",
+        default=os.environ.get("GFLOW_CLI_PROJECT"),
+        required="GFLOW_CLI_PROJECT" not in os.environ,
+    )
     p.add_argument("--entity-id", dest="entity_id", default="", help="entityId for fe_id_ tile")
     p.add_argument("--name", default="Stickman")
     p.add_argument("--locale", default=os.environ.get("GFLOW_CLI_LOCALE", "pt"))
