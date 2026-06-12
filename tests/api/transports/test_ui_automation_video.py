@@ -19,7 +19,12 @@ from gflow_cli.api.transports.ui_automation_video import (
     VideoGenerationMixin,
 )
 from gflow_cli.api.video import Aspect, GenerateVideoRequest, Mode, VideoModel, VideoStatus
-from gflow_cli.errors import AuthExpiredError, TransportTimeoutError, UiSelectorDriftError, WireFormatError
+from gflow_cli.errors import (
+    AuthExpiredError,
+    TransportTimeoutError,
+    UiSelectorDriftError,
+    WireFormatError,
+)
 
 
 def _make_listener_page() -> tuple[MagicMock, list]:
