@@ -153,6 +153,47 @@ class TestRealChromeStrategy:
         assert not (profile_dir / ".gflow_browser_strategy").exists()
 
     @pytest.mark.asyncio
+    async def test_real_chrome_preserves_preexisting_marker_on_transient_failure(
+        self, tmp_path: Path
+    ) -> None:
+        """A re-login on a previously-verified chrome profile that hits a
+        transient VERIFICATION_ERROR must NOT delete the pre-existing marker —
+        otherwise channel_for_profile stops returning 'chrome' and FlowApiClient
+        downgrades to bundled Chromium on a real-Chrome profile."""
+        strategy = RealChromeStrategy()
+        gflow_home = tmp_path / "gflow_home"
+        profile_dir = gflow_home / "profile_default"
+        profile_dir.mkdir(parents=True)
+        # Profile was verified-chrome on a previous successful login.
+        marker = profile_dir / ".gflow_browser_strategy"
+        marker.write_text("chrome", encoding="utf-8")
+
+        mock_proc = _build_mock_proc()
+
+        with (
+            patch("gflow_cli.auth.real_chrome.get_settings") as mock_settings,
+            patch(
+                "gflow_cli.auth.real_chrome.find_chrome_executable",
+                return_value=r"C:\fake\chrome.exe",
+            ),
+            patch(
+                "gflow_cli.auth.real_chrome.asyncio.create_subprocess_exec",
+                AsyncMock(return_value=mock_proc),
+            ),
+            patch(
+                "gflow_cli.auth.real_chrome.verify_flow_profile",
+                AsyncMock(return_value=_status(FlowSessionOutcome.VERIFICATION_ERROR)),
+            ),
+        ):
+            mock_settings.return_value.home = gflow_home
+            with pytest.raises(AuthMissingError):
+                await strategy.login(profile_dir, headless=False)
+
+        # The marker the profile already had must survive the transient failure.
+        assert marker.exists(), "pre-existing chrome marker must survive a transient failure"
+        assert marker.read_text(encoding="utf-8") == "chrome"
+
+    @pytest.mark.asyncio
     async def test_real_chrome_privacy_guard(self, tmp_path: Path) -> None:
         """Verify SecurityError when profile_dir is outside GFLOW_CLI_HOME."""
         strategy = RealChromeStrategy()
