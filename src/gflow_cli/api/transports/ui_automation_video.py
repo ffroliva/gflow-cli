@@ -397,6 +397,20 @@ async def _capture_debug_screenshot(page: Any, out_dir: Path | None, filename: s
     return shot_path
 
 
+def selector_drift_detail(probe: str, what: str, shot: Path | None) -> str:
+    """Build a :class:`UiSelectorDriftError` detail string for a probe miss.
+
+    Shared by the image and video transports so the message shape stays
+    symmetric, and so the ``Screenshot:`` clause is omitted (rather than
+    rendering a literal ``None``) when no debug screenshot was captured —
+    the caller had no ``out_dir`` to write into.
+    """
+    detail = f"probe={probe}: {what}"
+    if shot is not None:
+        detail = f"{detail} Screenshot: {shot}"
+    return detail
+
+
 def _summarize_request_image_inputs(request: Any) -> dict[str, Any]:
     """Privacy-safe summary of the image inputs in a generate request body:
     presence of startImage/endImage + referenceImages count, each as an 8-char
@@ -813,8 +827,11 @@ class VideoGenerationMixin:
         if trigger is None:
             shot = await _capture_debug_screenshot(page, out_dir, "debug_no_mode_trigger.png")
             raise UiSelectorDriftError(
-                f"probe=mode_switch_trigger: no matching element found on the Flow editor. "
-                f"Screenshot: {shot}"
+                selector_drift_detail(
+                    "mode_switch_trigger",
+                    "no matching element found on the Flow editor.",
+                    shot,
+                )
             )
         await trigger.click()
         await page.wait_for_timeout(800)
@@ -826,8 +843,11 @@ class VideoGenerationMixin:
         if video_tab is None:
             shot = await _capture_debug_screenshot(page, out_dir, "debug_no_video_tab.png")
             raise UiSelectorDriftError(
-                f"probe=video_mode_tab: Video tab not found in the mode dropdown. "
-                f"Screenshot: {shot}"
+                selector_drift_detail(
+                    "video_mode_tab",
+                    "Video tab not found in the mode dropdown.",
+                    shot,
+                )
             )
         await video_tab.click()
         await page.wait_for_timeout(1200)
@@ -999,9 +1019,12 @@ class VideoGenerationMixin:
         )
         if tab is None:
             shot = await _capture_debug_screenshot(page, out_dir, f"debug_no_submode_{sub}.png")
-            msg = f"video sub-mode tab {sub!r} not found on the Flow editor. Screenshot: {shot}"
-            raise RuntimeError(
-                msg,
+            raise UiSelectorDriftError(
+                selector_drift_detail(
+                    f"video_submode_{sub}",
+                    f"video sub-mode tab {sub!r} not found on the Flow editor.",
+                    shot,
+                )
             )
         await tab.click()
         await page.wait_for_timeout(900)

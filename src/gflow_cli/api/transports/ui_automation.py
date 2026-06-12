@@ -32,6 +32,7 @@ from gflow_cli.api.transports.ui_automation_video import (
     ENTITY_ATTACH_DRIFT_HINT,
     MODE_SWITCH_TRIGGER_SELECTORS,
     VideoGenerationMixin,
+    selector_drift_detail,
     zip_entity_refs,
 )
 from gflow_cli.errors import (
@@ -991,8 +992,11 @@ class UiAutomationTransport(VideoGenerationMixin):
         if trigger is None:
             shot = await _capture_debug_screenshot(page, out_dir, "debug_no_mode_trigger.png")
             raise UiSelectorDriftError(
-                f"probe=mode_switch_trigger: no matching element found on the Flow editor. "
-                f"Screenshot: {shot}"
+                selector_drift_detail(
+                    "mode_switch_trigger",
+                    "no matching element found on the Flow editor.",
+                    shot,
+                )
             )
         await trigger.click()
         await page.wait_for_timeout(800)
@@ -1004,8 +1008,11 @@ class UiAutomationTransport(VideoGenerationMixin):
         if image_tab is None:
             shot = await _capture_debug_screenshot(page, out_dir, "debug_no_image_tab.png")
             raise UiSelectorDriftError(
-                f"probe=image_mode_tab: Image tab not found in the mode dropdown. "
-                f"Screenshot: {shot}"
+                selector_drift_detail(
+                    "image_mode_tab",
+                    "Image tab not found in the mode dropdown.",
+                    shot,
+                )
             )
         await image_tab.click()
         await page.wait_for_timeout(1200)

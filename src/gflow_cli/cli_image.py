@@ -353,6 +353,7 @@ async def _run_upload(
             profile_dir=profile_dir,
             headless=headless,
             transport=transport,
+            out_dir=settings.output_dir,
         ) as client:
             console.print(_CREATING_PROJECT_MSG)
             project = await client.create_project(title="gflow-cli upload")
@@ -544,6 +545,7 @@ async def _run_upscale(
         profile_dir=profile_dir,
         headless=headless,
         transport=transport,
+        out_dir=output_root,
     ) as client:
         console.print(f"Upscaling [bold]{media_id}[/bold] to {scale_label.upper()}...")
         target = await client.upsample_image(
@@ -871,6 +873,7 @@ async def _run_t2i(
             profile_dir=profile_dir,
             headless=headless,
             transport=transport,
+            out_dir=out if out is not None else output_root,
         ) as client:
             # Title is a `gflow-cli ...` prefix per project convention (post-rename a02684f).
             # cli_video.py's _run_t2v / _run_i2v don't currently set a title — tracked separately.
@@ -1264,6 +1267,7 @@ async def _run_i2i(
             profile_dir=profile_dir,
             headless=headless,
             transport=transport,
+            out_dir=out if out is not None else output_root,
         ) as client:
             # Title is a `gflow-cli ...` prefix per project convention (post-rename a02684f).
             # cli_video.py's _run_t2v / _run_i2v don't currently set a title — tracked separately.

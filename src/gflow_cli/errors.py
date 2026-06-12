@@ -400,9 +400,11 @@ class UiSelectorDriftError(GFlowError):
     title = "Flow UI selector drift"
     _default_remediation = (
         "A Flow editor UI element could not be located — Google may have updated "
-        "their frontend. Re-run with --verbose to capture a debug screenshot, then "
-        "file a bug at https://github.com/ffroliva/gflow-cli/issues referencing the "
-        "probe name and the screenshot (do NOT include tokens or signed URLs)."
+        "their frontend. Check for a newer gflow-cli release, then file a bug at "
+        "https://github.com/ffroliva/gflow-cli/issues referencing the probe name "
+        "and attaching the debug screenshot from this message, if one was captured "
+        "(review it first — the viewport may show your account name/avatar; do NOT "
+        "include tokens or signed URLs)."
     )
 
 
