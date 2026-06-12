@@ -189,6 +189,33 @@ async def test_playwright_timeout_error_retried():
     assert attempts["n"] == MAX_ATTEMPTS
 
 
+@pytest.mark.asyncio
+async def test_patchright_timeout_error_retried():
+    """Patchright raises its OWN TimeoutError — a DISTINCT class from playwright's
+    (patchright._impl vs playwright._impl). retryable_engine_errors() unions both,
+    so a patchright transport hiccup must retry rather than surface raw. This is
+    the exact regression predict flagged (#3): without the union, an `except
+    PlaywrightTimeoutError` would not catch it and retries would silently stop.
+    """
+    pytest.importorskip("patchright")
+    from patchright.async_api import TimeoutError as PatchrightTimeoutError  # type: ignore[import]
+
+    from gflow_cli.api._retry import _make_retrying
+
+    attempts = {"n": 0}
+
+    async def attempt():
+        attempts["n"] += 1
+        raise PatchrightTimeoutError("simulated patchright timeout")
+
+    retrying = _make_retrying(wait_seconds=lambda _: 0)
+    with pytest.raises(PatchrightTimeoutError):
+        async for r in retrying:
+            with r:
+                await attempt()
+    assert attempts["n"] == MAX_ATTEMPTS
+
+
 def test_jittered_exponential_wait_default_schedule():
     """Exercise :class:`_JitteredExponentialWait` default exponential schedule.
 
