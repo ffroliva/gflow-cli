@@ -28,6 +28,7 @@ __all__ = [
     "SceneConcatError",
     "SecurityError",
     "TransportTimeoutError",
+    "UiSelectorDriftError",
     "UpscaleUnavailableError",
     "VideoModelSelectionError",
     "WafRejectionError",
@@ -381,6 +382,30 @@ class UpscaleUnavailableError(GFlowError):
     )
 
 
+class UiSelectorDriftError(GFlowError):
+    """Raised when a UI-automation selector cascade finds no matching element.
+
+    Indicates that Flow's frontend has changed in a way that invalidates one
+    of the selector probes (mode-switch trigger, mode tab, sub-mode tab, etc.).
+    The ``detail`` names the probe label and includes the debug screenshot path
+    when one was captured.
+
+    This is a hard failure — gflow cannot safely proceed without the control —
+    but it is *diagnosed*, not opaque: the user gets the probe name and the
+    screenshot for inspection.  Exit code 23 lets scripted callers branch on
+    "the UI changed and needs a selector update" versus generic error (1).
+    """
+
+    problem_type = "https://gflow-cli.dev/errors/ui-selector-drift"
+    title = "Flow UI selector drift"
+    _default_remediation = (
+        "A Flow editor UI element could not be located — Google may have updated "
+        "their frontend. Re-run with --verbose to capture a debug screenshot, then "
+        "file a bug at https://github.com/ffroliva/gflow-cli/issues referencing the "
+        "probe name and the screenshot (do NOT include tokens or signed URLs)."
+    )
+
+
 class SecurityError(GFlowError):
     """Raised when a security boundary is violated (e.g. profile_dir outside HOME)."""
 
@@ -643,6 +668,10 @@ EXIT_CODE_MAP: dict[type[GFlowError], int] = {
     # from WafRejectionError's 10 even though both are HTTP 403. Direct GFlowError
     # subclass, so unconstrained by the ordering invariant.
     UpscaleUnavailableError: 22,
+    # UiSelectorDriftError (issue #183): Flow UI changed, selector probe failed.
+    # Direct GFlowError subclass; exit 23 lets scripts distinguish "UI drifted"
+    # from generic error (1) without parsing stderr.
+    UiSelectorDriftError: 23,
     # ModelModeIncompatibilityError + VideoModelSelectionError BEFORE
     # ConfigurationError (their parent) so the isinstance walk lands on 17/18,
     # not 11. Per [[exit-code-map-ordering-invariant-test-pitfall]].

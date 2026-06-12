@@ -39,6 +39,7 @@ from gflow_cli.errors import (
     BatchPartialError,
     ContentPolicyError,
     GFlowError,
+    UiSelectorDriftError,
     WafRejectionError,
     WireFormatError,
 )
@@ -989,9 +990,9 @@ class UiAutomationTransport(VideoGenerationMixin):
         )
         if trigger is None:
             shot = await _capture_debug_screenshot(page, out_dir, "debug_no_mode_trigger.png")
-            msg = f"mode-switch dropdown trigger not found on the Flow editor. Screenshot: {shot}"
-            raise RuntimeError(
-                msg,
+            raise UiSelectorDriftError(
+                f"probe=mode_switch_trigger: no matching element found on the Flow editor. "
+                f"Screenshot: {shot}"
             )
         await trigger.click()
         await page.wait_for_timeout(800)
@@ -1002,8 +1003,10 @@ class UiAutomationTransport(VideoGenerationMixin):
         )
         if image_tab is None:
             shot = await _capture_debug_screenshot(page, out_dir, "debug_no_image_tab.png")
-            msg = f"Image tab not found in the mode dropdown. Screenshot: {shot}"
-            raise RuntimeError(msg)
+            raise UiSelectorDriftError(
+                f"probe=image_mode_tab: Image tab not found in the mode dropdown. "
+                f"Screenshot: {shot}"
+            )
         await image_tab.click()
         await page.wait_for_timeout(1200)
         await page.keyboard.press("Escape")

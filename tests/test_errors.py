@@ -22,6 +22,7 @@ from gflow_cli.errors import (
     ProblemDetails,
     RateLimitError,
     TransportTimeoutError,
+    UiSelectorDriftError,
     UpscaleUnavailableError,
     VideoModelSelectionError,
     WafRejectionError,
@@ -452,3 +453,39 @@ def test_chain_partial_error_partial_results_defaults_empty() -> None:
     (but present) ``partial_results`` list — never None."""
     err = ChainPartialError(detail="first link failed")
     assert err.partial_results == []
+
+
+# ---------- UiSelectorDriftError (issue #183) ----------
+
+
+def test_ui_selector_drift_error_exit_code_23() -> None:
+    """UiSelectorDriftError -> exit code 23 (issue #183).
+
+    Raised when a UI-automation selector cascade finds no matching element,
+    indicating that Flow's frontend has changed.  Exit 23 lets scripted
+    callers distinguish "UI drifted" from generic error (1)."""
+    err = UiSelectorDriftError(
+        detail="probe=mode_switch_trigger: no matching element found on the Flow editor."
+    )
+    assert _exit_code_for(err) == 23
+    assert EXIT_CODE_MAP[UiSelectorDriftError] == 23
+    assert isinstance(err, GFlowError)
+    assert err.remediation_hint != ""
+
+
+def test_ui_selector_drift_error_problem_details() -> None:
+    """UiSelectorDriftError carries RFC 9457 Problem Details with a stable type URI."""
+    err = UiSelectorDriftError(detail="probe=image_mode_tab: Image tab not found.")
+    pd = err.to_problem_details()
+    assert pd["type"] == "https://gflow-cli.dev/errors/ui-selector-drift"
+    assert pd["title"] == "Flow UI selector drift"
+    assert "image_mode_tab" in pd.get("detail", "")
+    assert "remediation_hint" in pd
+
+
+def test_ui_selector_drift_error_not_a_subclass_of_flow_api_error() -> None:
+    """UiSelectorDriftError is a direct GFlowError subclass — it is NOT a
+    FlowApiError (it is a UI-automation concern, not a wire-protocol error)."""
+    err = UiSelectorDriftError(detail="probe=mode_switch_trigger: selector cascade failed.")
+    assert isinstance(err, GFlowError)
+    assert not isinstance(err, FlowApiError)
