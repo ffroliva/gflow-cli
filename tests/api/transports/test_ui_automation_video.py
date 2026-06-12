@@ -243,6 +243,14 @@ class TestSwitchToVideoMode:
         with pytest.raises(UiSelectorDriftError, match="Video tab"):
             await VideoGenerationMixin._switch_to_video_mode(page, out_dir=None)
 
+    @pytest.mark.asyncio
+    async def test_submode_miss_raises_drift_error(self) -> None:
+        # The sub-mode probe is the same selector-cascade pattern as the
+        # mode-switch trigger and must carry the same typed-error contract.
+        page = _cascade_page(set())
+        with pytest.raises(UiSelectorDriftError, match="video_submode_references"):
+            await VideoGenerationMixin._switch_video_sub_mode(page, "references", out_dir=None)
+
 
 class TestWaitVideoEditorReady:
     @pytest.mark.asyncio
