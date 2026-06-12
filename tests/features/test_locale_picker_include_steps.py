@@ -129,8 +129,15 @@ def _mock_backstop_runner(monkeypatch: pytest.MonkeyPatch) -> None:
     so the run must fail loudly instead of reporting a text-only success."""
 
     async def _fake_t2i(**_kwargs: Any) -> None:
+        # Mirror the real raise site (ui_automation._assert_image_entities_attached):
+        # since issue #174 it carries the library-UI drift hint + discovery payload.
+        from gflow_cli.api.transports.ui_automation_video import ENTITY_ATTACH_DRIFT_HINT
+
         raise WireFormatError(
-            "captured batchGenerateImages submit is missing referenceEntities ['ent-123']"
+            "captured batchGenerateImages submit is missing referenceEntities ['ent-123']",
+            route="flowMedia:batchGenerateImages",
+            remediation_hint=ENTITY_ATTACH_DRIFT_HINT,
+            discovery={"entity_attach_context": "image"},
         )
 
     monkeypatch.setattr("gflow_cli.cli_image._run_t2i", _fake_t2i)
@@ -198,7 +205,7 @@ def _check_output_locale_neutral(cli_result_holder: dict[str, Any]) -> None:
     assert "Incluir no comando" not in result.output, result.output
 
 
-@then('the output contains "File a bug"')
-def _check_output_file_a_bug(cli_result_holder: dict[str, Any]) -> None:
+@then('the output contains "issues/174"')
+def _check_output_issue_174(cli_result_holder: dict[str, Any]) -> None:
     result = cli_result_holder["result"]
-    assert "File a bug" in result.output, result.output
+    assert "issues/174" in result.output, result.output

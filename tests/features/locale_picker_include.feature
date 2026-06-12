@@ -22,4 +22,4 @@ Feature: Locale-free character entity attach (issue 170)
     Given the mocked t2i runner raises the reference-entity submit backstop
     When I run "gflow image t2i a knight --project proj-1 --reference-entity ent-123 --reference-entity-name Lukas"
     Then the exit code is 7
-    And the output contains "File a bug"
+    And the output contains "issues/174"
