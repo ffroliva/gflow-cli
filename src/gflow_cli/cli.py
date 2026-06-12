@@ -235,6 +235,10 @@ def auth_status(profile: str | None) -> None:
         )
     for k, v in s.items():
         console.print(f"  {k}: {v}")
+    # Surface the active browser engine so a two-engine setup is debuggable.
+    from gflow_cli.config import get_settings
+
+    console.print(f"  browser_engine: {get_settings().browser_engine}")
 
 
 @auth.command("list")

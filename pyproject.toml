@@ -58,6 +58,15 @@ s3 = [
 chain = [
     "av>=12",
 ]
+# Patchright engine extra — opt-in, drop-in patched Playwright (Chromium) that
+# avoids the Runtime.enable CDP leak on the headed path. Selected via
+# GFLOW_CLI_BROWSER_ENGINE=patchright. Ships a PATCHED Chromium driver that
+# handles live Google session cookies/Bearer/SAPISID, so it is EXACT-pinned and
+# treated as a security-review-required bump (NOT a dependabot auto-merge) —
+# see SECURITY.md. Not a headless unlock.
+patchright = [
+    "patchright==1.60.1",
+]
 
 [project.scripts]
 gflow = "gflow_cli.cli:main"

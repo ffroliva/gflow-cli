@@ -201,6 +201,26 @@ Audited with `pip-audit` in CI on every push. Major dependency surface:
 
 No transitive dep with known CVEs at the time of v0.1.0 scaffold.
 
+### Optional `patchright` engine — elevated supply-chain trust
+
+The `gflow-cli[patchright]` extra (opt-in via `GFLOW_CLI_BROWSER_ENGINE=patchright`)
+installs **Patchright**, a single-maintainer package that ships a **patched
+Chromium driver**. Because that driver *is* the browser process that loads your
+real Google session — it has direct access to session cookies, the OAuth Bearer
+token, and SAPISID — it carries a higher blast radius than an ordinary Python
+dependency: a compromised release could exfiltrate the full Google session.
+
+Controls:
+
+- **Optional-only** — never in the base `dependencies`; the default install pulls
+  neither the package nor its driver.
+- **Exact-pinned** (`patchright==1.60.1`) so a release cannot silently move the
+  browser binary underneath you.
+- **Security-review-required on bump** — a Patchright version change is treated
+  like a browser-binary change, NOT a routine dependabot auto-merge.
+- Default engine is `playwright` (Microsoft, security-reviewed); patchright is an
+  experiment you opt into per the trade-off above.
+
 ## Reporting
 
 | Issue type | How |
