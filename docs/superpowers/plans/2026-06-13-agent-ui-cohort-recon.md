@@ -555,7 +555,7 @@ Record: `navigator.webdriver` and the `flow-page-probe.json` / `snapshot-interac
 
 Keep the launched Chrome open; open the project, then:
 ```
-.\scripts\capture-agent-ui.ps1 -ProjectUrl "https://labs.google/fx/tools/flow/project/58c24049-c3bc-44fb-8615-852f84e5fd0f?hl=en" -Profile ffroliva -Locale en -Port 9334
+.\scripts\capture-agent-ui.ps1 -ProjectUrl "https://labs.google/fx/tools/flow/project/58c24049-c3bc-44fb-8615-852f84e5fd0f?hl=en" -ProfileName ffroliva -Locale en -Port 9334
 ```
 Follow the prompts: attempt to leave Agent mode (records `cropRecoverable`), then trigger ONE free image generation (records the wire via HAR).
 
@@ -563,7 +563,7 @@ Follow the prompts: attempt to leave Agent mode (records `cropRecoverable`), the
 
 ```
 .\scripts\launch-flow-chrome.ps1 -ProfileName denon82 -Port 9335
-.\scripts\capture-agent-ui.ps1 -ProjectUrl "https://labs.google/fx/tools/flow/project/<denon82-project-uuid>?hl=pt" -Profile denon82 -Locale pt -Port 9335
+.\scripts\capture-agent-ui.ps1 -ProjectUrl "https://labs.google/fx/tools/flow/project/<denon82-project-uuid>?hl=pt" -ProfileName denon82 -Locale pt -Port 9335
 ```
 
 - [ ] **Step 4: Engine axis — compare CDP-real-Chrome vs gflow's Playwright path**
