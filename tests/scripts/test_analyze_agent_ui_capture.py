@@ -2,30 +2,38 @@ import importlib.util
 import sys
 from pathlib import Path
 
-_MOD = Path(__file__).resolve().parents[2] / "scripts" / "dev" / "analyze_agent_ui_capture.py"
-_spec = importlib.util.spec_from_file_location("analyze_agent_ui_capture", _MOD)
-mod = importlib.util.module_from_spec(_spec)
-sys.modules["analyze_agent_ui_capture"] = mod
-_spec.loader.exec_module(mod)
+# Load the analyzer from scripts/dev/ by path. scripts/ is intentionally outside
+# pyright's include (src, tests) and is not an importable package, so a plain
+# `from scripts.dev...` import is unresolvable under the project config. The
+# asserts narrow spec / spec.loader away from None to keep pyright clean.
+_MOD_PATH = Path(__file__).resolve().parents[2] / "scripts" / "dev" / "analyze_agent_ui_capture.py"
+_spec = importlib.util.spec_from_file_location("analyze_agent_ui_capture", _MOD_PATH)
+assert _spec is not None and _spec.loader is not None
+_mod = importlib.util.module_from_spec(_spec)
+sys.modules["analyze_agent_ui_capture"] = _mod
+_spec.loader.exec_module(_mod)
 
-ComposerSignals = mod.ComposerSignals
-ComposerState = mod.ComposerState
-classify_composer = mod.classify_composer
-fingerprint_map = mod.fingerprint_map
-diff_signal_sets = mod.diff_signal_sets
-summarize_capture = mod.summarize_capture
-build_findings = mod.build_findings
+ComposerSignals = _mod.ComposerSignals
+ComposerState = _mod.ComposerState
+build_findings = _mod.build_findings
+classify_composer = _mod.classify_composer
+diff_signal_sets = _mod.diff_signal_sets
+fingerprint_map = _mod.fingerprint_map
+summarize_capture = _mod.summarize_capture
 
 
-def _sig(**kw):
-    base = dict(
-        crop_present=False,
-        agent_pill_present=False,
-        agent_chat_panel_present=False,
-        crop_recoverable=None,
+def _sig(
+    crop_present: bool = False,
+    agent_pill_present: bool = False,
+    agent_chat_panel_present: bool = False,
+    crop_recoverable: bool | None = None,
+) -> ComposerSignals:
+    return ComposerSignals(
+        crop_present=crop_present,
+        agent_pill_present=agent_pill_present,
+        agent_chat_panel_present=agent_chat_panel_present,
+        crop_recoverable=crop_recoverable,
     )
-    base.update(kw)
-    return ComposerSignals(**base)
 
 
 def test_crop_present_is_classic():
