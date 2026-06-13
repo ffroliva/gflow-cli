@@ -132,20 +132,39 @@ denon82 reverted within 12h (looks like re-bucketing or a server toggle).
 
 ## 5. Methodology
 
-**Extend the proven harness, do not reinvent.** Build on `_spike_common`
-(`build_client`, `resolve_profile_dir`, `step`) and the structure of
-`spike_issue174_library_ui_recon.py`. New capability this spike adds on top: **HAR
-recording, cookie capture, and storage/flag capture** (the #174 harness has none).
+**Two tools, split by responsibility** (confirmed 2026-06-13):
 
-**Capture stack (single Playwright context per run):**
-- **HAR** via `record_har_path` on the persistent context (the `_persistent_context_kwargs` seam) → full request/response archive.
-- **DOM dumps** (`outerHTML` via `page.evaluate`) of composer, agent pill, chat panel, Agent settings, session history, library overlay — plus a **ligature inventory** (as the #174 spike already does).
-- **Cookies** via `context.cookies()`; **`localStorage` + `sessionStorage`** via `page.evaluate`; **`__NEXT_DATA__`** and any experiment-config response body from the HAR.
-- **Screenshots** at every step.
+- **Capture → `C:\development\github\gflow-agent-browser-spike`** — a separate,
+  isolated, non-git sandbox driving `agent-browser@0.27.0` over **CDP** (no Node
+  deps in gflow-cli). It attaches **real Chrome to a gflow profile**
+  (`launch-flow-chrome.ps1 -ProfileName <name>` resolves `profile_<name>` under
+  `GFLOW_CLI_HOME`), then **manually drives** the agentic UI while capturing.
+  Manual drive is deliberate: we don't have the agentic selectors yet, so passive
+  capture beats scripted clicking on unknown elements.
+- **Analyze → `gflow-cli`** — offline Python. The tested pure helpers (classifier,
+  redaction, diff) **consume the sandbox artifacts**. No browser driving in
+  gflow-cli for this spike.
+
+**Capture stack (sandbox, per run):**
+- **HAR** via `agent-browser network har start|stop` → full request/response
+  archive. Capture the **whole** HAR and identify the agentic gen endpoint *from*
+  it — do **not** assume `aisandbox-pa`; the agentic surface may use a new route.
+- **DOM / signals** via `agent-browser --json eval <js>` and `snapshot -i`:
+  composer-state signals (crop_* / agent-pill / chat-panel presence), composer
+  `outerHTML` slice + ligature inventory, the Agent-settings panel.
+- **Gating** via `eval`: `localStorage`, `sessionStorage`, `__NEXT_DATA__`
+  pageProp keys, and JS-visible `document.cookie`. **httpOnly cohort cookies are
+  recovered from HAR request `Cookie` headers** (JS cannot read them).
+- **`navigator.webdriver`** (engine/fingerprint axis) via the existing
+  `run-cdp-smoke.ps1`.
+- **Screenshots** of the Chrome window at each step.
 
 **Credit posture — credit-free by default:**
-- Image generation is free → capture the agent's **real** image request *and response* at $0.
-- Video submit captured via `route.abort()` (reads payload at $0, no response) — the established technique (`spike_movie_attach_payload.py`, `credit-free-route-abort-verification`).
+- Image generation is free → manually trigger **one image** generation through the
+  agentic UI and let HAR capture the real request **and** response at $0.
+- **Do not manually trigger video generation** — manual CDP capture has no clean
+  `route.abort()` $0 path. The video wire is inferred from #174 / deferred unless
+  the user explicitly opts to spend one credit.
 
 **Three-axis diff:** run identical capture across *account* (`ffroliva` /
 `denon82`), *locale* (en / pt-BR), and *profile+engine* (the user's primary
@@ -154,14 +173,16 @@ cookie/storage/flag **delta** that tracks the agentic-vs-classic UI — and is
 stable across locales — is the gating signal. (Primary-profile capture is
 read-only / manual; gflow-profile capture runs the harness.)
 
-**Privacy:** auto-redact account name / email / avatar from screenshots, and
-capture cookie/flag **names** with values redacted (hash or length only).
-Artifacts land in `scripts/dev/_spike_out/` — **local only, never committed**
-(consistent with the #174 harness header and the #183 screenshot caution).
+**Privacy:** the sandbox's raw HAR carries auth cookies, tokens, and prompts (its
+own README flags this). Artifacts stay in the sandbox's `artifacts/` —
+**local only, never committed**. The gflow-cli analyzer **redacts before writing
+any finding**: cookie/flag/storage **names** with values reduced to length + a
+short hash; account name / email / avatar scrubbed from anything it emits.
 
-**Discipline:** headed, supervised, **one disciplined run per account** (WAF heat
-— same rule the #174 plan sets). Parameterized via argparse (`--profile`,
-`--project`, `--locale`, `--scenarios`, `--out`) per the parameterize rule.
+**Discipline:** headed, supervised, **one disciplined run per (profile, scenario)**
+(WAF heat — same rule the #174 plan sets). The capture script is parameterized
+(`-ProfileName`, `-Port`, project URL, locale) and the analyzer takes the capture
+artifact paths — per the parameterize rule.
 
 ---
 
@@ -199,10 +220,11 @@ recoverable + the profile/engine axis); S5/S6 answer *"the wire"* and close the
 
 ## 7. Deliverables
 
-1. **`scripts/dev/spike_agent_ui_cohort.py`** — the capture harness (extends `_spike_common` + the #174 harness pattern; adds HAR + cookie + storage/flag capture).
-2. **Raw artifacts** in `scripts/dev/_spike_out/` — HAR, DOM dumps, storage/cookie JSON (redacted), screenshots, per-run summary JSON. Local only.
-3. **`docs/AGENT_UI_RECON.md`** — the assessment written **from the captured evidence**: the gating mechanism, the three-state detection signals, the agentic wire protocol, and the #174 resolution. Indexed in `docs/INDEX.md` (docs-first-class rule).
-4. **Feature plan (separate, deferred)** — detect → disambiguate (recoverable toggle vs forced cohort) → fail-cleanly (new typed error + cohort fingerprint) or drive-the-agent-UI. Written only after the recon doc lands, decided on evidence.
+1. **Capture scripts in `gflow-agent-browser-spike`** — reuse `launch-flow-chrome.ps1` + the HAR scripts; add `capture-agent-ui.ps1` (composer signals + gating `eval` + DOM dump + HAR around one manual image generation), tagged per profile / locale / engine.
+2. **`gflow-cli/scripts/dev/analyze_agent_ui_capture.py`** — offline analyzer: reads the sandbox capture JSONs + HAR summaries, classifies composer state, diffs gating signals across the three axes, emits a consolidated, redacted findings JSON. Pure logic unit-tested in `tests/scripts/`.
+3. **Raw artifacts** in the sandbox's `artifacts/` — HAR, `eval` JSONs, snapshots, screenshots. Local only, never committed.
+4. **`docs/AGENT_UI_RECON.md`** — the assessment written **from the captured evidence**: the gating mechanism, the three-state detection signals, the agentic wire protocol, and the #174 resolution. Indexed in `docs/INDEX.md` (docs-first-class rule).
+5. **Feature plan (separate, deferred)** — detect → disambiguate (recoverable toggle vs forced cohort) → fail-cleanly (new typed error + cohort fingerprint) or drive-the-agent-UI. Written only after the recon doc lands, decided on evidence.
 
 ---
 
