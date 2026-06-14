@@ -94,9 +94,39 @@ so the probe never recovers, the selector cascade exhausts, and the caller raise
 
 ## Open follow-ups
 
-- **Wire/HAR**: capture the agentic generation endpoint + payload/response (does
-  it differ from `batchGenerateImages`? does `referenceEntities` ride — the #174
-  question?). Needs a HAR around one live agentic image generation.
-- **httpOnly cohort cookie**: confirm/deny from HAR request `Cookie` headers.
-- **Model families**: `narwhal_display` (image) and `abra` (video) families
-  surfaced in `FLOW_MAIN_PROMPT_BOX_STATE` — cross-check against gflow's model map.
+## The Wire & API Endpoint (Resolved via Issue #183 Reporter)
+
+The network request logs from the agentic UI have been resolved. The new UX bypasses the direct media generation endpoints (such as `batchGenerateImages`) and routes all generation requests through Google's conversational flow creation agent.
+
+- **Endpoint**: `POST https://aisandbox-pa.googleapis.com/v1/flowCreationAgent:streamChat?alt=sse`
+- **Transport**: Server-Sent Events (SSE) stream, preceded by a CORS OPTIONS preflight.
+- **Request Payload Structure**:
+  ```json
+  {
+    "agentSessionId": "<uuid>",
+    "agentClientContext": {
+      "projectId": "projects/<projectUuid>",
+      "clientSessionId": ";<epochMillis>",
+      "recaptchaContext": {
+        "token": "<recaptcha_token>",
+        "applicationType": "RECAPTCHA_APPLICATION_TYPE_WEB"
+      },
+      "turnNumber": 2
+    },
+    "userMessage": {
+      "userPrompt": {
+        "parts": [
+          {
+            "text": "a red apple"
+          }
+        ]
+      }
+    }
+  }
+  ```
+
+### Why page-level CDP/Playwright instrumentation recorded 0 entries
+During local capture sessions, page-level request event listeners repeatedly recorded `0` API request entries. This occurred because the agentic UI delegates all `streamChat` network requests to a background **Web/Service Worker** target (`type: worker`). Worker-initiated requests completely bypass page-level network event registration in Playwright/CDP and require worker-level target attachments to capture.
+
+### Impact on issue #174 (referenceEntities)
+In the agentic UI, the prompt box is a conversational Slate.js editor. Because generation is driven by the conversation agent stream rather than direct REST inputs, staging library entities (e.g. characters) behaves differently. For the initial implementation phase, driving or injecting into `flowCreationAgent:streamChat` is out of scope. The recommended direction is **Runtime DOM detection + Fail Cleanly** with `FlowAgentUiError` (exit code 23) to prevent automation lockups while the cohort is active.
