@@ -2,8 +2,9 @@
 
 > How to **deterministically** drive and validate `gflow`'s **Agentic UI** image
 > path against live Google Flow. Companion to
-> [AGENT_UI_RECON.md](AGENT_UI_RECON.md) (the reverse-engineering) and
-> `docs/superpowers/plans/2026-06-14-agentic-ui-detection/` (the design).
+> [AGENT_UI_RECON.md](AGENT_UI_RECON.md) (the reverse-engineered wire/DOM spec)
+> and [LIVE_VERIFICATION_v0.20.0.md](LIVE_VERIFICATION_v0.20.0.md) (the shipped
+> evidence).
 
 ## The problem, and the way in
 
