@@ -7,6 +7,8 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+## [0.20.0] — 2026-06-15
+
 ### Added
 
 - **Forced Agentic UI detection** (exit code 25): dynamically detects if the account's Flow editor page has been placed in Google Flow's new Agentic UI A/B cohort. Raises `FlowAgentUiError` and captures a diagnostic viewport screenshot (`debug_forced_agent_ui.png`) to exit cleanly and prevent CLI hangs.
@@ -1556,7 +1558,8 @@ shell-script template that branches on these codes.
 
 First skeleton. Not functional end-to-end yet.
 
-[Unreleased]: https://github.com/ffroliva/gflow-cli/compare/v0.19.0...HEAD
+[Unreleased]: https://github.com/ffroliva/gflow-cli/compare/v0.20.0...HEAD
+[0.20.0]: https://github.com/ffroliva/gflow-cli/compare/v0.19.0...v0.20.0
 [0.19.0]: https://github.com/ffroliva/gflow-cli/compare/v0.18.0...v0.19.0
 [0.18.0]: https://github.com/ffroliva/gflow-cli/compare/v0.17.0...v0.18.0
 [0.17.0]: https://github.com/ffroliva/gflow-cli/compare/v0.16.0...v0.17.0
