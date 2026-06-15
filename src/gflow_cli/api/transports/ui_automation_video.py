@@ -39,6 +39,7 @@ from gflow_cli.api.video import (
 )
 from gflow_cli.errors import (
     AuthExpiredError,
+    FlowAgentUiError,
     ModelModeIncompatibilityError,
     TransportTimeoutError,
     UiSelectorDriftError,
@@ -146,6 +147,17 @@ COMPOSER_AGENT_TOGGLE_SELECTOR = (
 AGENT_CHAT_PANEL_CLOSE_SELECTOR = (
     "div:has(button:has(i.google-symbols:text-is('edit_square'))) "
     "button:has(i.google-symbols:text-is('close'))"
+)
+
+# Selectors unique to the new Agentic UI cohort. If crop settings are absent
+# and any of these are present, we are in the forced Agentic UI cohort.
+AGENTIC_UI_INDICATORS = (
+    "i.google-symbols:text-is('tune')",
+    "i.google-symbols:text-is('apps_spark_2')",
+    "i.google-symbols:text-is('article_spark')",
+    "i.google-symbols:text-is('edit_square')",
+    COMPOSER_AGENT_TOGGLE_SELECTOR,
+    AGENT_CHAT_PANEL_CLOSE_SELECTOR,
 )
 
 # Timing for the Agent-exit loop. The clicks are force=True (immediate), so the
@@ -716,7 +728,7 @@ class VideoGenerationMixin:
         return False
 
     @staticmethod
-    async def _exit_agent_mode(page: Page) -> bool:
+    async def _exit_agent_mode(page: Page, *, out_dir: Path | None = None) -> bool:
         """Ensure the composer is in media (Image/Video) mode, not Agent mode.
 
         Flow's "Agent" mode hides the media-generation panel — the ``crop_*``
@@ -743,7 +755,7 @@ class VideoGenerationMixin:
         ``False`` otherwise (already in media mode, nothing to act on, or the
         clicks did not re-mount the panel). Best-effort, locale-invariant
         (Material Symbols ligatures + structural anchors, no UI text, no ARIA),
-        and never raises — a DOM probe failure must not abort generation.
+        and raises FlowAgentUiError if a forced Agentic UI cohort is encountered.
         """
         try:
             # Common case: the media panel is already mounted → media mode,
@@ -798,6 +810,26 @@ class VideoGenerationMixin:
                 if acted:
                     log.info("ui_automation_video.exited_agent_mode")
                 return True
+
+            # If the media panel is not present after the exit attempts, check if
+            # any of the unique Agentic UI indicators are present.
+            for sel in AGENTIC_UI_INDICATORS:
+                if await page.locator(sel).count() > 0:
+                    log.warning(
+                        "ui_automation_video.forced_agentic_ui_detected",
+                        indicator=sel,
+                        note="Forced Agentic UI detected; classic media panel is not recoverable.",
+                    )
+                    shot_path = await _capture_debug_screenshot(
+                        page, out_dir, "debug_forced_agent_ui.png"
+                    )
+                    raise FlowAgentUiError(
+                        detail=(
+                            f"Agentic UI detected via indicator {sel!r}. "
+                            f"Viewport screenshot: {shot_path}"
+                        )
+                    )
+
             if acted:
                 # We clicked something but the panel never came back — don't claim
                 # a false "exited"; warn and let the caller's own trigger probe
@@ -807,6 +839,8 @@ class VideoGenerationMixin:
                     note="dismissed Agent affordance(s) but the media panel did not re-mount",
                 )
             return False
+        except FlowAgentUiError:
+            raise
         except Exception as e:  # noqa: BLE001 — best-effort, never fatal
             log.debug("ui_automation_video.agent_toggle_probe_failed", error=str(e)[:80])
             return False
@@ -818,7 +852,7 @@ class VideoGenerationMixin:
         # New Flow UI: if the composer is in Agent mode the generation panel is
         # absent — return to media mode first so the trigger probe can find the
         # crop_* dropdown.
-        await VideoGenerationMixin._exit_agent_mode(page)
+        await VideoGenerationMixin._exit_agent_mode(page, out_dir=out_dir)
         trigger = await VideoGenerationMixin._probe_selector_cascade(
             page,
             "mode_switch_trigger",
@@ -1679,6 +1713,15 @@ class VideoGenerationMixin:
                 issue_ref="#125",
             )
 
+        from gflow_cli.api.transports.drivers.classic import (  # noqa: PLC0415
+            ClassicFlowUiDriver,
+        )
+
+        # Bind the driver unconditionally to classic for Task 2.  Task 3 will
+        # replace this line with ``await get_ui_driver(page)`` once the agentic
+        # driver is production-ready.
+        ui_driver = ClassicFlowUiDriver(transport=self)
+
         page: Page = self._page  # type: ignore[assignment]  # guarded in generate_video
 
         await self._enter_editor(page, out_dir, project_id=project_id)
@@ -1686,7 +1729,7 @@ class VideoGenerationMixin:
         # Dismiss any Flow changelog / "What's new" overlay that may be on top
         # of the editor before we click into mode-switch / settings / submit (#26).
         await self._dismiss_blocking_overlays(page, out_dir)
-        await VideoGenerationMixin._switch_to_video_mode(page, out_dir=out_dir)
+        await ui_driver.switch_to_video_mode(page, out_dir=out_dir)
 
         # Capture project_id from the editor URL as soon as we have it —
         # needed for VideoStarted provenance and recorded before the generate request.
@@ -1699,23 +1742,7 @@ class VideoGenerationMixin:
         # would let Flow fall back to omni-flash and route to T2V (issue #125),
         # so _select_video_model raises here — before any frame attach or submit,
         # spending no credit.
-        if effective_model is not None:
-            await VideoGenerationMixin._select_video_model(
-                page,
-                effective_model,
-                out_dir=out_dir,
-                required=is_i2v_with_frames,
-            )
-        if request.mode is Mode.I2V:
-            await VideoGenerationMixin._switch_video_sub_mode(page, "frames", out_dir=out_dir)
-        elif request.mode is Mode.R2V:
-            await VideoGenerationMixin._switch_video_sub_mode(page, "references", out_dir=out_dir)
-        await VideoGenerationMixin._select_video_aspect(page, request.aspect)
-        await VideoGenerationMixin._set_output_count(page, request.count)
-        if request.duration is not None:
-            await VideoGenerationMixin._select_video_duration(page, request.duration)
-        await page.keyboard.press("Escape")  # close the settings panel
-        await page.wait_for_timeout(600)
+        await ui_driver.configure_video_settings(page, request, out_dir=out_dir)
 
         # Attach images AFTER the panel is closed — the slots / 'Add Media' button
         # live in the main editor. This is what makes Flow fire StartImage /
@@ -1764,7 +1791,7 @@ class VideoGenerationMixin:
         )
         generate_resp: dict[str, Any] = {}
         try:
-            await self._send_prompt(page, request.prompt, out_dir)
+            await ui_driver.send_prompt(page, request.prompt, out_dir=out_dir)
 
             generate_resp = await VideoGenerationMixin._await_generate_response(generate_captured)
 

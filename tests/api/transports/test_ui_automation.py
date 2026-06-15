@@ -2604,6 +2604,9 @@ def _exit_agent_page(initial: dict) -> tuple[MagicMock, dict]:
             return _loc("pill", _pill_click)
         if sel == AGENT_CHAT_PANEL_CLOSE_SELECTOR:
             return _loc("chat", _chat_click)
+        for k in state:
+            if k in sel:
+                return _loc(k)
         return _loc("crop")  # any MODE_SWITCH_TRIGGER_SELECTORS probe
 
     page = AsyncMock()
@@ -2726,15 +2729,32 @@ class TestExitAgentMode:
     @pytest.mark.asyncio
     async def test_pill_clicked_at_most_once_when_panel_never_remounts(self) -> None:
         """State B but the click does NOT re-mount the panel → click the pill
-        exactly ONCE (never flip-flop the binary toggle) and return False."""
+        exactly ONCE (never flip-flop the binary toggle) and raise FlowAgentUiError."""
         page, state = _exit_agent_page(
             {"crop": 0, "pill": 1, "chat": 0, "crop_after_pill": 0},
         )
 
-        switched = await UiAutomationTransport._exit_agent_mode(page)
+        from gflow_cli.errors import FlowAgentUiError
 
-        assert switched is False
+        with pytest.raises(FlowAgentUiError):
+            await UiAutomationTransport._exit_agent_mode(page)
+
         assert state["pill_clicks"] == 1  # NOT 2/3 — no flip-flop
+
+    @pytest.mark.asyncio
+    async def test_raises_flow_agent_ui_error_on_forced_agent_mode(self) -> None:
+        """If crop is absent but forced agentic UI indicators are present (e.g. tune icon),
+        raise FlowAgentUiError immediately after exit loop."""
+        page, state = _exit_agent_page(
+            {"crop": 0, "pill": 0, "chat": 0, "tune": 1},
+        )
+
+        from gflow_cli.errors import FlowAgentUiError
+
+        with pytest.raises(FlowAgentUiError) as exc_info:
+            await UiAutomationTransport._exit_agent_mode(page)
+
+        assert "Agentic UI detected" in str(exc_info.value)
 
     @pytest.mark.asyncio
     async def test_noop_when_no_affordance_present(self) -> None:
@@ -2843,7 +2863,7 @@ class TestModeSwitchExitsAgentFirst:
         page.keyboard = AsyncMock()
         order: list[str] = []
 
-        async def _exit(_p: object) -> bool:
+        async def _exit(_p: object, **_kw: object) -> bool:
             order.append("exit_agent")
             return True
 
@@ -2869,7 +2889,7 @@ class TestModeSwitchExitsAgentFirst:
         page = AsyncMock()
         order: list[str] = []
 
-        async def _exit(_p: object) -> bool:
+        async def _exit(_p: object, **_kw: object) -> bool:
             order.append("exit_agent")
             return True
 
