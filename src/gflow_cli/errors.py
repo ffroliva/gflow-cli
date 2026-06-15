@@ -19,6 +19,7 @@ __all__ = [
     "DataIntegrityError",
     "DataMigrationError",
     "DataStoreError",
+    "FlowAgentUiError",
     "FlowApiError",
     "FrameExtractionError",
     "GFlowError",
@@ -429,6 +430,26 @@ class UiSelectorDriftError(GFlowError):
     )
 
 
+class FlowAgentUiError(GFlowError):
+    """Raised when Google Flow's new Agentic UI cohort is detected at runtime.
+
+    This cohort replaces the classic generation controls with a chat interface
+    that is not supported by gflow-cli. Raising this error allows the CLI to
+    fail cleanly with exit code 25 instead of timing out or raising drift errors.
+    """
+
+    problem_type = "https://gflow-cli.dev/errors/flow-agent-ui"
+    title = "Google Flow Agentic UI detected"
+    _default_remediation = (
+        "Your account has been placed in Google Flow's new 'Agentic UI' A/B cohort, "
+        "which removes the classic media generation controls. gflow-cli does not "
+        "currently support driving this interface. Try using a different Chrome profile, "
+        "or wait for a future update. If you need to share a bug report, review the "
+        "diagnostic screenshot first — the viewport may show personal info (do NOT "
+        "include tokens or credentials)."
+    )
+
+
 class SecurityError(GFlowError):
     """Raised when a security boundary is violated (e.g. profile_dir outside HOME)."""
 
@@ -703,6 +724,7 @@ EXIT_CODE_MAP: dict[type[GFlowError], int] = {
     # BrowserEngineUnavailableError (Patchright engine opt-in): BEFORE
     # ConfigurationError (its parent) so the isinstance walk lands on 24, not 11.
     BrowserEngineUnavailableError: 24,
+    FlowAgentUiError: 25,
     ConfigurationError: 11,
     AuthExpiredError: 3,
     RateLimitError: 4,
