@@ -16,6 +16,7 @@ from __future__ import annotations
 import asyncio
 import hashlib
 import json
+import os
 import random
 import re
 import time
@@ -29,6 +30,7 @@ from gflow_cli.api.dto import BatchSubmissionResult, GeneratedImage
 from gflow_cli.api.image import Aspect, GenerateImageRequest, Model
 from gflow_cli.api.transports._common import extract_project_id
 from gflow_cli.api.transports.ui_automation_video import (
+    COMPOSER_AGENT_TOGGLE_SELECTOR,
     ENTITY_ATTACH_DRIFT_HINT,
     MODE_SWITCH_TRIGGER_SELECTORS,
     VideoGenerationMixin,
@@ -111,6 +113,9 @@ _ALLOWED_DOWNLOAD_HOST_SUFFIXES: tuple[str, ...] = (
     "googleusercontent.com",
     "googleapis.com",
     "google.com",
+    # Agentic cohort: the tRPC redirect URL (media.getMediaUrlRedirect) is
+    # same-origin with labs.google — session cookies authorise the download.
+    "labs.google",
 )
 
 
@@ -188,6 +193,18 @@ SUBMIT_BUTTON_SELECTORS = (
     "button:has(i:text('arrow_forward'))",
     "button:has-text('arrow_forward')",
 )
+
+# Agent-mode activation. Clicking the in-composer "Agent" toggle
+# (:data:`COMPOSER_AGENT_TOGGLE_SELECTOR`) flips the classic composer into the
+# agentic chat layout — the ``crop_*`` media trigger disappears and the ``tune``
+# settings gear + ``expand_content`` open button appear. Captured live
+# 2026-06-14 via ``scripts/e2e/capture_agent_toggle.py`` (cropPresent true→false,
+# tune false→true). Opt-in via ``GFLOW_CLI_FORCE_AGENT_UI`` to deterministically
+# drive the agentic path regardless of the server-assigned A/B cohort (which has
+# no client-readable flag and cannot otherwise be forced).
+AGENT_FORCE_ENV_VAR = "GFLOW_CLI_FORCE_AGENT_UI"
+AGENT_TUNE_INDICATOR_SELECTOR = "i.google-symbols:text-is('tune')"
+AGENT_EXPAND_BUTTON_SELECTOR = "button:has(i.google-symbols:text-is('expand_content'))"
 
 # Self-contained, locale-independent triptych instruction for body generation.
 # Live-verified 2026-06-02: produces a consistent front/side/back body image in ONE
@@ -435,9 +452,14 @@ _CLI_FROM_ASPECT: dict[Aspect, str] = {
 }
 
 
-def _aspect_cli_from_enum(aspect: Aspect) -> str | None:
+def aspect_cli_from_enum(aspect: Aspect) -> str | None:
     """Map the domain Aspect enum to the CLI string the settings panel expects."""
     return _CLI_FROM_ASPECT.get(aspect)
+
+
+# Back-compat alias — kept so any remaining internal callers and the existing
+# test imports work without a rename sweep.
+_aspect_cli_from_enum = aspect_cli_from_enum
 
 
 def _prompt_hash_stable(text: str) -> str:
@@ -988,6 +1010,44 @@ class UiAutomationTransport(VideoGenerationMixin):
         )
 
     @staticmethod
+    async def _force_agent_mode(page: Page) -> bool:
+        """Force the agentic composer by clicking the in-composer Agent toggle.
+
+        Opt-in helper (gated by :data:`AGENT_FORCE_ENV_VAR`) used to drive the
+        agentic path deterministically — the server-assigned A/B cohort has no
+        client-readable flag, but the in-composer "Agent" toggle switches the
+        classic composer into the same agentic layout (``crop_*`` → ``tune``).
+
+        Idempotent: a no-op when the composer is already agentic (the ``tune``
+        gear is present). Returns ``True`` if the composer is agentic on exit.
+        """
+        if await page.locator(AGENT_TUNE_INDICATOR_SELECTOR).count() > 0:
+            log.info("ui_automation.agent_mode_already_active")
+            return True
+        # The composer renders a beat after navigation, so wait for the Agent
+        # toggle before clicking — an instant probe races the render and misses
+        # it (same failure mode as the cohort-detection race).
+        toggle = page.locator(COMPOSER_AGENT_TOGGLE_SELECTOR).first
+        try:
+            await toggle.wait_for(state="visible", timeout=8000)
+        except Exception:
+            log.warning("ui_automation.agent_toggle_not_found")
+            return False
+        await toggle.click(force=True)
+        await page.wait_for_timeout(1200)
+        # Best-effort: open the agent side panel via the expand button.
+        try:
+            expand = page.locator(AGENT_EXPAND_BUTTON_SELECTOR).first
+            if await expand.count() > 0:
+                await expand.click(force=True)
+                await page.wait_for_timeout(800)
+        except Exception as e:
+            log.debug("ui_automation.agent_expand_failed", error=str(e)[:80])
+        activated = await page.locator(AGENT_TUNE_INDICATOR_SELECTOR).count() > 0
+        log.info("ui_automation.agent_mode_forced", activated=activated)
+        return activated
+
+    @staticmethod
     async def _switch_to_image_mode(page: Page, *, out_dir: Path | None = None) -> None:
         """Open the 2-step mode dropdown and switch to Image mode.
 
@@ -1003,7 +1063,7 @@ class UiAutomationTransport(VideoGenerationMixin):
         # New Flow UI: if the composer is in Agent mode the generation panel is
         # absent — switch back to media mode first so the trigger probe below
         # can find the crop_* dropdown.
-        await VideoGenerationMixin._exit_agent_mode(page)
+        await VideoGenerationMixin._exit_agent_mode(page, out_dir=out_dir)
         trigger = await VideoGenerationMixin._probe_selector_cascade(
             page,
             "mode_switch_trigger",
@@ -1970,6 +2030,10 @@ class UiAutomationTransport(VideoGenerationMixin):
         project_id: str | None = None,
     ) -> list[GeneratedImage]:
         """Serialized body of generate_images — called under self._generate_lock."""
+        from gflow_cli.api.transports.drivers.factory import (  # noqa: PLC0415
+            get_ui_driver,
+        )
+
         page: Page = self._page  # type: ignore[assignment]  # guard in caller
         out_dir = self._out_dir
 
@@ -1977,22 +2041,35 @@ class UiAutomationTransport(VideoGenerationMixin):
         # Dismiss any Flow changelog / "What's new" overlay that may be on top
         # of the editor before we click into settings / submit (#26).
         await self._dismiss_blocking_overlays(page, out_dir)
+
+        # Opt-in (GFLOW_CLI_FORCE_AGENT_UI): force the agentic composer so the
+        # agentic path can be exercised deterministically (the A/B cohort can't
+        # be forced server-side). The probe below then binds the agentic driver.
+        if os.getenv(AGENT_FORCE_ENV_VAR):
+            await self._force_agent_mode(page)
+
+        # Probe the DOM for the active UI cohort AFTER _enter_editor so the
+        # project page is fully rendered.  The cohort flaps per page load so
+        # we re-probe every generation — never cache across calls.
+        # Classic driver requires a transport reference for send_prompt.
+        ui_driver = await get_ui_driver(page)
+        if ui_driver.name == "classic":
+            ui_driver._transport = self  # type: ignore[union-attr]
+
         # Select Image mode explicitly. If the account was last in Video mode,
         # an unguarded submission goes to the video endpoint and the image
         # listener never observes ``batchGenerateImages``.
-        await self._switch_to_image_mode(page, out_dir=out_dir)
+        await ui_driver.switch_to_image_mode(page, out_dir=out_dir)
 
         # Resolve the project_id from the URL now that we're in the editor.
         nav_project_id = _extract_project_id(page.url)
-        aspect_cli = _aspect_cli_from_enum(request.aspect)
 
         # Configure generation settings (aspect ratio + count) BEFORE attaching
         # the response listener so settings clicks don't interfere with capture.
-        await self._configure_generation_settings(
+        await ui_driver.configure_image_settings(
             page,
-            aspect_cli,
-            request.count,
-            model=request.model,
+            request,
+            out_dir=out_dir,
         )
 
         # I2I: bind local reference images through the editor's media dialog —
@@ -2014,6 +2091,13 @@ class UiAutomationTransport(VideoGenerationMixin):
                 out_dir=out_dir,
             )
 
+        # Agentic path: DOM scraping (page-level network capture is dead in this
+        # cohort — requests are Web-Worker-delegated, so 0 entries are captured).
+        if ui_driver.name == "agentic":
+            await ui_driver.send_prompt(page, request.prompt, out_dir=out_dir)
+            return await ui_driver.await_images(page, request.count, out_dir=out_dir)
+
+        # Classic path: network-capture via response listener (unchanged).
         # Attach the response listener SYNCHRONOUSLY before any prompt
         # action. asyncio.create_task is unsafe here: it defers the listener
         # registration until the new task gets event-loop scheduling, which
@@ -2033,7 +2117,7 @@ class UiAutomationTransport(VideoGenerationMixin):
         submit_time = time.monotonic()
         responses: list[dict[str, Any]] = []
         try:
-            await self._send_prompt(page, request.prompt, out_dir)
+            await ui_driver.send_prompt(page, request.prompt, out_dir=out_dir)
             responses = await self._await_captured(
                 captured,
                 expected_count=request.count,
@@ -2151,6 +2235,7 @@ class UiAutomationTransport(VideoGenerationMixin):
         req: GenerateImageRequest,
         project_id: str,
         out_dir: Path | None,
+        ui_driver: Any,
     ) -> tuple[BatchSubmissionResult, GFlowError | None]:
         """Single prompt's lifecycle inside a batch: configure → attach
         listener → submit → await → detach → parse.
@@ -2161,7 +2246,6 @@ class UiAutomationTransport(VideoGenerationMixin):
         the caller should propagate via :class:`BatchPartialError`.  Detach
         is guaranteed exactly once on every code path.
         """
-        aspect_cli = _aspect_cli_from_enum(req.aspect)
         prompt_hash = _prompt_hash_stable(req.prompt)
 
         def _fail(exc: BaseException) -> tuple[BatchSubmissionResult, GFlowError]:
@@ -2184,17 +2268,35 @@ class UiAutomationTransport(VideoGenerationMixin):
 
         # Step 1 — configure settings (aspect + count) for this prompt.
         try:
-            await self._configure_generation_settings(
+            await ui_driver.configure_image_settings(
                 page,
-                aspect_cli,
-                req.count,
-                model=req.model,
+                req,
                 out_dir=out_dir,
                 prompt_idx=idx,
             )
         except Exception as exc:
             return _fail(exc)
 
+        # Agentic path: DOM scraping — no page-level listener (Web-Worker-delegated).
+        if ui_driver.name == "agentic":
+            try:
+                await ui_driver.send_prompt(page, req.prompt, out_dir=out_dir)
+                images = await ui_driver.await_images(page, req.count, out_dir=out_dir)
+            except Exception as exc:
+                return _fail(exc)
+            return (
+                BatchSubmissionResult(
+                    status="ok",
+                    project_id=project_id,
+                    prompt_idx=idx,
+                    prompt_hash=prompt_hash,
+                    images=tuple(images),
+                    error=None,
+                ),
+                None,
+            )
+
+        # Classic path: network-capture via response listener (unchanged).
         # Step 2 — attach a fresh listener JUST for this prompt.
         # Attaching after configure ensures settings-panel clicks never land
         # in the listener window.  Detach happens immediately after
@@ -2208,7 +2310,7 @@ class UiAutomationTransport(VideoGenerationMixin):
 
         # Step 3 — submit the prompt.
         try:
-            await self._send_prompt(page, req.prompt, out_dir)
+            await ui_driver.send_prompt(page, req.prompt, out_dir=out_dir)
         except Exception as exc:
             detach()
             return _fail(exc)
@@ -2292,6 +2394,10 @@ class UiAutomationTransport(VideoGenerationMixin):
         The editor stays mounted for the full batch (same-project invariant
         intact) — only the submit/await cycle is serial.
         """
+        from gflow_cli.api.transports.drivers.factory import (  # noqa: PLC0415
+            get_ui_driver,
+        )
+
         page: Any = self._page  # type: ignore[assignment]
         out_dir = self._out_dir
 
@@ -2320,8 +2426,16 @@ class UiAutomationTransport(VideoGenerationMixin):
             )
             raise
 
+        # Probe the DOM for the active UI cohort AFTER _enter_editor.  The
+        # cohort flaps per page load; bind once per batch (the editor stays
+        # mounted so the cohort is stable for this batch's lifetime).
+        # Classic driver requires a transport reference for send_prompt.
+        ui_driver = await get_ui_driver(page)
+        if ui_driver.name == "classic":
+            ui_driver._transport = self  # type: ignore[union-attr]
+
         try:
-            await self._switch_to_image_mode(page, out_dir=out_dir)
+            await ui_driver.switch_to_image_mode(page, out_dir=out_dir)
         except Exception:
             log.warning(
                 "ui_automation.orphaned_project_warning",
@@ -2346,6 +2460,7 @@ class UiAutomationTransport(VideoGenerationMixin):
                 req=req,
                 project_id=project_id,
                 out_dir=out_dir,
+                ui_driver=ui_driver,
             )
             results.append(result)
 
