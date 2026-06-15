@@ -162,11 +162,26 @@ def _isolate_profile_home(tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> No
 
 @given("the page DOM shows forced Agentic UI")
 def _mock_forced_agent_ui(monkeypatch: pytest.MonkeyPatch) -> None:
-    """Mock generate_video to raise FlowAgentUiError simulating forced Agentic UI."""
+    """Force ``generate_video`` to raise ``FlowAgentUiError`` AND no-op the
+    client's async context manager.
+
+    Without the CM no-op the real ``__aenter__`` launches Playwright, which fails
+    in clean CI (no browser/profile) with a generic exit 1 *before* the mock
+    fires — masking the exit-25 assertion. Mocking ``__aenter__``/``__aexit__``
+    keeps the test environment-independent.
+    """
 
     async def _raise(*args: Any, **kwargs: Any) -> None:
         raise FlowAgentUiError(detail="Agentic UI detected.")
 
+    async def _aenter(self: Any) -> Any:
+        return self
+
+    async def _aexit(self: Any, *exc: object) -> bool:
+        return False
+
+    monkeypatch.setattr("gflow_cli.api.client.FlowApiClient.__aenter__", _aenter)
+    monkeypatch.setattr("gflow_cli.api.client.FlowApiClient.__aexit__", _aexit)
     monkeypatch.setattr("gflow_cli.api.client.FlowApiClient.generate_video", _raise)
 
 
