@@ -15,6 +15,7 @@ from gflow_cli.errors import (
     ChainPartialError,
     ConfigurationError,
     ContentPolicyError,
+    FlowAgentUiError,
     FlowApiError,
     FrameExtractionError,
     GFlowError,
@@ -515,3 +516,22 @@ def test_ui_selector_drift_error_not_a_subclass_of_flow_api_error() -> None:
     err = UiSelectorDriftError(detail="probe=mode_switch_trigger: selector cascade failed.")
     assert isinstance(err, GFlowError)
     assert not isinstance(err, FlowApiError)
+
+
+# ---------- FlowAgentUiError (Google Flow Agentic UI cohort) ----------
+
+
+def test_flow_agent_ui_error_exit_code_25() -> None:
+    """FlowAgentUiError -> exit 25."""
+    err = FlowAgentUiError(detail="Agentic UI detected.")
+    assert isinstance(err, GFlowError)
+    assert EXIT_CODE_MAP[FlowAgentUiError] == 25
+    assert _exit_code_for(err) == 25
+
+
+def test_flow_agent_ui_error_problem_details() -> None:
+    err = FlowAgentUiError(detail="Agentic UI detected.")
+    pd = err.to_problem_details()
+    assert pd["type"] == "https://gflow-cli.dev/errors/flow-agent-ui"
+    assert pd["title"] == "Google Flow Agentic UI detected"
+    assert "remediation_hint" in pd
