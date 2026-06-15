@@ -18,6 +18,7 @@ from unittest.mock import AsyncMock, MagicMock, patch
 
 import pytest
 
+from gflow_cli.api.transports.drivers.classic import ClassicFlowUiDriver
 from gflow_cli.api.transports.ui_automation import (
     UiAutomationTransport,
 )
@@ -215,7 +216,7 @@ async def test_generate_images_batch_happy_path(monkeypatch: pytest.MonkeyPatch)
     """Three prompts, all succeed. Verify:
     - _enter_editor called once
     - _dismiss_blocking_overlays called once
-    - _configure_generation_settings + _attach_batch_response_listener +
+    - ClassicFlowUiDriver.configure_image_settings + _attach_batch_response_listener +
       _send_prompt called 3x each, in order
     - jitter sleep called twice (between prompts), not before the first or after the last
     - results returned in submission order
@@ -237,7 +238,6 @@ async def test_generate_images_batch_happy_path(monkeypatch: pytest.MonkeyPatch)
 
     transport._enter_editor = AsyncMock()  # type: ignore[attr-defined]
     transport._dismiss_blocking_overlays = AsyncMock()  # type: ignore[attr-defined]
-    transport._configure_generation_settings = AsyncMock()  # type: ignore[attr-defined]
     transport._send_prompt = AsyncMock()  # type: ignore[attr-defined]
 
     # event_log records attach/detach events in call order so we can verify
@@ -300,14 +300,20 @@ async def test_generate_images_batch_happy_path(monkeypatch: pytest.MonkeyPatch)
         GenerateImageRequest(prompt="p2", aspect=Aspect.PORTRAIT, model=Model.NARWHAL, count=1),
     ]
 
-    results = await transport.generate_images_batch(
-        prompts=prompts, jitter_range=(1.0, 2.0), continue_on_error=False
-    )
+    # Patch ClassicFlowUiDriver.configure_image_settings at class level — the
+    # batch locked path instantiates a fresh driver per batch, so class-level
+    # patching is the only way to observe the delegation without touching the
+    # internal driver instance.
+    configure_mock = AsyncMock()
+    with patch.object(ClassicFlowUiDriver, "configure_image_settings", configure_mock):
+        results = await transport.generate_images_batch(
+            prompts=prompts, jitter_range=(1.0, 2.0), continue_on_error=False
+        )
 
     # Bug-fix invariants:
     assert transport._enter_editor.call_count == 1
     assert transport._dismiss_blocking_overlays.call_count == 1
-    assert transport._configure_generation_settings.call_count == 3
+    assert configure_mock.call_count == 3
     assert transport._send_prompt.call_count == 3
     assert listener_calls[0] == 3
     assert sleep_calls == [1.5, 1.5]  # N-1 sleeps, both deterministic
@@ -575,10 +581,11 @@ async def test_settings_fail_after_attach_calls_detach_before_continue(
 ) -> None:
     """Council Finding T2 (detach-before-continue).
 
-    _configure_generation_settings raises on idx=1 AFTER
-    _attach_batch_response_listener for that prompt has been called.
-    With continue_on_error=True the loop must call the idx=1 listener's
-    detach_fn BEFORE continuing to prompt 2.
+    ClassicFlowUiDriver.configure_image_settings raises on idx=1 BEFORE
+    _attach_batch_response_listener for that prompt is called (configure
+    precedes attach in _run_one_prompt_in_batch).
+    With continue_on_error=True the loop must continue to prompt 2 (ok).
+    Listeners for idx=0 and idx=2 must be detached (cleanup invariant).
     """
     import gflow_cli.api.transports.ui_automation as uia_mod
     from gflow_cli.api.image import Aspect, GenerateImageRequest, Model
@@ -591,21 +598,22 @@ async def test_settings_fail_after_attach_calls_detach_before_continue(
     transport._generate_lock = __import__("asyncio").Lock()  # type: ignore[attr-defined]
     transport._enter_editor = AsyncMock()  # type: ignore[attr-defined]
     transport._dismiss_blocking_overlays = AsyncMock()  # type: ignore[attr-defined]
+    transport._send_prompt = AsyncMock()  # type: ignore[attr-defined]
 
     cfg_call = [0]
 
-    async def cfg_raises_on_idx1(page, aspect_cli, count, **kwargs):  # type: ignore[no-untyped-def]
-        # Matches real signature: (page, aspect_cli, count, *, out_dir, prompt_idx)
+    async def cfg_raises_on_idx1(  # type: ignore[no-untyped-def]
+        _self, _page, _request=None, **_kwargs
+    ):
+        # Called as ClassicFlowUiDriver.configure_image_settings(self, page, req, ...)
         call = cfg_call[0]
         cfg_call[0] += 1
         if call == 1:
             raise RuntimeError("settings fail on idx=1")
 
-    transport._configure_generation_settings = cfg_raises_on_idx1  # type: ignore[attr-defined]
-    transport._send_prompt = AsyncMock()  # type: ignore[attr-defined]
-
-    # The transport calls configure BEFORE attach, so idx=1's listener is never
-    # attached when configure raises. Only idx=0 and idx=2 get real detach mocks.
+    # The driver calls configure_image_settings BEFORE _attach_batch_response_listener,
+    # so idx=1's listener is never attached when configure raises.
+    # Only idx=0 and idx=2 get real detach mocks.
     detach_0 = MagicMock()
     detach_2 = MagicMock()
     captures: list[list] = [
@@ -643,9 +651,10 @@ async def test_settings_fail_after_attach_calls_detach_before_continue(
         GenerateImageRequest(prompt="p2", aspect=Aspect.PORTRAIT, model=Model.NARWHAL, count=1),
     ]
 
-    results = await transport.generate_images_batch(
-        prompts=prompts, jitter_range=(0.0, 0.0), continue_on_error=True
-    )
+    with patch.object(ClassicFlowUiDriver, "configure_image_settings", cfg_raises_on_idx1):
+        results = await transport.generate_images_batch(
+            prompts=prompts, jitter_range=(0.0, 0.0), continue_on_error=True
+        )
 
     assert len(results) == 3
     assert results[0].status == "ok"

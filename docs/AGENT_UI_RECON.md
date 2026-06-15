@@ -92,7 +92,67 @@ so the probe never recovers, the selector cascade exhausts, and the caller raise
      via the Agent-settings (`tune`) panel, handle the confirm-before-generating
      gate. Larger; intermittently needed because the cohort flaps.
 
+## DOM scraping validation (2026-06-14, live capture)
+
+> Captured via `scripts/capture-media-scrape.ps1` (CDP-attached real Chrome,
+> profile `default`, agentic cohort confirmed: `crop=false, agentPill=true,
+> chatPanel=true`). One image generation, before/after media-DOM snapshot.
+> Artifact: `media-scrape-agentic-20260614-202739.json`.
+
+This resolves the open question blocking `AgenticFlowUiDriver.await_images`: **how do
+generated assets surface in the agentic DOM, and is count-delta scraping viable?**
+
+- **Assets render as plain remote `<img>` nodes.** After the generation: `blob=0`,
+  `data=0`, `canvas=0`, `background-image=0`. The full-res asset is a normal
+  `<img src="https://…">`. Count-delta DOM scraping **is viable** — network
+  interception is not (see HAR note below).
+- **The src is a same-origin tRPC redirect carrying a stable media id:**
+  ```
+  https://labs.google/fx/api/trpc/media.getMediaUrlRedirect?name=<uuid>[&mediaUrlType=MEDIA_URL_TYPE_THUMBNAIL]
+  ```
+  It 302-redirects to the CDN blob; same-origin (`labs.google`) means the session
+  cookies authorize the download. The `name=<uuid>` is the **stable backend media id**
+  — scraped assets correlate to media identity (usable for the batch ledger / dedup).
+- **Dedupe by `name=<uuid>`, NOT by `<img>` node count.** One generated asset surfaces
+  as **multiple** `<img>` nodes (canvas full-res + filmstrip thumbnail + chat preview,
+  each in bare and `&mediaUrlType=MEDIA_URL_TYPE_THUMBNAIL` variants). The single
+  capture produced **9 new `<img>` nodes for only 3 distinct assets** (~3× inflation).
+  `await_images` must extract the `name` query param and **count distinct UUIDs** — a
+  raw `initial_count + expected_count` node check would massively over-count.
+- **Page-level HAR captured 0 entries.** Confirms the Web-Worker delegation: the
+  `streamChat` + media requests bypass page-level network capture entirely. **DOM
+  scraping is the only viable capture path** in the agentic cohort.
+- **`flag` is NOT a content-policy signal.** The warn-symbol probe matched the `flag`
+  ligature 11× on a *successful* generation — `flag`/`thumb_up`/`thumb_down` are the
+  normal per-message chat affordances. Fail-fast detection must key on `warning` /
+  `error` / `block` or specific dialog/stream text, **never `flag`**. *(A deliberate
+  content-policy-refusal capture is still outstanding — no positive block sample yet.)*
+
+## Settings via prompt, not the `tune` popover (agentic acts MCP-like)
+
+The agentic composer behaves like a conversational agent: generation parameters that the
+classic UI exposes as discrete controls — **output count** (1 / 4 images), **video
+duration** (4/6/8/10 s), and likely **aspect ratio** and **model** — can be expressed in
+**natural language inside the prompt** (e.g. `Generate 4 images of <prompt> in 16:9`), and
+the agent resolves the selection itself.
+
+Implications for `AgenticFlowUiDriver`:
+- **`configure_settings` becomes optional.** Encoding settings as a directive prompt
+  avoids driving the fragile `tune` → Radix-popover dropdowns — the most drift-prone
+  surface on a volatile A/B UI. Prefer prompt-encoding; treat popover automation as a
+  fallback only if prompt-steering proves unreliable.
+- **The agent *interprets* the request → verify, don't trust.** It may produce a
+  different count or ignore a duration. This is precisely why scrape-and-dedup-by-UUID
+  is load-bearing: request N → poll until N distinct new media UUIDs → if the produced
+  count differs, raise a typed mismatch rather than silently returning the wrong set.
+- **Compose carefully** so settings directives aren't read as subject text (e.g. a
+  `Generate {n} image(s){aspect}: {prompt}` template).
+
 ## Open follow-ups
+
+- **Content-policy block sample (outstanding):** capture a deliberate-refusal generation
+  in the agentic cohort to learn how a block surfaces (chat message vs. dialog vs.
+  symbol) — needed to design `await_images` fail-fast. The `flag` symbol is ruled out.
 
 ## The Wire & API Endpoint (Resolved via Issue #183 Reporter)
 

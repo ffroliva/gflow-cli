@@ -7,6 +7,13 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+### Added
+
+- **Forced Agentic UI detection** (exit code 25): dynamically detects if the account's Flow editor page has been placed in Google Flow's new Agentic UI A/B cohort. Raises `FlowAgentUiError` and captures a diagnostic viewport screenshot (`debug_forced_agent_ui.png`) to exit cleanly and prevent CLI hangs.
+- **Pluggable Flow UI driver strategy** (`FlowUiDriver`): the UI-automation transport now probes the editor DOM **per generation** (the cohort flaps per page load) and binds a `ClassicFlowUiDriver` or `AgenticFlowUiDriver`, so the two cohorts' selectors never share code. Classic generation is unchanged.
+- **Agentic-cohort image generation** (validated live): when the editor is served the Agentic UI, `gflow image` drives it by encoding settings (count / aspect) into the conversational prompt directive and scraping generated assets directly from the DOM — **deduplicated by media UUID** — because the Agentic UI routes generation through a background Web Worker that defeats page-level network capture. Content-policy blocks (detected in alert/dialog regions) fail fast with `ContentPolicyError` (exit 5). Agentic **video** still raises `FlowAgentUiError` (exit 25) pending a validated scraping path.
+- **`GFLOW_CLI_FORCE_AGENT_UI`** (testing/diagnostic opt-in): forces the agentic composer by clicking the in-input "Agent" toggle after entering the editor, so the agentic path can be exercised deterministically regardless of the server-assigned A/B cohort (which has no client-readable flag). Unset by default — the cohort is auto-detected per generation. See `docs/AGENT_UI_E2E.md`.
+
 ## [0.19.0] — 2026-06-12
 
 ### Added

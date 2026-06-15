@@ -10,11 +10,12 @@ otherwise an account whose last-used mode was Video silently routes
 from __future__ import annotations
 
 from pathlib import Path
-from unittest.mock import AsyncMock, MagicMock
+from unittest.mock import AsyncMock, MagicMock, patch
 
 import pytest
 
 from gflow_cli.api.transports import ui_automation as mod
+from gflow_cli.api.transports.drivers.classic import ClassicFlowUiDriver
 from gflow_cli.api.transports.ui_automation import UiAutomationTransport
 from gflow_cli.api.transports.ui_automation_video import (
     MODE_SWITCH_TRIGGER_SELECTORS,
@@ -86,11 +87,15 @@ class TestSwitchToImageMode:
 
 
 class TestModeSwitchCallSite:
-    """Regression guard: assert ``_switch_to_image_mode`` is actually
+    """Regression guard: assert ``switch_to_image_mode`` is actually
     invoked by ``generate_images`` and ``generate_images_batch`` before
     any prompt is submitted. This is the assertion that would have caught
     the 2026-05-23 mode-confusion bug (image prompts silently routed to
     the video endpoint) had it existed earlier.
+
+    With the Strategy pattern, the transport creates a ``ClassicFlowUiDriver``
+    and delegates to it — the recorder patches ``ClassicFlowUiDriver`` methods
+    at the class level so the delegation path is still observable.
     """
 
     @staticmethod
@@ -116,8 +121,6 @@ class TestModeSwitchCallSite:
 
         t._enter_editor = _recorder("enter_editor")  # type: ignore[attr-defined]
         t._dismiss_blocking_overlays = _recorder("dismiss_overlays")  # type: ignore[attr-defined]
-        t._switch_to_image_mode = _recorder("switch_to_image_mode")  # type: ignore[attr-defined]
-        t._configure_generation_settings = _recorder("configure")  # type: ignore[attr-defined]
 
         # _attach_batch_response_listener is sync; return a (list, detach) pair.
         def _attach(*_a: object, **_kw: object) -> tuple[list[object], object]:
@@ -135,7 +138,7 @@ class TestModeSwitchCallSite:
 
         def _await(*_a: object, **_kw: object) -> None:
             order.append("await_captured")
-            raise _StopHereError("stop after _send_prompt — call-order recorded")
+            raise _StopHereError("stop after send_prompt — call-order recorded")
 
         t._await_captured = AsyncMock(side_effect=_await)  # type: ignore[attr-defined]
         t._stop_sentinel = _StopHereError  # type: ignore[attr-defined]
@@ -149,21 +152,39 @@ class TestModeSwitchCallSite:
         req = GenerateImageRequest(
             prompt="a calm forest at dawn", model=Model.NARWHAL, aspect=Aspect.PORTRAIT
         )
-        # The recorder raises a sentinel from _await_captured to halt the call
-        # chain after _send_prompt — we only care about the order up to and
-        # including the prompt submit.
-        with pytest.raises(t._stop_sentinel):  # type: ignore[attr-defined]
+
+        # Patch the ClassicFlowUiDriver methods so the delegation path is
+        # observable — the transport instantiates the driver per generation,
+        # so class-level patching intercepts all driver calls.
+        def _switch(*_a: object, **_kw: object) -> None:
+            order.append("switch_to_image_mode")
+
+        def _configure(*_a: object, **_kw: object) -> None:
+            order.append("configure")
+
+        def _send(*_a: object, **_kw: object) -> None:
+            order.append("send_prompt")
+
+        switch_mock = AsyncMock(side_effect=_switch)
+        configure_mock = AsyncMock(side_effect=_configure)
+        send_mock = AsyncMock(side_effect=_send)
+        with (
+            patch.object(ClassicFlowUiDriver, "switch_to_image_mode", new=switch_mock),
+            patch.object(ClassicFlowUiDriver, "configure_image_settings", new=configure_mock),
+            patch.object(ClassicFlowUiDriver, "send_prompt", new=send_mock),
+            pytest.raises(t._stop_sentinel),  # type: ignore[attr-defined]
+        ):
             await t.generate_images(project_id=None, request=req)
 
-        assert "switch_to_image_mode" in order, f"_switch_to_image_mode never called; order={order}"
+        assert "switch_to_image_mode" in order, f"switch_to_image_mode never called; order={order}"
         switch_idx = order.index("switch_to_image_mode")
         send_idx = order.index("send_prompt")
         assert switch_idx < send_idx, (
-            f"_switch_to_image_mode must precede _send_prompt; order={order}"
+            f"switch_to_image_mode must precede send_prompt; order={order}"
         )
         dismiss_idx = order.index("dismiss_overlays")
         assert dismiss_idx < switch_idx, (
-            f"_switch_to_image_mode must follow _dismiss_blocking_overlays; order={order}"
+            f"switch_to_image_mode must follow dismiss_overlays; order={order}"
         )
 
     @pytest.mark.asyncio
@@ -178,22 +199,40 @@ class TestModeSwitchCallSite:
             GenerateImageRequest(prompt=f"p{i}", model=Model.NARWHAL, aspect=Aspect.PORTRAIT)
             for i in range(3)
         ]
+
+        def _switch(*_a: object, **_kw: object) -> None:
+            order.append("switch_to_image_mode")
+
+        def _configure(*_a: object, **_kw: object) -> None:
+            order.append("configure")
+
+        def _send(*_a: object, **_kw: object) -> None:
+            order.append("send_prompt")
+
+        switch_mock = AsyncMock(side_effect=_switch)
+        configure_mock = AsyncMock(side_effect=_configure)
+        send_mock = AsyncMock(side_effect=_send)
         # The recorder makes _await_captured raise — under continue_on_error=False
         # the transport wraps it in BatchPartialError. That is the expected
         # synthetic-test outcome; we only care that the mode switch ran exactly
-        # once and before the first _send_prompt.
-        with pytest.raises(BatchPartialError):
+        # once and before the first send_prompt.
+        with (
+            patch.object(ClassicFlowUiDriver, "switch_to_image_mode", new=switch_mock),
+            patch.object(ClassicFlowUiDriver, "configure_image_settings", new=configure_mock),
+            patch.object(ClassicFlowUiDriver, "send_prompt", new=send_mock),
+            pytest.raises(BatchPartialError),
+        ):
             await t.generate_images_batch(
                 prompts=prompts, jitter_range=(0.0, 0.0), continue_on_error=False
             )
 
         switch_count = order.count("switch_to_image_mode")
         assert switch_count == 1, (
-            f"_switch_to_image_mode must be called exactly once per batch; "
+            f"switch_to_image_mode must be called exactly once per batch; "
             f"got {switch_count}; order={order}"
         )
         switch_idx = order.index("switch_to_image_mode")
         first_send_idx = order.index("send_prompt")
         assert switch_idx < first_send_idx, (
-            f"_switch_to_image_mode must precede the first _send_prompt; order={order}"
+            f"switch_to_image_mode must precede the first send_prompt; order={order}"
         )
