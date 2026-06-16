@@ -7,6 +7,13 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+## [0.20.1] — 2026-06-16
+
+### Fixed
+
+- **Aspect ratio overrides in Agentic & Classic cohorts** ([#193](https://github.com/ffroliva/gflow-cli/issues/193)): Fixed a bug where aspect ratio settings were ignored under the pluggable `FlowUiDriver` strategies (both single and batch image generation paths).
+- **`GFLOW_CLI_PREFER_CLASSIC`** (or `prefer_classic` setting): Added a configuration setting to force the classic UI driver, allowing users to bypass the Agentic UI cohort if preferred.
+
 ## [0.20.0] — 2026-06-15
 
 ### Added
@@ -1558,7 +1565,8 @@ shell-script template that branches on these codes.
 
 First skeleton. Not functional end-to-end yet.
 
-[Unreleased]: https://github.com/ffroliva/gflow-cli/compare/v0.20.0...HEAD
+[Unreleased]: https://github.com/ffroliva/gflow-cli/compare/v0.20.1...HEAD
+[0.20.1]: https://github.com/ffroliva/gflow-cli/compare/v0.20.0...v0.20.1
 [0.20.0]: https://github.com/ffroliva/gflow-cli/compare/v0.19.0...v0.20.0
 [0.19.0]: https://github.com/ffroliva/gflow-cli/compare/v0.18.0...v0.19.0
 [0.18.0]: https://github.com/ffroliva/gflow-cli/compare/v0.17.0...v0.18.0
