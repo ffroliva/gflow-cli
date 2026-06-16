@@ -1176,3 +1176,60 @@ async def test_configure_generation_settings_resets_count_between_prompts() -> N
         f"Prompt 1 (count=1) must click nth(0) after prompt 0's nth(1). "
         f"Full click log: {clicks_after_prompt1}"
     )
+
+
+@pytest.mark.asyncio
+async def test_generate_images_batch_threads_prefer_classic(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    import gflow_cli.api.transports.ui_automation as uia_mod
+    from gflow_cli.api.image import Aspect, GenerateImageRequest, Model
+
+    transport = UiAutomationTransport.__new__(UiAutomationTransport)
+    transport._setup_done = True
+    transport._page = MagicMock()
+    transport._page.url = "https://labs.google/fx/tools/flow/project/PROJ-PREFER"
+    transport._out_dir = None
+    transport._generate_lock = __import__("asyncio").Lock()
+
+    transport._enter_editor = AsyncMock()
+    transport._dismiss_blocking_overlays = AsyncMock()
+    transport._send_prompt = AsyncMock()
+
+    # Set prefer_classic in settings to True
+    monkeypatch.setenv("GFLOW_CLI_PREFER_CLASSIC", "true")
+    from gflow_cli.config import reset_settings
+
+    reset_settings()
+
+    mock_get_driver = AsyncMock()
+    mock_get_driver.return_value.name = "classic"
+
+    from gflow_cli.api.dto import BatchSubmissionResult
+
+    transport._run_one_prompt_in_batch = AsyncMock(
+        return_value=(
+            BatchSubmissionResult(
+                status="ok",
+                project_id="PROJ-PREFER",
+                prompt_idx=0,
+                prompt_hash="abc",
+                images=(),
+            ),
+            None,
+        )
+    )
+    monkeypatch.setattr(uia_mod, "_extract_project_id", lambda url: "PROJ-PREFER")
+
+    prompts = [
+        GenerateImageRequest(prompt="p0", aspect=Aspect.PORTRAIT, model=Model.NARWHAL, count=1),
+    ]
+
+    with (
+        patch("gflow_cli.api.transports.drivers.factory.get_ui_driver", new=mock_get_driver),
+    ):
+        await transport.generate_images_batch(
+            prompts=prompts, jitter_range=(0.0, 0.0), continue_on_error=False
+        )
+
+    mock_get_driver.assert_called_once_with(transport._page, prefer_classic=True)

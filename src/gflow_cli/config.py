@@ -221,6 +221,16 @@ class Settings(BaseSettings):
             "stays playwright and is unaffected. Override via GFLOW_CLI_BROWSER_ENGINE."
         ),
     )
+    prefer_classic: bool = Field(
+        default=False,
+        description=(
+            "Try to force the Classic Flow UI mode for image generation by clicking "
+            "the Agent toggle pill if the page mounts in Agentic mode. This ensures "
+            "deterministic aspect ratio controls. "
+            "If the page cannot be switched back to Classic, falls back to Agentic mode. "
+            "Override via GFLOW_CLI_PREFER_CLASSIC."
+        ),
+    )
 
     # --- logging ----------------------------------------------------------
     log_level: LogLevel = LogLevel.INFO

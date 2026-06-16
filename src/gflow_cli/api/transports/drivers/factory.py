@@ -122,12 +122,24 @@ async def get_ui_driver(
     *,
     timeout_s: float | None = None,
     poll_interval_s: float | None = None,
+    prefer_classic: bool = False,
 ) -> FlowUiDriver:
     """Probe the DOM and return the matching :class:`FlowUiDriver`.
 
     Call per generation — the cohort flaps per page load, so a cached driver
     goes stale on the next navigation / batch item.
     """
+    if prefer_classic:
+        from gflow_cli.api.transports.ui_automation_video import (
+            VideoGenerationMixin,
+        )
+
+        try:
+            log.info("ui_driver.prefer_classic.attempt_exit_agent")
+            await VideoGenerationMixin._exit_agent_mode(page)  # type: ignore[reportPrivateUsage]
+        except Exception as exc:
+            log.warning("ui_driver.prefer_classic.exit_agent_failed", error=str(exc))
+
     mode = await detect_ui_mode(page, timeout_s=timeout_s, poll_interval_s=poll_interval_s)
     log.info("ui_driver.bound", mode=mode)
     if mode == "agentic":
