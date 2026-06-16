@@ -186,3 +186,12 @@ class TestBrowserEngine:
         monkeypatch.setenv("GFLOW_CLI_BROWSER_ENGINE", "patchwright")
         with pytest.raises(ValidationError):
             Settings()
+
+
+class TestPreferClassic:
+    def test_defaults_to_false(self, clean_env: None) -> None:
+        assert Settings().prefer_classic is False
+
+    def test_override_true(self, monkeypatch: pytest.MonkeyPatch) -> None:
+        monkeypatch.setenv("GFLOW_CLI_PREFER_CLASSIC", "true")
+        assert Settings().prefer_classic is True

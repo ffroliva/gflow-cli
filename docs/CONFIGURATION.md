@@ -200,6 +200,14 @@ GFLOW_CLI_HISTORY_PROMPTS=redacted gflow image t2i "confidential brief"
 **Reverting:** unset the variable (or set `playwright`) — the default path is byte-identical to a build without this feature, with no profile migration.
 **Security note:** the `patchright` extra ships a *patched Chromium driver* that handles your live Google session cookies; it is exact-pinned and treated as a security-review-required dependency. See [SECURITY.md § Dependencies](SECURITY.md).
 
+### `GFLOW_CLI_PREFER_CLASSIC`
+
+**What:** Try to force the Classic Flow UI mode for image generation by clicking the Agent toggle pill if the page mounts in Agentic mode.
+**Values:** `true` | `false`
+**Default:** `false`
+**Why use it:** The Agentic UI cohort (conversational chat) treats requested aspect ratios as a soft prompt hint, which can result in inconsistent aspect ratios (e.g. producing landscape when portrait 9:16 was requested). Exposing this setting allows callers to opt into switching the UI back to Classic mode where aspect ratios are enforced deterministically (via hard Flow crop controls).
+**Fallback:** If the page cannot be switched back to Classic (e.g., in a forced A/B cohort where the toggle is not available), the driver gracefully falls back to Agentic mode rather than blocking execution.
+
 ### `GFLOW_CLI_LOCALE`
 
 **What:** BCP-47 locale tag passed to Playwright's `launch_persistent_context(locale=...)` — controls the `Accept-Language` HTTP header only.
