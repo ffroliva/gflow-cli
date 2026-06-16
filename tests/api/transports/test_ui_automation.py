@@ -1079,6 +1079,33 @@ class TestGenerateImages:
         assert images[0].seed == 42
 
     @pytest.mark.asyncio
+    async def test_generate_images_threads_prefer_classic(
+        self, monkeypatch: pytest.MonkeyPatch
+    ) -> None:
+        t = UiAutomationTransport()
+        t._setup_done = True
+        t._page = MagicMock()
+
+        # Set prefer_classic in settings to True
+        monkeypatch.setenv("GFLOW_CLI_PREFER_CLASSIC", "true")
+        from gflow_cli.config import reset_settings
+
+        reset_settings()
+
+        mock_get_driver = AsyncMock()
+        mock_get_driver.return_value.name = "classic"
+
+        with (
+            patch("gflow_cli.api.transports.drivers.factory.get_ui_driver", new=mock_get_driver),
+            patch.object(t, "_enter_editor", new=AsyncMock()),
+            patch.object(t, "_send_prompt", new=AsyncMock()),
+            patch.object(t, "_await_captured", new=AsyncMock(return_value=[_flow_200_capture()])),
+        ):
+            await t.generate_images(project_id="ignored", request=_req())
+
+        mock_get_driver.assert_called_once_with(t._page, prefer_classic=True)
+
+    @pytest.mark.asyncio
     async def test_non_200_response_raises(self) -> None:
         t = UiAutomationTransport()
         t._setup_done = True  # type: ignore[attr-defined]
