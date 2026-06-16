@@ -2052,7 +2052,9 @@ class UiAutomationTransport(VideoGenerationMixin):
         # project page is fully rendered.  The cohort flaps per page load so
         # we re-probe every generation — never cache across calls.
         # Classic driver requires a transport reference for send_prompt.
-        ui_driver = await get_ui_driver(page)
+        from gflow_cli.config import get_settings
+
+        ui_driver = await get_ui_driver(page, prefer_classic=get_settings().prefer_classic)
         if ui_driver.name == "classic":
             ui_driver._transport = self  # type: ignore[union-attr]
 
@@ -2430,7 +2432,9 @@ class UiAutomationTransport(VideoGenerationMixin):
         # cohort flaps per page load; bind once per batch (the editor stays
         # mounted so the cohort is stable for this batch's lifetime).
         # Classic driver requires a transport reference for send_prompt.
-        ui_driver = await get_ui_driver(page)
+        from gflow_cli.config import get_settings
+
+        ui_driver = await get_ui_driver(page, prefer_classic=get_settings().prefer_classic)
         if ui_driver.name == "classic":
             ui_driver._transport = self  # type: ignore[union-attr]
 
