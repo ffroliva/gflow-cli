@@ -54,6 +54,11 @@ if TYPE_CHECKING:
 
 log = structlog.get_logger(__name__)
 
+# Type alias for the JSON request-list ``cast(...)`` target. Extracted so the
+# quoted cast string is not duplicated (SonarCloud S1192); a module-level alias
+# keeps ruff's TC006 happy since call sites pass a bare name, not a subscript.
+_JsonObjList = list[dict[str, Any]]
+
 # The three mode-specific generate routes (spec §2.1). The listener filters on
 # these substrings only — video generate URLs carry no /projects/{id}/ path
 # segment, so a project-id URL filter is impossible (deviation from §5.4).
@@ -434,7 +439,7 @@ def _summarize_request_image_inputs(request: Any) -> dict[str, Any]:
         if not raw:
             return {"parsed": False}
         data = cast("dict[str, Any]", json.loads(raw))
-        reqs = cast("list[dict[str, Any]]", data.get("requests") or [])
+        reqs = cast(_JsonObjList, data.get("requests") or [])
         first: dict[str, Any] = reqs[0] if reqs else {}
 
         def _mid(obj: Any) -> str | None:
@@ -443,7 +448,7 @@ def _summarize_request_image_inputs(request: Any) -> dict[str, Any]:
             mid = cast("dict[str, Any]", obj).get("mediaId")
             return mid[:8] if isinstance(mid, str) else None
 
-        refs = cast("list[dict[str, Any]]", first.get("referenceImages") or [])
+        refs = cast(_JsonObjList, first.get("referenceImages") or [])
         return {
             "parsed": True,
             "startImage": _mid(first.get("startImage")),
@@ -1477,17 +1482,17 @@ class VideoGenerationMixin:
         body = cast("dict[str, Any]", generate_resp.get("body") or {})
         got: list[str] = []
         # Response shape (the live one): media[] -> ...videoGenerationEntityInputs.
-        for media in cast("list[dict[str, Any]]", body.get("media") or []):
+        for media in cast(_JsonObjList, body.get("media") or []):
             meta = cast("dict[str, Any]", media.get("mediaMetadata") or {})
             req_data = cast("dict[str, Any]", meta.get("requestData") or {})
             vgrd = cast("dict[str, Any]", req_data.get("videoGenerationRequestData") or {})
-            for e in cast("list[dict[str, Any]]", vgrd.get("videoGenerationEntityInputs") or []):
+            for e in cast(_JsonObjList, vgrd.get("videoGenerationEntityInputs") or []):
                 entity_id = cast("str | None", e.get("entityId"))
                 if entity_id:
                     got.append(entity_id)
         # Request shape (fallback): requests[].referenceEntities.
-        for r in cast("list[dict[str, Any]]", body.get("requests") or []):
-            for e in cast("list[dict[str, Any]]", r.get("referenceEntities") or []):
+        for r in cast(_JsonObjList, body.get("requests") or []):
+            for e in cast(_JsonObjList, r.get("referenceEntities") or []):
                 entity_id = cast("str | None", e.get("entityId"))
                 if entity_id:
                     got.append(entity_id)

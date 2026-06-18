@@ -118,6 +118,8 @@ MAX_UPSAMPLE_B64_LEN = 50 * 1024 * 1024
 
 # aisandbox-pa rejects application/json — see samples/captured/*.json.
 _AISANDBOX_CONTENT_TYPE = "text/plain;charset=UTF-8"
+# Content type for the labs.google BFF (tRPC) endpoints, which DO accept JSON.
+_APPLICATION_JSON = "application/json"
 
 # aisandbox-pa POSTs return 401 to page.request unless an Authorization: Bearer
 # <access_token> is attached — the SPA's OAuth2 token, fetched from the BFF
@@ -756,7 +758,7 @@ class FlowApiClient:
         """
         title = title or _default_project_title()
         body = {"json": {"projectTitle": title, "toolName": "PINHOLE"}}
-        data = await self._post_json(routes.CREATE_PROJECT, body, content_type="application/json")
+        data = await self._post_json(routes.CREATE_PROJECT, body, content_type=_APPLICATION_JSON)
         return ProjectInfo.from_create_response(data)
 
     async def upload_image(self, project_id: str, image_path: Path) -> AssetInfo:
@@ -1434,7 +1436,7 @@ class FlowApiClient:
         data = await self._post_json(
             routes.CREATE_ENTITY_URL,
             body,
-            content_type="application/json",
+            content_type=_APPLICATION_JSON,
             route_name="createEntity",
         )
         payload = _unwrap_trpc(data)
@@ -1775,7 +1777,7 @@ def _build_wire_format_discovery(resp: Any, body_text: str, route: str) -> JsonO
         content_type = ""
     top_keys: list[str] = []
     try:
-        parsed = json.loads(body_text) if content_type.startswith("application/json") else None
+        parsed = json.loads(body_text) if content_type.startswith(_APPLICATION_JSON) else None
         if isinstance(parsed, dict):
             top_keys = sorted(cast("JsonObject", parsed).keys())
     except ValueError:  # json.JSONDecodeError is a ValueError subclass

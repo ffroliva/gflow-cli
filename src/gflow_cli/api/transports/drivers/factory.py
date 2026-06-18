@@ -72,7 +72,9 @@ async def _any_present(page: Page, selectors: Iterable[str]) -> bool:
         try:
             if await page.locator(sel).count() > 0:
                 return True
-        except Exception:  # noqa: BLE001 — best-effort probe, continue on any locator error
+        # Best-effort probe: swallow any locator error so one bad selector never
+        # aborts detection — the next selector (and the safe default) still run.
+        except Exception:  # noqa: BLE001
             continue
     return False
 
