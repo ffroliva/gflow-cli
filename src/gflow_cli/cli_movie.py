@@ -534,7 +534,12 @@ async def _create_character(
     state.save(state_path)
     console.print(f"    entity_id: {result.entity_id}")
     for slot, p in enumerate(image_paths):
-        label = "face" if slot == 0 else "body" if slot == 1 else f"slot{slot}"
+        if slot == 0:
+            label = "face"
+        elif slot == 1:
+            label = "body"
+        else:
+            label = f"slot{slot}"
         console.print(f"    {label}: {p or '(unavailable)'}")
 
 
@@ -700,7 +705,9 @@ def _ffmpeg_concat(clips: list[Path], out: Path) -> None:
             f.write(f"file '{c.as_posix()}'\n")
         listfile = f.name
     try:
-        subprocess.run(  # noqa: S603 — ffmpeg path from shutil.which, args fixed
+        # ffmpeg path comes from shutil.which and all args are fixed literals —
+        # no shell, no user-controlled tokens.
+        subprocess.run(  # noqa: S603
             [
                 ffmpeg,
                 "-y",

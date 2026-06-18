@@ -30,6 +30,12 @@ __all__ = [
     "SceneState",
 ]
 
+# Type aliases for TOML-shaped ``cast(...)`` targets. Extracted so the quoted
+# cast strings are not duplicated (SonarCloud S1192); module-level aliases keep
+# ruff's TC006 happy since call sites pass a bare name, not a subscript.
+_TomlObj = dict[str, object]
+_TomlList = list[object]
+
 # ---------------------------------------------------------------------------
 # Allowed values
 # ---------------------------------------------------------------------------
@@ -78,7 +84,7 @@ class MovieManifest:
             _raw = tomllib.loads(raw)
         except tomllib.TOMLDecodeError as exc:
             raise ConfigurationError(f"Failed to parse {path}: {exc}") from exc
-        return cls._from_dict(cast("dict[str, object]", _raw))
+        return cls._from_dict(cast(_TomlObj, _raw))
 
     @classmethod
     def _from_dict(cls, data: dict[str, object]) -> MovieManifest:
@@ -103,7 +109,7 @@ class MovieManifest:
         chars_raw = data.get("characters", [])
         if not isinstance(chars_raw, list):
             raise ConfigurationError("'characters' must be a TOML array.")
-        chars_list = cast("list[object]", chars_raw)
+        chars_list = cast(_TomlList, chars_raw)
         characters: dict[str, Character] = {}
         for i, c in enumerate(chars_list):
             parsed = _parse_character(c, i)
@@ -116,7 +122,7 @@ class MovieManifest:
             raise ConfigurationError("'scenes' must be a TOML array.")
         if not scenes_raw:
             raise ConfigurationError("At least one [[scenes]] entry is required.")
-        scenes_list = cast("list[object]", scenes_raw)
+        scenes_list = cast(_TomlList, scenes_raw)
         char_names = set(characters)
         scenes = tuple(
             _parse_scene(s, i, char_names, characters) for i, s in enumerate(scenes_list)
@@ -130,7 +136,7 @@ class MovieManifest:
         continuity = "independent"
         movie_raw = data.get("movie")
         if isinstance(movie_raw, dict):
-            raw_cont = cast("dict[str, object]", movie_raw).get("continuity", "independent")
+            raw_cont = cast(_TomlObj, movie_raw).get("continuity", "independent")
             if not isinstance(raw_cont, str):
                 raise ConfigurationError("movie.continuity must be a string.")
             continuity = raw_cont
@@ -140,7 +146,7 @@ class MovieManifest:
         if assemble_raw is not None:
             if not isinstance(assemble_raw, dict):
                 raise ConfigurationError("[assemble] must be a TOML table.")
-            assemble_dict = cast("dict[str, object]", assemble_raw)
+            assemble_dict = cast(_TomlObj, assemble_raw)
             output = assemble_dict.get("output")
             if output is not None and not isinstance(output, str):
                 raise ConfigurationError("assemble.output must be a string path.")
@@ -169,7 +175,7 @@ def _parse_style(data: object) -> StyleSpec:
         return StyleSpec()
     if not isinstance(data, dict):
         raise ConfigurationError("[style] must be a TOML table.")
-    d = cast("dict[str, object]", data)
+    d = cast(_TomlObj, data)
 
     def s(key: str) -> str | None:
         v = d.get(key)
@@ -191,7 +197,7 @@ def _parse_style(data: object) -> StyleSpec:
 def _parse_character(data: object, idx: int) -> Character:
     if not isinstance(data, dict):
         raise ConfigurationError(f"characters[{idx}] must be a TOML table.")
-    d = cast("dict[str, object]", data)
+    d = cast(_TomlObj, data)
 
     name = d.get("name")
     if not isinstance(name, str) or not name.strip():
@@ -204,7 +210,7 @@ def _parse_character(data: object, idx: int) -> Character:
     variants_raw = d.get("variants", {})
     if not isinstance(variants_raw, dict):
         raise ConfigurationError(f"characters[{idx}].variants must be a table.")
-    variants = {str(k): str(v) for k, v in cast("dict[str, object]", variants_raw).items()}
+    variants = {str(k): str(v) for k, v in cast(_TomlObj, variants_raw).items()}
 
     model = d.get("model", "nano2")
     if not isinstance(model, str) or model not in _VALID_CHARACTER_MODELS:
@@ -243,7 +249,7 @@ def _parse_scene(
 ) -> Scene:
     if not isinstance(data, dict):
         raise ConfigurationError(f"scenes[{idx}] must be a TOML table.")
-    d = cast("dict[str, object]", data)
+    d = cast(_TomlObj, data)
 
     sid = d.get("id")
     if not isinstance(sid, str) or not sid.strip():
@@ -263,7 +269,7 @@ def _parse_scene(
     if not isinstance(chars_raw, list):
         raise ConfigurationError(f"scenes[{idx}].characters must be an array.")
     chars: list[str] = []
-    for cn in cast("list[object]", chars_raw):
+    for cn in cast(_TomlList, chars_raw):
         if not isinstance(cn, str) or cn not in char_names:
             raise ConfigurationError(f"scenes[{idx}] references unknown character {cn!r}.")
         chars.append(cn)
@@ -289,10 +295,10 @@ def _parse_scene(
         dialogue.append(DialogueLine(speaker=str(speaker), line=line.strip()))
 
     if isinstance(per_char, list):
-        for e in cast("list[object]", per_char):
+        for e in cast(_TomlList, per_char):
             if not isinstance(e, dict):
                 continue
-            ed = cast("dict[str, object]", e)
+            ed = cast(_TomlObj, e)
             nm = ed.get("name")
             ln = ed.get("line")
             if nm not in chars:
@@ -372,7 +378,7 @@ class CharacterState:
         raw_paths = d.get("image_paths")
         paths: list[str | None] = []
         if isinstance(raw_paths, list):
-            for p in cast("list[object]", raw_paths):
+            for p in cast(_TomlList, raw_paths):
                 paths.append(str(p) if isinstance(p, str) else None)
         return cls(
             entity_id=str(eid) if eid is not None else "",
@@ -449,22 +455,18 @@ class MovieState:
             return state
         if not isinstance(raw, dict):
             return state
-        data = cast("dict[str, object]", raw)
+        data = cast(_TomlObj, raw)
 
         chars_raw = data.get("characters")
         if isinstance(chars_raw, dict):
-            for name, raw_char in cast("dict[str, object]", chars_raw).items():
+            for name, raw_char in cast(_TomlObj, chars_raw).items():
                 if isinstance(raw_char, dict):
-                    state.characters[name] = CharacterState.from_dict(
-                        cast("dict[str, object]", raw_char)
-                    )
+                    state.characters[name] = CharacterState.from_dict(cast(_TomlObj, raw_char))
         scenes_raw = data.get("scenes")
         if isinstance(scenes_raw, dict):
-            for title_key, raw_scene in cast("dict[str, object]", scenes_raw).items():
+            for title_key, raw_scene in cast(_TomlObj, scenes_raw).items():
                 if isinstance(raw_scene, dict):
-                    state.scenes[title_key] = SceneState.from_dict(
-                        cast("dict[str, object]", raw_scene)
-                    )
+                    state.scenes[title_key] = SceneState.from_dict(cast(_TomlObj, raw_scene))
         return state
 
     def save(self, path: Path) -> None:
