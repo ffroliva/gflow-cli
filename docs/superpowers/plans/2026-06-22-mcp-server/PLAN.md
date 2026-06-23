@@ -30,6 +30,10 @@ src/gflow_cli/mcp/server.py
   Core server loop, JSON-RPC transport wrapper, and stdout redirection layer.
 src/gflow_cli/mcp/tools.py
   Exposed tool schemas and execution routers binding to FlowApiClient.
+src/gflow_cli/mcp/prompts.py
+  Exposed MCP prompts (templates for prompt expansion and characters).
+src/gflow_cli/mcp/resources.py
+  Exposed MCP resources (serving SKILL.md, schema details, and known-issues).
 tests/mcp/test_server.py
   Integration tests for JSON-RPC tool list queries and mock executions.
 docs/MCP.md
@@ -106,7 +110,28 @@ CHANGELOG.md
 
 ---
 
-## Task 4 — Add Click `gflow mcp` Subcommands
+## Task 4 — Expose MCP Prompts & Resources
+
+**What:** Expose useful prompt templates (creative director prompt formula) and static/dynamic documentation resources (like local gflow skills or schema information) via the MCP standard.
+
+**Files:**
+- `src/gflow_cli/mcp/prompts.py`
+- `src/gflow_cli/mcp/resources.py`
+
+**Steps:**
+- [ ] Create `src/gflow_cli/mcp/prompts.py` exposing `@mcp.prompt` mappings:
+  - `expand_prompt`: Prompt template helper for 5-component Google prompt formula.
+  - `create_character`: Prompt template helper for consistent character profile descriptions.
+- [ ] Create `src/gflow_cli/mcp/resources.py` exposing `@mcp.resource` mappings:
+  - `gflow://docs/skill`: Serves the `gflow-cli` skill documentation.
+  - `gflow://docs/known-issues`: Serves `KNOWN_ISSUES.md` warnings.
+  - `gflow://db/schema`: Serves the SQLite database schema query details.
+- [ ] Wire both prompts and resources modules into the server boot file `src/gflow_cli/mcp/server.py`.
+- [ ] Write tests in `tests/mcp/test_server.py` verifying that prompts and resources list queries return correct schemas.
+
+---
+
+## Task 5 — Add Click `gflow mcp` Subcommands
 
 **What:** Expose Click command targets to run and register the server.
 
@@ -120,7 +145,7 @@ CHANGELOG.md
 
 ---
 
-## Task 5 — Documentation & Validation
+## Task 6 — Documentation & Validation
 
 **What:** Create user guides and verify full repository test suite compliance.
 
@@ -140,4 +165,4 @@ CHANGELOG.md
 - [ ] All task steps checked off.
 - [ ] `/gflow:check` green.
 - [ ] `docs/MCP.md` written and validated.
-- [ ] User can add the MCP configuration to their IDE agent and invoke `gflow` commands automatically.
+- [ ] User can add the MCP configuration to their IDE agent and invoke `gflow` tools, prompts, and resources automatically.
