@@ -1,38 +1,36 @@
-# High-Level & Low-Level Design: Integrated Local Studio & Flow Worker
+# High-Level & Low-Level Design: Decoupled MCP Daemon & Flow Worker
 
-This document defines the High-Level Design (HLD) and Low-Level Design (LLD) to unify the **Local Filmmaking Studio (Web UI)**, the **Flow Worker (Queue Daemon)**, and the **MCP SSE (Server-Sent Events) Server** into a cohesive system.
+This document defines the High-Level Design (HLD) and Low-Level Design (LLD) to decouple the **Visual Filmmaking Studio (Web/Desktop UI)** from the **gflow-cli engine**. 
+
+Instead of embedding visual frontend assets and custom REST routers inside the Python CLI package, `gflow-cli` acts strictly as the headless backend engine. It exposes standard Model Context Protocol (MCP) tools, prompts, and resources over a local Server-Sent Events (SSE) HTTP stream. Independent frontend applications (e.g. built via Tauri/React or Electron) connect to this SSE stream as standard MCP clients and read the local SQLite database directly.
 
 ---
 
 ## 1. High-Level Design (HLD)
 
-The goal is to transition `gflow-cli` from a simple terminal tool into a local, self-contained **Creative Director Studio**. 
-
-Instead of separate application lifecycles, the system uses a single core daemon that coordinates background rendering task queues, SQLite catalog synchronization, local user sessions, and both JSON-RPC (MCP) and REST communications.
-
 ### 1.1 System Context Diagram
 
 ```
-                  ┌────────────────────────────────────────┐
-                  │          External Interfaces           │
-                  │  (Claude Desktop, Cursor, Browser)     │
-                  └─────────┬────────────────────┬─────────┘
-                            │                    │
-                            │ MCP / Stdio        │ HTTP / REST / SSE
-                            ▼                    ▼
+┌────────────────────────────────────────┐
+│        Visual Filmmaking Studio        │
+│  - React / TypeScript Timeline Editor  │
+│  - Bundled FFmpeg / CapCut sidecars    │
+│  - Excluded from gflow-cli codebase    │
+└───────┬────────────────────────┬───────┘
+        │                        │
+        │ SQLite Read (WAL)      │ MCP JSON-RPC over SSE
+        ▼                        ▼
 ┌────────────────────────────────────────────────────────────────────────┐
 │                        gflow Local Daemon                              │
+│  (Triggered via: gflow serve)                                          │
 │                                                                        │
-│  ┌───────────────────────┐          ┌──────────────────────────────┐   │
-│  │   MCP stdio Adapter   │          │     Uvicorn / FastAPI        │   │
-│  └──────────┬────────────┘          ├──────────────────────────────┤   │
-│             │                       │  - REST Endpoints            │   │
-│             │                       │  - MCP SSE Endpoint          │   │
-│             │                       │  - Static Asset Server       │   │
-│             │                       └──────────────┬───────────────┘   │
-│             │                                      │                   │
-│             └─────────────────┐  ┌─────────────────┘                   │
-│                               ▼  ▼                                     │
+│  ┌─────────────────────────────────────────────────────────────────┐   │
+│  │                    Uvicorn / FastAPI Server                     │   │
+│  │  - Exposes FastMCP over SSE (/mcp/sse & /mcp/message)           │   │
+│  │  - Excludes static UI assets or custom REST controllers         │   │
+│  └────────────────────────────┬────────────────────────────────────┘   │
+│                               │                                        │
+│                               ▼                                        │
 │  ┌─────────────────────────────────────────────────────────────────┐   │
 │  │                       Application Core                          │   │
 │  │  - FlowApiClient (Browser / Playwright automation)               │   │
@@ -43,23 +41,16 @@ Instead of separate application lifecycles, the system uses a single core daemon
 │                               ▼                                        │
 │  ┌─────────────────────────────────────────────────────────────────┐   │
 │  │                          Data Layer                             │   │
-│  │  - SQLite operations catalog (gflow.db)                         │   │
+│  │  - SQLite operations catalog (gflow.db with WAL mode)           │   │
 │  │  - Chrome profile contexts (profile_default/, profile_email/)   │   │
 │  └─────────────────────────────────────────────────────────────────┘   │
 └────────────────────────────────────────────────────────────────────────┘
 ```
 
-### 1.2 Unifying MCP and Web UI through SSE
-The MCP standard natively supports **Server-Sent Events (SSE)**. Under this design:
-1. The local daemon runs a FastAPI server hosting the Filmmaking Studio (single-page React app).
-2. The same FastAPI server exposes `/mcp/sse` (SSE connection endpoint) and `/mcp/message` (RPC client-to-server POST endpoint).
-3. Local Web UI client scripts can communicate using standard MCP JSON-RPC, keeping the communication protocol uniform across IDE agents and local UI components.
-
-### 1.3 Flow Worker Integration
-The `google-flow-worker` engine is ported directly into the `gflow-cli` codebase as `src/gflow_cli/data/worker.py`. 
-* **State Engine:** The worker polls a SQLite table (`generation_queue`) for pending items.
-* **Resilience:** If a generation fails (e.g. anti-bot triggers or browser crashes), the worker updates the status code, logs the RFC 9457 error details, and applies exponential backoff before retrying.
-* **Concurrency:** The worker runs a single-threaded queue loop per Chrome profile, preventing context collisions.
+### 1.2 Separation of Concerns & Decoupled Communication
+*   **Separation of Concerns:** `gflow-cli` is kept free of node, npm, Vite, and system-level FFmpeg path resolutions. Python manages browser automation, session authentication, and database schemas. The frontend handles timelines, visual elements, and media splicing.
+*   **Unified Interface (MCP over SSE):** The backend daemon exposes an MCP server over Server-Sent Events. The visual client uses this unified JSON-RPC interface to submit generations, meaning the frontend behaves identically to standard IDE agents (Cursor, Claude Desktop).
+*   **Direct SQLite Read (WAL Mode):** Since SQLite is configured in WAL (Write-Ahead Logging) mode, the decoupled visual client reads catalog data (`gflow.db`) directly from disk for presentation (gallery, logs, character rosters), achieving sub-10ms read times without any HTTP API latency or duplication of database controllers.
 
 ---
 
@@ -70,58 +61,28 @@ The `google-flow-worker` engine is ported directly into the `gflow-cli` codebase
 src/gflow_cli/
 ├── mcp/
 │   ├── __init__.py
-│   ├── server.py       # Exposes FastMCP instance (Stdio + SSE compatible)
+│   ├── server.py       # Exposes FastMCP instance (Stdio & SSE compatible)
 │   ├── tools.py        # Maps MCP tools to FlowApiClient / FlowWorker
-│   ├── prompts.py      # Prompts (formula expanders)
+│   ├── prompts.py      # Prompts (Gemini formulas, character constructors)
 │   └── resources.py    # Resources (db/schema, docs/mcp-guide)
 ├── ui/
 │   ├── __init__.py
-│   ├── app.py          # FastAPI application definitions & routing
-│   ├── server.py       # Uvicorn boot wrapper (gflow ui)
-│   └── static/         # Compiled Web UI studio assets (HTML/JS/CSS)
+│   ├── app.py          # FastAPI application wrapper exposing SSE routes
+│   └── server.py       # Uvicorn boot wrapper (gflow serve)
 └── worker/
     ├── __init__.py
     ├── daemon.py       # Background worker polling generation_queue
-    └── queue.py        # Queue CRUD interfaces and state definitions
+    └── queue.py        # Queue CRUD database interfaces
 ```
 
-### 2.2 Database Schema Updates (generation_queue)
-To manage background rendering without double billing, a new `generation_queue` table is added:
+### 2.2 Interface Specifications
 
-```sql
-CREATE TABLE generation_queue (
-    task_id TEXT PRIMARY KEY,
-    profile_name TEXT NOT NULL,
-    project_id TEXT,
-    kind TEXT NOT NULL,         -- 'image' | 'video'
-    prompt TEXT NOT NULL,
-    aspect TEXT NOT NULL,
-    options_json TEXT,          -- model, seed, reference assets, voices
-    status TEXT NOT NULL,       -- 'pending' | 'processing' | 'succeeded' | 'failed'
-    attempts INTEGER DEFAULT 0,
-    created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
-    updated_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
-    error_details_json TEXT     -- RFC 9457 structured error if failed
-);
-```
+#### 2.2.1 MCP SSE Endpoints
+The decoupled Web UI connects to these endpoints:
+*   `GET /mcp/sse`: Handshake endpoint. Establishes the Server-Sent Events stream connection, assigning a client ID and returning the endpoint URI.
+*   `POST /mcp/message?transport_id={id}`: Handles JSON-RPC requests (tool calls, prompt queries, resource reads) sent from the UI.
 
-### 2.3 Interface Specifications
-
-#### 2.3.1 Local FastAPI REST Endpoints
-
-##### UI Client API
-* `GET /api/v1/projects`: Retrieves projects from the sqlite database.
-* `GET /api/v1/projects/{project_id}/assets`: Lists generated assets.
-* `GET /api/v1/profiles`: Lists active Google profiles and auth status.
-* `POST /api/v1/profiles/rename`: Renames active profiles.
-* `POST /api/v1/queue/submit`: Appends a new generation task to the `generation_queue` table.
-* `GET /api/v1/queue/status/{task_id}`: Inspects task status.
-
-##### MCP Server Sent Events (SSE)
-* `GET /mcp/sse`: Handshake endpoint. Returns SSE stream mapping client transport ID.
-* `POST /mcp/message?transport_id={id}`: Receives client JSON-RPC requests (e.g. tool execution, prompt list, resource query).
-
-#### 2.3.2 Flow Worker Loop (Pseudo-Code)
+#### 2.2.2 Flow Worker Loop (Pseudo-Code)
 ```python
 class FlowWorker:
     def __init__(self, profile_name: str, db_path: str):
@@ -137,26 +98,20 @@ class FlowWorker:
                     await self.process_task(task)
             else:
                 await asyncio.sleep(5)  # Poll interval
-
-    async def process_task(self, task: TaskDTO):
-        await self.db.update_status(task.task_id, "processing")
-        try:
-            async with FlowApiClient(profile_name=self.profile_name) as client:
-                if task.kind == "image":
-                    result = await client.generate_image(...)
-                elif task.kind == "video":
-                    result = await client.generate_video(...)
-                await self.db.update_status(task.task_id, "succeeded", result)
-        except GFlowError as e:
-            await self.db.log_failure(task.task_id, e.to_problem_details())
 ```
 
 ---
 
-## 3. System Rules & Concurrency
+## 3. Concurrency & DB Locking
 
-### 3.1 Profile Locking (No Collisions)
-Chromium profiles are locked at the OS level. Running the CLI, the Web UI, and the Background Worker concurrently on the same profile requires strict guards:
-1. **Queue Serialization:** Background task workers are single-threaded per Chrome profile.
-2. **File locks:** Before `FlowApiClient` initializes Playwright, it checks for a file-based lock `lockfile.lock` inside the Chrome user-data folder, waiting up to 60 seconds before throwing a `ConcurrencyError`.
-3. **Pre-flight verification:** Read-only actions (like catalog browse or queue check) bypass Playwright entirely and read from SQLite, which supports concurrent WAL-mode queries.
+### 3.1 SQLite WAL Concurrency
+The SQLite database `gflow.db` is configured with `journal_mode=WAL` and `foreign_keys=ON`. This is critical for decoupled architectures:
+1. **Unblocked Readers:** The decoupled UI app can run complex SQLite read queries concurrently while the background FlowWorker is writing new assets.
+2. **Busy Timeout Handling:** Both the daemon and the decoupled UI client must configure:
+   ```sql
+   PRAGMA busy_timeout = 5000;
+   ```
+   This ensures that concurrent database modifications queue gracefully rather than throwing immediate `DatabaseLocked` exceptions.
+
+### 3.2 Playwright Profile Serialization
+Because Google Chrome profile locks restrict browser instances to a single OS process, the UI client must never launch browser-level subprocesses. Instead, it must post generation tasks as tool requests over MCP SSE. The local daemon worker serializes the requests internally using an `asyncio.Lock`, preventing browser context collisions.

@@ -1,143 +1,110 @@
-# Integrated Studio, Worker Daemon & MCP SSE Plan
+# Decoupled Daemon & Flow Worker Queue Plan
 
-> **For agentic workers:** Run `/gflow:status --feature mcp-ui-worker-integration` to find the
-> next unchecked task. Implement one task at a time. Run `/gflow:check` before every commit.
-
-**Goal:** Implement the local Filmmaking Web Studio, port the `google-flow-worker` background queue loop, and support Server-Sent Events (SSE) for HTTP MCP integrations.
+This plan defines the step-by-step implementation sequence to build the headless daemon (`gflow serve`), the SQLite-backed background worker queue (`FlowWorker`), and the E2E verification test suite.
 
 ---
 
-## File structure
+## 1. Agreed Design Fundamentals & Best Practices
 
-### New files
-```
-src/gflow_cli/worker/
-  daemon.py       # FlowWorker polling loop
-  queue.py        # SQLite queue storage interface
-src/gflow_cli/ui/
-  app.py          # FastAPI application definitions & REST routes
-  server.py       # Uvicorn server startup runner
-tests/worker/test_daemon.py
-  Unit/mock checks for background task processing
-tests/ui/test_app.py
-  Integration tests for REST and SSE endpoints
-```
+Before starting execution, we establish agreement on these core constraints and best practices:
+1. **Decoupled Repositories:** Keep `gflow-cli` strictly headless. No visual frontend files (React, Vite, Node modules) should exist inside the `gflow-cli` codebase. The UI client runs as an independent sibling desktop app (e.g., Gflow Studio built with Tauri).
+2. **SQLite WAL Mode:** Both the CLI daemon and the visual UI access `gflow.db` concurrently. Direct reads (SQL queries) happen inside the UI for sub-10ms performance, utilizing `PRAGMA journal_mode = WAL` and `PRAGMA busy_timeout = 5000` to prevent write locks.
+3. **Single Writer Serialization:** Playwright session locks restrict browser profile operations to one OS process. The local daemon is the sole browser automation broker, serialization managed using an `asyncio.Lock` inside the background worker.
+4. **Local network Isolation:** The FastAPI server listens on `127.0.0.1` by default. Binding to `0.0.0.0` is prohibited unless explicit API token headers (`GFLOW_DAEMON_TOKEN`) are active.
+5. **Crash Recovery & Clean Exit:** The daemon wires OS signal handlers (`SIGINT`/`SIGTERM`) to release locks and closes browser instances cleanly. Upon daemon boot, a recovery SQL script clears active `processing` flags to prevent lock-ups.
+6. **CLI/MCP Option Symmetry:** A CI test verifies that any CLI command parameter added in Click command routers is programmatically mirrored in FastMCP server tool registration signatures to prevent drift.
 
-### Modified files
-```
-pyproject.toml
-  Add fastapi, uvicorn, and sse-starlette to dependencies.
-src/gflow_cli/cli.py
-  Add CLI command `gflow ui` to run the FastAPI server.
-src/gflow_cli/mcp/server.py
-  Allow boot option in FastMCP to bind to SSE HTTP transport.
-CHANGELOG.md
-  Document upcoming Integrated Studio.
-ROADMAP.md
-  Update roadmap milestones.
+---
+
+## 2. Phased Development Sequence
+
+```mermaid
+graph TD
+    A[Phase 1: Foundations & SQLite Queue] -->|Unit/Integration Tested| B[Phase 2: FastAPI SSE Daemon & CLI]
+    B -->|Integration Tested| C[Phase 3: E2E Verification & Gates]
+    C -->|E2E Passed| D[Backlog Done]
 ```
 
----
+### Phase 1 — Foundations & SQLite Queue
 
-## Task 1 — Add Studio Dependencies & Database Queue Table
+**Goal:** Establish the database schema, SQLite transactional queries, queue worker loop, and verify sequential execution locks under unit/integration mocks.
 
-**What:** Add FastAPI/Uvicorn dependencies and write database migration for queue schema.
-
-**Files:**
-- `pyproject.toml`
-- `src/gflow_cli/data/migrations/0002_queue.sql` (or schema initialization SQL)
-
-**Steps:**
-- [ ] Add `fastapi`, `uvicorn`, and `sse-starlette` to dependencies in `pyproject.toml`.
-- [ ] Run `uv sync` to update the lockfile.
-- [ ] Add the `generation_queue` table creation to SQLite migrations.
-- [ ] Write integration test verifying migration runs cleanly and schema parameters query.
-
----
-
-## Task 2 — Implement Queue Storage & Flow Worker Daemon
-
-**What:** Port the background queue loop and status updates.
-
-**Files:**
-- `src/gflow_cli/worker/queue.py`
-- `src/gflow_cli/worker/daemon.py`
-- `tests/worker/test_daemon.py`
-
-**Steps:**
-- [ ] Create `src/gflow_cli/worker/queue.py` containing SQLite queue queries.
-- [ ] Create `src/gflow_cli/worker/daemon.py` executing the FlowWorker infinite poll loop.
-- [ ] Enforce sequential execution locks per profile name.
-- [ ] Log RFC 9457 error details in JSON column on generation failure.
-- [ ] Write unit tests verifying queue additions, status polling, and error logging under mock client conditions.
+*   **Task 1.1: Dependencies & Environment Settings**
+    *   Add `fastapi`, `uvicorn`, and `sse-starlette` to `pyproject.toml` dependencies.
+    *   Run `uv sync` to update lock files.
+    *   Add `GFLOW_DAEMON_TOKEN` and `GFLOW_DAEMON_PORT` template properties in `.env.template` and [config.py](file:///C:/development/github/gflow-cli/src/gflow_cli/config.py).
+    
+*   **Task 1.2: Database Migration (`0002_queue.sql`)**
+    *   Create migration file `src/gflow_cli/data/migrations/0002_queue.sql`.
+    *   Create the `generation_queue` table tracking `task_id`, `profile_name`, `task_type` (t2i, t2v, etc.), `payload_json`, `status` (pending, processing, completed, failed), `flow_media_id`, `error_json`, `created_at`, and `updated_at`.
+    
+*   **Task 1.3: Queue Repository & FlowWorker Daemon**
+    *   Create `src/gflow_cli/worker/queue.py` containing transaction-safe SQLite inserts, status transitions, and pending task polling.
+    *   Create `src/gflow_cli/worker/daemon.py` containing the `FlowWorker` infinite poll loop.
+    *   Ensure the queue worker enforces sequential execution locks using an `asyncio.Lock` per Chrome profile context to prevent Playwright conflicts.
+    *   Ensure failures log RFC 9457 structured problems inside the database's `error_json` column.
+    
+*   **Task 1.4: Unit & Integration Mocks**
+    *   Create `tests/worker/test_daemon.py`.
+    *   Write tests verifying queue insertion, priority order polling, background execution under mocked client conditions, and database status state changes.
 
 ---
 
-## Task 3 — Expose FastAPI REST App & Static UI Server
+### Phase 2 — FastAPI SSE Daemon & CLI Integration
 
-**What:** Construct the local API and static file routes.
+**Goal:** Wrap the FastMCP instance in FastAPI SSE routers, support OS shutdown signal traps, add database crash recoveries, and add the Click command `gflow serve`.
 
-**Files:**
-- `src/gflow_cli/ui/app.py`
-- `tests/ui/test_app.py`
-
-**Steps:**
-- [ ] Create `src/gflow_cli/ui/app.py`.
-- [ ] Implement REST endpoints: projects browse, profiles management, and queue submission.
-- [ ] Implement static file server routes mounting compiled UI build folder `src/gflow_cli/ui/static/`.
-- [ ] Write integration tests verifying REST client calls.
-
----
-
-## Task 4 — Implement MCP SSE (Server-Sent Events) HTTP Transport
-
-**What:** Wire the FastMCP instance into FastAPI SSE routes.
-
-**Files:**
-- `src/gflow_cli/mcp/server.py`
-- `src/gflow_cli/ui/app.py`
-
-**Steps:**
-- [ ] Update `server.py` to support binding FastMCP routes to SSE.
-- [ ] Expose `GET /mcp/sse` and `POST /mcp/message` inside `ui/app.py`.
-- [ ] Write integration tests validating SSE JSON-RPC exchanges.
+*   **Task 2.1: FastAPI SSE Application Architecture**
+    *   Create `src/gflow_cli/ui/app.py`.
+    *   Expose endpoints `GET /mcp/sse` (initiates server SSE transport stream) and `POST /mcp/message` (receives JSON-RPC command payloads).
+    *   Redact raw secrets or session tokens in daemon logs using `redact_metadata`.
+    
+*   **Task 2.2: Crash Recovery & OS Signal Traps**
+    *   Create `src/gflow_cli/ui/server.py` containing Uvicorn boot operations.
+    *   Wire signal handlers for `SIGINT` (Ctrl+C) and `SIGTERM` in the FastAPI event loops to safely close Playwright browser processes and database cursors.
+    *   On FastAPI startup, execute a database sweep to reset any hung `processing` tasks to `failed` with a recovery message.
+    
+*   **Task 2.3: Click CLI Command `gflow serve`**
+    *   Modify `src/gflow_cli/cli.py` to add `gflow serve [--port PORT] [--host HOST] [--profile NAME]` command.
+    *   Implement filesystem-level locks (`profile.lock`) inside browser manager sequences to block manual command runs while the daemon is actively running a browser context for that profile.
+    
+*   **Task 2.4: Integration Tests**
+    *   Create `tests/ui/test_app.py`.
+    *   Write integration tests verifying connection handshakes on `/mcp/sse`, JSON-RPC echo routing, and recovery behaviors.
 
 ---
 
-## Task 5 — Click CLI Command `gflow ui`
+### Phase 3 — E2E Verification & Symmetry Gates
 
-**What:** Define Click entrypoint to start the server.
+**Goal:** Establish end-to-end integration tests using live credentials, verify CLI/MCP option parameters symmetry, update roadmaps, and pass all hygiene gates.
 
-**Files:**
-- `src/gflow_cli/cli.py`
-- `src/gflow_cli/ui/server.py`
-
-**Steps:**
-- [ ] Create `src/gflow_cli/ui/server.py` to initialize Uvicorn.
-- [ ] Add Click command `gflow ui [--port PORT] [--host HOST] [--profile NAME]` in `cli.py`.
-- [ ] Enforce file-based profile locks when booting the daemon.
-
----
-
-## Task 6 — Roadmap & Documentation Updates
-
-**What:** Sync project docs and verify repository hygiene.
-
-**Files:**
-- `ROADMAP.md`
-- `CHANGELOG.md`
-- `PLAN.md`
-
-**Steps:**
-- [ ] Refine `ROADMAP.md` to reflect the integrated Web UI, worker queue, and SSE milestones.
-- [ ] Update root `PLAN.md` backlog to link this plan.
-- [ ] Run `/gflow:check` to ensure the entire suite is green.
+*   **Task 3.1: E2E Integration Suite (`tests/e2e/test_daemon_e2e.py`)**
+    *   Write `tests/e2e/test_daemon_e2e.py`.
+    *   **E2E Test Execution Sequence:**
+        1. Spawn the daemon background process using `gflow serve --port 8999 --profile default`.
+        2. Initiate an SSE client connection over `http://127.0.0.1:8999/mcp/sse`.
+        3. Dispatch an MCP tool command `generate_image` containing test inputs.
+        4. Read and assert on the incoming SSE stream events to verify log steps and status changes.
+        5. Verify that the final asset is downloaded, a SQLite record exists in the database, and the local file is registered.
+        6. Send termination signal, asserting that the daemon shuts down, releases files, and exits cleanly.
+        
+*   **Task 3.2: CLI & MCP Option Symmetry Validation**
+    *   Update `tests/mcp/test_server.py` to programmatically extract Click CLI command inputs and verify that every option and default matches FastMCP schemas.
+    *   Validate that missing schemas fail the CI test suite.
+    
+*   **Task 3.3: Repository Hygiene & Backlog Sync**
+    *   Refine `ROADMAP.md` milestones.
+    *   Update root `PLAN.md` backlog.
+    *   Run `/gflow:check` (the Impeccable Routine) to verify all gates pass.
 
 ---
 
-## Definition of done
+## 3. Definition of Done (DoD)
 
-- [ ] All task steps checked off.
-- [ ] `/gflow:check` green.
-- [ ] Uvicorn server starts cleanly with `gflow ui`.
-- [ ] User can browse the local filmmaking dashboard on `127.0.0.1:8000` and submit background rendering jobs.
+To resolve this feature branch as complete and ready for integration:
+- [ ] All development tasks and phases checked off.
+- [ ] All unit, integration, and E2E daemon tests pass cleanly.
+- [ ] The CLI/MCP option symmetry test verifies parameter parity.
+- [ ] The `gflow serve` command starts FastAPI/Uvicorn, binds safely to localhost, and shuts down cleanly on OS signals.
+- [ ] `gflow.db` schema migration versions are verified transactional.
+- [ ] Documentation and roadmaps are updated to reflect the new daemon architecture.
