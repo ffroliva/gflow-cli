@@ -127,4 +127,5 @@ Because the MCP server runs locally, inheriting the host user's permissions and 
    sys.stdin.reconfigure(encoding='utf-8')
    ```
    This prevents crashes caused by non-ASCII prompt strings on Windows.
-4. **Local Rate-Limiting:** To prevent malicious injection prompts from running expensive credit-burning loops, the server restricts tool executions to a maximum of 3 concurrent generations per sliding 60-second window.
+4. **Local Rate-Limiting:** Enforces a token-bucket rate limiter with a capacity of 8 tokens and a refill rate of 1 token every 20 seconds (allowing burst filmmaking tasks without timeouts). It also evaluates cumulative session and daily limits (`GFLOW_CLI_SESSION_CREDIT_LIMIT` and `GFLOW_CLI_DAILY_BUDGET`) against SQLite logs, failing fast to prevent credit depletion attacks.
+5. **CLI-MCP Parameter Symmetry:** Automated checks in the CI test suite (`tests/mcp/test_server.py`) compare CLI Click parameters with registered MCP tool signatures, ensuring that any added options or flags in the CLI are instantly mirrored in the MCP layer to prevent schema drift.
