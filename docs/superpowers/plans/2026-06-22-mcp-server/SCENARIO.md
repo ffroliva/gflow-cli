@@ -35,7 +35,8 @@ We evaluate the MCP Server wrapper against relevant failure dimensions.
 | 9 | D9 Transport| Client reads resource URI "gflow://docs/mcp-guide" | Low | Return custom MCP-targeted agent guidance to use registered tools. | Unit |
 | 10| D9 Transport| Client reads resource URI "gflow://db/schema" | Low | Return SQLite database table definitions as text. | Unit |
 | 11| D8 Cross-plat| Windows user issues prompt with non-ASCII characters | High | UTF-8 stdio reconfiguration prevents pipe crashes. | Unit |
-| 12| D2 WAF/reCAP | Prompt injection attempts >3 generations in a minute | High | Local sliding-window rate limit triggers and returns rate-limit error response. | Unit |
+| 12| D2 WAF/reCAP | Prompt injection attempts credit burning via loops or burst requests | High | Exhaust token-bucket capacity (max 8 burst tokens, refill 1/20s) or cross session/daily budget limits, returning cost-limit errors. | Unit / Integration |
+| 13| D2 WAF/reCAP | Client options/arguments added to Click command | High | Automated parameter-symmetry test in tests/mcp/test_server.py fails in CI if MCP tool parameter schema does not match CLI options. | Unit |
 
 ---
 

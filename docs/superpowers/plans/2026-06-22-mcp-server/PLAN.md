@@ -70,11 +70,13 @@ CHANGELOG.md
   - Test verifying that a tool query requests list matches our schema.
   - Test verifying stdout redirection intercepts raw prints.
   - Test verifying error responses catch exceptions without crashing.
+  - Test introspecting Click command structures and asserting parameter symmetry with MCP tool signatures.
 
 **Tests created (red):**
 - [ ] `test_mcp_list_tools`
 - [ ] `test_mcp_stdout_redirection`
 - [ ] `test_mcp_error_boundary`
+- [ ] `test_cli_mcp_parameter_symmetry`
 
 ---
 
@@ -108,8 +110,9 @@ CHANGELOG.md
   - `gflow_generate_video` (T2V)
   - `gflow_list_projects` (reads SQLite catalog directly)
   - `gflow_list_characters` (reads SQLite catalog directly)
-- [ ] Implement a sliding-window rate limit (max 3 generations per minute) inside the generation tool wrappers to prevent automated credit-burning loops.
-- [ ] Add an internal `asyncio.Lock` queue to serialize concurrent Playwright execution requests on the single Chromium profile context.
+- [ ] Implement a token-bucket rate limiter (capacity of 8 to allow storyboards, refill rate of 1 token every 20 seconds) for generation tool wrappers.
+- [ ] Add session and daily budget limit validations in `tools.py` (`GFLOW_CLI_SESSION_CREDIT_LIMIT` and `GFLOW_CLI_DAILY_BUDGET`), verifying spent limits against SQLite database records.
+- [ ] Add an internal `asyncio.Lock` queue for sequential tool executions, and acquire file-based locks on the context profile directory to prevent CLI and MCP process collisions.
 - [ ] Ensure generation tools verify authentication cookies *before* starting Playwright to prevent hanging processes.
 - [ ] Convert resulting local asset filepaths into absolute `file://` URIs.
 - [ ] Run `pytest tests/mcp/test_server.py` until checks pass green.
