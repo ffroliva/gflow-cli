@@ -31,6 +31,9 @@ We evaluate the MCP Server wrapper against relevant failure dimensions.
 | 5 | D5 Concurrency| AI client issues two parallel generation commands | Medium | Acquire a lock per-profile and execute sequentially, or return busy error. Sequential execution is preferred. | Integration |
 | 6 | D6 Data | Tool queries local SQLite catalog | Low | Read directly using fast SQL select queries; resolve within < 50ms without launching browser. | Unit |
 | 7 | D11 Input | Invalid aspect ratio passed via tool arguments | Low | Validate input in Python, return error message immediately without launching browser context. | Unit |
+| 8 | D9 Transport| Client queries list of exposed prompts | Low | Return list of prompts including "expand_prompt" and "create_character". | Unit |
+| 9 | D9 Transport| Client reads resource URI "gflow://docs/skill" | Low | Return content of "skills/gflow-cli/SKILL.md" as text. | Unit |
+| 10| D9 Transport| Client reads resource URI "gflow://db/schema" | Low | Return SQLite database table definitions as text. | Unit |
 
 ---
 
@@ -52,4 +55,10 @@ Feature: MCP Server
     When the MCP server executes "gflow_generate_image"
     Then the tool response should contain the text "Authentication required"
     And the JSON-RPC connection should remain open
+
+  Scenario: Querying prompt templates and reading resources
+    When the MCP server receives a prompt list request
+    Then it should return description of "expand_prompt" and "create_character"
+    When the MCP server receives a resource read request for "gflow://docs/skill"
+    Then the response should contain the content of the gflow-cli skill file
 ```
