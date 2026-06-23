@@ -11,14 +11,17 @@
 * Integrate the server startup and registration workflows under a new CLI command group `gflow mcp`.
 * Enforce absolute `stdout` isolation: redirect all internal logs, diagnostics, and prints to `stderr` to prevent JSON-RPC transport corruption.
 
-**Predict verdict:** GO — confidence 8.6/10
+**Predict verdict:** CAUTION — confidence 7.8/10
 
 **Risk Register:**
 | Severity | Risk | Mitigation |
 |---|---|---|
 | Critical | Stdout pollution from logs/prints crashes the JSON-RPC channel | Wrap the server event loop and globally redirect `sys.stdout` to `sys.stderr` for any sub-call print writes. |
 | High | Unauthenticated tool requests hang on background browser launch | Check session cookies locally *before* spawning Playwright; fail fast if authentication is missing. |
+| High | Windows pipe encoding crashes on non-ASCII prompt strings | Explicitly reconfigure stdout/stdin to use utf-8 encoding on server startup. |
+| High | Malicious prompt injection burns credits in loops | Implement local sliding-window rate-limiting (max 3 runs/minute) inside the tool wrappers. |
 | Medium | Parallel tool execution conflicts on single-profile contexts | Implement a profile-level lock to queue concurrent request threads sequentially. |
+| Medium | Agent hallucinations leading to CLI scripting instead of tool calls | Expose a dedicated, agent-targeted `gflow://docs/mcp-guide` resource instead of the raw `SKILL.md`. |
 
 ---
 
@@ -85,6 +88,7 @@ CHANGELOG.md
 **Steps:**
 - [ ] Create `src/gflow_cli/mcp/server.py`.
 - [ ] Set up the official `mcp.server.fastmcp.FastMCP` instance or standard `mcp.server.Server`.
+- [ ] Explicitly reconfigure stdout/stdin to use utf-8 encoding during server initialization to prevent Windows pipe encoding crashes.
 - [ ] Implement a context manager that redirects `sys.stdout` to `sys.stderr` while keeping stdio streams isolated for JSON-RPC communications.
 - [ ] Configure `structlog` to write strictly to `stderr` under all formatting modes during server startup.
 
@@ -104,6 +108,8 @@ CHANGELOG.md
   - `gflow_generate_video` (T2V)
   - `gflow_list_projects` (reads SQLite catalog directly)
   - `gflow_list_characters` (reads SQLite catalog directly)
+- [ ] Implement a sliding-window rate limit (max 3 generations per minute) inside the generation tool wrappers to prevent automated credit-burning loops.
+- [ ] Add an internal `asyncio.Lock` queue to serialize concurrent Playwright execution requests on the single Chromium profile context.
 - [ ] Ensure generation tools verify authentication cookies *before* starting Playwright to prevent hanging processes.
 - [ ] Convert resulting local asset filepaths into absolute `file://` URIs.
 - [ ] Run `pytest tests/mcp/test_server.py` until checks pass green.
@@ -123,7 +129,7 @@ CHANGELOG.md
   - `expand_prompt`: Prompt template helper for 5-component Google prompt formula.
   - `create_character`: Prompt template helper for consistent character profile descriptions.
 - [ ] Create `src/gflow_cli/mcp/resources.py` exposing `@mcp.resource` mappings:
-  - `gflow://docs/skill`: Serves the `gflow-cli` skill documentation.
+  - `gflow://docs/mcp-guide`: Serves a dedicated, agentic guide instructing the LLM to use registered tools instead of terminal shell wrappers.
   - `gflow://docs/known-issues`: Serves `KNOWN_ISSUES.md` warnings.
   - `gflow://db/schema`: Serves the SQLite database schema query details.
 - [ ] Wire both prompts and resources modules into the server boot file `src/gflow_cli/mcp/server.py`.

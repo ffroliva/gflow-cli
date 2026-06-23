@@ -28,12 +28,14 @@ We evaluate the MCP Server wrapper against relevant failure dimensions.
 | 2 | D7 Error | Tool call raises an exception (e.g. `FlowApiError`) | High | Catch error, format as standard text error response, return code 200 JSON-RPC (do not exit server). | Unit |
 | 3 | D1 Auth | Active browser context has no cookies or has expired | High | Return text response: "Authentication required. Run 'gflow auth login' in your local terminal." | Integration |
 | 4 | D8 Paths | Returning generated image path to AI client | High | Convert local path to a structured absolute file URI (e.g. `file:///C:/path/to/image.png`). | Unit |
-| 5 | D5 Concurrency| AI client issues two parallel generation commands | Medium | Acquire a lock per-profile and execute sequentially, or return busy error. Sequential execution is preferred. | Integration |
+| 5 | D5 Concurrency| AI client issues two parallel generation commands | High | Queue requests using asyncio.Lock, verify lock is released, and acquire file-based locks on the context directory to avoid profile crashes. | Integration |
 | 6 | D6 Data | Tool queries local SQLite catalog | Low | Read directly using fast SQL select queries; resolve within < 50ms without launching browser. | Unit |
 | 7 | D11 Input | Invalid aspect ratio passed via tool arguments | Low | Validate input in Python, return error message immediately without launching browser context. | Unit |
 | 8 | D9 Transport| Client queries list of exposed prompts | Low | Return list of prompts including "expand_prompt" and "create_character". | Unit |
-| 9 | D9 Transport| Client reads resource URI "gflow://docs/skill" | Low | Return content of "skills/gflow-cli/SKILL.md" as text. | Unit |
+| 9 | D9 Transport| Client reads resource URI "gflow://docs/mcp-guide" | Low | Return custom MCP-targeted agent guidance to use registered tools. | Unit |
 | 10| D9 Transport| Client reads resource URI "gflow://db/schema" | Low | Return SQLite database table definitions as text. | Unit |
+| 11| D8 Cross-plat| Windows user issues prompt with non-ASCII characters | High | UTF-8 stdio reconfiguration prevents pipe crashes. | Unit |
+| 12| D2 WAF/reCAP | Prompt injection attempts >3 generations in a minute | High | Local sliding-window rate limit triggers and returns rate-limit error response. | Unit |
 
 ---
 
@@ -59,6 +61,6 @@ Feature: MCP Server
   Scenario: Querying prompt templates and reading resources
     When the MCP server receives a prompt list request
     Then it should return description of "expand_prompt" and "create_character"
-    When the MCP server receives a resource read request for "gflow://docs/skill"
-    Then the response should contain the content of the gflow-cli skill file
+    When the MCP server receives a resource read request for "gflow://docs/mcp-guide"
+    Then the response should contain the content of the MCP-targeted agent guide
 ```
