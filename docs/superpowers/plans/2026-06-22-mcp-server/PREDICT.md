@@ -1,10 +1,12 @@
 # Predict: Model Context Protocol (MCP) Server
 
-## Verdict: GO
-**Confidence:** 8.6/10
+## Verdict: CAUTION
+**Confidence:** 7.8/10
 
 ## Summary
-The five personas collectively agree that exposing `gflow-cli` tools via a Python-native MCP server is highly feasible and provides a clean, structured interface for IDE agents. The primary architectural risk is standard output (stdout) contamination from logger/print statements, which would corrupt the JSON-RPC stream. Mitigations include a global stdout-to-stderr redirect wrapper and strict logging configuration during server startup.
+The LLM Council evaluates the proposed MCP Server. While the Architect and UX Critics agree that structured JSON-RPC represents a major usability upgrade over raw terminal logs and escape codes, the Devil's Advocate and Security Critics flag significant concerns: Windows-specific pipe fragility (encoding issues), the risk of malicious prompts causing credit-burning loops, and the hallucination risk if agents are fed terminal-focused skill documentation.
+
+The verdict is downgraded from **GO to CAUTION**. Mitigations have been added to the plan to address these critical failure modes.
 
 ---
 
@@ -12,48 +14,52 @@ The five personas collectively agree that exposing `gflow-cli` tools via a Pytho
 
 ### Architect — GO (9/10)
 - Exposing tools via MCP introduces a new primary adapter (`src/gflow_cli/mcp/`) that sits side-by-side with the Click CLI (`cli.py`). Both drive the core application domain (`FlowApiClient` and `data/repository.py`).
-- This layout respects the dependency rule: `interfaces (cli, mcp) -> application/infrastructure (api, data)`.
-- Reusing `FlowApiClient` directly avoids duplicating business logic. No complex DDD modifications are needed yet.
+- SQLite data operations read directly from the repository layer without launching a browser.
+- **Context Locking:** Playwright persistent contexts lock the Chromium profile directory. 
+  - *Mitigation:* The server must serialize requests via an internal `asyncio.Lock` AND use a file-based lock on the profile context directory to prevent concurrent CLI and MCP runs from colliding.
 
-### Security / reCAPTCHA — CAUTION (8/10)
-- **Trust Boundary:** The MCP server executes locally with the user's permissions, running commands against their authenticated Google profile.
-- **Hanging / Timeout:** If a tool is executed and session cookies are expired/missing, Playwright will hang or prompt for input, causing the host agent to time out. 
-  - *Mitigation:* The server must check cookie validity via SQLite or profile storage *before* starting Playwright, returning a clean "Authentication required" text response.
-- **Secret Leaking:** Ensure reCAPTCHA tokens or auth headers are never logged to `stderr` or returned in error payloads. `show_locals=False` must remain active on structlog settings.
+### Security / reCAPTCHA — CAUTION (7/10)
+- **Trust Boundary:** The MCP server inherits the host user's local execution permissions. It grants the client LLM agent access to drive the user's active Google account.
+- **Prompt Injection & Credit Burning:** Malicious prompts could trick the client agent into running expensive generation loops, exhausting the user's Flow credits.
+  - *Mitigation:* Implement sliding-window rate-limiting (max 3 runs/minute) inside tool wrappers. Exclude billing modifications from tool parameters.
+- **Hanging / Timeout:** Prevent interactive auth calls on stdin by checking cookie validity *before* spawning the browser, returning a standard text response when unauthenticated.
 
 ### Performance / Playwright — CAUTION (8/10)
-- **Page Pool Concurrency:** Desktop agents can issue parallel tool calls. If two tool calls execute concurrently on the same Google Chrome profile, Playwright persistent context will crash due to profile locking.
-  - *Mitigation:* Implement a serialization lock on the server execution wrapper to queue tool invocations sequentially.
-- **Direct DB Reads:** For read-only queries (`list_projects`, `list_characters`), the server should bypass Playwright entirely and read directly from the SQLite catalog via `DataStore`/`repository.py` (<50ms execution).
+- Exposing SQLite catalog reads via tools (`list_projects`, `list_characters`) yields fast results (<50ms) by bypassing Playwright entirely.
+- Browser-based generations run headless and are serialized to prevent queue pollution.
 
-### CLI UX / Cross-platform — GO (8/10)
-- Introduce Click command `gflow mcp run` to boot the server and `gflow mcp setup` to automatically register the server block in the Claude Desktop configuration (`%APPDATA%/Castano/Claude/claude_desktop_config.json` or `~/.claude/settings.json`).
-- Standardize exit codes: exit cleanly if stdio disconnects.
-- Windows path handling: ensure file paths returned by tools are converted to absolute `file://` URIs.
+### CLI UX & Agentic — CAUTION (7/10)
+- Exposing the terminal-targeted `skills/gflow-cli/SKILL.md` directly via `gflow://docs/skill` introduces a **hallucination risk** where agents may try to write and run shell scripts instead of calling native MCP tools.
+  - *Mitigation:* Expose a dedicated, agent-targeted `gflow://docs/mcp-guide` resource that instructs the agent to prefer native JSON-RPC tools and prompts.
+- Click subcommands `gflow mcp run` and `gflow mcp setup` streamline setup and configuration writing.
 
-### Devil's Advocate — GO (9/10)
-- **Why not just let the LLM use CLI commands?** While LLMs can run `gflow image t2i`, parsing terminal stdout/stderr is fragile due to line wraps, escape codes, and structural logging formats. Native MCP returns structured JSON, handles type validation, and provides explicit error responses.
-- The timing is perfect: we have a stable SQLite data layer and a robust `UiAutomationTransport` ready to be driven.
+### Devil's Advocate — CAUTION (6/10)
+- **Stdio Pipe Fragility:** Stdio-based JSON-RPC on Windows is fragile to encoding conflicts (e.g. non-ASCII prompts causing pipe crashes on `cp1252`).
+  - *Mitigation:* Explicitly reconfigure stdout/stdin to use `utf-8` encoding during server startup.
+- **Stdout Pollution:** Any debug prints from core libraries will corrupt the JSON-RPC stream. Redirecting all stdout to stderr is mandatory and must be carefully tested.
 
 ---
 
 ## High-confidence risks (flagged by 2+ personas)
-1. **Stdout pollution:** Any package, third-party library, or print statement writing to `stdout` corrupts the MCP JSON-RPC stream, crashing the server.
-   - *Mitigation:* Force all internal logging (including `structlog` and external libraries) to `stderr`. Wrap the server runner in a context manager that redirects standard `sys.stdout` to `sys.stderr` except for the actual JSON-RPC transport stream.
+1. **Stdout pollution:** Corrupts the MCP stream. Mitigated by global stdout-to-stderr captures.
+2. **Windows pipe encoding crashes:** Mitigated by forcing `utf-8` encoding on stdio.
+3. **Credit depletion via prompt injection:** Mitigated by local rate-limiting inside the tool handlers.
 
 ---
 
 ## Conflicts resolved
-- *CLI vs MCP execution:* Devil's Advocate questioned if configuring a separate server adds bloat. Resolution: Stdio MCP is lightweight, requires only a few files under `src/gflow_cli/mcp/` and one extra dependency (`mcp`), keeping the CLI lean while unlocking native agent capabilities.
+* *Is MCP redundant vs CLI?* Yes, agents can run CLI commands directly via shell tools. However, shell runs suffer from high escaping risks and process launch latency, and concurrent runs crash Playwright. The MCP server encapsulates these issues in a single, safe process lifecycle, justifying the extra layer.
 
 ---
 
 ## Required mitigations before EXECUTE
-1. Global stdout redirection inside `src/gflow_cli/mcp/server.py`.
-2. Session cookie pre-flight check before checking out a Playwright page.
-3. Queue lock to serialize concurrent tool executions on a single profile.
+1. Global stdout capture and redirection to `stderr`.
+2. Windows stdio encoding reconfiguration to `utf-8` on startup.
+3. Local sliding-window rate limiting (max 3 runs per minute).
+4. Dedicated agentic guide resource `gflow://docs/mcp-guide` to replace raw `SKILL.md` exposure.
+5. Internal `asyncio.Lock` + file-based profile lock.
 
 ---
 
 ## Recommended next step
-Proceed to `/gflow:scenario` and outline the BDD / integration tests verifying stderr redirection and error boundaries.
+Proceed to `/gflow:scenario` and update the test plan with assertions for stdio encoding, rate limits, and lock concurrency.
