@@ -153,6 +153,41 @@ def auth(ctx: click.Context) -> None:
     _render_profiles_table(profiles)
 
 
+def _maybe_rename_first_profile(
+    profile: str | None,
+    profiles: list[profile_store.ProfileMeta],
+) -> list[profile_store.ProfileMeta]:
+    """Auto-rename an opaque 'default' profile to the email local-part on first login.
+
+    Only fires when no explicit ``--profile`` was given, there is exactly one
+    profile, it is still named ``"default"``, and a google_account is present.
+    Returns the (possibly refreshed) profiles list.
+    """
+    if not (
+        profile is None
+        and len(profiles) == 1
+        and profiles[0].name == "default"
+        and profiles[0].google_account
+    ):
+        return profiles
+    local_part = _profile_name_from_account(profiles[0].google_account)
+    if not local_part or local_part == "default":
+        return profiles
+    try:
+        profile_store.rename_profile("default", local_part)
+        profiles = profile_store.list_profiles()
+        console.print(
+            f"[dim]Renamed profile from [bold]default[/bold] to "
+            f"[bold]{local_part}[/bold] (derived from Google account).[/dim]",
+        )
+    except FileExistsError:
+        console.print(
+            f"[dim]Profile [bold]{local_part}[/bold] already exists — "
+            "keeping name [bold]default[/bold].[/dim]",
+        )
+    return profiles
+
+
 @auth.command("login")
 @click.option(
     "--profile",
@@ -208,26 +243,7 @@ def auth_login(profile: str | None, browser: str | None) -> None:
     # when no explicit --profile was given (profile is None), so `gflow auth
     # login --profile default` never silently renames the user's named profile.
     profiles = profile_store.list_profiles()
-    if (
-        profile is None
-        and len(profiles) == 1
-        and profiles[0].name == "default"
-        and profiles[0].google_account
-    ):
-        local_part = _profile_name_from_account(profiles[0].google_account)
-        if local_part and local_part != "default":
-            try:
-                pdir = profile_store.rename_profile("default", local_part)
-                profiles = profile_store.list_profiles()
-                console.print(
-                    f"[dim]Renamed profile from [bold]default[/bold] to "
-                    f"[bold]{local_part}[/bold] (derived from Google account).[/dim]",
-                )
-            except FileExistsError:
-                console.print(
-                    f"[dim]Profile [bold]{local_part}[/bold] already exists — "
-                    "keeping name [bold]default[/bold].[/dim]",
-                )
+    profiles = _maybe_rename_first_profile(profile, profiles)
 
     # If this was the very first profile, set it as default automatically so
     # subsequent commands work without explicit --profile / GFLOW_CLI_PROFILE.
