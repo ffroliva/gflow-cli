@@ -18,9 +18,9 @@ import base64
 import json
 import os
 import time
-from dataclasses import replace as _dc_replace
+from dataclasses import replace as _dataclass_replace
 from datetime import datetime
-from typing import TYPE_CHECKING, Any, Self, cast
+from typing import TYPE_CHECKING, Any, Self, TypeVar, cast
 from urllib.parse import quote, urlsplit, urlunsplit
 
 import structlog
@@ -69,6 +69,8 @@ from gflow_cli.storage import AnyPath, storage_path, write_asset_async
 if TYPE_CHECKING:
     from pathlib import Path
 
+    from _typeshed import DataclassInstance
+
     from gflow_cli.api.image import GenerateImageRequest
     from gflow_cli.api.video import GenerateVideoRequest, VideoResult, VideoStartedCallback
 
@@ -76,6 +78,20 @@ if TYPE_CHECKING:
 # bodies, launch kwargs, etc.). A single definition avoids the duplicated-literal
 # smell (SonarCloud S1192) from repeating the bare mapping type across the module.
 JsonObject = dict[str, Any]
+
+_DataclassT = TypeVar("_DataclassT", bound="DataclassInstance")
+
+
+def _dc_replace(obj: _DataclassT, /, **changes: Any) -> _DataclassT:
+    """Typed wrapper over ``dataclasses.replace`` that preserves the input type.
+
+    The stdlib annotation for ``replace`` is opaque to some analyzers (they infer
+    a generic ``DataclassInstance``), which produced spurious argument-type and
+    declared-type findings at call sites. Re-declaring it with a ``TypeVar`` makes
+    the return type flow through as the concrete request dataclass.
+    """
+    return _dataclass_replace(obj, **changes)
+
 
 # Marker substring used by Playwright when a Page/Context/Browser is closed.
 # Stable across recent Playwright versions; we match on message text to avoid
