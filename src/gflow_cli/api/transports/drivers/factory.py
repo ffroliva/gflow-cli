@@ -74,7 +74,7 @@ async def _any_present(page: Page, selectors: Iterable[str]) -> bool:
                 return True
         # Best-effort probe: swallow any locator error so one bad selector never
         # aborts detection — the next selector (and the safe default) still run.
-        except Exception:  # noqa: BLE001
+        except Exception:  # noqa: BLE001  # NOSONAR
             continue
     return False
 

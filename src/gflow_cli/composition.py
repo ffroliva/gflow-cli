@@ -140,6 +140,30 @@ def _dialogue_block(scene: Scene, characters: Mapping[str, Character]) -> str:
     return "Dialogue:\n" + "\n".join(rows)
 
 
+def _subjects_block(scene: Scene, characters: Mapping[str, Character]) -> str:
+    """Return the subject sentence for all characters in the scene, or ''."""
+    subjects: list[str] = []
+    for name in scene.characters:
+        c = characters.get(name)
+        if c is None:
+            continue
+        subj = (
+            c.resolve_variant(scene.variant) if len(scene.characters) == 1 else (c.appearance or "")
+        )
+        if subj:
+            subjects.append(subj)
+    return _sentence("; ".join(subjects)) if subjects else ""
+
+
+def _framing_camera_block(scene: Scene, style: StyleSpec) -> str:
+    """Return the combined framing+camera sentence, or ''."""
+    camera = scene.camera or style.camera
+    framing_cam = ", ".join(
+        x for x in ([f"{scene.framing} shot" if scene.framing else None, camera]) if x
+    )
+    return _sentence(framing_cam) if framing_cam else ""
+
+
 def compose_prompt(
     style: StyleSpec,
     scene: Scene,
@@ -157,18 +181,9 @@ def compose_prompt(
     parts.append(_sentence(scene.action))
 
     # 2. SUBJECT (appearance + variant) for each named character
-    subjects: list[str] = []
-    for name in scene.characters:
-        c = characters.get(name)
-        if c is None:
-            continue
-        subj = (
-            c.resolve_variant(scene.variant) if len(scene.characters) == 1 else (c.appearance or "")
-        )
-        if subj:
-            subjects.append(subj)
-    if subjects:
-        parts.append(_sentence("; ".join(subjects)))
+    subj_block = _subjects_block(scene, characters)
+    if subj_block:
+        parts.append(subj_block)
 
     # 3. SETTING
     setting = scene.setting or style.environment
@@ -187,12 +202,9 @@ def compose_prompt(
         parts.append(_sentence(lighting))
 
     # 7. FRAMING + CAMERA
-    camera = scene.camera or style.camera
-    framing_cam = ", ".join(
-        x for x in ([f"{scene.framing} shot" if scene.framing else None, camera]) if x
-    )
-    if framing_cam:
-        parts.append(_sentence(framing_cam))
+    framing_cam_block = _framing_camera_block(scene, style)
+    if framing_cam_block:
+        parts.append(framing_cam_block)
 
     # 8. MOOD
     mood = scene.mood or style.mood
@@ -210,6 +222,68 @@ def compose_prompt(
         parts.append(f"Avoid: {', '.join(negs)}.")
 
     return " ".join(p for p in parts if p)
+
+
+def _build_handoff_characters(manifest: Any, state: Any) -> list[dict[str, Any]]:
+    """Build the ``characters`` list for the handoff manifest."""
+    chars_out: list[dict[str, Any]] = []
+    for c in manifest.characters.values():
+        x_gflow_char: dict[str, Any] = {}
+        cstate = state.characters.get(c.name)
+        if cstate is not None and cstate.entity_id:
+            x_gflow_char["entity_id"] = cstate.entity_id
+        chars_out.append(
+            {
+                "name": c.name,
+                "identity": c.identity,
+                "voice": c.voice,
+                "x_gflow": x_gflow_char,
+            }
+        )
+    return chars_out
+
+
+def _build_handoff_clip(
+    *,
+    index: int,
+    scene: Any,
+    ss: Any,
+    manifest: Any,
+    rel: Any,
+    include_prompts: bool,
+) -> dict[str, Any]:
+    """Build one clip entry for the handoff manifest."""
+    status = ss.status if ss else "failed"
+    dur = float(scene.duration) if scene.duration else None
+
+    prompt_val: str | None = None
+    if include_prompts:
+        stored = getattr(ss, "prompt", None) if ss else None
+        prompt_val = stored or compose_prompt(manifest.style, scene, manifest.characters)
+
+    return {
+        "id": scene.id,
+        "index": index,
+        "file": rel(ss.local_path) if ss else None,
+        "duration_seconds": dur,
+        "framing": scene.framing,
+        "characters": list(scene.characters),
+        "consistency_method": (getattr(ss, "consistency_method", "text") if ss else "text"),
+        "dialogue": [
+            {"speaker": d.speaker, "line": d.line, "voice": d.voice} for d in scene.dialogue
+        ],
+        "prompt": prompt_val,
+        "status": status,
+        "x_gflow": {
+            k: v
+            for k, v in (
+                ("media_id", ss.media_id if ss else None),
+                ("operation_id", ss.flow_operation_id if ss else None),
+                ("project_id", manifest.project),
+            )
+            if v
+        },
+    }
 
 
 def build_handoff(
@@ -242,59 +316,24 @@ def build_handoff(
     style_fields = cast("dict[str, Any]", vars(manifest.style))
     style_out: dict[str, Any] = {k: v for k, v in style_fields.items() if v}
 
-    chars_out: list[dict[str, Any]] = []
-    for c in manifest.characters.values():
-        x_gflow_char: dict[str, Any] = {}
-        cstate = state.characters.get(c.name)
-        if cstate is not None and cstate.entity_id:
-            x_gflow_char["entity_id"] = cstate.entity_id
-        chars_out.append(
-            {
-                "name": c.name,
-                "identity": c.identity,
-                "voice": c.voice,
-                "x_gflow": x_gflow_char,
-            }
-        )
+    chars_out = _build_handoff_characters(manifest, state)
 
     clips: list[dict[str, Any]] = []
     total = 0.0
     for index, scene in enumerate(manifest.scenes):
         ss = state.scenes.get(scene.id)
-        status = ss.status if ss else "failed"
         dur = float(scene.duration) if scene.duration else None
         if dur:
             total += dur
-
-        prompt_val: str | None = None
-        if include_prompts:
-            stored = getattr(ss, "prompt", None) if ss else None
-            prompt_val = stored or compose_prompt(manifest.style, scene, manifest.characters)
-
         clips.append(
-            {
-                "id": scene.id,
-                "index": index,
-                "file": rel(ss.local_path) if ss else None,
-                "duration_seconds": dur,
-                "framing": scene.framing,
-                "characters": list(scene.characters),
-                "consistency_method": (getattr(ss, "consistency_method", "text") if ss else "text"),
-                "dialogue": [
-                    {"speaker": d.speaker, "line": d.line, "voice": d.voice} for d in scene.dialogue
-                ],
-                "prompt": prompt_val,
-                "status": status,
-                "x_gflow": {
-                    k: v
-                    for k, v in (
-                        ("media_id", ss.media_id if ss else None),
-                        ("operation_id", ss.flow_operation_id if ss else None),
-                        ("project_id", manifest.project),
-                    )
-                    if v
-                },
-            }
+            _build_handoff_clip(
+                index=index,
+                scene=scene,
+                ss=ss,
+                manifest=manifest,
+                rel=rel,
+                include_prompts=include_prompts,
+            )
         )
 
     return {
