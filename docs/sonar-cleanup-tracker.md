@@ -18,11 +18,15 @@
 
 ## Clusters
 
-- [ ] **C1 — transport drivers** (13): `agentic.py`, `classic.py`, `factory.py` — S1172, S7503, S7632
-- [ ] **C2 — api** (9): `api/character.py`, `api/client.py`, `api/video.py` — S5655, S1192, S3776, S1135
+- [x] **C1 — transport drivers** (13): `agentic.py`, `classic.py`, `factory.py` — done, pushed
+- [x] **C2 — api** (9): `api/character.py`, `api/client.py`, `api/video.py` — done, pushed
 - [ ] **C3 — ui-automation** (14): `transports/ui_automation.py`, `transports/ui_automation_video.py` — S3776, S1192, S2638, S7503, S7632
 - [ ] **C4 — chain/manifests** (13): `chain.py`, `chain_manifest.py`, `composition.py`, `movie_manifest.py`, `data/recorder.py` — S3776, S1192, S7632
-- [ ] **C5 — cli** (13): `cli.py`, `cli_image.py`, `cli_movie.py`, `cli_scene.py`, `cli_video.py` — S3776, S107, S3358, S1940, S7503, S7632
+- [x] **C5 — cli** (13): `cli.py`, `cli_image.py`, `cli_movie.py`, `cli_scene.py`, `cli_video.py` — done, pushed
+
+> Wave 1 (C1/C2/C5) green: pyright 0 errors, ruff clean, 1755 tests pass. Two NOSONAR
+> acceptances: `cli_image.t2i` (CLI-surface param count) and `cli_video._run_batch`
+> (async required by asyncio.run convention). Driver interface params also NOSONAR.
 
 ## Issue inventory (60)
 
