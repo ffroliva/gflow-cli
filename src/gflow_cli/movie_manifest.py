@@ -194,6 +194,22 @@ def _parse_style(data: object) -> StyleSpec:
     )
 
 
+def _parse_character_variants(d: _TomlObj, idx: int) -> dict[str, str]:
+    """Parse the optional variants table for a character entry."""
+    variants_raw = d.get("variants", {})
+    if not isinstance(variants_raw, dict):
+        raise ConfigurationError(f"characters[{idx}].variants must be a table.")
+    return {str(k): str(v) for k, v in cast(_TomlObj, variants_raw).items()}
+
+
+def _character_opt_str(d: _TomlObj, key: str, idx: int) -> str | None:
+    """Read an optional string field from a character dict; raise on wrong type."""
+    v = d.get(key)
+    if v is not None and not isinstance(v, str):
+        raise ConfigurationError(f"characters[{idx}].{key} must be a string.")
+    return v.strip() if isinstance(v, str) else None
+
+
 def _parse_character(data: object, idx: int) -> Character:
     if not isinstance(data, dict):
         raise ConfigurationError(f"characters[{idx}] must be a TOML table.")
@@ -207,10 +223,7 @@ def _parse_character(data: object, idx: int) -> Character:
     if identity not in ("text", "entity"):
         raise ConfigurationError(f"characters[{idx}].identity must be 'text' or 'entity'.")
 
-    variants_raw = d.get("variants", {})
-    if not isinstance(variants_raw, dict):
-        raise ConfigurationError(f"characters[{idx}].variants must be a table.")
-    variants = {str(k): str(v) for k, v in cast(_TomlObj, variants_raw).items()}
+    variants = _parse_character_variants(d, idx)
 
     model = d.get("model", "nano2")
     if not isinstance(model, str) or model not in _VALID_CHARACTER_MODELS:
@@ -219,26 +232,122 @@ def _parse_character(data: object, idx: int) -> Character:
             f"{sorted(_VALID_CHARACTER_MODELS)} (got {model!r})."
         )
 
-    def opt(key: str) -> str | None:
-        v = d.get(key)
-        if v is not None and not isinstance(v, str):
-            raise ConfigurationError(f"characters[{idx}].{key} must be a string.")
-        return v.strip() if isinstance(v, str) else None
-
-    face_prompt = opt("face_prompt")
+    face_prompt = _character_opt_str(d, "face_prompt", idx)
     if identity == "entity" and not face_prompt:
         raise ConfigurationError(f"characters[{idx}] identity='entity' requires face_prompt.")
 
     return Character(
         name=name.strip(),
-        appearance=opt("appearance"),
+        appearance=_character_opt_str(d, "appearance", idx),
         identity=str(identity),
-        voice=opt("voice"),
+        voice=_character_opt_str(d, "voice", idx),
         variants=variants,
         face_prompt=face_prompt,
-        body_prompt=opt("body_prompt"),
+        body_prompt=_character_opt_str(d, "body_prompt", idx),
         model=str(model),
     )
+
+
+def _parse_scene_chars(d: _TomlObj, idx: int, char_names: set[str]) -> list[str]:
+    """Parse and validate the characters array for a scene."""
+    chars_raw = d.get("characters", [])
+    if not isinstance(chars_raw, list):
+        raise ConfigurationError(f"scenes[{idx}].characters must be an array.")
+    chars: list[str] = []
+    for cn in cast(_TomlList, chars_raw):
+        if not isinstance(cn, str) or cn not in char_names:
+            raise ConfigurationError(f"scenes[{idx}] references unknown character {cn!r}.")
+        chars.append(cn)
+    return chars
+
+
+def _parse_scene_shorthand_dialogue(
+    d: _TomlObj,
+    idx: int,
+    chars: list[str],
+) -> tuple[list[DialogueLine], object, object]:
+    """Parse shorthand speaker/line/variant fields; return (dialogue, speaker, variant).
+
+    Also validates that shorthand fields are not used when >1 character is present.
+    """
+    dialogue: list[DialogueLine] = []
+    speaker = d.get("speaker")
+    line = d.get("line")
+    variant = d.get("variant")
+
+    if (speaker is not None or line is not None or variant is not None) and len(chars) > 1:
+        raise ConfigurationError(
+            f"scenes[{idx}]: speaker/line/variant shorthand is invalid with >1 character; "
+            "use per-character [[scenes.characters_detail]] entries."
+        )
+
+    if speaker is not None:
+        if speaker not in chars:
+            raise ConfigurationError(f"scenes[{idx}].speaker {speaker!r} not in characters.")
+        if not isinstance(line, str) or not line.strip():
+            raise ConfigurationError(f"scenes[{idx}].line must be a non-empty string.")
+        dialogue.append(DialogueLine(speaker=str(speaker), line=line.strip()))
+
+    return dialogue, speaker, variant
+
+
+def _parse_scene_per_char_dialogue(
+    d: _TomlObj,
+    idx: int,
+    chars: list[str],
+) -> list[DialogueLine]:
+    """Parse the optional [[scenes.characters_detail]] per-character dialogue table."""
+    dialogue: list[DialogueLine] = []
+    per_char = d.get("characters_detail")
+    if not isinstance(per_char, list):
+        return dialogue
+    for e in cast(_TomlList, per_char):
+        if not isinstance(e, dict):
+            continue
+        ed = cast(_TomlObj, e)
+        nm = ed.get("name")
+        ln = ed.get("line")
+        if nm not in chars:
+            raise ConfigurationError(
+                f"scenes[{idx}].characters_detail name {nm!r} not in characters."
+            )
+        if isinstance(ln, str) and ln.strip():
+            dialogue.append(DialogueLine(speaker=str(nm), line=ln.strip()))
+    return dialogue
+
+
+def _validate_scene_variant(
+    variant: object,
+    chars: list[str],
+    characters: dict[str, Character],
+    idx: int,
+) -> None:
+    """Validate that the shorthand variant name exists on the (single) character."""
+    if not isinstance(variant, str) or len(chars) != 1:
+        return
+    ch = characters.get(chars[0])
+    if ch is not None and variant not in ch.variants:
+        raise ConfigurationError(
+            f"scenes[{idx}].variant {variant!r} is not a variant of "
+            f"character {chars[0]!r} (defined: {sorted(ch.variants)!r})."
+        )
+
+
+def _parse_scene_numeric_fields(d: _TomlObj, idx: int) -> tuple[str, object]:
+    """Parse and validate aspect and duration; return (aspect_str, duration_raw)."""
+    aspect = d.get("aspect", "16:9")
+    if not isinstance(aspect, str) or aspect not in _VALID_VIDEO_ASPECTS:
+        raise ConfigurationError(
+            f"scenes[{idx}].aspect must be one of {sorted(_VALID_VIDEO_ASPECTS)}."
+        )
+
+    duration = d.get("duration")
+    if duration is not None and duration not in _VALID_DURATIONS:
+        raise ConfigurationError(
+            f"scenes[{idx}].duration must be one of {sorted(_VALID_DURATIONS)}."
+        )
+
+    return str(aspect), duration
 
 
 def _parse_scene(
@@ -265,69 +374,16 @@ def _parse_scene(
             f"scenes[{idx}].framing must be one of {sorted(FRAMING)} (got {framing!r})."
         )
 
-    chars_raw = d.get("characters", [])
-    if not isinstance(chars_raw, list):
-        raise ConfigurationError(f"scenes[{idx}].characters must be an array.")
-    chars: list[str] = []
-    for cn in cast(_TomlList, chars_raw):
-        if not isinstance(cn, str) or cn not in char_names:
-            raise ConfigurationError(f"scenes[{idx}] references unknown character {cn!r}.")
-        chars.append(cn)
+    chars = _parse_scene_chars(d, idx, char_names)
 
     # Dialogue: shorthand (speaker/line) for single-char scenes, else per-character table.
-    dialogue: list[DialogueLine] = []
-    speaker = d.get("speaker")
-    line = d.get("line")
-    variant = d.get("variant")
-    per_char = d.get("characters_detail")  # optional [[scenes.characters_detail]] table list
+    shorthand_dialogue, _, variant = _parse_scene_shorthand_dialogue(d, idx, chars)
+    per_char_dialogue = _parse_scene_per_char_dialogue(d, idx, chars)
+    dialogue = shorthand_dialogue + per_char_dialogue
 
-    if (speaker is not None or line is not None or variant is not None) and len(chars) > 1:
-        raise ConfigurationError(
-            f"scenes[{idx}]: speaker/line/variant shorthand is invalid with >1 character; "
-            "use per-character [[scenes.characters_detail]] entries."
-        )
+    _validate_scene_variant(variant, chars, characters, idx)
 
-    if speaker is not None:
-        if speaker not in chars:
-            raise ConfigurationError(f"scenes[{idx}].speaker {speaker!r} not in characters.")
-        if not isinstance(line, str) or not line.strip():
-            raise ConfigurationError(f"scenes[{idx}].line must be a non-empty string.")
-        dialogue.append(DialogueLine(speaker=str(speaker), line=line.strip()))
-
-    if isinstance(per_char, list):
-        for e in cast(_TomlList, per_char):
-            if not isinstance(e, dict):
-                continue
-            ed = cast(_TomlObj, e)
-            nm = ed.get("name")
-            ln = ed.get("line")
-            if nm not in chars:
-                raise ConfigurationError(
-                    f"scenes[{idx}].characters_detail name {nm!r} not in characters."
-                )
-            if isinstance(ln, str) and ln.strip():
-                dialogue.append(DialogueLine(speaker=str(nm), line=ln.strip()))
-
-    # Validate shorthand variant exists for the (single) character.
-    if isinstance(variant, str) and len(chars) == 1:
-        ch = characters.get(chars[0])
-        if ch is not None and variant not in ch.variants:
-            raise ConfigurationError(
-                f"scenes[{idx}].variant {variant!r} is not a variant of "
-                f"character {chars[0]!r} (defined: {sorted(ch.variants)!r})."
-            )
-
-    aspect = d.get("aspect", "16:9")
-    if not isinstance(aspect, str) or aspect not in _VALID_VIDEO_ASPECTS:
-        raise ConfigurationError(
-            f"scenes[{idx}].aspect must be one of {sorted(_VALID_VIDEO_ASPECTS)}."
-        )
-
-    duration = d.get("duration")
-    if duration is not None and duration not in _VALID_DURATIONS:
-        raise ConfigurationError(
-            f"scenes[{idx}].duration must be one of {sorted(_VALID_DURATIONS)}."
-        )
+    aspect, duration = _parse_scene_numeric_fields(d, idx)
 
     model = d.get("model")
     if model is not None and not isinstance(model, str):
@@ -352,7 +408,7 @@ def _parse_scene(
         dialogue=tuple(dialogue),
         duration=duration if isinstance(duration, int) else None,
         model=model if isinstance(model, str) else None,
-        aspect=str(aspect),
+        aspect=aspect,
         count=1,
     )
 
