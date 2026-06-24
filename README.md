@@ -46,11 +46,11 @@ gflow video t2v "Slow cinematic push-in on a sunlit forest clearing" --aspect 16
 gflow character create --project <id> --name "Aria" --face-prompt "..." --body-prompt "..."
 ```
 
-Outputs land under `$GFLOW_CLI_OUTPUT_DIR`, or send them to S3, MinIO, or Google Cloud Storage with [`GFLOW_CLI_STORAGE_URI`](docs/EXTERNAL_STORAGE.md). The first call takes 30 to 90 seconds while Chromium warms up; later calls reuse the warm session.
+Outputs land under `$GFLOW_CLI_OUTPUT_DIR`, or you can route them to S3, MinIO, or Google Cloud Storage with [`GFLOW_CLI_STORAGE_URI`](docs/EXTERNAL_STORAGE.md). The first call takes 30 to 90 seconds while Chromium warms up; later calls reuse the warm session.
 
 > **Why `--browser chrome`?** Google rejects Playwright's bundled Chromium. The CLI fails fast with a friendly error (`AuthBrowserRejectedError`, exit code 14) if you pick anything else.
 
-For the full 10-minute walkthrough with troubleshooting and multi-account setup, see **[USER_GUIDE — Journey 1](docs/USER_GUIDE.md#journey-1--first-time-setup-10-minutes)**.
+For the full 10-minute walkthrough with troubleshooting and multi-account setup, see **[USER_GUIDE: Journey 1](docs/USER_GUIDE.md#journey-1--first-time-setup-10-minutes)**.
 
 ## Examples
 
