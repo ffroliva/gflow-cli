@@ -28,6 +28,10 @@ dependencies = [
     "structlog>=24.0.0",
     "tenacity>=8.2",
     "browser-cookie3>=0.20.1",
+    "fastapi>=0.110.0",
+    "uvicorn>=0.29.0",
+    "sse-starlette>=2.0.0",
+    "mcp>=1.0.0",
 ]
 
 [project.optional-dependencies]
