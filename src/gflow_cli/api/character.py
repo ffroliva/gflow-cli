@@ -52,8 +52,8 @@ CHARACTER_MODELS: dict[str, str] = {
 # whether Flow applies the voice from a lowercase id vs the Capitalized canonical
 # form is UNVERIFIED — we adopt the Capitalized form as canonical per the UI.
 #
-# TODO(backlog): fetch the live voice list from Flow's API; confirm wire-case for
-#       presetVoiceId; support voice creation ("Criar nova voz").
+# Backlog: fetch the live voice list from Flow's API; confirm wire-case for
+# presetVoiceId; support voice creation ("Criar nova voz").
 # ---------------------------------------------------------------------------
 
 
@@ -193,6 +193,54 @@ class CharacterCreateResult:
 # ---------------------------------------------------------------------------
 
 
+def _parse_character_entity(e: dict[str, Any]) -> Character | None:
+    """Parse one raw entity dict into a :class:`Character`, or return ``None``.
+
+    Returns ``None`` when the entity is not a CHARACTER, or when required
+    stable ids (``entityId``, ``projectId``) are absent from the wire payload.
+    Signed URLs (``fifeUrl``, etc.) are intentionally not forwarded (scenario #16).
+    """
+    info: dict[str, Any] = e.get("entityInfo") or {}
+    if info.get("entityType") != "CHARACTER":
+        return None
+    entity_id_raw = e.get("entityId")
+    project_id_raw = e.get("projectId")
+    if not entity_id_raw:
+        log.warning("character.parse_skip_missing_entity_id", entity=e)
+        return None
+    if not project_id_raw:
+        log.warning(
+            "character.parse_skip_missing_project_id",
+            entity_id=entity_id_raw,
+            entity=e,
+        )
+        return None
+    ci: dict[str, Any] = info.get("characterInfo") or {}
+    image_refs: list[dict[str, Any]] = ci.get("imageReferences") or []
+    audio_refs: list[dict[str, Any]] = ci.get("audioReferences") or []
+    # Extract only workflowId — never fifeUrl or other signed fields.
+    workflow_ids: tuple[str, ...] = tuple(
+        str(r["workflowId"]) for r in image_refs if r.get("workflowId")
+    )
+    voice: str | None = next(
+        (str(a["presetVoiceId"]) for a in audio_refs if a.get("presetVoiceId")),
+        None,
+    )
+    personality_raw = ci.get("personalityNotes")
+    personality: str | None = str(personality_raw) if personality_raw is not None else None
+    thumbnail_raw = e.get("thumbnailMediaId")
+    thumbnail_media_id: str | None = str(thumbnail_raw) if thumbnail_raw is not None else None
+    return Character(
+        entity_id=str(entity_id_raw),
+        display_name=str(info.get("displayName") or ""),
+        project_id=str(project_id_raw),
+        workflow_ids=workflow_ids,
+        voice=voice,
+        personality=personality,
+        thumbnail_media_id=thumbnail_media_id,
+    )
+
+
 def parse_characters(project_initial_data: dict[str, Any]) -> list[Character]:
     """Extract Character entities from a ``projectInitialData`` response.
 
@@ -210,52 +258,7 @@ def parse_characters(project_initial_data: dict[str, Any]) -> list[Character]:
         A list of :class:`Character` instances, one per CHARACTER entity,
         in the order they appear in the response.
     """
-    out: list[Character] = []
     raw_contents: dict[str, Any] = project_initial_data.get("projectContents") or {}
     raw_entities: list[dict[str, Any]] = raw_contents.get("entities") or []
-    for e in raw_entities:
-        info: dict[str, Any] = e.get("entityInfo") or {}
-        if info.get("entityType") != "CHARACTER":
-            continue
-        entity_id_raw = e.get("entityId")
-        project_id_raw = e.get("projectId")
-        if not entity_id_raw:
-            log.warning(
-                "character.parse_skip_missing_entity_id",
-                entity=e,
-            )
-            continue
-        if not project_id_raw:
-            log.warning(
-                "character.parse_skip_missing_project_id",
-                entity_id=entity_id_raw,
-                entity=e,
-            )
-            continue
-        ci: dict[str, Any] = info.get("characterInfo") or {}
-        image_refs: list[dict[str, Any]] = ci.get("imageReferences") or []
-        audio_refs: list[dict[str, Any]] = ci.get("audioReferences") or []
-        # Extract only workflowId — never fifeUrl or other signed fields.
-        workflow_ids: tuple[str, ...] = tuple(
-            str(r["workflowId"]) for r in image_refs if r.get("workflowId")
-        )
-        voice: str | None = next(
-            (str(a["presetVoiceId"]) for a in audio_refs if a.get("presetVoiceId")),
-            None,
-        )
-        personality_raw = ci.get("personalityNotes")
-        personality: str | None = str(personality_raw) if personality_raw is not None else None
-        thumbnail_raw = e.get("thumbnailMediaId")
-        thumbnail_media_id: str | None = str(thumbnail_raw) if thumbnail_raw is not None else None
-        out.append(
-            Character(
-                entity_id=str(entity_id_raw),
-                display_name=str(info.get("displayName") or ""),
-                project_id=str(project_id_raw),
-                workflow_ids=workflow_ids,
-                voice=voice,
-                personality=personality,
-                thumbnail_media_id=thumbnail_media_id,
-            )
-        )
-    return out
+    result = (_parse_character_entity(e) for e in raw_entities)
+    return [c for c in result if c is not None]

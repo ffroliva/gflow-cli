@@ -984,6 +984,75 @@ class FlowApiClient:
         )
         return Scene.from_get_response(data, scene_id=scene_id, project_id=project_id)
 
+    async def _poll_concat_until_done(
+        self,
+        operation: Any,
+        *,
+        poll_interval: float,
+        deadline: float,
+        timeout_s: float,
+    ) -> str:
+        """Poll ``runVideoFxCheckConcatenationStatus`` until successful.
+
+        Returns the raw base64 ``encodedVideo`` string on success.
+        Raises :class:`SceneConcatError` on job failure and
+        :class:`TransportTimeoutError` on deadline breach.
+        """
+        while True:
+            status_resp = await self._post_json(
+                routes.RUN_VIDEO_FX_CHECK_CONCATENATION_STATUS,
+                {"operation": operation},
+                route_name="runVideoFxCheckConcatenationStatus",
+            )
+            status = str(status_resp.get("status", ""))
+            if status == "MEDIA_GENERATION_STATUS_SUCCESSFUL":
+                return str(status_resp.get("encodedVideo") or "")
+            if status and status != "MEDIA_GENERATION_STATUS_ACTIVE":
+                # FAILED / unspecified — detail from status ONLY, never encodedVideo.
+                logger.warning("scene.concat_failed", status=status)
+                raise SceneConcatError(
+                    detail=f"concatenation job status: {status}",
+                    route="runVideoFxCheckConcatenationStatus",
+                )
+            if time.monotonic() >= deadline:
+                raise TransportTimeoutError(
+                    f"scene concatenation did not finish within {timeout_s:.0f}s"
+                )
+            await asyncio.sleep(poll_interval)
+
+    @staticmethod
+    def _decode_concat_video(encoded: str) -> bytes:
+        """Validate size, base64-decode, and magic-byte-check a concat payload.
+
+        Raises :class:`SceneConcatError` when the payload is absent, oversized,
+        undecodable, or not a valid MP4.
+        """
+        if not encoded:
+            raise SceneConcatError(
+                detail="concatenation succeeded but returned no encodedVideo",
+                route="runVideoFxCheckConcatenationStatus",
+            )
+        if len(encoded) > MAX_CONCAT_B64_LEN:
+            # Reject before decode — never log the body (mitigation: no 20MB+ in logs).
+            raise SceneConcatError(
+                detail=(
+                    f"concatenated video exceeds the {MAX_CONCAT_B64_LEN // (1024 * 1024)} MB "
+                    "size cap; compose fewer/shorter clips"
+                ),
+                route="runVideoFxConcatenation",
+            )
+        try:
+            video_bytes = base64.b64decode(encoded)
+        except ValueError as e:  # binascii.Error subclasses ValueError
+            # Don't include the (undecodable) body in the message.
+            raise SceneConcatError(
+                detail="concatenation returned undecodable video data",
+                route="runVideoFxCheckConcatenationStatus",
+            ) from e
+        if video_bytes[4:8] != b"ftyp":
+            raise SceneConcatError(detail="concatenation output is not a valid MP4")
+        return video_bytes
+
     async def concatenate_scene(
         self,
         inputs: list[ConcatInput],
@@ -1017,55 +1086,14 @@ class FlowApiClient:
         logger.info("scene.concat_started", clips=len(inputs))
 
         deadline = time.monotonic() + timeout_s
-        encoded = ""
-        while True:
-            status_resp = await self._post_json(
-                routes.RUN_VIDEO_FX_CHECK_CONCATENATION_STATUS,
-                {"operation": operation},
-                route_name="runVideoFxCheckConcatenationStatus",
-            )
-            status = str(status_resp.get("status", ""))
-            if status == "MEDIA_GENERATION_STATUS_SUCCESSFUL":
-                encoded = str(status_resp.get("encodedVideo") or "")
-                break
-            if status and status != "MEDIA_GENERATION_STATUS_ACTIVE":
-                # FAILED / unspecified — detail from status ONLY, never encodedVideo.
-                logger.warning("scene.concat_failed", status=status)
-                raise SceneConcatError(
-                    detail=f"concatenation job status: {status}",
-                    route="runVideoFxCheckConcatenationStatus",
-                )
-            if time.monotonic() >= deadline:
-                raise TransportTimeoutError(
-                    f"scene concatenation did not finish within {timeout_s:.0f}s"
-                )
-            await asyncio.sleep(poll_interval)
-
-        if not encoded:
-            raise SceneConcatError(
-                detail="concatenation succeeded but returned no encodedVideo",
-                route="runVideoFxCheckConcatenationStatus",
-            )
-        if len(encoded) > MAX_CONCAT_B64_LEN:
-            # Reject before decode — never log the body (mitigation: no 20MB+ in logs).
-            raise SceneConcatError(
-                detail=(
-                    f"concatenated video exceeds the {MAX_CONCAT_B64_LEN // (1024 * 1024)} MB "
-                    "size cap; compose fewer/shorter clips"
-                ),
-                route="runVideoFxConcatenation",
-            )
-        try:
-            video_bytes = base64.b64decode(encoded)
-        except ValueError as e:  # binascii.Error subclasses ValueError
-            # Don't include the (undecodable) body in the message.
-            raise SceneConcatError(
-                detail="concatenation returned undecodable video data",
-                route="runVideoFxCheckConcatenationStatus",
-            ) from e
-        del encoded, status_resp  # drop the ~20MB+ payload promptly
-        if video_bytes[4:8] != b"ftyp":
-            raise SceneConcatError(detail="concatenation output is not a valid MP4")
+        encoded = await self._poll_concat_until_done(
+            operation,
+            poll_interval=poll_interval,
+            deadline=deadline,
+            timeout_s=timeout_s,
+        )
+        video_bytes = self._decode_concat_video(encoded)
+        del encoded  # drop the ~20MB+ payload promptly
         logger.info("scene.concat_completed", bytes=len(video_bytes))
 
         # Write via the same storage_uri-aware path as download_image.
@@ -1124,7 +1152,7 @@ class FlowApiClient:
             resolution=target_resolution.name,
         )
         token = await self._mint_recaptcha_token(recaptcha_action)
-        req = _dc_replace(base_req, recaptcha_token=token)
+        req: UpsampleImageRequest = _dc_replace(base_req, recaptcha_token=token)
         session_id = f";{int(time.time() * 1000)}"
         try:
             resp = await self._post_json(
@@ -1267,7 +1295,7 @@ class FlowApiClient:
         invoking the single-image API still receive exactly one image (no
         silent discard).
         """
-        req_one = _dc_replace(req, count=1)
+        req_one: GenerateImageRequest = _dc_replace(req, count=1)
         images = await self._drive_images_generation(
             project_id=project_id,
             req=req_one,
@@ -1346,7 +1374,7 @@ class FlowApiClient:
             else:
                 resolved_project_id = project_id
 
-            req_with_count = _dc_replace(req, count=count)
+            req_with_count: GenerateImageRequest = _dc_replace(req, count=count)
             return await self._drive_images_generation(
                 project_id=resolved_project_id,
                 req=req_with_count,
