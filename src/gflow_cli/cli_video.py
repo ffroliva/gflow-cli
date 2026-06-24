@@ -7,6 +7,7 @@
 from __future__ import annotations
 
 import warnings
+from dataclasses import dataclass
 from pathlib import Path
 from typing import Any
 
@@ -358,22 +359,29 @@ def _resolve_chain_resume(
     return chain_id, skipped
 
 
+@dataclass(frozen=True)
+class _ChainExecConfig:
+    """Bundled context for :func:`_execute_chain_links` (keeps its arg count sane)."""
+
+    resolved_out_dir: Path
+    resolved_model: Any
+    recorder: Any
+    catalog_recorder: OperationRecorder
+    profile_name: str
+    profile_dir: Path
+    aspect_enum: Any
+    seed_offset: int
+    jitter: float
+    chain_id: str
+    as_json: bool
+
+
 async def _execute_chain_links(
     *,
     chain_mod: Any,
     client: Any,
     remaining_links: list[Any],
-    resolved_out_dir: Path,
-    resolved_model: Any,
-    recorder: Any,
-    catalog_recorder: OperationRecorder,
-    profile_name: str,
-    profile_dir: Path,
-    aspect_enum: Any,
-    seed_offset: int,
-    jitter: float,
-    chain_id: str,
-    as_json: bool,
+    cfg: _ChainExecConfig,
 ) -> tuple[list[Any], bool, list[Path]]:
     """Run the chain links, handling partial failures.
 
@@ -381,6 +389,18 @@ async def _execute_chain_links(
     On a JSON partial failure exits the process directly (to avoid a double
     JSON document on stdout).
     """
+    resolved_out_dir = cfg.resolved_out_dir
+    resolved_model = cfg.resolved_model
+    recorder = cfg.recorder
+    catalog_recorder = cfg.catalog_recorder
+    profile_name = cfg.profile_name
+    profile_dir = cfg.profile_dir
+    aspect_enum = cfg.aspect_enum
+    seed_offset = cfg.seed_offset
+    jitter = cfg.jitter
+    chain_id = cfg.chain_id
+    as_json = cfg.as_json
+
     from gflow_cli.api.video import GenerateVideoRequest, VideoResult, VideoStarted
     from gflow_cli.errors import ChainPartialError
 
@@ -585,17 +605,19 @@ async def _run_chain(
                 chain_mod=chain_mod,
                 client=client,
                 remaining_links=remaining_links,
-                resolved_out_dir=resolved_out_dir,
-                resolved_model=resolved_model,
-                recorder=recorder,
-                catalog_recorder=catalog_recorder,
-                profile_name=profile_name,
-                profile_dir=profile_dir,
-                aspect_enum=aspect_enum,
-                seed_offset=seed_offset,
-                jitter=jitter,
-                chain_id=chain_id,
-                as_json=as_json,
+                cfg=_ChainExecConfig(
+                    resolved_out_dir=resolved_out_dir,
+                    resolved_model=resolved_model,
+                    recorder=recorder,
+                    catalog_recorder=catalog_recorder,
+                    profile_name=profile_name,
+                    profile_dir=profile_dir,
+                    aspect_enum=aspect_enum,
+                    seed_offset=seed_offset,
+                    jitter=jitter,
+                    chain_id=chain_id,
+                    as_json=as_json,
+                ),
             )
     finally:
         recorder.close()
