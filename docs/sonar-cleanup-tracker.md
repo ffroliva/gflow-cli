@@ -20,8 +20,11 @@
 
 - [x] **C1 — transport drivers** (13): `agentic.py`, `classic.py`, `factory.py` — done, pushed
 - [x] **C2 — api** (9): `api/character.py`, `api/client.py`, `api/video.py` — done, pushed
-- [ ] **C3 — ui-automation** (14): `transports/ui_automation.py`, `transports/ui_automation_video.py` — S3776, S1192, S2638, S7503, S7632
-- [ ] **C4 — chain/manifests** (13): `chain.py`, `chain_manifest.py`, `composition.py`, `movie_manifest.py`, `data/recorder.py` — S3776, S1192, S7632
+- [x] **C3 — ui-automation** (14): `transports/ui_automation.py`, `transports/ui_automation_video.py` — done, pushed
+- [x] **C4 — chain/manifests** (13): `chain.py`, `chain_manifest.py`, `composition.py`, `movie_manifest.py`, `data/recorder.py` — done, pushed
+
+> **All 60 addressed.** Wave 2 (C3/C4) green: pyright 0 errors, ruff clean, 1755 tests pass.
+> Final "zero" pending SonarCloud CI re-analysis on this branch / its PR.
 - [x] **C5 — cli** (13): `cli.py`, `cli_image.py`, `cli_movie.py`, `cli_scene.py`, `cli_video.py` — done, pushed
 
 > Wave 1 (C1/C2/C5) green: pyright 0 errors, ruff clean, 1755 tests pass. Two NOSONAR
