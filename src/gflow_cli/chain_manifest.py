@@ -47,6 +47,41 @@ def _fail(lineno: int, reason: str) -> ChainManifestError:
     return ChainManifestError(f"line {lineno}: {reason}")
 
 
+def _parse_model_field(lineno: int, raw_model: object) -> VideoModel | None:
+    """Parse the optional 'model' field; return None if absent."""
+    if raw_model is None:
+        return None
+    if not isinstance(raw_model, str):
+        raise _fail(lineno, "'model' must be a string alias")
+    try:
+        return VideoModel.from_cli(raw_model)
+    except ValueError as exc:
+        raise _fail(lineno, str(exc)) from exc
+
+
+def _parse_duration_field(lineno: int, raw_duration: object) -> int | None:
+    """Parse the optional 'duration' field; return None if absent."""
+    if raw_duration is None:
+        return None
+    # bool is a subclass of int; reject it explicitly so a JSON ``true``
+    # cannot masquerade as a duration.
+    if isinstance(raw_duration, bool) or not isinstance(raw_duration, int):
+        raise _fail(lineno, "'duration' must be an integer (seconds)")
+    return raw_duration
+
+
+def _parse_aspect_field(lineno: int, raw_aspect: object) -> Aspect | None:
+    """Parse the optional 'aspect' field; return None if absent."""
+    if raw_aspect is None:
+        return None
+    if not isinstance(raw_aspect, str):
+        raise _fail(lineno, "'aspect' must be a string (9:16 | 16:9 | 1:1)")
+    try:
+        return Aspect.from_cli(raw_aspect)
+    except ValueError as exc:
+        raise _fail(lineno, str(exc)) from exc
+
+
 def _parse_line(lineno: int, raw: str) -> ChainLinkSpec:
     """Parse one non-blank, non-comment JSONL line into a ChainLinkSpec."""
     try:
@@ -70,40 +105,11 @@ def _parse_line(lineno: int, raw: str) -> ChainLinkSpec:
     if not isinstance(prompt, str) or not prompt.strip():
         raise _fail(lineno, "'prompt' is required and must be a non-empty string")
 
-    model: VideoModel | None = None
-    raw_model = obj.get("model")
-    if raw_model is not None:
-        if not isinstance(raw_model, str):
-            raise _fail(lineno, "'model' must be a string alias")
-        try:
-            model = VideoModel.from_cli(raw_model)
-        except ValueError as exc:
-            raise _fail(lineno, str(exc)) from exc
-
-    duration: int | None = None
-    raw_duration = obj.get("duration")
-    if raw_duration is not None:
-        # bool is a subclass of int; reject it explicitly so a JSON ``true``
-        # cannot masquerade as a duration.
-        if isinstance(raw_duration, bool) or not isinstance(raw_duration, int):
-            raise _fail(lineno, "'duration' must be an integer (seconds)")
-        duration = raw_duration
-
-    aspect: Aspect | None = None
-    raw_aspect = obj.get("aspect")
-    if raw_aspect is not None:
-        if not isinstance(raw_aspect, str):
-            raise _fail(lineno, "'aspect' must be a string (9:16 | 16:9 | 1:1)")
-        try:
-            aspect = Aspect.from_cli(raw_aspect)
-        except ValueError as exc:
-            raise _fail(lineno, str(exc)) from exc
-
     return ChainLinkSpec(
         prompt=prompt.strip(),
-        model=model,
-        duration=duration,
-        aspect=aspect,
+        model=_parse_model_field(lineno, obj.get("model")),
+        duration=_parse_duration_field(lineno, obj.get("duration")),
+        aspect=_parse_aspect_field(lineno, obj.get("aspect")),
     )
 
 

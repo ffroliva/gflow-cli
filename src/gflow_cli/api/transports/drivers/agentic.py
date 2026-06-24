@@ -176,7 +176,12 @@ class AgenticFlowUiDriver:
     # FlowUiDriver protocol — mode switching
     # ------------------------------------------------------------------
 
-    async def switch_to_image_mode(self, page: Page, *, out_dir: Path | None = None) -> None:
+    async def switch_to_image_mode(  # NOSONAR
+        self,
+        page: Page,  # NOSONAR
+        *,
+        out_dir: Path | None = None,  # NOSONAR
+    ) -> None:
         """No-op: the agentic UI has no explicit mode toggle.
 
         The conversational agent infers image vs. video from the prompt
@@ -205,12 +210,12 @@ class AgenticFlowUiDriver:
     # FlowUiDriver protocol — settings configuration
     # ------------------------------------------------------------------
 
-    async def configure_image_settings(
+    async def configure_image_settings(  # NOSONAR
         self,
-        page: Page,
+        page: Page,  # NOSONAR
         request: GenerateImageRequest,
         *,
-        out_dir: Path | None = None,
+        out_dir: Path | None = None,  # NOSONAR
         prompt_idx: int | None = None,
     ) -> None:
         """Encode settings on the instance for prompt-directive composition.
@@ -272,7 +277,7 @@ class AgenticFlowUiDriver:
         page: Page,
         prompt_text: str,
         *,
-        out_dir: Path | None = None,
+        out_dir: Path | None = None,  # NOSONAR
     ) -> None:
         """Type the directive into the Slate composer and submit.
 
@@ -335,7 +340,7 @@ class AgenticFlowUiDriver:
         page: Page,
         expected_count: int,
         *,
-        out_dir: Path | None = None,
+        out_dir: Path | None = None,  # NOSONAR
     ) -> list[GeneratedImage]:
         """Poll the DOM until ``expected_count`` distinct new media UUIDs appear.
 

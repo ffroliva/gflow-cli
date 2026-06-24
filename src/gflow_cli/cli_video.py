@@ -7,6 +7,7 @@
 from __future__ import annotations
 
 import warnings
+from dataclasses import dataclass
 from pathlib import Path
 from typing import Any
 
@@ -262,7 +263,7 @@ async def _run_r2v(
     )
 
 
-async def _run_batch(**kwargs: Any) -> None:  # pragma: no cover
+async def _run_batch(**kwargs: Any) -> None:  # pragma: no cover  # NOSONAR
     console.print(_BATCH_UNAVAILABLE)
     raise SystemExit(1)
 
@@ -321,6 +322,177 @@ def _print_chain_plan(
         console.print(f"  [{idx}] {mode} · {link_model} · {spec.prompt!r}{status}")
 
 
+def _resolve_chain_resume(
+    resume_from: str | None,
+    links: list[Any],
+    *,
+    settings: Any,
+    profile_name: str,
+    profile_dir: Path,
+) -> tuple[str, int]:
+    """Resolve the chain_id and number of already-completed links.
+
+    For a fresh run mints a new UUID.  For a resume, opens the chain recorder
+    to count completed links and returns early (raises SystemExit via
+    console.print + return sentinel) when the chain is already done.
+    Returns ``(chain_id, skipped)`` — callers check ``skipped >= len(links)``
+    themselves via the returned value; this helper raises nothing.
+    """
+    import uuid
+
+    from gflow_cli.data.chain_repo import ChainLinkRecorder
+
+    if resume_from is None:
+        return str(uuid.uuid4()), 0
+
+    chain_id = resume_from
+    probe = ChainLinkRecorder.open(
+        settings,
+        profile_name=profile_name,
+        profile_dir=profile_dir,
+        chain_id=chain_id,
+    )
+    try:
+        skipped = len(probe.completed_links())
+    finally:
+        probe.close()
+    return chain_id, skipped
+
+
+@dataclass(frozen=True)
+class _ChainExecConfig:
+    """Bundled context for :func:`_execute_chain_links` (keeps its arg count sane)."""
+
+    resolved_out_dir: Path
+    resolved_model: Any
+    recorder: Any
+    catalog_recorder: OperationRecorder
+    profile_name: str
+    profile_dir: Path
+    aspect_enum: Any
+    seed_offset: int
+    jitter: float
+    chain_id: str
+    as_json: bool
+
+
+async def _execute_chain_links(
+    *,
+    chain_mod: Any,
+    client: Any,
+    remaining_links: list[Any],
+    cfg: _ChainExecConfig,
+) -> tuple[list[Any], bool, list[Path]]:
+    """Run the chain links, handling partial failures.
+
+    Returns ``(results, partial, completed_paths)``.
+    On a JSON partial failure exits the process directly (to avoid a double
+    JSON document on stdout).
+    """
+    resolved_out_dir = cfg.resolved_out_dir
+    resolved_model = cfg.resolved_model
+    recorder = cfg.recorder
+    catalog_recorder = cfg.catalog_recorder
+    profile_name = cfg.profile_name
+    profile_dir = cfg.profile_dir
+    aspect_enum = cfg.aspect_enum
+    seed_offset = cfg.seed_offset
+    jitter = cfg.jitter
+    chain_id = cfg.chain_id
+    as_json = cfg.as_json
+
+    from gflow_cli.api.video import GenerateVideoRequest, VideoResult, VideoStarted
+    from gflow_cli.errors import ChainPartialError
+
+    def _on_link_started(request: GenerateVideoRequest) -> Any:
+        """Build the per-link ``on_started`` forwarded into ``generate_video``."""
+
+        def on_started(started: VideoStarted) -> None:
+            try:
+                catalog_recorder.record_started_video(
+                    profile_name=profile_name,
+                    profile_dir=profile_dir,
+                    request=request,
+                    started=started,
+                )
+            except DataStoreError as exc:
+                _warn_persistence_failed_after_success(
+                    exc=exc,
+                    flow_media_id=started.media_id,
+                    local_path=None,
+                )
+
+        return on_started
+
+    def _on_link_completed(request: GenerateVideoRequest, result: VideoResult) -> None:
+        """Finalize the catalog row for a downloaded link."""
+        try:
+            catalog_recorder.record_completed_video(
+                profile_name=profile_name,
+                _profile_dir=profile_dir,
+                request=request,
+                result=result,
+                cloud_storage_info=(
+                    cloud_info_from_path(result.local_path)
+                    if result.local_path is not None
+                    else None
+                ),
+            )
+        except DataStoreError as exc:
+            _warn_persistence_failed_after_success(
+                exc=exc,
+                flow_media_id=result.status.media_id,
+                local_path=result.local_path,
+            )
+
+    total_links = len(remaining_links)
+    results: list[Any] = []
+    completed_paths: list[Path] = []
+
+    try:
+        results = await chain_mod.run_chain(
+            client=client,
+            links=remaining_links,
+            out_dir=resolved_out_dir,
+            model=resolved_model,
+            recorder=recorder,
+            on_link_started=_on_link_started,
+            on_link_completed=_on_link_completed,
+            aspect=aspect_enum,
+            seed_offset_ms=seed_offset,
+            jitter=jitter,
+        )
+        return results, False, completed_paths
+    except ChainPartialError as exc:
+        completed_paths = list(exc.partial_results)
+        logger.warning(
+            "chain_link_failed",
+            chain_id=chain_id,
+            total_links=total_links,
+            completed=len(completed_paths),
+        )
+        if as_json:
+            # Emit the chain-shaped payload (carries the partial flag +
+            # completed clip paths) and exit directly with the mapped
+            # code. Re-raising here would let run_with_handlers emit a
+            # SECOND, error-shaped JSON document on stdout — two
+            # concatenated objects no json.loads can parse.
+            import sys as _sys
+
+            json_output.emit(
+                _chain_json(
+                    chain_id=chain_id,
+                    results=results,
+                    partial=True,
+                    completed_paths=completed_paths,
+                )
+            )
+            _sys.exit(json_output.exit_code_for(exc))
+        # Non-json: re-raise so the shared handler maps
+        # ChainPartialError -> exit 21 and prints the resume hint.
+        raise
+
+
 async def _run_chain(
     *,
     profile_name: str,
@@ -343,11 +515,10 @@ async def _run_chain(
     short-circuit, and ``--resume-from`` skip-paid-links logic all run BEFORE a
     client is created so a rejected/dry run spends nothing and opens no browser.
     """
-    import uuid
     from pathlib import Path as _Path
 
     from gflow_cli import chain as chain_mod
-    from gflow_cli.api.video import Aspect, GenerateVideoRequest, VideoResult, VideoStarted
+    from gflow_cli.api.video import Aspect
     from gflow_cli.chain import ChainLinkSpec
     from gflow_cli.chain_manifest import parse_chain_manifest
     from gflow_cli.data.chain_repo import ChainLinkRecorder
@@ -369,27 +540,19 @@ async def _run_chain(
 
     # Resume: bind the prior chain_id, query already-paid links, skip them so
     # they are NOT regenerated (no re-billing). A fresh run mints a new id.
-    skipped = 0
-    if resume_from is not None:
-        chain_id = resume_from
-        probe = ChainLinkRecorder.open(
-            settings,
-            profile_name=profile_name,
-            profile_dir=profile_dir,
-            chain_id=chain_id,
+    chain_id, skipped = _resolve_chain_resume(
+        resume_from,
+        links,
+        settings=settings,
+        profile_name=profile_name,
+        profile_dir=profile_dir,
+    )
+    if skipped >= len(links):
+        console.print(
+            f"[green]Chain {chain_id} already complete[/green] "
+            f"({skipped}/{len(links)} links); nothing to do."
         )
-        try:
-            skipped = len(probe.completed_links())
-        finally:
-            probe.close()
-        if skipped >= len(links):
-            console.print(
-                f"[green]Chain {chain_id} already complete[/green] "
-                f"({skipped}/{len(links)} links); nothing to do."
-            )
-            return
-    else:
-        chain_id = str(uuid.uuid4())
+        return
 
     remaining_links = links[skipped:]
     cost = len(remaining_links)
@@ -434,105 +597,28 @@ async def _run_chain(
     # surface chain clips. Distinct from the chain-correlation `recorder` above.
     catalog_recorder = OperationRecorder.open(settings)
 
-    def _on_link_started(request: GenerateVideoRequest) -> Any:
-        """Build the per-link ``on_started`` forwarded into ``generate_video``.
-
-        Threaded with the link's OWN request (link 0 T2V, links N I2V) so the
-        catalog row mode matches. The recorder call is wrapped in
-        try/except DataStoreError because it runs INSIDE the transport, where an
-        uncaught exception would abort the PAID generation.
-        """
-
-        def on_started(started: VideoStarted) -> None:
-            try:
-                catalog_recorder.record_started_video(
-                    profile_name=profile_name,
-                    profile_dir=profile_dir,
-                    request=request,
-                    started=started,
-                )
-            except DataStoreError as exc:
-                _warn_persistence_failed_after_success(
-                    exc=exc,
-                    flow_media_id=started.media_id,
-                    local_path=None,
-                )
-
-        return on_started
-
-    def _on_link_completed(request: GenerateVideoRequest, result: VideoResult) -> None:
-        """Finalize the catalog row for a downloaded link. A post-success
-        persistence failure WARNS but never aborts the already-paid chain."""
-        try:
-            catalog_recorder.record_completed_video(
-                profile_name=profile_name,
-                _profile_dir=profile_dir,
-                request=request,
-                result=result,
-                cloud_storage_info=(
-                    cloud_info_from_path(result.local_path)
-                    if result.local_path is not None
-                    else None
-                ),
-            )
-        except DataStoreError as exc:
-            _warn_persistence_failed_after_success(
-                exc=exc,
-                flow_media_id=result.status.media_id,
-                local_path=result.local_path,
-            )
-
-    total_links = len(remaining_links)
     partial = False
-    completed_paths: list[Path] = []
     results: list[Any] = []
     try:
-        from gflow_cli.errors import ChainPartialError
-
         async with FlowApiClient(profile_dir=profile_dir, out_dir=resolved_out_dir) as client:
-            try:
-                results = await chain_mod.run_chain(
-                    client=client,
-                    links=remaining_links,
-                    out_dir=resolved_out_dir,
-                    model=resolved_model,
+            results, partial, _ = await _execute_chain_links(
+                chain_mod=chain_mod,
+                client=client,
+                remaining_links=remaining_links,
+                cfg=_ChainExecConfig(
+                    resolved_out_dir=resolved_out_dir,
+                    resolved_model=resolved_model,
                     recorder=recorder,
-                    on_link_started=_on_link_started,
-                    on_link_completed=_on_link_completed,
-                    aspect=aspect_enum,
-                    seed_offset_ms=seed_offset,
+                    catalog_recorder=catalog_recorder,
+                    profile_name=profile_name,
+                    profile_dir=profile_dir,
+                    aspect_enum=aspect_enum,
+                    seed_offset=seed_offset,
                     jitter=jitter,
-                )
-            except ChainPartialError as exc:
-                partial = True
-                completed_paths = list(exc.partial_results)
-                logger.warning(
-                    "chain_link_failed",
                     chain_id=chain_id,
-                    total_links=total_links,
-                    completed=len(completed_paths),
-                )
-                if as_json:
-                    # Emit the chain-shaped payload (carries the partial flag +
-                    # completed clip paths) and exit directly with the mapped
-                    # code. Re-raising here would let run_with_handlers emit a
-                    # SECOND, error-shaped JSON document on stdout — two
-                    # concatenated objects no json.loads can parse.
-                    import sys as _sys
-
-                    json_output.emit(
-                        _chain_json(
-                            chain_id=chain_id,
-                            results=results,
-                            partial=True,
-                            completed_paths=completed_paths,
-                        )
-                    )
-                    # recorder.close() runs in the finally below.
-                    _sys.exit(json_output.exit_code_for(exc))
-                # Non-json: re-raise so the shared handler maps
-                # ChainPartialError -> exit 21 and prints the resume hint.
-                raise
+                    as_json=as_json,
+                ),
+            )
     finally:
         recorder.close()
         catalog_recorder.close()
@@ -667,6 +753,47 @@ def t2v(
     )
 
 
+def _resolve_i2v_args(
+    image: str | None,
+    prompt: str | None,
+    initial_frame: str | None,
+) -> tuple[str, str]:
+    """Resolve the (image_path, prompt) pair from i2v's positional/flag arguments.
+
+    Click fills positional arguments left-to-right (greedy). When --initial-frame
+    is used without a positional IMAGE, the sole remaining positional (the PROMPT
+    text) lands in the ``image`` slot and ``prompt`` is None. This helper detects
+    the swap, validates the resolved image path, and returns ``(resolved_image,
+    resolved_prompt)``.
+    """
+    if initial_frame is not None and prompt is None and image is not None:
+        return initial_frame, image
+
+    if prompt is not None:
+        resolved_image = initial_frame or image
+        if resolved_image is None:
+            raise click.UsageError(
+                "Provide an initial frame via --initial-frame or as the first positional argument."
+            )
+        # Validate the positional IMAGE path manually (click.Path can't be used on this
+        # argument because the positional slot doubles as PROMPT text in the swap branch).
+        if initial_frame is None:
+            resolved_image_path = Path(resolved_image)
+            if not resolved_image_path.is_file():
+                raise click.BadParameter(
+                    f"Path '{resolved_image}' does not exist or is a directory.",
+                    param_hint="'IMAGE'",
+                )
+            return str(resolved_image_path.resolve()), prompt
+        # Also normalize --initial-frame if passed as flag
+        return str(Path(resolved_image).resolve()), prompt
+
+    raise click.UsageError(
+        "Missing arguments. Provide PROMPT and an initial frame"
+        " (via --initial-frame or as a positional argument)."
+    )
+
+
 @video.command(
     "i2v",
     short_help="Generate a video from an initial frame + motion prompt.",
@@ -765,37 +892,7 @@ def i2v(
     as_json: bool,
 ) -> None:
     """Generate a video from an initial frame + motion PROMPT."""
-    # Click fills positional arguments left-to-right (greedy). When --initial-frame
-    # is used without a positional IMAGE, the sole remaining positional (the PROMPT
-    # text) lands in the `image` slot and `prompt` is None. Detect and swap.
-    if initial_frame is not None and prompt is None and image is not None:
-        resolved_prompt = image
-        resolved_image = initial_frame
-    elif prompt is not None:
-        resolved_image = initial_frame or image
-        resolved_prompt = prompt
-        if resolved_image is None:
-            raise click.UsageError(
-                "Provide an initial frame via --initial-frame or as the first positional argument."
-            )
-        # Validate the positional IMAGE path manually (click.Path can't be used on this
-        # argument because the positional slot doubles as PROMPT text in the swap branch).
-        if initial_frame is None:
-            resolved_image_path = Path(resolved_image)
-            if not resolved_image_path.is_file():
-                raise click.BadParameter(
-                    f"Path '{resolved_image}' does not exist or is a directory.",
-                    param_hint="'IMAGE'",
-                )
-            resolved_image = str(resolved_image_path.resolve())
-        else:
-            # Also normalize --initial-frame if passed as flag
-            resolved_image = str(Path(resolved_image).resolve())
-    else:
-        raise click.UsageError(
-            "Missing arguments. Provide PROMPT and an initial frame"
-            " (via --initial-frame or as a positional argument)."
-        )
+    resolved_image, resolved_prompt = _resolve_i2v_args(image, prompt, initial_frame)
 
     if end_image_deprecated is not None:
         warnings.warn(

@@ -17,6 +17,7 @@ from __future__ import annotations
 import asyncio
 import re
 import sys
+from dataclasses import dataclass
 from datetime import date
 from pathlib import Path
 from typing import TYPE_CHECKING, TypeVar
@@ -653,7 +654,7 @@ async def _run_upscale(
     is_flag=True,
     help="Emit a machine-readable JSON result instead of a Rich table.",
 )
-def t2i(
+def t2i(  # NOSONAR
     prompts: tuple[str, ...],
     prompts_file: Path | None,
     read_stdin: bool,
@@ -853,6 +854,62 @@ def _as_usage_error(exc: ConfigurationError) -> click.UsageError:
     return click.UsageError(str(exc))
 
 
+async def _download_images(
+    client: FlowApiClient,
+    images: list[GeneratedImage],
+    out: Path | None,
+    output_root: Path,
+) -> list[Path]:
+    """Download each generated image to its resolved target path."""
+    saved_paths: list[Path] = []
+    for i, img in enumerate(images, start=1):
+        target = (
+            out / f"{img.media_name}_{i}.png"
+            if out is not None
+            else image_output_path(output_root, job_id=img.media_name, index=i)
+        )
+        saved = await client.download_image(img, target)
+        saved_paths.append(saved)
+    return saved_paths
+
+
+def _record_generated_images_safe(
+    recorder: OperationRecorder,
+    *,
+    profile_name: str,
+    profile_dir: Path,
+    project: ProjectInfo,
+    project_created: bool,
+    request: GenerateImageRequest,
+    images: list[GeneratedImage],
+    saved_paths: list[Path],
+    input_media_ids: list[str],
+    operation_kind: str,
+) -> None:
+    """Persist generation metadata; warn on DataStoreError (never abort success)."""
+    try:
+        recorder.record_generated_images(
+            profile_name=profile_name,
+            profile_dir=profile_dir,
+            project=project,
+            project_created=project_created,
+            request=request,
+            images=images,
+            saved_paths=saved_paths,
+            cloud_storage_infos=[cloud_info_from_path(path) for path in saved_paths],
+            input_media_ids=input_media_ids,
+            operation_kind=operation_kind,
+        )
+    except DataStoreError as exc:
+        first_image = images[0] if images else None
+        first_path = saved_paths[0] if saved_paths else None
+        _warn_persistence_failed_after_success(
+            exc=exc,
+            flow_media_id=first_image.media_name if first_image else None,
+            local_path=first_path,
+        )
+
+
 async def _run_t2i(
     *,
     profile_name: str,
@@ -894,15 +951,7 @@ async def _run_t2i(
                     count=count,
                 )
 
-            saved_paths: list[Path] = []
-            for i, img in enumerate(images, start=1):
-                target = (
-                    out / f"{img.media_name}_{i}.png"
-                    if out is not None
-                    else image_output_path(output_root, job_id=img.media_name, index=i)
-                )
-                saved = await client.download_image(img, target)
-                saved_paths.append(saved)
+            saved_paths = await _download_images(client, images, out, output_root)
 
             if as_json:
                 json_output.emit(
@@ -917,27 +966,18 @@ async def _run_t2i(
             else:
                 _print_t2i_summary(images, saved_paths)
 
-            try:
-                recorder.record_generated_images(
-                    profile_name=profile_name,
-                    profile_dir=profile_dir,
-                    project=project,
-                    project_created=project_created,
-                    request=req,
-                    images=images,
-                    saved_paths=saved_paths,
-                    cloud_storage_infos=[cloud_info_from_path(path) for path in saved_paths],
-                    input_media_ids=[],
-                    operation_kind="t2i",
-                )
-            except DataStoreError as exc:
-                first_image = images[0] if images else None
-                first_path = saved_paths[0] if saved_paths else None
-                _warn_persistence_failed_after_success(
-                    exc=exc,
-                    flow_media_id=first_image.media_name if first_image else None,
-                    local_path=first_path,
-                )
+            _record_generated_images_safe(
+                recorder,
+                profile_name=profile_name,
+                profile_dir=profile_dir,
+                project=project,
+                project_created=project_created,
+                request=req,
+                images=images,
+                saved_paths=saved_paths,
+                input_media_ids=[],
+                operation_kind="t2i",
+            )
     finally:
         recorder.close()
 
@@ -1101,6 +1141,23 @@ def batch(
 # ---------------------------------------------------------------------------
 
 
+@dataclass(frozen=True)
+class _I2IParams:
+    """Bundles image-generation options for :func:`_run_i2i`.
+
+    Separating these from the profile/transport/output fields keeps the
+    function signature below Sonar's 13-parameter limit (S107) while preserving
+    every CLI option.
+    """
+
+    prompt: str
+    classified_refs: list[ImageRef | Path]
+    aspect: Aspect
+    model: Model
+    reference_entities: tuple[str, ...]
+    reference_entity_names: tuple[str, ...]
+
+
 @image.command(
     "i2i",
     short_help="Generate image(s) from a prompt + one or more reference images.",
@@ -1219,22 +1276,25 @@ def i2i(
     profile_name = _resolve_profile(profile)
     provider_dir = _make_provider_dir(profile_name)
     settings = get_settings()
+    i2i_params = _I2IParams(
+        prompt=prompt,
+        classified_refs=classified_refs,
+        aspect=Aspect.from_cli(aspect),
+        model=model_enum,
+        reference_entities=tuple(reference_entities),
+        reference_entity_names=tuple(reference_entity_names),
+    )
     run_with_handlers(
         lambda: _run_i2i(
             profile_name=profile_name,
             profile_dir=provider_dir,
             headless=settings.headless,
-            prompt=prompt,
-            classified_refs=classified_refs,
-            aspect=Aspect.from_cli(aspect),
-            model=model_enum,
+            params=i2i_params,
             count=count,
             out=out,
             output_root=settings.output_dir,
             transport=transport,
             project_id=project_id,
-            reference_entities=tuple(reference_entities),
-            reference_entity_names=tuple(reference_entity_names),
             as_json=as_json,
         ),
         cli_command="image i2i",
@@ -1247,17 +1307,12 @@ async def _run_i2i(
     profile_name: str,
     profile_dir: Path,
     headless: bool,
-    prompt: str,
-    classified_refs: list[ImageRef | Path],
-    aspect: Aspect,
-    model: Model,
+    params: _I2IParams,
     count: int,
     out: Path | None,
     output_root: Path,
     transport: str | None = None,
     project_id: str | None = None,
-    reference_entities: tuple[str, ...] = (),
-    reference_entity_names: tuple[str, ...] = (),
     as_json: bool = False,
 ) -> None:
     settings = get_settings()
@@ -1279,16 +1334,16 @@ async def _run_i2i(
             # ui_automation transport (the REST uploadImage path 401s — see #15/#39).
             # Already-uploaded UUID refs go on `refs` (best-effort; binding a library
             # asset by UUID via the UI is not wired yet — local files are the path).
-            uuid_refs = tuple(r for r in classified_refs if isinstance(r, ImageRef))
-            local_ref_paths = tuple(r for r in classified_refs if isinstance(r, Path))
+            uuid_refs = tuple(r for r in params.classified_refs if isinstance(r, ImageRef))
+            local_ref_paths = tuple(r for r in params.classified_refs if isinstance(r, Path))
             req = GenerateImageRequest(
-                prompt=prompt,
-                aspect=aspect,
-                model=model,
+                prompt=params.prompt,
+                aspect=params.aspect,
+                model=params.model,
                 refs=uuid_refs,
                 ref_paths=local_ref_paths,
-                reference_entities=reference_entities,
-                reference_entity_names=reference_entity_names,
+                reference_entities=params.reference_entities,
+                reference_entity_names=params.reference_entity_names,
             )
 
             n_refs = len(uuid_refs) + len(local_ref_paths)
@@ -1307,15 +1362,7 @@ async def _run_i2i(
                     count=count,
                 )
 
-            saved_paths: list[Path] = []
-            for i, img in enumerate(images, start=1):
-                target = (
-                    out / f"{img.media_name}_{i}.png"
-                    if out is not None
-                    else image_output_path(output_root, job_id=img.media_name, index=i)
-                )
-                saved = await client.download_image(img, target)
-                saved_paths.append(saved)
+            saved_paths = await _download_images(client, images, out, output_root)
 
             if as_json:
                 json_output.emit(
@@ -1331,32 +1378,23 @@ async def _run_i2i(
             else:
                 _print_i2i_summary(images, saved_paths)
 
-            try:
-                recorder.record_generated_images(
-                    profile_name=profile_name,
-                    profile_dir=profile_dir,
-                    project=project,
-                    project_created=project_created,
-                    request=req,
-                    images=images,
-                    saved_paths=saved_paths,
-                    cloud_storage_infos=[cloud_info_from_path(path) for path in saved_paths],
-                    # Only already-uploaded UUID refs have a flow_media_id we
-                    # can persist as INPUT. Local files attached via the media
-                    # dialog don't surface a media_id at this layer; the recorder
-                    # will skip them silently (record_generated_images guards on
-                    # repo.get_asset_by_flow_media_id returning None).
-                    input_media_ids=[ref.name for ref in uuid_refs],
-                    operation_kind="i2i",
-                )
-            except DataStoreError as exc:
-                first_image = images[0] if images else None
-                first_path = saved_paths[0] if saved_paths else None
-                _warn_persistence_failed_after_success(
-                    exc=exc,
-                    flow_media_id=first_image.media_name if first_image else None,
-                    local_path=first_path,
-                )
+            _record_generated_images_safe(
+                recorder,
+                profile_name=profile_name,
+                profile_dir=profile_dir,
+                project=project,
+                project_created=project_created,
+                request=req,
+                images=images,
+                saved_paths=saved_paths,
+                # Only already-uploaded UUID refs have a flow_media_id we
+                # can persist as INPUT. Local files attached via the media
+                # dialog don't surface a media_id at this layer; the recorder
+                # will skip them silently (record_generated_images guards on
+                # repo.get_asset_by_flow_media_id returning None).
+                input_media_ids=[ref.name for ref in uuid_refs],
+                operation_kind="i2i",
+            )
     finally:
         recorder.close()
 

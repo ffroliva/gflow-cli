@@ -257,6 +257,17 @@ def _print_header(manifest: MovieManifest, *, out_dir: Path, dry_run: bool) -> N
     console.print(f"  characters: {len(manifest.characters)}  scenes: {len(manifest.scenes)}")
 
 
+def _format_scene_line(s: Scene, done: bool, cost: int) -> str:
+    """Return the single-line plan summary for one scene."""
+    mode = "r2v" if s.characters else "t2v"
+    refs = f"  refs=[{', '.join(s.characters)}]" if s.characters else ""
+    framing_tag = f"  {s.framing}" if s.framing else ""
+    model_tag = f"  {s.model}" if s.model else ""
+    dur_tag = f"  {s.duration}s" if s.duration else ""
+    status = "[dim]skip (done)[/dim]" if done else f"{cost} credit(s)"
+    return f"    [{mode}] {s.id!r}{framing_tag}{model_tag}{dur_tag}{refs}  {status}"
+
+
 def _print_plan(manifest: MovieManifest, state: MovieState) -> None:
     console.print("\n[bold]Plan:[/bold]")
 
@@ -276,13 +287,7 @@ def _print_plan(manifest: MovieManifest, state: MovieState) -> None:
         done = done_state is not None and done_state.status == "completed"
         cost = 0 if done else 1
         scene_credits += cost
-        mode = "r2v" if s.characters else "t2v"
-        refs = f"  refs=[{', '.join(s.characters)}]" if s.characters else ""
-        framing_tag = f"  {s.framing}" if s.framing else ""
-        model_tag = f"  {s.model}" if s.model else ""
-        dur_tag = f"  {s.duration}s" if s.duration else ""
-        status = "[dim]skip (done)[/dim]" if done else f"{cost} credit(s)"
-        console.print(f"    [{mode}] {s.id!r}{framing_tag}{model_tag}{dur_tag}{refs}  {status}")
+        console.print(_format_scene_line(s, done, cost))
 
     console.print(f"\n  Estimated credits: ~{scene_credits}")
 
@@ -290,6 +295,122 @@ def _print_plan(manifest: MovieManifest, state: MovieState) -> None:
 # ---------------------------------------------------------------------------
 # Core async orchestrator
 # ---------------------------------------------------------------------------
+
+
+async def _run_one_scene(
+    *,
+    client: FlowApiClient,
+    recorder: OperationRecorder,
+    scene: Scene,
+    manifest: MovieManifest,
+    state: MovieState,
+    state_path: Path,
+    profile_name: str,
+    profile_dir: Path,
+    out_dir: Path,
+    generated_any: bool,
+    continue_on_error: bool,
+) -> Path | None:
+    """Generate one scene clip and persist its state.
+
+    Returns the local video path on success, ``None`` on a handled failure
+    (continue_on_error).  Re-raises on an unhandled failure (fail-fast).
+    """
+    prompt = compose_prompt(manifest.style, scene, manifest.characters)
+
+    # reference_entities / reference_entity_names are resolved inside
+    # the try so a pre-flight ConfigurationError (missing entity_id)
+    # is handled per-scene by the continue-on-error / fail-fast
+    # policy like any other failure.
+    reference_entities: tuple[str, ...] = ()
+
+    try:
+        # Resolve native (entity-identity) characters to their created
+        # entity ids. FAIL LOUD when an entity character has no
+        # entity_id in state — never silently drop the reference
+        # (council C4). reference_audio stays None: embedded-voice-on-
+        # entity is the preferred path (the entity carries the voice).
+        reference_entities = _resolve_entities(scene, manifest, state)
+
+        # Build the parallel display-name list so the UI picker can
+        # select tiles by name instead of UUID (live e2e fix).
+        reference_entity_names = _resolve_entity_names(scene, manifest)
+
+        # reCAPTCHA cooldown between scenes — inside the try so any
+        # failure here is handled per-scene and never aborts the run.
+        if generated_any:
+            await asyncio.sleep(5)
+
+        video_result = await _generate_scene(
+            client=client,
+            recorder=recorder,
+            scene=scene,
+            prompt=prompt,
+            reference_entities=reference_entities,
+            reference_entity_names=reference_entity_names,
+            reference_audio=None,
+            profile_name=profile_name,
+            profile_dir=profile_dir,
+            out_dir=out_dir,
+            project_id=manifest.project,
+        )
+        local_path_str = (
+            str(video_result.local_path) if video_result.local_path is not None else None
+        )
+        state.scenes[scene.id] = SceneState(
+            media_id=video_result.status.media_id,
+            flow_operation_id=video_result.flow_operation_id,
+            local_path=local_path_str,
+            status="completed",
+            prompt=prompt,
+            consistency_method="entity" if reference_entities else "text",
+        )
+        state.save(state_path)
+        console.print(f"    saved: {video_result.local_path}")
+        return video_result.local_path
+
+    except Exception as exc:
+        log.error(
+            "movie.scene_failed",
+            scene_id=scene.id,
+            error=str(exc),
+            exc_info=True,
+        )
+        # An entity scene whose wire backstop (WireFormatError) tripped
+        # but the run continued is recorded as "degraded" (entity path
+        # attempted, identity not honored); everything else is "text".
+        if reference_entities and isinstance(exc, WireFormatError):
+            failed_method = "degraded"
+        else:
+            failed_method = "text"
+        state.scenes[scene.id] = SceneState(
+            media_id="",
+            flow_operation_id=None,
+            local_path=None,
+            status="failed",
+            prompt=prompt,
+            consistency_method=failed_method,
+        )
+        state.save(state_path)
+        if continue_on_error:
+            console.print(f"    [red]Scene failed:[/red] {exc}")
+            return None
+        raise
+
+
+def _write_handoff(
+    manifest: MovieManifest,
+    state: MovieState,
+    state_path: Path,
+    out_dir: Path,
+    include_prompts: bool,
+) -> None:
+    """Write the versioned handoff manifest alongside the state file."""
+    handoff = build_handoff(manifest, state, out_dir=out_dir, include_prompts=include_prompts)
+    handoff_path = state_path.with_name(state_path.stem.replace("-state", "") + "-handoff.json")
+    handoff_path.parent.mkdir(parents=True, exist_ok=True)
+    handoff_path.write_text(json.dumps(handoff, indent=2, ensure_ascii=False), encoding="utf-8")
+    console.print(f"  handoff: {handoff_path}")
 
 
 async def _run_movie(
@@ -354,100 +475,27 @@ async def _run_movie(
                     continue
 
                 console.print(f"\n  Generating scene [bold]{scene.id!r}[/bold]…")
-                prompt = compose_prompt(manifest.style, scene, manifest.characters)
-
-                # reference_entities / reference_entity_names are resolved inside
-                # the try so a pre-flight ConfigurationError (missing entity_id)
-                # is handled per-scene by the continue-on-error / fail-fast
-                # policy like any other failure.
-                reference_entities: tuple[str, ...] = ()
-                reference_entity_names: tuple[str, ...] = ()
-
-                try:
-                    # Resolve native (entity-identity) characters to their created
-                    # entity ids. FAIL LOUD when an entity character has no
-                    # entity_id in state — never silently drop the reference
-                    # (council C4). reference_audio stays None: embedded-voice-on-
-                    # entity is the preferred path (the entity carries the voice).
-                    reference_entities = _resolve_entities(scene, manifest, state)
-
-                    # Build the parallel display-name list so the UI picker can
-                    # select tiles by name instead of UUID (live e2e fix).
-                    reference_entity_names = _resolve_entity_names(scene, manifest)
-
-                    # reCAPTCHA cooldown between scenes — inside the try so any
-                    # failure here is handled per-scene and never aborts the run.
-                    if generated_any:
-                        await asyncio.sleep(5)
-
-                    video_result = await _generate_scene(
-                        client=client,
-                        recorder=recorder,
-                        scene=scene,
-                        prompt=prompt,
-                        reference_entities=reference_entities,
-                        reference_entity_names=reference_entity_names,
-                        reference_audio=None,
-                        profile_name=profile_name,
-                        profile_dir=profile_dir,
-                        out_dir=out_dir,
-                        project_id=manifest.project,
-                    )
-                    state.scenes[scene.id] = SceneState(
-                        media_id=video_result.status.media_id,
-                        flow_operation_id=video_result.flow_operation_id,
-                        local_path=(
-                            str(video_result.local_path)
-                            if video_result.local_path is not None
-                            else None
-                        ),
-                        status="completed",
-                        prompt=prompt,
-                        consistency_method="entity" if reference_entities else "text",
-                    )
-                    state.save(state_path)
-                    console.print(f"    saved: {video_result.local_path}")
-                    if video_result.local_path:
-                        completed_local_paths.append(video_result.local_path)
-                    generated_any = True
-
-                except Exception as exc:
-                    log.error(
-                        "movie.scene_failed",
-                        scene_id=scene.id,
-                        error=str(exc),
-                        exc_info=True,
-                    )
-                    # An entity scene whose wire backstop (WireFormatError) tripped
-                    # but the run continued is recorded as "degraded" (entity path
-                    # attempted, identity not honored); everything else is "text".
-                    failed_method = (
-                        "degraded"
-                        if reference_entities and isinstance(exc, WireFormatError)
-                        else "text"
-                    )
-                    state.scenes[scene.id] = SceneState(
-                        media_id="",
-                        flow_operation_id=None,
-                        local_path=None,
-                        status="failed",
-                        prompt=prompt,
-                        consistency_method=failed_method,
-                    )
-                    state.save(state_path)
-                    if continue_on_error:
-                        console.print(f"    [red]Scene failed:[/red] {exc}")
-                    else:
-                        raise
+                local_path = await _run_one_scene(
+                    client=client,
+                    recorder=recorder,
+                    scene=scene,
+                    manifest=manifest,
+                    state=state,
+                    state_path=state_path,
+                    profile_name=profile_name,
+                    profile_dir=profile_dir,
+                    out_dir=out_dir,
+                    generated_any=generated_any,
+                    continue_on_error=continue_on_error,
+                )
+                if local_path is not None:
+                    completed_local_paths.append(local_path)
+                generated_any = True
 
     finally:
         recorder.close()
         # Always write the handoff manifest (pure projection of run state).
-        handoff = build_handoff(manifest, state, out_dir=out_dir, include_prompts=include_prompts)
-        handoff_path = state_path.with_name(state_path.stem.replace("-state", "") + "-handoff.json")
-        handoff_path.parent.mkdir(parents=True, exist_ok=True)
-        handoff_path.write_text(json.dumps(handoff, indent=2, ensure_ascii=False), encoding="utf-8")
-        console.print(f"  handoff: {handoff_path}")
+        _write_handoff(manifest, state, state_path, out_dir, include_prompts)
 
     _print_summary(manifest=manifest, completed_local_paths=completed_local_paths)
 
@@ -540,7 +588,8 @@ async def _create_character(
             label = "body"
         else:
             label = f"slot{slot}"
-        console.print(f"    {label}: {p or '(unavailable)'}")
+        path_display = p or "(unavailable)"
+        console.print(f"    {label}: {path_display}")
 
 
 def _resolve_entities(
@@ -707,7 +756,7 @@ def _ffmpeg_concat(clips: list[Path], out: Path) -> None:
     try:
         # ffmpeg path comes from shutil.which and all args are fixed literals —
         # no shell, no user-controlled tokens.
-        subprocess.run(  # noqa: S603
+        subprocess.run(  # noqa: S603  # NOSONAR
             [
                 ffmpeg,
                 "-y",

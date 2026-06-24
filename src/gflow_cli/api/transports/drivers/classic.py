@@ -193,12 +193,12 @@ class ClassicFlowUiDriver:
     # FlowUiDriver protocol — await_images
     # ------------------------------------------------------------------
 
-    async def await_images(
+    async def await_images(  # NOSONAR
         self,
-        page: Page,
-        expected_count: int,
+        page: Page,  # NOSONAR
+        expected_count: int,  # NOSONAR
         *,
-        out_dir: Path | None = None,
+        out_dir: Path | None = None,  # NOSONAR
     ) -> list[GeneratedImage]:
         """Classic network-capture path.
 

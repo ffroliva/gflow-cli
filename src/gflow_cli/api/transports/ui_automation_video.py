@@ -54,9 +54,10 @@ if TYPE_CHECKING:
 
 log = structlog.get_logger(__name__)
 
-# Type alias for the JSON request-list ``cast(...)`` target. Extracted so the
-# quoted cast string is not duplicated (SonarCloud S1192); a module-level alias
-# keeps ruff's TC006 happy since call sites pass a bare name, not a subscript.
+# Type aliases for JSON-shaped ``cast(...)`` targets. Extracted so the quoted
+# cast strings are not duplicated (SonarCloud S1192); module-level aliases keep
+# ruff's TC006 happy since call sites pass a bare name, not a subscript.
+_JsonObj = dict[str, Any]
 _JsonObjList = list[dict[str, Any]]
 
 # The three mode-specific generate routes (spec §2.1). The listener filters on
@@ -438,14 +439,14 @@ def _summarize_request_image_inputs(request: Any) -> dict[str, Any]:
         raw = request.post_data
         if not raw:
             return {"parsed": False}
-        data = cast("dict[str, Any]", json.loads(raw))
+        data = cast(_JsonObj, json.loads(raw))
         reqs = cast(_JsonObjList, data.get("requests") or [])
         first: dict[str, Any] = reqs[0] if reqs else {}
 
         def _mid(obj: Any) -> str | None:
             if not isinstance(obj, dict):
                 return None
-            mid = cast("dict[str, Any]", obj).get("mediaId")
+            mid = cast(_JsonObj, obj).get("mediaId")
             return mid[:8] if isinstance(mid, str) else None
 
         refs = cast(_JsonObjList, first.get("referenceImages") or [])
@@ -482,7 +483,12 @@ class VideoGenerationMixin:
     if TYPE_CHECKING:
 
         async def _enter_editor(
-            self, page: Page, out_dir: Path | None = None, *, project_id: str | None = None
+            self,
+            page: Page,
+            out_dir: Path | None = None,
+            *,
+            project_id: str | None = None,
+            locale: str = "en-US",
         ) -> None: ...
         async def _send_prompt(
             self,
@@ -497,7 +503,7 @@ class VideoGenerationMixin:
         ) -> bool: ...
 
     @staticmethod
-    def _attach_video_response_listener(page: Page) -> tuple[list[dict[str, Any]], Any]:
+    def _attach_video_response_listener(page: Page) -> tuple[_JsonObjList, Any]:
         """Register a `page.on('response')` listener for the three
         batchAsyncGenerateVideo* routes (spec §2.1). Returns `(captured, handler)`
         — the caller awaits `captured` after submitting the prompt and MUST
@@ -509,7 +515,7 @@ class VideoGenerationMixin:
         The captured `body` is kept for parsing only — it carries
         `remainingCredits` and media UUIDs and MUST NOT be logged.
         """
-        captured: list[dict[str, Any]] = []
+        captured: _JsonObjList = []
 
         async def on_response(response: Any) -> None:
             if not any(route in response.url for route in VIDEO_GENERATE_ROUTES):
@@ -537,14 +543,14 @@ class VideoGenerationMixin:
         return captured, on_response
 
     @staticmethod
-    def _attach_status_response_listener(page: Page) -> tuple[list[dict[str, Any]], Any]:
+    def _attach_status_response_listener(page: Page) -> tuple[_JsonObjList, Any]:
         """Register a `page.on('response')` listener for the status route. Flow's
         SPA polls `batchCheckAsyncVideoGenerationStatus` itself while a
         generation runs; this captures that traffic. Returns `(captured, handler)`
         — the caller MUST `page.remove_listener('response', handler)` in a
         `finally`. Attached BEFORE `_send_prompt` so no early status response is
         missed (spec §5.5)."""
-        captured: list[dict[str, Any]] = []
+        captured: _JsonObjList = []
 
         async def on_response(response: Any) -> None:
             if VIDEO_STATUS_ROUTE not in response.url:
@@ -560,9 +566,72 @@ class VideoGenerationMixin:
         return captured, on_response
 
     @staticmethod
+    def _scan_for_terminal_status(
+        captured_status: _JsonObjList,
+        media_name: str,
+    ) -> tuple[VideoStatus | None, str | None]:
+        """Scan all captured status responses for a terminal VideoStatus.
+
+        Returns ``(terminal_status, last_seen_status_string)``. Raises
+        ``AuthExpiredError`` on HTTP 401. Skips responses for other media.
+        """
+        terminal: VideoStatus | None = None
+        last_status: str | None = None
+        for response in captured_status:
+            if response.get("status") == 401:
+                raise AuthExpiredError(
+                    detail=(
+                        "batchCheckAsyncVideoGenerationStatus returned HTTP 401"
+                        " — session expired mid-poll"
+                    ),
+                    status=401,
+                    route="video:status",
+                )
+            try:
+                status = parse_video_status(response.get("body") or {}, media_id=media_name)
+            except ValueError:
+                continue  # this response is for other media — skip
+            last_status = status.status
+            if status.is_terminal:
+                terminal = status
+        return terminal, last_status
+
+    @staticmethod
+    async def _nudge_tab_if_stalled(
+        page: Page,
+        captured_status: _JsonObjList,
+        seen_count: int,
+        last_progress: float,
+        nudged: bool,
+        stall_nudge_s: float,
+        media_name: str,
+    ) -> tuple[int, float, bool]:
+        """Update stall-detection bookkeeping and nudge the tab once on stall.
+
+        Returns the updated ``(seen_count, last_progress, nudged)`` tuple.
+        """
+        if len(captured_status) != seen_count:
+            return len(captured_status), time.monotonic(), nudged
+        if not nudged and time.monotonic() - last_progress > stall_nudge_s:
+            # Distinguish "Flow never polled the status route at all" from
+            # "Flow stalled mid-run".
+            event = (
+                "ui_automation_video.poll_no_status_traffic"
+                if seen_count == 0
+                else "ui_automation_video.poll_stall_nudge"
+            )
+            log.warning(event, media_name=media_name, status_responses_seen=seen_count)
+            try:
+                await page.bring_to_front()
+            except Exception as e:
+                log.debug("ui_automation_video.bring_to_front_failed", error=str(e))
+            nudged = True
+        return seen_count, last_progress, nudged
+
+    @staticmethod
     async def _poll_video_status(
         page: Page,
-        captured_status: list[dict[str, Any]],
+        captured_status: _JsonObjList,
         media_name: str,
         *,
         timeout_s: float = 600.0,
@@ -589,24 +658,9 @@ class VideoGenerationMixin:
         last_progress = time.monotonic()
         nudged = False
         while time.monotonic() < deadline:
-            terminal: VideoStatus | None = None
-            for response in captured_status:
-                if response.get("status") == 401:
-                    raise AuthExpiredError(
-                        detail=(
-                            "batchCheckAsyncVideoGenerationStatus returned HTTP 401"
-                            " — session expired mid-poll"
-                        ),
-                        status=401,
-                        route="video:status",
-                    )
-                try:
-                    status = parse_video_status(response.get("body") or {}, media_id=media_name)
-                except ValueError:
-                    continue  # this response is for other media — skip
-                last_status = status.status
-                if status.is_terminal:
-                    terminal = status
+            terminal, last_status = VideoGenerationMixin._scan_for_terminal_status(
+                captured_status, media_name
+            )
             if terminal is not None:
                 log.info(
                     "ui_automation_video.poll_terminal",
@@ -614,26 +668,9 @@ class VideoGenerationMixin:
                     status=terminal.status,
                 )
                 return terminal
-            # Stall detection: nudge the tab to the foreground ONCE if Flow's
-            # own polling has stopped — or never started — appending responses.
-            if len(captured_status) != seen_count:
-                seen_count = len(captured_status)
-                last_progress = time.monotonic()
-            elif not nudged and time.monotonic() - last_progress > stall_nudge_s:
-                nudged = True
-                # Distinguish "Flow never polled the status route at all" from
-                # "Flow stalled mid-run" — the former is the single most likely
-                # production failure (spec §5.5 flags it as unconfirmed).
-                event = (
-                    "ui_automation_video.poll_no_status_traffic"
-                    if seen_count == 0
-                    else "ui_automation_video.poll_stall_nudge"
-                )
-                log.warning(event, media_name=media_name, status_responses_seen=seen_count)
-                try:
-                    await page.bring_to_front()
-                except Exception as e:
-                    log.debug("ui_automation_video.bring_to_front_failed", error=str(e))
+            seen_count, last_progress, nudged = await VideoGenerationMixin._nudge_tab_if_stalled(
+                page, captured_status, seen_count, last_progress, nudged, stall_nudge_s, media_name
+            )
             await asyncio.sleep(poll_interval_s)
         cause = (
             "Flow never polled the status route"
@@ -733,6 +770,62 @@ class VideoGenerationMixin:
         return False
 
     @staticmethod
+    async def _dismiss_agent_affordances(page: Page) -> bool:
+        """Run a bounded loop to dismiss Agent-mode affordances until the media panel returns.
+
+        Returns ``(acted, panel_restored)`` encoded as a single bool: True when
+        the media panel is back after at least one click, False when nothing was
+        clicked or the panel never re-mounted. Raises ``FlowAgentUiError`` if a
+        forced Agentic UI indicator is detected.
+        """
+        acted = False
+        clicked_pill = False
+        for _ in range(_AGENT_EXIT_MAX_ITERS):
+            if await VideoGenerationMixin._media_panel_present(page):
+                break
+            # Shape 2 first: the chat side-panel suppresses the pill entirely,
+            # so it must go before the pill can be found.
+            chat_close = page.locator(AGENT_CHAT_PANEL_CLOSE_SELECTOR).first
+            if await chat_close.count() > 0:
+                await chat_close.click(force=True, timeout=_AGENT_CLICK_TIMEOUT_MS)
+                await page.wait_for_timeout(_AGENT_SETTLE_MS)
+                acted = True
+                continue
+            # Shape 1: the in-composer pill — click AT MOST ONCE (binary toggle).
+            if clicked_pill:
+                break
+            pill = page.locator(COMPOSER_AGENT_TOGGLE_SELECTOR).first
+            if await pill.count() > 0:
+                await pill.click(force=True, timeout=_AGENT_CLICK_TIMEOUT_MS)
+                await page.wait_for_timeout(_AGENT_SETTLE_MS)
+                acted = True
+                clicked_pill = True
+                continue
+            # Neither affordance present — nothing more to do.
+            break
+        return acted
+
+    @staticmethod
+    async def _check_forced_agentic_ui(page: Page, out_dir: Path | None) -> None:
+        """Raise ``FlowAgentUiError`` if any forced Agentic UI indicator is present."""
+        for sel in AGENTIC_UI_INDICATORS:
+            if await page.locator(sel).count() > 0:
+                log.warning(
+                    "ui_automation_video.forced_agentic_ui_detected",
+                    indicator=sel,
+                    note="Forced Agentic UI detected; classic media panel is not recoverable.",
+                )
+                shot_path = await _capture_debug_screenshot(
+                    page, out_dir, "debug_forced_agent_ui.png"
+                )
+                raise FlowAgentUiError(
+                    detail=(
+                        f"Agentic UI detected via indicator {sel!r}. "
+                        f"Viewport screenshot: {shot_path}"
+                    )
+                )
+
+    @staticmethod
     async def _exit_agent_mode(page: Page, *, out_dir: Path | None = None) -> bool:
         """Ensure the composer is in media (Image/Video) mode, not Agent mode.
 
@@ -768,48 +861,7 @@ class VideoGenerationMixin:
             if await VideoGenerationMixin._media_panel_present(page):
                 return False
 
-            acted = False
-            clicked_pill = False
-            # Bounded loop: dismissing the chat panel can reveal the pill, which
-            # then needs its own click — at most a couple of transitions. The cap
-            # is a backstop against a pathological flip-flop.
-            for _ in range(_AGENT_EXIT_MAX_ITERS):
-                if await VideoGenerationMixin._media_panel_present(page):
-                    break
-                # Shape 2 first: the chat side-panel suppresses the pill entirely,
-                # so it must go before the pill can be found. Closing it is
-                # self-terminating (the X is gone afterwards), so it is safe to
-                # revisit across iterations.
-                chat_close = page.locator(AGENT_CHAT_PANEL_CLOSE_SELECTOR).first
-                if await chat_close.count() > 0:
-                    # force=True: the panel mounts with an entry animation that can
-                    # leave Playwright's actionability check waiting; the element is
-                    # present and the click lands regardless. The short timeout is
-                    # just a safety cap — a forced click is effectively immediate.
-                    await chat_close.click(force=True, timeout=_AGENT_CLICK_TIMEOUT_MS)
-                    await page.wait_for_timeout(_AGENT_SETTLE_MS)
-                    acted = True
-                    continue
-                # Shape 1: the in-composer pill. It is a binary toggle, so click it
-                # AT MOST ONCE — clicking again would just turn Agent mode back on.
-                # If one click doesn't re-mount the panel, stop and let the caller's
-                # own trigger probe fail loudly rather than flip-flopping.
-                if clicked_pill:
-                    break
-                pill = page.locator(COMPOSER_AGENT_TOGGLE_SELECTOR).first
-                if await pill.count() > 0:
-                    # force=True for the same reason as the chat-close above: the
-                    # composer can still be settling from the panel dismissal, which
-                    # stalls Playwright's actionability check; the pill is present and
-                    # the click lands. Timeout is just a safety cap on a forced click.
-                    await pill.click(force=True, timeout=_AGENT_CLICK_TIMEOUT_MS)
-                    await page.wait_for_timeout(_AGENT_SETTLE_MS)
-                    acted = True
-                    clicked_pill = True
-                    continue
-                # Neither affordance present and panel still absent — nothing this
-                # helper can do (older UI, or an unrecognised Agent shape).
-                break
+            acted = await VideoGenerationMixin._dismiss_agent_affordances(page)
 
             if await VideoGenerationMixin._media_panel_present(page):
                 if acted:
@@ -818,22 +870,7 @@ class VideoGenerationMixin:
 
             # If the media panel is not present after the exit attempts, check if
             # any of the unique Agentic UI indicators are present.
-            for sel in AGENTIC_UI_INDICATORS:
-                if await page.locator(sel).count() > 0:
-                    log.warning(
-                        "ui_automation_video.forced_agentic_ui_detected",
-                        indicator=sel,
-                        note="Forced Agentic UI detected; classic media panel is not recoverable.",
-                    )
-                    shot_path = await _capture_debug_screenshot(
-                        page, out_dir, "debug_forced_agent_ui.png"
-                    )
-                    raise FlowAgentUiError(
-                        detail=(
-                            f"Agentic UI detected via indicator {sel!r}. "
-                            f"Viewport screenshot: {shot_path}"
-                        )
-                    )
+            await VideoGenerationMixin._check_forced_agentic_ui(page, out_dir)
 
             if acted:
                 # We clicked something but the panel never came back — don't claim
@@ -846,7 +883,7 @@ class VideoGenerationMixin:
             return False
         except FlowAgentUiError:
             raise
-        except Exception as e:  # noqa: BLE001 — best-effort, never fatal
+        except Exception as e:  # noqa: BLE001
             log.debug("ui_automation_video.agent_toggle_probe_failed", error=str(e)[:80])
             return False
 
@@ -1169,7 +1206,7 @@ class VideoGenerationMixin:
         submits before the image binds. Shared by I2V slots and R2V references."""
         uploaded: list[str] = []
 
-        async def on_response(response: Any) -> None:
+        def on_response(response: Any) -> None:
             if UPLOAD_IMAGE_ROUTE in response.url:
                 uploaded.append(response.url)
                 log.info(
@@ -1460,6 +1497,38 @@ class VideoGenerationMixin:
         log.info("ui_automation_video.reference_audio_attached", voice=voice_id)
 
     @staticmethod
+    def _collect_entity_ids_from_response_shape(body: dict[str, Any]) -> list[str]:
+        """Extract entityIds from the live response shape.
+
+        Path: ``media[].mediaMetadata.requestData.videoGenerationRequestData
+                   .videoGenerationEntityInputs[].entityId``
+        """
+        ids: list[str] = []
+        for media in cast(_JsonObjList, body.get("media") or []):
+            meta = cast(_JsonObj, media.get("mediaMetadata") or {})
+            req_data = cast(_JsonObj, meta.get("requestData") or {})
+            vgrd = cast(_JsonObj, req_data.get("videoGenerationRequestData") or {})
+            for e in cast(_JsonObjList, vgrd.get("videoGenerationEntityInputs") or []):
+                entity_id = cast("str | None", e.get("entityId"))
+                if entity_id:
+                    ids.append(entity_id)
+        return ids
+
+    @staticmethod
+    def _collect_entity_ids_from_request_shape(body: dict[str, Any]) -> list[str]:
+        """Extract entityIds from the request-body shape (fallback).
+
+        Path: ``requests[].referenceEntities[].entityId``
+        """
+        ids: list[str] = []
+        for r in cast(_JsonObjList, body.get("requests") or []):
+            for e in cast(_JsonObjList, r.get("referenceEntities") or []):
+                entity_id = cast("str | None", e.get("entityId"))
+                if entity_id:
+                    ids.append(entity_id)
+        return ids
+
+    @staticmethod
     def _assert_entities_attached(generate_resp: dict[str, Any], *, expected: list[str]) -> None:
         """Defense-in-depth: confirm the character entities actually rode the wire.
 
@@ -1479,23 +1548,10 @@ class VideoGenerationMixin:
         """
         if not expected:
             return
-        body = cast("dict[str, Any]", generate_resp.get("body") or {})
-        got: list[str] = []
-        # Response shape (the live one): media[] -> ...videoGenerationEntityInputs.
-        for media in cast(_JsonObjList, body.get("media") or []):
-            meta = cast("dict[str, Any]", media.get("mediaMetadata") or {})
-            req_data = cast("dict[str, Any]", meta.get("requestData") or {})
-            vgrd = cast("dict[str, Any]", req_data.get("videoGenerationRequestData") or {})
-            for e in cast(_JsonObjList, vgrd.get("videoGenerationEntityInputs") or []):
-                entity_id = cast("str | None", e.get("entityId"))
-                if entity_id:
-                    got.append(entity_id)
-        # Request shape (fallback): requests[].referenceEntities.
-        for r in cast(_JsonObjList, body.get("requests") or []):
-            for e in cast(_JsonObjList, r.get("referenceEntities") or []):
-                entity_id = cast("str | None", e.get("entityId"))
-                if entity_id:
-                    got.append(entity_id)
+        body = cast(_JsonObj, generate_resp.get("body") or {})
+        got = VideoGenerationMixin._collect_entity_ids_from_response_shape(
+            body
+        ) + VideoGenerationMixin._collect_entity_ids_from_request_shape(body)
         missing = [e for e in expected if e not in got]
         if missing:
             raise WireFormatError(
@@ -1531,7 +1587,7 @@ class VideoGenerationMixin:
 
     @staticmethod
     async def _await_generate_response(
-        captured: list[dict[str, Any]],
+        captured: _JsonObjList,
         *,
         timeout_s: float = 180.0,
         poll_interval_s: float = 0.5,
@@ -1634,7 +1690,7 @@ class VideoGenerationMixin:
         # A video 200 ALWAYS carries media[0] (the asset slot — capture 02);
         # content rejection surfaces later as a FAILED *status*, not empty media.
         # So a missing media[0] here is a genuine wire anomaly — WireFormatError.
-        body: dict[str, Any] = cast("dict[str, Any]", generate_resp.get("body") or {})
+        body: dict[str, Any] = cast(_JsonObj, generate_resp.get("body") or {})
         try:
             media_name = media_name_from_generate_response(body)
         except ValueError as e:
@@ -1661,28 +1717,17 @@ class VideoGenerationMixin:
         if inspect.isawaitable(result_or_coro):
             await result_or_coro
 
-    async def _generate_video_locked(
-        self,
+    @staticmethod
+    def _resolve_i2v_model(
         request: GenerateVideoRequest,
-        *,
-        project_id: str | None = None,
-        out_dir: Path | None,
-        poll_timeout_s: float,
-        download: bool,
-        on_started: VideoStartedCallback | None,
-    ) -> VideoResult:
-        """Serialized body of `generate_video` — runs under `self._generate_lock`
-        (shared with `generate_images`: one Page, one DOM)."""
-        # Defense-in-depth model/mode guard (issue #125). Pure DTO check — runs
-        # BEFORE any browser interaction so a bad combination fails instantly
-        # with no DOM state mutated and no credit risk. The CLI Click Choice
-        # already blocks omni-flash for i2v, but direct FlowApiClient callers
-        # (e.g. gflow-cli-remotion) bypass Click; this is their safety net.
-        # omni-flash silently drops i2v frame refs at submit and routes to the
-        # T2V endpoint — see VideoModel.supports_i2v_interpolation.
-        is_i2v_with_frames = request.mode is Mode.I2V and (
-            request.start_image is not None or request.end_image is not None
-        )
+        is_i2v_with_frames: bool,
+    ) -> VideoModel | None:
+        """Validate and resolve the effective model for an I2V request.
+
+        Raises ``ModelModeIncompatibilityError`` if the requested model does not
+        support I2V interpolation. Returns the effective model to use — defaults
+        to ``I2V_DEFAULT_MODEL`` when ``is_i2v_with_frames`` and no model is set.
+        """
         if (
             is_i2v_with_frames
             and request.model is not None
@@ -1703,13 +1748,7 @@ class VideoGenerationMixin:
                     f"and produces a text-only video (issue #125)."
                 ),
             )
-
-        # For i2v, never leave the model unset. An unset model means
-        # `_select_video_model` is skipped and Flow applies its last-used default
-        # (often omni-flash), which silently drops the frames to T2V (issue #125).
-        # Default to an interpolation-capable model — mirrors the CLI's resolution
-        # so direct FlowApiClient callers get the same safe behaviour.
-        effective_model: VideoModel | None = request.model
+        effective_model = request.model
         if is_i2v_with_frames and effective_model is None:
             effective_model = I2V_DEFAULT_MODEL
             log.info(
@@ -1717,6 +1756,148 @@ class VideoGenerationMixin:
                 model=effective_model.value,
                 issue_ref="#125",
             )
+        return effective_model
+
+    @staticmethod
+    async def _attach_media_inputs(
+        page: Page,
+        request: GenerateVideoRequest,
+        *,
+        out_dir: Path | None,
+    ) -> None:
+        """Attach I2V frames or R2V references/entities to the editor before submit."""
+        if request.mode is Mode.I2V and request.start_image is not None:
+            await VideoGenerationMixin._attach_frame(
+                page, 0, "Start", request.start_image, out_dir=out_dir
+            )
+            if request.end_image is not None:
+                await VideoGenerationMixin._attach_frame(
+                    page, 1, "End", request.end_image, out_dir=out_dir
+                )
+        elif request.mode is Mode.R2V:
+            if request.reference_entities:
+                await VideoGenerationMixin._attach_character_entities(
+                    page,
+                    zip_entity_refs(request.reference_entities, request.reference_entity_names),
+                    out_dir=out_dir,
+                )
+            if request.reference_images:
+                await VideoGenerationMixin._attach_references(
+                    page,
+                    list(request.reference_images),
+                    out_dir=out_dir,
+                )
+            if request.reference_audio:
+                await VideoGenerationMixin._attach_reference_audio(
+                    page, request.reference_audio, out_dir=out_dir
+                )
+
+    async def _submit_and_poll(
+        self,
+        page: Page,
+        request: GenerateVideoRequest,
+        is_i2v_with_frames: bool,
+        effective_model: VideoModel | None,
+        project_id: str | None,
+        out_dir: Path | None,
+        poll_timeout_s: float,
+        download: bool,
+        on_started: VideoStartedCallback | None,
+        ui_driver: Any,
+    ) -> VideoResult:
+        """Submit the prompt, await and validate the generate response, then poll."""
+        generate_captured, generate_handler = VideoGenerationMixin._attach_video_response_listener(
+            page
+        )
+        status_captured, status_handler = VideoGenerationMixin._attach_status_response_listener(
+            page
+        )
+        generate_resp: dict[str, Any] = {}
+        try:
+            await ui_driver.send_prompt(page, request.prompt, out_dir=out_dir)
+            generate_resp = await VideoGenerationMixin._await_generate_response(generate_captured)
+
+            # Layer-2 backstop (issue #125): for i2v, the request MUST have
+            # routed to a Start/StartAndEndImage endpoint.
+            if is_i2v_with_frames:
+                captured_url = str(generate_resp.get("url") or "")
+                if _T2V_GENERATE_ROUTE in captured_url:
+                    log.error(
+                        "ui_automation_video.i2v_routed_to_t2v",
+                        url=captured_url,
+                        model=(effective_model.value if effective_model else None),
+                        issue_ref="#125",
+                    )
+                    raise WireFormatError(
+                        detail=(
+                            "i2v request routed to the T2V endpoint "
+                            f"({_T2V_GENERATE_ROUTE}); Flow dropped the start/end "
+                            "frames and produced a text-only video (issue #125). "
+                            "The credit was spent but the output is not an "
+                            "interpolation — refusing to report success."
+                        ),
+                        route=_T2V_GENERATE_ROUTE,
+                    )
+
+            if request.reference_entities:
+                VideoGenerationMixin._assert_entities_attached(
+                    generate_resp, expected=list(request.reference_entities)
+                )
+
+            media_name, flow_operation_id = VideoGenerationMixin._parse_generate_response(
+                generate_resp
+            )
+
+            if on_started is not None:
+                started = VideoStarted(
+                    media_id=media_name,
+                    project_id=project_id,
+                    flow_operation_id=flow_operation_id,
+                )
+                await VideoGenerationMixin._fire_on_started(on_started, started)
+
+            status = await VideoGenerationMixin._poll_video_status(
+                page,
+                status_captured,
+                media_name,
+                timeout_s=poll_timeout_s,
+            )
+            local_path = (
+                await self._download_video(status.media_id, out_dir, page)
+                if download and status.succeeded
+                else None
+            )
+            return VideoResult(
+                status=status,
+                local_path=local_path,
+                project_id=project_id,
+                flow_operation_id=flow_operation_id,
+            )
+        finally:
+            # The Page is pooled and persistent — remove both listeners so they
+            # never leak across calls.
+            page.remove_listener("response", generate_handler)
+            page.remove_listener("response", status_handler)
+
+    async def _generate_video_locked(
+        self,
+        request: GenerateVideoRequest,
+        *,
+        project_id: str | None = None,
+        out_dir: Path | None,
+        poll_timeout_s: float,
+        download: bool,
+        on_started: VideoStartedCallback | None,
+    ) -> VideoResult:
+        """Serialized body of `generate_video` — runs under `self._generate_lock`
+        (shared with `generate_images`: one Page, one DOM)."""
+        is_i2v_with_frames = request.mode is Mode.I2V and (
+            request.start_image is not None or request.end_image is not None
+        )
+        # Defense-in-depth model/mode guard (issue #125). Pure DTO check — runs
+        # BEFORE any browser interaction so a bad combination fails instantly
+        # with no DOM state mutated and no credit risk.
+        effective_model = VideoGenerationMixin._resolve_i2v_model(request, is_i2v_with_frames)
 
         from gflow_cli.api.transports.drivers.classic import (  # noqa: PLC0415
             ClassicFlowUiDriver,
@@ -1752,118 +1933,18 @@ class VideoGenerationMixin:
         # Attach images AFTER the panel is closed — the slots / 'Add Media' button
         # live in the main editor. This is what makes Flow fire StartImage /
         # StartAndEndImage / ReferenceImages instead of the plain Text route.
-        if request.mode is Mode.I2V and request.start_image is not None:
-            await VideoGenerationMixin._attach_frame(
-                page,
-                0,
-                "Start",
-                request.start_image,
-                out_dir=out_dir,
-            )
-            if request.end_image is not None:
-                await VideoGenerationMixin._attach_frame(
-                    page,
-                    1,
-                    "End",
-                    request.end_image,
-                    out_dir=out_dir,
-                )
-        elif request.mode is Mode.R2V:
-            if request.reference_entities:
-                await VideoGenerationMixin._attach_character_entities(
-                    page,
-                    zip_entity_refs(request.reference_entities, request.reference_entity_names),
-                    out_dir=out_dir,
-                )
-            if request.reference_images:
-                await VideoGenerationMixin._attach_references(
-                    page,
-                    list(request.reference_images),
-                    out_dir=out_dir,
-                )
-            if request.reference_audio:
-                await VideoGenerationMixin._attach_reference_audio(
-                    page, request.reference_audio, out_dir=out_dir
-                )
+        await VideoGenerationMixin._attach_media_inputs(page, request, out_dir=out_dir)
 
-        # Attach BOTH listeners synchronously BEFORE the prompt is submitted so
-        # neither the generate response nor an early status poll is missed.
-        generate_captured, generate_handler = VideoGenerationMixin._attach_video_response_listener(
+        # Submit prompt, await generate response, validate, and poll for status.
+        return await self._submit_and_poll(
             page,
+            request,
+            is_i2v_with_frames,
+            effective_model,
+            project_id,
+            out_dir,
+            poll_timeout_s,
+            download,
+            on_started,
+            ui_driver,
         )
-        status_captured, status_handler = VideoGenerationMixin._attach_status_response_listener(
-            page,
-        )
-        generate_resp: dict[str, Any] = {}
-        try:
-            await ui_driver.send_prompt(page, request.prompt, out_dir=out_dir)
-
-            generate_resp = await VideoGenerationMixin._await_generate_response(generate_captured)
-
-            # Layer-2 backstop (issue #125): for i2v, the request MUST have
-            # routed to a Start/StartAndEndImage endpoint. If it landed on the
-            # plain T2V route, Flow silently dropped the frames (e.g. an
-            # undiscovered fallback path) — the credit is already spent, but we
-            # MUST NOT return a "successful i2v" VideoResult that is actually a
-            # text-only video. Raise loudly instead of recording a fake success.
-            if is_i2v_with_frames:
-                captured_url = str(generate_resp.get("url") or "")
-                if _T2V_GENERATE_ROUTE in captured_url:
-                    log.error(
-                        "ui_automation_video.i2v_routed_to_t2v",
-                        url=captured_url,
-                        model=(effective_model.value if effective_model else None),
-                        issue_ref="#125",
-                    )
-                    raise WireFormatError(
-                        detail=(
-                            "i2v request routed to the T2V endpoint "
-                            f"({_T2V_GENERATE_ROUTE}); Flow dropped the start/end "
-                            "frames and produced a text-only video (issue #125). "
-                            "The credit was spent but the output is not an "
-                            "interpolation — refusing to report success."
-                        ),
-                        route=_T2V_GENERATE_ROUTE,
-                    )
-
-            if request.reference_entities:
-                VideoGenerationMixin._assert_entities_attached(
-                    generate_resp, expected=list(request.reference_entities)
-                )
-
-            media_name, flow_operation_id = VideoGenerationMixin._parse_generate_response(
-                generate_resp,
-            )
-
-            # Fire on_started BEFORE polling so the recorder can insert a STARTED
-            # row even if the long poll later fails.
-            if on_started is not None:
-                started = VideoStarted(
-                    media_id=media_name,
-                    project_id=project_id,
-                    flow_operation_id=flow_operation_id,
-                )
-                await VideoGenerationMixin._fire_on_started(on_started, started)
-
-            status = await VideoGenerationMixin._poll_video_status(
-                page,
-                status_captured,
-                media_name,
-                timeout_s=poll_timeout_s,
-            )
-            local_path = (
-                await self._download_video(status.media_id, out_dir, page)
-                if download and status.succeeded
-                else None
-            )
-            return VideoResult(
-                status=status,
-                local_path=local_path,
-                project_id=project_id,
-                flow_operation_id=flow_operation_id,
-            )
-        finally:
-            # The Page is pooled and persistent — remove both listeners so they
-            # never leak across calls.
-            page.remove_listener("response", generate_handler)
-            page.remove_listener("response", status_handler)
