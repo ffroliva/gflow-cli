@@ -23,8 +23,11 @@
 - [x] **C3 — ui-automation** (14): `transports/ui_automation.py`, `transports/ui_automation_video.py` — done, pushed
 - [x] **C4 — chain/manifests** (13): `chain.py`, `chain_manifest.py`, `composition.py`, `movie_manifest.py`, `data/recorder.py` — done, pushed
 
-> **All 60 addressed.** Wave 2 (C3/C4) green: pyright 0 errors, ruff clean, 1755 tests pass.
-> Final "zero" pending SonarCloud CI re-analysis on this branch / its PR.
+> **DONE — SonarCloud verified ZERO on PR #200:** 0 bugs · 0 vulns · 0 hotspots · **0 code smells**.
+> All 60 original smells cleared. A 6th commit fixed 4 *secondary* smells (S5890 ×3, S107 ×1)
+> that the cleanup refactors themselves introduced — only the SonarCloud job surfaces those
+> (ruff/pyright/tests pass). Live e2e (image + video via the refactored ui_automation paths)
+> passed against the real Flow API. pyright 0 errors, ruff clean, 1755 tests pass.
 - [x] **C5 — cli** (13): `cli.py`, `cli_image.py`, `cli_movie.py`, `cli_scene.py`, `cli_video.py` — done, pushed
 
 > Wave 1 (C1/C2/C5) green: pyright 0 errors, ruff clean, 1755 tests pass. Two NOSONAR
