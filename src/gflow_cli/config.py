@@ -231,6 +231,10 @@ class Settings(BaseSettings):
             "Override via GFLOW_CLI_PREFER_CLASSIC."
         ),
     )
+    daemon_token: str | None = Field(
+        default=None,
+        description="Auth token required when binding the serve daemon to a non-localhost address.",
+    )
 
     # --- logging ----------------------------------------------------------
     log_level: LogLevel = LogLevel.INFO

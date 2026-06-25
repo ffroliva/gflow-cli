@@ -368,5 +368,101 @@ main.add_command(_models_command)
 main.add_command(_scene_group)
 
 
+# --- mcp --------------------------------------------------------------------
+
+
+@main.group()
+def mcp() -> None:
+    """Model Context Protocol server for IDE/agent integration."""
+
+
+@mcp.command("run")
+@click.option("--profile", default=None, help="Profile to use for generation tools.")
+def mcp_run(profile: str | None) -> None:
+    """Start the MCP server over stdio transport.
+
+    Use this with Claude Desktop, Cursor, or other MCP-aware clients.
+    The server communicates via stdin/stdout JSON-RPC.
+
+    \b
+    Configuration example (claude_desktop_config.json):
+      {
+        "mcpServers": {
+          "gflow": {
+            "command": "gflow",
+            "args": ["mcp", "run"]
+          }
+        }
+      }
+    """
+    from gflow_cli.mcp.server import main_stdio
+
+    main_stdio()
+
+
+@mcp.command("setup")
+@click.option(
+    "--target",
+    type=click.Choice(["claude-desktop", "cursor", "vscode"]),
+    default="claude-desktop",
+    help="Target IDE/agent to configure.",
+)
+def mcp_setup(target: str) -> None:
+    """Auto-configure MCP server for a supported IDE/agent.
+
+    Writes the server configuration block to the target's config file.
+    """
+    console.print(
+        f"[yellow]MCP setup for {target} is not yet implemented.[/yellow]\n"
+        "[dim]Manual setup: add the gflow MCP server config to your IDE settings.[/dim]"
+    )
+
+
+# --- serve ------------------------------------------------------------------
+
+
+@main.command()
+@click.option("--port", default=8000, show_default=True, help="Port to bind the daemon to.")
+@click.option(
+    "--host",
+    default="127.0.0.1",
+    show_default=True,
+    help="Host to bind. Use 0.0.0.0 with caution (requires GFLOW_DAEMON_TOKEN).",
+)
+@click.option("--profile", default=None, help="Profile for the background worker.")
+def serve(port: int, host: str, profile: str | None) -> None:
+    """Start the gflow daemon with MCP-SSE + REST /api/v1 endpoints.
+
+    \b
+    This daemon powers Gflow Studio and external API consumers:
+      • MCP-SSE at /mcp/sse — live agent/log stream
+      • REST /api/v1/* — CRUD + generation queue (planned)
+      • Background FlowWorker — sequential generation (planned)
+
+    \b
+    Example:
+      gflow serve --port 8000
+      gflow serve --host 0.0.0.0 --port 8000  # requires GFLOW_DAEMON_TOKEN
+    """
+    if host != "127.0.0.1":
+        token = get_settings().daemon_token if hasattr(get_settings(), "daemon_token") else None
+        if not token:
+            console.print(
+                "[red]Error:[/red] Binding to a non-localhost address requires "
+                "[bold]GFLOW_DAEMON_TOKEN[/bold] to be set.\n"
+                "[dim]Set it in .env.local or as an environment variable.[/dim]"
+            )
+            sys.exit(11)
+
+    console.print(
+        f"\n[bold]🎬 gflow daemon[/bold] starting on [cyan]{host}:{port}[/cyan]\n"
+        f"  MCP-SSE: [cyan]http://{host}:{port}/mcp/sse[/cyan]\n"
+    )
+
+    from gflow_cli.mcp.server import main_sse
+
+    main_sse(host=host, port=port)
+
+
 if __name__ == "__main__":
     main()
