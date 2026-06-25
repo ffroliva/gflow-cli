@@ -62,6 +62,12 @@ except ImportError:  # pragma: no cover — Playwright is an install dependency
 
 log = structlog.get_logger(__name__)
 
+# Type aliases for JSON-shaped ``cast(...)`` targets. Extracted so the quoted
+# cast strings are not duplicated (SonarCloud S1192); a module-level alias keeps
+# ruff's TC006 happy since the call sites pass a bare name, not a subscript.
+_JsonObj = dict[str, Any]
+_AnyList = list[Any]
+
 # Flow editor entrypoint — ``?hl=en`` locks locale for selector stability.
 FLOW_URL = "https://labs.google/fx/tools/flow?hl=en"
 # URL fragment that distinguishes the project editor from the gallery.
@@ -415,6 +421,10 @@ _COUNT_TAB_COUNT = 4
 # (duplicate literal) and keep the spelling consistent across log sites.
 _EVT_COUNT_SETTER_COMPLETED = "ui_automation.count_setter_completed"
 
+# Structured event name emitted at every overlay-dismissal exit path.
+# Extracted to a module-level constant to satisfy SonarCloud S1192.
+_EVT_OVERLAY_DISMISSED = "ui_automation.overlay_dismissed"
+
 # Regex that matches count-tab text exactly: "1x", "x2", "x3", "x4".
 # These are the ONLY role="tab" elements whose text fits this pattern —
 # Mode tabs ("image\nImagem") and Aspect tabs ("16:9", "crop_square") do not.
@@ -486,10 +496,10 @@ def _collect_images_from_body(body: dict[str, Any], images: list[GeneratedImage]
     media_list_raw = body.get("media", [])
     if not isinstance(media_list_raw, list):
         return
-    for item_raw in cast("list[Any]", media_list_raw):
+    for item_raw in cast(_AnyList, media_list_raw):
         if not isinstance(item_raw, dict):
             continue
-        item: dict[str, Any] = cast("dict[str, Any]", item_raw)
+        item: dict[str, Any] = cast(_JsonObj, item_raw)
         try:
             images.append(GeneratedImage.from_response_item(item))
         except ValueError as e:
@@ -511,7 +521,7 @@ def _images_from_responses(
 
     for response in responses:
         status = response.get("status")
-        body: dict[str, Any] = cast("dict[str, Any]", response.get("body") or {})
+        body: dict[str, Any] = cast(_JsonObj, response.get("body") or {})
         route_str: str = str(response.get("url", ""))
 
         if status == 401:
@@ -591,10 +601,10 @@ def _summarize_batch_request_body(post_data: str | None) -> dict[str, Any]:
         return summary
     if not isinstance(parsed, dict):
         return summary
-    parsed_dict = cast("dict[str, Any]", parsed)
+    parsed_dict = cast(_JsonObj, parsed)
     reqs = parsed_dict.get("requests")
     if isinstance(reqs, list) and reqs and isinstance(reqs[0], dict):
-        first = cast("dict[str, Any]", reqs[0])
+        first = cast(_JsonObj, reqs[0])
         summary["request0_keys"] = sorted(first.keys())
         ref_bits = {
             k: _elide_large_value(v)
@@ -606,6 +616,22 @@ def _summarize_batch_request_body(post_data: str | None) -> dict[str, Any]:
     else:
         summary["top_keys"] = sorted(parsed_dict.keys())
     return summary
+
+
+def _entity_ids_from_one_request(req: Any) -> set[str]:
+    """Extract entityId strings from a single ``requests[]`` entry."""
+    if not isinstance(req, dict):
+        return set()
+    ents = cast(_JsonObj, req).get("referenceEntities")
+    if not isinstance(ents, list):
+        return set()
+    out: set[str] = set()
+    for ent in cast(_AnyList, ents):
+        if isinstance(ent, dict):
+            entity_id = cast(_JsonObj, ent).get("entityId")
+            if isinstance(entity_id, str):
+                out.add(entity_id)
+    return out
 
 
 def _entity_ids_from_request_body(post_data: str | None) -> set[str]:
@@ -625,20 +651,11 @@ def _entity_ids_from_request_body(post_data: str | None) -> set[str]:
     if not isinstance(parsed, dict):
         return set()
     out: set[str] = set()
-    reqs = cast("dict[str, Any]", parsed).get("requests")
+    reqs = cast(_JsonObj, parsed).get("requests")
     if not isinstance(reqs, list):
         return out
-    for req in cast("list[Any]", reqs):
-        if not isinstance(req, dict):
-            continue
-        ents = cast("dict[str, Any]", req).get("referenceEntities")
-        if not isinstance(ents, list):
-            continue
-        for ent in cast("list[Any]", ents):
-            if isinstance(ent, dict):
-                entity_id = cast("dict[str, Any]", ent).get("entityId")
-                if isinstance(entity_id, str):
-                    out.add(entity_id)
+    for req in cast(_AnyList, reqs):
+        out |= _entity_ids_from_one_request(req)
     return out
 
 
@@ -833,6 +850,58 @@ class UiAutomationTransport(VideoGenerationMixin):
             except Exception:
                 continue
 
+    @staticmethod
+    async def _detect_overlay(page: Page) -> bool:
+        """Return True if any changelog iframe or welcome screen is currently visible."""
+        for sel in CHANGELOG_IFRAME_SELECTORS + WELCOME_SCREEN_SELECTORS:
+            try:
+                if await page.locator(sel).first.is_visible(timeout=1500):
+                    log.info("ui_automation.overlay_detected", selector=sel)
+                    return True
+            except Exception:
+                continue
+        return False
+
+    @staticmethod
+    async def _try_page_close_button(page: Page) -> bool:
+        """Try each OVERLAY_CLOSE_BUTTON_SELECTORS at page level. Returns True on success."""
+        for close_sel in OVERLAY_CLOSE_BUTTON_SELECTORS:
+            try:
+                loc = page.locator(close_sel).first
+                if await loc.is_visible(timeout=500):
+                    await loc.click(force=True)
+                    await page.wait_for_timeout(1000)
+                    log.info(
+                        _EVT_OVERLAY_DISMISSED,
+                        selector=close_sel,
+                        method="close_button_page",
+                    )
+                    return True
+            except Exception:
+                continue
+        return False
+
+    @staticmethod
+    async def _try_iframe_close_button(page: Page) -> bool:
+        """Try each close-button selector inside each changelog iframe. Returns True on success."""
+        for iframe_sel in CHANGELOG_IFRAME_SELECTORS:
+            try:
+                frame = page.frame_locator(iframe_sel).first
+                for close_sel in OVERLAY_CLOSE_BUTTON_SELECTORS:
+                    loc = frame.locator(close_sel).first
+                    if await loc.is_visible(timeout=500):
+                        await loc.click(force=True)
+                        await page.wait_for_timeout(1000)
+                        log.info(
+                            _EVT_OVERLAY_DISMISSED,
+                            selector=close_sel,
+                            method="close_button_frame",
+                        )
+                        return True
+            except Exception:
+                continue
+        return False
+
     async def _dismiss_blocking_overlays(
         self,
         page: Page,
@@ -857,62 +926,21 @@ class UiAutomationTransport(VideoGenerationMixin):
         Returns True if a dismissal action was taken, False if the page was
         clear (no overlay) or if dismissal could not be confirmed.
         """
-        # Step 1 — detect whether a blocking overlay is present.
-        overlay_found = False
-        for sel in CHANGELOG_IFRAME_SELECTORS + WELCOME_SCREEN_SELECTORS:
-            try:
-                if await page.locator(sel).first.is_visible(timeout=1500):
-                    overlay_found = True
-                    log.info("ui_automation.overlay_detected", selector=sel)
-                    break
-            except Exception:
-                continue
-
-        if not overlay_found:
+        if not await self._detect_overlay(page):
             return False
 
-        # Step 2 — try explicit close buttons first.
-        # We try them both on the page AND inside any detected iframe.
-        for close_sel in OVERLAY_CLOSE_BUTTON_SELECTORS:
-            try:
-                # Try page level
-                loc = page.locator(close_sel).first
-                if await loc.is_visible(timeout=500):
-                    await loc.click(force=True)
-                    await page.wait_for_timeout(1000)
-                    log.info(
-                        "ui_automation.overlay_dismissed",
-                        selector=close_sel,
-                        method="close_button_page",
-                    )
-                    return True
-            except Exception:
-                continue
+        if await self._try_page_close_button(page):
+            return True
 
-        # Step 3 — try inside iframes.
-        for iframe_sel in CHANGELOG_IFRAME_SELECTORS:
-            try:
-                frame = page.frame_locator(iframe_sel).first
-                for close_sel in OVERLAY_CLOSE_BUTTON_SELECTORS:
-                    loc = frame.locator(close_sel).first
-                    if await loc.is_visible(timeout=500):
-                        await loc.click(force=True)
-                        await page.wait_for_timeout(1000)
-                        log.info(
-                            "ui_automation.overlay_dismissed",
-                            selector=close_sel,
-                            method="close_button_frame",
-                        )
-                        return True
-            except Exception:
-                continue
+        if await self._try_iframe_close_button(page):
+            return True
 
-        # Step 4 — Escape fallback (regression test case: iframe present, no close button).
+        # Escape fallback (regression test case: iframe present, no close button).
         try:
             await page.keyboard.press("Escape")
             await page.wait_for_timeout(1000)
             log.info(
-                "ui_automation.overlay_dismissed",
+                _EVT_OVERLAY_DISMISSED,
                 selector="<none>",
                 method="escape",
             )
@@ -2694,14 +2722,14 @@ class UiAutomationTransport(VideoGenerationMixin):
         for response in responses:
             if response.get("status") != 200:
                 continue
-            body: dict[str, Any] = cast("dict[str, Any]", response.get("body") or {})
+            body: dict[str, Any] = cast(_JsonObj, response.get("body") or {})
             raw_workflows = body.get("workflows", [])
             if not isinstance(raw_workflows, list):
                 continue
-            for wf_raw in cast("list[Any]", raw_workflows):
+            for wf_raw in cast(_AnyList, raw_workflows):
                 if not isinstance(wf_raw, dict):
                     continue
-                wf: dict[str, Any] = cast("dict[str, Any]", wf_raw)
+                wf: dict[str, Any] = cast(_JsonObj, wf_raw)
                 # Only surface workflows that carry the character-binding field.
                 if "parentEntityId" not in wf:
                     log.debug(
