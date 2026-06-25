@@ -18,9 +18,9 @@ import base64
 import json
 import os
 import time
-from dataclasses import replace as _dc_replace
+from dataclasses import replace as _dataclass_replace
 from datetime import datetime
-from typing import TYPE_CHECKING, Any, Self, cast
+from typing import TYPE_CHECKING, Any, Self, TypeVar, cast
 from urllib.parse import quote, urlsplit, urlunsplit
 
 import structlog
@@ -69,6 +69,8 @@ from gflow_cli.storage import AnyPath, storage_path, write_asset_async
 if TYPE_CHECKING:
     from pathlib import Path
 
+    from _typeshed import DataclassInstance
+
     from gflow_cli.api.image import GenerateImageRequest
     from gflow_cli.api.video import GenerateVideoRequest, VideoResult, VideoStartedCallback
 
@@ -76,6 +78,20 @@ if TYPE_CHECKING:
 # bodies, launch kwargs, etc.). A single definition avoids the duplicated-literal
 # smell (SonarCloud S1192) from repeating the bare mapping type across the module.
 JsonObject = dict[str, Any]
+
+_DataclassT = TypeVar("_DataclassT", bound="DataclassInstance")
+
+
+def _dc_replace(obj: _DataclassT, /, **changes: Any) -> _DataclassT:
+    """Typed wrapper over ``dataclasses.replace`` that preserves the input type.
+
+    The stdlib annotation for ``replace`` is opaque to some analyzers (they infer
+    a generic ``DataclassInstance``), which produced spurious argument-type and
+    declared-type findings at call sites. Re-declaring it with a ``TypeVar`` makes
+    the return type flow through as the concrete request dataclass.
+    """
+    return _dataclass_replace(obj, **changes)
+
 
 # Marker substring used by Playwright when a Page/Context/Browser is closed.
 # Stable across recent Playwright versions; we match on message text to avoid
@@ -118,6 +134,8 @@ MAX_UPSAMPLE_B64_LEN = 50 * 1024 * 1024
 
 # aisandbox-pa rejects application/json — see samples/captured/*.json.
 _AISANDBOX_CONTENT_TYPE = "text/plain;charset=UTF-8"
+# Content type for the labs.google BFF (tRPC) endpoints, which DO accept JSON.
+_APPLICATION_JSON = "application/json"
 
 # aisandbox-pa POSTs return 401 to page.request unless an Authorization: Bearer
 # <access_token> is attached — the SPA's OAuth2 token, fetched from the BFF
@@ -756,7 +774,7 @@ class FlowApiClient:
         """
         title = title or _default_project_title()
         body = {"json": {"projectTitle": title, "toolName": "PINHOLE"}}
-        data = await self._post_json(routes.CREATE_PROJECT, body, content_type="application/json")
+        data = await self._post_json(routes.CREATE_PROJECT, body, content_type=_APPLICATION_JSON)
         return ProjectInfo.from_create_response(data)
 
     async def upload_image(self, project_id: str, image_path: Path) -> AssetInfo:
@@ -982,6 +1000,75 @@ class FlowApiClient:
         )
         return Scene.from_get_response(data, scene_id=scene_id, project_id=project_id)
 
+    async def _poll_concat_until_done(
+        self,
+        operation: Any,
+        *,
+        poll_interval: float,
+        deadline: float,
+        timeout_s: float,
+    ) -> str:
+        """Poll ``runVideoFxCheckConcatenationStatus`` until successful.
+
+        Returns the raw base64 ``encodedVideo`` string on success.
+        Raises :class:`SceneConcatError` on job failure and
+        :class:`TransportTimeoutError` on deadline breach.
+        """
+        while True:
+            status_resp = await self._post_json(
+                routes.RUN_VIDEO_FX_CHECK_CONCATENATION_STATUS,
+                {"operation": operation},
+                route_name="runVideoFxCheckConcatenationStatus",
+            )
+            status = str(status_resp.get("status", ""))
+            if status == "MEDIA_GENERATION_STATUS_SUCCESSFUL":
+                return str(status_resp.get("encodedVideo") or "")
+            if status and status != "MEDIA_GENERATION_STATUS_ACTIVE":
+                # FAILED / unspecified — detail from status ONLY, never encodedVideo.
+                logger.warning("scene.concat_failed", status=status)
+                raise SceneConcatError(
+                    detail=f"concatenation job status: {status}",
+                    route="runVideoFxCheckConcatenationStatus",
+                )
+            if time.monotonic() >= deadline:
+                raise TransportTimeoutError(
+                    f"scene concatenation did not finish within {timeout_s:.0f}s"
+                )
+            await asyncio.sleep(poll_interval)
+
+    @staticmethod
+    def _decode_concat_video(encoded: str) -> bytes:
+        """Validate size, base64-decode, and magic-byte-check a concat payload.
+
+        Raises :class:`SceneConcatError` when the payload is absent, oversized,
+        undecodable, or not a valid MP4.
+        """
+        if not encoded:
+            raise SceneConcatError(
+                detail="concatenation succeeded but returned no encodedVideo",
+                route="runVideoFxCheckConcatenationStatus",
+            )
+        if len(encoded) > MAX_CONCAT_B64_LEN:
+            # Reject before decode — never log the body (mitigation: no 20MB+ in logs).
+            raise SceneConcatError(
+                detail=(
+                    f"concatenated video exceeds the {MAX_CONCAT_B64_LEN // (1024 * 1024)} MB "
+                    "size cap; compose fewer/shorter clips"
+                ),
+                route="runVideoFxConcatenation",
+            )
+        try:
+            video_bytes = base64.b64decode(encoded)
+        except ValueError as e:  # binascii.Error subclasses ValueError
+            # Don't include the (undecodable) body in the message.
+            raise SceneConcatError(
+                detail="concatenation returned undecodable video data",
+                route="runVideoFxCheckConcatenationStatus",
+            ) from e
+        if video_bytes[4:8] != b"ftyp":
+            raise SceneConcatError(detail="concatenation output is not a valid MP4")
+        return video_bytes
+
     async def concatenate_scene(
         self,
         inputs: list[ConcatInput],
@@ -1015,55 +1102,14 @@ class FlowApiClient:
         logger.info("scene.concat_started", clips=len(inputs))
 
         deadline = time.monotonic() + timeout_s
-        encoded = ""
-        while True:
-            status_resp = await self._post_json(
-                routes.RUN_VIDEO_FX_CHECK_CONCATENATION_STATUS,
-                {"operation": operation},
-                route_name="runVideoFxCheckConcatenationStatus",
-            )
-            status = str(status_resp.get("status", ""))
-            if status == "MEDIA_GENERATION_STATUS_SUCCESSFUL":
-                encoded = str(status_resp.get("encodedVideo") or "")
-                break
-            if status and status != "MEDIA_GENERATION_STATUS_ACTIVE":
-                # FAILED / unspecified — detail from status ONLY, never encodedVideo.
-                logger.warning("scene.concat_failed", status=status)
-                raise SceneConcatError(
-                    detail=f"concatenation job status: {status}",
-                    route="runVideoFxCheckConcatenationStatus",
-                )
-            if time.monotonic() >= deadline:
-                raise TransportTimeoutError(
-                    f"scene concatenation did not finish within {timeout_s:.0f}s"
-                )
-            await asyncio.sleep(poll_interval)
-
-        if not encoded:
-            raise SceneConcatError(
-                detail="concatenation succeeded but returned no encodedVideo",
-                route="runVideoFxCheckConcatenationStatus",
-            )
-        if len(encoded) > MAX_CONCAT_B64_LEN:
-            # Reject before decode — never log the body (mitigation: no 20MB+ in logs).
-            raise SceneConcatError(
-                detail=(
-                    f"concatenated video exceeds the {MAX_CONCAT_B64_LEN // (1024 * 1024)} MB "
-                    "size cap; compose fewer/shorter clips"
-                ),
-                route="runVideoFxConcatenation",
-            )
-        try:
-            video_bytes = base64.b64decode(encoded)
-        except ValueError as e:  # binascii.Error subclasses ValueError
-            # Don't include the (undecodable) body in the message.
-            raise SceneConcatError(
-                detail="concatenation returned undecodable video data",
-                route="runVideoFxCheckConcatenationStatus",
-            ) from e
-        del encoded, status_resp  # drop the ~20MB+ payload promptly
-        if video_bytes[4:8] != b"ftyp":
-            raise SceneConcatError(detail="concatenation output is not a valid MP4")
+        encoded = await self._poll_concat_until_done(
+            operation,
+            poll_interval=poll_interval,
+            deadline=deadline,
+            timeout_s=timeout_s,
+        )
+        video_bytes = self._decode_concat_video(encoded)
+        del encoded  # drop the ~20MB+ payload promptly
         logger.info("scene.concat_completed", bytes=len(video_bytes))
 
         # Write via the same storage_uri-aware path as download_image.
@@ -1122,7 +1168,7 @@ class FlowApiClient:
             resolution=target_resolution.name,
         )
         token = await self._mint_recaptcha_token(recaptcha_action)
-        req = _dc_replace(base_req, recaptcha_token=token)
+        req: UpsampleImageRequest = _dc_replace(base_req, recaptcha_token=token)
         session_id = f";{int(time.time() * 1000)}"
         try:
             resp = await self._post_json(
@@ -1265,7 +1311,7 @@ class FlowApiClient:
         invoking the single-image API still receive exactly one image (no
         silent discard).
         """
-        req_one = _dc_replace(req, count=1)
+        req_one: GenerateImageRequest = _dc_replace(req, count=1)
         images = await self._drive_images_generation(
             project_id=project_id,
             req=req_one,
@@ -1344,7 +1390,7 @@ class FlowApiClient:
             else:
                 resolved_project_id = project_id
 
-            req_with_count = _dc_replace(req, count=count)
+            req_with_count: GenerateImageRequest = _dc_replace(req, count=count)
             return await self._drive_images_generation(
                 project_id=resolved_project_id,
                 req=req_with_count,
@@ -1434,7 +1480,7 @@ class FlowApiClient:
         data = await self._post_json(
             routes.CREATE_ENTITY_URL,
             body,
-            content_type="application/json",
+            content_type=_APPLICATION_JSON,
             route_name="createEntity",
         )
         payload = _unwrap_trpc(data)
@@ -1775,7 +1821,7 @@ def _build_wire_format_discovery(resp: Any, body_text: str, route: str) -> JsonO
         content_type = ""
     top_keys: list[str] = []
     try:
-        parsed = json.loads(body_text) if content_type.startswith("application/json") else None
+        parsed = json.loads(body_text) if content_type.startswith(_APPLICATION_JSON) else None
         if isinstance(parsed, dict):
             top_keys = sorted(cast("JsonObject", parsed).keys())
     except ValueError:  # json.JSONDecodeError is a ValueError subclass
