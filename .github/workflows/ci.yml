@@ -25,6 +25,20 @@ jobs:
         env:
           GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
 
+  # ── Security gate: dependency CVE audit against locked deps ──────────────
+  deps-audit:
+    name: Dependency audit (pip-audit)
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v7
+      - name: Install uv
+        uses: astral-sh/setup-uv@v7
+      - name: Audit locked dependencies for known CVEs
+        # Fails the build on any known advisory. Accept later via: pip-audit --ignore-vuln <GHSA-id>
+        run: |
+          uv export --frozen --format requirements-txt --no-emit-project > requirements-audit.txt
+          uvx pip-audit -r requirements-audit.txt
+
   # ── Main test matrix ──────────────────────────────────────────────────────
   test:
     runs-on: ubuntu-latest
