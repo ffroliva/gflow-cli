@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 import asyncio
+import contextlib
 import json
 from contextlib import asynccontextmanager
 from typing import Any
@@ -59,10 +60,8 @@ async def lifespan(app: FastAPI):
     logger.info("Shutting down gflow-daemon lifespan")
     daemon_lock = settings.profile_subdir(profile_name) / "profile.lock"
     if daemon_lock.exists():
-        try:
+        with contextlib.suppress(FileNotFoundError):
             daemon_lock.unlink()
-        except FileNotFoundError:
-            pass
 
     worker.stop()
     try:
