@@ -23,15 +23,15 @@ Extends the data layer surface from read-only listing to inspection and selectiv
 - `gflow data export` — JSON / CSV / TSV
 - `gflow data prune` — retention controls (`--older-than`, `--keep-last-n`)
 
-## v0.11.0 — Local Studio, Background Worker & MCP SSE Service
+## v0.11.0 — Local Studio, Background Worker & MCP SSE Service (in progress / develop)
 
-The local Web UI Filmmaking Studio, background task worker, and MCP HTTP/SSE service are integrated into a single unified daemon interface under `gflow ui`.
+The local Web UI Filmmaking Studio, background task worker, and MCP HTTP/SSE service are integrated into a single unified daemon interface under `gflow serve`.
 
-- `gflow ui` — Starts the local FastAPI/Uvicorn server.
-- **MCP SSE Server:** Exposes the MCP server over HTTP/SSE, allowing IDE clients and local Web UI widgets to run JSON-RPC commands.
-- **Flow Worker Daemon:** Ported `google-flow-worker` running as a background task processor, reading from SQLite queue tables and managing automated retries.
-- **REST & Static UI:** FastAPI endpoints for asset management and hosting of the Filmmaking Studio (single-page app).
-- **Aggregated Management:** Full view of accounts, profiles, projects, and active storyboarding queues.
+- [x] **Uvicorn Daemon:** `gflow serve` starts the local FastAPI/Uvicorn server with background task loop.
+- [x] **MCP SSE Server:** Exposes the MCP server over HTTP/SSE, allowing IDE clients and external tools to run JSON-RPC commands.
+- [x] **Flow Worker Daemon:** Local queue manager and `FlowWorker` background task processor reading from SQLite queue tables and managing sequential profile-locked generation runs.
+- [ ] **REST & Static UI:** FastAPI endpoints for asset management and hosting of the Filmmaking Studio (single-page app).
+- [ ] **Aggregated Management:** Full view of accounts, profiles, projects, and active storyboarding queues.
 
 ## v1.0.0 — Stable API
 

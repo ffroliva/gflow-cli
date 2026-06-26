@@ -27,7 +27,7 @@ from functools import lru_cache
 from pathlib import Path
 from typing import Literal
 
-from pydantic import Field, field_validator
+from pydantic import AliasChoices, Field, field_validator
 from pydantic_settings import BaseSettings, SettingsConfigDict
 
 from gflow_cli import paths
@@ -239,6 +239,20 @@ class Settings(BaseSettings):
     # --- logging ----------------------------------------------------------
     log_level: LogLevel = LogLevel.INFO
     log_format: LogFormat = LogFormat.AUTO
+
+    # --- daemon -----------------------------------------------------------
+    daemon_token: str | None = Field(
+        default=None,
+        validation_alias=AliasChoices("GFLOW_CLI_DAEMON_TOKEN", "GFLOW_DAEMON_TOKEN"),
+        description="API token to authenticate calls to the daemon server.",
+    )
+    daemon_port: int = Field(
+        default=8000,
+        ge=1,
+        le=65535,
+        validation_alias=AliasChoices("GFLOW_CLI_DAEMON_PORT", "GFLOW_DAEMON_PORT"),
+        description="Port for the FastAPI daemon server. Default is 8000.",
+    )
 
     # --- derived path helpers --------------------------------------------
 
