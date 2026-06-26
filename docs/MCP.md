@@ -143,11 +143,16 @@ For decoupled clients, local web interfaces, or multi-process frontends, you can
 ```bash
 gflow serve --port 8000 --host 127.0.0.1 --profile default
 ```
-This runs a FastAPI server hosting the MCP app under standard SSE paths:
-* **Connection endpoint:** `http://127.0.0.1:8000/mcp/sse`
-* **Command posting endpoint:** `http://127.0.0.1:8000/mcp/message`
+This serves the MCP server over Server-Sent Events under FastMCP's standard paths:
+* **Connection endpoint (SSE stream):** `http://127.0.0.1:8000/sse`
+* **Command posting endpoint:** `http://127.0.0.1:8000/messages/`
 
-Additionally, starting the daemon launches a background `FlowWorker` queue manager to queue and execute generation requests sequentially, preventing Playwright context lock collisions on the profile.
+Non-loopback binds (e.g. `--host 0.0.0.0`) require `GFLOW_DAEMON_TOKEN` to be set.
+
+> **Note:** the background `FlowWorker` queue manager and the REST `/api/v1`
+> surface are built as internal foundation but are **not yet wired into**
+> `gflow serve` — it currently runs the MCP/SSE server only. See the
+> [CHANGELOG](../CHANGELOG.md) for the roadmap.
 
 ---
 

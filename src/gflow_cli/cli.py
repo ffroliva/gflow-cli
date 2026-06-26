@@ -431,11 +431,11 @@ def mcp_setup(target: str) -> None:
 )
 @click.option("--profile", default=None, help="Profile for the background worker.")
 def serve(port: int, host: str, profile: str | None) -> None:
-    """Start the gflow daemon with MCP-SSE + REST /api/v1 endpoints.
+    """Start the gflow MCP server over HTTP/SSE.
 
     \b
-    This daemon powers Gflow Studio and external API consumers:
-      • MCP-SSE at /mcp/sse — live agent/log stream
+    Foundation for Gflow Studio and external API consumers:
+      • MCP-SSE at /sse — JSON-RPC event stream (POST messages to /messages/)
       • REST /api/v1/* — CRUD + generation queue (planned)
       • Background FlowWorker — sequential generation (planned)
 
@@ -456,7 +456,7 @@ def serve(port: int, host: str, profile: str | None) -> None:
 
     console.print(
         f"\n[bold]🎬 gflow daemon[/bold] starting on [cyan]{host}:{port}[/cyan]\n"
-        f"  MCP-SSE: [cyan]http://{host}:{port}/mcp/sse[/cyan]\n"
+        f"  MCP-SSE: [cyan]http://{host}:{port}/sse[/cyan]\n"
     )
 
     from gflow_cli.mcp.server import main_sse
