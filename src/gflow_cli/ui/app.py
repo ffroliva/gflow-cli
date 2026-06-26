@@ -12,7 +12,7 @@ from starlette.types import ASGIApp, Receive, Scope, Send
 from gflow_cli.config import get_settings
 from gflow_cli.data.redaction import redact_metadata
 from gflow_cli.data.store import DataStore
-from gflow_cli.mcp.server import mcp
+from gflow_cli.mcp.server import server
 from gflow_cli.worker.daemon import FlowWorker
 from gflow_cli.worker.queue import QueueRepository
 
@@ -76,7 +76,7 @@ async def lifespan(app: FastAPI):
 
 app = FastAPI(title="gflow-daemon", lifespan=lifespan)
 
-mcp_sse_app = mcp.sse_app(mount_path="/mcp")
+mcp_sse_app = server.sse_app(mount_path="/mcp")
 
 
 class LogMcpRequestsMiddleware:
