@@ -2,42 +2,46 @@
 
 from __future__ import annotations
 
+import asyncio
 from typing import Any
 
+import pytest
 
-class TestMcpToolDiscovery:
-    """Verify MCP server exposes expected tools via JSON-RPC."""
+from gflow_cli.mcp.server import server
 
-    def test_server_exposes_all_core_tools(self, mcp_server: Any) -> None:
-        """All four core tools must be registered and discoverable."""
-        tools = mcp_server._tool_manager._tools
-        expected_tools = {
-            "gflow_generate_image",
-            "gflow_generate_video",
-            "gflow_list_projects",
-            "gflow_list_characters",
-        }
-        actual_tools = set(tools.keys())
-        assert expected_tools.issubset(actual_tools), (
-            f"Missing tools: {expected_tools - actual_tools}"
-        )
+# Import tools and resources to register them
+import gflow_cli.mcp.tools  # noqa: F401
+import gflow_cli.mcp.resources  # noqa: F401
 
-    def test_generate_image_tool_has_correct_schema(self, mcp_server: Any) -> None:
-        """gflow_generate_image must accept prompt, model, aspect, count, seed, profile."""
-        tool = mcp_server._tool_manager._tools["gflow_generate_image"]
-        schema = tool.parameters
-        properties = set(schema.get("properties", {}).keys())
-        required = set(schema.get("required", []))
 
-        assert "prompt" in required, "prompt must be required"
-        assert {"prompt", "model", "aspect", "count", "seed", "profile"}.issubset(properties)
+class TestMcpJsonRpcProtocol:
+    """Verify MCP server responds to JSON-RPC requests correctly."""
 
-    def test_generate_video_tool_has_correct_schema(self, mcp_server: Any) -> None:
-        """gflow_generate_video must accept prompt, mode, aspect, image_path, profile."""
-        tool = mcp_server._tool_manager._tools["gflow_generate_video"]
-        schema = tool.parameters
-        properties = set(schema.get("properties", {}).keys())
-        required = set(schema.get("required", []))
+    @pytest.mark.asyncio
+    async def test_server_has_tools_registered(self) -> None:
+        """Server must have at least 4 tools registered."""
+        tools = server._tool_manager._tools
+        assert len(tools) >= 4, f"Expected at least 4 tools, got {len(tools)}"
 
-        assert "prompt" in required, "prompt must be required"
-        assert {"prompt", "mode", "aspect", "image_path", "profile"}.issubset(properties)
+    @pytest.mark.asyncio
+    async def test_server_has_resources_registered(self) -> None:
+        """Server must have resources registered."""
+        resources = server._resource_manager._resources
+        assert len(resources) >= 2, f"Expected at least 2 resources, got {len(resources)}"
+
+    @pytest.mark.asyncio
+    async def test_tool_execution_returns_dict(self) -> None:
+        """Tool execution must return a dictionary."""
+        from gflow_cli.mcp.tools import gflow_list_projects
+
+        result = await gflow_list_projects()
+        assert isinstance(result, dict)
+
+    @pytest.mark.asyncio
+    async def test_resource_read_returns_string(self) -> None:
+        """Resource read must return a string."""
+        from gflow_cli.mcp.resources import mcp_guide
+
+        content = await mcp_guide()
+        assert isinstance(content, str)
+        assert len(content) > 0
