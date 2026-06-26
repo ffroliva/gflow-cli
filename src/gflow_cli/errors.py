@@ -306,6 +306,14 @@ class ConfigurationError(GFlowError):
     )
 
 
+class ProfileLockedError(ConfigurationError):
+    """Raised when the profile directory is locked by a running gflow serve daemon."""
+
+    problem_type = "https://gflow-cli.dev/errors/profile-locked"
+    title = "Profile locked"
+    _default_remediation = "Close the running gflow serve daemon or use a different profile name."
+
+
 class BrowserEngineUnavailableError(ConfigurationError):
     """Raised when GFLOW_CLI_BROWSER_ENGINE selects an engine that is unavailable.
 

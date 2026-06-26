@@ -10,12 +10,12 @@
 
 1. Read **[AGENTS.md](AGENTS.md)** — universal rules every agent must follow.
 2. Read **[docs/INDEX.md](docs/INDEX.md)** — routing layer for all project docs and commands.
-3. Pull deeper context on demand:
-   - Current task / where we left off → `/gflow:status`
-   - Starting a new feature → `/gflow:predict` → `/gflow:scenario` → `/gflow:plan <feature>`
-   - Touching auth or reCAPTCHA → `/gflow:known-issues`
-   - Cutting a release → `/gflow:release`
-   - Before any commit → `/gflow:check`
+3. Pull deeper context on demand (type as plain text in the `agy` TUI prompt):
+   - Current task / where we left off → `gflow:status`
+   - Starting a new feature → `gflow:predict` → `gflow:scenario` → `gflow:plan <feature>`
+   - Touching auth or reCAPTCHA → `gflow:known-issues`
+   - Cutting a release → `gflow:release`
+   - Before any commit → `gflow:check`
 
 ## Gemini-specific
 
@@ -28,4 +28,4 @@
 - **Decoupled Daemon/Worker Plan:** The blueprint for the headless SSE Daemon, SQLite generation queue, and Tauri/React editor is scheduled in [PLAN.md](file:///C:/development/github/gflow-cli/docs/superpowers/plans/2026-06-23-mcp-ui-worker-integration/PLAN.md) and [SCENARIO.md](file:///C:/development/github/gflow-cli/docs/superpowers/plans/2026-06-23-mcp-ui-worker-integration/SCENARIO.md).
 - **Core Lesson (Retrospective):** Kept `gflow-cli` strictly headless (running Uvicorn and FastMCP over localhost HTTP/SSE). Bypassed browser context locks by serializing task writes in SQLite queue, allowing parallel client database reads via WAL mode.
 
-See [PLAN.md](PLAN.md) or run `/gflow:status` for the current task. Run `/gflow:plan <feature>` to create a new feature plan.
+See [PLAN.md](PLAN.md) or type `gflow:status` for the current task. Type `gflow:plan <feature>` to create a new feature plan.

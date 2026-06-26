@@ -664,6 +664,19 @@ Today the CLI writes media to `$GFLOW_CLI_OUTPUT_DIR` on the local filesystem. P
 
 ---
 
+### Unified Multi-Account Management — BACKLOG
+
+**Background:** A key strength of the gflow architecture is its capacity to drive and coordinate across multiple Google Accounts in a unified way. This enables horizontal scale, credit pooling, and parallel batch generation bypassing individual account quotas.
+
+**Requirements & Implications:**
+- **Cross-Account Session Inventory:** A unified credential manager tracking persistent browser context directories (`profile_<email_local>`) and session lifespans.
+- **Concurrent Warm Context Pool:** A background daemon scheduling across a warm browser context pool representing multiple active Google Accounts (e.g., executing parallel worker queues on different profiles).
+- **Round-Robin Queue Dispatcher:** A dispatcher that distributes task batches dynamically across profiles based on quota availability or idle status.
+- **Aggregated Provenance Mapping:** The local `gflow.db` data layer indexes projects, operations, and downloaded files back to the generating Google identity.
+- **Studio UI Integration:** Dropdowns displaying connected profiles, quota/credit tracking, active account tags on workflow nodes, and single-click profile swapping.
+
+---
+
 ## 5. Decision log (ADRs in miniature)
 
 | # | Decision | Rationale |

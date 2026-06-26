@@ -1,0 +1,420 @@
+# SPDX-License-Identifier: MIT
+"""Tests for the MCP server — tool listing, schema validation, and CLI/MCP symmetry.
+
+These tests verify that:
+1. The MCP server exposes the expected tools with correct schemas.
+2. CLI command parameters have parity with MCP tool signatures.
+3. Error boundaries catch exceptions without crashing.
+4. Stdout redirection works (stdio transport safety).
+"""
+
+from __future__ import annotations
+
+import asyncio
+from typing import Any
+from unittest.mock import patch
+
+import pytest
+
+# ---------------------------------------------------------------------------
+# Tool listing
+# ---------------------------------------------------------------------------
+
+
+class TestMcpToolListing:
+    """Verify the server exposes the expected tools."""
+
+    def test_server_has_expected_tools(self, mcp_server: Any) -> None:
+        """The server should expose at least 4 core tools."""
+        tools = mcp_server._tool_manager._tools
+        tool_names = set(tools.keys())
+        expected = {
+            "gflow_generate_image",
+            "gflow_generate_video",
+            "gflow_list_projects",
+            "gflow_list_characters",
+        }
+        assert expected.issubset(tool_names), (
+            f"Missing tools: {expected - tool_names}. Found: {tool_names}"
+        )
+
+    def test_generate_image_tool_has_required_params(self, mcp_server: Any) -> None:
+        """gflow_generate_image should accept prompt, model, aspect, count, seed, profile."""
+        tool = mcp_server._tool_manager._tools["gflow_generate_image"]
+        schema = tool.parameters
+        required_fields = {"prompt"}
+        assert required_fields.issubset(set(schema.get("required", []))), (
+            f"Missing required fields: {required_fields}"
+        )
+
+    def test_generate_video_tool_has_required_params(self, mcp_server: Any) -> None:
+        """gflow_generate_video should accept prompt, mode, aspect, image_path, profile."""
+        tool = mcp_server._tool_manager._tools["gflow_generate_video"]
+        schema = tool.parameters
+        required_fields = {"prompt"}
+        assert required_fields.issubset(set(schema.get("required", []))), (
+            f"Missing required fields: {required_fields}"
+        )
+
+
+# ---------------------------------------------------------------------------
+# Stdout redirection
+# ---------------------------------------------------------------------------
+
+
+class TestStdoutRedirection:
+    """Verify stdout → stderr redirection for stdio transport safety."""
+
+    def test_redirect_stdout_to_stderr(self) -> None:
+        """After redirection, sys.stdout should write to stderr's buffer."""
+        import io
+        import sys
+
+        from gflow_cli.mcp.server import _redirect_stdout_to_stderr
+
+        mock_stdout = object()
+
+        class MockStderr:
+            buffer = io.BytesIO()
+
+        # Patch sys streams and modules to pretend we are not in pytest
+        with (
+            patch("sys.stdout", mock_stdout),
+            patch("sys.stderr", MockStderr()),
+            patch("sys.modules", {}),
+            patch("gflow_cli.mcp.server.io.TextIOWrapper") as mock_wrapper,
+        ):
+            _redirect_stdout_to_stderr()
+
+            mock_wrapper.assert_called_once()
+            assert sys.stdout is not mock_stdout
+
+    def test_utf8_pipes_configured(self) -> None:
+        """UTF-8 encoding should be configured for stdin/stdout on Windows."""
+        import sys
+        from unittest.mock import MagicMock
+
+        from gflow_cli.mcp.server import _configure_utf8_pipes
+
+        mock_stream = MagicMock()
+        mock_stream.reconfigure = MagicMock()
+
+        with (
+            patch.object(sys, "platform", "win32"),
+            patch.object(sys, "stdin", mock_stream),
+            patch.object(sys, "stdout", mock_stream),
+            patch.object(sys, "stderr", mock_stream),
+        ):
+            _configure_utf8_pipes()
+            assert mock_stream.reconfigure.call_count == 3
+
+
+# ---------------------------------------------------------------------------
+# Rate limiter
+# ---------------------------------------------------------------------------
+
+
+class TestTokenBucketRateLimiter:
+    """Verify the token-bucket rate limiter."""
+
+    @pytest.mark.asyncio
+    async def test_acquire_succeeds_within_capacity(self) -> None:
+        """Acquisitions within bucket capacity should succeed."""
+        from gflow_cli.mcp.tools import _TokenBucket
+
+        bucket = _TokenBucket(capacity=3, refill_rate=0.0)
+        assert await bucket.acquire() is True
+        assert await bucket.acquire() is True
+        assert await bucket.acquire() is True
+
+    @pytest.mark.asyncio
+    async def test_acquire_fails_when_empty(self) -> None:
+        """Acquisitions beyond capacity should fail (rate-limited)."""
+        from gflow_cli.mcp.tools import _TokenBucket
+
+        bucket = _TokenBucket(capacity=1, refill_rate=0.0)
+        assert await bucket.acquire() is True
+        assert await bucket.acquire() is False
+
+    @pytest.mark.asyncio
+    async def test_bucket_refills_over_time(self) -> None:
+        """Tokens should refill at the configured rate."""
+        from gflow_cli.mcp.tools import _TokenBucket
+
+        bucket = _TokenBucket(capacity=1, refill_rate=100.0)  # fast refill for testing
+        assert await bucket.acquire() is True
+        assert await bucket.acquire() is False
+        await asyncio.sleep(0.02)  # wait for refill
+        assert await bucket.acquire() is True
+
+    @pytest.mark.asyncio
+    async def test_rate_limiter_concurrent_access(self) -> None:
+        """Rate limiter should handle concurrent acquisitions safely."""
+        from gflow_cli.mcp.tools import _TokenBucket
+
+        bucket = _TokenBucket(capacity=4, refill_rate=0.0)
+
+        async def acquire_token() -> bool:
+            return await bucket.acquire()
+
+        results = await asyncio.gather(*[acquire_token() for _ in range(6)])
+        assert sum(results) == 4
+
+
+# ---------------------------------------------------------------------------
+# Tool execution (mocked)
+# ---------------------------------------------------------------------------
+
+
+class TestToolExecution:
+    """Verify tool handlers return structured responses."""
+
+    @pytest.mark.asyncio
+    async def test_generate_image_returns_structured_response(self) -> None:
+        """gflow_generate_image should return a dict with status and params."""
+        from gflow_cli.mcp.tools import gflow_generate_image
+
+        result = await gflow_generate_image(prompt="test sunset", model="nano2")
+        assert isinstance(result, dict)
+        assert "status" in result
+        assert "params" in result
+        assert result["params"]["prompt"] == "test sunset"
+
+    @pytest.mark.asyncio
+    async def test_generate_video_returns_structured_response(self) -> None:
+        """gflow_generate_video should return a dict with status and params."""
+        from gflow_cli.mcp.tools import gflow_generate_video
+
+        result = await gflow_generate_video(prompt="cinematic drone shot")
+        assert isinstance(result, dict)
+        assert "status" in result
+        assert "params" in result
+        assert result["params"]["mode"] == "t2v"
+
+    @pytest.mark.asyncio
+    async def test_list_projects_returns_empty_list(self) -> None:
+        """gflow_list_projects should return an empty list when no data."""
+        from gflow_cli.mcp.tools import gflow_list_projects
+
+        result = await gflow_list_projects()
+        assert result["status"] == "ok"
+        assert result["projects"] == []
+
+    @pytest.mark.asyncio
+    async def test_list_characters_returns_empty_list(self) -> None:
+        """gflow_list_characters should return an empty list when no data."""
+        from gflow_cli.mcp.tools import gflow_list_characters
+
+        result = await gflow_list_characters()
+        assert result["status"] == "ok"
+        assert result["characters"] == []
+
+
+# ---------------------------------------------------------------------------
+# MCP resources
+# ---------------------------------------------------------------------------
+
+
+class TestMcpResources:
+    """Verify MCP resources are registered and return content."""
+
+    @pytest.mark.asyncio
+    async def test_mcp_guide_returns_content(self) -> None:
+        """gflow://docs/mcp-guide should return agent instructions."""
+        from gflow_cli.mcp.resources import mcp_guide
+
+        content = await mcp_guide()
+        assert "gflow_generate_image" in content
+        assert "gflow_generate_video" in content
+        assert "Use tools, not shell commands" in content
+
+    @pytest.mark.asyncio
+    async def test_db_schema_resource(self) -> None:
+        """gflow://db/schema should return SQL or a not-found message."""
+        from gflow_cli.mcp.resources import db_schema
+
+        content = await db_schema()
+        assert isinstance(content, str)
+        assert len(content) > 0
+
+    @pytest.mark.asyncio
+    async def test_server_has_resources_registered(self, mcp_server: Any) -> None:
+        """Server must have resources registered."""
+        resources = mcp_server._resource_manager._resources
+        assert len(resources) >= 2, f"Expected at least 2 resources, got {len(resources)}"
+
+    @pytest.mark.asyncio
+    async def test_known_issues_resource_returns_content(self) -> None:
+        """gflow://docs/known-issues must return KNOWN_ISSUES.md content."""
+        from gflow_cli.mcp.resources import known_issues
+
+        content = await known_issues()
+        assert isinstance(content, str)
+        assert len(content) > 0
+        assert "##" in content
+
+
+# ---------------------------------------------------------------------------
+# CLI/MCP parameter symmetry
+# ---------------------------------------------------------------------------
+
+
+class TestCliMcpParameterSymmetry:
+    """Verify that CLI command parameters match MCP tool signatures.
+
+    This is a CI gate — any new CLI option must have a corresponding
+    MCP tool parameter. See AGENTS.md: 'MCP & CLI Schema Symmetry'.
+    """
+
+    def test_image_t2i_params_mirrored(self, mcp_server: Any) -> None:
+        """Key parameters of `gflow image t2i` must appear in gflow_generate_image."""
+        tool = mcp_server._tool_manager._tools["gflow_generate_image"]
+        schema_props = set(tool.parameters.get("properties", {}).keys())
+        # Core params that must be mirrored
+        required_in_both = {"prompt", "model", "aspect", "count", "seed", "profile"}
+        assert required_in_both.issubset(schema_props), (
+            f"MCP tool missing CLI params: {required_in_both - schema_props}"
+        )
+
+    def test_video_t2v_params_mirrored(self, mcp_server: Any) -> None:
+        """Key parameters of `gflow video t2v` must appear in gflow_generate_video."""
+        tool = mcp_server._tool_manager._tools["gflow_generate_video"]
+        schema_props = set(tool.parameters.get("properties", {}).keys())
+        required_in_both = {"prompt", "mode", "aspect", "profile"}
+        assert required_in_both.issubset(schema_props), (
+            f"MCP tool missing CLI params: {required_in_both - schema_props}"
+        )
+
+
+# ---------------------------------------------------------------------------
+# MCP prompts
+# ---------------------------------------------------------------------------
+
+
+class TestMcpPrompts:
+    """Verify MCP prompts return expected content."""
+
+    @pytest.mark.asyncio
+    async def test_expand_prompt_returns_formula(self) -> None:
+        """expand_prompt must return a structured prompt formula."""
+        from gflow_cli.mcp.prompts import expand_prompt
+
+        result = expand_prompt(subject="sunset over mountains")
+        assert isinstance(result, str)
+        assert "Subject: sunset over mountains" in result
+        assert "Creative Director" in result
+
+    @pytest.mark.asyncio
+    async def test_expand_prompt_with_all_params(self) -> None:
+        """expand_prompt must include all provided parameters."""
+        from gflow_cli.mcp.prompts import expand_prompt
+
+        result = expand_prompt(
+            subject="cat",
+            action="sleeping",
+            setting="window sill",
+            camera="close-up",
+            lighting="warm sunset",
+        )
+        assert "Subject: cat" in result
+        assert "Action/Movement: sleeping" in result
+        assert "Setting/Location: window sill" in result
+        assert "Camera/Framing: close-up" in result
+        assert "Lighting/Atmosphere: warm sunset" in result
+
+    @pytest.mark.asyncio
+    async def test_create_character_returns_profile(self) -> None:
+        """create_character must return a character profile prompt."""
+        from gflow_cli.mcp.prompts import create_character
+
+        result = create_character(name="Alice")
+        assert isinstance(result, str)
+        assert "Alice" in result
+        assert "character" in result.lower()
+
+    @pytest.mark.asyncio
+    async def test_create_character_with_all_params(self) -> None:
+        """create_character must include all provided parameters."""
+        from gflow_cli.mcp.prompts import create_character
+
+        result = create_character(
+            name="Bob",
+            gender="male",
+            appearance="tall, brown hair",
+            clothing="suit",
+        )
+        assert "Bob" in result
+        assert "male" in result
+        assert "brown hair" in result
+        assert "suit" in result
+
+
+# ---------------------------------------------------------------------------
+# MCP server entry points
+# ---------------------------------------------------------------------------
+
+
+class TestMcpServerEntryPoints:
+    """Verify MCP server entry point functions exist and are callable."""
+
+    def test_run_stdio_is_coroutine_function(self) -> None:
+        """run_stdio must be an async function."""
+        import inspect
+
+        from gflow_cli.mcp.server import run_stdio
+
+        assert inspect.iscoroutinefunction(run_stdio)
+
+    def test_run_sse_is_coroutine_function(self) -> None:
+        """run_sse must be an async function."""
+        import inspect
+
+        from gflow_cli.mcp.server import run_sse
+
+        assert inspect.iscoroutinefunction(run_sse)
+
+    def test_main_stdio_is_callable(self) -> None:
+        """main_stdio must be a callable function."""
+        from gflow_cli.mcp.server import main_stdio
+
+        assert callable(main_stdio)
+
+    def test_main_sse_is_callable(self) -> None:
+        """main_sse must be a callable function."""
+        from gflow_cli.mcp.server import main_sse
+
+        assert callable(main_sse)
+
+    @pytest.mark.asyncio
+    async def test_run_stdio_invokes_server(self) -> None:
+        """run_stdio must configure pipes and call server.run_stdio_async."""
+        from unittest.mock import AsyncMock, patch
+
+        from gflow_cli.mcp.server import run_stdio
+
+        with (
+            patch("gflow_cli.mcp.server.server") as mock_server,
+            patch("gflow_cli.mcp.server._configure_utf8_pipes"),
+            patch("gflow_cli.mcp.server._redirect_stdout_to_stderr"),
+        ):
+            mock_server.run_stdio_async = AsyncMock()
+            await run_stdio()
+            mock_server.run_stdio_async.assert_called_once()
+
+    @pytest.mark.asyncio
+    async def test_run_sse_configures_and_starts(self) -> None:
+        """run_sse must configure host/port and call server.run_sse_async."""
+        from unittest.mock import AsyncMock, MagicMock, patch
+
+        from gflow_cli.mcp.server import run_sse
+
+        with (
+            patch("gflow_cli.mcp.server.server") as mock_server,
+            patch("gflow_cli.mcp.server._configure_utf8_pipes"),
+        ):
+            mock_server.run_sse_async = AsyncMock()
+            mock_server.settings = MagicMock()
+            await run_sse(host="127.0.0.1", port=9999)
+            mock_server.run_sse_async.assert_called_once()
+            assert mock_server.settings.host == "127.0.0.1"
+            assert mock_server.settings.port == 9999
