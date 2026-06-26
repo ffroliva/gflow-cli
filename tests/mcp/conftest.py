@@ -1,8 +1,6 @@
-"""Shared fixtures for MCP end-to-end tests."""
+"""Shared fixtures for MCP tests."""
 
 from __future__ import annotations
-
-from pathlib import Path
 
 import pytest
 
@@ -15,13 +13,3 @@ def mcp_server():
     from gflow_cli.mcp.server import server
 
     return server
-
-
-@pytest.fixture()
-def mcp_env(tmp_path: Path) -> dict[str, str]:
-    """Build an isolated environment for MCP server testing."""
-    env: dict[str, str] = {}
-    env["PYTHONUTF8"] = "1"
-    env["GFLOW_CLI_DB_PATH"] = str(tmp_path / "gflow.db")
-    env["GFLOW_CLI_OUTPUT_DIR"] = str(tmp_path / "out")
-    return env
