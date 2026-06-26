@@ -56,7 +56,11 @@ class FlowWorker:
                 else:
                     await asyncio.sleep(1)
             except asyncio.CancelledError:
-                break
+                # Cooperative cancellation: log, then re-raise so the framework
+                # (and the daemon lifespan awaiting this task) sees the worker
+                # has acknowledged the cancellation and is stopping.
+                logger.info("FlowWorker loop cancelled", profile_name=self.profile_name)
+                raise
             except Exception as exc:
                 logger.exception(
                     "Error in FlowWorker loop", profile_name=self.profile_name, exc_info=exc
