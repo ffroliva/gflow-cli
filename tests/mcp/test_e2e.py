@@ -87,3 +87,40 @@ class TestMcpToolExecution:
         assert isinstance(result, dict)
         assert result["status"] == "ok"
         assert "characters" in result
+
+
+class TestMcpResources:
+    """Verify MCP resources return expected content."""
+
+    @pytest.mark.asyncio
+    async def test_mcp_guide_resource_returns_content(self) -> None:
+        """gflow://docs/mcp-guide must return agent instructions."""
+        from gflow_cli.mcp.resources import mcp_guide
+
+        content = await mcp_guide()
+
+        assert isinstance(content, str)
+        assert len(content) > 0
+        assert "gflow_generate_image" in content
+        assert "gflow_generate_video" in content
+        assert "Use tools, not shell commands" in content
+
+    @pytest.mark.asyncio
+    async def test_known_issues_resource_returns_content(self) -> None:
+        """gflow://docs/known-issues must return KNOWN_ISSUES.md content."""
+        from gflow_cli.mcp.resources import known_issues
+
+        content = await known_issues()
+
+        assert isinstance(content, str)
+        assert len(content) > 0
+
+    @pytest.mark.asyncio
+    async def test_db_schema_resource_returns_content(self) -> None:
+        """gflow://db/schema must return SQL schema."""
+        from gflow_cli.mcp.resources import db_schema
+
+        content = await db_schema()
+
+        assert isinstance(content, str)
+        assert len(content) > 0
