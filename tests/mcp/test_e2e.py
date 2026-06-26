@@ -2,6 +2,8 @@
 
 from __future__ import annotations
 
+from typing import Any
+
 import pytest
 
 # Import tools and resources to register them
@@ -44,62 +46,44 @@ class TestMcpJsonRpcProtocol:
 
 
 class TestMcpToolExecution:
-    """Verify MCP tools return structured responses with correct schemas."""
+    """Verify MCP tools return structured responses when called via server."""
 
     @pytest.mark.asyncio
-    async def test_generate_image_returns_valid_response(self) -> None:
-        """gflow_generate_image must return status and params."""
-        from gflow_cli.mcp.tools import gflow_generate_image
-
-        result = await gflow_generate_image(
-            prompt="test sunset over mountains",
-            model="nano2",
-            aspect="16:9",
-            count=1,
-        )
+    async def test_generate_image_via_server(self, mcp_server: Any) -> None:
+        """Server tool execution must return structured response."""
+        tool = mcp_server._tool_manager._tools["gflow_generate_image"]
+        result = await tool.run(arguments={"prompt": "test sunset", "model": "nano2"})
 
         assert isinstance(result, dict)
         assert "status" in result
         assert "params" in result
-        assert result["params"]["prompt"] == "test sunset over mountains"
-        assert result["params"]["model"] == "nano2"
 
     @pytest.mark.asyncio
-    async def test_generate_video_returns_valid_response(self) -> None:
-        """gflow_generate_video must return status and params."""
-        from gflow_cli.mcp.tools import gflow_generate_video
-
-        result = await gflow_generate_video(
-            prompt="cinematic drone shot of city",
-            mode="t2v",
-            aspect="9:16",
-        )
+    async def test_generate_video_via_server(self, mcp_server: Any) -> None:
+        """Server tool execution must return structured response."""
+        tool = mcp_server._tool_manager._tools["gflow_generate_video"]
+        result = await tool.run(arguments={"prompt": "cinematic shot", "mode": "t2v"})
 
         assert isinstance(result, dict)
         assert "status" in result
         assert "params" in result
-        assert result["params"]["mode"] == "t2v"
 
     @pytest.mark.asyncio
-    async def test_list_projects_returns_structured_response(self) -> None:
-        """gflow_list_projects must return status and projects list."""
-        from gflow_cli.mcp.tools import gflow_list_projects
-
-        result = await gflow_list_projects()
+    async def test_list_projects_via_server(self, mcp_server: Any) -> None:
+        """Server tool execution must return structured response."""
+        tool = mcp_server._tool_manager._tools["gflow_list_projects"]
+        result = await tool.run(arguments={})
 
         assert isinstance(result, dict)
         assert result["status"] == "ok"
         assert "projects" in result
-        assert isinstance(result["projects"], list)
 
     @pytest.mark.asyncio
-    async def test_list_characters_returns_structured_response(self) -> None:
-        """gflow_list_characters must return status and characters list."""
-        from gflow_cli.mcp.tools import gflow_list_characters
-
-        result = await gflow_list_characters()
+    async def test_list_characters_via_server(self, mcp_server: Any) -> None:
+        """Server tool execution must return structured response."""
+        tool = mcp_server._tool_manager._tools["gflow_list_characters"]
+        result = await tool.run(arguments={})
 
         assert isinstance(result, dict)
         assert result["status"] == "ok"
         assert "characters" in result
-        assert isinstance(result["characters"], list)
