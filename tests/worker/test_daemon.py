@@ -262,3 +262,23 @@ async def test_worker_poll_loop_processes_tasks(temp_db: DataStore) -> None:
     assert t1 is not None and t1.status == "completed"
     assert t2 is not None and t2.status == "completed"
     worker.close()
+
+
+@pytest.mark.asyncio
+async def test_worker_loop_reraises_cancellation(temp_db: DataStore) -> None:
+    """Cancelling the worker loop must propagate asyncio.CancelledError instead
+    of swallowing it, so cooperative cancellation works on daemon shutdown.
+
+    Regression for SonarCloud python:S7497 (cancellation must be re-raised).
+    """
+    worker = FlowWorker("default", str(temp_db.path))
+    # No pending tasks, so the loop parks in `await asyncio.sleep(...)`.
+    loop_task = asyncio.create_task(worker.start())
+    await asyncio.sleep(0.05)
+
+    loop_task.cancel()
+
+    with pytest.raises(asyncio.CancelledError):
+        await loop_task
+
+    worker.close()

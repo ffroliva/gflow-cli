@@ -1,5 +1,6 @@
 from __future__ import annotations
 
+import asyncio
 import os
 from unittest.mock import AsyncMock, MagicMock, patch
 
@@ -8,7 +9,7 @@ from fastapi.testclient import TestClient
 
 from gflow_cli.config import get_settings
 from gflow_cli.data.store import DataStore
-from gflow_cli.ui.app import app
+from gflow_cli.ui.app import app, lifespan
 from gflow_cli.worker.queue import QueueRepository
 
 
@@ -105,3 +106,32 @@ def test_profile_lockfile_lifecycle(mock_worker) -> None:
         assert pid == str(os.getpid())
 
     assert not lockfile_path.exists()
+
+
+@pytest.mark.asyncio
+async def test_lifespan_cancels_running_worker() -> None:
+    """Lifespan shutdown must cancel a still-running worker task and return
+    cleanly, without leaking the worker's asyncio.CancelledError.
+
+    Regression for SonarCloud python:S7497 (cancellation must be re-raised).
+    """
+    started = asyncio.Event()
+
+    async def _never_ending() -> None:
+        started.set()
+        await asyncio.Event().wait()  # blocks until cancelled
+
+    with patch("gflow_cli.ui.app.FlowWorker") as mock_cls:
+        instance = MagicMock()
+        instance.start = _never_ending
+        instance.stop = MagicMock()
+        instance.close = MagicMock()
+        mock_cls.return_value = instance
+
+        async with lifespan(app):
+            # Worker task is created and running by the time startup completes.
+            await asyncio.wait_for(started.wait(), timeout=1)
+
+    # Reaching here means shutdown cancelled the worker and returned cleanly.
+    instance.stop.assert_called_once()
+    instance.close.assert_called_once()

@@ -64,11 +64,11 @@ async def lifespan(app: FastAPI):
             daemon_lock.unlink()
 
     worker.stop()
-    try:
-        worker_task.cancel()
-        await worker_task
-    except asyncio.CancelledError:
-        pass
+    worker_task.cancel()
+    # Await the worker's completion. gather(..., return_exceptions=True) captures
+    # the worker task's own CancelledError as a result instead of swallowing a
+    # genuine cancellation of this lifespan task, which is re-raised.
+    await asyncio.gather(worker_task, return_exceptions=True)
     worker.close()
     logger.info("gflow-daemon worker stopped cleanly")
 
