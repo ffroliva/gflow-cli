@@ -1,6 +1,6 @@
 [project]
 name = "gflow-cli"
-version = "0.20.1"
+version = "0.21.0"
 description = "Unofficial CLI for Google Flow — drive Veo image-to-video generations from the terminal."
 readme = "README.md"
 license = { file = "LICENSE" }
@@ -28,6 +28,11 @@ dependencies = [
     "structlog>=24.0.0",
     "tenacity>=8.2",
     "browser-cookie3>=0.20.1",
+    # MCP server + daemon layer (gflow serve / gflow mcp)
+    "mcp>=1.0.0",
+    "fastapi>=0.115.0",
+    "uvicorn[standard]>=0.34.0",
+    "sse-starlette>=2.0.0",
 ]
 
 [project.optional-dependencies]

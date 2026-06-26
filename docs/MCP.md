@@ -6,16 +6,18 @@ This document describes the design, configuration, security model, and developer
 
 ## 1. Architecture
 
-The `gflow-cli` MCP server acts as a type-safe JSON-RPC interface over standard input/output (`stdio`), allowing AI desktop agents (like Claude Desktop, Cursor, and VS Code) to natively trigger image and video generation through the user's Google account.
+The `gflow-cli` MCP server acts as a type-safe JSON-RPC interface, supporting two transport mechanisms:
+1. **stdio Subprocess Transport (`gflow mcp run`):** Runs over standard input/output (`stdio`), ideal for direct integration with local desktop agents like Claude Desktop, Cursor, or VS Code.
+2. **SSE HTTP Transport (`gflow serve`):** Runs as a background web daemon over HTTP and Server-Sent Events (SSE), ideal for decoupled web UI dashboards, concurrent scripts, or external clients.
 
 ```
 ┌────────────────────────────────────────────────────────────┐
-│              Client AI Agent (Claude / Cursor)             │
+│      Client AI Agent (Claude / Cursor / Web Dashboard)     │
 └─────────────┬───────────────────▲──────────────────────────┘
               │ JSON-RPC          │ JSON-RPC
-              │ (stdin)           │ (stdout)
+              │ (stdio / HTTP)    │ (stdout / SSE)
 ┌─────────────▼───────────────────┴──────────────────────────┐
-│             gflow mcp run (FastMCP Subprocess)            │
+│          MCP Server Adapter (FastMCP / FastAPI app)         │
 │  Exposes: Tools, Prompts, Resources                        │
 └─────────────┬──────────────────────────────────────────────┘
               │ internal calls
@@ -85,7 +87,26 @@ This automatically appends the server entry to your Claude Desktop configuration
 * **macOS:** `~/Library/Application Support/Claude/claude_desktop_config.json`
 
 #### Manual Configuration
-Add this configuration block under the `mcpServers` key:
+Depending on how you installed `gflow-cli`, add one of the following configuration blocks under the `mcpServers` key of your `claude_desktop_config.json`:
+
+##### Option A: Global Installation (Recommended)
+Use this if you installed `gflow-cli` globally (e.g. via `uv tool install gflow-cli` or `pip install gflow-cli`):
+```json
+{
+  "mcpServers": {
+    "gflow-cli": {
+      "command": "gflow",
+      "args": [
+        "mcp",
+        "run"
+      ]
+    }
+  }
+}
+```
+
+##### Option B: Local Clone (Development)
+Use this if you cloned the repository locally and run it via `uv`:
 ```json
 {
   "mcpServers": {
@@ -107,10 +128,31 @@ Add this configuration block under the `mcpServers` key:
 ### Cursor Setup
 1. Open Cursor Settings -> Features -> MCP.
 2. Click **+ Add New MCP Server**.
-3. Configure:
-   * **Name:** `gflow-cli`
-   * **Type:** `command`
-   * **Command:** `uv --directory C:/development/github/gflow-cli run gflow mcp run`
+3. Configure depending on your installation:
+   * **Global Installation:**
+     * **Name:** `gflow-cli`
+     * **Type:** `command`
+     * **Command:** `gflow mcp run`
+   * **Local Clone (Development):**
+     * **Name:** `gflow-cli`
+     * **Type:** `command`
+     * **Command:** `uv --directory C:/development/github/gflow-cli run gflow mcp run`
+
+### SSE Daemon Setup (`gflow serve`)
+For decoupled clients, local web interfaces, or multi-process frontends, you can run the daemon as an HTTP/SSE service:
+```bash
+gflow serve --port 8000 --host 127.0.0.1 --profile default
+```
+This serves the MCP server over Server-Sent Events under FastMCP's standard paths:
+* **Connection endpoint (SSE stream):** `http://127.0.0.1:8000/sse`
+* **Command posting endpoint:** `http://127.0.0.1:8000/messages/`
+
+Non-loopback binds (e.g. `--host 0.0.0.0`) require `GFLOW_DAEMON_TOKEN` to be set.
+
+> **Note:** the background `FlowWorker` queue manager and the REST `/api/v1`
+> surface are built as internal foundation but are **not yet wired into**
+> `gflow serve` — it currently runs the MCP/SSE server only. See the
+> [CHANGELOG](../CHANGELOG.md) for the roadmap.
 
 ---
 

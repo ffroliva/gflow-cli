@@ -195,3 +195,33 @@ class TestPreferClassic:
     def test_override_true(self, monkeypatch: pytest.MonkeyPatch) -> None:
         monkeypatch.setenv("GFLOW_CLI_PREFER_CLASSIC", "true")
         assert Settings().prefer_classic is True
+
+
+class TestDaemonSettings:
+    def test_daemon_defaults(self, clean_env: None) -> None:
+        s = Settings()
+        assert s.daemon_token is None
+        assert s.daemon_port == 8000
+
+    def test_daemon_token_override(self, monkeypatch: pytest.MonkeyPatch) -> None:
+        monkeypatch.setenv("GFLOW_DAEMON_TOKEN", "secret-token")
+        assert Settings().daemon_token == "secret-token"
+
+        monkeypatch.setenv("GFLOW_CLI_DAEMON_TOKEN", "other-token")
+        reset_settings()
+        assert Settings().daemon_token == "other-token"
+
+    def test_daemon_port_override(self, monkeypatch: pytest.MonkeyPatch) -> None:
+        monkeypatch.setenv("GFLOW_DAEMON_PORT", "9000")
+        assert Settings().daemon_port == 9000
+
+        monkeypatch.setenv("GFLOW_CLI_DAEMON_PORT", "9001")
+        reset_settings()
+        assert Settings().daemon_port == 9001
+
+    def test_invalid_daemon_port_raises(self, monkeypatch: pytest.MonkeyPatch) -> None:
+        from pydantic import ValidationError
+
+        monkeypatch.setenv("GFLOW_DAEMON_PORT", "70000")
+        with pytest.raises(ValidationError):
+            Settings()

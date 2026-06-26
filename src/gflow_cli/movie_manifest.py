@@ -88,73 +88,19 @@ class MovieManifest:
 
     @classmethod
     def _from_dict(cls, data: dict[str, object]) -> MovieManifest:
-        title = data.get("title")
-        if not isinstance(title, str) or not title.strip():
-            raise ConfigurationError("'title' must be a non-empty string.")
-
-        project = data.get("project")
-        if not isinstance(project, str) or not project.strip():
-            raise ConfigurationError("'project' must be a non-empty string (your Flow project id).")
-
-        output_dir = data.get("output_dir")
-        if output_dir is not None and not isinstance(output_dir, str):
-            raise ConfigurationError("'output_dir' must be a string.")
-
-        schema_version = data.get("schema_version", 1)
-        if not isinstance(schema_version, int):
-            raise ConfigurationError("'schema_version' must be an integer.")
-
+        title = _require_nonempty_str(data, "title")
+        project = _require_nonempty_str(data, "project")
+        output_dir = _optional_str(data, "output_dir")
+        schema_version = _require_int(data, "schema_version", default=1)
         style = _parse_style(data.get("style"))
-
-        chars_raw = data.get("characters", [])
-        if not isinstance(chars_raw, list):
-            raise ConfigurationError("'characters' must be a TOML array.")
-        chars_list = cast(_TomlList, chars_raw)
-        characters: dict[str, Character] = {}
-        for i, c in enumerate(chars_list):
-            parsed = _parse_character(c, i)
-            if parsed.name in characters:
-                raise ConfigurationError(f"Duplicate character name: {parsed.name!r}")
-            characters[parsed.name] = parsed
-
-        scenes_raw = data.get("scenes", [])
-        if not isinstance(scenes_raw, list):
-            raise ConfigurationError("'scenes' must be a TOML array.")
-        if not scenes_raw:
-            raise ConfigurationError("At least one [[scenes]] entry is required.")
-        scenes_list = cast(_TomlList, scenes_raw)
-        char_names = set(characters)
-        scenes = tuple(
-            _parse_scene(s, i, char_names, characters) for i, s in enumerate(scenes_list)
-        )
-        scene_ids: set[str] = set()
-        for s in scenes:
-            if s.id in scene_ids:
-                raise ConfigurationError(f"Duplicate scene id: {s.id!r}")
-            scene_ids.add(s.id)
-
-        continuity = "independent"
-        movie_raw = data.get("movie")
-        if isinstance(movie_raw, dict):
-            raw_cont = cast(_TomlObj, movie_raw).get("continuity", "independent")
-            if not isinstance(raw_cont, str):
-                raise ConfigurationError("movie.continuity must be a string.")
-            continuity = raw_cont
-
-        assemble: AssemblyDef | None = None
-        assemble_raw = data.get("assemble")
-        if assemble_raw is not None:
-            if not isinstance(assemble_raw, dict):
-                raise ConfigurationError("[assemble] must be a TOML table.")
-            assemble_dict = cast(_TomlObj, assemble_raw)
-            output = assemble_dict.get("output")
-            if output is not None and not isinstance(output, str):
-                raise ConfigurationError("assemble.output must be a string path.")
-            assemble = AssemblyDef(output=output)
+        characters = _parse_characters(data)
+        scenes = _parse_scenes(data, characters)
+        continuity = _parse_continuity(data)
+        assemble = _parse_assemble(data)
 
         return cls(
-            title=title.strip(),
-            project=project.strip(),
+            title=title,
+            project=project,
             style=style,
             characters=characters,
             scenes=scenes,
@@ -168,6 +114,89 @@ class MovieManifest:
 # ---------------------------------------------------------------------------
 # Internal parsers
 # ---------------------------------------------------------------------------
+
+
+def _require_nonempty_str(data: dict[str, object], key: str) -> str:
+    """Extract a required non-empty string from data."""
+    value = data.get(key)
+    if not isinstance(value, str) or not value.strip():
+        raise ConfigurationError(f"'{key}' must be a non-empty string.")
+    return value.strip()
+
+
+def _optional_str(data: dict[str, object], key: str) -> str | None:
+    """Extract an optional string from data."""
+    value = data.get(key)
+    if value is not None and not isinstance(value, str):
+        raise ConfigurationError(f"'{key}' must be a string.")
+    return value
+
+
+def _require_int(data: dict[str, object], key: str, default: int = 0) -> int:
+    """Extract a required integer from data."""
+    value = data.get(key, default)
+    if not isinstance(value, int):
+        raise ConfigurationError(f"'{key}' must be an integer.")
+    return value
+
+
+def _parse_characters(data: dict[str, object]) -> dict[str, Character]:
+    """Parse characters from data."""
+    chars_raw = data.get("characters", [])
+    if not isinstance(chars_raw, list):
+        raise ConfigurationError("'characters' must be a TOML array.")
+    chars_list = cast(_TomlList, chars_raw)
+    characters: dict[str, Character] = {}
+    for i, c in enumerate(chars_list):
+        parsed = _parse_character(c, i)
+        if parsed.name in characters:
+            raise ConfigurationError(f"Duplicate character name: {parsed.name!r}")
+        characters[parsed.name] = parsed
+    return characters
+
+
+def _parse_scenes(data: dict[str, object], characters: dict[str, Character]) -> tuple[Scene, ...]:
+    """Parse scenes from data."""
+    scenes_raw = data.get("scenes", [])
+    if not isinstance(scenes_raw, list):
+        raise ConfigurationError("'scenes' must be a TOML array.")
+    if not scenes_raw:
+        raise ConfigurationError("At least one [[scenes]] entry is required.")
+    scenes_list = cast(_TomlList, scenes_raw)
+    char_names = set(characters)
+    scenes = tuple(_parse_scene(s, i, char_names, characters) for i, s in enumerate(scenes_list))
+    scene_ids: set[str] = set()
+    for s in scenes:
+        if s.id in scene_ids:
+            raise ConfigurationError(f"Duplicate scene id: {s.id!r}")
+        scene_ids.add(s.id)
+    return scenes
+
+
+def _parse_continuity(data: dict[str, object]) -> str:
+    """Parse continuity setting from data."""
+    continuity = "independent"
+    movie_raw = data.get("movie")
+    if isinstance(movie_raw, dict):
+        raw_cont = cast(_TomlObj, movie_raw).get("continuity", "independent")
+        if not isinstance(raw_cont, str):
+            raise ConfigurationError("movie.continuity must be a string.")
+        continuity = raw_cont
+    return continuity
+
+
+def _parse_assemble(data: dict[str, object]) -> AssemblyDef | None:
+    """Parse assemble setting from data."""
+    assemble_raw = data.get("assemble")
+    if assemble_raw is None:
+        return None
+    if not isinstance(assemble_raw, dict):
+        raise ConfigurationError("[assemble] must be a TOML table.")
+    assemble_dict = cast(_TomlObj, assemble_raw)
+    output = assemble_dict.get("output")
+    if output is not None and not isinstance(output, str):
+        raise ConfigurationError("assemble.output must be a string path.")
+    return AssemblyDef(output=output)
 
 
 def _parse_style(data: object) -> StyleSpec:
