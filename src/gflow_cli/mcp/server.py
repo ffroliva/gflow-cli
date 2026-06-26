@@ -27,7 +27,7 @@ log = structlog.get_logger()
 # ---------------------------------------------------------------------------
 
 _SERVER_NAME = "gflow-cli"
-_SERVER_VERSION = "0.20.1"
+_SERVER_VERSION = "0.21.0"
 
 server = FastMCP(
     name=_SERVER_NAME,
@@ -82,20 +82,39 @@ async def run_stdio() -> None:
 
     This is the entry point for ``gflow mcp run``.
     """
+    import anyio
+    from mcp.server.stdio import stdio_server
+
     _configure_utf8_pipes()
+
+    # Capture the REAL stdout for the JSON-RPC channel BEFORE redirecting
+    # sys.stdout to stderr. FastMCP.run_stdio_async() binds sys.stdout at call
+    # time, so redirecting first routes every protocol message to stderr and a
+    # real MCP client (which reads stdout) sees nothing. We wrap the original
+    # stdout here, then redirect sys.stdout so stray print() calls still can't
+    # corrupt the channel.
+    protocol_stdout = anyio.wrap_file(io.TextIOWrapper(sys.stdout.buffer, encoding="utf-8"))
     _redirect_stdout_to_stderr()
 
     log.info("mcp.server.starting", transport="stdio", name=_SERVER_NAME)
 
     # Import tools, prompts, resources to register them with the server
+    from gflow_cli.mcp import prompts as _prompts
     from gflow_cli.mcp import resources as _resources
     from gflow_cli.mcp import tools as _tools
 
     # Access them to satisfy pyright unused import check
-    _ = (_resources, _tools)
+    _ = (_prompts, _resources, _tools)
 
-    # FastMCP run_stdio_async is a coroutine
-    await server.run_stdio_async()  # type: ignore[attr-defined]
+    # Drive the low-level server directly so the protocol writes to the real
+    # stdout we captured above (FastMCP.run_stdio_async exposes no stdout param).
+    mcp_server = server._mcp_server  # type: ignore[attr-defined]
+    async with stdio_server(stdout=protocol_stdout) as (read_stream, write_stream):
+        await mcp_server.run(
+            read_stream,
+            write_stream,
+            mcp_server.create_initialization_options(),
+        )
 
 
 async def run_sse(host: str = "127.0.0.1", port: int = 8000) -> None:
@@ -118,11 +137,12 @@ async def run_sse(host: str = "127.0.0.1", port: int = 8000) -> None:
     )
 
     # Import tools, prompts, resources to register them with the server
+    from gflow_cli.mcp import prompts as _prompts
     from gflow_cli.mcp import resources as _resources
     from gflow_cli.mcp import tools as _tools
 
     # Access them to satisfy pyright unused import check
-    _ = (_resources, _tools)
+    _ = (_prompts, _resources, _tools)
 
     # Configure the server settings dynamically before running
     server.settings.host = host  # type: ignore[attr-defined]
