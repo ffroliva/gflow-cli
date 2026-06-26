@@ -155,9 +155,7 @@ def _parse_characters(data: dict[str, object]) -> dict[str, Character]:
     return characters
 
 
-def _parse_scenes(
-    data: dict[str, object], characters: dict[str, Character]
-) -> tuple[Scene, ...]:
+def _parse_scenes(data: dict[str, object], characters: dict[str, Character]) -> tuple[Scene, ...]:
     """Parse scenes from data."""
     scenes_raw = data.get("scenes", [])
     if not isinstance(scenes_raw, list):
@@ -166,9 +164,7 @@ def _parse_scenes(
         raise ConfigurationError("At least one [[scenes]] entry is required.")
     scenes_list = cast(_TomlList, scenes_raw)
     char_names = set(characters)
-    scenes = tuple(
-        _parse_scene(s, i, char_names, characters) for i, s in enumerate(scenes_list)
-    )
+    scenes = tuple(_parse_scene(s, i, char_names, characters) for i, s in enumerate(scenes_list))
     scene_ids: set[str] = set()
     for s in scenes:
         if s.id in scene_ids:
