@@ -284,3 +284,103 @@ class TestCliMcpParameterSymmetry:
         assert required_in_both.issubset(schema_props), (
             f"MCP tool missing CLI params: {required_in_both - schema_props}"
         )
+
+
+# ---------------------------------------------------------------------------
+# MCP prompts
+# ---------------------------------------------------------------------------
+
+
+class TestMcpPrompts:
+    """Verify MCP prompts return expected content."""
+
+    @pytest.mark.asyncio
+    async def test_expand_prompt_returns_formula(self) -> None:
+        """expand_prompt must return a structured prompt formula."""
+        from gflow_cli.mcp.prompts import expand_prompt
+
+        result = expand_prompt(subject="sunset over mountains")
+        assert isinstance(result, str)
+        assert "Subject: sunset over mountains" in result
+        assert "Creative Director" in result
+
+    @pytest.mark.asyncio
+    async def test_expand_prompt_with_all_params(self) -> None:
+        """expand_prompt must include all provided parameters."""
+        from gflow_cli.mcp.prompts import expand_prompt
+
+        result = expand_prompt(
+            subject="cat",
+            action="sleeping",
+            setting="window sill",
+            camera="close-up",
+            lighting="warm sunset",
+        )
+        assert "Subject: cat" in result
+        assert "Action/Movement: sleeping" in result
+        assert "Setting/Location: window sill" in result
+        assert "Camera/Framing: close-up" in result
+        assert "Lighting/Atmosphere: warm sunset" in result
+
+    @pytest.mark.asyncio
+    async def test_create_character_returns_profile(self) -> None:
+        """create_character must return a character profile prompt."""
+        from gflow_cli.mcp.prompts import create_character
+
+        result = create_character(name="Alice")
+        assert isinstance(result, str)
+        assert "Alice" in result
+        assert "character" in result.lower()
+
+    @pytest.mark.asyncio
+    async def test_create_character_with_all_params(self) -> None:
+        """create_character must include all provided parameters."""
+        from gflow_cli.mcp.prompts import create_character
+
+        result = create_character(
+            name="Bob",
+            gender="male",
+            appearance="tall, brown hair",
+            clothing="suit",
+        )
+        assert "Bob" in result
+        assert "male" in result
+        assert "brown hair" in result
+        assert "suit" in result
+
+
+# ---------------------------------------------------------------------------
+# MCP server entry points
+# ---------------------------------------------------------------------------
+
+
+class TestMcpServerEntryPoints:
+    """Verify MCP server entry point functions exist and are callable."""
+
+    def test_run_stdio_is_coroutine_function(self) -> None:
+        """run_stdio must be an async function."""
+        import inspect
+
+        from gflow_cli.mcp.server import run_stdio
+
+        assert inspect.iscoroutinefunction(run_stdio)
+
+    def test_run_sse_is_coroutine_function(self) -> None:
+        """run_sse must be an async function."""
+        import inspect
+
+        from gflow_cli.mcp.server import run_sse
+
+        assert inspect.iscoroutinefunction(run_sse)
+
+    def test_main_stdio_is_callable(self) -> None:
+        """main_stdio must be a callable function."""
+        from gflow_cli.mcp.server import main_stdio
+
+        assert callable(main_stdio)
+
+    def test_main_sse_is_callable(self) -> None:
+        """main_sse must be a callable function."""
+        from gflow_cli.mcp.server import main_sse
+
+        assert callable(main_sse)
