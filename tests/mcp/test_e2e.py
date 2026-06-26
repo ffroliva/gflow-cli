@@ -120,6 +120,49 @@ class TestMcpResources:
         assert "CREATE TABLE" in content
 
 
+class TestMcpStdoutIsolation:
+    """Verify stdout is redirected to stderr for JSON-RPC transport safety."""
+
+    def test_redirect_stdout_to_stderr(self) -> None:
+        """After redirection, sys.stdout should write to stderr's buffer."""
+        import io
+        import sys
+        from unittest.mock import patch
+
+        from gflow_cli.mcp.server import _redirect_stdout_to_stderr
+
+        mock_stdout = object()
+
+        class MockStderr:
+            buffer = io.BytesIO()
+
+        with (
+            patch("sys.stdout", mock_stdout),
+            patch("sys.stderr", MockStderr()),
+            patch("sys.modules", {}),
+            patch("gflow_cli.mcp.server.io.TextIOWrapper") as mock_wrapper,
+        ):
+            _redirect_stdout_to_stderr()
+            mock_wrapper.assert_called_once()
+
+    def test_utf8_pipes_configured(self) -> None:
+        """UTF-8 encoding should be configured for stdin/stdout on Windows."""
+        import sys
+        from unittest.mock import MagicMock, patch
+
+        from gflow_cli.mcp.server import _configure_utf8_pipes
+
+        mock_stream = MagicMock()
+        mock_stream.reconfigure = MagicMock()
+
+        with patch.object(sys, "platform", "win32"), \
+             patch.object(sys, "stdin", mock_stream), \
+             patch.object(sys, "stdout", mock_stream), \
+             patch.object(sys, "stderr", mock_stream):
+            _configure_utf8_pipes()
+            assert mock_stream.reconfigure.call_count == 3
+
+
 class TestMcpRateLimiter:
     """Verify token-bucket rate limiter behavior under controlled conditions."""
 
