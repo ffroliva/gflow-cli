@@ -2,6 +2,7 @@
 
 from __future__ import annotations
 
+import asyncio
 from typing import Any
 
 import pytest
@@ -117,3 +118,53 @@ class TestMcpResources:
         assert isinstance(content, str)
         assert len(content) > 0
         assert "CREATE TABLE" in content
+
+
+class TestMcpRateLimiter:
+    """Verify token-bucket rate limiter behavior under controlled conditions."""
+
+    @pytest.mark.asyncio
+    async def test_rate_limiter_allows_burst_within_capacity(self) -> None:
+        """Should allow up to 8 consecutive calls (bucket capacity)."""
+        from gflow_cli.mcp.tools import _TokenBucket
+
+        bucket = _TokenBucket(capacity=8, refill_rate=0.0)
+
+        for _ in range(8):
+            assert await bucket.acquire() is True
+
+    @pytest.mark.asyncio
+    async def test_rate_limiter_blocks_when_exhausted(self) -> None:
+        """Should block after capacity is exhausted."""
+        from gflow_cli.mcp.tools import _TokenBucket
+
+        bucket = _TokenBucket(capacity=2, refill_rate=0.0)
+
+        assert await bucket.acquire() is True
+        assert await bucket.acquire() is True
+        assert await bucket.acquire() is False
+
+    @pytest.mark.asyncio
+    async def test_rate_limiter_refills_over_time(self) -> None:
+        """Tokens should refill at the configured rate."""
+        from gflow_cli.mcp.tools import _TokenBucket
+
+        bucket = _TokenBucket(capacity=1, refill_rate=100.0)
+
+        assert await bucket.acquire() is True
+        assert await bucket.acquire() is False
+        await asyncio.sleep(0.02)
+        assert await bucket.acquire() is True
+
+    @pytest.mark.asyncio
+    async def test_rate_limiter_concurrent_access(self) -> None:
+        """Rate limiter should handle concurrent acquisitions safely."""
+        from gflow_cli.mcp.tools import _TokenBucket
+
+        bucket = _TokenBucket(capacity=4, refill_rate=0.0)
+
+        async def acquire_token() -> bool:
+            return await bucket.acquire()
+
+        results = await asyncio.gather(*[acquire_token() for _ in range(6)])
+        assert sum(results) == 4
