@@ -17,21 +17,6 @@ from unittest.mock import patch
 import pytest
 
 # ---------------------------------------------------------------------------
-# Fixtures
-# ---------------------------------------------------------------------------
-
-
-@pytest.fixture()
-def server():
-    """Return the FastMCP server instance."""
-    import gflow_cli.mcp.resources  # noqa: F401
-    import gflow_cli.mcp.tools  # noqa: F401
-    from gflow_cli.mcp.server import server
-
-    return server
-
-
-# ---------------------------------------------------------------------------
 # Tool listing
 # ---------------------------------------------------------------------------
 
@@ -39,9 +24,9 @@ def server():
 class TestMcpToolListing:
     """Verify the server exposes the expected tools."""
 
-    def test_server_has_expected_tools(self, server: Any) -> None:
+    def test_server_has_expected_tools(self, mcp_server: Any) -> None:
         """The server should expose at least 4 core tools."""
-        tools = server._tool_manager._tools
+        tools = mcp_server._tool_manager._tools
         tool_names = set(tools.keys())
         expected = {
             "gflow_generate_image",
@@ -53,18 +38,18 @@ class TestMcpToolListing:
             f"Missing tools: {expected - tool_names}. Found: {tool_names}"
         )
 
-    def test_generate_image_tool_has_required_params(self, server: Any) -> None:
+    def test_generate_image_tool_has_required_params(self, mcp_server: Any) -> None:
         """gflow_generate_image should accept prompt, model, aspect, count, seed, profile."""
-        tool = server._tool_manager._tools["gflow_generate_image"]
+        tool = mcp_server._tool_manager._tools["gflow_generate_image"]
         schema = tool.parameters
         required_fields = {"prompt"}
         assert required_fields.issubset(set(schema.get("required", []))), (
             f"Missing required fields: {required_fields}"
         )
 
-    def test_generate_video_tool_has_required_params(self, server: Any) -> None:
+    def test_generate_video_tool_has_required_params(self, mcp_server: Any) -> None:
         """gflow_generate_video should accept prompt, mode, aspect, image_path, profile."""
-        tool = server._tool_manager._tools["gflow_generate_video"]
+        tool = mcp_server._tool_manager._tools["gflow_generate_video"]
         schema = tool.parameters
         required_fields = {"prompt"}
         assert required_fields.issubset(set(schema.get("required", []))), (
@@ -233,9 +218,9 @@ class TestCliMcpParameterSymmetry:
     MCP tool parameter. See AGENTS.md: 'MCP & CLI Schema Symmetry'.
     """
 
-    def test_image_t2i_params_mirrored(self, server: Any) -> None:
+    def test_image_t2i_params_mirrored(self, mcp_server: Any) -> None:
         """Key parameters of `gflow image t2i` must appear in gflow_generate_image."""
-        tool = server._tool_manager._tools["gflow_generate_image"]
+        tool = mcp_server._tool_manager._tools["gflow_generate_image"]
         schema_props = set(tool.parameters.get("properties", {}).keys())
         # Core params that must be mirrored
         required_in_both = {"prompt", "model", "aspect", "count", "seed", "profile"}
@@ -243,9 +228,9 @@ class TestCliMcpParameterSymmetry:
             f"MCP tool missing CLI params: {required_in_both - schema_props}"
         )
 
-    def test_video_t2v_params_mirrored(self, server: Any) -> None:
+    def test_video_t2v_params_mirrored(self, mcp_server: Any) -> None:
         """Key parameters of `gflow video t2v` must appear in gflow_generate_video."""
-        tool = server._tool_manager._tools["gflow_generate_video"]
+        tool = mcp_server._tool_manager._tools["gflow_generate_video"]
         schema_props = set(tool.parameters.get("properties", {}).keys())
         required_in_both = {"prompt", "mode", "aspect", "profile"}
         assert required_in_both.issubset(schema_props), (
