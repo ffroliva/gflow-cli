@@ -89,6 +89,25 @@ class TestStdoutRedirection:
             mock_wrapper.assert_called_once()
             assert sys.stdout is not mock_stdout
 
+    def test_utf8_pipes_configured(self) -> None:
+        """UTF-8 encoding should be configured for stdin/stdout on Windows."""
+        import sys
+        from unittest.mock import MagicMock
+
+        from gflow_cli.mcp.server import _configure_utf8_pipes
+
+        mock_stream = MagicMock()
+        mock_stream.reconfigure = MagicMock()
+
+        with (
+            patch.object(sys, "platform", "win32"),
+            patch.object(sys, "stdin", mock_stream),
+            patch.object(sys, "stdout", mock_stream),
+            patch.object(sys, "stderr", mock_stream),
+        ):
+            _configure_utf8_pipes()
+            assert mock_stream.reconfigure.call_count == 3
+
 
 # ---------------------------------------------------------------------------
 # Rate limiter
@@ -127,6 +146,19 @@ class TestTokenBucketRateLimiter:
         assert await bucket.acquire() is False
         await asyncio.sleep(0.02)  # wait for refill
         assert await bucket.acquire() is True
+
+    @pytest.mark.asyncio
+    async def test_rate_limiter_concurrent_access(self) -> None:
+        """Rate limiter should handle concurrent acquisitions safely."""
+        from gflow_cli.mcp.tools import _TokenBucket
+
+        bucket = _TokenBucket(capacity=4, refill_rate=0.0)
+
+        async def acquire_token() -> bool:
+            return await bucket.acquire()
+
+        results = await asyncio.gather(*[acquire_token() for _ in range(6)])
+        assert sum(results) == 4
 
 
 # ---------------------------------------------------------------------------
@@ -204,6 +236,22 @@ class TestMcpResources:
         content = await db_schema()
         assert isinstance(content, str)
         assert len(content) > 0
+
+    @pytest.mark.asyncio
+    async def test_server_has_resources_registered(self, mcp_server: Any) -> None:
+        """Server must have resources registered."""
+        resources = mcp_server._resource_manager._resources
+        assert len(resources) >= 2, f"Expected at least 2 resources, got {len(resources)}"
+
+    @pytest.mark.asyncio
+    async def test_known_issues_resource_returns_content(self) -> None:
+        """gflow://docs/known-issues must return KNOWN_ISSUES.md content."""
+        from gflow_cli.mcp.resources import known_issues
+
+        content = await known_issues()
+        assert isinstance(content, str)
+        assert len(content) > 0
+        assert "##" in content
 
 
 # ---------------------------------------------------------------------------
