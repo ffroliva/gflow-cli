@@ -384,3 +384,37 @@ class TestMcpServerEntryPoints:
         from gflow_cli.mcp.server import main_sse
 
         assert callable(main_sse)
+
+    @pytest.mark.asyncio
+    async def test_run_stdio_invokes_server(self) -> None:
+        """run_stdio must configure pipes and call server.run_stdio_async."""
+        from unittest.mock import AsyncMock, patch
+
+        from gflow_cli.mcp.server import run_stdio
+
+        with (
+            patch("gflow_cli.mcp.server.server") as mock_server,
+            patch("gflow_cli.mcp.server._configure_utf8_pipes"),
+            patch("gflow_cli.mcp.server._redirect_stdout_to_stderr"),
+        ):
+            mock_server.run_stdio_async = AsyncMock()
+            await run_stdio()
+            mock_server.run_stdio_async.assert_called_once()
+
+    @pytest.mark.asyncio
+    async def test_run_sse_configures_and_starts(self) -> None:
+        """run_sse must configure host/port and call server.run_sse_async."""
+        from unittest.mock import AsyncMock, MagicMock, patch
+
+        from gflow_cli.mcp.server import run_sse
+
+        with (
+            patch("gflow_cli.mcp.server.server") as mock_server,
+            patch("gflow_cli.mcp.server._configure_utf8_pipes"),
+        ):
+            mock_server.run_sse_async = AsyncMock()
+            mock_server.settings = MagicMock()
+            await run_sse(host="127.0.0.1", port=9999)
+            mock_server.run_sse_async.assert_called_once()
+            assert mock_server.settings.host == "127.0.0.1"
+            assert mock_server.settings.port == 9999
