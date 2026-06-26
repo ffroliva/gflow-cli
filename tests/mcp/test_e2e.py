@@ -35,15 +35,6 @@ class TestMcpJsonRpcProtocol:
         result = await gflow_list_projects()
         assert isinstance(result, dict)
 
-    @pytest.mark.asyncio
-    async def test_resource_read_returns_string(self) -> None:
-        """Resource read must return a string."""
-        from gflow_cli.mcp.resources import mcp_guide
-
-        content = await mcp_guide()
-        assert isinstance(content, str)
-        assert len(content) > 0
-
 
 class TestMcpToolExecution:
     """Verify MCP tools return structured responses when called via server."""
@@ -114,6 +105,7 @@ class TestMcpResources:
 
         assert isinstance(content, str)
         assert len(content) > 0
+        assert "##" in content
 
     @pytest.mark.asyncio
     async def test_db_schema_resource_returns_content(self) -> None:
@@ -124,3 +116,4 @@ class TestMcpResources:
 
         assert isinstance(content, str)
         assert len(content) > 0
+        assert "CREATE TABLE" in content
