@@ -1,9 +1,9 @@
 from __future__ import annotations
 
-from gflow_cli.mcp.server import mcp
+from gflow_cli.mcp.server import server
 
 
-@mcp.prompt()
+@server.prompt()
 def expand_prompt(
     subject: str,
     action: str = "",
@@ -41,7 +41,7 @@ def expand_prompt(
     )
 
 
-@mcp.prompt()
+@server.prompt()
 def create_character(
     name: str,
     gender: str = "neutral",
