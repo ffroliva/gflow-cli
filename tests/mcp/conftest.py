@@ -2,8 +2,6 @@
 
 from __future__ import annotations
 
-import sys
-from collections.abc import Iterator
 from pathlib import Path
 
 import pytest
@@ -17,16 +15,6 @@ def mcp_server():
     from gflow_cli.mcp.server import server
 
     return server
-
-
-@pytest.fixture()
-def isolated_stdout() -> Iterator:
-    """Isolate stdout for MCP transport safety testing."""
-    original_stdout = sys.stdout
-    try:
-        yield sys.stdout
-    finally:
-        sys.stdout = original_stdout
 
 
 @pytest.fixture()
