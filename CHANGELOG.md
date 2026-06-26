@@ -7,6 +7,23 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+## [0.21.0] — 2026-06-26
+
+### Added
+
+- **MCP server** (`gflow mcp run`): a [Model Context Protocol](https://modelcontextprotocol.io) server over **stdio** that exposes gflow's image / video / data operations to MCP-aware agents (Claude Desktop, Cursor, VS Code) as JSON-RPC **tools, resources, and prompts**. Point the client at `gflow mcp run` (example config in `gflow mcp run --help` and [docs/MCP.md](docs/MCP.md)). `gflow mcp setup --target <claude-desktop|cursor|vscode>` is scaffolded for future auto-configuration.
+- **MCP over HTTP/SSE** (`gflow serve`): serves the same MCP server over Server-Sent Events — stream at `/sse`, POST messages to `/messages/`. Binds `127.0.0.1:8000` by default; non-loopback binds require `GFLOW_DAEMON_TOKEN`. Foundation for the forthcoming Gflow Studio Web UI and REST `/api/v1` surface.
+- **Daemon & generation-queue scaffolding** (internal foundation): a FastAPI lifespan daemon, a `FlowWorker` background processor, and a SQLite-backed generation queue (`QueueRepository` + migration `0007_queue`, swept to `failed` on restart). Lays the groundwork for queued asynchronous generation; not yet wired into a user command (`gflow serve` currently runs the MCP/SSE server only).
+
+### Fixed
+
+- **Security — `cryptography` advisory** ([GHSA-537c-gmf6-5ccf](https://github.com/advisories/GHSA-537c-gmf6-5ccf)): bumped the locked `cryptography` from 48.0.0 to 49.0.0 (transitive dependency).
+
+### Changed
+
+- **CI — dependency CVE gate**: added a `pip-audit` job that audits the locked dependency set on every PR and fails on known advisories.
+- **Code health**: SonarCloud cleanup sweep across the CLI, API, transport drivers, and movie/manifest layers (cognitive-complexity, duplicate-literal, and unused-argument refactors) with no behavioral change.
+
 ## [0.20.1] — 2026-06-16
 
 ### Fixed
@@ -1565,7 +1582,8 @@ shell-script template that branches on these codes.
 
 First skeleton. Not functional end-to-end yet.
 
-[Unreleased]: https://github.com/ffroliva/gflow-cli/compare/v0.20.1...HEAD
+[Unreleased]: https://github.com/ffroliva/gflow-cli/compare/v0.21.0...HEAD
+[0.21.0]: https://github.com/ffroliva/gflow-cli/compare/v0.20.1...v0.21.0
 [0.20.1]: https://github.com/ffroliva/gflow-cli/compare/v0.20.0...v0.20.1
 [0.20.0]: https://github.com/ffroliva/gflow-cli/compare/v0.19.0...v0.20.0
 [0.19.0]: https://github.com/ffroliva/gflow-cli/compare/v0.18.0...v0.19.0

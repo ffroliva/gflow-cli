@@ -596,6 +596,20 @@ async def get_or_launch_browser(
     lock_path = profile_dir / _LOCK_FILENAME
     profile_name = profile_dir.name
 
+    daemon_lock = profile_dir / "profile.lock"
+    if daemon_lock.exists():
+        try:
+            locked_pid = int(daemon_lock.read_text().strip())
+            if locked_pid != os.getpid() and _pid_alive(locked_pid):
+                from gflow_cli.errors import ProfileLockedError
+
+                raise ProfileLockedError(
+                    f"Profile '{profile_name}' is locked by another "
+                    f"gflow serve daemon (PID {locked_pid})."
+                )
+        except ValueError:
+            pass
+
     async with _spawn_lock:
         existing_lock, locked_pid, locked_port = _sanitize_existing_lock(
             lock_path,
