@@ -2,16 +2,12 @@
 
 from __future__ import annotations
 
-import asyncio
-from typing import Any
-
 import pytest
 
-from gflow_cli.mcp.server import server
-
 # Import tools and resources to register them
-import gflow_cli.mcp.tools  # noqa: F401
 import gflow_cli.mcp.resources  # noqa: F401
+import gflow_cli.mcp.tools  # noqa: F401
+from gflow_cli.mcp.server import server
 
 
 class TestMcpJsonRpcProtocol:
@@ -45,3 +41,65 @@ class TestMcpJsonRpcProtocol:
         content = await mcp_guide()
         assert isinstance(content, str)
         assert len(content) > 0
+
+
+class TestMcpToolExecution:
+    """Verify MCP tools return structured responses with correct schemas."""
+
+    @pytest.mark.asyncio
+    async def test_generate_image_returns_valid_response(self) -> None:
+        """gflow_generate_image must return status and params."""
+        from gflow_cli.mcp.tools import gflow_generate_image
+
+        result = await gflow_generate_image(
+            prompt="test sunset over mountains",
+            model="nano2",
+            aspect="16:9",
+            count=1,
+        )
+
+        assert isinstance(result, dict)
+        assert "status" in result
+        assert "params" in result
+        assert result["params"]["prompt"] == "test sunset over mountains"
+        assert result["params"]["model"] == "nano2"
+
+    @pytest.mark.asyncio
+    async def test_generate_video_returns_valid_response(self) -> None:
+        """gflow_generate_video must return status and params."""
+        from gflow_cli.mcp.tools import gflow_generate_video
+
+        result = await gflow_generate_video(
+            prompt="cinematic drone shot of city",
+            mode="t2v",
+            aspect="9:16",
+        )
+
+        assert isinstance(result, dict)
+        assert "status" in result
+        assert "params" in result
+        assert result["params"]["mode"] == "t2v"
+
+    @pytest.mark.asyncio
+    async def test_list_projects_returns_structured_response(self) -> None:
+        """gflow_list_projects must return status and projects list."""
+        from gflow_cli.mcp.tools import gflow_list_projects
+
+        result = await gflow_list_projects()
+
+        assert isinstance(result, dict)
+        assert result["status"] == "ok"
+        assert "projects" in result
+        assert isinstance(result["projects"], list)
+
+    @pytest.mark.asyncio
+    async def test_list_characters_returns_structured_response(self) -> None:
+        """gflow_list_characters must return status and characters list."""
+        from gflow_cli.mcp.tools import gflow_list_characters
+
+        result = await gflow_list_characters()
+
+        assert isinstance(result, dict)
+        assert result["status"] == "ok"
+        assert "characters" in result
+        assert isinstance(result["characters"], list)
