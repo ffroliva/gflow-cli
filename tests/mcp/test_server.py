@@ -387,19 +387,37 @@ class TestMcpServerEntryPoints:
 
     @pytest.mark.asyncio
     async def test_run_stdio_invokes_server(self) -> None:
-        """run_stdio must configure pipes and call server.run_stdio_async."""
-        from unittest.mock import AsyncMock, patch
+        """run_stdio must configure pipes and drive the low-level MCP server.
+
+        It captures the real stdout for the protocol channel (so responses are
+        not misrouted to stderr) and runs ``server._mcp_server`` over it.
+        """
+        from contextlib import asynccontextmanager
+        from unittest.mock import AsyncMock, MagicMock, patch
 
         from gflow_cli.mcp.server import run_stdio
+
+        captured = {}
+
+        @asynccontextmanager
+        async def fake_stdio_server(stdout=None):
+            captured["stdout"] = stdout
+            yield (MagicMock(), MagicMock())
 
         with (
             patch("gflow_cli.mcp.server.server") as mock_server,
             patch("gflow_cli.mcp.server._configure_utf8_pipes"),
             patch("gflow_cli.mcp.server._redirect_stdout_to_stderr"),
+            patch("gflow_cli.mcp.server.sys.stdout", MagicMock()),
+            patch("gflow_cli.mcp.server.io.TextIOWrapper"),
+            patch("anyio.wrap_file", return_value="PROTOCOL_STDOUT"),
+            patch("mcp.server.stdio.stdio_server", fake_stdio_server),
         ):
-            mock_server.run_stdio_async = AsyncMock()
+            mock_server._mcp_server.run = AsyncMock()
             await run_stdio()
-            mock_server.run_stdio_async.assert_called_once()
+            mock_server._mcp_server.run.assert_called_once()
+            # The protocol stream must be the captured real stdout, not stderr.
+            assert captured["stdout"] == "PROTOCOL_STDOUT"
 
     @pytest.mark.asyncio
     async def test_run_sse_configures_and_starts(self) -> None:
