@@ -358,6 +358,66 @@ def _resolve_or_prompt(default_for_first_run: str) -> str:
         )
 
 
+@main.command("serve")
+@click.option(
+    "--port",
+    default=None,
+    type=int,
+    help="Port for the FastAPI daemon server. Overrides GFLOW_DAEMON_PORT.",
+)
+@click.option(
+    "--host",
+    default=None,
+    type=str,
+    help="Host for the FastAPI daemon server. Defaults to 127.0.0.1.",
+)
+@click.option(
+    "--profile",
+    default=None,
+    type=str,
+    help="Profile name to lock and use. Defaults to the resolved default.",
+)
+def serve(port: int | None, host: str | None, profile: str | None) -> None:
+    """Start the gflow local daemon and FastMCP server.
+
+    Runs a FastAPI app hosting a background queue worker for the specified profile
+    and exposing an SSE-based Model Context Protocol (MCP) server interface.
+    """
+    import os
+
+    from gflow_cli._cli_helpers import _make_provider_dir, _resolve_profile
+    from gflow_cli.config import get_settings, reset_settings
+    from gflow_cli.ui.server import run_server
+
+    # 1. Resolve profile name
+    resolved_profile = _resolve_profile(profile)
+    # Ensure profile has a session (will exit 2 if not)
+    _make_provider_dir(resolved_profile)
+
+    # 2. Apply CLI overrides to os.environ so get_settings() resolves them
+    os.environ["GFLOW_CLI_PROFILE"] = resolved_profile
+    if port is not None:
+        os.environ["GFLOW_CLI_DAEMON_PORT"] = str(port)
+
+    # 3. Reload settings
+    reset_settings()
+    settings = get_settings()
+
+    # Determine port and host to run Uvicorn on
+    run_port = settings.daemon_port
+    run_host = host or "127.0.0.1"
+
+    # Local network Isolation: Binding to 0.0.0.0 is prohibited unless
+    # explicit API token headers (GFLOW_DAEMON_TOKEN) are active.
+    if run_host == "0.0.0.0" and not settings.daemon_token:
+        raise click.ClickException(
+            "Binding to 0.0.0.0 is prohibited unless GFLOW_DAEMON_TOKEN is configured."
+        )
+
+    # 4. Invoke run_server
+    run_server(host=run_host, port=run_port)
+
+
 main.add_command(_character_group)
 main.add_command(_data_group)
 main.add_command(_movie_group)
