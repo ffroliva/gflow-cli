@@ -1,0 +1,50 @@
+name: Guard main base
+
+# Blocks the divergence class that bit v0.21.0: a non-release branch merged
+# straight into `main` (PR #203 — base mistakenly set to `main`, then squashed),
+# which bypassed `develop` and skipped the `main -> develop` back-merge, leaving
+# `main` ahead of `develop` by an orphaned squash commit.
+#
+# Policy: only `chore/release-*` (cut by /gflow:release) or `hotfix/*` branches
+# may target `main`. Everything else must go through `develop` (the default /
+# integration branch). Dependabot and normal PRs already default to `develop`,
+# so this only catches a deliberate, mistaken `--base main`.
+#
+# The job runs on EVERY PR and passes trivially when the base is not `main`, so
+# it is safe to mark as a *required* status check on `main` without blocking
+# `develop` PRs (which would otherwise hang as "expected — waiting").
+
+on:
+  pull_request:
+    types: [opened, reopened, edited, synchronize]
+
+permissions:
+  contents: read
+
+jobs:
+  guard:
+    name: Only release/hotfix branches may target main
+    runs-on: ubuntu-latest
+    steps:
+      - name: Verify base/head pairing
+        env:
+          BASE_REF: ${{ github.base_ref }}
+          HEAD_REF: ${{ github.head_ref }}
+        run: |
+          echo "PR head '$HEAD_REF' -> base '$BASE_REF'"
+          if [ "$BASE_REF" != "main" ]; then
+            echo "Base is '$BASE_REF' (not main) — nothing to enforce."
+            exit 0
+          fi
+          case "$HEAD_REF" in
+            chore/release-*|hotfix/*)
+              echo "OK: '$HEAD_REF' is allowed to target 'main'."
+              ;;
+            *)
+              echo "::error title=Wrong base branch::PR head '$HEAD_REF' must not target 'main'."
+              echo "Only 'chore/release-*' (via /gflow:release) or 'hotfix/*' branches may merge into 'main'."
+              echo "Feature, CI, fix, docs, and dependency work must target 'develop' (the integration branch)."
+              echo "Fix: re-target this PR to 'develop', or — if this really is a release — rename the branch to 'chore/release-vX.Y.Z'."
+              exit 1
+              ;;
+          esac
