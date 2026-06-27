@@ -112,10 +112,22 @@ Deep setup, verification, and security notes live in
 
 ### `GFLOW_CLI_GEMINI_API_KEY`
 
-**What:** API key for the official Veo 3.1 SDK.
-**Required when:** `GFLOW_CLI_PROVIDER=official`.
+**What:** Public Gemini API key. Used by the **prompt-expansion** "Creative Director"
+(`-e` / `--expand` on `image t2i` and `video t2v`) and, in future, by the official
+Veo 3.1 SDK.
+**Required when:** you pass `-e` / `--expand`, or `GFLOW_CLI_PROVIDER=official`.
 **Default:** unset
+**Behavior when unset:** `--expand` is a no-op — gflow logs an `INFO` notice and generates
+from your original prompt (it never fails the run). API errors (rate limit, network) fall
+back the same way after a short exponential-backoff retry.
 **Get one:** <https://aistudio.google.com/apikey>
+
+### `GFLOW_CLI_GEMINI_MODEL`
+
+**What:** Gemini model used for prompt expansion (`-e` / `--expand`).
+**Default:** `gemini-2.5-flash`
+**Note:** Override to select a newer Flash revision without upgrading gflow-cli, e.g.
+`GFLOW_CLI_GEMINI_MODEL=gemini-2.5-flash-lite`.
 
 ### `GFLOW_CLI_AUTH_LOGIN_TIMEOUT`
 

@@ -7,6 +7,19 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+### Added
+
+- **Prompt expansion ("Creative Director")**: pass `-e` / `--expand` to `gflow image t2i`
+  or `gflow video t2v` to rewrite a terse prompt into a richer one using Google's
+  five-component formula (Subject + Action + Context/Location + Composition/Camera +
+  Style) via the public Gemini API before generating. Requires `GFLOW_CLI_GEMINI_API_KEY`
+  ([get one](https://aistudio.google.com/apikey)); optional `GFLOW_CLI_GEMINI_MODEL`
+  (default `gemini-2.5-flash`). Expansion is **never fatal** — a missing key, rate limit
+  (retried with exponential backoff), or any API/network fault degrades gracefully to the
+  original prompt. The local catalog records both the original prompt and the submitted
+  expansion (a new `operations.expanded_prompt` column; withheld under
+  `GFLOW_CLI_HISTORY_PROMPTS=redacted`). Single-prompt only.
+
 ## [0.21.0] — 2026-06-26
 
 ### Added
