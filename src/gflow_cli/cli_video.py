@@ -19,6 +19,7 @@ from gflow_cli import json_output
 from gflow_cli._cli_helpers import (
     _make_provider_dir,
     _resolve_profile,
+    expand_prompt,
     run_with_handlers,
 )
 from gflow_cli.api.client import FlowApiClient
@@ -60,6 +61,7 @@ async def _generate_and_report(
     out_dir: Path | None,
     command: str = "video",
     as_json: bool = False,
+    original_prompt: str | None = None,
 ) -> None:
     """Drive FlowApiClient for a single GenerateVideoRequest and print the
     result (or fail with a non-zero exit). Shared by t2v, i2v, and r2v.
@@ -84,6 +86,7 @@ async def _generate_and_report(
                         profile_dir=profile_dir,
                         request=request,
                         started=started,
+                        original_prompt=original_prompt,
                     )
                 except DataStoreError as exc:
                     _warn_persistence_failed_after_success(
@@ -110,6 +113,7 @@ async def _generate_and_report(
                     if result.local_path is not None
                     else None
                 ),
+                original_prompt=original_prompt,
             )
         except DataStoreError as exc:
             _warn_persistence_failed_after_success(
@@ -149,6 +153,7 @@ async def _run_t2v(
     duration: int | None = None,
     count: int = 1,
     as_json: bool = False,
+    original_prompt: str | None = None,
 ) -> None:
     from gflow_cli.api.video import Aspect, GenerateVideoRequest, Mode, VideoModel
 
@@ -167,6 +172,7 @@ async def _run_t2v(
         out_dir=out_dir,
         command="video t2v",
         as_json=as_json,
+        original_prompt=original_prompt,
     )
 
 
@@ -711,6 +717,17 @@ def video() -> None:
 )
 @click.option("--profile", default=None, help="Profile name (overrides default).")
 @click.option(
+    "-e",
+    "--expand",
+    "expand",
+    is_flag=True,
+    help=(
+        "Expand the prompt with the Gemini 'Creative Director' (five-component "
+        "formula) before generating. Requires GFLOW_CLI_GEMINI_API_KEY; falls back "
+        "to the original prompt if unset or on error."
+    ),
+)
+@click.option(
     "--out-dir",
     "out_dir",
     default=None,
@@ -730,23 +747,26 @@ def t2v(
     duration: str | None,
     count: int,
     profile: str | None,
+    expand: bool,
     out_dir: Path | None,
     as_json: bool,
 ) -> None:
     """Generate a video from PROMPT."""
     profile_name = _resolve_profile(profile)
     provider_dir = _make_provider_dir(profile_name)
+    prompt_to_send, original_prompt = expand_prompt(prompt, enabled=expand)
     run_with_handlers(
         lambda: _run_t2v(
             profile_name=profile_name,
             profile_dir=provider_dir,
-            prompt=prompt,
+            prompt=prompt_to_send,
             aspect=aspect,
             out_dir=out_dir,
             model=model,
             duration=int(duration) if duration is not None else None,
             count=count,
             as_json=as_json,
+            original_prompt=original_prompt,
         ),
         cli_command="video t2v",
         as_json=as_json,
