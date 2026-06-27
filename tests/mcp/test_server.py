@@ -39,21 +39,29 @@ class TestMcpToolListing:
         )
 
     def test_generate_image_tool_has_required_params(self, mcp_server: Any) -> None:
-        """gflow_generate_image should accept prompt, model, aspect, count, seed, profile."""
+        """gflow_generate_image should accept prompt + model/aspect/count/seed/expand/profile."""
         tool = mcp_server._tool_manager._tools["gflow_generate_image"]
         schema = tool.parameters
         required_fields = {"prompt"}
         assert required_fields.issubset(set(schema.get("required", []))), (
             f"Missing required fields: {required_fields}"
         )
+        # CLI/MCP symmetry (AGENTS.md): the CLI `-e`/`--expand` flag must be mirrored.
+        assert "expand" in schema.get("properties", {}), (
+            "MCP image tool missing 'expand' (CLI parity)"
+        )
 
     def test_generate_video_tool_has_required_params(self, mcp_server: Any) -> None:
-        """gflow_generate_video should accept prompt, mode, aspect, image_path, profile."""
+        """gflow_generate_video should accept prompt, mode, aspect, image_path, expand, profile."""
         tool = mcp_server._tool_manager._tools["gflow_generate_video"]
         schema = tool.parameters
         required_fields = {"prompt"}
         assert required_fields.issubset(set(schema.get("required", []))), (
             f"Missing required fields: {required_fields}"
+        )
+        # CLI/MCP symmetry (AGENTS.md): the CLI `-e`/`--expand` flag must be mirrored.
+        assert "expand" in schema.get("properties", {}), (
+            "MCP video tool missing 'expand' (CLI parity)"
         )
 
 
