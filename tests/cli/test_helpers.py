@@ -156,3 +156,52 @@ def test_make_provider_dir_exits_when_profile_missing(
         assert excinfo.value.code == 2
     finally:
         reset_settings()
+
+
+def test_expand_prompt_disabled_returns_identity() -> None:
+    from gflow_cli._cli_helpers import expand_prompt
+
+    sent, original = expand_prompt("cat in space", enabled=False)
+    assert sent == "cat in space"
+    assert original is None
+
+
+def test_expand_prompt_no_key_falls_back(monkeypatch: pytest.MonkeyPatch) -> None:
+    from gflow_cli.config import reset_settings
+
+    monkeypatch.delenv("GFLOW_CLI_GEMINI_API_KEY", raising=False)
+    reset_settings()
+    from gflow_cli._cli_helpers import expand_prompt
+
+    sent, original = expand_prompt("cat in space", enabled=True)
+    assert sent == "cat in space"
+    assert original is None
+
+
+def test_expand_prompt_success_returns_expanded_and_original(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    from gflow_cli.api import prompt_expander as pe
+    from gflow_cli.config import reset_settings
+
+    monkeypatch.setenv("GFLOW_CLI_GEMINI_API_KEY", "fake-key")
+    reset_settings()
+
+    class _StubExpander:
+        def expand(self, prompt: str) -> pe.ExpansionResult:
+            return pe.ExpansionResult(
+                original=prompt,
+                expanded="a vivid, fully expanded prompt",
+                was_expanded=True,
+            )
+
+    monkeypatch.setattr(
+        pe.PromptExpander,
+        "from_settings",
+        classmethod(lambda cls, settings, **kwargs: _StubExpander()),  # noqa: ARG005
+    )
+    from gflow_cli._cli_helpers import expand_prompt
+
+    sent, original = expand_prompt("cat in space", enabled=True)
+    assert sent == "a vivid, fully expanded prompt"
+    assert original == "cat in space"

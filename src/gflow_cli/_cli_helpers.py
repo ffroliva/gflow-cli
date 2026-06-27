@@ -71,9 +71,47 @@ __all__ = [
     "_handle_unhandled_error",
     "_make_provider_dir",
     "_resolve_profile",
+    "expand_prompt",
     "run_with_handlers",
     "safe_path_text",
 ]
+
+
+def expand_prompt(prompt: str, *, enabled: bool) -> tuple[str, str | None]:
+    """Optionally expand *prompt* via the Gemini "Creative Director".
+
+    Returns ``(prompt_to_send, original_prompt)``. ``original_prompt`` is the
+    user's untouched prompt when an expansion actually happened, and ``None``
+    when expansion was disabled, unconfigured, or failed — so the caller (and
+    the data-layer recorder) treats ``prompt_to_send`` as the original.
+
+    Never raises: a missing ``GFLOW_CLI_GEMINI_API_KEY`` or any API/network fault
+    degrades gracefully to the original prompt (the client logs the reason).
+    """
+    if not enabled:
+        return prompt, None
+
+    from gflow_cli.api.prompt_expander import PromptExpander
+    from gflow_cli.config import get_settings
+
+    settings = get_settings()
+    result = PromptExpander.from_settings(settings).expand(prompt)
+    if not result.was_expanded:
+        if settings.gemini_api_key is None:
+            _console.print(
+                "[yellow]--expand skipped:[/yellow] set GFLOW_CLI_GEMINI_API_KEY to enable "
+                "prompt expansion. Using your original prompt.",
+            )
+        else:
+            _console.print(
+                "[yellow]--expand unavailable[/yellow] (Gemini API error); "
+                "using your original prompt.",
+            )
+        return prompt, None
+
+    _console.print("[cyan]Creative Director expanded your prompt:[/cyan]")
+    _console.print(f"  [dim]{result.expanded}[/dim]")
+    return result.expanded, result.original
 
 
 def safe_path_text(path: Path) -> str:
