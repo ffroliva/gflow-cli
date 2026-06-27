@@ -176,6 +176,8 @@ Options:
                             consistency (repeatable; must live in --project).
                             Single-prompt only.
   --reference-entity-name N Display name paired with --reference-entity.
+  -e, --expand              Expand the prompt with the Gemini "Creative
+                            Director" before generating. Single-prompt only.
   --profile NAME            Profile name (overrides default).
 ```
 
@@ -199,6 +201,24 @@ Options:
   fan-out is 50 prompts * 4 = 200 images.
 - `--continue-on-error` is default; `--fail-fast` stops after the first failed
   prompt.
+
+**Prompt expansion (`-e` / `--expand`).**
+
+Rewrites a terse prompt into a richer one using Google's five-component formula
+(Subject + Action + Context/Location + Composition/Camera + Style) via the public
+Gemini API before generating. Single-prompt only.
+
+- Requires `GFLOW_CLI_GEMINI_API_KEY` ([get one](https://aistudio.google.com/apikey));
+  optionally `GFLOW_CLI_GEMINI_MODEL` (default `gemini-2.5-flash`).
+- Graceful: if the key is unset or the API errors, gflow prints a notice and
+  generates from your **original** prompt — the run never fails because of expansion.
+- The local catalog records **both** the original prompt and the submitted
+  expansion (the expansion is withheld under `GFLOW_CLI_HISTORY_PROMPTS=redacted`).
+
+```bash
+# Expand "cat in space" into a detailed prompt, then generate
+gflow image t2i "cat in space" -e
+```
 
 **Output paths.**
 
@@ -409,14 +429,20 @@ All prompts in a batch share one Flow project. The editor is opened once; each p
 Generate a video from a text prompt only.
 
 ```text
-gflow video t2v PROMPT [--model] [--duration] [--count] [--aspect] [--profile] [--out-dir]
+gflow video t2v PROMPT [--model] [--duration] [--count] [--aspect] [--profile] [-e/--expand] [--out-dir]
 ```
 
 ```bash
 gflow video t2v "Slow cinematic push-in toward a candle flame"
 gflow video t2v "Aerial shot of a coastline at sunset" --aspect 16:9 --out-dir ./out
 gflow video t2v "A neon city timelapse" --model omni-flash --duration 10 --count 2
+# Expand the prompt via the Gemini "Creative Director" before generating
+gflow video t2v "a dog surfing" -e
 ```
+
+`-e` / `--expand` rewrites the prompt with Gemini before generating — see
+[prompt expansion](#gflow-image-t2i) under `image t2i` for the full contract
+(requires `GFLOW_CLI_GEMINI_API_KEY`; degrades gracefully to the original prompt).
 
 ## `gflow video i2v`
 
