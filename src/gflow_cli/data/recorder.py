@@ -18,7 +18,7 @@ from gflow_cli.data.models import (
     SceneClipRecord,
     SceneRecord,
 )
-from gflow_cli.data.redaction import PromptMode, prompt_fields, redact_metadata
+from gflow_cli.data.redaction import PromptFields, PromptMode, prompt_fields, redact_metadata
 from gflow_cli.data.repository import DataRepository
 from gflow_cli.data.store import DataStore
 
@@ -71,6 +71,26 @@ class OperationRecorder:
 
     def close(self) -> None:
         self.repository.store.close()
+
+    def _resolve_prompts(
+        self,
+        sent_prompt: str | None,
+        original_prompt: str | None,
+    ) -> tuple[PromptFields, str | None]:
+        """Resolve the recorded prompt fields and the expansion-to-store.
+
+        ``sent_prompt`` is what was actually submitted to Flow. When
+        ``original_prompt`` is provided (i.e. ``--expand`` rewrote the prompt),
+        the user's *original* prompt is recorded as the operation prompt and the
+        ``sent_prompt`` is persisted separately as ``expanded_prompt`` — withheld
+        when ``history_prompts='redacted'``, exactly like the original prompt.
+        """
+        recorded = original_prompt if original_prompt is not None else sent_prompt
+        pf = prompt_fields(recorded, mode=self.prompt_mode)
+        expanded = (
+            sent_prompt if (original_prompt is not None and self.prompt_mode == "store") else None
+        )
+        return pf, expanded
 
     # ------------------------------------------------------------------
     # Image upload
@@ -230,6 +250,7 @@ class OperationRecorder:
         operation_kind: str,
         cloud_storage_infos: list[CloudStorageInfo | None] | None = None,
         project_created: bool = True,
+        original_prompt: str | None = None,
     ) -> None:
         repo = self.repository
 
@@ -248,7 +269,7 @@ class OperationRecorder:
             ),
         )
 
-        pf = prompt_fields(request.prompt, mode=self.prompt_mode)
+        pf, expanded_prompt = self._resolve_prompts(request.prompt, original_prompt)
         op_id = _new_id()
         repo.insert_operation(
             OperationRecord(
@@ -267,6 +288,7 @@ class OperationRecorder:
                 aspect_ratio=request.aspect.value,
                 error_type=None,
                 error_detail=None,
+                expanded_prompt=expanded_prompt,
             ),
         )
         # Image generation is recorded AFTER all downloads complete, so the
@@ -400,6 +422,7 @@ class OperationRecorder:
         profile_dir: Path,
         request: GenerateVideoRequest,
         started: VideoStarted,
+        original_prompt: str | None = None,
     ) -> None:
         repo = self.repository
 
@@ -436,7 +459,7 @@ class OperationRecorder:
             ),
         )
 
-        pf = prompt_fields(request.prompt, mode=self.prompt_mode)
+        pf, expanded_prompt = self._resolve_prompts(request.prompt, original_prompt)
         op_id = _new_id()
         repo.insert_operation(
             OperationRecord(
@@ -455,6 +478,7 @@ class OperationRecorder:
                 aspect_ratio=request.aspect.value,
                 error_type=None,
                 error_detail=None,
+                expanded_prompt=expanded_prompt,
             ),
         )
         repo.link_operation_asset(op_id, asset_id, OperationAssetRole.OUTPUT, 0)
@@ -467,9 +491,10 @@ class OperationRecorder:
         flow_media_id: str,
         request: GenerateVideoRequest,
         result: VideoResult,
+        original_prompt: str | None = None,
     ) -> None:
         """Insert a completed video operation when on_started failed or was skipped."""
-        pf = prompt_fields(request.prompt, mode=self.prompt_mode)
+        pf, expanded_prompt = self._resolve_prompts(request.prompt, original_prompt)
         op_id = _new_id()
         repo.insert_operation(
             OperationRecord(
@@ -488,6 +513,7 @@ class OperationRecorder:
                 aspect_ratio=request.aspect.value,
                 error_type=None,
                 error_detail=None,
+                expanded_prompt=expanded_prompt,
             ),
         )
         asset_lookup = repo.get_asset_by_flow_media_id(profile_name, flow_media_id)
@@ -538,6 +564,7 @@ class OperationRecorder:
         request: GenerateVideoRequest,
         result: VideoResult,
         cloud_storage_info: CloudStorageInfo | None = None,
+        original_prompt: str | None = None,
     ) -> None:
         # VideoResult carries status.media_id (the flow_media_id) and local_path
 
@@ -584,6 +611,7 @@ class OperationRecorder:
                 flow_media_id=flow_media_id,
                 request=request,
                 result=result,
+                original_prompt=original_prompt,
             )
 
         if result.local_path is not None or cloud_storage_info is not None:
