@@ -131,6 +131,38 @@ class TestExpanderHttpErrorFallback:
         assert result.was_expanded is False
         assert result.expanded == "cat in space"
 
+    def test_whitespace_only_candidate_falls_back(self) -> None:
+        # A non-empty but whitespace/quote-only candidate cleans to "" — it must
+        # NOT be returned as the prompt (that would abort a valid run), so the
+        # expander falls back to the original. Guards the "never fatal" contract.
+        transport = _RecordingTransport(returns=_candidates('  "   "  '))
+        expander = PromptExpander("key", transport=transport)
+
+        result = expander.expand("cat in space")
+
+        assert result.was_expanded is False
+        assert result.expanded == "cat in space"
+
+
+class TestExpanderCleaning:
+    def test_preserves_internally_quoted_content(self) -> None:
+        # The quote chars are real content, not a wrapping pair → leave intact.
+        transport = _RecordingTransport(returns=_candidates('"A" contrasted with "B"'))
+        expander = PromptExpander("key", transport=transport)
+
+        result = expander.expand("a vs b")
+
+        assert result.was_expanded is True
+        assert result.expanded == '"A" contrasted with "B"'
+
+    def test_strips_simple_wrapping_quotes(self) -> None:
+        transport = _RecordingTransport(returns=_candidates('"a single wrapped prompt"'))
+        expander = PromptExpander("key", transport=transport)
+
+        result = expander.expand("prompt")
+
+        assert result.expanded == "a single wrapped prompt"
+
 
 class TestExpanderTruncation:
     def test_input_truncated_before_send(self) -> None:
