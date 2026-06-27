@@ -717,7 +717,7 @@ def t2i(  # NOSONAR
         profile_name = _resolve_profile(profile)
         provider_dir = _make_provider_dir(profile_name)
         settings = get_settings()
-        prompt_to_send, original_prompt = expand_prompt(prompt, enabled=expand)
+        prompt_to_send, original_prompt = expand_prompt(prompt, enabled=expand, quiet=as_json)
         run_with_handlers(
             lambda: _run_t2i(
                 profile_name=profile_name,

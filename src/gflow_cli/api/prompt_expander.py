@@ -156,13 +156,11 @@ class PromptExpander:
     def from_settings(cls, settings: Settings, **overrides: object) -> PromptExpander:
         """Build an expander from :class:`gflow_cli.config.Settings`.
 
-        Reads the API key from ``GFLOW_CLI_GEMINI_API_KEY`` and the model from
-        ``GFLOW_CLI_GEMINI_MODEL`` (falling back to :data:`DEFAULT_MODEL`).
+        Reads the API key (``GFLOW_CLI_GEMINI_API_KEY``) and model
+        (``GFLOW_CLI_GEMINI_MODEL``, default :data:`DEFAULT_MODEL`) from the
+        centralized pydantic settings layer.
         """
-        import os
-
-        model = os.environ.get("GFLOW_CLI_GEMINI_MODEL", DEFAULT_MODEL)
-        return cls(settings.gemini_api_key, model=model, **overrides)  # type: ignore[arg-type]
+        return cls(settings.gemini_api_key, model=settings.gemini_model, **overrides)  # type: ignore[arg-type]
 
     def expand(self, prompt: str) -> ExpansionResult:
         """Return an :class:`ExpansionResult`. Never raises for API/network faults."""
@@ -201,6 +199,12 @@ class PromptExpander:
                 return ExpansionResult(prompt, prompt, was_expanded=False)
 
             cleaned = _clean(expanded)[: self._max_output_chars]
+            if not cleaned:
+                # Whitespace/quote-only candidate cleans to empty. Returning it
+                # would feed an empty prompt to the generator and abort a valid
+                # run — fall back to the original to honor the "never fatal" contract.
+                log.warning("prompt_expander_empty_response")
+                return ExpansionResult(prompt, prompt, was_expanded=False)
             log.info(
                 "prompt_expanded",
                 original_len=len(prompt),
@@ -234,8 +238,18 @@ class PromptExpander:
 
 
 def _clean(text: str) -> str:
-    """Strip whitespace and a single layer of wrapping quotes from model output."""
+    """Strip whitespace and a single layer of *wrapping* quotes from model output.
+
+    Only strips when the quote char does not also appear inside, so a prompt whose
+    content legitimately starts and ends with a quote (e.g. ``"A" vs "B"``) is left
+    intact rather than mangled.
+    """
     cleaned = text.strip()
-    if len(cleaned) >= 2 and cleaned[0] == cleaned[-1] and cleaned[0] in {'"', "'"}:
+    if (
+        len(cleaned) >= 2
+        and cleaned[0] == cleaned[-1]
+        and cleaned[0] in {'"', "'"}
+        and cleaned[0] not in cleaned[1:-1]
+    ):
         cleaned = cleaned[1:-1].strip()
     return cleaned

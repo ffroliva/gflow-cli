@@ -205,3 +205,31 @@ def test_expand_prompt_success_returns_expanded_and_original(
     sent, original = expand_prompt("cat in space", enabled=True)
     assert sent == "a vivid, fully expanded prompt"
     assert original == "cat in space"
+
+
+def test_expand_prompt_quiet_suppresses_stdout_notice(
+    monkeypatch: pytest.MonkeyPatch,
+    capsys: pytest.CaptureFixture[str],
+) -> None:
+    """quiet=True (the --json path) must not write Rich notices to stdout."""
+    from gflow_cli.api import prompt_expander as pe
+    from gflow_cli.config import reset_settings
+
+    monkeypatch.setenv("GFLOW_CLI_GEMINI_API_KEY", "fake-key")
+    reset_settings()
+
+    class _StubExpander:
+        def expand(self, prompt: str) -> pe.ExpansionResult:
+            return pe.ExpansionResult(original=prompt, expanded="expanded", was_expanded=True)
+
+    monkeypatch.setattr(
+        pe.PromptExpander,
+        "from_settings",
+        classmethod(lambda cls, settings, **kwargs: _StubExpander()),  # noqa: ARG005
+    )
+    from gflow_cli._cli_helpers import expand_prompt
+
+    sent, original = expand_prompt("cat in space", enabled=True, quiet=True)
+    assert sent == "expanded"
+    assert original == "cat in space"
+    assert capsys.readouterr().out == ""
