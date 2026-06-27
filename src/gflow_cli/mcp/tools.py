@@ -90,6 +90,7 @@ async def gflow_generate_image(
     aspect: str = "1:1",
     count: int = 1,
     seed: int | None = None,
+    expand: bool = False,
     profile: str = "default",
 ) -> dict[str, Any]:
     """Generate an image via Google Flow's Imagen.
@@ -100,6 +101,9 @@ async def gflow_generate_image(
         aspect: Aspect ratio — '1:1', '9:16', '16:9', '4:3', '3:4'.
         count: Number of images to generate (1-4).
         seed: Optional random seed for reproducibility.
+        expand: Expand the prompt with the Gemini "Creative Director" before
+            generating (mirrors the CLI `-e`/`--expand` flag; requires
+            GFLOW_CLI_GEMINI_API_KEY, degrades gracefully to the original prompt).
         profile: gflow-cli profile name to use.
 
     Returns:
@@ -137,6 +141,7 @@ async def gflow_generate_image(
                 "aspect": aspect,
                 "count": count,
                 "seed": seed,
+                "expand": expand,
                 "profile": profile,
             },
         }
@@ -156,6 +161,7 @@ async def gflow_generate_video(
     mode: str = "t2v",
     aspect: str = "9:16",
     image_path: str | None = None,
+    expand: bool = False,
     profile: str = "default",
 ) -> dict[str, Any]:
     """Generate a video via Google Flow's Veo.
@@ -165,6 +171,9 @@ async def gflow_generate_video(
         mode: Generation mode — 't2v', 'i2v', or 'r2v'.
         aspect: Aspect ratio — '9:16' or '16:9'.
         image_path: Path to start frame image (required for i2v/r2v).
+        expand: Expand the prompt with the Gemini "Creative Director" before
+            generating (mirrors the CLI `-e`/`--expand` flag on `video t2v`;
+            requires GFLOW_CLI_GEMINI_API_KEY, degrades gracefully).
         profile: gflow-cli profile name to use.
 
     Returns:
@@ -199,6 +208,7 @@ async def gflow_generate_video(
                 "mode": mode,
                 "aspect": aspect,
                 "image_path": image_path,
+                "expand": expand,
                 "profile": profile,
             },
         }

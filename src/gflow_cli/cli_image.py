@@ -31,6 +31,7 @@ from gflow_cli import json_output
 from gflow_cli._cli_helpers import (
     _make_provider_dir,
     _resolve_profile,
+    expand_prompt,
     run_with_handlers,
     safe_path_text,
 )
@@ -638,6 +639,17 @@ async def _run_upscale(
 )
 @click.option("--profile", default=None, help="Profile name (overrides default).")
 @click.option(
+    "-e",
+    "--expand",
+    "expand",
+    is_flag=True,
+    help=(
+        "Expand the prompt with the Gemini 'Creative Director' (five-component "
+        "formula) before generating. Single-prompt only. Requires "
+        "GFLOW_CLI_GEMINI_API_KEY; falls back to the original prompt if unset or on error."
+    ),
+)
+@click.option(
     "--transport",
     type=click.Choice(transport_choices(), case_sensitive=False),
     default=None,
@@ -664,6 +676,7 @@ def t2i(  # NOSONAR
     count: int,
     out: Path | None,
     profile: str | None,
+    expand: bool,
     transport: str | None,
     project_id: str | None,
     reference_entities: tuple[str, ...],
@@ -688,6 +701,12 @@ def t2i(  # NOSONAR
         msg = "--json is single-prompt only; remove the extra prompts."
         raise click.UsageError(msg)
 
+    if is_multi_prompt and expand:
+        # -e/--expand calls Gemini per prompt; that belongs on the single-prompt
+        # path. Loop t2i one prompt at a time if you want every prompt expanded.
+        msg = "-e/--expand is single-prompt only; remove the extra prompts."
+        raise click.UsageError(msg)
+
     if not is_multi_prompt:
         if not prompts:
             msg = "Provide a prompt, multiple prompts, --prompts-file, or --stdin."
@@ -698,13 +717,14 @@ def t2i(  # NOSONAR
         profile_name = _resolve_profile(profile)
         provider_dir = _make_provider_dir(profile_name)
         settings = get_settings()
+        prompt_to_send, original_prompt = expand_prompt(prompt, enabled=expand, quiet=as_json)
         run_with_handlers(
             lambda: _run_t2i(
                 profile_name=profile_name,
                 profile_dir=provider_dir,
                 headless=settings.headless,
                 req=GenerateImageRequest(
-                    prompt=prompt,
+                    prompt=prompt_to_send,
                     aspect=Aspect.from_cli(aspect),
                     model=Model.from_cli(model),
                     reference_entities=tuple(reference_entities),
@@ -716,6 +736,7 @@ def t2i(  # NOSONAR
                 transport=transport,
                 project_id=project_id,
                 as_json=as_json,
+                original_prompt=original_prompt,
             ),
             cli_command="image t2i",
             as_json=as_json,
@@ -885,6 +906,7 @@ def _record_generated_images_safe(
     saved_paths: list[Path],
     input_media_ids: list[str],
     operation_kind: str,
+    original_prompt: str | None = None,
 ) -> None:
     """Persist generation metadata; warn on DataStoreError (never abort success)."""
     try:
@@ -899,6 +921,7 @@ def _record_generated_images_safe(
             cloud_storage_infos=[cloud_info_from_path(path) for path in saved_paths],
             input_media_ids=input_media_ids,
             operation_kind=operation_kind,
+            original_prompt=original_prompt,
         )
     except DataStoreError as exc:
         first_image = images[0] if images else None
@@ -922,6 +945,7 @@ async def _run_t2i(
     transport: str | None = None,
     project_id: str | None = None,
     as_json: bool = False,
+    original_prompt: str | None = None,
 ) -> None:
     settings = get_settings()
     recorder = OperationRecorder.open(settings)
@@ -977,6 +1001,7 @@ async def _run_t2i(
                 saved_paths=saved_paths,
                 input_media_ids=[],
                 operation_kind="t2i",
+                original_prompt=original_prompt,
             )
     finally:
         recorder.close()
