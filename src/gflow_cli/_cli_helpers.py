@@ -37,7 +37,7 @@ from __future__ import annotations
 
 import sys
 from pathlib import Path
-from typing import TYPE_CHECKING, Any
+from typing import TYPE_CHECKING, Any, Literal
 
 import click
 import structlog
@@ -50,6 +50,7 @@ from gflow_cli.errors import (
     GFlowError,
 )
 from gflow_cli.observability import emit_error_event, emit_unhandled_event
+from gflow_cli.tools.runtime import apply_tool
 
 if TYPE_CHECKING:
     from collections.abc import Callable, Coroutine
@@ -71,32 +72,23 @@ __all__ = [
     "_handle_unhandled_error",
     "_make_provider_dir",
     "_resolve_profile",
-    "expand_prompt",
+    "apply_tool_option",
     "run_with_handlers",
     "safe_path_text",
 ]
 
 
 def expand_prompt(prompt: str, *, enabled: bool, quiet: bool = False) -> tuple[str, str | None]:
-    """Optionally expand *prompt* via the Gemini "Creative Director".
+    """Compatibility shim: kept for ``cli_video.py`` until Task 9 replaces ``--expand``.
 
-    Returns ``(prompt_to_send, original_prompt)``. ``original_prompt`` is the
-    user's untouched prompt when an expansion actually happened, and ``None``
-    when expansion was disabled, unconfigured, or failed — so the caller (and
-    the data-layer recorder) treats ``prompt_to_send`` as the original.
-
-    Set ``quiet=True`` (e.g. for ``--json`` output) to suppress the Rich notices
-    so they do not pollute a machine-readable stdout stream — the structlog
-    ``prompt_expanded`` / ``prompt_expander_*`` events still fire.
-
-    Never raises: a missing ``GFLOW_CLI_GEMINI_API_KEY`` or any API/network fault
-    degrades gracefully to the original prompt (the client logs the reason).
+    Delegates to ``gflow_cli.tools.expander.PromptExpander`` (module relocated in Task 5).
+    Returns ``(prompt_to_send, original_prompt|None)``. Never raises.
     """
     if not enabled:
         return prompt, None
 
-    from gflow_cli.api.prompt_expander import PromptExpander
     from gflow_cli.config import get_settings
+    from gflow_cli.tools.expander import PromptExpander
 
     settings = get_settings()
     result = PromptExpander.from_settings(settings).expand(prompt)
@@ -117,6 +109,55 @@ def expand_prompt(prompt: str, *, enabled: bool, quiet: bool = False) -> tuple[s
         _console.print("[cyan]Creative Director expanded your prompt:[/cyan]")
         _console.print(f"  [dim]{result.expanded}[/dim]")
     return result.expanded, result.original
+
+
+def _parse_tool_spec(spec: str) -> tuple[str, dict[str, str]]:
+    name, _, raw_opts = spec.partition(":")
+    options: dict[str, str] = {}
+    if raw_opts:
+        for pair in raw_opts.split(","):
+            k, _, v = pair.partition("=")
+            options[k.strip()] = v.strip()
+    return name.strip(), options
+
+
+def apply_tool_option(
+    text: str,
+    tool_specs: tuple[str, ...],
+    *,
+    category: Literal["image", "video"],
+    quiet: bool,
+) -> tuple[str, str | None]:
+    """Apply ``--tool name[:k=v]`` specs in sequence. Returns ``(prompt_to_send,
+    original_prompt|None)``. Unknown tool / wrong category → UsageError (pre-network).
+
+    ``apply_tool`` is imported at MODULE scope so tests can monkeypatch it.
+    """
+    from gflow_cli.errors import ConfigurationError
+    from gflow_cli.tools.registry import get_tool
+
+    if not tool_specs:
+        return text, None
+    original = text
+    current = text
+    changed = False
+    for spec_str in tool_specs:
+        name, options = _parse_tool_spec(spec_str)
+        try:
+            spec = get_tool(name)
+        except ConfigurationError as exc:
+            raise click.UsageError(str(exc)) from exc
+        if not spec.supports(category):
+            raise click.UsageError(f"tool {name!r} does not support {category} generation.")
+        result = apply_tool(spec, current, options)
+        if result.was_expanded:
+            changed = True
+            current = result.expanded
+            if not quiet:
+                _console.print(f"[cyan]{spec.title} applied:[/cyan] [dim]{current}[/dim]")
+        elif not quiet:
+            _console.print(f"[yellow]{spec.title} skipped[/yellow] (unavailable); using original.")
+    return current, (original if changed else None)
 
 
 def safe_path_text(path: Path) -> str:
