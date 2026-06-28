@@ -19,7 +19,7 @@ from gflow_cli import json_output
 from gflow_cli._cli_helpers import (
     _make_provider_dir,
     _resolve_profile,
-    expand_prompt,
+    apply_tool_option,
     run_with_handlers,
 )
 from gflow_cli.api.client import FlowApiClient
@@ -717,14 +717,14 @@ def video() -> None:
 )
 @click.option("--profile", default=None, help="Profile name (overrides default).")
 @click.option(
-    "-e",
-    "--expand",
-    "expand",
-    is_flag=True,
+    "-t",
+    "--tool",
+    "tool_specs",
+    multiple=True,
     help=(
-        "Expand the prompt with the Gemini 'Creative Director' (five-component "
-        "formula) before generating. Requires GFLOW_CLI_GEMINI_API_KEY; falls back "
-        "to the original prompt if unset or on error."
+        "Apply a prompt tool before generating (e.g. creative-director or "
+        "creative-director:style=cinematic). Requires GFLOW_CLI_GEMINI_API_KEY; "
+        "falls back to the original prompt if unset or on error."
     ),
 )
 @click.option(
@@ -747,14 +747,16 @@ def t2v(
     duration: str | None,
     count: int,
     profile: str | None,
-    expand: bool,
+    tool_specs: tuple[str, ...],
     out_dir: Path | None,
     as_json: bool,
 ) -> None:
     """Generate a video from PROMPT."""
     profile_name = _resolve_profile(profile)
     provider_dir = _make_provider_dir(profile_name)
-    prompt_to_send, original_prompt = expand_prompt(prompt, enabled=expand, quiet=as_json)
+    prompt_to_send, original_prompt = apply_tool_option(
+        prompt, tool_specs, category="video", quiet=as_json
+    )
     run_with_handlers(
         lambda: _run_t2v(
             profile_name=profile_name,
