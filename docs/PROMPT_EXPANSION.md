@@ -190,7 +190,7 @@ a recording failure warns and returns exit 0 — never a non-zero exit after a p
 
 ## 9. Relationship to the `expand_prompt` MCP prompt
 
-The MCP server also exposes an older **prompt template** named `expand_prompt`
+The MCP server also exposes an older, now-**deprecated** **prompt template** named `expand_prompt`
 ([`mcp/prompts.py`](../src/gflow_cli/mcp/prompts.py)). It predates the tools framework and overlaps
 functionally with `creative-director`, but they are **different surfaces**:
 
@@ -205,10 +205,12 @@ functionally with `creative-director`, but they are **different surfaces**:
 | Formula | Treats lighting as a 5th separate component. | Folds lighting into the Style component. |
 
 **Guidance:** prefer the `creative-director` tool (`--tool` / the MCP `tools` array) for actual
-generation — it is the maintained, provenance-recording, server-side path. The `expand_prompt`
-prompt remains available for MCP clients that want a structured-slot template to feed their own
-model and is left in place for backward compatibility; consolidating the two (or retiring the
-prompt) is tracked as a follow-up. See [TOOLS.md §8](TOOLS.md#8-mcp-exposure).
+generation — it is the maintained, provenance-recording, server-side path. `expand_prompt` is
+**deprecated** as of the unreleased line: its client-visible description carries a `[DEPRECATED]`
+marker pointing to the tool, and it is **slated for removal in a future major release**. It remains
+functional for now because some MCP clients surface prompts as user-pickable templates (a distinct
+UX from agent-invoked tools), but no new work should depend on it. See
+[TOOLS.md §8](TOOLS.md#8-mcp-exposure).
 
 ---
 

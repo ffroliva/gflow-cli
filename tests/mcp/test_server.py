@@ -366,6 +366,18 @@ class TestMcpPrompts:
         assert "Creative Director" in result
 
     @pytest.mark.asyncio
+    async def test_expand_prompt_is_marked_deprecated(self) -> None:
+        """The client-visible description (docstring) must flag deprecation and
+        point to the creative-director tool, so MCP clients steer to the
+        maintained surface. Functionality is retained for backward compatibility."""
+        from gflow_cli.mcp.prompts import expand_prompt
+
+        doc = expand_prompt.__doc__ or ""
+        first_line = doc.lstrip().splitlines()[0]
+        assert "DEPRECATED" in first_line
+        assert "creative-director" in doc
+
+    @pytest.mark.asyncio
     async def test_expand_prompt_with_all_params(self) -> None:
         """expand_prompt must include all provided parameters."""
         from gflow_cli.mcp.prompts import expand_prompt

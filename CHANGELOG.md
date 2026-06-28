@@ -35,6 +35,15 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
     `gflow_generate_image` / `gflow_generate_video`, validated and adapted to the CLI
     `--tool` form.
 
+### Deprecated
+
+- **`expand_prompt` MCP prompt**: superseded by the `creative-director` tool, which performs the
+  rewrite server-side (calls Gemini, strips banned keywords, supports domain styles, records
+  provenance). The prompt still works and now carries a `[DEPRECATED]` marker in its
+  client-visible description; it is slated for removal in a future major release. Use
+  `gflow tools run creative-director` / `--tool` (CLI) or `gflow_list_tools` + the `tools` array
+  param (MCP) instead.
+
 ## [0.21.0] — 2026-06-26
 
 ### Added
