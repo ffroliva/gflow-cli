@@ -274,6 +274,9 @@ class Settings(BaseSettings):
     def config_file(self) -> Path:
         return paths.config_file(self.home)
 
+    def user_tools_dir(self) -> Path:
+        return paths.user_tools_dir(self.home)
+
 
 @lru_cache(maxsize=1)
 def get_settings() -> Settings:
