@@ -34,6 +34,10 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   - MCP parity: `gflow_list_tools` tool and a `tools` array parameter (`[{name, options}]`) on
     `gflow_generate_image` / `gflow_generate_video`, validated and adapted to the CLI
     `--tool` form.
+  - **"My Tools"**: drop your own tool TOMLs into `<GFLOW_CLI_HOME>/tools/*.toml` and they are
+    registered automatically — listed by `gflow tools list`, usable via `--tool`, and exposed over
+    MCP, just like built-ins. A user tool may override a built-in of the same name (logged via
+    `tool_user_override`); a malformed user TOML fails loud. See [docs/TOOLS.md](docs/TOOLS.md).
 
 ### Deprecated
 

@@ -69,6 +69,11 @@ def database_path(home: Path) -> Path:
     return home / "gflow.db"
 
 
+def user_tools_dir(home: Path) -> Path:
+    """Where user-authored ("My Tools") tool TOMLs live, under GFLOW_CLI_HOME."""
+    return home / "tools"
+
+
 def validate_job_id(job_id: str) -> str:
     if not _SAFE_ID_RE.match(job_id):
         msg = f"Unsafe job_id returned by API: {job_id!r}"

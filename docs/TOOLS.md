@@ -218,7 +218,9 @@ Creative Director specifics.
 
 ---
 
-## 7. Adding a new built-in tool
+## 7. Adding a tool
+
+### Built-in tools
 
 1. Write `src/gflow_cli/tools/builtin/<name>.toml` following the schema in §5.
 2. That's it — the loader auto-discovers every `*.toml` in the `builtin/` package via
@@ -232,12 +234,23 @@ Creative Director specifics.
 
 The registry is built once and memoized (`@lru_cache`), mirroring `config.get_settings`.
 
-### Dormant "My Tools" seam
+### "My Tools" — user-authored tools
 
-`loader.load_user_tools(config_dir)` exists but is **not** wired into the registry this cycle. It
-is the planted seam for a future user-authored **My Tools** directory (scan + override/merge of
-TOMLs from the config dir). Activating it is a single call site; until then, only packaged
-built-ins are registered.
+You can add your own tools without touching the package: drop a TOML following the §5 schema into
+**`<GFLOW_CLI_HOME>/tools/*.toml`** (`GFLOW_CLI_HOME` defaults per OS — see
+[CONFIGURATION.md](CONFIGURATION.md)). At startup the registry loads the packaged built-ins first,
+then layers your tools on top:
+
+- A user tool with a **new** name is registered alongside the built-ins and appears in
+  `gflow tools list`, `--tool`, and the MCP surface immediately.
+- A user tool whose name **matches a built-in** overrides it (your customization wins) — the
+  shadow is logged (`tool_user_override`) so it is never silent. This lets you, e.g., tweak
+  `creative-director`'s `system_template` or styles by shipping your own `creative-director.toml`.
+- A malformed user TOML **fails loud** (`ConfigurationError`), exactly like a malformed built-in —
+  a typo in your tool won't be silently skipped.
+
+There is no separate enable flag; presence of the file is the activation. (This is the "My Tools"
+analogue of Flow's Tools menu.)
 
 ---
 
