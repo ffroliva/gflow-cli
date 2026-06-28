@@ -176,8 +176,9 @@ Options:
                             consistency (repeatable; must live in --project).
                             Single-prompt only.
   --reference-entity-name N Display name paired with --reference-entity.
-  -e, --expand              Expand the prompt with the Gemini "Creative
-                            Director" before generating. Single-prompt only.
+  -t, --tool NAME[:k=v]     Apply a prompt tool before generating, e.g.
+                            `creative-director:style=cinema`. Repeatable; applied
+                            per prompt on multi-prompt/batch. See "Prompt tools".
   --profile NAME            Profile name (overrides default).
 ```
 
@@ -202,22 +203,30 @@ Options:
 - `--continue-on-error` is default; `--fail-fast` stops after the first failed
   prompt.
 
-**Prompt expansion (`-e` / `--expand`).**
+**Prompt tools (`-t` / `--tool`).**
 
-Rewrites a terse prompt into a richer one using Google's five-component formula
-(Subject + Action + Context/Location + Composition/Camera + Style) via the public
-Gemini API before generating. Single-prompt only.
+A *tool* is a named, single-purpose transform applied to your prompt before generating —
+the first built-in is `creative-director`, which rewrites a terse prompt into a richer one
+using Google's five-component formula (Subject + Action + Context/Location +
+Composition/Camera + Style) via the public Gemini API. `-t/--tool` is **repeatable** and
+works on every generation command (`image t2i`/`i2i`/`batch`, `video t2v`/`i2v`/`r2v`/`chain`);
+on multi-prompt/batch it is applied per prompt.
 
 - Requires `GFLOW_CLI_GEMINI_API_KEY` ([get one](https://aistudio.google.com/apikey));
   optionally `GFLOW_CLI_GEMINI_MODEL` (default `gemini-2.5-flash`).
 - Graceful: if the key is unset or the API errors, gflow prints a notice and
-  generates from your **original** prompt — the run never fails because of expansion.
+  generates from your **original** prompt — the run never fails because of a tool
+  (each call is bounded by an overall ~60s wall-clock budget).
 - The local catalog records **both** the original prompt and the submitted
-  expansion (the expansion is withheld under `GFLOW_CLI_HISTORY_PROMPTS=redacted`).
+  expansion (withheld under `GFLOW_CLI_HISTORY_PROMPTS=redacted`), plus a
+  `metadata_json.tool` provenance descriptor.
+- Discover and preview tools with `gflow tools list` / `show` / `run` (see the
+  **`gflow tools`** section below). Full reference: [TOOLS.md](TOOLS.md) and
+  [PROMPT_EXPANSION.md](PROMPT_EXPANSION.md).
 
 ```bash
-# Expand "cat in space" into a detailed prompt, then generate
-gflow image t2i "cat in space" -e
+# Rewrite "cat in space" into a detailed prompt with the cinema style, then generate
+gflow image t2i "cat in space" --tool creative-director:style=cinema
 ```
 
 **Output paths.**
@@ -429,19 +438,19 @@ All prompts in a batch share one Flow project. The editor is opened once; each p
 Generate a video from a text prompt only.
 
 ```text
-gflow video t2v PROMPT [--model] [--duration] [--count] [--aspect] [--profile] [-e/--expand] [--out-dir]
+gflow video t2v PROMPT [--model] [--duration] [--count] [--aspect] [--profile] [-t/--tool] [--out-dir]
 ```
 
 ```bash
 gflow video t2v "Slow cinematic push-in toward a candle flame"
 gflow video t2v "Aerial shot of a coastline at sunset" --aspect 16:9 --out-dir ./out
 gflow video t2v "A neon city timelapse" --model omni-flash --duration 10 --count 2
-# Expand the prompt via the Gemini "Creative Director" before generating
-gflow video t2v "a dog surfing" -e
+# Apply the creative-director tool (cinematic style) before generating
+gflow video t2v "a dog surfing" --tool creative-director:style=cinematic
 ```
 
-`-e` / `--expand` rewrites the prompt with Gemini before generating — see
-[prompt expansion](#gflow-image-t2i) under `image t2i` for the full contract
+`-t` / `--tool` applies a prompt tool before generating — see
+[prompt tools](#gflow-image-t2i) under `image t2i` for the full contract
 (requires `GFLOW_CLI_GEMINI_API_KEY`; degrades gracefully to the original prompt).
 
 ## `gflow video i2v`
@@ -619,6 +628,35 @@ gflow video chain story.jsonl --resume-from 1f2e3d4c-...
 # Seed 150 ms before EOF to dodge a fade-to-black final frame
 gflow video chain story.jsonl --seed-offset 150 --yes
 ```
+
+## `gflow tools`
+
+Discover and run **prompt tools** — named, single-purpose transforms applied to a prompt
+before generation. The first built-in is `creative-director` (the Gemini "Creative Director").
+Apply a tool inline on any generation command with `-t/--tool` (see [prompt tools](#gflow-image-t2i)),
+or use this group standalone. Full reference: [TOOLS.md](TOOLS.md) · [PROMPT_EXPANSION.md](PROMPT_EXPANSION.md).
+
+```text
+gflow tools list [--json]
+gflow tools show NAME [--json]
+gflow tools run NAME "INPUT" [--style MODE] [--json]
+```
+
+- **`list`** — registered tools (name, title, category, description). Includes your own
+  "My Tools" TOMLs from `<GFLOW_CLI_HOME>/tools/*.toml`.
+- **`show NAME`** — full spec incl. required env and available `--style` modes.
+- **`run NAME "INPUT"`** — run the tool standalone (no generation, no credits); pipeable.
+  Emits `{name, original, expanded, was_expanded}` with `--json`.
+
+```bash
+gflow tools list
+gflow tools show creative-director
+# Preview an expansion (needs GFLOW_CLI_GEMINI_API_KEY); never fatal
+gflow tools run creative-director "a cat on a couch" --style cinema --json
+```
+
+To author your own tool, drop a TOML in `<GFLOW_CLI_HOME>/tools/` — see
+[TOOLS.md § My Tools](TOOLS.md).
 
 ## `gflow scene`
 
