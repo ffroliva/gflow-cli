@@ -127,6 +127,7 @@ class PromptExpander:
         api_key: str | None,
         *,
         model: str = DEFAULT_MODEL,
+        system_instruction: str | None = None,
         max_retries: int = 3,
         timeout: float = 30.0,
         max_input_chars: int = DEFAULT_MAX_INPUT_CHARS,
@@ -136,6 +137,7 @@ class PromptExpander:
     ) -> None:
         self._api_key = api_key
         self._model = model
+        self._instruction = system_instruction or _SYSTEM_INSTRUCTION
         self._max_retries = max_retries
         self._timeout = timeout
         self._max_input_chars = max_input_chars
@@ -218,7 +220,7 @@ class PromptExpander:
 
     def _build_payload(self, prompt: str) -> dict[str, object]:
         return {
-            "contents": [{"parts": [{"text": _SYSTEM_INSTRUCTION + prompt}]}],
+            "contents": [{"parts": [{"text": self._instruction + prompt}]}],
             "generationConfig": {"temperature": 0.7, "maxOutputTokens": 1024},
         }
 
