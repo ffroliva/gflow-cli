@@ -124,14 +124,18 @@ def apply_tool_option(
                 raise click.UsageError(
                     f"tool {name!r}: unknown option(s) {unknown_keys!r}; valid options: {valid!r}"
                 )
-        # Validate the style value when provided — must match a declared domain.
+        # Validate the style value when provided — must match a declared domain
+        # for THIS generation category (an image style is invalid on video, etc).
         style_val = options.get("style")
-        if style_val is not None and spec.config.domain(style_val) is None:
-            valid_styles = sorted(d.name for d in spec.config.domains)
-            raise click.UsageError(
-                f"tool {name!r}: unknown style {style_val!r}; valid styles: {valid_styles!r}"
+        if style_val is not None and spec.config.domain(style_val, category) is None:
+            valid_styles = sorted(
+                d.name for d in spec.config.domains if d.category in (category, "both")
             )
-        result = apply_tool(spec, current, options)
+            raise click.UsageError(
+                f"tool {name!r}: unknown {category} style {style_val!r}; "
+                f"valid {category} styles: {valid_styles!r}"
+            )
+        result = apply_tool(spec, current, options, category=category)
         if result.was_expanded:
             changed = True
             current = result.expanded

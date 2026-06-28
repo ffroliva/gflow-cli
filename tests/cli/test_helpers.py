@@ -248,12 +248,31 @@ def test_apply_tool_option_unknown_style_raises_usage_error() -> None:
 
     from gflow_cli._cli_helpers import apply_tool_option
 
-    with pytest.raises(click.UsageError, match="unknown style"):
+    with pytest.raises(click.UsageError, match="unknown image style"):
         apply_tool_option(
             "cat",
             ("creative-director:style=cinmaaatic",),
             category="image",
             quiet=True,
+        )
+
+
+def test_apply_tool_option_rejects_cross_category_style() -> None:
+    """An image generation must reject a video-only style and vice versa
+    (category-gated domain resolution, review fold-in)."""
+    import click
+
+    from gflow_cli._cli_helpers import apply_tool_option
+
+    # "cinematic" is a video domain — invalid on an image command.
+    with pytest.raises(click.UsageError, match="unknown image style 'cinematic'"):
+        apply_tool_option(
+            "cat", ("creative-director:style=cinematic",), category="image", quiet=True
+        )
+    # "cinema" is an image domain — invalid on a video command.
+    with pytest.raises(click.UsageError, match="unknown video style 'cinema'"):
+        apply_tool_option(
+            "cat", ("creative-director:style=cinema",), category="video", quiet=True
         )
 
 

@@ -55,7 +55,15 @@ def show_tool(name: str) -> None:
     if spec.requires_env:
         console.print(f"Requires env: {', '.join(spec.requires_env)}")
     if spec.config.domains:
-        console.print("Styles: " + ", ".join(d.name for d in spec.config.domains))
+        # A style name can exist for both image and video (e.g. "product"); show
+        # the category in parentheses so the two are distinguishable.
+        console.print(
+            "Styles: "
+            + ", ".join(
+                d.name if d.category == "both" else f"{d.name} ({d.category})"
+                for d in spec.config.domains
+            )
+        )
 
 
 @tools.command("run")
