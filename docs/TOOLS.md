@@ -266,11 +266,13 @@ than raising.
 
 ### Relationship to the `expand_prompt` MCP *prompt*
 
-The MCP server also registers an older `expand_prompt` **prompt template** (`mcp/prompts.py`).
-That is a distinct surface from the `creative-director` **tool**: a prompt template returns text
-for the *client's* model to expand (no API call, no banned-keyword stripping, no styles, no
-provenance), whereas the tool runs server-side and records provenance. The two overlap
-functionally; see [PROMPT_EXPANSION.md §9](PROMPT_EXPANSION.md#9-relationship-to-the-expand_prompt-mcp-prompt)
+The MCP server also registers an older `expand_prompt` **prompt template** (`mcp/prompts.py`),
+now **deprecated** in favor of this tool. That is a distinct surface from the `creative-director`
+**tool**: a prompt template returns text for the *client's* model to expand (no API call, no
+banned-keyword stripping, no styles, no provenance), whereas the tool runs server-side and records
+provenance. `expand_prompt` carries a `[DEPRECATED]` marker in its client-visible description and
+is slated for removal in a future major release; see
+[PROMPT_EXPANSION.md §9](PROMPT_EXPANSION.md#9-relationship-to-the-expand_prompt-mcp-prompt)
 for the full comparison and migration guidance.
 
 ---
