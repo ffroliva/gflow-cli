@@ -27,6 +27,9 @@ $env:GFLOW_CLI_HOME = "D:\gflow-cli"                                # PowerShell
 ```
 
 See [AUTHENTICATION § Session storage](AUTHENTICATION.md#session-storage) for the full layout.
+`$GFLOW_CLI_HOME` also holds `config.toml`, the SQLite catalog (`gflow.db`), and — if you
+create it — a `tools/` directory of user-authored "My Tools" TOMLs
+(`<GFLOW_CLI_HOME>/tools/*.toml`, auto-loaded; see [TOOLS.md § My Tools](TOOLS.md)).
 
 ### `GFLOW_CLI_PROFILE`
 
@@ -112,19 +115,22 @@ Deep setup, verification, and security notes live in
 
 ### `GFLOW_CLI_GEMINI_API_KEY`
 
-**What:** Public Gemini API key. Used by the **prompt-expansion** "Creative Director"
-(`-e` / `--expand` on `image t2i` and `video t2v`) and, in future, by the official
-Veo 3.1 SDK.
-**Required when:** you pass `-e` / `--expand`, or `GFLOW_CLI_PROVIDER=official`.
+**What:** Public Gemini API key. Used by the **`creative-director`** prompt tool
+(`--tool creative-director` / `gflow tools run creative-director`, see
+[TOOLS.md](TOOLS.md) and [PROMPT_EXPANSION.md](PROMPT_EXPANSION.md)) and, in future, by the
+official Veo 3.1 SDK.
+**Required when:** you apply the `creative-director` tool (via `--tool` on any generation
+command, or `gflow tools run`), or `GFLOW_CLI_PROVIDER=official`.
 **Default:** unset
-**Behavior when unset:** `--expand` is a no-op — gflow logs an `INFO` notice and generates
+**Behavior when unset:** the tool is a no-op — gflow logs an `INFO` notice and generates
 from your original prompt (it never fails the run). API errors (rate limit, network) fall
-back the same way after a short exponential-backoff retry.
+back the same way after a short exponential-backoff retry, bounded by an overall ~60s
+wall-clock budget per call.
 **Get one:** <https://aistudio.google.com/apikey>
 
 ### `GFLOW_CLI_GEMINI_MODEL`
 
-**What:** Gemini model used for prompt expansion (`-e` / `--expand`).
+**What:** Gemini model used by the `creative-director` prompt tool.
 **Default:** `gemini-2.5-flash`
 **Note:** Override to select a newer Flash revision without upgrading gflow-cli, e.g.
 `GFLOW_CLI_GEMINI_MODEL=gemini-2.5-flash-lite`.
@@ -190,6 +196,11 @@ Use this when you want the DB on a different volume, outside `GFLOW_CLI_HOME`, o
 - `redacted` — only the SHA-256 hash of the prompt is stored; the prompt text itself is never written to disk. Use this when prompts may contain sensitive content.
 
 **Default:** `store`
+
+**Tool provenance:** when a prompt tool (e.g. `creative-director`) rewrites a prompt, `store`
+mode also records the submitted `expanded_prompt` and a full `metadata_json.tool` descriptor;
+`redacted` withholds the expanded prompt and reduces the descriptor to
+`{name, version, params_hash, config_hash}`. See [PROMPT_EXPANSION.md](PROMPT_EXPANSION.md).
 
 ```bash
 GFLOW_CLI_HISTORY_PROMPTS=redacted gflow image t2i "confidential brief"

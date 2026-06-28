@@ -144,9 +144,13 @@ stdlib-only (`urllib`) and bounded. `expand()` returns the original prompt with
 
 Retryable statuses (`429, 500, 502, 503, 504`) are retried with exponential backoff (default 3
 attempts, base delay 1s, doubling); **`401` / `403` fail fast** (and still degrade to the
-original). Input is truncated to `max_input_chars` (4000) and output to `max_output_chars` (3500);
-a single layer of wrapping quotes is stripped from the response. The net guarantee: **a tool can
-never abort a generation** — the worst case is "your prompt went through unchanged."
+original). Each attempt has a 20s socket timeout, and the whole call is bounded by an **overall
+~60s wall-clock budget** (`max_total_seconds`): retries stop once the budget is spent and each
+attempt's timeout is clamped to the remaining budget, so sustained rate limiting can never stall a
+batch for the full timeout×retries schedule. (Both bounds are fixed defaults, not env-tunable.)
+Input is truncated to `max_input_chars` (4000) and output to `max_output_chars` (3500); a single
+layer of wrapping quotes is stripped from the response. The net guarantee: **a tool can never
+abort a generation** — the worst case is "your prompt went through unchanged."
 
 ---
 
