@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 import hashlib
+import json
 import mimetypes
 import uuid
 from datetime import UTC, datetime
@@ -18,7 +19,7 @@ from gflow_cli.data.models import (
     SceneClipRecord,
     SceneRecord,
 )
-from gflow_cli.data.redaction import PromptMode, prompt_fields, redact_metadata
+from gflow_cli.data.redaction import PromptFields, PromptMode, prompt_fields, redact_metadata
 from gflow_cli.data.repository import DataRepository
 from gflow_cli.data.store import DataStore
 
@@ -31,6 +32,10 @@ if TYPE_CHECKING:
     from gflow_cli.api.video import GenerateVideoRequest, VideoResult, VideoStarted
     from gflow_cli.config import Settings
     from gflow_cli.storage import CloudStorageInfo
+    from gflow_cli.tools.invocation import AppliedTool
+
+    # Both generation requests carry the tool-provenance fields the recorder reads.
+    _ToolableRequest = GenerateImageRequest | GenerateVideoRequest
 
 
 def _new_id() -> str:
@@ -71,6 +76,64 @@ class OperationRecorder:
 
     def close(self) -> None:
         self.repository.store.close()
+
+    def _resolve_prompts(
+        self,
+        request: _ToolableRequest,
+    ) -> tuple[PromptFields, str | None]:
+        """Resolve the recorded prompt fields and the expansion-to-store.
+
+        ``request.prompt`` is what was actually submitted to Flow. When
+        ``request.original_prompt`` is set (i.e. a ``--tool`` rewrote the
+        prompt), the user's *original* prompt is recorded as the operation
+        prompt and the submitted prompt is persisted separately as
+        ``expanded_prompt`` — withheld when ``history_prompts='redacted'``,
+        exactly like the original prompt.
+
+        Reading both off the request (rather than a separate ``original_prompt``
+        kwarg) keeps the recorded original in lockstep with the submitted prompt
+        — they can no longer drift apart at the call site (PR2 §8 / prior-review
+        silent-misrecord hazard).
+        """
+        sent_prompt = request.prompt
+        original_prompt = request.original_prompt
+        recorded = original_prompt if original_prompt is not None else sent_prompt
+        pf = prompt_fields(recorded, mode=self.prompt_mode)
+        expanded = (
+            sent_prompt if (original_prompt is not None and self.prompt_mode == "store") else None
+        )
+        return pf, expanded
+
+    def _tool_metadata(self, tool: AppliedTool | None) -> dict[str, object] | None:
+        """Build the redaction-aware ``metadata_json.tool`` payload for a
+        generation operation, or ``None`` when no tool was applied.
+
+        ``redact_metadata`` only redacts by key-name / sensitive-URL markers, so
+        a free-text option (e.g. ``params.style``) would pass through verbatim.
+        We therefore branch on :class:`PromptMode` here: in ``redacted`` mode we
+        store only ``{name, version, params_hash, config_hash}`` — never the raw
+        ``model``/``params`` — reusing :func:`prompt_fields`' sha256 for the
+        params digest (council D7).
+        """
+        if tool is None:
+            return None
+        params = tool.params_dict()
+        if self.prompt_mode == "redacted":
+            params_blob = json.dumps(params, sort_keys=True)
+            params_hash = prompt_fields(params_blob, mode="store").prompt_hash
+            return {
+                "name": tool.name,
+                "version": tool.version,
+                "params_hash": params_hash,
+                "config_hash": tool.config_hash,
+            }
+        return {
+            "name": tool.name,
+            "version": tool.version,
+            "model": tool.model,
+            "params": params,
+            "config_hash": tool.config_hash,
+        }
 
     # ------------------------------------------------------------------
     # Image upload
@@ -248,7 +311,7 @@ class OperationRecorder:
             ),
         )
 
-        pf = prompt_fields(request.prompt, mode=self.prompt_mode)
+        pf, expanded_prompt = self._resolve_prompts(request)
         op_id = _new_id()
         repo.insert_operation(
             OperationRecord(
@@ -267,6 +330,7 @@ class OperationRecorder:
                 aspect_ratio=request.aspect.value,
                 error_type=None,
                 error_detail=None,
+                expanded_prompt=expanded_prompt,
             ),
         )
         # Image generation is recorded AFTER all downloads complete, so the
@@ -274,6 +338,9 @@ class OperationRecorder:
         # downstream queries like "SELECT * FROM operations WHERE completed_at
         # IS NULL" don't surface successful runs.
         repo.update_operation_status(op_id, OperationStatus.SUCCEEDED, _now_utc_iso(), None, None)
+        tool_meta = self._tool_metadata(request.tool)
+        if tool_meta is not None:
+            repo.set_operation_metadata(op_id, {"tool": tool_meta})
 
         # Link input assets (I2I seed images)
         for i, media_id in enumerate(input_media_ids):
@@ -436,7 +503,7 @@ class OperationRecorder:
             ),
         )
 
-        pf = prompt_fields(request.prompt, mode=self.prompt_mode)
+        pf, expanded_prompt = self._resolve_prompts(request)
         op_id = _new_id()
         repo.insert_operation(
             OperationRecord(
@@ -455,9 +522,13 @@ class OperationRecorder:
                 aspect_ratio=request.aspect.value,
                 error_type=None,
                 error_detail=None,
+                expanded_prompt=expanded_prompt,
             ),
         )
         repo.link_operation_asset(op_id, asset_id, OperationAssetRole.OUTPUT, 0)
+        tool_meta = self._tool_metadata(request.tool)
+        if tool_meta is not None:
+            repo.set_operation_metadata(op_id, {"tool": tool_meta})
 
     def _insert_fallback_video_operation(
         self,
@@ -469,7 +540,7 @@ class OperationRecorder:
         result: VideoResult,
     ) -> None:
         """Insert a completed video operation when on_started failed or was skipped."""
-        pf = prompt_fields(request.prompt, mode=self.prompt_mode)
+        pf, expanded_prompt = self._resolve_prompts(request)
         op_id = _new_id()
         repo.insert_operation(
             OperationRecord(
@@ -488,11 +559,15 @@ class OperationRecorder:
                 aspect_ratio=request.aspect.value,
                 error_type=None,
                 error_detail=None,
+                expanded_prompt=expanded_prompt,
             ),
         )
         asset_lookup = repo.get_asset_by_flow_media_id(profile_name, flow_media_id)
         if asset_lookup is not None:
             repo.link_operation_asset(op_id, asset_lookup.id, OperationAssetRole.OUTPUT, 0)
+        tool_meta = self._tool_metadata(request.tool)
+        if tool_meta is not None:
+            repo.set_operation_metadata(op_id, {"tool": tool_meta})
 
     def _persist_completed_video_file(
         self,

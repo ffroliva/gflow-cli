@@ -56,6 +56,7 @@ if TYPE_CHECKING:
 
     from gflow_cli.api.client import FlowApiClient
     from gflow_cli.api.video import VideoResult, VideoStartedCallback
+    from gflow_cli.tools.invocation import AppliedTool
 
 __all__ = [
     "ChainLinkResult",
@@ -85,6 +86,10 @@ class ChainLinkSpec:
     model: VideoModel | None = None
     duration: int | None = None
     aspect: Aspect | None = None
+    # Tool provenance — set when a ``--tool`` rewrote this link's prompt (PR2).
+    # ``prompt`` is then the rewritten text; these are recorded, not sent.
+    original_prompt: str | None = None
+    tool: AppliedTool | None = None
 
 
 @dataclass(frozen=True)
@@ -170,6 +175,8 @@ def _build_link_request(
         model=link_model,
         duration=spec.duration,
         start_image=prev_frame if is_i2v else None,
+        original_prompt=spec.original_prompt,
+        tool=spec.tool,
     )
 
 

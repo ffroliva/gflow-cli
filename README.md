@@ -23,6 +23,7 @@ You pay for Google AI Ultra or Pro, you have Veo credits, and you run real batch
 
 - **Batch generation.** Loop prompts straight from the shell: `for p in $(cat prompts.txt); do gflow image t2i "$p"; done`. Image batching plus `gflow video t2v` / `i2v` / `r2v` all ship today.
 - **Consistent subjects.** `gflow character create` mints a Flow Character (face and body reference) so the same person appears from one generation to the next.
+- **Prompt tools.** `--tool creative-director` rewrites a terse prompt into a vivid one (Google's 5-component formula) before generating — on any command. Bring your own with [My Tools](docs/TOOLS.md).
 - **Pipelines.** Wire Veo into your content automation, AI-video stack, or batch experiments.
 - **Terminal-native.** After one `gflow auth login`, you stay in the shell. No clicking through dialogs.
 

@@ -138,6 +138,53 @@ def test_t2i_rejects_multiple_prompt_sources_before_profile_resolution(tmp_path:
     resolve_profile.assert_not_called()
 
 
+def test_t2i_applies_tool_per_prompt_in_batch(monkeypatch: pytest.MonkeyPatch) -> None:
+    """PR2 removed the single-prompt --tool guard: a multi-prompt batch now
+    applies the tool to each prompt and carries the provenance per item."""
+    from gflow_cli import cli_image
+
+    calls: list[str] = []
+
+    def fake_apply(text, tool_specs, *, category, quiet):  # noqa: ANN001, ANN202
+        calls.append(text)
+        return f"EXPANDED:{text}", text, None
+
+    captured: dict[str, object] = {}
+
+    def fake_exec(batch_prompts, *args, **kwargs):  # noqa: ANN001, ANN002, ANN003, ANN202
+        captured["items"] = batch_prompts
+
+    monkeypatch.setattr(cli_image, "apply_tool_option", fake_apply)
+    monkeypatch.setattr(cli_image, "_execute_t2i_batch", fake_exec)
+
+    result = _invoke_t2i(["one", "two", "--tool", "creative-director"])
+
+    assert result.exit_code == 0
+    # The tool is applied once per prompt (no single-prompt rejection).
+    assert calls == ["one", "two"]
+    items = captured["items"]
+    assert [it.text for it in items] == ["EXPANDED:one", "EXPANDED:two"]  # type: ignore[union-attr]
+    assert [it.original_prompt for it in items] == ["one", "two"]  # type: ignore[union-attr]
+
+
+def test_apply_tools_to_batch_prompts_unit(monkeypatch: pytest.MonkeyPatch) -> None:
+    from gflow_cli import cli_image
+    from gflow_cli.image_batch import BatchPromptItem
+
+    def fake_apply(text, tool_specs, *, category, quiet):  # noqa: ANN001, ANN202
+        assert category == "image"
+        return f"X:{text}", text, "TOOLOBJ"
+
+    monkeypatch.setattr(cli_image, "apply_tool_option", fake_apply)
+    items = (BatchPromptItem(text="a", index=0), BatchPromptItem(text="b", index=1))
+    out = cli_image._apply_tools_to_batch_prompts(items, ("creative-director",))
+    assert [i.text for i in out] == ["X:a", "X:b"]
+    assert [i.original_prompt for i in out] == ["a", "b"]
+    assert all(i.tool == "TOOLOBJ" for i in out)
+    # index/aspect/model preserved
+    assert [i.index for i in out] == [0, 1]
+
+
 def test_t2i_rejects_empty_stdin_before_profile_resolution() -> None:
     from gflow_cli.cli import main
 

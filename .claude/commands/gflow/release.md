@@ -198,8 +198,10 @@ gh pr create --base main --head chore/release-v<NEW_VERSION> \
   --title "chore(release): v<NEW_VERSION>"
 ```
 
-Wait for PR CI to go green (`gh pr checks <N> --watch`), then merge with a **merge
-commit** — never squash:
+Wait for PR CI to go green (`gh pr checks <N> --watch`). **The `SonarCloud analysis`
+check must be green (gate passed) — not just the test matrix.** If it is red or you
+want the verdict, run `/gflow:sonar <N>` and drive it to zero before merging. Then
+merge with a **merge commit** — never squash:
 
 ```bash
 gh pr merge <N> --merge --delete-branch

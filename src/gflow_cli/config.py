@@ -173,7 +173,16 @@ class Settings(BaseSettings):
     provider: Provider = Provider.FLOW
     gemini_api_key: str | None = Field(
         default=None,
-        description="Required when provider=official (v0.3+).",
+        description=(
+            "Public Gemini API key. Enables prompt tools (--tool/-t) and, "
+            "in future, provider=official. Override via GFLOW_CLI_GEMINI_API_KEY."
+        ),
+    )
+    gemini_model: str = Field(
+        default="gemini-2.5-flash",
+        description=(
+            "Gemini model used for prompt tools (--tool/-t). Override via GFLOW_CLI_GEMINI_MODEL."
+        ),
     )
 
     # --- transport --------------------------------------------------------
@@ -264,6 +273,9 @@ class Settings(BaseSettings):
 
     def config_file(self) -> Path:
         return paths.config_file(self.home)
+
+    def user_tools_dir(self) -> Path:
+        return paths.user_tools_dir(self.home)
 
 
 @lru_cache(maxsize=1)

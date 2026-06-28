@@ -25,7 +25,7 @@ class TestMcpToolListing:
     """Verify the server exposes the expected tools."""
 
     def test_server_has_expected_tools(self, mcp_server: Any) -> None:
-        """The server should expose at least 4 core tools."""
+        """The server should expose at least 5 core tools."""
         tools = mcp_server._tool_manager._tools
         tool_names = set(tools.keys())
         expected = {
@@ -33,28 +33,57 @@ class TestMcpToolListing:
             "gflow_generate_video",
             "gflow_list_projects",
             "gflow_list_characters",
+            "gflow_list_tools",
         }
         assert expected.issubset(tool_names), (
             f"Missing tools: {expected - tool_names}. Found: {tool_names}"
         )
 
     def test_generate_image_tool_has_required_params(self, mcp_server: Any) -> None:
-        """gflow_generate_image should accept prompt, model, aspect, count, seed, profile."""
+        """gflow_generate_image should accept prompt + model/aspect/count/seed/tools/profile."""
         tool = mcp_server._tool_manager._tools["gflow_generate_image"]
         schema = tool.parameters
         required_fields = {"prompt"}
         assert required_fields.issubset(set(schema.get("required", []))), (
             f"Missing required fields: {required_fields}"
         )
+        # CLI/MCP symmetry (AGENTS.md): the CLI --tool option mirrors to a `tools` param.
+        assert "tools" in schema.get("properties", {}), (
+            "MCP image tool missing 'tools' (CLI parity)"
+        )
 
     def test_generate_video_tool_has_required_params(self, mcp_server: Any) -> None:
-        """gflow_generate_video should accept prompt, mode, aspect, image_path, profile."""
+        """gflow_generate_video should accept prompt, mode, aspect, image_path, tools, profile."""
         tool = mcp_server._tool_manager._tools["gflow_generate_video"]
         schema = tool.parameters
         required_fields = {"prompt"}
         assert required_fields.issubset(set(schema.get("required", []))), (
             f"Missing required fields: {required_fields}"
         )
+        # CLI/MCP symmetry (AGENTS.md): the CLI --tool option mirrors to a `tools` param.
+        assert "tools" in schema.get("properties", {}), (
+            "MCP video tool missing 'tools' (CLI parity)"
+        )
+
+
+# ---------------------------------------------------------------------------
+# gflow_list_tools
+# ---------------------------------------------------------------------------
+
+
+class TestListTools:
+    def test_list_tools_registered(self, mcp_server: Any) -> None:
+        assert "gflow_list_tools" in mcp_server._tool_manager._tools
+
+    @pytest.mark.asyncio
+    async def test_list_tools_payload_shape(self) -> None:
+        from gflow_cli.mcp.tools import gflow_list_tools
+
+        payload = await gflow_list_tools()
+        names = {t["name"] for t in payload["tools"]}
+        assert "creative-director" in names
+        cd = next(t for t in payload["tools"] if t["name"] == "creative-director")
+        assert {"name", "title", "description", "category"} <= cd.keys()
 
 
 # ---------------------------------------------------------------------------
@@ -192,6 +221,38 @@ class TestToolExecution:
         assert result["params"]["mode"] == "t2v"
 
     @pytest.mark.asyncio
+    async def test_generate_image_adapts_tools_to_specs(self) -> None:
+        """A valid MCP `tools` array is adapted to CLI --tool specs in params."""
+        from gflow_cli.mcp.tools import gflow_generate_image
+
+        result = await gflow_generate_image(
+            prompt="a cat",
+            tools=[{"name": "creative-director", "options": {"style": "cinema"}}],
+        )
+        assert result["status"] == "pending"
+        assert result["params"]["tool_specs"] == ["creative-director:style=cinema"]
+
+    @pytest.mark.asyncio
+    async def test_generate_image_rejects_malformed_tools(self) -> None:
+        """A malformed `tools` item returns a clean invalid_tools error."""
+        from gflow_cli.mcp.tools import gflow_generate_image
+
+        result = await gflow_generate_image(prompt="a cat", tools=[{"options": {"style": "x"}}])
+        assert result["status"] == "invalid_tools"
+        assert "tools" in result["error"]
+
+    @pytest.mark.asyncio
+    async def test_generate_video_adapts_tools_to_specs(self) -> None:
+        from gflow_cli.mcp.tools import gflow_generate_video
+
+        result = await gflow_generate_video(
+            prompt="a dog",
+            tools=[{"name": "creative-director"}],
+        )
+        assert result["status"] == "pending"
+        assert result["params"]["tool_specs"] == ["creative-director"]
+
+    @pytest.mark.asyncio
     async def test_list_projects_returns_empty_list(self) -> None:
         """gflow_list_projects should return an empty list when no data."""
         from gflow_cli.mcp.tools import gflow_list_projects
@@ -303,6 +364,18 @@ class TestMcpPrompts:
         assert isinstance(result, str)
         assert "Subject: sunset over mountains" in result
         assert "Creative Director" in result
+
+    @pytest.mark.asyncio
+    async def test_expand_prompt_is_marked_deprecated(self) -> None:
+        """The client-visible description (docstring) must flag deprecation and
+        point to the creative-director tool, so MCP clients steer to the
+        maintained surface. Functionality is retained for backward compatibility."""
+        from gflow_cli.mcp.prompts import expand_prompt
+
+        doc = expand_prompt.__doc__ or ""
+        first_line = doc.lstrip().splitlines()[0]
+        assert "DEPRECATED" in first_line
+        assert "creative-director" in doc
 
     @pytest.mark.asyncio
     async def test_expand_prompt_with_all_params(self) -> None:

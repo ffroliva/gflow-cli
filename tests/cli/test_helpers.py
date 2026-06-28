@@ -156,3 +156,150 @@ def test_make_provider_dir_exits_when_profile_missing(
         assert excinfo.value.code == 2
     finally:
         reset_settings()
+
+
+def test_apply_tool_option_no_tools_is_identity() -> None:
+    from gflow_cli._cli_helpers import apply_tool_option
+
+    sent, original, applied = apply_tool_option("cat", (), category="image", quiet=True)
+    assert sent == "cat"
+    assert original is None
+    assert applied is None
+
+
+def test_apply_tool_option_unknown_tool_raises_usage_error() -> None:
+    import click
+    import pytest
+
+    from gflow_cli._cli_helpers import apply_tool_option
+
+    with pytest.raises(click.UsageError):
+        apply_tool_option("cat", ("nope",), category="image", quiet=True)
+
+
+def test_apply_tool_option_runs_creative_director(monkeypatch: pytest.MonkeyPatch) -> None:
+    from gflow_cli import _cli_helpers
+    from gflow_cli.tools.expander import ExpansionResult
+
+    monkeypatch.setattr(
+        _cli_helpers,
+        "apply_tool",
+        lambda spec, text, options, **kw: ExpansionResult(
+            original=text, expanded="EXPANDED", was_expanded=True
+        ),
+    )
+    sent, original, applied = _cli_helpers.apply_tool_option(
+        "cat", ("creative-director",), category="image", quiet=True
+    )
+    assert sent == "EXPANDED"
+    assert original == "cat"
+    # The applied-tool snapshot is built from the real spec (not apply_tool's
+    # monkeypatched output) for metadata_json.tool recording.
+    assert applied is not None
+    assert applied.name == "creative-director"
+    assert applied.version == "1"
+    assert len(applied.config_hash) == 64
+
+
+def test_apply_tool_option_wrong_category_raises(monkeypatch: pytest.MonkeyPatch) -> None:
+    import click
+    import pytest
+
+    from gflow_cli._cli_helpers import apply_tool_option
+    from gflow_cli.tools.spec import ToolConfig, ToolSpec
+
+    video_only = ToolSpec(
+        name="vid",
+        title="Vid",
+        description="d",
+        category="video",
+        version="1",
+        config=ToolConfig(system_template="t"),
+    )
+    # get_tool is imported function-locally, so patch the registry source.
+    monkeypatch.setattr("gflow_cli.tools.registry.get_tool", lambda name: video_only)
+    with pytest.raises(click.UsageError):
+        apply_tool_option("cat", ("vid",), category="image", quiet=True)
+
+
+def test_parse_tool_spec_handles_options() -> None:
+    from gflow_cli._cli_helpers import _parse_tool_spec
+
+    assert _parse_tool_spec("creative-director") == ("creative-director", {})
+    assert _parse_tool_spec("creative-director:style=cinema") == (
+        "creative-director",
+        {"style": "cinema"},
+    )
+    assert _parse_tool_spec("name:") == ("name", {})
+    assert _parse_tool_spec("name:a=1,b=2") == ("name", {"a": "1", "b": "2"})
+
+
+def test_apply_tool_option_unknown_option_key_raises_usage_error() -> None:
+    """An option key not declared in the tool's options_schema → UsageError."""
+    import click
+
+    from gflow_cli._cli_helpers import apply_tool_option
+
+    with pytest.raises(click.UsageError, match="unknown option"):
+        apply_tool_option(
+            "cat",
+            ("creative-director:unknown_key=foo",),
+            category="image",
+            quiet=True,
+        )
+
+
+def test_apply_tool_option_unknown_style_raises_usage_error() -> None:
+    """A style value that is not a declared domain → UsageError."""
+    import click
+
+    from gflow_cli._cli_helpers import apply_tool_option
+
+    with pytest.raises(click.UsageError, match="unknown image style"):
+        apply_tool_option(
+            "cat",
+            ("creative-director:style=cinmaaatic",),
+            category="image",
+            quiet=True,
+        )
+
+
+def test_apply_tool_option_rejects_cross_category_style() -> None:
+    """An image generation must reject a video-only style and vice versa
+    (category-gated domain resolution, review fold-in)."""
+    import click
+
+    from gflow_cli._cli_helpers import apply_tool_option
+
+    # "cinematic" is a video domain — invalid on an image command.
+    with pytest.raises(click.UsageError, match="unknown image style 'cinematic'"):
+        apply_tool_option(
+            "cat", ("creative-director:style=cinematic",), category="image", quiet=True
+        )
+    # "cinema" is an image domain — invalid on a video command.
+    with pytest.raises(click.UsageError, match="unknown video style 'cinema'"):
+        apply_tool_option("cat", ("creative-director:style=cinema",), category="video", quiet=True)
+
+
+def test_apply_tool_option_valid_style_does_not_raise(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    """A recognized style value must pass validation and reach apply_tool."""
+    from gflow_cli import _cli_helpers
+    from gflow_cli.tools.expander import ExpansionResult
+
+    monkeypatch.setattr(
+        _cli_helpers,
+        "apply_tool",
+        lambda spec, text, options, **kw: ExpansionResult(
+            original=text, expanded="EXPANDED", was_expanded=True
+        ),
+    )
+    sent, original, _applied = _cli_helpers.apply_tool_option(
+        "cat",
+        ("creative-director:style=cinema",),
+        category="image",
+        quiet=True,
+    )
+    assert sent == "EXPANDED"
+    assert original == "cat"
