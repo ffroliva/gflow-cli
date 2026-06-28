@@ -93,3 +93,6 @@ worktrees/
 # Understand Anything (local knowledge graph)
 .understand-anything/
 .worktrees
+
+# Subagent-driven-development scratch (ledger + task reports)
+.superpowers/
