@@ -21,6 +21,7 @@ from gflow_cli._cli_helpers import (
     _resolve_profile,
     apply_tool_option,
     run_with_handlers,
+    tool_option,
 )
 from gflow_cli.api.client import FlowApiClient
 from gflow_cli.api.video import VideoModel, reference_cap_for
@@ -30,6 +31,7 @@ from gflow_cli.errors import DataStoreError
 from gflow_cli.storage import cloud_info_from_path
 
 if TYPE_CHECKING:
+    from gflow_cli.chain import ChainLinkSpec
     from gflow_cli.tools.invocation import AppliedTool
 
 console = Console()
@@ -194,6 +196,8 @@ async def _run_i2v(
     duration: int | None = None,
     count: int = 1,
     as_json: bool = False,
+    original_prompt: str | None = None,
+    tool: AppliedTool | None = None,
 ) -> None:
     from gflow_cli.api.video import (
         I2V_DEFAULT_MODEL,
@@ -229,6 +233,8 @@ async def _run_i2v(
         count=count,
         start_image=Path(image),
         end_image=Path(end_frame) if end_frame else None,
+        original_prompt=original_prompt,
+        tool=tool,
     )
     await _generate_and_report(
         request,
@@ -252,6 +258,8 @@ async def _run_r2v(
     duration: int | None = None,
     count: int = 1,
     as_json: bool = False,
+    original_prompt: str | None = None,
+    tool: AppliedTool | None = None,
 ) -> None:
     from gflow_cli.api.video import Aspect, GenerateVideoRequest, Mode, VideoModel
 
@@ -263,6 +271,8 @@ async def _run_r2v(
         duration=duration,
         count=count,
         reference_images=tuple(Path(r) for r in refs),
+        original_prompt=original_prompt,
+        tool=tool,
     )
     await _generate_and_report(
         request,
@@ -316,7 +326,6 @@ def _print_chain_plan(
     chain_id: str,
 ) -> None:
     """Render the resolved plan (used by --dry-run and the pre-spend summary)."""
-    from gflow_cli.chain import ChainLinkSpec
 
     typed_links: list[ChainLinkSpec] = list(links)
     remaining = len(typed_links) - skipped
@@ -504,6 +513,27 @@ async def _execute_chain_links(
         raise
 
 
+def _apply_tools_to_chain_links(
+    links: list[ChainLinkSpec],
+    tool_specs: tuple[str, ...],
+) -> list[ChainLinkSpec]:
+    """Apply ``--tool`` to each chain link's prompt (sequential, never-fatal).
+
+    Returns new ``ChainLinkSpec`` objects carrying the rewritten ``prompt`` plus
+    ``original_prompt`` / ``tool`` provenance. An unknown tool/style raises
+    ``click.UsageError`` (pre-network) so the chain fails fast.
+    """
+    from dataclasses import replace
+
+    applied: list[ChainLinkSpec] = []
+    for link in links:
+        sent, original, tool = apply_tool_option(
+            link.prompt, tool_specs, category="video", quiet=True
+        )
+        applied.append(replace(link, prompt=sent, original_prompt=original, tool=tool))
+    return applied
+
+
 async def _run_chain(
     *,
     profile_name: str,
@@ -519,6 +549,7 @@ async def _run_chain(
     yes: bool,
     dry_run: bool,
     as_json: bool,
+    tool_specs: tuple[str, ...] = (),
 ) -> None:
     """Drive a sequential last-frame I2V chain from a JSONL manifest.
 
@@ -530,7 +561,6 @@ async def _run_chain(
 
     from gflow_cli import chain as chain_mod
     from gflow_cli.api.video import Aspect
-    from gflow_cli.chain import ChainLinkSpec
     from gflow_cli.chain_manifest import parse_chain_manifest
     from gflow_cli.data.chain_repo import ChainLinkRecorder
     from gflow_cli.errors import ChainManifestError
@@ -593,6 +623,13 @@ async def _run_chain(
             f"Generate {cost} chain link(s) for ~{cost} credit(s)?",
             abort=True,
         )
+
+    # Apply --tool per link AFTER the dry-run/confirm gate so a rejected or
+    # dry run spends nothing and makes no Gemini calls. Each link's prompt is
+    # rewritten in place; provenance rides ChainLinkSpec into the per-link
+    # GenerateVideoRequest for metadata_json.tool recording (never-fatal).
+    if tool_specs:
+        remaining_links = _apply_tools_to_chain_links(remaining_links, tool_specs)
 
     resolved_out_dir = out_dir if out_dir is not None else settings.output_dir
     resolved_out_dir.mkdir(parents=True, exist_ok=True)
@@ -892,6 +929,7 @@ def _resolve_i2v_args(
     help="How many videos to generate (1-4).",
 )
 @click.option("--profile", default=None, help="Profile name (overrides default).")
+@tool_option
 @click.option(
     "--out-dir",
     "out_dir",
@@ -916,6 +954,7 @@ def i2v(
     duration: str | None,
     count: int,
     profile: str | None,
+    tool_specs: tuple[str, ...],
     out_dir: Path | None,
     as_json: bool,
 ) -> None:
@@ -934,12 +973,15 @@ def i2v(
 
     profile_name = _resolve_profile(profile)
     provider_dir = _make_provider_dir(profile_name)
+    prompt_to_send, original_prompt, applied_tool = apply_tool_option(
+        resolved_prompt, tool_specs, category="video", quiet=as_json
+    )
     run_with_handlers(
         lambda: _run_i2v(
             profile_name=profile_name,
             profile_dir=provider_dir,
             image=resolved_image,
-            prompt=resolved_prompt,
+            prompt=prompt_to_send,
             end_frame=end_frame,
             aspect=aspect,
             model=model,
@@ -947,6 +989,8 @@ def i2v(
             count=count,
             out_dir=out_dir,
             as_json=as_json,
+            original_prompt=original_prompt,
+            tool=applied_tool,
         ),
         cli_command="video i2v",
         as_json=as_json,
@@ -1006,6 +1050,7 @@ def i2v(
     help="How many videos to generate (1-4).",
 )
 @click.option("--profile", default=None, help="Profile name (overrides default).")
+@tool_option
 @click.option(
     "--out-dir",
     "out_dir",
@@ -1027,6 +1072,7 @@ def r2v(
     duration: str | None,
     count: int,
     profile: str | None,
+    tool_specs: tuple[str, ...],
     out_dir: Path | None,
     as_json: bool,
 ) -> None:
@@ -1051,11 +1097,14 @@ def r2v(
 
     profile_name = _resolve_profile(profile)
     provider_dir = _make_provider_dir(profile_name)
+    prompt_to_send, original_prompt, applied_tool = apply_tool_option(
+        prompt, tool_specs, category="video", quiet=as_json
+    )
     run_with_handlers(
         lambda: _run_r2v(
             profile_name=profile_name,
             profile_dir=provider_dir,
-            prompt=prompt,
+            prompt=prompt_to_send,
             refs=refs,
             aspect=aspect,
             model=model,
@@ -1063,6 +1112,8 @@ def r2v(
             count=count,
             out_dir=out_dir,
             as_json=as_json,
+            original_prompt=original_prompt,
+            tool=applied_tool,
         ),
         cli_command="video r2v",
         as_json=as_json,
@@ -1152,6 +1203,7 @@ def r2v(
     help="Uniform aspect ratio for every link (continuity requirement).",
 )
 @click.option("--profile", default=None, help="Profile name (overrides default).")
+@tool_option
 @click.option(
     "--out-dir",
     "out_dir",
@@ -1176,6 +1228,7 @@ def chain(
     seed_offset: int,
     aspect: str,
     profile: str | None,
+    tool_specs: tuple[str, ...],
     out_dir: Path | None,
     as_json: bool,
 ) -> None:
@@ -1197,6 +1250,7 @@ def chain(
             yes=yes,
             dry_run=dry_run,
             as_json=as_json,
+            tool_specs=tool_specs,
         ),
         cli_command="video chain",
         as_json=as_json,
