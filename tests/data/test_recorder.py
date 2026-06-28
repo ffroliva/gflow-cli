@@ -1,3 +1,5 @@
+import hashlib
+import json
 from pathlib import Path
 
 from gflow_cli.api.dto import AssetInfo, GeneratedImage, ProjectInfo
@@ -103,12 +105,13 @@ def test_record_generated_images_persists_original_and_expanded_prompt(tmp_path:
     with DataStore.open(tmp_path / "gflow.db") as store:
         recorder = OperationRecorder(DataRepository(store), prompt_mode="store")
         project = ProjectInfo(project_id="flow-project-1", title="gflow-cli t2i")
-        # The request carries the EXPANDED prompt (what was submitted to Flow);
-        # the user's original prompt is passed separately.
+        # The request carries the EXPANDED prompt (what was submitted to Flow)
+        # AND the user's original prompt (recorder reads both off the request).
         req = GenerateImageRequest(
             prompt="a richly detailed expanded prompt",
             aspect=Aspect.PORTRAIT,
             model=Model.NARWHAL,
+            original_prompt="cat in space",
         )
         recorder.record_generated_images(
             profile_name="default",
@@ -119,7 +122,6 @@ def test_record_generated_images_persists_original_and_expanded_prompt(tmp_path:
             saved_paths=[saved],
             input_media_ids=[],
             operation_kind="t2i",
-            original_prompt="cat in space",
         )
         row = store.conn.execute(
             "SELECT prompt, expanded_prompt, prompt_redacted FROM operations WHERE mode='t2i'"
@@ -140,6 +142,7 @@ def test_expanded_prompt_withheld_when_history_redacted(tmp_path: Path) -> None:
             prompt="a richly detailed expanded prompt",
             aspect=Aspect.PORTRAIT,
             model=Model.NARWHAL,
+            original_prompt="cat in space",
         )
         recorder.record_generated_images(
             profile_name="default",
@@ -150,7 +153,6 @@ def test_expanded_prompt_withheld_when_history_redacted(tmp_path: Path) -> None:
             saved_paths=[saved],
             input_media_ids=[],
             operation_kind="t2i",
-            original_prompt="cat in space",
         )
         row = store.conn.execute(
             "SELECT prompt, prompt_hash, expanded_prompt, prompt_redacted "
@@ -198,6 +200,7 @@ def test_record_started_video_persists_expanded_prompt(tmp_path: Path) -> None:
             prompt="a cinematic expanded video prompt",
             mode=Mode.T2V,
             aspect=VideoAspect.PORTRAIT,
+            original_prompt="a dog surfing",
         )
         recorder.record_started_video(
             profile_name="default",
@@ -208,7 +211,6 @@ def test_record_started_video_persists_expanded_prompt(tmp_path: Path) -> None:
                 project_id="flow-project-video-1",
                 flow_operation_id="operation-video-1",
             ),
-            original_prompt="a dog surfing",
         )
         row = store.conn.execute(
             "SELECT prompt, expanded_prompt FROM operations WHERE mode='t2v'"
@@ -346,3 +348,141 @@ def test_record_completed_video_with_cloud_storage_uses_cloud_columns(
         assert asset is not None
         assert asset.local_files[0].path is None
         assert asset.local_files[0].cloud_uri == cloud_info.uri
+
+
+# ---------------------------------------------------------------------------
+# metadata_json.tool — applied-tool provenance (PR2 §8)
+# ---------------------------------------------------------------------------
+
+
+def _applied_tool() -> object:
+    from gflow_cli.tools.invocation import AppliedTool
+
+    return AppliedTool(
+        name="creative-director",
+        version="1",
+        model="gemini-2.5-flash",
+        config_hash="a" * 64,
+        params=(("style", "cinema"),),
+    )
+
+
+def _op_tool_meta(store: DataStore, mode: str) -> dict[str, object]:
+    row = store.conn.execute(
+        "SELECT metadata_json FROM operations WHERE mode = ?", (mode,)
+    ).fetchone()
+    assert row["metadata_json"]
+    return json.loads(row["metadata_json"])["tool"]
+
+
+def test_record_generated_images_persists_tool_metadata_store_mode(tmp_path: Path) -> None:
+    saved = tmp_path / "image.png"
+    saved.write_bytes(b"image-bytes")
+    with DataStore.open(tmp_path / "gflow.db") as store:
+        recorder = OperationRecorder(DataRepository(store), prompt_mode="store")
+        req = GenerateImageRequest(
+            prompt="a richly detailed expanded prompt",
+            aspect=Aspect.PORTRAIT,
+            model=Model.NARWHAL,
+            original_prompt="cat",
+            tool=_applied_tool(),  # type: ignore[arg-type]
+        )
+        recorder.record_generated_images(
+            profile_name="default",
+            profile_dir=tmp_path / "profile_default",
+            project=ProjectInfo(project_id="p1", title="t"),
+            request=req,
+            images=[_generated_image()],
+            saved_paths=[saved],
+            input_media_ids=[],
+            operation_kind="t2i",
+        )
+        tool = _op_tool_meta(store, "t2i")
+        assert tool["name"] == "creative-director"
+        assert tool["version"] == "1"
+        assert tool["model"] == "gemini-2.5-flash"
+        assert tool["params"] == {"style": "cinema"}
+        assert tool["config_hash"] == "a" * 64
+        # Store mode does NOT carry a params_hash (the raw params are stored).
+        assert "params_hash" not in tool
+
+
+def test_record_generated_images_redacts_tool_metadata(tmp_path: Path) -> None:
+    saved = tmp_path / "image.png"
+    saved.write_bytes(b"image-bytes")
+    with DataStore.open(tmp_path / "gflow.db") as store:
+        recorder = OperationRecorder(DataRepository(store), prompt_mode="redacted")
+        req = GenerateImageRequest(
+            prompt="expanded",
+            aspect=Aspect.PORTRAIT,
+            model=Model.NARWHAL,
+            original_prompt="cat",
+            tool=_applied_tool(),  # type: ignore[arg-type]
+        )
+        recorder.record_generated_images(
+            profile_name="default",
+            profile_dir=tmp_path / "profile_default",
+            project=ProjectInfo(project_id="p1", title="t"),
+            request=req,
+            images=[_generated_image()],
+            saved_paths=[saved],
+            input_media_ids=[],
+            operation_kind="t2i",
+        )
+        tool = _op_tool_meta(store, "t2i")
+        # Redacted mode stores only name/version/params_hash/config_hash — never
+        # the raw model or free-text params (redact_metadata wouldn't catch them).
+        assert tool == {
+            "name": "creative-director",
+            "version": "1",
+            "params_hash": hashlib.sha256(
+                json.dumps({"style": "cinema"}, sort_keys=True).encode("utf-8")
+            ).hexdigest(),
+            "config_hash": "a" * 64,
+        }
+        assert "model" not in tool
+        assert "params" not in tool
+
+
+def test_record_generated_images_without_tool_writes_no_tool_metadata(tmp_path: Path) -> None:
+    saved = tmp_path / "image.png"
+    saved.write_bytes(b"image-bytes")
+    with DataStore.open(tmp_path / "gflow.db") as store:
+        recorder = OperationRecorder(DataRepository(store), prompt_mode="store")
+        req = GenerateImageRequest(prompt="cat", aspect=Aspect.PORTRAIT, model=Model.NARWHAL)
+        recorder.record_generated_images(
+            profile_name="default",
+            profile_dir=tmp_path / "profile_default",
+            project=ProjectInfo(project_id="p1", title="t"),
+            request=req,
+            images=[_generated_image()],
+            saved_paths=[saved],
+            input_media_ids=[],
+            operation_kind="t2i",
+        )
+        row = store.conn.execute("SELECT metadata_json FROM operations WHERE mode='t2i'").fetchone()
+        # No tool applied → metadata_json carries no tool key (NULL or no 'tool').
+        meta = json.loads(row["metadata_json"]) if row["metadata_json"] else {}
+        assert "tool" not in meta
+
+
+def test_record_started_video_persists_tool_metadata(tmp_path: Path) -> None:
+    with DataStore.open(tmp_path / "gflow.db") as store:
+        recorder = OperationRecorder(DataRepository(store), prompt_mode="store")
+        request = GenerateVideoRequest(
+            prompt="expanded video prompt",
+            mode=Mode.T2V,
+            aspect=VideoAspect.PORTRAIT,
+            original_prompt="a dog",
+            tool=_applied_tool(),  # type: ignore[arg-type]
+        )
+        recorder.record_started_video(
+            profile_name="default",
+            profile_dir=tmp_path / "profile_default",
+            request=request,
+            started=VideoStarted(media_id="m1", project_id="pv1", flow_operation_id="o1"),
+        )
+        tool = _op_tool_meta(store, "t2v")
+        assert tool["name"] == "creative-director"
+        assert tool["model"] == "gemini-2.5-flash"
+        assert tool["params"] == {"style": "cinema"}

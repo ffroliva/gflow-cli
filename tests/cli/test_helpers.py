@@ -161,9 +161,10 @@ def test_make_provider_dir_exits_when_profile_missing(
 def test_apply_tool_option_no_tools_is_identity() -> None:
     from gflow_cli._cli_helpers import apply_tool_option
 
-    sent, original = apply_tool_option("cat", (), category="image", quiet=True)
+    sent, original, applied = apply_tool_option("cat", (), category="image", quiet=True)
     assert sent == "cat"
     assert original is None
+    assert applied is None
 
 
 def test_apply_tool_option_unknown_tool_raises_usage_error() -> None:
@@ -187,11 +188,17 @@ def test_apply_tool_option_runs_creative_director(monkeypatch: pytest.MonkeyPatc
             original=text, expanded="EXPANDED", was_expanded=True
         ),
     )
-    sent, original = _cli_helpers.apply_tool_option(
+    sent, original, applied = _cli_helpers.apply_tool_option(
         "cat", ("creative-director",), category="image", quiet=True
     )
     assert sent == "EXPANDED"
     assert original == "cat"
+    # The applied-tool snapshot is built from the real spec (not apply_tool's
+    # monkeypatched output) for metadata_json.tool recording.
+    assert applied is not None
+    assert applied.name == "creative-director"
+    assert applied.version == "1"
+    assert len(applied.config_hash) == 64
 
 
 def test_apply_tool_option_wrong_category_raises(monkeypatch: pytest.MonkeyPatch) -> None:
@@ -290,7 +297,7 @@ def test_apply_tool_option_valid_style_does_not_raise(
             original=text, expanded="EXPANDED", was_expanded=True
         ),
     )
-    sent, original = _cli_helpers.apply_tool_option(
+    sent, original, _applied = _cli_helpers.apply_tool_option(
         "cat",
         ("creative-director:style=cinema",),
         category="image",

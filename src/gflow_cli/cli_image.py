@@ -716,7 +716,7 @@ def t2i(  # NOSONAR
         profile_name = _resolve_profile(profile)
         provider_dir = _make_provider_dir(profile_name)
         settings = get_settings()
-        prompt_to_send, original_prompt = apply_tool_option(
+        prompt_to_send, original_prompt, applied_tool = apply_tool_option(
             prompt, tool_specs, category="image", quiet=as_json
         )
         run_with_handlers(
@@ -730,6 +730,8 @@ def t2i(  # NOSONAR
                     model=Model.from_cli(model),
                     reference_entities=tuple(reference_entities),
                     reference_entity_names=tuple(reference_entity_names),
+                    original_prompt=original_prompt,
+                    tool=applied_tool,
                 ),
                 count=count,
                 out=out,
@@ -737,7 +739,6 @@ def t2i(  # NOSONAR
                 transport=transport,
                 project_id=project_id,
                 as_json=as_json,
-                original_prompt=original_prompt,
             ),
             cli_command="image t2i",
             as_json=as_json,
@@ -907,9 +908,12 @@ def _record_generated_images_safe(
     saved_paths: list[Path],
     input_media_ids: list[str],
     operation_kind: str,
-    original_prompt: str | None = None,
 ) -> None:
-    """Persist generation metadata; warn on DataStoreError (never abort success)."""
+    """Persist generation metadata; warn on DataStoreError (never abort success).
+
+    Tool provenance (``original_prompt`` / ``tool``) travels on ``request``, so
+    the recorder reads it directly — no separate kwarg to drift out of sync.
+    """
     try:
         recorder.record_generated_images(
             profile_name=profile_name,
@@ -922,7 +926,6 @@ def _record_generated_images_safe(
             cloud_storage_infos=[cloud_info_from_path(path) for path in saved_paths],
             input_media_ids=input_media_ids,
             operation_kind=operation_kind,
-            original_prompt=original_prompt,
         )
     except DataStoreError as exc:
         first_image = images[0] if images else None
@@ -946,7 +949,6 @@ async def _run_t2i(
     transport: str | None = None,
     project_id: str | None = None,
     as_json: bool = False,
-    original_prompt: str | None = None,
 ) -> None:
     settings = get_settings()
     recorder = OperationRecorder.open(settings)
@@ -1002,7 +1004,6 @@ async def _run_t2i(
                 saved_paths=saved_paths,
                 input_media_ids=[],
                 operation_kind="t2i",
-                original_prompt=original_prompt,
             )
     finally:
         recorder.close()

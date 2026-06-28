@@ -55,6 +55,8 @@ from gflow_cli.tools.runtime import apply_tool
 if TYPE_CHECKING:
     from collections.abc import Callable, Coroutine
 
+    from gflow_cli.tools.invocation import AppliedTool
+
 _logger = structlog.get_logger(__name__)
 _console = Console()
 
@@ -94,20 +96,27 @@ def apply_tool_option(
     *,
     category: Literal["image", "video"],
     quiet: bool,
-) -> tuple[str, str | None]:
+) -> tuple[str, str | None, AppliedTool | None]:
     """Apply ``--tool name[:k=v]`` specs in sequence. Returns ``(prompt_to_send,
-    original_prompt|None)``. Unknown tool / wrong category → UsageError (pre-network).
+    original_prompt|None, applied_tool|None)``. Unknown tool / wrong category →
+    UsageError (pre-network).
 
-    ``apply_tool`` is imported at MODULE scope so tests can monkeypatch it.
+    ``applied_tool`` is the provenance snapshot of the LAST tool that rewrote the
+    prompt — recorded in ``operations.metadata_json.tool``. It is built from the
+    resolved spec + options (not the tool's output), so it stays accurate even
+    under a monkeypatched ``apply_tool`` in tests. ``apply_tool`` is imported at
+    MODULE scope so tests can monkeypatch it.
     """
     from gflow_cli.errors import ConfigurationError
+    from gflow_cli.tools.invocation import applied_tool_from_spec
     from gflow_cli.tools.registry import get_tool
 
     if not tool_specs:
-        return text, None
+        return text, None, None
     original = text
     current = text
     changed = False
+    applied: AppliedTool | None = None
     for spec_str in tool_specs:
         name, options = _parse_tool_spec(spec_str)
         try:
@@ -139,11 +148,12 @@ def apply_tool_option(
         if result.was_expanded:
             changed = True
             current = result.expanded
+            applied = applied_tool_from_spec(spec, options)
             if not quiet:
                 _console.print(f"[cyan]{spec.title} applied:[/cyan] [dim]{current}[/dim]")
         elif not quiet:
             _console.print(f"[yellow]{spec.title} skipped[/yellow] (unavailable).")
-    return current, (original if changed else None)
+    return current, (original if changed else None), applied
 
 
 def safe_path_text(path: Path) -> str:

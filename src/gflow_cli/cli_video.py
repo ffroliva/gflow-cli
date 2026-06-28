@@ -9,7 +9,7 @@ from __future__ import annotations
 import warnings
 from dataclasses import dataclass
 from pathlib import Path
-from typing import Any
+from typing import TYPE_CHECKING, Any
 
 import click
 import structlog
@@ -28,6 +28,9 @@ from gflow_cli.config import get_settings
 from gflow_cli.data.recorder import OperationRecorder
 from gflow_cli.errors import DataStoreError
 from gflow_cli.storage import cloud_info_from_path
+
+if TYPE_CHECKING:
+    from gflow_cli.tools.invocation import AppliedTool
 
 console = Console()
 logger = structlog.get_logger(__name__)
@@ -61,10 +64,12 @@ async def _generate_and_report(
     out_dir: Path | None,
     command: str = "video",
     as_json: bool = False,
-    original_prompt: str | None = None,
 ) -> None:
     """Drive FlowApiClient for a single GenerateVideoRequest and print the
     result (or fail with a non-zero exit). Shared by t2v, i2v, and r2v.
+
+    Tool provenance (``original_prompt`` / ``tool``) travels on ``request``, so
+    the recorder reads it directly — no separate kwarg to drift out of sync.
 
     With ``as_json`` the result is emitted as a JSON object (carrying the same
     ok/fail status as the exit code) instead of the Rich lines; a failed
@@ -86,7 +91,6 @@ async def _generate_and_report(
                         profile_dir=profile_dir,
                         request=request,
                         started=started,
-                        original_prompt=original_prompt,
                     )
                 except DataStoreError as exc:
                     _warn_persistence_failed_after_success(
@@ -113,7 +117,6 @@ async def _generate_and_report(
                     if result.local_path is not None
                     else None
                 ),
-                original_prompt=original_prompt,
             )
         except DataStoreError as exc:
             _warn_persistence_failed_after_success(
@@ -154,6 +157,7 @@ async def _run_t2v(
     count: int = 1,
     as_json: bool = False,
     original_prompt: str | None = None,
+    tool: AppliedTool | None = None,
 ) -> None:
     from gflow_cli.api.video import Aspect, GenerateVideoRequest, Mode, VideoModel
 
@@ -164,6 +168,8 @@ async def _run_t2v(
         model=VideoModel.from_cli(model),
         duration=duration,
         count=count,
+        original_prompt=original_prompt,
+        tool=tool,
     )
     await _generate_and_report(
         request,
@@ -172,7 +178,6 @@ async def _run_t2v(
         out_dir=out_dir,
         command="video t2v",
         as_json=as_json,
-        original_prompt=original_prompt,
     )
 
 
@@ -754,7 +759,7 @@ def t2v(
     """Generate a video from PROMPT."""
     profile_name = _resolve_profile(profile)
     provider_dir = _make_provider_dir(profile_name)
-    prompt_to_send, original_prompt = apply_tool_option(
+    prompt_to_send, original_prompt, applied_tool = apply_tool_option(
         prompt, tool_specs, category="video", quiet=as_json
     )
     run_with_handlers(
@@ -769,6 +774,7 @@ def t2v(
             count=count,
             as_json=as_json,
             original_prompt=original_prompt,
+            tool=applied_tool,
         ),
         cli_command="video t2v",
         as_json=as_json,
