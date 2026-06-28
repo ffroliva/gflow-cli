@@ -99,12 +99,22 @@ These exercise the whole prompt-tool path (registry → `apply_tool` → `build_
 `PromptExpander.expand` → `strip_banned_keywords`), the never-fatal contract, category gating, and
 the user-dir loader — end to end against the real Gemini endpoint.
 
-### Generation recording (`expanded_prompt` + `metadata_json.tool` + redaction) — ⏳ pending
+### Generation recording (`expanded_prompt` + `metadata_json.tool` + redaction) — ✅ live-verified 2026-06-28
 
-Requires a real Flow generation (headed-browser UI automation against an authenticated profile,
-e.g. `denon82`; image gen is credit-free). To complete: run
-`gflow image t2i "a fox in the snow" --tool creative-director:style=cinema --profile denon82`,
-then `gflow data show <op_id> --json` and assert `prompt` = original, `expanded_prompt` = the
-rewrite, and `metadata_json.tool = {name, version, model, params, config_hash}`; repeat with
-`GFLOW_CLI_HISTORY_PROMPTS=redacted` to confirm the reduced `{name, version, params_hash,
-config_hash}` descriptor and withheld `expanded_prompt`.
+Real credit-free `image t2i` generations on the authenticated `denon82` profile (agentic UI
+cohort, model NARWHAL), CLI v0.22.0:
+
+**Store mode** — `gflow image t2i "a fox in the snow" --tool creative-director:style=cinema --profile denon82`:
+- File: a real **729 KB JPEG** (magic bytes `ff d8 ff`) written to the `--out` dir ✅
+- `prompt` = `"a fox in the snow"` (the **original**) ✅
+- `expanded_prompt` = the 971-char rewrite (`"A sleek, mature red fox, …"`) ✅
+- `operations.metadata_json.tool` = `{name: "creative-director", version: "1", model: "gemini-2.5-flash", params: {style: "cinema"}, config_hash: "e8399085…"}` ✅
+
+**Redacted mode** — same command with `GFLOW_CLI_HISTORY_PROMPTS=redacted` (`"a red barn at dusk"`):
+- `prompt` = `None`, `prompt_redacted` = `1`, `expanded_prompt` = `None` (both withheld) ✅
+- `metadata_json.tool` = `{name, version, params_hash, config_hash}` only — no `model`, no raw
+  `params` (replaced by `params_hash`) ✅
+- `config_hash` identical to store mode (same resolved `ToolConfig`) — tamper-evidence confirmed ✅
+
+**All 5 ledger layers cleared** (file + magic bytes + real generation + DB rows in both prompt
+modes + structlog `prompt_expanded`/`ui_driver.bound`). v0.22.0 live verification is **complete**.
