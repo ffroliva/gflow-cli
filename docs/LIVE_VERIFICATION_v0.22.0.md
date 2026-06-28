@@ -82,5 +82,29 @@ Owner checklist (run after publish, then fill **Post-tag evidence**):
 
 ## Post-tag evidence
 
-_(fill after the owner live run: the 5-layer ledger — command, exit code, catalog row JSON,
-structlog events, and a user-confirmable artifact.)_
+### Tool / expander / My-Tools — ✅ live-verified 2026-06-28 (real Gemini API)
+
+Run with the owner's `GFLOW_CLI_GEMINI_API_KEY` (from `.env.local`), CLI v0.22.0:
+
+| # | Check | Command | Result |
+|---|---|---|---|
+| 1 | Tool registered | `gflow tools list` | `creative-director` listed (Title/Category/Description correct) ✅ |
+| 2 | Real expansion | `gflow tools run creative-director "a cat on a couch" --style cinema --json` | `was_expanded: true`; 16→1189 chars; vivid 5-component prose naming a real camera (Sony A7R IV / Cooke S7/i) + prestige anchor (Kinfolk); structlog `prompt_expanded` (model `gemini-2.5-flash`) ✅ |
+| 3 | Banned-keyword guarantee | `gflow tools run creative-director "a luxury watch" --style product` | output scanned against all 13 banned terms → **none present** ✅ |
+| 4 | Never-fatal (bad key) | `GFLOW_CLI_GEMINI_API_KEY=invalid-key-xyz gflow tools run creative-director "a dog" --json` | `was_expanded: false`, original returned, no error/exit ✅ |
+| 5 | Video category style | `gflow tools run creative-director "a city at night" --style cinematic` | rewrites with cinematic vocabulary (video-gated style resolves) ✅ |
+| 6 | "My Tools" loader | wrote `<HOME>/tools/haiku-bot.toml`; `GFLOW_CLI_HOME=<tmp> gflow tools list` | user tool `haiku-bot` listed **alongside** the builtin `creative-director` ✅ |
+
+These exercise the whole prompt-tool path (registry → `apply_tool` → `build_instruction` → live
+`PromptExpander.expand` → `strip_banned_keywords`), the never-fatal contract, category gating, and
+the user-dir loader — end to end against the real Gemini endpoint.
+
+### Generation recording (`expanded_prompt` + `metadata_json.tool` + redaction) — ⏳ pending
+
+Requires a real Flow generation (headed-browser UI automation against an authenticated profile,
+e.g. `denon82`; image gen is credit-free). To complete: run
+`gflow image t2i "a fox in the snow" --tool creative-director:style=cinema --profile denon82`,
+then `gflow data show <op_id> --json` and assert `prompt` = original, `expanded_prompt` = the
+rewrite, and `metadata_json.tool = {name, version, model, params, config_hash}`; repeat with
+`GFLOW_CLI_HISTORY_PROMPTS=redacted` to confirm the reduced `{name, version, params_hash,
+config_hash}` descriptor and withheld `expanded_prompt`.
