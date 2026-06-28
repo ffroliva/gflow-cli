@@ -69,6 +69,30 @@ def _get_profile_lock(profile: str) -> asyncio.Lock:
     return _profile_locks[profile]
 
 
+def _adapt_tools(tools: list[dict[str, Any]] | None) -> tuple[str, ...] | dict[str, Any]:
+    """Validate + adapt the MCP ``tools`` array to CLI ``--tool`` specs.
+
+    Returns the spec tuple on success, or a structured error dict (to return to
+    the agent) when an item is malformed — so a bad ``tools`` payload fails
+    cleanly rather than as an uncaught error once generation is wired.
+    """
+    from pydantic import ValidationError
+
+    from gflow_cli.tools.invocation import tool_specs_from_invocations
+
+    try:
+        return tool_specs_from_invocations(tools)
+    except ValidationError as exc:
+        log.warning("mcp.tool.invalid_tools", error=str(exc))
+        return {
+            "status": "invalid_tools",
+            "error": (
+                "Each item in 'tools' must be {'name': <slug>, 'options': {k: v}}. "
+                f"Validation failed: {exc}"
+            ),
+        }
+
+
 # ---------------------------------------------------------------------------
 # MCP Tools
 # ---------------------------------------------------------------------------
@@ -131,6 +155,14 @@ async def gflow_generate_image(
             profile=profile,
         )
 
+        # Validate + adapt the agent-supplied tools array to CLI --tool specs now
+        # (fail cleanly on malformed input) even though generation is not yet
+        # wired — the daemon will feed these specs to apply_tool_option.
+        adapted = _adapt_tools(tools)
+        if isinstance(adapted, dict):
+            return adapted
+        tool_specs = adapted
+
         # TODO: Wire to FlowApiClient when daemon integration lands.
         # For now, return a structured placeholder that validates the schema.
         return {
@@ -146,6 +178,7 @@ async def gflow_generate_image(
                 "count": count,
                 "seed": seed,
                 "tools": tools or [],
+                "tool_specs": list(tool_specs),
                 "profile": profile,
             },
         }
@@ -204,6 +237,11 @@ async def gflow_generate_video(
             profile=profile,
         )
 
+        adapted = _adapt_tools(tools)
+        if isinstance(adapted, dict):
+            return adapted
+        tool_specs = adapted
+
         # TODO: Wire to FlowApiClient when daemon integration lands.
         return {
             "status": "pending",
@@ -217,6 +255,7 @@ async def gflow_generate_video(
                 "aspect": aspect,
                 "image_path": image_path,
                 "tools": tools or [],
+                "tool_specs": list(tool_specs),
                 "profile": profile,
             },
         }

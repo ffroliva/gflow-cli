@@ -1,6 +1,14 @@
 from __future__ import annotations
 
-from gflow_cli.tools.invocation import applied_tool_from_spec, config_hash
+import pytest
+from pydantic import ValidationError
+
+from gflow_cli.tools.invocation import (
+    ToolInvocation,
+    applied_tool_from_spec,
+    config_hash,
+    tool_specs_from_invocations,
+)
 from gflow_cli.tools.spec import ToolConfig, ToolSpec
 
 
@@ -46,3 +54,35 @@ def test_config_hash_is_stable_and_sensitive() -> None:
         config=ToolConfig(system_template="DIFFERENT", model="gemini-2.5-flash"),
     )
     assert config_hash(spec_a.config) != config_hash(spec_c.config)
+
+
+def test_tool_invocation_to_spec() -> None:
+    assert ToolInvocation(name="creative-director").to_spec() == "creative-director"
+    assert (
+        ToolInvocation(name="creative-director", options={"style": "cinema"}).to_spec()
+        == "creative-director:style=cinema"
+    )
+
+
+def test_tool_invocation_rejects_bad_name() -> None:
+    with pytest.raises(ValidationError):
+        ToolInvocation(name="Bad Name!")
+
+
+def test_tool_specs_from_invocations_adapts_list() -> None:
+    assert tool_specs_from_invocations(None) == ()
+    assert tool_specs_from_invocations([]) == ()
+    specs = tool_specs_from_invocations(
+        [
+            {"name": "creative-director", "options": {"style": "cinema"}},
+            {"name": "creative-director"},
+        ]
+    )
+    assert specs == ("creative-director:style=cinema", "creative-director")
+
+
+def test_tool_specs_from_invocations_raises_on_malformed() -> None:
+    with pytest.raises(ValidationError):
+        tool_specs_from_invocations([{"options": {"style": "cinema"}}])  # missing name
+    with pytest.raises(ValidationError):
+        tool_specs_from_invocations([{"name": "Bad Name!"}])
