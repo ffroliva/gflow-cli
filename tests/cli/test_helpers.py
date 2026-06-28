@@ -158,78 +158,124 @@ def test_make_provider_dir_exits_when_profile_missing(
         reset_settings()
 
 
-def test_expand_prompt_disabled_returns_identity() -> None:
-    from gflow_cli._cli_helpers import expand_prompt
+def test_apply_tool_option_no_tools_is_identity() -> None:
+    from gflow_cli._cli_helpers import apply_tool_option
 
-    sent, original = expand_prompt("cat in space", enabled=False)
-    assert sent == "cat in space"
+    sent, original = apply_tool_option("cat", (), category="image", quiet=True)
+    assert sent == "cat"
     assert original is None
 
 
-def test_expand_prompt_no_key_falls_back(monkeypatch: pytest.MonkeyPatch) -> None:
-    from gflow_cli.config import reset_settings
+def test_apply_tool_option_unknown_tool_raises_usage_error() -> None:
+    import click
+    import pytest
 
-    monkeypatch.delenv("GFLOW_CLI_GEMINI_API_KEY", raising=False)
-    reset_settings()
-    from gflow_cli._cli_helpers import expand_prompt
+    from gflow_cli._cli_helpers import apply_tool_option
 
-    sent, original = expand_prompt("cat in space", enabled=True)
-    assert sent == "cat in space"
-    assert original is None
+    with pytest.raises(click.UsageError):
+        apply_tool_option("cat", ("nope",), category="image", quiet=True)
 
 
-def test_expand_prompt_success_returns_expanded_and_original(
-    monkeypatch: pytest.MonkeyPatch,
-) -> None:
-    from gflow_cli.api import prompt_expander as pe
-    from gflow_cli.config import reset_settings
-
-    monkeypatch.setenv("GFLOW_CLI_GEMINI_API_KEY", "fake-key")
-    reset_settings()
-
-    class _StubExpander:
-        def expand(self, prompt: str) -> pe.ExpansionResult:
-            return pe.ExpansionResult(
-                original=prompt,
-                expanded="a vivid, fully expanded prompt",
-                was_expanded=True,
-            )
+def test_apply_tool_option_runs_creative_director(monkeypatch: pytest.MonkeyPatch) -> None:
+    from gflow_cli import _cli_helpers
+    from gflow_cli.tools.expander import ExpansionResult
 
     monkeypatch.setattr(
-        pe.PromptExpander,
-        "from_settings",
-        classmethod(lambda cls, settings, **kwargs: _StubExpander()),  # noqa: ARG005
+        _cli_helpers,
+        "apply_tool",
+        lambda spec, text, options, **kw: ExpansionResult(
+            original=text, expanded="EXPANDED", was_expanded=True
+        ),
     )
-    from gflow_cli._cli_helpers import expand_prompt
+    sent, original = _cli_helpers.apply_tool_option(
+        "cat", ("creative-director",), category="image", quiet=True
+    )
+    assert sent == "EXPANDED"
+    assert original == "cat"
 
-    sent, original = expand_prompt("cat in space", enabled=True)
-    assert sent == "a vivid, fully expanded prompt"
-    assert original == "cat in space"
+
+def test_apply_tool_option_wrong_category_raises(monkeypatch: pytest.MonkeyPatch) -> None:
+    import click
+    import pytest
+
+    from gflow_cli._cli_helpers import apply_tool_option
+    from gflow_cli.tools.spec import ToolConfig, ToolSpec
+
+    video_only = ToolSpec(
+        name="vid",
+        title="Vid",
+        description="d",
+        category="video",
+        version="1",
+        config=ToolConfig(system_template="t"),
+    )
+    # get_tool is imported function-locally, so patch the registry source.
+    monkeypatch.setattr("gflow_cli.tools.registry.get_tool", lambda name: video_only)
+    with pytest.raises(click.UsageError):
+        apply_tool_option("cat", ("vid",), category="image", quiet=True)
 
 
-def test_expand_prompt_quiet_suppresses_stdout_notice(
+def test_parse_tool_spec_handles_options() -> None:
+    from gflow_cli._cli_helpers import _parse_tool_spec
+
+    assert _parse_tool_spec("creative-director") == ("creative-director", {})
+    assert _parse_tool_spec("creative-director:style=cinema") == (
+        "creative-director",
+        {"style": "cinema"},
+    )
+    assert _parse_tool_spec("name:") == ("name", {})
+    assert _parse_tool_spec("name:a=1,b=2") == ("name", {"a": "1", "b": "2"})
+
+
+def test_apply_tool_option_unknown_option_key_raises_usage_error() -> None:
+    """An option key not declared in the tool's options_schema → UsageError."""
+    import click
+
+    from gflow_cli._cli_helpers import apply_tool_option
+
+    with pytest.raises(click.UsageError, match="unknown option"):
+        apply_tool_option(
+            "cat",
+            ("creative-director:unknown_key=foo",),
+            category="image",
+            quiet=True,
+        )
+
+
+def test_apply_tool_option_unknown_style_raises_usage_error() -> None:
+    """A style value that is not a declared domain → UsageError."""
+    import click
+
+    from gflow_cli._cli_helpers import apply_tool_option
+
+    with pytest.raises(click.UsageError, match="unknown style"):
+        apply_tool_option(
+            "cat",
+            ("creative-director:style=cinmaaatic",),
+            category="image",
+            quiet=True,
+        )
+
+
+def test_apply_tool_option_valid_style_does_not_raise(
     monkeypatch: pytest.MonkeyPatch,
-    capsys: pytest.CaptureFixture[str],
 ) -> None:
-    """quiet=True (the --json path) must not write Rich notices to stdout."""
-    from gflow_cli.api import prompt_expander as pe
-    from gflow_cli.config import reset_settings
-
-    monkeypatch.setenv("GFLOW_CLI_GEMINI_API_KEY", "fake-key")
-    reset_settings()
-
-    class _StubExpander:
-        def expand(self, prompt: str) -> pe.ExpansionResult:
-            return pe.ExpansionResult(original=prompt, expanded="expanded", was_expanded=True)
+    """A recognized style value must pass validation and reach apply_tool."""
+    from gflow_cli import _cli_helpers
+    from gflow_cli.tools.expander import ExpansionResult
 
     monkeypatch.setattr(
-        pe.PromptExpander,
-        "from_settings",
-        classmethod(lambda cls, settings, **kwargs: _StubExpander()),  # noqa: ARG005
+        _cli_helpers,
+        "apply_tool",
+        lambda spec, text, options, **kw: ExpansionResult(
+            original=text, expanded="EXPANDED", was_expanded=True
+        ),
     )
-    from gflow_cli._cli_helpers import expand_prompt
-
-    sent, original = expand_prompt("cat in space", enabled=True, quiet=True)
-    assert sent == "expanded"
-    assert original == "cat in space"
-    assert capsys.readouterr().out == ""
+    sent, original = _cli_helpers.apply_tool_option(
+        "cat",
+        ("creative-director:style=cinema",),
+        category="image",
+        quiet=True,
+    )
+    assert sent == "EXPANDED"
+    assert original == "cat"

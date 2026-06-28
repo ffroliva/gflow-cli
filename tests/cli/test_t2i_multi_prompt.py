@@ -138,9 +138,9 @@ def test_t2i_rejects_multiple_prompt_sources_before_profile_resolution(tmp_path:
     resolve_profile.assert_not_called()
 
 
-def test_t2i_rejects_expand_with_multiple_prompts() -> None:
+def test_t2i_rejects_tool_with_multiple_prompts() -> None:
     with patch("gflow_cli.cli_image._resolve_profile") as resolve_profile:
-        result = _invoke_t2i(["one", "two", "--expand"])
+        result = _invoke_t2i(["one", "two", "--tool", "creative-director"])
 
     assert result.exit_code == 2
     assert "single-prompt only" in result.output.lower()
