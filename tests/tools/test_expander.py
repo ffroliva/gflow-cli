@@ -188,6 +188,98 @@ class TestExpanderTruncation:
         assert len(result.expanded) <= 3500
 
 
+class _FakeClock:
+    """Deterministic monotonic clock: returns each scripted tick in turn,
+    repeating the last value once the script is exhausted."""
+
+    def __init__(self, ticks: list[float]) -> None:
+        self._ticks = ticks
+        self._i = 0
+
+    def __call__(self) -> float:
+        tick = self._ticks[min(self._i, len(self._ticks) - 1)]
+        self._i += 1
+        return tick
+
+
+class TestExpanderTimeBudget:
+    def test_default_per_attempt_timeout_is_20s(self) -> None:
+        # The default per-attempt timeout was lowered from 30s to 20s to cut
+        # worst-case blocking under sustained rate limiting.
+        transport = _RecordingTransport(returns=_candidates("ok"))
+        expander = PromptExpander("key", transport=transport)
+
+        expander.expand("cat")
+
+        assert transport.calls[0]["timeout"] == 20.0
+
+    def test_attempt_timeout_clamped_to_remaining_budget(self) -> None:
+        # When the total budget is smaller than the per-attempt timeout, the
+        # attempt must not be allowed to run longer than the budget.
+        transport = _RecordingTransport(returns=_candidates("ok"))
+        expander = PromptExpander(
+            "key",
+            transport=transport,
+            timeout=20.0,
+            max_total_seconds=3.0,
+            clock=_FakeClock([0.0]),
+        )
+
+        expander.expand("cat")
+
+        assert transport.calls[0]["timeout"] == 3.0
+
+    def test_total_budget_stops_retries_early(
+        self,
+        install_log_capture: structlog.testing.LogCapture,
+    ) -> None:
+        # Sustained 429s would otherwise retry max_retries+1 times. With the
+        # budget exhausted after the first failure, the expander stops early and
+        # falls back rather than blocking for the full retry schedule.
+        transport = _RecordingTransport(raises=GeminiHttpError(429, "rate limited"))
+        # clock reads: start=0, attempt-0 budget check=0 (so the first attempt
+        # runs), then 100 at the pre-retry check so it blows the 5s budget.
+        clock = _FakeClock([0.0, 0.0, 100.0])
+        expander = PromptExpander(
+            "key",
+            transport=transport,
+            max_retries=3,
+            max_total_seconds=5.0,
+            clock=clock,
+            sleep=lambda _s: None,
+        )
+
+        result = expander.expand("cat in space")
+
+        assert result.was_expanded is False
+        assert result.expanded == "cat in space"
+        # Only the first attempt ran — the budget gate cut the retries.
+        assert len(transport.calls) == 1
+        events = {e["event"] for e in install_log_capture.entries}
+        assert "prompt_expander_budget_exhausted" in events
+
+    def test_budget_skips_first_attempt_when_already_exhausted(
+        self,
+        install_log_capture: structlog.testing.LogCapture,
+    ) -> None:
+        # A non-positive remaining budget at the very first attempt means no call
+        # is made at all — straight to the fallback.
+        transport = _RecordingTransport(returns=_candidates("ok"))
+        expander = PromptExpander(
+            "key",
+            transport=transport,
+            max_total_seconds=0.0,
+            clock=_FakeClock([0.0]),
+        )
+
+        result = expander.expand("cat")
+
+        assert result.was_expanded is False
+        assert transport.calls == []
+        events = {e["event"] for e in install_log_capture.entries}
+        assert "prompt_expander_budget_exhausted" in events
+
+
 def test_custom_system_instruction_is_used() -> None:
     captured: dict[str, object] = {}
 
