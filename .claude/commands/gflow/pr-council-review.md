@@ -8,4 +8,10 @@ description: Multi-dimensional LLM council review of an open PR. Five baseline d
 
 > Do **not** call `Skill(skill="pr-council-review")` — the repo's `skills/*/SKILL.md` files are plain Markdown, not registered as Skill-tool-invocable (only `.claude/commands/gflow/*` are). Invoking it errors with `Unknown skill: pr-council-review`. Read the file directly instead.
 
+**Required gate — SonarCloud must be green.** The council reviews the *diff*; it does
+not see SonarCloud's verdict. Before declaring the final verdict, run **`/gflow:sonar`**
+for this PR — the `SonarCloud analysis` gate must be green (zero new issues). A red gate
+is a blocking finding regardless of the council's own conclusions; report it with the
+exact failing conditions and do not call the PR merge-ready until it is green.
+
 Sibling: `/review` is the single-agent Claude-Code built-in (fast, one-pass). Use it for spot-checks; use this command for pre-merge multi-dim audits.

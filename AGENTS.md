@@ -50,6 +50,7 @@ Or invoke the wrapper: `/gflow:check`.
 - Use `pytest -m "not live and not e2e and not smoke"` locally; full suite OOMs on small dev machines. Scope to changed dirs; trust CI for the full sweep.
 - TDD is non-negotiable. Coverage floor: 80% overall.
 - Documentation is a first-class deliverable. Every behavior, workflow, config, or operator-facing change must update the relevant docs or state why no docs changed in the PR/checklist. `scripts/ci/check_doc_links.py` is a merge gate.
+- **A PR is not done until its SonarCloud gate is green (zero new issues).** The six gates above are local/pre-commit; SonarCloud is server-side and runs in CI (`sonar.qualitygate.wait=true` → a red gate turns the `SonarCloud analysis` check red). Before calling a PR merge-ready, verify it with `/gflow:sonar <N>` (it is skipped on fork PRs — maintainer-checked there).
 - Live tests (`@pytest.mark.live`) opt in via `GFLOW_LIVE=1`. E2E tests require `GFLOW_CLI_E2E_PROFILE`.
 
 ## Code style
