@@ -31,7 +31,7 @@ from gflow_cli import json_output
 from gflow_cli._cli_helpers import (
     _make_provider_dir,
     _resolve_profile,
-    expand_prompt,
+    apply_tool_option,
     run_with_handlers,
     safe_path_text,
 )
@@ -639,14 +639,13 @@ async def _run_upscale(
 )
 @click.option("--profile", default=None, help="Profile name (overrides default).")
 @click.option(
-    "-e",
-    "--expand",
-    "expand",
-    is_flag=True,
+    "-t",
+    "--tool",
+    "tool_specs",
+    multiple=True,
     help=(
-        "Expand the prompt with the Gemini 'Creative Director' (five-component "
-        "formula) before generating. Single-prompt only. Requires "
-        "GFLOW_CLI_GEMINI_API_KEY; falls back to the original prompt if unset or on error."
+        "Apply a tool before generating, e.g. --tool creative-director or "
+        "--tool creative-director:style=cinema. Repeatable. Single-prompt only."
     ),
 )
 @click.option(
@@ -676,7 +675,7 @@ def t2i(  # NOSONAR
     count: int,
     out: Path | None,
     profile: str | None,
-    expand: bool,
+    tool_specs: tuple[str, ...],
     transport: str | None,
     project_id: str | None,
     reference_entities: tuple[str, ...],
@@ -701,10 +700,10 @@ def t2i(  # NOSONAR
         msg = "--json is single-prompt only; remove the extra prompts."
         raise click.UsageError(msg)
 
-    if is_multi_prompt and expand:
-        # -e/--expand calls Gemini per prompt; that belongs on the single-prompt
-        # path. Loop t2i one prompt at a time if you want every prompt expanded.
-        msg = "-e/--expand is single-prompt only; remove the extra prompts."
+    if is_multi_prompt and tool_specs:
+        # --tool calls Gemini per prompt; that belongs on the single-prompt
+        # path. Loop t2i one prompt at a time if you want every prompt processed.
+        msg = "-t/--tool is single-prompt only; remove the extra prompts."
         raise click.UsageError(msg)
 
     if not is_multi_prompt:
@@ -717,7 +716,9 @@ def t2i(  # NOSONAR
         profile_name = _resolve_profile(profile)
         provider_dir = _make_provider_dir(profile_name)
         settings = get_settings()
-        prompt_to_send, original_prompt = expand_prompt(prompt, enabled=expand, quiet=as_json)
+        prompt_to_send, original_prompt = apply_tool_option(
+            prompt, tool_specs, category="image", quiet=as_json
+        )
         run_with_handlers(
             lambda: _run_t2i(
                 profile_name=profile_name,

@@ -783,3 +783,13 @@ def test_i2v_help_uses_initial_end_frame_wording() -> None:
     assert "--initial-frame" in result.output
     assert "--end-frame" in result.output
     assert "--end-image" not in result.output  # deprecated flag is hidden
+
+
+def test_t2v_help_shows_tool_option() -> None:
+    from click.testing import CliRunner
+
+    from gflow_cli.cli import main
+
+    result = CliRunner().invoke(main, ["video", "t2v", "--help"])
+    assert "--tool" in result.output
+    assert "--expand" not in result.output
