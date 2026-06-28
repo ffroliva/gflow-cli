@@ -221,6 +221,38 @@ class TestToolExecution:
         assert result["params"]["mode"] == "t2v"
 
     @pytest.mark.asyncio
+    async def test_generate_image_adapts_tools_to_specs(self) -> None:
+        """A valid MCP `tools` array is adapted to CLI --tool specs in params."""
+        from gflow_cli.mcp.tools import gflow_generate_image
+
+        result = await gflow_generate_image(
+            prompt="a cat",
+            tools=[{"name": "creative-director", "options": {"style": "cinema"}}],
+        )
+        assert result["status"] == "pending"
+        assert result["params"]["tool_specs"] == ["creative-director:style=cinema"]
+
+    @pytest.mark.asyncio
+    async def test_generate_image_rejects_malformed_tools(self) -> None:
+        """A malformed `tools` item returns a clean invalid_tools error."""
+        from gflow_cli.mcp.tools import gflow_generate_image
+
+        result = await gflow_generate_image(prompt="a cat", tools=[{"options": {"style": "x"}}])
+        assert result["status"] == "invalid_tools"
+        assert "tools" in result["error"]
+
+    @pytest.mark.asyncio
+    async def test_generate_video_adapts_tools_to_specs(self) -> None:
+        from gflow_cli.mcp.tools import gflow_generate_video
+
+        result = await gflow_generate_video(
+            prompt="a dog",
+            tools=[{"name": "creative-director"}],
+        )
+        assert result["status"] == "pending"
+        assert result["params"]["tool_specs"] == ["creative-director"]
+
+    @pytest.mark.asyncio
     async def test_list_projects_returns_empty_list(self) -> None:
         """gflow_list_projects should return an empty list when no data."""
         from gflow_cli.mcp.tools import gflow_list_projects

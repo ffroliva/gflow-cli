@@ -2,25 +2,22 @@
 
 from __future__ import annotations
 
+from functools import lru_cache
+
 from gflow_cli.errors import ConfigurationError
 from gflow_cli.tools.loader import load_builtin_tools
 from gflow_cli.tools.spec import ToolSpec
 
-# Lowercase: pyright treats UPPERCASE module globals as constants and forbids
-# reassignment (reportConstantRedefinition); this cache is intentionally mutable.
-_registry_cache: dict[str, ToolSpec] | None = None
 
-
+@lru_cache(maxsize=1)
 def _registry() -> dict[str, ToolSpec]:
-    global _registry_cache
-    if _registry_cache is None:
-        _registry_cache = load_builtin_tools()
-    return _registry_cache
+    # Built once, lazily, and memoized — mirrors ``config.get_settings``'s
+    # ``@lru_cache`` discipline. ``reset_registry`` clears it for tests.
+    return load_builtin_tools()
 
 
 def reset_registry() -> None:
-    global _registry_cache
-    _registry_cache = None
+    _registry.cache_clear()
 
 
 def tool_names() -> tuple[str, ...]:

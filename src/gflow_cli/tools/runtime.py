@@ -12,19 +12,24 @@ from gflow_cli.tools.banned import strip_banned_keywords
 from gflow_cli.tools.expander import ExpansionResult, PromptExpander
 
 if TYPE_CHECKING:
-    from gflow_cli.tools.spec import ToolConfig, ToolSpec
+    from gflow_cli.tools.spec import DomainCategory, ToolConfig, ToolSpec
 
 log = structlog.get_logger(__name__)
 
 
-def build_instruction(config: ToolConfig, style: str | None) -> str:
+def build_instruction(
+    config: ToolConfig,
+    style: str | None,
+    category: DomainCategory | None = None,
+) -> str:
     # The TOML system_template carries ONLY the formula (no trailing marker);
     # build_instruction appends the user-prompt marker EXACTLY ONCE, after any
     # domain vocabulary — so the domain and no-domain branches never duplicate it.
+    # ``category`` gates which same-named domain (image vs video) is selected.
     parts = [config.system_template.rstrip()]
-    domain = config.domain(style)
+    domain = config.domain(style, category)
     if style is not None and domain is None:
-        log.warning("tool_unknown_style", style=style)
+        log.warning("tool_unknown_style", style=style, category=category)
     if domain is not None:
         parts.append(f"Apply this {domain.name} style vocabulary: {domain.vocabulary}")
     return "\n\n".join(parts) + "\n\nUser prompt: "
@@ -35,10 +40,11 @@ def apply_tool(
     prompt: str,
     options: Mapping[str, str],
     *,
+    category: DomainCategory | None = None,
     expander: PromptExpander | None = None,
 ) -> ExpansionResult:
     style = options.get("style")
-    instruction = build_instruction(spec.config, style)
+    instruction = build_instruction(spec.config, style, category)
     if expander is None:
         settings = get_settings()
         expander = PromptExpander(

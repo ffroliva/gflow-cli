@@ -29,6 +29,8 @@ if TYPE_CHECKING:
     from collections.abc import Mapping
     from pathlib import Path
 
+    from gflow_cli.tools.invocation import AppliedTool
+
 __all__ = [
     "Aspect",
     "GenerateImageRequest",
@@ -240,6 +242,12 @@ class GenerateImageRequest:
     recaptcha_token: str = ""  # populated by caller right before send; "" means unminted
     # number of images to generate (1–4); UI transport uses this to set Flow's count tab
     count: int = 1
+    # Tool provenance (recorded, never sent on the wire). ``original_prompt`` is
+    # the user's pre-tool text when a ``--tool`` rewrote ``prompt``; ``tool`` is
+    # the applied-tool snapshot for ``operations.metadata_json.tool``. Both are
+    # ignored by the body builders. (PR2 §8)
+    original_prompt: str | None = None
+    tool: AppliedTool | None = None
 
     def __post_init__(self) -> None:
         if not self.prompt or not self.prompt.strip():

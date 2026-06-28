@@ -5,6 +5,7 @@ from __future__ import annotations
 from pathlib import Path
 from unittest.mock import AsyncMock, MagicMock, patch
 
+import pytest
 from click.testing import CliRunner
 
 from gflow_cli.cli_video import video
@@ -793,3 +794,106 @@ def test_t2v_help_shows_tool_option() -> None:
     result = CliRunner().invoke(main, ["video", "t2v", "--help"])
     assert "--tool" in result.output
     assert "--expand" not in result.output
+
+
+# ---------------------------------------------------------------------------
+# --tool broaden (PR2 §8): i2v / r2v / chain.
+# ---------------------------------------------------------------------------
+
+
+def _tool_sentinel() -> object:
+    from gflow_cli.tools.invocation import AppliedTool
+
+    return AppliedTool(
+        name="creative-director", version="1", model="gemini-2.5-flash", config_hash="z" * 64
+    )
+
+
+def test_i2v_run_threads_tool_provenance(tmp_path: Path) -> None:
+    import asyncio
+
+    from gflow_cli.cli_video import _run_i2v
+
+    captured: dict[str, object] = {}
+
+    async def _capture(request: object, **_kwargs: object) -> None:
+        captured["request"] = request
+
+    start = tmp_path / "start.png"
+    start.write_bytes(b"\x89PNG\r\n\x1a\n")
+    tool = _tool_sentinel()
+
+    with patch("gflow_cli.cli_video._generate_and_report", new=_capture):
+        asyncio.run(
+            _run_i2v(
+                profile_name="default",
+                profile_dir=tmp_path,
+                image=str(start),
+                prompt="EXPANDED",
+                aspect="9:16",
+                out_dir=None,
+                original_prompt="cat",
+                tool=tool,  # type: ignore[arg-type]
+            )
+        )
+
+    request = captured["request"]
+    assert request.original_prompt == "cat"  # type: ignore[attr-defined]
+    assert request.tool is tool  # type: ignore[attr-defined]
+
+
+def test_r2v_run_threads_tool_provenance(tmp_path: Path) -> None:
+    import asyncio
+
+    from gflow_cli.cli_video import _run_r2v
+
+    captured: dict[str, object] = {}
+
+    async def _capture(request: object, **_kwargs: object) -> None:
+        captured["request"] = request
+
+    ref = tmp_path / "ref.png"
+    ref.write_bytes(b"\x89PNG\r\n\x1a\n")
+    tool = _tool_sentinel()
+
+    with patch("gflow_cli.cli_video._generate_and_report", new=_capture):
+        asyncio.run(
+            _run_r2v(
+                profile_name="default",
+                profile_dir=tmp_path,
+                prompt="EXPANDED",
+                refs=(str(ref),),
+                aspect="9:16",
+                out_dir=None,
+                model="omni-flash",
+                original_prompt="cat",
+                tool=tool,  # type: ignore[arg-type]
+            )
+        )
+
+    request = captured["request"]
+    assert request.original_prompt == "cat"  # type: ignore[attr-defined]
+    assert request.tool is tool  # type: ignore[attr-defined]
+
+
+def test_apply_tools_to_chain_links_rewrites_each_link(monkeypatch: pytest.MonkeyPatch) -> None:
+    from gflow_cli import cli_video
+    from gflow_cli.chain import ChainLinkSpec
+
+    def fake_apply(text, tool_specs, *, category, quiet):  # noqa: ANN001, ANN202
+        assert category == "video"
+        return f"X:{text}", text, "TOOLOBJ"
+
+    monkeypatch.setattr(cli_video, "apply_tool_option", fake_apply)
+    links = [ChainLinkSpec(prompt="a"), ChainLinkSpec(prompt="b")]
+    out = cli_video._apply_tools_to_chain_links(links, ("creative-director",))
+    assert [link.prompt for link in out] == ["X:a", "X:b"]
+    assert [link.original_prompt for link in out] == ["a", "b"]
+    assert all(link.tool == "TOOLOBJ" for link in out)
+
+
+def test_tool_option_present_on_video_generation_commands() -> None:
+    runner = CliRunner()
+    for cmd in ("t2v", "i2v", "r2v", "chain"):
+        result = runner.invoke(video, [cmd, "--help"])
+        assert "--tool" in result.output, f"{cmd} --help missing --tool"
