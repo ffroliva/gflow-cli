@@ -37,6 +37,7 @@ if TYPE_CHECKING:
 
     from gflow_cli.api.dto import GeneratedImage
     from gflow_cli.data.recorder import OperationRecorder
+    from gflow_cli.tools.invocation import AppliedTool
 
 console = Console()
 logger = structlog.get_logger(__name__)
@@ -86,7 +87,12 @@ _ANSI_RE = re.compile(r"\x1b\[[0-?]*[ -/]*[@-~]")
 
 @dataclass(frozen=True)
 class BatchPromptItem:
-    """One prompt entry for image batch execution."""
+    """One prompt entry for image batch execution.
+
+    ``text`` is the prompt actually submitted (already tool-expanded when a
+    ``--tool`` was applied). ``original_prompt`` / ``tool`` carry the provenance
+    the recorder writes; both are ``None`` when no tool ran.
+    """
 
     text: str
     aspect_ratio: str = DEFAULT_ASPECT_RATIO
@@ -94,6 +100,8 @@ class BatchPromptItem:
     count: int = DEFAULT_COUNT
     output_filename: str | None = None
     index: int = 0
+    original_prompt: str | None = None
+    tool: AppliedTool | None = None
 
 
 @dataclass(frozen=True)
@@ -387,6 +395,8 @@ async def run_one_image_prompt(
         prompt=item.text,
         aspect=Aspect.from_cli(item.aspect_ratio),
         model=Model.from_cli(item.model),
+        original_prompt=item.original_prompt,
+        tool=item.tool,
     )
     stem = item.output_filename or f"prompt_{idx}"
     try:
@@ -727,6 +737,8 @@ def _to_request(item: BatchPromptItem) -> GenerateImageRequest:
         aspect=Aspect.from_cli(item.aspect_ratio),
         model=Model.from_cli(item.model),
         count=item.count,
+        original_prompt=item.original_prompt,
+        tool=item.tool,
     )
 
 

@@ -77,7 +77,30 @@ __all__ = [
     "apply_tool_option",
     "run_with_handlers",
     "safe_path_text",
+    "tool_option",
 ]
+
+
+_TOOL_OPTION_HELP = (
+    "Apply a prompt tool before generating, e.g. --tool creative-director or "
+    "--tool creative-director:style=cinema. Repeatable. Requires "
+    "GFLOW_CLI_GEMINI_API_KEY; falls back to the original prompt if unset or on error."
+)
+
+
+def tool_option(func: Callable[..., Any]) -> Callable[..., Any]:
+    """Reusable ``-t/--tool`` Click option (DRY across t2i/i2i/t2v/i2v/r2v/chain).
+
+    Binds to the ``tool_specs: tuple[str, ...]`` parameter. One definition keeps
+    the help text and flag spelling identical on every generation command.
+    """
+    return click.option(
+        "-t",
+        "--tool",
+        "tool_specs",
+        multiple=True,
+        help=_TOOL_OPTION_HELP,
+    )(func)
 
 
 def _parse_tool_spec(spec: str) -> tuple[str, dict[str, str]]:

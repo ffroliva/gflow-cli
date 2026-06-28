@@ -278,9 +278,7 @@ def test_apply_tool_option_rejects_cross_category_style() -> None:
         )
     # "cinema" is an image domain — invalid on a video command.
     with pytest.raises(click.UsageError, match="unknown video style 'cinema'"):
-        apply_tool_option(
-            "cat", ("creative-director:style=cinema",), category="video", quiet=True
-        )
+        apply_tool_option("cat", ("creative-director:style=cinema",), category="video", quiet=True)
 
 
 def test_apply_tool_option_valid_style_does_not_raise(
