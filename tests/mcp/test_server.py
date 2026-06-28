@@ -25,7 +25,7 @@ class TestMcpToolListing:
     """Verify the server exposes the expected tools."""
 
     def test_server_has_expected_tools(self, mcp_server: Any) -> None:
-        """The server should expose at least 4 core tools."""
+        """The server should expose at least 5 core tools."""
         tools = mcp_server._tool_manager._tools
         tool_names = set(tools.keys())
         expected = {
@@ -33,36 +33,57 @@ class TestMcpToolListing:
             "gflow_generate_video",
             "gflow_list_projects",
             "gflow_list_characters",
+            "gflow_list_tools",
         }
         assert expected.issubset(tool_names), (
             f"Missing tools: {expected - tool_names}. Found: {tool_names}"
         )
 
     def test_generate_image_tool_has_required_params(self, mcp_server: Any) -> None:
-        """gflow_generate_image should accept prompt + model/aspect/count/seed/expand/profile."""
+        """gflow_generate_image should accept prompt + model/aspect/count/seed/tools/profile."""
         tool = mcp_server._tool_manager._tools["gflow_generate_image"]
         schema = tool.parameters
         required_fields = {"prompt"}
         assert required_fields.issubset(set(schema.get("required", []))), (
             f"Missing required fields: {required_fields}"
         )
-        # CLI/MCP symmetry (AGENTS.md): the CLI `-e`/`--expand` flag must be mirrored.
-        assert "expand" in schema.get("properties", {}), (
-            "MCP image tool missing 'expand' (CLI parity)"
+        # CLI/MCP symmetry (AGENTS.md): the CLI --tool option mirrors to a `tools` param.
+        assert "tools" in schema.get("properties", {}), (
+            "MCP image tool missing 'tools' (CLI parity)"
         )
 
     def test_generate_video_tool_has_required_params(self, mcp_server: Any) -> None:
-        """gflow_generate_video should accept prompt, mode, aspect, image_path, expand, profile."""
+        """gflow_generate_video should accept prompt, mode, aspect, image_path, tools, profile."""
         tool = mcp_server._tool_manager._tools["gflow_generate_video"]
         schema = tool.parameters
         required_fields = {"prompt"}
         assert required_fields.issubset(set(schema.get("required", []))), (
             f"Missing required fields: {required_fields}"
         )
-        # CLI/MCP symmetry (AGENTS.md): the CLI `-e`/`--expand` flag must be mirrored.
-        assert "expand" in schema.get("properties", {}), (
-            "MCP video tool missing 'expand' (CLI parity)"
+        # CLI/MCP symmetry (AGENTS.md): the CLI --tool option mirrors to a `tools` param.
+        assert "tools" in schema.get("properties", {}), (
+            "MCP video tool missing 'tools' (CLI parity)"
         )
+
+
+# ---------------------------------------------------------------------------
+# gflow_list_tools
+# ---------------------------------------------------------------------------
+
+
+class TestListTools:
+    def test_list_tools_registered(self, mcp_server: Any) -> None:
+        assert "gflow_list_tools" in mcp_server._tool_manager._tools
+
+    @pytest.mark.asyncio
+    async def test_list_tools_payload_shape(self) -> None:
+        from gflow_cli.mcp.tools import gflow_list_tools
+
+        payload = await gflow_list_tools()
+        names = {t["name"] for t in payload["tools"]}
+        assert "creative-director" in names
+        cd = next(t for t in payload["tools"] if t["name"] == "creative-director")
+        assert {"name", "title", "description", "category"} <= cd.keys()
 
 
 # ---------------------------------------------------------------------------

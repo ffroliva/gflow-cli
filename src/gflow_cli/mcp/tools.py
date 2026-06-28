@@ -90,7 +90,7 @@ async def gflow_generate_image(
     aspect: str = "1:1",
     count: int = 1,
     seed: int | None = None,
-    expand: bool = False,
+    tools: list[dict[str, Any]] | None = None,
     profile: str = "default",
 ) -> dict[str, Any]:
     """Generate an image via Google Flow's Imagen.
@@ -101,9 +101,13 @@ async def gflow_generate_image(
         aspect: Aspect ratio — '1:1', '9:16', '16:9', '4:3', '3:4'.
         count: Number of images to generate (1-4).
         seed: Optional random seed for reproducibility.
-        expand: Expand the prompt with the Gemini "Creative Director" before
-            generating (mirrors the CLI `-e`/`--expand` flag; requires
-            GFLOW_CLI_GEMINI_API_KEY, degrades gracefully to the original prompt).
+        tools: Optional list of prompt tools to apply before generation.
+            Each item is ``{"name": str, "options": dict}``.  Valid names
+            include ``"creative-director"`` (which supports an ``options``
+            key of ``"style"`` for domain-vocabulary injection).
+            Requires GFLOW_CLI_GEMINI_API_KEY; degrades gracefully to the
+            original prompt when unavailable (mirrors the CLI ``--tool/-t``
+            flag).
         profile: gflow-cli profile name to use.
 
     Returns:
@@ -141,7 +145,7 @@ async def gflow_generate_image(
                 "aspect": aspect,
                 "count": count,
                 "seed": seed,
-                "expand": expand,
+                "tools": tools or [],
                 "profile": profile,
             },
         }
@@ -161,7 +165,7 @@ async def gflow_generate_video(
     mode: str = "t2v",
     aspect: str = "9:16",
     image_path: str | None = None,
-    expand: bool = False,
+    tools: list[dict[str, Any]] | None = None,
     profile: str = "default",
 ) -> dict[str, Any]:
     """Generate a video via Google Flow's Veo.
@@ -171,9 +175,13 @@ async def gflow_generate_video(
         mode: Generation mode — 't2v', 'i2v', or 'r2v'.
         aspect: Aspect ratio — '9:16' or '16:9'.
         image_path: Path to start frame image (required for i2v/r2v).
-        expand: Expand the prompt with the Gemini "Creative Director" before
-            generating (mirrors the CLI `-e`/`--expand` flag on `video t2v`;
-            requires GFLOW_CLI_GEMINI_API_KEY, degrades gracefully).
+        tools: Optional list of prompt tools to apply before generation.
+            Each item is ``{"name": str, "options": dict}``.  Valid names
+            include ``"creative-director"`` (which supports an ``options``
+            key of ``"style"`` for domain-vocabulary injection).
+            Requires GFLOW_CLI_GEMINI_API_KEY; degrades gracefully to the
+            original prompt when unavailable (mirrors the CLI ``--tool/-t``
+            flag on ``video t2v``).
         profile: gflow-cli profile name to use.
 
     Returns:
@@ -208,10 +216,30 @@ async def gflow_generate_video(
                 "mode": mode,
                 "aspect": aspect,
                 "image_path": image_path,
-                "expand": expand,
+                "tools": tools or [],
                 "profile": profile,
             },
         }
+
+
+@server.tool(
+    name="gflow_list_tools",
+    description="List available gflow prompt tools (name, title, description, category).",
+)
+async def gflow_list_tools() -> dict[str, Any]:
+    """List available prompt tools that can be passed to gflow_generate_image/video.
+
+    Returns:
+        Dict with 'tools' list; each entry has name, title, description, category.
+    """
+    from gflow_cli.tools.registry import iter_tools
+
+    return {
+        "tools": [
+            {"name": s.name, "title": s.title, "description": s.description, "category": s.category}
+            for s in iter_tools()
+        ]
+    }
 
 
 @server.tool(
