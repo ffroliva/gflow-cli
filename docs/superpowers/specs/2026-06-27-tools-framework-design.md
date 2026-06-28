@@ -89,10 +89,14 @@ class ToolSpec(BaseModel):
 
 ### 4.3 Runtime
 
-- `runtime.apply_tool(spec, prompt, options, *, settings) -> ExpansionResult` — reuses the
-  expander's existing frozen `ExpansionResult(original, expanded, was_expanded)`; no new
+- `runtime.apply_tool(spec, prompt, options, *, expander=None) -> ExpansionResult` — reuses
+  the expander's existing frozen `ExpansionResult(original, expanded, was_expanded)`; no new
   result type at S2 (the richer `ToolOutcome` envelope is reserved for the S3 dispatch
-  framework — see the research doc).
+  framework — see the research doc). The optional `expander` arg is a test seam; in
+  production it is built from `get_settings()` + `spec.config.model` + the built instruction.
+- `build_instruction(config, style)` appends the `"User prompt: "` marker exactly once
+  (after any domain vocabulary); the TOML `system_template` must NOT carry the marker
+  (avoids the duplicated-marker bug — council D2).
 - For `creative-director`: builds the Gemini system instruction from `config.system_template`
   + the selected `options["style"]` domain vocabulary, calls the expander (never-fatal),
   then runs `strip_banned_keywords()` on the result (belt-and-braces with the instruction).
@@ -128,7 +132,12 @@ written as narrative paragraphs (never keyword lists), per banana-claude
 - `gflow tools run <name> "<input>" [--style <mode>] [--json]` — standalone; emits
   `{name, original, expanded, was_expanded}` (pipeable). Pure tools only (no generation).
 - `--tool/-t <name>[:k=v]` (repeatable) on `image t2i/i2i` + batch, `video t2v/i2v/r2v/chain`.
-  Applied as pre-processing before the transport. Single-prompt-only guard **removed**.
+  Applied as pre-processing before the transport.
+- **Per-PR scope of the single-prompt guard (council D8):** PR 1 wires `--tool` into
+  single-prompt `t2i`/`t2v` only and **keeps** the existing single-prompt guard there (help
+  text reads "single-prompt only"). The guard is **removed in PR 2** when `--tool` broadens
+  to `i2i` / batch `t2i` / `i2v` / `r2v` / `chain` (§8, §11). The "guard removed" end state
+  above is the post-PR-2 surface, not PR 1.
 
 ## 7. MCP surface (AGENTS.md §61 symmetry)
 
@@ -137,6 +146,11 @@ written as narrative paragraphs (never keyword lists), per banana-claude
   (replaces the scaffolded `expand: bool`). The §61 parity test asserts the **container**
   `tools` param exists on both CLI and MCP — keeps symmetry fixed as tools accrue.
 - Param description enumerates valid tool names + styles so agents self-educate.
+- **Existing `mcp/prompts.py` `expand_prompt` MCP *prompt* (council D1):** distinct from the
+  deleted `api/prompt_expander.py` and from the new tool — it is an MCP-client-facing prompt
+  template. PR 1 leaves it **untouched**. Its functional overlap with `creative-director` is a
+  deferred reconciliation (revisit in PR 3 / backlog); the PR-1 cleanup grep explicitly
+  excludes it.
 
 ## 8. Broaden surface + data
 
@@ -148,6 +162,15 @@ written as narrative paragraphs (never keyword lists), per banana-claude
 - Record `metadata_json.tool = {name, version, model, params}` via the recorder
   (redaction-gated; in redacted mode store `{name, version, params_hash}` only). No migration
   (reuses `metadata_json`).
+- **Redaction is NEW recorder-level logic, not free from `redact_metadata` (council D7):**
+  `redact_metadata` only redacts by key-name / sensitive-URL markers, so a free-text
+  `params.style` (or any future tool's text param) would pass through verbatim. The recorder
+  MUST branch on `PromptMode`: in `redacted` mode build `{name, version, params_hash}` itself
+  (reuse `prompt_fields`' sha256 for `params_hash`) — never dump the full `tool` dict and lean
+  on `redact_metadata`. Also (D7) add a `config_hash` of `ToolConfig` alongside the hand-bumped
+  `version` (tamper-evidence), and ensure the `metadata_json.tool` write rides the existing
+  post-success recorder safety wrapper so a write failure warns + returns 0 (never exit 16
+  after a paid generation, per `[[exit-code-16-data-store]]`).
 - Wire `--tool` into every generation path: `i2i` (`_run_i2i`), batch t2i (per item,
   sequential ≤50, non-fatal), manifest `image batch` (≤5), `i2v`/`r2v`
   (`_generate_and_report` already supports it via the DTO), `chain` (per-link, sequential).
@@ -168,13 +191,18 @@ written as narrative paragraphs (never keyword lists), per banana-claude
   column + `metadata_json.tool`, never-fatal contract, config, banana-claude credit (PR #202).
 - `docs/superpowers/research/2026-06-27-tool-abstraction-evaluation.md` — the owl analysis
   (already written).
-- `CHANGELOG.md` `[Unreleased]` updated; `PLAN.md` backlog reconciled.
+- `CHANGELOG.md` `[Unreleased]` reconciled. **Council D9/D8 note:** the full `docs/TOOLS.md` /
+  `docs/PROMPT_EXPANSION.md` land in PR 3 (a conscious deviation from the same-PR living-doc
+  convention `[[docs-first-class-living-spec]]`, justified by the 3-PR split), BUT the
+  CHANGELOG `[Unreleased]` entry is edited **in PR 1** so it never references the removed
+  `-e/--expand` flag. `PLAN.md` backlog reconciled in PR 3.
 
 ## 11. Packaging (3 PRs to `develop`)
 
 - **PR 1 — Tools framework + Creative Director:** `tools/` package, `creative-director.toml`,
   banned filter, domains, `gflow tools list/show/run`, refactor `--expand`→`--tool` on
-  t2i/t2v, MCP `gflow_list_tools` + `tools` param (replace `expand`), §61 test update.
+  t2i/t2v (single-prompt guard kept), MCP `gflow_list_tools` + `tools` param (replace
+  `expand`), §61 test update, **CHANGELOG `[Unreleased]` edit** (drop `-e/--expand`).
 - **PR 2 — Broaden surface:** DTO `original_prompt` field + recorder reads it + retire kwarg;
   `metadata_json.tool` recording; wire `--tool` into i2i/batch/i2v/r2v/chain; remove guard.
 - **PR 3 — Docs:** `docs/TOOLS.md`, `docs/PROMPT_EXPANSION.md`, INDEX entries, CHANGELOG/PLAN.

@@ -207,6 +207,14 @@ def test_image_only_does_not_support_video() -> None:
     spec = _spec().model_copy(update={"category": "image"})
     assert spec.supports("image")
     assert not spec.supports("video")
+
+
+def test_name_slug_validated() -> None:
+    with pytest.raises(ValidationError):
+        ToolSpec(
+            name="Bad Name!", title="X", description="d", category="both", version="1",
+            config=ToolConfig(system_template="t"),
+        )
 ```
 
 - [ ] **Step 2: Run test to verify it fails**
@@ -224,7 +232,7 @@ from __future__ import annotations
 
 from typing import Literal
 
-from pydantic import BaseModel, ConfigDict
+from pydantic import BaseModel, ConfigDict, Field
 
 
 class DomainMode(BaseModel):
@@ -251,7 +259,9 @@ class ToolConfig(BaseModel):
 
 class ToolSpec(BaseModel):
     model_config = ConfigDict(frozen=True)
-    name: str
+    # Slug only — used as a registry key, an error-message token, and (once the
+    # My-Tools loader activates) a potential filename. Constrain now. (council D3)
+    name: str = Field(pattern=r"^[a-z0-9-]+$")
     title: str
     description: str
     category: Literal["image", "video", "both"]
@@ -293,7 +303,7 @@ git commit -m "feat(tools): ToolSpec/ToolConfig pydantic models"
 - Consumes: `ToolSpec` (Task 2).
 - Produces: `load_builtin_tools() -> dict[str, ToolSpec]` (reads every `*.toml` under `tools/builtin/` via `importlib.resources`, parses with `tomllib`, validates into `ToolSpec`, keyed by `name`). Raises `gflow_cli.errors.ConfigurationError` on a malformed/invalid TOML. `load_user_tools(config_dir: Path) -> dict[str, ToolSpec]` exists but is NOT wired (dormant My-Tools seam) — it returns `{}` when the dir is absent.
 
-**TOML content note:** Populate `system_template` with banana-claude's verbatim 5-component formula instruction (source: `C:\development\github\banana-claude\skills\banana\references\prompt-engineering.md` lines 8–65, plus the `SKILL.md` CRITICAL RULES) adapted to a single system-instruction string ending in `"\n\nUser prompt: "`. Populate `[[config.domains]]` with the 9 image domain vocab libraries (prompt-engineering.md lines 67–123) and 6 video domains (cinematic, documentary, product, animation, abstract, social). Keep `banned_keywords` = the Task-1 list. This is DATA transcription from the cited source, not logic.
+**TOML content note:** Populate `system_template` with banana-claude's verbatim 5-component formula instruction (source — out-of-repo, requires local access: `C:\development\github\banana-claude\skills\banana\references\prompt-engineering.md` lines 8–65, plus the `SKILL.md` CRITICAL RULES). **Do NOT end `system_template` with a `"User prompt: "` marker** — `build_instruction` (Task 6) appends it exactly once (council D2 fix). Populate `[[config.domains]]` with the 9 image domain vocab libraries (prompt-engineering.md lines 67–123) and 6 video domains (cinematic, documentary, product, animation, abstract, social). Keep `banned_keywords` = the Task-1 list. This is DATA transcription from the cited source, not logic.
 
 - [ ] **Step 1: Write the failing test**
 
@@ -327,15 +337,29 @@ def test_user_tools_empty_when_dir_absent(tmp_path: Path) -> None:
     assert load_user_tools(tmp_path / "nope") == {}
 
 
-def test_invalid_toml_raises_configuration_error(tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> None:
+def test_user_tools_empty_when_dir_empty(tmp_path: Path) -> None:
+    empty = tmp_path / "tools"
+    empty.mkdir()
+    assert load_user_tools(empty) == {}
+
+
+def test_invalid_schema_raises_configuration_error(tmp_path: Path) -> None:
+    from gflow_cli.tools.loader import _load_dir
+
     bad = tmp_path / "tools"
     bad.mkdir()
     (bad / "broken.toml").write_text('name = "x"\n', encoding="utf-8")  # missing required fields
-    assert load_user_tools(tmp_path / "tools") == {} or True  # see note
     with pytest.raises(ConfigurationError):
-        # _load_dir is the shared validator used by both builtin + user loaders
-        from gflow_cli.tools.loader import _load_dir
+        _load_dir(bad)
 
+
+def test_malformed_toml_raises_configuration_error(tmp_path: Path) -> None:
+    from gflow_cli.tools.loader import _load_dir
+
+    bad = tmp_path / "tools"
+    bad.mkdir()
+    (bad / "broken.toml").write_text("this is = = not toml", encoding="utf-8")
+    with pytest.raises(ConfigurationError):
         _load_dir(bad)
 ```
 
@@ -372,11 +396,10 @@ five-component formula written as natural narrative (never keyword lists):
 Subject, Action, Location/Context, Composition, Style (lighting lives in Style).
 Keep the user's original intent and any named subjects intact. Do not use the
 banned Stable-Diffusion-era keywords. Do not ask questions, add preamble, use
-markdown, or wrap the result in quotes. Respond with ONLY the rewritten prompt.
-
-User prompt: """
+markdown, or wrap the result in quotes. Respond with ONLY the rewritten prompt."""
 # NOTE: replace the template above with the verbatim banana-claude formula
 # (prompt-engineering.md lines 8-65 + SKILL.md CRITICAL RULES) during execution.
+# Do NOT end system_template with a "User prompt:" marker — build_instruction adds it once.
 
 [[config.domains]]
 name = "cinema"
@@ -404,6 +427,16 @@ from gflow_cli.tools.spec import ToolSpec
 _BUILTIN_PACKAGE = "gflow_cli.tools.builtin"
 
 
+def _parse(name: str, text: str) -> dict[str, object]:
+    # Wrap BOTH failure modes as ConfigurationError so spec §4.2 holds
+    # ("Invalid TOML → ConfigurationError") — syntactic (TOMLDecodeError) and
+    # schema (ValidationError, in _validate). (council D2 nice-to-have)
+    try:
+        return tomllib.loads(text)
+    except tomllib.TOMLDecodeError as exc:
+        raise ConfigurationError(detail=f"malformed TOML in tool {name!r}: {exc}") from exc
+
+
 def _validate(name: str, data: dict[str, object]) -> ToolSpec:
     try:
         return ToolSpec.model_validate(data)
@@ -416,8 +449,7 @@ def load_builtin_tools() -> dict[str, ToolSpec]:
     root = resources.files(_BUILTIN_PACKAGE)
     for entry in root.iterdir():
         if entry.name.endswith(".toml"):
-            data = tomllib.loads(entry.read_text(encoding="utf-8"))
-            spec = _validate(entry.name, data)
+            spec = _validate(entry.name, _parse(entry.name, entry.read_text(encoding="utf-8")))
             tools[spec.name] = spec
     return tools
 
@@ -425,9 +457,7 @@ def load_builtin_tools() -> dict[str, ToolSpec]:
 def _load_dir(directory: Path) -> dict[str, ToolSpec]:
     tools: dict[str, ToolSpec] = {}
     for path in sorted(directory.glob("*.toml")):
-        with path.open("rb") as fh:
-            data = tomllib.load(fh)
-        spec = _validate(path.name, data)
+        spec = _validate(path.name, _parse(path.name, path.read_text(encoding="utf-8")))
         tools[spec.name] = spec
     return tools
 
@@ -742,16 +772,16 @@ log = structlog.get_logger(__name__)
 
 
 def build_instruction(config: ToolConfig, style: str | None) -> str:
-    instruction = config.system_template
+    # The TOML system_template carries ONLY the formula (no trailing marker);
+    # build_instruction appends the user-prompt marker EXACTLY ONCE, after any
+    # domain vocabulary — so the domain and no-domain branches never duplicate it.
+    parts = [config.system_template.rstrip()]
     domain = config.domain(style)
     if style is not None and domain is None:
         log.warning("tool_unknown_style", style=style)
     if domain is not None:
-        instruction = (
-            f"{config.system_template}\n\nApply this {domain.name} style vocabulary: "
-            f"{domain.vocabulary}\n\nUser prompt: "
-        )
-    return instruction
+        parts.append(f"Apply this {domain.name} style vocabulary: {domain.vocabulary}")
+    return "\n\n".join(parts) + "\n\nUser prompt: "
 
 
 def apply_tool(
@@ -781,7 +811,7 @@ def apply_tool(
     return ExpansionResult(original=result.original, expanded=cleaned, was_expanded=True)
 ```
 
-Note: `build_instruction` must end the no-domain branch with the template's own `"User prompt: "` marker — if the TOML `system_template` already ends with it, the no-domain branch returns the template unchanged (correct); the domain branch re-appends the marker after the vocabulary. Ensure the TOML template ends with `"\n\nUser prompt: "` so both branches feed the user prompt correctly.
+Note (council D2 fix): the TOML `system_template` must **NOT** end with the `"User prompt: "` marker — `build_instruction` appends `"\n\nUser prompt: "` exactly once at the end (after any domain vocabulary). This avoids the duplicated/orphan-marker bug the council caught (a template ending in the marker plus a domain branch re-appending it produced `…User prompt: \n\nApply this cinema…\n\nUser prompt: `). The relocated expander's built-in default `_SYSTEM_INSTRUCTION` keeps its own trailing marker for standalone use; the tool path overrides it with `build_instruction`'s output.
 
 - [ ] **Step 4: Run to verify it passes**
 
@@ -991,6 +1021,30 @@ def test_apply_tool_option_runs_creative_director(monkeypatch) -> None:  # noqa:
     sent, original = _cli_helpers.apply_tool_option("cat", ("creative-director",), category="image", quiet=True)
     assert sent == "EXPANDED"
     assert original == "cat"
+
+
+def test_apply_tool_option_wrong_category_raises(monkeypatch) -> None:  # noqa: ANN001
+    import click
+    import pytest
+
+    from gflow_cli._cli_helpers import apply_tool_option
+    from gflow_cli.tools.spec import ToolConfig, ToolSpec
+
+    video_only = ToolSpec(name="vid", title="Vid", description="d", category="video",
+                          version="1", config=ToolConfig(system_template="t"))
+    # get_tool is imported function-locally, so patch the registry source.
+    monkeypatch.setattr("gflow_cli.tools.registry.get_tool", lambda name: video_only)
+    with pytest.raises(click.UsageError):
+        apply_tool_option("cat", ("vid",), category="image", quiet=True)
+
+
+def test_parse_tool_spec_handles_options() -> None:
+    from gflow_cli._cli_helpers import _parse_tool_spec
+
+    assert _parse_tool_spec("creative-director") == ("creative-director", {})
+    assert _parse_tool_spec("creative-director:style=cinema") == ("creative-director", {"style": "cinema"})
+    assert _parse_tool_spec("name:") == ("name", {})
+    assert _parse_tool_spec("name:a=1,b=2") == ("name", {"a": "1", "b": "2"})
 ```
 
 - [ ] **Step 2: Run to verify it fails**
@@ -1000,7 +1054,14 @@ Expected: FAIL (`cannot import name 'apply_tool_option'`)
 
 - [ ] **Step 3: Implement `apply_tool_option`, remove `expand_prompt`**
 
-In `_cli_helpers.py`: delete `expand_prompt`; add:
+In `_cli_helpers.py`: delete `expand_prompt`. Add a **module-level** import near the top (council D2 fix — the test monkeypatches `_cli_helpers.apply_tool`, so it must be a module attribute, and a module-scope name also avoids the local-import shadowing):
+
+```python
+from typing import Literal  # add to the existing typing import if absent
+from gflow_cli.tools.runtime import apply_tool  # module scope, NOT function-local
+```
+
+Then add:
 
 ```python
 def _parse_tool_spec(spec: str) -> tuple[str, dict[str, str]]:
@@ -1024,8 +1085,8 @@ def apply_tool_option(
     original_prompt|None). Unknown tool / wrong category → UsageError (pre-network)."""
     from gflow_cli.errors import ConfigurationError
     from gflow_cli.tools.registry import get_tool
-    from gflow_cli.tools.runtime import apply_tool
 
+    # NB: `apply_tool` is imported at MODULE scope (above) so tests can patch it.
     if not tool_specs:
         return text, None
     original = text
@@ -1163,11 +1224,23 @@ git commit -m "feat(cli): replace --expand with --tool on video t2v"
         assert "tools" in schema.get("properties", {}), "MCP image tool missing 'tools' (CLI parity)"
 # (and the same for the video tool test)
 
-# add a new test:
+# add new tests:
 class TestListTools:
     def test_list_tools_registered(self, mcp_server: Any) -> None:
         assert "gflow_list_tools" in mcp_server._tool_manager._tools
+
+    @pytest.mark.asyncio
+    async def test_list_tools_payload_shape(self) -> None:
+        from gflow_cli.mcp.tools import gflow_list_tools
+
+        payload = await gflow_list_tools()
+        names = {t["name"] for t in payload["tools"]}
+        assert "creative-director" in names
+        cd = next(t for t in payload["tools"] if t["name"] == "creative-director")
+        assert {"name", "title", "description", "category"} <= cd.keys()
 ```
+
+Also (council D1 nice-to-have): when editing the two §61 param-test docstrings, replace the stale `"…seed/expand/profile"` / `"…image_path/expand/profile"` wording with `tools` so the docstrings don't keep referencing the removed `expand` param.
 
 - [ ] **Step 2: Run to verify it fails**
 
@@ -1177,7 +1250,7 @@ Expected: FAIL (`'tools' missing` / `gflow_list_tools` not registered)
 - [ ] **Step 3: Implement**
 
 In `mcp/tools.py`:
-- Replace `expand: bool = False` with `tools: list[dict[str, Any]] | None = None` on `gflow_generate_image` and `gflow_generate_video`; update docstrings (a `tools` array of `{name, options}` applied before generation; enumerate valid names + that `creative-director` supports `style`); put `"tools": tools or []` into the returned `params` dict (replacing `"expand": expand`).
+- Replace `expand: bool = False` with `tools: list[dict[str, Any]] | None = None` on `gflow_generate_image` and `gflow_generate_video`; update docstrings (a `tools` array of `{name, options}` applied before generation; enumerate valid names + that `creative-director` supports `style`); put `"tools": tools or []` into the returned `params` dict (replacing `"expand": expand`). (council D3 nice-to-have: each item is conceptually `{name: str, options: dict}`; when PR-2 wires real generation, validate items with a pydantic `ToolInvocation` model so malformed agent input fails cleanly rather than as an uncaught `TypeError` — for PR 1 the handler only echoes `tools` into `params`, so `list[dict]` is acceptable.)
 - Add:
 
 ```python
@@ -1218,8 +1291,10 @@ git commit -m "feat(mcp): gflow_list_tools + tools param (replace expand)"
 
 - [ ] **Step 1: Confirm no `--expand` / `prompt_expander` / `expand_prompt` remnants**
 
-Run: `grep -rn "expand_prompt\|--expand\|api.prompt_expander\|\bexpand: bool" src tests`
+Run: `grep -rn "expand_prompt\|--expand\|api.prompt_expander\|\bexpand: bool" src tests | grep -v "src/gflow_cli/mcp/prompts.py"`
 Expected: NO matches (the only "expand" left is inside `expanded_prompt`/`ExpansionResult`/`was_expanded`). Fix any straggler.
+
+**Council D1 note — `mcp/prompts.py` is intentionally excluded:** `src/gflow_cli/mcp/prompts.py` legitimately defines an MCP `@server.prompt() def expand_prompt(...)` — the Flow 5-component MCP *prompt* (an MCP-client-facing prompt template), which is DISTINCT from the deleted `api/prompt_expander.py` and from the new `creative-director` tool. It is **out of scope for PR 1 — leave it untouched** (do NOT delete it; the bare grep would otherwise either never go green or trick an executor into removing a valid prompt). Its functional overlap with the `creative-director` tool is a deliberate, deferred reconciliation (see spec §7 note); revisit in PR 3 / backlog.
 
 - [ ] **Step 2: Lint + format the whole tree**
 
@@ -1244,11 +1319,15 @@ Expected: all pass (note `tests/api` no longer contains `test_prompt_expander.py
 .venv/Scripts/python.exe -m gflow image t2i --help   # shows -t/--tool, not --expand
 ```
 
-- [ ] **Step 6: Final commit (if any straggler fixed)**
+- [ ] **Step 6: Update CHANGELOG `[Unreleased]` (council D8/D9)**
+
+The PR #209 `[Unreleased]` entry describes prompt expansion via `-e/--expand`. Edit that entry so it describes the renamed surface: the `creative-director` **tool** invoked via `--tool/-t` and `gflow tools list/show/run`, replacing the never-released `-e/--expand`. (Full `docs/TOOLS.md` / `docs/PROMPT_EXPANSION.md` remain PR 3, but the CHANGELOG must not reference a flag that no longer exists.)
+
+- [ ] **Step 7: Final commit**
 
 ```bash
 git add -A
-git commit -m "chore(tools): PR1 verification — no --expand remnants, full suite green"
+git commit -m "chore(tools): PR1 verification + CHANGELOG — no --expand remnants, full suite green"
 ```
 
 ---
