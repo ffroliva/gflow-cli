@@ -36,7 +36,8 @@ def load_builtin_tools() -> dict[str, ToolSpec]:
     root = resources.files(_BUILTIN_PACKAGE)
     for entry in root.iterdir():
         if entry.name.endswith(".toml"):
-            spec = _validate(entry.name, _parse(entry.name, entry.read_text(encoding="utf-8")))
+            label = Path(entry.name).stem  # strip .toml for error labels
+            spec = _validate(label, _parse(label, entry.read_text(encoding="utf-8")))
             tools[spec.name] = spec
     return tools
 
@@ -44,7 +45,7 @@ def load_builtin_tools() -> dict[str, ToolSpec]:
 def _load_dir(directory: Path) -> dict[str, ToolSpec]:
     tools: dict[str, ToolSpec] = {}
     for path in sorted(directory.glob("*.toml")):
-        spec = _validate(path.name, _parse(path.name, path.read_text(encoding="utf-8")))
+        spec = _validate(path.stem, _parse(path.stem, path.read_text(encoding="utf-8")))
         tools[spec.name] = spec
     return tools
 

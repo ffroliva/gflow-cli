@@ -116,6 +116,21 @@ def apply_tool_option(
             raise click.UsageError(str(exc)) from exc
         if not spec.supports(category):
             raise click.UsageError(f"tool {name!r} does not support {category} generation.")
+        # Validate option keys against the tool's declared schema.
+        if options:
+            unknown_keys = sorted(set(options) - set(spec.options_schema))
+            if unknown_keys:
+                valid = sorted(spec.options_schema)
+                raise click.UsageError(
+                    f"tool {name!r}: unknown option(s) {unknown_keys!r}; valid options: {valid!r}"
+                )
+        # Validate the style value when provided — must match a declared domain.
+        style_val = options.get("style")
+        if style_val is not None and spec.config.domain(style_val) is None:
+            valid_styles = sorted(d.name for d in spec.config.domains)
+            raise click.UsageError(
+                f"tool {name!r}: unknown style {style_val!r}; valid styles: {valid_styles!r}"
+            )
         result = apply_tool(spec, current, options)
         if result.was_expanded:
             changed = True
@@ -123,7 +138,7 @@ def apply_tool_option(
             if not quiet:
                 _console.print(f"[cyan]{spec.title} applied:[/cyan] [dim]{current}[/dim]")
         elif not quiet:
-            _console.print(f"[yellow]{spec.title} skipped[/yellow] (unavailable); using original.")
+            _console.print(f"[yellow]{spec.title} skipped[/yellow] (unavailable).")
     return current, (original if changed else None)
 
 
