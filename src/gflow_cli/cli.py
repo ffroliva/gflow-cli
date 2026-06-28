@@ -22,6 +22,7 @@ from gflow_cli.cli_models import models as _models_command
 from gflow_cli.cli_movie import movie as _movie_group
 from gflow_cli.cli_run import run as _run_command
 from gflow_cli.cli_scene import scene as _scene_group
+from gflow_cli.cli_tools import tools as _tools_group
 from gflow_cli.cli_video import video as _video_group
 from gflow_cli.config import get_settings
 from gflow_cli.observability import DEBUG_LEVEL, configure_logging
@@ -366,6 +367,7 @@ main.add_command(_image_group)
 main.add_command(_run_command)
 main.add_command(_models_command)
 main.add_command(_scene_group)
+main.add_command(_tools_group)
 
 
 # --- mcp --------------------------------------------------------------------

@@ -69,6 +69,30 @@ def _get_profile_lock(profile: str) -> asyncio.Lock:
     return _profile_locks[profile]
 
 
+def _adapt_tools(tools: list[dict[str, Any]] | None) -> tuple[str, ...] | dict[str, Any]:
+    """Validate + adapt the MCP ``tools`` array to CLI ``--tool`` specs.
+
+    Returns the spec tuple on success, or a structured error dict (to return to
+    the agent) when an item is malformed — so a bad ``tools`` payload fails
+    cleanly rather than as an uncaught error once generation is wired.
+    """
+    from pydantic import ValidationError
+
+    from gflow_cli.tools.invocation import tool_specs_from_invocations
+
+    try:
+        return tool_specs_from_invocations(tools)
+    except ValidationError as exc:
+        log.warning("mcp.tool.invalid_tools", error=str(exc))
+        return {
+            "status": "invalid_tools",
+            "error": (
+                "Each item in 'tools' must be {'name': <slug>, 'options': {k: v}}. "
+                f"Validation failed: {exc}"
+            ),
+        }
+
+
 # ---------------------------------------------------------------------------
 # MCP Tools
 # ---------------------------------------------------------------------------
@@ -90,6 +114,7 @@ async def gflow_generate_image(
     aspect: str = "1:1",
     count: int = 1,
     seed: int | None = None,
+    tools: list[dict[str, Any]] | None = None,
     profile: str = "default",
 ) -> dict[str, Any]:
     """Generate an image via Google Flow's Imagen.
@@ -100,6 +125,13 @@ async def gflow_generate_image(
         aspect: Aspect ratio — '1:1', '9:16', '16:9', '4:3', '3:4'.
         count: Number of images to generate (1-4).
         seed: Optional random seed for reproducibility.
+        tools: Optional list of prompt tools to apply before generation.
+            Each item is ``{"name": str, "options": dict}``.  Valid names
+            include ``"creative-director"`` (which supports an ``options``
+            key of ``"style"`` for domain-vocabulary injection).
+            Requires GFLOW_CLI_GEMINI_API_KEY; degrades gracefully to the
+            original prompt when unavailable (mirrors the CLI ``--tool/-t``
+            flag).
         profile: gflow-cli profile name to use.
 
     Returns:
@@ -123,6 +155,14 @@ async def gflow_generate_image(
             profile=profile,
         )
 
+        # Validate + adapt the agent-supplied tools array to CLI --tool specs now
+        # (fail cleanly on malformed input) even though generation is not yet
+        # wired — the daemon will feed these specs to apply_tool_option.
+        adapted = _adapt_tools(tools)
+        if isinstance(adapted, dict):
+            return adapted
+        tool_specs = adapted
+
         # TODO: Wire to FlowApiClient when daemon integration lands.
         # For now, return a structured placeholder that validates the schema.
         return {
@@ -137,6 +177,8 @@ async def gflow_generate_image(
                 "aspect": aspect,
                 "count": count,
                 "seed": seed,
+                "tools": tools or [],
+                "tool_specs": list(tool_specs),
                 "profile": profile,
             },
         }
@@ -156,6 +198,7 @@ async def gflow_generate_video(
     mode: str = "t2v",
     aspect: str = "9:16",
     image_path: str | None = None,
+    tools: list[dict[str, Any]] | None = None,
     profile: str = "default",
 ) -> dict[str, Any]:
     """Generate a video via Google Flow's Veo.
@@ -165,6 +208,13 @@ async def gflow_generate_video(
         mode: Generation mode — 't2v', 'i2v', or 'r2v'.
         aspect: Aspect ratio — '9:16' or '16:9'.
         image_path: Path to start frame image (required for i2v/r2v).
+        tools: Optional list of prompt tools to apply before generation.
+            Each item is ``{"name": str, "options": dict}``.  Valid names
+            include ``"creative-director"`` (which supports an ``options``
+            key of ``"style"`` for domain-vocabulary injection).
+            Requires GFLOW_CLI_GEMINI_API_KEY; degrades gracefully to the
+            original prompt when unavailable (mirrors the CLI ``--tool/-t``
+            flag on ``video t2v``).
         profile: gflow-cli profile name to use.
 
     Returns:
@@ -187,6 +237,11 @@ async def gflow_generate_video(
             profile=profile,
         )
 
+        adapted = _adapt_tools(tools)
+        if isinstance(adapted, dict):
+            return adapted
+        tool_specs = adapted
+
         # TODO: Wire to FlowApiClient when daemon integration lands.
         return {
             "status": "pending",
@@ -199,9 +254,31 @@ async def gflow_generate_video(
                 "mode": mode,
                 "aspect": aspect,
                 "image_path": image_path,
+                "tools": tools or [],
+                "tool_specs": list(tool_specs),
                 "profile": profile,
             },
         }
+
+
+@server.tool(
+    name="gflow_list_tools",
+    description="List available gflow prompt tools (name, title, description, category).",
+)
+async def gflow_list_tools() -> dict[str, Any]:
+    """List available prompt tools that can be passed to gflow_generate_image/video.
+
+    Returns:
+        Dict with 'tools' list; each entry has name, title, description, category.
+    """
+    from gflow_cli.tools.registry import iter_tools
+
+    return {
+        "tools": [
+            {"name": s.name, "title": s.title, "description": s.description, "category": s.category}
+            for s in iter_tools()
+        ]
+    }
 
 
 @server.tool(

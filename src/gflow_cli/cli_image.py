@@ -31,8 +31,10 @@ from gflow_cli import json_output
 from gflow_cli._cli_helpers import (
     _make_provider_dir,
     _resolve_profile,
+    apply_tool_option,
     run_with_handlers,
     safe_path_text,
+    tool_option,
 )
 from gflow_cli.api.client import FlowApiClient
 from gflow_cli.api.dto import ProjectInfo
@@ -87,6 +89,7 @@ if TYPE_CHECKING:
     from collections.abc import Callable
 
     from gflow_cli.api.dto import GeneratedImage
+    from gflow_cli.tools.invocation import AppliedTool
 
 _CmdFn = TypeVar("_CmdFn", bound="Callable[..., object]")
 
@@ -637,6 +640,7 @@ async def _run_upscale(
     ),
 )
 @click.option("--profile", default=None, help="Profile name (overrides default).")
+@tool_option
 @click.option(
     "--transport",
     type=click.Choice(transport_choices(), case_sensitive=False),
@@ -664,6 +668,7 @@ def t2i(  # NOSONAR
     count: int,
     out: Path | None,
     profile: str | None,
+    tool_specs: tuple[str, ...],
     transport: str | None,
     project_id: str | None,
     reference_entities: tuple[str, ...],
@@ -698,17 +703,22 @@ def t2i(  # NOSONAR
         profile_name = _resolve_profile(profile)
         provider_dir = _make_provider_dir(profile_name)
         settings = get_settings()
+        prompt_to_send, original_prompt, applied_tool = apply_tool_option(
+            prompt, tool_specs, category="image", quiet=as_json
+        )
         run_with_handlers(
             lambda: _run_t2i(
                 profile_name=profile_name,
                 profile_dir=provider_dir,
                 headless=settings.headless,
                 req=GenerateImageRequest(
-                    prompt=prompt,
+                    prompt=prompt_to_send,
                     aspect=Aspect.from_cli(aspect),
                     model=Model.from_cli(model),
                     reference_entities=tuple(reference_entities),
                     reference_entity_names=tuple(reference_entity_names),
+                    original_prompt=original_prompt,
+                    tool=applied_tool,
                 ),
                 count=count,
                 out=out,
@@ -730,7 +740,35 @@ def t2i(  # NOSONAR
         model,
         count,
     )
+    # --tool now works on the batch path too (PR2): apply each tool per prompt
+    # before submission (sequential Gemini calls, never fatal). Validation of an
+    # unknown tool/style raises a UsageError here, before any browser opens.
+    if tool_specs:
+        batch_prompts = _apply_tools_to_batch_prompts(batch_prompts, tool_specs)
     _execute_t2i_batch(batch_prompts, count, continue_on_error, profile, out, transport)
+
+
+def _apply_tools_to_batch_prompts(
+    batch_prompts: tuple[BatchPromptItem, ...],
+    tool_specs: tuple[str, ...],
+) -> tuple[BatchPromptItem, ...]:
+    """Apply ``--tool`` to each batch item's text (sequential, ≤50 prompts).
+
+    Returns new items carrying the rewritten ``text`` plus ``original_prompt`` /
+    ``tool`` provenance. ``apply_tool_option`` is never-fatal per prompt (a
+    missing key / API error degrades to the original text); an unknown tool or
+    style still raises ``click.UsageError`` (pre-network) so the whole batch
+    fails fast rather than silently skipping the tool.
+    """
+    from dataclasses import replace
+
+    applied: list[BatchPromptItem] = []
+    for item in batch_prompts:
+        sent, original, tool = apply_tool_option(
+            item.text, tool_specs, category="image", quiet=True
+        )
+        applied.append(replace(item, text=sent, original_prompt=original, tool=tool))
+    return tuple(applied)
 
 
 def _build_t2i_batch_prompts(
@@ -886,7 +924,11 @@ def _record_generated_images_safe(
     input_media_ids: list[str],
     operation_kind: str,
 ) -> None:
-    """Persist generation metadata; warn on DataStoreError (never abort success)."""
+    """Persist generation metadata; warn on DataStoreError (never abort success).
+
+    Tool provenance (``original_prompt`` / ``tool``) travels on ``request``, so
+    the recorder reads it directly — no separate kwarg to drift out of sync.
+    """
     try:
         recorder.record_generated_images(
             profile_name=profile_name,
@@ -1070,6 +1112,7 @@ _BATCH_TITLE = "gflow-cli image batch"
     ),
 )
 @click.option("--profile", default=None, help="Profile name (overrides default).")
+@tool_option
 @click.option(
     "--transport",
     type=click.Choice(transport_choices(), case_sensitive=False),
@@ -1084,6 +1127,7 @@ def batch(
     continue_on_error: bool,
     out: Path | None,
     profile: str | None,
+    tool_specs: tuple[str, ...],
     transport: str | None,
 ) -> None:
     """Run MANIFEST (JSON or TSV) through Flow's image generator."""
@@ -1096,6 +1140,11 @@ def batch(
         )
     except ConfigurationError as exc:
         raise _as_usage_error(exc) from exc
+
+    # Apply --tool to each manifest row before submission (≤5 prompts, sequential,
+    # never-fatal per row; unknown tool/style fails fast pre-network).
+    if tool_specs:
+        prompts = _apply_tools_to_batch_prompts(prompts, tool_specs)
 
     profile_name = _resolve_profile(profile)
     provider_dir = _make_provider_dir(profile_name)
@@ -1156,6 +1205,9 @@ class _I2IParams:
     model: Model
     reference_entities: tuple[str, ...]
     reference_entity_names: tuple[str, ...]
+    # Tool provenance (set when a --tool rewrote the prompt; recorded only).
+    original_prompt: str | None = None
+    tool: AppliedTool | None = None
 
 
 @image.command(
@@ -1221,6 +1273,7 @@ class _I2IParams:
     ),
 )
 @click.option("--profile", default=None, help="Profile name (overrides default).")
+@tool_option
 @click.option(
     "--transport",
     type=click.Choice(transport_choices(), case_sensitive=False),
@@ -1246,6 +1299,7 @@ def i2i(
     count: int,
     out: Path | None,
     profile: str | None,
+    tool_specs: tuple[str, ...],
     transport: str | None,
     project_id: str | None,
     reference_entities: tuple[str, ...],
@@ -1276,13 +1330,18 @@ def i2i(
     profile_name = _resolve_profile(profile)
     provider_dir = _make_provider_dir(profile_name)
     settings = get_settings()
+    prompt_to_send, original_prompt, applied_tool = apply_tool_option(
+        prompt, tool_specs, category="image", quiet=as_json
+    )
     i2i_params = _I2IParams(
-        prompt=prompt,
+        prompt=prompt_to_send,
         classified_refs=classified_refs,
         aspect=Aspect.from_cli(aspect),
         model=model_enum,
         reference_entities=tuple(reference_entities),
         reference_entity_names=tuple(reference_entity_names),
+        original_prompt=original_prompt,
+        tool=applied_tool,
     )
     run_with_handlers(
         lambda: _run_i2i(
@@ -1344,6 +1403,8 @@ async def _run_i2i(
                 ref_paths=local_ref_paths,
                 reference_entities=params.reference_entities,
                 reference_entity_names=params.reference_entity_names,
+                original_prompt=params.original_prompt,
+                tool=params.tool,
             )
 
             n_refs = len(uuid_refs) + len(local_ref_paths)

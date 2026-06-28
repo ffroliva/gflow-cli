@@ -37,7 +37,7 @@ from __future__ import annotations
 
 import sys
 from pathlib import Path
-from typing import TYPE_CHECKING, Any
+from typing import TYPE_CHECKING, Any, Literal
 
 import click
 import structlog
@@ -50,9 +50,12 @@ from gflow_cli.errors import (
     GFlowError,
 )
 from gflow_cli.observability import emit_error_event, emit_unhandled_event
+from gflow_cli.tools.runtime import apply_tool
 
 if TYPE_CHECKING:
     from collections.abc import Callable, Coroutine
+
+    from gflow_cli.tools.invocation import AppliedTool
 
 _logger = structlog.get_logger(__name__)
 _console = Console()
@@ -71,9 +74,109 @@ __all__ = [
     "_handle_unhandled_error",
     "_make_provider_dir",
     "_resolve_profile",
+    "apply_tool_option",
     "run_with_handlers",
     "safe_path_text",
+    "tool_option",
 ]
+
+
+_TOOL_OPTION_HELP = (
+    "Apply a prompt tool before generating, e.g. --tool creative-director or "
+    "--tool creative-director:style=cinema. Repeatable. Requires "
+    "GFLOW_CLI_GEMINI_API_KEY; falls back to the original prompt if unset or on error."
+)
+
+
+def tool_option(func: Callable[..., Any]) -> Callable[..., Any]:
+    """Reusable ``-t/--tool`` Click option (DRY across t2i/i2i/t2v/i2v/r2v/chain).
+
+    Binds to the ``tool_specs: tuple[str, ...]`` parameter. One definition keeps
+    the help text and flag spelling identical on every generation command.
+    """
+    return click.option(
+        "-t",
+        "--tool",
+        "tool_specs",
+        multiple=True,
+        help=_TOOL_OPTION_HELP,
+    )(func)
+
+
+def _parse_tool_spec(spec: str) -> tuple[str, dict[str, str]]:
+    name, _, raw_opts = spec.partition(":")
+    options: dict[str, str] = {}
+    if raw_opts:
+        for pair in raw_opts.split(","):
+            k, _, v = pair.partition("=")
+            options[k.strip()] = v.strip()
+    return name.strip(), options
+
+
+def apply_tool_option(
+    text: str,
+    tool_specs: tuple[str, ...],
+    *,
+    category: Literal["image", "video"],
+    quiet: bool,
+) -> tuple[str, str | None, AppliedTool | None]:
+    """Apply ``--tool name[:k=v]`` specs in sequence. Returns ``(prompt_to_send,
+    original_prompt|None, applied_tool|None)``. Unknown tool / wrong category →
+    UsageError (pre-network).
+
+    ``applied_tool`` is the provenance snapshot of the LAST tool that rewrote the
+    prompt — recorded in ``operations.metadata_json.tool``. It is built from the
+    resolved spec + options (not the tool's output), so it stays accurate even
+    under a monkeypatched ``apply_tool`` in tests. ``apply_tool`` is imported at
+    MODULE scope so tests can monkeypatch it.
+    """
+    from gflow_cli.errors import ConfigurationError
+    from gflow_cli.tools.invocation import applied_tool_from_spec
+    from gflow_cli.tools.registry import get_tool
+
+    if not tool_specs:
+        return text, None, None
+    original = text
+    current = text
+    changed = False
+    applied: AppliedTool | None = None
+    for spec_str in tool_specs:
+        name, options = _parse_tool_spec(spec_str)
+        try:
+            spec = get_tool(name)
+        except ConfigurationError as exc:
+            raise click.UsageError(str(exc)) from exc
+        if not spec.supports(category):
+            raise click.UsageError(f"tool {name!r} does not support {category} generation.")
+        # Validate option keys against the tool's declared schema.
+        if options:
+            unknown_keys = sorted(set(options) - set(spec.options_schema))
+            if unknown_keys:
+                valid = sorted(spec.options_schema)
+                raise click.UsageError(
+                    f"tool {name!r}: unknown option(s) {unknown_keys!r}; valid options: {valid!r}"
+                )
+        # Validate the style value when provided — must match a declared domain
+        # for THIS generation category (an image style is invalid on video, etc).
+        style_val = options.get("style")
+        if style_val is not None and spec.config.domain(style_val, category) is None:
+            valid_styles = sorted(
+                d.name for d in spec.config.domains if d.category in (category, "both")
+            )
+            raise click.UsageError(
+                f"tool {name!r}: unknown {category} style {style_val!r}; "
+                f"valid {category} styles: {valid_styles!r}"
+            )
+        result = apply_tool(spec, current, options, category=category)
+        if result.was_expanded:
+            changed = True
+            current = result.expanded
+            applied = applied_tool_from_spec(spec, options)
+            if not quiet:
+                _console.print(f"[cyan]{spec.title} applied:[/cyan] [dim]{current}[/dim]")
+        elif not quiet:
+            _console.print(f"[yellow]{spec.title} skipped[/yellow] (unavailable).")
+    return current, (original if changed else None), applied
 
 
 def safe_path_text(path: Path) -> str:

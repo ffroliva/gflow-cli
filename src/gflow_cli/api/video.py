@@ -17,6 +17,8 @@ from typing import TYPE_CHECKING, Any, cast
 if TYPE_CHECKING:
     from pathlib import Path
 
+    from gflow_cli.tools.invocation import AppliedTool
+
 # Type alias used with cast() in response parsers — avoids repeating the
 # string-form annotation "dict[str, Any]" on every call (SonarCloud S1192).
 _StrAnyDict = dict[str, Any]
@@ -207,6 +209,11 @@ class GenerateVideoRequest:
         str, ...
     ] = ()  # R2V — character DISPLAY names (UI picker selection)
     reference_audio: str | None = None  # R2V — voice resource mediaId (e.g. "alnilam")
+    # Tool provenance (recorded, never sent on the wire). ``original_prompt`` is
+    # the user's pre-tool text when a ``--tool`` rewrote ``prompt``; ``tool`` is
+    # the applied-tool snapshot for ``operations.metadata_json.tool``. (PR2 §8)
+    original_prompt: str | None = None
+    tool: AppliedTool | None = None
 
     def __post_init__(self) -> None:
         self._validate_prompt()

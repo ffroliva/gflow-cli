@@ -7,6 +7,52 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+## [0.22.0] — 2026-06-28
+
+### Added
+
+- **Tools framework ("Creative Director")**: a TOML-defined prompt-tool system with
+  `creative-director` as the first built-in tool, exposed via two surfaces:
+  - **`gflow tools list/show/run`** — discover tools, inspect their styles, and run them
+    standalone (e.g. `gflow tools run creative-director "a cat" --style cinema --json`).
+  - **`-t` / `--tool` option** on every generation command — `image t2i` / `i2i` / `batch`,
+    `video t2v` / `i2v` / `r2v` / `chain` — apply one or more tools before generating
+    (e.g. `--tool creative-director:style=cinema`). Repeatable. On multi-prompt batches and
+    chains the tool is applied per prompt/link. Replaces the never-released `-e/--expand` flag.
+  - The `creative-director` tool rewrites a terse prompt into a vivid one using Google's
+    five-component formula (Subject + Action + Context/Location + Composition/Camera + Style)
+    via the public Gemini API. Requires `GFLOW_CLI_GEMINI_API_KEY`
+    ([get one](https://aistudio.google.com/apikey)); optional `GFLOW_CLI_GEMINI_MODEL`
+    (default `gemini-2.5-flash`). Domain-vocabulary modes (`--style cinema`, `portrait`,
+    `product`, etc.) inject specialized lens/lighting/colour vocabulary; styles are
+    **category-gated**, so image styles apply to image commands and video styles to video.
+  - Tool application is **never fatal** — missing key, rate limit, or any API/network fault
+    degrades gracefully to the original prompt.
+  - **History**: a generation rewritten by a tool records the user's original prompt in the
+    `prompt` column, the submitted expansion in `expanded_prompt`, and the applied tool
+    (`{name, version, model, params, config_hash}`) in `operations.metadata_json.tool` — all
+    honoring `GFLOW_CLI_HISTORY_PROMPTS=redacted` (the redacted form stores only
+    `{name, version, params_hash, config_hash}`).
+  - MCP parity: `gflow_list_tools` tool and a `tools` array parameter (`[{name, options}]`) on
+    `gflow_generate_image` / `gflow_generate_video`, validated and adapted to the CLI
+    `--tool` form.
+  - **"My Tools"**: drop your own tool TOMLs into `<GFLOW_CLI_HOME>/tools/*.toml` and they are
+    registered automatically — listed by `gflow tools list`, usable via `--tool`, and exposed over
+    MCP, just like built-ins. A user tool may override a built-in of the same name (logged via
+    `tool_user_override`); a malformed user TOML fails loud. See [docs/TOOLS.md](docs/TOOLS.md).
+  - The Gemini prompt expander gained an overall **wall-clock budget** (default ~60s per call)
+    on top of the lowered 20s per-attempt timeout, so sustained rate limiting can no longer
+    block a generation for the full retry schedule before falling back to the original prompt.
+
+### Deprecated
+
+- **`expand_prompt` MCP prompt**: superseded by the `creative-director` tool, which performs the
+  rewrite server-side (calls Gemini, strips banned keywords, supports domain styles, records
+  provenance). The prompt still works and now carries a `[DEPRECATED]` marker in its
+  client-visible description; it is slated for removal in a future major release. Use
+  `gflow tools run creative-director` / `--tool` (CLI) or `gflow_list_tools` + the `tools` array
+  param (MCP) instead.
+
 ## [0.21.0] — 2026-06-26
 
 ### Added
@@ -1582,7 +1628,8 @@ shell-script template that branches on these codes.
 
 First skeleton. Not functional end-to-end yet.
 
-[Unreleased]: https://github.com/ffroliva/gflow-cli/compare/v0.21.0...HEAD
+[Unreleased]: https://github.com/ffroliva/gflow-cli/compare/v0.22.0...HEAD
+[0.22.0]: https://github.com/ffroliva/gflow-cli/compare/v0.21.0...v0.22.0
 [0.21.0]: https://github.com/ffroliva/gflow-cli/compare/v0.20.1...v0.21.0
 [0.20.1]: https://github.com/ffroliva/gflow-cli/compare/v0.20.0...v0.20.1
 [0.20.0]: https://github.com/ffroliva/gflow-cli/compare/v0.19.0...v0.20.0
