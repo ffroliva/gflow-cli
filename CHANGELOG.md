@@ -13,19 +13,27 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   `creative-director` as the first built-in tool, exposed via two surfaces:
   - **`gflow tools list/show/run`** — discover tools, inspect their styles, and run them
     standalone (e.g. `gflow tools run creative-director "a cat" --style cinema --json`).
-  - **`-t` / `--tool` option** on `gflow image t2i` and `gflow video t2v` — apply one or
-    more tools before generating (e.g. `--tool creative-director:style=cinema`). Repeatable;
-    single-prompt only. Replaces the never-released `-e/--expand` flag.
+  - **`-t` / `--tool` option** on every generation command — `image t2i` / `i2i` / `batch`,
+    `video t2v` / `i2v` / `r2v` / `chain` — apply one or more tools before generating
+    (e.g. `--tool creative-director:style=cinema`). Repeatable. On multi-prompt batches and
+    chains the tool is applied per prompt/link. Replaces the never-released `-e/--expand` flag.
   - The `creative-director` tool rewrites a terse prompt into a vivid one using Google's
     five-component formula (Subject + Action + Context/Location + Composition/Camera + Style)
     via the public Gemini API. Requires `GFLOW_CLI_GEMINI_API_KEY`
     ([get one](https://aistudio.google.com/apikey)); optional `GFLOW_CLI_GEMINI_MODEL`
     (default `gemini-2.5-flash`). Domain-vocabulary modes (`--style cinema`, `portrait`,
-    `product`, etc.) inject specialized lens/lighting/colour vocabulary.
+    `product`, etc.) inject specialized lens/lighting/colour vocabulary; styles are
+    **category-gated**, so image styles apply to image commands and video styles to video.
   - Tool application is **never fatal** — missing key, rate limit, or any API/network fault
     degrades gracefully to the original prompt.
-  - MCP parity: `gflow_list_tools` tool and a `tools` array parameter on
-    `gflow_generate_image` / `gflow_generate_video`.
+  - **History**: a generation rewritten by a tool records the user's original prompt in the
+    `prompt` column, the submitted expansion in `expanded_prompt`, and the applied tool
+    (`{name, version, model, params, config_hash}`) in `operations.metadata_json.tool` — all
+    honoring `GFLOW_CLI_HISTORY_PROMPTS=redacted` (the redacted form stores only
+    `{name, version, params_hash, config_hash}`).
+  - MCP parity: `gflow_list_tools` tool and a `tools` array parameter (`[{name, options}]`) on
+    `gflow_generate_image` / `gflow_generate_video`, validated and adapted to the CLI
+    `--tool` form.
 
 ## [0.21.0] — 2026-06-26
 
