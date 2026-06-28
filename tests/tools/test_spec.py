@@ -59,3 +59,39 @@ def test_name_slug_validated() -> None:
             version="1",
             config=ToolConfig(system_template="t"),
         )
+
+
+def test_domain_category_gating() -> None:
+    """Two domains can share a name when their categories differ; ``domain()``
+    disambiguates by the requested category (review fold-in)."""
+    cfg = ToolConfig(
+        system_template="t",
+        domains=(
+            DomainMode(name="product", vocabulary="IMAGE product vocab", category="image"),
+            DomainMode(name="product", vocabulary="VIDEO product vocab", category="video"),
+            DomainMode(name="cinema", vocabulary="image cinema", category="image"),
+        ),
+    )
+    # category=None → first name match (backward compatible).
+    assert cfg.domain("product").vocabulary == "IMAGE product vocab"
+    # category gates which "product" is returned.
+    assert cfg.domain("product", "image").vocabulary == "IMAGE product vocab"
+    assert cfg.domain("product", "video").vocabulary == "VIDEO product vocab"
+    # an image-only domain is invisible to a video request.
+    assert cfg.domain("cinema", "video") is None
+    assert cfg.domain("cinema", "image").vocabulary == "image cinema"
+
+
+def test_domain_both_category_matches_any() -> None:
+    cfg = ToolConfig(
+        system_template="t",
+        domains=(DomainMode(name="universal", vocabulary="v"),),  # default category="both"
+    )
+    assert cfg.domain("universal", "image").vocabulary == "v"
+    assert cfg.domain("universal", "video").vocabulary == "v"
+
+
+def test_options_schema_is_immutable() -> None:
+    spec = _spec()
+    with pytest.raises(TypeError):
+        spec.options_schema["style"] = "mutated"  # type: ignore[index]

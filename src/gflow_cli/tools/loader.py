@@ -34,7 +34,8 @@ def _validate(name: str, data: dict[str, object]) -> ToolSpec:
 def load_builtin_tools() -> dict[str, ToolSpec]:
     tools: dict[str, ToolSpec] = {}
     root = resources.files(_BUILTIN_PACKAGE)
-    for entry in root.iterdir():
+    # Sorted for deterministic load order (stable across platforms / packagers).
+    for entry in sorted(root.iterdir(), key=lambda e: e.name):
         if entry.name.endswith(".toml"):
             label = Path(entry.name).stem  # strip .toml for error labels
             spec = _validate(label, _parse(label, entry.read_text(encoding="utf-8")))
