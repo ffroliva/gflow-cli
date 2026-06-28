@@ -80,7 +80,7 @@ class OperationRecorder:
         """Resolve the recorded prompt fields and the expansion-to-store.
 
         ``sent_prompt`` is what was actually submitted to Flow. When
-        ``original_prompt`` is provided (i.e. ``--expand`` rewrote the prompt),
+        ``original_prompt`` is provided (i.e. ``--tool`` rewrote the prompt),
         the user's *original* prompt is recorded as the operation prompt and the
         ``sent_prompt`` is persisted separately as ``expanded_prompt`` — withheld
         when ``history_prompts='redacted'``, exactly like the original prompt.

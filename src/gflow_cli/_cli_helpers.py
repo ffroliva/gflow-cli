@@ -78,39 +78,6 @@ __all__ = [
 ]
 
 
-def expand_prompt(prompt: str, *, enabled: bool, quiet: bool = False) -> tuple[str, str | None]:
-    """Compatibility shim: kept for ``cli_video.py`` until Task 9 replaces ``--expand``.
-
-    Delegates to ``gflow_cli.tools.expander.PromptExpander`` (module relocated in Task 5).
-    Returns ``(prompt_to_send, original_prompt|None)``. Never raises.
-    """
-    if not enabled:
-        return prompt, None
-
-    from gflow_cli.config import get_settings
-    from gflow_cli.tools.expander import PromptExpander
-
-    settings = get_settings()
-    result = PromptExpander.from_settings(settings).expand(prompt)
-    if not result.was_expanded:
-        if not quiet and settings.gemini_api_key is None:
-            _console.print(
-                "[yellow]--expand skipped:[/yellow] set GFLOW_CLI_GEMINI_API_KEY to enable "
-                "prompt expansion. Using your original prompt.",
-            )
-        elif not quiet:
-            _console.print(
-                "[yellow]--expand unavailable[/yellow] (Gemini API error); "
-                "using your original prompt.",
-            )
-        return prompt, None
-
-    if not quiet:
-        _console.print("[cyan]Creative Director expanded your prompt:[/cyan]")
-        _console.print(f"  [dim]{result.expanded}[/dim]")
-    return result.expanded, result.original
-
-
 def _parse_tool_spec(spec: str) -> tuple[str, dict[str, str]]:
     name, _, raw_opts = spec.partition(":")
     options: dict[str, str] = {}
