@@ -460,6 +460,57 @@ class TestImageI2I:
         assert len(req.ref_paths) == 1
         assert req.ref_paths[0] == png.resolve()
 
+    def test_i2i_applies_tool_and_records_provenance(
+        self, runner: CliRunner, tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+    ) -> None:
+        """`--tool` on i2i rewrites the prompt and threads original_prompt + tool
+        onto the GenerateImageRequest for recording (PR2 broaden)."""
+        from gflow_cli import cli_image
+        from gflow_cli.tools.invocation import AppliedTool
+
+        png = tmp_path / "hero.png"
+        png.write_bytes(b"\x89PNG\r\n\x1a\n")
+        client = _make_i2i_client(upload_uuid="unused")
+        out_dir = tmp_path / "out"
+        sentinel = AppliedTool(
+            name="creative-director", version="1", model="gemini-2.5-flash", config_hash="z" * 64
+        )
+
+        def fake_apply(text, tool_specs, *, category, quiet):  # noqa: ANN001, ANN202
+            assert category == "image"
+            return "EXPANDED CINEMATIC", text, sentinel
+
+        monkeypatch.setattr(cli_image, "apply_tool_option", fake_apply)
+
+        with (
+            patch("gflow_cli.cli_image.FlowApiClient", return_value=client),
+            patch("gflow_cli.cli_image._make_provider_dir", return_value=tmp_path / "prof"),
+            patch("gflow_cli.cli_image._resolve_profile", return_value="default"),
+        ):
+            from gflow_cli.cli import main
+
+            result = runner.invoke(
+                main,
+                [
+                    "image",
+                    "i2i",
+                    "make it cinematic",
+                    "--ref",
+                    str(png),
+                    "--tool",
+                    "creative-director",
+                    "--out",
+                    str(out_dir),
+                ],
+                catch_exceptions=False,
+            )
+
+        assert result.exit_code == 0, result.output
+        req = client.generate_image.await_args.kwargs["req"]
+        assert req.prompt == "EXPANDED CINEMATIC"
+        assert req.original_prompt == "make it cinematic"
+        assert req.tool is sentinel
+
     def test_i2i_passes_through_uuid_refs(self, runner: CliRunner, tmp_path: Path) -> None:
         """Bare-UUID --ref must NOT trigger upload_image and must be used verbatim."""
         uuid_str = "ddb6ef97-262d-49f4-8269-4a28c0fae6a2"
