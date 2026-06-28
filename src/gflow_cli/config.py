@@ -174,15 +174,14 @@ class Settings(BaseSettings):
     gemini_api_key: str | None = Field(
         default=None,
         description=(
-            "Public Gemini API key. Enables prompt expansion (-e/--expand) and, "
+            "Public Gemini API key. Enables prompt tools (--tool/-t) and, "
             "in future, provider=official. Override via GFLOW_CLI_GEMINI_API_KEY."
         ),
     )
     gemini_model: str = Field(
         default="gemini-2.5-flash",
         description=(
-            "Gemini model used for prompt expansion (-e/--expand). "
-            "Override via GFLOW_CLI_GEMINI_MODEL."
+            "Gemini model used for prompt tools (--tool/-t). Override via GFLOW_CLI_GEMINI_MODEL."
         ),
     )
 

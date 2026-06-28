@@ -9,16 +9,23 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ### Added
 
-- **Prompt expansion ("Creative Director")**: pass `-e` / `--expand` to `gflow image t2i`
-  or `gflow video t2v` to rewrite a terse prompt into a richer one using Google's
-  five-component formula (Subject + Action + Context/Location + Composition/Camera +
-  Style) via the public Gemini API before generating. Requires `GFLOW_CLI_GEMINI_API_KEY`
-  ([get one](https://aistudio.google.com/apikey)); optional `GFLOW_CLI_GEMINI_MODEL`
-  (default `gemini-2.5-flash`). Expansion is **never fatal** — a missing key, rate limit
-  (retried with exponential backoff), or any API/network fault degrades gracefully to the
-  original prompt. The local catalog records both the original prompt and the submitted
-  expansion (a new `operations.expanded_prompt` column; withheld under
-  `GFLOW_CLI_HISTORY_PROMPTS=redacted`). Single-prompt only.
+- **Tools framework ("Creative Director")**: a TOML-defined prompt-tool system with
+  `creative-director` as the first built-in tool, exposed via two surfaces:
+  - **`gflow tools list/show/run`** — discover tools, inspect their styles, and run them
+    standalone (e.g. `gflow tools run creative-director "a cat" --style cinema --json`).
+  - **`-t` / `--tool` option** on `gflow image t2i` and `gflow video t2v` — apply one or
+    more tools before generating (e.g. `--tool creative-director:style=cinema`). Repeatable;
+    single-prompt only. Replaces the never-released `-e/--expand` flag.
+  - The `creative-director` tool rewrites a terse prompt into a vivid one using Google's
+    five-component formula (Subject + Action + Context/Location + Composition/Camera + Style)
+    via the public Gemini API. Requires `GFLOW_CLI_GEMINI_API_KEY`
+    ([get one](https://aistudio.google.com/apikey)); optional `GFLOW_CLI_GEMINI_MODEL`
+    (default `gemini-2.5-flash`). Domain-vocabulary modes (`--style cinema`, `portrait`,
+    `product`, etc.) inject specialized lens/lighting/colour vocabulary.
+  - Tool application is **never fatal** — missing key, rate limit, or any API/network fault
+    degrades gracefully to the original prompt.
+  - MCP parity: `gflow_list_tools` tool and a `tools` array parameter on
+    `gflow_generate_image` / `gflow_generate_video`.
 
 ## [0.21.0] — 2026-06-26
 
