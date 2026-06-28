@@ -13,6 +13,13 @@ def expand_prompt(
 ) -> str:
     """Expand a simple prompt concept into Google Flow's official 5-component prompt formula.
 
+    This is a *prompt template* — it returns an instruction string for the calling
+    client's own model to expand. For a server-side rewrite that calls Gemini directly,
+    strips banned keywords, supports domain styles, and records provenance, prefer the
+    ``creative-director`` tool (``gflow_list_tools`` / the ``tools`` array param on the
+    generation tools, or ``gflow tools run creative-director`` / ``--tool`` on the CLI).
+    See docs/PROMPT_EXPANSION.md for the comparison.
+
     Inputs:
     - subject: The primary subject of the generation.
     - action: Description of actions or motion (optional).
