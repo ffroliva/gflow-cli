@@ -127,9 +127,10 @@ Where it is wired:
 | `video chain` | video | Applied **per link**, *after* the dry-run / cost-confirmation gate — a rejected or `--dry-run` chain spends nothing and makes no Gemini calls. |
 
 On multi-item paths (batch, chain), the tool runs **once per prompt/link, sequentially** — so a
-50-prompt batch with `--tool creative-director` is up to 50 sequential Gemini calls. This is
-bounded and non-fatal; concurrency is a later optimization. Plan for the added latency on large
-batches.
+50-prompt batch with `--tool creative-director` is up to 50 sequential Gemini calls. Each call is
+bounded by an overall ~60s wall-clock budget (see
+[PROMPT_EXPANSION.md §6](PROMPT_EXPANSION.md#6-never-fatal-contract)), and the whole thing is
+non-fatal; concurrency is a later optimization. Plan for the added latency on large batches.
 
 ### Cost note
 

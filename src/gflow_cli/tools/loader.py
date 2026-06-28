@@ -1,4 +1,4 @@
-"""Load + validate packaged builtin tool TOMLs (and, dormant, user tools)."""
+"""Load + validate packaged builtin tool TOMLs and user-authored "My Tools" TOMLs."""
 
 from __future__ import annotations
 
@@ -52,10 +52,12 @@ def _load_dir(directory: Path) -> dict[str, ToolSpec]:
 
 
 def load_user_tools(config_dir: Path) -> dict[str, ToolSpec]:
-    """Dormant My-Tools seam: scan a user config dir for tool TOMLs.
+    """Scan a user config dir for "My Tools" tool TOMLs.
 
-    Not wired into the registry this cycle. Returns ``{}`` when the dir is
-    absent so a future activation is a one-line change.
+    Wired into the registry (``registry._registry`` layers these over the
+    packaged builtins; a same-named user tool overrides a builtin). Returns
+    ``{}`` when the dir is absent. A malformed TOML fails loud
+    (``ConfigurationError``), like a malformed builtin.
     """
     if not config_dir.exists():
         return {}
