@@ -53,13 +53,19 @@ def _run_gflow(
     args: list[str], *, env: dict[str, str], timeout: int
 ) -> subprocess.CompletedProcess[str]:
     """Run `python -m gflow_cli <args>` as an isolated subprocess (real CLI path)."""
+    sub_env = dict(env)
+    # The autouse `_isolate_settings` fixture points GFLOW_CLI_HOME at a per-test
+    # tmp dir, which `e2e_env` copies — but the real authenticated profiles live
+    # under the DEFAULT home. Drop it so the subprocess resolves the real profile;
+    # the DB and output dir stay isolated via their own explicit env vars.
+    sub_env.pop("GFLOW_CLI_HOME", None)
     return subprocess.run(
         [sys.executable, "-m", "gflow_cli", *args],
         capture_output=True,
         text=True,
         timeout=timeout,
         check=False,
-        env=env,
+        env=sub_env,
     )
 
 
