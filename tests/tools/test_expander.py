@@ -1,4 +1,4 @@
-"""Unit tests for the Gemini-backed :mod:`gflow_cli.api.prompt_expander`.
+"""Unit tests for the Gemini-backed :mod:`gflow_cli.tools.expander`.
 
 The client is exercised through an injected ``transport`` callable so no real
 network traffic is made. The contract under test:
@@ -14,7 +14,7 @@ from __future__ import annotations
 
 import structlog
 
-from gflow_cli.api.prompt_expander import (
+from gflow_cli.tools.expander import (
     ExpansionResult,
     GeminiHttpError,
     PromptExpander,
@@ -186,3 +186,18 @@ class TestExpanderTruncation:
 
         assert result.was_expanded is True
         assert len(result.expanded) <= 3500
+
+
+def test_custom_system_instruction_is_used() -> None:
+    captured: dict[str, object] = {}
+
+    def transport(url: str, payload: dict[str, object], timeout: float) -> dict[str, object]:
+        captured["payload"] = payload
+        return {"candidates": [{"content": {"parts": [{"text": "expanded"}]}}]}
+
+    expander = PromptExpander("key", transport=transport, system_instruction="CINEMA MODE: ")
+    result = expander.expand("a cat")
+    assert result.was_expanded
+    sent = captured["payload"]["contents"][0]["parts"][0]["text"]  # type: ignore[index]
+    assert sent.startswith("CINEMA MODE: ")
+    assert "a cat" in sent
