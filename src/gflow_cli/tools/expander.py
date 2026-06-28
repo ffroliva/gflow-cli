@@ -16,6 +16,18 @@ Design constraints:
   Callers can therefore always use :attr:`ExpansionResult.expanded` verbatim.
 * **Bounded** — input is truncated before sending and output is truncated after
   receiving, so a pathological prompt cannot blow up the request or the catalog.
+  The retry loop is additionally bounded by an overall wall-clock budget
+  (:data:`DEFAULT_MAX_TOTAL_SECONDS`) so sustained rate limiting can never stall a
+  batch for the full per-attempt-timeout x retries schedule.
+
+The retry/backoff loop is deliberately hand-rolled rather than delegated to
+``tenacity`` (a project dependency): tenacity is built around *re-raising* after
+exhausting retries, whereas this client's contract is the opposite — it must
+*never* raise, falling back to the original prompt. The custom loop also needs
+per-attempt ``structlog`` events and a total-time budget that clamps each
+attempt's timeout to the remaining budget; expressing that through tenacity's
+stop/wait/retry primitives would be more code, not less, for a ~20-line loop with
+fully-injectable ``transport`` / ``sleep`` / ``clock`` seams.
 
 The API key is read from ``GFLOW_CLI_GEMINI_API_KEY`` (see
 :class:`gflow_cli.config.Settings.gemini_api_key`); construct via
@@ -49,6 +61,17 @@ _ENDPOINT = "https://generativelanguage.googleapis.com/v1beta/models/{model}:gen
 DEFAULT_MAX_INPUT_CHARS = 4000
 #: Expanded output is clipped to this many characters before returning/persisting.
 DEFAULT_MAX_OUTPUT_CHARS = 3500
+
+#: Per-attempt socket timeout (seconds). A Flash text rewrite normally returns in
+#: 1-3s; 20s is generous while keeping the worst case low. The overall wall-clock
+#: is additionally bounded by :data:`DEFAULT_MAX_TOTAL_SECONDS`.
+DEFAULT_TIMEOUT = 20.0
+#: Overall wall-clock budget across *all* attempts (initial + retries + backoff
+#: sleeps). Without this, sustained 429s could block ~4x the per-attempt timeout
+#: plus the backoff schedule (~120s) before falling back; the budget caps that so
+#: a tool never stalls a batch for long. Retries stop once the budget is spent and
+#: each attempt's timeout is clamped to the remaining budget.
+DEFAULT_MAX_TOTAL_SECONDS = 60.0
 
 #: HTTP statuses worth retrying with backoff. Auth errors (401/403) are NOT here
 #: — retrying a bad key just wastes time, so those fail fast to the fallback.
@@ -129,20 +152,24 @@ class PromptExpander:
         model: str = DEFAULT_MODEL,
         system_instruction: str | None = None,
         max_retries: int = 3,
-        timeout: float = 30.0,
+        timeout: float = DEFAULT_TIMEOUT,
+        max_total_seconds: float = DEFAULT_MAX_TOTAL_SECONDS,
         max_input_chars: int = DEFAULT_MAX_INPUT_CHARS,
         max_output_chars: int = DEFAULT_MAX_OUTPUT_CHARS,
         transport: Transport | None = None,
         sleep: Callable[[float], None] = time.sleep,
+        clock: Callable[[], float] = time.monotonic,
     ) -> None:
         self._api_key = api_key
         self._model = model
         self._instruction = system_instruction or _SYSTEM_INSTRUCTION
         self._max_retries = max_retries
         self._timeout = timeout
+        self._max_total_seconds = max_total_seconds
         self._max_input_chars = max_input_chars
         self._max_output_chars = max_output_chars
         self._sleep = sleep
+        self._clock = clock
         self._transport: Transport
         if transport is not None:
             self._transport = transport
@@ -174,12 +201,31 @@ class PromptExpander:
         url = _ENDPOINT.format(model=self._model)
         payload = self._build_payload(truncated)
 
+        start = self._clock()
         delay = 1.0
         for attempt in range(self._max_retries + 1):
+            remaining = self._max_total_seconds - (self._clock() - start)
+            if remaining <= 0:
+                # Wall-clock budget spent (e.g. earlier attempts + backoff sleeps
+                # under sustained rate limiting). Stop rather than block further.
+                log.warning(
+                    "prompt_expander_budget_exhausted",
+                    max_total_seconds=self._max_total_seconds,
+                )
+                return ExpansionResult(prompt, prompt, was_expanded=False)
+            attempt_timeout = min(self._timeout, remaining)
             try:
-                data = self._transport(url, payload, self._timeout)
+                data = self._transport(url, payload, attempt_timeout)
             except GeminiHttpError as exc:
                 if exc.status in _RETRYABLE_STATUS and attempt < self._max_retries:
+                    if (self._clock() - start) + delay >= self._max_total_seconds:
+                        # No budget left to sleep + run another attempt — fall back
+                        # now instead of sleeping into a guaranteed-skipped retry.
+                        log.warning(
+                            "prompt_expander_budget_exhausted",
+                            max_total_seconds=self._max_total_seconds,
+                        )
+                        return ExpansionResult(prompt, prompt, was_expanded=False)
                     log.warning(
                         "prompt_expander_retry",
                         status=exc.status,
