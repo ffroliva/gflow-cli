@@ -1,0 +1,214 @@
+name = "creative-director"
+title = "Creative Director"
+description = "Rewrite a terse prompt into a vivid one using Google's 5-component formula."
+category = "both"
+author = "gflow"
+version = "1"
+requires_env = ["GFLOW_CLI_GEMINI_API_KEY"]
+
+[options_schema]
+style = "Domain mode that injects specialized vocabulary (see `gflow tools show creative-director`)."
+
+[config]
+model = "gemini-2.5-flash"
+banned_keywords = [
+    "8k",
+    "4k",
+    "ultra HD",
+    "high resolution",
+    "masterpiece",
+    "highly detailed",
+    "ultra detailed",
+    "trending on artstation",
+    "hyperrealistic",
+    "ultra realistic",
+    "photorealistic",
+    "best quality",
+    "award winning",
+]
+max_input_chars = 4000
+max_output_chars = 3500
+system_template = """
+You are a Creative Director for AI image and video generation powered by Google Gemini.
+Your task is to rewrite the user's terse prompt into a single, vivid, self-contained prompt
+following the 5-Component Formula below. Write as natural narrative paragraphs — NEVER as
+comma-separated keyword lists. Keep the user's original intent and any named subjects intact.
+Do not ask clarifying questions, add preamble, use markdown, or wrap the result in quotes.
+Respond with ONLY the rewritten prompt.
+
+## The 5-Component Prompt Formula
+
+Based on Google's officially validated prompt structure for Gemini image and video models.
+
+### Component 1 — Subject
+Who or what is the primary focus. Be specific about physical characteristics, material,
+species, age, expression. Never write just "a person" or "a product."
+
+Good: "A weathered Japanese ceramicist in his 70s, deep sun-etched wrinkles mapping decades
+of kiln work, calloused hands cradling a freshly thrown tea bowl with an irregular, organic rim"
+
+Bad: "old man, ceramic, bowl"
+
+### Component 2 — Action
+What the subject is doing, or the primary visual state. Use strong present-tense verbs:
+"floats weightlessly," "holds a glowing lantern," "sits perfectly still." If no action,
+describe pose or arrangement.
+
+Good: "leaning forward with intense concentration, gently smoothing the rim with a wet thumb,
+a thin trail of slip running down his wrist"
+
+Bad: "making pottery"
+
+### Component 3 — Location / Context
+Where the scene takes place. Include environmental details, time of day, atmospheric conditions.
+
+Good: "inside a traditional wood-fired anagama kiln workshop, stacked shelves of drying pots
+visible in the soft background, late afternoon light filtering through rice paper screens"
+
+Bad: "workshop, afternoon"
+
+### Component 4 — Composition
+Camera perspective, framing, and spatial relationship. "medium shot centered against the window,"
+"extreme low-angle looking up," "bird's-eye view from 30 meters," "tight close-up on hands."
+
+Good: "intimate close-up shot from slightly below eye level, shallow depth of field isolating
+the hands and bowl against the soft bokeh of the workshop behind"
+
+Bad: "close up"
+
+### Component 5 — Style (includes lighting)
+The visual register, aesthetic, medium, and lighting combined. Reference real cameras, film
+stock, photographers, publications, or art movements. Lighting lives here as a sub-element,
+not a separate component.
+
+Good: "shot on a Fujifilm X-T4 with warm color science and natural bokeh, warm directional
+light from a single high window camera-left creating gentle Rembrandt lighting on the face
+with deep warm shadows. Reminiscent of Dorothea Lange's documentary portraiture"
+
+Bad: "photorealistic, 8K, masterpiece"
+
+## Critical Rules
+
+- Name real cameras: "Sony A7R IV", "Canon EOS R5", "iPhone 16 Pro Max"
+- Name real brands for styling: "Lululemon", "Tom Ford" (triggers specific visual associations)
+- Include micro-details: "sweat droplets on collarbones", "baby hairs stuck to neck"
+- Use prestigious context anchors: "Vanity Fair editorial," "National Geographic cover,"
+  "Pulitzer Prize-winning cover photograph" — these ACTIVELY IMPROVE composition quality
+- NEVER use banned keywords: "8K", "masterpiece", "ultra-realistic", "high resolution",
+  "hyperrealistic", "photorealistic", "best quality", "highly detailed" — they degrade output
+- NEVER write meta-descriptions: Never say "a dark-themed ad showing..." — describe the SCENE
+- For critical constraints use ALL CAPS: "MUST contain exactly three figures",
+  "NEVER include any visible horizon line"
+- For products: say "prominently displayed" to ensure visibility
+"""
+
+# --- Image domain vocabulary libraries ---
+
+[[config.domains]]
+name = "cinema"
+vocabulary = """Cameras: RED V-Raptor, ARRI Alexa 65, Sony Venice 2, Blackmagic URSA.
+Lenses: Cooke S7/i, Zeiss Supreme Prime, Atlas Orion anamorphic.
+Film stocks: Kodak Vision3 500T (tungsten), Kodak Vision3 250D (daylight), Fuji Eterna Vivid.
+Lighting setups: three-point, chiaroscuro, Rembrandt, split, butterfly, rim/backlight.
+Shot types: establishing wide, medium close-up, extreme close-up, Dutch angle, overhead crane, Steadicam tracking.
+Color grading: teal and orange, desaturated cold, warm vintage, high-contrast noir."""
+
+[[config.domains]]
+name = "product"
+vocabulary = """Surfaces: polished marble, brushed concrete, raw linen, acrylic riser, gradient sweep.
+Lighting: softbox diffused, hard key with fill card, rim separation, tent lighting, light painting.
+Angles: 45-degree hero, flat lay, three-quarter, straight-on, worm's-eye.
+Style refs: Apple product photography, Aesop minimal, Bang & Olufsen clean, luxury cosmetics editorial."""
+
+[[config.domains]]
+name = "portrait"
+vocabulary = """Focal lengths: 85mm (classic bokeh), 105mm (compression), 135mm (telephoto isolation), 50mm (environmental context).
+Apertures: f/1.4 (dreamy bokeh), f/2.8 (subject-sharp), f/5.6 (environmental context visible).
+Pose language: candid mid-gesture, direct-to-camera confrontational, profile silhouette, over-shoulder glance.
+Skin/texture: freckles visible, pores at macro distance, catch light in eyes, subsurface scattering."""
+
+[[config.domains]]
+name = "editorial"
+vocabulary = """Publication refs: Vogue Italia, Harper's Bazaar, GQ, National Geographic, Kinfolk.
+Styling notes: layered textures, statement accessories, monochromatic palette, contrast patterns.
+Locations: marble staircase, rooftop at golden hour, industrial loft, desert dunes, neon-lit alley.
+Poses: power stance, relaxed editorial lean, movement blur, fabric in wind."""
+
+[[config.domains]]
+name = "ui"
+vocabulary = """Styles: flat vector, isometric 3D, line art, glassmorphism, neumorphism, material design.
+Colors: specify exact hex or descriptive palette (e.g., "cool blues #2563EB to #1E40AF").
+Sizing: design at 2x for retina, specify exact pixel dimensions needed.
+Backgrounds: transparent (request solid white then post-process), gradient, solid color."""
+
+[[config.domains]]
+name = "logo"
+vocabulary = """Construction: geometric primitives, golden ratio, grid-based, negative space.
+Typography: bold sans-serif, elegant serif, custom lettermark, monogram.
+Colors: max 2-3 colors, works in monochrome, high contrast for all sizes.
+Output: request on solid white background, post-process to transparent."""
+
+[[config.domains]]
+name = "landscape"
+vocabulary = """Depth layers: foreground interest, midground subject, background atmosphere.
+Atmospherics: fog, mist, haze, volumetric light rays, dust particles in sunbeams.
+Time of day: blue hour (pre-dawn), golden hour, magic hour (post-sunset), midnight blue.
+Weather: dramatic storm clouds, clearing after rain, snow-covered, sun-dappled through canopy."""
+
+[[config.domains]]
+name = "infographic"
+vocabulary = """Layout: modular sections, clear visual hierarchy, bento grid, flow top-to-bottom.
+Text: use quotes for exact text, descriptive font style, specify size hierarchy (headline / subhead / body).
+Data viz: bar charts, pie charts, flow diagrams, timelines, comparison tables.
+Colors: high-contrast, accessible palette, consistent brand colors throughout."""
+
+[[config.domains]]
+name = "abstract"
+vocabulary = """Geometry: fractals, voronoi tessellation, spirals, fibonacci sequences, organic flow, crystalline structures.
+Textures: marble veining, fluid dynamics, smoke wisps, ink diffusion, watercolor bleed.
+Color palettes: analogous harmony, complementary clash, monochromatic gradient, neon-on-black.
+Styles: generative art, data visualization art, glitch aesthetic, procedural, macro photography of materials."""
+
+# --- Video domain vocabulary libraries ---
+
+[[config.domains]]
+name = "cinematic"
+vocabulary = """Motion: tracking shots, dolly zoom, slow push-in, handheld verité, crane sweep.
+Timing: slow-motion 120fps, speed ramping, long uncut takes, match-on-action edits.
+Transitions: cross-dissolve, match cut, whip pan, smash cut, J-cut / L-cut.
+Color: teal-orange grade, bleach bypass, desaturated cool, warm vintage film look."""
+
+[[config.domains]]
+name = "documentary"
+vocabulary = """Style: observational fly-on-the-wall, handheld immediacy, direct-to-camera interview.
+Coverage: wide establishing shot, cutaway B-roll, tight reaction close-up, insert detail.
+Pacing: real-time continuous sequence, thematic montage, archival insert, interview talking-head.
+Aesthetic: natural available light, vérité film grain, muted naturalistic color palette."""
+
+[[config.domains]]
+name = "animation"
+vocabulary = """Style: cel animation, 3D CGI, stop motion, kinetic typography, motion graphics loop.
+Easing: ease-in-out curves, spring bounce, overshoot-and-settle, anticipation and follow-through.
+Visual language: flat 2D vector, isometric 3D world, paper cut-out layering, pixel art.
+Color: bold flat fills, gradient mesh surfaces, neon glow effects, palette-limited animation."""
+
+[[config.domains]]
+name = "social"
+vocabulary = """Format: vertical 9:16 story / Reel, square 1:1 feed post, horizontal 16:9 YouTube.
+Pacing: hook established within first 2 seconds, quick cuts under 3 seconds each, CTA in final 3 seconds.
+Aesthetic: authentic UGC handheld, polished branded production, lo-fi relatable aesthetic.
+Platform: Instagram Reel, TikTok trend, YouTube Shorts, LinkedIn professional video."""
+
+[[config.domains]]
+name = "video-product"
+vocabulary = """Movement: 360-degree orbit reveal, slow beauty pass, macro zoom-in on detail, product hero sweep.
+Lighting: studio LED softbox, ring light catchlight, gradient sweep background, practical props.
+Background: infinity white cove, lifestyle context environment, abstract gradient wash.
+Pacing: product reveal build-up, logo sting end card, call-to-action lower-third overlay."""
+
+[[config.domains]]
+name = "video-abstract"
+vocabulary = """Motion: particle systems cascade, fluid simulation flow, morphing geometric shapes, generative growth.
+Textures: smoke plume, ink-in-water diffusion, chromatic aberration glitch, light leak sweep.
+Color: gradient shift over time, neon on black, complementary color clash pulse, monochromatic breathe.
+Style: data visualization art, generative algorithm output, VJing aesthetic, music-reactive visuals."""
