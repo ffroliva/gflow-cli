@@ -225,3 +225,57 @@ def test_parse_tool_spec_handles_options() -> None:
     )
     assert _parse_tool_spec("name:") == ("name", {})
     assert _parse_tool_spec("name:a=1,b=2") == ("name", {"a": "1", "b": "2"})
+
+
+def test_apply_tool_option_unknown_option_key_raises_usage_error() -> None:
+    """An option key not declared in the tool's options_schema → UsageError."""
+    import click
+
+    from gflow_cli._cli_helpers import apply_tool_option
+
+    with pytest.raises(click.UsageError, match="unknown option"):
+        apply_tool_option(
+            "cat",
+            ("creative-director:unknown_key=foo",),
+            category="image",
+            quiet=True,
+        )
+
+
+def test_apply_tool_option_unknown_style_raises_usage_error() -> None:
+    """A style value that is not a declared domain → UsageError."""
+    import click
+
+    from gflow_cli._cli_helpers import apply_tool_option
+
+    with pytest.raises(click.UsageError, match="unknown style"):
+        apply_tool_option(
+            "cat",
+            ("creative-director:style=cinmaaatic",),
+            category="image",
+            quiet=True,
+        )
+
+
+def test_apply_tool_option_valid_style_does_not_raise(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    """A recognized style value must pass validation and reach apply_tool."""
+    from gflow_cli import _cli_helpers
+    from gflow_cli.tools.expander import ExpansionResult
+
+    monkeypatch.setattr(
+        _cli_helpers,
+        "apply_tool",
+        lambda spec, text, options, **kw: ExpansionResult(
+            original=text, expanded="EXPANDED", was_expanded=True
+        ),
+    )
+    sent, original = _cli_helpers.apply_tool_option(
+        "cat",
+        ("creative-director:style=cinema",),
+        category="image",
+        quiet=True,
+    )
+    assert sent == "EXPANDED"
+    assert original == "cat"

@@ -51,7 +51,7 @@ def apply_tool(
     result = expander.expand(prompt)
     if not result.was_expanded:
         return result
-    cleaned, removed = strip_banned_keywords(result.expanded)
+    cleaned, removed = strip_banned_keywords(result.expanded, spec.config.banned_keywords)
     if removed:
         log.info("tool_banned_keywords_stripped", tool=spec.name, removed=removed)
     return ExpansionResult(original=result.original, expanded=cleaned, was_expanded=True)

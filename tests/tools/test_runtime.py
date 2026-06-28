@@ -30,3 +30,35 @@ def test_apply_tool_strips_banned_from_output() -> None:
     assert result.was_expanded
     assert "hyperrealistic" not in result.expanded.lower()
     assert "8k" not in result.expanded.lower()
+
+
+def test_apply_tool_uses_per_tool_banned_keywords() -> None:
+    """apply_tool must strip from spec.config.banned_keywords, not the global list.
+
+    A spec that only bans "photorealism" must strip "photorealism" but leave
+    "8k" intact (8k is in the global BANNED_KEYWORDS but not in this spec).
+    """
+    from gflow_cli.tools.spec import ToolConfig, ToolSpec
+
+    spec = ToolSpec(
+        name="test-tool",
+        title="Test Tool",
+        description="d",
+        category="both",
+        version="1",
+        config=ToolConfig(
+            system_template="expand: ",
+            banned_keywords=("photorealism",),
+        ),
+    )
+
+    def transport(url, payload, timeout):  # noqa: ANN001
+        return {"candidates": [{"content": {"parts": [{"text": "a photorealism 8k landscape"}]}}]}
+
+    expander = PromptExpander("key", transport=transport, system_instruction="expand: ")
+    result = apply_tool(spec, "landscape", {}, expander=expander)
+    assert result.was_expanded
+    # "photorealism" is in spec.config.banned_keywords → must be stripped
+    assert "photorealism" not in result.expanded.lower()
+    # "8k" is NOT in spec.config.banned_keywords → must survive
+    assert "8k" in result.expanded.lower()
