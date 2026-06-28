@@ -4,9 +4,9 @@
 
 ## Current release
 
-**v0.17.0 — alpha.** **Cookie-store session verification.** `verify_flow_profile` (contributed by @3mora2, PR #168) verifies a Flow session directly from the Chrome cookie store via `browser_cookie3` + `httpx` — a fast path that skips launching a browser — with a marker-gated Playwright fallback for encrypted/locked stores (Windows DPAPI failures included) and retry/backoff on transient HTTP errors. Entity-attach `WireFormatError` failures (exit 7) now carry an issue-#174-aware remediation hint plus `entity_attach_context` drift telemetry. Live-verified 2026-06-12 ([evidence](LIVE_VERIFICATION_v0.17.0.md)). Carries forward v0.16.0 (locale-free picker include selectors #170, `gflow image upscale` #171) and v0.15.1 (Docker `/dev/shm` hardening, mid-workflow 401 detection).
+**v0.22.0 — alpha.** **Tools framework ("Creative Director").** A TOML-defined prompt-tool system: `creative-director` rewrites a terse prompt into a vivid one via Google's five-component formula (public Gemini API, never-fatal), with 15 category-gated domain styles and deterministic banned-keyword stripping. Invoke it via the new `gflow tools list/show/run` group or the uniform `-t`/`--tool` option on every generation command (`image t2i`/`i2i`/`batch`, `video t2v`/`i2v`/`r2v`/`chain`), replacing the never-released `-e/--expand`. History records the original prompt, the submitted `expanded_prompt`, and `metadata_json.tool` provenance (redaction-honoring). **"My Tools"**: user-authored TOMLs in `<GFLOW_CLI_HOME>/tools/*.toml` load automatically. MCP parity via `gflow_list_tools` + a `tools` array param; the legacy `expand_prompt` MCP prompt is deprecated. The Gemini expander gained an overall wall-clock budget. Carries forward v0.21.0 (MCP server over stdio + HTTP/SSE). Verification: [LIVE_VERIFICATION_v0.22.0](LIVE_VERIFICATION_v0.22.0.md) (CI/automated complete; live owner-run pending).
 
-**Develop (unreleased, post-v0.17.0):** *(empty — develop is the staging branch for the next release).*
+**Develop (unreleased, post-v0.22.0):** *(empty — develop is the staging branch for the next release).*
 
 ## Milestone history
 
@@ -63,6 +63,11 @@
 | `gflow image upscale <mediaId> --scale 2k\|4k` — credit-free download-menu upscale, 4K Ultra-gated (#171) | ✅ done (v0.16.0) |
 | Cookie-store session verification fast path (`verify_flow_profile`, PR #168) + Playwright fallback | ✅ done (v0.17.0) |
 | Entity-attach exit-7 remediation hint + `entity_attach_context` drift telemetry (#174 interim) | ✅ done (v0.17.0) |
+| Agentic-UI exit-23 `UiSelectorDriftError` + `out_dir` wiring (#183) | ✅ done (v0.18.0) |
+| Patchright opt-in browser engine (`GFLOW_CLI_BROWSER_ENGINE=patchright`) | ✅ done (v0.19.0) |
+| Aspect-ratio overrides under Agentic & Classic cohorts + `GFLOW_CLI_PREFER_CLASSIC` (#193) | ✅ done (v0.20.0 / v0.20.1) |
+| MCP server (`gflow mcp run` stdio + `gflow serve` HTTP/SSE) + daemon/queue scaffolding | ✅ done (v0.21.0) |
+| Tools framework: `gflow tools` group + `--tool` + `creative-director` + "My Tools" + MCP parity | ✅ done (v0.22.0) |
 | `gflow video batch` (TSV manifest) on `ui_automation` | ⏳ Phase B |
 | Persistence layer (stay-mounted batch sessions across project boundaries) | ⏳ Phase B |
 | Provider abstraction for official Veo 3.1 API | ⏳ planned |

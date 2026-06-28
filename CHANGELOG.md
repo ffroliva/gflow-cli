@@ -7,6 +7,8 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+## [0.22.0] — 2026-06-28
+
 ### Added
 
 - **Tools framework ("Creative Director")**: a TOML-defined prompt-tool system with
@@ -38,6 +40,9 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
     registered automatically — listed by `gflow tools list`, usable via `--tool`, and exposed over
     MCP, just like built-ins. A user tool may override a built-in of the same name (logged via
     `tool_user_override`); a malformed user TOML fails loud. See [docs/TOOLS.md](docs/TOOLS.md).
+  - The Gemini prompt expander gained an overall **wall-clock budget** (default ~60s per call)
+    on top of the lowered 20s per-attempt timeout, so sustained rate limiting can no longer
+    block a generation for the full retry schedule before falling back to the original prompt.
 
 ### Deprecated
 
@@ -1623,7 +1628,8 @@ shell-script template that branches on these codes.
 
 First skeleton. Not functional end-to-end yet.
 
-[Unreleased]: https://github.com/ffroliva/gflow-cli/compare/v0.21.0...HEAD
+[Unreleased]: https://github.com/ffroliva/gflow-cli/compare/v0.22.0...HEAD
+[0.22.0]: https://github.com/ffroliva/gflow-cli/compare/v0.21.0...v0.22.0
 [0.21.0]: https://github.com/ffroliva/gflow-cli/compare/v0.20.1...v0.21.0
 [0.20.1]: https://github.com/ffroliva/gflow-cli/compare/v0.20.0...v0.20.1
 [0.20.0]: https://github.com/ffroliva/gflow-cli/compare/v0.19.0...v0.20.0
