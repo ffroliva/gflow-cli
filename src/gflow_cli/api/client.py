@@ -17,6 +17,7 @@ import asyncio
 import base64
 import json
 import os
+import sys
 import time
 from dataclasses import replace as _dataclass_replace
 from datetime import datetime
@@ -347,6 +348,56 @@ class FlowApiClient:
             "args": ["--disable-blink-features=AutomationControlled", "--disable-dev-shm-usage"],
         }
 
+    def _log_and_guard_launch(self, kwargs: dict[str, Any]) -> None:
+        """Log the resolved browser-launch identity and fail loud on a silent
+        chrome->bundled downgrade (issue #222).
+
+        Under the 'chrome' strategy ``channel`` must resolve to ``"chrome"``
+        (system Chrome). If it resolved to ``None`` Chrome wasn't found and
+        Playwright would fall back to bundled Chromium. On macOS that bundled
+        Chromium cannot decrypt cookies written by real Chrome (per-app Keychain
+        'Chrome Safe Storage'), producing a logged-out context and a confusing
+        HTTP 401 at project.createProject. Make that fatal with a clear
+        remediation. On other platforms the bundled fallback may still work
+        (e.g. Windows DPAPI cookie key is per-user), so warn instead of raising.
+
+        The diagnostic event names the resolved channel / executable /
+        user-data-dir / cookie-db presence — the data needed to tell a channel
+        downgrade apart from a cookie-decryption failure.
+        """
+        from gflow_cli.browser_manager import (
+            chrome_strategy_requested,
+            resolved_chrome_binary,
+        )
+
+        channel = kwargs.get("channel")
+        wants_chrome = chrome_strategy_requested(self.profile_dir)
+        executable = resolved_chrome_binary()
+        cookies_db = self.profile_dir / "Default" / "Cookies"
+        logger.info(
+            "client.persistent_context_launch",
+            channel=channel,
+            chrome_strategy_requested=wants_chrome,
+            chrome_executable=executable,
+            user_data_dir=str(self.profile_dir),
+            cookies_db_present=cookies_db.exists(),
+            platform=sys.platform,
+        )
+        if wants_chrome and channel is None:
+            msg = (
+                "Profile requests the 'chrome' browser strategy "
+                "(.gflow_browser_strategy=chrome) but system Chrome was not found, so "
+                "generation would fall back to Playwright's bundled Chromium. On macOS "
+                "the bundled Chromium cannot decrypt cookies written by real Chrome "
+                "(Keychain 'Chrome Safe Storage'), yielding a logged-out session and an "
+                "HTTP 401 at project.createProject. Install Google Chrome (or set "
+                "CHROME_BINARY), then retry; or re-run `gflow auth login` to re-capture "
+                "the session."
+            )
+            if sys.platform == "darwin":
+                raise ConfigurationError(msg)
+            logger.warning("client.chrome_strategy_downgraded", detail=msg)
+
     async def _enter_setup(self) -> None:
         """Body of __aenter__ after the Playwright driver starts.
 
@@ -355,9 +406,9 @@ class FlowApiClient:
         """
         # Invariant: __aenter__ sets self._pw immediately before calling us.
         assert self._pw is not None
-        self._context = await self._pw.chromium.launch_persistent_context(
-            **self._persistent_context_kwargs()
-        )
+        kwargs = self._persistent_context_kwargs()
+        self._log_and_guard_launch(kwargs)
+        self._context = await self._pw.chromium.launch_persistent_context(**kwargs)
         # Hide the automation flag so reCAPTCHA Enterprise doesn't score
         # the session as a bot — navigator.webdriver=true causes low-score
         # tokens and HTTP 403 on batchGenerateImages.
