@@ -37,13 +37,17 @@ def test_persistent_context_kwargs_are_unchanged(tmp_path: Path) -> None:
         "--enable-automation",
         "--no-sandbox",
     ]
-    # Regression for #222: generation must NOT suppress --password-store=basic.
-    # auth login seals the profile cookies with the *basic* store; if generation
-    # lets Chrome fall back to the macOS keychain, those cookies can't be
-    # decrypted -> logged-out -> 401 on createProject. (Unit-level proxy: the
-    # real failure only reproduces on a headed Chrome on macOS.)
+    # Regression for #222: generation must pass --password-store=basic EXPLICITLY
+    # in args (not merely keep it out of ignore_default_args). auth login and
+    # verification seal/read the profile cookies with the *basic* store; if
+    # generation lets Chrome fall back to the macOS keychain, those cookies can't
+    # be decrypted -> logged-out -> 401 on createProject. Every other launch site
+    # passes the flag; this shared context must too. (Unit-level proxy: the real
+    # failure only reproduces on a headed Chrome on macOS.)
     assert "--password-store=basic" not in kwargs["ignore_default_args"]
+    assert "--password-store=basic" in kwargs["args"]
     assert kwargs["args"] == [
+        "--password-store=basic",
         "--disable-blink-features=AutomationControlled",
         "--disable-dev-shm-usage",
     ]
