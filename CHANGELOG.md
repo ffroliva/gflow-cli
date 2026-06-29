@@ -7,6 +7,24 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+### Fixed
+
+- **Chrome channel on Chromium-only hosts**: `channel_for_profile()` now gates
+  Playwright's `channel="chrome"` on a new `_is_playwright_chrome_channel_available()`
+  check that probes only the exact Google-Chrome paths Playwright hardcodes, instead
+  of `is_chrome_available()` (which also accepts Chromium). On a host with only
+  Chromium installed, the CLI no longer requests `channel="chrome"` and fails with
+  `Chromium distribution 'chrome' is not found at /opt/google/chrome/chrome`; it falls
+  back to bundled Chromium and logs an actionable warning (#219).
+- **Text-to-image extra-image billing**: the generation-settings trigger selector now
+  requires `button[aria-haspopup='menu']` (aliased to `MODE_SWITCH_TRIGGER_SELECTORS`),
+  preventing a mis-click on an icon-only aspect thumbnail that skipped the count panel
+  and left Flow's own default count (typically 2) in effect — billing extra generations
+  while the CLI saved only one (#219).
+- **Extra-image observability**: `generate_image()` now logs a
+  `client.generate_image_extra_returned` warning when the transport returns more images
+  than the requested `count=1`, so silent over-generation is surfaced to the user (#219).
+
 ## [0.22.0] — 2026-06-28
 
 ### Added

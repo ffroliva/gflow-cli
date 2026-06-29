@@ -387,15 +387,16 @@ WELCOME_SCREEN_SELECTORS = (
 )
 
 
-# Generation settings trigger — the button shows the current ratio icon.
-# All 5 ratio icon names are enumerated so the selector is ratio-invariant.
-GEN_SETTINGS_BUTTON_SELECTORS = (
-    "button:has(i.google-symbols:text('crop_16_9'))",
-    "button:has(i.google-symbols:text('crop_9_16'))",
-    "button:has(i.google-symbols:text('crop_square'))",
-    "button:has(i.google-symbols:text('crop_portrait'))",
-    "button:has(i.google-symbols:text('crop_landscape'))",
-)
+# Generation settings trigger — the SAME unified button as the mode-switch
+# dropdown: a ``button[aria-haspopup='menu']`` carrying the current ratio
+# ``crop_*`` icon. The ``aria-haspopup='menu'`` qualifier is REQUIRED — without
+# it any icon-only aspect thumbnail in the just-opened panel can match, causing
+# a click on the wrong element and a ``gen_settings_panel_not_found`` skip that
+# leaves Flow's own default count in effect (typically 2 concurrent requests
+# billed while the CLI downloads only 1). Aliased to
+# ``MODE_SWITCH_TRIGGER_SELECTORS`` so the two call sites stay a single source
+# of truth (see [[image-video-mode-switch-symmetry]]).
+GEN_SETTINGS_BUTTON_SELECTORS = MODE_SWITCH_TRIGGER_SELECTORS
 
 # CLI string → ordered list of candidate tab labels to try in the Flow gen
 # settings panel. Most ratios are labelled with their colon-numeric form
