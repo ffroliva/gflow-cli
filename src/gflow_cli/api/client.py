@@ -1316,6 +1316,12 @@ class FlowApiClient:
         constructing a :class:`GenerateImageRequest` with ``count>1`` and then
         invoking the single-image API still receive exactly one image (no
         silent discard).
+
+        When the transport returns more images than the requested ``count=1``
+        (typically because the generation-settings panel was not found and Flow
+        used its own default count, billing the account for the extra
+        generations), a ``client.generate_image_extra_returned`` warning is
+        logged so the caller can investigate.
         """
         req_one: GenerateImageRequest = _dc_replace(req, count=1)
         images = await self._drive_images_generation(
@@ -1323,6 +1329,20 @@ class FlowApiClient:
             req=req_one,
             recaptcha_action=recaptcha_action,
         )
+        if len(images) > 1:
+            logger.warning(
+                "client.generate_image_extra_returned",
+                requested=1,
+                returned=len(images),
+                extra_media_ids=[img.media_name for img in images[1:]],
+                hint=(
+                    "Flow generated more images than requested — the "
+                    "generation-settings panel selector may have missed and Flow "
+                    "used its own default count. The extra image(s) were billed "
+                    "to your account but not saved. Use `gflow image t2i -n 2` to "
+                    "request and save multiple images explicitly."
+                ),
+            )
         return images[0]
 
     async def generate_image(

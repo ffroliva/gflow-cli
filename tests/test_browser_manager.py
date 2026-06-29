@@ -223,6 +223,49 @@ class TestChromeBinaryDetection:
         assert "chrome.exe" in result.lower() or "Chrome" in result
 
 
+class TestPlaywrightChromeChannelAvailable:
+    """Gate for Playwright's ``channel="chrome"`` — Chromium must NOT satisfy it.
+
+    ``launch_persistent_context(channel="chrome")`` resolves to hardcoded
+    Google-Chrome paths; a plain Chromium binary does not satisfy it. The gate
+    therefore must ignore ``shutil.which`` (which would find Chromium) and probe
+    only the exact Google-Chrome paths.
+    """
+
+    def test_chromium_only_host_returns_false(self) -> None:
+        """Chromium on PATH but no Google Chrome at Playwright's paths → False."""
+        from gflow_cli.browser_manager import _is_playwright_chrome_channel_available
+
+        env_without = {k: v for k, v in os.environ.items() if k != "CHROME_BINARY"}
+        with (
+            patch.dict(os.environ, env_without, clear=True),
+            patch("sys.platform", "linux"),
+            # Chromium IS discoverable, but the gate must ignore which() entirely.
+            patch("gflow_cli.browser_manager.shutil.which", return_value="/usr/bin/chromium"),
+            patch.object(Path, "exists", return_value=False),
+        ):
+            assert _is_playwright_chrome_channel_available() is False
+
+    def test_returns_true_when_google_chrome_present(self) -> None:
+        """Google Chrome at Playwright's expected path → True."""
+        from gflow_cli.browser_manager import _is_playwright_chrome_channel_available
+
+        env_without = {k: v for k, v in os.environ.items() if k != "CHROME_BINARY"}
+        with (
+            patch.dict(os.environ, env_without, clear=True),
+            patch("sys.platform", "linux"),
+            patch.object(Path, "exists", return_value=True),
+        ):
+            assert _is_playwright_chrome_channel_available() is True
+
+    def test_env_override_returns_true(self, tmp_path: Path) -> None:
+        """CHROME_BINARY override is honoured for parity with _find_chrome_binary."""
+        from gflow_cli.browser_manager import _is_playwright_chrome_channel_available
+
+        with patch.dict(os.environ, {"CHROME_BINARY": str(tmp_path / "chrome")}):
+            assert _is_playwright_chrome_channel_available() is True
+
+
 # ---------------------------------------------------------------------------
 # Port-range auto-increment
 # ---------------------------------------------------------------------------
