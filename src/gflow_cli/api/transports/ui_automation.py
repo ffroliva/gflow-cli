@@ -386,15 +386,22 @@ WELCOME_SCREEN_SELECTORS = (
     "button:has-text('See what's new')",
 )
 
-
-# Generation settings trigger — the button shows the current ratio icon.
-# All 5 ratio icon names are enumerated so the selector is ratio-invariant.
+# Generation settings trigger — the button shows the current ratio icon and
+# opens the mode/settings dropdown (``aria-haspopup='menu'``).  The
+# ``aria-haspopup='menu'`` attribute is REQUIRED: without it any button that
+# happens to carry a ``crop_*`` icon (e.g. an icon-only aspect thumbnail in
+# the panel that just opened) can match — the result is a click on the wrong
+# element and a ``gen_settings_panel_not_found`` skip that leaves Flow's own
+# default count in effect (typically 2 concurrent requests billed against the
+# account while the CLI only downloads 1).  This list mirrors
+# ``MODE_SWITCH_TRIGGER_SELECTORS`` exactly — they target the SAME button.
 GEN_SETTINGS_BUTTON_SELECTORS = (
-    "button:has(i.google-symbols:text('crop_16_9'))",
-    "button:has(i.google-symbols:text('crop_9_16'))",
-    "button:has(i.google-symbols:text('crop_square'))",
-    "button:has(i.google-symbols:text('crop_portrait'))",
-    "button:has(i.google-symbols:text('crop_landscape'))",
+    "button[aria-haspopup='menu']:has(i.google-symbols:text('crop_16_9'))",
+    "button[aria-haspopup='menu']:has(i.google-symbols:text('crop_9_16'))",
+    "button[aria-haspopup='menu']:has(i.google-symbols:text('crop_square'))",
+    "button[aria-haspopup='menu']:has(i.google-symbols:text('crop_portrait'))",
+    "button[aria-haspopup='menu']:has(i.google-symbols:text('crop_landscape'))",
+    "button[aria-haspopup='menu']:has(i.google-symbols:text('crop_original'))",
 )
 
 # CLI string → ordered list of candidate tab labels to try in the Flow gen
