@@ -18,7 +18,16 @@ Incoming GitHub issues (e.g. #222) need a **systematic, repeatable** assessment 
 
 The hermes-ops VPS is **headless Linux**. Flow generation auth requires a **headed real-Chrome** session (`real-browser-auth-mandatory` in memory). Therefore, for any Flow-generation/selector/auth bug, the autonomous agent **cannot e2e-verify** — it can only get the problem review-ready and hand to a human. This is encoded as a **standing known limitation**, never hidden. The design goal is to make a wrong autonomous action *rare*, not to pretend the agent can verify everything.
 
-## Architecture — two skills
+## Two-layer architecture (orchestration vs domain)
+
+Separation of concerns across two repos, with a one-way dependency:
+
+- **hermes-ops = orchestration layer (project-agnostic "HOW the agent operates").** Triggers (cron/webhook/label), the autonomy gate, the `skills/`→`blessed/` blessing procedure, secret access (SOPS `GH_TOKEN`), the Opus→Sonnet→Opus delegation loop, Telegram delivery, idempotency. Hosts an `autopilot-core` reused by `dependabot-autopilot` (deterministic), `issue-autopilot` (LLM), and `release-autopilot` (weekly patch-bump-if-safe).
+- **gflow-cli = domain layer (project-specific "WHAT the work means").** `issue-assessment` / `issue-resolve` + the existing `/gflow:*` pipeline. Encodes gflow-cli's e2e-gate (headed-browser truth), `KNOWN_ISSUES`, branch workflow.
+
+**Rule:** hermes orchestration *calls into* a target repo's domain skills; gflow-cli never imports hermes. A gflow-cli skill must run standalone (interactive) **and** be invokable by hermes. The safety boundary lands on the blessing gate — the autonomous machinery (hermes layer) is exactly what a human blesses; domain skills are ordinary repo content. The two skills below are the **domain layer**; the orchestration layer is a later phase in the hermes-ops repo.
+
+## Architecture — two skills (domain layer)
 
 The repo already ships the fix pipeline as skills (`/gflow:predict` → `/gflow:scenario` → `/gflow:plan` → `/gflow:check` → `/gflow:pr-council-review`) plus superpowers TDD/worktrees. The new work is a **conductor** on top, split for a clean safety boundary:
 
@@ -113,13 +122,22 @@ skills/issue-resolve/SKILL.md        # mutating, gated
 
 macOS, v0.22.0: `image t2i` launches a logged-out browser → 401 on `createProject` despite `.gflow_browser_strategy=chrome`. Code investigation hypothesis: `channel_for_profile()` returns `None` because macOS `is_chrome_available()` (`src/gflow_cli/browser_manager.py:146`) only checks the hardcoded `/Applications/Google Chrome.app/...` path with no `shutil.which()` fallback (unlike Windows/Linux), so generation falls back to bundled Chromium, which can't decrypt Keychain-protected cookies. **Caveat:** if detection failed, a `browser_manager.chrome_marker_but_unavailable` warning should fire — the reporter didn't mention it, so the channel may instead never be resolved on the `setup_shared_page` path. This ambiguity is exactly why the verdict is `LIKELY-BUG / NEEDS-E2E` (macOS + headed browser, unverifiable on Windows or the VPS) rather than `CONFIRMED-BUG`. Expected workflow output: a reporter reply requesting the discriminating diagnostic (does the warning appear? actual Chrome path? DEBUG run with channel logging), plus optionally a draft PR adding the `shutil.which` fallback with a unit test, flagged NOT-e2e-verified.
 
-## VPS deployment (later phase)
+## hermes-ops orchestration layer (later phase, hermes-ops repo)
 
-To be completed from hermes-ops documentation (host, deploy path, agent-memory format, workflow activation, GitHub credentials). Deferred until after build + local e2e validation. This section will be filled before any remote action; nothing remote runs until the user confirms the target.
+Confirmed facts about the target runtime (`C:\development\github\hermes-ops`, deployed):
 
-## Out of scope (YAGNI)
+- **VPS:** `REDACTED-HOST` (`the ops VPS`), headless Hetzner Linux. SSH `deploy@REDACTED-HOST` (key-based). hermes-agent v0.16.0 as a systemd unit (`HERMES_HOME=/opt/hermes`); repo at `/opt/hermes-ops` (git-pull deploy: `git fetch && git reset --hard origin/main`).
+- **GitHub creds:** `GH_TOKEN` already provisioned in SOPS (`secrets/vps-prod.env.sops.yaml`), fine-grained PAT scoped to **gflow-cli `pull_requests:write + contents:write`**. Decrypted by `hermes.service` `ExecStartPre` to `/opt/hermes/.env` (600, owner `hermes`); `gh` reads it automatically.
+- **Knowledge (T1):** git-versioned markdown in `hermes-ops/knowledge/`; update = branch → human review → merge → VPS pulls.
+- **Triggers:** `hermes cron create "<expr>" "<prompt>" --skills … --deliver telegram` (v1); `hermes webhook subscribe --events … --skills … --deliver …` (v2, deferred).
+- **Blessing gate (NOT yet implemented):** `skills/` (unprivileged staging) → human signoff → `blessed/` (executable). Skill file format + promotion procedure are undefined on disk — `autopilot-core` defines them once.
+- **Headless confirmation:** no headed Chrome on the VPS → Flow-generation/selector/auth bugs are **never** e2e-verifiable autonomously. This is the standing known limitation that forces the `LIKELY-BUG / NEEDS-E2E` + draft-PR-for-human terminal behavior.
 
-- A standalone reusable agent-orchestration skill (the Opus/Sonnet loop lives inside `issue-resolve` for now).
-- Auto-merging or auto-promoting PRs.
+Reconciliation: the same-day `hermes-ops/docs/specs/2026-06-29-dependabot-autopilot-design.md` becomes the first (deterministic) specialization of `autopilot-core`. Nothing runs on the remote until the user confirms; this section is reference for the orchestration-layer spec to be written in the hermes-ops repo.
+
+## Out of scope (this spec — domain layer only)
+
+- The hermes-ops orchestration layer (`autopilot-core`, `issue-autopilot`, `release-autopilot`) — designed separately in the hermes-ops repo.
+- Auto-merging or auto-promoting PRs (always draft, human promotes).
 - Acting on unlabeled issues.
-- Cross-repo generalization beyond gflow-cli.
+- Onboarding target repos other than gflow-cli.
