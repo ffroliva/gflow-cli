@@ -225,6 +225,19 @@ def is_chrome_available() -> bool:
         return False
 
 
+def resolved_chrome_binary() -> str | None:
+    """Return the system Chrome binary path, or ``None`` if Chrome can't be found.
+
+    Public, exception-free wrapper around :func:`_find_chrome_binary` for
+    diagnostics/logging callers that want the path without handling
+    :class:`ConfigurationError`.
+    """
+    try:
+        return _find_chrome_binary()
+    except ConfigurationError:
+        return None
+
+
 def channel_for_profile(profile_dir: Path) -> str | None:
     """Return the Playwright channel to use for ``profile_dir``, or None.
 
@@ -268,6 +281,23 @@ def channel_for_profile(profile_dir: Path) -> str | None:
         "you need the Chrome channel.",
     )
     return None
+
+
+def chrome_strategy_requested(profile_dir: Path) -> bool:
+    """True if the profile's ``.gflow_browser_strategy`` marker requests system Chrome.
+
+    Distinct from :func:`channel_for_profile`, which returns ``None`` both when no
+    marker is present (legitimate bundled-Chromium use) AND when the marker says
+    ``chrome`` but Chrome can't be found (a silent downgrade). Callers use this to
+    tell those two cases apart — see ``FlowApiClient._log_and_guard_launch`` and
+    issue #222 (macOS: a chrome→bundled downgrade yields cookies the bundled
+    Chromium can't decrypt → 401).
+    """
+    marker = profile_dir / ".gflow_browser_strategy"
+    try:
+        return marker.exists() and marker.read_text(encoding="utf-8").strip() == "chrome"
+    except OSError:
+        return False
 
 
 # ---------------------------------------------------------------------------

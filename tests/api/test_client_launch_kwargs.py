@@ -9,6 +9,7 @@ seam's contract stable.
 
 from __future__ import annotations
 
+import sys
 from pathlib import Path
 from unittest.mock import AsyncMock, MagicMock, patch
 
@@ -16,6 +17,10 @@ import pytest
 
 from gflow_cli.api.client import FlowApiClient
 from gflow_cli.api.transports.ui_automation import UiAutomationTransport
+from gflow_cli.browser_manager import chrome_strategy_requested
+from gflow_cli.errors import ConfigurationError
+
+_MARKER = ".gflow_browser_strategy"
 
 
 def test_persistent_context_kwargs_are_unchanged(tmp_path: Path) -> None:
@@ -80,3 +85,47 @@ async def test_ui_automation_setup_passes_disable_dev_shm_usage(tmp_path: Path) 
         _call_kwargs.args[1] if len(_call_kwargs.args) > 1 else [],
     )
     assert "--disable-dev-shm-usage" in args_passed
+
+
+# --- issue #222: chrome-strategy downgrade guard --------------------------------
+
+
+def test_chrome_strategy_requested_reads_marker(tmp_path: Path) -> None:
+    """chrome_strategy_requested is True only when the marker says 'chrome'."""
+    assert chrome_strategy_requested(tmp_path) is False  # no marker
+    (tmp_path / _MARKER).write_text("chrome", encoding="utf-8")
+    assert chrome_strategy_requested(tmp_path) is True
+    (tmp_path / _MARKER).write_text("internal-chromium", encoding="utf-8")
+    assert chrome_strategy_requested(tmp_path) is False
+
+
+def test_guard_raises_on_macos_when_chrome_strategy_downgrades(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    """marker=chrome but channel=None on macOS → fatal (bundled Chromium can't
+    decrypt real-Chrome cookies via the per-app Keychain key)."""
+    (tmp_path / _MARKER).write_text("chrome", encoding="utf-8")
+    # Construct BEFORE patching sys.platform: construction resolves dirs via
+    # platformdirs, whose backend is sensitive to sys.platform. The guard path
+    # itself does not touch platformdirs, so patch only around the call.
+    client = FlowApiClient(profile_dir=tmp_path, headless=True)
+    monkeypatch.setattr(sys, "platform", "darwin")
+    with pytest.raises(ConfigurationError, match="chrome"):
+        client._log_and_guard_launch({"channel": None})  # noqa: SLF001
+
+
+def test_guard_warns_not_raises_off_macos(tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> None:
+    """Same downgrade off macOS is non-fatal (e.g. Windows DPAPI cookie key is
+    per-user, so bundled Chromium can still decrypt) — must not raise."""
+    (tmp_path / _MARKER).write_text("chrome", encoding="utf-8")
+    client = FlowApiClient(profile_dir=tmp_path, headless=True)
+    monkeypatch.setattr(sys, "platform", "win32")
+    client._log_and_guard_launch({"channel": None})  # noqa: SLF001  (no raise)
+
+
+def test_guard_ok_when_channel_resolved(tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> None:
+    """channel resolved to 'chrome' → no downgrade → no raise, even on macOS."""
+    (tmp_path / _MARKER).write_text("chrome", encoding="utf-8")
+    client = FlowApiClient(profile_dir=tmp_path, headless=True)
+    monkeypatch.setattr(sys, "platform", "darwin")
+    client._log_and_guard_launch({"channel": "chrome"})  # noqa: SLF001  (no raise)
