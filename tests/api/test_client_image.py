@@ -15,12 +15,14 @@ a controllable _FakeTransport.
 from __future__ import annotations
 
 import asyncio
+import dataclasses
 import inspect
 from pathlib import Path
 from typing import Any
 from unittest.mock import AsyncMock, MagicMock, patch
 
 import pytest
+import structlog
 
 from gflow_cli.api.client import FlowApiClient, FlowApiError
 from gflow_cli.api.dto import GeneratedImage
@@ -151,6 +153,51 @@ class TestGenerateImage:
         result = await client.generate_image(project_id="proj-1", req=_make_req())
 
         assert isinstance(result, GeneratedImage)
+
+    async def test_generate_image_warns_when_transport_returns_extra(self, tmp_path: Path) -> None:
+        """count=1 but transport returns 2 → client.generate_image_extra_returned warning.
+
+        Guards the regression where a missed generation-settings panel let Flow
+        bill its own default count: the CLI still returns the first image, but
+        the over-generation must be surfaced via a structured warning naming the
+        extra media ids. A fresh LogCapture-wrapped logger is injected so no
+        cached structlog config from another test bleeds in
+        (see auto-memory: structlog cache-logger-off-for-tests).
+        """
+        cap = structlog.testing.LogCapture()
+        with patch(
+            "gflow_cli.api.client.logger",
+            structlog.wrap_logger(None, processors=[cap]),
+        ):
+            extra = dataclasses.replace(_FAKE_IMAGE, media_name="media-uuid-2")
+            transport = _FakeTransport(images=[_FAKE_IMAGE, extra])
+            client = _client_with_transport(tmp_path, transport)
+
+            result = await client.generate_image(project_id="proj-1", req=_make_req())
+
+        # The caller still receives exactly the first image (no silent discard surprise).
+        assert result.media_name == "media-uuid-1"
+
+        events = [e for e in cap.entries if e["event"] == "client.generate_image_extra_returned"]
+        assert len(events) == 1, f"expected one extra-returned warning, got {cap.entries}"
+        assert events[0]["log_level"] == "warning"
+        assert events[0]["requested"] == 1
+        assert events[0]["returned"] == 2
+        assert events[0]["extra_media_ids"] == ["media-uuid-2"]
+
+    async def test_generate_image_no_warning_on_single_image(self, tmp_path: Path) -> None:
+        """count=1 and transport returns 1 → no extra-returned warning (negative case)."""
+        cap = structlog.testing.LogCapture()
+        with patch(
+            "gflow_cli.api.client.logger",
+            structlog.wrap_logger(None, processors=[cap]),
+        ):
+            transport = _FakeTransport()  # default single image
+            client = _client_with_transport(tmp_path, transport)
+
+            await client.generate_image(project_id="proj-1", req=_make_req())
+
+        assert not [e for e in cap.entries if e["event"] == "client.generate_image_extra_returned"]
 
     async def test_generate_image_raises_content_policy_on_empty_media(
         self, tmp_path: Path
