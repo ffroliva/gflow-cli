@@ -333,10 +333,16 @@ class FlowApiClient:
             "locale": "en-US",
             "extra_http_headers": {"Accept-Language": "en-US,en;q=0.9"},
             "channel": channel_for_profile(self.profile_dir),
+            # Do NOT suppress Playwright's default --password-store=basic here.
+            # auth login (auth/real_chrome.py) seals the profile's cookies with
+            # the *basic* store; if generation lets Chrome fall back to the OS
+            # keychain (macOS "Chrome Safe Storage") the basic-sealed cookies
+            # can't be decrypted -> logged-out context -> 401 on createProject.
+            # Keeping the flag (via Playwright's default) makes both paths
+            # symmetric. See issue #222.
             "ignore_default_args": [
                 "--enable-automation",
                 "--no-sandbox",
-                "--password-store=basic",
             ],
             "args": ["--disable-blink-features=AutomationControlled", "--disable-dev-shm-usage"],
         }
