@@ -369,18 +369,29 @@ class FlowApiClient:
             chrome_strategy_requested,
             resolved_chrome_binary,
         )
+        from gflow_cli.paths import get_cookies_path
 
         channel = kwargs.get("channel")
         wants_chrome = chrome_strategy_requested(self.profile_dir)
         executable = resolved_chrome_binary()
-        cookies_db = self.profile_dir / "Default" / "Cookies"
+        # Resolve the cookie file the way auth/verification does (Chrome 130+
+        # Default/Network/Cookies, then legacy Default/Cookies, then bundled
+        # Cookies). Logging the actual path discriminates the H2 cookie-location
+        # mismatch (the persistent context reading a different file than the one
+        # the session was written to) from a plain decryption failure. See #222.
+        cookies_db = None
+        try:
+            cookies_db = get_cookies_path(self.profile_dir)
+        except FileNotFoundError:
+            pass
         logger.info(
             "client.persistent_context_launch",
             channel=channel,
             chrome_strategy_requested=wants_chrome,
             chrome_executable=executable,
             user_data_dir=str(self.profile_dir),
-            cookies_db_present=cookies_db.exists(),
+            cookies_db_present=cookies_db is not None,
+            cookies_db_path=str(cookies_db) if cookies_db else None,
             platform=sys.platform,
         )
         if wants_chrome and channel is None:
