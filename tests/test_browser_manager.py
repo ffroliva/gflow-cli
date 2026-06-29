@@ -265,6 +265,38 @@ class TestPlaywrightChromeChannelAvailable:
         with patch.dict(os.environ, {"CHROME_BINARY": str(tmp_path / "chrome")}):
             assert _is_playwright_chrome_channel_available() is True
 
+    def test_win32_probes_program_files_chrome(self) -> None:
+        """On win32, the Program Files Google-Chrome path is probed → True when present."""
+        from gflow_cli.browser_manager import _is_playwright_chrome_channel_available
+
+        expected = "C:/Program Files/Google/Chrome/Application/chrome.exe"
+        env_without = {
+            k: v for k, v in os.environ.items() if k not in ("CHROME_BINARY", "LOCALAPPDATA")
+        }
+        env_without["LOCALAPPDATA"] = str(Path(tempfile.gettempdir()) / "nonexistent_la")
+
+        def path_exists_mock(self: Path) -> bool:
+            return str(self).replace("\\", "/") == expected
+
+        with (
+            patch.dict(os.environ, env_without, clear=True),
+            patch("sys.platform", "win32"),
+            patch.object(Path, "exists", path_exists_mock),
+        ):
+            assert _is_playwright_chrome_channel_available() is True
+
+    def test_darwin_probes_app_bundle(self) -> None:
+        """On darwin, the /Applications Google Chrome.app path is probed."""
+        from gflow_cli.browser_manager import _is_playwright_chrome_channel_available
+
+        env_without = {k: v for k, v in os.environ.items() if k != "CHROME_BINARY"}
+        with (
+            patch.dict(os.environ, env_without, clear=True),
+            patch("sys.platform", "darwin"),
+            patch.object(Path, "exists", return_value=True),
+        ):
+            assert _is_playwright_chrome_channel_available() is True
+
 
 # ---------------------------------------------------------------------------
 # Port-range auto-increment
