@@ -334,18 +334,28 @@ class FlowApiClient:
             "locale": "en-US",
             "extra_http_headers": {"Accept-Language": "en-US,en;q=0.9"},
             "channel": channel_for_profile(self.profile_dir),
-            # Do NOT suppress Playwright's default --password-store=basic here.
-            # auth login (auth/real_chrome.py) seals the profile's cookies with
-            # the *basic* store; if generation lets Chrome fall back to the OS
-            # keychain (macOS "Chrome Safe Storage") the basic-sealed cookies
-            # can't be decrypted -> logged-out context -> 401 on createProject.
-            # Keeping the flag (via Playwright's default) makes both paths
-            # symmetric. See issue #222.
             "ignore_default_args": [
                 "--enable-automation",
                 "--no-sandbox",
             ],
-            "args": ["--disable-blink-features=AutomationControlled", "--disable-dev-shm-usage"],
+            # Pass --password-store=basic EXPLICITLY (issue #222). auth login
+            # (auth/real_chrome.py:69) and verification (auth/verification.py:246)
+            # seal and read the profile's cookies with Chrome's *basic* store —
+            # as does every other launch site in the codebase (auth/cookies.py,
+            # auth/internal_chromium.py, browser_manager.py, ui_automation.py).
+            # This shared generation context was the ONE path that omitted the
+            # flag and merely relied on Playwright's internal default; on macOS
+            # that let Chrome read cookies via the OS Keychain ("Chrome Safe
+            # Storage"), which cannot decrypt the basic-sealed cookies -> a
+            # logged-out context -> HTTP 401 at project.createProject (login and
+            # verify succeed, generation fails). #225 added a comment but never
+            # the flag here. Passing it explicitly keeps all paths symmetric
+            # regardless of Playwright's defaults.
+            "args": [
+                "--password-store=basic",
+                "--disable-blink-features=AutomationControlled",
+                "--disable-dev-shm-usage",
+            ],
         }
 
     def _log_and_guard_launch(self, kwargs: dict[str, Any]) -> None:
@@ -384,6 +394,7 @@ class FlowApiClient:
             cookies_db = get_cookies_path(self.profile_dir)
         except FileNotFoundError:
             pass
+        launch_args: list[str] = kwargs.get("args") or []
         logger.info(
             "client.persistent_context_launch",
             channel=channel,
@@ -393,6 +404,12 @@ class FlowApiClient:
             cookies_db_present=cookies_db is not None,
             cookies_db_path=str(cookies_db) if cookies_db else None,
             platform=sys.platform,
+            # issue #222: surface the actual launch args so we can confirm the
+            # generation context passes --password-store=basic (cookie-store
+            # symmetry with login/verification) on the failing macOS path.
+            launch_args=launch_args,
+            ignore_default_args=kwargs.get("ignore_default_args"),
+            password_store_basic="--password-store=basic" in launch_args,
         )
         if wants_chrome and channel is None:
             msg = (
