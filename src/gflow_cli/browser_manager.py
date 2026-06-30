@@ -120,7 +120,14 @@ def _find_chrome_binary() -> str:
     Resolution order:
     1. ``CHROME_BINARY`` env var (override)
     2. ``shutil.which("chrome")`` / ``shutil.which("google-chrome")``
-    3. Platform-standard install paths
+    3. Platform-standard install paths (including Chromium as last resort for
+       non-Playwright-channel uses such as CDP spawning and auth login).
+
+    .. note::
+        This function accepts Chromium as a fallback for the auth/CDP use-case.
+        It must NOT be used to decide whether Playwright's ``channel="chrome"``
+        is available — use :func:`_is_playwright_chrome_channel_available` for
+        that, which checks only the exact paths Playwright hard-codes.
 
     Raises ``ConfigurationError`` if nothing found.
     """
@@ -129,7 +136,7 @@ def _find_chrome_binary() -> str:
     if env_override:
         return env_override
 
-    # 2. PATH probe
+    # 2. PATH probe — Google Chrome names first, Chromium last-resort
     for candidate in ("chrome", "google-chrome", "chromium"):
         found = shutil.which(candidate)
         if found:
