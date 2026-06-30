@@ -6,6 +6,7 @@ from typing import Any
 
 import structlog
 
+from gflow_cli._cli_helpers import apply_tool_option
 from gflow_cli.api.client import FlowApiClient
 from gflow_cli.api.dto import ProjectInfo
 from gflow_cli.api.image import Aspect as ImageAspect
@@ -197,17 +198,23 @@ class FlowWorker:
                         )
                         flow_media_id = result.status.media_id
 
-                    recorder.record_completed_video(
-                        profile_name=self.profile_name,
-                        _profile_dir=profile_dir,
-                        request=req,
-                        result=result,
-                        cloud_storage_info=(
-                            cloud_info_from_path(result.local_path)
-                            if result.local_path is not None
-                            else None
-                        ),
-                    )
+                    try:
+                        recorder.record_completed_video(
+                            profile_name=self.profile_name,
+                            _profile_dir=profile_dir,
+                            request=req,
+                            result=result,
+                            cloud_storage_info=(
+                                cloud_info_from_path(result.local_path)
+                                if result.local_path is not None
+                                else None
+                            ),
+                        )
+                    except Exception as exc:
+                        # Post-success recording must never flip a credit-spent
+                        # video to "failed" — warn and continue (cf. exit-code-16
+                        # data-store contract, on_started recorder safety).
+                        logger.warning("Failed to record completed video", exc_info=exc)
 
                     if not result.status.succeeded:
                         reasons = (
@@ -268,6 +275,11 @@ class FlowWorker:
     def _build_image_request(self, payload: dict[str, Any]) -> GenerateImageRequest:
         prompt = payload["prompt"]
 
+        tool_specs = tuple(payload.get("tool_specs", ()))
+        if tool_specs:
+            # Mirror the CLI --tool flag: expand the prompt before generation.
+            prompt = apply_tool_option(prompt, tool_specs, category="image", quiet=True)[0]
+
         aspect_val = payload.get("aspect")
         aspect = ImageAspect.from_cli(aspect_val) if aspect_val else ImageAspect.PORTRAIT
 
@@ -293,6 +305,11 @@ class FlowWorker:
 
     def _build_video_request(self, payload: dict[str, Any]) -> GenerateVideoRequest:
         prompt = payload["prompt"]
+
+        tool_specs = tuple(payload.get("tool_specs", ()))
+        if tool_specs:
+            # Mirror the CLI --tool flag: expand the prompt before generation.
+            prompt = apply_tool_option(prompt, tool_specs, category="video", quiet=True)[0]
 
         mode_val = payload.get("mode")
         mode = VideoMode(mode_val) if mode_val else VideoMode.T2V
