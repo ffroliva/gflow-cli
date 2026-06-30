@@ -426,6 +426,45 @@ class FlowApiClient:
                 raise ConfigurationError(msg)
             logger.warning("client.chrome_strategy_downgraded", detail=msg)
 
+    async def _log_context_cookie_state(self) -> None:
+        """Diagnostic (issue #222): log whether the launched persistent context
+        actually loaded the Flow session cookie.
+
+        The accepting path (auth ``verify_flow_profile``) reads cookies via
+        browser_cookie3 + httpx and never uses a persistent context; generation
+        uses THIS persistent Chrome context. Logging the context's own cookie jar
+        (presence / count / expiry only — never values, so it is safe to paste
+        into a public issue) splits a cookie-LOAD failure (the context could not
+        decrypt or find the Flow session cookie) from a server-side rejection
+        (cookie present yet createProject still 401s). Pure observability — it
+        must never raise and never break the launch.
+        """
+        if self._context is None:
+            return
+        try:
+            cookies = await self._context.cookies()
+            now = time.time()
+            flow_cookie = next(
+                (c for c in cookies if c.get("name") == "__Secure-next-auth.session-token"),
+                None,
+            )
+            flow_expires = flow_cookie.get("expires") if flow_cookie is not None else None
+            logger.info(
+                "client.context_cookie_state",
+                context_cookie_count=len(cookies),
+                flow_session_cookie_present=flow_cookie is not None,
+                # expires == -1 -> a session cookie (no persisted expiry); otherwise
+                # epoch seconds. Chromium prunes already-expired cookies from the
+                # jar, so the common "logged out" signal is present=False; this flag
+                # only catches a near-boundary expiry that survived into the jar.
+                flow_session_cookie_expired=(
+                    flow_expires is not None and flow_expires != -1 and flow_expires < now
+                ),
+                google_sapisid_present=any(c.get("name") == "SAPISID" for c in cookies),
+            )
+        except Exception as exc:  # noqa: BLE001 — a diagnostic must never break the launch
+            logger.warning("client.context_cookie_probe_error", error=type(exc).__name__)
+
     async def _enter_setup(self) -> None:
         """Body of __aenter__ after the Playwright driver starts.
 
@@ -443,6 +482,9 @@ class FlowApiClient:
         await self._context.add_init_script(
             "Object.defineProperty(navigator,'webdriver',{get:()=>undefined})",
         )
+        # issue #222 diagnostic: confirm the persistent context actually loaded
+        # the Flow session cookie (the load-vs-send discriminator).
+        await self._log_context_cookie_state()
         # Open ``Settings.concurrency`` Pages inside the one persistent
         # BrowserContext. ``launch_persistent_context`` opens one Page by
         # default; reuse it as slot 0 to avoid an unused N+1 Page.
