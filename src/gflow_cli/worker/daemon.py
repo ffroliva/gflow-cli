@@ -208,6 +208,14 @@ class FlowWorker:
                             else None
                         ),
                     )
+
+                    if not result.status.succeeded:
+                        reasons = (
+                            ", ".join(result.status.failure_reasons)
+                            if result.status.failure_reasons
+                            else result.status.error_message or "Unknown reason"
+                        )
+                        raise GFlowError(f"Video generation failed: {reasons}")
                 except Exception as exc:
                     logger.warning("Failed during video generation or recording", exc_info=exc)
                     raise
