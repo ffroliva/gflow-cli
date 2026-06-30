@@ -7,16 +7,21 @@ from typing import Any
 import structlog
 
 from gflow_cli.api.client import FlowApiClient
+from gflow_cli.api.dto import ProjectInfo
 from gflow_cli.api.image import Aspect as ImageAspect
 from gflow_cli.api.image import GenerateImageRequest, ImageRef
 from gflow_cli.api.image import Model as ImageModel
 from gflow_cli.api.video import Aspect as VideoAspect
-from gflow_cli.api.video import GenerateVideoRequest, VideoModel
+from gflow_cli.api.video import GenerateVideoRequest, VideoModel, VideoStarted
 from gflow_cli.api.video import Mode as VideoMode
 from gflow_cli.api.video import Tier as VideoTier
 from gflow_cli.config import get_settings
+from gflow_cli.data.recorder import OperationRecorder
+from gflow_cli.data.repository import DataRepository
 from gflow_cli.data.store import DataStore
 from gflow_cli.errors import GFlowError
+from gflow_cli.paths import image_output_path
+from gflow_cli.storage import cloud_info_from_path
 from gflow_cli.worker.queue import QueueRepository, QueueTask
 
 logger = structlog.get_logger()
@@ -90,29 +95,63 @@ class FlowWorker:
                 count = task.payload.get("count", 1)
                 project_id = task.payload.get("project_id")
 
-                async with FlowApiClient(
-                    profile_dir=profile_dir,
-                    headless=headless,
-                    transport=transport,
-                    out_dir=out_dir,
-                ) as client:
-                    project_title = task.payload.get("project_title", "gflow-cli images")
-                    if project_id:
-                        project_flow_id = project_id
-                    else:
-                        project = await client.create_project(title=project_title)
-                        project_flow_id = project.project_id
+                recorder = OperationRecorder(
+                    DataRepository(self.db), prompt_mode=settings.history_prompts
+                )
+                try:
+                    async with FlowApiClient(
+                        profile_dir=profile_dir,
+                        headless=headless,
+                        transport=transport,
+                        out_dir=out_dir,
+                    ) as client:
+                        project_title = task.payload.get("project_title", "gflow-cli images")
+                        project_created = False
+                        if project_id:
+                            project_flow_id = project_id
+                            project = ProjectInfo(project_id=project_id, title=project_title)
+                        else:
+                            project = await client.create_project(title=project_title)
+                            project_flow_id = project.project_id
+                            project_created = True
 
-                    if count == 1:
-                        img = await client.generate_image(project_id=project_flow_id, req=req)
-                        flow_media_id = img.media_name
-                    else:
-                        images = await client.generate_images_batch(
-                            project_id=project_flow_id,
-                            req=req,
-                            count=count,
-                        )
+                        if count == 1:
+                            img = await client.generate_image(project_id=project_flow_id, req=req)
+                            images = [img]
+                        else:
+                            images = await client.generate_images_batch(
+                                project_id=project_flow_id,
+                                req=req,
+                                count=count,
+                            )
+
                         flow_media_id = images[0].media_name if images else None
+
+                        saved_paths: list[Path] = []
+                        for i, img in enumerate(images, start=1):
+                            target = image_output_path(
+                                settings.output_dir, job_id=img.media_name, index=i
+                            )
+                            saved = await client.download_image(img, target)
+                            saved_paths.append(saved)
+
+                        recorder.record_generated_images(
+                            profile_name=self.profile_name,
+                            profile_dir=profile_dir,
+                            project=project,
+                            project_created=project_created,
+                            request=req,
+                            images=images,
+                            saved_paths=saved_paths,
+                            input_media_ids=(
+                                [r.name for r in req.refs] if hasattr(req, "refs") else []
+                            ),
+                            operation_kind=task.task_type,
+                            cloud_storage_infos=[cloud_info_from_path(p) for p in saved_paths],
+                        )
+                except Exception as exc:
+                    logger.warning("Failed during image generation or recording", exc_info=exc)
+                    raise
 
                 self.repo.update_task_status(
                     task.task_id,
@@ -125,19 +164,53 @@ class FlowWorker:
 
             elif task.task_type in ("t2v", "i2v", "r2v"):
                 req = self._build_video_request(task.payload)
+                project_id = task.payload.get("project_id")
 
-                async with FlowApiClient(
-                    profile_dir=profile_dir,
-                    headless=headless,
-                    transport=transport,
-                    out_dir=out_dir,
-                ) as client:
-                    result = await client.generate_video(
-                        req=req,
+                recorder = OperationRecorder(
+                    DataRepository(self.db), prompt_mode=settings.history_prompts
+                )
+                try:
+                    async with FlowApiClient(
+                        profile_dir=profile_dir,
+                        headless=headless,
+                        transport=transport,
                         out_dir=out_dir,
-                        download=True,
+                    ) as client:
+
+                        def on_started(started: VideoStarted) -> None:
+                            try:
+                                recorder.record_started_video(
+                                    profile_name=self.profile_name,
+                                    profile_dir=profile_dir,
+                                    request=req,
+                                    started=started,
+                                )
+                            except Exception as exc:
+                                logger.warning("Failed to record started video", exc_info=exc)
+
+                        result = await client.generate_video(
+                            req=req,
+                            project_id=project_id,
+                            out_dir=out_dir,
+                            download=True,
+                            on_started=on_started,
+                        )
+                        flow_media_id = result.status.media_id
+
+                    recorder.record_completed_video(
+                        profile_name=self.profile_name,
+                        _profile_dir=profile_dir,
+                        request=req,
+                        result=result,
+                        cloud_storage_info=(
+                            cloud_info_from_path(result.local_path)
+                            if result.local_path is not None
+                            else None
+                        ),
                     )
-                    flow_media_id = result.status.media_id
+                except Exception as exc:
+                    logger.warning("Failed during video generation or recording", exc_info=exc)
+                    raise
 
                 self.repo.update_task_status(
                     task.task_id,

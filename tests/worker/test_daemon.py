@@ -16,16 +16,27 @@ from gflow_cli.worker.queue import QueueRepository
 @dataclass
 class FakeGeneratedImage:
     media_name: str
+    dimensions: tuple[int, int] = (1024, 1024)
+    workflow_id: str = "workflow-123"
+    media_generation_id: str = "gen-123"
+    model_name_type: str = "model-123"
+    aspect_ratio: str = "1:1"
+    seed: int = 12345
+    fife_url: str = "http://fake"
 
 
 @dataclass
 class FakeVideoStatus:
     media_id: str
+    status: str = "completed"
 
 
 @dataclass
 class FakeVideoResult:
     status: FakeVideoStatus
+    local_path: Path | None = None
+    project_id: str | None = "proj-abc"
+    flow_operation_id: str | None = "op-123"
 
 
 class FakeFlowApiClient:
@@ -35,6 +46,7 @@ class FakeFlowApiClient:
         self.generate_images_batch = AsyncMock()
         self.generate_video = AsyncMock()
         self.create_project = AsyncMock()
+        self.download_image = AsyncMock(return_value=Path("/tmp/fake.png"))
 
     async def __aenter__(self):
         return self
@@ -117,7 +129,9 @@ async def test_worker_process_t2i_single(temp_db: DataStore) -> None:
 
     worker = FlowWorker("default", str(temp_db.path))
     fake_client = FakeFlowApiClient()
-    fake_client.create_project.return_value = MagicMock(project_id="project-abc")
+    fake_client.create_project.return_value = MagicMock(
+        project_id="project-abc", title="Test Project"
+    )
     fake_client.generate_image.return_value = FakeGeneratedImage(media_name="media-img-123")
 
     with patch("gflow_cli.worker.daemon.FlowApiClient", return_value=fake_client):
@@ -145,7 +159,9 @@ async def test_worker_process_t2i_batch(temp_db: DataStore) -> None:
 
     worker = FlowWorker("default", str(temp_db.path))
     fake_client = FakeFlowApiClient()
-    fake_client.create_project.return_value = MagicMock(project_id="project-abc")
+    fake_client.create_project.return_value = MagicMock(
+        project_id="project-abc", title="Test Project"
+    )
     fake_client.generate_images_batch.return_value = [
         FakeGeneratedImage(media_name="media-img-batch-1"),
         FakeGeneratedImage(media_name="media-img-batch-2"),
@@ -244,8 +260,11 @@ async def test_worker_poll_loop_processes_tasks(temp_db: DataStore) -> None:
 
     worker = FlowWorker("default", str(temp_db.path))
     fake_client = FakeFlowApiClient()
-    fake_client.create_project.return_value = MagicMock(project_id="proj")
-    fake_client.generate_image.return_value = FakeGeneratedImage(media_name="img-id")
+    fake_client.create_project.return_value = MagicMock(project_id="proj", title="Test Project")
+    fake_client.generate_image.side_effect = [
+        FakeGeneratedImage(media_name="img-1"),
+        FakeGeneratedImage(media_name="img-2"),
+    ]
 
     with patch("gflow_cli.worker.daemon.FlowApiClient", return_value=fake_client):
         # Run worker loop in background task

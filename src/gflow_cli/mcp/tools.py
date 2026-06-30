@@ -2,7 +2,7 @@
 """MCP tool definitions — maps MCP tools to gflow-cli core functions.
 
 Each tool is registered on the shared FastMCP server instance and delegates
-to FlowApiClient / DataStore for actual execution.
+to FlowWorker / DataStore / data.queries for actual execution.
 
 Rate limiting: a token-bucket (capacity=8, refill=1/20s) prevents runaway
 agentic loops from burning credits. Session and daily budget limits are
@@ -16,11 +16,20 @@ from __future__ import annotations
 
 import asyncio
 import time
+import uuid
 from typing import Any
 
 import structlog
 
+from gflow_cli.config import get_settings
+from gflow_cli.data.queries import list_projects
+from gflow_cli.data.repository import DataRepository
+from gflow_cli.data.store import DataStore
+from gflow_cli.errors import GFlowError
 from gflow_cli.mcp.server import server
+from gflow_cli.profile_store import NoDefaultProfileError, NoProfilesError, resolve_profile
+from gflow_cli.worker.daemon import FlowWorker
+from gflow_cli.worker.queue import QueueRepository
 
 log = structlog.get_logger()
 
@@ -94,6 +103,214 @@ def _adapt_tools(tools: list[dict[str, Any]] | None) -> tuple[str, ...] | dict[s
 
 
 # ---------------------------------------------------------------------------
+# Internal helpers
+# ---------------------------------------------------------------------------
+
+
+def _resolve_and_validate_profile(profile: str) -> str | dict[str, Any]:
+    """Resolve the requested profile name using the same precedence as the CLI.
+
+    When *profile* is ``"default"`` (the MCP sentinel meaning "auto-pick"),
+    this runs the full CLI resolution chain:
+
+    1. ``GFLOW_CLI_PROFILE`` env var
+    2. ``config.toml`` ``default_profile``
+    3. Auto-select the only profile that exists on disk
+
+    When *profile* is any other value (an explicit name the agent passed in),
+    it is forwarded to ``resolve_profile()`` as-is so the same validation runs.
+
+    Returns the resolved profile name string on success, or a ready-to-return
+    error dict on failure.
+    """
+    try:
+        # Pass None when the agent omitted the profile (left it as "default")
+        # so resolve_profile runs the full auto-detection chain.
+        cli_flag: str | None = None if profile == "default" else profile
+        resolved = resolve_profile(cli_flag)
+    except NoProfilesError:
+        return {
+            "status": "error",
+            "error": {
+                "type": "https://gflow-cli.dev/errors/no-profile",
+                "title": "No Profile Found",
+                "status": 400,
+                "detail": (
+                    "No gflow profiles exist. Run `gflow auth login --browser chrome` first."
+                ),
+            },
+        }
+    except NoDefaultProfileError as exc:
+        return {
+            "status": "error",
+            "error": {
+                "type": "https://gflow-cli.dev/errors/no-default-profile",
+                "title": "No Default Profile",
+                "status": 400,
+                "detail": (
+                    f"Multiple profiles exist ({', '.join(exc.available)}) but none is set as "
+                    "default. Pass profile=<name> explicitly, or run "
+                    "`gflow auth use <name>` / set GFLOW_CLI_PROFILE."
+                ),
+                "available_profiles": exc.available,
+            },
+        }
+
+    # Sanity-check: the profile directory must exist on disk. If auth was never
+    # completed the FlowApiClient would fail with a cryptic Playwright error;
+    # surface a clear message here instead.
+    settings = get_settings()
+    profile_dir = settings.profile_subdir(resolved)
+    if not profile_dir.exists():
+        return {
+            "status": "error",
+            "error": {
+                "type": "https://gflow-cli.dev/errors/no-profile",
+                "title": "Profile Directory Not Found",
+                "status": 400,
+                "detail": (
+                    f"Profile {resolved!r} resolved but its directory does not exist: "
+                    f"{profile_dir}. Run `gflow auth login --browser chrome` first."
+                ),
+            },
+        }
+
+    log.debug("mcp.tool.profile_resolved", requested=profile, resolved=resolved)
+    return resolved
+
+
+async def _run_generation_task(
+    *,
+    profile: str,
+    task_type: str,
+    payload: dict[str, Any],
+) -> dict[str, Any]:
+    """Enqueue a generation task, run it via FlowWorker, and return the result.
+
+    This helper is called while holding the per-profile lock (via the callers
+    in gflow_generate_image / gflow_generate_video).  It:
+
+    1. Opens the DataStore (applying any pending migrations on first open).
+    2. Ensures the profile row exists in the ``profiles`` table (FK requirement).
+    3. Enqueues the task in ``generation_queue``.
+    4. Instantiates a :class:`FlowWorker` and directly awaits
+       ``process_task()`` — no separate daemon process needed.
+    5. Reads the completed / failed status back from the queue row.
+    6. On success, resolves local file paths from the ``assets`` / ``local_files``
+       tables and returns them.  On failure, surfaces the RFC 9457 error dict.
+    """
+    settings = get_settings()
+    db_path = settings.resolved_db_path()
+
+    task_id = str(uuid.uuid4())
+
+    try:
+        with DataStore.open(db_path) as store:
+            repo = QueueRepository(store)
+            data_repo = DataRepository(store)
+
+            # Ensure the profile FK exists before inserting the queue row.
+            profile_dir = settings.profile_subdir(profile)
+            data_repo.upsert_profile(profile, profile_dir)
+
+            task = repo.enqueue_task(
+                task_id=task_id,
+                profile_name=profile,
+                task_type=task_type,
+                payload=payload,
+            )
+
+            log.info(
+                "mcp.tool.task_enqueued",
+                task_id=task_id,
+                task_type=task_type,
+                profile=profile,
+            )
+
+            # Run the worker synchronously (we already hold the profile lock).
+            # FlowWorker opens its own DataStore connection, so close ours first
+            # to avoid a WAL write-lock contention on the same process.
+            # (WAL mode allows one writer at a time; sequential open/close is fine.)
+            store.close()
+
+            worker = FlowWorker(profile_name=profile, db_path=str(db_path))
+            try:
+                await worker.process_task(task)
+            finally:
+                worker.close()
+
+            # Re-open to read the final task state.
+            with DataStore.open(db_path) as store2:
+                repo2 = QueueRepository(store2)
+                data_repo2 = DataRepository(store2)
+
+                completed_task = repo2.get_task(task_id)
+                if completed_task is None:
+                    return {
+                        "status": "error",
+                        "error": f"Task {task_id!r} disappeared from queue after execution.",
+                    }
+
+                if completed_task.status == "failed":
+                    log.warning(
+                        "mcp.tool.task_failed",
+                        task_id=task_id,
+                        error=completed_task.error,
+                    )
+                    return {
+                        "status": "failed",
+                        "task_id": task_id,
+                        "error": completed_task.error or {"detail": "Unknown error"},
+                    }
+
+                # Resolve local file paths from the asset catalog.
+                file_paths: list[str] = []
+                if completed_task.flow_media_id:
+                    asset = data_repo2.get_asset_by_flow_media_id(
+                        profile,
+                        completed_task.flow_media_id,
+                    )
+                    if asset and asset.local_files:
+                        file_paths = [
+                            str(lf.path) for lf in asset.local_files if lf.path is not None
+                        ]
+
+                log.info(
+                    "mcp.tool.task_completed",
+                    task_id=task_id,
+                    flow_media_id=completed_task.flow_media_id,
+                    file_count=len(file_paths),
+                )
+
+                return {
+                    "status": "completed",
+                    "task_id": task_id,
+                    "flow_media_id": completed_task.flow_media_id,
+                    "files": file_paths,
+                }
+
+    except GFlowError as exc:
+        log.error("mcp.tool.gflow_error", task_id=task_id, error=str(exc))
+        return {
+            "status": "error",
+            "task_id": task_id,
+            "error": dict(exc.to_problem_details()),
+        }
+    except Exception as exc:
+        log.exception("mcp.tool.unexpected_error", task_id=task_id, exc_info=exc)
+        return {
+            "status": "error",
+            "task_id": task_id,
+            "error": {
+                "type": "https://gflow-cli.dev/errors/unknown",
+                "title": "Unexpected Error",
+                "status": 500,
+                "detail": str(exc),
+            },
+        }
+
+
+# ---------------------------------------------------------------------------
 # MCP Tools
 # ---------------------------------------------------------------------------
 
@@ -132,10 +349,14 @@ async def gflow_generate_image(
             Requires GFLOW_CLI_GEMINI_API_KEY; degrades gracefully to the
             original prompt when unavailable (mirrors the CLI ``--tool/-t``
             flag).
-        profile: gflow-cli profile name to use.
+        profile: gflow-cli profile name to use.  Leave as ``"default"`` (or
+            omit) to auto-resolve using the same precedence as the CLI:
+            ``GFLOW_CLI_PROFILE`` env var → ``config.toml`` default →
+            auto-select if exactly one profile exists.
 
     Returns:
-        Dict with 'status', 'images' (list of file paths), and metadata.
+        Dict with 'status', 'files' (list of local file paths), and metadata.
+        On failure, 'status' is 'failed' or 'error' with an RFC 9457 'error' dict.
     """
     if not await _rate_limiter.acquire():
         log.warning("mcp.tool.rate_limited", tool="gflow_generate_image")
@@ -144,7 +365,14 @@ async def gflow_generate_image(
             "error": "Too many requests. Please wait before generating again.",
         }
 
-    lock = _get_profile_lock(profile)
+    # Resolve and validate the profile BEFORE acquiring the per-profile lock so
+    # that the lock key matches the real on-disk profile name, not the sentinel.
+    resolved = _resolve_and_validate_profile(profile)
+    if isinstance(resolved, dict):
+        return resolved  # profile error — bail out early
+    resolved_profile = resolved
+
+    lock = _get_profile_lock(resolved_profile)
     async with lock:
         log.info(
             "mcp.tool.generate_image",
@@ -152,36 +380,45 @@ async def gflow_generate_image(
             model=model,
             aspect=aspect,
             count=count,
-            profile=profile,
+            profile=resolved_profile,
         )
 
-        # Validate + adapt the agent-supplied tools array to CLI --tool specs now
-        # (fail cleanly on malformed input) even though generation is not yet
-        # wired — the daemon will feed these specs to apply_tool_option.
+        # Validate + adapt the agent-supplied tools array to CLI --tool specs.
         adapted = _adapt_tools(tools)
         if isinstance(adapted, dict):
             return adapted
         tool_specs = adapted
 
-        # TODO: Wire to FlowApiClient when daemon integration lands.
-        # For now, return a structured placeholder that validates the schema.
-        return {
-            "status": "pending",
-            "message": (
-                "MCP server scaffolded. Image generation will be wired "
-                "when the daemon worker queue (Sprint 2) ships."
-            ),
-            "params": {
-                "prompt": prompt,
-                "model": model,
-                "aspect": aspect,
-                "count": count,
-                "seed": seed,
-                "tools": tools or [],
-                "tool_specs": list(tool_specs),
-                "profile": profile,
-            },
+        payload: dict[str, Any] = {
+            "prompt": prompt,
+            "model": model,
+            "aspect": aspect,
+            "count": count,
         }
+        if seed is not None:
+            payload["seed"] = seed
+        if tool_specs:
+            payload["tool_specs"] = list(tool_specs)
+
+        result = await _run_generation_task(
+            profile=resolved_profile,
+            task_type="t2i",
+            payload=payload,
+        )
+
+        # Annotate the result with the original request parameters for context.
+        result["params"] = {
+            "prompt": prompt,
+            "model": model,
+            "aspect": aspect,
+            "count": count,
+            "seed": seed,
+            "tools": tools or [],
+            "tool_specs": list(tool_specs),
+            "profile": resolved_profile,
+            "requested_profile": profile,
+        }
+        return result
 
 
 @server.tool(
@@ -215,10 +452,14 @@ async def gflow_generate_video(
             Requires GFLOW_CLI_GEMINI_API_KEY; degrades gracefully to the
             original prompt when unavailable (mirrors the CLI ``--tool/-t``
             flag on ``video t2v``).
-        profile: gflow-cli profile name to use.
+        profile: gflow-cli profile name to use.  Leave as ``"default"`` (or
+            omit) to auto-resolve using the same precedence as the CLI:
+            ``GFLOW_CLI_PROFILE`` env var → ``config.toml`` default →
+            auto-select if exactly one profile exists.
 
     Returns:
-        Dict with 'status', 'video_path', and metadata.
+        Dict with 'status', 'files' (list of local file paths), and metadata.
+        On failure, 'status' is 'failed' or 'error' with an RFC 9457 'error' dict.
     """
     if not await _rate_limiter.acquire():
         log.warning("mcp.tool.rate_limited", tool="gflow_generate_video")
@@ -227,14 +468,21 @@ async def gflow_generate_video(
             "error": "Too many requests. Please wait before generating again.",
         }
 
-    lock = _get_profile_lock(profile)
+    # Resolve and validate the profile BEFORE acquiring the per-profile lock so
+    # that the lock key matches the real on-disk profile name, not the sentinel.
+    resolved = _resolve_and_validate_profile(profile)
+    if isinstance(resolved, dict):
+        return resolved  # profile error — bail out early
+    resolved_profile = resolved
+
+    lock = _get_profile_lock(resolved_profile)
     async with lock:
         log.info(
             "mcp.tool.generate_video",
             prompt=prompt[:80],
             mode=mode,
             aspect=aspect,
-            profile=profile,
+            profile=resolved_profile,
         )
 
         adapted = _adapt_tools(tools)
@@ -242,23 +490,35 @@ async def gflow_generate_video(
             return adapted
         tool_specs = adapted
 
-        # TODO: Wire to FlowApiClient when daemon integration lands.
-        return {
-            "status": "pending",
-            "message": (
-                "MCP server scaffolded. Video generation will be wired "
-                "when the daemon worker queue (Sprint 2) ships."
-            ),
-            "params": {
-                "prompt": prompt,
-                "mode": mode,
-                "aspect": aspect,
-                "image_path": image_path,
-                "tools": tools or [],
-                "tool_specs": list(tool_specs),
-                "profile": profile,
-            },
+        payload: dict[str, Any] = {
+            "prompt": prompt,
+            "mode": mode,
+            "aspect": aspect,
         }
+        if image_path is not None:
+            payload["start_image"] = image_path
+        if tool_specs:
+            payload["tool_specs"] = list(tool_specs)
+
+        # task_type matches the mode ("t2v", "i2v", "r2v")
+        result = await _run_generation_task(
+            profile=resolved_profile,
+            task_type=mode,
+            payload=payload,
+        )
+
+        # Annotate the result with the original request parameters for context.
+        result["params"] = {
+            "prompt": prompt,
+            "mode": mode,
+            "aspect": aspect,
+            "image_path": image_path,
+            "tools": tools or [],
+            "tool_specs": list(tool_specs),
+            "profile": resolved_profile,
+            "requested_profile": profile,
+        }
+        return result
 
 
 @server.tool(
@@ -303,13 +563,38 @@ async def gflow_list_projects(
     """
     log.info("mcp.tool.list_projects", profile=profile, limit=limit)
 
-    # TODO: Wire to DataStore queries when daemon integration lands.
-    return {
-        "status": "ok",
-        "message": "MCP server scaffolded. Project listing will be wired to DataStore.",
-        "projects": [],
-        "total": 0,
-    }
+    settings = get_settings()
+    db_path = settings.resolved_db_path()
+
+    try:
+        rows = list_projects(
+            db_path=db_path,
+            profile=profile if profile != "default" else None,
+            limit=limit,
+            offset=0,
+        )
+        return {
+            "status": "ok",
+            "projects": [
+                {
+                    "project_id": r.project_id,
+                    "profile": r.profile,
+                    "created_at": r.created_at.isoformat(),
+                    "image_count": r.image_count,
+                    "video_count": r.video_count,
+                }
+                for r in rows
+            ],
+            "total": len(rows),
+        }
+    except Exception as exc:
+        log.error("mcp.tool.list_projects_error", error=str(exc))
+        return {
+            "status": "error",
+            "error": str(exc),
+            "projects": [],
+            "total": 0,
+        }
 
 
 @server.tool(
@@ -324,17 +609,49 @@ async def gflow_list_characters(
 ) -> dict[str, Any]:
     """List Flow Character entities from the local catalog.
 
+    Characters are cloud-side Flow entities (not stored in the local SQLite
+    catalog) and require an active browser session to enumerate.  Use
+    ``gflow character list`` in the CLI for a full listing, or call this tool
+    from a context where a browser session is available.
+
     Args:
         profile: gflow-cli profile name to filter by.
 
     Returns:
         Dict with 'characters' list.
+
+    Note:
+        Characters are project-scoped on the Flow side; this tool returns an
+        empty list when no project_id is provided, since listing across all
+        projects would require iterating every project.  Pass a project_id
+        via a future parameter update, or use ``gflow character list`` in the
+        terminal.
     """
     log.info("mcp.tool.list_characters", profile=profile)
 
-    # TODO: Wire to DataStore queries when daemon integration lands.
+    # Characters live on the Flow cloud side and are not cached in the local
+    # SQLite catalog — fetching them requires an active browser session and a
+    # specific project_id.  Return an informative empty response rather than
+    # silently returning nothing or crashing.
     return {
         "status": "ok",
-        "message": "MCP server scaffolded. Character listing will be wired to DataStore.",
         "characters": [],
+        "note": (
+            "Character listing requires a project_id and an active browser session. "
+            "Use `gflow character list --project <id>` in the terminal, or extend "
+            "this MCP tool with a project_id parameter."
+        ),
     }
+
+
+# Re-export Path so tests that import it directly still work
+__all__ = [
+    "gflow_generate_image",
+    "gflow_generate_video",
+    "gflow_list_tools",
+    "gflow_list_projects",
+    "gflow_list_characters",
+    "_TokenBucket",
+    "_adapt_tools",
+    "_run_generation_task",
+]
