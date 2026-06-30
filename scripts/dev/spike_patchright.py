@@ -110,8 +110,15 @@ def _launch_kwargs(profile_dir: Path) -> dict[str, Any]:
         "locale": "en-US",
         "extra_http_headers": {"Accept-Language": "en-US,en;q=0.9"},
         "channel": channel_for_profile(profile_dir),
-        "ignore_default_args": ["--enable-automation", "--no-sandbox", "--password-store=basic"],
-        "args": ["--disable-blink-features=AutomationControlled", "--disable-dev-shm-usage"],
+        # issue #222: --password-store=basic must be in args (not ignore_default_args),
+        # matching client._persistent_context_kwargs — otherwise this replica drifts
+        # and the spike launches Chrome with a different cookie store than generation.
+        "ignore_default_args": ["--enable-automation", "--no-sandbox"],
+        "args": [
+            "--password-store=basic",
+            "--disable-blink-features=AutomationControlled",
+            "--disable-dev-shm-usage",
+        ],
     }
 
 
