@@ -229,12 +229,16 @@ def resolved_chrome_binary() -> str | None:
     """Return the system Chrome binary path, or ``None`` if Chrome can't be found.
 
     Public, exception-free wrapper around :func:`_find_chrome_binary` for
-    diagnostics/logging callers that want the path without handling
-    :class:`ConfigurationError`.
+    diagnostics/logging callers that want the path without handling errors. It
+    must NEVER raise: it feeds ``_log_and_guard_launch``'s observability log, and
+    a best-effort path probe should never abort a launch. Besides
+    :class:`ConfigurationError` (no binary found), ``shutil.which`` can raise on
+    odd environments (e.g. an OS-detection mismatch), so any error resolves to
+    ``None``.
     """
     try:
         return _find_chrome_binary()
-    except ConfigurationError:
+    except Exception:  # noqa: BLE001 — exception-free by contract; any failure → None
         return None
 
 
