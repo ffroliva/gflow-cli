@@ -24,6 +24,21 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 - **Extra-image observability**: `generate_image()` now logs a
   `client.generate_image_extra_returned` warning when the transport returns more images
   than the requested `count=1`, so silent over-generation is surfaced to the user (#219).
+- **macOS generation 401 — fail loud (#222)**: a `chrome`-strategy profile that is
+  silently downgraded to bundled Chromium at generation launch now raises instead of
+  running logged-out, so the macOS auth failure surfaces at its cause rather than as an
+  opaque later `401`.
+
+### Diagnostics
+
+- **Persistent-context cookie state (#222)**: generation launch now logs the resolved
+  `cookies_db_path` (`client.persistent_context_launch`) and the launched context's own
+  cookie state (`client.context_cookie_state`: `flow_session_cookie_present` / count /
+  expiry — **never values**, safe to paste publicly). This splits a cookie-**load**
+  failure (the macOS persistent context cannot decrypt the profile's cookies) from a
+  server-side rejection. Root cause of the macOS `401` is localized but not yet fixed —
+  see [KNOWN_ISSUES.md](KNOWN_ISSUES.md) and
+  [#222](https://github.com/ffroliva/gflow-cli/issues/222).
 
 ## [0.22.0] — 2026-06-28
 
