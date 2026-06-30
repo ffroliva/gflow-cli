@@ -333,10 +333,16 @@ class FlowApiClient:
             "locale": "en-US",
             "extra_http_headers": {"Accept-Language": "en-US,en;q=0.9"},
             "channel": channel_for_profile(self.profile_dir),
+            # Do NOT suppress Playwright's default --password-store=basic here.
+            # auth login (auth/real_chrome.py) seals the profile's cookies with
+            # the *basic* store; if generation lets Chrome fall back to the OS
+            # keychain (macOS "Chrome Safe Storage") the basic-sealed cookies
+            # can't be decrypted -> logged-out context -> 401 on createProject.
+            # Keeping the flag (via Playwright's default) makes both paths
+            # symmetric. See issue #222.
             "ignore_default_args": [
                 "--enable-automation",
                 "--no-sandbox",
-                "--password-store=basic",
             ],
             "args": ["--disable-blink-features=AutomationControlled", "--disable-dev-shm-usage"],
         }
@@ -1311,14 +1317,12 @@ class FlowApiClient:
         invoking the single-image API still receive exactly one image (no
         silent discard).
 
-        When the transport returns more images than the requested count=1
-        (typically because the generation-settings panel was not found and
-        Flow used its own default, billing the account for the extra
-        generations), a warning is logged so the caller can investigate.
+        When the transport returns more images than the requested ``count=1``
+        (typically because the generation-settings panel was not found and Flow
+        used its own default count, billing the account for the extra
+        generations), a ``client.generate_image_extra_returned`` warning is
+        logged so the caller can investigate.
         """
-        import structlog as _structlog
-
-        _log = _structlog.get_logger(__name__)
         req_one: GenerateImageRequest = _dc_replace(req, count=1)
         images = await self._drive_images_generation(
             project_id=project_id,
@@ -1326,16 +1330,17 @@ class FlowApiClient:
             recaptcha_action=recaptcha_action,
         )
         if len(images) > 1:
-            _log.warning(
+            logger.warning(
                 "client.generate_image_extra_returned",
                 requested=1,
                 returned=len(images),
                 extra_media_ids=[img.media_name for img in images[1:]],
                 hint=(
-                    "Flow generated more images than requested — the generation-settings "
-                    "panel selector may have missed and Flow used its own default count. "
-                    "The extra image(s) were billed to your account but not saved. "
-                    "Use `gflow image t2i -n 2` to request and save multiple images explicitly."
+                    "Flow generated more images than requested — the "
+                    "generation-settings panel selector may have missed and Flow "
+                    "used its own default count. The extra image(s) were billed "
+                    "to your account but not saved. Use `gflow image t2i -n 2` to "
+                    "request and save multiple images explicitly."
                 ),
             )
         return images[0]
