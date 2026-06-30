@@ -414,13 +414,15 @@ class FlowApiClient:
         if wants_chrome and channel is None:
             msg = (
                 "Profile requests the 'chrome' browser strategy "
-                "(.gflow_browser_strategy=chrome) but system Chrome was not found, so "
-                "generation would fall back to Playwright's bundled Chromium. On macOS "
-                "the bundled Chromium cannot decrypt cookies written by real Chrome "
-                "(Keychain 'Chrome Safe Storage'), yielding a logged-out session and an "
-                "HTTP 401 at project.createProject. Install Google Chrome (or set "
-                "CHROME_BINARY), then retry; or re-run `gflow auth login` to re-capture "
-                "the session."
+                "(.gflow_browser_strategy=chrome) but Playwright's 'chrome' channel is "
+                "unavailable (Google Chrome is not at the location Playwright probes — "
+                "note a Chrome binary resolved elsewhere is logged as chrome_executable "
+                "but does not satisfy the channel), so generation would fall back to "
+                "Playwright's bundled Chromium. On macOS the bundled Chromium cannot "
+                "decrypt cookies written by real Chrome (Keychain 'Chrome Safe Storage'), "
+                "yielding a logged-out session and an HTTP 401 at project.createProject. "
+                "Install Google Chrome in its default location (or set CHROME_BINARY), "
+                "then retry; or re-run `gflow auth login` to re-capture the session."
             )
             if sys.platform == "darwin":
                 raise ConfigurationError(msg)

@@ -120,11 +120,18 @@ def test_guard_raises_on_macos_when_chrome_strategy_downgrades(
 
 def test_guard_warns_not_raises_off_macos(tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> None:
     """Same downgrade off macOS is non-fatal (e.g. Windows DPAPI cookie key is
-    per-user, so bundled Chromium can still decrypt) — must not raise."""
+    per-user, so bundled Chromium can still decrypt) — must not raise, but MUST
+    still log the ``client.chrome_strategy_downgraded`` warning so the silent
+    downgrade is visible to operators."""
+    import structlog
+
     (tmp_path / _MARKER).write_text("chrome", encoding="utf-8")
     client = FlowApiClient(profile_dir=tmp_path, headless=True)
     monkeypatch.setattr(sys, "platform", "win32")
-    client._log_and_guard_launch({"channel": None})  # noqa: SLF001  (no raise)
+    cap = structlog.testing.LogCapture()
+    with patch("gflow_cli.api.client.logger", structlog.wrap_logger(None, processors=[cap])):
+        client._log_and_guard_launch({"channel": None})  # noqa: SLF001  (no raise)
+    assert any(e["event"] == "client.chrome_strategy_downgraded" for e in cap.entries)
 
 
 def test_guard_ok_when_channel_resolved(tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> None:
@@ -133,6 +140,35 @@ def test_guard_ok_when_channel_resolved(tmp_path: Path, monkeypatch: pytest.Monk
     client = FlowApiClient(profile_dir=tmp_path, headless=True)
     monkeypatch.setattr(sys, "platform", "darwin")
     client._log_and_guard_launch({"channel": "chrome"})  # noqa: SLF001  (no raise)
+
+
+def test_persistent_context_launch_event_fields(tmp_path: Path) -> None:
+    """The launch diagnostic emits the fields needed to remotely root-cause #222:
+    channel, the cookie-db path/presence (H2 location discriminator), platform,
+    and the ``--password-store=basic`` flag (cookie-store symmetry). A regression
+    that drops or renames one of these would otherwise ship green."""
+    import structlog
+
+    client = FlowApiClient(profile_dir=tmp_path, headless=True)
+    kwargs = {
+        "channel": None,
+        "args": ["--password-store=basic", "--disable-dev-shm-usage"],
+        "ignore_default_args": ["--enable-automation"],
+    }
+    cap = structlog.testing.LogCapture()
+    # No marker -> chrome_strategy_requested is False, so the guard neither raises
+    # nor warns: this isolates the launch event itself.
+    with patch("gflow_cli.api.client.logger", structlog.wrap_logger(None, processors=[cap])):
+        client._log_and_guard_launch(kwargs)  # noqa: SLF001
+    ev = next(e for e in cap.entries if e["event"] == "client.persistent_context_launch")
+    assert ev["channel"] is None
+    assert ev["chrome_strategy_requested"] is False
+    assert ev["password_store_basic"] is True
+    assert ev["launch_args"] == kwargs["args"]
+    assert ev["user_data_dir"] == str(tmp_path)
+    assert ev["platform"] == sys.platform
+    assert "cookies_db_present" in ev
+    assert "cookies_db_path" in ev
 
 
 # --- issue #222: persistent-context cookie-state diagnostic --------------------
@@ -197,3 +233,24 @@ def test_context_cookie_state_absent(tmp_path: Path) -> None:
     assert ev["flow_session_cookie_present"] is False
     assert ev["flow_session_cookie_expired"] is False
     assert ev["google_sapisid_present"] is True
+
+
+def test_context_cookie_state_swallows_probe_error(tmp_path: Path) -> None:
+    """Contract: the diagnostic is pure observability — if ``context.cookies()``
+    raises (e.g. a closing context), it must NOT propagate (it is awaited inside
+    ``_enter_setup``, so a raise would abort the whole generation launch). It logs
+    ``client.context_cookie_probe_error`` and emits no ``context_cookie_state``."""
+    import asyncio
+
+    import structlog
+
+    client = FlowApiClient(profile_dir=tmp_path, headless=True)
+    ctx = MagicMock()
+    ctx.cookies = AsyncMock(side_effect=PermissionError("locked"))
+    client._context = ctx  # noqa: SLF001
+    cap = structlog.testing.LogCapture()
+    with patch("gflow_cli.api.client.logger", structlog.wrap_logger(None, processors=[cap])):
+        asyncio.run(client._log_context_cookie_state())  # noqa: SLF001  (must not raise)
+    events = [e["event"] for e in cap.entries]
+    assert "client.context_cookie_probe_error" in events
+    assert "client.context_cookie_state" not in events
