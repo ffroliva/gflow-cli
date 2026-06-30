@@ -17,6 +17,7 @@ import asyncio
 import base64
 import json
 import os
+import sys
 import time
 from dataclasses import replace as _dataclass_replace
 from datetime import datetime
@@ -333,19 +334,138 @@ class FlowApiClient:
             "locale": "en-US",
             "extra_http_headers": {"Accept-Language": "en-US,en;q=0.9"},
             "channel": channel_for_profile(self.profile_dir),
-            # Do NOT suppress Playwright's default --password-store=basic here.
-            # auth login (auth/real_chrome.py) seals the profile's cookies with
-            # the *basic* store; if generation lets Chrome fall back to the OS
-            # keychain (macOS "Chrome Safe Storage") the basic-sealed cookies
-            # can't be decrypted -> logged-out context -> 401 on createProject.
-            # Keeping the flag (via Playwright's default) makes both paths
-            # symmetric. See issue #222.
             "ignore_default_args": [
                 "--enable-automation",
                 "--no-sandbox",
             ],
-            "args": ["--disable-blink-features=AutomationControlled", "--disable-dev-shm-usage"],
+            # Pass --password-store=basic EXPLICITLY (issue #222). auth login
+            # (auth/real_chrome.py:69) and verification (auth/verification.py:246)
+            # seal and read the profile's cookies with Chrome's *basic* store —
+            # as does every other launch site in the codebase (auth/cookies.py,
+            # auth/internal_chromium.py, browser_manager.py, ui_automation.py).
+            # This shared generation context was the ONE path that omitted the
+            # flag and merely relied on Playwright's internal default; on macOS
+            # that let Chrome read cookies via the OS Keychain ("Chrome Safe
+            # Storage"), which cannot decrypt the basic-sealed cookies -> a
+            # logged-out context -> HTTP 401 at project.createProject (login and
+            # verify succeed, generation fails). #225 added a comment but never
+            # the flag here. Passing it explicitly keeps all paths symmetric
+            # regardless of Playwright's defaults.
+            "args": [
+                "--password-store=basic",
+                "--disable-blink-features=AutomationControlled",
+                "--disable-dev-shm-usage",
+            ],
         }
+
+    def _log_and_guard_launch(self, kwargs: dict[str, Any]) -> None:
+        """Log the resolved browser-launch identity and fail loud on a silent
+        chrome->bundled downgrade (issue #222).
+
+        Under the 'chrome' strategy ``channel`` must resolve to ``"chrome"``
+        (system Chrome). If it resolved to ``None`` Chrome wasn't found and
+        Playwright would fall back to bundled Chromium. On macOS that bundled
+        Chromium cannot decrypt cookies written by real Chrome (per-app Keychain
+        'Chrome Safe Storage'), producing a logged-out context and a confusing
+        HTTP 401 at project.createProject. Make that fatal with a clear
+        remediation. On other platforms the bundled fallback may still work
+        (e.g. Windows DPAPI cookie key is per-user), so warn instead of raising.
+
+        The diagnostic event names the resolved channel / executable /
+        user-data-dir / cookie-db presence — the data needed to tell a channel
+        downgrade apart from a cookie-decryption failure.
+        """
+        from gflow_cli.browser_manager import (
+            chrome_strategy_requested,
+            resolved_chrome_binary,
+        )
+        from gflow_cli.paths import get_cookies_path
+
+        channel = kwargs.get("channel")
+        wants_chrome = chrome_strategy_requested(self.profile_dir)
+        executable = resolved_chrome_binary()
+        # Resolve the cookie file the way auth/verification does (Chrome 130+
+        # Default/Network/Cookies, then legacy Default/Cookies, then bundled
+        # Cookies). Logging the actual path discriminates the H2 cookie-location
+        # mismatch (the persistent context reading a different file than the one
+        # the session was written to) from a plain decryption failure. See #222.
+        cookies_db = None
+        try:
+            cookies_db = get_cookies_path(self.profile_dir)
+        except FileNotFoundError:
+            pass
+        launch_args: list[str] = kwargs.get("args") or []
+        logger.info(
+            "client.persistent_context_launch",
+            channel=channel,
+            chrome_strategy_requested=wants_chrome,
+            chrome_executable=executable,
+            user_data_dir=str(self.profile_dir),
+            cookies_db_present=cookies_db is not None,
+            cookies_db_path=str(cookies_db) if cookies_db else None,
+            platform=sys.platform,
+            # issue #222: surface the actual launch args so we can confirm the
+            # generation context passes --password-store=basic (cookie-store
+            # symmetry with login/verification) on the failing macOS path.
+            launch_args=launch_args,
+            ignore_default_args=kwargs.get("ignore_default_args"),
+            password_store_basic="--password-store=basic" in launch_args,
+        )
+        if wants_chrome and channel is None:
+            msg = (
+                "Profile requests the 'chrome' browser strategy "
+                "(.gflow_browser_strategy=chrome) but Playwright's 'chrome' channel is "
+                "unavailable (Google Chrome is not at the location Playwright probes — "
+                "note a Chrome binary resolved elsewhere is logged as chrome_executable "
+                "but does not satisfy the channel), so generation would fall back to "
+                "Playwright's bundled Chromium. On macOS the bundled Chromium cannot "
+                "decrypt cookies written by real Chrome (Keychain 'Chrome Safe Storage'), "
+                "yielding a logged-out session and an HTTP 401 at project.createProject. "
+                "Install Google Chrome in its default location (or set CHROME_BINARY), "
+                "then retry; or re-run `gflow auth login` to re-capture the session."
+            )
+            if sys.platform == "darwin":
+                raise ConfigurationError(msg)
+            logger.warning("client.chrome_strategy_downgraded", detail=msg)
+
+    async def _log_context_cookie_state(self) -> None:
+        """Diagnostic (issue #222): log whether the launched persistent context
+        actually loaded the Flow session cookie.
+
+        The accepting path (auth ``verify_flow_profile``) reads cookies via
+        browser_cookie3 + httpx and never uses a persistent context; generation
+        uses THIS persistent Chrome context. Logging the context's own cookie jar
+        (presence / count / expiry only — never values, so it is safe to paste
+        into a public issue) splits a cookie-LOAD failure (the context could not
+        decrypt or find the Flow session cookie) from a server-side rejection
+        (cookie present yet createProject still 401s). Pure observability — it
+        must never raise and never break the launch.
+        """
+        if self._context is None:
+            return
+        try:
+            cookies = await self._context.cookies()
+            now = time.time()
+            flow_cookie = next(
+                (c for c in cookies if c.get("name") == "__Secure-next-auth.session-token"),
+                None,
+            )
+            flow_expires = flow_cookie.get("expires") if flow_cookie is not None else None
+            logger.info(
+                "client.context_cookie_state",
+                context_cookie_count=len(cookies),
+                flow_session_cookie_present=flow_cookie is not None,
+                # expires == -1 -> a session cookie (no persisted expiry); otherwise
+                # epoch seconds. Chromium prunes already-expired cookies from the
+                # jar, so the common "logged out" signal is present=False; this flag
+                # only catches a near-boundary expiry that survived into the jar.
+                flow_session_cookie_expired=(
+                    flow_expires is not None and flow_expires != -1 and flow_expires < now
+                ),
+                google_sapisid_present=any(c.get("name") == "SAPISID" for c in cookies),
+            )
+        except Exception as exc:  # noqa: BLE001 — a diagnostic must never break the launch
+            logger.warning("client.context_cookie_probe_error", error=type(exc).__name__)
 
     async def _enter_setup(self) -> None:
         """Body of __aenter__ after the Playwright driver starts.
@@ -355,15 +475,18 @@ class FlowApiClient:
         """
         # Invariant: __aenter__ sets self._pw immediately before calling us.
         assert self._pw is not None
-        self._context = await self._pw.chromium.launch_persistent_context(
-            **self._persistent_context_kwargs()
-        )
+        kwargs = self._persistent_context_kwargs()
+        self._log_and_guard_launch(kwargs)
+        self._context = await self._pw.chromium.launch_persistent_context(**kwargs)
         # Hide the automation flag so reCAPTCHA Enterprise doesn't score
         # the session as a bot — navigator.webdriver=true causes low-score
         # tokens and HTTP 403 on batchGenerateImages.
         await self._context.add_init_script(
             "Object.defineProperty(navigator,'webdriver',{get:()=>undefined})",
         )
+        # issue #222 diagnostic: confirm the persistent context actually loaded
+        # the Flow session cookie (the load-vs-send discriminator).
+        await self._log_context_cookie_state()
         # Open ``Settings.concurrency`` Pages inside the one persistent
         # BrowserContext. ``launch_persistent_context`` opens one Page by
         # default; reuse it as slot 0 to avoid an unused N+1 Page.
