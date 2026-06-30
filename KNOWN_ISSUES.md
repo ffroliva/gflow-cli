@@ -14,6 +14,46 @@ Living list of behaviour that's broken, surprising, or limited by design — alo
 
 ## Open
 
+### macOS: generation runs logged-out → HTTP 401, even with `--browser chrome`
+
+- **Status:** **Open** — root cause localized, no fix yet; tracked in
+  [#222](https://github.com/ffroliva/gflow-cli/issues/222)
+- **Severity:** High · **Affects:** all `gflow` generation (`image`, `video`)
+  on **macOS** with a `chrome`-strategy profile; Windows is unaffected
+
+On macOS, generation calls fail with **HTTP 401** (`AuthExpiredError` at
+`project.createProject`) on a profile that `gflow auth login` and verification
+accept — the account *is* authorized, but the generation run is logged out.
+
+**Root cause.** Generation drives a **persistent Chrome context** (the
+`ui_automation` transport). On macOS that context cannot decrypt the profile's
+on-disk cookies — Chrome encrypts them with a per-app Keychain key ("Chrome
+Safe Storage") the Playwright-launched context does not hold — so the Flow
+session cookie (`__Secure-next-auth.session-token`) never loads into the context
+jar and the run is anonymous. `gflow auth login` / verification succeed only
+because they read cookies a different way (`browser_cookie3`, when Chrome is not
+holding the profile lock).
+
+**Diagnostics (shipped).** gflow logs, at generation launch, the resolved
+`cookies_db_path` (`client.persistent_context_launch`) and the launched
+context's own cookie state — `client.context_cookie_state` with
+`flow_session_cookie_present` / `context_cookie_count` / expiry; **cookie values
+are never logged**, so the lines are safe to paste into a public issue. On an
+affected macOS run you will see `flow_session_cookie_present=False` with
+`context_cookie_count=3`, which splits a cookie-**load** failure from a
+server-side rejection.
+
+**Why no fix yet.** Seeding the cookie into the context by re-reading it via
+`browser_cookie3` at launch was attempted and **disproven on macOS**: while the
+generation context holds the profile lock, `browser_cookie3` *also* fails to
+read the cookie (`PermissionError`), so there is nothing to inject. A robust fix
+must obtain the session credential by a path that works while Chrome holds the
+profile — still being investigated.
+
+**Workaround:** none on macOS yet; Windows is unaffected. If you hit this, add
+your `client.persistent_context_launch` / `client.context_cookie_state` log
+lines to [#222](https://github.com/ffroliva/gflow-cli/issues/222).
+
 ### Flow's new full-page media-library UI breaks entity attach (A/B rollout)
 
 - **Status:** **Open** — Flow-side staged rollout; tracked in
