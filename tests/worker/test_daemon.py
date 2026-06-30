@@ -1,12 +1,14 @@
 from __future__ import annotations
 
 import asyncio
+from collections.abc import Iterator
 from dataclasses import dataclass
 from pathlib import Path
 from unittest.mock import AsyncMock, MagicMock, patch
 
 import pytest
 
+from gflow_cli.api.video import VideoResult, VideoStatus
 from gflow_cli.data.store import DataStore
 from gflow_cli.errors import FlowApiError
 from gflow_cli.worker.daemon import FlowWorker
@@ -16,16 +18,28 @@ from gflow_cli.worker.queue import QueueRepository
 @dataclass
 class FakeGeneratedImage:
     media_name: str
+    dimensions: tuple[int, int] = (1024, 1024)
+    workflow_id: str = "workflow-123"
+    media_generation_id: str = "gen-123"
+    model_name_type: str = "model-123"
+    aspect_ratio: str = "1:1"
+    seed: int = 12345
+    fife_url: str = "http://fake"
 
 
-@dataclass
-class FakeVideoStatus:
-    media_id: str
-
-
-@dataclass
-class FakeVideoResult:
-    status: FakeVideoStatus
+def _completed_video_result(media_id: str = "media-vid-123") -> VideoResult:
+    """A real, successful VideoResult — the worker checks ``status.succeeded``,
+    which only exists on the real VideoStatus (a hand-rolled fake silently broke
+    this path and flipped the task to ``failed``)."""
+    return VideoResult(
+        status=VideoStatus(
+            media_id=media_id,
+            status="MEDIA_GENERATION_STATUS_SUCCESSFUL",
+        ),
+        local_path=None,
+        project_id="proj-abc",
+        flow_operation_id="op-123",
+    )
 
 
 class FakeFlowApiClient:
@@ -35,6 +49,7 @@ class FakeFlowApiClient:
         self.generate_images_batch = AsyncMock()
         self.generate_video = AsyncMock()
         self.create_project = AsyncMock()
+        self.download_image = AsyncMock(return_value=Path("/tmp/fake.png"))
 
     async def __aenter__(self):
         return self
@@ -44,7 +59,7 @@ class FakeFlowApiClient:
 
 
 @pytest.fixture
-def temp_db(tmp_path: Path) -> DataStore:
+def temp_db(tmp_path: Path) -> Iterator[DataStore]:
     db_file = tmp_path / "gflow_test.db"
     # Ensure tables are created by applying migrations
     store = DataStore.open(db_file)
@@ -56,7 +71,10 @@ def temp_db(tmp_path: Path) -> DataStore:
         "INSERT INTO profiles(name, profile_dir, first_seen_at) "
         "VALUES ('other_profile', 'C:/profiles/other', '2026-06-24T00:00:00Z')"
     )
-    return store
+    try:
+        yield store
+    finally:
+        store.close()
 
 
 def test_queue_repository_crud(temp_db: DataStore) -> None:
@@ -117,7 +135,9 @@ async def test_worker_process_t2i_single(temp_db: DataStore) -> None:
 
     worker = FlowWorker("default", str(temp_db.path))
     fake_client = FakeFlowApiClient()
-    fake_client.create_project.return_value = MagicMock(project_id="project-abc")
+    fake_client.create_project.return_value = MagicMock(
+        project_id="project-abc", title="Test Project"
+    )
     fake_client.generate_image.return_value = FakeGeneratedImage(media_name="media-img-123")
 
     with patch("gflow_cli.worker.daemon.FlowApiClient", return_value=fake_client):
@@ -145,7 +165,9 @@ async def test_worker_process_t2i_batch(temp_db: DataStore) -> None:
 
     worker = FlowWorker("default", str(temp_db.path))
     fake_client = FakeFlowApiClient()
-    fake_client.create_project.return_value = MagicMock(project_id="project-abc")
+    fake_client.create_project.return_value = MagicMock(
+        project_id="project-abc", title="Test Project"
+    )
     fake_client.generate_images_batch.return_value = [
         FakeGeneratedImage(media_name="media-img-batch-1"),
         FakeGeneratedImage(media_name="media-img-batch-2"),
@@ -175,9 +197,7 @@ async def test_worker_process_t2v(temp_db: DataStore) -> None:
 
     worker = FlowWorker("default", str(temp_db.path))
     fake_client = FakeFlowApiClient()
-    fake_client.generate_video.return_value = FakeVideoResult(
-        status=FakeVideoStatus(media_id="media-vid-123")
-    )
+    fake_client.generate_video.return_value = _completed_video_result("media-vid-123")
 
     with patch("gflow_cli.worker.daemon.FlowApiClient", return_value=fake_client):
         await worker.process_task(task)
@@ -188,6 +208,72 @@ async def test_worker_process_t2v(temp_db: DataStore) -> None:
     assert updated.status == "completed"
     assert updated.flow_media_id == "media-vid-123"
     fake_client.generate_video.assert_called_once()
+    worker.close()
+
+
+@pytest.mark.asyncio
+async def test_worker_t2v_recording_failure_does_not_fail_task(temp_db: DataStore) -> None:
+    """A credit-spent video that succeeds must stay 'completed' even if the
+    post-success data-layer recording raises — recording is best-effort."""
+    repo = QueueRepository(temp_db)
+    task = repo.enqueue_task(
+        task_id="task-rec-fail",
+        profile_name="default",
+        task_type="t2v",
+        payload={"prompt": "cinematic camera movement", "aspect": "16:9"},
+    )
+
+    worker = FlowWorker("default", str(temp_db.path))
+    fake_client = FakeFlowApiClient()
+    fake_client.generate_video.return_value = _completed_video_result("media-vid-rec")
+
+    failing_recorder = MagicMock()
+    failing_recorder.record_completed_video.side_effect = RuntimeError("DB write failed")
+
+    with (
+        patch("gflow_cli.worker.daemon.FlowApiClient", return_value=fake_client),
+        patch("gflow_cli.worker.daemon.OperationRecorder", return_value=failing_recorder),
+    ):
+        await worker.process_task(task)
+
+    updated = repo.get_task("task-rec-fail")
+    assert updated is not None
+    assert updated.status == "completed"
+    assert updated.flow_media_id == "media-vid-rec"
+    assert updated.error is None
+    worker.close()
+
+
+@pytest.mark.asyncio
+async def test_worker_applies_tool_specs_to_prompt(
+    temp_db: DataStore, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    """tool_specs in the payload must expand the prompt before generation —
+    mirroring the CLI --tool flag. Previously they were packed but never applied,
+    making the MCP `tools` parameter a silent no-op."""
+    repo = QueueRepository(temp_db)
+    task = repo.enqueue_task(
+        task_id="task-tool",
+        profile_name="default",
+        task_type="t2i",
+        payload={"prompt": "a cat", "tool_specs": ["creative-director"], "count": 1},
+    )
+
+    worker = FlowWorker("default", str(temp_db.path))
+    fake_client = FakeFlowApiClient()
+    fake_client.create_project.return_value = MagicMock(project_id="p", title="T")
+    fake_client.generate_image.return_value = FakeGeneratedImage(media_name="m")
+
+    def _fake_apply(text: str, specs: tuple[str, ...], *, category: str, quiet: bool):
+        return (f"EXPANDED::{text}", text, None)
+
+    monkeypatch.setattr("gflow_cli.worker.daemon.apply_tool_option", _fake_apply)
+
+    with patch("gflow_cli.worker.daemon.FlowApiClient", return_value=fake_client):
+        await worker.process_task(task)
+
+    req = fake_client.generate_image.call_args.kwargs["req"]
+    assert req.prompt == "EXPANDED::a cat"
     worker.close()
 
 
@@ -244,8 +330,11 @@ async def test_worker_poll_loop_processes_tasks(temp_db: DataStore) -> None:
 
     worker = FlowWorker("default", str(temp_db.path))
     fake_client = FakeFlowApiClient()
-    fake_client.create_project.return_value = MagicMock(project_id="proj")
-    fake_client.generate_image.return_value = FakeGeneratedImage(media_name="img-id")
+    fake_client.create_project.return_value = MagicMock(project_id="proj", title="Test Project")
+    fake_client.generate_image.side_effect = [
+        FakeGeneratedImage(media_name="img-1"),
+        FakeGeneratedImage(media_name="img-2"),
+    ]
 
     with patch("gflow_cli.worker.daemon.FlowApiClient", return_value=fake_client):
         # Run worker loop in background task
