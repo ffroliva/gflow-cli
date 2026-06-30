@@ -15,8 +15,10 @@ to prevent Playwright browser-context collisions.
 from __future__ import annotations
 
 import asyncio
+import re
 import time
 import uuid
+from pathlib import Path
 from typing import Any
 
 import structlog
@@ -331,6 +333,7 @@ async def gflow_generate_image(
     aspect: str = "1:1",
     count: int = 1,
     seed: int | None = None,
+    reference_images: list[str] | None = None,
     tools: list[dict[str, Any]] | None = None,
     profile: str = "default",
 ) -> dict[str, Any]:
@@ -342,6 +345,8 @@ async def gflow_generate_image(
         aspect: Aspect ratio — '1:1', '9:16', '16:9', '4:3', '3:4'.
         count: Number of images to generate (1-4).
         seed: Optional random seed for reproducibility.
+        reference_images: Optional list of reference images for image-to-image generation.
+            Can be local file paths or UUIDs of previously uploaded assets.
         tools: Optional list of prompt tools to apply before generation.
             Each item is ``{"name": str, "options": dict}``.  Valid names
             include ``"creative-director"`` (which supports an ``options``
@@ -397,12 +402,43 @@ async def gflow_generate_image(
         }
         if seed is not None:
             payload["seed"] = seed
+
+        task_type = "t2i"
+        if reference_images:
+            uuid_re = re.compile(
+                r"^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$",
+                re.IGNORECASE,
+            )
+            refs: list[str] = []
+            ref_paths: list[str] = []
+            for ref in reference_images:
+                if uuid_re.fullmatch(ref):
+                    refs.append(ref)
+                else:
+                    path = Path(ref).resolve()
+                    if not path.is_file():
+                        return {
+                            "status": "error",
+                            "error": {
+                                "type": "https://gflow-cli.dev/errors/bad-parameter",
+                                "title": "Invalid Reference Image",
+                                "status": 400,
+                                "detail": (
+                                    f"Reference image path '{ref}' does not exist or is not a file."
+                                ),
+                            },
+                        }
+                    ref_paths.append(str(path))
+            payload["refs"] = refs
+            payload["ref_paths"] = ref_paths
+            task_type = "i2i"
+
         if tool_specs:
             payload["tool_specs"] = list(tool_specs)
 
         result = await _run_generation_task(
             profile=resolved_profile,
-            task_type="t2i",
+            task_type=task_type,
             payload=payload,
         )
 
@@ -413,6 +449,7 @@ async def gflow_generate_image(
             "aspect": aspect,
             "count": count,
             "seed": seed,
+            "reference_images": reference_images,
             "tools": tools or [],
             "tool_specs": list(tool_specs),
             "profile": resolved_profile,
@@ -434,7 +471,9 @@ async def gflow_generate_video(
     prompt: str,
     mode: str = "t2v",
     aspect: str = "9:16",
-    image_path: str | None = None,
+    initial_frame: str | None = None,
+    end_frame: str | None = None,
+    reference_images: list[str] | None = None,
     tools: list[dict[str, Any]] | None = None,
     profile: str = "default",
 ) -> dict[str, Any]:
@@ -444,7 +483,9 @@ async def gflow_generate_video(
         prompt: The text prompt describing the desired video.
         mode: Generation mode — 't2v', 'i2v', or 'r2v'.
         aspect: Aspect ratio — '9:16' or '16:9'.
-        image_path: Path to start frame image (required for i2v/r2v).
+        initial_frame: Path to start frame image (required for i2v).
+        end_frame: Path to end frame image (optional for i2v).
+        reference_images: List of reference image paths (ingredients) for r2v.
         tools: Optional list of prompt tools to apply before generation.
             Each item is ``{"name": str, "options": dict}``.  Valid names
             include ``"creative-director"`` (which supports an ``options``
@@ -495,8 +536,69 @@ async def gflow_generate_video(
             "mode": mode,
             "aspect": aspect,
         }
-        if image_path is not None:
-            payload["start_image"] = image_path
+        if reference_images and (initial_frame or end_frame):
+            return {
+                "status": "error",
+                "error": {
+                    "type": "https://gflow-cli.dev/errors/bad-parameter",
+                    "title": "Mutually Exclusive Arguments",
+                    "status": 400,
+                    "detail": (
+                        "reference_images (for r2v) cannot be used "
+                        "alongside initial_frame or end_frame (for i2v)."
+                    ),
+                },
+            }
+
+        if initial_frame is not None:
+            path = Path(initial_frame).resolve()
+            if not path.is_file():
+                return {
+                    "status": "error",
+                    "error": {
+                        "type": "https://gflow-cli.dev/errors/bad-parameter",
+                        "title": "Invalid Start Image",
+                        "status": 400,
+                        "detail": (
+                            f"Start image path '{initial_frame}' does not exist or is not a file."
+                        ),
+                    },
+                }
+            payload["start_image"] = str(path)
+
+        if end_frame is not None:
+            path = Path(end_frame).resolve()
+            if not path.is_file():
+                return {
+                    "status": "error",
+                    "error": {
+                        "type": "https://gflow-cli.dev/errors/bad-parameter",
+                        "title": "Invalid End Image",
+                        "status": 400,
+                        "detail": f"End image path '{end_frame}' does not exist or is not a file.",
+                    },
+                }
+            payload["end_image"] = str(path)
+
+        if reference_images:
+            ref_paths: list[str] = []
+            for ref in reference_images:
+                path = Path(ref).resolve()
+                if not path.is_file():
+                    return {
+                        "status": "error",
+                        "error": {
+                            "type": "https://gflow-cli.dev/errors/bad-parameter",
+                            "title": "Invalid Reference Image",
+                            "status": 400,
+                            "detail": (
+                                f"Reference image path '{ref}' does not exist or is not a file."
+                            ),
+                        },
+                    }
+                ref_paths.append(str(path))
+            payload["reference_images"] = ref_paths
+
         if tool_specs:
             payload["tool_specs"] = list(tool_specs)
 
@@ -512,7 +614,9 @@ async def gflow_generate_video(
             "prompt": prompt,
             "mode": mode,
             "aspect": aspect,
-            "image_path": image_path,
+            "initial_frame": initial_frame,
+            "end_frame": end_frame,
+            "reference_images": reference_images,
             "tools": tools or [],
             "tool_specs": list(tool_specs),
             "profile": resolved_profile,
