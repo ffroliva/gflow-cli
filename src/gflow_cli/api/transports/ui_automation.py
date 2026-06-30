@@ -386,23 +386,17 @@ WELCOME_SCREEN_SELECTORS = (
     "button:has-text('See what's new')",
 )
 
-# Generation settings trigger — the button shows the current ratio icon and
-# opens the mode/settings dropdown (``aria-haspopup='menu'``).  The
-# ``aria-haspopup='menu'`` attribute is REQUIRED: without it any button that
-# happens to carry a ``crop_*`` icon (e.g. an icon-only aspect thumbnail in
-# the panel that just opened) can match — the result is a click on the wrong
-# element and a ``gen_settings_panel_not_found`` skip that leaves Flow's own
-# default count in effect (typically 2 concurrent requests billed against the
-# account while the CLI only downloads 1).  This list mirrors
-# ``MODE_SWITCH_TRIGGER_SELECTORS`` exactly — they target the SAME button.
-GEN_SETTINGS_BUTTON_SELECTORS = (
-    "button[aria-haspopup='menu']:has(i.google-symbols:text('crop_16_9'))",
-    "button[aria-haspopup='menu']:has(i.google-symbols:text('crop_9_16'))",
-    "button[aria-haspopup='menu']:has(i.google-symbols:text('crop_square'))",
-    "button[aria-haspopup='menu']:has(i.google-symbols:text('crop_portrait'))",
-    "button[aria-haspopup='menu']:has(i.google-symbols:text('crop_landscape'))",
-    "button[aria-haspopup='menu']:has(i.google-symbols:text('crop_original'))",
-)
+
+# Generation settings trigger — the SAME unified button as the mode-switch
+# dropdown: a ``button[aria-haspopup='menu']`` carrying the current ratio
+# ``crop_*`` icon. The ``aria-haspopup='menu'`` qualifier is REQUIRED — without
+# it any icon-only aspect thumbnail in the just-opened panel can match, causing
+# a click on the wrong element and a ``gen_settings_panel_not_found`` skip that
+# leaves Flow's own default count in effect (typically 2 concurrent requests
+# billed while the CLI downloads only 1). Aliased to
+# ``MODE_SWITCH_TRIGGER_SELECTORS`` so the two call sites stay a single source
+# of truth (see [[image-video-mode-switch-symmetry]]).
+GEN_SETTINGS_BUTTON_SELECTORS = MODE_SWITCH_TRIGGER_SELECTORS
 
 # CLI string → ordered list of candidate tab labels to try in the Flow gen
 # settings panel. Most ratios are labelled with their colon-numeric form

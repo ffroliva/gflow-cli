@@ -180,9 +180,9 @@ def _is_playwright_chrome_channel_available() -> bool:
 
     Playwright's ``launch_persistent_context(channel="chrome")`` looks for
     **Google Chrome proper** at platform-specific hardcoded paths — it does NOT
-    accept a plain Chromium binary.  This function replicates those paths so
-    :func:`channel_for_profile` can gate the ``channel="chrome"`` argument on
-    a binary that Playwright will actually find, avoiding the misleading
+    accept a plain Chromium binary. This function replicates those paths so
+    :func:`channel_for_profile` can gate the ``channel="chrome"`` argument on a
+    binary that Playwright will actually find, avoiding the misleading
     ``Chromium distribution 'chrome' is not found at /opt/google/chrome/chrome``
     error that occurs when only system Chromium is present.
 
@@ -191,10 +191,12 @@ def _is_playwright_chrome_channel_available() -> bool:
     """
     env_override = os.environ.get("CHROME_BINARY")
     if env_override:
-        return bool(env_override)
+        return True
 
-    # Playwright's own resolution paths for channel="chrome" (as of Playwright
-    # 1.45+).  Derived from playwright/_impl/_browser_type.py executables().
+    # Playwright's own resolution paths for channel="chrome". Derived from
+    # playwright/_impl/_browser_type.py executables(). channel="chrome" resolves
+    # ONLY to these exact Google-Chrome paths — a system Chromium does NOT
+    # satisfy it, so we must not list Chromium or distro chrome shims here.
     if sys.platform == "win32":
         local_app_data = os.environ.get("LOCALAPPDATA", "")
         chrome_paths: list[Path] = [
@@ -207,11 +209,9 @@ def _is_playwright_chrome_channel_available() -> bool:
             Path("/Applications/Google Chrome.app/Contents/MacOS/Google Chrome"),
         ]
     else:
-        # Linux — Playwright looks here for channel="chrome"
+        # Linux — Playwright resolves channel="chrome" only to this path.
         chrome_paths = [
             Path("/opt/google/chrome/chrome"),
-            Path("/usr/bin/google-chrome"),
-            Path("/usr/bin/google-chrome-stable"),
         ]
 
     return any(p.exists() for p in chrome_paths)
@@ -220,9 +220,9 @@ def _is_playwright_chrome_channel_available() -> bool:
 def is_chrome_available() -> bool:
     """Return True if a Google Chrome (or Chromium fallback) binary can be found.
 
-    This is used for the auth login flow and CDP spawning.  It intentionally
+    This is used for the auth login flow and CDP spawning. It intentionally
     accepts Chromium as a fallback so the auth browser can open even when only
-    Chromium is installed.  For deciding whether Playwright's ``channel="chrome"``
+    Chromium is installed. For deciding whether Playwright's ``channel="chrome"``
     can be used, call :func:`_is_playwright_chrome_channel_available` instead.
     """
     try:
@@ -239,18 +239,20 @@ def channel_for_profile(profile_dir: Path) -> str | None:
     :class:`~gflow_cli.auth.real_chrome.RealChromeStrategy`. When the marker
     is ``"chrome"`` and **Google Chrome proper** is available at the paths
     Playwright expects, returns ``"chrome"`` so callers can pass it to
-    ``launch_persistent_context(channel=...)`` — avoiding the exit-33
-    downgrade-cleanup error that occurs when Playwright's bundled Chromium
-    opens a profile created by Chrome 130+.
+    ``launch_persistent_context(channel=...)`` — avoiding the downgrade-cleanup
+    exit-33 that occurs when Playwright's bundled Chromium opens a profile
+    created by Chrome 130+.
 
-    Critically, this function uses :func:`_is_playwright_chrome_channel_available`
+    Critically, this gate uses :func:`_is_playwright_chrome_channel_available`
     (not :func:`is_chrome_available`) so that a system with only Chromium
-    installed does NOT trigger ``channel="chrome"`` — Playwright's ``channel="chrome"``
-    resolves to hardcoded Google Chrome paths and would fail with
+    installed does NOT request ``channel="chrome"`` — Playwright's
+    ``channel="chrome"`` resolves to hardcoded Google-Chrome paths and would
+    otherwise fail with
     ``Chromium distribution 'chrome' is not found at /opt/google/chrome/chrome``.
 
     Logs a warning when the marker requests Chrome but Chrome is no longer
-    available at the expected Playwright paths.
+    available at the expected Playwright paths, as the resulting launch against
+    bundled Chromium will likely fail with the same exit-33 error.
     """
     import structlog as _structlog
 
