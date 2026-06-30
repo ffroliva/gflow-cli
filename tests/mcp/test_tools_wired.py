@@ -9,6 +9,7 @@ run offline and quickly.
 
 from __future__ import annotations
 
+from collections.abc import Iterator
 from dataclasses import dataclass
 from pathlib import Path
 from typing import Any
@@ -16,6 +17,7 @@ from unittest.mock import AsyncMock, MagicMock, patch
 
 import pytest
 
+from gflow_cli.api.video import VideoResult, VideoStatus
 from gflow_cli.data.store import DataStore
 
 # ---------------------------------------------------------------------------
@@ -24,7 +26,7 @@ from gflow_cli.data.store import DataStore
 
 
 @pytest.fixture()
-def temp_db(tmp_path: Path) -> DataStore:
+def temp_db(tmp_path: Path) -> Iterator[DataStore]:
     """Isolated DataStore with a seeded 'default' profile row."""
     db_file = tmp_path / "gflow_test.db"
     store = DataStore.open(db_file)
@@ -33,7 +35,10 @@ def temp_db(tmp_path: Path) -> DataStore:
         "VALUES ('default', '/profiles/default', '2026-06-29T00:00:00Z')"
     )
     store.conn.commit()
-    return store
+    try:
+        yield store
+    finally:
+        store.close()
 
 
 @dataclass
@@ -48,18 +53,16 @@ class _FakeImage:
     fife_url: str = "http://fake"
 
 
-@dataclass
-class _FakeVideoStatus:
-    media_id: str
-    status: str = "completed"
-
-
-@dataclass
-class _FakeVideo:
-    status: _FakeVideoStatus
-    local_path: Path | None = None
-    project_id: str | None = "proj-abc"
-    flow_operation_id: str | None = "op-123"
+def _completed_video_result(media_id: str = "media-vid-wired") -> VideoResult:
+    """A real, successful VideoResult — the worker checks ``status.succeeded``,
+    which only exists on the real VideoStatus. A hand-rolled fake silently broke
+    that path and flipped the task to ``failed``."""
+    return VideoResult(
+        status=VideoStatus(media_id=media_id, status="MEDIA_GENERATION_STATUS_SUCCESSFUL"),
+        local_path=None,
+        project_id="proj-abc",
+        flow_operation_id="op-123",
+    )
 
 
 class _FakeFlowApiClient:
@@ -68,9 +71,7 @@ class _FakeFlowApiClient:
         self.generate_images_batch = AsyncMock(
             return_value=[_FakeImage(media_name="media-img-wired")]
         )
-        self.generate_video = AsyncMock(
-            return_value=_FakeVideo(status=_FakeVideoStatus(media_id="media-vid-wired"))
-        )
+        self.generate_video = AsyncMock(return_value=_completed_video_result())
         self.create_project = AsyncMock(
             return_value=MagicMock(project_id="proj-abc", title="Test Project")
         )
@@ -233,6 +234,43 @@ class TestGenerateVideoWired:
         assert result["status"] == "completed"
         assert "flow_media_id" in result
         assert result["params"]["mode"] == "t2v"
+
+    @pytest.mark.asyncio
+    async def test_video_i2v_without_initial_frame_is_rejected(self) -> None:
+        """i2v without initial_frame must fail fast at the tool boundary with a
+        clear 400, not enqueue a task that dies on a cryptic ValueError."""
+        from gflow_cli.mcp.tools import _TokenBucket, gflow_generate_video
+
+        with (
+            patch("gflow_cli.mcp.tools._rate_limiter", _TokenBucket(capacity=8, refill_rate=0.0)),
+            patch(
+                "gflow_cli.mcp.tools._resolve_and_validate_profile",
+                return_value="default",
+            ),
+        ):
+            result = await gflow_generate_video(prompt="pan across the scene", mode="i2v")
+
+        assert result["status"] == "error"
+        assert result["error"]["title"] == "Missing Start Image"
+        assert result["error"]["status"] == 400
+
+    @pytest.mark.asyncio
+    async def test_video_r2v_without_reference_images_is_rejected(self) -> None:
+        """r2v without reference_images must fail fast at the tool boundary."""
+        from gflow_cli.mcp.tools import _TokenBucket, gflow_generate_video
+
+        with (
+            patch("gflow_cli.mcp.tools._rate_limiter", _TokenBucket(capacity=8, refill_rate=0.0)),
+            patch(
+                "gflow_cli.mcp.tools._resolve_and_validate_profile",
+                return_value="default",
+            ),
+        ):
+            result = await gflow_generate_video(prompt="blend these refs", mode="r2v")
+
+        assert result["status"] == "error"
+        assert result["error"]["title"] == "Missing Reference Images"
+        assert result["error"]["status"] == 400
 
     @pytest.mark.asyncio
     async def test_video_failed_task_returns_error(

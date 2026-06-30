@@ -207,89 +207,85 @@ async def _run_generation_task(
     task_id = str(uuid.uuid4())
 
     try:
+        # 1. Enqueue the task (short-lived connection, closed before the worker
+        #    opens its own — WAL allows a single writer at a time).
         with DataStore.open(db_path) as store:
-            repo = QueueRepository(store)
             data_repo = DataRepository(store)
 
             # Ensure the profile FK exists before inserting the queue row.
             profile_dir = settings.profile_subdir(profile)
             data_repo.upsert_profile(profile, profile_dir)
 
-            task = repo.enqueue_task(
+            task = QueueRepository(store).enqueue_task(
                 task_id=task_id,
                 profile_name=profile,
                 task_type=task_type,
                 payload=payload,
             )
 
-            log.info(
-                "mcp.tool.task_enqueued",
-                task_id=task_id,
-                task_type=task_type,
-                profile=profile,
-            )
+        log.info(
+            "mcp.tool.task_enqueued",
+            task_id=task_id,
+            task_type=task_type,
+            profile=profile,
+        )
 
-            # Run the worker synchronously (we already hold the profile lock).
-            # FlowWorker opens its own DataStore connection, so close ours first
-            # to avoid a WAL write-lock contention on the same process.
-            # (WAL mode allows one writer at a time; sequential open/close is fine.)
-            store.close()
+        # 2. Run the worker synchronously (we already hold the profile lock).
+        worker = FlowWorker(profile_name=profile, db_path=str(db_path))
+        try:
+            await worker.process_task(task)
+        finally:
+            worker.close()
 
-            worker = FlowWorker(profile_name=profile, db_path=str(db_path))
-            try:
-                await worker.process_task(task)
-            finally:
-                worker.close()
-
-            # Re-open to read the final task state.
-            with DataStore.open(db_path) as store2:
-                repo2 = QueueRepository(store2)
-                data_repo2 = DataRepository(store2)
-
-                completed_task = repo2.get_task(task_id)
-                if completed_task is None:
-                    return {
-                        "status": "error",
-                        "error": f"Task {task_id!r} disappeared from queue after execution.",
-                    }
-
-                if completed_task.status == "failed":
-                    log.warning(
-                        "mcp.tool.task_failed",
-                        task_id=task_id,
-                        error=completed_task.error,
-                    )
-                    return {
-                        "status": "failed",
-                        "task_id": task_id,
-                        "error": completed_task.error or {"detail": "Unknown error"},
-                    }
-
-                # Resolve local file paths from the asset catalog.
-                file_paths: list[str] = []
-                if completed_task.flow_media_id:
-                    asset = data_repo2.get_asset_by_flow_media_id(
-                        profile,
-                        completed_task.flow_media_id,
-                    )
-                    if asset and asset.local_files:
-                        file_paths = [
-                            str(lf.path) for lf in asset.local_files if lf.path is not None
-                        ]
-
-                log.info(
-                    "mcp.tool.task_completed",
-                    task_id=task_id,
-                    flow_media_id=completed_task.flow_media_id,
-                    file_count=len(file_paths),
-                )
-
+        # 3. Read the final task state back.
+        with DataStore.open(db_path) as store:
+            completed_task = QueueRepository(store).get_task(task_id)
+            if completed_task is None:
                 return {
-                    "status": "completed",
-                    "task_id": task_id,
-                    "flow_media_id": completed_task.flow_media_id,
-                    "files": file_paths,
+                    "status": "error",
+                    "error": f"Task {task_id!r} disappeared from queue after execution.",
                 }
+
+            # Treat anything other than an explicit "completed" as a failure —
+            # a row stuck in "processing"/"pending" must not be reported as a
+            # success with an empty file list.
+            if completed_task.status != "completed":
+                log.warning(
+                    "mcp.tool.task_failed",
+                    task_id=task_id,
+                    status=completed_task.status,
+                    error=completed_task.error,
+                )
+                return {
+                    "status": "failed",
+                    "task_id": task_id,
+                    "error": completed_task.error
+                    or {"detail": f"Task ended in unexpected status {completed_task.status!r}"},
+                }
+
+            # Resolve local file paths from the asset catalog.
+            file_paths: list[str] = []
+            if completed_task.flow_media_id:
+                asset = DataRepository(store).get_asset_by_flow_media_id(
+                    profile,
+                    completed_task.flow_media_id,
+                )
+                if asset and asset.local_files:
+                    file_paths = [str(lf.path) for lf in asset.local_files if lf.path is not None]
+
+        log.info(
+            "mcp.tool.task_completed",
+            task_id=task_id,
+            flow_media_id=completed_task.flow_media_id,
+            file_count=len(file_paths),
+        )
+
+        return {
+            "status": "completed",
+            "task_id": task_id,
+            "flow_media_id": completed_task.flow_media_id,
+            "files": file_paths,
+        }
 
     except GFlowError as exc:
         log.error("mcp.tool.gflow_error", task_id=task_id, error=str(exc))
@@ -310,6 +306,29 @@ async def _run_generation_task(
                 "detail": str(exc),
             },
         }
+
+
+def _resolve_image_path(
+    raw: str, *, title: str, label: str
+) -> tuple[str | None, dict[str, Any] | None]:
+    """Resolve a user-supplied image path.
+
+    Returns ``(resolved_path, None)`` when ``raw`` is an existing file, or
+    ``(None, error_dict)`` with an RFC 9457 bad-parameter error otherwise.
+    Shared by the image and video tools so the validation message stays uniform.
+    """
+    path = Path(raw).resolve()
+    if not path.is_file():
+        return None, {
+            "status": "error",
+            "error": {
+                "type": "https://gflow-cli.dev/errors/bad-parameter",
+                "title": title,
+                "status": 400,
+                "detail": f"{label} '{raw}' does not exist or is not a file.",
+            },
+        }
+    return str(path), None
 
 
 # ---------------------------------------------------------------------------
@@ -415,20 +434,13 @@ async def gflow_generate_image(
                 if uuid_re.fullmatch(ref):
                     refs.append(ref)
                 else:
-                    path = Path(ref).resolve()
-                    if not path.is_file():
-                        return {
-                            "status": "error",
-                            "error": {
-                                "type": "https://gflow-cli.dev/errors/bad-parameter",
-                                "title": "Invalid Reference Image",
-                                "status": 400,
-                                "detail": (
-                                    f"Reference image path '{ref}' does not exist or is not a file."
-                                ),
-                            },
-                        }
-                    ref_paths.append(str(path))
+                    resolved, err = _resolve_image_path(
+                        ref, title="Invalid Reference Image", label="Reference image path"
+                    )
+                    if err is not None:
+                        return err
+                    assert resolved is not None
+                    ref_paths.append(resolved)
             payload["refs"] = refs
             payload["ref_paths"] = ref_paths
             task_type = "i2i"
@@ -550,53 +562,61 @@ async def gflow_generate_video(
                 },
             }
 
+        # Mode-specific required inputs. Without these the request would fail
+        # deep in the worker with a cryptic ValueError surfaced as a "failed"
+        # task; reject early at the tool boundary with a clear 400. (i2v missing
+        # a start frame is also the historic T2V-misroute footgun — the request
+        # layer now guards it, but a clear upfront error is better UX.)
+        if mode == "i2v" and initial_frame is None:
+            return {
+                "status": "error",
+                "error": {
+                    "type": "https://gflow-cli.dev/errors/bad-parameter",
+                    "title": "Missing Start Image",
+                    "status": 400,
+                    "detail": "i2v (image-to-video) requires 'initial_frame'.",
+                },
+            }
+
+        if mode == "r2v" and not reference_images:
+            return {
+                "status": "error",
+                "error": {
+                    "type": "https://gflow-cli.dev/errors/bad-parameter",
+                    "title": "Missing Reference Images",
+                    "status": 400,
+                    "detail": "r2v (reference-to-video) requires 'reference_images'.",
+                },
+            }
+
         if initial_frame is not None:
-            path = Path(initial_frame).resolve()
-            if not path.is_file():
-                return {
-                    "status": "error",
-                    "error": {
-                        "type": "https://gflow-cli.dev/errors/bad-parameter",
-                        "title": "Invalid Start Image",
-                        "status": 400,
-                        "detail": (
-                            f"Start image path '{initial_frame}' does not exist or is not a file."
-                        ),
-                    },
-                }
-            payload["start_image"] = str(path)
+            resolved, err = _resolve_image_path(
+                initial_frame, title="Invalid Start Image", label="Start image path"
+            )
+            if err is not None:
+                return err
+            assert resolved is not None
+            payload["start_image"] = resolved
 
         if end_frame is not None:
-            path = Path(end_frame).resolve()
-            if not path.is_file():
-                return {
-                    "status": "error",
-                    "error": {
-                        "type": "https://gflow-cli.dev/errors/bad-parameter",
-                        "title": "Invalid End Image",
-                        "status": 400,
-                        "detail": f"End image path '{end_frame}' does not exist or is not a file.",
-                    },
-                }
-            payload["end_image"] = str(path)
+            resolved, err = _resolve_image_path(
+                end_frame, title="Invalid End Image", label="End image path"
+            )
+            if err is not None:
+                return err
+            assert resolved is not None
+            payload["end_image"] = resolved
 
         if reference_images:
             ref_paths: list[str] = []
             for ref in reference_images:
-                path = Path(ref).resolve()
-                if not path.is_file():
-                    return {
-                        "status": "error",
-                        "error": {
-                            "type": "https://gflow-cli.dev/errors/bad-parameter",
-                            "title": "Invalid Reference Image",
-                            "status": 400,
-                            "detail": (
-                                f"Reference image path '{ref}' does not exist or is not a file."
-                            ),
-                        },
-                    }
-                ref_paths.append(str(path))
+                resolved, err = _resolve_image_path(
+                    ref, title="Invalid Reference Image", label="Reference image path"
+                )
+                if err is not None:
+                    return err
+                assert resolved is not None
+                ref_paths.append(resolved)
             payload["reference_images"] = ref_paths
 
         if tool_specs:
