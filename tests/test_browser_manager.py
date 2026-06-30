@@ -222,6 +222,20 @@ class TestChromeBinaryDetection:
 
         assert "chrome.exe" in result.lower() or "Chrome" in result
 
+    def test_resolved_chrome_binary_swallows_non_configuration_errors(self) -> None:
+        """resolved_chrome_binary is exception-free by contract: a non-ConfigurationError
+        from _find_chrome_binary (e.g. shutil.which raising AttributeError under an
+        OS-detection mismatch — faking sys.platform='win32' on Linux) must resolve to
+        None, never propagate. It feeds the _log_and_guard_launch diagnostic and must
+        not abort a launch."""
+        from gflow_cli.browser_manager import resolved_chrome_binary
+
+        with patch(
+            "gflow_cli.browser_manager._find_chrome_binary",
+            side_effect=AttributeError("NeedCurrentDirectoryForExePath"),
+        ):
+            assert resolved_chrome_binary() is None
+
 
 class TestPlaywrightChromeChannelAvailable:
     """Gate for Playwright's ``channel="chrome"`` — Chromium must NOT satisfy it.
