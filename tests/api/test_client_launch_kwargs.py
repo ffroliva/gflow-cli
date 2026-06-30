@@ -133,3 +133,67 @@ def test_guard_ok_when_channel_resolved(tmp_path: Path, monkeypatch: pytest.Monk
     client = FlowApiClient(profile_dir=tmp_path, headless=True)
     monkeypatch.setattr(sys, "platform", "darwin")
     client._log_and_guard_launch({"channel": "chrome"})  # noqa: SLF001  (no raise)
+
+
+# --- issue #222: persistent-context cookie-state diagnostic --------------------
+#
+# These pin the load-vs-send discriminator: the launched context's own cookie
+# jar tells us whether the Flow session cookie was loaded (vs a server-side 401).
+# A fresh LogCapture-wrapped logger is injected so no cached structlog config
+# bleeds in (see auto-memory: structlog cache-logger-off-for-tests).
+
+
+def _capture_cookie_state(client: FlowApiClient) -> dict:
+    import asyncio
+
+    import structlog
+
+    cap = structlog.testing.LogCapture()
+    with patch("gflow_cli.api.client.logger", structlog.wrap_logger(None, processors=[cap])):
+        asyncio.run(client._log_context_cookie_state())  # noqa: SLF001
+    return dict(next(e for e in cap.entries if e["event"] == "client.context_cookie_state"))
+
+
+def _client_with_cookies(tmp_path: Path, cookies: list[dict]) -> FlowApiClient:
+    client = FlowApiClient(profile_dir=tmp_path, headless=True)
+    ctx = MagicMock()
+    ctx.cookies = AsyncMock(return_value=cookies)
+    client._context = ctx  # noqa: SLF001
+    return client
+
+
+def test_context_cookie_state_present_and_unexpired(tmp_path: Path) -> None:
+    """Flow session cookie present + future expiry → present=True, expired=False."""
+    client = _client_with_cookies(
+        tmp_path,
+        [
+            {"name": "__Secure-next-auth.session-token", "expires": 9_999_999_999.0},
+            {"name": "SAPISID", "expires": -1},
+        ],
+    )
+    ev = _capture_cookie_state(client)
+    assert ev["flow_session_cookie_present"] is True
+    assert ev["flow_session_cookie_expired"] is False
+    assert ev["google_sapisid_present"] is True
+    assert ev["context_cookie_count"] == 2
+
+
+def test_context_cookie_state_flags_expired(tmp_path: Path) -> None:
+    """A past expiry on the Flow session cookie → expired=True."""
+    client = _client_with_cookies(
+        tmp_path,
+        [{"name": "__Secure-next-auth.session-token", "expires": 1_000.0}],
+    )
+    ev = _capture_cookie_state(client)
+    assert ev["flow_session_cookie_present"] is True
+    assert ev["flow_session_cookie_expired"] is True
+
+
+def test_context_cookie_state_absent(tmp_path: Path) -> None:
+    """No Flow session cookie in the jar → present=False (the cookie-LOAD failure
+    signal we expect if the persistent context can't decrypt/find it)."""
+    client = _client_with_cookies(tmp_path, [{"name": "SAPISID", "expires": -1}])
+    ev = _capture_cookie_state(client)
+    assert ev["flow_session_cookie_present"] is False
+    assert ev["flow_session_cookie_expired"] is False
+    assert ev["google_sapisid_present"] is True
