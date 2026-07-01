@@ -25,7 +25,7 @@
 
 ## Active phase
 
-- **Decoupled Daemon/Worker Plan:** The blueprint for the headless SSE Daemon, SQLite generation queue, and Tauri/React editor is scheduled in [PLAN.md](file:///C:/development/github/gflow-cli/docs/superpowers/plans/2026-06-23-mcp-ui-worker-integration/PLAN.md) and [SCENARIO.md](file:///C:/development/github/gflow-cli/docs/superpowers/plans/2026-06-23-mcp-ui-worker-integration/SCENARIO.md).
+- **Decoupled Daemon/Worker Plan:** The MCP→FlowWorker wiring shipped in v0.23.0 (PR #228). The remaining headless SSE Daemon + Tauri/React editor blueprint is scheduled in [gflow-studio-scaffold/PLAN.md](file:///C:/development/github/gflow-cli/docs/superpowers/plans/2026-06-24-gflow-studio-scaffold/PLAN.md) and [rest-api-layer/PLAN.md](file:///C:/development/github/gflow-cli/docs/superpowers/plans/2026-06-24-rest-api-layer/PLAN.md).
 - **Core Lesson (Retrospective):** Kept `gflow-cli` strictly headless (running Uvicorn and FastMCP over localhost HTTP/SSE). Bypassed browser context locks by serializing task writes in SQLite queue, allowing parallel client database reads via WAL mode.
 
 See [PLAN.md](PLAN.md) or type `gflow:status` for the current task. Type `gflow:plan <feature>` to create a new feature plan.

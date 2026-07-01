@@ -278,6 +278,36 @@ async def test_worker_applies_tool_specs_to_prompt(
 
 
 @pytest.mark.asyncio
+async def test_worker_applies_tool_specs_to_video_prompt(
+    temp_db: DataStore, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    """tool_specs must also expand the prompt on the video path (_build_video_request)."""
+    repo = QueueRepository(temp_db)
+    task = repo.enqueue_task(
+        task_id="task-tool-vid",
+        profile_name="default",
+        task_type="t2v",
+        payload={"prompt": "a dog", "aspect": "16:9", "tool_specs": ["creative-director"]},
+    )
+
+    worker = FlowWorker("default", str(temp_db.path))
+    fake_client = FakeFlowApiClient()
+    fake_client.generate_video.return_value = _completed_video_result("media-vid-tool")
+
+    def _fake_apply(text: str, specs: tuple[str, ...], *, category: str, quiet: bool):
+        return (f"EXPANDED::{text}", text, None)
+
+    monkeypatch.setattr("gflow_cli.worker.daemon.apply_tool_option", _fake_apply)
+
+    with patch("gflow_cli.worker.daemon.FlowApiClient", return_value=fake_client):
+        await worker.process_task(task)
+
+    req = fake_client.generate_video.call_args.kwargs["req"]
+    assert req.prompt == "EXPANDED::a dog"
+    worker.close()
+
+
+@pytest.mark.asyncio
 async def test_worker_process_failure_logs_rfc9457(temp_db: DataStore) -> None:
     repo = QueueRepository(temp_db)
     task = repo.enqueue_task(

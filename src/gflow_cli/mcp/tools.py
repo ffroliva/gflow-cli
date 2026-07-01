@@ -308,6 +308,23 @@ async def _run_generation_task(
         }
 
 
+_BAD_PARAM_TYPE = "https://gflow-cli.dev/errors/bad-parameter"
+
+# UUID (Flow media id) vs on-disk path discriminator for image references.
+_UUID_RE = re.compile(
+    r"^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$",
+    re.IGNORECASE,
+)
+
+
+def _bad_param(title: str, detail: str) -> dict[str, Any]:
+    """Build the standard RFC 9457 bad-parameter (400) error envelope."""
+    return {
+        "status": "error",
+        "error": {"type": _BAD_PARAM_TYPE, "title": title, "status": 400, "detail": detail},
+    }
+
+
 def _resolve_image_path(
     raw: str, *, title: str, label: str
 ) -> tuple[str | None, dict[str, Any] | None]:
@@ -319,16 +336,88 @@ def _resolve_image_path(
     """
     path = Path(raw).resolve()
     if not path.is_file():
-        return None, {
-            "status": "error",
-            "error": {
-                "type": "https://gflow-cli.dev/errors/bad-parameter",
-                "title": title,
-                "status": 400,
-                "detail": f"{label} '{raw}' does not exist or is not a file.",
-            },
-        }
+        return None, _bad_param(title, f"{label} '{raw}' does not exist or is not a file.")
     return str(path), None
+
+
+def _resolve_image_references(
+    reference_images: list[str],
+) -> tuple[dict[str, list[str]] | None, dict[str, Any] | None]:
+    """Split image ``reference_images`` into Flow-media-id refs vs resolved
+    on-disk paths. Returns ``({"refs", "ref_paths"}, None)`` or ``(None, error)``.
+    """
+    refs: list[str] = []
+    ref_paths: list[str] = []
+    for ref in reference_images:
+        if _UUID_RE.fullmatch(ref):
+            refs.append(ref)
+            continue
+        resolved, err = _resolve_image_path(
+            ref, title="Invalid Reference Image", label="Reference image path"
+        )
+        if err is not None:
+            return None, err
+        assert resolved is not None
+        ref_paths.append(resolved)
+    return {"refs": refs, "ref_paths": ref_paths}, None
+
+
+def _build_video_media_inputs(
+    *,
+    mode: str,
+    initial_frame: str | None,
+    end_frame: str | None,
+    reference_images: list[str] | None,
+) -> tuple[dict[str, Any] | None, dict[str, Any] | None]:
+    """Validate + resolve the media inputs (start/end/reference frames) for a
+    video request. Returns ``(payload_fragment, None)`` or ``(None, error)``.
+
+    Enforces mutual exclusivity (r2v refs vs i2v frames) and the mode-specific
+    required inputs at the tool boundary, so a missing frame fails fast with a
+    clear 400 instead of a cryptic worker ``ValueError``.
+    """
+    if reference_images and (initial_frame or end_frame):
+        return None, _bad_param(
+            "Mutually Exclusive Arguments",
+            "reference_images (for r2v) cannot be used alongside initial_frame or "
+            "end_frame (for i2v).",
+        )
+    if mode == "i2v" and initial_frame is None:
+        return None, _bad_param(
+            "Missing Start Image", "i2v (image-to-video) requires 'initial_frame'."
+        )
+    if mode == "r2v" and not reference_images:
+        return None, _bad_param(
+            "Missing Reference Images", "r2v (reference-to-video) requires 'reference_images'."
+        )
+
+    media: dict[str, Any] = {}
+    if initial_frame is not None:
+        resolved, err = _resolve_image_path(
+            initial_frame, title="Invalid Start Image", label="Start image path"
+        )
+        if err is not None:
+            return None, err
+        media["start_image"] = resolved
+    if end_frame is not None:
+        resolved, err = _resolve_image_path(
+            end_frame, title="Invalid End Image", label="End image path"
+        )
+        if err is not None:
+            return None, err
+        media["end_image"] = resolved
+    if reference_images:
+        ref_paths: list[str] = []
+        for ref in reference_images:
+            resolved, err = _resolve_image_path(
+                ref, title="Invalid Reference Image", label="Reference image path"
+            )
+            if err is not None:
+                return None, err
+            assert resolved is not None
+            ref_paths.append(resolved)
+        media["reference_images"] = ref_paths
+    return media, None
 
 
 # ---------------------------------------------------------------------------
@@ -424,25 +513,12 @@ async def gflow_generate_image(
 
         task_type = "t2i"
         if reference_images:
-            uuid_re = re.compile(
-                r"^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$",
-                re.IGNORECASE,
-            )
-            refs: list[str] = []
-            ref_paths: list[str] = []
-            for ref in reference_images:
-                if uuid_re.fullmatch(ref):
-                    refs.append(ref)
-                else:
-                    resolved, err = _resolve_image_path(
-                        ref, title="Invalid Reference Image", label="Reference image path"
-                    )
-                    if err is not None:
-                        return err
-                    assert resolved is not None
-                    ref_paths.append(resolved)
-            payload["refs"] = refs
-            payload["ref_paths"] = ref_paths
+            ref_data, err = _resolve_image_references(reference_images)
+            if err is not None:
+                return err
+            assert ref_data is not None
+            payload["refs"] = ref_data["refs"]
+            payload["ref_paths"] = ref_data["ref_paths"]
             task_type = "i2i"
 
         if tool_specs:
@@ -548,76 +624,17 @@ async def gflow_generate_video(
             "mode": mode,
             "aspect": aspect,
         }
-        if reference_images and (initial_frame or end_frame):
-            return {
-                "status": "error",
-                "error": {
-                    "type": "https://gflow-cli.dev/errors/bad-parameter",
-                    "title": "Mutually Exclusive Arguments",
-                    "status": 400,
-                    "detail": (
-                        "reference_images (for r2v) cannot be used "
-                        "alongside initial_frame or end_frame (for i2v)."
-                    ),
-                },
-            }
 
-        # Mode-specific required inputs. Without these the request would fail
-        # deep in the worker with a cryptic ValueError surfaced as a "failed"
-        # task; reject early at the tool boundary with a clear 400. (i2v missing
-        # a start frame is also the historic T2V-misroute footgun — the request
-        # layer now guards it, but a clear upfront error is better UX.)
-        if mode == "i2v" and initial_frame is None:
-            return {
-                "status": "error",
-                "error": {
-                    "type": "https://gflow-cli.dev/errors/bad-parameter",
-                    "title": "Missing Start Image",
-                    "status": 400,
-                    "detail": "i2v (image-to-video) requires 'initial_frame'.",
-                },
-            }
-
-        if mode == "r2v" and not reference_images:
-            return {
-                "status": "error",
-                "error": {
-                    "type": "https://gflow-cli.dev/errors/bad-parameter",
-                    "title": "Missing Reference Images",
-                    "status": 400,
-                    "detail": "r2v (reference-to-video) requires 'reference_images'.",
-                },
-            }
-
-        if initial_frame is not None:
-            resolved, err = _resolve_image_path(
-                initial_frame, title="Invalid Start Image", label="Start image path"
-            )
-            if err is not None:
-                return err
-            assert resolved is not None
-            payload["start_image"] = resolved
-
-        if end_frame is not None:
-            resolved, err = _resolve_image_path(
-                end_frame, title="Invalid End Image", label="End image path"
-            )
-            if err is not None:
-                return err
-            assert resolved is not None
-            payload["end_image"] = resolved
-
-        if reference_images:
-            ref_paths: list[str] = []
-            for ref in reference_images:
-                resolved, err = _resolve_image_path(
-                    ref, title="Invalid Reference Image", label="Reference image path"
-                )
-                if err is not None:
-                    return err
-                assert resolved is not None
-                ref_paths.append(resolved)
-            payload["reference_images"] = ref_paths
+        media, media_err = _build_video_media_inputs(
+            mode=mode,
+            initial_frame=initial_frame,
+            end_frame=end_frame,
+            reference_images=reference_images,
+        )
+        if media_err is not None:
+            return media_err
+        assert media is not None
+        payload.update(media)
 
         if tool_specs:
             payload["tool_specs"] = list(tool_specs)
