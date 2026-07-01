@@ -308,3 +308,48 @@ def test_context_no_seed_when_preread_empty(tmp_path: Path) -> None:
     # _preread_flow_cookies defaults to {} — nothing captured pre-launch.
     asyncio.run(client._ensure_context_session_cookie())  # noqa: SLF001
     ctx.add_cookies.assert_not_awaited()
+
+
+# --- issue #222: pre-launch snapshot capture (_preread_flow_session_cookies) ---
+
+
+def test_preread_flow_session_cookies_populates(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    """#222: the pre-launch capture stores the snapshot's flow cookies into
+    _preread_flow_cookies, ready for _ensure_context_session_cookie to seed."""
+    import asyncio
+
+    from gflow_cli.auth.cookies import ChromeCookieSnapshot
+
+    client = FlowApiClient(profile_dir=tmp_path, headless=True)
+    snap = ChromeCookieSnapshot(
+        httpx_cookies={"__Secure-next-auth.session-token": "tok", "other": "v"},
+        google_session=True,
+    )
+
+    async def _fake_snapshot(_profile_dir: Path) -> ChromeCookieSnapshot:
+        return snap
+
+    monkeypatch.setattr("gflow_cli.auth.cookies.get_chrome_cookie_snapshot", _fake_snapshot)
+    asyncio.run(client._preread_flow_session_cookies())  # noqa: SLF001
+    assert client._preread_flow_cookies == {  # noqa: SLF001
+        "__Secure-next-auth.session-token": "tok",
+        "other": "v",
+    }
+
+
+def test_preread_flow_session_cookies_best_effort(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    """#222: a failing snapshot read must never break launch — pre-read stays {}."""
+    import asyncio
+
+    client = FlowApiClient(profile_dir=tmp_path, headless=True)
+
+    async def _boom(_profile_dir: Path) -> object:
+        raise PermissionError("cannot decrypt")
+
+    monkeypatch.setattr("gflow_cli.auth.cookies.get_chrome_cookie_snapshot", _boom)
+    asyncio.run(client._preread_flow_session_cookies())  # noqa: SLF001  (must not raise)
+    assert client._preread_flow_cookies == {}  # noqa: SLF001
