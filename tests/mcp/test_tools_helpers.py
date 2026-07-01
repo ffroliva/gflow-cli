@@ -15,7 +15,23 @@ from gflow_cli.mcp.tools import (
     _build_video_media_inputs,
     _resolve_image_path,
     _resolve_image_references,
+    _validate_project,
 )
+
+
+def test_validate_project_none_is_ok() -> None:
+    assert _validate_project(None) is None
+
+
+def test_validate_project_valid_id_is_ok() -> None:
+    assert _validate_project("PROJ-123abc") is None
+
+
+def test_validate_project_rejects_bad_id() -> None:
+    err = _validate_project("bad/id")
+    assert err is not None
+    assert err["error"]["title"] == "Invalid Project Id"
+    assert err["error"]["status"] == 400
 
 
 def test_bad_param_envelope_shape() -> None:

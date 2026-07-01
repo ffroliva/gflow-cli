@@ -23,6 +23,7 @@ from typing import Any
 
 import structlog
 
+from gflow_cli._cli_helpers import _FLOW_ID_RE
 from gflow_cli.config import get_settings
 from gflow_cli.data.queries import list_projects
 from gflow_cli.data.repository import DataRepository
@@ -325,6 +326,19 @@ def _bad_param(title: str, detail: str) -> dict[str, Any]:
     }
 
 
+def _validate_project(project: str | None) -> dict[str, Any] | None:
+    """Return a bad-parameter error dict if ``project`` is set but not a valid
+    Flow project id, else ``None``. Reuses the CLI's ``_FLOW_ID_RE`` so the MCP
+    ``project`` arg is validated identically to the CLI ``--project`` flag.
+    """
+    if project is not None and not _FLOW_ID_RE.fullmatch(project):
+        return _bad_param(
+            "Invalid Project Id",
+            f"Project id '{project}' is not a valid Flow project id.",
+        )
+    return None
+
+
 def _resolve_image_path(
     raw: str, *, title: str, label: str
 ) -> tuple[str | None, dict[str, Any] | None]:
@@ -444,6 +458,7 @@ async def gflow_generate_image(
     reference_images: list[str] | None = None,
     tools: list[dict[str, Any]] | None = None,
     profile: str = "default",
+    project: str | None = None,
 ) -> dict[str, Any]:
     """Generate an image via Google Flow's Imagen.
 
@@ -466,11 +481,17 @@ async def gflow_generate_image(
             omit) to auto-resolve using the same precedence as the CLI:
             ``GFLOW_CLI_PROFILE`` env var → ``config.toml`` default →
             auto-select if exactly one profile exists.
+        project: Optional existing Flow project id to generate into (mirrors the
+            CLI ``--project`` flag). When omitted, a scratch project is created
+            as before.
 
     Returns:
         Dict with 'status', 'files' (list of local file paths), and metadata.
         On failure, 'status' is 'failed' or 'error' with an RFC 9457 'error' dict.
     """
+    if (proj_err := _validate_project(project)) is not None:
+        return proj_err
+
     if not await _rate_limiter.acquire():
         log.warning("mcp.tool.rate_limited", tool="gflow_generate_image")
         return {
@@ -510,6 +531,8 @@ async def gflow_generate_image(
         }
         if seed is not None:
             payload["seed"] = seed
+        if project is not None:
+            payload["project_id"] = project
 
         task_type = "t2i"
         if reference_images:
@@ -542,6 +565,7 @@ async def gflow_generate_image(
             "tool_specs": list(tool_specs),
             "profile": resolved_profile,
             "requested_profile": profile,
+            "project": project,
         }
         return result
 
@@ -564,6 +588,7 @@ async def gflow_generate_video(
     reference_images: list[str] | None = None,
     tools: list[dict[str, Any]] | None = None,
     profile: str = "default",
+    project: str | None = None,
 ) -> dict[str, Any]:
     """Generate a video via Google Flow's Veo.
 
@@ -585,11 +610,17 @@ async def gflow_generate_video(
             omit) to auto-resolve using the same precedence as the CLI:
             ``GFLOW_CLI_PROFILE`` env var → ``config.toml`` default →
             auto-select if exactly one profile exists.
+        project: Optional existing Flow project id to generate into (mirrors the
+            CLI ``--project`` flag on ``video t2v``/``i2v``/``r2v``). When
+            omitted, a scratch project is created as before.
 
     Returns:
         Dict with 'status', 'files' (list of local file paths), and metadata.
         On failure, 'status' is 'failed' or 'error' with an RFC 9457 'error' dict.
     """
+    if (proj_err := _validate_project(project)) is not None:
+        return proj_err
+
     if not await _rate_limiter.acquire():
         log.warning("mcp.tool.rate_limited", tool="gflow_generate_video")
         return {
@@ -638,6 +669,8 @@ async def gflow_generate_video(
 
         if tool_specs:
             payload["tool_specs"] = list(tool_specs)
+        if project is not None:
+            payload["project_id"] = project
 
         # task_type matches the mode ("t2v", "i2v", "r2v")
         result = await _run_generation_task(
@@ -658,6 +691,7 @@ async def gflow_generate_video(
             "tool_specs": list(tool_specs),
             "profile": resolved_profile,
             "requested_profile": profile,
+            "project": project,
         }
         return result
 

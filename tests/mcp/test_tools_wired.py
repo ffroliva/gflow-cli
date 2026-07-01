@@ -438,3 +438,97 @@ class TestRunGenerationTask:
 
         assert result["status"] == "error"
         assert "error" in result
+
+
+# ---------------------------------------------------------------------------
+# --project / project_id parity (mirrors the CLI --project flag)
+# ---------------------------------------------------------------------------
+
+
+class TestProjectParam:
+    """The MCP `project` arg must thread through to the task payload as
+    `project_id` (which the worker already consumes), and reject a bad id."""
+
+    @pytest.mark.asyncio
+    async def test_image_project_threads_to_payload(self) -> None:
+        from gflow_cli.mcp import tools as tools_mod
+
+        captured: dict[str, Any] = {}
+
+        async def _fake_run(*, profile: str, task_type: str, payload: dict[str, Any]):
+            captured["payload"] = payload
+            return {"status": "completed", "files": [], "flow_media_id": "m"}
+
+        with (
+            patch(
+                "gflow_cli.mcp.tools._rate_limiter",
+                tools_mod._TokenBucket(capacity=8, refill_rate=0.0),
+            ),
+            patch("gflow_cli.mcp.tools._resolve_and_validate_profile", return_value="default"),
+            patch.object(tools_mod, "_run_generation_task", _fake_run),
+        ):
+            result = await tools_mod.gflow_generate_image(prompt="a cat", project="PROJ123")
+
+        assert captured["payload"]["project_id"] == "PROJ123"
+        assert result["params"]["project"] == "PROJ123"
+
+    @pytest.mark.asyncio
+    async def test_video_project_threads_to_payload(self) -> None:
+        from gflow_cli.mcp import tools as tools_mod
+
+        captured: dict[str, Any] = {}
+
+        async def _fake_run(*, profile: str, task_type: str, payload: dict[str, Any]):
+            captured["payload"] = payload
+            return {"status": "completed", "files": [], "flow_media_id": "m"}
+
+        with (
+            patch(
+                "gflow_cli.mcp.tools._rate_limiter",
+                tools_mod._TokenBucket(capacity=8, refill_rate=0.0),
+            ),
+            patch("gflow_cli.mcp.tools._resolve_and_validate_profile", return_value="default"),
+            patch.object(tools_mod, "_run_generation_task", _fake_run),
+        ):
+            result = await tools_mod.gflow_generate_video(prompt="a dog", project="PROJ123")
+
+        assert captured["payload"]["project_id"] == "PROJ123"
+        assert result["params"]["project"] == "PROJ123"
+
+    @pytest.mark.asyncio
+    async def test_image_omitted_project_has_no_project_id(self) -> None:
+        from gflow_cli.mcp import tools as tools_mod
+
+        captured: dict[str, Any] = {}
+
+        async def _fake_run(*, profile: str, task_type: str, payload: dict[str, Any]):
+            captured["payload"] = payload
+            return {"status": "completed", "files": [], "flow_media_id": "m"}
+
+        with (
+            patch(
+                "gflow_cli.mcp.tools._rate_limiter",
+                tools_mod._TokenBucket(capacity=8, refill_rate=0.0),
+            ),
+            patch("gflow_cli.mcp.tools._resolve_and_validate_profile", return_value="default"),
+            patch.object(tools_mod, "_run_generation_task", _fake_run),
+        ):
+            await tools_mod.gflow_generate_image(prompt="a cat")
+
+        assert "project_id" not in captured["payload"]
+
+    @pytest.mark.asyncio
+    async def test_image_bad_project_rejected_before_worker(self) -> None:
+        from gflow_cli.mcp import tools as tools_mod
+
+        result = await tools_mod.gflow_generate_image(prompt="a cat", project="bad/id")
+        assert result["status"] == "error"
+        assert result["error"]["title"] == "Invalid Project Id"
+
+    @pytest.mark.asyncio
+    async def test_video_bad_project_rejected_before_worker(self) -> None:
+        from gflow_cli.mcp import tools as tools_mod
+
+        result = await tools_mod.gflow_generate_video(prompt="a dog", project="bad/id")
+        assert result["status"] == "error"
+        assert result["error"]["title"] == "Invalid Project Id"
