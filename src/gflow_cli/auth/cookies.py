@@ -161,8 +161,19 @@ async def _get_chrome_cookies_playwright(profile_dir: Path) -> ChromeCookieSnaps
         finally:
             await ctx.close()
 
+    # #222: derive the flow cookies from the FULL jar (domain-filtered), NOT from
+    # ctx.cookies([_FLOW_COOKIE_URL]) — that URL filter only returns cookies whose
+    # path matches "/", silently dropping the NextAuth session token scoped to
+    # "/fx" (labs.google/fx is where the Flow app and project.createProject live).
+    # Missing that token is why a seeded context stayed logged-out -> 401.
+    logger.info(
+        "playwright_cookie_read",
+        all_cookies=len(all_cookies),
+        flow_path_root=len(flow_cookies),
+        flow_domain=sum(1 for c in all_cookies if _is_flow_cookie(c)),
+    )
     return ChromeCookieSnapshot(
-        httpx_cookies=_name_value_cookies(flow_cookies, flow_only=False),
+        httpx_cookies=_name_value_cookies(all_cookies, flow_only=True),
         google_session=_has_google_session_cookie(all_cookies),
     )
 
