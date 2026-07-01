@@ -379,12 +379,24 @@ def mcp() -> None:
 
 
 @mcp.command("run")
-@click.option("--profile", default=None, help="Profile to use for generation tools.")
+@click.option(
+    "--profile",
+    default=None,
+    envvar="GFLOW_CLI_PROFILE",
+    help=(
+        "Profile to use for generation tools. "
+        "Defaults to the profile set as default (gflow auth use <name>). "
+        "Can also be set via the GFLOW_CLI_PROFILE environment variable."
+    ),
+)
 def mcp_run(profile: str | None) -> None:
     """Start the MCP server over stdio transport.
 
     Use this with Claude Desktop, Cursor, or other MCP-aware clients.
     The server communicates via stdin/stdout JSON-RPC.
+
+    The server auto-selects your default profile (set via `gflow auth use`).
+    Pass --profile or set GFLOW_CLI_PROFILE to pin a specific profile.
 
     \b
     Configuration example (claude_desktop_config.json):
@@ -397,7 +409,15 @@ def mcp_run(profile: str | None) -> None:
         }
       }
     """
+    import os
+
     from gflow_cli.mcp.server import main_stdio
+
+    # Pin the profile for all tool calls in this server process.
+    # _resolve_and_validate_profile() in tools.py reads GFLOW_CLI_PROFILE.
+    if profile:
+        os.environ["GFLOW_CLI_PROFILE"] = profile
+        sys.stderr.write(f"[gflow] MCP server using profile: {profile}\n")
 
     main_stdio()
 

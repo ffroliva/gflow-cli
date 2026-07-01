@@ -14,6 +14,28 @@ Living list of behaviour that's broken, surprising, or limited by design — alo
 
 ## Open
 
+### macOS: generation runs logged-out → HTTP 401, even with `--browser chrome`
+
+- **Status:** **RESOLVED in v0.23.0** ([#222](https://github.com/ffroliva/gflow-cli/issues/222),
+  fixed by [#230](https://github.com/ffroliva/gflow-cli/pull/230), @gunalak)
+- **Severity:** High · **Affected:** all `gflow` generation on **macOS** with a
+  `chrome`-strategy profile; Windows was unaffected
+
+On macOS, generation calls failed with **HTTP 401** (`AuthExpiredError` at
+`project.createProject`) on a profile that `gflow auth login` and verification
+accepted. Two corrections fixed it (verified end-to-end on macOS Apple Silicon):
+
+1. **Cookie-read bug (unconditional).** The Flow cookie snapshot read the jar via
+   `ctx.cookies(["https://labs.google"])`, whose path-`/` filter silently dropped
+   the `/fx`-scoped `__Secure-next-auth.session-token`. Now the full jar is read
+   and filtered by domain, so the session token is captured.
+2. **macOS headed-context decrypt (intermittent).** When the headed generation
+   context can't decrypt the on-disk store, the session is seeded from a snapshot
+   captured **pre-launch** via the working `--password-store=basic` reader. No-op on
+   Windows and on runs where the context decrypts natively.
+
+Evidence: [LIVE_VERIFICATION_v0.23.0](docs/LIVE_VERIFICATION_v0.23.0.md).
+
 ### Flow's new full-page media-library UI breaks entity attach (A/B rollout)
 
 - **Status:** **Open** — Flow-side staged rollout; tracked in
