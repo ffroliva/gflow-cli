@@ -145,6 +145,9 @@ _APPLICATION_JSON = "application/json"
 _AISANDBOX_HOST = "aisandbox-pa.googleapis.com"
 _LABS_ORIGIN = "https://labs.google"
 _SESSION_API_URL = "https://labs.google/fx/api/auth/session"
+# issue #222: the NextAuth Flow session cookie + the URL used to seed it.
+_FLOW_SESSION_COOKIE = "__Secure-next-auth.session-token"
+_FLOW_COOKIE_URL = _LABS_ORIGIN
 
 
 def _parse_iso_to_epoch(value: object) -> float:
@@ -286,6 +289,11 @@ class FlowApiClient:
         # ``self._page``. T3 rewires them to ``_checkout_page()`` /
         # ``_checkin_page()`` and this alias goes away.
         self._page: Page | None = None
+        # issue #222: Flow cookies read from the profile BEFORE the headed
+        # generation context launches, used to seed that context if it cannot
+        # decrypt the on-disk cookie store (macOS Keychain vs basic-store
+        # mismatch). Populated by _preread_flow_session_cookies().
+        self._preread_flow_cookies: dict[str, str] = {}
 
     # --- lifecycle --------------------------------------------------------
 
@@ -428,44 +436,100 @@ class FlowApiClient:
                 raise ConfigurationError(msg)
             logger.warning("client.chrome_strategy_downgraded", detail=msg)
 
-    async def _log_context_cookie_state(self) -> None:
-        """Diagnostic (issue #222): log whether the launched persistent context
-        actually loaded the Flow session cookie.
+    async def _preread_flow_session_cookies(self) -> None:
+        """#222: read the profile's Flow cookies BEFORE the headed generation
+        context launches, so _ensure_context_session_cookie can seed them if the
+        headed context fails to decrypt the on-disk store (macOS Keychain vs
+        basic-store mismatch).
+
+        Why pre-launch: ``get_chrome_cookie_snapshot``'s fallback opens a
+        *headless* ``--password-store=basic`` Chrome context on the same profile —
+        the one read path that decrypts on macOS — and a second persistent context
+        cannot be opened once the headed context holds the profile's singleton
+        lock.
+
+        Best-effort: any failure leaves the pre-read empty and the launch proceeds
+        unchanged. Cheap where browser_cookie3 succeeds (no browser is launched).
+        """
+        try:
+            from gflow_cli.auth.cookies import get_chrome_cookie_snapshot
+
+            snapshot = await get_chrome_cookie_snapshot(self.profile_dir)
+            self._preread_flow_cookies = dict(snapshot.httpx_cookies)
+            logger.info(
+                "client.preread_flow_cookies",
+                preread_count=len(self._preread_flow_cookies),
+                preread_session=_FLOW_SESSION_COOKIE in self._preread_flow_cookies,
+            )
+        except Exception as exc:  # noqa: BLE001 — best-effort; must never break launch
+            logger.warning("client.preread_flow_cookies_failed", error=type(exc).__name__)
+            self._preread_flow_cookies = {}
+
+    async def _ensure_context_session_cookie(self) -> None:
+        """Diagnostic + seed (issue #222): log whether the launched persistent
+        context loaded the Flow session cookie and, if it did not, seed it from
+        the pre-launch snapshot.
 
         The accepting path (auth ``verify_flow_profile``) reads cookies via
         browser_cookie3 + httpx and never uses a persistent context; generation
-        uses THIS persistent Chrome context. Logging the context's own cookie jar
-        (presence / count / expiry only — never values, so it is safe to paste
-        into a public issue) splits a cookie-LOAD failure (the context could not
-        decrypt or find the Flow session cookie) from a server-side rejection
-        (cookie present yet createProject still 401s). Pure observability — it
-        must never raise and never break the launch.
+        uses THIS persistent Chrome context. On macOS that headed context can load
+        ZERO cookies — it cannot decrypt the profile's basic-store-sealed jar — so
+        the Flow session never loads and project.createProject 401s, even though
+        login + verification succeed (they read via the headless
+        ``--password-store=basic`` path, which DOES decrypt). We seed from
+        ``self._preread_flow_cookies`` (captured pre-launch via that same working
+        reader; see ``_preread_flow_session_cookies``) so the context carries the
+        session. No-op where the context loads the cookie itself (e.g. Windows).
+
+        The diagnostic logs presence / count / expiry only — never values, so it
+        is safe to paste into a public issue. Pure best-effort: never raises,
+        never breaks the launch.
         """
         if self._context is None:
             return
         try:
             cookies = await self._context.cookies()
-            now = time.time()
-            flow_cookie = next(
-                (c for c in cookies if c.get("name") == "__Secure-next-auth.session-token"),
-                None,
-            )
-            flow_expires = flow_cookie.get("expires") if flow_cookie is not None else None
-            logger.info(
-                "client.context_cookie_state",
-                context_cookie_count=len(cookies),
-                flow_session_cookie_present=flow_cookie is not None,
-                # expires == -1 -> a session cookie (no persisted expiry); otherwise
-                # epoch seconds. Chromium prunes already-expired cookies from the
-                # jar, so the common "logged out" signal is present=False; this flag
-                # only catches a near-boundary expiry that survived into the jar.
-                flow_session_cookie_expired=(
-                    flow_expires is not None and flow_expires != -1 and flow_expires < now
-                ),
-                google_sapisid_present=any(c.get("name") == "SAPISID" for c in cookies),
-            )
-        except Exception as exc:  # noqa: BLE001 — a diagnostic must never break the launch
+        except Exception as exc:  # noqa: BLE001 — must never break the launch
             logger.warning("client.context_cookie_probe_error", error=type(exc).__name__)
+            return
+        now = time.time()
+        flow_cookie = next(
+            (c for c in cookies if c.get("name") == _FLOW_SESSION_COOKIE),
+            None,
+        )
+        flow_expires = flow_cookie.get("expires") if flow_cookie is not None else None
+        logger.info(
+            "client.context_cookie_state",
+            context_cookie_count=len(cookies),
+            flow_session_cookie_present=flow_cookie is not None,
+            # expires == -1 -> a session cookie (no persisted expiry); otherwise
+            # epoch seconds. Chromium prunes already-expired cookies from the
+            # jar, so the common "logged out" signal is present=False; this flag
+            # only catches a near-boundary expiry that survived into the jar.
+            flow_session_cookie_expired=(
+                flow_expires is not None and flow_expires != -1 and flow_expires < now
+            ),
+            google_sapisid_present=any(c.get("name") == "SAPISID" for c in cookies),
+        )
+        if flow_cookie is not None:
+            return  # context loaded the session cookie — nothing to seed
+        if not self._preread_flow_cookies:
+            logger.warning("client.context_cookie_seed_unavailable")
+            return
+        try:
+            await self._context.add_cookies(
+                [
+                    {"name": name, "value": value, "url": _FLOW_COOKIE_URL}
+                    for name, value in self._preread_flow_cookies.items()
+                ]
+            )
+            logger.info(
+                "client.context_cookies_seeded",
+                seeded_count=len(self._preread_flow_cookies),
+                seeded_session=_FLOW_SESSION_COOKIE in self._preread_flow_cookies,
+            )
+        except Exception as exc:  # noqa: BLE001 — seeding must never break the launch
+            logger.warning("client.context_cookie_seed_error", error=type(exc).__name__)
 
     async def _enter_setup(self) -> None:
         """Body of __aenter__ after the Playwright driver starts.
@@ -475,6 +539,12 @@ class FlowApiClient:
         """
         # Invariant: __aenter__ sets self._pw immediately before calling us.
         assert self._pw is not None
+        # issue #222 (macOS): pre-read the profile's Flow cookies BEFORE launching
+        # the headed context, so _ensure_context_session_cookie can seed them if the
+        # headed context can't decrypt the on-disk store. Must run pre-launch — the
+        # snapshot's fallback opens a headless context on the same profile, which
+        # would deadlock on the singleton lock once the headed context holds it.
+        await self._preread_flow_session_cookies()
         kwargs = self._persistent_context_kwargs()
         self._log_and_guard_launch(kwargs)
         self._context = await self._pw.chromium.launch_persistent_context(**kwargs)
@@ -484,9 +554,10 @@ class FlowApiClient:
         await self._context.add_init_script(
             "Object.defineProperty(navigator,'webdriver',{get:()=>undefined})",
         )
-        # issue #222 diagnostic: confirm the persistent context actually loaded
-        # the Flow session cookie (the load-vs-send discriminator).
-        await self._log_context_cookie_state()
+        # issue #222: log whether the headed context loaded the Flow session
+        # cookie and, if not (macOS can't decrypt the on-disk store), seed it
+        # from the pre-launch snapshot.
+        await self._ensure_context_session_cookie()
         # Open ``Settings.concurrency`` Pages inside the one persistent
         # BrowserContext. ``launch_persistent_context`` opens one Page by
         # default; reuse it as slot 0 to avoid an unused N+1 Page.
