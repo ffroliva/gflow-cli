@@ -4,6 +4,19 @@
 
 ## Current release
 
+**v0.24.0 — alpha.** **`--project` parity across CLI + MCP.** The video commands
+(`video t2v`/`i2v`/`r2v`) gain `--project <id>` to generate into an existing Flow project
+instead of a scratch one (#233/#234), matching `image t2i`/`i2i`; and the MCP
+`gflow_generate_image` / `gflow_generate_video` tools gain a matching `project` parameter
+(#235), so agent callers get the same capability. Both surface an already-wired worker
+capability (`payload["project_id"]`) and validate the id identically. Carries forward
+v0.23.0 (MCP generation live + macOS 401 fix). Verification:
+[LIVE_VERIFICATION_v0.24.0](LIVE_VERIFICATION_v0.24.0.md).
+
+**Develop (unreleased, post-v0.24.0):** *(empty — develop is the staging branch for the next release).*
+
+<details><summary>v0.23.0 — MCP generation live + macOS 401 fixed</summary>
+
 **v0.23.0 — alpha.** **MCP generation goes live + macOS 401 fixed.** The MCP server's
 `gflow_generate_image` / `gflow_generate_video` tools — previously non-functional stubs —
 are now wired end-to-end to the FlowWorker queue (background worker owns download +
@@ -16,7 +29,7 @@ Carries forward v0.22.0 (Tools framework) + v0.21.0 (MCP server). Verification:
 [LIVE_VERIFICATION_v0.23.0](LIVE_VERIFICATION_v0.23.0.md) (MCP wiring proven live; #222
 reporter-verified e2e on macOS).
 
-**Develop (unreleased, post-v0.23.0):** *(empty — develop is the staging branch for the next release).*
+</details>
 
 <details><summary>v0.22.0 — Tools framework ("Creative Director")</summary>
 
