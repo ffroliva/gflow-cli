@@ -13,6 +13,10 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   project instead of always creating a scratch project, matching `image t2i`/`i2i`.
   Lets programmatic callers (e.g. a multi-clip storyboard worker) share one project
   across several video generations instead of leaving one throwaway project per clip.
+- **`project` parameter on the MCP `gflow_generate_image` / `gflow_generate_video`
+  tools**: mirrors the CLI `--project` flag so MCP callers can also target an existing
+  Flow project (validated against the same id format). Completes `--project` parity
+  across the CLI and MCP surfaces.
 
 ## [0.23.0] — 2026-07-01
 
