@@ -186,7 +186,7 @@ def _capture_cookie_state(client: FlowApiClient) -> dict:
 
     cap = structlog.testing.LogCapture()
     with patch("gflow_cli.api.client.logger", structlog.wrap_logger(None, processors=[cap])):
-        asyncio.run(client._log_context_cookie_state())  # noqa: SLF001
+        asyncio.run(client._ensure_context_session_cookie())  # noqa: SLF001
     return dict(next(e for e in cap.entries if e["event"] == "client.context_cookie_state"))
 
 
@@ -250,7 +250,61 @@ def test_context_cookie_state_swallows_probe_error(tmp_path: Path) -> None:
     client._context = ctx  # noqa: SLF001
     cap = structlog.testing.LogCapture()
     with patch("gflow_cli.api.client.logger", structlog.wrap_logger(None, processors=[cap])):
-        asyncio.run(client._log_context_cookie_state())  # noqa: SLF001  (must not raise)
+        asyncio.run(client._ensure_context_session_cookie())  # noqa: SLF001  (must not raise)
     events = [e["event"] for e in cap.entries]
     assert "client.context_cookie_probe_error" in events
     assert "client.context_cookie_state" not in events
+
+
+# --- issue #222: pre-read seed of the session cookie (macOS decrypt failure) ----
+
+
+def test_context_seeds_session_when_absent_and_preread_present(tmp_path: Path) -> None:
+    """#222: when the headed context loaded NO session cookie (macOS can't decrypt
+    the on-disk store) but the pre-launch snapshot has it, seed it into the context."""
+    import asyncio
+
+    client = FlowApiClient(profile_dir=tmp_path, headless=True)
+    ctx = MagicMock()
+    ctx.cookies = AsyncMock(return_value=[])  # headed context loaded nothing
+    ctx.add_cookies = AsyncMock()
+    client._context = ctx  # noqa: SLF001
+    client._preread_flow_cookies = {  # noqa: SLF001
+        "__Secure-next-auth.session-token": "tok",
+        "__Host-next-auth.csrf-token": "csrf",
+    }
+    asyncio.run(client._ensure_context_session_cookie())  # noqa: SLF001
+    ctx.add_cookies.assert_awaited_once()
+    seeded = ctx.add_cookies.await_args.args[0]
+    assert any(c["name"] == "__Secure-next-auth.session-token" for c in seeded)
+    assert all(c["url"] == "https://labs.google" for c in seeded)
+
+
+def test_context_no_seed_when_session_present(tmp_path: Path) -> None:
+    """#222: if the context already loaded the session cookie, do NOT seed."""
+    import asyncio
+
+    client = FlowApiClient(profile_dir=tmp_path, headless=True)
+    ctx = MagicMock()
+    ctx.cookies = AsyncMock(
+        return_value=[{"name": "__Secure-next-auth.session-token", "expires": -1}]
+    )
+    ctx.add_cookies = AsyncMock()
+    client._context = ctx  # noqa: SLF001
+    client._preread_flow_cookies = {"__Secure-next-auth.session-token": "tok"}  # noqa: SLF001
+    asyncio.run(client._ensure_context_session_cookie())  # noqa: SLF001
+    ctx.add_cookies.assert_not_awaited()
+
+
+def test_context_no_seed_when_preread_empty(tmp_path: Path) -> None:
+    """#222: session absent AND no pre-read → nothing to seed, logs unavailable."""
+    import asyncio
+
+    client = FlowApiClient(profile_dir=tmp_path, headless=True)
+    ctx = MagicMock()
+    ctx.cookies = AsyncMock(return_value=[])
+    ctx.add_cookies = AsyncMock()
+    client._context = ctx  # noqa: SLF001
+    # _preread_flow_cookies defaults to {} — nothing captured pre-launch.
+    asyncio.run(client._ensure_context_session_cookie())  # noqa: SLF001
+    ctx.add_cookies.assert_not_awaited()
