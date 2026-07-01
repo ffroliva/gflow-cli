@@ -530,7 +530,7 @@ def test_i2v_run_defaults_to_veo_lite_when_model_omitted(tmp_path: Path) -> None
     import asyncio
 
     from gflow_cli.api.video import VideoModel
-    from gflow_cli.cli_video import _run_i2v
+    from gflow_cli.cli_video import _I2VParams, _run_i2v
 
     captured: dict[str, object] = {}
 
@@ -545,11 +545,8 @@ def test_i2v_run_defaults_to_veo_lite_when_model_omitted(tmp_path: Path) -> None
             _run_i2v(
                 profile_name="default",
                 profile_dir=tmp_path,
-                image=str(start),
-                prompt="rise up",
-                aspect="9:16",
+                params=_I2VParams(image=str(start), prompt="rise up", aspect="9:16", model=None),
                 out_dir=None,
-                model=None,
             )
         )
 
@@ -562,7 +559,7 @@ def test_i2v_run_rejects_omni_flash_from_stale_config(tmp_path: Path) -> None:
     must still be rejected with ModelModeIncompatibilityError (exit code 17)."""
     import asyncio
 
-    from gflow_cli.cli_video import _run_i2v
+    from gflow_cli.cli_video import _I2VParams, _run_i2v
     from gflow_cli.errors import EXIT_CODE_MAP, ModelModeIncompatibilityError
 
     start = tmp_path / "start.png"
@@ -577,11 +574,10 @@ def test_i2v_run_rejects_omni_flash_from_stale_config(tmp_path: Path) -> None:
                 _run_i2v(
                     profile_name="default",
                     profile_dir=tmp_path,
-                    image=str(start),
-                    prompt="rise up",
-                    aspect="9:16",
+                    params=_I2VParams(
+                        image=str(start), prompt="rise up", aspect="9:16", model="omni-flash"
+                    ),
                     out_dir=None,
-                    model="omni-flash",
                 )
             )
         except ModelModeIncompatibilityError as e:
@@ -601,7 +597,7 @@ def test_i2v_positional_image_back_compat(tmp_path: Path) -> None:
     import asyncio
 
     from gflow_cli.api.video import VideoModel
-    from gflow_cli.cli_video import _run_i2v
+    from gflow_cli.cli_video import _I2VParams, _run_i2v
 
     captured: dict[str, object] = {}
 
@@ -627,9 +623,7 @@ def test_i2v_positional_image_back_compat(tmp_path: Path) -> None:
             _run_i2v(
                 profile_name="default",
                 profile_dir=tmp_path,
-                image=str(start),
-                prompt="rise up",
-                aspect="9:16",
+                params=_I2VParams(image=str(start), prompt="rise up", aspect="9:16"),
                 out_dir=None,
             )
         )
@@ -718,7 +712,7 @@ def test_i2v_end_frame_flag(tmp_path: Path) -> None:
     """--end-frame sets end_image on the GenerateVideoRequest."""
     import asyncio
 
-    from gflow_cli.cli_video import _run_i2v
+    from gflow_cli.cli_video import _I2VParams, _run_i2v
 
     captured: dict[str, object] = {}
 
@@ -735,11 +729,10 @@ def test_i2v_end_frame_flag(tmp_path: Path) -> None:
             _run_i2v(
                 profile_name="default",
                 profile_dir=tmp_path,
-                image=str(start),
-                prompt="pan left",
-                aspect="9:16",
+                params=_I2VParams(
+                    image=str(start), prompt="pan left", aspect="9:16", end_frame=str(end)
+                ),
                 out_dir=None,
-                end_frame=str(end),
             )
         )
 
@@ -820,7 +813,7 @@ def _tool_sentinel() -> object:
 def test_i2v_run_threads_tool_provenance(tmp_path: Path) -> None:
     import asyncio
 
-    from gflow_cli.cli_video import _run_i2v
+    from gflow_cli.cli_video import _I2VParams, _run_i2v
 
     captured: dict[str, object] = {}
 
@@ -836,12 +829,14 @@ def test_i2v_run_threads_tool_provenance(tmp_path: Path) -> None:
             _run_i2v(
                 profile_name="default",
                 profile_dir=tmp_path,
-                image=str(start),
-                prompt="EXPANDED",
-                aspect="9:16",
+                params=_I2VParams(
+                    image=str(start),
+                    prompt="EXPANDED",
+                    aspect="9:16",
+                    original_prompt="cat",
+                    tool=tool,  # type: ignore[arg-type]
+                ),
                 out_dir=None,
-                original_prompt="cat",
-                tool=tool,  # type: ignore[arg-type]
             )
         )
 

@@ -196,21 +196,33 @@ async def _run_t2v(
     )
 
 
+@dataclass(frozen=True)
+class _I2VParams:
+    """Bundles image-to-video generation options for :func:`_run_i2v`.
+
+    Separating these from the profile/output/count fields keeps the function
+    signature below Sonar's 13-parameter limit (S107) while preserving every
+    CLI option. Mirrors `cli_image.py`'s `_I2IParams`.
+    """
+
+    image: str
+    prompt: str
+    aspect: str
+    end_frame: str | None = None
+    model: str | None = None
+    duration: int | None = None
+    original_prompt: str | None = None
+    tool: AppliedTool | None = None
+
+
 async def _run_i2v(
     *,
     profile_name: str,
     profile_dir: Path,
-    image: str,
-    prompt: str,
-    aspect: str,
+    params: _I2VParams,
     out_dir: Path | None,
-    end_frame: str | None = None,
-    model: str | None = None,
-    duration: int | None = None,
     count: int = 1,
     as_json: bool = False,
-    original_prompt: str | None = None,
-    tool: AppliedTool | None = None,
     project_id: str | None = None,
 ) -> None:
     from gflow_cli.api.video import (
@@ -227,7 +239,7 @@ async def _run_i2v(
     # direct programmatic call can still smuggle it in. omni-flash silently
     # drops the start/end frames at submit and routes to T2V (issue #125), so
     # reject it here before any paid call.
-    resolved_model = VideoModel.from_cli(model)
+    resolved_model = VideoModel.from_cli(params.model)
     if resolved_model is None:
         resolved_model = I2V_DEFAULT_MODEL
     elif not resolved_model.supports_i2v_interpolation():
@@ -239,16 +251,16 @@ async def _run_i2v(
         raise ModelModeIncompatibilityError(detail=msg)
 
     request = GenerateVideoRequest(
-        prompt=prompt,
+        prompt=params.prompt,
         mode=Mode.I2V,
-        aspect=Aspect.from_cli(aspect),
+        aspect=Aspect.from_cli(params.aspect),
         model=resolved_model,
-        duration=duration,
+        duration=params.duration,
         count=count,
-        start_image=Path(image),
-        end_image=Path(end_frame) if end_frame else None,
-        original_prompt=original_prompt,
-        tool=tool,
+        start_image=Path(params.image),
+        end_image=Path(params.end_frame) if params.end_frame else None,
+        original_prompt=params.original_prompt,
+        tool=params.tool,
     )
     await _generate_and_report(
         request,
@@ -964,7 +976,7 @@ def _resolve_i2v_args(
     is_flag=True,
     help="Emit a machine-readable JSON result instead of Rich output.",
 )
-def i2v(
+def i2v(  # NOSONAR
     image: str | None,
     prompt: str | None,
     initial_frame: str | None,
@@ -998,21 +1010,24 @@ def i2v(
     prompt_to_send, original_prompt, applied_tool = apply_tool_option(
         resolved_prompt, tool_specs, category="video", quiet=as_json
     )
+    i2v_params = _I2VParams(
+        image=resolved_image,
+        prompt=prompt_to_send,
+        aspect=aspect,
+        end_frame=end_frame,
+        model=model,
+        duration=int(duration) if duration is not None else None,
+        original_prompt=original_prompt,
+        tool=applied_tool,
+    )
     run_with_handlers(
         lambda: _run_i2v(
             profile_name=profile_name,
             profile_dir=provider_dir,
-            image=resolved_image,
-            prompt=prompt_to_send,
-            end_frame=end_frame,
-            aspect=aspect,
-            model=model,
-            duration=int(duration) if duration is not None else None,
+            params=i2v_params,
             count=count,
             out_dir=out_dir,
             as_json=as_json,
-            original_prompt=original_prompt,
-            tool=applied_tool,
             project_id=project_id,
         ),
         cli_command="video i2v",
