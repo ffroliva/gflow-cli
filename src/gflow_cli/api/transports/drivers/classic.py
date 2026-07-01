@@ -144,7 +144,11 @@ class ClassicFlowUiDriver:
             await VideoGenerationMixin._switch_video_sub_mode(  # type: ignore[reportPrivateUsage]
                 page, "frames", out_dir=out_dir
             )
-        elif request.mode is Mode.R2V:
+        elif request.mode is Mode.R2V or request.use_avatar:
+            # Avatar attach (_attach_likeness) needs Flow's Add Media '+'
+            # button, which is only rendered once the composer leaves the
+            # bare Video tab — R2V already lands here for its own references;
+            # pure Mode.AVATAR needs the same switch to expose that button.
             await VideoGenerationMixin._switch_video_sub_mode(  # type: ignore[reportPrivateUsage]
                 page, "references", out_dir=out_dir
             )

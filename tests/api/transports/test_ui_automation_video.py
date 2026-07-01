@@ -380,6 +380,7 @@ def _stub_video_helpers(monkeypatch: pytest.MonkeyPatch, *, generate_resp: dict)
     monkeypatch.setattr(VideoGenerationMixin, "_switch_video_sub_mode", AsyncMock())
     monkeypatch.setattr(VideoGenerationMixin, "_attach_frame", AsyncMock())
     monkeypatch.setattr(VideoGenerationMixin, "_attach_references", AsyncMock())
+    monkeypatch.setattr(VideoGenerationMixin, "_attach_likeness", AsyncMock())
     monkeypatch.setattr(
         VideoGenerationMixin,
         "_attach_video_response_listener",
@@ -570,6 +571,43 @@ class TestGenerateVideoGuards:
         assert any("references" in a for a in sub_args), sub_args
         VideoGenerationMixin._attach_references.assert_awaited()  # type: ignore[attr-defined]
         VideoGenerationMixin._attach_frame.assert_not_awaited()  # type: ignore[attr-defined]
+
+    @pytest.mark.asyncio
+    async def test_avatar_routes_to_references_and_attaches_likeness(
+        self, monkeypatch: pytest.MonkeyPatch
+    ) -> None:
+        """Pure avatar (Mode.AVATAR) must ALSO switch to the 'references'
+        (Ingredients) sub-mode before attaching the likeness — Flow's Add
+        Media '+' button is not shown on the bare Video tab, only once the
+        editor is in Frames or Ingredients sub-mode."""
+        transport = UiAutomationTransport()
+        transport._page = _mock_async_page()
+        transport._setup_done = True
+        monkeypatch.setattr(transport, "_enter_editor", AsyncMock())
+        monkeypatch.setattr(transport, "_send_prompt", AsyncMock())
+        monkeypatch.setattr(transport, "_dismiss_blocking_overlays", AsyncMock())
+        _stub_video_helpers(
+            monkeypatch,
+            generate_resp={"status": 200, "url": _T2V_URL, "body": {"media": [{"name": "v"}]}},
+        )
+        monkeypatch.setattr(
+            VideoGenerationMixin,
+            "_poll_video_status",
+            AsyncMock(
+                return_value=VideoStatus(media_id="v", status="MEDIA_GENERATION_STATUS_SUCCESSFUL")
+            ),
+        )
+        monkeypatch.setattr(transport, "_download_video", AsyncMock(return_value=Path("v.mp4")))
+        req = GenerateVideoRequest(prompt="x", mode=Mode.AVATAR, use_avatar=True)
+        await transport.generate_video(request=req, download=False)
+        sub_args = [
+            c.args
+            for c in VideoGenerationMixin._switch_video_sub_mode.await_args_list  # type: ignore[attr-defined]
+        ]
+        assert any("references" in a for a in sub_args), sub_args
+        VideoGenerationMixin._attach_likeness.assert_awaited()  # type: ignore[attr-defined]
+        VideoGenerationMixin._attach_frame.assert_not_awaited()  # type: ignore[attr-defined]
+        VideoGenerationMixin._attach_references.assert_not_awaited()  # type: ignore[attr-defined]
 
     @pytest.mark.asyncio
     async def test_rejects_square_aspect(self) -> None:
