@@ -78,7 +78,19 @@ def _get_chrome_cookies3(profile_dir: Path) -> ChromeCookieSnapshot:
     key is inaccessible — e.g. running as a different user or in a sandboxed
     environment. This is treated the same as `BrowserCookieError` and triggers
     the Playwright fallback.
+
+    On Linux, `browser-cookie3` reads the encryption key from the system keyring
+    (secretstorage / kwallet), not from `Local State`. Passing a ``key_file`` on
+    Linux can trigger the Windows DPAPI code path and raise ``KeyError:
+    'encrypted_key'`` when ``Local State`` lacks an ``os_crypt.encrypted_key``
+    entry (which is always the case on Linux). We therefore only pass
+    ``key_file`` on Windows. Additionally, if the Linux keyring daemon is not
+    reachable (e.g. right after Chrome exits, before the D-Bus session bus has
+    settled), browser_cookie3 may raise ``KeyError`` from its ``__methods_map``
+    lookup — we treat this as a decryption failure and fall back to Playwright.
     """
+    import sys
+
     import browser_cookie3  # pyright: ignore[reportMissingTypeStubs]
 
     try:
@@ -86,13 +98,16 @@ def _get_chrome_cookies3(profile_dir: Path) -> ChromeCookieSnapshot:
     except FileNotFoundError:
         return ChromeCookieSnapshot(httpx_cookies={}, google_session=False)
 
-    key_file = profile_dir.joinpath("Local State")
+    # Only pass key_file on Windows — browser_cookie3 only uses it on win32.
+    # On Linux/macOS the key comes from the system keyring; passing Local State
+    # there can hit the Windows DPAPI branch and raise KeyError.
+    key_file = profile_dir.joinpath("Local State") if sys.platform == "win32" else None
 
     try:
         cookies = list(
             browser_cookie3.chrome(  # pyright: ignore[reportUnknownMemberType]
                 cookie_file=cookies_file,
-                key_file=key_file if key_file.exists() else None,
+                key_file=key_file if (key_file and key_file.exists()) else None,
             )
         )
     except browser_cookie3.BrowserCookieError as exc:
@@ -104,6 +119,13 @@ def _get_chrome_cookies3(profile_dir: Path) -> ChromeCookieSnapshot:
         if "dpapi" in str(exc).lower():
             raise PermissionError(f"Failed to decrypt Chrome cookies (DPAPI): {exc}") from exc
         raise
+    except KeyError as exc:
+        # On Linux, browser_cookie3 raises KeyError when the system keyring daemon
+        # (secretstorage / kwallet) is unreachable or lacks the expected key entry.
+        # This can happen transiently right after Chrome exits before the D-Bus
+        # session has settled, or in minimal desktop environments without a keyring.
+        # Treat it as a decryption failure so the Playwright fallback runs.
+        raise PermissionError(f"Failed to read Chrome keyring key: {exc}") from exc
 
     return ChromeCookieSnapshot(
         httpx_cookies=_name_value_cookies(cookies, flow_only=True),
@@ -139,8 +161,19 @@ async def _get_chrome_cookies_playwright(profile_dir: Path) -> ChromeCookieSnaps
         finally:
             await ctx.close()
 
+    # #222: derive the flow cookies from the FULL jar (domain-filtered), NOT from
+    # ctx.cookies([_FLOW_COOKIE_URL]) — that URL filter only returns cookies whose
+    # path matches "/", silently dropping the NextAuth session token scoped to
+    # "/fx" (labs.google/fx is where the Flow app and project.createProject live).
+    # Missing that token is why a seeded context stayed logged-out -> 401.
+    logger.info(
+        "playwright_cookie_read",
+        all_cookies=len(all_cookies),
+        flow_path_root=len(flow_cookies),
+        flow_domain=sum(1 for c in all_cookies if _is_flow_cookie(c)),
+    )
     return ChromeCookieSnapshot(
-        httpx_cookies=_name_value_cookies(flow_cookies, flow_only=False),
+        httpx_cookies=_name_value_cookies(all_cookies, flow_only=True),
         google_session=_has_google_session_cookie(all_cookies),
     )
 

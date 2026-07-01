@@ -93,10 +93,13 @@ jobs:
     runs-on: ubuntu-latest
     needs: test   # wait for tests + coverage report
     # Forked pull_request runs do not receive repository secrets, so SONAR_TOKEN
-    # is empty there and the scanner fails before analysis. Keep SonarCloud on
-    # trusted pushes/internal PRs where the token is available.
+    # is empty there and the scanner fails before analysis. Dependabot-triggered
+    # runs are the same case: GitHub serves them the separate Dependabot secrets
+    # namespace, so SONAR_TOKEN is also empty even though the branch is in-repo.
+    # Keep SonarCloud on trusted pushes/internal PRs where the token is available.
     if: >
       always() &&
+      github.actor != 'dependabot[bot]' &&
       (
         github.event_name != 'pull_request' ||
         github.event.pull_request.head.repo.full_name == github.repository

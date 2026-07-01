@@ -45,10 +45,10 @@ Both Click CLI (`src/gflow_cli/cli.py`) and MCP Server (`src/gflow_cli/mcp/`) ar
 The server registers three protocol surfaces:
 
 ### Tools (Executable actions)
-* `gflow_generate_image(prompt, model, aspect, count, seed)`: Triggers text-to-image (Imagen 3.5 / Nano Banana).
-* `gflow_generate_video(prompt, initial_frame_path, aspect, seed)`: Triggers vertical or landscape video generation (Veo 3.1).
-* `gflow_list_projects(limit, offset)`: Queries SQLite catalog for recent generation folders.
-* `gflow_list_characters(project_id)`: Lists saved project-scoped characters.
+* `gflow_generate_image(prompt, model, aspect, count, seed, reference_images, tools, profile)`: Triggers text-to-image / image-to-image (Imagen / Nano Banana). `reference_images` switches to i2i.
+* `gflow_generate_video(prompt, mode, aspect, initial_frame, end_frame, reference_images, tools, profile)`: Triggers vertical or landscape video generation (Veo). `mode` is `t2v`/`i2v`/`r2v`; `i2v` requires `initial_frame`, `r2v` requires `reference_images`.
+* `gflow_list_projects(profile, limit)`: Queries SQLite catalog for recent generation folders.
+* `gflow_list_characters(profile)`: Lists Flow Character entities (requires an active browser session).
 
 ### Prompts (Orchestration templates)
 * `expand_prompt`: Helps the agent structure simple ideas into Google's official 5-component prompt formula (Subject + Action + Location + Composition + Style) before sending them to the generation tools.

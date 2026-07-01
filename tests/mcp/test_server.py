@@ -200,64 +200,152 @@ class TestToolExecution:
 
     @pytest.mark.asyncio
     async def test_generate_image_returns_structured_response(self) -> None:
-        """gflow_generate_image should return a dict with status and params."""
+        """gflow_generate_image should return a dict with status and params when wired."""
+        from unittest.mock import AsyncMock, patch
+
         from gflow_cli.mcp.tools import gflow_generate_image
 
-        result = await gflow_generate_image(prompt="test sunset", model="nano2")
+        with (
+            patch(
+                "gflow_cli.mcp.tools._resolve_and_validate_profile",
+                return_value="default",
+            ),
+            patch(
+                "gflow_cli.mcp.tools._run_generation_task",
+                new=AsyncMock(
+                    return_value={
+                        "status": "completed",
+                        "task_id": "task-abc",
+                        "flow_media_id": "media-123",
+                        "files": ["/tmp/out/img.png"],
+                    }
+                ),
+            ),
+        ):
+            result = await gflow_generate_image(prompt="test sunset", model="nano2")
+
         assert isinstance(result, dict)
-        assert "status" in result
+        assert result["status"] == "completed"
         assert "params" in result
         assert result["params"]["prompt"] == "test sunset"
 
     @pytest.mark.asyncio
     async def test_generate_video_returns_structured_response(self) -> None:
-        """gflow_generate_video should return a dict with status and params."""
+        """gflow_generate_video should return a dict with status and params when wired."""
+        from unittest.mock import AsyncMock, patch
+
         from gflow_cli.mcp.tools import gflow_generate_video
 
-        result = await gflow_generate_video(prompt="cinematic drone shot")
+        with (
+            patch(
+                "gflow_cli.mcp.tools._resolve_and_validate_profile",
+                return_value="default",
+            ),
+            patch(
+                "gflow_cli.mcp.tools._run_generation_task",
+                new=AsyncMock(
+                    return_value={
+                        "status": "completed",
+                        "task_id": "task-xyz",
+                        "flow_media_id": "media-vid-456",
+                        "files": ["/tmp/out/vid.mp4"],
+                    }
+                ),
+            ),
+        ):
+            result = await gflow_generate_video(prompt="cinematic drone shot")
+
         assert isinstance(result, dict)
-        assert "status" in result
+        assert result["status"] == "completed"
         assert "params" in result
         assert result["params"]["mode"] == "t2v"
 
     @pytest.mark.asyncio
     async def test_generate_image_adapts_tools_to_specs(self) -> None:
         """A valid MCP `tools` array is adapted to CLI --tool specs in params."""
+        from unittest.mock import AsyncMock, patch
+
         from gflow_cli.mcp.tools import gflow_generate_image
 
-        result = await gflow_generate_image(
-            prompt="a cat",
-            tools=[{"name": "creative-director", "options": {"style": "cinema"}}],
-        )
-        assert result["status"] == "pending"
+        with (
+            patch(
+                "gflow_cli.mcp.tools._resolve_and_validate_profile",
+                return_value="default",
+            ),
+            patch(
+                "gflow_cli.mcp.tools._run_generation_task",
+                new=AsyncMock(
+                    return_value={
+                        "status": "completed",
+                        "task_id": "task-tools",
+                        "flow_media_id": "media-t",
+                        "files": [],
+                    }
+                ),
+            ),
+        ):
+            result = await gflow_generate_image(
+                prompt="a cat",
+                tools=[{"name": "creative-director", "options": {"style": "cinema"}}],
+            )
+        assert result["status"] == "completed"
         assert result["params"]["tool_specs"] == ["creative-director:style=cinema"]
 
     @pytest.mark.asyncio
     async def test_generate_image_rejects_malformed_tools(self) -> None:
         """A malformed `tools` item returns a clean invalid_tools error."""
+        from unittest.mock import patch
+
         from gflow_cli.mcp.tools import gflow_generate_image
 
-        result = await gflow_generate_image(prompt="a cat", tools=[{"options": {"style": "x"}}])
+        # Profile resolution must succeed first so tools validation is reached.
+        with patch(
+            "gflow_cli.mcp.tools._resolve_and_validate_profile",
+            return_value="default",
+        ):
+            result = await gflow_generate_image(prompt="a cat", tools=[{"options": {"style": "x"}}])
         assert result["status"] == "invalid_tools"
         assert "tools" in result["error"]
 
     @pytest.mark.asyncio
     async def test_generate_video_adapts_tools_to_specs(self) -> None:
+        from unittest.mock import AsyncMock, patch
+
         from gflow_cli.mcp.tools import gflow_generate_video
 
-        result = await gflow_generate_video(
-            prompt="a dog",
-            tools=[{"name": "creative-director"}],
-        )
-        assert result["status"] == "pending"
+        with (
+            patch(
+                "gflow_cli.mcp.tools._resolve_and_validate_profile",
+                return_value="default",
+            ),
+            patch(
+                "gflow_cli.mcp.tools._run_generation_task",
+                new=AsyncMock(
+                    return_value={
+                        "status": "completed",
+                        "task_id": "task-vt",
+                        "flow_media_id": "media-vt",
+                        "files": [],
+                    }
+                ),
+            ),
+        ):
+            result = await gflow_generate_video(
+                prompt="a dog",
+                tools=[{"name": "creative-director"}],
+            )
+        assert result["status"] == "completed"
         assert result["params"]["tool_specs"] == ["creative-director"]
 
     @pytest.mark.asyncio
     async def test_list_projects_returns_empty_list(self) -> None:
         """gflow_list_projects should return an empty list when no data."""
+        from unittest.mock import patch
+
         from gflow_cli.mcp.tools import gflow_list_projects
 
-        result = await gflow_list_projects()
+        with patch("gflow_cli.mcp.tools.list_projects", return_value=[]):
+            result = await gflow_list_projects()
         assert result["status"] == "ok"
         assert result["projects"] == []
 
