@@ -55,6 +55,8 @@ def test_helpers_relocated_to_cli_helpers_module() -> None:
 
     assert callable(_cli_helpers._resolve_profile)
     assert callable(_cli_helpers._make_provider_dir)
+    assert callable(_cli_helpers._validate_project_id)
+    assert _cli_helpers._FLOW_ID_RE.fullmatch("PROJ123")
 
 
 @pytest.mark.parametrize(
@@ -65,7 +67,10 @@ def test_helpers_relocated_to_cli_helpers_module() -> None:
 def test_no_local_helper_definitions_in_cli_modules(module_path: Path) -> None:
     """Negative test — drift prevention. After T4b, neither ``cli_image.py``
     nor ``cli_video.py`` defines ``_resolve_profile`` or ``_make_provider_dir``
-    locally; they import from ``gflow_cli._cli_helpers``.
+    locally; they import from ``gflow_cli._cli_helpers``. ``_validate_project_id``
+    (the shared ``--project`` id allowlist) was byte-identically duplicated in both
+    modules before being relocated here too — pin the same guard so it can't drift
+    back.
     """
     assert module_path.exists(), f"Expected source file at {module_path}"
     names = _toplevel_function_names(module_path)
@@ -75,6 +80,10 @@ def test_no_local_helper_definitions_in_cli_modules(module_path: Path) -> None:
     )
     assert "_make_provider_dir" not in names, (
         f"{module_path} still defines _make_provider_dir locally — "
+        "import from gflow_cli._cli_helpers instead."
+    )
+    assert "_validate_project_id" not in names, (
+        f"{module_path} still defines _validate_project_id locally — "
         "import from gflow_cli._cli_helpers instead."
     )
 

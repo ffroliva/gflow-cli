@@ -6,7 +6,6 @@
 
 from __future__ import annotations
 
-import re
 import warnings
 from dataclasses import dataclass
 from pathlib import Path
@@ -20,6 +19,7 @@ from gflow_cli import json_output
 from gflow_cli._cli_helpers import (
     _make_provider_dir,
     _resolve_profile,
+    _validate_project_id,
     apply_tool_option,
     run_with_handlers,
     tool_option,
@@ -37,22 +37,6 @@ if TYPE_CHECKING:
 
 console = Console()
 logger = structlog.get_logger(__name__)
-
-# Flow project ids are interpolated into navigation URLs by the transport, so
-# reject anything but the same allowlist cli_image.py / api.routes enforce
-# before it ever reaches page.goto.
-_FLOW_ID_RE = re.compile(r"^[A-Za-z0-9\-]{1,128}$")
-
-
-def _validate_project_id(
-    _ctx: click.Context, param: click.Parameter, value: str | None
-) -> str | None:
-    """Reject a --project id that isn't alphanumeric/hyphen (1-128 chars)."""
-    if value is not None and not _FLOW_ID_RE.fullmatch(value):
-        msg = "project id must be 1-128 chars of letters, digits, or hyphens."
-        raise click.BadParameter(msg, param=param)
-    return value
-
 
 _project_option = click.option(
     "--project",
