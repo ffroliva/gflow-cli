@@ -29,8 +29,10 @@ from rich.table import Table
 
 from gflow_cli import json_output
 from gflow_cli._cli_helpers import (
+    _FLOW_ID_RE,
     _make_provider_dir,
     _resolve_profile,
+    _validate_project_id,
     apply_tool_option,
     run_with_handlers,
     safe_path_text,
@@ -106,25 +108,10 @@ _CREATING_PROJECT_MSG = "  Creating project..."
 _T2I_PROJECT_TITLE = "gflow-cli t2i"
 _I2I_PROJECT_TITLE = "gflow-cli i2i"
 
-# Flow project / character-entity ids interpolated into navigation URLs and UI
-# selectors. Mirror routes._PROJECT_ID_RE so untrusted --project / --reference-entity
-# values are rejected at the CLI boundary (closes the page.goto + CSS-selector
-# injection gaps before the value ever reaches the browser).
-_FLOW_ID_RE = re.compile(r"^[A-Za-z0-9\-]{1,128}$")
-
-
-def _validate_project_id(
-    _ctx: click.Context, param: click.Parameter, value: str | None
-) -> str | None:
-    """Reject a --project id that isn't alphanumeric/hyphen (1-128 chars).
-
-    The value is interpolated into the editor navigation URL (`page.goto`) before
-    any other guard runs, so validate here at the boundary.
-    """
-    if value is not None and not _FLOW_ID_RE.fullmatch(value):
-        msg = "project id must be 1-128 chars of letters, digits, or hyphens."
-        raise click.BadParameter(msg, param=param)
-    return value
+# `_FLOW_ID_RE` / `_validate_project_id` (Flow project/character-entity id
+# allowlist for --project / --reference-entity) live in gflow_cli._cli_helpers
+# since they're shared with cli_video.py's --project option — see that
+# module's docstring for the injection-surface rationale.
 
 
 def _validate_entity_ids(

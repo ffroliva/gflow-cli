@@ -438,7 +438,11 @@ All prompts in a batch share one Flow project. The editor is opened once; each p
 Generate a video from a text prompt only.
 
 ```text
-gflow video t2v PROMPT [--model] [--duration] [--count] [--aspect] [--profile] [-t/--tool] [--out-dir]
+gflow video t2v PROMPT [--model] [--duration] [--count] [--aspect] [--profile] [-t/--tool] [--project] [--out-dir]
+
+Options:
+  --project ID          Generate in this EXISTING Flow project instead of a
+                        scratch project (see "Sharing one project across calls").
 ```
 
 ```bash
@@ -472,6 +476,8 @@ Arguments:
 Options:
   --initial-frame PATH  Initial frame to animate. Canonical form; replaces the positional IMAGE.
   --end-frame PATH      Optional end frame — Flow interpolates initial frame -> end frame.
+  --project ID          Generate in this EXISTING Flow project instead of a
+                        scratch project (see "Sharing one project across calls").
 ```
 
 ```bash
@@ -491,12 +497,27 @@ images. Per-model cap: `omni-flash` ≤7, the `veo-*` models ≤3. Fires
 gflow video r2v PROMPT --ref IMG [--ref IMG ...] [--model] [--duration] [--count] [--aspect] [...]
 
 Options:
-  --ref PATH  Reference image; repeat for up to 7 (omni-flash) / 3 (veo). [required]
+  --ref PATH    Reference image; repeat for up to 7 (omni-flash) / 3 (veo). [required]
+  --project ID  Generate in this EXISTING Flow project instead of a scratch
+                project (see "Sharing one project across calls").
 ```
 
 ```bash
 gflow video r2v "a knight in this armor walks forward" --ref armor.png
 gflow video r2v "blend these worlds" --ref a.png --ref b.png --ref c.png --model omni-flash
+```
+
+### Sharing one project across calls
+
+By default each `video t2v` / `i2v` / `r2v` call creates its own scratch Flow
+project. Pass `--project <id>` (same contract as `image t2i`/`i2i` — see
+[`gflow image t2i`](#gflow-image-t2i)) to generate into an existing project
+instead, e.g. to avoid one-throwaway-project-per-clip when scripting a
+multi-clip storyboard:
+
+```bash
+gflow video t2v "establishing shot" --project PROJ123
+gflow video t2v "close-up reaction" --project PROJ123
 ```
 
 ## `gflow video batch`
@@ -509,10 +530,12 @@ gflow video r2v "blend these worlds" --ref a.png --ref b.png --ref c.png --model
 ### Workaround — shell for-loop
 
 Until the manifest runner lands, you can drive sequential video generations
-through a plain shell loop. Each `gflow video t2v` / `i2v` / `r2v` call opens
-its **own Flow project**, so the resulting videos will NOT share a
-`project_id` (unlike `gflow image batch`, which mounts one project across
-all prompts) — but they DO get generated and downloaded:
+through a plain shell loop. Without `--project`, each `gflow video t2v` /
+`i2v` / `r2v` call opens its **own Flow project**, so the resulting videos
+will NOT share a `project_id` (unlike `gflow image batch`, which mounts one
+project across all prompts) — but they DO get generated and downloaded. Pass
+the same `--project <id>` to every call in the loop (see "Sharing one project
+across calls" above) if you want them to land in one project instead:
 
 ```bash
 # bash / WSL / macOS — one prompt per line
