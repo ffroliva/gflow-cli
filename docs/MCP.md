@@ -45,8 +45,8 @@ Both Click CLI (`src/gflow_cli/cli.py`) and MCP Server (`src/gflow_cli/mcp/`) ar
 The server registers three protocol surfaces:
 
 ### Tools (Executable actions)
-* `gflow_generate_image(prompt, model, aspect, count, seed, reference_images, tools, profile)`: Triggers text-to-image / image-to-image (Imagen / Nano Banana). `reference_images` switches to i2i.
-* `gflow_generate_video(prompt, mode, aspect, initial_frame, end_frame, reference_images, tools, profile)`: Triggers vertical or landscape video generation (Veo). `mode` is `t2v`/`i2v`/`r2v`; `i2v` requires `initial_frame`, `r2v` requires `reference_images`.
+* `gflow_generate_image(prompt, model, aspect, count, seed, reference_images, tools, profile, project)`: Triggers text-to-image / image-to-image (Imagen / Nano Banana). `reference_images` switches to i2i; `project` generates into an existing Flow project id (mirrors CLI `--project`).
+* `gflow_generate_video(prompt, mode, aspect, initial_frame, end_frame, reference_images, tools, profile, project)`: Triggers vertical or landscape video generation (Veo). `mode` is `t2v`/`i2v`/`r2v`; `i2v` requires `initial_frame`, `r2v` requires `reference_images`; `project` generates into an existing Flow project id (mirrors CLI `--project`).
 * `gflow_list_projects(profile, limit)`: Queries SQLite catalog for recent generation folders.
 * `gflow_list_characters(profile)`: Lists Flow Character entities (requires an active browser session).
 

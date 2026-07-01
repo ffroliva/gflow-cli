@@ -7,6 +7,19 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+## [0.24.0] — 2026-07-01
+
+### Added
+
+- **`--project` on `video t2v`/`i2v`/`r2v` (#233)**: generate into an existing Flow
+  project instead of always creating a scratch project, matching `image t2i`/`i2i`.
+  Lets programmatic callers (e.g. a multi-clip storyboard worker) share one project
+  across several video generations instead of leaving one throwaway project per clip.
+- **`project` parameter on the MCP `gflow_generate_image` / `gflow_generate_video`
+  tools**: mirrors the CLI `--project` flag so MCP callers can also target an existing
+  Flow project (validated against the same id format). Completes `--project` parity
+  across the CLI and MCP surfaces.
+
 ## [0.23.0] — 2026-07-01
 
 ### Added
@@ -1682,7 +1695,8 @@ shell-script template that branches on these codes.
 
 First skeleton. Not functional end-to-end yet.
 
-[Unreleased]: https://github.com/ffroliva/gflow-cli/compare/v0.23.0...HEAD
+[Unreleased]: https://github.com/ffroliva/gflow-cli/compare/v0.24.0...HEAD
+[0.24.0]: https://github.com/ffroliva/gflow-cli/compare/v0.23.0...v0.24.0
 [0.23.0]: https://github.com/ffroliva/gflow-cli/compare/v0.22.0...v0.23.0
 [0.22.0]: https://github.com/ffroliva/gflow-cli/compare/v0.21.0...v0.22.0
 [0.21.0]: https://github.com/ffroliva/gflow-cli/compare/v0.20.1...v0.21.0
