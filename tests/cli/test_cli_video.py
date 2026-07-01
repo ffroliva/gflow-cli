@@ -165,7 +165,9 @@ def test_t2v_records_started_then_completed(tmp_path: Path) -> None:
 
     fake_recorder = FakeVideoRecorder()
 
-    async def fake_generate_video(*, req, out_dir, poll_timeout_s=None, download, on_started):
+    async def fake_generate_video(
+        *, req, out_dir, project_id=None, poll_timeout_s=None, download, on_started
+    ):
         if on_started is not None:
             import inspect
 
@@ -232,7 +234,9 @@ def test_t2v_json_emits_clean_machine_readable_result(tmp_path: Path) -> None:
 
     fake_recorder = FakeVideoRecorder()
 
-    async def fake_generate_video(*, req, out_dir, poll_timeout_s=None, download, on_started):
+    async def fake_generate_video(
+        *, req, out_dir, project_id=None, poll_timeout_s=None, download, on_started
+    ):
         if on_started is not None:
             import inspect
 
@@ -298,7 +302,9 @@ def test_t2v_json_failed_gen_emits_exactly_one_payload(tmp_path: Path) -> None:
 
     fake_recorder = FakeVideoRecorder()
 
-    async def fake_generate_video(*, req, out_dir, poll_timeout_s=None, download, on_started):
+    async def fake_generate_video(
+        *, req, out_dir, project_id=None, poll_timeout_s=None, download, on_started
+    ):
         if on_started is not None:
             import inspect
 
@@ -372,7 +378,9 @@ def test_t2v_records_cloud_storage_info_for_downloaded_video(tmp_path: Path) -> 
 
     fake_recorder = FakeVideoRecorder()
 
-    async def fake_generate_video(*, req, out_dir, poll_timeout_s=None, download, on_started):
+    async def fake_generate_video(
+        *, req, out_dir, project_id=None, poll_timeout_s=None, download, on_started
+    ):
         if on_started is not None:
             import inspect
 
@@ -897,3 +905,158 @@ def test_tool_option_present_on_video_generation_commands() -> None:
     for cmd in ("t2v", "i2v", "r2v", "chain"):
         result = runner.invoke(video, [cmd, "--help"])
         assert "--tool" in result.output, f"{cmd} --help missing --tool"
+
+
+# ---------------------------------------------------------------------------
+# --project flag (issue #233): parity with `image t2i`/`i2i`.
+# ---------------------------------------------------------------------------
+
+
+class TestVideoProjectFlag:
+    """`--project <id>` threads project_id through to client.generate_video."""
+
+    def test_t2v_threads_project_id_to_generate_and_report(self, tmp_path: Path) -> None:
+        captured: dict[str, object] = {}
+
+        async def _capture(request: object, **kwargs: object) -> None:
+            captured["request"] = request
+            captured["kwargs"] = kwargs
+
+        runner = CliRunner()
+        with (
+            patch("gflow_cli.cli_video._resolve_profile", return_value="default"),
+            patch("gflow_cli.cli_video._make_provider_dir", return_value=tmp_path),
+            patch("gflow_cli.cli_video._generate_and_report", new=_capture),
+        ):
+            result = runner.invoke(video, ["t2v", "a sunset", "--project", "PROJ123"])
+
+        assert result.exit_code == 0, result.output
+        assert captured["kwargs"]["project_id"] == "PROJ123"  # type: ignore[index]
+
+    def test_i2v_threads_project_id_to_generate_and_report(self, tmp_path: Path) -> None:
+        captured: dict[str, object] = {}
+
+        async def _capture(request: object, **kwargs: object) -> None:
+            captured["request"] = request
+            captured["kwargs"] = kwargs
+
+        start = tmp_path / "hero.png"
+        start.write_bytes(b"\x89PNG\r\n\x1a\n")
+
+        runner = CliRunner()
+        with (
+            patch("gflow_cli.cli_video._resolve_profile", return_value="default"),
+            patch("gflow_cli.cli_video._make_provider_dir", return_value=tmp_path),
+            patch("gflow_cli.cli_video._generate_and_report", new=_capture),
+        ):
+            result = runner.invoke(
+                video,
+                ["i2v", str(start), "slow push-in", "--project", "PROJ123"],
+            )
+
+        assert result.exit_code == 0, result.output
+        assert captured["kwargs"]["project_id"] == "PROJ123"  # type: ignore[index]
+
+    def test_r2v_threads_project_id_to_generate_and_report(self, tmp_path: Path) -> None:
+        captured: dict[str, object] = {}
+
+        async def _capture(request: object, **kwargs: object) -> None:
+            captured["request"] = request
+            captured["kwargs"] = kwargs
+
+        ref = tmp_path / "armor.png"
+        ref.write_bytes(b"\x89PNG\r\n\x1a\n")
+
+        runner = CliRunner()
+        with (
+            patch("gflow_cli.cli_video._resolve_profile", return_value="default"),
+            patch("gflow_cli.cli_video._make_provider_dir", return_value=tmp_path),
+            patch("gflow_cli.cli_video._generate_and_report", new=_capture),
+        ):
+            result = runner.invoke(
+                video,
+                ["r2v", "knight walks forward", "--ref", str(ref), "--project", "PROJ123"],
+            )
+
+        assert result.exit_code == 0, result.output
+        assert captured["kwargs"]["project_id"] == "PROJ123"  # type: ignore[index]
+
+    def test_t2v_without_project_passes_none(self, tmp_path: Path) -> None:
+        """Omitting --project keeps the historical scratch-project behavior."""
+        captured: dict[str, object] = {}
+
+        async def _capture(request: object, **kwargs: object) -> None:
+            captured["kwargs"] = kwargs
+
+        runner = CliRunner()
+        with (
+            patch("gflow_cli.cli_video._resolve_profile", return_value="default"),
+            patch("gflow_cli.cli_video._make_provider_dir", return_value=tmp_path),
+            patch("gflow_cli.cli_video._generate_and_report", new=_capture),
+        ):
+            result = runner.invoke(video, ["t2v", "a sunset"])
+
+        assert result.exit_code == 0, result.output
+        assert captured["kwargs"]["project_id"] is None  # type: ignore[index]
+
+    def test_t2v_forwards_project_id_to_client_generate_video(self, tmp_path: Path) -> None:
+        """End-to-end: --project reaches FlowApiClient.generate_video(project_id=...)."""
+        from gflow_cli.api.video import VideoResult, VideoStarted, VideoStatus
+
+        saved = tmp_path / "test-uuid.mp4"
+        saved.touch()
+        stub_result = VideoResult(
+            status=VideoStatus(media_id="m1", status="MEDIA_GENERATION_STATUS_SUCCESSFUL"),
+            local_path=saved,
+            project_id="PROJ123",
+            flow_operation_id="o1",
+        )
+
+        fake_recorder = FakeVideoRecorder()
+        generate_video_mock = AsyncMock(return_value=stub_result)
+
+        async def fake_generate_video(**kwargs: object) -> object:
+            if kwargs.get("on_started") is not None:
+                import inspect
+
+                started = VideoStarted(media_id="m1", project_id="PROJ123", flow_operation_id="o1")
+                res = kwargs["on_started"](started)  # type: ignore[operator]
+                if inspect.isawaitable(res):
+                    await res
+            return await generate_video_mock(**kwargs)
+
+        runner = CliRunner()
+        with (
+            patch("gflow_cli.cli_video._resolve_profile", return_value="default"),
+            patch("gflow_cli.cli_video._make_provider_dir", return_value=tmp_path),
+            patch("gflow_cli.data.recorder.OperationRecorder.open", return_value=fake_recorder),
+            patch(
+                "gflow_cli.api.client.FlowApiClient.__aenter__",
+                new_callable=AsyncMock,
+            ) as mock_enter,
+            patch("gflow_cli.api.client.FlowApiClient.__aexit__", new_callable=AsyncMock),
+        ):
+            from gflow_cli.api.client import FlowApiClient
+
+            fake_client = MagicMock(spec=FlowApiClient)
+            fake_client.generate_video = fake_generate_video
+            mock_enter.return_value = fake_client
+
+            result = runner.invoke(video, ["t2v", "a sunset", "--project", "PROJ123"])
+
+        assert result.exit_code == 0, result.output
+        call = generate_video_mock.await_args
+        assert call is not None
+        assert call.kwargs["project_id"] == "PROJ123"
+
+    def test_t2v_rejects_bad_project_id(self) -> None:
+        runner = CliRunner()
+        result = runner.invoke(video, ["t2v", "a cat", "--project", "bad/id"])
+        assert result.exit_code == 2, result.output
+        assert "project id" in result.output.lower()
+
+    def test_project_help_text_present_on_video_generation_commands(self) -> None:
+        runner = CliRunner()
+        for cmd in ("t2v", "i2v", "r2v"):
+            result = runner.invoke(video, [cmd, "--help"])
+            assert "--project" in result.output, f"{cmd} --help missing --project"

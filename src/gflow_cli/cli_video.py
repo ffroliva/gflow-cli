@@ -6,6 +6,7 @@
 
 from __future__ import annotations
 
+import re
 import warnings
 from dataclasses import dataclass
 from pathlib import Path
@@ -37,6 +38,30 @@ if TYPE_CHECKING:
 console = Console()
 logger = structlog.get_logger(__name__)
 
+# Flow project ids are interpolated into navigation URLs by the transport, so
+# reject anything but the same allowlist cli_image.py / api.routes enforce
+# before it ever reaches page.goto.
+_FLOW_ID_RE = re.compile(r"^[A-Za-z0-9\-]{1,128}$")
+
+
+def _validate_project_id(
+    _ctx: click.Context, param: click.Parameter, value: str | None
+) -> str | None:
+    """Reject a --project id that isn't alphanumeric/hyphen (1-128 chars)."""
+    if value is not None and not _FLOW_ID_RE.fullmatch(value):
+        msg = "project id must be 1-128 chars of letters, digits, or hyphens."
+        raise click.BadParameter(msg, param=param)
+    return value
+
+
+_project_option = click.option(
+    "--project",
+    "project_id",
+    default=None,
+    callback=_validate_project_id,
+    help=("Generate in this existing Flow project id instead of creating a scratch project."),
+)
+
 
 def _warn_persistence_failed_after_success(
     *,
@@ -66,6 +91,7 @@ async def _generate_and_report(
     out_dir: Path | None,
     command: str = "video",
     as_json: bool = False,
+    project_id: str | None = None,
 ) -> None:
     """Drive FlowApiClient for a single GenerateVideoRequest and print the
     result (or fail with a non-zero exit). Shared by t2v, i2v, and r2v.
@@ -103,6 +129,7 @@ async def _generate_and_report(
 
             result = await client.generate_video(
                 req=request,
+                project_id=project_id,
                 out_dir=out_dir,
                 download=True,
                 on_started=on_started,
@@ -160,6 +187,7 @@ async def _run_t2v(
     as_json: bool = False,
     original_prompt: str | None = None,
     tool: AppliedTool | None = None,
+    project_id: str | None = None,
 ) -> None:
     from gflow_cli.api.video import Aspect, GenerateVideoRequest, Mode, VideoModel
 
@@ -180,6 +208,7 @@ async def _run_t2v(
         out_dir=out_dir,
         command="video t2v",
         as_json=as_json,
+        project_id=project_id,
     )
 
 
@@ -198,6 +227,7 @@ async def _run_i2v(
     as_json: bool = False,
     original_prompt: str | None = None,
     tool: AppliedTool | None = None,
+    project_id: str | None = None,
 ) -> None:
     from gflow_cli.api.video import (
         I2V_DEFAULT_MODEL,
@@ -243,6 +273,7 @@ async def _run_i2v(
         out_dir=out_dir,
         command="video i2v",
         as_json=as_json,
+        project_id=project_id,
     )
 
 
@@ -260,6 +291,7 @@ async def _run_r2v(
     as_json: bool = False,
     original_prompt: str | None = None,
     tool: AppliedTool | None = None,
+    project_id: str | None = None,
 ) -> None:
     from gflow_cli.api.video import Aspect, GenerateVideoRequest, Mode, VideoModel
 
@@ -281,6 +313,7 @@ async def _run_r2v(
         out_dir=out_dir,
         command="video r2v",
         as_json=as_json,
+        project_id=project_id,
     )
 
 
@@ -769,6 +802,7 @@ def video() -> None:
         "falls back to the original prompt if unset or on error."
     ),
 )
+@_project_option
 @click.option(
     "--out-dir",
     "out_dir",
@@ -790,6 +824,7 @@ def t2v(
     count: int,
     profile: str | None,
     tool_specs: tuple[str, ...],
+    project_id: str | None,
     out_dir: Path | None,
     as_json: bool,
 ) -> None:
@@ -812,6 +847,7 @@ def t2v(
             as_json=as_json,
             original_prompt=original_prompt,
             tool=applied_tool,
+            project_id=project_id,
         ),
         cli_command="video t2v",
         as_json=as_json,
@@ -930,6 +966,7 @@ def _resolve_i2v_args(
 )
 @click.option("--profile", default=None, help="Profile name (overrides default).")
 @tool_option
+@_project_option
 @click.option(
     "--out-dir",
     "out_dir",
@@ -955,6 +992,7 @@ def i2v(
     count: int,
     profile: str | None,
     tool_specs: tuple[str, ...],
+    project_id: str | None,
     out_dir: Path | None,
     as_json: bool,
 ) -> None:
@@ -991,6 +1029,7 @@ def i2v(
             as_json=as_json,
             original_prompt=original_prompt,
             tool=applied_tool,
+            project_id=project_id,
         ),
         cli_command="video i2v",
         as_json=as_json,
@@ -1051,6 +1090,7 @@ def i2v(
 )
 @click.option("--profile", default=None, help="Profile name (overrides default).")
 @tool_option
+@_project_option
 @click.option(
     "--out-dir",
     "out_dir",
@@ -1073,6 +1113,7 @@ def r2v(
     count: int,
     profile: str | None,
     tool_specs: tuple[str, ...],
+    project_id: str | None,
     out_dir: Path | None,
     as_json: bool,
 ) -> None:
@@ -1114,6 +1155,7 @@ def r2v(
             as_json=as_json,
             original_prompt=original_prompt,
             tool=applied_tool,
+            project_id=project_id,
         ),
         cli_command="video r2v",
         as_json=as_json,
