@@ -50,14 +50,16 @@ Or invoke the wrapper: `/gflow:check`.
 - Use `pytest -m "not live and not e2e and not smoke"` locally; full suite OOMs on small dev machines. Scope to changed dirs; trust CI for the full sweep.
 - TDD is non-negotiable. Coverage floor: 80% overall.
 - Documentation is a first-class deliverable. Every behavior, workflow, config, or operator-facing change must update the relevant docs or state why no docs changed in the PR/checklist. `scripts/ci/check_doc_links.py` is a merge gate.
+- **A PR is not done until its SonarCloud gate is green (zero new issues).** The six gates above are local/pre-commit; SonarCloud is server-side and runs in CI (`sonar.qualitygate.wait=true` → a red gate turns the `SonarCloud analysis` check red). Before calling a PR merge-ready, verify it with `/gflow:sonar <N>` (it is skipped on fork PRs — maintainer-checked there).
 - Live tests (`@pytest.mark.live`) opt in via `GFLOW_LIVE=1`. E2E tests require `GFLOW_CLI_E2E_PROFILE`.
 
 ## Code style
 
 - Type hints everywhere; `pyright` strict on `src/gflow_cli`.
 - Structured logging only (`structlog`) — **never** raw `print()` or `import logging` in `src/`.
-- Errors as RFC 9457 Problem Details with stable per-class exit codes (3–21, e.g. 16 is the `DataStoreError` family, 19 `SceneConcatError`, 20 `FrameExtractionError`, 21 `ChainPartialError`). See `src/gflow_cli/errors.py::EXIT_CODE_MAP` for the complete mapping.
+- Errors as RFC 9457 Problem Details with stable per-class exit codes (3–22, e.g. 16 is the `DataStoreError` family, 19 `SceneConcatError`, 20 `FrameExtractionError`, 21 `ChainPartialError`, 22 `UpscaleUnavailableError`). See `src/gflow_cli/errors.py::EXIT_CODE_MAP` for the complete mapping.
 - 100-char line length, `ruff` configured. Imports sorted by `ruff` (isort rules).
+- **MCP & CLI Schema Symmetry**: Any updates or additions to user-facing CLI command parameters (e.g., `gflow image t2i`, `gflow video`) must be mirrored in the corresponding MCP tool definitions. Never add option/argument fields to Click commands without updating the MCP server implementation. This symmetry is enforced programmatically in CI via `tests/mcp/test_server.py`.
 
 ## PR instructions
 
@@ -66,6 +68,15 @@ Or invoke the wrapper: `/gflow:check`.
 - **Never add AI attribution to commit messages.** `Co-Authored-By:` trailers are fine if the user asks for them; auto-generated "🤖 Generated with Claude Code" footers are not.
 - Run `/gflow:check` (or the Impeccable Routine) before every commit.
 - All releases require a signed annotated tag (`git tag -s vX.Y.Z`); CI rejects unsigned tags.
+
+## Working discipline — verify before you act
+
+These rules exist because docs alone don't bind under momentum: a "check open PRs first" rule was already written and still got skipped, and a PR was merged without seeing an entangled open one. Follow them on every task.
+
+- **Check what's already in flight before coding a fix, opening a PR, or merging.** Run `gh pr list` and `git ls-remote` first — another open PR may already touch the same issue or files. Reconcile against it; don't re-derive "the only thing left" from a stale handoff. (A `PreToolUse` hook also surfaces same-issue open PRs at `gh pr create`/`merge` time, but treat that as a backstop, not a substitute for looking.)
+- **Truth is the CLI and running the code — not IDE/LSP "reminder" diagnostics.** Editor / `pyright`-in-worktree warnings go stale for an entire session and throw false positives (especially across multiple worktrees). Confirm with `ruff` / `pyright` / `pytest` from the terminal — or trust the worktree's own venv — never an IDE squiggle.
+- **Verify third-party runtime behavior empirically before wiring it in.** Don't assume how an external library, API, or browser actually behaves — exercise it once and observe, then build on the observed contract.
+- **If a claim can't be verified in the current environment, it's LIKELY — not CONFIRMED.** Keep the issue open, reference it with `Refs #N` (not `Closes #N`), and ship diagnostics rather than a blind fix. When you can't reproduce it, hand the fix to whoever can.
 
 ## Skills reference (cross-tool)
 
@@ -80,7 +91,7 @@ The `skills/` directory ships installable agent skill docs in plain Markdown wit
 | `status` | [`skills/status/SKILL.md`](skills/status/SKILL.md) | Show current plan state, progress, and next unchecked task |
 | `pr-council-review` | [`skills/pr-council-review/SKILL.md`](skills/pr-council-review/SKILL.md) | Multi-dimensional PR council review |
 
-**Cursor / Aider / Codex / Gemini CLI:** paste or include the relevant `SKILL.md` in your system context.
+**Cursor / Aider / Codex / Gemini CLI (`agy`):** paste or include the relevant `SKILL.md` in your system context. Note: in the `agy` TUI prompt, custom slash commands (e.g. `/gflow:pr-council-review`) are blocked by the TUI's command parser. Type them as plain text without the leading slash (e.g. `gflow:pr-council-review`, `gflow:branch-review`, or `gflow:check`) to trigger the corresponding agent skill workflow.
 **Claude Code:** the `/gflow:` slash commands in `.claude/commands/gflow/` are auto-discovered when the project is open — no extra setup needed. To register a skill globally, copy the command file to `~/.claude/commands/`.
 **Custom agents:** fetch `skills/gflow-cli/SKILL.md` into your knowledge base before answering gflow questions.
 

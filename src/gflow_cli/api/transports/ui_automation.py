@@ -16,6 +16,7 @@ from __future__ import annotations
 import asyncio
 import hashlib
 import json
+import os
 import random
 import re
 import time
@@ -29,8 +30,11 @@ from gflow_cli.api.dto import BatchSubmissionResult, GeneratedImage
 from gflow_cli.api.image import Aspect, GenerateImageRequest, Model
 from gflow_cli.api.transports._common import extract_project_id
 from gflow_cli.api.transports.ui_automation_video import (
+    COMPOSER_AGENT_TOGGLE_SELECTOR,
+    ENTITY_ATTACH_DRIFT_HINT,
     MODE_SWITCH_TRIGGER_SELECTORS,
     VideoGenerationMixin,
+    selector_drift_detail,
     zip_entity_refs,
 )
 from gflow_cli.errors import (
@@ -38,6 +42,7 @@ from gflow_cli.errors import (
     BatchPartialError,
     ContentPolicyError,
     GFlowError,
+    UiSelectorDriftError,
     WafRejectionError,
     WireFormatError,
 )
@@ -56,6 +61,12 @@ except ImportError:  # pragma: no cover — Playwright is an install dependency
     async_playwright = None  # type: ignore[assignment]
 
 log = structlog.get_logger(__name__)
+
+# Type aliases for JSON-shaped ``cast(...)`` targets. Extracted so the quoted
+# cast strings are not duplicated (SonarCloud S1192); a module-level alias keeps
+# ruff's TC006 happy since the call sites pass a bare name, not a subscript.
+_JsonObj = dict[str, Any]
+_AnyList = list[Any]
 
 # Flow editor entrypoint — ``?hl=en`` locks locale for selector stability.
 FLOW_URL = "https://labs.google/fx/tools/flow?hl=en"
@@ -108,6 +119,9 @@ _ALLOWED_DOWNLOAD_HOST_SUFFIXES: tuple[str, ...] = (
     "googleusercontent.com",
     "googleapis.com",
     "google.com",
+    # Agentic cohort: the tRPC redirect URL (media.getMediaUrlRedirect) is
+    # same-origin with labs.google — session cookies authorise the download.
+    "labs.google",
 )
 
 
@@ -185,6 +199,18 @@ SUBMIT_BUTTON_SELECTORS = (
     "button:has(i:text('arrow_forward'))",
     "button:has-text('arrow_forward')",
 )
+
+# Agent-mode activation. Clicking the in-composer "Agent" toggle
+# (:data:`COMPOSER_AGENT_TOGGLE_SELECTOR`) flips the classic composer into the
+# agentic chat layout — the ``crop_*`` media trigger disappears and the ``tune``
+# settings gear + ``expand_content`` open button appear. Captured live
+# 2026-06-14 via ``scripts/e2e/capture_agent_toggle.py`` (cropPresent true→false,
+# tune false→true). Opt-in via ``GFLOW_CLI_FORCE_AGENT_UI`` to deterministically
+# drive the agentic path regardless of the server-assigned A/B cohort (which has
+# no client-readable flag and cannot otherwise be forced).
+AGENT_FORCE_ENV_VAR = "GFLOW_CLI_FORCE_AGENT_UI"
+AGENT_TUNE_INDICATOR_SELECTOR = "i.google-symbols:text-is('tune')"
+AGENT_EXPAND_BUTTON_SELECTOR = "button:has(i.google-symbols:text-is('expand_content'))"
 
 # Self-contained, locale-independent triptych instruction for body generation.
 # Live-verified 2026-06-02: produces a consistent front/side/back body image in ONE
@@ -361,15 +387,16 @@ WELCOME_SCREEN_SELECTORS = (
 )
 
 
-# Generation settings trigger — the button shows the current ratio icon.
-# All 5 ratio icon names are enumerated so the selector is ratio-invariant.
-GEN_SETTINGS_BUTTON_SELECTORS = (
-    "button:has(i.google-symbols:text('crop_16_9'))",
-    "button:has(i.google-symbols:text('crop_9_16'))",
-    "button:has(i.google-symbols:text('crop_square'))",
-    "button:has(i.google-symbols:text('crop_portrait'))",
-    "button:has(i.google-symbols:text('crop_landscape'))",
-)
+# Generation settings trigger — the SAME unified button as the mode-switch
+# dropdown: a ``button[aria-haspopup='menu']`` carrying the current ratio
+# ``crop_*`` icon. The ``aria-haspopup='menu'`` qualifier is REQUIRED — without
+# it any icon-only aspect thumbnail in the just-opened panel can match, causing
+# a click on the wrong element and a ``gen_settings_panel_not_found`` skip that
+# leaves Flow's own default count in effect (typically 2 concurrent requests
+# billed while the CLI downloads only 1). Aliased to
+# ``MODE_SWITCH_TRIGGER_SELECTORS`` so the two call sites stay a single source
+# of truth (see [[image-video-mode-switch-symmetry]]).
+GEN_SETTINGS_BUTTON_SELECTORS = MODE_SWITCH_TRIGGER_SELECTORS
 
 # CLI string → ordered list of candidate tab labels to try in the Flow gen
 # settings panel. Most ratios are labelled with their colon-numeric form
@@ -394,6 +421,10 @@ _COUNT_TAB_COUNT = 4
 # Extracted to a module-level constant to satisfy SonarCloud S1192
 # (duplicate literal) and keep the spelling consistent across log sites.
 _EVT_COUNT_SETTER_COMPLETED = "ui_automation.count_setter_completed"
+
+# Structured event name emitted at every overlay-dismissal exit path.
+# Extracted to a module-level constant to satisfy SonarCloud S1192.
+_EVT_OVERLAY_DISMISSED = "ui_automation.overlay_dismissed"
 
 # Regex that matches count-tab text exactly: "1x", "x2", "x3", "x4".
 # These are the ONLY role="tab" elements whose text fits this pattern —
@@ -432,9 +463,14 @@ _CLI_FROM_ASPECT: dict[Aspect, str] = {
 }
 
 
-def _aspect_cli_from_enum(aspect: Aspect) -> str | None:
+def aspect_cli_from_enum(aspect: Aspect) -> str | None:
     """Map the domain Aspect enum to the CLI string the settings panel expects."""
     return _CLI_FROM_ASPECT.get(aspect)
+
+
+# Back-compat alias — kept so any remaining internal callers and the existing
+# test imports work without a rename sweep.
+_aspect_cli_from_enum = aspect_cli_from_enum
 
 
 def _prompt_hash_stable(text: str) -> str:
@@ -461,10 +497,10 @@ def _collect_images_from_body(body: dict[str, Any], images: list[GeneratedImage]
     media_list_raw = body.get("media", [])
     if not isinstance(media_list_raw, list):
         return
-    for item_raw in cast("list[Any]", media_list_raw):
+    for item_raw in cast(_AnyList, media_list_raw):
         if not isinstance(item_raw, dict):
             continue
-        item: dict[str, Any] = cast("dict[str, Any]", item_raw)
+        item: dict[str, Any] = cast(_JsonObj, item_raw)
         try:
             images.append(GeneratedImage.from_response_item(item))
         except ValueError as e:
@@ -486,7 +522,7 @@ def _images_from_responses(
 
     for response in responses:
         status = response.get("status")
-        body: dict[str, Any] = cast("dict[str, Any]", response.get("body") or {})
+        body: dict[str, Any] = cast(_JsonObj, response.get("body") or {})
         route_str: str = str(response.get("url", ""))
 
         if status == 401:
@@ -566,10 +602,10 @@ def _summarize_batch_request_body(post_data: str | None) -> dict[str, Any]:
         return summary
     if not isinstance(parsed, dict):
         return summary
-    parsed_dict = cast("dict[str, Any]", parsed)
+    parsed_dict = cast(_JsonObj, parsed)
     reqs = parsed_dict.get("requests")
     if isinstance(reqs, list) and reqs and isinstance(reqs[0], dict):
-        first = cast("dict[str, Any]", reqs[0])
+        first = cast(_JsonObj, reqs[0])
         summary["request0_keys"] = sorted(first.keys())
         ref_bits = {
             k: _elide_large_value(v)
@@ -581,6 +617,47 @@ def _summarize_batch_request_body(post_data: str | None) -> dict[str, Any]:
     else:
         summary["top_keys"] = sorted(parsed_dict.keys())
     return summary
+
+
+def _entity_ids_from_one_request(req: Any) -> set[str]:
+    """Extract entityId strings from a single ``requests[]`` entry."""
+    if not isinstance(req, dict):
+        return set()
+    ents = cast(_JsonObj, req).get("referenceEntities")
+    if not isinstance(ents, list):
+        return set()
+    out: set[str] = set()
+    for ent in cast(_AnyList, ents):
+        if isinstance(ent, dict):
+            entity_id = cast(_JsonObj, ent).get("entityId")
+            if isinstance(entity_id, str):
+                out.add(entity_id)
+    return out
+
+
+def _entity_ids_from_request_body(post_data: str | None) -> set[str]:
+    """Entity ids carried by an outgoing ``batchGenerateImages`` body.
+
+    Request shape (live-verified — issue #170 report + movie spike):
+    ``requests[].referenceEntities[].entityId``. Feeds the #170 submit
+    backstop: a UI attach miss must not degrade to a text-only generation
+    reported as success.
+    """
+    if not post_data:
+        return set()
+    try:
+        parsed: object = json.loads(post_data)
+    except (ValueError, TypeError):
+        return set()
+    if not isinstance(parsed, dict):
+        return set()
+    out: set[str] = set()
+    reqs = cast(_JsonObj, parsed).get("requests")
+    if not isinstance(reqs, list):
+        return out
+    for req in cast(_AnyList, reqs):
+        out |= _entity_ids_from_one_request(req)
+    return out
 
 
 class UiAutomationTransport(VideoGenerationMixin):
@@ -651,7 +728,21 @@ class UiAutomationTransport(VideoGenerationMixin):
             log.info("ui_automation.setup_shared_page")
             return
 
-        if async_playwright is None:  # pragma: no cover — install-time guard
+        # Engine selection (standalone-context path; the shared-page path above
+        # already returned). Default playwright keeps the module symbol; only the
+        # opt-in patchright engine routes through the resolver.
+        from gflow_cli.api._engine import (
+            active_engine,
+            log_engine_selected,
+            resolve_async_playwright,
+        )
+        from gflow_cli.config import BrowserEngine
+
+        engine = active_engine()
+        log_engine_selected(engine)
+        if engine == BrowserEngine.PATCHRIGHT:
+            pw_factory = resolve_async_playwright(engine)
+        elif async_playwright is None:  # pragma: no cover — install-time guard
             msg = (
                 "Playwright is required for UiAutomationTransport. "
                 "Install via `uv sync` (it is a runtime dependency)."
@@ -659,9 +750,14 @@ class UiAutomationTransport(VideoGenerationMixin):
             raise RuntimeError(
                 msg,
             )
+        else:
+            pw_factory = async_playwright
 
-        pw_cm = async_playwright()
-        pw = await pw_cm.__aenter__()
+        pw_cm = pw_factory()
+        # The two engines (playwright | patchright) expose a structurally identical
+        # ``.chromium.launch_persistent_context`` surface; type as Any so this
+        # standalone path is engine-agnostic without per-engine stubs.
+        pw: Any = await pw_cm.__aenter__()
         try:
             import os
 
@@ -688,9 +784,10 @@ class UiAutomationTransport(VideoGenerationMixin):
             )
             self._pw_cm = pw_cm
             self._ctx = ctx
-            self._page = ctx.pages[0] if ctx.pages else await ctx.new_page()
+            page = cast("Page", ctx.pages[0] if ctx.pages else await ctx.new_page())
+            self._page = page
             try:
-                await self._page.goto(FLOW_URL, wait_until="networkidle", timeout=45_000)
+                await page.goto(FLOW_URL, wait_until="networkidle", timeout=45_000)
             except Exception as e:
                 log.warning("ui_automation.flow_initial_goto_failed", error=str(e))
             self._owns_playwright = True
@@ -754,6 +851,58 @@ class UiAutomationTransport(VideoGenerationMixin):
             except Exception:
                 continue
 
+    @staticmethod
+    async def _detect_overlay(page: Page) -> bool:
+        """Return True if any changelog iframe or welcome screen is currently visible."""
+        for sel in CHANGELOG_IFRAME_SELECTORS + WELCOME_SCREEN_SELECTORS:
+            try:
+                if await page.locator(sel).first.is_visible(timeout=1500):
+                    log.info("ui_automation.overlay_detected", selector=sel)
+                    return True
+            except Exception:
+                continue
+        return False
+
+    @staticmethod
+    async def _try_page_close_button(page: Page) -> bool:
+        """Try each OVERLAY_CLOSE_BUTTON_SELECTORS at page level. Returns True on success."""
+        for close_sel in OVERLAY_CLOSE_BUTTON_SELECTORS:
+            try:
+                loc = page.locator(close_sel).first
+                if await loc.is_visible(timeout=500):
+                    await loc.click(force=True)
+                    await page.wait_for_timeout(1000)
+                    log.info(
+                        _EVT_OVERLAY_DISMISSED,
+                        selector=close_sel,
+                        method="close_button_page",
+                    )
+                    return True
+            except Exception:
+                continue
+        return False
+
+    @staticmethod
+    async def _try_iframe_close_button(page: Page) -> bool:
+        """Try each close-button selector inside each changelog iframe. Returns True on success."""
+        for iframe_sel in CHANGELOG_IFRAME_SELECTORS:
+            try:
+                frame = page.frame_locator(iframe_sel).first
+                for close_sel in OVERLAY_CLOSE_BUTTON_SELECTORS:
+                    loc = frame.locator(close_sel).first
+                    if await loc.is_visible(timeout=500):
+                        await loc.click(force=True)
+                        await page.wait_for_timeout(1000)
+                        log.info(
+                            _EVT_OVERLAY_DISMISSED,
+                            selector=close_sel,
+                            method="close_button_frame",
+                        )
+                        return True
+            except Exception:
+                continue
+        return False
+
     async def _dismiss_blocking_overlays(
         self,
         page: Page,
@@ -778,62 +927,21 @@ class UiAutomationTransport(VideoGenerationMixin):
         Returns True if a dismissal action was taken, False if the page was
         clear (no overlay) or if dismissal could not be confirmed.
         """
-        # Step 1 — detect whether a blocking overlay is present.
-        overlay_found = False
-        for sel in CHANGELOG_IFRAME_SELECTORS + WELCOME_SCREEN_SELECTORS:
-            try:
-                if await page.locator(sel).first.is_visible(timeout=1500):
-                    overlay_found = True
-                    log.info("ui_automation.overlay_detected", selector=sel)
-                    break
-            except Exception:
-                continue
-
-        if not overlay_found:
+        if not await self._detect_overlay(page):
             return False
 
-        # Step 2 — try explicit close buttons first.
-        # We try them both on the page AND inside any detected iframe.
-        for close_sel in OVERLAY_CLOSE_BUTTON_SELECTORS:
-            try:
-                # Try page level
-                loc = page.locator(close_sel).first
-                if await loc.is_visible(timeout=500):
-                    await loc.click(force=True)
-                    await page.wait_for_timeout(1000)
-                    log.info(
-                        "ui_automation.overlay_dismissed",
-                        selector=close_sel,
-                        method="close_button_page",
-                    )
-                    return True
-            except Exception:
-                continue
+        if await self._try_page_close_button(page):
+            return True
 
-        # Step 3 — try inside iframes.
-        for iframe_sel in CHANGELOG_IFRAME_SELECTORS:
-            try:
-                frame = page.frame_locator(iframe_sel).first
-                for close_sel in OVERLAY_CLOSE_BUTTON_SELECTORS:
-                    loc = frame.locator(close_sel).first
-                    if await loc.is_visible(timeout=500):
-                        await loc.click(force=True)
-                        await page.wait_for_timeout(1000)
-                        log.info(
-                            "ui_automation.overlay_dismissed",
-                            selector=close_sel,
-                            method="close_button_frame",
-                        )
-                        return True
-            except Exception:
-                continue
+        if await self._try_iframe_close_button(page):
+            return True
 
-        # Step 4 — Escape fallback (regression test case: iframe present, no close button).
+        # Escape fallback (regression test case: iframe present, no close button).
         try:
             await page.keyboard.press("Escape")
             await page.wait_for_timeout(1000)
             log.info(
-                "ui_automation.overlay_dismissed",
+                _EVT_OVERLAY_DISMISSED,
                 selector="<none>",
                 method="escape",
             )
@@ -931,6 +1039,44 @@ class UiAutomationTransport(VideoGenerationMixin):
         )
 
     @staticmethod
+    async def _force_agent_mode(page: Page) -> bool:
+        """Force the agentic composer by clicking the in-composer Agent toggle.
+
+        Opt-in helper (gated by :data:`AGENT_FORCE_ENV_VAR`) used to drive the
+        agentic path deterministically — the server-assigned A/B cohort has no
+        client-readable flag, but the in-composer "Agent" toggle switches the
+        classic composer into the same agentic layout (``crop_*`` → ``tune``).
+
+        Idempotent: a no-op when the composer is already agentic (the ``tune``
+        gear is present). Returns ``True`` if the composer is agentic on exit.
+        """
+        if await page.locator(AGENT_TUNE_INDICATOR_SELECTOR).count() > 0:
+            log.info("ui_automation.agent_mode_already_active")
+            return True
+        # The composer renders a beat after navigation, so wait for the Agent
+        # toggle before clicking — an instant probe races the render and misses
+        # it (same failure mode as the cohort-detection race).
+        toggle = page.locator(COMPOSER_AGENT_TOGGLE_SELECTOR).first
+        try:
+            await toggle.wait_for(state="visible", timeout=8000)
+        except Exception:
+            log.warning("ui_automation.agent_toggle_not_found")
+            return False
+        await toggle.click(force=True)
+        await page.wait_for_timeout(1200)
+        # Best-effort: open the agent side panel via the expand button.
+        try:
+            expand = page.locator(AGENT_EXPAND_BUTTON_SELECTOR).first
+            if await expand.count() > 0:
+                await expand.click(force=True)
+                await page.wait_for_timeout(800)
+        except Exception as e:
+            log.debug("ui_automation.agent_expand_failed", error=str(e)[:80])
+        activated = await page.locator(AGENT_TUNE_INDICATOR_SELECTOR).count() > 0
+        log.info("ui_automation.agent_mode_forced", activated=activated)
+        return activated
+
+    @staticmethod
     async def _switch_to_image_mode(page: Page, *, out_dir: Path | None = None) -> None:
         """Open the 2-step mode dropdown and switch to Image mode.
 
@@ -946,7 +1092,7 @@ class UiAutomationTransport(VideoGenerationMixin):
         # New Flow UI: if the composer is in Agent mode the generation panel is
         # absent — switch back to media mode first so the trigger probe below
         # can find the crop_* dropdown.
-        await VideoGenerationMixin._exit_agent_mode(page)
+        await VideoGenerationMixin._exit_agent_mode(page, out_dir=out_dir)
         trigger = await VideoGenerationMixin._probe_selector_cascade(
             page,
             "mode_switch_trigger",
@@ -954,9 +1100,12 @@ class UiAutomationTransport(VideoGenerationMixin):
         )
         if trigger is None:
             shot = await _capture_debug_screenshot(page, out_dir, "debug_no_mode_trigger.png")
-            msg = f"mode-switch dropdown trigger not found on the Flow editor. Screenshot: {shot}"
-            raise RuntimeError(
-                msg,
+            raise UiSelectorDriftError(
+                selector_drift_detail(
+                    "mode_switch_trigger",
+                    "no matching element found on the Flow editor.",
+                    shot,
+                )
             )
         await trigger.click()
         await page.wait_for_timeout(800)
@@ -967,8 +1116,13 @@ class UiAutomationTransport(VideoGenerationMixin):
         )
         if image_tab is None:
             shot = await _capture_debug_screenshot(page, out_dir, "debug_no_image_tab.png")
-            msg = f"Image tab not found in the mode dropdown. Screenshot: {shot}"
-            raise RuntimeError(msg)
+            raise UiSelectorDriftError(
+                selector_drift_detail(
+                    "image_mode_tab",
+                    "Image tab not found in the mode dropdown.",
+                    shot,
+                )
+            )
         await image_tab.click()
         await page.wait_for_timeout(1200)
         await page.keyboard.press("Escape")
@@ -1664,6 +1818,7 @@ class UiAutomationTransport(VideoGenerationMixin):
         page: Page,
         *,
         project_id: str | None = None,
+        sink: list[dict[str, Any]] | None = None,
     ) -> Callable[[], None]:
         """Register a ``page.on('request', ...)`` that logs a compact summary of
         each outgoing ``batchGenerateImages`` body.
@@ -1672,6 +1827,10 @@ class UiAutomationTransport(VideoGenerationMixin):
         the submit carries ``referenceEntities`` — the entity-reference spike's
         make-or-break signal — without dumping i2i image bytes. Returns an
         idempotent detach fn, torn down alongside the response listener.
+
+        When *sink* is given, each matching request also appends
+        ``{"url", "entity_ids"}`` so the caller can enforce the #170 submit
+        backstop (:meth:`_assert_image_entities_attached`) after the run.
         """
 
         def on_request(request_obj: Any) -> None:
@@ -1687,6 +1846,13 @@ class UiAutomationTransport(VideoGenerationMixin):
                 filter_project_id=project_id,
                 summary=_summarize_batch_request_body(post_data),
             )
+            if sink is not None:
+                sink.append(
+                    {
+                        "url": request_obj.url,
+                        "entity_ids": _entity_ids_from_request_body(post_data),
+                    }
+                )
 
         page.on("request", on_request)
 
@@ -1893,6 +2059,10 @@ class UiAutomationTransport(VideoGenerationMixin):
         project_id: str | None = None,
     ) -> list[GeneratedImage]:
         """Serialized body of generate_images — called under self._generate_lock."""
+        from gflow_cli.api.transports.drivers.factory import (  # noqa: PLC0415
+            get_ui_driver,
+        )
+
         page: Page = self._page  # type: ignore[assignment]  # guard in caller
         out_dir = self._out_dir
 
@@ -1900,22 +2070,37 @@ class UiAutomationTransport(VideoGenerationMixin):
         # Dismiss any Flow changelog / "What's new" overlay that may be on top
         # of the editor before we click into settings / submit (#26).
         await self._dismiss_blocking_overlays(page, out_dir)
+
+        # Opt-in (GFLOW_CLI_FORCE_AGENT_UI): force the agentic composer so the
+        # agentic path can be exercised deterministically (the A/B cohort can't
+        # be forced server-side). The probe below then binds the agentic driver.
+        if os.getenv(AGENT_FORCE_ENV_VAR):
+            await self._force_agent_mode(page)
+
+        # Probe the DOM for the active UI cohort AFTER _enter_editor so the
+        # project page is fully rendered.  The cohort flaps per page load so
+        # we re-probe every generation — never cache across calls.
+        # Classic driver requires a transport reference for send_prompt.
+        from gflow_cli.config import get_settings
+
+        ui_driver = await get_ui_driver(page, prefer_classic=get_settings().prefer_classic)
+        if ui_driver.name == "classic":
+            ui_driver._transport = self  # type: ignore[union-attr]
+
         # Select Image mode explicitly. If the account was last in Video mode,
         # an unguarded submission goes to the video endpoint and the image
         # listener never observes ``batchGenerateImages``.
-        await self._switch_to_image_mode(page, out_dir=out_dir)
+        await ui_driver.switch_to_image_mode(page, out_dir=out_dir)
 
         # Resolve the project_id from the URL now that we're in the editor.
         nav_project_id = _extract_project_id(page.url)
-        aspect_cli = _aspect_cli_from_enum(request.aspect)
 
         # Configure generation settings (aspect ratio + count) BEFORE attaching
         # the response listener so settings clicks don't interfere with capture.
-        await self._configure_generation_settings(
+        await ui_driver.configure_image_settings(
             page,
-            aspect_cli,
-            request.count,
-            model=request.model,
+            request,
+            out_dir=out_dir,
         )
 
         # I2I: bind local reference images through the editor's media dialog —
@@ -1945,6 +2130,13 @@ class UiAutomationTransport(VideoGenerationMixin):
                 out_dir=out_dir,
             )
 
+        # Agentic path: DOM scraping (page-level network capture is dead in this
+        # cohort — requests are Web-Worker-delegated, so 0 entries are captured).
+        if ui_driver.name == "agentic":
+            await ui_driver.send_prompt(page, request.prompt, out_dir=out_dir)
+            return await ui_driver.await_images(page, request.count, out_dir=out_dir)
+
+        # Classic path: network-capture via response listener (unchanged).
         # Attach the response listener SYNCHRONOUSLY before any prompt
         # action. asyncio.create_task is unsafe here: it defers the listener
         # registration until the new task gets event-loop scheduling, which
@@ -1952,16 +2144,19 @@ class UiAutomationTransport(VideoGenerationMixin):
         # attach/await eliminates that race. Project-ID filter prevents stale
         # responses from previously-visited projects accumulating in the list.
         captured, detach = self._attach_batch_response_listener(page, project_id=nav_project_id)
-        # Also log the OUTGOING request body summary so the entity-reference spike
-        # can read whether the submit carries `referenceEntities`.
-        req_log_detach = self._attach_batch_request_logger(page, project_id=nav_project_id)
+        # Also log the OUTGOING request body summary AND collect the entity ids
+        # it carries — the #170 submit backstop reads the sink after the run.
+        request_bodies: list[dict[str, Any]] = []
+        req_log_detach = self._attach_batch_request_logger(
+            page, project_id=nav_project_id, sink=request_bodies
+        )
         # Record submit_time BEFORE the click so the post-submit-time filter
         # in _await_captured can distinguish this prompt's responses from any
         # stale entries that arrived between listener attach and the click.
         submit_time = time.monotonic()
         responses: list[dict[str, Any]] = []
         try:
-            await self._send_prompt(page, request.prompt, out_dir)
+            await ui_driver.send_prompt(page, request.prompt, out_dir=out_dir)
             responses = await self._await_captured(
                 captured,
                 expected_count=request.count,
@@ -1987,7 +2182,48 @@ class UiAutomationTransport(VideoGenerationMixin):
                 detail="batchGenerateImages returned 200 but no parseable media items",
                 route=first_error_route or "",
             )
+        # Submit backstop (issue #170): the run is only a success if every
+        # requested character entity actually rode the wire. A missed UI attach
+        # (e.g. the include selector clicked the wrong element) would otherwise
+        # return a plain text-only generation as if it used the character.
+        if request.reference_entities:
+            self._assert_image_entities_attached(
+                request_bodies, expected=list(request.reference_entities)
+            )
         return images
+
+    @staticmethod
+    def _assert_image_entities_attached(
+        request_bodies: list[dict[str, Any]],
+        *,
+        expected: list[str],
+    ) -> None:
+        """Defense-in-depth mirror of the video path's _assert_entities_attached.
+
+        *request_bodies* is the sink filled by :meth:`_attach_batch_request_logger`
+        (one entry per captured outgoing ``batchGenerateImages`` body). Every
+        *expected* entity id must appear in at least one captured submit;
+        otherwise raise :class:`WireFormatError` — never report a text-only
+        generation as an entity-referenced success.
+        """
+        seen: set[str] = set()
+        for body in request_bodies:
+            ids = body.get("entity_ids")
+            if isinstance(ids, set):
+                seen |= cast("set[str]", ids)
+        missing = [e for e in expected if e not in seen]
+        if missing:
+            raise WireFormatError(
+                detail=(
+                    f"captured batchGenerateImages submit is missing "
+                    f"referenceEntities {missing} — the staged character "
+                    f"never rode the wire"
+                ),
+                route="flowMedia:batchGenerateImages",
+                remediation_hint=ENTITY_ATTACH_DRIFT_HINT,
+                discovery={"entity_attach_context": "image"},
+            )
+        log.info("ui_automation.image_entities_attached", entity_ids=sorted(seen))
 
     # ------------------------------------------------------------------
     # Public batch API — generate_images_batch (stay-mounted, v3-3)
@@ -2038,6 +2274,7 @@ class UiAutomationTransport(VideoGenerationMixin):
         req: GenerateImageRequest,
         project_id: str,
         out_dir: Path | None,
+        ui_driver: Any,
     ) -> tuple[BatchSubmissionResult, GFlowError | None]:
         """Single prompt's lifecycle inside a batch: configure → attach
         listener → submit → await → detach → parse.
@@ -2048,7 +2285,6 @@ class UiAutomationTransport(VideoGenerationMixin):
         the caller should propagate via :class:`BatchPartialError`.  Detach
         is guaranteed exactly once on every code path.
         """
-        aspect_cli = _aspect_cli_from_enum(req.aspect)
         prompt_hash = _prompt_hash_stable(req.prompt)
 
         def _fail(exc: BaseException) -> tuple[BatchSubmissionResult, GFlowError]:
@@ -2071,17 +2307,35 @@ class UiAutomationTransport(VideoGenerationMixin):
 
         # Step 1 — configure settings (aspect + count) for this prompt.
         try:
-            await self._configure_generation_settings(
+            await ui_driver.configure_image_settings(
                 page,
-                aspect_cli,
-                req.count,
-                model=req.model,
+                req,
                 out_dir=out_dir,
                 prompt_idx=idx,
             )
         except Exception as exc:
             return _fail(exc)
 
+        # Agentic path: DOM scraping — no page-level listener (Web-Worker-delegated).
+        if ui_driver.name == "agentic":
+            try:
+                await ui_driver.send_prompt(page, req.prompt, out_dir=out_dir)
+                images = await ui_driver.await_images(page, req.count, out_dir=out_dir)
+            except Exception as exc:
+                return _fail(exc)
+            return (
+                BatchSubmissionResult(
+                    status="ok",
+                    project_id=project_id,
+                    prompt_idx=idx,
+                    prompt_hash=prompt_hash,
+                    images=tuple(images),
+                    error=None,
+                ),
+                None,
+            )
+
+        # Classic path: network-capture via response listener (unchanged).
         # Step 2 — attach a fresh listener JUST for this prompt.
         # Attaching after configure ensures settings-panel clicks never land
         # in the listener window.  Detach happens immediately after
@@ -2095,7 +2349,7 @@ class UiAutomationTransport(VideoGenerationMixin):
 
         # Step 3 — submit the prompt.
         try:
-            await self._send_prompt(page, req.prompt, out_dir)
+            await ui_driver.send_prompt(page, req.prompt, out_dir=out_dir)
         except Exception as exc:
             detach()
             return _fail(exc)
@@ -2179,6 +2433,10 @@ class UiAutomationTransport(VideoGenerationMixin):
         The editor stays mounted for the full batch (same-project invariant
         intact) — only the submit/await cycle is serial.
         """
+        from gflow_cli.api.transports.drivers.factory import (  # noqa: PLC0415
+            get_ui_driver,
+        )
+
         page: Any = self._page  # type: ignore[assignment]
         out_dir = self._out_dir
 
@@ -2207,8 +2465,18 @@ class UiAutomationTransport(VideoGenerationMixin):
             )
             raise
 
+        # Probe the DOM for the active UI cohort AFTER _enter_editor.  The
+        # cohort flaps per page load; bind once per batch (the editor stays
+        # mounted so the cohort is stable for this batch's lifetime).
+        # Classic driver requires a transport reference for send_prompt.
+        from gflow_cli.config import get_settings
+
+        ui_driver = await get_ui_driver(page, prefer_classic=get_settings().prefer_classic)
+        if ui_driver.name == "classic":
+            ui_driver._transport = self  # type: ignore[union-attr]
+
         try:
-            await self._switch_to_image_mode(page, out_dir=out_dir)
+            await ui_driver.switch_to_image_mode(page, out_dir=out_dir)
         except Exception:
             log.warning(
                 "ui_automation.orphaned_project_warning",
@@ -2233,6 +2501,7 @@ class UiAutomationTransport(VideoGenerationMixin):
                 req=req,
                 project_id=project_id,
                 out_dir=out_dir,
+                ui_driver=ui_driver,
             )
             results.append(result)
 
@@ -2462,14 +2731,14 @@ class UiAutomationTransport(VideoGenerationMixin):
         for response in responses:
             if response.get("status") != 200:
                 continue
-            body: dict[str, Any] = cast("dict[str, Any]", response.get("body") or {})
+            body: dict[str, Any] = cast(_JsonObj, response.get("body") or {})
             raw_workflows = body.get("workflows", [])
             if not isinstance(raw_workflows, list):
                 continue
-            for wf_raw in cast("list[Any]", raw_workflows):
+            for wf_raw in cast(_AnyList, raw_workflows):
                 if not isinstance(wf_raw, dict):
                     continue
-                wf: dict[str, Any] = cast("dict[str, Any]", wf_raw)
+                wf: dict[str, Any] = cast(_JsonObj, wf_raw)
                 # Only surface workflows that carry the character-binding field.
                 if "parentEntityId" not in wf:
                     log.debug(

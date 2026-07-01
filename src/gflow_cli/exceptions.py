@@ -24,5 +24,7 @@ from gflow_cli.errors import ProblemDetails as ProblemDetails
 from gflow_cli.errors import RateLimitError as RateLimitError
 from gflow_cli.errors import SecurityError as SecurityError
 from gflow_cli.errors import TransportTimeoutError as TransportTimeoutError
+from gflow_cli.errors import UiSelectorDriftError as UiSelectorDriftError
+from gflow_cli.errors import UpscaleUnavailableError as UpscaleUnavailableError
 from gflow_cli.errors import WafRejectionError as WafRejectionError
 from gflow_cli.errors import WireFormatError as WireFormatError

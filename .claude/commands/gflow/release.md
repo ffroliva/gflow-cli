@@ -70,6 +70,19 @@ memory) or the release branch will hit conflicts on `pyproject.toml` / `__init__
 
 Run `/gflow:check` — all gates must pass. Abort if any fail.
 
+**4b. Live-verify the release's user-facing features (REQUIRED gate).**
+
+For every new/changed user-facing feature in this release, exercise it against
+live Flow (credit-free wherever possible — image gen, entity attach, upscale, and
+scene/timeline ops cost no Veo credits) and write the evidence to
+`docs/LIVE_VERIFICATION_v<NEW_VERSION>.md` using the 5-layer ledger (file count +
+magic bytes + dimensions/shape + structlog invariants + a user-confirmable
+artifact). Add it to the "what was live-verified" entry in `docs/INDEX.md`. This
+doc shipped for every release v0.7.0→v0.13.0, then lapsed for v0.14.0–v0.15.1 —
+which is why it is now an explicit gate. If a feature genuinely cannot be verified
+this cycle, record that and the reason in the doc; never silently omit it. Stage
+the doc into the release-prep commit (step 11).
+
 **5. Create a release branch off `develop`.**
 
 ```bash
@@ -115,6 +128,12 @@ rg -n "__version__|<OLD_VERSION>|version assertion" tests src pyproject.toml
 **10. Run the documentation review gate.**
 
 Run `/gflow:doc-review` — audit all version refs, INDEX completeness, evidence files, skill files, CHANGELOG footer, and memory files. Fix every **FAIL** before continuing. Fold all discovered fixes into the release prep commit.
+
+Also **consolidate shipped planning artifacts** here: extract any durable patterns
+into auto-memory, then remove the now-shipped `docs/superpowers/` plan / spec /
+verification files (keep only in-flight work). `check_repo_hygiene.py` enforces the
+root-doc allowlist, so a stray review doc or session marker left at the repo root
+will fail the gate.
 
 **11. Commit the release prep.**
 
@@ -179,8 +198,10 @@ gh pr create --base main --head chore/release-v<NEW_VERSION> \
   --title "chore(release): v<NEW_VERSION>"
 ```
 
-Wait for PR CI to go green (`gh pr checks <N> --watch`), then merge with a **merge
-commit** — never squash:
+Wait for PR CI to go green (`gh pr checks <N> --watch`). **The `SonarCloud analysis`
+check must be green (gate passed) — not just the test matrix.** If it is red or you
+want the verdict, run `/gflow:sonar <N>` and drive it to zero before merging. Then
+merge with a **merge commit** — never squash:
 
 ```bash
 gh pr merge <N> --merge --delete-branch

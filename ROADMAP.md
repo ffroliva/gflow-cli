@@ -23,14 +23,15 @@ Extends the data layer surface from read-only listing to inspection and selectiv
 - `gflow data export` — JSON / CSV / TSV
 - `gflow data prune` — retention controls (`--older-than`, `--keep-last-n`)
 
-## v0.11.0 — Local HTTP API + Web UI
+## v0.11.0 — Local Studio, Background Worker & MCP SSE Service (in progress / develop)
 
-The API and the UI ship together as one deliverable — neither is useful alone. `gflow ui` boots a local HTTP server on `127.0.0.1` that hosts both the API and the UI; everything stays loopback-only.
+The local Web UI Filmmaking Studio, background task worker, and MCP HTTP/SSE service are integrated into a single unified daemon interface under `gflow serve`.
 
-- `gflow ui` — single command, single port
-- Local REST API over the SQLite catalog with read endpoints for projects / images / videos / profiles
-- Web UI consumes the API; browses generations with thumbnails
-- Aggregated view across local profiles (read-only)
+- [x] **Uvicorn Daemon:** `gflow serve` starts the local FastAPI/Uvicorn server with background task loop.
+- [x] **MCP SSE Server:** Exposes the MCP server over HTTP/SSE, allowing IDE clients and external tools to run JSON-RPC commands.
+- [x] **Flow Worker Daemon:** Local queue manager and `FlowWorker` background task processor reading from SQLite queue tables and managing sequential profile-locked generation runs.
+- [ ] **REST & Static UI:** FastAPI endpoints for asset management and hosting of the Filmmaking Studio (single-page app).
+- [ ] **Aggregated Management:** Full view of accounts, profiles, projects, and active storyboarding queues.
 
 ## v1.0.0 — Stable API
 

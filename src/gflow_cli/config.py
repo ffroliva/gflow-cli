@@ -27,7 +27,7 @@ from functools import lru_cache
 from pathlib import Path
 from typing import Literal
 
-from pydantic import Field, field_validator
+from pydantic import AliasChoices, Field, field_validator
 from pydantic_settings import BaseSettings, SettingsConfigDict
 
 from gflow_cli import paths
@@ -76,6 +76,20 @@ class LogFormat(StrEnum):
 class Provider(StrEnum):
     FLOW = "flow"
     OFFICIAL = "official"  # planned v0.3+ via googleapis/python-genai
+
+
+class BrowserEngine(StrEnum):
+    """Browser-automation engine backing the Playwright API.
+
+    PLAYWRIGHT is the default and the only engine the standard install ships.
+    PATCHRIGHT is an opt-in, drop-in patched Playwright (Chromium) that avoids
+    the ``Runtime.enable`` CDP leak for stronger reCAPTCHA-Enterprise evasion on
+    the headed path; it must be installed separately (``pip install patchright``)
+    and is NOT a headless unlock.
+    """
+
+    PLAYWRIGHT = "playwright"
+    PATCHRIGHT = "patchright"
 
 
 class Settings(BaseSettings):
@@ -159,7 +173,16 @@ class Settings(BaseSettings):
     provider: Provider = Provider.FLOW
     gemini_api_key: str | None = Field(
         default=None,
-        description="Required when provider=official (v0.3+).",
+        description=(
+            "Public Gemini API key. Enables prompt tools (--tool/-t) and, "
+            "in future, provider=official. Override via GFLOW_CLI_GEMINI_API_KEY."
+        ),
+    )
+    gemini_model: str = Field(
+        default="gemini-2.5-flash",
+        description=(
+            "Gemini model used for prompt tools (--tool/-t). Override via GFLOW_CLI_GEMINI_MODEL."
+        ),
     )
 
     # --- transport --------------------------------------------------------
@@ -196,10 +219,49 @@ class Settings(BaseSettings):
             "that use a different transport (e.g. bearer/sapisidhash)."
         ),
     )
+    browser_engine: BrowserEngine = Field(
+        default=BrowserEngine.PLAYWRIGHT,
+        description=(
+            "Browser automation engine: 'playwright' (default) or 'patchright'. "
+            "Patchright is an OPT-IN, drop-in patched Playwright (Chromium) that "
+            "avoids the Runtime.enable CDP leak for stronger reCAPTCHA-Enterprise "
+            "evasion on the HEADED path. It must be installed separately "
+            "(`pip install patchright`) and is NOT a headless unlock — the default "
+            "stays playwright and is unaffected. Override via GFLOW_CLI_BROWSER_ENGINE."
+        ),
+    )
+    prefer_classic: bool = Field(
+        default=False,
+        description=(
+            "Try to force the Classic Flow UI mode for image generation by clicking "
+            "the Agent toggle pill if the page mounts in Agentic mode. This ensures "
+            "deterministic aspect ratio controls. "
+            "If the page cannot be switched back to Classic, falls back to Agentic mode. "
+            "Override via GFLOW_CLI_PREFER_CLASSIC."
+        ),
+    )
+    daemon_token: str | None = Field(
+        default=None,
+        description="Auth token required when binding the serve daemon to a non-localhost address.",
+    )
 
     # --- logging ----------------------------------------------------------
     log_level: LogLevel = LogLevel.INFO
     log_format: LogFormat = LogFormat.AUTO
+
+    # --- daemon -----------------------------------------------------------
+    daemon_token: str | None = Field(
+        default=None,
+        validation_alias=AliasChoices("GFLOW_CLI_DAEMON_TOKEN", "GFLOW_DAEMON_TOKEN"),
+        description="API token to authenticate calls to the daemon server.",
+    )
+    daemon_port: int = Field(
+        default=8000,
+        ge=1,
+        le=65535,
+        validation_alias=AliasChoices("GFLOW_CLI_DAEMON_PORT", "GFLOW_DAEMON_PORT"),
+        description="Port for the FastAPI daemon server. Default is 8000.",
+    )
 
     # --- derived path helpers --------------------------------------------
 
@@ -211,6 +273,9 @@ class Settings(BaseSettings):
 
     def config_file(self) -> Path:
         return paths.config_file(self.home)
+
+    def user_tools_dir(self) -> Path:
+        return paths.user_tools_dir(self.home)
 
 
 @lru_cache(maxsize=1)

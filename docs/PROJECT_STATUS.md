@@ -4,9 +4,25 @@
 
 ## Current release
 
-**v0.15.0 — alpha.** **Character-consistent images via entity references.** `gflow image t2i/i2i` can now reference locked Flow CHARACTER entities (`--reference-entity <id>`, repeatable) and generate in an existing project (`--project <id>`) where those entities live — entities attach through the editor's Personagens picker and ride the submit as `referenceEntities` (confirmed against the live API; the body builder serializes them for headless transports too). Live-verified 2026-06-08: a 3-frame Dragon-Hook smoke rendered drift-free with all three characters on-model. LLM-council-reviewed (security/correctness/dedup) before merge. Carries forward the v0.14.0 `gflow movie` line (multi-scene, character-consistent video).
+**v0.23.0 — alpha.** **MCP generation goes live + macOS 401 fixed.** The MCP server's
+`gflow_generate_image` / `gflow_generate_video` tools — previously non-functional stubs —
+are now wired end-to-end to the FlowWorker queue (background worker owns download +
+history recording), the `tools` prompt-expansion parameter is actually applied, and i2v/r2v
+require their frame/reference inputs at the tool boundary. The long-standing macOS
+generation `401` (#222) is resolved (#230, @gunalak): Flow cookies are read from the full
+jar by domain instead of a path-`/` filter that dropped the `/fx`-scoped session token, and
+the headed context is seeded from a pre-launch snapshot when macOS can't decrypt the store.
+Carries forward v0.22.0 (Tools framework) + v0.21.0 (MCP server). Verification:
+[LIVE_VERIFICATION_v0.23.0](LIVE_VERIFICATION_v0.23.0.md) (MCP wiring proven live; #222
+reporter-verified e2e on macOS).
 
-**Develop (unreleased, post-v0.15.0):** *(empty — develop is the staging branch for the next release).*
+**Develop (unreleased, post-v0.23.0):** *(empty — develop is the staging branch for the next release).*
+
+<details><summary>v0.22.0 — Tools framework ("Creative Director")</summary>
+
+**v0.22.0 — alpha.** **Tools framework ("Creative Director").** A TOML-defined prompt-tool system: `creative-director` rewrites a terse prompt into a vivid one via Google's five-component formula (public Gemini API, never-fatal), with 15 category-gated domain styles and deterministic banned-keyword stripping. Invoke it via the new `gflow tools list/show/run` group or the uniform `-t`/`--tool` option on every generation command (`image t2i`/`i2i`/`batch`, `video t2v`/`i2v`/`r2v`/`chain`), replacing the never-released `-e/--expand`. History records the original prompt, the submitted `expanded_prompt`, and `metadata_json.tool` provenance (redaction-honoring). **"My Tools"**: user-authored TOMLs in `<GFLOW_CLI_HOME>/tools/*.toml` load automatically. MCP parity via `gflow_list_tools` + a `tools` array param; the legacy `expand_prompt` MCP prompt is deprecated. The Gemini expander gained an overall wall-clock budget. Carries forward v0.21.0 (MCP server over stdio + HTTP/SSE). Verification: [LIVE_VERIFICATION_v0.22.0](LIVE_VERIFICATION_v0.22.0.md) (CI/automated complete; live owner-run pending).
+
+</details>
 
 ## Milestone history
 
@@ -58,6 +74,18 @@
 | `gflow scene` — Add Clip / Scenes compose + credit-free server-side extended video (`runVideoFxConcatenation`) | ✅ done (v0.12.0) |
 | `gflow video chain` — last-frame I2V chaining from a JSONL manifest (`--dry-run`/`--max-links`/`--resume-from`) | ✅ done (v0.12.0) |
 | Create-project generation works under Flow's Agent docked chat panel | ✅ done (v0.12.0) |
+| Video status poll raises `AuthExpiredError` (exit 3) on mid-workflow 401 (#156) + Docker `/dev/shm` hardening | ✅ done (v0.15.1) |
+| Locale-free resource-picker include selectors — entity attach works on every account language (#170) | ✅ done (v0.16.0) |
+| `gflow image upscale <mediaId> --scale 2k\|4k` — credit-free download-menu upscale, 4K Ultra-gated (#171) | ✅ done (v0.16.0) |
+| Cookie-store session verification fast path (`verify_flow_profile`, PR #168) + Playwright fallback | ✅ done (v0.17.0) |
+| Entity-attach exit-7 remediation hint + `entity_attach_context` drift telemetry (#174 interim) | ✅ done (v0.17.0) |
+| Agentic-UI exit-23 `UiSelectorDriftError` + `out_dir` wiring (#183) | ✅ done (v0.18.0) |
+| Patchright opt-in browser engine (`GFLOW_CLI_BROWSER_ENGINE=patchright`) | ✅ done (v0.19.0) |
+| Aspect-ratio overrides under Agentic & Classic cohorts + `GFLOW_CLI_PREFER_CLASSIC` (#193) | ✅ done (v0.20.0 / v0.20.1) |
+| MCP server (`gflow mcp run` stdio + `gflow serve` HTTP/SSE) + daemon/queue scaffolding | ✅ done (v0.21.0) |
+| Tools framework: `gflow tools` group + `--tool` + `creative-director` + "My Tools" + MCP parity | ✅ done (v0.22.0) |
+| MCP generation wired to FlowWorker (tool→queue→download→record) + `tools` applied + i2v/r2v boundary validation | ✅ done (v0.23.0) |
+| macOS generation 401 fixed — `/fx` cookie-path read + headed-context seed (#222/#230) | ✅ done (v0.23.0) |
 | `gflow video batch` (TSV manifest) on `ui_automation` | ⏳ Phase B |
 | Persistence layer (stay-mounted batch sessions across project boundaries) | ⏳ Phase B |
 | Provider abstraction for official Veo 3.1 API | ⏳ planned |

@@ -7,6 +7,204 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+## [0.23.0] — 2026-07-01
+
+### Added
+
+- **MCP generation is now functional (#228)**: the `gflow_generate_image` and
+  `gflow_generate_video` MCP tools — previously non-functional stubs — now enqueue onto
+  the FlowWorker queue and run end-to-end, with the background worker owning download and
+  history recording. The `tools` parameter (e.g. `creative-director`) is now applied to
+  expand the prompt before generation (it was previously accepted but never applied), and
+  reference images are supported across the image (`i2i`) and video (`i2v` / `r2v`) tools.
+
+### Fixed
+
+- **macOS generation 401 — resolved (#222, #230)**: Flow cookies are now read from the
+  full cookie jar filtered by domain instead of a path-`/` URL filter that silently
+  dropped the `/fx`-scoped `__Secure-next-auth.session-token`; and on macOS — where the
+  headed generation context can intermittently fail to decrypt the on-disk cookie store —
+  the session is seeded into the context from a snapshot captured pre-launch via the
+  working `--password-store=basic` reader. Verified end-to-end on macOS (Apple Silicon) by
+  the reporter. Thanks @gunalak.
+- **MCP video task safety (#228)**: `i2v` now requires `initial_frame` and `r2v` requires
+  `reference_images`, validated at the tool boundary with a clear error; a post-success
+  recording failure no longer flips a credit-spent video to `failed`; and any
+  non-`completed` task status is reported as a failure rather than a false success.
+- **Chrome channel on Chromium-only hosts**: `channel_for_profile()` now gates
+  Playwright's `channel="chrome"` on a new `_is_playwright_chrome_channel_available()`
+  check that probes only the exact Google-Chrome paths Playwright hardcodes, instead
+  of `is_chrome_available()` (which also accepts Chromium). On a host with only
+  Chromium installed, the CLI no longer requests `channel="chrome"` and fails with
+  `Chromium distribution 'chrome' is not found at /opt/google/chrome/chrome`; it falls
+  back to bundled Chromium and logs an actionable warning (#219).
+- **Text-to-image extra-image billing**: the generation-settings trigger selector now
+  requires `button[aria-haspopup='menu']` (aliased to `MODE_SWITCH_TRIGGER_SELECTORS`),
+  preventing a mis-click on an icon-only aspect thumbnail that skipped the count panel
+  and left Flow's own default count (typically 2) in effect — billing extra generations
+  while the CLI saved only one (#219).
+- **Extra-image observability**: `generate_image()` now logs a
+  `client.generate_image_extra_returned` warning when the transport returns more images
+  than the requested `count=1`, so silent over-generation is surfaced to the user (#219).
+- **macOS generation 401 — fail loud (#222)**: a `chrome`-strategy profile that is
+  silently downgraded to bundled Chromium at generation launch now raises instead of
+  running logged-out, so the macOS auth failure surfaces at its cause rather than as an
+  opaque later `401`.
+
+### Diagnostics
+
+- **Persistent-context cookie state (#222)**: generation launch now logs the resolved
+  `cookies_db_path` (`client.persistent_context_launch`) and the launched context's own
+  cookie state (`client.context_cookie_state`: `flow_session_cookie_present` / count /
+  expiry — **never values**, safe to paste publicly). This splits a cookie-**load**
+  failure (the macOS persistent context cannot decrypt the profile's cookies) from a
+  server-side rejection — the observability that localized the macOS `401` root cause,
+  now resolved (see the #222/#230 entry above).
+
+## [0.22.0] — 2026-06-28
+
+### Added
+
+- **Tools framework ("Creative Director")**: a TOML-defined prompt-tool system with
+  `creative-director` as the first built-in tool, exposed via two surfaces:
+  - **`gflow tools list/show/run`** — discover tools, inspect their styles, and run them
+    standalone (e.g. `gflow tools run creative-director "a cat" --style cinema --json`).
+  - **`-t` / `--tool` option** on every generation command — `image t2i` / `i2i` / `batch`,
+    `video t2v` / `i2v` / `r2v` / `chain` — apply one or more tools before generating
+    (e.g. `--tool creative-director:style=cinema`). Repeatable. On multi-prompt batches and
+    chains the tool is applied per prompt/link. Replaces the never-released `-e/--expand` flag.
+  - The `creative-director` tool rewrites a terse prompt into a vivid one using Google's
+    five-component formula (Subject + Action + Context/Location + Composition/Camera + Style)
+    via the public Gemini API. Requires `GFLOW_CLI_GEMINI_API_KEY`
+    ([get one](https://aistudio.google.com/apikey)); optional `GFLOW_CLI_GEMINI_MODEL`
+    (default `gemini-2.5-flash`). Domain-vocabulary modes (`--style cinema`, `portrait`,
+    `product`, etc.) inject specialized lens/lighting/colour vocabulary; styles are
+    **category-gated**, so image styles apply to image commands and video styles to video.
+  - Tool application is **never fatal** — missing key, rate limit, or any API/network fault
+    degrades gracefully to the original prompt.
+  - **History**: a generation rewritten by a tool records the user's original prompt in the
+    `prompt` column, the submitted expansion in `expanded_prompt`, and the applied tool
+    (`{name, version, model, params, config_hash}`) in `operations.metadata_json.tool` — all
+    honoring `GFLOW_CLI_HISTORY_PROMPTS=redacted` (the redacted form stores only
+    `{name, version, params_hash, config_hash}`).
+  - MCP parity: `gflow_list_tools` tool and a `tools` array parameter (`[{name, options}]`) on
+    `gflow_generate_image` / `gflow_generate_video`, validated and adapted to the CLI
+    `--tool` form.
+  - **"My Tools"**: drop your own tool TOMLs into `<GFLOW_CLI_HOME>/tools/*.toml` and they are
+    registered automatically — listed by `gflow tools list`, usable via `--tool`, and exposed over
+    MCP, just like built-ins. A user tool may override a built-in of the same name (logged via
+    `tool_user_override`); a malformed user TOML fails loud. See [docs/TOOLS.md](docs/TOOLS.md).
+  - The Gemini prompt expander gained an overall **wall-clock budget** (default ~60s per call)
+    on top of the lowered 20s per-attempt timeout, so sustained rate limiting can no longer
+    block a generation for the full retry schedule before falling back to the original prompt.
+
+### Deprecated
+
+- **`expand_prompt` MCP prompt**: superseded by the `creative-director` tool, which performs the
+  rewrite server-side (calls Gemini, strips banned keywords, supports domain styles, records
+  provenance). The prompt still works and now carries a `[DEPRECATED]` marker in its
+  client-visible description; it is slated for removal in a future major release. Use
+  `gflow tools run creative-director` / `--tool` (CLI) or `gflow_list_tools` + the `tools` array
+  param (MCP) instead.
+
+## [0.21.0] — 2026-06-26
+
+### Added
+
+- **MCP server** (`gflow mcp run`): a [Model Context Protocol](https://modelcontextprotocol.io) server over **stdio** that exposes gflow's image / video / data operations to MCP-aware agents (Claude Desktop, Cursor, VS Code) as JSON-RPC **tools, resources, and prompts**. Point the client at `gflow mcp run` (example config in `gflow mcp run --help` and [docs/MCP.md](docs/MCP.md)). `gflow mcp setup --target <claude-desktop|cursor|vscode>` is scaffolded for future auto-configuration.
+- **MCP over HTTP/SSE** (`gflow serve`): serves the same MCP server over Server-Sent Events — stream at `/sse`, POST messages to `/messages/`. Binds `127.0.0.1:8000` by default; non-loopback binds require `GFLOW_DAEMON_TOKEN`. Foundation for the forthcoming Gflow Studio Web UI and REST `/api/v1` surface.
+- **Daemon & generation-queue scaffolding** (internal foundation): a FastAPI lifespan daemon, a `FlowWorker` background processor, and a SQLite-backed generation queue (`QueueRepository` + migration `0007_queue`, swept to `failed` on restart). Lays the groundwork for queued asynchronous generation; not yet wired into a user command (`gflow serve` currently runs the MCP/SSE server only).
+
+### Fixed
+
+- **Security — `cryptography` advisory** ([GHSA-537c-gmf6-5ccf](https://github.com/advisories/GHSA-537c-gmf6-5ccf)): bumped the locked `cryptography` from 48.0.0 to 49.0.0 (transitive dependency).
+
+### Changed
+
+- **CI — dependency CVE gate**: added a `pip-audit` job that audits the locked dependency set on every PR and fails on known advisories.
+- **Code health**: SonarCloud cleanup sweep across the CLI, API, transport drivers, and movie/manifest layers (cognitive-complexity, duplicate-literal, and unused-argument refactors) with no behavioral change.
+
+## [0.20.1] — 2026-06-16
+
+### Fixed
+
+- **Aspect ratio overrides in Agentic & Classic cohorts** ([#193](https://github.com/ffroliva/gflow-cli/issues/193)): Fixed a bug where aspect ratio settings were ignored under the pluggable `FlowUiDriver` strategies (both single and batch image generation paths).
+- **`GFLOW_CLI_PREFER_CLASSIC`** (or `prefer_classic` setting): Added a configuration setting to force the classic UI driver, allowing users to bypass the Agentic UI cohort if preferred.
+
+## [0.20.0] — 2026-06-15
+
+### Added
+
+- **Forced Agentic UI detection** (exit code 25): dynamically detects if the account's Flow editor page has been placed in Google Flow's new Agentic UI A/B cohort. Raises `FlowAgentUiError` and captures a diagnostic viewport screenshot (`debug_forced_agent_ui.png`) to exit cleanly and prevent CLI hangs.
+- **Pluggable Flow UI driver strategy** (`FlowUiDriver`): the UI-automation transport now probes the editor DOM **per generation** (the cohort flaps per page load) and binds a `ClassicFlowUiDriver` or `AgenticFlowUiDriver`, so the two cohorts' selectors never share code. Classic generation is unchanged.
+- **Agentic-cohort image generation** (validated live): when the editor is served the Agentic UI, `gflow image` drives it by encoding settings (count / aspect) into the conversational prompt directive and scraping generated assets directly from the DOM — **deduplicated by media UUID** — because the Agentic UI routes generation through a background Web Worker that defeats page-level network capture. Content-policy blocks (detected in alert/dialog regions) fail fast with `ContentPolicyError` (exit 5). Agentic **video** still raises `FlowAgentUiError` (exit 25) pending a validated scraping path.
+- **`GFLOW_CLI_FORCE_AGENT_UI`** (testing/diagnostic opt-in): forces the agentic composer by clicking the in-input "Agent" toggle after entering the editor, so the agentic path can be exercised deterministically regardless of the server-assigned A/B cohort (which has no client-readable flag). Unset by default — the cohort is auto-detected per generation. See `docs/AGENT_UI_E2E.md`.
+
+## [0.19.0] — 2026-06-12
+
+### Added
+
+- **Opt-in Patchright browser engine** via `GFLOW_CLI_BROWSER_ENGINE=patchright`
+  (default `playwright`, unchanged). Patchright is a drop-in patched Playwright
+  (Chromium) that runs page evaluations in an isolated execution context to
+  avoid the `Runtime.enable` CDP leak, for stronger reCAPTCHA-Enterprise evasion
+  on the **headed** path. It is **not** a headless unlock and must be installed
+  separately: `pip install 'gflow-cli[patchright]'`. The default engine is
+  byte-identical to before. `gflow auth status` now reports the active engine.
+- `BrowserEngineUnavailableError` (exit code 24): selecting `patchright` without
+  the package installed now fails with a clear `pip install patchright`
+  remediation hint instead of a raw `ImportError` hashed to a generic exit 1.
+
+### Fixed
+
+- An invalid `GFLOW_CLI_*` enum value (e.g. a typo'd `GFLOW_CLI_BROWSER_ENGINE`,
+  `GFLOW_CLI_PROVIDER`, or `GFLOW_CLI_LOG_LEVEL`) now fails with a clean
+  configuration error and **exit code 11** naming the offending variable, instead
+  of leaking a raw pydantic `ValidationError` traceback and exiting 1.
+
+## [0.18.0] — 2026-06-12
+
+### Added
+
+- `UiSelectorDriftError` (exit code 23): UI-automation selector-probe failures — e.g. the
+  mode-switch `crop_*` trigger missing from the Flow editor (issue #183) — now raise a typed
+  error carrying the probe name, the debug-screenshot path, and a remediation hint, instead
+  of an opaque "Unexpected error" (exit 1) whose message was hashed away in logs. Converted
+  probes: mode-switch trigger, Image/Video mode tabs, and video sub-mode tabs, in both the
+  image and video transports.
+
+### Fixed
+
+- `gflow image` commands (`t2i` / `i2i` / `upscale` / `upload`) now plumb their output
+  directory into the API client, so debug screenshots are actually captured on
+  UI-automation failures. Previously the transport's screenshot directory was never set on
+  the image path and drift errors reported `Screenshot: None` even with `--verbose`.
+
+## [0.17.0] — 2026-06-12
+
+### Added
+
+- Added `verify_flow_profile` in `gflow_cli.auth.verification` using `browser_cookie3` and `httpx` to verify sessions directly from the Chrome cookie store (fast path), with a marker-gated Playwright fallback for encrypted/locked stores. `RealChromeStrategy` now writes the Chrome marker before verification (the fallback reads it) and, on failure, rolls back only a speculative write — a marker that legitimately pre-existed (a previously-verified chrome profile) survives a transient probe failure, and an interrupted verification never leaves an unverified profile claiming the chrome strategy. Cookie extraction is centralised in the new `gflow_cli.auth.cookies` module.
+
+### Fixed
+
+- `gflow_cli.auth.cookies._get_chrome_cookies3` now catches `RuntimeError` (Windows DPAPI failure — `RuntimeError('Failed to decrypt the cipher text with DPAPI')`) in addition to `browser_cookie3.BrowserCookieError`, and re-raises both as `PermissionError` so the Playwright fallback is triggered instead of propagating an unhandled exception.
+- `verify_flow_profile` now retries transient HTTP failures (429/503/504) and network errors up to `_MAX_ATTEMPTS` times with exponential backoff, matching the retry behaviour of the existing Playwright-based `verify_flow_session`.
+
+### Changed
+
+- Entity-attach `WireFormatError` failures (exit 7) now carry a remediation hint pointing at Flow's new full-page media-library UI rollout ([#174](https://github.com/ffroliva/gflow-cli/issues/174)) — affected accounts can stage entities via the include action but the submit never carries `referenceEntities`; the error now explains how to tell which UI an account has and where to follow the fix, instead of the generic file-a-bug hint. Both backstops also emit an `entity_attach_context` discovery field (`video`/`image`) for drift telemetry. New KNOWN_ISSUES entry documents the rollout
+
+## [0.16.0] — 2026-06-12
+
+### Fixed
+
+- **`--reference-entity` no longer fails on non-Portuguese Flow accounts** ([#170](https://github.com/ffroliva/gflow-cli/issues/170)) — the resource-picker include selectors hardcoded the pt-BR caption "Incluir no comando"; they are now locale-free tier cascades (context-menu `add`-ligature anchor + pt/ru/en text fallback), fixing `gflow image t2i --reference-entity`, movie R2V entity attach, and Vozes voice attach for every account language. Failures are now typed (`TransportTimeoutError`, exit 9) with a locale-neutral remediation hint, the matched selector tier is logged (`include_selector_tier`) for drift telemetry, and a new image-side submit backstop raises `WireFormatError` (exit 7) if a staged character never reaches the wire instead of silently returning a text-only generation. Thanks @papushin7987 for the live-verified report
+
+### Added
+
+- **`gflow image upscale <mediaId> --scale 2k|4k`** — upscale a platform-generated image to 2K or 4K (Flow's download-menu 1K/2K/4K options) and save it locally; credit-free. The owning project is resolved from the local catalog (or pass `--project` for images gflow didn't record). 4K requires a Flow Ultra subscription — a non-Ultra 4K request fails fast with exit code 22 (`UpscaleUnavailableError`) rather than a generic 403. Reverse-engineered wire documented in [docs/IMAGE_UPSCALE_RECON.md](docs/IMAGE_UPSCALE_RECON.md); live-verified end-to-end (issue #171)
+
 ## [0.15.1] — 2026-06-10
 
 ### Changed
@@ -1484,7 +1682,16 @@ shell-script template that branches on these codes.
 
 First skeleton. Not functional end-to-end yet.
 
-[Unreleased]: https://github.com/ffroliva/gflow-cli/compare/v0.15.1...HEAD
+[Unreleased]: https://github.com/ffroliva/gflow-cli/compare/v0.23.0...HEAD
+[0.23.0]: https://github.com/ffroliva/gflow-cli/compare/v0.22.0...v0.23.0
+[0.22.0]: https://github.com/ffroliva/gflow-cli/compare/v0.21.0...v0.22.0
+[0.21.0]: https://github.com/ffroliva/gflow-cli/compare/v0.20.1...v0.21.0
+[0.20.1]: https://github.com/ffroliva/gflow-cli/compare/v0.20.0...v0.20.1
+[0.20.0]: https://github.com/ffroliva/gflow-cli/compare/v0.19.0...v0.20.0
+[0.19.0]: https://github.com/ffroliva/gflow-cli/compare/v0.18.0...v0.19.0
+[0.18.0]: https://github.com/ffroliva/gflow-cli/compare/v0.17.0...v0.18.0
+[0.17.0]: https://github.com/ffroliva/gflow-cli/compare/v0.16.0...v0.17.0
+[0.16.0]: https://github.com/ffroliva/gflow-cli/compare/v0.15.1...v0.16.0
 [0.15.1]: https://github.com/ffroliva/gflow-cli/compare/v0.15.0...v0.15.1
 [0.15.0]: https://github.com/ffroliva/gflow-cli/compare/v0.14.0...v0.15.0
 [0.14.0]: https://github.com/ffroliva/gflow-cli/compare/v0.13.0...v0.14.0

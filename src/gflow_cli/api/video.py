@@ -17,6 +17,12 @@ from typing import TYPE_CHECKING, Any, cast
 if TYPE_CHECKING:
     from pathlib import Path
 
+    from gflow_cli.tools.invocation import AppliedTool
+
+# Type alias used with cast() in response parsers — avoids repeating the
+# string-form annotation "dict[str, Any]" on every call (SonarCloud S1192).
+_StrAnyDict = dict[str, Any]
+
 
 class Mode(StrEnum):
     T2V = "t2v"
@@ -210,6 +216,11 @@ class GenerateVideoRequest:
         str, ...
     ] = ()  # R2V — character DISPLAY names (UI picker selection)
     reference_audio: str | None = None  # R2V — voice resource mediaId (e.g. "alnilam")
+    # Tool provenance (recorded, never sent on the wire). ``original_prompt`` is
+    # the user's pre-tool text when a ``--tool`` rewrote ``prompt``; ``tool`` is
+    # the applied-tool snapshot for ``operations.metadata_json.tool``. (PR2 §8)
+    original_prompt: str | None = None
+    tool: AppliedTool | None = None
 
     def __post_init__(self) -> None:
         self._validate_prompt()
@@ -246,25 +257,31 @@ class GenerateVideoRequest:
             msg = f"count must be 1-4, got {self.count}"
             raise ValueError(msg)
 
+    def _validate_i2v_symmetry(self) -> None:
+        if self.start_image is None:
+            msg = "I2V request requires start_image"
+            raise ValueError(msg)
+        if self.reference_images or self.reference_entities:
+            msg = "I2V request must not carry reference_images or reference_entities"
+            raise ValueError(msg)
+
+    def _validate_r2v_symmetry(self) -> None:
+        if not self.reference_images and not self.reference_entities:
+            msg = "R2V request requires reference_images or reference_entities"
+            raise ValueError(msg)
+        if self.start_image or self.end_image:
+            msg = "R2V request must not carry start/end images"
+            raise ValueError(msg)
+
     def _validate_mode_symmetry(self) -> None:
         has_inputs = self.start_image or self.end_image or self.reference_images or self.use_avatar
         if self.mode is Mode.T2V and has_inputs:
             msg = "T2V request must not carry image inputs; use Mode.AVATAR for avatar"
             raise ValueError(msg)
         if self.mode is Mode.I2V:
-            if self.start_image is None:
-                msg = "I2V request requires start_image"
-                raise ValueError(msg)
-            if self.reference_images or self.reference_entities:
-                msg = "I2V request must not carry reference_images or reference_entities"
-                raise ValueError(msg)
+            self._validate_i2v_symmetry()
         if self.mode is Mode.R2V:
-            if not self.reference_images and not self.reference_entities:
-                msg = "R2V request requires reference_images or reference_entities"
-                raise ValueError(msg)
-            if self.start_image or self.end_image:
-                msg = "R2V request must not carry start/end images"
-                raise ValueError(msg)
+            self._validate_r2v_symmetry()
         if self.mode is Mode.AVATAR:
             # Pure avatar: prompt + use_avatar only — no reference images.
             # For avatar + reference images together, use Mode.R2V + use_avatar=True.
@@ -381,7 +398,7 @@ def operation_name_from_generate_response(response_json: dict[str, Any]) -> str 
     operations = response_json.get("operations")
     if not isinstance(operations, list) or not operations:
         return None
-    first: dict[str, Any] = cast("dict[str, Any]", operations[0])
+    first: dict[str, Any] = cast(_StrAnyDict, operations[0])
     operation: dict[str, Any] | None = cast("dict[str, Any] | None", first.get("operation"))
     if not isinstance(operation, dict):
         return None
@@ -420,14 +437,14 @@ def parse_video_status(response_json: dict[str, Any], *, media_id: str) -> Video
     for item in media:
         if item.get("name") != media_id:
             continue
-        meta = cast("dict[str, Any]", item.get("mediaMetadata") or {})
-        media_status = cast("dict[str, Any]", meta.get("mediaStatus") or {})
+        meta = cast(_StrAnyDict, item.get("mediaMetadata") or {})
+        media_status = cast(_StrAnyDict, meta.get("mediaStatus") or {})
         status = media_status.get("mediaGenerationStatus")
         if not isinstance(status, str):
             msg = f"status entry for {media_id} has no mediaGenerationStatus"
             raise ValueError(msg)
         reasons = tuple(cast("list[str]", media_status.get("failureReasons") or []))
-        error_entry = cast("dict[str, Any]", media_status.get("error") or {})
+        error_entry = cast(_StrAnyDict, media_status.get("error") or {})
         raw_msg = error_entry.get("message")
         error_message: str | None = str(raw_msg) if raw_msg is not None else None
         return VideoStatus(

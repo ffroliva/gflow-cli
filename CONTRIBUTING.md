@@ -102,6 +102,23 @@ pip install pre-commit && pre-commit install
 
 The `.pre-commit-config.yaml` already ships ruff and the hygiene gate.
 
+### SonarCloud quality gate
+
+On top of the six gates, CI runs a **SonarCloud** analysis whose quality gate must be
+**green** before a PR is merge-ready — the target is **zero new issues** on changed code
+(new bugs, vulnerabilities, and code smells = 0; coverage of new lines ≥ 80%; security
+hotspots reviewed = 100%). The local `--cov-fail-under=80` gate already pre-empts the
+coverage condition, so if your tests are green locally you have usually cleared the part
+of the gate you can run yourself.
+
+SonarCloud is **server-side and maintainer-run**: it needs a repo secret (`SONAR_TOKEN`)
+that, for security, GitHub does **not** share with pull requests from forks. So **on a
+fork PR the SonarCloud check is skipped** — you cannot run it, and that is expected. A
+maintainer checks the gate before merging (and, for fork PRs, may re-run the branch
+internally to produce an analysis). Don't worry if you see the SonarCloud check absent or
+skipped on your PR; focus on keeping the six local gates green and your diff free of new
+smells. Full policy: [`docs/GITHUB.md`](docs/GITHUB.md) § SonarCloud Quality Gate.
+
 ### Script output convention
 
 All runtime output — smoke runs, debug dumps, generated images — **must** go

@@ -11,9 +11,11 @@ from gflow_cli.errors import (
     AuthBrowserRejectedError,
     AuthExpiredError,
     AuthMissingError,
+    BrowserEngineUnavailableError,
     ChainPartialError,
     ConfigurationError,
     ContentPolicyError,
+    FlowAgentUiError,
     FlowApiError,
     FrameExtractionError,
     GFlowError,
@@ -22,6 +24,8 @@ from gflow_cli.errors import (
     ProblemDetails,
     RateLimitError,
     TransportTimeoutError,
+    UiSelectorDriftError,
+    UpscaleUnavailableError,
     VideoModelSelectionError,
     WafRejectionError,
     WireFormatError,
@@ -180,6 +184,19 @@ def test_video_model_selection_error_exit_code_18():
     assert isinstance(err, ConfigurationError)
     assert _exit_code_for(err) == 18
     assert EXIT_CODE_MAP[VideoModelSelectionError] == 18
+
+
+def test_upscale_unavailable_error_exit_code_22():
+    """Issue #171: 4K upscale on a non-Ultra account (or otherwise unavailable
+    target resolution) gets a DISTINCT exit code 22, separate from WafRejectionError
+    (10) — even though both surface as HTTP 403 — so scripted callers can branch on
+    "upgrade your tier" vs "WAF blocked the request" without parsing stderr.
+    """
+    err = UpscaleUnavailableError(detail="4K requires an Ultra subscription", status=403)
+    assert isinstance(err, GFlowError)
+    assert not isinstance(err, WafRejectionError)
+    assert EXIT_CODE_MAP[UpscaleUnavailableError] == 22
+    assert next(code for cls, code in EXIT_CODE_MAP.items() if isinstance(err, cls)) == 22
 
 
 def test_exit_code_map_ordering_invariant():
@@ -438,3 +455,83 @@ def test_chain_partial_error_partial_results_defaults_empty() -> None:
     (but present) ``partial_results`` list — never None."""
     err = ChainPartialError(detail="first link failed")
     assert err.partial_results == []
+
+
+# ---------- UiSelectorDriftError (issue #183) ----------
+
+
+def test_ui_selector_drift_error_exit_code_23() -> None:
+    """UiSelectorDriftError -> exit code 23 (issue #183).
+
+    Raised when a UI-automation selector cascade finds no matching element,
+    indicating that Flow's frontend has changed.  Exit 23 lets scripted
+    callers distinguish "UI drifted" from generic error (1)."""
+    err = UiSelectorDriftError(
+        detail="probe=mode_switch_trigger: no matching element found on the Flow editor."
+    )
+    assert _exit_code_for(err) == 23
+    assert EXIT_CODE_MAP[UiSelectorDriftError] == 23
+    assert isinstance(err, GFlowError)
+    assert err.remediation_hint != ""
+
+
+def test_ui_selector_drift_error_problem_details() -> None:
+    """UiSelectorDriftError carries RFC 9457 Problem Details with a stable type URI."""
+    err = UiSelectorDriftError(detail="probe=image_mode_tab: Image tab not found.")
+    pd = err.to_problem_details()
+    assert pd["type"] == "https://gflow-cli.dev/errors/ui-selector-drift"
+    assert pd["title"] == "Flow UI selector drift"
+    assert "image_mode_tab" in pd.get("detail", "")
+    assert "remediation_hint" in pd
+
+
+# ---------- BrowserEngineUnavailableError (patchright engine opt-in) ----------
+
+
+def test_browser_engine_unavailable_error_exit_code_24() -> None:
+    """BrowserEngineUnavailableError -> exit 24, and the isinstance walk lands on
+    24 (most-specific) rather than its ConfigurationError parent's 11."""
+    err = BrowserEngineUnavailableError(
+        detail="the 'patchright' package is not installed",
+        remediation_hint="Install it with `pip install patchright`.",
+    )
+    assert isinstance(err, ConfigurationError)
+    assert EXIT_CODE_MAP[BrowserEngineUnavailableError] == 24
+    # The ordering invariant must keep the subclass BEFORE its parent so this 24
+    # wins over ConfigurationError's 11 in the isinstance walk.
+    assert _exit_code_for(err) == 24
+
+
+def test_browser_engine_unavailable_error_problem_details() -> None:
+    err = BrowserEngineUnavailableError(detail="patchright missing")
+    pd = err.to_problem_details()
+    assert pd["type"] == "https://gflow-cli.dev/errors/browser-engine-unavailable"
+    assert pd["title"] == "Selected browser engine is unavailable"
+    assert "remediation_hint" in pd
+
+
+def test_ui_selector_drift_error_not_a_subclass_of_flow_api_error() -> None:
+    """UiSelectorDriftError is a direct GFlowError subclass — it is NOT a
+    FlowApiError (it is a UI-automation concern, not a wire-protocol error)."""
+    err = UiSelectorDriftError(detail="probe=mode_switch_trigger: selector cascade failed.")
+    assert isinstance(err, GFlowError)
+    assert not isinstance(err, FlowApiError)
+
+
+# ---------- FlowAgentUiError (Google Flow Agentic UI cohort) ----------
+
+
+def test_flow_agent_ui_error_exit_code_25() -> None:
+    """FlowAgentUiError -> exit 25."""
+    err = FlowAgentUiError(detail="Agentic UI detected.")
+    assert isinstance(err, GFlowError)
+    assert EXIT_CODE_MAP[FlowAgentUiError] == 25
+    assert _exit_code_for(err) == 25
+
+
+def test_flow_agent_ui_error_problem_details() -> None:
+    err = FlowAgentUiError(detail="Agentic UI detected.")
+    pd = err.to_problem_details()
+    assert pd["type"] == "https://gflow-cli.dev/errors/flow-agent-ui"
+    assert pd["title"] == "Google Flow Agentic UI detected"
+    assert "remediation_hint" in pd

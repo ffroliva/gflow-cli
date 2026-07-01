@@ -56,6 +56,7 @@ if TYPE_CHECKING:
 
     from gflow_cli.api.client import FlowApiClient
     from gflow_cli.api.video import VideoResult, VideoStartedCallback
+    from gflow_cli.tools.invocation import AppliedTool
 
 __all__ = [
     "ChainLinkResult",
@@ -85,6 +86,10 @@ class ChainLinkSpec:
     model: VideoModel | None = None
     duration: int | None = None
     aspect: Aspect | None = None
+    # Tool provenance — set when a ``--tool`` rewrote this link's prompt (PR2).
+    # ``prompt`` is then the rewritten text; these are recorded, not sent.
+    original_prompt: str | None = None
+    tool: AppliedTool | None = None
 
 
 @dataclass(frozen=True)
@@ -152,6 +157,77 @@ class LinkCompletedHook(Protocol):
     def __call__(self, request: GenerateVideoRequest, result: VideoResult) -> None: ...
 
 
+def _build_link_request(
+    *,
+    spec: ChainLinkSpec,
+    index: int,
+    model: VideoModel,
+    aspect: Aspect,
+    prev_frame: Path | None,
+) -> GenerateVideoRequest:
+    """Construct the GenerateVideoRequest for one chain link."""
+    link_model = spec.model if spec.model is not None else model
+    is_i2v = index > 0
+    return GenerateVideoRequest(
+        prompt=spec.prompt,
+        mode=Mode.I2V if is_i2v else Mode.T2V,
+        aspect=aspect,
+        model=link_model,
+        duration=spec.duration,
+        start_image=prev_frame if is_i2v else None,
+        original_prompt=spec.original_prompt,
+        tool=spec.tool,
+    )
+
+
+async def _generate_link(
+    *,
+    client: FlowApiClient,
+    req: GenerateVideoRequest,
+    index: int,
+    completed_paths: list[Path],
+    on_link_started: LinkStartedHook | None,
+) -> VideoResult:
+    """Call generate_video for one link; raise ChainPartialError on abort."""
+    link_on_started = on_link_started(req) if on_link_started is not None else None
+    try:
+        return await client.generate_video(req=req, on_started=link_on_started)
+    except (WireFormatError, WafRejectionError) as exc:
+        _log.warning(
+            "chain_link_aborted",
+            index=index,
+            error_class=type(exc).__name__,
+            completed=len(completed_paths),
+        )
+        raise ChainPartialError(
+            detail=f"chain aborted at link {index}: {exc}",
+            partial_results=list(completed_paths),
+            cause=exc,
+        ) from exc
+
+
+def _build_link_result(
+    *,
+    index: int,
+    spec: ChainLinkSpec,
+    result: VideoResult,
+    is_last: bool,
+    out_dir: Path,
+) -> ChainLinkResult:
+    """Assemble the ChainLinkResult after a successful download."""
+    local_path = result.local_path
+    frame_path = None if is_last else out_dir / f"link{index}_lastframe.jpg"
+    return ChainLinkResult(
+        index=index,
+        prompt=spec.prompt,
+        local_path=local_path,  # type: ignore[arg-type]
+        media_id=result.status.media_id,
+        frame_path=frame_path,
+        project_id=result.project_id,
+        flow_operation_id=result.flow_operation_id,
+    )
+
+
 async def run_chain(
     *,
     client: FlowApiClient,
@@ -217,64 +293,33 @@ async def run_chain(
 
     for index, spec in enumerate(links):
         if index > 0 and jitter > 0:
-            await asyncio.sleep(random.uniform(0.0, jitter))  # noqa: S311 — cadence, not crypto
+            await asyncio.sleep(random.uniform(0.0, jitter))  # noqa: S311  # cadence, not crypto
 
         _log.info("chain_link_started", index=index, total_links=len(links))
-        link_model = spec.model if spec.model is not None else model
-        is_i2v = index > 0
-        req = GenerateVideoRequest(
-            prompt=spec.prompt,
-            mode=Mode.I2V if is_i2v else Mode.T2V,
-            aspect=aspect,
-            model=link_model,
-            duration=spec.duration,
-            start_image=prev_frame if is_i2v else None,
+        req = _build_link_request(
+            spec=spec, index=index, model=model, aspect=aspect, prev_frame=prev_frame
         )
 
-        link_on_started = on_link_started(req) if on_link_started is not None else None
+        result = await _generate_link(
+            client=client,
+            req=req,
+            index=index,
+            completed_paths=completed_paths,
+            on_link_started=on_link_started,
+        )
 
-        try:
-            result: VideoResult = await client.generate_video(
-                req=req,
-                on_started=link_on_started,
-            )
-        except (WireFormatError, WafRejectionError) as exc:
-            _log.warning(
-                "chain_link_aborted",
-                index=index,
-                error_class=type(exc).__name__,
-                completed=len(completed_paths),
-            )
-            raise ChainPartialError(
-                detail=f"chain aborted at link {index}: {exc}",
-                partial_results=list(completed_paths),
-                cause=exc,
-            ) from exc
-
-        local_path = result.local_path
-        if local_path is None:
+        if result.local_path is None:
             msg = f"link {index} returned no local_path (download failed)"
-            raise ChainPartialError(
-                detail=msg,
-                partial_results=list(completed_paths),
-            )
+            raise ChainPartialError(detail=msg, partial_results=list(completed_paths))
 
-        media_id = result.status.media_id
         is_last = index == len(links) - 1
 
         # RECORD-BEFORE-EXTRACT: persist the downloaded clip before decoding it.
         # The frame_path is the planned seed-frame destination; it is filled in
         # below for non-final links, but the clip itself is recorded first so a
         # crash in the download->extract gap resumes at extraction.
-        frame_path = None if is_last else out_dir / f"link{index}_lastframe.jpg"
-        link_result = ChainLinkResult(
-            index=index,
-            prompt=spec.prompt,
-            local_path=local_path,
-            media_id=media_id,
-            frame_path=frame_path,
-            project_id=result.project_id,
-            flow_operation_id=result.flow_operation_id,
+        link_result = _build_link_result(
+            index=index, spec=spec, result=result, is_last=is_last, out_dir=out_dir
         )
         if recorder is not None:
             recorder.record_chain_link(link_result)
@@ -286,22 +331,22 @@ async def run_chain(
         if on_link_completed is not None:
             on_link_completed(req, result)
 
-        if frame_path is not None:
+        if link_result.frame_path is not None:
             prev_frame = await asyncio.to_thread(
                 extractor,
-                src=local_path,
-                dst=frame_path,
+                src=result.local_path,
+                dst=link_result.frame_path,
                 offset_ms=seed_offset_ms,
             )
 
         results.append(link_result)
-        completed_paths.append(local_path)
+        completed_paths.append(result.local_path)
         _log.info(
             "chain_link_completed",
             index=index,
-            media_id=media_id,
+            media_id=link_result.media_id,
             mode=req.mode.value,
-            seeded=is_i2v,
+            seeded=(index > 0),
         )
 
     return results

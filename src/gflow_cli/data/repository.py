@@ -243,9 +243,9 @@ class DataRepository:
                         prompt, prompt_hash, prompt_redacted, model, aspect_ratio,
                         status, started_at, completed_at,
                         error_type, error_detail,
-                        flow_operation_id, flow_batch_id
+                        flow_operation_id, flow_batch_id, expanded_prompt
                     )
-                    VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+                    VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
                     """,
                     (
                         record.id,
@@ -265,6 +265,7 @@ class DataRepository:
                         record.error_detail,
                         record.flow_operation_id,
                         record.flow_batch_id,
+                        record.expanded_prompt,
                     ),
                 )
         except sqlite3.IntegrityError as exc:
@@ -345,7 +346,7 @@ class DataRepository:
                    o.prompt, o.prompt_hash, o.prompt_redacted, o.model, o.aspect_ratio,
                    o.status, o.started_at, o.completed_at,
                    o.error_type, o.error_detail,
-                   o.flow_operation_id, o.flow_batch_id
+                   o.flow_operation_id, o.flow_batch_id, o.expanded_prompt
             FROM operations o
             JOIN operation_assets oa ON oa.operation_id = o.id
             JOIN assets a ON a.id = oa.asset_id
@@ -959,4 +960,5 @@ def _row_to_operation(row: sqlite3.Row) -> OperationRecord:
         error_detail=row["error_detail"],
         started_at=row["started_at"],
         completed_at=row["completed_at"],
+        expanded_prompt=row["expanded_prompt"],
     )

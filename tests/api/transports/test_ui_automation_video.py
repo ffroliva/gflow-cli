@@ -14,10 +14,17 @@ from gflow_cli.api.transports.ui_automation import UiAutomationTransport
 from gflow_cli.api.transports.ui_automation_video import (
     FRAME_SLOT_BY_LABEL,
     FRAME_SLOTS_STRUCT,
+    PICKER_CONTEXT_INCLUDE,
+    PICKER_INCLUDE_BUTTON,
     VideoGenerationMixin,
 )
 from gflow_cli.api.video import Aspect, GenerateVideoRequest, Mode, VideoModel, VideoStatus
-from gflow_cli.errors import AuthExpiredError, WireFormatError
+from gflow_cli.errors import (
+    AuthExpiredError,
+    TransportTimeoutError,
+    UiSelectorDriftError,
+    WireFormatError,
+)
 
 
 def _make_listener_page() -> tuple[MagicMock, list]:
@@ -225,7 +232,7 @@ class TestSwitchToVideoMode:
     @pytest.mark.asyncio
     async def test_raises_when_trigger_missing(self) -> None:
         page = _cascade_page(set())
-        with pytest.raises(RuntimeError, match="mode-switch"):
+        with pytest.raises(UiSelectorDriftError, match="mode_switch_trigger"):
             await VideoGenerationMixin._switch_to_video_mode(page, out_dir=None)
 
     @pytest.mark.asyncio
@@ -233,8 +240,16 @@ class TestSwitchToVideoMode:
         from gflow_cli.api.transports import ui_automation_video as mod
 
         page = _cascade_page({mod.MODE_SWITCH_TRIGGER_SELECTORS[0]})
-        with pytest.raises(RuntimeError, match="Video tab"):
+        with pytest.raises(UiSelectorDriftError, match="Video tab"):
             await VideoGenerationMixin._switch_to_video_mode(page, out_dir=None)
+
+    @pytest.mark.asyncio
+    async def test_submode_miss_raises_drift_error(self) -> None:
+        # The sub-mode probe is the same selector-cascade pattern as the
+        # mode-switch trigger and must carry the same typed-error contract.
+        page = _cascade_page(set())
+        with pytest.raises(UiSelectorDriftError, match="video_submode_references"):
+            await VideoGenerationMixin._switch_video_sub_mode(page, "references", out_dir=None)
 
 
 class TestWaitVideoEditorReady:
@@ -1020,6 +1035,58 @@ class TestI2vT2vRoutingBackstop:
         assert result.status.succeeded is True
 
 
+class TestPickerIncludeSelectorLocaleInvariance:
+    """Issue #170: the picker include selectors must be tiered cascades —
+    locale-free anchor first where one exists, localized text as fallback.
+
+    Recon (denon82 pt-BR 2026-06-11 + ru report on #170): the right-click
+    context menu is `div[role='menu'][data-state='open']` and its include item
+    carries the `add` ligature (unique within the menu: content_cut /
+    content_copy / delete). The Vozes include button has NO ligature — it is
+    the lone iconless button in the open picker dialog.
+    """
+
+    def test_context_include_is_a_two_tier_cascade(self) -> None:
+        assert isinstance(PICKER_CONTEXT_INCLUDE, tuple)
+        assert len(PICKER_CONTEXT_INCLUDE) == 2
+
+    def test_context_include_tier1_is_menu_scoped_add_icon(self) -> None:
+        """Tier 1 locked verbatim so a drift can't silently slip past."""
+        assert PICKER_CONTEXT_INCLUDE[0] == (
+            "[role='menu'][data-state='open'] "
+            "[role='menuitem']:has(i.google-symbols:text-is('add'))"
+        ), f"PICKER_CONTEXT_INCLUDE[0] drifted: {PICKER_CONTEXT_INCLUDE[0]!r}"
+
+    def test_context_include_tier1_has_no_localized_text(self) -> None:
+        for word in ("Incluir", "Добавить", "Add to prompt"):
+            assert word not in PICKER_CONTEXT_INCLUDE[0]
+
+    def test_context_include_text_tier_covers_pt_ru_en_menu_scoped(self) -> None:
+        text_tier = PICKER_CONTEXT_INCLUDE[1]
+        for caption in ("Incluir no comando", "Добавить в запрос", "Add to prompt"):
+            assert caption in text_tier, f"missing caption {caption!r}"
+        # Every comma-segment must be scoped to the open menu so a user-named
+        # tile (e.g. a character called 'Add to prompt') can never match.
+        for segment in text_tier.split(","):
+            assert segment.strip().startswith("[role='menu']"), (
+                f"unscoped text segment: {segment.strip()!r}"
+            )
+
+    def test_include_button_is_a_two_tier_cascade(self) -> None:
+        assert isinstance(PICKER_INCLUDE_BUTTON, tuple)
+        assert len(PICKER_INCLUDE_BUTTON) == 2
+
+    def test_include_button_text_tier_covers_pt_ru_en(self) -> None:
+        text_tier = PICKER_INCLUDE_BUTTON[0]
+        for caption in ("Incluir no comando", "Добавить в запрос", "Add to prompt"):
+            assert caption in text_tier, f"missing caption {caption!r}"
+
+    def test_include_button_structural_tier_is_lone_iconless_dialog_button(self) -> None:
+        structural = PICKER_INCLUDE_BUTTON[1]
+        assert structural.startswith("[role='dialog'][data-state='open']")
+        assert ":not(:has(i.google-symbols))" in structural
+
+
 class TestAttachCharacterEntities:
     @staticmethod
     def _picker_page() -> MagicMock:
@@ -1030,6 +1097,7 @@ class TestAttachCharacterEntities:
         loc.last = loc
         loc.click = AsyncMock()
         loc.hover = AsyncMock()
+        loc.fill = AsyncMock()
         loc.wait_for = AsyncMock()
         loc.scroll_into_view_if_needed = AsyncMock()
         loc.count = AsyncMock(return_value=1)
@@ -1037,14 +1105,18 @@ class TestAttachCharacterEntities:
         page.wait_for_timeout = AsyncMock()
         page.mouse = MagicMock()
         page.mouse.wheel = AsyncMock()
+        page.keyboard = MagicMock()
+        page.keyboard.press = AsyncMock()
+        page.screenshot = AsyncMock()
         return page
 
     @pytest.mark.asyncio
     async def test_attach_right_clicks_personagens_entity_tile(self) -> None:
         """A character is staged as a referenceEntity via: Personagens tab ->
-        RIGHT-CLICK the `data-tile-id=fe_id_<entityId>` tile -> context-menu
-        'Incluir no comando'. The tile is addressed by entity id (not name), and
-        the click MUST be a right-click (a left-click navigates to the editor)."""
+        RIGHT-CLICK the `data-tile-id=fe_id_<entityId>` tile -> the context-menu
+        include action, matched by its locale-free `add` ligature (Tier 1). The
+        tile is addressed by entity id (not name), and the click MUST be a
+        right-click (a left-click navigates to the editor)."""
         page = self._picker_page()
 
         await VideoGenerationMixin._attach_character_entities(
@@ -1054,7 +1126,7 @@ class TestAttachCharacterEntities:
         selectors = " ".join(str(c.args[0]) for c in page.locator.call_args_list)
         assert "accessibility_new" in selectors  # Personagens tab
         assert "fe_id_ent-123" in selectors  # tile keyed by entity id
-        assert "Incluir no comando" in selectors  # context-menu action
+        assert "text-is('add')" in selectors  # icon-tier context-menu action
         assert "add-menu-input" not in selectors  # NOT the prompt box
         # The selection click is a right-click (button='right').
         right_clicks = [
@@ -1065,22 +1137,109 @@ class TestAttachCharacterEntities:
         assert right_clicks, "expected a right-click on the entity tile"
 
     @pytest.mark.asyncio
-    async def test_attach_raises_when_context_menu_absent(self) -> None:
-        """If the right-click context menu never shows 'Incluir no comando', the
-        attach fails loudly (with a screenshot) instead of silently dropping the
-        entity — the submit backstop must never see an empty referenceEntities."""
+    async def test_attach_logs_which_selector_tier_matched(
+        self, install_log_capture: structlog.testing.LogCapture
+    ) -> None:
+        """Drift telemetry: a successful attach reports the matched tier so the
+        icon tier dying (text tier silently carrying the load) is observable."""
         page = self._picker_page()
-        # wait_for succeeds for add-media / Personagens tab / tile, then raises on
-        # the context-menu include item (the menu never appeared).
-        page.locator.return_value.wait_for = AsyncMock(
-            side_effect=[None, None, None, TimeoutError("boom")]
-        )
-        page.screenshot = AsyncMock()
 
-        with pytest.raises(RuntimeError, match="Incluir no comando"):
+        await VideoGenerationMixin._attach_character_entities(
+            page, [("ent-123", "Stickman")], out_dir=None
+        )
+
+        tier_events = [
+            e
+            for e in install_log_capture.entries
+            if e["event"] == "ui_automation_video.include_selector_tier"
+        ]
+        assert tier_events, "expected an include_selector_tier event"
+        assert tier_events[0]["tier"] == "icon"
+        assert tier_events[0]["surface"] == "context_menu"
+
+    @pytest.mark.asyncio
+    async def test_attach_raises_when_context_menu_absent(self) -> None:
+        """If the right-click context menu never shows the include action (any
+        tier), the attach fails loudly (with a screenshot) instead of silently
+        dropping the entity — and the error is TYPED with a locale-neutral
+        message (issue #170: a RuntimeError embedding the pt-BR caption reached
+        the user only as a privacy-hashed 'Unexpected error.', burying the
+        remediation hint)."""
+        page = self._picker_page()
+        # wait_for succeeds for add-media / Personagens tab / tile, then raises
+        # for every include tier probe (the menu item never appeared).
+        page.locator.return_value.wait_for = AsyncMock(
+            side_effect=[None, None, None] + [TimeoutError("boom")] * 4
+        )
+
+        with pytest.raises(TransportTimeoutError, match="include action") as excinfo:
             await VideoGenerationMixin._attach_character_entities(
                 page, [("ent-123", "Stickman")], out_dir=None
             )
+        message = str(excinfo.value)
+        assert "Incluir" not in message, "error message must be locale-neutral"
+        assert "ent-123" in message
+        assert excinfo.value.remediation_hint, "expected a remediation hint"
+        assert "Incluir" not in excinfo.value.remediation_hint
+
+    @pytest.mark.asyncio
+    async def test_attach_failure_closes_picker_before_raising(self) -> None:
+        """The failure path must not return a Page to the pool with the picker
+        dialog / context menu still open (state contamination for the next
+        checkout) — Escape is pressed before the error propagates."""
+        page = self._picker_page()
+        page.locator.return_value.wait_for = AsyncMock(
+            side_effect=[None, None, None] + [TimeoutError("boom")] * 4
+        )
+
+        with pytest.raises(TransportTimeoutError, match="include action"):
+            await VideoGenerationMixin._attach_character_entities(
+                page, [("ent-123", "Stickman")], out_dir=None
+            )
+        escapes = [
+            c for c in page.keyboard.press.call_args_list if c.args and c.args[0] == "Escape"
+        ]
+        assert escapes, "expected Escape cleanup before raising"
+
+
+class TestAttachReferenceAudio:
+    @pytest.mark.asyncio
+    async def test_attach_audio_logs_selector_tier(
+        self, install_log_capture: structlog.testing.LogCapture
+    ) -> None:
+        """The Vozes include button has no ligature (recon 2026-06-11): the
+        text tier is primary and its match must be reported for telemetry."""
+        page = TestAttachCharacterEntities._picker_page()
+
+        await VideoGenerationMixin._attach_reference_audio(page, "Alnilam", out_dir=None)
+
+        tier_events = [
+            e
+            for e in install_log_capture.entries
+            if e["event"] == "ui_automation_video.include_selector_tier"
+        ]
+        assert tier_events, "expected an include_selector_tier event"
+        assert tier_events[0]["tier"] == "text"
+        assert tier_events[0]["surface"] == "vozes_button"
+
+    @pytest.mark.asyncio
+    async def test_attach_audio_raises_locale_neutral_when_button_absent(self) -> None:
+        """When no include-button tier matches, the failure is loud, typed,
+        locale-neutral, and leaves no open dialog behind."""
+        page = TestAttachCharacterEntities._picker_page()
+        # add-media wait succeeds; both include-button tier probes time out.
+        page.locator.return_value.wait_for = AsyncMock(
+            side_effect=[None] + [TimeoutError("boom")] * 4
+        )
+
+        with pytest.raises(TransportTimeoutError, match="include action") as excinfo:
+            await VideoGenerationMixin._attach_reference_audio(page, "Alnilam", out_dir=None)
+        message = str(excinfo.value)
+        assert "Incluir" not in message, "error message must be locale-neutral"
+        escapes = [
+            c for c in page.keyboard.press.call_args_list if c.args and c.args[0] == "Escape"
+        ]
+        assert escapes, "expected Escape cleanup before raising"
 
 
 class TestAssertEntitiesAttached:
@@ -1135,3 +1294,18 @@ class TestAssertEntitiesAttached:
         # request-body shape (referenceEntities) is also accepted.
         captured = {"body": {"requests": [{"referenceEntities": [{"entityId": "ent-1"}]}]}}
         VideoGenerationMixin._assert_entities_attached(captured, expected=["ent-1"])
+
+    def test_backstop_error_carries_issue_174_hint_and_discovery(self) -> None:
+        """Issue #174: an attach miss on the new library UI must point the
+        user at the tracking issue (typed-error remediation hint) and tag
+        the surface in the discovery payload."""
+        from gflow_cli.api.transports.ui_automation_video import VideoGenerationMixin
+        from gflow_cli.errors import WireFormatError
+
+        captured = {"body": {"media": [{"mediaMetadata": {"requestData": {}}}]}}
+        with pytest.raises(WireFormatError) as exc_info:
+            VideoGenerationMixin._assert_entities_attached(captured, expected=["ent-1"])
+        err = exc_info.value
+        assert "github.com/ffroliva/gflow-cli/issues/174" in err.remediation_hint
+        assert err.to_problem_details().get("remediation_hint") == err.remediation_hint
+        assert err.discovery == {"entity_attach_context": "video"}

@@ -11,6 +11,7 @@ __all__ = [
     "AuthMissingError",
     "BatchIntegrityError",
     "BatchPartialError",
+    "BrowserEngineUnavailableError",
     "ChainManifestError",
     "ChainPartialError",
     "ConfigurationError",
@@ -18,6 +19,7 @@ __all__ = [
     "DataIntegrityError",
     "DataMigrationError",
     "DataStoreError",
+    "FlowAgentUiError",
     "FlowApiError",
     "FrameExtractionError",
     "GFlowError",
@@ -28,6 +30,8 @@ __all__ = [
     "SceneConcatError",
     "SecurityError",
     "TransportTimeoutError",
+    "UiSelectorDriftError",
+    "UpscaleUnavailableError",
     "VideoModelSelectionError",
     "WafRejectionError",
     "WireFormatError",
@@ -302,6 +306,34 @@ class ConfigurationError(GFlowError):
     )
 
 
+class ProfileLockedError(ConfigurationError):
+    """Raised when the profile directory is locked by a running gflow serve daemon."""
+
+    problem_type = "https://gflow-cli.dev/errors/profile-locked"
+    title = "Profile locked"
+    _default_remediation = "Close the running gflow serve daemon or use a different profile name."
+
+
+class BrowserEngineUnavailableError(ConfigurationError):
+    """Raised when GFLOW_CLI_BROWSER_ENGINE selects an engine that is unavailable.
+
+    Two causes: the optional ``patchright`` package is not installed, or its
+    browser driver is missing. Caught at the engine-resolver seam and re-raised
+    here (never a raw ``ImportError``, which would be SHA-hashed to a generic
+    exit 1). Distinct exit code 24 (not ConfigurationError's 11) so scripted
+    callers can branch on "install the engine" versus a generic config mistake.
+    The remediation hint differs per cause and is supplied at the raise site.
+    """
+
+    problem_type = "https://gflow-cli.dev/errors/browser-engine-unavailable"
+    title = "Selected browser engine is unavailable"
+    _default_remediation = (
+        "The selected browser engine is unavailable. Install it with "
+        "`pip install patchright`, or unset GFLOW_CLI_BROWSER_ENGINE to use the "
+        "default playwright engine."
+    )
+
+
 class ModelModeIncompatibilityError(ConfigurationError):
     """Raised when the chosen video model is incompatible with the requested
     generation mode (issue #125).
@@ -351,6 +383,78 @@ class VideoModelSelectionError(ConfigurationError):
         "picker option was not found). This is usually transient — retry the "
         "command. If it persists, Flow's model-picker UI may have changed; please "
         "report it referencing issue #125."
+    )
+
+
+class UpscaleUnavailableError(GFlowError):
+    """Raised when an image upscale target resolution is unavailable for the account
+    (issue #171).
+
+    The canonical case: a non-Ultra (e.g. Pro) account requests ``--scale 4k``.
+    Flow's ``upsampleImage`` endpoint returns HTTP 403 for the tier gate, which is
+    indistinguishable on the wire from a WAF/fingerprint 403. The transport
+    disambiguates by context (the request was a 4K upscale, the session is valid,
+    reCAPTCHA was accepted) and raises THIS error rather than ``WafRejectionError``.
+
+    Distinct exit code 22 (not WAF's 10) so scripted callers can branch on
+    "upgrade your subscription" versus "the request was blocked / rotate profile".
+    The caller MUST NOT auto-retry a tier 403 — retrying only inflates per-profile
+    WAF heat without ever succeeding.
+    """
+
+    problem_type = "https://gflow-cli.dev/errors/upscale-unavailable"
+    title = "Image upscale unavailable for this account"
+    _default_remediation = (
+        "This upscale resolution is not available on your account. 4K upscaling "
+        "requires a Flow Ultra subscription — use --scale 2k, or upgrade your plan. "
+        "If you just upgraded, re-run `gflow auth login --profile <name>` to refresh "
+        "the session."
+    )
+
+
+class UiSelectorDriftError(GFlowError):
+    """Raised when a UI-automation selector cascade finds no matching element.
+
+    Indicates that Flow's frontend has changed in a way that invalidates one
+    of the selector probes (mode-switch trigger, mode tab, sub-mode tab, etc.).
+    The ``detail`` names the probe label and includes the debug screenshot path
+    when one was captured.
+
+    This is a hard failure — gflow cannot safely proceed without the control —
+    but it is *diagnosed*, not opaque: the user gets the probe name and the
+    screenshot for inspection.  Exit code 23 lets scripted callers branch on
+    "the UI changed and needs a selector update" versus generic error (1).
+    """
+
+    problem_type = "https://gflow-cli.dev/errors/ui-selector-drift"
+    title = "Flow UI selector drift"
+    _default_remediation = (
+        "A Flow editor UI element could not be located — Google may have updated "
+        "their frontend. Check for a newer gflow-cli release, then file a bug at "
+        "https://github.com/ffroliva/gflow-cli/issues referencing the probe name "
+        "and attaching the debug screenshot from this message, if one was captured "
+        "(review it first — the viewport may show your account name/avatar; do NOT "
+        "include tokens or signed URLs)."
+    )
+
+
+class FlowAgentUiError(GFlowError):
+    """Raised when Google Flow's new Agentic UI cohort is detected at runtime.
+
+    This cohort replaces the classic generation controls with a chat interface
+    that is not supported by gflow-cli. Raising this error allows the CLI to
+    fail cleanly with exit code 25 instead of timing out or raising drift errors.
+    """
+
+    problem_type = "https://gflow-cli.dev/errors/flow-agent-ui"
+    title = "Google Flow Agentic UI detected"
+    _default_remediation = (
+        "Your account has been placed in Google Flow's new 'Agentic UI' A/B cohort, "
+        "which removes the classic media generation controls. gflow-cli does not "
+        "currently support driving this interface. Try using a different Chrome profile, "
+        "or wait for a future update. If you need to share a bug report, review the "
+        "diagnostic screenshot first — the viewport may show personal info (do NOT "
+        "include tokens or credentials)."
     )
 
 
@@ -612,11 +716,23 @@ EXIT_CODE_MAP: dict[type[GFlowError], int] = {
     AuthMissingError: 8,
     TransportTimeoutError: 9,
     WafRejectionError: 10,
+    # UpscaleUnavailableError (issue #171): tier-gated 4K upscale 403, DISTINCT
+    # from WafRejectionError's 10 even though both are HTTP 403. Direct GFlowError
+    # subclass, so unconstrained by the ordering invariant.
+    UpscaleUnavailableError: 22,
+    # UiSelectorDriftError (issue #183): Flow UI changed, selector probe failed.
+    # Direct GFlowError subclass; exit 23 lets scripts distinguish "UI drifted"
+    # from generic error (1) without parsing stderr.
+    UiSelectorDriftError: 23,
     # ModelModeIncompatibilityError + VideoModelSelectionError BEFORE
     # ConfigurationError (their parent) so the isinstance walk lands on 17/18,
     # not 11. Per [[exit-code-map-ordering-invariant-test-pitfall]].
     ModelModeIncompatibilityError: 17,
     VideoModelSelectionError: 18,
+    # BrowserEngineUnavailableError (Patchright engine opt-in): BEFORE
+    # ConfigurationError (its parent) so the isinstance walk lands on 24, not 11.
+    BrowserEngineUnavailableError: 24,
+    FlowAgentUiError: 25,
     ConfigurationError: 11,
     AuthExpiredError: 3,
     RateLimitError: 4,

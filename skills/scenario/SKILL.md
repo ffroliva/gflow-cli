@@ -144,6 +144,13 @@ it propagate into the new code path or is it missing from the event?
 
 ---
 
+## Artifact location
+
+Write the analysis to **`docs/superpowers/plans/<YYYY-MM-DD>-<feature-slug>/SCENARIO.md`**
+(same directory the subsequent `/gflow:plan` writes its `PLAN.md` into) and commit it
+with the plan on the feature branch. Established by the image-upscale (#171) and
+locale-selectors (#170) cycles — do not leave the analysis only in conversation.
+
 ## Output format
 
 ```

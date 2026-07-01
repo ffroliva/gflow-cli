@@ -48,7 +48,7 @@ def _parse_clip_ref(token: str) -> ClipRef:
     except ValueError as e:
         msg = f"bad trim in clipRef {token!r}: expected <start>-<end> in seconds"
         raise ValueError(msg) from e
-    if not (start < end):
+    if start >= end:
         msg = f"bad trim in clipRef {token!r}: start must be < end"
         raise ValueError(msg)
     return ClipRef(wf, start, end)

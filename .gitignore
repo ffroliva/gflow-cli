@@ -32,12 +32,15 @@ htmlcov/
 .DS_Store
 
 # Project-specific — secrets / session storage (NEVER commit)
-auth/                  # any project-local auth dir
-profile_*/             # Chromium persistent contexts (any name)
-*.cookies.json         # exported cookie jars
-storage_state.json     # Playwright storage_state output
-secrets.json           # generic secrets file
-.env                   # local env overrides (the .env.template IS committed)
+# NOTE: git does NOT support trailing inline comments in .gitignore — a `#` only
+# starts a comment at the START of a line. Keep each pattern on its own line so
+# the comment text isn't folded into the pattern (which silently un-ignores it).
+/auth/
+profile_*/
+*.cookies.json
+storage_state.json
+secrets.json
+.env
 .env.local
 .env.*.local
 
@@ -66,6 +69,9 @@ test_assets/debug_*/
 # Phase-2 live-spike capture outputs — NEVER commit (may contain real API payloads)
 scripts/dev/_spike_out/
 
+# Agent session marker — machine/session-local handoff state, regenerated per run
+.continue-here.md
+
 # Live Flow traffic captures — NEVER commit (contain real Bearer tokens / API keys).
 # Diagnostic scripts MUST default-write here, NOT to samples/captured/.
 # Sanitised reference samples (no secrets) can still live under samples/captured/.
@@ -89,3 +95,7 @@ worktrees/
 
 # Understand Anything (local knowledge graph)
 .understand-anything/
+.worktrees
+
+# Subagent-driven-development scratch (ledger + task reports)
+.superpowers/

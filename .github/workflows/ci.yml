@@ -16,7 +16,7 @@ jobs:
     name: Secret scan (gitleaks)
     runs-on: ubuntu-latest
     steps:
-      - uses: actions/checkout@v6
+      - uses: actions/checkout@v7
         with:
           fetch-depth: 0  # full history so gitleaks can diff against base
 
@@ -25,6 +25,20 @@ jobs:
         env:
           GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
 
+  # ── Security gate: dependency CVE audit against locked deps ──────────────
+  deps-audit:
+    name: Dependency audit (pip-audit)
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v7
+      - name: Install uv
+        uses: astral-sh/setup-uv@v7
+      - name: Audit locked dependencies for known CVEs
+        # Fails the build on any known advisory. Accept later via: pip-audit --ignore-vuln <GHSA-id>
+        run: |
+          uv export --frozen --format requirements-txt --no-emit-project > requirements-audit.txt
+          uvx pip-audit -r requirements-audit.txt
+
   # ── Main test matrix ──────────────────────────────────────────────────────
   test:
     runs-on: ubuntu-latest
@@ -32,7 +46,7 @@ jobs:
       matrix:
         python-version: ["3.11", "3.12", "3.13"]
     steps:
-      - uses: actions/checkout@v6
+      - uses: actions/checkout@v7
 
       - name: Install uv
         uses: astral-sh/setup-uv@v7
@@ -79,16 +93,19 @@ jobs:
     runs-on: ubuntu-latest
     needs: test   # wait for tests + coverage report
     # Forked pull_request runs do not receive repository secrets, so SONAR_TOKEN
-    # is empty there and the scanner fails before analysis. Keep SonarCloud on
-    # trusted pushes/internal PRs where the token is available.
+    # is empty there and the scanner fails before analysis. Dependabot-triggered
+    # runs are the same case: GitHub serves them the separate Dependabot secrets
+    # namespace, so SONAR_TOKEN is also empty even though the branch is in-repo.
+    # Keep SonarCloud on trusted pushes/internal PRs where the token is available.
     if: >
       always() &&
+      github.actor != 'dependabot[bot]' &&
       (
         github.event_name != 'pull_request' ||
         github.event.pull_request.head.repo.full_name == github.repository
       )
     steps:
-      - uses: actions/checkout@v6
+      - uses: actions/checkout@v7
         with:
           fetch-depth: 0  # shallow clones break blame / new-code detection
 

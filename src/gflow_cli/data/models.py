@@ -117,6 +117,9 @@ class OperationRecord:
     error_detail: str | None
     started_at: str | None = None
     completed_at: str | None = None
+    # The Gemini "Creative Director" expansion actually submitted to Flow, when
+    # a `--tool` ran. None for un-tooled runs and when history_prompts='redacted'.
+    expanded_prompt: str | None = None
 
     @classmethod
     def minimal(

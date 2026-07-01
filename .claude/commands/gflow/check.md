@@ -50,3 +50,10 @@ If the coverage run crashes the current MCP/sandbox session with `Connection clo
 same marker-filtered suite in smaller chunks without coverage and rely on CI for the coverage XML.
 Project pytest defaults already exclude `e2e` and `live`; those markers are explicit,
 credit-spending gates and must be requested with a separate `-m e2e` / `-m live` command.
+
+**Windows agent sessions:** `uv run pytest` is unreliable — invoke
+`.venv/Scripts/python.exe -m pytest` directly, and prefix Python invocations with
+`PYTHONUTF8=1` when output contains non-ASCII. The unscoped full-coverage sweep
+(step 4) can OOM locally (exit 137 / SIGKILL): run the suites scoped to the dirs you
+touched and trust CI for the full coverage gate — **a green full-suite CI run on the
+same tree (e.g. the just-merged PR) satisfies step 4 for release purposes.**

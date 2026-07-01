@@ -6,7 +6,14 @@ from pathlib import Path
 
 import pytest
 
-from gflow_cli.config import LogFormat, LogLevel, Provider, Settings, reset_settings
+from gflow_cli.config import (
+    BrowserEngine,
+    LogFormat,
+    LogLevel,
+    Provider,
+    Settings,
+    reset_settings,
+)
 
 
 @pytest.fixture(autouse=True)
@@ -160,3 +167,61 @@ class TestLegacyEnvShim:
             _migrate_legacy_env()
 
         assert not any(issubclass(w.category, DeprecationWarning) for w in caught)
+
+
+class TestBrowserEngine:
+    """GFLOW_CLI_BROWSER_ENGINE typed enum field (patchright opt-in)."""
+
+    def test_defaults_to_playwright(self, clean_env: None) -> None:
+        assert Settings().browser_engine == BrowserEngine.PLAYWRIGHT
+
+    def test_override_patchright(self, monkeypatch: pytest.MonkeyPatch) -> None:
+        monkeypatch.setenv("GFLOW_CLI_BROWSER_ENGINE", "patchright")
+        assert Settings().browser_engine == BrowserEngine.PATCHRIGHT
+
+    def test_invalid_value_raises(self, monkeypatch: pytest.MonkeyPatch) -> None:
+        from pydantic import ValidationError
+
+        # A typo must fail loudly at startup naming the field, not fall through.
+        monkeypatch.setenv("GFLOW_CLI_BROWSER_ENGINE", "patchwright")
+        with pytest.raises(ValidationError):
+            Settings()
+
+
+class TestPreferClassic:
+    def test_defaults_to_false(self, clean_env: None) -> None:
+        assert Settings().prefer_classic is False
+
+    def test_override_true(self, monkeypatch: pytest.MonkeyPatch) -> None:
+        monkeypatch.setenv("GFLOW_CLI_PREFER_CLASSIC", "true")
+        assert Settings().prefer_classic is True
+
+
+class TestDaemonSettings:
+    def test_daemon_defaults(self, clean_env: None) -> None:
+        s = Settings()
+        assert s.daemon_token is None
+        assert s.daemon_port == 8000
+
+    def test_daemon_token_override(self, monkeypatch: pytest.MonkeyPatch) -> None:
+        monkeypatch.setenv("GFLOW_DAEMON_TOKEN", "secret-token")
+        assert Settings().daemon_token == "secret-token"
+
+        monkeypatch.setenv("GFLOW_CLI_DAEMON_TOKEN", "other-token")
+        reset_settings()
+        assert Settings().daemon_token == "other-token"
+
+    def test_daemon_port_override(self, monkeypatch: pytest.MonkeyPatch) -> None:
+        monkeypatch.setenv("GFLOW_DAEMON_PORT", "9000")
+        assert Settings().daemon_port == 9000
+
+        monkeypatch.setenv("GFLOW_CLI_DAEMON_PORT", "9001")
+        reset_settings()
+        assert Settings().daemon_port == 9001
+
+    def test_invalid_daemon_port_raises(self, monkeypatch: pytest.MonkeyPatch) -> None:
+        from pydantic import ValidationError
+
+        monkeypatch.setenv("GFLOW_DAEMON_PORT", "70000")
+        with pytest.raises(ValidationError):
+            Settings()

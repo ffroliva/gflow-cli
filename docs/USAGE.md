@@ -105,6 +105,44 @@ UUID=$(gflow image upload hero.png | awk '/Asset UUID:/ {print $3}')
 gflow image i2i "make it cinematic" --ref "$UUID"
 ```
 
+## `gflow image upscale`
+
+Upscale a **platform-generated** image to 2K or 4K (the same 1K/2K/4K options Flow's
+download menu offers) and save it locally. Uploaded images are not supported.
+
+```text
+gflow image upscale MEDIA_ID --scale 2k|4k [OPTIONS]
+
+Arguments:
+  MEDIA_ID                  UUID of a Flow-generated image (find one with
+                            `gflow data list images`).
+
+Options:
+  --scale [2k|4k]           Target resolution. 4k requires a Flow Ultra
+                            subscription; 1k is the original (no upscale).
+  --project ID              Project that owns the image. Resolved from the local
+                            catalog when omitted; pass it explicitly for images
+                            gflow didn't record (e.g. generated in the web UI).
+  --out PATH                Output directory (see "Output paths" below).
+  --profile NAME            Profile name (overrides default).
+```
+
+```bash
+# Upscale a previously generated image to 2K (project auto-resolved from the catalog)
+gflow image upscale 3a56bb5e-92a2-44f4-9992-3c6a9bf0cd14 --scale 2k
+
+# Upscale an image generated in the Flow web UI (not in the local catalog)
+gflow image upscale <mediaId> --scale 2k --project <projectId>
+```
+
+Notes:
+
+- **Credit-free** — upscaling is an image operation and spends no credits.
+- **4K is Ultra-only.** On a non-Ultra account a 4K request fails with exit code 22
+  (`UpscaleUnavailableError`) and a hint to use `--scale 2k` or upgrade.
+- The result is saved as `<output_dir>/images/<YYYY-MM-DD>/<mediaId>_<scale>.<ext>`
+  (extension matches the returned format — usually `.jpg`).
+
 ## `gflow image t2i`
 
 Generate 1–4 images from one text prompt, or run a shell-friendly batch of 1–50
@@ -138,6 +176,9 @@ Options:
                             consistency (repeatable; must live in --project).
                             Single-prompt only.
   --reference-entity-name N Display name paired with --reference-entity.
+  -t, --tool NAME[:k=v]     Apply a prompt tool before generating, e.g.
+                            `creative-director:style=cinema`. Repeatable; applied
+                            per prompt on multi-prompt/batch. See "Prompt tools".
   --profile NAME            Profile name (overrides default).
 ```
 
@@ -161,6 +202,32 @@ Options:
   fan-out is 50 prompts * 4 = 200 images.
 - `--continue-on-error` is default; `--fail-fast` stops after the first failed
   prompt.
+
+**Prompt tools (`-t` / `--tool`).**
+
+A *tool* is a named, single-purpose transform applied to your prompt before generating —
+the first built-in is `creative-director`, which rewrites a terse prompt into a richer one
+using Google's five-component formula (Subject + Action + Context/Location +
+Composition/Camera + Style) via the public Gemini API. `-t/--tool` is **repeatable** and
+works on every generation command (`image t2i`/`i2i`/`batch`, `video t2v`/`i2v`/`r2v`/`chain`);
+on multi-prompt/batch it is applied per prompt.
+
+- Requires `GFLOW_CLI_GEMINI_API_KEY` ([get one](https://aistudio.google.com/apikey));
+  optionally `GFLOW_CLI_GEMINI_MODEL` (default `gemini-2.5-flash`).
+- Graceful: if the key is unset or the API errors, gflow prints a notice and
+  generates from your **original** prompt — the run never fails because of a tool
+  (each call is bounded by an overall ~60s wall-clock budget).
+- The local catalog records **both** the original prompt and the submitted
+  expansion (withheld under `GFLOW_CLI_HISTORY_PROMPTS=redacted`), plus a
+  `metadata_json.tool` provenance descriptor.
+- Discover and preview tools with `gflow tools list` / `show` / `run` (see the
+  **`gflow tools`** section below). Full reference: [TOOLS.md](TOOLS.md) and
+  [PROMPT_EXPANSION.md](PROMPT_EXPANSION.md).
+
+```bash
+# Rewrite "cat in space" into a detailed prompt with the cinema style, then generate
+gflow image t2i "cat in space" --tool creative-director:style=cinema
+```
 
 **Output paths.**
 
@@ -371,14 +438,20 @@ All prompts in a batch share one Flow project. The editor is opened once; each p
 Generate a video from a text prompt only.
 
 ```text
-gflow video t2v PROMPT [--model] [--duration] [--count] [--aspect] [--profile] [--out-dir]
+gflow video t2v PROMPT [--model] [--duration] [--count] [--aspect] [--profile] [-t/--tool] [--out-dir]
 ```
 
 ```bash
 gflow video t2v "Slow cinematic push-in toward a candle flame"
 gflow video t2v "Aerial shot of a coastline at sunset" --aspect 16:9 --out-dir ./out
 gflow video t2v "A neon city timelapse" --model omni-flash --duration 10 --count 2
+# Apply the creative-director tool (cinematic style) before generating
+gflow video t2v "a dog surfing" --tool creative-director:style=cinematic
 ```
+
+`-t` / `--tool` applies a prompt tool before generating — see
+[prompt tools](#gflow-image-t2i) under `image t2i` for the full contract
+(requires `GFLOW_CLI_GEMINI_API_KEY`; degrades gracefully to the original prompt).
 
 ## `gflow video i2v`
 
@@ -555,6 +628,35 @@ gflow video chain story.jsonl --resume-from 1f2e3d4c-...
 # Seed 150 ms before EOF to dodge a fade-to-black final frame
 gflow video chain story.jsonl --seed-offset 150 --yes
 ```
+
+## `gflow tools`
+
+Discover and run **prompt tools** — named, single-purpose transforms applied to a prompt
+before generation. The first built-in is `creative-director` (the Gemini "Creative Director").
+Apply a tool inline on any generation command with `-t/--tool` (see [prompt tools](#gflow-image-t2i)),
+or use this group standalone. Full reference: [TOOLS.md](TOOLS.md) · [PROMPT_EXPANSION.md](PROMPT_EXPANSION.md).
+
+```text
+gflow tools list [--json]
+gflow tools show NAME [--json]
+gflow tools run NAME "INPUT" [--style MODE] [--json]
+```
+
+- **`list`** — registered tools (name, title, category, description). Includes your own
+  "My Tools" TOMLs from `<GFLOW_CLI_HOME>/tools/*.toml`.
+- **`show NAME`** — full spec incl. required env and available `--style` modes.
+- **`run NAME "INPUT"`** — run the tool standalone (no generation, no credits); pipeable.
+  Emits `{name, original, expanded, was_expanded}` with `--json`.
+
+```bash
+gflow tools list
+gflow tools show creative-director
+# Preview an expansion (needs GFLOW_CLI_GEMINI_API_KEY); never fatal
+gflow tools run creative-director "a cat on a couch" --style cinema --json
+```
+
+To author your own tool, drop a TOML in `<GFLOW_CLI_HOME>/tools/` — see
+[TOOLS.md § My Tools](TOOLS.md).
 
 ## `gflow scene`
 
@@ -984,9 +1086,16 @@ shell scripts can branch on the failure mode without parsing stderr.
 | `12` | `AuthLoginTimeoutError` | Browser sign-in was not completed in time       | Re-run login or raise `GFLOW_CLI_AUTH_LOGIN_TIMEOUT`       |
 | `13` | `SecurityError`       | Unsafe local profile or secret handling blocked   | Follow the error's safety guidance                         |
 | `14` | `AuthBrowserRejectedError` | Google rejected the login browser             | `gflow auth login --browser chrome`                        |
+| `15` | `BrowserSessionClosedError` | The automation browser window was closed mid-operation | Re-run; keep the browser window open until the command finishes |
 | `16` | `DataStoreError`      | Local database cannot be opened, a migration failed, or the DB schema is newer than the installed gflow-cli | See below                                  |
 | `17` | `ModelModeIncompatibilityError` | The chosen video model can't do the requested mode (e.g. `--model omni-flash` with an `i2v` start/end frame — issue #125) | Use `--model veo-lite` (or veo-fast / veo-quality / veo-lite-lp) for `i2v` |
 | `18` | `VideoModelSelectionError` | gflow could not select the requested video model in Flow's editor for an `i2v` run (model-picker option not found) | Usually transient — retry; if it persists, Flow's model-picker UI changed (report referencing #125) |
+| `19` | `SceneConcatError`    | Server-side scene render/concat failed (`gflow scene --output`) | Retry; the recorded compose survives, so re-render is safe |
+| `20` | `FrameExtractionError` | Could not extract the last frame for a video chain link | Check the source video downloaded intact; retry the link  |
+| `21` | `ChainPartialError`   | A video chain stopped mid-way; earlier links completed | Resume from the last completed link shown in the error     |
+| `22` | `UpscaleUnavailableError` | 4K upscale is gated to Flow **Ultra** accounts (HTTP 403) | Use `--scale 2k`, or upgrade the Flow plan                |
+| `23` | `UiSelectorDriftError` | A Flow editor control could not be located — Google changed the frontend (issue #183) | Update gflow-cli; file a bug with the probe name + debug screenshot from the error message |
+| `24` | `BrowserEngineUnavailableError` | `GFLOW_CLI_BROWSER_ENGINE=patchright` but the engine is not installed | `pip install 'gflow-cli[patchright]'`, or unset `GFLOW_CLI_BROWSER_ENGINE` |
 | `130`| SIGINT                | User-interrupted (Ctrl-C)                        | —                                                          |
 
 **Exit code 16 — data store / migration error.** Fires when:

@@ -14,6 +14,77 @@ Living list of behaviour that's broken, surprising, or limited by design — alo
 
 ## Open
 
+### macOS: generation runs logged-out → HTTP 401, even with `--browser chrome`
+
+- **Status:** **RESOLVED in v0.23.0** ([#222](https://github.com/ffroliva/gflow-cli/issues/222),
+  fixed by [#230](https://github.com/ffroliva/gflow-cli/pull/230), @gunalak)
+- **Severity:** High · **Affected:** all `gflow` generation on **macOS** with a
+  `chrome`-strategy profile; Windows was unaffected
+
+On macOS, generation calls failed with **HTTP 401** (`AuthExpiredError` at
+`project.createProject`) on a profile that `gflow auth login` and verification
+accepted. Two corrections fixed it (verified end-to-end on macOS Apple Silicon):
+
+1. **Cookie-read bug (unconditional).** The Flow cookie snapshot read the jar via
+   `ctx.cookies(["https://labs.google"])`, whose path-`/` filter silently dropped
+   the `/fx`-scoped `__Secure-next-auth.session-token`. Now the full jar is read
+   and filtered by domain, so the session token is captured.
+2. **macOS headed-context decrypt (intermittent).** When the headed generation
+   context can't decrypt the on-disk store, the session is seeded from a snapshot
+   captured **pre-launch** via the working `--password-store=basic` reader. No-op on
+   Windows and on runs where the context decrypts natively.
+
+Evidence: [LIVE_VERIFICATION_v0.23.0](docs/LIVE_VERIFICATION_v0.23.0.md).
+
+### Flow's new full-page media-library UI breaks entity attach (A/B rollout)
+
+- **Status:** **Open** — Flow-side staged rollout; tracked in
+  [#174](https://github.com/ffroliva/gflow-cli/issues/174)
+- **Severity:** High · **Affects:** `gflow image t2i --reference-entity` and
+  movie R2V entity attach on accounts that received the new UI, any locale
+
+Flow is A/B-rolling a new full-page media-library UI: clicking **Add Media**
+in the composer **navigates to a library page** (sidebar: All media /
+Characters / Scenes / Tools, with a floating quick-create composer) instead of
+opening the resource-picker dialog. On affected accounts the right-click
+include action still lands (a chip appears), **but the staged entity never
+reaches the submit** — the request carries no `referenceEntities`, so the
+submit backstops raise `WireFormatError` (**exit 7**) instead of silently
+returning a text-only generation as success.
+
+**How to tell which UI your account has:** in the Flow web editor, click
+**Add Media** — a small dialog means the old (working) UI; a navigation to a
+full-page library means the affected new UI.
+
+**Note:** the experiment appears to flap — the affected account observed on
+2026-06-12 00:13 was back on the old dialog UI by 12:48 the same day (variant
+probe, issue #174). If you hit exit 7 on entity attach, re-running later the
+same day may simply work again.
+
+**Workaround:** none yet on affected accounts — the attach gesture for the new
+UI is being reverse-engineered (recon plan in
+[docs/superpowers/plans/2026-06-12-issue-174-library-ui-attach/PLAN.md](docs/superpowers/plans/2026-06-12-issue-174-library-ui-attach/PLAN.md)).
+If you have a second profile/account still on the old UI, entity attach works
+there. Follow [#174](https://github.com/ffroliva/gflow-cli/issues/174) for
+status; please report whether your account shows the dialog or the full-page
+library (plus your locale) on that issue.
+
+### 4K image upscale requires a Flow Ultra subscription
+
+- **Status:** **Open** (by design — a Flow platform limit, not a gflow bug)
+- **Severity:** Low · **Affects:** `gflow image upscale --scale 4k` on non-Ultra accounts
+
+`gflow image upscale <mediaId> --scale 4k` returns **exit code 22**
+(`UpscaleUnavailableError`) on accounts below the Ultra tier — Flow gates 4K
+upscaling behind Ultra (the web UI shows an "Upgrade" button instead of a 4K
+option). The account tier is reported on the wire as `userPaygateTier` but is
+enforced server-side, so gflow cannot grant 4K locally.
+
+**Workaround:** use `--scale 2k` (available on all tiers), or upgrade the Flow
+account to Ultra. If you just upgraded, re-run `gflow auth login --profile <name>`
+to refresh the session before retrying 4K. Wire detail:
+[docs/IMAGE_UPSCALE_RECON.md](docs/IMAGE_UPSCALE_RECON.md) (#171).
+
 ### Image generation returns HTTP 401 — `aisandbox-pa` generation endpoint
 
 - **Status:** **RESOLVED in v0.7.0** — moved to [Resolved](#resolved) section
@@ -332,7 +403,7 @@ issue and not blocked by any code change in this repo.
 
 ### `UiAutomationTransport` selectors locale-agnostic — issue #24 Phase 5 complete
 
-- **Status:** Resolved (pending owner live e2e on non-EN profile) · **Severity:** Low · **Tracking:** [issue #24](https://github.com/ffroliva/gflow-cli/issues/24), [issue #94](https://github.com/ffroliva/gflow-cli/issues/94)
+- **Status:** Resolved (pending owner live e2e on non-EN profile) · **Severity:** Low · **Tracking:** [issue #24](https://github.com/ffroliva/gflow-cli/issues/24), [issue #94](https://github.com/ffroliva/gflow-cli/issues/94), [issue #170](https://github.com/ffroliva/gflow-cli/issues/170)
 
   `--lang=en-US` removed in PR #127 (2026-05-30). All selector groups now use
   locale-stable anchors: `IMAGE_MODEL_OPTION_SELECTORS` and
@@ -342,6 +413,20 @@ issue and not blocked by any code change in this repo.
   Google-branded identifiers. Locale is controlled by the `locale=locale_env`
   Playwright kwarg (persists across all in-session navigations). Full resolution
   gate: live e2e with `gflow image t2i` (each model) on a non-EN Chrome profile.
+
+  **2026-06-12 correction (issue #170):** the "all selector groups" claim above
+  had two stragglers — `PICKER_INCLUDE_BUTTON` and `PICKER_CONTEXT_INCLUDE`
+  hardcoded the pt-BR caption "Incluir no comando", breaking
+  `--reference-entity` (image t2i), movie R2V entity attach, and Vozes voice
+  attach on every non-Portuguese account (Flow renders in the ACCOUNT language;
+  `?hl=en` cannot override it). Fixed by converting both constants to sequential
+  tier cascades — context-menu Tier 1 is the locale-free `add`-ligature menuitem
+  scoped to the open menu; the Vozes button has no ligature, so pt/ru/en text
+  leads with a lone-iconless-dialog-button structural fallback. The matched tier
+  is emitted as `ui_automation_video.include_selector_tier` (drift telemetry),
+  exhaustion raises typed `TransportTimeoutError` (exit 9) with a locale-neutral
+  remediation hint, and an image-side submit backstop now raises
+  `WireFormatError` when a requested entity never rode the wire.
 
 **Phase 2 progress (2026-05-25, develop / post-v0.8.1, unreleased):**
 
@@ -565,6 +650,15 @@ success. The expected authenticated response shape is pinned by the
 change surfaces there as a failing test. Start any investigation of a sudden
 `gflow auth login` verification failure at that fixture and `verification.py`.
 
+Since PR #168 the production entry point is `verify_flow_profile`, which reads
+the session cookie **directly from Chrome's SQLite store** via `browser_cookie3`
+(a no-browser fast path) and only falls back to launching Playwright when that
+decryption fails. This adds two more local surfaces to check when verification
+fails unexpectedly: a Windows **DPAPI decrypt failure** (cross-user / cross-machine
+key — surfaces as a `RuntimeError` that `auth/cookies.py` normalizes to
+`PermissionError` to trigger the Playwright fallback) and a **locked cookie DB**
+(Chrome still running holds an exclusive SQLite lock). Both degrade fail-closed.
+
 ---
 
 ## Resolved
@@ -590,8 +684,8 @@ Profiles created before this fix continue to work and display `unknown` in the
 account column. Re-running `gflow auth login` against an existing profile backfills
 the `.gflow_account` file.
 
-See [AUTHENTICATION.md § Profile naming](AUTHENTICATION.md#profile-naming) for the
-new naming convention and [AUTHENTICATION.md § gflow auth list](AUTHENTICATION.md#gflow-auth-list)
+See [AUTHENTICATION.md § Profile naming](docs/AUTHENTICATION.md#profile-naming) for the
+new naming convention and [AUTHENTICATION.md § gflow auth list](docs/AUTHENTICATION.md#gflow-auth-list)
 for the updated `--json` schema.
 
 ---

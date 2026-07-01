@@ -17,25 +17,37 @@ import asyncio
 import base64
 import json
 import os
+import sys
 import time
-from dataclasses import replace as _dc_replace
+from dataclasses import replace as _dataclass_replace
 from datetime import datetime
-from typing import TYPE_CHECKING, Any, Self, cast
+from typing import TYPE_CHECKING, Any, Self, TypeVar, cast
 from urllib.parse import quote, urlsplit, urlunsplit
 
 import structlog
 from playwright.async_api import BrowserContext, Page, Playwright, async_playwright
 
 from gflow_cli.api import routes
+from gflow_cli.api._engine import (
+    active_engine,
+    log_engine_selected,
+    mint_evaluate_kwargs,
+    resolve_async_playwright,
+)
 from gflow_cli.api._retry import parse_retry_after, post_with_retry
 from gflow_cli.api.character import Character, CharacterImageRequest, parse_characters
 from gflow_cli.api.dto import AssetInfo, GeneratedImage, ProjectInfo
+from gflow_cli.api.image_upscale import (
+    TargetResolution,
+    UpsampleImageRequest,
+    build_upsample_image_body,
+)
 from gflow_cli.api.recaptcha import TokenMinter
 from gflow_cli.api.scene import ConcatInput, Scene, SceneWorkflow
 from gflow_cli.api.transports import make_transport
 from gflow_cli.api.transports.base import FlowTransportStrategy, VideoCapableTransport
 from gflow_cli.browser_manager import channel_for_profile
-from gflow_cli.config import Settings
+from gflow_cli.config import BrowserEngine, Settings
 from gflow_cli.errors import (
     AisandboxAuthError,
     AuthExpiredError,
@@ -48,6 +60,7 @@ from gflow_cli.errors import (
     RateLimitError,
     SceneConcatError,
     TransportTimeoutError,
+    UpscaleUnavailableError,
     WafRejectionError,
     WireFormatError,
 )
@@ -57,6 +70,8 @@ from gflow_cli.storage import AnyPath, storage_path, write_asset_async
 if TYPE_CHECKING:
     from pathlib import Path
 
+    from _typeshed import DataclassInstance
+
     from gflow_cli.api.image import GenerateImageRequest
     from gflow_cli.api.video import GenerateVideoRequest, VideoResult, VideoStartedCallback
 
@@ -64,6 +79,20 @@ if TYPE_CHECKING:
 # bodies, launch kwargs, etc.). A single definition avoids the duplicated-literal
 # smell (SonarCloud S1192) from repeating the bare mapping type across the module.
 JsonObject = dict[str, Any]
+
+_DataclassT = TypeVar("_DataclassT", bound="DataclassInstance")
+
+
+def _dc_replace(obj: _DataclassT, /, **changes: Any) -> _DataclassT:
+    """Typed wrapper over ``dataclasses.replace`` that preserves the input type.
+
+    The stdlib annotation for ``replace`` is opaque to some analyzers (they infer
+    a generic ``DataclassInstance``), which produced spurious argument-type and
+    declared-type findings at call sites. Re-declaring it with a ``TypeVar`` makes
+    the return type flow through as the concrete request dataclass.
+    """
+    return _dataclass_replace(obj, **changes)
+
 
 # Marker substring used by Playwright when a Page/Context/Browser is closed.
 # Stable across recent Playwright versions; we match on message text to avoid
@@ -99,8 +128,15 @@ MAX_IMAGE_BYTES = 20 * 1024 * 1024  # 20 MB
 # pathologically long scene; ~350 MB base64 ≈ 260 MB MP4 ≈ a ~4.5-min scene.
 MAX_CONCAT_B64_LEN = 350 * 1024 * 1024
 
+# upsampleImage returns the upscaled image inline as base64 in `encodedImage`
+# (~3.8–5.1 MB observed for 2K). Cap before b64decode to avoid OOM on a
+# pathological 4K PNG; 50 MB base64 ≈ 37 MB decoded gives generous headroom.
+MAX_UPSAMPLE_B64_LEN = 50 * 1024 * 1024
+
 # aisandbox-pa rejects application/json — see samples/captured/*.json.
 _AISANDBOX_CONTENT_TYPE = "text/plain;charset=UTF-8"
+# Content type for the labs.google BFF (tRPC) endpoints, which DO accept JSON.
+_APPLICATION_JSON = "application/json"
 
 # aisandbox-pa POSTs return 401 to page.request unless an Authorization: Bearer
 # <access_token> is attached — the SPA's OAuth2 token, fetched from the BFF
@@ -109,6 +145,9 @@ _AISANDBOX_CONTENT_TYPE = "text/plain;charset=UTF-8"
 _AISANDBOX_HOST = "aisandbox-pa.googleapis.com"
 _LABS_ORIGIN = "https://labs.google"
 _SESSION_API_URL = "https://labs.google/fx/api/auth/session"
+# issue #222: the NextAuth Flow session cookie + the URL used to seed it.
+_FLOW_SESSION_COOKIE = "__Secure-next-auth.session-token"
+_FLOW_COOKIE_URL = _LABS_ORIGIN
 
 
 def _parse_iso_to_epoch(value: object) -> float:
@@ -250,6 +289,11 @@ class FlowApiClient:
         # ``self._page``. T3 rewires them to ``_checkout_page()`` /
         # ``_checkin_page()`` and this alias goes away.
         self._page: Page | None = None
+        # issue #222: Flow cookies read from the profile BEFORE the headed
+        # generation context launches, used to seed that context if it cannot
+        # decrypt the on-disk cookie store (macOS Keychain vs basic-store
+        # mismatch). Populated by _preread_flow_session_cookies().
+        self._preread_flow_cookies: dict[str, str] = {}
 
     # --- lifecycle --------------------------------------------------------
 
@@ -260,7 +304,17 @@ class FlowApiClient:
         # ``page=`` kwarg so it can reuse the client's context instead of
         # opening a second Playwright process against the same profile dir
         # (which would conflict on the Chromium lockfile — spec § 5.4.4).
-        self._pw = await async_playwright().start()
+        # Engine selection: the default (playwright) path uses this module's
+        # ``async_playwright`` symbol unchanged — byte-identical behaviour and the
+        # existing test monkeypatches still apply. Only the opt-in patchright
+        # engine routes through the resolver (which raises a typed exit-24 error
+        # if the optional package is missing).
+        engine = active_engine()
+        log_engine_selected(engine)
+        if engine == BrowserEngine.PATCHRIGHT:
+            self._pw = await resolve_async_playwright(engine)().start()
+        else:
+            self._pw = await async_playwright().start()
         # Partial-setup leak guard: __aexit__ is NOT invoked when __aenter__
         # raises, so a launched persistent context (and its chrome process)
         # would leak and lock the profile dir — the next run then fails to
@@ -291,10 +345,191 @@ class FlowApiClient:
             "ignore_default_args": [
                 "--enable-automation",
                 "--no-sandbox",
-                "--password-store=basic",
             ],
-            "args": ["--disable-blink-features=AutomationControlled", "--disable-dev-shm-usage"],
+            # Pass --password-store=basic EXPLICITLY (issue #222). auth login
+            # (auth/real_chrome.py:69) and verification (auth/verification.py:246)
+            # seal and read the profile's cookies with Chrome's *basic* store —
+            # as does every other launch site in the codebase (auth/cookies.py,
+            # auth/internal_chromium.py, browser_manager.py, ui_automation.py).
+            # This shared generation context was the ONE path that omitted the
+            # flag and merely relied on Playwright's internal default; on macOS
+            # that let Chrome read cookies via the OS Keychain ("Chrome Safe
+            # Storage"), which cannot decrypt the basic-sealed cookies -> a
+            # logged-out context -> HTTP 401 at project.createProject (login and
+            # verify succeed, generation fails). #225 added a comment but never
+            # the flag here. Passing it explicitly keeps all paths symmetric
+            # regardless of Playwright's defaults.
+            "args": [
+                "--password-store=basic",
+                "--disable-blink-features=AutomationControlled",
+                "--disable-dev-shm-usage",
+            ],
         }
+
+    def _log_and_guard_launch(self, kwargs: dict[str, Any]) -> None:
+        """Log the resolved browser-launch identity and fail loud on a silent
+        chrome->bundled downgrade (issue #222).
+
+        Under the 'chrome' strategy ``channel`` must resolve to ``"chrome"``
+        (system Chrome). If it resolved to ``None`` Chrome wasn't found and
+        Playwright would fall back to bundled Chromium. On macOS that bundled
+        Chromium cannot decrypt cookies written by real Chrome (per-app Keychain
+        'Chrome Safe Storage'), producing a logged-out context and a confusing
+        HTTP 401 at project.createProject. Make that fatal with a clear
+        remediation. On other platforms the bundled fallback may still work
+        (e.g. Windows DPAPI cookie key is per-user), so warn instead of raising.
+
+        The diagnostic event names the resolved channel / executable /
+        user-data-dir / cookie-db presence — the data needed to tell a channel
+        downgrade apart from a cookie-decryption failure.
+        """
+        from gflow_cli.browser_manager import (
+            chrome_strategy_requested,
+            resolved_chrome_binary,
+        )
+        from gflow_cli.paths import get_cookies_path
+
+        channel = kwargs.get("channel")
+        wants_chrome = chrome_strategy_requested(self.profile_dir)
+        executable = resolved_chrome_binary()
+        # Resolve the cookie file the way auth/verification does (Chrome 130+
+        # Default/Network/Cookies, then legacy Default/Cookies, then bundled
+        # Cookies). Logging the actual path discriminates the H2 cookie-location
+        # mismatch (the persistent context reading a different file than the one
+        # the session was written to) from a plain decryption failure. See #222.
+        cookies_db = None
+        try:
+            cookies_db = get_cookies_path(self.profile_dir)
+        except FileNotFoundError:
+            pass
+        launch_args: list[str] = kwargs.get("args") or []
+        logger.info(
+            "client.persistent_context_launch",
+            channel=channel,
+            chrome_strategy_requested=wants_chrome,
+            chrome_executable=executable,
+            user_data_dir=str(self.profile_dir),
+            cookies_db_present=cookies_db is not None,
+            cookies_db_path=str(cookies_db) if cookies_db else None,
+            platform=sys.platform,
+            # issue #222: surface the actual launch args so we can confirm the
+            # generation context passes --password-store=basic (cookie-store
+            # symmetry with login/verification) on the failing macOS path.
+            launch_args=launch_args,
+            ignore_default_args=kwargs.get("ignore_default_args"),
+            password_store_basic="--password-store=basic" in launch_args,
+        )
+        if wants_chrome and channel is None:
+            msg = (
+                "Profile requests the 'chrome' browser strategy "
+                "(.gflow_browser_strategy=chrome) but Playwright's 'chrome' channel is "
+                "unavailable (Google Chrome is not at the location Playwright probes — "
+                "note a Chrome binary resolved elsewhere is logged as chrome_executable "
+                "but does not satisfy the channel), so generation would fall back to "
+                "Playwright's bundled Chromium. On macOS the bundled Chromium cannot "
+                "decrypt cookies written by real Chrome (Keychain 'Chrome Safe Storage'), "
+                "yielding a logged-out session and an HTTP 401 at project.createProject. "
+                "Install Google Chrome in its default location (or set CHROME_BINARY), "
+                "then retry; or re-run `gflow auth login` to re-capture the session."
+            )
+            if sys.platform == "darwin":
+                raise ConfigurationError(msg)
+            logger.warning("client.chrome_strategy_downgraded", detail=msg)
+
+    async def _preread_flow_session_cookies(self) -> None:
+        """#222: read the profile's Flow cookies BEFORE the headed generation
+        context launches, so _ensure_context_session_cookie can seed them if the
+        headed context fails to decrypt the on-disk store (macOS Keychain vs
+        basic-store mismatch).
+
+        Why pre-launch: ``get_chrome_cookie_snapshot``'s fallback opens a
+        *headless* ``--password-store=basic`` Chrome context on the same profile —
+        the one read path that decrypts on macOS — and a second persistent context
+        cannot be opened once the headed context holds the profile's singleton
+        lock.
+
+        Best-effort: any failure leaves the pre-read empty and the launch proceeds
+        unchanged. Cheap where browser_cookie3 succeeds (no browser is launched).
+        """
+        try:
+            from gflow_cli.auth.cookies import get_chrome_cookie_snapshot
+
+            snapshot = await get_chrome_cookie_snapshot(self.profile_dir)
+            self._preread_flow_cookies = dict(snapshot.httpx_cookies)
+            logger.info(
+                "client.preread_flow_cookies",
+                preread_count=len(self._preread_flow_cookies),
+                preread_session=_FLOW_SESSION_COOKIE in self._preread_flow_cookies,
+            )
+        except Exception as exc:  # noqa: BLE001 — best-effort; must never break launch
+            logger.warning("client.preread_flow_cookies_failed", error=type(exc).__name__)
+            self._preread_flow_cookies = {}
+
+    async def _ensure_context_session_cookie(self) -> None:
+        """Diagnostic + seed (issue #222): log whether the launched persistent
+        context loaded the Flow session cookie and, if it did not, seed it from
+        the pre-launch snapshot.
+
+        The accepting path (auth ``verify_flow_profile``) reads cookies via
+        browser_cookie3 + httpx and never uses a persistent context; generation
+        uses THIS persistent Chrome context. On macOS that headed context can load
+        ZERO cookies — it cannot decrypt the profile's basic-store-sealed jar — so
+        the Flow session never loads and project.createProject 401s, even though
+        login + verification succeed (they read via the headless
+        ``--password-store=basic`` path, which DOES decrypt). We seed from
+        ``self._preread_flow_cookies`` (captured pre-launch via that same working
+        reader; see ``_preread_flow_session_cookies``) so the context carries the
+        session. No-op where the context loads the cookie itself (e.g. Windows).
+
+        The diagnostic logs presence / count / expiry only — never values, so it
+        is safe to paste into a public issue. Pure best-effort: never raises,
+        never breaks the launch.
+        """
+        if self._context is None:
+            return
+        try:
+            cookies = await self._context.cookies()
+        except Exception as exc:  # noqa: BLE001 — must never break the launch
+            logger.warning("client.context_cookie_probe_error", error=type(exc).__name__)
+            return
+        now = time.time()
+        flow_cookie = next(
+            (c for c in cookies if c.get("name") == _FLOW_SESSION_COOKIE),
+            None,
+        )
+        flow_expires = flow_cookie.get("expires") if flow_cookie is not None else None
+        logger.info(
+            "client.context_cookie_state",
+            context_cookie_count=len(cookies),
+            flow_session_cookie_present=flow_cookie is not None,
+            # expires == -1 -> a session cookie (no persisted expiry); otherwise
+            # epoch seconds. Chromium prunes already-expired cookies from the
+            # jar, so the common "logged out" signal is present=False; this flag
+            # only catches a near-boundary expiry that survived into the jar.
+            flow_session_cookie_expired=(
+                flow_expires is not None and flow_expires != -1 and flow_expires < now
+            ),
+            google_sapisid_present=any(c.get("name") == "SAPISID" for c in cookies),
+        )
+        if flow_cookie is not None:
+            return  # context loaded the session cookie — nothing to seed
+        if not self._preread_flow_cookies:
+            logger.warning("client.context_cookie_seed_unavailable")
+            return
+        try:
+            await self._context.add_cookies(
+                [
+                    {"name": name, "value": value, "url": _FLOW_COOKIE_URL}
+                    for name, value in self._preread_flow_cookies.items()
+                ]
+            )
+            logger.info(
+                "client.context_cookies_seeded",
+                seeded_count=len(self._preread_flow_cookies),
+                seeded_session=_FLOW_SESSION_COOKIE in self._preread_flow_cookies,
+            )
+        except Exception as exc:  # noqa: BLE001 — seeding must never break the launch
+            logger.warning("client.context_cookie_seed_error", error=type(exc).__name__)
 
     async def _enter_setup(self) -> None:
         """Body of __aenter__ after the Playwright driver starts.
@@ -304,15 +539,25 @@ class FlowApiClient:
         """
         # Invariant: __aenter__ sets self._pw immediately before calling us.
         assert self._pw is not None
-        self._context = await self._pw.chromium.launch_persistent_context(
-            **self._persistent_context_kwargs()
-        )
+        # issue #222 (macOS): pre-read the profile's Flow cookies BEFORE launching
+        # the headed context, so _ensure_context_session_cookie can seed them if the
+        # headed context can't decrypt the on-disk store. Must run pre-launch — the
+        # snapshot's fallback opens a headless context on the same profile, which
+        # would deadlock on the singleton lock once the headed context holds it.
+        await self._preread_flow_session_cookies()
+        kwargs = self._persistent_context_kwargs()
+        self._log_and_guard_launch(kwargs)
+        self._context = await self._pw.chromium.launch_persistent_context(**kwargs)
         # Hide the automation flag so reCAPTCHA Enterprise doesn't score
         # the session as a bot — navigator.webdriver=true causes low-score
         # tokens and HTTP 403 on batchGenerateImages.
         await self._context.add_init_script(
             "Object.defineProperty(navigator,'webdriver',{get:()=>undefined})",
         )
+        # issue #222: log whether the headed context loaded the Flow session
+        # cookie and, if not (macOS can't decrypt the on-disk store), seed it
+        # from the pre-launch snapshot.
+        await self._ensure_context_session_cookie()
         # Open ``Settings.concurrency`` Pages inside the one persistent
         # BrowserContext. ``launch_persistent_context`` opens one Page by
         # default; reuse it as slot 0 to avoid an unused N+1 Page.
@@ -729,7 +974,7 @@ class FlowApiClient:
         """
         title = title or _default_project_title()
         body = {"json": {"projectTitle": title, "toolName": "PINHOLE"}}
-        data = await self._post_json(routes.CREATE_PROJECT, body, content_type="application/json")
+        data = await self._post_json(routes.CREATE_PROJECT, body, content_type=_APPLICATION_JSON)
         return ProjectInfo.from_create_response(data)
 
     async def upload_image(self, project_id: str, image_path: Path) -> AssetInfo:
@@ -955,6 +1200,75 @@ class FlowApiClient:
         )
         return Scene.from_get_response(data, scene_id=scene_id, project_id=project_id)
 
+    async def _poll_concat_until_done(
+        self,
+        operation: Any,
+        *,
+        poll_interval: float,
+        deadline: float,
+        timeout_s: float,
+    ) -> str:
+        """Poll ``runVideoFxCheckConcatenationStatus`` until successful.
+
+        Returns the raw base64 ``encodedVideo`` string on success.
+        Raises :class:`SceneConcatError` on job failure and
+        :class:`TransportTimeoutError` on deadline breach.
+        """
+        while True:
+            status_resp = await self._post_json(
+                routes.RUN_VIDEO_FX_CHECK_CONCATENATION_STATUS,
+                {"operation": operation},
+                route_name="runVideoFxCheckConcatenationStatus",
+            )
+            status = str(status_resp.get("status", ""))
+            if status == "MEDIA_GENERATION_STATUS_SUCCESSFUL":
+                return str(status_resp.get("encodedVideo") or "")
+            if status and status != "MEDIA_GENERATION_STATUS_ACTIVE":
+                # FAILED / unspecified — detail from status ONLY, never encodedVideo.
+                logger.warning("scene.concat_failed", status=status)
+                raise SceneConcatError(
+                    detail=f"concatenation job status: {status}",
+                    route="runVideoFxCheckConcatenationStatus",
+                )
+            if time.monotonic() >= deadline:
+                raise TransportTimeoutError(
+                    f"scene concatenation did not finish within {timeout_s:.0f}s"
+                )
+            await asyncio.sleep(poll_interval)
+
+    @staticmethod
+    def _decode_concat_video(encoded: str) -> bytes:
+        """Validate size, base64-decode, and magic-byte-check a concat payload.
+
+        Raises :class:`SceneConcatError` when the payload is absent, oversized,
+        undecodable, or not a valid MP4.
+        """
+        if not encoded:
+            raise SceneConcatError(
+                detail="concatenation succeeded but returned no encodedVideo",
+                route="runVideoFxCheckConcatenationStatus",
+            )
+        if len(encoded) > MAX_CONCAT_B64_LEN:
+            # Reject before decode — never log the body (mitigation: no 20MB+ in logs).
+            raise SceneConcatError(
+                detail=(
+                    f"concatenated video exceeds the {MAX_CONCAT_B64_LEN // (1024 * 1024)} MB "
+                    "size cap; compose fewer/shorter clips"
+                ),
+                route="runVideoFxConcatenation",
+            )
+        try:
+            video_bytes = base64.b64decode(encoded)
+        except ValueError as e:  # binascii.Error subclasses ValueError
+            # Don't include the (undecodable) body in the message.
+            raise SceneConcatError(
+                detail="concatenation returned undecodable video data",
+                route="runVideoFxCheckConcatenationStatus",
+            ) from e
+        if video_bytes[4:8] != b"ftyp":
+            raise SceneConcatError(detail="concatenation output is not a valid MP4")
+        return video_bytes
+
     async def concatenate_scene(
         self,
         inputs: list[ConcatInput],
@@ -988,55 +1302,14 @@ class FlowApiClient:
         logger.info("scene.concat_started", clips=len(inputs))
 
         deadline = time.monotonic() + timeout_s
-        encoded = ""
-        while True:
-            status_resp = await self._post_json(
-                routes.RUN_VIDEO_FX_CHECK_CONCATENATION_STATUS,
-                {"operation": operation},
-                route_name="runVideoFxCheckConcatenationStatus",
-            )
-            status = str(status_resp.get("status", ""))
-            if status == "MEDIA_GENERATION_STATUS_SUCCESSFUL":
-                encoded = str(status_resp.get("encodedVideo") or "")
-                break
-            if status and status != "MEDIA_GENERATION_STATUS_ACTIVE":
-                # FAILED / unspecified — detail from status ONLY, never encodedVideo.
-                logger.warning("scene.concat_failed", status=status)
-                raise SceneConcatError(
-                    detail=f"concatenation job status: {status}",
-                    route="runVideoFxCheckConcatenationStatus",
-                )
-            if time.monotonic() >= deadline:
-                raise TransportTimeoutError(
-                    f"scene concatenation did not finish within {timeout_s:.0f}s"
-                )
-            await asyncio.sleep(poll_interval)
-
-        if not encoded:
-            raise SceneConcatError(
-                detail="concatenation succeeded but returned no encodedVideo",
-                route="runVideoFxCheckConcatenationStatus",
-            )
-        if len(encoded) > MAX_CONCAT_B64_LEN:
-            # Reject before decode — never log the body (mitigation: no 20MB+ in logs).
-            raise SceneConcatError(
-                detail=(
-                    f"concatenated video exceeds the {MAX_CONCAT_B64_LEN // (1024 * 1024)} MB "
-                    "size cap; compose fewer/shorter clips"
-                ),
-                route="runVideoFxConcatenation",
-            )
-        try:
-            video_bytes = base64.b64decode(encoded)
-        except ValueError as e:  # binascii.Error subclasses ValueError
-            # Don't include the (undecodable) body in the message.
-            raise SceneConcatError(
-                detail="concatenation returned undecodable video data",
-                route="runVideoFxCheckConcatenationStatus",
-            ) from e
-        del encoded, status_resp  # drop the ~20MB+ payload promptly
-        if video_bytes[4:8] != b"ftyp":
-            raise SceneConcatError(detail="concatenation output is not a valid MP4")
+        encoded = await self._poll_concat_until_done(
+            operation,
+            poll_interval=poll_interval,
+            deadline=deadline,
+            timeout_s=timeout_s,
+        )
+        video_bytes = self._decode_concat_video(encoded)
+        del encoded  # drop the ~20MB+ payload promptly
         logger.info("scene.concat_completed", bytes=len(video_bytes))
 
         # Write via the same storage_uri-aware path as download_image.
@@ -1053,6 +1326,122 @@ class FlowApiClient:
         await write_asset_async(target, video_bytes)
         return target
 
+    async def upsample_image(
+        self,
+        *,
+        media_id: str,
+        project_id: str,
+        target_resolution: TargetResolution,
+        out_path: Path,
+        recaptcha_action: str = "IMAGE_GENERATION",
+    ) -> AnyPath:
+        """Upscale a platform-generated image to 2K/4K via Flow's ``upsampleImage``.
+
+        reCAPTCHA-gated (a Bearer-only call is 403-walled — REST is not viable),
+        so this mints a fresh single-use token, POSTs, and decodes the synchronous
+        ``{"encodedImage": <base64>}`` response (no async poll loop). Writes to
+        ``out_path`` (or the configured cloud ``storage_uri``) and returns the
+        target.
+
+        ``project_id`` is the project that owns ``media_id`` — the live wire
+        requires it inside ``clientContext`` (a minimal body 403s even with a
+        valid token; confirmed by live smoke). The request is validated BEFORE the
+        reCAPTCHA mint so malformed ids fail fast without spending a token.
+
+        4K is Ultra-tier-gated: a 403 on a 4K request surfaces as
+        :class:`UpscaleUnavailableError` (exit 22, never auto-retried) rather than
+        :class:`WafRejectionError` — both are HTTP 403 on the wire, disambiguated
+        by the requested resolution. A 403 on a 2K request stays a WAF rejection.
+
+        The ~5 MB ``encodedImage`` base64 is NEVER logged; it is capped before
+        decode, validated by magic bytes, and dropped promptly after decode.
+        """
+        # Construct (and validate media_id/project_id) BEFORE minting — fail fast.
+        base_req = UpsampleImageRequest(
+            media_id=media_id,
+            project_id=project_id,
+            target_resolution=target_resolution,
+        )
+        logger.info(
+            "image.upscale_started",
+            media_id=media_id,
+            resolution=target_resolution.name,
+        )
+        token = await self._mint_recaptcha_token(recaptcha_action)
+        req: UpsampleImageRequest = _dc_replace(base_req, recaptcha_token=token)
+        session_id = f";{int(time.time() * 1000)}"
+        try:
+            resp = await self._post_json(
+                routes.UPSAMPLE_IMAGE,
+                build_upsample_image_body(req, session_id=session_id),
+                route_name="upsampleImage",
+            )
+        except WafRejectionError as exc:
+            # A 403 on a 4K request is almost certainly the Ultra-tier gate, not a
+            # WAF/fingerprint block. Surface the distinct error (exit 22) so callers
+            # can branch on "upgrade your plan" — and crucially, NEVER auto-retry it
+            # (a retry only inflates per-profile WAF heat and never succeeds).
+            if target_resolution is TargetResolution.RES_4K:
+                raise UpscaleUnavailableError(
+                    detail="4K upscale rejected (HTTP 403) — requires a Flow Ultra subscription",
+                    status=403,
+                    instance=_make_instance(),
+                    route="upsampleImage",
+                ) from exc
+            raise
+
+        resp_obj: JsonObject = cast("JsonObject", resp) if isinstance(resp, dict) else {}
+        encoded = str(resp_obj.get("encodedImage") or "")
+        if not encoded:
+            raise WireFormatError(
+                detail="upsampleImage response missing encodedImage",
+                instance=_make_instance(),
+                route="upsampleImage",
+                discovery={"keys": sorted(resp_obj)},
+            )
+        if len(encoded) > MAX_UPSAMPLE_B64_LEN:
+            # Reject before decode — never log the body (mitigation: no MBs in logs).
+            raise WireFormatError(
+                detail=(
+                    f"upscaled image exceeds the {MAX_UPSAMPLE_B64_LEN // (1024 * 1024)} MB "
+                    "size cap"
+                ),
+                route="upsampleImage",
+            )
+        try:
+            image_bytes = base64.b64decode(encoded)
+        except ValueError as exc:  # binascii.Error subclasses ValueError
+            raise WireFormatError(
+                detail="upsampleImage returned undecodable image data",
+                route="upsampleImage",
+            ) from exc
+        del encoded, resp  # drop the multi-MB payload promptly
+        if not _is_png_or_jpeg(image_bytes):
+            raise WireFormatError(
+                detail="upscaled output is not a valid PNG/JPEG",
+                route="upsampleImage",
+            )
+        logger.info(
+            "image.upscale_completed",
+            media_id=media_id,
+            resolution=target_resolution.name,
+            bytes=len(image_bytes),
+        )
+
+        storage_uri = self.settings.storage_uri
+        if storage_uri:
+            try:
+                key = out_path.relative_to(self.settings.output_dir).as_posix()
+            except ValueError:
+                key = out_path.name
+            target: AnyPath = storage_path(storage_uri, self.settings.output_dir, key)
+        else:
+            out_path.parent.mkdir(parents=True, exist_ok=True)
+            target = out_path
+        target = adjust_key_extension(target, image_bytes)
+        await write_asset_async(target, image_bytes)
+        return target
+
     async def _mint_recaptcha_token(self, action: str) -> str:
         """Mint a single-use reCAPTCHA Enterprise token via the client's Page.
 
@@ -1067,7 +1456,10 @@ class FlowApiClient:
         """
         page = await self._checkout_page()
         try:
-            minter = TokenMinter(page)
+            # Patchright evaluates in an isolated world by default, where the
+            # page's main-world ``grecaptcha`` global is undefined; the resolver
+            # supplies ``isolated_context=False`` for patchright ({} for playwright).
+            minter = TokenMinter(page, mint_evaluate_kwargs=mint_evaluate_kwargs())
             return await minter.mint(action)
         finally:
             self._checkin_page(page)
@@ -1118,13 +1510,33 @@ class FlowApiClient:
         constructing a :class:`GenerateImageRequest` with ``count>1`` and then
         invoking the single-image API still receive exactly one image (no
         silent discard).
+
+        When the transport returns more images than the requested ``count=1``
+        (typically because the generation-settings panel was not found and Flow
+        used its own default count, billing the account for the extra
+        generations), a ``client.generate_image_extra_returned`` warning is
+        logged so the caller can investigate.
         """
-        req_one = _dc_replace(req, count=1)
+        req_one: GenerateImageRequest = _dc_replace(req, count=1)
         images = await self._drive_images_generation(
             project_id=project_id,
             req=req_one,
             recaptcha_action=recaptcha_action,
         )
+        if len(images) > 1:
+            logger.warning(
+                "client.generate_image_extra_returned",
+                requested=1,
+                returned=len(images),
+                extra_media_ids=[img.media_name for img in images[1:]],
+                hint=(
+                    "Flow generated more images than requested — the "
+                    "generation-settings panel selector may have missed and Flow "
+                    "used its own default count. The extra image(s) were billed "
+                    "to your account but not saved. Use `gflow image t2i -n 2` to "
+                    "request and save multiple images explicitly."
+                ),
+            )
         return images[0]
 
     async def generate_image(
@@ -1198,7 +1610,7 @@ class FlowApiClient:
             else:
                 resolved_project_id = project_id
 
-            req_with_count = _dc_replace(req, count=count)
+            req_with_count: GenerateImageRequest = _dc_replace(req, count=count)
             return await self._drive_images_generation(
                 project_id=resolved_project_id,
                 req=req_with_count,
@@ -1288,7 +1700,7 @@ class FlowApiClient:
         data = await self._post_json(
             routes.CREATE_ENTITY_URL,
             body,
-            content_type="application/json",
+            content_type=_APPLICATION_JSON,
             route_name="createEntity",
         )
         payload = _unwrap_trpc(data)
@@ -1629,7 +2041,7 @@ def _build_wire_format_discovery(resp: Any, body_text: str, route: str) -> JsonO
         content_type = ""
     top_keys: list[str] = []
     try:
-        parsed = json.loads(body_text) if content_type.startswith("application/json") else None
+        parsed = json.loads(body_text) if content_type.startswith(_APPLICATION_JSON) else None
         if isinstance(parsed, dict):
             top_keys = sorted(cast("JsonObject", parsed).keys())
     except ValueError:  # json.JSONDecodeError is a ValueError subclass
@@ -1646,6 +2058,16 @@ def _build_wire_format_discovery(resp: Any, body_text: str, route: str) -> JsonO
         "top_level_keys": top_keys,
         "body_prefix_redacted": _redact_for_log(body_text)[:200],
     }
+
+
+def _is_png_or_jpeg(data: bytes) -> bool:
+    """True if *data* begins with a PNG or JPEG magic-byte signature.
+
+    Guards against writing a non-image payload (e.g. an error blob that decoded
+    as base64) to an image file. PNG: ``89 50 4E 47 0D 0A 1A 0A``; JPEG/JFIF:
+    ``FF D8 FF``.
+    """
+    return data[:8] == b"\x89PNG\r\n\x1a\n" or data[:3] == b"\xff\xd8\xff"
 
 
 def _raise_for_non_retryable(resp: Any, body_text: str, *, route: str) -> None:

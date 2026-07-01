@@ -39,7 +39,10 @@ from gflow_cli.api.video import (
 )
 from gflow_cli.errors import (
     AuthExpiredError,
+    FlowAgentUiError,
     ModelModeIncompatibilityError,
+    TransportTimeoutError,
+    UiSelectorDriftError,
     VideoModelSelectionError,
     WafRejectionError,
     WireFormatError,
@@ -50,6 +53,12 @@ if TYPE_CHECKING:
     from playwright.async_api import Locator, Page
 
 log = structlog.get_logger(__name__)
+
+# Type aliases for JSON-shaped ``cast(...)`` targets. Extracted so the quoted
+# cast strings are not duplicated (SonarCloud S1192); module-level aliases keep
+# ruff's TC006 happy since call sites pass a bare name, not a subscript.
+_JsonObj = dict[str, Any]
+_JsonObjList = list[dict[str, Any]]
 
 # The three mode-specific generate routes (spec §2.1). The listener filters on
 # these substrings only — video generate URLs carry no /projects/{id}/ path
@@ -144,6 +153,17 @@ COMPOSER_AGENT_TOGGLE_SELECTOR = (
 AGENT_CHAT_PANEL_CLOSE_SELECTOR = (
     "div:has(button:has(i.google-symbols:text-is('edit_square'))) "
     "button:has(i.google-symbols:text-is('close'))"
+)
+
+# Selectors unique to the new Agentic UI cohort. If crop settings are absent
+# and any of these are present, we are in the forced Agentic UI cohort.
+AGENTIC_UI_INDICATORS = (
+    "i.google-symbols:text-is('tune')",
+    "i.google-symbols:text-is('apps_spark_2')",
+    "i.google-symbols:text-is('article_spark')",
+    "i.google-symbols:text-is('edit_square')",
+    COMPOSER_AGENT_TOGGLE_SELECTOR,
+    AGENT_CHAT_PANEL_CLOSE_SELECTOR,
 )
 
 # Timing for the Agent-exit loop. The clicks are force=True (immediate), so the
@@ -293,12 +313,48 @@ PICKER_VOZES_TAB = (
     "[role='tab']:has(i.google-symbols:text-is('voice_selection')),"
     " button:has(i.google-symbols:text-is('voice_selection'))"
 )
-PICKER_INCLUDE_BUTTON = "button:has-text('Incluir no comando')"
-# Context-menu 'Incluir no comando' shown on RIGHT-CLICK of a Personagens entity
+# Picker include button (Vozes flow). Issue #170: the original single pt-BR
+# has-text selector broke every non-Portuguese account — Flow renders in the
+# ACCOUNT language and `?hl=en` cannot override it. Recon (denon82 pt-BR,
+# 2026-06-11): the button carries NO ligature icon, so known localized captions
+# lead; the structural fallback is the LONE iconless button inside the open
+# picker dialog (every other dialog button has a ligature: tabs, `play_arrow`
+# preview, `arrow_drop_down` sort) — same situation as ADD_TO_PROMPT_DIALOG.
+# Tiers are probed sequentially (see _resolve_include_action), never flattened
+# into one comma list: comma lists resolve in DOM order, not tier priority.
+PICKER_INCLUDE_BUTTON: tuple[str, str] = (
+    "button:has-text('Incluir no comando'), button:has-text('Добавить в запрос'),"
+    " button:has-text('Add to prompt')",
+    "[role='dialog'][data-state='open'] button:not(:has(i.google-symbols))",
+)
+_INCLUDE_BUTTON_TIER_NAMES = ("text", "structural")
+# Context-menu include action shown on RIGHT-CLICK of a Personagens entity
 # tile. This is what stages a `referenceEntity` (the inline Tudo button instead
 # stages a `referenceImage` of the thumbnail). Verified 2026-06-06.
-PICKER_CONTEXT_INCLUDE = (
-    "[role='menuitem']:has-text('Incluir no comando'), button:has-text('Incluir no comando')"
+# Issue #170 + recon 2026-06-11 (pt-BR denon82, matching the ru report): the
+# menu is `div[role='menu'][data-state='open']` with menuitem ligatures
+# add / content_cut / content_copy / delete — `add` is unique within the menu,
+# so the icon tier is locale-free. The text tier keeps known captions, menu-
+# scoped so a user-named tile (e.g. a character called 'Add to prompt') can
+# never match.
+PICKER_CONTEXT_INCLUDE: tuple[str, str] = (
+    "[role='menu'][data-state='open'] [role='menuitem']:has(i.google-symbols:text-is('add'))",
+    "[role='menu'] [role='menuitem']:has-text('Incluir no comando'),"
+    " [role='menu'] [role='menuitem']:has-text('Добавить в запрос'),"
+    " [role='menu'] [role='menuitem']:has-text('Add to prompt')",
+)
+_CONTEXT_INCLUDE_TIER_NAMES = ("icon", "text")
+# Issue #174: Flow is A/B-rolling a full-page media-library UI where the
+# include action lands (a chip appears) but the staged entity never reaches
+# the submit. Both entity-attach backstops (video + image) point affected
+# users at the tracking issue instead of the generic file-a-bug hint.
+ENTITY_ATTACH_DRIFT_HINT = (
+    "If clicking 'Add Media' on this account opens a full-page media library "
+    "instead of a picker dialog, this is Flow's new library UI rollout, where "
+    "the include action no longer stages entities — follow "
+    "https://github.com/ffroliva/gflow-cli/issues/174 for status and progress. "
+    "Otherwise, file a bug at https://github.com/ffroliva/gflow-cli/issues "
+    "(do NOT include captured tokens or signed URLs)."
 )
 # The picker grid is virtualised (react-virtuoso): off-screen tiles are not in
 # the DOM. When the target entity tile is not initially rendered, scroll the grid
@@ -359,6 +415,20 @@ async def _capture_debug_screenshot(page: Any, out_dir: Path | None, filename: s
     return shot_path
 
 
+def selector_drift_detail(probe: str, what: str, shot: Path | None) -> str:
+    """Build a :class:`UiSelectorDriftError` detail string for a probe miss.
+
+    Shared by the image and video transports so the message shape stays
+    symmetric, and so the ``Screenshot:`` clause is omitted (rather than
+    rendering a literal ``None``) when no debug screenshot was captured —
+    the caller had no ``out_dir`` to write into.
+    """
+    detail = f"probe={probe}: {what}"
+    if shot is not None:
+        detail = f"{detail} Screenshot: {shot}"
+    return detail
+
+
 def _summarize_request_image_inputs(request: Any) -> dict[str, Any]:
     """Privacy-safe summary of the image inputs in a generate request body:
     presence of startImage/endImage + referenceImages count, each as an 8-char
@@ -369,17 +439,17 @@ def _summarize_request_image_inputs(request: Any) -> dict[str, Any]:
         raw = request.post_data
         if not raw:
             return {"parsed": False}
-        data = cast("dict[str, Any]", json.loads(raw))
-        reqs = cast("list[dict[str, Any]]", data.get("requests") or [])
+        data = cast(_JsonObj, json.loads(raw))
+        reqs = cast(_JsonObjList, data.get("requests") or [])
         first: dict[str, Any] = reqs[0] if reqs else {}
 
         def _mid(obj: Any) -> str | None:
             if not isinstance(obj, dict):
                 return None
-            mid = cast("dict[str, Any]", obj).get("mediaId")
+            mid = cast(_JsonObj, obj).get("mediaId")
             return mid[:8] if isinstance(mid, str) else None
 
-        refs = cast("list[dict[str, Any]]", first.get("referenceImages") or [])
+        refs = cast(_JsonObjList, first.get("referenceImages") or [])
         return {
             "parsed": True,
             "startImage": _mid(first.get("startImage")),
@@ -413,7 +483,12 @@ class VideoGenerationMixin:
     if TYPE_CHECKING:
 
         async def _enter_editor(
-            self, page: Page, out_dir: Path | None = None, *, project_id: str | None = None
+            self,
+            page: Page,
+            out_dir: Path | None = None,
+            *,
+            project_id: str | None = None,
+            locale: str = "en-US",
         ) -> None: ...
         async def _send_prompt(
             self,
@@ -428,7 +503,7 @@ class VideoGenerationMixin:
         ) -> bool: ...
 
     @staticmethod
-    def _attach_video_response_listener(page: Page) -> tuple[list[dict[str, Any]], Any]:
+    def _attach_video_response_listener(page: Page) -> tuple[_JsonObjList, Any]:
         """Register a `page.on('response')` listener for the three
         batchAsyncGenerateVideo* routes (spec §2.1). Returns `(captured, handler)`
         — the caller awaits `captured` after submitting the prompt and MUST
@@ -440,7 +515,7 @@ class VideoGenerationMixin:
         The captured `body` is kept for parsing only — it carries
         `remainingCredits` and media UUIDs and MUST NOT be logged.
         """
-        captured: list[dict[str, Any]] = []
+        captured: _JsonObjList = []
 
         async def on_response(response: Any) -> None:
             if not any(route in response.url for route in VIDEO_GENERATE_ROUTES):
@@ -468,14 +543,14 @@ class VideoGenerationMixin:
         return captured, on_response
 
     @staticmethod
-    def _attach_status_response_listener(page: Page) -> tuple[list[dict[str, Any]], Any]:
+    def _attach_status_response_listener(page: Page) -> tuple[_JsonObjList, Any]:
         """Register a `page.on('response')` listener for the status route. Flow's
         SPA polls `batchCheckAsyncVideoGenerationStatus` itself while a
         generation runs; this captures that traffic. Returns `(captured, handler)`
         — the caller MUST `page.remove_listener('response', handler)` in a
         `finally`. Attached BEFORE `_send_prompt` so no early status response is
         missed (spec §5.5)."""
-        captured: list[dict[str, Any]] = []
+        captured: _JsonObjList = []
 
         async def on_response(response: Any) -> None:
             if VIDEO_STATUS_ROUTE not in response.url:
@@ -491,9 +566,72 @@ class VideoGenerationMixin:
         return captured, on_response
 
     @staticmethod
+    def _scan_for_terminal_status(
+        captured_status: _JsonObjList,
+        media_name: str,
+    ) -> tuple[VideoStatus | None, str | None]:
+        """Scan all captured status responses for a terminal VideoStatus.
+
+        Returns ``(terminal_status, last_seen_status_string)``. Raises
+        ``AuthExpiredError`` on HTTP 401. Skips responses for other media.
+        """
+        terminal: VideoStatus | None = None
+        last_status: str | None = None
+        for response in captured_status:
+            if response.get("status") == 401:
+                raise AuthExpiredError(
+                    detail=(
+                        "batchCheckAsyncVideoGenerationStatus returned HTTP 401"
+                        " — session expired mid-poll"
+                    ),
+                    status=401,
+                    route="video:status",
+                )
+            try:
+                status = parse_video_status(response.get("body") or {}, media_id=media_name)
+            except ValueError:
+                continue  # this response is for other media — skip
+            last_status = status.status
+            if status.is_terminal:
+                terminal = status
+        return terminal, last_status
+
+    @staticmethod
+    async def _nudge_tab_if_stalled(
+        page: Page,
+        captured_status: _JsonObjList,
+        seen_count: int,
+        last_progress: float,
+        nudged: bool,
+        stall_nudge_s: float,
+        media_name: str,
+    ) -> tuple[int, float, bool]:
+        """Update stall-detection bookkeeping and nudge the tab once on stall.
+
+        Returns the updated ``(seen_count, last_progress, nudged)`` tuple.
+        """
+        if len(captured_status) != seen_count:
+            return len(captured_status), time.monotonic(), nudged
+        if not nudged and time.monotonic() - last_progress > stall_nudge_s:
+            # Distinguish "Flow never polled the status route at all" from
+            # "Flow stalled mid-run".
+            event = (
+                "ui_automation_video.poll_no_status_traffic"
+                if seen_count == 0
+                else "ui_automation_video.poll_stall_nudge"
+            )
+            log.warning(event, media_name=media_name, status_responses_seen=seen_count)
+            try:
+                await page.bring_to_front()
+            except Exception as e:
+                log.debug("ui_automation_video.bring_to_front_failed", error=str(e))
+            nudged = True
+        return seen_count, last_progress, nudged
+
+    @staticmethod
     async def _poll_video_status(
         page: Page,
-        captured_status: list[dict[str, Any]],
+        captured_status: _JsonObjList,
         media_name: str,
         *,
         timeout_s: float = 600.0,
@@ -520,24 +658,9 @@ class VideoGenerationMixin:
         last_progress = time.monotonic()
         nudged = False
         while time.monotonic() < deadline:
-            terminal: VideoStatus | None = None
-            for response in captured_status:
-                if response.get("status") == 401:
-                    raise AuthExpiredError(
-                        detail=(
-                            "batchCheckAsyncVideoGenerationStatus returned HTTP 401"
-                            " — session expired mid-poll"
-                        ),
-                        status=401,
-                        route="video:status",
-                    )
-                try:
-                    status = parse_video_status(response.get("body") or {}, media_id=media_name)
-                except ValueError:
-                    continue  # this response is for other media — skip
-                last_status = status.status
-                if status.is_terminal:
-                    terminal = status
+            terminal, last_status = VideoGenerationMixin._scan_for_terminal_status(
+                captured_status, media_name
+            )
             if terminal is not None:
                 log.info(
                     "ui_automation_video.poll_terminal",
@@ -545,26 +668,9 @@ class VideoGenerationMixin:
                     status=terminal.status,
                 )
                 return terminal
-            # Stall detection: nudge the tab to the foreground ONCE if Flow's
-            # own polling has stopped — or never started — appending responses.
-            if len(captured_status) != seen_count:
-                seen_count = len(captured_status)
-                last_progress = time.monotonic()
-            elif not nudged and time.monotonic() - last_progress > stall_nudge_s:
-                nudged = True
-                # Distinguish "Flow never polled the status route at all" from
-                # "Flow stalled mid-run" — the former is the single most likely
-                # production failure (spec §5.5 flags it as unconfirmed).
-                event = (
-                    "ui_automation_video.poll_no_status_traffic"
-                    if seen_count == 0
-                    else "ui_automation_video.poll_stall_nudge"
-                )
-                log.warning(event, media_name=media_name, status_responses_seen=seen_count)
-                try:
-                    await page.bring_to_front()
-                except Exception as e:
-                    log.debug("ui_automation_video.bring_to_front_failed", error=str(e))
+            seen_count, last_progress, nudged = await VideoGenerationMixin._nudge_tab_if_stalled(
+                page, captured_status, seen_count, last_progress, nudged, stall_nudge_s, media_name
+            )
             await asyncio.sleep(poll_interval_s)
         cause = (
             "Flow never polled the status route"
@@ -664,7 +770,63 @@ class VideoGenerationMixin:
         return False
 
     @staticmethod
-    async def _exit_agent_mode(page: Page) -> bool:
+    async def _dismiss_agent_affordances(page: Page) -> bool:
+        """Run a bounded loop to dismiss Agent-mode affordances until the media panel returns.
+
+        Returns ``(acted, panel_restored)`` encoded as a single bool: True when
+        the media panel is back after at least one click, False when nothing was
+        clicked or the panel never re-mounted. Raises ``FlowAgentUiError`` if a
+        forced Agentic UI indicator is detected.
+        """
+        acted = False
+        clicked_pill = False
+        for _ in range(_AGENT_EXIT_MAX_ITERS):
+            if await VideoGenerationMixin._media_panel_present(page):
+                break
+            # Shape 2 first: the chat side-panel suppresses the pill entirely,
+            # so it must go before the pill can be found.
+            chat_close = page.locator(AGENT_CHAT_PANEL_CLOSE_SELECTOR).first
+            if await chat_close.count() > 0:
+                await chat_close.click(force=True, timeout=_AGENT_CLICK_TIMEOUT_MS)
+                await page.wait_for_timeout(_AGENT_SETTLE_MS)
+                acted = True
+                continue
+            # Shape 1: the in-composer pill — click AT MOST ONCE (binary toggle).
+            if clicked_pill:
+                break
+            pill = page.locator(COMPOSER_AGENT_TOGGLE_SELECTOR).first
+            if await pill.count() > 0:
+                await pill.click(force=True, timeout=_AGENT_CLICK_TIMEOUT_MS)
+                await page.wait_for_timeout(_AGENT_SETTLE_MS)
+                acted = True
+                clicked_pill = True
+                continue
+            # Neither affordance present — nothing more to do.
+            break
+        return acted
+
+    @staticmethod
+    async def _check_forced_agentic_ui(page: Page, out_dir: Path | None) -> None:
+        """Raise ``FlowAgentUiError`` if any forced Agentic UI indicator is present."""
+        for sel in AGENTIC_UI_INDICATORS:
+            if await page.locator(sel).count() > 0:
+                log.warning(
+                    "ui_automation_video.forced_agentic_ui_detected",
+                    indicator=sel,
+                    note="Forced Agentic UI detected; classic media panel is not recoverable.",
+                )
+                shot_path = await _capture_debug_screenshot(
+                    page, out_dir, "debug_forced_agent_ui.png"
+                )
+                raise FlowAgentUiError(
+                    detail=(
+                        f"Agentic UI detected via indicator {sel!r}. "
+                        f"Viewport screenshot: {shot_path}"
+                    )
+                )
+
+    @staticmethod
+    async def _exit_agent_mode(page: Page, *, out_dir: Path | None = None) -> bool:
         """Ensure the composer is in media (Image/Video) mode, not Agent mode.
 
         Flow's "Agent" mode hides the media-generation panel — the ``crop_*``
@@ -691,7 +853,7 @@ class VideoGenerationMixin:
         ``False`` otherwise (already in media mode, nothing to act on, or the
         clicks did not re-mount the panel). Best-effort, locale-invariant
         (Material Symbols ligatures + structural anchors, no UI text, no ARIA),
-        and never raises — a DOM probe failure must not abort generation.
+        and raises FlowAgentUiError if a forced Agentic UI cohort is encountered.
         """
         try:
             # Common case: the media panel is already mounted → media mode,
@@ -699,53 +861,17 @@ class VideoGenerationMixin:
             if await VideoGenerationMixin._media_panel_present(page):
                 return False
 
-            acted = False
-            clicked_pill = False
-            # Bounded loop: dismissing the chat panel can reveal the pill, which
-            # then needs its own click — at most a couple of transitions. The cap
-            # is a backstop against a pathological flip-flop.
-            for _ in range(_AGENT_EXIT_MAX_ITERS):
-                if await VideoGenerationMixin._media_panel_present(page):
-                    break
-                # Shape 2 first: the chat side-panel suppresses the pill entirely,
-                # so it must go before the pill can be found. Closing it is
-                # self-terminating (the X is gone afterwards), so it is safe to
-                # revisit across iterations.
-                chat_close = page.locator(AGENT_CHAT_PANEL_CLOSE_SELECTOR).first
-                if await chat_close.count() > 0:
-                    # force=True: the panel mounts with an entry animation that can
-                    # leave Playwright's actionability check waiting; the element is
-                    # present and the click lands regardless. The short timeout is
-                    # just a safety cap — a forced click is effectively immediate.
-                    await chat_close.click(force=True, timeout=_AGENT_CLICK_TIMEOUT_MS)
-                    await page.wait_for_timeout(_AGENT_SETTLE_MS)
-                    acted = True
-                    continue
-                # Shape 1: the in-composer pill. It is a binary toggle, so click it
-                # AT MOST ONCE — clicking again would just turn Agent mode back on.
-                # If one click doesn't re-mount the panel, stop and let the caller's
-                # own trigger probe fail loudly rather than flip-flopping.
-                if clicked_pill:
-                    break
-                pill = page.locator(COMPOSER_AGENT_TOGGLE_SELECTOR).first
-                if await pill.count() > 0:
-                    # force=True for the same reason as the chat-close above: the
-                    # composer can still be settling from the panel dismissal, which
-                    # stalls Playwright's actionability check; the pill is present and
-                    # the click lands. Timeout is just a safety cap on a forced click.
-                    await pill.click(force=True, timeout=_AGENT_CLICK_TIMEOUT_MS)
-                    await page.wait_for_timeout(_AGENT_SETTLE_MS)
-                    acted = True
-                    clicked_pill = True
-                    continue
-                # Neither affordance present and panel still absent — nothing this
-                # helper can do (older UI, or an unrecognised Agent shape).
-                break
+            acted = await VideoGenerationMixin._dismiss_agent_affordances(page)
 
             if await VideoGenerationMixin._media_panel_present(page):
                 if acted:
                     log.info("ui_automation_video.exited_agent_mode")
                 return True
+
+            # If the media panel is not present after the exit attempts, check if
+            # any of the unique Agentic UI indicators are present.
+            await VideoGenerationMixin._check_forced_agentic_ui(page, out_dir)
+
             if acted:
                 # We clicked something but the panel never came back — don't claim
                 # a false "exited"; warn and let the caller's own trigger probe
@@ -755,7 +881,9 @@ class VideoGenerationMixin:
                     note="dismissed Agent affordance(s) but the media panel did not re-mount",
                 )
             return False
-        except Exception as e:  # noqa: BLE001 — best-effort, never fatal
+        except FlowAgentUiError:
+            raise
+        except Exception as e:  # noqa: BLE001
             log.debug("ui_automation_video.agent_toggle_probe_failed", error=str(e)[:80])
             return False
 
@@ -766,7 +894,7 @@ class VideoGenerationMixin:
         # New Flow UI: if the composer is in Agent mode the generation panel is
         # absent — return to media mode first so the trigger probe can find the
         # crop_* dropdown.
-        await VideoGenerationMixin._exit_agent_mode(page)
+        await VideoGenerationMixin._exit_agent_mode(page, out_dir=out_dir)
         trigger = await VideoGenerationMixin._probe_selector_cascade(
             page,
             "mode_switch_trigger",
@@ -774,9 +902,12 @@ class VideoGenerationMixin:
         )
         if trigger is None:
             shot = await _capture_debug_screenshot(page, out_dir, "debug_no_mode_trigger.png")
-            msg = f"mode-switch dropdown trigger not found on the Flow editor. Screenshot: {shot}"
-            raise RuntimeError(
-                msg,
+            raise UiSelectorDriftError(
+                selector_drift_detail(
+                    "mode_switch_trigger",
+                    "no matching element found on the Flow editor.",
+                    shot,
+                )
             )
         await trigger.click()
         await page.wait_for_timeout(800)
@@ -787,8 +918,13 @@ class VideoGenerationMixin:
         )
         if video_tab is None:
             shot = await _capture_debug_screenshot(page, out_dir, "debug_no_video_tab.png")
-            msg = f"Video tab not found in the mode dropdown. Screenshot: {shot}"
-            raise RuntimeError(msg)
+            raise UiSelectorDriftError(
+                selector_drift_detail(
+                    "video_mode_tab",
+                    "Video tab not found in the mode dropdown.",
+                    shot,
+                )
+            )
         await video_tab.click()
         await page.wait_for_timeout(1200)
         log.info("ui_automation_video.video_mode_entered")
@@ -959,9 +1095,12 @@ class VideoGenerationMixin:
         )
         if tab is None:
             shot = await _capture_debug_screenshot(page, out_dir, f"debug_no_submode_{sub}.png")
-            msg = f"video sub-mode tab {sub!r} not found on the Flow editor. Screenshot: {shot}"
-            raise RuntimeError(
-                msg,
+            raise UiSelectorDriftError(
+                selector_drift_detail(
+                    f"video_submode_{sub}",
+                    f"video sub-mode tab {sub!r} not found on the Flow editor.",
+                    shot,
+                )
             )
         await tab.click()
         await page.wait_for_timeout(900)
@@ -1067,7 +1206,7 @@ class VideoGenerationMixin:
         submits before the image binds. Shared by I2V slots and R2V references."""
         uploaded: list[str] = []
 
-        async def on_response(response: Any) -> None:
+        def on_response(response: Any) -> None:
             if UPLOAD_IMAGE_ROUTE in response.url:
                 uploaded.append(response.url)
                 log.info(
@@ -1262,6 +1401,60 @@ class VideoGenerationMixin:
         return tile
 
     @staticmethod
+    async def _resolve_include_action(
+        page: Page,
+        tiers: tuple[str, ...],
+        tier_names: tuple[str, ...],
+        *,
+        surface: str,
+        detail: str,
+        out_dir: Path | None,
+        screenshot_name: str,
+    ) -> Locator:
+        """Probe the include-action selector tiers IN ORDER; return the first
+        visible match.
+
+        Issue #170: a single localized has-text selector broke every
+        non-Portuguese account. Tiers are probed sequentially (not flattened
+        into one comma list — comma lists resolve in DOM order, not tier
+        priority) and the matched tier is logged so a dead locale-free tier
+        silently carried by the text fallback stays observable.
+
+        On exhaustion: capture a screenshot, press Escape twice (context menu
+        + picker dialog — a Page must never return to the pool with an open
+        overlay), and raise a typed, locale-neutral
+        :class:`TransportTimeoutError` so the CLI surfaces the remediation
+        hint with exit 9 instead of the privacy-hashed 'Unexpected error.'.
+        """
+        last_exc: Exception | None = None
+        for tier, selector in zip(tier_names, tiers, strict=True):
+            loc = page.locator(selector).first
+            try:
+                await loc.wait_for(state="visible", timeout=4000)
+            except Exception as e:  # noqa: BLE001 — try the next tier
+                last_exc = e
+                continue
+            log.info(
+                "ui_automation_video.include_selector_tier",
+                surface=surface,
+                tier=tier,
+            )
+            return loc
+        shot = await _capture_debug_screenshot(page, out_dir, screenshot_name)
+        await page.keyboard.press("Escape")
+        await page.keyboard.press("Escape")
+        raise TransportTimeoutError(
+            f"{detail} include action did not appear (no selector tier "
+            f"matched on surface {surface!r}). Screenshot: {shot}",
+            remediation_hint=(
+                "Flow's resource picker may have changed, or your account's "
+                "UI language is not yet covered by the selector fallbacks. "
+                "Report the visible menu/button captions (plus the screenshot) "
+                "at https://github.com/ffroliva/gflow-cli/issues."
+            ),
+        ) from last_exc
+
+    @staticmethod
     async def _attach_character_entities(
         page: Page,
         entities: list[tuple[str, str]],
@@ -1273,9 +1466,10 @@ class VideoGenerationMixin:
 
         Mechanism (verified credit-free via route-abort payload capture,
         2026-06-06): open 'Add Media' -> Personagens tab -> RIGHT-CLICK the entity
-        tile -> context-menu 'Incluir no comando'. This stages
+        tile -> the context-menu include action (`add`-ligature menu item; the
+        caption is localized, e.g. 'Incluir no comando' on pt-BR). This stages
         `referenceEntities:[{entityId}]` on the submit payload. A LEFT-click on a
-        Tudo-tab tile + the inline 'Incluir' button instead stages a plain
+        Tudo-tab tile + the inline include button instead stages a plain
         `referenceImage` (the character thumbnail) — which the submit backstop
         (`_assert_entities_attached`) correctly rejects. A plain left-click on the
         Personagens tile navigates into the character editor (it is an
@@ -1299,16 +1493,15 @@ class VideoGenerationMixin:
             await tile.scroll_into_view_if_needed(timeout=8000)
             await tile.click(button="right")
             await page.wait_for_timeout(400)
-            include = page.locator(PICKER_CONTEXT_INCLUDE).first
-            try:
-                await include.wait_for(state="visible", timeout=8000)
-            except Exception as e:
-                shot = await _capture_debug_screenshot(page, out_dir, "debug_entity_ctx_menu.png")
-                msg = (
-                    f"character {name!r} ({entity_id}) context-menu 'Incluir no "
-                    f"comando' did not appear after right-click. Screenshot: {shot}"
-                )
-                raise RuntimeError(msg) from e
+            include = await VideoGenerationMixin._resolve_include_action(
+                page,
+                PICKER_CONTEXT_INCLUDE,
+                _CONTEXT_INCLUDE_TIER_NAMES,
+                surface="context_menu",
+                detail=f"character {name!r} ({entity_id})",
+                out_dir=out_dir,
+                screenshot_name="debug_entity_ctx_menu.png",
+            )
             await include.click()
             await page.wait_for_timeout(600)
             log.info(
@@ -1324,7 +1517,7 @@ class VideoGenerationMixin:
         *,
         out_dir: Path | None,
     ) -> None:
-        """R2V: attach a voice resource via the Vozes picker -> 'Incluir no comando'."""
+        """R2V: attach a voice resource via the Vozes picker -> include button."""
         add = page.locator(ADD_MEDIA_BUTTON).first
         await add.wait_for(state="visible", timeout=8000)
         await add.click()
@@ -1338,9 +1531,50 @@ class VideoGenerationMixin:
         ).first
         await tile.click()
         await page.wait_for_timeout(300)
-        await page.locator(PICKER_INCLUDE_BUTTON).first.click()
+        include = await VideoGenerationMixin._resolve_include_action(
+            page,
+            PICKER_INCLUDE_BUTTON,
+            _INCLUDE_BUTTON_TIER_NAMES,
+            surface="vozes_button",
+            detail=f"voice {voice_id!r}",
+            out_dir=out_dir,
+            screenshot_name="debug_voice_include.png",
+        )
+        await include.click()
         await page.wait_for_timeout(600)
         log.info("ui_automation_video.reference_audio_attached", voice=voice_id)
+
+    @staticmethod
+    def _collect_entity_ids_from_response_shape(body: dict[str, Any]) -> list[str]:
+        """Extract entityIds from the live response shape.
+
+        Path: ``media[].mediaMetadata.requestData.videoGenerationRequestData
+                   .videoGenerationEntityInputs[].entityId``
+        """
+        ids: list[str] = []
+        for media in cast(_JsonObjList, body.get("media") or []):
+            meta = cast(_JsonObj, media.get("mediaMetadata") or {})
+            req_data = cast(_JsonObj, meta.get("requestData") or {})
+            vgrd = cast(_JsonObj, req_data.get("videoGenerationRequestData") or {})
+            for e in cast(_JsonObjList, vgrd.get("videoGenerationEntityInputs") or []):
+                entity_id = cast("str | None", e.get("entityId"))
+                if entity_id:
+                    ids.append(entity_id)
+        return ids
+
+    @staticmethod
+    def _collect_entity_ids_from_request_shape(body: dict[str, Any]) -> list[str]:
+        """Extract entityIds from the request-body shape (fallback).
+
+        Path: ``requests[].referenceEntities[].entityId``
+        """
+        ids: list[str] = []
+        for r in cast(_JsonObjList, body.get("requests") or []):
+            for e in cast(_JsonObjList, r.get("referenceEntities") or []):
+                entity_id = cast("str | None", e.get("entityId"))
+                if entity_id:
+                    ids.append(entity_id)
+        return ids
 
     @staticmethod
     def _assert_entities_attached(generate_resp: dict[str, Any], *, expected: list[str]) -> None:
@@ -1362,23 +1596,10 @@ class VideoGenerationMixin:
         """
         if not expected:
             return
-        body = cast("dict[str, Any]", generate_resp.get("body") or {})
-        got: list[str] = []
-        # Response shape (the live one): media[] -> ...videoGenerationEntityInputs.
-        for media in cast("list[dict[str, Any]]", body.get("media") or []):
-            meta = cast("dict[str, Any]", media.get("mediaMetadata") or {})
-            req_data = cast("dict[str, Any]", meta.get("requestData") or {})
-            vgrd = cast("dict[str, Any]", req_data.get("videoGenerationRequestData") or {})
-            for e in cast("list[dict[str, Any]]", vgrd.get("videoGenerationEntityInputs") or []):
-                entity_id = cast("str | None", e.get("entityId"))
-                if entity_id:
-                    got.append(entity_id)
-        # Request shape (fallback): requests[].referenceEntities.
-        for r in cast("list[dict[str, Any]]", body.get("requests") or []):
-            for e in cast("list[dict[str, Any]]", r.get("referenceEntities") or []):
-                entity_id = cast("str | None", e.get("entityId"))
-                if entity_id:
-                    got.append(entity_id)
+        body = cast(_JsonObj, generate_resp.get("body") or {})
+        got = VideoGenerationMixin._collect_entity_ids_from_response_shape(
+            body
+        ) + VideoGenerationMixin._collect_entity_ids_from_request_shape(body)
         missing = [e for e in expected if e not in got]
         if missing:
             raise WireFormatError(
@@ -1388,6 +1609,8 @@ class VideoGenerationMixin:
                     f"report success"
                 ),
                 route="video:batchAsyncGenerateVideoReferenceImages",
+                remediation_hint=ENTITY_ATTACH_DRIFT_HINT,
+                discovery={"entity_attach_context": "video"},
             )
 
     @staticmethod
@@ -1412,7 +1635,7 @@ class VideoGenerationMixin:
 
     @staticmethod
     async def _await_generate_response(
-        captured: list[dict[str, Any]],
+        captured: _JsonObjList,
         *,
         timeout_s: float = 180.0,
         poll_interval_s: float = 0.5,
@@ -1515,7 +1738,7 @@ class VideoGenerationMixin:
         # A video 200 ALWAYS carries media[0] (the asset slot — capture 02);
         # content rejection surfaces later as a FAILED *status*, not empty media.
         # So a missing media[0] here is a genuine wire anomaly — WireFormatError.
-        body: dict[str, Any] = cast("dict[str, Any]", generate_resp.get("body") or {})
+        body: dict[str, Any] = cast(_JsonObj, generate_resp.get("body") or {})
         try:
             media_name = media_name_from_generate_response(body)
         except ValueError as e:
@@ -1542,28 +1765,17 @@ class VideoGenerationMixin:
         if inspect.isawaitable(result_or_coro):
             await result_or_coro
 
-    async def _generate_video_locked(
-        self,
+    @staticmethod
+    def _resolve_i2v_model(
         request: GenerateVideoRequest,
-        *,
-        project_id: str | None = None,
-        out_dir: Path | None,
-        poll_timeout_s: float,
-        download: bool,
-        on_started: VideoStartedCallback | None,
-    ) -> VideoResult:
-        """Serialized body of `generate_video` — runs under `self._generate_lock`
-        (shared with `generate_images`: one Page, one DOM)."""
-        # Defense-in-depth model/mode guard (issue #125). Pure DTO check — runs
-        # BEFORE any browser interaction so a bad combination fails instantly
-        # with no DOM state mutated and no credit risk. The CLI Click Choice
-        # already blocks omni-flash for i2v, but direct FlowApiClient callers
-        # (e.g. gflow-cli-remotion) bypass Click; this is their safety net.
-        # omni-flash silently drops i2v frame refs at submit and routes to the
-        # T2V endpoint — see VideoModel.supports_i2v_interpolation.
-        is_i2v_with_frames = request.mode is Mode.I2V and (
-            request.start_image is not None or request.end_image is not None
-        )
+        is_i2v_with_frames: bool,
+    ) -> VideoModel | None:
+        """Validate and resolve the effective model for an I2V request.
+
+        Raises ``ModelModeIncompatibilityError`` if the requested model does not
+        support I2V interpolation. Returns the effective model to use — defaults
+        to ``I2V_DEFAULT_MODEL`` when ``is_i2v_with_frames`` and no model is set.
+        """
         if (
             is_i2v_with_frames
             and request.model is not None
@@ -1584,13 +1796,7 @@ class VideoGenerationMixin:
                     f"and produces a text-only video (issue #125)."
                 ),
             )
-
-        # For i2v, never leave the model unset. An unset model means
-        # `_select_video_model` is skipped and Flow applies its last-used default
-        # (often omni-flash), which silently drops the frames to T2V (issue #125).
-        # Default to an interpolation-capable model — mirrors the CLI's resolution
-        # so direct FlowApiClient callers get the same safe behaviour.
-        effective_model: VideoModel | None = request.model
+        effective_model = request.model
         if is_i2v_with_frames and effective_model is None:
             effective_model = I2V_DEFAULT_MODEL
             log.info(
@@ -1598,63 +1804,23 @@ class VideoGenerationMixin:
                 model=effective_model.value,
                 issue_ref="#125",
             )
+        return effective_model
 
-        page: Page = self._page  # type: ignore[assignment]  # guarded in generate_video
-
-        await self._enter_editor(page, out_dir, project_id=project_id)
-        await VideoGenerationMixin._wait_video_editor_ready(page)
-        # Dismiss any Flow changelog / "What's new" overlay that may be on top
-        # of the editor before we click into mode-switch / settings / submit (#26).
-        await self._dismiss_blocking_overlays(page, out_dir)
-        await VideoGenerationMixin._switch_to_video_mode(page, out_dir=out_dir)
-
-        # Capture project_id from the editor URL as soon as we have it —
-        # needed for VideoStarted provenance and recorded before the generate request.
-        # Falls back to the caller-supplied id when the URL carries none.
-        project_id = extract_project_id(page.url) or project_id
-
-        # All settings-panel selections happen while the panel is open: model
-        # (gates the 10s duration), sub-mode tab, aspect, count, duration.
-        # For i2v, model selection is REQUIRED (required=True): a silent miss
-        # would let Flow fall back to omni-flash and route to T2V (issue #125),
-        # so _select_video_model raises here — before any frame attach or submit,
-        # spending no credit.
-        if effective_model is not None:
-            await VideoGenerationMixin._select_video_model(
-                page,
-                effective_model,
-                out_dir=out_dir,
-                required=is_i2v_with_frames,
-            )
-        if request.mode is Mode.I2V:
-            await VideoGenerationMixin._switch_video_sub_mode(page, "frames", out_dir=out_dir)
-        elif request.mode is Mode.R2V:
-            await VideoGenerationMixin._switch_video_sub_mode(page, "references", out_dir=out_dir)
-        await VideoGenerationMixin._select_video_aspect(page, request.aspect)
-        await VideoGenerationMixin._set_output_count(page, request.count)
-        if request.duration is not None:
-            await VideoGenerationMixin._select_video_duration(page, request.duration)
-        await page.keyboard.press("Escape")  # close the settings panel
-        await page.wait_for_timeout(600)
-
-        # Attach images AFTER the panel is closed — the slots / 'Add Media' button
-        # live in the main editor. This is what makes Flow fire StartImage /
-        # StartAndEndImage / ReferenceImages instead of the plain Text route.
+    @staticmethod
+    async def _attach_media_inputs(
+        page: Page,
+        request: GenerateVideoRequest,
+        *,
+        out_dir: Path | None,
+    ) -> None:
+        """Attach I2V frames or R2V references/entities to the editor before submit."""
         if request.mode is Mode.I2V and request.start_image is not None:
             await VideoGenerationMixin._attach_frame(
-                page,
-                0,
-                "Start",
-                request.start_image,
-                out_dir=out_dir,
+                page, 0, "Start", request.start_image, out_dir=out_dir
             )
             if request.end_image is not None:
                 await VideoGenerationMixin._attach_frame(
-                    page,
-                    1,
-                    "End",
-                    request.end_image,
-                    out_dir=out_dir,
+                    page, 1, "End", request.end_image, out_dir=out_dir
                 )
         elif request.mode is Mode.R2V:
             if request.reference_entities:
@@ -1683,26 +1849,35 @@ class VideoGenerationMixin:
                 out_dir=out_dir,
             )
 
+    async def _submit_and_poll(
+        self,
+        page: Page,
+        request: GenerateVideoRequest,
+        is_i2v_with_frames: bool,
+        effective_model: VideoModel | None,
+        project_id: str | None,
+        out_dir: Path | None,
+        poll_timeout_s: float,
+        download: bool,
+        on_started: VideoStartedCallback | None,
+        ui_driver: Any,
+    ) -> VideoResult:
+        """Submit the prompt, await and validate the generate response, then poll."""
         # Attach BOTH listeners synchronously BEFORE the prompt is submitted so
         # neither the generate response nor an early status poll is missed.
         generate_captured, generate_handler = VideoGenerationMixin._attach_video_response_listener(
-            page,
+            page
         )
         status_captured, status_handler = VideoGenerationMixin._attach_status_response_listener(
-            page,
+            page
         )
         generate_resp: dict[str, Any] = {}
         try:
-            await self._send_prompt(page, request.prompt, out_dir)
-
+            await ui_driver.send_prompt(page, request.prompt, out_dir=out_dir)
             generate_resp = await VideoGenerationMixin._await_generate_response(generate_captured)
 
             # Layer-2 backstop (issue #125): for i2v, the request MUST have
-            # routed to a Start/StartAndEndImage endpoint. If it landed on the
-            # plain T2V route, Flow silently dropped the frames (e.g. an
-            # undiscovered fallback path) — the credit is already spent, but we
-            # MUST NOT return a "successful i2v" VideoResult that is actually a
-            # text-only video. Raise loudly instead of recording a fake success.
+            # routed to a Start/StartAndEndImage endpoint.
             if is_i2v_with_frames:
                 captured_url = str(generate_resp.get("url") or "")
                 if _T2V_GENERATE_ROUTE in captured_url:
@@ -1729,11 +1904,9 @@ class VideoGenerationMixin:
                 )
 
             media_name, flow_operation_id = VideoGenerationMixin._parse_generate_response(
-                generate_resp,
+                generate_resp
             )
 
-            # Fire on_started BEFORE polling so the recorder can insert a STARTED
-            # row even if the long poll later fails.
             if on_started is not None:
                 started = VideoStarted(
                     media_id=media_name,
@@ -1764,3 +1937,73 @@ class VideoGenerationMixin:
             # never leak across calls.
             page.remove_listener("response", generate_handler)
             page.remove_listener("response", status_handler)
+
+    async def _generate_video_locked(
+        self,
+        request: GenerateVideoRequest,
+        *,
+        project_id: str | None = None,
+        out_dir: Path | None,
+        poll_timeout_s: float,
+        download: bool,
+        on_started: VideoStartedCallback | None,
+    ) -> VideoResult:
+        """Serialized body of `generate_video` — runs under `self._generate_lock`
+        (shared with `generate_images`: one Page, one DOM)."""
+        is_i2v_with_frames = request.mode is Mode.I2V and (
+            request.start_image is not None or request.end_image is not None
+        )
+        # Defense-in-depth model/mode guard (issue #125). Pure DTO check — runs
+        # BEFORE any browser interaction so a bad combination fails instantly
+        # with no DOM state mutated and no credit risk.
+        effective_model = VideoGenerationMixin._resolve_i2v_model(request, is_i2v_with_frames)
+
+        from gflow_cli.api.transports.drivers.classic import (  # noqa: PLC0415
+            ClassicFlowUiDriver,
+        )
+
+        # Bind the driver unconditionally to classic for Task 2.  Task 3 will
+        # replace this line with ``await get_ui_driver(page)`` once the agentic
+        # driver is production-ready.
+        ui_driver = ClassicFlowUiDriver(transport=self)
+
+        page: Page = self._page  # type: ignore[assignment]  # guarded in generate_video
+
+        await self._enter_editor(page, out_dir, project_id=project_id)
+        await VideoGenerationMixin._wait_video_editor_ready(page)
+        # Dismiss any Flow changelog / "What's new" overlay that may be on top
+        # of the editor before we click into mode-switch / settings / submit (#26).
+        await self._dismiss_blocking_overlays(page, out_dir)
+        await ui_driver.switch_to_video_mode(page, out_dir=out_dir)
+
+        # Capture project_id from the editor URL as soon as we have it —
+        # needed for VideoStarted provenance and recorded before the generate request.
+        # Falls back to the caller-supplied id when the URL carries none.
+        project_id = extract_project_id(page.url) or project_id
+
+        # All settings-panel selections happen while the panel is open: model
+        # (gates the 10s duration), sub-mode tab, aspect, count, duration.
+        # For i2v, model selection is REQUIRED (required=True): a silent miss
+        # would let Flow fall back to omni-flash and route to T2V (issue #125),
+        # so _select_video_model raises here — before any frame attach or submit,
+        # spending no credit.
+        await ui_driver.configure_video_settings(page, request, out_dir=out_dir)
+
+        # Attach images AFTER the panel is closed — the slots / 'Add Media' button
+        # live in the main editor. This is what makes Flow fire StartImage /
+        # StartAndEndImage / ReferenceImages instead of the plain Text route.
+        await VideoGenerationMixin._attach_media_inputs(page, request, out_dir=out_dir)
+
+        # Submit prompt, await generate response, validate, and poll for status.
+        return await self._submit_and_poll(
+            page,
+            request,
+            is_i2v_with_frames,
+            effective_model,
+            project_id,
+            out_dir,
+            poll_timeout_s,
+            download,
+            on_started,
+            ui_driver,
+        )

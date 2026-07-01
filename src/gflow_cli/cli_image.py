@@ -17,6 +17,8 @@ from __future__ import annotations
 import asyncio
 import re
 import sys
+from dataclasses import dataclass
+from datetime import date
 from pathlib import Path
 from typing import TYPE_CHECKING, TypeVar
 
@@ -29,15 +31,20 @@ from gflow_cli import json_output
 from gflow_cli._cli_helpers import (
     _make_provider_dir,
     _resolve_profile,
+    apply_tool_option,
     run_with_handlers,
     safe_path_text,
+    tool_option,
 )
 from gflow_cli.api.client import FlowApiClient
 from gflow_cli.api.dto import ProjectInfo
 from gflow_cli.api.image import Aspect, GenerateImageRequest, ImageRef, Model, reference_cap_for
+from gflow_cli.api.image_upscale import TargetResolution, UpsampleImageRequest
 from gflow_cli.api.transports import transport_choices
 from gflow_cli.config import get_settings
 from gflow_cli.data.recorder import OperationRecorder
+from gflow_cli.data.repository import DataRepository
+from gflow_cli.data.store import DataStore
 from gflow_cli.errors import ConfigurationError, DataStoreError
 from gflow_cli.image_batch import (
     ALLOWED_ASPECT_RATIOS as _ALLOWED_ASPECT_RATIOS,
@@ -82,6 +89,7 @@ if TYPE_CHECKING:
     from collections.abc import Callable
 
     from gflow_cli.api.dto import GeneratedImage
+    from gflow_cli.tools.invocation import AppliedTool
 
 _CmdFn = TypeVar("_CmdFn", bound="Callable[..., object]")
 
@@ -349,6 +357,7 @@ async def _run_upload(
             profile_dir=profile_dir,
             headless=headless,
             transport=transport,
+            out_dir=settings.output_dir,
         ) as client:
             console.print(_CREATING_PROJECT_MSG)
             project = await client.create_project(title="gflow-cli upload")
@@ -377,6 +386,179 @@ async def _run_upload(
                 )
     finally:
         recorder.close()
+
+
+# ---------------------------------------------------------------------------
+# upscale subcommand
+# ---------------------------------------------------------------------------
+
+
+@image.command(
+    "upscale",
+    short_help="Upscale a platform-generated image to 2K or 4K.",
+    help=(
+        "Upscale a Flow-generated image to 2K or 4K and save it locally.\n\n"
+        "\b\n"
+        "Examples:\n"
+        "  gflow image upscale <mediaId> --scale 2k\n"
+        "  gflow image upscale <mediaId> --scale 4k --out ~/Downloads\n\n"
+        "MEDIA_ID is the UUID of a platform-generated image — find one with "
+        "`gflow data list images`. Only images Flow generated can be upscaled "
+        "(uploaded images are not supported). 4K requires a Flow Ultra "
+        "subscription; on other plans use --scale 2k."
+    ),
+)
+@click.argument("media_id")
+@click.option(
+    "--scale",
+    required=True,
+    help="Target resolution: 2k or 4k (4k is Ultra-only). 1k is the original.",
+)
+@click.option(
+    "--out",
+    "out_dir",
+    type=click.Path(file_okay=False, path_type=Path),
+    default=None,
+    help="Output directory (defaults to the configured gflow output dir).",
+)
+@click.option(
+    "--project",
+    "project_id",
+    default=None,
+    callback=_validate_project_id,
+    help=(
+        "Project that owns the image. Resolved from the local catalog when "
+        "omitted; pass it explicitly for images gflow didn't record (e.g. "
+        "generated in the web UI)."
+    ),
+)
+@click.option("--profile", default=None, help="Profile name (overrides default).")
+@click.option(
+    "--transport",
+    type=click.Choice(transport_choices(), case_sensitive=False),
+    default=None,
+    help="Override transport strategy (advanced).",
+)
+def upscale(
+    media_id: str,
+    scale: str,
+    out_dir: Path | None,
+    project_id: str | None,
+    profile: str | None,
+    transport: str | None,
+) -> None:
+    """Upscale MEDIA_ID to the requested --scale and save it locally."""
+    # Validate scale + mediaId format before doing anything (fail fast, exit 2).
+    try:
+        resolution = TargetResolution.from_cli(scale)
+    except ValueError as exc:
+        raise click.BadParameter(str(exc), param_hint="--scale") from exc
+    if not _UUID_RE.fullmatch(media_id):
+        raise click.BadParameter(
+            "MEDIA_ID must be a bare UUID (8-4-4-4-12 hex).", param_hint="MEDIA_ID"
+        )
+
+    profile_name = _resolve_profile(profile)
+    # Resolve the owning project (catalog lookup or explicit --project) BEFORE
+    # launching the browser — no reCAPTCHA mint is spent on an unresolvable id.
+    resolved_project = _resolve_upscale_project_id(
+        media_id=media_id, explicit=project_id, profile_name=profile_name
+    )
+    # Final guard: both ids must be well-formed UUIDs (the wire requires it).
+    try:
+        UpsampleImageRequest(
+            media_id=media_id, project_id=resolved_project, target_resolution=resolution
+        )
+    except ValueError as exc:
+        raise click.BadParameter(str(exc)) from exc
+
+    provider_dir = _make_provider_dir(profile_name)
+    settings = get_settings()
+    run_with_handlers(
+        lambda: _run_upscale(
+            profile_dir=provider_dir,
+            headless=settings.headless,
+            media_id=media_id,
+            project_id=resolved_project,
+            resolution=resolution,
+            scale_label=scale.strip().lower(),
+            out_dir=out_dir,
+            transport=transport,
+        ),
+        cli_command="image upscale",
+    )
+
+
+def _lookup_project_in_catalog(media_id: str, profile_name: str) -> str | None:
+    """Return the owning projectId for *media_id* recorded under *profile_name*.
+
+    Scoped to the authenticated profile on purpose: a hit means THIS account
+    generated the image (ownership proof). Returns ``None`` if not recorded or
+    the catalog is unavailable — the caller then asks for an explicit --project.
+    """
+    try:
+        settings = get_settings()
+        with DataStore.open(settings.resolved_db_path()) as store:
+            asset = DataRepository(store).get_asset_by_flow_media_id(profile_name, media_id)
+    except DataStoreError:
+        return None
+    if asset is not None and asset.flow_project_id:
+        return asset.flow_project_id
+    return None
+
+
+def _resolve_upscale_project_id(*, media_id: str, explicit: str | None, profile_name: str) -> str:
+    """Resolve the owning project: explicit --project wins, else the catalog.
+
+    Fails fast with a usage error (exit 2) when neither yields a project, so no
+    browser/reCAPTCHA work is wasted.
+    """
+    cataloged = _lookup_project_in_catalog(media_id, profile_name)
+    if explicit is not None:
+        if cataloged is not None and cataloged != explicit:
+            console.print(
+                f"[yellow]Note:[/yellow] --project {explicit} differs from the catalog's "
+                f"{cataloged} for this media id; using --project as given."
+            )
+        return explicit
+    if cataloged is not None:
+        return cataloged
+    msg = (
+        f"Could not resolve the owning project for media {media_id!r} from the local "
+        f"catalog (profile {profile_name!r}). Pass --project <id> — find it in the Flow "
+        f"editor URL (…/project/<id>/…) or via `gflow data list images`."
+    )
+    raise click.UsageError(msg)
+
+
+async def _run_upscale(
+    *,
+    profile_dir: Path,
+    headless: bool,
+    media_id: str,
+    project_id: str,
+    resolution: TargetResolution,
+    scale_label: str,
+    out_dir: Path | None,
+    transport: str | None = None,
+) -> None:
+    settings = get_settings()
+    output_root = out_dir if out_dir is not None else settings.output_dir
+    out_path = output_root / "images" / date.today().isoformat() / f"{media_id}_{scale_label}.png"
+    async with FlowApiClient(
+        profile_dir=profile_dir,
+        headless=headless,
+        transport=transport,
+        out_dir=output_root,
+    ) as client:
+        console.print(f"Upscaling [bold]{media_id}[/bold] to {scale_label.upper()}...")
+        target = await client.upsample_image(
+            media_id=media_id,
+            project_id=project_id,
+            target_resolution=resolution,
+            out_path=out_path,
+        )
+        console.print(f"[bold green]Saved:[/bold green] {safe_path_text(target)}")
 
 
 # ---------------------------------------------------------------------------
@@ -458,6 +640,7 @@ async def _run_upload(
     ),
 )
 @click.option("--profile", default=None, help="Profile name (overrides default).")
+@tool_option
 @click.option(
     "--transport",
     type=click.Choice(transport_choices(), case_sensitive=False),
@@ -475,7 +658,7 @@ async def _run_upload(
     is_flag=True,
     help="Emit a machine-readable JSON result instead of a Rich table.",
 )
-def t2i(
+def t2i(  # NOSONAR
     prompts: tuple[str, ...],
     prompts_file: Path | None,
     read_stdin: bool,
@@ -485,6 +668,7 @@ def t2i(
     count: int,
     out: Path | None,
     profile: str | None,
+    tool_specs: tuple[str, ...],
     transport: str | None,
     project_id: str | None,
     reference_entities: tuple[str, ...],
@@ -519,17 +703,22 @@ def t2i(
         profile_name = _resolve_profile(profile)
         provider_dir = _make_provider_dir(profile_name)
         settings = get_settings()
+        prompt_to_send, original_prompt, applied_tool = apply_tool_option(
+            prompt, tool_specs, category="image", quiet=as_json
+        )
         run_with_handlers(
             lambda: _run_t2i(
                 profile_name=profile_name,
                 profile_dir=provider_dir,
                 headless=settings.headless,
                 req=GenerateImageRequest(
-                    prompt=prompt,
+                    prompt=prompt_to_send,
                     aspect=Aspect.from_cli(aspect),
                     model=Model.from_cli(model),
                     reference_entities=tuple(reference_entities),
                     reference_entity_names=tuple(reference_entity_names),
+                    original_prompt=original_prompt,
+                    tool=applied_tool,
                 ),
                 count=count,
                 out=out,
@@ -551,7 +740,35 @@ def t2i(
         model,
         count,
     )
+    # --tool now works on the batch path too (PR2): apply each tool per prompt
+    # before submission (sequential Gemini calls, never fatal). Validation of an
+    # unknown tool/style raises a UsageError here, before any browser opens.
+    if tool_specs:
+        batch_prompts = _apply_tools_to_batch_prompts(batch_prompts, tool_specs)
     _execute_t2i_batch(batch_prompts, count, continue_on_error, profile, out, transport)
+
+
+def _apply_tools_to_batch_prompts(
+    batch_prompts: tuple[BatchPromptItem, ...],
+    tool_specs: tuple[str, ...],
+) -> tuple[BatchPromptItem, ...]:
+    """Apply ``--tool`` to each batch item's text (sequential, ≤50 prompts).
+
+    Returns new items carrying the rewritten ``text`` plus ``original_prompt`` /
+    ``tool`` provenance. ``apply_tool_option`` is never-fatal per prompt (a
+    missing key / API error degrades to the original text); an unknown tool or
+    style still raises ``click.UsageError`` (pre-network) so the whole batch
+    fails fast rather than silently skipping the tool.
+    """
+    from dataclasses import replace
+
+    applied: list[BatchPromptItem] = []
+    for item in batch_prompts:
+        sent, original, tool = apply_tool_option(
+            item.text, tool_specs, category="image", quiet=True
+        )
+        applied.append(replace(item, text=sent, original_prompt=original, tool=tool))
+    return tuple(applied)
 
 
 def _build_t2i_batch_prompts(
@@ -675,6 +892,66 @@ def _as_usage_error(exc: ConfigurationError) -> click.UsageError:
     return click.UsageError(str(exc))
 
 
+async def _download_images(
+    client: FlowApiClient,
+    images: list[GeneratedImage],
+    out: Path | None,
+    output_root: Path,
+) -> list[Path]:
+    """Download each generated image to its resolved target path."""
+    saved_paths: list[Path] = []
+    for i, img in enumerate(images, start=1):
+        target = (
+            out / f"{img.media_name}_{i}.png"
+            if out is not None
+            else image_output_path(output_root, job_id=img.media_name, index=i)
+        )
+        saved = await client.download_image(img, target)
+        saved_paths.append(saved)
+    return saved_paths
+
+
+def _record_generated_images_safe(
+    recorder: OperationRecorder,
+    *,
+    profile_name: str,
+    profile_dir: Path,
+    project: ProjectInfo,
+    project_created: bool,
+    request: GenerateImageRequest,
+    images: list[GeneratedImage],
+    saved_paths: list[Path],
+    input_media_ids: list[str],
+    operation_kind: str,
+) -> None:
+    """Persist generation metadata; warn on DataStoreError (never abort success).
+
+    Tool provenance (``original_prompt`` / ``tool``) travels on ``request``, so
+    the recorder reads it directly — no separate kwarg to drift out of sync.
+    """
+    try:
+        recorder.record_generated_images(
+            profile_name=profile_name,
+            profile_dir=profile_dir,
+            project=project,
+            project_created=project_created,
+            request=request,
+            images=images,
+            saved_paths=saved_paths,
+            cloud_storage_infos=[cloud_info_from_path(path) for path in saved_paths],
+            input_media_ids=input_media_ids,
+            operation_kind=operation_kind,
+        )
+    except DataStoreError as exc:
+        first_image = images[0] if images else None
+        first_path = saved_paths[0] if saved_paths else None
+        _warn_persistence_failed_after_success(
+            exc=exc,
+            flow_media_id=first_image.media_name if first_image else None,
+            local_path=first_path,
+        )
+
+
 async def _run_t2i(
     *,
     profile_name: str,
@@ -695,6 +972,7 @@ async def _run_t2i(
             profile_dir=profile_dir,
             headless=headless,
             transport=transport,
+            out_dir=out if out is not None else output_root,
         ) as client:
             # Title is a `gflow-cli ...` prefix per project convention (post-rename a02684f).
             # cli_video.py's _run_t2v / _run_i2v don't currently set a title — tracked separately.
@@ -715,15 +993,7 @@ async def _run_t2i(
                     count=count,
                 )
 
-            saved_paths: list[Path] = []
-            for i, img in enumerate(images, start=1):
-                target = (
-                    out / f"{img.media_name}_{i}.png"
-                    if out is not None
-                    else image_output_path(output_root, job_id=img.media_name, index=i)
-                )
-                saved = await client.download_image(img, target)
-                saved_paths.append(saved)
+            saved_paths = await _download_images(client, images, out, output_root)
 
             if as_json:
                 json_output.emit(
@@ -738,27 +1008,18 @@ async def _run_t2i(
             else:
                 _print_t2i_summary(images, saved_paths)
 
-            try:
-                recorder.record_generated_images(
-                    profile_name=profile_name,
-                    profile_dir=profile_dir,
-                    project=project,
-                    project_created=project_created,
-                    request=req,
-                    images=images,
-                    saved_paths=saved_paths,
-                    cloud_storage_infos=[cloud_info_from_path(path) for path in saved_paths],
-                    input_media_ids=[],
-                    operation_kind="t2i",
-                )
-            except DataStoreError as exc:
-                first_image = images[0] if images else None
-                first_path = saved_paths[0] if saved_paths else None
-                _warn_persistence_failed_after_success(
-                    exc=exc,
-                    flow_media_id=first_image.media_name if first_image else None,
-                    local_path=first_path,
-                )
+            _record_generated_images_safe(
+                recorder,
+                profile_name=profile_name,
+                profile_dir=profile_dir,
+                project=project,
+                project_created=project_created,
+                request=req,
+                images=images,
+                saved_paths=saved_paths,
+                input_media_ids=[],
+                operation_kind="t2i",
+            )
     finally:
         recorder.close()
 
@@ -851,6 +1112,7 @@ _BATCH_TITLE = "gflow-cli image batch"
     ),
 )
 @click.option("--profile", default=None, help="Profile name (overrides default).")
+@tool_option
 @click.option(
     "--transport",
     type=click.Choice(transport_choices(), case_sensitive=False),
@@ -865,6 +1127,7 @@ def batch(
     continue_on_error: bool,
     out: Path | None,
     profile: str | None,
+    tool_specs: tuple[str, ...],
     transport: str | None,
 ) -> None:
     """Run MANIFEST (JSON or TSV) through Flow's image generator."""
@@ -877,6 +1140,11 @@ def batch(
         )
     except ConfigurationError as exc:
         raise _as_usage_error(exc) from exc
+
+    # Apply --tool to each manifest row before submission (≤5 prompts, sequential,
+    # never-fatal per row; unknown tool/style fails fast pre-network).
+    if tool_specs:
+        prompts = _apply_tools_to_batch_prompts(prompts, tool_specs)
 
     profile_name = _resolve_profile(profile)
     provider_dir = _make_provider_dir(profile_name)
@@ -920,6 +1188,26 @@ def batch(
 # ---------------------------------------------------------------------------
 # i2i subcommand
 # ---------------------------------------------------------------------------
+
+
+@dataclass(frozen=True)
+class _I2IParams:
+    """Bundles image-generation options for :func:`_run_i2i`.
+
+    Separating these from the profile/transport/output fields keeps the
+    function signature below Sonar's 13-parameter limit (S107) while preserving
+    every CLI option.
+    """
+
+    prompt: str
+    classified_refs: list[ImageRef | Path]
+    aspect: Aspect
+    model: Model
+    reference_entities: tuple[str, ...]
+    reference_entity_names: tuple[str, ...]
+    # Tool provenance (set when a --tool rewrote the prompt; recorded only).
+    original_prompt: str | None = None
+    tool: AppliedTool | None = None
 
 
 @image.command(
@@ -985,6 +1273,7 @@ def batch(
     ),
 )
 @click.option("--profile", default=None, help="Profile name (overrides default).")
+@tool_option
 @click.option(
     "--transport",
     type=click.Choice(transport_choices(), case_sensitive=False),
@@ -1010,6 +1299,7 @@ def i2i(
     count: int,
     out: Path | None,
     profile: str | None,
+    tool_specs: tuple[str, ...],
     transport: str | None,
     project_id: str | None,
     reference_entities: tuple[str, ...],
@@ -1040,22 +1330,30 @@ def i2i(
     profile_name = _resolve_profile(profile)
     provider_dir = _make_provider_dir(profile_name)
     settings = get_settings()
+    prompt_to_send, original_prompt, applied_tool = apply_tool_option(
+        prompt, tool_specs, category="image", quiet=as_json
+    )
+    i2i_params = _I2IParams(
+        prompt=prompt_to_send,
+        classified_refs=classified_refs,
+        aspect=Aspect.from_cli(aspect),
+        model=model_enum,
+        reference_entities=tuple(reference_entities),
+        reference_entity_names=tuple(reference_entity_names),
+        original_prompt=original_prompt,
+        tool=applied_tool,
+    )
     run_with_handlers(
         lambda: _run_i2i(
             profile_name=profile_name,
             profile_dir=provider_dir,
             headless=settings.headless,
-            prompt=prompt,
-            classified_refs=classified_refs,
-            aspect=Aspect.from_cli(aspect),
-            model=model_enum,
+            params=i2i_params,
             count=count,
             out=out,
             output_root=settings.output_dir,
             transport=transport,
             project_id=project_id,
-            reference_entities=tuple(reference_entities),
-            reference_entity_names=tuple(reference_entity_names),
             as_json=as_json,
         ),
         cli_command="image i2i",
@@ -1068,17 +1366,12 @@ async def _run_i2i(
     profile_name: str,
     profile_dir: Path,
     headless: bool,
-    prompt: str,
-    classified_refs: list[ImageRef | Path],
-    aspect: Aspect,
-    model: Model,
+    params: _I2IParams,
     count: int,
     out: Path | None,
     output_root: Path,
     transport: str | None = None,
     project_id: str | None = None,
-    reference_entities: tuple[str, ...] = (),
-    reference_entity_names: tuple[str, ...] = (),
     as_json: bool = False,
 ) -> None:
     settings = get_settings()
@@ -1088,6 +1381,7 @@ async def _run_i2i(
             profile_dir=profile_dir,
             headless=headless,
             transport=transport,
+            out_dir=out if out is not None else output_root,
         ) as client:
             # Title is a `gflow-cli ...` prefix per project convention (post-rename a02684f).
             # cli_video.py's _run_t2v / _run_i2v don't currently set a title — tracked separately.
@@ -1099,16 +1393,18 @@ async def _run_i2i(
             # ui_automation transport (the REST uploadImage path 401s — see #15/#39).
             # Already-uploaded UUID refs go on `refs` (best-effort; binding a library
             # asset by UUID via the UI is not wired yet — local files are the path).
-            uuid_refs = tuple(r for r in classified_refs if isinstance(r, ImageRef))
-            local_ref_paths = tuple(r for r in classified_refs if isinstance(r, Path))
+            uuid_refs = tuple(r for r in params.classified_refs if isinstance(r, ImageRef))
+            local_ref_paths = tuple(r for r in params.classified_refs if isinstance(r, Path))
             req = GenerateImageRequest(
-                prompt=prompt,
-                aspect=aspect,
-                model=model,
+                prompt=params.prompt,
+                aspect=params.aspect,
+                model=params.model,
                 refs=uuid_refs,
                 ref_paths=local_ref_paths,
-                reference_entities=reference_entities,
-                reference_entity_names=reference_entity_names,
+                reference_entities=params.reference_entities,
+                reference_entity_names=params.reference_entity_names,
+                original_prompt=params.original_prompt,
+                tool=params.tool,
             )
 
             n_refs = len(uuid_refs) + len(local_ref_paths)
@@ -1127,15 +1423,7 @@ async def _run_i2i(
                     count=count,
                 )
 
-            saved_paths: list[Path] = []
-            for i, img in enumerate(images, start=1):
-                target = (
-                    out / f"{img.media_name}_{i}.png"
-                    if out is not None
-                    else image_output_path(output_root, job_id=img.media_name, index=i)
-                )
-                saved = await client.download_image(img, target)
-                saved_paths.append(saved)
+            saved_paths = await _download_images(client, images, out, output_root)
 
             if as_json:
                 json_output.emit(
@@ -1151,32 +1439,23 @@ async def _run_i2i(
             else:
                 _print_i2i_summary(images, saved_paths)
 
-            try:
-                recorder.record_generated_images(
-                    profile_name=profile_name,
-                    profile_dir=profile_dir,
-                    project=project,
-                    project_created=project_created,
-                    request=req,
-                    images=images,
-                    saved_paths=saved_paths,
-                    cloud_storage_infos=[cloud_info_from_path(path) for path in saved_paths],
-                    # Only already-uploaded UUID refs have a flow_media_id we
-                    # can persist as INPUT. Local files attached via the media
-                    # dialog don't surface a media_id at this layer; the recorder
-                    # will skip them silently (record_generated_images guards on
-                    # repo.get_asset_by_flow_media_id returning None).
-                    input_media_ids=[ref.name for ref in uuid_refs],
-                    operation_kind="i2i",
-                )
-            except DataStoreError as exc:
-                first_image = images[0] if images else None
-                first_path = saved_paths[0] if saved_paths else None
-                _warn_persistence_failed_after_success(
-                    exc=exc,
-                    flow_media_id=first_image.media_name if first_image else None,
-                    local_path=first_path,
-                )
+            _record_generated_images_safe(
+                recorder,
+                profile_name=profile_name,
+                profile_dir=profile_dir,
+                project=project,
+                project_created=project_created,
+                request=req,
+                images=images,
+                saved_paths=saved_paths,
+                # Only already-uploaded UUID refs have a flow_media_id we
+                # can persist as INPUT. Local files attached via the media
+                # dialog don't surface a media_id at this layer; the recorder
+                # will skip them silently (record_generated_images guards on
+                # repo.get_asset_by_flow_media_id returning None).
+                input_media_ids=[ref.name for ref in uuid_refs],
+                operation_kind="i2i",
+            )
     finally:
         recorder.close()
 

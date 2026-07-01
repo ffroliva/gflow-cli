@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 import hashlib
+import json
 import mimetypes
 import uuid
 from datetime import UTC, datetime
@@ -18,7 +19,7 @@ from gflow_cli.data.models import (
     SceneClipRecord,
     SceneRecord,
 )
-from gflow_cli.data.redaction import PromptMode, prompt_fields, redact_metadata
+from gflow_cli.data.redaction import PromptFields, PromptMode, prompt_fields, redact_metadata
 from gflow_cli.data.repository import DataRepository
 from gflow_cli.data.store import DataStore
 
@@ -31,6 +32,10 @@ if TYPE_CHECKING:
     from gflow_cli.api.video import GenerateVideoRequest, VideoResult, VideoStarted
     from gflow_cli.config import Settings
     from gflow_cli.storage import CloudStorageInfo
+    from gflow_cli.tools.invocation import AppliedTool
+
+    # Both generation requests carry the tool-provenance fields the recorder reads.
+    _ToolableRequest = GenerateImageRequest | GenerateVideoRequest
 
 
 def _new_id() -> str:
@@ -71,6 +76,64 @@ class OperationRecorder:
 
     def close(self) -> None:
         self.repository.store.close()
+
+    def _resolve_prompts(
+        self,
+        request: _ToolableRequest,
+    ) -> tuple[PromptFields, str | None]:
+        """Resolve the recorded prompt fields and the expansion-to-store.
+
+        ``request.prompt`` is what was actually submitted to Flow. When
+        ``request.original_prompt`` is set (i.e. a ``--tool`` rewrote the
+        prompt), the user's *original* prompt is recorded as the operation
+        prompt and the submitted prompt is persisted separately as
+        ``expanded_prompt`` — withheld when ``history_prompts='redacted'``,
+        exactly like the original prompt.
+
+        Reading both off the request (rather than a separate ``original_prompt``
+        kwarg) keeps the recorded original in lockstep with the submitted prompt
+        — they can no longer drift apart at the call site (PR2 §8 / prior-review
+        silent-misrecord hazard).
+        """
+        sent_prompt = request.prompt
+        original_prompt = request.original_prompt
+        recorded = original_prompt if original_prompt is not None else sent_prompt
+        pf = prompt_fields(recorded, mode=self.prompt_mode)
+        expanded = (
+            sent_prompt if (original_prompt is not None and self.prompt_mode == "store") else None
+        )
+        return pf, expanded
+
+    def _tool_metadata(self, tool: AppliedTool | None) -> dict[str, object] | None:
+        """Build the redaction-aware ``metadata_json.tool`` payload for a
+        generation operation, or ``None`` when no tool was applied.
+
+        ``redact_metadata`` only redacts by key-name / sensitive-URL markers, so
+        a free-text option (e.g. ``params.style``) would pass through verbatim.
+        We therefore branch on :class:`PromptMode` here: in ``redacted`` mode we
+        store only ``{name, version, params_hash, config_hash}`` — never the raw
+        ``model``/``params`` — reusing :func:`prompt_fields`' sha256 for the
+        params digest (council D7).
+        """
+        if tool is None:
+            return None
+        params = tool.params_dict()
+        if self.prompt_mode == "redacted":
+            params_blob = json.dumps(params, sort_keys=True)
+            params_hash = prompt_fields(params_blob, mode="store").prompt_hash
+            return {
+                "name": tool.name,
+                "version": tool.version,
+                "params_hash": params_hash,
+                "config_hash": tool.config_hash,
+            }
+        return {
+            "name": tool.name,
+            "version": tool.version,
+            "model": tool.model,
+            "params": params,
+            "config_hash": tool.config_hash,
+        }
 
     # ------------------------------------------------------------------
     # Image upload
@@ -164,6 +227,59 @@ class OperationRecorder:
     # Generated images (T2I / I2I)
     # ------------------------------------------------------------------
 
+    def _persist_generated_image(
+        self,
+        *,
+        repo: DataRepository,
+        op_id: str,
+        i: int,
+        image: GeneratedImage,
+        saved_path: Path,
+        profile_name: str,
+        flow_project_id: str,
+        cloud_info: CloudStorageInfo | None,
+    ) -> None:
+        """Upsert one generated image asset + local-file row and link it to the operation."""
+        # Use the saved_path name for mime-type detection; for cloud paths
+        # str(saved_path) returns the full URI but .name gives the filename.
+        media_type = mimetypes.guess_type(saved_path.name)[0]
+        asset_id = _new_id()
+        width, height = image.dimensions
+        repo.upsert_asset(
+            AssetRecord(
+                id=asset_id,
+                profile_name=profile_name,
+                flow_project_id=flow_project_id,
+                flow_media_id=image.media_name,
+                flow_workflow_id=image.workflow_id,
+                flow_media_generation_id=image.media_generation_id,
+                kind=AssetKind.IMAGE,
+                status="ready",
+                model=image.model_name_type,
+                aspect_ratio=image.aspect_ratio,
+                width=width,
+                height=height,
+                duration_seconds=None,
+                seed=image.seed,
+                metadata_json=redact_metadata({"fife_url": image.fife_url}),
+            ),
+        )
+        repo.link_operation_asset(op_id, asset_id, OperationAssetRole.OUTPUT, i)
+        is_cloud = cloud_info is not None
+        repo.upsert_local_file(
+            LocalFileRecord(
+                id=_new_id(),
+                profile_name=profile_name,
+                asset_id=asset_id,
+                path=saved_path.resolve() if not is_cloud else None,
+                media_type=media_type,
+                bytes=_file_bytes(saved_path) if not is_cloud else None,
+                sha256=_file_sha256(saved_path) if not is_cloud else None,
+                storage_provider=cloud_info.provider if cloud_info else None,
+                cloud_uri=cloud_info.uri if cloud_info else None,
+            ),
+        )
+
     def record_generated_images(
         self,
         *,
@@ -195,7 +311,7 @@ class OperationRecorder:
             ),
         )
 
-        pf = prompt_fields(request.prompt, mode=self.prompt_mode)
+        pf, expanded_prompt = self._resolve_prompts(request)
         op_id = _new_id()
         repo.insert_operation(
             OperationRecord(
@@ -214,6 +330,7 @@ class OperationRecorder:
                 aspect_ratio=request.aspect.value,
                 error_type=None,
                 error_detail=None,
+                expanded_prompt=expanded_prompt,
             ),
         )
         # Image generation is recorded AFTER all downloads complete, so the
@@ -221,6 +338,9 @@ class OperationRecorder:
         # downstream queries like "SELECT * FROM operations WHERE completed_at
         # IS NULL" don't surface successful runs.
         repo.update_operation_status(op_id, OperationStatus.SUCCEEDED, _now_utc_iso(), None, None)
+        tool_meta = self._tool_metadata(request.tool)
+        if tool_meta is not None:
+            repo.set_operation_metadata(op_id, {"tool": tool_meta})
 
         # Link input assets (I2I seed images)
         for i, media_id in enumerate(input_media_ids):
@@ -235,44 +355,15 @@ class OperationRecorder:
                 if cloud_storage_infos and i < len(cloud_storage_infos)
                 else None
             )
-            # Use the saved_path name for mime-type detection; for cloud paths
-            # str(saved_path) returns the full URI but .name gives the filename.
-            media_type = mimetypes.guess_type(saved_path.name)[0]
-            asset_id = _new_id()
-            width, height = image.dimensions
-            repo.upsert_asset(
-                AssetRecord(
-                    id=asset_id,
-                    profile_name=profile_name,
-                    flow_project_id=project.project_id,
-                    flow_media_id=image.media_name,
-                    flow_workflow_id=image.workflow_id,
-                    flow_media_generation_id=image.media_generation_id,
-                    kind=AssetKind.IMAGE,
-                    status="ready",
-                    model=image.model_name_type,
-                    aspect_ratio=image.aspect_ratio,
-                    width=width,
-                    height=height,
-                    duration_seconds=None,
-                    seed=image.seed,
-                    metadata_json=redact_metadata({"fife_url": image.fife_url}),
-                ),
-            )
-            repo.link_operation_asset(op_id, asset_id, OperationAssetRole.OUTPUT, i)
-            is_cloud = cloud_info is not None
-            repo.upsert_local_file(
-                LocalFileRecord(
-                    id=_new_id(),
-                    profile_name=profile_name,
-                    asset_id=asset_id,
-                    path=saved_path.resolve() if not is_cloud else None,
-                    media_type=media_type,
-                    bytes=_file_bytes(saved_path) if not is_cloud else None,
-                    sha256=_file_sha256(saved_path) if not is_cloud else None,
-                    storage_provider=cloud_info.provider if cloud_info else None,
-                    cloud_uri=cloud_info.uri if cloud_info else None,
-                ),
+            self._persist_generated_image(
+                repo=repo,
+                op_id=op_id,
+                i=i,
+                image=image,
+                saved_path=saved_path,
+                profile_name=profile_name,
+                flow_project_id=project.project_id,
+                cloud_info=cloud_info,
             )
 
     # ------------------------------------------------------------------
@@ -412,7 +503,7 @@ class OperationRecorder:
             ),
         )
 
-        pf = prompt_fields(request.prompt, mode=self.prompt_mode)
+        pf, expanded_prompt = self._resolve_prompts(request)
         op_id = _new_id()
         repo.insert_operation(
             OperationRecord(
@@ -431,9 +522,88 @@ class OperationRecorder:
                 aspect_ratio=request.aspect.value,
                 error_type=None,
                 error_detail=None,
+                expanded_prompt=expanded_prompt,
             ),
         )
         repo.link_operation_asset(op_id, asset_id, OperationAssetRole.OUTPUT, 0)
+        tool_meta = self._tool_metadata(request.tool)
+        if tool_meta is not None:
+            repo.set_operation_metadata(op_id, {"tool": tool_meta})
+
+    def _insert_fallback_video_operation(
+        self,
+        *,
+        repo: DataRepository,
+        profile_name: str,
+        flow_media_id: str,
+        request: GenerateVideoRequest,
+        result: VideoResult,
+    ) -> None:
+        """Insert a completed video operation when on_started failed or was skipped."""
+        pf, expanded_prompt = self._resolve_prompts(request)
+        op_id = _new_id()
+        repo.insert_operation(
+            OperationRecord(
+                id=op_id,
+                profile_name=profile_name,
+                flow_project_id=result.project_id,
+                command=f"video {request.mode.value}",
+                mode=OperationKind(request.mode.value),
+                status=OperationStatus.SUCCEEDED,
+                flow_operation_id=result.flow_operation_id,
+                flow_batch_id=None,
+                prompt=pf.prompt,
+                prompt_hash=pf.prompt_hash,
+                prompt_redacted=pf.prompt_redacted,
+                model=request.model.value if request.model is not None else None,
+                aspect_ratio=request.aspect.value,
+                error_type=None,
+                error_detail=None,
+                expanded_prompt=expanded_prompt,
+            ),
+        )
+        asset_lookup = repo.get_asset_by_flow_media_id(profile_name, flow_media_id)
+        if asset_lookup is not None:
+            repo.link_operation_asset(op_id, asset_lookup.id, OperationAssetRole.OUTPUT, 0)
+        tool_meta = self._tool_metadata(request.tool)
+        if tool_meta is not None:
+            repo.set_operation_metadata(op_id, {"tool": tool_meta})
+
+    def _persist_completed_video_file(
+        self,
+        *,
+        repo: DataRepository,
+        profile_name: str,
+        flow_media_id: str,
+        local_path: Path | None,
+        cloud_storage_info: CloudStorageInfo | None,
+    ) -> None:
+        """Upsert the local-file row for a downloaded (or cloud-stored) video."""
+        asset_lookup = repo.get_asset_by_flow_media_id(profile_name, flow_media_id)
+        if asset_lookup is None:
+            return
+        is_cloud = cloud_storage_info is not None
+        media_type = (
+            mimetypes.guess_type(local_path.name)[0] if local_path is not None else "video/mp4"
+        )
+        # Persist on-disk path/bytes/hash only for genuinely local files
+        # (single-level conditionals so pyright narrows ``local_path``).
+        resolved_path = local_path.resolve() if not is_cloud and local_path is not None else None
+        file_bytes = _file_bytes(local_path) if not is_cloud and local_path is not None else None
+        file_sha256 = _file_sha256(local_path) if not is_cloud and local_path is not None else None
+        repo.upsert_local_file(
+            LocalFileRecord(
+                id=_new_id(),
+                profile_name=profile_name,
+                asset_id=asset_lookup.id,
+                path=resolved_path,
+                media_type=media_type,
+                bytes=file_bytes,
+                sha256=file_sha256,
+                storage_provider=cloud_storage_info.provider if cloud_storage_info else None,
+                cloud_uri=cloud_storage_info.uri if cloud_storage_info else None,
+            ),
+        )
 
     def record_completed_video(
         self,
@@ -483,68 +653,22 @@ class OperationRecorder:
             repo.update_operation_status(op.id, OperationStatus.SUCCEEDED, completed_at, None, None)
         else:
             # on_started may have failed — insert a fresh completed operation
-            pf = prompt_fields(request.prompt, mode=self.prompt_mode)
-            op_id = _new_id()
-            repo.insert_operation(
-                OperationRecord(
-                    id=op_id,
-                    profile_name=profile_name,
-                    flow_project_id=result.project_id,
-                    command=f"video {request.mode.value}",
-                    mode=OperationKind(request.mode.value),
-                    status=OperationStatus.SUCCEEDED,
-                    flow_operation_id=result.flow_operation_id,
-                    flow_batch_id=None,
-                    prompt=pf.prompt,
-                    prompt_hash=pf.prompt_hash,
-                    prompt_redacted=pf.prompt_redacted,
-                    model=request.model.value if request.model is not None else None,
-                    aspect_ratio=request.aspect.value,
-                    error_type=None,
-                    error_detail=None,
-                ),
+            self._insert_fallback_video_operation(
+                repo=repo,
+                profile_name=profile_name,
+                flow_media_id=flow_media_id,
+                request=request,
+                result=result,
             )
-            asset_lookup = repo.get_asset_by_flow_media_id(profile_name, flow_media_id)
-            if asset_lookup is not None:
-                repo.link_operation_asset(op_id, asset_lookup.id, OperationAssetRole.OUTPUT, 0)
 
-        has_local = result.local_path is not None
-        if has_local or cloud_storage_info is not None:
-            asset_lookup = repo.get_asset_by_flow_media_id(profile_name, flow_media_id)
-            if asset_lookup is not None:
-                local_path = result.local_path
-                is_cloud = cloud_storage_info is not None
-                media_type = (
-                    mimetypes.guess_type(local_path.name)[0]
-                    if local_path is not None
-                    else "video/mp4"
-                )
-                # Persist on-disk path/bytes/hash only for genuinely local files
-                # (single-level conditionals so pyright narrows ``local_path``).
-                resolved_path = (
-                    local_path.resolve() if not is_cloud and local_path is not None else None
-                )
-                file_bytes = (
-                    _file_bytes(local_path) if not is_cloud and local_path is not None else None
-                )
-                file_sha256 = (
-                    _file_sha256(local_path) if not is_cloud and local_path is not None else None
-                )
-                repo.upsert_local_file(
-                    LocalFileRecord(
-                        id=_new_id(),
-                        profile_name=profile_name,
-                        asset_id=asset_lookup.id,
-                        path=resolved_path,
-                        media_type=media_type,
-                        bytes=file_bytes,
-                        sha256=file_sha256,
-                        storage_provider=(
-                            cloud_storage_info.provider if cloud_storage_info else None
-                        ),
-                        cloud_uri=cloud_storage_info.uri if cloud_storage_info else None,
-                    ),
-                )
+        if result.local_path is not None or cloud_storage_info is not None:
+            self._persist_completed_video_file(
+                repo=repo,
+                profile_name=profile_name,
+                flow_media_id=flow_media_id,
+                local_path=result.local_path,
+                cloud_storage_info=cloud_storage_info,
+            )
 
     # ------------------------------------------------------------------
     # Character — started / completed (persist-before-spend saga)
