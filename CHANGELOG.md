@@ -7,6 +7,13 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+### Added
+
+- **`--project` on `video t2v`/`i2v`/`r2v` (#233)**: generate into an existing Flow
+  project instead of always creating a scratch project, matching `image t2i`/`i2i`.
+  Lets programmatic callers (e.g. a multi-clip storyboard worker) share one project
+  across several video generations instead of leaving one throwaway project per clip.
+
 ## [0.23.0] — 2026-07-01
 
 ### Added

@@ -35,6 +35,7 @@ been removed. Both error handlers now import
 
 from __future__ import annotations
 
+import re
 import sys
 from pathlib import Path
 from typing import TYPE_CHECKING, Any, Literal
@@ -70,15 +71,35 @@ _console = Console()
 # `reportPrivateUsage` rule does NOT honor the PEP 484 `from X import Y as Y`
 # re-export idiom for underscore names, so __all__ is the practical fix.
 __all__ = [
+    "_FLOW_ID_RE",
     "_handle_gflow_error",
     "_handle_unhandled_error",
     "_make_provider_dir",
     "_resolve_profile",
+    "_validate_project_id",
     "apply_tool_option",
     "run_with_handlers",
     "safe_path_text",
     "tool_option",
 ]
+
+# Flow project ids are interpolated into navigation URLs and CSS selectors
+# (page.goto, `data-tile-id='fe_id_<id>'`) before any other guard runs, so the
+# `--project` option on both `image t2i`/`i2i` and `video t2v`/`i2v`/`r2v`
+# validates against this allowlist at the CLI boundary. Mirrors
+# `routes._PROJECT_ID_RE`. Relocated here (T4b follow-up) so the two call-site
+# modules can't drift out of sync.
+_FLOW_ID_RE = re.compile(r"^[A-Za-z0-9\-]{1,128}$")
+
+
+def _validate_project_id(
+    _ctx: click.Context, param: click.Parameter, value: str | None
+) -> str | None:
+    """Reject a --project id that isn't alphanumeric/hyphen (1-128 chars)."""
+    if value is not None and not _FLOW_ID_RE.fullmatch(value):
+        msg = "project id must be 1-128 chars of letters, digits, or hyphens."
+        raise click.BadParameter(msg, param=param)
+    return value
 
 
 _TOOL_OPTION_HELP = (
