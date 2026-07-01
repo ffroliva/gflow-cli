@@ -4,9 +4,25 @@
 
 ## Current release
 
+**v0.23.0 — alpha.** **MCP generation goes live + macOS 401 fixed.** The MCP server's
+`gflow_generate_image` / `gflow_generate_video` tools — previously non-functional stubs —
+are now wired end-to-end to the FlowWorker queue (background worker owns download +
+history recording), the `tools` prompt-expansion parameter is actually applied, and i2v/r2v
+require their frame/reference inputs at the tool boundary. The long-standing macOS
+generation `401` (#222) is resolved (#230, @gunalak): Flow cookies are read from the full
+jar by domain instead of a path-`/` filter that dropped the `/fx`-scoped session token, and
+the headed context is seeded from a pre-launch snapshot when macOS can't decrypt the store.
+Carries forward v0.22.0 (Tools framework) + v0.21.0 (MCP server). Verification:
+[LIVE_VERIFICATION_v0.23.0](LIVE_VERIFICATION_v0.23.0.md) (MCP wiring proven live; #222
+reporter-verified e2e on macOS).
+
+**Develop (unreleased, post-v0.23.0):** *(empty — develop is the staging branch for the next release).*
+
+<details><summary>v0.22.0 — Tools framework ("Creative Director")</summary>
+
 **v0.22.0 — alpha.** **Tools framework ("Creative Director").** A TOML-defined prompt-tool system: `creative-director` rewrites a terse prompt into a vivid one via Google's five-component formula (public Gemini API, never-fatal), with 15 category-gated domain styles and deterministic banned-keyword stripping. Invoke it via the new `gflow tools list/show/run` group or the uniform `-t`/`--tool` option on every generation command (`image t2i`/`i2i`/`batch`, `video t2v`/`i2v`/`r2v`/`chain`), replacing the never-released `-e/--expand`. History records the original prompt, the submitted `expanded_prompt`, and `metadata_json.tool` provenance (redaction-honoring). **"My Tools"**: user-authored TOMLs in `<GFLOW_CLI_HOME>/tools/*.toml` load automatically. MCP parity via `gflow_list_tools` + a `tools` array param; the legacy `expand_prompt` MCP prompt is deprecated. The Gemini expander gained an overall wall-clock budget. Carries forward v0.21.0 (MCP server over stdio + HTTP/SSE). Verification: [LIVE_VERIFICATION_v0.22.0](LIVE_VERIFICATION_v0.22.0.md) (CI/automated complete; live owner-run pending).
 
-**Develop (unreleased, post-v0.22.0):** *(empty — develop is the staging branch for the next release).*
+</details>
 
 ## Milestone history
 
@@ -68,6 +84,8 @@
 | Aspect-ratio overrides under Agentic & Classic cohorts + `GFLOW_CLI_PREFER_CLASSIC` (#193) | ✅ done (v0.20.0 / v0.20.1) |
 | MCP server (`gflow mcp run` stdio + `gflow serve` HTTP/SSE) + daemon/queue scaffolding | ✅ done (v0.21.0) |
 | Tools framework: `gflow tools` group + `--tool` + `creative-director` + "My Tools" + MCP parity | ✅ done (v0.22.0) |
+| MCP generation wired to FlowWorker (tool→queue→download→record) + `tools` applied + i2v/r2v boundary validation | ✅ done (v0.23.0) |
+| macOS generation 401 fixed — `/fx` cookie-path read + headed-context seed (#222/#230) | ✅ done (v0.23.0) |
 | `gflow video batch` (TSV manifest) on `ui_automation` | ⏳ Phase B |
 | Persistence layer (stay-mounted batch sessions across project boundaries) | ⏳ Phase B |
 | Provider abstraction for official Veo 3.1 API | ⏳ planned |
