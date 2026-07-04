@@ -201,9 +201,12 @@ class GenerateVideoRequest:
     duration: int | None = None  # seconds: 4/6/8 (or 10, omni_flash only); None -> default
     count: int = 1  # 1-4 outputs; >1 multiplies credit cost
     seed: int | None = None
-    start_image: Path | None = None  # I2V
-    end_image: Path | None = None  # I2V (optional)
-    reference_images: tuple[Path, ...] = ()  # R2V
+    start_image: Path | None = None  # I2V (local file path)
+    start_image_ref_name: str | None = None  # I2V (remote asset display name)
+    end_image: Path | None = None  # I2V (optional local file path)
+    end_image_ref_name: str | None = None  # I2V (optional remote asset display name)
+    reference_images: tuple[Path, ...] = ()  # R2V (local file paths)
+    ref_names: tuple[str, ...] = ()  # R2V (remote asset display names)
     reference_entities: tuple[str, ...] = ()  # R2V — Flow CHARACTER entity ids
     reference_entity_names: tuple[
         str, ...
@@ -251,23 +254,32 @@ class GenerateVideoRequest:
             raise ValueError(msg)
 
     def _validate_i2v_symmetry(self) -> None:
-        if self.start_image is None:
-            msg = "I2V request requires start_image"
+        if self.start_image is None and self.start_image_ref_name is None:
+            msg = "I2V request requires start_image or start_image_ref_name"
             raise ValueError(msg)
-        if self.reference_images or self.reference_entities:
-            msg = "I2V request must not carry reference_images or reference_entities"
+        if self.reference_images or self.ref_names or self.reference_entities:
+            msg = "I2V request must not carry reference_images, ref_names, or reference_entities"
             raise ValueError(msg)
 
     def _validate_r2v_symmetry(self) -> None:
-        if not self.reference_images and not self.reference_entities:
-            msg = "R2V request requires reference_images or reference_entities"
+        if not self.reference_images and not self.ref_names and not self.reference_entities:
+            msg = "R2V request requires reference_images, ref_names, or reference_entities"
             raise ValueError(msg)
-        if self.start_image or self.end_image:
+        if (
+            self.start_image
+            or self.start_image_ref_name
+            or self.end_image
+            or self.end_image_ref_name
+        ):
             msg = "R2V request must not carry start/end images"
             raise ValueError(msg)
 
     def _validate_mode_symmetry(self) -> None:
-        if self.mode is Mode.T2V and (self.start_image or self.end_image or self.reference_images):
+        if self.mode is Mode.T2V and (
+            self.start_image or self.start_image_ref_name or
+            self.end_image or self.end_image_ref_name or
+            self.reference_images or self.ref_names
+        ):
             msg = "T2V request must not carry image inputs"
             raise ValueError(msg)
         if self.mode is Mode.I2V:
@@ -276,7 +288,7 @@ class GenerateVideoRequest:
             self._validate_r2v_symmetry()
 
     def _validate_r2v_caps(self) -> None:
-        if len(self.reference_images) > MAX_REFERENCE_IMAGES:
+        if len(self.reference_images) + len(self.ref_names) > MAX_REFERENCE_IMAGES:
             msg = f"at most {MAX_REFERENCE_IMAGES} reference images"
             raise ValueError(msg)
         # Per-model reference cap (live-verified): omni_flash=7, veo lite/fast/lite_lp=3,
@@ -287,15 +299,16 @@ class GenerateVideoRequest:
             if cap == 0:
                 msg = f"{self.model.value} does not support R2V (reference-to-video)"
                 raise ValueError(msg)
-            if len(self.reference_images) > cap:
+            total_img_refs = len(self.reference_images) + len(self.ref_names)
+            if total_img_refs > cap:
                 msg = (
                     f"{self.model.value} allows at most {cap} reference image(s); "
-                    f"got {len(self.reference_images)}"
+                    f"got {total_img_refs}"
                 )
                 raise ValueError(
                     msg,
                 )
-            total_refs = len(self.reference_images) + len(self.reference_entities)
+            total_refs = total_img_refs + len(self.reference_entities)
             if total_refs > cap:
                 msg = (
                     f"reference cap exceeded: {total_refs} refs (images+entities) "
