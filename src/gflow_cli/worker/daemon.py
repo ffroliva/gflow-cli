@@ -288,6 +288,7 @@ class FlowWorker:
 
         refs = tuple(ImageRef(r) for r in payload.get("refs", []))
         ref_paths = tuple(Path(p) for p in payload.get("ref_paths", []))
+        ref_names = tuple(payload.get("ref_names", []))
         reference_entities = tuple(payload.get("reference_entities", []))
         reference_entity_names = tuple(payload.get("reference_entity_names", []))
         count = payload.get("count", 1)
@@ -298,6 +299,7 @@ class FlowWorker:
             model=model,
             refs=refs,
             ref_paths=ref_paths,
+            ref_names=ref_names,
             reference_entities=reference_entities,
             reference_entity_names=reference_entity_names,
             count=count,
@@ -328,8 +330,11 @@ class FlowWorker:
         seed = payload.get("seed")
 
         start_image = Path(payload["start_image"]) if payload.get("start_image") else None
+        start_image_ref_name = payload.get("start_image_ref_name")
         end_image = Path(payload["end_image"]) if payload.get("end_image") else None
+        end_image_ref_name = payload.get("end_image_ref_name")
         reference_images = tuple(Path(p) for p in payload.get("reference_images", []))
+        ref_names = tuple(payload.get("ref_names", []))
         reference_entities = tuple(payload.get("reference_entities", []))
         reference_entity_names = tuple(payload.get("reference_entity_names", []))
         reference_audio = payload.get("reference_audio")
@@ -344,8 +349,11 @@ class FlowWorker:
             count=count,
             seed=seed,
             start_image=start_image,
+            start_image_ref_name=start_image_ref_name,
             end_image=end_image,
+            end_image_ref_name=end_image_ref_name,
             reference_images=reference_images,
+            ref_names=ref_names,
             reference_entities=reference_entities,
             reference_entity_names=reference_entity_names,
             reference_audio=reference_audio,

@@ -15,6 +15,7 @@ from __future__ import annotations
 
 import asyncio
 import json
+import random
 import time
 from pathlib import Path
 from typing import TYPE_CHECKING, Any, cast
@@ -295,6 +296,7 @@ UPLOAD_MEDIA_BUTTON = (
 UPLOAD_MEDIA_BUTTON_TEXT = "[role='dialog'][data-state='open'] button:has-text('Upload media')"
 # 'Add to Prompt' has no stable string anchor; selected structurally (the lone
 # iconless button) at the call site. This scope is the open media dialog.
+ADD_TO_PROMPT_BUTTON_TEXT = "button:has-text('Add to Prompt')"
 ADD_TO_PROMPT_DIALOG = "[role='dialog'][data-state='open']"
 # R2V references mode has NO Start/End slots — references are added via the
 # only button[aria-haspopup='dialog'] in the editor: a 'Create' button carrying
@@ -1191,6 +1193,76 @@ class VideoGenerationMixin:
         log.info("ui_automation_video.frame_attached", slot=label)
 
     @staticmethod
+    async def _attach_remote_frame(
+        page: Page,
+        slot_index: int,
+        label: str,
+        name: str,
+        *,
+        out_dir: Path | None,
+        timeout_s: float = 120.0,
+    ) -> None:
+        """Attach a remote image (by display name) into an I2V frame slot."""
+        structs = page.locator(FRAME_SLOTS_STRUCT)
+        try:
+            await structs.first.wait_for(state="visible", timeout=12000)
+        except Exception as e:
+            shot = await _capture_debug_screenshot(
+                page,
+                out_dir,
+                f"debug_no_{label.lower()}_slot.png",
+            )
+            msg = f"frame slot {label!r} not found on the Flow editor. Screenshot: {shot}"
+            raise RuntimeError(msg) from e
+
+        struct_count = await structs.count()
+        if struct_count > slot_index:
+            slot = structs.nth(slot_index)
+        elif struct_count > 0:
+            slot = structs.first
+        else:
+            slot = page.locator(FRAME_SLOT_BY_LABEL.format(label=label)).first
+            try:
+                await slot.wait_for(state="visible", timeout=3000)
+            except Exception as e:
+                msg = (
+                    f"frame slot index {slot_index} ({label!r}) not present "
+                    f"(found {struct_count} structural slot(s), "
+                    f"text-label fallback also missed)"
+                )
+                raise RuntimeError(msg) from e
+
+        await slot.click()
+        await page.wait_for_timeout(1000)  # media dialog opens
+
+        search_input = page.locator("#add-menu-input")
+        await search_input.press_sequentially(name, delay=random.randint(10, 50))
+        await page.wait_for_timeout(600)
+
+        tile = page.locator(f"[role='option']:has-text('{name}')").first
+        await tile.wait_for(state="visible", timeout=8000)
+        await tile.click()
+        await page.wait_for_timeout(300)
+
+        add_btn = page.locator(ADD_TO_PROMPT_BUTTON_TEXT).first
+        try:
+            if await add_btn.is_visible():
+                await add_btn.click(timeout=3000)
+                await page.wait_for_timeout(600)
+        except Exception as e:
+            log.debug("ui_automation_video.remote_frame_add_btn_skip", error=str(e))
+
+        dialog = page.locator("[role='dialog']").last
+        try:
+            await dialog.wait_for(state="hidden", timeout=timeout_s * 1000)
+        except Exception as e:
+            raise TransportTimeoutError(
+                f"{label} remote frame dialog did not close after {timeout_s}s",
+            ) from e
+
+        log.info("ui_automation_video.remote_frame_attached", slot=label, display_name=name)
+
+    @staticmethod
     async def _upload_via_open_dialog(
         page: Page,
         image: Path,
@@ -1325,6 +1397,42 @@ class VideoGenerationMixin:
             )
             attached += 1
             log.info("ui_automation_video.reference_attached", index=i)
+
+    @staticmethod
+    async def _attach_remote_references(
+        page: Page,
+        ref_names: list[str],
+        *,
+        out_dir: Path | None,
+    ) -> None:
+        """Attach remote images by searching their display_name in the All tab."""
+        for name in ref_names:
+            add = page.locator(ADD_MEDIA_BUTTON).first
+            await add.wait_for(state="visible", timeout=8000)
+            await add.click()
+            await page.wait_for_timeout(800)
+
+            # Search in the input box using human-like typing to avoid WAF flagging
+            search_input = page.locator("#add-menu-input")
+            await search_input.press_sequentially(name, delay=random.randint(10, 50))
+            await page.wait_for_timeout(600)
+
+            # Select the option
+            tile = page.locator(f"[role='option']:has-text('{name}')").first
+            await tile.wait_for(state="visible", timeout=8000)
+            await tile.click()
+            await page.wait_for_timeout(300)
+
+            # Click Add to Prompt if it is still visible (sometimes clicking the tile auto-adds it)
+            add_btn = page.locator(ADD_TO_PROMPT_BUTTON_TEXT).first
+            try:
+                if await add_btn.is_visible():
+                    await add_btn.click(timeout=3000)
+                    await page.wait_for_timeout(600)
+            except Exception as e:
+                log.debug("ui_automation_video.remote_reference_add_btn_skip", error=str(e))
+
+            log.info("ui_automation_video.remote_reference_attached", display_name=name)
 
     @staticmethod
     async def _scroll_picker_grid(page: Page, delta_px: int = PICKER_GRID_SCROLL_DELTA_PX) -> None:
@@ -1766,13 +1874,23 @@ class VideoGenerationMixin:
         out_dir: Path | None,
     ) -> None:
         """Attach I2V frames or R2V references/entities to the editor before submit."""
-        if request.mode is Mode.I2V and request.start_image is not None:
-            await VideoGenerationMixin._attach_frame(
-                page, 0, "Start", request.start_image, out_dir=out_dir
-            )
+        if request.mode is Mode.I2V:
+            if request.start_image is not None:
+                await VideoGenerationMixin._attach_frame(
+                    page, 0, "Start", request.start_image, out_dir=out_dir
+                )
+            elif request.start_image_ref_name is not None:
+                await VideoGenerationMixin._attach_remote_frame(
+                    page, 0, "Start", request.start_image_ref_name, out_dir=out_dir
+                )
+
             if request.end_image is not None:
                 await VideoGenerationMixin._attach_frame(
                     page, 1, "End", request.end_image, out_dir=out_dir
+                )
+            elif request.end_image_ref_name is not None:
+                await VideoGenerationMixin._attach_remote_frame(
+                    page, 1, "End", request.end_image_ref_name, out_dir=out_dir
                 )
         elif request.mode is Mode.R2V:
             if request.reference_entities:
@@ -1785,6 +1903,12 @@ class VideoGenerationMixin:
                 await VideoGenerationMixin._attach_references(
                     page,
                     list(request.reference_images),
+                    out_dir=out_dir,
+                )
+            if request.ref_names:
+                await VideoGenerationMixin._attach_remote_references(
+                    page,
+                    list(request.ref_names),
                     out_dir=out_dir,
                 )
             if request.reference_audio:

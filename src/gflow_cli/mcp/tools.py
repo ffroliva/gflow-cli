@@ -217,6 +217,26 @@ async def _run_generation_task(
             profile_dir = settings.profile_subdir(profile)
             data_repo.upsert_profile(profile, profile_dir)
 
+            # Resolve display names for remote refs so the UI automation can search for them
+            def _resolve_ref(ref_id: str) -> str:
+                name = None
+                asset = data_repo.get_asset_by_any_id(profile, ref_id)
+                if asset:
+                    name = asset.metadata_json.get("display_name")
+                    if not name:
+                        # Fallback for images generated before display_name was extracted properly
+                        seed_info = data_repo.resolve_seed_image(profile, asset.flow_media_id)
+                        if seed_info and seed_info.prompt:
+                            name = seed_info.prompt
+                return name or ref_id
+
+            if "refs" in payload:
+                payload["ref_names"] = [_resolve_ref(r) for r in payload["refs"]]
+            if "start_image_ref" in payload:
+                payload["start_image_ref_name"] = _resolve_ref(payload["start_image_ref"])
+            if "end_image_ref" in payload:
+                payload["end_image_ref_name"] = _resolve_ref(payload["end_image_ref"])
+
             task = QueueRepository(store).enqueue_task(
                 task_id=task_id,
                 profile_name=profile,
@@ -266,17 +286,25 @@ async def _run_generation_task(
 
             # Resolve local file paths from the asset catalog.
             file_paths: list[str] = []
+            flow_project_id: str | None = None
+            flow_workflow_id: str | None = None
             if completed_task.flow_media_id:
                 asset = DataRepository(store).get_asset_by_flow_media_id(
                     profile,
                     completed_task.flow_media_id,
                 )
-                if asset and asset.local_files:
-                    file_paths = [str(lf.path) for lf in asset.local_files if lf.path is not None]
+                if asset:
+                    flow_project_id = asset.flow_project_id
+                    flow_workflow_id = asset.flow_workflow_id
+                    if asset.local_files:
+                        file_paths = [
+                            str(lf.path) for lf in asset.local_files if lf.path is not None
+                        ]
 
         log.info(
             "mcp.tool.task_completed",
             task_id=task_id,
+            flow_project_id=flow_project_id,
             flow_media_id=completed_task.flow_media_id,
             file_count=len(file_paths),
         )
@@ -284,7 +312,8 @@ async def _run_generation_task(
         return {
             "status": "completed",
             "task_id": task_id,
-            "flow_media_id": completed_task.flow_media_id,
+            "flow_project_id": flow_project_id,
+            "flow_media_id": flow_workflow_id if flow_workflow_id else completed_task.flow_media_id,
             "files": file_paths,
         }
 
@@ -407,30 +436,34 @@ def _build_video_media_inputs(
 
     media: dict[str, Any] = {}
     if initial_frame is not None:
-        resolved, err = _resolve_image_path(
-            initial_frame, title="Invalid Start Image", label="Start image path"
-        )
-        if err is not None:
-            return None, err
-        media["start_image"] = resolved
-    if end_frame is not None:
-        resolved, err = _resolve_image_path(
-            end_frame, title="Invalid End Image", label="End image path"
-        )
-        if err is not None:
-            return None, err
-        media["end_image"] = resolved
-    if reference_images:
-        ref_paths: list[str] = []
-        for ref in reference_images:
+        if _UUID_RE.fullmatch(initial_frame):
+            media["start_image_ref"] = initial_frame
+        else:
             resolved, err = _resolve_image_path(
-                ref, title="Invalid Reference Image", label="Reference image path"
+                initial_frame, title="Invalid Start Image", label="Start image path"
             )
             if err is not None:
                 return None, err
-            assert resolved is not None
-            ref_paths.append(resolved)
-        media["reference_images"] = ref_paths
+            media["start_image"] = resolved
+    if end_frame is not None:
+        if _UUID_RE.fullmatch(end_frame):
+            media["end_image_ref"] = end_frame
+        else:
+            resolved, err = _resolve_image_path(
+                end_frame, title="Invalid End Image", label="End image path"
+            )
+            if err is not None:
+                return None, err
+            media["end_image"] = resolved
+    if reference_images:
+        ref_data, err = _resolve_image_references(reference_images)
+        if err is not None:
+            return None, err
+        assert ref_data is not None
+        if ref_data["ref_paths"]:
+            media["reference_images"] = ref_data["ref_paths"]
+        if ref_data["refs"]:
+            media["refs"] = ref_data["refs"]
     return media, None
 
 
