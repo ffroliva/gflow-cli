@@ -1132,58 +1132,13 @@ class VideoGenerationMixin:
             msg = f"frame image not found: {image}"
             raise FileNotFoundError(msg)
 
-        # Locate the slot structural-first (locale-free): the frame slots are the
-        # dialog-divs inside the swap_horiz container, indexed by position
-        # (0=start, 1=end).  FRAME_SLOT_BY_LABEL (has-text 'Start'/'End') is
-        # tried only as a fallback when the structural count is insufficient —
-        # it requires --lang=en-US / English Chrome profile to work.
-        #
-        # wait_for is short (1500 ms) because _wait_video_editor_ready already
+        # wait_ms is short (1500) because _wait_video_editor_ready already
         # guaranteed the editor SPA is mounted; the frame panel resolves in
-        # <10 ms (one CDP round-trip) on a pre-rendered page.  A shorter probe
-        # means a future swap_horiz rename surfaces as a fast, clear error
-        # instead of an 8-second dead wait on every I2V/R2V call.
-        structs = page.locator(FRAME_SLOTS_STRUCT)
-        try:
-            await structs.first.wait_for(state="visible", timeout=1500)
-        except Exception as e:
-            shot = await _capture_debug_screenshot(
-                page,
-                out_dir,
-                f"debug_no_{label.lower()}_slot.png",
-            )
-            msg = f"frame slot {label!r} not found on the Flow editor. Screenshot: {shot}"
-            raise RuntimeError(
-                msg,
-            ) from e
-
-        struct_count = await structs.count()
-        if struct_count > slot_index:
-            # Both slots unfilled — pick by DOM order.
-            slot = structs.nth(slot_index)
-        elif struct_count > 0:
-            # Some slots already attached (typical: Start filled, End remaining).
-            # The DOM only keeps `div[type='button'][aria-haspopup='dialog']` on
-            # the unfilled slot(s) — once an image binds, the slot transitions
-            # away from that pattern. The next unfilled slot is therefore
-            # `.first` of the remaining matches, regardless of its original
-            # positional index. This case is hit on the End-frame call after
-            # Start was just attached.
-            slot = structs.first
-        else:
-            # Structural count was insufficient; fall back to text-label match.
-            slot = page.locator(FRAME_SLOT_BY_LABEL.format(label=label)).first
-            try:
-                await slot.wait_for(state="visible", timeout=3000)
-            except Exception as e:
-                msg = (
-                    f"frame slot index {slot_index} ({label!r}) not present "
-                    f"(found {struct_count} structural slot(s), "
-                    f"text-label fallback also missed)"
-                )
-                raise RuntimeError(
-                    msg,
-                ) from e
+        # <10 ms on a pre-rendered page, so a future swap_horiz rename surfaces
+        # as a fast, clear error instead of an 8-second dead wait per call.
+        slot = await VideoGenerationMixin._resolve_frame_slot(
+            page, slot_index, label, out_dir=out_dir, wait_ms=1500
+        )
         await slot.click()
         await page.wait_for_timeout(1000)  # media dialog opens
         await VideoGenerationMixin._upload_via_open_dialog(
@@ -1260,6 +1215,53 @@ class VideoGenerationMixin:
         return page.get_by_role("option", name=name)
 
     @staticmethod
+    async def _resolve_frame_slot(
+        page: Page,
+        slot_index: int,
+        label: str,
+        *,
+        out_dir: Path | None,
+        wait_ms: int,
+    ) -> Locator:
+        """Locate an I2V frame slot, structural-first with a text-label fallback.
+
+        Shared by the local-upload and remote-ref frame-attach paths. The frame
+        slots are the dialog-divs inside the swap_horiz container, indexed by
+        position (0=start, 1=end); FRAME_SLOT_BY_LABEL (has-text 'Start'/'End',
+        English-only) is the fallback when the structural count is insufficient.
+        Once an image binds, its slot leaves the structural pattern, so the next
+        unfilled slot is `.first` of the remaining matches regardless of index.
+        Returns the (unclicked) slot locator; raises RuntimeError with a debug
+        screenshot if none resolves.
+        """
+        structs = page.locator(FRAME_SLOTS_STRUCT)
+        try:
+            await structs.first.wait_for(state="visible", timeout=wait_ms)
+        except Exception as e:
+            shot = await _capture_debug_screenshot(
+                page, out_dir, f"debug_no_{label.lower()}_slot.png"
+            )
+            msg = f"frame slot {label!r} not found on the Flow editor. Screenshot: {shot}"
+            raise RuntimeError(msg) from e
+
+        struct_count = await structs.count()
+        if struct_count > slot_index:
+            return structs.nth(slot_index)
+        if struct_count > 0:
+            return structs.first
+        slot = page.locator(FRAME_SLOT_BY_LABEL.format(label=label)).first
+        try:
+            await slot.wait_for(state="visible", timeout=3000)
+        except Exception as e:
+            msg = (
+                f"frame slot index {slot_index} ({label!r}) not present "
+                f"(found {struct_count} structural slot(s), "
+                f"text-label fallback also missed)"
+            )
+            raise RuntimeError(msg) from e
+        return slot
+
+    @staticmethod
     async def _attach_remote_frame(
         page: Page,
         slot_index: int,
@@ -1270,35 +1272,9 @@ class VideoGenerationMixin:
         timeout_s: float = 120.0,
     ) -> None:
         """Attach a remote image (by display name) into an I2V frame slot."""
-        structs = page.locator(FRAME_SLOTS_STRUCT)
-        try:
-            await structs.first.wait_for(state="visible", timeout=12000)
-        except Exception as e:
-            shot = await _capture_debug_screenshot(
-                page,
-                out_dir,
-                f"debug_no_{label.lower()}_slot.png",
-            )
-            msg = f"frame slot {label!r} not found on the Flow editor. Screenshot: {shot}"
-            raise RuntimeError(msg) from e
-
-        struct_count = await structs.count()
-        if struct_count > slot_index:
-            slot = structs.nth(slot_index)
-        elif struct_count > 0:
-            slot = structs.first
-        else:
-            slot = page.locator(FRAME_SLOT_BY_LABEL.format(label=label)).first
-            try:
-                await slot.wait_for(state="visible", timeout=3000)
-            except Exception as e:
-                msg = (
-                    f"frame slot index {slot_index} ({label!r}) not present "
-                    f"(found {struct_count} structural slot(s), "
-                    f"text-label fallback also missed)"
-                )
-                raise RuntimeError(msg) from e
-
+        slot = await VideoGenerationMixin._resolve_frame_slot(
+            page, slot_index, label, out_dir=out_dir, wait_ms=12000
+        )
         await slot.click()
         await page.wait_for_timeout(1000)  # media dialog opens
 
