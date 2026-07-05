@@ -326,3 +326,51 @@ def test_seed_read_api_resolves_by_path_latest_project_and_candidate(tmp_path: P
         project_images = repo.list_project_images("default", "flow-project-1")
         assert [item.flow_media_id for item in project_images] == ["media-latest"]
         assert repo.candidate_image_exists("default", "media-latest") is True
+
+
+def test_get_asset_by_any_id_resolves_media_workflow_and_asset_ids(tmp_path: Path) -> None:
+    """PR #237: UUID→asset resolution must work for every id kind and hydrate
+    the fields the MCP display-name lookup relies on (flow_workflow_id,
+    metadata_json) — the original submission constructed AssetLookup with
+    fields the dataclass did not declare (TypeError)."""
+    with DataStore.open(tmp_path / "gflow.db") as store:
+        repo = DataRepository(store)
+        repo.upsert_profile("default", Path("C:/profiles/profile_default"))
+        repo.upsert_project(
+            ProjectRecord(
+                id="project-any",
+                profile_name="default",
+                flow_project_id="flow-project-any",
+                title="t",
+                source="generated",
+            )
+        )
+        repo.upsert_asset(
+            AssetRecord(
+                id="asset-any",
+                profile_name="default",
+                flow_project_id="flow-project-any",
+                flow_media_id="media-any",
+                flow_workflow_id="workflow-any",
+                flow_media_generation_id="generation-any",
+                kind=AssetKind.IMAGE,
+                status="ready",
+                model="NARWHAL",
+                aspect_ratio="IMAGE_ASPECT_RATIO_PORTRAIT",
+                width=1024,
+                height=1792,
+                duration_seconds=None,
+                seed=1,
+                metadata_json={"display_name": "A cozy cabin"},
+            )
+        )
+
+        for ref in ("media-any", "workflow-any", "asset-any"):
+            found = repo.get_asset_by_any_id("default", ref)
+            assert found is not None, ref
+            assert found.flow_media_id == "media-any"
+            assert found.flow_workflow_id == "workflow-any"
+            assert found.metadata_json == {"display_name": "A cozy cabin"}
+
+        assert repo.get_asset_by_any_id("default", "nope") is None
+        assert repo.get_asset_by_any_id("other-profile", "media-any") is None

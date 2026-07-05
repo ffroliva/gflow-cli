@@ -7,6 +7,17 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+### Added
+
+- **Remote image UUIDs in `gflow_generate_video` (#237)**: I2V (`initial_frame` /
+  `end_frame`) and R2V (`reference_images`) now accept a generated image's Flow UUID,
+  not just a local file path — pipe the output of an image generation straight into a
+  video generation with no download/re-upload round-trip. UUID inputs are resolved to
+  the asset's display name at enqueue time and attached via the resource picker; a UUID
+  that isn't in your asset catalog fails fast with a clear "Reference Not Found" error
+  instead of a long browser timeout. (Contributed by @C1ph3r404; hardened during
+  maintainer review — see below.)
+
 ### Fixed
 
 - **Removed a shadowed duplicate `Settings.daemon_token` field definition (#243)**: the

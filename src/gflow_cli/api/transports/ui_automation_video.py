@@ -294,9 +294,9 @@ UPLOAD_MEDIA_BUTTON = (
 # This is exactly why the failure message tells the operator to set the Chrome
 # profile to English: it makes this fallback tier viable.
 UPLOAD_MEDIA_BUTTON_TEXT = "[role='dialog'][data-state='open'] button:has-text('Upload media')"
-# 'Add to Prompt' has no stable string anchor; selected structurally (the lone
-# iconless button) at the call site. This scope is the open media dialog.
-ADD_TO_PROMPT_BUTTON_TEXT = "button:has-text('Add to Prompt')"
+# 'Add to Prompt' has no stable string anchor; it is resolved via the tiered,
+# locale-safe PICKER_INCLUDE_BUTTON / _resolve_include_action pattern (a
+# hardcoded English string here previously hung non-English accounts — #170/#56).
 ADD_TO_PROMPT_DIALOG = "[role='dialog'][data-state='open']"
 # R2V references mode has NO Start/End slots — references are added via the
 # only button[aria-haspopup='dialog'] in the editor: a 'Create' button carrying
@@ -1193,6 +1193,18 @@ class VideoGenerationMixin:
         log.info("ui_automation_video.frame_attached", slot=label)
 
     @staticmethod
+    def _remote_option_tile(page: Page, name: str) -> Locator:
+        """Locate a picker result tile by its display name.
+
+        Uses ARIA role+name matching rather than
+        ``[role='option']:has-text('{name}')``: ``name`` is a stored
+        ``display_name`` or the original generation prompt, both of which
+        commonly contain an apostrophe or quote that would break a
+        single-quoted ``:has-text()`` CSS selector (PR #237 review).
+        """
+        return page.get_by_role("option", name=name)
+
+    @staticmethod
     async def _attach_remote_frame(
         page: Page,
         slot_index: int,
@@ -1239,18 +1251,22 @@ class VideoGenerationMixin:
         await search_input.press_sequentially(name, delay=random.randint(10, 50))
         await page.wait_for_timeout(600)
 
-        tile = page.locator(f"[role='option']:has-text('{name}')").first
+        tile = VideoGenerationMixin._remote_option_tile(page, name).first
         await tile.wait_for(state="visible", timeout=8000)
         await tile.click()
         await page.wait_for_timeout(300)
 
-        add_btn = page.locator(ADD_TO_PROMPT_BUTTON_TEXT).first
-        try:
-            if await add_btn.is_visible():
-                await add_btn.click(timeout=3000)
-                await page.wait_for_timeout(600)
-        except Exception as e:
-            log.debug("ui_automation_video.remote_frame_add_btn_skip", error=str(e))
+        include = await VideoGenerationMixin._resolve_include_action(
+            page,
+            PICKER_INCLUDE_BUTTON,
+            _INCLUDE_BUTTON_TIER_NAMES,
+            surface="remote_frame_include",
+            detail=f"{label} remote frame",
+            out_dir=out_dir,
+            screenshot_name="remote_frame_include_missing.png",
+        )
+        await include.click(timeout=3000)
+        await page.wait_for_timeout(600)
 
         dialog = page.locator("[role='dialog']").last
         try:
@@ -1417,20 +1433,38 @@ class VideoGenerationMixin:
             await search_input.press_sequentially(name, delay=random.randint(10, 50))
             await page.wait_for_timeout(600)
 
-            # Select the option
-            tile = page.locator(f"[role='option']:has-text('{name}')").first
+            # Select the option (role+name match — apostrophes in the display
+            # name would break a `:has-text('{name}')` CSS selector).
+            tile = VideoGenerationMixin._remote_option_tile(page, name).first
             await tile.wait_for(state="visible", timeout=8000)
             await tile.click()
             await page.wait_for_timeout(300)
 
-            # Click Add to Prompt if it is still visible (sometimes clicking the tile auto-adds it)
-            add_btn = page.locator(ADD_TO_PROMPT_BUTTON_TEXT).first
+            # Include via the locale-safe tiered resolver (a hardcoded English
+            # "Add to Prompt" here previously hung on non-English accounts —
+            # issues #170/#56).
+            include = await VideoGenerationMixin._resolve_include_action(
+                page,
+                PICKER_INCLUDE_BUTTON,
+                _INCLUDE_BUTTON_TIER_NAMES,
+                surface="remote_reference_include",
+                detail="remote reference",
+                out_dir=out_dir,
+                screenshot_name="remote_reference_include_missing.png",
+            )
+            await include.click(timeout=3000)
+            await page.wait_for_timeout(600)
+
+            # Verify the picker actually closed — otherwise the include never
+            # fired and logging success would be a silent false positive.
+            dialog = page.locator("[role='dialog']").last
             try:
-                if await add_btn.is_visible():
-                    await add_btn.click(timeout=3000)
-                    await page.wait_for_timeout(600)
+                await dialog.wait_for(state="hidden", timeout=8000)
             except Exception as e:
-                log.debug("ui_automation_video.remote_reference_add_btn_skip", error=str(e))
+                raise TransportTimeoutError(
+                    f"remote reference {name!r} picker dialog did not close "
+                    "(the include action may not have registered)",
+                ) from e
 
             log.info("ui_automation_video.remote_reference_attached", display_name=name)
 
