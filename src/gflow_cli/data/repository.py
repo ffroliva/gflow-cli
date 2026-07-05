@@ -32,6 +32,11 @@ def _utc_now() -> str:
     return datetime.now(UTC).isoformat(timespec="milliseconds").replace("+00:00", "Z")
 
 
+_ASSET_LOOKUP_COLUMNS = (
+    "id, profile_name, flow_project_id, flow_media_id, flow_workflow_id, metadata_json, kind"
+)
+
+
 class DataRepository:
     def __init__(self, store: DataStore) -> None:
         self._store = store
@@ -165,9 +170,8 @@ class DataRepository:
         flow_media_id: str,
     ) -> AssetLookup | None:
         row = self._store.conn.execute(
-            """
-            SELECT id, profile_name, flow_project_id, flow_media_id,
-            flow_workflow_id, metadata_json, kind
+            f"""
+            SELECT {_ASSET_LOOKUP_COLUMNS}
             FROM assets
             WHERE profile_name = ? AND flow_media_id = ?
             """,
@@ -183,9 +187,8 @@ class DataRepository:
         ref_id: str,
     ) -> AssetLookup | None:
         row = self._store.conn.execute(
-            """
-            SELECT id, profile_name, flow_project_id, flow_media_id,
-            flow_workflow_id, metadata_json, kind
+            f"""
+            SELECT {_ASSET_LOOKUP_COLUMNS}
             FROM assets
             WHERE profile_name = ? AND (flow_media_id = ? OR flow_workflow_id = ? OR id = ?)
             ORDER BY created_at DESC
@@ -206,9 +209,8 @@ class DataRepository:
         Closes #87.
         """
         rows = self._store.conn.execute(
-            """
-            SELECT id, profile_name, flow_project_id, flow_media_id,
-            flow_workflow_id, metadata_json, kind
+            f"""
+            SELECT {_ASSET_LOOKUP_COLUMNS}
             FROM assets
             WHERE flow_media_id = ?
             ORDER BY profile_name ASC, id ASC
