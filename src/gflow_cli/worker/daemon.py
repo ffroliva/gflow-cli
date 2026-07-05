@@ -105,6 +105,10 @@ class FlowWorker:
                         headless=headless,
                         transport=transport,
                         out_dir=out_dir,
+                        # Reuse the cached settings: a bare Settings() in the client
+                        # would re-read .env files live per task and could disagree
+                        # with the task parameters derived from get_settings().
+                        settings=settings,
                     ) as client:
                         project_title = task.payload.get("project_title", "gflow-cli images")
                         project_created = False
@@ -176,6 +180,7 @@ class FlowWorker:
                         headless=headless,
                         transport=transport,
                         out_dir=out_dir,
+                        settings=settings,  # same rationale as the image path above
                     ) as client:
 
                         def on_started(started: VideoStarted) -> None:
