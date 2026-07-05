@@ -219,8 +219,10 @@ class AssetLookup:
     profile_name: str
     flow_project_id: str | None
     flow_media_id: str
+    flow_workflow_id: str | None
     kind: AssetKind
     local_files: list[LocalFileRecord]
+    metadata_json: JsonObject
 
 
 @dataclass(frozen=True)

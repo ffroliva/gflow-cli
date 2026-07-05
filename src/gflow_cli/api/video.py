@@ -276,9 +276,12 @@ class GenerateVideoRequest:
 
     def _validate_mode_symmetry(self) -> None:
         if self.mode is Mode.T2V and (
-            self.start_image or self.start_image_ref_name or
-            self.end_image or self.end_image_ref_name or
-            self.reference_images or self.ref_names
+            self.start_image
+            or self.start_image_ref_name
+            or self.end_image
+            or self.end_image_ref_name
+            or self.reference_images
+            or self.ref_names
         ):
             msg = "T2V request must not carry image inputs"
             raise ValueError(msg)

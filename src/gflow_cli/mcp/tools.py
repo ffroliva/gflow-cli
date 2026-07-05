@@ -217,25 +217,23 @@ async def _run_generation_task(
             profile_dir = settings.profile_subdir(profile)
             data_repo.upsert_profile(profile, profile_dir)
 
-            # Resolve display names for remote refs so the UI automation can search for them
-            def _resolve_ref(ref_id: str) -> str:
-                name = None
-                asset = data_repo.get_asset_by_any_id(profile, ref_id)
-                if asset:
-                    name = asset.metadata_json.get("display_name")
-                    if not name:
-                        # Fallback for images generated before display_name was extracted properly
-                        seed_info = data_repo.resolve_seed_image(profile, asset.flow_media_id)
-                        if seed_info and seed_info.prompt:
-                            name = seed_info.prompt
-                return name or ref_id
-
+            # Resolve remote-ref UUIDs to the display names the UI automation
+            # searches for; an unresolvable UUID fails fast here (see
+            # _resolve_ref_name) instead of timing out in the browser.
+            ref_names: list[str] = []
+            for ref in payload.get("refs", []):
+                name, err = _resolve_ref_name(data_repo, profile, ref)
+                if err is not None:
+                    return err
+                ref_names.append(name or ref)
             if "refs" in payload:
-                payload["ref_names"] = [_resolve_ref(r) for r in payload["refs"]]
-            if "start_image_ref" in payload:
-                payload["start_image_ref_name"] = _resolve_ref(payload["start_image_ref"])
-            if "end_image_ref" in payload:
-                payload["end_image_ref_name"] = _resolve_ref(payload["end_image_ref"])
+                payload["ref_names"] = ref_names
+            for key in ("start_image_ref", "end_image_ref"):
+                if key in payload:
+                    name, err = _resolve_ref_name(data_repo, profile, payload[key])
+                    if err is not None:
+                        return err
+                    payload[f"{key}_name"] = name
 
             task = QueueRepository(store).enqueue_task(
                 task_id=task_id,
@@ -353,6 +351,37 @@ def _bad_param(title: str, detail: str) -> dict[str, Any]:
         "status": "error",
         "error": {"type": _BAD_PARAM_TYPE, "title": title, "status": 400, "detail": detail},
     }
+
+
+def _resolve_ref_name(
+    data_repo: DataRepository,
+    profile: str,
+    ref_id: str,
+) -> tuple[str | None, dict[str, Any] | None]:
+    """Resolve a remote reference to the display name the UI automation searches.
+
+    Returns ``(name, None)`` or ``(None, error_envelope)``. A ``ref_id`` that is
+    UUID-shaped but absent from the asset catalog is a mistake worth catching at
+    enqueue time: passing the raw UUID downstream surfaced as a ~120s Playwright
+    timeout (PR #237 review). A non-UUID string is treated as a literal display
+    name the caller typed directly and passed through unchanged.
+    """
+    asset = data_repo.get_asset_by_any_id(profile, ref_id)
+    if asset is not None:
+        name = asset.metadata_json.get("display_name")
+        if not name:
+            # Fallback for images generated before display_name was extracted.
+            seed_info = data_repo.resolve_seed_image(profile, asset.flow_media_id)
+            if seed_info and seed_info.prompt:
+                name = seed_info.prompt
+        return name or ref_id, None
+    if _UUID_RE.fullmatch(ref_id):
+        return None, _bad_param(
+            "Reference Not Found",
+            f"'{ref_id}' was not found in your asset catalog for profile "
+            f"{profile!r}. Generate the image first, or pass its display name.",
+        )
+    return ref_id, None
 
 
 def _validate_project(project: str | None) -> dict[str, Any] | None:
