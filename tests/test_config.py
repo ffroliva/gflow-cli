@@ -24,11 +24,44 @@ def _reset_cache() -> None:
 
 
 @pytest.fixture
-def clean_env(monkeypatch: pytest.MonkeyPatch) -> None:
-    """Strip every GFLOW_CLI_* and legacy FLOW_CLI_* env var to expose true defaults."""
+def clean_env(monkeypatch: pytest.MonkeyPatch, tmp_path: Path) -> None:
+    """Strip every GFLOW_CLI_* / legacy FLOW_CLI_* env var AND fence the dotenv sweep.
+
+    Stripping alone removes the autouse tmp GFLOW_CLI_HOME (conftest
+    `_isolate_settings`), which would send the home-.env lookup to the
+    developer's REAL platform home; the CWD entry would read whatever
+    directory pytest was launched from. Both are re-fenced into tmp_path so
+    "defaults" tests never depend on real machine files. Tests that need a
+    different home/cwd simply set their own afterwards (later patches win).
+    """
     for key in list(__import__("os").environ):
         if key.startswith("GFLOW_CLI_") or key.startswith("FLOW_CLI_"):
             monkeypatch.delenv(key, raising=False)
+    monkeypatch.setattr("gflow_cli.config.paths.default_home", lambda: tmp_path / "clean-home")
+    clean_cwd = tmp_path / "clean-cwd"
+    clean_cwd.mkdir(exist_ok=True)
+    monkeypatch.chdir(clean_cwd)
+
+
+class TestCleanEnvHermeticity:
+    """`clean_env` must fence the dotenv sweep, not just strip env vars.
+
+    Stripping removes the autouse tmp GFLOW_CLI_HOME, which would otherwise
+    send the home-.env lookup to the developer's REAL platform home — a real
+    home .env (e.g. GFLOW_CLI_TIMEOUT_SECONDS=300) then fails the defaults
+    tests on that machine while CI stays green. Same for the CWD entry when
+    pytest is launched from a directory containing a .env (the repo root's
+    gitignored .env is the documented dev setup).
+    """
+
+    def test_dotenv_sweep_is_fenced_inside_the_test_tmp_dir(
+        self, clean_env: None, tmp_path: Path
+    ) -> None:
+        from gflow_cli import config as config_module
+
+        home_env_file, _cwd_env_file = config_module._env_files()
+        assert str(tmp_path) in home_env_file  # not the real platform home
+        assert str(tmp_path) in str(Path.cwd())  # not the pytest launch dir
 
 
 class TestDefaults:
@@ -167,6 +200,185 @@ class TestLegacyEnvShim:
             _migrate_legacy_env()
 
         assert not any(issubclass(w.category, DeprecationWarning) for w in caught)
+
+
+class TestHomeEnvFileFallback:
+    """Issue #240: `.env` must also load from `$GFLOW_CLI_HOME/.env`.
+
+    docs/CONFIGURATION.md documents a home-`.env` fallback with CWD winning;
+    before the fix only the CWD `.env` was ever read.
+    """
+
+    @pytest.fixture
+    def isolated_cwd(self, monkeypatch: pytest.MonkeyPatch, tmp_path: Path) -> Path:
+        """Run the test from an empty directory so the repo's own `.env` never leaks in."""
+        cwd = tmp_path / "cwd"
+        cwd.mkdir()
+        monkeypatch.chdir(cwd)
+        return cwd
+
+    @pytest.fixture
+    def home_with_env(self, monkeypatch: pytest.MonkeyPatch, tmp_path: Path) -> Path:
+        home = tmp_path / "home"
+        home.mkdir()
+        (home / ".env").write_text("GFLOW_CLI_TIMEOUT_SECONDS=123\n", encoding="utf-8")
+        monkeypatch.setenv("GFLOW_CLI_HOME", str(home))
+        return home
+
+    def test_home_env_file_is_loaded_without_cwd_env(
+        self, clean_env: None, isolated_cwd: Path, home_with_env: Path
+    ) -> None:
+        assert Settings().timeout_seconds == 123
+
+    def test_home_and_cwd_env_files_merge(
+        self, clean_env: None, isolated_cwd: Path, home_with_env: Path
+    ) -> None:
+        (isolated_cwd / ".env").write_text("GFLOW_CLI_CONCURRENCY=3\n", encoding="utf-8")
+        s = Settings()
+        assert s.timeout_seconds == 123  # from home .env
+        assert s.concurrency == 3  # from CWD .env
+
+    def test_cwd_env_file_wins_over_home_env_file(
+        self, clean_env: None, isolated_cwd: Path, home_with_env: Path
+    ) -> None:
+        (isolated_cwd / ".env").write_text("GFLOW_CLI_TIMEOUT_SECONDS=456\n", encoding="utf-8")
+        assert Settings().timeout_seconds == 456
+
+    def test_process_env_var_beats_both_env_files(
+        self,
+        clean_env: None,
+        isolated_cwd: Path,
+        home_with_env: Path,
+        monkeypatch: pytest.MonkeyPatch,
+    ) -> None:
+        (isolated_cwd / ".env").write_text("GFLOW_CLI_TIMEOUT_SECONDS=456\n", encoding="utf-8")
+        monkeypatch.setenv("GFLOW_CLI_TIMEOUT_SECONDS", "789")
+        assert Settings().timeout_seconds == 789
+
+    def test_default_home_env_file_used_when_home_var_unset(
+        self,
+        clean_env: None,
+        isolated_cwd: Path,
+        tmp_path: Path,
+        monkeypatch: pytest.MonkeyPatch,
+    ) -> None:
+        home = tmp_path / "default-home"
+        home.mkdir()
+        (home / ".env").write_text("GFLOW_CLI_TIMEOUT_SECONDS=321\n", encoding="utf-8")
+        monkeypatch.setattr("gflow_cli.config.paths.default_home", lambda: home)
+        assert Settings().timeout_seconds == 321
+
+    def test_missing_home_env_file_is_harmless(
+        self,
+        clean_env: None,
+        isolated_cwd: Path,
+        tmp_path: Path,
+        monkeypatch: pytest.MonkeyPatch,
+    ) -> None:
+        home = tmp_path / "home-no-env"
+        home.mkdir()
+        monkeypatch.setenv("GFLOW_CLI_HOME", str(home))
+        assert Settings().timeout_seconds == 600  # built-in default
+
+
+class TestHomeResolutionCoherence:
+    """#240 rework: the home used to locate the home ``.env`` must be the same
+    home the ``home`` field resolves to — for every channel that can set it.
+    """
+
+    @pytest.fixture
+    def isolated_cwd(self, monkeypatch: pytest.MonkeyPatch, tmp_path: Path) -> Path:
+        cwd = tmp_path / "cwd"
+        cwd.mkdir()
+        monkeypatch.chdir(cwd)
+        return cwd
+
+    def test_home_set_in_cwd_env_file_relocates_home_env_lookup(
+        self, clean_env: None, isolated_cwd: Path, tmp_path: Path
+    ) -> None:
+        new_home = tmp_path / "relocated-home"
+        new_home.mkdir()
+        (new_home / ".env").write_text("GFLOW_CLI_TIMEOUT_SECONDS=123\n", encoding="utf-8")
+        (isolated_cwd / ".env").write_text(f"GFLOW_CLI_HOME={new_home}\n", encoding="utf-8")
+        s = Settings()
+        assert s.home == new_home
+        assert s.timeout_seconds == 123  # the relocated home's .env was loaded
+
+    def test_empty_home_env_var_means_unset_for_field_and_env_lookup(
+        self,
+        clean_env: None,
+        isolated_cwd: Path,
+        tmp_path: Path,
+        monkeypatch: pytest.MonkeyPatch,
+    ) -> None:
+        default = tmp_path / "default-gflow-cli"
+        default.mkdir()
+        (default / ".env").write_text("GFLOW_CLI_TIMEOUT_SECONDS=321\n", encoding="utf-8")
+        monkeypatch.setattr("gflow_cli.config.paths.default_home", lambda: default)
+        monkeypatch.setenv("GFLOW_CLI_HOME", "")
+        s = Settings()
+        assert s.timeout_seconds == 321  # env lookup fell back to default home
+        assert s.home == default  # the field agrees — not Path('.')
+
+    def test_lowercase_home_env_var_honored_for_env_lookup(
+        self,
+        clean_env: None,
+        isolated_cwd: Path,
+        tmp_path: Path,
+        monkeypatch: pytest.MonkeyPatch,
+    ) -> None:
+        # Simulate a POSIX case-sensitive environment where only the lowercase
+        # key exists (valid for the field: case_sensitive=False).
+        import gflow_cli.config as config_module
+
+        home = tmp_path / "lower-home"
+        home.mkdir()
+        (home / ".env").write_text("GFLOW_CLI_TIMEOUT_SECONDS=222\n", encoding="utf-8")
+        monkeypatch.setattr(config_module.os, "environ", {"gflow_cli_home": str(home)})
+        s = Settings()
+        assert s.home == home
+        assert s.timeout_seconds == 222
+
+
+class TestEnvFileInitKwarg:
+    """The standard pydantic-settings ``_env_file`` init kwarg keeps working.
+
+    Regression for the #240 rework: the first implementation replaced the
+    framework dotenv source wholesale, silently ignoring
+    ``Settings(_env_file=...)`` including the disable idiom ``_env_file=None``.
+    """
+
+    @pytest.fixture
+    def isolated_cwd(self, monkeypatch: pytest.MonkeyPatch, tmp_path: Path) -> Path:
+        cwd = tmp_path / "cwd"
+        cwd.mkdir()
+        monkeypatch.chdir(cwd)
+        return cwd
+
+    @pytest.fixture
+    def home_with_env(self, monkeypatch: pytest.MonkeyPatch, tmp_path: Path) -> Path:
+        home = tmp_path / "home"
+        home.mkdir()
+        (home / ".env").write_text("GFLOW_CLI_TIMEOUT_SECONDS=123\n", encoding="utf-8")
+        monkeypatch.setenv("GFLOW_CLI_HOME", str(home))
+        return home
+
+    def test_env_file_none_disables_all_dotenv_loading(
+        self, clean_env: None, isolated_cwd: Path, home_with_env: Path
+    ) -> None:
+        (isolated_cwd / ".env").write_text("GFLOW_CLI_CONCURRENCY=3\n", encoding="utf-8")
+        s = Settings(_env_file=None)  # pyright: ignore[reportCallIssue]
+        assert s.timeout_seconds == 600  # home .env skipped
+        assert s.concurrency == 1  # CWD .env skipped
+
+    def test_explicit_env_file_replaces_both_defaults(
+        self, clean_env: None, isolated_cwd: Path, home_with_env: Path
+    ) -> None:
+        (isolated_cwd / ".env").write_text("GFLOW_CLI_TIMEOUT_SECONDS=456\n", encoding="utf-8")
+        other = isolated_cwd / "other.env"
+        other.write_text("GFLOW_CLI_TIMEOUT_SECONDS=999\n", encoding="utf-8")
+        s = Settings(_env_file=other)  # pyright: ignore[reportCallIssue]
+        assert s.timeout_seconds == 999
 
 
 class TestBrowserEngine:

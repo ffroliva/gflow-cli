@@ -312,9 +312,11 @@ predictable external storage keys, set the bucket prefix in
 
 ## .env loading
 
-`gflow-cli` (via [`pydantic-settings`](https://docs.pydantic.dev/latest/concepts/pydantic_settings/)) loads a single `.env` from the **current working directory** at startup. There is no second load from `$GFLOW_CLI_HOME` — keep your `.env` next to where you invoke `gflow`.
+`gflow-cli` (via [`pydantic-settings`](https://docs.pydantic.dev/latest/concepts/pydantic_settings/)) loads **two** `.env` files at startup: `$GFLOW_CLI_HOME/.env` (machine-wide defaults — useful for processes whose working directory is arbitrary, like the MCP server or a worker service) and a `.env` in the **current working directory** (project-local overrides). On conflicting keys the CWD file wins.
 
-Variables already set in the actual environment always beat any `.env` file. Anything explicitly passed on the CLI beats everything else.
+The home used for the first file is resolved from the `GFLOW_CLI_HOME` env var, else a `GFLOW_CLI_HOME` entry in the CWD `.env`, else the platform default — the same home `Settings.home` reports. (By construction the home `.env` cannot relocate home itself; set the env var or the CWD `.env` instead.)
+
+Variables already set in the actual environment always beat both `.env` files. Anything explicitly passed on the CLI beats everything else.
 
 Use [`.env.template`](../.env.template) as your starting point:
 
