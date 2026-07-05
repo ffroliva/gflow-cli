@@ -29,10 +29,23 @@ def test_r2v_valid_with_audio() -> None:
 
 
 def test_r2v_requires_images_or_entities() -> None:
-    with pytest.raises(ValueError, match="reference_images or reference_entities"):
+    with pytest.raises(ValueError, match="reference_images, ref_names, or reference_entities"):
         GenerateVideoRequest(
             prompt="x", mode=Mode.R2V, aspect=Aspect.LANDSCAPE, model=VideoModel.VEO_3_1_LITE
         )
+
+
+def test_r2v_accepts_remote_ref_names_alone() -> None:
+    # PR #237: a UUID resolved to a remote display name (ref_names) is a valid
+    # R2V reference source on its own — no local reference_images required.
+    req = GenerateVideoRequest(
+        prompt="x",
+        mode=Mode.R2V,
+        aspect=Aspect.LANDSCAPE,
+        model=VideoModel.VEO_3_1_LITE,
+        ref_names=("A cozy cabin",),
+    )
+    assert req.ref_names == ("A cozy cabin",)
 
 
 def test_cap_budget_counts_entities_plus_images() -> None:
