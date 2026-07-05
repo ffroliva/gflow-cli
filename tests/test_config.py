@@ -410,6 +410,23 @@ class TestPreferClassic:
 
 
 class TestDaemonSettings:
+    def test_daemon_token_defined_exactly_once(self) -> None:
+        """A duplicated class-body field is silently shadowed by the later
+        definition (issue #243) — the dead duplicate must not return, or a
+        future edit to the wrong copy would be invisibly ignored."""
+        import inspect
+
+        source = inspect.getsource(Settings)
+        assert source.count("daemon_token: str | None") == 1
+
+    def test_daemon_token_keeps_both_env_aliases(self) -> None:
+        """Pin the SURVIVING definition's contract: both env var spellings
+        must stay accepted (the shadowed duplicate had no aliases)."""
+        field = Settings.model_fields["daemon_token"]
+        alias = field.validation_alias
+        assert alias is not None
+        assert getattr(alias, "choices", None) == ["GFLOW_CLI_DAEMON_TOKEN", "GFLOW_DAEMON_TOKEN"]
+
     def test_daemon_defaults(self, clean_env: None) -> None:
         s = Settings()
         assert s.daemon_token is None
