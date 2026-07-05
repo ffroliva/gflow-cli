@@ -9,6 +9,13 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ### Fixed
 
+- **Removed a shadowed duplicate `Settings.daemon_token` field definition (#243)**: the
+  class body defined `daemon_token` twice; Python silently kept only the second
+  (aliased) one, leaving the first as dead code that a future edit could touch without
+  effect. The surviving definition's contract (both `GFLOW_CLI_DAEMON_TOKEN` and
+  `GFLOW_DAEMON_TOKEN` accepted) is now pinned by tests, along with a guard that the
+  field is defined exactly once.
+
 - **`$GFLOW_CLI_HOME/.env` now loads as a dotenv fallback (#240)**: `config.py`'s own
   module docstring promised a `.env` fallback "from CWD or `$GFLOW_CLI_HOME/.env`", but
   the implementation only ever read the CWD file — a key placed in the home `.env` was
