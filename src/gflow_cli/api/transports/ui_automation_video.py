@@ -298,6 +298,9 @@ UPLOAD_MEDIA_BUTTON_TEXT = "[role='dialog'][data-state='open'] button:has-text('
 # locale-safe PICKER_INCLUDE_BUTTON / _resolve_include_action pattern (a
 # hardcoded English string here previously hung non-English accounts — #170/#56).
 ADD_TO_PROMPT_DIALOG = "[role='dialog'][data-state='open']"
+# Any open dialog (state-agnostic), used to confirm a picker closed after an
+# include action.
+DIALOG_ANY = "[role='dialog']"
 # R2V references mode has NO Start/End slots — references are added via the
 # only button[aria-haspopup='dialog'] in the editor: a 'Create' button carrying
 # the 'add_2' icon (its visible text 'Create' / 'Add Media' is unreliable — a
@@ -1193,6 +1196,58 @@ class VideoGenerationMixin:
         log.info("ui_automation_video.frame_attached", slot=label)
 
     @staticmethod
+    async def _pick_option_and_include(
+        page: Page,
+        name: str,
+        *,
+        surface: str,
+        detail: str,
+        out_dir: Path | None,
+        dialog_timeout_s: float,
+    ) -> None:
+        """Shared picker flow: type ``name`` into the open resource picker,
+        select the matching result tile, fire the locale-safe include action,
+        and verify the picker dialog closed. Used by both the I2V frame and R2V
+        reference remote-attach paths (the picker is identical once open)."""
+        search_input = page.locator(PICKER_SEARCH_INPUT)
+        # Human-like typing jitter to dodge WAF bot heuristics — not a security
+        # context, so a plain PRNG is fine.
+        await search_input.press_sequentially(name, delay=random.randint(10, 50))  # NOSONAR
+        await page.wait_for_timeout(600)
+
+        # Role+name match — apostrophes in the display name would break a
+        # `:has-text('{name}')` CSS selector.
+        tile = VideoGenerationMixin._remote_option_tile(page, name).first
+        await tile.wait_for(state="visible", timeout=8000)
+        await tile.click()
+        await page.wait_for_timeout(300)
+
+        # Include via the tiered, locale-safe resolver (a hardcoded English
+        # "Add to Prompt" here previously hung non-English accounts — #170/#56).
+        include = await VideoGenerationMixin._resolve_include_action(
+            page,
+            PICKER_INCLUDE_BUTTON,
+            _INCLUDE_BUTTON_TIER_NAMES,
+            surface=surface,
+            detail=detail,
+            out_dir=out_dir,
+            screenshot_name=f"{surface}_missing.png",
+        )
+        await include.click(timeout=3000)
+        await page.wait_for_timeout(600)
+
+        # Confirm the picker closed — otherwise the include never registered and
+        # logging success would be a silent false positive.
+        dialog = page.locator(DIALOG_ANY).last
+        try:
+            await dialog.wait_for(state="hidden", timeout=dialog_timeout_s * 1000)
+        except Exception as e:
+            raise TransportTimeoutError(
+                f"{detail} picker dialog did not close after {dialog_timeout_s}s "
+                "(the include action may not have registered)",
+            ) from e
+
+    @staticmethod
     def _remote_option_tile(page: Page, name: str) -> Locator:
         """Locate a picker result tile by its display name.
 
@@ -1247,35 +1302,14 @@ class VideoGenerationMixin:
         await slot.click()
         await page.wait_for_timeout(1000)  # media dialog opens
 
-        search_input = page.locator("#add-menu-input")
-        await search_input.press_sequentially(name, delay=random.randint(10, 50))
-        await page.wait_for_timeout(600)
-
-        tile = VideoGenerationMixin._remote_option_tile(page, name).first
-        await tile.wait_for(state="visible", timeout=8000)
-        await tile.click()
-        await page.wait_for_timeout(300)
-
-        include = await VideoGenerationMixin._resolve_include_action(
+        await VideoGenerationMixin._pick_option_and_include(
             page,
-            PICKER_INCLUDE_BUTTON,
-            _INCLUDE_BUTTON_TIER_NAMES,
+            name,
             surface="remote_frame_include",
             detail=f"{label} remote frame",
             out_dir=out_dir,
-            screenshot_name="remote_frame_include_missing.png",
+            dialog_timeout_s=timeout_s,
         )
-        await include.click(timeout=3000)
-        await page.wait_for_timeout(600)
-
-        dialog = page.locator("[role='dialog']").last
-        try:
-            await dialog.wait_for(state="hidden", timeout=timeout_s * 1000)
-        except Exception as e:
-            raise TransportTimeoutError(
-                f"{label} remote frame dialog did not close after {timeout_s}s",
-            ) from e
-
         log.info("ui_automation_video.remote_frame_attached", slot=label, display_name=name)
 
     @staticmethod
@@ -1428,44 +1462,14 @@ class VideoGenerationMixin:
             await add.click()
             await page.wait_for_timeout(800)
 
-            # Search in the input box using human-like typing to avoid WAF flagging
-            search_input = page.locator("#add-menu-input")
-            await search_input.press_sequentially(name, delay=random.randint(10, 50))
-            await page.wait_for_timeout(600)
-
-            # Select the option (role+name match — apostrophes in the display
-            # name would break a `:has-text('{name}')` CSS selector).
-            tile = VideoGenerationMixin._remote_option_tile(page, name).first
-            await tile.wait_for(state="visible", timeout=8000)
-            await tile.click()
-            await page.wait_for_timeout(300)
-
-            # Include via the locale-safe tiered resolver (a hardcoded English
-            # "Add to Prompt" here previously hung on non-English accounts —
-            # issues #170/#56).
-            include = await VideoGenerationMixin._resolve_include_action(
+            await VideoGenerationMixin._pick_option_and_include(
                 page,
-                PICKER_INCLUDE_BUTTON,
-                _INCLUDE_BUTTON_TIER_NAMES,
+                name,
                 surface="remote_reference_include",
-                detail="remote reference",
+                detail=f"remote reference {name!r}",
                 out_dir=out_dir,
-                screenshot_name="remote_reference_include_missing.png",
+                dialog_timeout_s=8.0,
             )
-            await include.click(timeout=3000)
-            await page.wait_for_timeout(600)
-
-            # Verify the picker actually closed — otherwise the include never
-            # fired and logging success would be a silent false positive.
-            dialog = page.locator("[role='dialog']").last
-            try:
-                await dialog.wait_for(state="hidden", timeout=8000)
-            except Exception as e:
-                raise TransportTimeoutError(
-                    f"remote reference {name!r} picker dialog did not close "
-                    "(the include action may not have registered)",
-                ) from e
-
             log.info("ui_automation_video.remote_reference_attached", display_name=name)
 
     @staticmethod
