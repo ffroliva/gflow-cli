@@ -212,6 +212,60 @@ async def test_worker_process_t2v(temp_db: DataStore) -> None:
 
 
 @pytest.mark.asyncio
+async def test_worker_passes_cached_settings_to_image_client(temp_db: DataStore) -> None:
+    """The client must reuse the worker's cached settings object.
+
+    A bare ``Settings()`` inside FlowApiClient re-reads the .env files live per
+    task, so a mid-run edit to ``$GFLOW_CLI_HOME/.env`` yields a client whose
+    config disagrees with the headless/transport/out_dir the task derived from
+    ``get_settings()`` (#240 review finding).
+    """
+    from gflow_cli.config import get_settings
+
+    repo = QueueRepository(temp_db)
+    task = repo.enqueue_task(
+        task_id="task-t2i-settings",
+        profile_name="default",
+        task_type="t2i",
+        payload={"prompt": "scenic landscape", "aspect": "16:9", "count": 1},
+    )
+
+    worker = FlowWorker("default", str(temp_db.path))
+    fake_client = FakeFlowApiClient()
+    fake_client.create_project.return_value = MagicMock(project_id="p-1", title="T")
+    fake_client.generate_image.return_value = FakeGeneratedImage(media_name="media-img-s")
+
+    with patch("gflow_cli.worker.daemon.FlowApiClient", return_value=fake_client) as client_cls:
+        await worker.process_task(task)
+
+    assert client_cls.call_args.kwargs.get("settings") is get_settings()
+    worker.close()
+
+
+@pytest.mark.asyncio
+async def test_worker_passes_cached_settings_to_video_client(temp_db: DataStore) -> None:
+    from gflow_cli.config import get_settings
+
+    repo = QueueRepository(temp_db)
+    task = repo.enqueue_task(
+        task_id="task-t2v-settings",
+        profile_name="default",
+        task_type="t2v",
+        payload={"prompt": "cinematic camera movement", "aspect": "16:9"},
+    )
+
+    worker = FlowWorker("default", str(temp_db.path))
+    fake_client = FakeFlowApiClient()
+    fake_client.generate_video.return_value = _completed_video_result("media-vid-s")
+
+    with patch("gflow_cli.worker.daemon.FlowApiClient", return_value=fake_client) as client_cls:
+        await worker.process_task(task)
+
+    assert client_cls.call_args.kwargs.get("settings") is get_settings()
+    worker.close()
+
+
+@pytest.mark.asyncio
 async def test_worker_t2v_recording_failure_does_not_fail_task(temp_db: DataStore) -> None:
     """A credit-spent video that succeeds must stay 'completed' even if the
     post-success data-layer recording raises — recording is best-effort."""
