@@ -218,22 +218,11 @@ async def _run_generation_task(
             data_repo.upsert_profile(profile, profile_dir)
 
             # Resolve remote-ref UUIDs to the display names the UI automation
-            # searches for; an unresolvable UUID fails fast here (see
-            # _resolve_ref_name) instead of timing out in the browser.
-            ref_names: list[str] = []
-            for ref in payload.get("refs", []):
-                name, err = _resolve_ref_name(data_repo, profile, ref)
-                if err is not None:
-                    return err
-                ref_names.append(name or ref)
-            if "refs" in payload:
-                payload["ref_names"] = ref_names
-            for key in ("start_image_ref", "end_image_ref"):
-                if key in payload:
-                    name, err = _resolve_ref_name(data_repo, profile, payload[key])
-                    if err is not None:
-                        return err
-                    payload[f"{key}_name"] = name
+            # searches for; an unresolvable UUID fails fast here instead of
+            # timing out in the browser.
+            ref_err = _resolve_payload_ref_names(data_repo, profile, payload)
+            if ref_err is not None:
+                return ref_err
 
             task = QueueRepository(store).enqueue_task(
                 task_id=task_id,
@@ -382,6 +371,34 @@ def _resolve_ref_name(
             f"{profile!r}. Generate the image first, or pass its display name.",
         )
     return ref_id, None
+
+
+def _resolve_payload_ref_names(
+    data_repo: DataRepository,
+    profile: str,
+    payload: dict[str, Any],
+) -> dict[str, Any] | None:
+    """Resolve every remote-ref field in ``payload`` to a display name in place.
+
+    Returns an error envelope on the first unresolvable UUID, else ``None``.
+    Keeps the UUID→name resolution out of the enqueue orchestrator so the
+    latter stays under the cognitive-complexity threshold.
+    """
+    if "refs" in payload:
+        ref_names: list[str] = []
+        for ref in payload["refs"]:
+            name, err = _resolve_ref_name(data_repo, profile, ref)
+            if err is not None:
+                return err
+            ref_names.append(name or ref)
+        payload["ref_names"] = ref_names
+    for key in ("start_image_ref", "end_image_ref"):
+        if key in payload:
+            name, err = _resolve_ref_name(data_repo, profile, payload[key])
+            if err is not None:
+                return err
+            payload[f"{key}_name"] = name
+    return None
 
 
 def _validate_project(project: str | None) -> dict[str, Any] | None:
