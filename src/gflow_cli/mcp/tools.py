@@ -218,9 +218,9 @@ async def _run_generation_task(
             data_repo.upsert_profile(profile, profile_dir)
 
             # Resolve remote-ref UUIDs to the display names the UI automation
-            # searches for; an unresolvable UUID fails fast here instead of
-            # timing out in the browser.
-            ref_err = _resolve_payload_ref_names(data_repo, profile, payload)
+            # searches for (video paths only); an unresolvable UUID fails fast
+            # here instead of timing out in the browser.
+            ref_err = _resolve_payload_ref_names(data_repo, profile, payload, task_type)
             if ref_err is not None:
                 return ref_err
 
@@ -300,7 +300,8 @@ async def _run_generation_task(
             "status": "completed",
             "task_id": task_id,
             "flow_project_id": flow_project_id,
-            "flow_media_id": flow_workflow_id if flow_workflow_id else completed_task.flow_media_id,
+            "flow_media_id": completed_task.flow_media_id,
+            "flow_workflow_id": flow_workflow_id,
             "files": file_paths,
         }
 
@@ -363,7 +364,17 @@ def _resolve_ref_name(
             seed_info = data_repo.resolve_seed_image(profile, asset.flow_media_id)
             if seed_info and seed_info.prompt:
                 name = seed_info.prompt
-        return name or ref_id, None
+        if name:
+            return name, None
+        # Asset exists but has no searchable name: returning the raw UUID here
+        # would make the picker search for the UUID and time out (PR #245
+        # review). Fail fast with a clear error instead.
+        return None, _bad_param(
+            "Reference Has No Display Name",
+            f"'{ref_id}' exists in the catalog but has no display name to search "
+            "for in the Flow picker. Re-generate it so a display name is recorded, "
+            "or pass the display name directly.",
+        )
     if _UUID_RE.fullmatch(ref_id):
         return None, _bad_param(
             "Reference Not Found",
@@ -373,24 +384,37 @@ def _resolve_ref_name(
     return ref_id, None
 
 
+# Video task types whose remote refs the UI automation attaches by DISPLAY NAME
+# (searched in the Flow picker) and therefore need UUID→name resolution. Image
+# task types attach remote refs by raw media id and MUST NOT be resolved here —
+# gating on that was the PR #245 image-i2i regression.
+_VIDEO_TASK_TYPES = frozenset({"t2v", "i2v", "r2v"})
+
+
 def _resolve_payload_ref_names(
     data_repo: DataRepository,
     profile: str,
     payload: dict[str, Any],
+    task_type: str,
 ) -> dict[str, Any] | None:
     """Resolve every remote-ref field in ``payload`` to a display name in place.
 
-    Returns an error envelope on the first unresolvable UUID, else ``None``.
-    Keeps the UUID→name resolution out of the enqueue orchestrator so the
-    latter stays under the cognitive-complexity threshold.
+    Only the video task types need this (their refs are attached by display
+    name); image tasks attach remote refs by raw media id and are left
+    untouched. Returns an error envelope on the first unresolvable UUID, else
+    ``None``.
     """
+    if task_type not in _VIDEO_TASK_TYPES:
+        return None
     if "refs" in payload:
         ref_names: list[str] = []
         for ref in payload["refs"]:
             name, err = _resolve_ref_name(data_repo, profile, ref)
             if err is not None:
                 return err
-            ref_names.append(name or ref)
+            # name is never falsy when err is None (see _resolve_ref_name).
+            assert name is not None
+            ref_names.append(name)
         payload["ref_names"] = ref_names
     for key in ("start_image_ref", "end_image_ref"):
         if key in payload:

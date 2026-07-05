@@ -1101,7 +1101,9 @@ class TestAttachCharacterEntities:
         loc.wait_for = AsyncMock()
         loc.scroll_into_view_if_needed = AsyncMock()
         loc.count = AsyncMock(return_value=1)
+        loc.or_ = MagicMock(return_value=loc)
         page.locator.return_value = loc
+        page.get_by_role.return_value = loc
         page.wait_for_timeout = AsyncMock()
         page.mouse = MagicMock()
         page.mouse.wheel = AsyncMock()
@@ -1326,6 +1328,15 @@ class TestRemoteRefTileLocator:
         assert args[0] == "option"
         assert kwargs.get("name") == "Wren's cabin"
         page.locator.assert_not_called()
+
+    def test_matches_exactly_so_a_substring_name_cannot_attach_the_wrong_tile(self) -> None:
+        # PR #245 review #4: without exact=True, get_by_role's default substring
+        # match makes 'cabin' also select 'cabin at night' → .first attaches the
+        # wrong image silently.
+        page = MagicMock()
+        VideoGenerationMixin._remote_option_tile(page, "cabin")
+        _, kwargs = page.get_by_role.call_args
+        assert kwargs.get("exact") is True
 
 
 class TestRemoteReferencesDialogGuard:
