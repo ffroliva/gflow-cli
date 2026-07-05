@@ -39,7 +39,7 @@
 
 Not used by v0.4.0a2's reverse-engineered Flow provider. Documented here in advance of `GFLOW_CLI_PROVIDER=official`.
 
-- **Location:** `$GFLOW_CLI_GEMINI_API_KEY` env var, optionally loaded from a `.env` file in the directory where you invoke `gflow` (CWD only — `$GFLOW_CLI_HOME` is not a `.env` search path; see [CONFIGURATION.md](CONFIGURATION.md)).
+- **Location:** `$GFLOW_CLI_GEMINI_API_KEY` env var, optionally loaded from a `.env` file in the directory where you invoke `gflow` or from `$GFLOW_CLI_HOME/.env` (CWD wins on conflicts; see [CONFIGURATION.md](CONFIGURATION.md#env-loading)). Treat BOTH locations as secret-bearing files: keep `$GFLOW_CLI_HOME/.env` user-readable only and out of shared images/backups.
 - **In memory:** Held only in the `Settings` dataclass, never logged.
 - **In transit:** Sent only to `generativelanguage.googleapis.com` over HTTPS.
 - **Rotate:** Set a new value in `.env`, restart the CLI. No persistence beyond the env var.

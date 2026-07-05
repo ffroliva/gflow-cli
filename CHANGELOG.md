@@ -9,15 +9,29 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ### Fixed
 
-- **`$GFLOW_CLI_HOME/.env` fallback now actually loads (#240)**: docs/CONFIGURATION.md
-  has always documented a `.env` fallback "from CWD or `$GFLOW_CLI_HOME/.env`", but the
-  implementation only ever read the CWD file — a key placed in the home `.env` was
+- **`$GFLOW_CLI_HOME/.env` now loads as a dotenv fallback (#240)**: `config.py`'s own
+  module docstring promised a `.env` fallback "from CWD or `$GFLOW_CLI_HOME/.env`", but
+  the implementation only ever read the CWD file — a key placed in the home `.env` was
   silently ignored (easy to miss under the prompt tools' never-fatal contract, and it
   bites any process whose CWD is not a project root: the MCP server launched by a
-  desktop client, a worker service, a scheduled task). Dotenv files are now resolved at
-  construction time via `settings_customise_sources`, honoring `GFLOW_CLI_HOME` from the
-  process env (falling back to the platform default home). Documented precedence is
-  preserved: process env vars beat both files, and a CWD `.env` beats `$GFLOW_CLI_HOME/.env`.
+  desktop client, a worker service, a scheduled task). `Settings` now defaults the
+  standard pydantic-settings `_env_file` init kwarg to `($GFLOW_CLI_HOME/.env, ./.env)`
+  per construction, so explicit `Settings(_env_file=...)` — including the disable idiom
+  `_env_file=None` — keeps working. Precedence: process env vars beat both files, and a
+  CWD `.env` beats `$GFLOW_CLI_HOME/.env`.
+  - **Home resolution is coherent across every channel**: the home used to locate the
+    home `.env` now matches what `Settings.home` reports when `GFLOW_CLI_HOME` comes
+    from the process env (case-insensitively, as the env source matches it), from a
+    `GFLOW_CLI_HOME` entry in the CWD `.env`, or is set-but-empty (treated as unset
+    rather than `Path('.')`). The home `.env` itself cannot relocate home (circular).
+  - **Docs reconciled**: `docs/CONFIGURATION.md` § ".env loading", `docs/SECURITY.md`
+    (Gemini-key locations) and `.env.template` previously documented CWD-only loading
+    and now describe the two-file behavior; the `gflow serve` token hint no longer
+    points at `.env.local`, which was never a loaded file.
+  - **Worker daemon**: `FlowApiClient` constructions in `process_task` now receive the
+    daemon's cached settings instead of re-reading `.env` files live per task, so a
+    mid-run edit to the home `.env` can no longer produce a task whose client config
+    disagrees with the parameters the task derived from `get_settings()`.
 
 ## [0.24.0] — 2026-07-01
 
