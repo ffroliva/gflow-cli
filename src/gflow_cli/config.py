@@ -28,7 +28,12 @@ from pathlib import Path
 from typing import Literal
 
 from pydantic import AliasChoices, Field, field_validator
-from pydantic_settings import BaseSettings, SettingsConfigDict
+from pydantic_settings import (
+    BaseSettings,
+    DotEnvSettingsSource,
+    PydanticBaseSettingsSource,
+    SettingsConfigDict,
+)
 
 from gflow_cli import paths
 
@@ -58,6 +63,20 @@ def _migrate_legacy_env() -> None:
 
 
 _migrate_legacy_env()
+
+
+def _env_files() -> tuple[str, str]:
+    """Dotenv files for :class:`Settings`, in pydantic-settings order (later wins).
+
+    Implements the documented fallback (docs/CONFIGURATION.md): a CWD ``.env``
+    takes precedence over ``$GFLOW_CLI_HOME/.env``. Home is resolved from the
+    process env var (the ``home`` field default isn't computed yet at this
+    point) falling back to :func:`gflow_cli.paths.default_home` — the same
+    resolution the field itself uses.
+    """
+    home = os.environ.get(_NEW_ENV_PREFIX + "HOME")
+    home_dir = Path(home) if home else paths.default_home()
+    return (str(home_dir / ".env"), ".env")
 
 
 class LogLevel(StrEnum):
@@ -97,11 +116,35 @@ class Settings(BaseSettings):
 
     model_config = SettingsConfigDict(
         env_prefix="GFLOW_CLI_",
-        env_file=(".env",),
-        env_file_encoding="utf-8",
+        # env_file is intentionally absent: dotenv files are resolved per
+        # construction in `settings_customise_sources` so $GFLOW_CLI_HOME is
+        # honored at call time (issue #240).
         case_sensitive=False,
         extra="ignore",
     )
+
+    @classmethod
+    def settings_customise_sources(
+        cls,
+        settings_cls: type[BaseSettings],
+        init_settings: PydanticBaseSettingsSource,
+        env_settings: PydanticBaseSettingsSource,
+        dotenv_settings: PydanticBaseSettingsSource,
+        file_secret_settings: PydanticBaseSettingsSource,
+    ) -> tuple[PydanticBaseSettingsSource, ...]:
+        """Standard source order, with dotenv files resolved at call time.
+
+        A static ``model_config["env_file"]`` tuple is evaluated once at class
+        creation and cannot depend on the environment; this hook rebuilds the
+        dotenv source per construction so ``$GFLOW_CLI_HOME/.env`` is found
+        (docs/CONFIGURATION.md, issue #240).
+        """
+        dotenv = DotEnvSettingsSource(
+            settings_cls,
+            env_file=_env_files(),
+            env_file_encoding="utf-8",
+        )
+        return (init_settings, env_settings, dotenv, file_secret_settings)
 
     # --- paths ------------------------------------------------------------
     home: Path = Field(

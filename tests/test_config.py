@@ -169,6 +169,85 @@ class TestLegacyEnvShim:
         assert not any(issubclass(w.category, DeprecationWarning) for w in caught)
 
 
+class TestHomeEnvFileFallback:
+    """Issue #240: `.env` must also load from `$GFLOW_CLI_HOME/.env`.
+
+    docs/CONFIGURATION.md documents a home-`.env` fallback with CWD winning;
+    before the fix only the CWD `.env` was ever read.
+    """
+
+    @pytest.fixture
+    def isolated_cwd(self, monkeypatch: pytest.MonkeyPatch, tmp_path: Path) -> Path:
+        """Run the test from an empty directory so the repo's own `.env` never leaks in."""
+        cwd = tmp_path / "cwd"
+        cwd.mkdir()
+        monkeypatch.chdir(cwd)
+        return cwd
+
+    @pytest.fixture
+    def home_with_env(self, monkeypatch: pytest.MonkeyPatch, tmp_path: Path) -> Path:
+        home = tmp_path / "home"
+        home.mkdir()
+        (home / ".env").write_text("GFLOW_CLI_TIMEOUT_SECONDS=123\n", encoding="utf-8")
+        monkeypatch.setenv("GFLOW_CLI_HOME", str(home))
+        return home
+
+    def test_home_env_file_is_loaded_without_cwd_env(
+        self, clean_env: None, isolated_cwd: Path, home_with_env: Path
+    ) -> None:
+        assert Settings().timeout_seconds == 123
+
+    def test_home_and_cwd_env_files_merge(
+        self, clean_env: None, isolated_cwd: Path, home_with_env: Path
+    ) -> None:
+        (isolated_cwd / ".env").write_text("GFLOW_CLI_CONCURRENCY=3\n", encoding="utf-8")
+        s = Settings()
+        assert s.timeout_seconds == 123  # from home .env
+        assert s.concurrency == 3  # from CWD .env
+
+    def test_cwd_env_file_wins_over_home_env_file(
+        self, clean_env: None, isolated_cwd: Path, home_with_env: Path
+    ) -> None:
+        (isolated_cwd / ".env").write_text("GFLOW_CLI_TIMEOUT_SECONDS=456\n", encoding="utf-8")
+        assert Settings().timeout_seconds == 456
+
+    def test_process_env_var_beats_both_env_files(
+        self,
+        clean_env: None,
+        isolated_cwd: Path,
+        home_with_env: Path,
+        monkeypatch: pytest.MonkeyPatch,
+    ) -> None:
+        (isolated_cwd / ".env").write_text("GFLOW_CLI_TIMEOUT_SECONDS=456\n", encoding="utf-8")
+        monkeypatch.setenv("GFLOW_CLI_TIMEOUT_SECONDS", "789")
+        assert Settings().timeout_seconds == 789
+
+    def test_default_home_env_file_used_when_home_var_unset(
+        self,
+        clean_env: None,
+        isolated_cwd: Path,
+        tmp_path: Path,
+        monkeypatch: pytest.MonkeyPatch,
+    ) -> None:
+        home = tmp_path / "default-home"
+        home.mkdir()
+        (home / ".env").write_text("GFLOW_CLI_TIMEOUT_SECONDS=321\n", encoding="utf-8")
+        monkeypatch.setattr("gflow_cli.config.paths.default_home", lambda: home)
+        assert Settings().timeout_seconds == 321
+
+    def test_missing_home_env_file_is_harmless(
+        self,
+        clean_env: None,
+        isolated_cwd: Path,
+        tmp_path: Path,
+        monkeypatch: pytest.MonkeyPatch,
+    ) -> None:
+        home = tmp_path / "home-no-env"
+        home.mkdir()
+        monkeypatch.setenv("GFLOW_CLI_HOME", str(home))
+        assert Settings().timeout_seconds == 600  # built-in default
+
+
 class TestBrowserEngine:
     """GFLOW_CLI_BROWSER_ENGINE typed enum field (patchright opt-in)."""
 

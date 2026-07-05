@@ -7,6 +7,18 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+### Fixed
+
+- **`$GFLOW_CLI_HOME/.env` fallback now actually loads (#240)**: docs/CONFIGURATION.md
+  has always documented a `.env` fallback "from CWD or `$GFLOW_CLI_HOME/.env`", but the
+  implementation only ever read the CWD file — a key placed in the home `.env` was
+  silently ignored (easy to miss under the prompt tools' never-fatal contract, and it
+  bites any process whose CWD is not a project root: the MCP server launched by a
+  desktop client, a worker service, a scheduled task). Dotenv files are now resolved at
+  construction time via `settings_customise_sources`, honoring `GFLOW_CLI_HOME` from the
+  process env (falling back to the platform default home). Documented precedence is
+  preserved: process env vars beat both files, and a CWD `.env` beats `$GFLOW_CLI_HOME/.env`.
+
 ## [0.24.0] — 2026-07-01
 
 ### Added
