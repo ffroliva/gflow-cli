@@ -1393,7 +1393,7 @@ class VideoGenerationMixin:
         if await add_btn.count():
             await add_btn.click()
         try:
-            await page.locator("[role='dialog']").last.wait_for(state="hidden", timeout=15_000)
+            await page.locator(DIALOG_ANY).last.wait_for(state="hidden", timeout=15_000)
         except Exception:
             log.warning("ui_automation_video.dialog_close_timeout", target=log_label)
         await page.wait_for_timeout(1500)
@@ -1477,7 +1477,7 @@ class VideoGenerationMixin:
         """Wheel-scroll the open resource picker down one step. The Tudo grid is
         virtualised, so off-screen tiles are absent from the DOM until scrolled
         into view. Hover the dialog first so the wheel targets the grid."""
-        dialog = page.locator("[role='dialog']").last
+        dialog = page.locator(DIALOG_ANY).last
         try:
             await dialog.hover(timeout=2000)
         except Exception:  # noqa: BLE001 - hover is best-effort; wheel still scrolls
@@ -1905,6 +1905,52 @@ class VideoGenerationMixin:
         return effective_model
 
     @staticmethod
+    async def _attach_i2v_frames(
+        page: Page, request: GenerateVideoRequest, *, out_dir: Path | None
+    ) -> None:
+        """Attach the Start (and optional End) I2V frame, local path or remote ref."""
+        if request.start_image is not None:
+            await VideoGenerationMixin._attach_frame(
+                page, 0, "Start", request.start_image, out_dir=out_dir
+            )
+        elif request.start_image_ref_name is not None:
+            await VideoGenerationMixin._attach_remote_frame(
+                page, 0, "Start", request.start_image_ref_name, out_dir=out_dir
+            )
+        if request.end_image is not None:
+            await VideoGenerationMixin._attach_frame(
+                page, 1, "End", request.end_image, out_dir=out_dir
+            )
+        elif request.end_image_ref_name is not None:
+            await VideoGenerationMixin._attach_remote_frame(
+                page, 1, "End", request.end_image_ref_name, out_dir=out_dir
+            )
+
+    @staticmethod
+    async def _attach_r2v_references(
+        page: Page, request: GenerateVideoRequest, *, out_dir: Path | None
+    ) -> None:
+        """Attach R2V character entities, local reference images, remote refs, and audio."""
+        if request.reference_entities:
+            await VideoGenerationMixin._attach_character_entities(
+                page,
+                zip_entity_refs(request.reference_entities, request.reference_entity_names),
+                out_dir=out_dir,
+            )
+        if request.reference_images:
+            await VideoGenerationMixin._attach_references(
+                page, list(request.reference_images), out_dir=out_dir
+            )
+        if request.ref_names:
+            await VideoGenerationMixin._attach_remote_references(
+                page, list(request.ref_names), out_dir=out_dir
+            )
+        if request.reference_audio:
+            await VideoGenerationMixin._attach_reference_audio(
+                page, request.reference_audio, out_dir=out_dir
+            )
+
+    @staticmethod
     async def _attach_media_inputs(
         page: Page,
         request: GenerateVideoRequest,
@@ -1913,46 +1959,9 @@ class VideoGenerationMixin:
     ) -> None:
         """Attach I2V frames or R2V references/entities to the editor before submit."""
         if request.mode is Mode.I2V:
-            if request.start_image is not None:
-                await VideoGenerationMixin._attach_frame(
-                    page, 0, "Start", request.start_image, out_dir=out_dir
-                )
-            elif request.start_image_ref_name is not None:
-                await VideoGenerationMixin._attach_remote_frame(
-                    page, 0, "Start", request.start_image_ref_name, out_dir=out_dir
-                )
-
-            if request.end_image is not None:
-                await VideoGenerationMixin._attach_frame(
-                    page, 1, "End", request.end_image, out_dir=out_dir
-                )
-            elif request.end_image_ref_name is not None:
-                await VideoGenerationMixin._attach_remote_frame(
-                    page, 1, "End", request.end_image_ref_name, out_dir=out_dir
-                )
+            await VideoGenerationMixin._attach_i2v_frames(page, request, out_dir=out_dir)
         elif request.mode is Mode.R2V:
-            if request.reference_entities:
-                await VideoGenerationMixin._attach_character_entities(
-                    page,
-                    zip_entity_refs(request.reference_entities, request.reference_entity_names),
-                    out_dir=out_dir,
-                )
-            if request.reference_images:
-                await VideoGenerationMixin._attach_references(
-                    page,
-                    list(request.reference_images),
-                    out_dir=out_dir,
-                )
-            if request.ref_names:
-                await VideoGenerationMixin._attach_remote_references(
-                    page,
-                    list(request.ref_names),
-                    out_dir=out_dir,
-                )
-            if request.reference_audio:
-                await VideoGenerationMixin._attach_reference_audio(
-                    page, request.reference_audio, out_dir=out_dir
-                )
+            await VideoGenerationMixin._attach_r2v_references(page, request, out_dir=out_dir)
 
     async def _submit_and_poll(
         self,

@@ -481,26 +481,21 @@ def _build_video_media_inputs(
         )
 
     media: dict[str, Any] = {}
-    if initial_frame is not None:
-        if _UUID_RE.fullmatch(initial_frame):
-            media["start_image_ref"] = initial_frame
-        else:
-            resolved, err = _resolve_image_path(
-                initial_frame, title="Invalid Start Image", label="Start image path"
-            )
-            if err is not None:
-                return None, err
-            media["start_image"] = resolved
-    if end_frame is not None:
-        if _UUID_RE.fullmatch(end_frame):
-            media["end_image_ref"] = end_frame
-        else:
-            resolved, err = _resolve_image_path(
-                end_frame, title="Invalid End Image", label="End image path"
-            )
-            if err is not None:
-                return None, err
-            media["end_image"] = resolved
+    for frame, ref_key, path_key, noun in (
+        (initial_frame, "start_image_ref", "start_image", "Start"),
+        (end_frame, "end_image_ref", "end_image", "End"),
+    ):
+        if frame is None:
+            continue
+        if _UUID_RE.fullmatch(frame):
+            media[ref_key] = frame
+            continue
+        resolved, err = _resolve_image_path(
+            frame, title=f"Invalid {noun} Image", label=f"{noun} image path"
+        )
+        if err is not None:
+            return None, err
+        media[path_key] = resolved
     if reference_images:
         ref_data, err = _resolve_image_references(reference_images)
         if err is not None:
