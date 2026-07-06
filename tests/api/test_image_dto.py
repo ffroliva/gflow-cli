@@ -68,6 +68,36 @@ class TestGeneratedImage:
         assert len(results) == 1
         assert results[0].seed == 646428
 
+    def test_from_response_dict_extracts_display_name_from_workflows(self) -> None:
+        """The Flow-assigned display name lives in the response's ``workflows[]``
+        array (keyed by workflow id), not in the media item — extract it onto
+        the GeneratedImage so the catalog records a searchable name. (Original
+        find by @C1ph3r404, PR #253.)"""
+        sample = _load("06_batchGenerateImages.json")
+        body = sample["response_body_parsed"]
+        results = GeneratedImage.from_response_dict(body)
+        assert results[0].display_name == "Warrior Zelda in dungeon"
+
+    def test_from_response_dict_display_name_none_when_no_workflows(self) -> None:
+        """A response without a matching workflow leaves display_name as None
+        (graceful — the field is optional)."""
+        item = {
+            "name": "m",
+            "workflowId": "w-1",
+            "image": {
+                "generatedImage": {
+                    "seed": "1",
+                    "prompt": "p",
+                    "modelNameType": "NARWHAL",
+                    "aspectRatio": "IMAGE_ASPECT_RATIO_PORTRAIT",
+                    "fifeUrl": "https://flow-content.google/image/x",
+                },
+                "dimensions": {"width": 1, "height": 1},
+            },
+        }
+        results = GeneratedImage.from_response_dict({"media": [item]})
+        assert results[0].display_name is None
+
     def test_parse_seeded_landscape_response(self) -> None:
         """Seeded I2I + 4:3 landscape capture parses to expected dimensions/aspect."""
         sample = _load("07_batchGenerateImages_seeded.json")

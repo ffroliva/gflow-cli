@@ -8,7 +8,7 @@ KeyErrors leak.
 
 from __future__ import annotations
 
-from dataclasses import dataclass
+from dataclasses import dataclass, replace
 from typing import TYPE_CHECKING, Any, Literal, cast
 
 if TYPE_CHECKING:
@@ -128,6 +128,10 @@ class GeneratedImage:
     fife_url: str  # CDN URL — usually expires after ~6 hours
     dimensions: tuple[int, int]  # (width, height)
     media_generation_id: str | None = None
+    # Flow-assigned display name (from the response's `workflows[]` array). This
+    # is the searchable label the media picker shows — recorded so a generated
+    # image can be referenced by name later. Original find by @C1ph3r404 (#253).
+    display_name: str | None = None
 
     @property
     def is_signed_url(self) -> bool:
@@ -172,8 +176,37 @@ class GeneratedImage:
         if not isinstance(media, list):
             msg = "unexpected batchGenerateImages response shape: media is not a list"
             raise ValueError(msg)
+        # Flow returns display names in a sibling `workflows[]` array keyed by
+        # workflow id (mirrors AssetInfo.from_upload_response). Build the lookup
+        # once and inject the name onto each parsed image. (Find by @C1ph3r404.)
+        workflow_names = cls._workflow_display_names(data.get("workflows"))
         items = cast("list[dict[str, Any]]", media)
-        return [cls.from_response_item(item) for item in items]
+        results: list[GeneratedImage] = []
+        for item in items:
+            img = cls.from_response_item(item)
+            name = workflow_names.get(img.workflow_id)
+            if name:
+                img = replace(img, display_name=name)
+            results.append(img)
+        return results
+
+    @staticmethod
+    def _workflow_display_names(workflows: object) -> dict[str, str]:
+        """Map workflow id → displayName from the response's ``workflows[]``."""
+        names: dict[str, str] = {}
+        if not isinstance(workflows, list):
+            return names
+        for w in cast("list[Any]", workflows):
+            if not isinstance(w, dict):
+                continue
+            entry = cast("dict[str, Any]", w)
+            w_id = entry.get("name")
+            metadata = entry.get("metadata")
+            if isinstance(w_id, str) and isinstance(metadata, dict):
+                display_name = cast("dict[str, Any]", metadata).get("displayName")
+                if isinstance(display_name, str) and display_name:
+                    names[w_id] = display_name
+        return names
 
 
 @dataclass(frozen=True)
