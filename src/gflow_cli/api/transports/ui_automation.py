@@ -1042,7 +1042,7 @@ class UiAutomationTransport(VideoGenerationMixin):
             try:
                 if project_id in page.url:
                     log.debug("ui_automation.hard_reload_existing_project", project_id=project_id)
-                    await page.reload(wait_until="domcontentloaded", timeout=45_000)
+                    await page.goto(page.url, wait_until="domcontentloaded", timeout=45_000)
                 else:
                     await page.goto(url, wait_until="domcontentloaded", timeout=45_000)
             except Exception as e:
