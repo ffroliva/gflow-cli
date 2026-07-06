@@ -386,10 +386,50 @@ def _resolve_ref_local_path(
 
 
 # Video task types whose media-id refs are resolved to local file paths and
-# attached via the local-upload path (#237 fix — see _resolve_ref_local_path).
-# Image task types attach remote refs by raw media id and MUST NOT be resolved
-# here — gating on that was the PR #245 image-i2i regression.
+# attached via the local-upload path (#237 fix — see _resolve_ref_local_path):
+# the video FRAME picker does not surface generated media, so there is no
+# existing tile to select. Image task types DO surface generated media in the
+# reference picker, so their refs are enriched (not rewritten) and attached by
+# selecting the existing asset — see _enrich_image_refs.
 _VIDEO_TASK_TYPES = frozenset({"t2v", "i2v", "r2v"})
+
+
+def _enrich_image_refs(
+    data_repo: DataRepository,
+    profile: str,
+    payload: dict[str, Any],
+) -> None:
+    """Annotate each media-id ref in an image ``payload`` with its Flow
+    ``display_name`` and on-disk ``local_path`` (best-effort), so the transport
+    can attach it by **selecting the already-existing Flow asset** in the
+    reference picker — the preferred path (no duplicate upload) — with the local
+    file as an upload fallback. Never errors: an uncatalogued UUID is still a
+    valid media id to attach in place (PR #245 — image refs pass through).
+    """
+    refs = payload.get("refs")
+    if not refs:
+        return
+    meta: dict[str, dict[str, str]] = {}
+    for ref in refs:
+        asset = data_repo.get_asset_by_any_id(profile, ref)
+        if asset is None:
+            continue
+        entry: dict[str, str] = {}
+        name = asset.metadata_json.get("display_name")
+        if isinstance(name, str) and name:
+            entry["display_name"] = name
+        for local_file in asset.local_files:
+            if (
+                local_file.storage_provider is None
+                and local_file.path is not None
+                and local_file.path.is_file()
+            ):
+                entry["local_path"] = str(local_file.path)
+                break
+        if entry:
+            meta[ref] = entry
+    if meta:
+        payload["ref_meta"] = meta
 
 
 def _resolve_payload_refs(
@@ -398,16 +438,18 @@ def _resolve_payload_refs(
     payload: dict[str, Any],
     task_type: str,
 ) -> dict[str, Any] | None:
-    """Rewrite every media-id ref in ``payload`` to a local file path in place.
+    """Resolve media-id refs in ``payload`` in place, by task type.
 
-    Only the video task types are resolved (image tasks attach remote refs by
-    raw media id and are left untouched — PR #245). For video, a start/end frame
-    ref becomes the local ``start_image``/``end_image`` path and r2v ``refs`` are
-    resolved and merged into ``reference_images`` — so the existing local-upload
-    attach runs and no (broken) picker name search is attempted. Returns an error
-    envelope on the first unresolvable UUID, else ``None``.
+    Video task types: a start/end frame ref becomes the local
+    ``start_image``/``end_image`` path and r2v ``refs`` are merged into
+    ``reference_images`` (local-upload attach — the video frame picker doesn't
+    surface generated media). Image task types: refs are *enriched* with
+    display_name/local_path so the transport selects the existing asset in the
+    picker (see _enrich_image_refs). Returns an error envelope on the first
+    unresolvable VIDEO UUID, else ``None`` (image enrichment never errors).
     """
     if task_type not in _VIDEO_TASK_TYPES:
+        _enrich_image_refs(data_repo, profile, payload)
         return None
     if "refs" in payload:
         resolved_paths: list[str] = []

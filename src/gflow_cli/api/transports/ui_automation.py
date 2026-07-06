@@ -2110,6 +2110,16 @@ class UiAutomationTransport(VideoGenerationMixin):
         if request.ref_paths:
             await self._attach_references(page, list(request.ref_paths), out_dir=out_dir)
 
+        # Pre-generated image UUID refs: attach by selecting the EXISTING Flow
+        # asset in the reference picker (no duplicate upload — founder principle),
+        # falling back to uploading the local file only when it can't be located.
+        if request.refs:
+            await self._attach_image_uuid_refs(
+                page,
+                [(r.name, r.display_name, r.local_path) for r in request.refs],
+                out_dir=out_dir,
+            )
+
         # Entity references: attach locked CHARACTER entities via the Personagens
         # picker (inherited from the video transport). The entity must live in the
         # project we generate in (pass --project / project_id). Flow's JS then
