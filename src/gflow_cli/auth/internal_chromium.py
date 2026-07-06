@@ -23,7 +23,7 @@ GEMINI_URL = "https://labs.google/fx/tools/flow?hl=en"
 GOOGLE_REJECTED_BROWSER_ROUTE = "accounts.google.com/v3/signin/rejected"
 
 
-async def _poll_session_until_authenticated(
+async def poll_session_until_authenticated(
     ctx: Any,
     page: Any,
     timeout_seconds: int,
@@ -163,7 +163,7 @@ class InternalChromiumStrategy(AuthStrategy):
                     )
 
                 # Poll until the Flow app sign-in completes; raises on timeout/rejection.
-                user_email = await _poll_session_until_authenticated(
+                user_email = await poll_session_until_authenticated(
                     ctx,
                     page,
                     self._timeout_seconds,

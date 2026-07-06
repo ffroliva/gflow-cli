@@ -101,10 +101,20 @@ def retryable_engine_errors() -> tuple[type[BaseException], ...]:
     errs: list[type[BaseException]] = [PwError, PwTimeout]
     try:
         mod = importlib.import_module("patchright.async_api")
+        errs.append(cast("type[BaseException]", mod.Error))
+        errs.append(cast("type[BaseException]", mod.TimeoutError))
     except ImportError:
-        return tuple(errs)
-    errs.append(cast("type[BaseException]", mod.Error))
-    errs.append(cast("type[BaseException]", mod.TimeoutError))
+        pass
+
+    try:
+        c_mod = importlib.import_module("camoufox.async_api")
+        if hasattr(c_mod, "Error"):
+            errs.append(cast("type[BaseException]", c_mod.Error))
+        if hasattr(c_mod, "TimeoutError"):
+            errs.append(cast("type[BaseException]", c_mod.TimeoutError))
+    except ImportError:
+        pass
+
     return tuple(errs)
 
 

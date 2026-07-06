@@ -72,6 +72,12 @@ chain = [
 patchright = [
     "patchright==1.60.1",
 ]
+# Camoufox engine extra — opt-in, stealth-oriented Firefox build that avoids
+# bot detection and WAFs. Selected via GFLOW_CLI_BROWSER_ENGINE=camoufox.
+# Requires separate installation: `uv pip install gflow-cli[camoufox]`.
+camoufox = [
+    "camoufox",
+]
 
 [project.scripts]
 gflow = "gflow_cli.cli:main"

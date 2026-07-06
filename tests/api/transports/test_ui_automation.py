@@ -763,7 +763,7 @@ class TestSendPrompt:
         press_calls = [c.args[0] for c in page.keyboard.press.call_args_list]
         assert "Control+A" in press_calls
         assert "Delete" in press_calls
-        
+
         insert_calls = [c.args[0] for c in page.keyboard.insert_text.call_args_list]
         assert insert_calls == ["h", "e", "l", "l", "o"]
         page._submit_loc.click.assert_called_once()  # type: ignore[attr-defined]

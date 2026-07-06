@@ -278,7 +278,6 @@ class AgenticFlowUiDriver:
         prompt_text: str,
         *,
         out_dir: Path | None = None,  # NOSONAR
-        fast: bool = False,
     ) -> None:
         """Type the directive into the Slate composer and submit.
 
@@ -308,18 +307,14 @@ class AgenticFlowUiDriver:
         # is the proven Slate path (mirrors classic _send_prompt).
         await page.keyboard.press("Control+a")
         await page.keyboard.press("Delete")
-
-        if fast:
-            await page.keyboard.insert_text(directive)
+        
+        from gflow_cli.config import BrowserEngine, get_settings
+        is_camoufox = get_settings().browser_engine == BrowserEngine.CAMOUFOX
+        
+        if is_camoufox:
+            await page.keyboard.type(directive)
         else:
-            import random
-
-            for char in directive:
-                if char == "\n":
-                    await page.keyboard.press("Enter")
-                else:
-                    await page.keyboard.insert_text(char)
-                await page.wait_for_timeout(random.randint(20, 80))
+            await page.keyboard.insert_text(directive)
 
         log.debug(
             "agentic_driver.send_prompt.typed",

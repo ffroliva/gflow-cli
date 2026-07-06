@@ -278,6 +278,12 @@ class FlowApiClient:
         self._access_token_exp: float = 0.0  # epoch seconds; 0 = unknown/expired
         self._pw: Playwright | None = None
         self._context: BrowserContext | None = None
+        # Camoufox CM — set only when GFLOW_CLI_BROWSER_ENGINE=camoufox.
+        # AsyncCamoufox is its own async context manager that yields a
+        # BrowserContext directly (no separate Playwright driver). The CM is
+        # stored here so _close_browser_resources can __aexit__ it instead of
+        # calling self._pw.stop() (which would be None on this path).
+        self._camoufox_cm: Any | None = None
         # Per-worker Page pool (Phase 4 T2). All Pages live inside ONE
         # persistent BrowserContext and therefore SHARE cookies + auth state
         # at the Context level — this is intentional and matches Playwright's
@@ -298,20 +304,44 @@ class FlowApiClient:
     # --- lifecycle --------------------------------------------------------
 
     async def __aenter__(self) -> Self:
-        # --- Step 1: Launch Playwright FIRST so self._page is ready before
+        # --- Step 1: Launch the browser driver so self._page is ready before
         # transport.setup() is called.  This order is load-bearing for S1
         # (EvaluateFetchTransport): it needs a live Page passed via the
         # ``page=`` kwarg so it can reuse the client's context instead of
         # opening a second Playwright process against the same profile dir
         # (which would conflict on the Chromium lockfile — spec § 5.4.4).
-        # Engine selection: the default (playwright) path uses this module's
-        # ``async_playwright`` symbol unchanged — byte-identical behaviour and the
-        # existing test monkeypatches still apply. Only the opt-in patchright
-        # engine routes through the resolver (which raises a typed exit-24 error
-        # if the optional package is missing).
+        # Engine selection:
+        #   - playwright (default): uses the module-level async_playwright symbol;
+        #     test monkeypatches still apply — byte-identical behaviour.
+        #   - patchright: opt-in drop-in Chromium variant, resolved via the
+        #     resolver (raises exit-24 if the optional package is missing).
+        #   - camoufox: opt-in stealth Firefox variant; AsyncCamoufox is its own
+        #     async CM that yields a BrowserContext directly (no separate
+        #     playwright driver). self._pw stays None; self._camoufox_cm holds
+        #     the CM so _close_browser_resources can exit it cleanly.
         engine = active_engine()
         log_engine_selected(engine)
-        if engine == BrowserEngine.PATCHRIGHT:
+        if engine == BrowserEngine.CAMOUFOX:
+            try:
+                from camoufox.async_api import AsyncCamoufox
+            except ImportError as exc:
+                from gflow_cli.errors import BrowserEngineUnavailableError
+
+                raise BrowserEngineUnavailableError(
+                    detail="the 'camoufox' package is not installed",
+                    remediation_hint=(
+                        "Install it with `pip install camoufox` or "
+                        "`uv pip install gflow-cli[camoufox]`."
+                    ),
+                ) from exc
+            cm = AsyncCamoufox(
+                persistent_context=True,
+                user_data_dir=str(self.profile_dir),
+                headless=self.headless,
+            )
+            self._camoufox_cm = cm
+            self._context = cast("BrowserContext", await cm.__aenter__())
+        elif engine == BrowserEngine.PATCHRIGHT:
             self._pw = await resolve_async_playwright(engine)().start()
         else:
             self._pw = await async_playwright().start()
@@ -532,32 +562,42 @@ class FlowApiClient:
             logger.warning("client.context_cookie_seed_error", error=type(exc).__name__)
 
     async def _enter_setup(self) -> None:
-        """Body of __aenter__ after the Playwright driver starts.
+        """Body of __aenter__ after the browser driver starts.
 
         Extracted so __aenter__ can wrap it in a partial-setup leak guard
         (a failed launch must not orphan a chrome process).
+
+        Camoufox path: ``self._context`` is already set by ``__aenter__``
+        (AsyncCamoufox yields the context directly); this method skips the
+        chromium launch and the navigator.webdriver patch (Camoufox spoofs
+        it natively) and proceeds directly to page-pool setup.
         """
-        # Invariant: __aenter__ sets self._pw immediately before calling us.
-        assert self._pw is not None
-        # issue #222 (macOS): pre-read the profile's Flow cookies BEFORE launching
-        # the headed context, so _ensure_context_session_cookie can seed them if the
-        # headed context can't decrypt the on-disk store. Must run pre-launch — the
-        # snapshot's fallback opens a headless context on the same profile, which
-        # would deadlock on the singleton lock once the headed context holds it.
-        await self._preread_flow_session_cookies()
-        kwargs = self._persistent_context_kwargs()
-        self._log_and_guard_launch(kwargs)
-        self._context = await self._pw.chromium.launch_persistent_context(**kwargs)
-        # Hide the automation flag so reCAPTCHA Enterprise doesn't score
-        # the session as a bot — navigator.webdriver=true causes low-score
-        # tokens and HTTP 403 on batchGenerateImages.
-        await self._context.add_init_script(
-            "Object.defineProperty(navigator,'webdriver',{get:()=>undefined})",
-        )
-        # issue #222: log whether the headed context loaded the Flow session
-        # cookie and, if not (macOS can't decrypt the on-disk store), seed it
-        # from the pre-launch snapshot.
-        await self._ensure_context_session_cookie()
+        engine = active_engine()
+        if engine == BrowserEngine.CAMOUFOX:
+            # Context was already opened in __aenter__ via AsyncCamoufox.
+            assert self._context is not None
+        else:
+            # Invariant for Playwright/Patchright: __aenter__ sets self._pw.
+            assert self._pw is not None
+            # issue #222 (macOS): pre-read the profile's Flow cookies BEFORE launching
+            # the headed context, so _ensure_context_session_cookie can seed them if the
+            # headed context can't decrypt the on-disk store. Must run pre-launch — the
+            # snapshot's fallback opens a headless context on the same profile, which
+            # would deadlock on the singleton lock once the headed context holds it.
+            await self._preread_flow_session_cookies()
+            kwargs = self._persistent_context_kwargs()
+            self._log_and_guard_launch(kwargs)
+            self._context = await self._pw.chromium.launch_persistent_context(**kwargs)
+            # Hide the automation flag so reCAPTCHA Enterprise doesn't score
+            # the session as a bot — navigator.webdriver=true causes low-score
+            # tokens and HTTP 403 on batchGenerateImages.
+            await self._context.add_init_script(
+                "Object.defineProperty(navigator,'webdriver',{get:()=>undefined})",
+            )
+            # issue #222: log whether the headed context loaded the Flow session
+            # cookie and, if not (macOS can't decrypt the on-disk store), seed it
+            # from the pre-launch snapshot.
+            await self._ensure_context_session_cookie()
         # Open ``Settings.concurrency`` Pages inside the one persistent
         # BrowserContext. ``launch_persistent_context`` opens one Page by
         # default; reuse it as slot 0 to avoid an unused N+1 Page.
@@ -646,7 +686,7 @@ class FlowApiClient:
                 logger.warning("transport_teardown_error", exc_info=True)
 
     async def _close_browser_resources(self) -> None:
-        """Close the BrowserContext and stop the Playwright driver, best-effort.
+        """Close the BrowserContext and stop the browser driver, best-effort.
 
         Shared by :meth:`__aexit__` and :meth:`__aenter__`'s partial-setup
         guard so a failed launch can't orphan a chrome process that then locks
@@ -654,19 +694,32 @@ class FlowApiClient:
         still runs the next; errors surface as warnings (CLAUDE.md: never
         silently swallow). Resets the browser fields so a reused client never
         holds references to a dead BrowserContext.
+
+        Camoufox path: the context is owned by ``self._camoufox_cm``; exiting
+        the CM closes both context and the Firefox process in one call. The
+        explicit ``self._context.close()`` is skipped to avoid a double-close.
         """
-        if self._context is not None:
+        if self._camoufox_cm is not None:
+            # Camoufox CM owns the context; exiting it closes both context and
+            # the underlying Firefox process.
             try:
-                await self._context.close()
+                await self._camoufox_cm.__aexit__(None, None, None)
             except Exception:
-                # Browser cleanup is best-effort but MUST be surfaced for
-                # diagnosis (CLAUDE.md: never silently swallow errors).
-                logger.warning("browser_context_close_error", exc_info=True)
-        if self._pw is not None:
-            try:
-                await self._pw.stop()
-            except Exception:
-                logger.warning("playwright_stop_error", exc_info=True)
+                logger.warning("camoufox_context_close_error", exc_info=True)
+            self._camoufox_cm = None
+        else:
+            if self._context is not None:
+                try:
+                    await self._context.close()
+                except Exception:
+                    # Browser cleanup is best-effort but MUST be surfaced for
+                    # diagnosis (CLAUDE.md: never silently swallow errors).
+                    logger.warning("browser_context_close_error", exc_info=True)
+            if self._pw is not None:
+                try:
+                    await self._pw.stop()
+                except Exception:
+                    logger.warning("playwright_stop_error", exc_info=True)
         self._pages = []
         self._page_queue = None
         self._page = None
@@ -1529,7 +1582,11 @@ class FlowApiClient:
             raise RuntimeError(
                 msg,
             )
-        token = await self._mint_recaptcha_token(recaptcha_action)
+        if self.transport.name == "ui_automation":
+            token = ""
+        else:
+            token = await self._mint_recaptcha_token(recaptcha_action)
+
         req_with_token = _dc_replace(req, recaptcha_token=token)
         images = await self.transport.generate_images(
             project_id=project_id,

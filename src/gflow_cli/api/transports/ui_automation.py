@@ -494,15 +494,37 @@ def _extract_project_id(url: str) -> str | None:
 
 def _collect_images_from_body(body: dict[str, Any], images: list[GeneratedImage]) -> None:
     """Append parseable GeneratedImage entries from one batchGenerateImages body."""
+    workflows = body.get("workflows", [])
+    workflow_map: dict[str, str] = {}
+    if isinstance(workflows, list):
+        workflows_list = cast("list[Any]", workflows)
+        for w in workflows_list:
+            if not isinstance(w, dict):
+                continue
+            w_dict = cast("dict[str, Any]", w)
+            w_id = w_dict.get("name")
+            if isinstance(w_id, str):
+                metadata = w_dict.get("metadata")
+                if isinstance(metadata, dict):
+                    metadata_dict = cast("dict[str, Any]", metadata)
+                    display_name = metadata_dict.get("displayName")
+                    if isinstance(display_name, str):
+                        workflow_map[w_id.split("/")[-1]] = display_name
+
     media_list_raw = body.get("media", [])
     if not isinstance(media_list_raw, list):
         return
-    for item_raw in cast(_AnyList, media_list_raw):
+    for item_raw in cast("list[Any]", media_list_raw):
         if not isinstance(item_raw, dict):
             continue
-        item: dict[str, Any] = cast(_JsonObj, item_raw)
+        item: dict[str, Any] = cast("dict[str, Any]", item_raw)
         try:
-            images.append(GeneratedImage.from_response_item(item))
+            img = GeneratedImage.from_response_item(item)
+            w_id = img.workflow_id.split("/")[-1]
+            if w_id in workflow_map:
+                from dataclasses import replace
+                img = replace(img, display_name=workflow_map[w_id])
+            images.append(img)
         except ValueError as e:
             log.warning("ui_automation.parse_media_item_failed", error=str(e))
 
@@ -740,51 +762,79 @@ class UiAutomationTransport(VideoGenerationMixin):
 
         engine = active_engine()
         log_engine_selected(engine)
-        if engine == BrowserEngine.PATCHRIGHT:
-            pw_factory = resolve_async_playwright(engine)
-        elif async_playwright is None:  # pragma: no cover — install-time guard
-            msg = (
-                "Playwright is required for UiAutomationTransport. "
-                "Install via `uv sync` (it is a runtime dependency)."
-            )
-            raise RuntimeError(
-                msg,
-            )
-        else:
-            pw_factory = async_playwright
 
-        pw_cm = pw_factory()
-        # The two engines (playwright | patchright) expose a structurally identical
-        # ``.chromium.launch_persistent_context`` surface; type as Any so this
-        # standalone path is engine-agnostic without per-engine stubs.
-        pw: Any = await pw_cm.__aenter__()
-        try:
-            import os
+        import os
 
-            from gflow_cli.browser_manager import channel_for_profile
+        from gflow_cli.browser_manager import channel_for_profile
 
-            locale_env = os.getenv("GFLOW_CLI_LOCALE", "en-US")
-            ctx = await pw.chromium.launch_persistent_context(
-                str(profile_dir),
+        locale_env = os.getenv("GFLOW_CLI_LOCALE", "en-US")
+        # Playwright/Patchright driver handle — None for Camoufox (which has no
+        # separate driver; AsyncCamoufox yields the BrowserContext directly).
+        pw: Any = None
+
+        if engine == BrowserEngine.CAMOUFOX:
+            try:
+                from camoufox.async_api import AsyncCamoufox
+            except ImportError as exc:
+                from gflow_cli.errors import BrowserEngineUnavailableError
+
+                raise BrowserEngineUnavailableError(
+                    detail="the 'camoufox' package is not installed",
+                    remediation_hint=(
+                        "Install it with `pip install camoufox`"
+                        " or `uv pip install gflow-cli[camoufox]`."
+                    ),
+                ) from exc
+
+            pw_cm = AsyncCamoufox(
+                persistent_context=True,
+                user_data_dir=str(profile_dir),
                 headless=False,
-                viewport=cast("ViewportSize", _VIEWPORT),
-                locale=locale_env,
-                channel=channel_for_profile(profile_dir),
-                args=[
-                    "--disable-blink-features=AutomationControlled",
-                    "--password-store=basic",
-                    "--disable-dev-shm-usage",
-                ],
             )
-            # Hide the automation flag so reCAPTCHA Enterprise doesn't score
-            # the session as a bot — navigator.webdriver=true causes low-score
-            # tokens and HTTP 403 on batchGenerateImages.
-            await ctx.add_init_script(
-                "Object.defineProperty(navigator,'webdriver',{get:()=>undefined})",
-            )
+            # AsyncCamoufox is its own async CM that yields a BrowserContext
+            # directly — there is no separate Playwright driver object here.
+            ctx = await pw_cm.__aenter__()
+        else:
+            if engine == BrowserEngine.PATCHRIGHT:
+                pw_factory = resolve_async_playwright(engine)
+            elif async_playwright is None:  # pragma: no cover — install-time guard
+                msg = (
+                    "Playwright is required for UiAutomationTransport. "
+                    "Install via `uv sync` (it is a runtime dependency)."
+                )
+                raise RuntimeError(msg)
+            else:
+                pw_factory = async_playwright
+
+            pw_cm = pw_factory()
+            pw = await pw_cm.__aenter__()
+            ctx = None
+
+        try:
+            if engine != BrowserEngine.CAMOUFOX:
+                ctx = await pw.chromium.launch_persistent_context(
+                    str(profile_dir),
+                    headless=False,
+                    viewport=cast("ViewportSize", _VIEWPORT),
+                    locale=locale_env,
+                    channel=channel_for_profile(profile_dir),
+                    args=[
+                        "--disable-blink-features=AutomationControlled",
+                        "--password-store=basic",
+                        "--disable-dev-shm-usage",
+                    ],
+                )
+                # Hide the automation flag so reCAPTCHA Enterprise doesn't score
+                # the session as a bot — navigator.webdriver=true causes low-score
+                # tokens and HTTP 403 on batchGenerateImages.
+                await ctx.add_init_script(
+                    "Object.defineProperty(navigator,'webdriver',{get:()=>undefined})",
+                )
+
             self._pw_cm = pw_cm
             self._ctx = ctx
-            page = cast("Page", ctx.pages[0] if ctx.pages else await ctx.new_page())
+            any_ctx = cast("Any", ctx)
+            page = cast("Page", any_ctx.pages[0] if any_ctx.pages else await any_ctx.new_page())
             self._page = page
             try:
                 await page.goto(FLOW_URL, wait_until="networkidle", timeout=45_000)
@@ -989,7 +1039,14 @@ class UiAutomationTransport(VideoGenerationMixin):
         if project_id:
             url = routes.project_editor_url(locale, project_id)
             log.info("ui_automation.entering_existing_project", project_id=project_id, url=url)
-            await page.goto(url, wait_until="domcontentloaded", timeout=45_000)
+            try:
+                await page.goto(url, wait_until="domcontentloaded", timeout=45_000)
+            except Exception as e:
+                if "NS_BINDING_ABORTED" in str(e):
+                    log.debug("ui_automation.goto_binding_aborted_ignored", url=url)
+                    await page.wait_for_timeout(2000)
+                else:
+                    raise
             await self._dismiss_blocking_overlays(page, out_dir)
             return
 
@@ -1003,7 +1060,14 @@ class UiAutomationTransport(VideoGenerationMixin):
             # and networkidle is flaky. The selector wait_for below is the real
             # readiness gate.
             log.info("ui_automation.navigating_to_gallery", restored_url=page.url)
-            await page.goto(FLOW_URL, timeout=45_000)
+            try:
+                await page.goto(FLOW_URL, timeout=45_000)
+            except Exception as e:
+                if "NS_BINDING_ABORTED" in str(e):
+                    log.debug("ui_automation.goto_binding_aborted_ignored", url=FLOW_URL)
+                    await page.wait_for_timeout(2000)
+                else:
+                    raise
             await self._bypass_onboarding(page)
 
         await page.wait_for_timeout(3000)
@@ -1210,21 +1274,25 @@ class UiAutomationTransport(VideoGenerationMixin):
         await page.keyboard.press("Control+A")
         await page.keyboard.press("Delete")
 
+        from gflow_cli.config import BrowserEngine, get_settings
+        is_camoufox = get_settings().browser_engine == BrowserEngine.CAMOUFOX
+
         if fast:
-            await page.keyboard.insert_text(prompt_text)
+            if is_camoufox:
+                await page.keyboard.type(prompt_text)
+            else:
+                await page.keyboard.insert_text(prompt_text)
             await page.wait_for_timeout(100)
         else:
-            # We use insert_text character by character with randomized delays to
-            # simulate human typing and avoid bot detection (paste signature), while
-            # bypassing Slate.js's 1.5s/char overhead for the .type() keydown events.
             import random
-
             for char in prompt_text:
                 if char == "\n":
                     await page.keyboard.press("Enter")
                 else:
-                    await page.keyboard.insert_text(char)
-                # random delay between 20ms and 80ms
+                    if is_camoufox:
+                        await page.keyboard.type(char)
+                    else:
+                        await page.keyboard.insert_text(char)
                 await page.wait_for_timeout(random.randint(20, 80))
         await page.wait_for_timeout(500)
 
@@ -1271,13 +1339,18 @@ class UiAutomationTransport(VideoGenerationMixin):
         await page.keyboard.press("Control+A")
         await page.keyboard.press("Delete")
 
-        import random
+        from gflow_cli.config import BrowserEngine, get_settings
+        is_camoufox = get_settings().browser_engine == BrowserEngine.CAMOUFOX
 
+        import random
         for char in full_prompt:
             if char == "\n":
                 await page.keyboard.press("Enter")
             else:
-                await page.keyboard.insert_text(char)
+                if is_camoufox:
+                    await page.keyboard.type(char)
+                else:
+                    await page.keyboard.insert_text(char)
             await page.wait_for_timeout(random.randint(20, 80))
 
         await page.wait_for_timeout(500)
@@ -2188,7 +2261,14 @@ class UiAutomationTransport(VideoGenerationMixin):
                 "ui_automation.waf_retry",
                 note="WAF block encountered. Refreshing page and retrying with fast paste...",
             )
-            await page.reload(wait_until="domcontentloaded")
+            try:
+                await page.goto(page.url, wait_until="domcontentloaded")
+            except Exception as e:
+                if "NS_BINDING_ABORTED" in str(e):
+                    log.debug("ui_automation.reload_binding_aborted_ignored")
+                    await page.wait_for_timeout(2000)
+                else:
+                    raise
             await page.wait_for_timeout(3000)
             await self._dismiss_blocking_overlays(page, out_dir)
 
@@ -2217,7 +2297,7 @@ class UiAutomationTransport(VideoGenerationMixin):
             submit_time = time.monotonic()
             responses = []
             try:
-                await ui_driver.send_prompt(page, request.prompt, out_dir=out_dir, fast=True)
+                await ui_driver.send_prompt(page, request.prompt, out_dir=out_dir)
                 responses = await self._await_captured(
                     captured,
                     expected_count=request.count,
@@ -2747,7 +2827,14 @@ class UiAutomationTransport(VideoGenerationMixin):
             project_id=project_id,
             entity_id=entity_id,
         )
-        await page.goto(url, wait_until="domcontentloaded", timeout=45_000)
+        try:
+            await page.goto(url, wait_until="domcontentloaded", timeout=45_000)
+        except Exception as e:
+            if "NS_BINDING_ABORTED" in str(e):
+                log.debug("ui_automation.goto_binding_aborted_ignored", url=url)
+                await page.wait_for_timeout(2000)
+            else:
+                raise
         await self._dismiss_blocking_overlays(page, self._out_dir)
 
         # Wait for the Slate editor to mount — the prompt textbox is the

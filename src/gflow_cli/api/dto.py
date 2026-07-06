@@ -188,13 +188,13 @@ class GeneratedImage:
                         metadata_dict = cast("dict[str, Any]", metadata)
                         display_name = metadata_dict.get("displayName")
                         if isinstance(display_name, str):
-                            workflow_map[w_id] = display_name
+                            workflow_map[w_id.split("/")[-1]] = display_name
 
         items = cast("list[dict[str, Any]]", media)
         result: list[GeneratedImage] = []
         for item in items:
             img = cls.from_response_item(item)
-            w_id = img.workflow_id
+            w_id = img.workflow_id.split("/")[-1]
             if w_id in workflow_map:
                 from dataclasses import replace
 

@@ -126,12 +126,17 @@ class BrowserEngine(StrEnum):
     PLAYWRIGHT is the default and the only engine the standard install ships.
     PATCHRIGHT is an opt-in, drop-in patched Playwright (Chromium) that avoids
     the ``Runtime.enable`` CDP leak for stronger reCAPTCHA-Enterprise evasion on
-    the headed path; it must be installed separately (``pip install patchright``)
+    the HEADED path; it must be installed separately (``pip install patchright``)
     and is NOT a headless unlock.
+
+    CAMOUFOX is an opt-in, stealth-oriented Firefox build that actively spoofs
+    fingerprints and removes CDP leaks to bypass bot detection and WAFs.
+    It must be installed separately (``pip install camoufox``).
     """
 
     PLAYWRIGHT = "playwright"
     PATCHRIGHT = "patchright"
+    CAMOUFOX = "camoufox"
 
 
 class Settings(BaseSettings):
@@ -292,7 +297,8 @@ class Settings(BaseSettings):
             "avoids the Runtime.enable CDP leak for stronger reCAPTCHA-Enterprise "
             "evasion on the HEADED path. It must be installed separately "
             "(`pip install patchright`) and is NOT a headless unlock — the default "
-            "stays playwright and is unaffected. Override via GFLOW_CLI_BROWSER_ENGINE."
+            "stays playwright and is unaffected. 'camoufox' is an anti-detect "
+            "stealth Firefox build. Override via GFLOW_CLI_BROWSER_ENGINE."
         ),
     )
     prefer_classic: bool = Field(

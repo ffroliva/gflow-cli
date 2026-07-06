@@ -38,8 +38,15 @@ class AuthStrategyFactory:
             )
             return InternalChromiumStrategy(timeout_seconds=timeout)
 
+        if mode == "camoufox":
+            from .camoufox_strategy import CamoufoxStrategy
+
+            return CamoufoxStrategy(timeout_seconds=timeout)
+
         if mode not in self._strategies:
-            msg = f"Unknown auth browser mode '{mode}'. Supported: auto, chrome, internal."
+            msg = (
+                f"Unknown auth browser mode '{mode}'. Supported: auto, chrome, internal, camoufox."
+            )
             raise ConfigurationError(
                 msg,
             )

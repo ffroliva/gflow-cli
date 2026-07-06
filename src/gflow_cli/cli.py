@@ -198,8 +198,8 @@ def _maybe_rename_first_profile(
 @click.option(
     "--browser",
     default=None,
-    type=click.Choice(["auto", "chrome", "internal"], case_sensitive=False),
-    help="Browser strategy for login. 'chrome' bypasses Google secure blocks.",
+    type=click.Choice(["auto", "chrome", "internal", "camoufox"], case_sensitive=False),
+    help="Browser strategy for login. 'chrome' or 'camoufox' bypass Google secure blocks.",
     envvar="GFLOW_CLI_AUTH_BROWSER",
 )
 def auth_login(profile: str | None, browser: str | None) -> None:
@@ -216,6 +216,8 @@ def auth_login(profile: str | None, browser: str | None) -> None:
         console.print("Launching internal Chromium...")
     elif selected_browser == "chrome":
         console.print("Launching real Chrome...")
+    elif selected_browser == "camoufox":
+        console.print("Launching stealth Camoufox...")
     else:  # auto
         console.print(
             "Launching real Chrome..."

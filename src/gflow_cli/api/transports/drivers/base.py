@@ -80,7 +80,6 @@ class FlowUiDriver(Protocol):
         prompt_text: str,
         *,
         out_dir: Path | None = None,
-        fast: bool = False,
     ) -> None:
         """Type ``prompt_text`` into the composer and submit it."""
         ...
