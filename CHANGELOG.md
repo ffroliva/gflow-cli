@@ -7,6 +7,25 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+### Fixed
+
+- **Follow-up review fixes for remote image UUIDs (#237/#245)**: a post-merge
+  multi-angle review surfaced regressions and defects now corrected:
+  - Image `i2i` with a Flow media-id ref that isn't in the local catalog is no
+    longer rejected — UUID→display-name resolution is applied only to the video
+    paths (image refs attach by media id). Restores the `i2i` pass-through.
+  - The generation result envelope's `flow_media_id` again carries the real
+    media id (it was returning the asset's `flow_workflow_id`); the workflow id
+    is exposed under its own `flow_workflow_id` key.
+  - An in-catalog asset with no display name no longer returns its raw UUID as
+    the picker search term (which timed out); it fails fast with a clear error.
+  - Remote picker tiles match the display name exactly (`get_by_role(exact=True)`),
+    so a name that is a substring of another can't silently attach the wrong image.
+  - The R2V picker-close timeout matches the I2V budget (was a too-tight 8s that
+    aborted slow-but-successful attaches).
+  - `_attach_reference_audio` selects its tile by ARIA role+name instead of an
+    apostrophe-unsafe `:has-text()` selector.
+
 ### Added
 
 - **Remote image UUIDs in `gflow_generate_video` (#237)**: I2V (`initial_frame` /

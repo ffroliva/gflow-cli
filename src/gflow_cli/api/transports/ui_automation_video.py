@@ -301,6 +301,10 @@ ADD_TO_PROMPT_DIALOG = "[role='dialog'][data-state='open']"
 # Any open dialog (state-agnostic), used to confirm a picker closed after an
 # include action.
 DIALOG_ANY = "[role='dialog']"
+# How long to wait for the resource picker to close after an include. Matched to
+# the I2V remote-frame budget (was an unexplained 8s for R2V, which spuriously
+# aborted slow-but-successful attaches on large/virtualised grids — #245 review).
+REMOTE_PICKER_CLOSE_TIMEOUT_S = 120.0
 # R2V references mode has NO Start/End slots — references are added via the
 # only button[aria-haspopup='dialog'] in the editor: a 'Create' button carrying
 # the 'add_2' icon (its visible text 'Create' / 'Add Media' is unreliable — a
@@ -1212,7 +1216,9 @@ class VideoGenerationMixin:
         commonly contain an apostrophe or quote that would break a
         single-quoted ``:has-text()`` CSS selector (PR #237 review).
         """
-        return page.get_by_role("option", name=name)
+        # exact=True: the default substring match would let 'cabin' select
+        # 'cabin at night' and .first attach the wrong image (PR #245 review).
+        return page.get_by_role("option", name=name, exact=True)
 
     @staticmethod
     async def _resolve_frame_slot(
@@ -1444,7 +1450,7 @@ class VideoGenerationMixin:
                 surface="remote_reference_include",
                 detail=f"remote reference {name!r}",
                 out_dir=out_dir,
-                dialog_timeout_s=8.0,
+                dialog_timeout_s=REMOTE_PICKER_CLOSE_TIMEOUT_S,
             )
             log.info("ui_automation_video.remote_reference_attached", display_name=name)
 
@@ -1600,9 +1606,13 @@ class VideoGenerationMixin:
         await page.wait_for_timeout(400)
         await page.locator(PICKER_SEARCH_INPUT).first.fill(voice_id)
         await page.wait_for_timeout(600)
-        tile = page.locator(
-            f"button:has-text('{voice_id}'), [role='option']:has-text('{voice_id}')"
-        ).first
+        # Role+name match (apostrophe-safe, mirroring _remote_option_tile) — a
+        # voice_id with a quote would break a single-quoted :has-text() selector.
+        tile = (
+            page.get_by_role("option", name=voice_id)
+            .or_(page.get_by_role("button", name=voice_id))
+            .first
+        )
         await tile.click()
         await page.wait_for_timeout(300)
         include = await VideoGenerationMixin._resolve_include_action(
