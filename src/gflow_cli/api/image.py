@@ -185,11 +185,20 @@ class ImageRef:
     """A reference image for I2I, identified by the upload's media UUID.
 
     The wire shape is the dict returned by :meth:`to_wire`. The UUID comes
-    from a prior ``/v1/flow/uploadImage`` call (see
-    ``samples/captured/01_upload_image.json``).
+    from a prior ``/v1/flow/uploadImage`` call OR a generated image's media id
+    (see ``samples/captured/01_upload_image.json``).
+
+    ``display_name`` and ``local_path`` are UI-automation-only hints (ignored by
+    :meth:`to_wire`): they let the transport attach the ref by **selecting the
+    already-existing Flow asset in the picker** — located by ``name`` (the media
+    UUID) in the tile's image URL, surfaced by ``display_name`` when a search is
+    needed — and preferred over re-uploading a duplicate. ``local_path`` is the
+    fallback file to upload only when the asset can't be located in place.
     """
 
     name: str
+    display_name: str = ""
+    local_path: str = ""
 
     def __post_init__(self) -> None:
         # Reject empty, whitespace-only, AND whitespace-padded UUIDs.
