@@ -7,6 +7,26 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+## [0.26.0] — 2026-07-06
+
+### Added
+
+- **Reference a generated image in `image i2i` by its Flow UUID (`gflow_generate_image`,
+  `reference_images`)**: pass a generated image's media UUID as a reference and gflow
+  attaches it by **selecting the already-existing asset in Flow's reference picker** —
+  it does **not** upload a duplicate copy (avoiding duplication is the preferred path).
+  The asset's tile is located by its media id in the thumbnail URL (robust to
+  display-name collisions), surfaced by a display-name search when it isn't already
+  visible, and attached in place. When the asset can't be located (e.g. it's in a
+  different project's picker), gflow falls back to uploading its on-disk local file. A
+  UUID that isn't in your catalog still attaches by media id (no error). Live-verified:
+  a generated image's UUID → i2i output that references it, with no duplicate upload.
+- **Generated images now record their Flow display name**: the display name is extracted
+  from the `batchGenerateImages` response's `workflows[]` array (previously ignored) and
+  persisted in the asset catalog — the searchable label the media picker shows, and what
+  the UUID-reference path searches by. (Original find and approach by **@C1ph3r404**,
+  #253/#255.)
+
 ## [0.25.0] — 2026-07-06
 
 ### Fixed
