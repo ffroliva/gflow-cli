@@ -472,7 +472,7 @@ def serve(port: int, host: str, profile: str | None) -> None:
             console.print(
                 "[red]Error:[/red] Binding to a non-localhost address requires "
                 "[bold]GFLOW_DAEMON_TOKEN[/bold] to be set.\n"
-                "[dim]Set it in .env.local or as an environment variable.[/dim]"
+                "[dim]Set it in .env (CWD or $GFLOW_CLI_HOME) or as an environment variable.[/dim]"
             )
             sys.exit(11)
 

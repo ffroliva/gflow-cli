@@ -147,3 +147,105 @@ def test_video_media_i2v_bad_frame(tmp_path: Path) -> None:
     assert media is None
     assert err is not None
     assert err["error"]["title"] == "Invalid Start Image"
+
+
+class _FakeRepo:
+    """Minimal stand-in for DataRepository's two methods _resolve_ref_name uses."""
+
+    def __init__(self, asset=None, seed=None):
+        self._asset = asset
+        self._seed = seed
+
+    def get_asset_by_any_id(self, profile, ref_id):
+        return self._asset
+
+    def resolve_seed_image(self, profile, flow_media_id):
+        return self._seed
+
+
+class _Asset:
+    def __init__(self, metadata_json, flow_media_id="m"):
+        self.metadata_json = metadata_json
+        self.flow_media_id = flow_media_id
+
+
+class _Seed:
+    def __init__(self, prompt):
+        self.prompt = prompt
+
+
+_A_UUID = "550e8400-e29b-41d4-a716-446655440000"
+
+
+def test_resolve_ref_name_uses_display_name() -> None:
+    from gflow_cli.mcp.tools import _resolve_ref_name
+
+    repo = _FakeRepo(asset=_Asset({"display_name": "A cozy cabin"}))
+    name, err = _resolve_ref_name(repo, "default", _A_UUID)
+    assert err is None
+    assert name == "A cozy cabin"
+
+
+def test_resolve_ref_name_falls_back_to_seed_prompt() -> None:
+    from gflow_cli.mcp.tools import _resolve_ref_name
+
+    repo = _FakeRepo(asset=_Asset({}), seed=_Seed("an old prompt"))
+    name, err = _resolve_ref_name(repo, "default", _A_UUID)
+    assert err is None
+    assert name == "an old prompt"
+
+
+def test_resolve_ref_name_unresolvable_uuid_returns_clear_error() -> None:
+    """PR #237 review #7: a UUID not in the catalog must fail fast with a clear
+    'not found' error instead of being passed downstream as a search term
+    (which surfaced as a ~120s Playwright timeout)."""
+    from gflow_cli.mcp.tools import _resolve_ref_name
+
+    repo = _FakeRepo(asset=None)
+    name, err = _resolve_ref_name(repo, "default", _A_UUID)
+    assert name is None
+    assert err is not None
+    assert _A_UUID in str(err)
+    assert "catalog" in str(err).lower()
+
+
+def test_resolve_ref_name_passes_through_a_literal_display_name() -> None:
+    """A non-UUID string is a display name the user typed directly — keep it."""
+    from gflow_cli.mcp.tools import _resolve_ref_name
+
+    repo = _FakeRepo(asset=None)
+    name, err = _resolve_ref_name(repo, "default", "A cozy cabin")
+    assert err is None
+    assert name == "A cozy cabin"
+
+
+def test_resolve_ref_name_found_asset_without_name_errors_not_uuid_passthrough() -> None:
+    """PR #245 review #3: an in-catalog asset with no display_name and no seed
+    prompt must NOT return the raw UUID (which then times out in the picker) —
+    it must return a clear error."""
+    from gflow_cli.mcp.tools import _resolve_ref_name
+
+    repo = _FakeRepo(asset=_Asset({}), seed=None)  # found, but no name resolvable
+    name, err = _resolve_ref_name(repo, "default", _A_UUID)
+    assert name is None
+    assert err is not None
+    assert _A_UUID in str(err)
+
+
+def test_resolve_payload_ref_names_leaves_image_refs_untouched() -> None:
+    """PR #245 review #1: _resolve_payload_ref_names must only be applied to the
+    video path. Image 'refs' (media-id UUIDs) attach by id and must pass through
+    even when absent from the local catalog."""
+    from gflow_cli.mcp.tools import _resolve_payload_ref_names
+
+    repo = _FakeRepo(asset=None)  # UUID not in local catalog
+    payload = {"refs": [_A_UUID]}
+    # video task type: resolves (and would error on the missing UUID)
+    err_video = _resolve_payload_ref_names(repo, "default", dict(payload), task_type="r2v")
+    assert err_video is not None
+    # image task type: passes through untouched, no ref_names added, no error
+    p_image = dict(payload)
+    err_image = _resolve_payload_ref_names(repo, "default", p_image, task_type="i2i")
+    assert err_image is None
+    assert "ref_names" not in p_image
+    assert p_image["refs"] == [_A_UUID]

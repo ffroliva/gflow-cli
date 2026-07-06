@@ -15,6 +15,7 @@ from __future__ import annotations
 
 import asyncio
 import json
+import random
 import time
 from pathlib import Path
 from typing import TYPE_CHECKING, Any, cast
@@ -293,9 +294,17 @@ UPLOAD_MEDIA_BUTTON = (
 # This is exactly why the failure message tells the operator to set the Chrome
 # profile to English: it makes this fallback tier viable.
 UPLOAD_MEDIA_BUTTON_TEXT = "[role='dialog'][data-state='open'] button:has-text('Upload media')"
-# 'Add to Prompt' has no stable string anchor; selected structurally (the lone
-# iconless button) at the call site. This scope is the open media dialog.
+# 'Add to Prompt' has no stable string anchor; it is resolved via the tiered,
+# locale-safe PICKER_INCLUDE_BUTTON / _resolve_include_action pattern (a
+# hardcoded English string here previously hung non-English accounts — #170/#56).
 ADD_TO_PROMPT_DIALOG = "[role='dialog'][data-state='open']"
+# Any open dialog (state-agnostic), used to confirm a picker closed after an
+# include action.
+DIALOG_ANY = "[role='dialog']"
+# How long to wait for the resource picker to close after an include. Matched to
+# the I2V remote-frame budget (was an unexplained 8s for R2V, which spuriously
+# aborted slow-but-successful attaches on large/virtualised grids — #245 review).
+REMOTE_PICKER_CLOSE_TIMEOUT_S = 120.0
 # R2V references mode has NO Start/End slots — references are added via the
 # only button[aria-haspopup='dialog'] in the editor: a 'Create' button carrying
 # the 'add_2' icon (its visible text 'Create' / 'Add Media' is unreliable — a
@@ -1127,58 +1136,13 @@ class VideoGenerationMixin:
             msg = f"frame image not found: {image}"
             raise FileNotFoundError(msg)
 
-        # Locate the slot structural-first (locale-free): the frame slots are the
-        # dialog-divs inside the swap_horiz container, indexed by position
-        # (0=start, 1=end).  FRAME_SLOT_BY_LABEL (has-text 'Start'/'End') is
-        # tried only as a fallback when the structural count is insufficient —
-        # it requires --lang=en-US / English Chrome profile to work.
-        #
-        # wait_for is short (1500 ms) because _wait_video_editor_ready already
+        # wait_ms is short (1500) because _wait_video_editor_ready already
         # guaranteed the editor SPA is mounted; the frame panel resolves in
-        # <10 ms (one CDP round-trip) on a pre-rendered page.  A shorter probe
-        # means a future swap_horiz rename surfaces as a fast, clear error
-        # instead of an 8-second dead wait on every I2V/R2V call.
-        structs = page.locator(FRAME_SLOTS_STRUCT)
-        try:
-            await structs.first.wait_for(state="visible", timeout=1500)
-        except Exception as e:
-            shot = await _capture_debug_screenshot(
-                page,
-                out_dir,
-                f"debug_no_{label.lower()}_slot.png",
-            )
-            msg = f"frame slot {label!r} not found on the Flow editor. Screenshot: {shot}"
-            raise RuntimeError(
-                msg,
-            ) from e
-
-        struct_count = await structs.count()
-        if struct_count > slot_index:
-            # Both slots unfilled — pick by DOM order.
-            slot = structs.nth(slot_index)
-        elif struct_count > 0:
-            # Some slots already attached (typical: Start filled, End remaining).
-            # The DOM only keeps `div[type='button'][aria-haspopup='dialog']` on
-            # the unfilled slot(s) — once an image binds, the slot transitions
-            # away from that pattern. The next unfilled slot is therefore
-            # `.first` of the remaining matches, regardless of its original
-            # positional index. This case is hit on the End-frame call after
-            # Start was just attached.
-            slot = structs.first
-        else:
-            # Structural count was insufficient; fall back to text-label match.
-            slot = page.locator(FRAME_SLOT_BY_LABEL.format(label=label)).first
-            try:
-                await slot.wait_for(state="visible", timeout=3000)
-            except Exception as e:
-                msg = (
-                    f"frame slot index {slot_index} ({label!r}) not present "
-                    f"(found {struct_count} structural slot(s), "
-                    f"text-label fallback also missed)"
-                )
-                raise RuntimeError(
-                    msg,
-                ) from e
+        # <10 ms on a pre-rendered page, so a future swap_horiz rename surfaces
+        # as a fast, clear error instead of an 8-second dead wait per call.
+        slot = await VideoGenerationMixin._resolve_frame_slot(
+            page, slot_index, label, out_dir=out_dir, wait_ms=1500
+        )
         await slot.click()
         await page.wait_for_timeout(1000)  # media dialog opens
         await VideoGenerationMixin._upload_via_open_dialog(
@@ -1189,6 +1153,146 @@ class VideoGenerationMixin:
             timeout_s=timeout_s,
         )
         log.info("ui_automation_video.frame_attached", slot=label)
+
+    @staticmethod
+    async def _pick_option_and_include(
+        page: Page,
+        name: str,
+        *,
+        surface: str,
+        detail: str,
+        out_dir: Path | None,
+        dialog_timeout_s: float,
+    ) -> None:
+        """Shared picker flow: type ``name`` into the open resource picker,
+        select the matching result tile, fire the locale-safe include action,
+        and verify the picker dialog closed. Used by both the I2V frame and R2V
+        reference remote-attach paths (the picker is identical once open)."""
+        search_input = page.locator(PICKER_SEARCH_INPUT)
+        # Human-like typing jitter to dodge WAF bot heuristics — not a security
+        # context, so a plain PRNG is fine.
+        await search_input.press_sequentially(name, delay=random.randint(10, 50))  # NOSONAR
+        await page.wait_for_timeout(600)
+
+        # Role+name match — apostrophes in the display name would break a
+        # `:has-text('{name}')` CSS selector.
+        tile = VideoGenerationMixin._remote_option_tile(page, name).first
+        await tile.wait_for(state="visible", timeout=8000)
+        await tile.click()
+        await page.wait_for_timeout(300)
+
+        # Include via the tiered, locale-safe resolver (a hardcoded English
+        # "Add to Prompt" here previously hung non-English accounts — #170/#56).
+        include = await VideoGenerationMixin._resolve_include_action(
+            page,
+            PICKER_INCLUDE_BUTTON,
+            _INCLUDE_BUTTON_TIER_NAMES,
+            surface=surface,
+            detail=detail,
+            out_dir=out_dir,
+            screenshot_name=f"{surface}_missing.png",
+        )
+        await include.click(timeout=3000)
+        await page.wait_for_timeout(600)
+
+        # Confirm the picker closed — otherwise the include never registered and
+        # logging success would be a silent false positive.
+        dialog = page.locator(DIALOG_ANY).last
+        try:
+            await dialog.wait_for(state="hidden", timeout=dialog_timeout_s * 1000)
+        except Exception as e:
+            raise TransportTimeoutError(
+                f"{detail} picker dialog did not close after {dialog_timeout_s}s "
+                "(the include action may not have registered)",
+            ) from e
+
+    @staticmethod
+    def _remote_option_tile(page: Page, name: str) -> Locator:
+        """Locate a picker result tile by its display name.
+
+        Uses ARIA role+name matching rather than
+        ``[role='option']:has-text('{name}')``: ``name`` is a stored
+        ``display_name`` or the original generation prompt, both of which
+        commonly contain an apostrophe or quote that would break a
+        single-quoted ``:has-text()`` CSS selector (PR #237 review).
+        """
+        # exact=True: the default substring match would let 'cabin' select
+        # 'cabin at night' and .first attach the wrong image (PR #245 review).
+        return page.get_by_role("option", name=name, exact=True)
+
+    @staticmethod
+    async def _resolve_frame_slot(
+        page: Page,
+        slot_index: int,
+        label: str,
+        *,
+        out_dir: Path | None,
+        wait_ms: int,
+    ) -> Locator:
+        """Locate an I2V frame slot, structural-first with a text-label fallback.
+
+        Shared by the local-upload and remote-ref frame-attach paths. The frame
+        slots are the dialog-divs inside the swap_horiz container, indexed by
+        position (0=start, 1=end); FRAME_SLOT_BY_LABEL (has-text 'Start'/'End',
+        English-only) is the fallback when the structural count is insufficient.
+        Once an image binds, its slot leaves the structural pattern, so the next
+        unfilled slot is `.first` of the remaining matches regardless of index.
+        Returns the (unclicked) slot locator; raises RuntimeError with a debug
+        screenshot if none resolves.
+        """
+        structs = page.locator(FRAME_SLOTS_STRUCT)
+        try:
+            await structs.first.wait_for(state="visible", timeout=wait_ms)
+        except Exception as e:
+            shot = await _capture_debug_screenshot(
+                page, out_dir, f"debug_no_{label.lower()}_slot.png"
+            )
+            msg = f"frame slot {label!r} not found on the Flow editor. Screenshot: {shot}"
+            raise RuntimeError(msg) from e
+
+        struct_count = await structs.count()
+        if struct_count > slot_index:
+            return structs.nth(slot_index)
+        if struct_count > 0:
+            return structs.first
+        slot = page.locator(FRAME_SLOT_BY_LABEL.format(label=label)).first
+        try:
+            await slot.wait_for(state="visible", timeout=3000)
+        except Exception as e:
+            msg = (
+                f"frame slot index {slot_index} ({label!r}) not present "
+                f"(found {struct_count} structural slot(s), "
+                f"text-label fallback also missed)"
+            )
+            raise RuntimeError(msg) from e
+        return slot
+
+    @staticmethod
+    async def _attach_remote_frame(
+        page: Page,
+        slot_index: int,
+        label: str,
+        name: str,
+        *,
+        out_dir: Path | None,
+        timeout_s: float = 120.0,
+    ) -> None:
+        """Attach a remote image (by display name) into an I2V frame slot."""
+        slot = await VideoGenerationMixin._resolve_frame_slot(
+            page, slot_index, label, out_dir=out_dir, wait_ms=12000
+        )
+        await slot.click()
+        await page.wait_for_timeout(1000)  # media dialog opens
+
+        await VideoGenerationMixin._pick_option_and_include(
+            page,
+            name,
+            surface="remote_frame_include",
+            detail=f"{label} remote frame",
+            out_dir=out_dir,
+            dialog_timeout_s=timeout_s,
+        )
+        log.info("ui_automation_video.remote_frame_attached", slot=label, display_name=name)
 
     @staticmethod
     async def _upload_via_open_dialog(
@@ -1271,7 +1375,7 @@ class VideoGenerationMixin:
         if await add_btn.count():
             await add_btn.click()
         try:
-            await page.locator("[role='dialog']").last.wait_for(state="hidden", timeout=15_000)
+            await page.locator(DIALOG_ANY).last.wait_for(state="hidden", timeout=15_000)
         except Exception:
             log.warning("ui_automation_video.dialog_close_timeout", target=log_label)
         await page.wait_for_timeout(1500)
@@ -1327,11 +1431,35 @@ class VideoGenerationMixin:
             log.info("ui_automation_video.reference_attached", index=i)
 
     @staticmethod
+    async def _attach_remote_references(
+        page: Page,
+        ref_names: list[str],
+        *,
+        out_dir: Path | None,
+    ) -> None:
+        """Attach remote images by searching their display_name in the All tab."""
+        for name in ref_names:
+            add = page.locator(ADD_MEDIA_BUTTON).first
+            await add.wait_for(state="visible", timeout=8000)
+            await add.click()
+            await page.wait_for_timeout(800)
+
+            await VideoGenerationMixin._pick_option_and_include(
+                page,
+                name,
+                surface="remote_reference_include",
+                detail=f"remote reference {name!r}",
+                out_dir=out_dir,
+                dialog_timeout_s=REMOTE_PICKER_CLOSE_TIMEOUT_S,
+            )
+            log.info("ui_automation_video.remote_reference_attached", display_name=name)
+
+    @staticmethod
     async def _scroll_picker_grid(page: Page, delta_px: int = PICKER_GRID_SCROLL_DELTA_PX) -> None:
         """Wheel-scroll the open resource picker down one step. The Tudo grid is
         virtualised, so off-screen tiles are absent from the DOM until scrolled
         into view. Hover the dialog first so the wheel targets the grid."""
-        dialog = page.locator("[role='dialog']").last
+        dialog = page.locator(DIALOG_ANY).last
         try:
             await dialog.hover(timeout=2000)
         except Exception:  # noqa: BLE001 - hover is best-effort; wheel still scrolls
@@ -1478,9 +1606,13 @@ class VideoGenerationMixin:
         await page.wait_for_timeout(400)
         await page.locator(PICKER_SEARCH_INPUT).first.fill(voice_id)
         await page.wait_for_timeout(600)
-        tile = page.locator(
-            f"button:has-text('{voice_id}'), [role='option']:has-text('{voice_id}')"
-        ).first
+        # Role+name match (apostrophe-safe, mirroring _remote_option_tile) — a
+        # voice_id with a quote would break a single-quoted :has-text() selector.
+        tile = (
+            page.get_by_role("option", name=voice_id)
+            .or_(page.get_by_role("button", name=voice_id))
+            .first
+        )
         await tile.click()
         await page.wait_for_timeout(300)
         include = await VideoGenerationMixin._resolve_include_action(
@@ -1759,6 +1891,52 @@ class VideoGenerationMixin:
         return effective_model
 
     @staticmethod
+    async def _attach_i2v_frames(
+        page: Page, request: GenerateVideoRequest, *, out_dir: Path | None
+    ) -> None:
+        """Attach the Start (and optional End) I2V frame, local path or remote ref."""
+        if request.start_image is not None:
+            await VideoGenerationMixin._attach_frame(
+                page, 0, "Start", request.start_image, out_dir=out_dir
+            )
+        elif request.start_image_ref_name is not None:
+            await VideoGenerationMixin._attach_remote_frame(
+                page, 0, "Start", request.start_image_ref_name, out_dir=out_dir
+            )
+        if request.end_image is not None:
+            await VideoGenerationMixin._attach_frame(
+                page, 1, "End", request.end_image, out_dir=out_dir
+            )
+        elif request.end_image_ref_name is not None:
+            await VideoGenerationMixin._attach_remote_frame(
+                page, 1, "End", request.end_image_ref_name, out_dir=out_dir
+            )
+
+    @staticmethod
+    async def _attach_r2v_references(
+        page: Page, request: GenerateVideoRequest, *, out_dir: Path | None
+    ) -> None:
+        """Attach R2V character entities, local reference images, remote refs, and audio."""
+        if request.reference_entities:
+            await VideoGenerationMixin._attach_character_entities(
+                page,
+                zip_entity_refs(request.reference_entities, request.reference_entity_names),
+                out_dir=out_dir,
+            )
+        if request.reference_images:
+            await VideoGenerationMixin._attach_references(
+                page, list(request.reference_images), out_dir=out_dir
+            )
+        if request.ref_names:
+            await VideoGenerationMixin._attach_remote_references(
+                page, list(request.ref_names), out_dir=out_dir
+            )
+        if request.reference_audio:
+            await VideoGenerationMixin._attach_reference_audio(
+                page, request.reference_audio, out_dir=out_dir
+            )
+
+    @staticmethod
     async def _attach_media_inputs(
         page: Page,
         request: GenerateVideoRequest,
@@ -1766,31 +1944,10 @@ class VideoGenerationMixin:
         out_dir: Path | None,
     ) -> None:
         """Attach I2V frames or R2V references/entities to the editor before submit."""
-        if request.mode is Mode.I2V and request.start_image is not None:
-            await VideoGenerationMixin._attach_frame(
-                page, 0, "Start", request.start_image, out_dir=out_dir
-            )
-            if request.end_image is not None:
-                await VideoGenerationMixin._attach_frame(
-                    page, 1, "End", request.end_image, out_dir=out_dir
-                )
+        if request.mode is Mode.I2V:
+            await VideoGenerationMixin._attach_i2v_frames(page, request, out_dir=out_dir)
         elif request.mode is Mode.R2V:
-            if request.reference_entities:
-                await VideoGenerationMixin._attach_character_entities(
-                    page,
-                    zip_entity_refs(request.reference_entities, request.reference_entity_names),
-                    out_dir=out_dir,
-                )
-            if request.reference_images:
-                await VideoGenerationMixin._attach_references(
-                    page,
-                    list(request.reference_images),
-                    out_dir=out_dir,
-                )
-            if request.reference_audio:
-                await VideoGenerationMixin._attach_reference_audio(
-                    page, request.reference_audio, out_dir=out_dir
-                )
+            await VideoGenerationMixin._attach_r2v_references(page, request, out_dir=out_dir)
 
     async def _submit_and_poll(
         self,

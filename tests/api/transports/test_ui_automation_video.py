@@ -1101,7 +1101,9 @@ class TestAttachCharacterEntities:
         loc.wait_for = AsyncMock()
         loc.scroll_into_view_if_needed = AsyncMock()
         loc.count = AsyncMock(return_value=1)
+        loc.or_ = MagicMock(return_value=loc)
         page.locator.return_value = loc
+        page.get_by_role.return_value = loc
         page.wait_for_timeout = AsyncMock()
         page.mouse = MagicMock()
         page.mouse.wheel = AsyncMock()
@@ -1309,3 +1311,73 @@ class TestAssertEntitiesAttached:
         assert "github.com/ffroliva/gflow-cli/issues/174" in err.remediation_hint
         assert err.to_problem_details().get("remediation_hint") == err.remediation_hint
         assert err.discovery == {"entity_attach_context": "video"}
+
+
+class TestRemoteRefTileLocator:
+    """PR #237: option tiles are matched by display_name / prompt text, which
+    commonly contains an apostrophe. The old `:has-text('{name}')` CSS selector
+    broke on those; `_remote_option_tile` must match by role name instead."""
+
+    def test_apostrophe_name_does_not_go_into_a_quoted_css_selector(self) -> None:
+        page = MagicMock()
+        VideoGenerationMixin._remote_option_tile(page, "Wren's cabin")
+        # role-based match: the raw name is passed as the accessible name,
+        # never interpolated into a `:has-text('...')` CSS string.
+        page.get_by_role.assert_called_once()
+        args, kwargs = page.get_by_role.call_args
+        assert args[0] == "option"
+        assert kwargs.get("name") == "Wren's cabin"
+        page.locator.assert_not_called()
+
+    def test_matches_exactly_so_a_substring_name_cannot_attach_the_wrong_tile(self) -> None:
+        # PR #245 review #4: without exact=True, get_by_role's default substring
+        # match makes 'cabin' also select 'cabin at night' → .first attaches the
+        # wrong image silently.
+        page = MagicMock()
+        VideoGenerationMixin._remote_option_tile(page, "cabin")
+        _, kwargs = page.get_by_role.call_args
+        assert kwargs.get("exact") is True
+
+
+class TestRemoteReferencesDialogGuard:
+    """PR #237 review #4: _attach_remote_references logged success even when the
+    include action never fired (locale mismatch). It must verify the picker
+    dialog closed and raise TransportTimeoutError otherwise."""
+
+    @staticmethod
+    def _locator_mock() -> MagicMock:
+        loc = MagicMock()
+        loc.wait_for = AsyncMock()
+        loc.click = AsyncMock()
+        loc.press_sequentially = AsyncMock()
+        loc.first = loc
+        loc.last = loc
+        return loc
+
+    @pytest.mark.asyncio
+    async def test_raises_when_picker_dialog_stays_open(
+        self, monkeypatch: pytest.MonkeyPatch
+    ) -> None:
+        page = _mock_async_page()
+        dialog = self._locator_mock()
+        dialog.wait_for = AsyncMock(side_effect=Exception("dialog still open"))
+
+        def _locator(selector: str) -> MagicMock:
+            return dialog if selector == "[role='dialog']" else self._locator_mock()
+
+        page.locator = MagicMock(side_effect=_locator)
+        monkeypatch.setattr(
+            VideoGenerationMixin,
+            "_remote_option_tile",
+            staticmethod(lambda p, n: self._locator_mock()),
+        )
+        monkeypatch.setattr(
+            VideoGenerationMixin,
+            "_resolve_include_action",
+            AsyncMock(return_value=self._locator_mock()),
+        )
+
+        with pytest.raises(TransportTimeoutError, match="did not close"):
+            await VideoGenerationMixin._attach_remote_references(
+                page, ["Wren's cabin"], out_dir=None
+            )

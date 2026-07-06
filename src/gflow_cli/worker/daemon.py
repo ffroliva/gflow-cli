@@ -105,6 +105,10 @@ class FlowWorker:
                         headless=headless,
                         transport=transport,
                         out_dir=out_dir,
+                        # Reuse the cached settings: a bare Settings() in the client
+                        # would re-read .env files live per task and could disagree
+                        # with the task parameters derived from get_settings().
+                        settings=settings,
                     ) as client:
                         project_title = task.payload.get("project_title", "gflow-cli images")
                         project_created = False
@@ -176,6 +180,7 @@ class FlowWorker:
                         headless=headless,
                         transport=transport,
                         out_dir=out_dir,
+                        settings=settings,  # same rationale as the image path above
                     ) as client:
 
                         def on_started(started: VideoStarted) -> None:
@@ -288,6 +293,10 @@ class FlowWorker:
 
         refs = tuple(ImageRef(r) for r in payload.get("refs", []))
         ref_paths = tuple(Path(p) for p in payload.get("ref_paths", []))
+        # NOTE: the payload may carry "ref_names" (the MCP layer resolves them
+        # for the video request); the image transport attaches remote refs by
+        # media id, so GenerateImageRequest has no ref_names field and must
+        # not receive one.
         reference_entities = tuple(payload.get("reference_entities", []))
         reference_entity_names = tuple(payload.get("reference_entity_names", []))
         count = payload.get("count", 1)
@@ -328,8 +337,11 @@ class FlowWorker:
         seed = payload.get("seed")
 
         start_image = Path(payload["start_image"]) if payload.get("start_image") else None
+        start_image_ref_name = payload.get("start_image_ref_name")
         end_image = Path(payload["end_image"]) if payload.get("end_image") else None
+        end_image_ref_name = payload.get("end_image_ref_name")
         reference_images = tuple(Path(p) for p in payload.get("reference_images", []))
+        ref_names = tuple(payload.get("ref_names", []))
         reference_entities = tuple(payload.get("reference_entities", []))
         reference_entity_names = tuple(payload.get("reference_entity_names", []))
         reference_audio = payload.get("reference_audio")
@@ -344,8 +356,11 @@ class FlowWorker:
             count=count,
             seed=seed,
             start_image=start_image,
+            start_image_ref_name=start_image_ref_name,
             end_image=end_image,
+            end_image_ref_name=end_image_ref_name,
             reference_images=reference_images,
+            ref_names=ref_names,
             reference_entities=reference_entities,
             reference_entity_names=reference_entity_names,
             reference_audio=reference_audio,
