@@ -1119,7 +1119,7 @@ class TestGenerateImages:
         t = UiAutomationTransport()
         t._setup_done = True  # type: ignore[attr-defined]
         page_mock = MagicMock()
-        page_mock.reload = AsyncMock()
+        page_mock.goto = AsyncMock()
         page_mock.wait_for_timeout = AsyncMock()
         t._page = page_mock  # type: ignore[attr-defined]
 
@@ -1142,6 +1142,8 @@ class TestGenerateImages:
             pytest.raises(WafRejectionError),
         ):
             await t.generate_images(project_id="x", request=_req())
+
+        page_mock.goto.assert_awaited_with(page_mock.url, wait_until="domcontentloaded")
 
     @pytest.mark.asyncio
     async def test_200_with_no_parseable_media_raises(self) -> None:
@@ -2945,3 +2947,37 @@ class TestModeSwitchExitsAgentFirst:
             await UiAutomationTransport._switch_to_video_mode(page, out_dir=None)
 
         assert order and order[0] == "exit_agent", f"expected exit_agent first, got {order}"
+
+from gflow_cli.api.transports.ui_automation import _collect_images_from_body
+
+class TestCollectImagesFromBody:
+    def test_extracts_display_name_from_fully_qualified_workflows(self) -> None:
+        """Verifies that _collect_images_from_body strips path prefixes when mapping workflows to display names."""
+        body = {
+            "media": [
+                {
+                    "name": "projects/proj-uuid/assets/asset-001",
+                    "workflowId": "wf-001",
+                    "image": {
+                        "generatedImage": {
+                            "seed": 42,
+                            "prompt": "test",
+                            "modelNameType": "NARWHAL",
+                            "aspectRatio": "IMAGE_ASPECT_RATIO_PORTRAIT",
+                            "fifeUrl": "url",
+                        },
+                        "dimensions": {"width": 1024, "height": 1024},
+                    },
+                }
+            ],
+            "workflows": [
+                {
+                    "name": "projects/proj-uuid/workflows/wf-001",
+                    "metadata": {"displayName": "My Cool Prompt"}
+                }
+            ],
+        }
+        images = []
+        _collect_images_from_body(body, images)
+        assert len(images) == 1
+        assert images[0].display_name == "My Cool Prompt"
