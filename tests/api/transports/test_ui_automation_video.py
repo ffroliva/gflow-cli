@@ -1072,17 +1072,17 @@ class TestPickerIncludeSelectorLocaleInvariance:
                 f"unscoped text segment: {segment.strip()!r}"
             )
 
-    def test_include_button_is_a_two_tier_cascade(self) -> None:
+    def test_include_button_is_a_four_tier_cascade(self) -> None:
         assert isinstance(PICKER_INCLUDE_BUTTON, tuple)
-        assert len(PICKER_INCLUDE_BUTTON) == 2
+        assert len(PICKER_INCLUDE_BUTTON) == 4
 
     def test_include_button_text_tier_covers_pt_ru_en(self) -> None:
-        text_tier = PICKER_INCLUDE_BUTTON[0]
+        text_tier = PICKER_INCLUDE_BUTTON[2]
         for caption in ("Incluir no comando", "Добавить в запрос", "Add to prompt"):
             assert caption in text_tier, f"missing caption {caption!r}"
 
     def test_include_button_structural_tier_is_lone_iconless_dialog_button(self) -> None:
-        structural = PICKER_INCLUDE_BUTTON[1]
+        structural = PICKER_INCLUDE_BUTTON[0]
         assert structural.startswith("[role='dialog'][data-state='open']")
         assert ":not(:has(i.google-symbols))" in structural
 
@@ -1221,7 +1221,7 @@ class TestAttachReferenceAudio:
             if e["event"] == "ui_automation_video.include_selector_tier"
         ]
         assert tier_events, "expected an include_selector_tier event"
-        assert tier_events[0]["tier"] == "text"
+        assert tier_events[0]["tier"] == "structural_overlay_open"
         assert tier_events[0]["surface"] == "vozes_button"
 
     @pytest.mark.asyncio
@@ -1323,10 +1323,7 @@ class TestRemoteRefTileLocator:
         VideoGenerationMixin._remote_option_tile(page, "Wren's cabin")
         # role-based match: the raw name is passed as the accessible name,
         # never interpolated into a `:has-text('...')` CSS string.
-        page.get_by_role.assert_called_once()
-        args, kwargs = page.get_by_role.call_args
-        assert args[0] == "option"
-        assert kwargs.get("name") == "Wren's cabin"
+        page.get_by_text.assert_called_once_with("Wren's cabin", exact=True)
         page.locator.assert_not_called()
 
     def test_matches_exactly_so_a_substring_name_cannot_attach_the_wrong_tile(self) -> None:
@@ -1335,8 +1332,7 @@ class TestRemoteRefTileLocator:
         # wrong image silently.
         page = MagicMock()
         VideoGenerationMixin._remote_option_tile(page, "cabin")
-        _, kwargs = page.get_by_role.call_args
-        assert kwargs.get("exact") is True
+        page.get_by_text.assert_called_once_with("cabin", exact=True)
 
 
 class TestRemoteReferencesDialogGuard:
@@ -1350,6 +1346,7 @@ class TestRemoteReferencesDialogGuard:
         loc.wait_for = AsyncMock()
         loc.click = AsyncMock()
         loc.press_sequentially = AsyncMock()
+        loc.is_visible = AsyncMock(return_value=True)
         loc.first = loc
         loc.last = loc
         return loc

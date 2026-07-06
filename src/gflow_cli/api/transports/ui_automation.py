@@ -1040,7 +1040,11 @@ class UiAutomationTransport(VideoGenerationMixin):
             url = routes.project_editor_url(locale, project_id)
             log.info("ui_automation.entering_existing_project", project_id=project_id, url=url)
             try:
-                await page.goto(url, wait_until="domcontentloaded", timeout=45_000)
+                if project_id in page.url:
+                    log.debug("ui_automation.hard_reload_existing_project", project_id=project_id)
+                    await page.reload(wait_until="domcontentloaded", timeout=45_000)
+                else:
+                    await page.goto(url, wait_until="domcontentloaded", timeout=45_000)
             except Exception as e:
                 if "NS_BINDING_ABORTED" in str(e):
                     log.debug("ui_automation.goto_binding_aborted_ignored", url=url)

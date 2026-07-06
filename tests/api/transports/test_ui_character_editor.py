@@ -835,14 +835,15 @@ class TestSubmitBodyPrompt:
         await t._submit_body_prompt(page, "red raincoat, rubber boots")  # type: ignore[attr-defined]
 
         expected = _BODY_TRIPTYCH_PREAMBLE + "red raincoat, rubber boots"
-        assert inserted == [expected], (
+        inserted_str = "".join(inserted)
+        assert inserted_str == expected, (
             f"submitted text must be the self-contained triptych prompt + "
-            f"description, independent of the pre-fill; got {inserted}"
+            f"description, independent of the pre-fill; got {inserted_str}"
         )
         # None of Flow's pre-filled template leaked through.
-        assert "Tríptico" not in inserted[0]
-        assert "[DESCREVA O CORPO E A ROUPA]" not in inserted[0]
-        assert "red raincoat, rubber boots" in inserted[0]
+        assert "Tríptico" not in inserted_str
+        assert "[DESCREVA O CORPO E A ROUPA]" not in inserted_str
+        assert "red raincoat, rubber boots" in inserted_str
 
     @pytest.mark.asyncio
     async def test_triptych_instruction_always_present(self) -> None:
@@ -857,7 +858,7 @@ class TestSubmitBodyPrompt:
 
             await t._submit_body_prompt(page, "warrior outfit")  # type: ignore[attr-defined]
 
-            submitted = inserted[0]
+            submitted = "".join(inserted)
             assert "front, side (3/4), and back" in submitted, (
                 f"front/side/back triptych instruction must always be present; got {submitted!r}"
             )

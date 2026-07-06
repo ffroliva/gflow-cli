@@ -331,12 +331,21 @@ PICKER_VOZES_TAB = (
 # preview, `arrow_drop_down` sort) — same situation as ADD_TO_PROMPT_DIALOG.
 # Tiers are probed sequentially (see _resolve_include_action), never flattened
 # into one comma list: comma lists resolve in DOM order, not tier priority.
-PICKER_INCLUDE_BUTTON: tuple[str, str] = (
+PICKER_INCLUDE_BUTTON: tuple[str, str, str, str] = (
+    "[role='dialog'][data-state='open'] button:has(div[data-type='button-overlay'])"
+    ":not(:has(i.google-symbols))",
+    "[role='dialog']:visible button:has(div[data-type='button-overlay'])"
+    ":not(:has(i.google-symbols))",
     "button:has-text('Incluir no comando'), button:has-text('Добавить в запрос'),"
     " button:has-text('Add to prompt')",
     "[role='dialog'][data-state='open'] button:not(:has(i.google-symbols))",
 )
-_INCLUDE_BUTTON_TIER_NAMES = ("text", "structural")
+_INCLUDE_BUTTON_TIER_NAMES = (
+    "structural_overlay_open",
+    "structural_overlay_visible",
+    "text",
+    "structural_iconless",
+)
 # Context-menu include action shown on RIGHT-CLICK of a Personagens entity
 # tile. This is what stages a `referenceEntity` (the inline Tudo button instead
 # stages a `referenceImage` of the thumbnail). Verified 2026-06-06.
@@ -1181,6 +1190,13 @@ class VideoGenerationMixin:
         await tile.click()
         await page.wait_for_timeout(300)
 
+        # Check if the tile click auto-closed the picker (some Flow UI cohorts
+        # auto-attach and close on tile click, removing the "Add to Prompt" step).
+        dialog = page.locator(DIALOG_ANY).last
+        if not await dialog.is_visible():
+            log.info("ui_automation_video.picker_auto_closed", surface=surface)
+            return
+
         # Include via the tiered, locale-safe resolver (a hardcoded English
         # "Add to Prompt" here previously hung non-English accounts — #170/#56).
         include = await VideoGenerationMixin._resolve_include_action(
@@ -1210,15 +1226,19 @@ class VideoGenerationMixin:
     def _remote_option_tile(page: Page, name: str) -> Locator:
         """Locate a picker result tile by its display name.
 
-        Uses ARIA role+name matching rather than
-        ``[role='option']:has-text('{name}')``: ``name`` is a stored
-        ``display_name`` or the original generation prompt, both of which
-        commonly contain an apostrophe or quote that would break a
-        single-quoted ``:has-text()`` CSS selector (PR #237 review).
+        Uses ARIA role + exact text node matching rather than
+        ``[role='option']:has-text('{name}')`` or ``name=name`` in get_by_role:
+        - name=name in get_by_role fails when the accessible name concatenates
+          other text (e.g. 'Icy planet in deep spaceImage' due to Flow's layout).
+        - :has-text() with string injection breaks on quotes/apostrophes.
+        - The exact=True text filter prevents 'cabin' from matching 'cabin at night'
+          (PR #245 review).
         """
-        # exact=True: the default substring match would let 'cabin' select
-        # 'cabin at night' and .first attach the wrong image (PR #245 review).
-        return page.get_by_role("option", name=name, exact=True)
+        text_node = page.get_by_text(name, exact=True)
+        return (
+            page.get_by_role("option").filter(has=text_node)
+            .or_(page.get_by_role("button").filter(has=text_node))
+        )
 
     @staticmethod
     async def _resolve_frame_slot(
