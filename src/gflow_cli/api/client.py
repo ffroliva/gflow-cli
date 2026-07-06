@@ -250,9 +250,11 @@ class FlowApiClient:
         settings: Settings | None = None,
         transport: FlowTransportStrategy | str | None = None,
         out_dir: Path | None = None,
+        mcp_warmup: bool = False,
     ) -> None:
         self.profile_dir = profile_dir
         self.headless = headless
+        self.mcp_warmup = mcp_warmup
         # Optional directory for debug screenshots when a generation step
         # fails on a selector. Propagated to the transport (see __aenter__)
         # so long-lived workers can diagnose a "Could not find ... CTA"
@@ -620,6 +622,30 @@ class FlowApiClient:
         # Back-compat alias for callers that still touch ``self._page``
         # directly. T3 removes the field entirely.
         self._page = self._pages[0]
+
+        if self.mcp_warmup:
+            try:
+                logger.info("client.mcp_warmup_start")
+                await self._page.goto(
+                    "https://www.google.com",
+                    wait_until="domcontentloaded",
+                    timeout=45_000,
+                )
+                await self._page.fill("textarea[name='q'], input[name='q']", "Google Flow")
+                await self._page.keyboard.press("Enter")
+                await self._page.wait_for_selector("a[href*='labs.google']", timeout=15000)
+                links = await self._page.locator("a[href*='labs.google']").all()
+                if links:
+                    await links[0].click()
+                    await self._page.wait_for_url(
+                        lambda url: "labs.google/fx/tools/flow" in url,
+                        timeout=15000,
+                    )
+                else:
+                    logger.warning("client.mcp_warmup_no_links")
+            except Exception as exc:
+                logger.warning("client.mcp_warmup_error", error=str(exc))
+
         # Bootstrap navigation so cookies + JS context are loaded before any
         # API call. Many endpoints 401 if you POST cold without an active page.
         # (Phase 3 deferred ``_new_session_id`` flake is addressed in T3 by

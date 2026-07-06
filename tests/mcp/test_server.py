@@ -429,7 +429,7 @@ class TestCliMcpParameterSymmetry:
         """Key parameters of `gflow video t2v` must appear in gflow_generate_video."""
         tool = mcp_server._tool_manager._tools["gflow_generate_video"]
         schema_props = set(tool.parameters.get("properties", {}).keys())
-        required_in_both = {"prompt", "mode", "aspect", "profile"}
+        required_in_both = {"prompt", "mode", "aspect", "profile", "model", "duration", "count"}
         assert required_in_both.issubset(schema_props), (
             f"MCP tool missing CLI params: {required_in_both - schema_props}"
         )

@@ -108,6 +108,7 @@ class _SessionManager:
                 client = FlowApiClient(
                     profile_dir=profile_dir,
                     settings=settings,
+                    mcp_warmup=True,
                 )
                 await client.__aenter__()
                 self.clients[profile] = client
@@ -121,12 +122,23 @@ class _SessionManager:
                 self.last_used[profile] = time.time()
 
     async def _monitor_idle_clients(self) -> None:
+        import os
         while True:
             await asyncio.sleep(60)
+
+            idle_time_str = os.environ.get("MCP_IDLE_TIME", "300")
+            try:
+                idle_timeout = int(idle_time_str)
+            except ValueError:
+                idle_timeout = 300
+
+            if idle_timeout <= 0:
+                continue
+
             now = time.time()
             async with self._lock:
                 for profile, client in list(self.clients.items()):
-                    if now - self.last_used.get(profile, now) > 300:  # 5 mins idle
+                    if now - self.last_used.get(profile, now) > idle_timeout:
                         try:
                             await client.__aexit__(None, None, None)
                         except Exception:
@@ -758,6 +770,9 @@ async def gflow_generate_video(
     prompt: str,
     mode: str = "t2v",
     aspect: str = "9:16",
+    model: str | None = None,
+    duration: int | None = None,
+    count: int = 1,
     initial_frame: str | None = None,
     end_frame: str | None = None,
     reference_images: list[str] | None = None,
@@ -771,6 +786,9 @@ async def gflow_generate_video(
         prompt: The text prompt describing the desired video.
         mode: Generation mode — 't2v', 'i2v', or 'r2v'.
         aspect: Aspect ratio — '9:16' or '16:9'.
+        model: Model to use (e.g. 'omni-flash', 'veo-lite'). If omitted, Flow's default applies.
+        duration: Clip length in seconds (4, 6, 8, or 10).
+        count: Number of videos to generate (1-4).
         initial_frame: Path to start frame image (required for i2v).
         end_frame: Path to end frame image (optional for i2v).
         reference_images: List of reference image paths (ingredients) for r2v.
@@ -817,6 +835,9 @@ async def gflow_generate_video(
             prompt=prompt[:80],
             mode=mode,
             aspect=aspect,
+            model=model,
+            duration=duration,
+            count=count,
             profile=resolved_profile,
         )
 
@@ -825,11 +846,22 @@ async def gflow_generate_video(
             return adapted
         tool_specs = adapted
 
+        # Protect against omni-flash silently dropping i2v frames (issue #125)
+        # by enforcing the same I2V_DEFAULT_MODEL logic as the CLI.
+        if mode == "i2v" and model is None:
+            from gflow_cli.api.video import I2V_DEFAULT_MODEL
+            model = I2V_DEFAULT_MODEL.value
+
         payload: dict[str, Any] = {
             "prompt": prompt,
             "mode": mode,
             "aspect": aspect,
+            "count": count,
         }
+        if model is not None:
+            payload["model"] = model
+        if duration is not None:
+            payload["duration"] = duration
 
         media, media_err = _build_video_media_inputs(
             mode=mode,

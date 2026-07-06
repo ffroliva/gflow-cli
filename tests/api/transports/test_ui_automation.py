@@ -32,6 +32,7 @@ from gflow_cli.api.transports.ui_automation import (
     ONBOARDING_SELECTORS,
     SUBMIT_BUTTON_SELECTORS,
     UiAutomationTransport,
+    _collect_images_from_body,
     _count_tabs_locator,  # noqa: PLC2701
     _summarize_batch_request_body,  # noqa: PLC2701
 )
@@ -2948,11 +2949,11 @@ class TestModeSwitchExitsAgentFirst:
 
         assert order and order[0] == "exit_agent", f"expected exit_agent first, got {order}"
 
-from gflow_cli.api.transports.ui_automation import _collect_images_from_body
+
 
 class TestCollectImagesFromBody:
     def test_extracts_display_name_from_fully_qualified_workflows(self) -> None:
-        """Verifies that _collect_images_from_body strips path prefixes when mapping workflows to display names."""
+        """Verifies that _collect_images_from_body strips path prefixes for display names."""
         body = {
             "media": [
                 {

@@ -307,10 +307,10 @@ class AgenticFlowUiDriver:
         # is the proven Slate path (mirrors classic _send_prompt).
         await page.keyboard.press("Control+a")
         await page.keyboard.press("Delete")
-        
+
         from gflow_cli.config import BrowserEngine, get_settings
         is_camoufox = get_settings().browser_engine == BrowserEngine.CAMOUFOX
-        
+
         if is_camoufox:
             await page.keyboard.type(directive)
         else:

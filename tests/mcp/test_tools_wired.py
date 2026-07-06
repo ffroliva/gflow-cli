@@ -51,6 +51,7 @@ class _FakeImage:
     aspect_ratio: str = "1:1"
     seed: int = 12345
     fife_url: str = "http://fake"
+    display_name: str | None = None
 
 
 def _completed_video_result(media_id: str = "media-vid-wired") -> VideoResult:
@@ -101,7 +102,7 @@ class TestGenerateImageWired:
                 return_value="default",
             ),
             patch(
-                "gflow_cli.worker.daemon.FlowApiClient",
+                "gflow_cli.mcp.tools.FlowApiClient",
                 return_value=_FakeFlowApiClient(),
             ),
             patch(
@@ -143,7 +144,7 @@ class TestGenerateImageWired:
                 return_value="default",
             ),
             patch(
-                "gflow_cli.worker.daemon.FlowApiClient",
+                "gflow_cli.mcp.tools.FlowApiClient",
                 return_value=_FakeFlowApiClient(),
             ),
             patch(
@@ -208,7 +209,7 @@ class TestGenerateVideoWired:
                 return_value="default",
             ),
             patch(
-                "gflow_cli.worker.daemon.FlowApiClient",
+                "gflow_cli.mcp.tools.FlowApiClient",
                 return_value=_FakeFlowApiClient(),
             ),
             patch(
@@ -295,7 +296,7 @@ class TestGenerateVideoWired:
                 return_value="default",
             ),
             patch(
-                "gflow_cli.worker.daemon.FlowApiClient",
+                "gflow_cli.mcp.tools.FlowApiClient",
                 return_value=failing_client,
             ),
             patch(
@@ -383,7 +384,7 @@ class TestRunGenerationTask:
 
         with (
             patch(
-                "gflow_cli.worker.daemon.FlowApiClient",
+                "gflow_cli.mcp.tools.FlowApiClient",
                 return_value=_FakeFlowApiClient(),
             ),
             patch(
@@ -423,7 +424,7 @@ class TestRunGenerationTask:
 
         with (
             patch(
-                "gflow_cli.worker.daemon.FlowApiClient",
+                "gflow_cli.mcp.tools.FlowApiClient",
                 return_value=_FakeFlowApiClient(),
             ),
             patch(
