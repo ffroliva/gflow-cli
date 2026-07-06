@@ -291,7 +291,19 @@ class FlowWorker:
         model_val = payload.get("model")
         model = ImageModel.from_cli(model_val) if model_val else ImageModel.NARWHAL
 
-        refs = tuple(ImageRef(r) for r in payload.get("refs", []))
+        # ref_meta (set by the MCP layer's _enrich_image_refs) carries the
+        # display_name + on-disk local_path per media-id ref, so the transport
+        # can select the EXISTING asset in the picker (preferred, no duplicate)
+        # and fall back to uploading local_path only if it can't be located.
+        ref_meta: dict[str, dict[str, str]] = payload.get("ref_meta", {})
+        refs = tuple(
+            ImageRef(
+                r,
+                display_name=ref_meta.get(r, {}).get("display_name", ""),
+                local_path=ref_meta.get(r, {}).get("local_path", ""),
+            )
+            for r in payload.get("refs", [])
+        )
         ref_paths = tuple(Path(p) for p in payload.get("ref_paths", []))
         # NOTE: the payload may carry "ref_names" (the MCP layer resolves them
         # for the video request); the image transport attaches remote refs by
