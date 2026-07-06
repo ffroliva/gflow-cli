@@ -37,6 +37,24 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   for the rare case where the local file was pruned is a planned follow-up; for now
   that case fails fast with a clear "Reference Not On Disk" error.)
 
+- **`gflow_generate_image` no longer silently saves a video as an image**: the
+  agentic image path has no explicit image-mode toggle — Flow's conversational
+  agent infers image-vs-video from the prompt and can produce a *video*, whose
+  tile is then scraped as if it were an image. The MP4 bytes were saved with a
+  `.png` suffix and catalogued as an image, a silent corruption that only
+  surfaced far downstream (Flow 400-rejects the file as an i2v frame → text-only
+  #125 fallback). `download_image` now detects video magic bytes (ISO-BMFF / WebM)
+  and fails loud with a `WireFormatError` naming the cause, instead of writing the
+  corrupt file. (Root cause — the agentic agent producing a video for an image
+  request — is tracked separately; this stops the silent corruption.)
+
+- **Rejected i2v/r2v frame uploads now fail loud instead of falling back to T2V**:
+  `_upload_via_open_dialog` matched the `uploadImage` response by URL only and
+  ignored its status, so a Flow 4xx rejection (e.g. an invalid image file) was
+  treated as success — the code committed an empty slot and the generation
+  silently produced a text-only video (#125). The upload status is now checked and
+  a rejection aborts with a clear error.
+
 ### Added
 
 - **Remote image UUIDs in `gflow_generate_video` (#237)**: I2V (`initial_frame` /
