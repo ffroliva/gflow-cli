@@ -968,14 +968,60 @@ class FlowApiClient:
     # --- public API -------------------------------------------------------
 
     async def create_project(self, title: str | None = None) -> ProjectInfo:
-        """Bootstrap a fresh Flow project. Title defaults to a timestamp.
+        """Bootstrap a fresh Flow project via UI automation.
 
-        Maps to `POST .../trpc/project.createProject`.
+        Navigates to the editor bootstrap URL, clicks the "New Project" button
+        (localized via the 'add_2' Google symbol icon), and intercepts the
+        tRPC createProject response.
         """
         title = title or _default_project_title()
-        body = {"json": {"projectTitle": title, "toolName": "PINHOLE"}}
-        data = await self._post_json(routes.CREATE_PROJECT, body, content_type=_APPLICATION_JSON)
-        return ProjectInfo.from_create_response(data)
+        page = await self._checkout_page()
+        try:
+            # 1. Ensure we are on the flow tools page (where the New Project button lives)
+            if not page.url.startswith("https://labs.google/fx/tools/flow"):
+                await page.goto(
+                    routes.EDITOR_BOOTSTRAP_URL,
+                    wait_until="domcontentloaded",
+                    timeout=60_000,
+                )
+
+            # Wait for button to be visible
+            btn = page.locator('button:has(i.google-symbols:has-text("add_2"))').first
+            await btn.wait_for(state="visible", timeout=30_000)
+
+            # Intercept the createProject tRPC response
+            async with page.expect_response(
+                lambda r: "project.createProject" in r.url and r.status == 200, timeout=30_000
+            ) as response_info:
+                await btn.click()
+
+            response = await response_info.value
+            try:
+                raw_data = await response.json()
+                if isinstance(raw_data, list) and raw_data:
+                    data_dict = cast("dict[str, Any]", raw_data[0])
+                else:
+                    data_dict = cast("dict[str, Any]", raw_data)
+                return ProjectInfo.from_create_response(data_dict)
+            except Exception as e:
+                # Fallback: if interception parsing fails, attempt to extract from the new URL
+                import re
+
+                try:
+                    await page.wait_for_url(re.compile(r"/project/([^/?]+)"), timeout=15_000)
+                except Exception:
+                    pass
+                m = re.search(r"/project/([^/?]+)", page.url)
+                if m:
+                    return ProjectInfo(project_id=m.group(1), title=title)
+                raise WireFormatError(
+                    detail=f"Failed to parse project creation response or URL: {e}",
+                    status=200,
+                    instance=_make_instance(),
+                    route="project.createProject",
+                ) from e
+        finally:
+            self._checkin_page(page)
 
     async def upload_image(self, project_id: str, image_path: Path) -> AssetInfo:
         """Upload an image into a Flow project's library.

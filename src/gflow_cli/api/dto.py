@@ -176,14 +176,17 @@ class GeneratedImage:
         workflows = data.get("workflows", [])
         workflow_map: dict[str, str] = {}
         if isinstance(workflows, list):
-            for w in workflows:
+            workflows_list = cast("list[Any]", workflows)
+            for w in workflows_list:
                 if not isinstance(w, dict):
                     continue
-                w_id = w.get("name")
+                w_dict = cast("dict[str, Any]", w)
+                w_id = w_dict.get("name")
                 if isinstance(w_id, str):
-                    metadata = w.get("metadata")
+                    metadata = w_dict.get("metadata")
                     if isinstance(metadata, dict):
-                        display_name = metadata.get("displayName")
+                        metadata_dict = cast("dict[str, Any]", metadata)
+                        display_name = metadata_dict.get("displayName")
                         if isinstance(display_name, str):
                             workflow_map[w_id] = display_name
 
@@ -194,6 +197,7 @@ class GeneratedImage:
             w_id = img.workflow_id
             if w_id in workflow_map:
                 from dataclasses import replace
+
                 img = replace(img, display_name=workflow_map[w_id])
             result.append(img)
         return result

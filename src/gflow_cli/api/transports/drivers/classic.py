@@ -171,6 +171,7 @@ class ClassicFlowUiDriver:
         prompt_text: str,
         *,
         out_dir: Path | None = None,
+        fast: bool = False,
     ) -> None:
         """Type ``prompt_text`` into Flow's editor and submit.
 
@@ -186,7 +187,7 @@ class ClassicFlowUiDriver:
             )
             raise RuntimeError(msg)
         await self._transport._send_prompt(  # type: ignore[reportPrivateUsage]
-            page, prompt_text, out_dir
+            page, prompt_text, out_dir, fast=fast
         )
 
     # ------------------------------------------------------------------

@@ -757,14 +757,23 @@ class TestSendPrompt:
     async def test_types_prompt_and_clicks_submit(self) -> None:
         t = UiAutomationTransport()
         page = _make_prompt_page(input_visible=True, submit_visible=True)
-        await t._send_prompt(page, "hello world")  # type: ignore[attr-defined]
+        await t._send_prompt(page, "hello")  # type: ignore[attr-defined]
         page._input_loc.click.assert_called_once()  # type: ignore[attr-defined]
-        # Clear (Ctrl+A + Delete) then insert_text (single beforeinput event — near-instant).
+        # Clear (Ctrl+A + Delete) then insert_text.
         press_calls = [c.args[0] for c in page.keyboard.press.call_args_list]
         assert "Control+A" in press_calls
         assert "Delete" in press_calls
-        page.keyboard.insert_text.assert_called_once_with("hello world")
+        
+        insert_calls = [c.args[0] for c in page.keyboard.insert_text.call_args_list]
+        assert insert_calls == ["h", "e", "l", "l", "o"]
         page._submit_loc.click.assert_called_once()  # type: ignore[attr-defined]
+
+    @pytest.mark.asyncio
+    async def test_fast_typing_submits_at_once(self) -> None:
+        t = UiAutomationTransport()
+        page = _make_prompt_page(input_visible=True, submit_visible=True)
+        await t._send_prompt(page, "hello", fast=True)  # type: ignore[attr-defined]
+        page.keyboard.insert_text.assert_called_once_with("hello")
 
     @pytest.mark.asyncio
     async def test_falls_back_to_enter_when_no_submit_button(self) -> None:
@@ -1109,7 +1118,10 @@ class TestGenerateImages:
     async def test_non_200_response_raises(self) -> None:
         t = UiAutomationTransport()
         t._setup_done = True  # type: ignore[attr-defined]
-        t._page = MagicMock()  # type: ignore[attr-defined]
+        page_mock = MagicMock()
+        page_mock.reload = AsyncMock()
+        page_mock.wait_for_timeout = AsyncMock()
+        t._page = page_mock  # type: ignore[attr-defined]
 
         with (
             patch.object(t, "_enter_editor", new=AsyncMock()),

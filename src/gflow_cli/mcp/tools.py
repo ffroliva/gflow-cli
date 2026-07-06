@@ -24,6 +24,7 @@ from typing import Any
 import structlog
 
 from gflow_cli._cli_helpers import _FLOW_ID_RE
+from gflow_cli.api.client import FlowApiClient
 from gflow_cli.config import get_settings
 from gflow_cli.data.queries import list_projects
 from gflow_cli.data.repository import DataRepository
@@ -69,6 +70,73 @@ class _TokenBucket:
 
 
 _rate_limiter = _TokenBucket()
+
+
+class _SessionManager:
+    """Manages long-lived FlowApiClient sessions for MCP tools."""
+
+    def __init__(self) -> None:
+        self.clients: dict[str, FlowApiClient] = {}
+        self.last_used: dict[str, float] = {}
+        self._lock = asyncio.Lock()
+        self._monitor_task: asyncio.Task[None] | None = None
+
+    async def get_client(self, profile: str) -> FlowApiClient:
+        from gflow_cli.config import get_settings
+
+        async with self._lock:
+            if self._monitor_task is None:
+                self._monitor_task = asyncio.create_task(self._monitor_idle_clients())
+
+            client = self.clients.get(profile)
+            if client is not None:
+                try:
+                    # If the page was manually closed, recreate the client.
+                    if client.page.is_closed():
+                        await client.__aexit__(None, None, None)
+                        client = None
+                except Exception:
+                    try:
+                        await client.__aexit__(None, None, None)
+                    except Exception:
+                        pass
+                    client = None
+
+            if client is None:
+                settings = get_settings()
+                profile_dir = settings.profile_subdir(profile)
+                client = FlowApiClient(
+                    profile_dir=profile_dir,
+                    settings=settings,
+                )
+                await client.__aenter__()
+                self.clients[profile] = client
+
+            self.last_used[profile] = time.time()
+            return client
+
+    async def release_client(self, profile: str) -> None:
+        async with self._lock:
+            if profile in self.last_used:
+                self.last_used[profile] = time.time()
+
+    async def _monitor_idle_clients(self) -> None:
+        while True:
+            await asyncio.sleep(60)
+            now = time.time()
+            async with self._lock:
+                for profile, client in list(self.clients.items()):
+                    if now - self.last_used.get(profile, now) > 300:  # 5 mins idle
+                        try:
+                            await client.__aexit__(None, None, None)
+                        except Exception:
+                            pass
+                        self.clients.pop(profile, None)
+                        self.last_used.pop(profile, None)
+                        log.info("mcp.session.idle_timeout", profile=profile)
+
+
+_session_manager = _SessionManager()
 
 # Per-profile execution locks to prevent Playwright collisions
 _profile_locks: dict[str, asyncio.Lock] = {}
@@ -239,9 +307,13 @@ async def _run_generation_task(
         )
 
         # 2. Run the worker synchronously (we already hold the profile lock).
+        # We reuse a long-lived FlowApiClient via the SessionManager so we don't
+        # thrash browser contexts between consecutive batch calls.
         worker = FlowWorker(profile_name=profile, db_path=str(db_path))
         try:
-            await worker.process_task(task)
+            client = await _session_manager.get_client(profile)
+            await worker.process_task(task, client=client)
+            await _session_manager.release_client(profile)
         finally:
             worker.close()
 

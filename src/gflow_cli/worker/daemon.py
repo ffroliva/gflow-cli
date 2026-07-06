@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 import asyncio
+import contextlib
 from pathlib import Path
 from typing import Any
 
@@ -73,7 +74,7 @@ class FlowWorker:
                 )
                 await asyncio.sleep(5)
 
-    async def process_task(self, task: QueueTask) -> None:
+    async def process_task(self, task: QueueTask, client: FlowApiClient | None = None) -> None:
         logger.info(
             "Processing task",
             task_id=task.task_id,
@@ -100,31 +101,35 @@ class FlowWorker:
                     DataRepository(self.db), prompt_mode=settings.history_prompts
                 )
                 try:
-                    async with FlowApiClient(
-                        profile_dir=profile_dir,
-                        headless=headless,
-                        transport=transport,
-                        out_dir=out_dir,
-                        # Reuse the cached settings: a bare Settings() in the client
-                        # would re-read .env files live per task and could disagree
-                        # with the task parameters derived from get_settings().
-                        settings=settings,
-                    ) as client:
+                    client_ctx = (
+                        contextlib.nullcontext(client)
+                        if client is not None
+                        else FlowApiClient(
+                            profile_dir=profile_dir,
+                            headless=headless,
+                            transport=transport,
+                            out_dir=out_dir,
+                            settings=settings,
+                        )
+                    )
+                    async with client_ctx as active_client:
                         project_title = task.payload.get("project_title", "gflow-cli images")
                         project_created = False
                         if project_id:
                             project_flow_id = project_id
                             project = ProjectInfo(project_id=project_id, title=project_title)
                         else:
-                            project = await client.create_project(title=project_title)
+                            project = await active_client.create_project(title=project_title)
                             project_flow_id = project.project_id
                             project_created = True
 
                         if count == 1:
-                            img = await client.generate_image(project_id=project_flow_id, req=req)
+                            img = await active_client.generate_image(
+                                project_id=project_flow_id, req=req
+                            )
                             images = [img]
                         else:
-                            images = await client.generate_images_batch(
+                            images = await active_client.generate_images_batch(
                                 project_id=project_flow_id,
                                 req=req,
                                 count=count,
@@ -137,7 +142,7 @@ class FlowWorker:
                             target = image_output_path(
                                 settings.output_dir, job_id=img.media_name, index=i
                             )
-                            saved = await client.download_image(img, target)
+                            saved = await active_client.download_image(img, target)
                             saved_paths.append(saved)
 
                         recorder.record_generated_images(
@@ -175,13 +180,18 @@ class FlowWorker:
                     DataRepository(self.db), prompt_mode=settings.history_prompts
                 )
                 try:
-                    async with FlowApiClient(
-                        profile_dir=profile_dir,
-                        headless=headless,
-                        transport=transport,
-                        out_dir=out_dir,
-                        settings=settings,  # same rationale as the image path above
-                    ) as client:
+                    client_ctx = (
+                        contextlib.nullcontext(client)
+                        if client is not None
+                        else FlowApiClient(
+                            profile_dir=profile_dir,
+                            headless=headless,
+                            transport=transport,
+                            out_dir=out_dir,
+                            settings=settings,
+                        )
+                    )
+                    async with client_ctx as active_client:
 
                         def on_started(started: VideoStarted) -> None:
                             try:
@@ -194,7 +204,7 @@ class FlowWorker:
                             except Exception as exc:
                                 logger.warning("Failed to record started video", exc_info=exc)
 
-                        result = await client.generate_video(
+                        result = await active_client.generate_video(
                             req=req,
                             project_id=project_id,
                             out_dir=out_dir,

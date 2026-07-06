@@ -1181,6 +1181,8 @@ class UiAutomationTransport(VideoGenerationMixin):
         page: Page,
         prompt_text: str,
         out_dir: Path | None = None,
+        *,
+        fast: bool = False,
     ) -> None:
         """Type ``prompt_text`` into Flow's editor and submit.
 
@@ -1207,9 +1209,23 @@ class UiAutomationTransport(VideoGenerationMixin):
         await input_box.click()
         await page.keyboard.press("Control+A")
         await page.keyboard.press("Delete")
-        # insert_text fires a single beforeinput event that Slate.js handles
-        # natively — near-instant vs keyboard.type() which is ~1.5s/char.
-        await page.keyboard.insert_text(prompt_text)
+
+        if fast:
+            await page.keyboard.insert_text(prompt_text)
+            await page.wait_for_timeout(100)
+        else:
+            # We use insert_text character by character with randomized delays to
+            # simulate human typing and avoid bot detection (paste signature), while
+            # bypassing Slate.js's 1.5s/char overhead for the .type() keydown events.
+            import random
+
+            for char in prompt_text:
+                if char == "\n":
+                    await page.keyboard.press("Enter")
+                else:
+                    await page.keyboard.insert_text(char)
+                # random delay between 20ms and 80ms
+                await page.wait_for_timeout(random.randint(20, 80))
         await page.wait_for_timeout(500)
 
         await self._click_submit(page)
@@ -1249,12 +1265,21 @@ class UiAutomationTransport(VideoGenerationMixin):
 
         # Clear Flow's pre-filled (localized) template and replace it wholesale
         # with our self-contained triptych prompt. Slate.js needs real keyboard
-        # events — select-all + Delete + insert_text, the same path _send_prompt
-        # uses.
+        # events — select-all + Delete + insert_text.
+        # We simulate human typing with random delays.
         await input_box.click()
         await page.keyboard.press("Control+A")
         await page.keyboard.press("Delete")
-        await page.keyboard.insert_text(full_prompt)
+
+        import random
+
+        for char in full_prompt:
+            if char == "\n":
+                await page.keyboard.press("Enter")
+            else:
+                await page.keyboard.insert_text(char)
+            await page.wait_for_timeout(random.randint(20, 80))
+
         await page.wait_for_timeout(500)
 
         log.info(
@@ -2138,22 +2163,11 @@ class UiAutomationTransport(VideoGenerationMixin):
             return await ui_driver.await_images(page, request.count, out_dir=out_dir)
 
         # Classic path: network-capture via response listener (unchanged).
-        # Attach the response listener SYNCHRONOUSLY before any prompt
-        # action. asyncio.create_task is unsafe here: it defers the listener
-        # registration until the new task gets event-loop scheduling, which
-        # could happen AFTER _send_prompt's click on a busy loop. Splitting
-        # attach/await eliminates that race. Project-ID filter prevents stale
-        # responses from previously-visited projects accumulating in the list.
         captured, detach = self._attach_batch_response_listener(page, project_id=nav_project_id)
-        # Also log the OUTGOING request body summary AND collect the entity ids
-        # it carries — the #170 submit backstop reads the sink after the run.
         request_bodies: list[dict[str, Any]] = []
         req_log_detach = self._attach_batch_request_logger(
             page, project_id=nav_project_id, sink=request_bodies
         )
-        # Record submit_time BEFORE the click so the post-submit-time filter
-        # in _await_captured can distinguish this prompt's responses from any
-        # stale entries that arrived between listener attach and the click.
         submit_time = time.monotonic()
         responses: list[dict[str, Any]] = []
         try:
@@ -2167,9 +2181,53 @@ class UiAutomationTransport(VideoGenerationMixin):
             detach()
             req_log_detach()
 
-        # Collect images from ALL captured responses (Flow makes one API call
-        # per image when count > 1).
-        images, first_error_status, first_error_route = _images_from_responses(responses)
+        try:
+            images, first_error_status, first_error_route = _images_from_responses(responses)
+        except WafRejectionError:
+            log.warning(
+                "ui_automation.waf_retry",
+                note="WAF block encountered. Refreshing page and retrying with fast paste...",
+            )
+            await page.reload(wait_until="domcontentloaded")
+            await page.wait_for_timeout(3000)
+            await self._dismiss_blocking_overlays(page, out_dir)
+
+            # Re-attach any reference images/entities that were cleared by the refresh
+            if request.ref_paths:
+                await self._attach_references(page, list(request.ref_paths), out_dir=out_dir)
+
+            if request.ref_names:
+                from gflow_cli.api.transports.ui_automation_video import VideoGenerationMixin
+
+                await VideoGenerationMixin._attach_remote_references(
+                    page, list(request.ref_names), out_dir=out_dir
+                )
+
+            if request.reference_entities:
+                await self._attach_character_entities(
+                    page,
+                    zip_entity_refs(request.reference_entities, request.reference_entity_names),
+                    out_dir=out_dir,
+                )
+
+            captured, detach = self._attach_batch_response_listener(page, project_id=nav_project_id)
+            req_log_detach = self._attach_batch_request_logger(
+                page, project_id=nav_project_id, sink=request_bodies
+            )
+            submit_time = time.monotonic()
+            responses = []
+            try:
+                await ui_driver.send_prompt(page, request.prompt, out_dir=out_dir, fast=True)
+                responses = await self._await_captured(
+                    captured,
+                    expected_count=request.count,
+                    submit_time=submit_time,
+                )
+            finally:
+                detach()
+                req_log_detach()
+
+            images, first_error_status, first_error_route = _images_from_responses(responses)
 
         if first_error_status is not None and not images:
             raise WireFormatError(
