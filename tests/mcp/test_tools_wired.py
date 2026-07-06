@@ -51,6 +51,7 @@ class _FakeImage:
     aspect_ratio: str = "1:1"
     seed: int = 12345
     fife_url: str = "http://fake"
+    display_name: str | None = None  # mirrors GeneratedImage.display_name
 
 
 def _completed_video_result(media_id: str = "media-vid-wired") -> VideoResult:
