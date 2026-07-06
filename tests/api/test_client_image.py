@@ -480,6 +480,29 @@ class TestDownloadImage:
 
         assert exc_info.value.status == 403
 
+    async def test_download_image_rejects_video_content(
+        self, client: FlowApiClient, tmp_path: Path
+    ) -> None:
+        """An image download whose bytes are actually a video (an agentic
+        gflow_generate_image can have Flow's agent produce a video) must fail
+        loud with WireFormatError, not silently save a video with a .png
+        suffix (which then fails far downstream as an i2v frame)."""
+        mp4 = b"\x00\x00\x00\x20ftypisom\x00\x00\x02\x00isomiso2avc1mp41"
+
+        async def fake_request_get(url, **kwargs):
+            resp = MagicMock()
+            resp.status = 200
+            resp.body = AsyncMock(return_value=mp4)
+            return resp
+
+        client._page.request.get = AsyncMock(side_effect=fake_request_get)
+
+        out_path = tmp_path / "out.png"
+        with pytest.raises(WireFormatError):
+            await client.download_image(_make_image(), out_path)
+        # Nothing written — the corrupt file must not land on disk.
+        assert not out_path.exists()
+
     async def test_download_image_error_route_redacts_signed_url_query(
         self, client: FlowApiClient, tmp_path: Path
     ) -> None:

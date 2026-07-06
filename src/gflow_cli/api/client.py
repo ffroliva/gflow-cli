@@ -64,7 +64,7 @@ from gflow_cli.errors import (
     WafRejectionError,
     WireFormatError,
 )
-from gflow_cli.paths import adjust_key_extension, character_output_path
+from gflow_cli.paths import adjust_key_extension, character_output_path, looks_like_video
 from gflow_cli.storage import AnyPath, storage_path, write_asset_async
 
 if TYPE_CHECKING:
@@ -1096,6 +1096,24 @@ class FlowApiClient:
         if resp.status >= 400:
             _raise_for_non_retryable(resp, await resp.text(), route=route)
         body = await resp.body()
+
+        # Fail loud if an image request downloaded video content. The agentic
+        # gflow_generate_image path has no explicit image-mode toggle — Flow's
+        # conversational agent infers image-vs-video from the prompt and can
+        # produce a video, whose tile await_images then scrapes as if it were an
+        # image. Saving those bytes with an image suffix is a silent corruption
+        # that only surfaces far downstream (e.g. Flow 400-rejects the file as an
+        # i2v frame -> #125 text-only fallback). Catch it at the download.
+        if looks_like_video(body):
+            raise WireFormatError(
+                detail=(
+                    "image download returned video content (ISO-BMFF/WebM magic "
+                    "bytes) — the agentic conversational agent likely produced a "
+                    "video instead of an image. Use a Classic UI profile "
+                    "(GFLOW_CLI_PREFER_CLASSIC=1) or rephrase the prompt."
+                ),
+                route=route,
+            )
 
         # Resolve the write target: local Path or cloud UPath.
         # Compute a relative key from out_path so cloud keys mirror the local

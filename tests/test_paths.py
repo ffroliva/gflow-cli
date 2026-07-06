@@ -159,6 +159,39 @@ class TestExtensionFromMagic:
         assert paths.extension_from_magic(b"RIFF\x00\x00\x00\x00WAVE") is None
 
 
+# Real ISO-BMFF (MP4) header from a Flow-generated video mis-saved as .png
+# (issue: agentic gflow_generate_image produced a video). Box size + 'ftyp' +
+# brand 'isom'/'iso2'/'avc1'/'mp41'.
+_MP4_HEAD = b"\x00\x00\x00\x20ftypisom\x00\x00\x02\x00isomiso2avc1mp41"
+_WEBM_HEAD = b"\x1a\x45\xdf\xa3" + b"\x00" * 20
+
+
+class TestLooksLikeVideo:
+    """`looks_like_video` positively detects video containers so an image
+    download that returns video content can fail loud instead of silently
+    saving a video with an image extension."""
+
+    def test_mp4_isobmff_detected(self) -> None:
+        assert paths.looks_like_video(_MP4_HEAD) is True
+
+    def test_webm_matroska_detected(self) -> None:
+        assert paths.looks_like_video(_WEBM_HEAD) is True
+
+    def test_png_is_not_video(self) -> None:
+        assert paths.looks_like_video(_PNG_HEAD) is False
+
+    def test_jpeg_is_not_video(self) -> None:
+        assert paths.looks_like_video(_JPEG_JFIF_HEAD) is False
+
+    def test_arbitrary_bytes_are_not_video(self) -> None:
+        # Guard must be conservative: only POSITIVE video detection, so
+        # unrecognised/short buffers (and existing arbitrary-byte download
+        # tests) are never misclassified as video.
+        assert paths.looks_like_video(b"image-bytes") is False
+        assert paths.looks_like_video(b"") is False
+        assert paths.looks_like_video(b"ftyp") is False  # too short, no size box
+
+
 class TestCorrectImageExtension:
     """`correct_image_extension` renames a downloaded file to match its actual
     format. Core fix for issue #96 (JPEG bytes written with .png suffix)."""
