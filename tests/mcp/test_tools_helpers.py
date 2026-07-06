@@ -158,9 +158,10 @@ class _LocalFile:
 
 
 class _Asset:
-    def __init__(self, local_files, flow_media_id="m"):
+    def __init__(self, local_files, flow_media_id="m", metadata_json=None):
         self.local_files = list(local_files)
         self.flow_media_id = flow_media_id
+        self.metadata_json = metadata_json or {}
 
 
 class _FakeRepo:
@@ -264,9 +265,9 @@ def test_resolve_payload_refs_r2v_refs_merge_into_reference_images(tmp_path: Pat
     assert "ref_names" not in payload
 
 
-def test_resolve_payload_refs_leaves_image_refs_untouched() -> None:
-    """PR #245 review #1: only the video path is resolved. Image 'refs' (media-id
-    UUIDs) attach by id and must pass through untouched even for a missing UUID."""
+def test_resolve_payload_refs_image_uncatalogued_uuid_passes_through() -> None:
+    """PR #245: an image 'refs' UUID not in the local catalog must pass through
+    without error (still a valid media id to attach in place); video errors."""
     from gflow_cli.mcp.tools import _resolve_payload_refs
 
     repo = _FakeRepo(asset=None)  # UUID not in local catalog
@@ -274,9 +275,39 @@ def test_resolve_payload_refs_leaves_image_refs_untouched() -> None:
     # video task type: resolves (and would error on the missing UUID)
     err_video = _resolve_payload_refs(repo, "default", dict(payload), task_type="r2v")
     assert err_video is not None
-    # image task type: passes through untouched, no error
+    # image task type: passes through, no error, no ref_meta (nothing to enrich)
     p_image = dict(payload)
     err_image = _resolve_payload_refs(repo, "default", p_image, task_type="i2i")
     assert err_image is None
     assert p_image["refs"] == [_A_UUID]
     assert "reference_images" not in p_image
+    assert "ref_meta" not in p_image
+
+
+def test_resolve_payload_refs_image_enriches_found_ref(tmp_path: Path) -> None:
+    """An image 'refs' UUID that IS in the catalog is enriched with its
+    display_name and on-disk local_path (ref_meta) so the transport can select
+    the existing asset in the picker (prefer-existing), refs left in place."""
+    from gflow_cli.mcp.tools import _resolve_payload_refs
+
+    img = tmp_path / "gen.png"
+    img.write_bytes(b"\x89PNG\r\n\x1a\n")
+    repo = _FakeRepo(asset=_Asset([_LocalFile(img)], metadata_json={"display_name": "Cozy cabin"}))
+    payload = {"refs": [_A_UUID]}
+    err = _resolve_payload_refs(repo, "default", payload, task_type="i2i")
+    assert err is None
+    assert payload["refs"] == [_A_UUID]  # not rewritten
+    assert payload["ref_meta"] == {_A_UUID: {"display_name": "Cozy cabin", "local_path": str(img)}}
+
+
+def test_resolve_payload_refs_image_enrich_partial_meta_only() -> None:
+    """Enrichment records only what's available — a catalogued asset with no
+    on-disk file contributes just its display_name (picker-select still works;
+    no local-upload fallback for that ref)."""
+    from gflow_cli.mcp.tools import _resolve_payload_refs
+
+    repo = _FakeRepo(asset=_Asset([], metadata_json={"display_name": "Named but pruned"}))
+    payload = {"refs": [_A_UUID]}
+    err = _resolve_payload_refs(repo, "default", payload, task_type="i2i")
+    assert err is None
+    assert payload["ref_meta"] == {_A_UUID: {"display_name": "Named but pruned"}}

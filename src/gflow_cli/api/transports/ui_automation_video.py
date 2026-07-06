@@ -1480,6 +1480,121 @@ class VideoGenerationMixin:
             log.info("ui_automation_video.remote_reference_attached", display_name=name)
 
     @staticmethod
+    def _existing_asset_tile(page: Page, media_id: str) -> Locator:
+        """Locate a picker tile for an already-existing asset by its media UUID.
+
+        The tile's thumbnail URL is ``media.getMediaUrlRedirect?name=<uuid>``, so
+        matching ``img[src*=<uuid>]`` selects the exact asset with no dependence
+        on a display name (robust to name collisions) and no search term.
+        """
+        return page.locator(f"[role='option']:has(img[src*='{media_id}'])").first
+
+    @staticmethod
+    async def _select_existing_asset(
+        page: Page,
+        media_id: str,
+        display_name: str,
+        *,
+        out_dir: Path | None,
+        dialog_timeout_s: float = REMOTE_PICKER_CLOSE_TIMEOUT_S,
+    ) -> bool:
+        """In the OPEN reference picker, select the already-existing Flow asset
+        identified by ``media_id`` (preferred over uploading a duplicate).
+
+        Locates the tile by the media UUID in its thumbnail URL; if it isn't
+        already visible, searches ``display_name`` to surface it, then re-locates
+        by UUID. Returns ``True`` once attached, ``False`` when the asset can't be
+        located (the caller then falls back to a local upload).
+        """
+        tile = VideoGenerationMixin._existing_asset_tile(page, media_id)
+        try:
+            await tile.wait_for(state="visible", timeout=4000)
+        except Exception:  # noqa: BLE001 - not-visible is an expected branch
+            if not display_name:
+                return False
+            search = page.locator(PICKER_SEARCH_INPUT)
+            # Human-like typing jitter to dodge WAF heuristics — not security.
+            await search.press_sequentially(display_name, delay=random.randint(10, 50))  # NOSONAR
+            await page.wait_for_timeout(800)
+            try:
+                await tile.wait_for(state="visible", timeout=6000)
+            except Exception:  # noqa: BLE001 - still not found -> caller uploads
+                return False
+
+        await tile.click()
+        await page.wait_for_timeout(400)
+
+        # The image reference picker attaches on tile-click and auto-closes the
+        # dialog (one step). The video r2v picker instead needs an explicit
+        # "Add to Prompt" include after selecting. Handle both: if the dialog
+        # already closed, the attach registered on click; otherwise resolve and
+        # click the locale-safe include button.
+        dialog = page.locator(DIALOG_ANY).last
+        try:
+            await dialog.wait_for(state="hidden", timeout=2500)
+            return True
+        except Exception:  # noqa: BLE001 - still open -> needs explicit include
+            pass
+
+        include = await VideoGenerationMixin._resolve_include_action(
+            page,
+            PICKER_INCLUDE_BUTTON,
+            _INCLUDE_BUTTON_TIER_NAMES,
+            surface="image_ref_include",
+            detail=f"image ref {media_id}",
+            out_dir=out_dir,
+            screenshot_name="image_ref_include_missing.png",
+        )
+        await include.click(timeout=3000)
+        await page.wait_for_timeout(600)
+        try:
+            await dialog.wait_for(state="hidden", timeout=dialog_timeout_s * 1000)
+        except Exception as e:
+            raise TransportTimeoutError(
+                f"image ref {media_id} picker dialog did not close after "
+                f"{dialog_timeout_s}s (the include action may not have registered)",
+            ) from e
+        return True
+
+    @staticmethod
+    async def _attach_image_uuid_refs(
+        page: Page,
+        refs: list[tuple[str, str, str]],
+        *,
+        out_dir: Path | None,
+    ) -> None:
+        """Attach pre-generated image UUID references for I2I.
+
+        Each ref is ``(media_id, display_name, local_path)``. **Prefers selecting
+        the already-existing Flow asset** in the picker (no duplicate upload —
+        the founder principle); uploads ``local_path`` only as a fallback when the
+        asset can't be located in place. Raises when neither is possible.
+        """
+        for media_id, display_name, local_path in refs:
+            add = page.locator(ADD_MEDIA_BUTTON).first
+            await add.wait_for(state="visible", timeout=8000)
+            await add.click()
+            await page.wait_for_timeout(800)
+
+            if await VideoGenerationMixin._select_existing_asset(
+                page, media_id, display_name, out_dir=out_dir
+            ):
+                log.info("ui_automation_video.image_ref_selected_existing", media_id=media_id)
+                continue
+
+            if local_path:
+                log.info("ui_automation_video.image_ref_upload_fallback", media_id=media_id)
+                await VideoGenerationMixin._upload_via_open_dialog(
+                    page, Path(local_path), log_label="image_ref", out_dir=out_dir
+                )
+                continue
+
+            raise TransportTimeoutError(
+                f"image ref {media_id!r} could not be selected in the picker and "
+                "has no local file to upload — re-generate it or pass a local path.",
+            )
+
+    @staticmethod
     async def _scroll_picker_grid(page: Page, delta_px: int = PICKER_GRID_SCROLL_DELTA_PX) -> None:
         """Wheel-scroll the open resource picker down one step. The Tudo grid is
         virtualised, so off-screen tiles are absent from the DOM until scrolled
