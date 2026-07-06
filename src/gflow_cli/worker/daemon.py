@@ -292,11 +292,8 @@ class FlowWorker:
         model = ImageModel.from_cli(model_val) if model_val else ImageModel.NARWHAL
 
         refs = tuple(ImageRef(r) for r in payload.get("refs", []))
+        ref_names = tuple(payload.get("ref_names", []))
         ref_paths = tuple(Path(p) for p in payload.get("ref_paths", []))
-        # NOTE: the payload may carry "ref_names" (the MCP layer resolves them
-        # for the video request); the image transport attaches remote refs by
-        # media id, so GenerateImageRequest has no ref_names field and must
-        # not receive one.
         reference_entities = tuple(payload.get("reference_entities", []))
         reference_entity_names = tuple(payload.get("reference_entity_names", []))
         count = payload.get("count", 1)
@@ -306,6 +303,7 @@ class FlowWorker:
             aspect=aspect,
             model=model,
             refs=refs,
+            ref_names=ref_names,
             ref_paths=ref_paths,
             reference_entities=reference_entities,
             reference_entity_names=reference_entity_names,

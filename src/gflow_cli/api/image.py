@@ -227,6 +227,9 @@ class GenerateImageRequest:
     aspect: Aspect = Aspect.PORTRAIT
     model: Model = Model.NARWHAL
     refs: tuple[ImageRef, ...] = ()
+    # Display names corresponding to the pre-uploaded UUID `refs`. Attached via the
+    # Flow UI picker by the ui_automation transport.
+    ref_names: tuple[str, ...] = ()
     # Local reference-image files for I2I — attached through the editor's media
     # dialog by the ui_automation transport (the REST uploadImage path 401s).
     # The common i2i case; `refs` (pre-uploaded UUIDs) would need library-select.

@@ -233,9 +233,10 @@ def test_resolve_ref_name_found_asset_without_name_errors_not_uuid_passthrough()
 
 
 def test_resolve_payload_ref_names_leaves_image_refs_untouched() -> None:
-    """PR #245 review #1: _resolve_payload_ref_names must only be applied to the
-    video path. Image 'refs' (media-id UUIDs) attach by id and must pass through
-    even when absent from the local catalog."""
+    """PR #245 review #1 (updated): image 'refs' (media-id UUIDs) must pass through
+    even when absent from the local catalog without erroring. The UI automation
+    transport will attempt to resolve them if found, but experimental REST transports
+    can still attempt to use the raw UUID."""
     from gflow_cli.mcp.tools import _resolve_payload_ref_names
 
     repo = _FakeRepo(asset=None)  # UUID not in local catalog
@@ -249,3 +250,17 @@ def test_resolve_payload_ref_names_leaves_image_refs_untouched() -> None:
     assert err_image is None
     assert "ref_names" not in p_image
     assert p_image["refs"] == [_A_UUID]
+
+
+def test_resolve_payload_ref_names_populates_ref_names_for_found_image_refs() -> None:
+    from gflow_cli.mcp.tools import _resolve_payload_ref_names
+
+    repo = _FakeRepo(asset=_Asset({"display_name": "My Found Image"}))
+    payload = {"refs": [_A_UUID]}
+
+    err = _resolve_payload_ref_names(repo, "default", payload, task_type="i2i")
+
+    assert err is None
+    assert "ref_names" in payload
+    assert payload["ref_names"] == ["My Found Image"]
+    assert payload["refs"] == [_A_UUID]

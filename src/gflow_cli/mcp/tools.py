@@ -384,10 +384,6 @@ def _resolve_ref_name(
     return ref_id, None
 
 
-# Video task types whose remote refs the UI automation attaches by DISPLAY NAME
-# (searched in the Flow picker) and therefore need UUID→name resolution. Image
-# task types attach remote refs by raw media id and MUST NOT be resolved here —
-# gating on that was the PR #245 image-i2i regression.
 _VIDEO_TASK_TYPES = frozenset({"t2v", "i2v", "r2v"})
 
 
@@ -399,29 +395,38 @@ def _resolve_payload_ref_names(
 ) -> dict[str, Any] | None:
     """Resolve every remote-ref field in ``payload`` to a display name in place.
 
-    Only the video task types need this (their refs are attached by display
-    name); image tasks attach remote refs by raw media id and are left
-    untouched. Returns an error envelope on the first unresolvable UUID, else
-    ``None``.
+    Video task types require this (their refs are attached by display name in the
+    Flow picker). Image task types also resolve when possible to support the UI
+    automation transport, but fail gracefully (pass through) if the UUID is missing
+    from the local catalog to satisfy PR #245 image-i2i requirements.
+
+    Returns an error envelope on the first unresolvable UUID for video tasks,
+    else ``None``.
     """
-    if task_type not in _VIDEO_TASK_TYPES:
-        return None
+    is_video = task_type in _VIDEO_TASK_TYPES
     if "refs" in payload:
         ref_names: list[str] = []
         for ref in payload["refs"]:
             name, err = _resolve_ref_name(data_repo, profile, ref)
             if err is not None:
-                return err
+                if is_video:
+                    return err
+                # For image tasks, if missing from catalog, pass through silently
+                # to satisfy PR #245 image-i2i requirements.
+                continue
             # name is never falsy when err is None (see _resolve_ref_name).
             assert name is not None
             ref_names.append(name)
-        payload["ref_names"] = ref_names
-    for key in ("start_image_ref", "end_image_ref"):
-        if key in payload:
-            name, err = _resolve_ref_name(data_repo, profile, payload[key])
-            if err is not None:
-                return err
-            payload[f"{key}_name"] = name
+        if ref_names:
+            payload["ref_names"] = ref_names
+
+    if is_video:
+        for key in ("start_image_ref", "end_image_ref"):
+            if key in payload:
+                name, err = _resolve_ref_name(data_repo, profile, payload[key])
+                if err is not None:
+                    return err
+                payload[f"{key}_name"] = name
     return None
 
 

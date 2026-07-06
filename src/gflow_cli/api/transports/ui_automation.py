@@ -2110,6 +2110,15 @@ class UiAutomationTransport(VideoGenerationMixin):
         if request.ref_paths:
             await self._attach_references(page, list(request.ref_paths), out_dir=out_dir)
 
+        # Already-uploaded UUID references (ref_names) must be attached via the
+        # editor's media dialog using their display name, identical to video R2V.
+        if request.ref_names:
+            from gflow_cli.api.transports.ui_automation_video import VideoGenerationMixin
+
+            await VideoGenerationMixin._attach_remote_references(
+                page, list(request.ref_names), out_dir=out_dir
+            )
+
         # Entity references: attach locked CHARACTER entities via the Personagens
         # picker (inherited from the video transport). The entity must live in the
         # project we generate in (pass --project / project_id). Flow's JS then
