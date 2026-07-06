@@ -26,16 +26,30 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   - `_attach_reference_audio` selects its tile by ARIA role+name instead of an
     apostrophe-unsafe `:has-text()` selector.
 
+- **Remote-UUID video attach reworked to use local upload (#237)**: live
+  verification found the original mechanism — resolve the UUID to a display name
+  and select its tile in Flow's resource picker — could never work for generated
+  media: Flow's asset search does not index generation prompts, and generated
+  assets carry no display name, so the picker returned "No results found" and the
+  attach timed out. The UUID is now resolved to the image's on-disk local file and
+  attached through the existing, already-verified file-upload path. The failing
+  picker path is no longer used for video UUID refs. (Automatic download-by-media-id
+  for the rare case where the local file was pruned is a planned follow-up; for now
+  that case fails fast with a clear "Reference Not On Disk" error.)
+
 ### Added
 
 - **Remote image UUIDs in `gflow_generate_video` (#237)**: I2V (`initial_frame` /
   `end_frame`) and R2V (`reference_images`) now accept a generated image's Flow UUID,
   not just a local file path — pipe the output of an image generation straight into a
-  video generation with no download/re-upload round-trip. UUID inputs are resolved to
-  the asset's display name at enqueue time and attached via the resource picker; a UUID
-  that isn't in your asset catalog fails fast with a clear "Reference Not Found" error
-  instead of a long browser timeout. (Contributed by @C1ph3r404; hardened during
-  maintainer review — see below.)
+  video generation. At enqueue time the UUID is resolved to the image's local file
+  (already on disk from the image generation) and attached through the same proven
+  file-upload path used for a local `--initial-frame`, so no picker name-search is
+  involved. A UUID that isn't in your asset catalog fails fast with a clear "Reference
+  Not Found" error, and a catalogued asset whose local file is missing fails fast with
+  "Reference Not On Disk" (re-generate it or pass a local path) — both instead of a
+  long browser timeout. (Contributed by @C1ph3r404; the attach mechanism was
+  reworked during maintainer live-verification — see Fixed below.)
 
 ### Fixed
 
