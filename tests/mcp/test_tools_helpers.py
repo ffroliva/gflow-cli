@@ -149,103 +149,134 @@ def test_video_media_i2v_bad_frame(tmp_path: Path) -> None:
     assert err["error"]["title"] == "Invalid Start Image"
 
 
-class _FakeRepo:
-    """Minimal stand-in for DataRepository's two methods _resolve_ref_name uses."""
+class _LocalFile:
+    """Stand-in for LocalFileRecord (only the fields the resolver reads)."""
 
-    def __init__(self, asset=None, seed=None):
-        self._asset = asset
-        self._seed = seed
-
-    def get_asset_by_any_id(self, profile, ref_id):
-        return self._asset
-
-    def resolve_seed_image(self, profile, flow_media_id):
-        return self._seed
+    def __init__(self, path, storage_provider=None):
+        self.path = path
+        self.storage_provider = storage_provider
 
 
 class _Asset:
-    def __init__(self, metadata_json, flow_media_id="m"):
-        self.metadata_json = metadata_json
+    def __init__(self, local_files, flow_media_id="m"):
+        self.local_files = list(local_files)
         self.flow_media_id = flow_media_id
 
 
-class _Seed:
-    def __init__(self, prompt):
-        self.prompt = prompt
+class _FakeRepo:
+    """Minimal stand-in for the single DataRepository method the resolver uses."""
+
+    def __init__(self, asset=None):
+        self._asset = asset
+
+    def get_asset_by_any_id(self, profile, ref_id):
+        return self._asset
 
 
 _A_UUID = "550e8400-e29b-41d4-a716-446655440000"
 
 
-def test_resolve_ref_name_uses_display_name() -> None:
-    from gflow_cli.mcp.tools import _resolve_ref_name
+def test_resolve_ref_local_path_returns_on_disk_file(tmp_path: Path) -> None:
+    """v0.25.0 #237 fix: a catalogued UUID resolves to its on-disk local file so
+    the video attach reuses the proven local-upload path (generated media do not
+    surface in Flow's picker search)."""
+    from gflow_cli.mcp.tools import _resolve_ref_local_path
 
-    repo = _FakeRepo(asset=_Asset({"display_name": "A cozy cabin"}))
-    name, err = _resolve_ref_name(repo, "default", _A_UUID)
+    img = tmp_path / "gen.png"
+    img.write_bytes(b"\x89PNG\r\n\x1a\n")
+    repo = _FakeRepo(asset=_Asset([_LocalFile(img)]))
+    path, err = _resolve_ref_local_path(repo, "default", _A_UUID)
     assert err is None
-    assert name == "A cozy cabin"
+    assert path == str(img)
 
 
-def test_resolve_ref_name_falls_back_to_seed_prompt() -> None:
-    from gflow_cli.mcp.tools import _resolve_ref_name
-
-    repo = _FakeRepo(asset=_Asset({}), seed=_Seed("an old prompt"))
-    name, err = _resolve_ref_name(repo, "default", _A_UUID)
-    assert err is None
-    assert name == "an old prompt"
-
-
-def test_resolve_ref_name_unresolvable_uuid_returns_clear_error() -> None:
-    """PR #237 review #7: a UUID not in the catalog must fail fast with a clear
-    'not found' error instead of being passed downstream as a search term
-    (which surfaced as a ~120s Playwright timeout)."""
-    from gflow_cli.mcp.tools import _resolve_ref_name
+def test_resolve_ref_local_path_unresolvable_uuid_returns_clear_error() -> None:
+    """PR #237 review #7: a UUID not in the catalog fails fast with a clear
+    'not found' error (no browser round-trip / picker timeout)."""
+    from gflow_cli.mcp.tools import _resolve_ref_local_path
 
     repo = _FakeRepo(asset=None)
-    name, err = _resolve_ref_name(repo, "default", _A_UUID)
-    assert name is None
+    path, err = _resolve_ref_local_path(repo, "default", _A_UUID)
+    assert path is None
     assert err is not None
     assert _A_UUID in str(err)
     assert "catalog" in str(err).lower()
 
 
-def test_resolve_ref_name_passes_through_a_literal_display_name() -> None:
-    """A non-UUID string is a display name the user typed directly — keep it."""
-    from gflow_cli.mcp.tools import _resolve_ref_name
+def test_resolve_ref_local_path_asset_without_local_file_errors(tmp_path: Path) -> None:
+    """An in-catalog asset whose local file is missing on disk fails fast with a
+    clear 'not on disk' error (auto-download-by-id is a planned follow-up)."""
+    from gflow_cli.mcp.tools import _resolve_ref_local_path
 
-    repo = _FakeRepo(asset=None)
-    name, err = _resolve_ref_name(repo, "default", "A cozy cabin")
-    assert err is None
-    assert name == "A cozy cabin"
-
-
-def test_resolve_ref_name_found_asset_without_name_errors_not_uuid_passthrough() -> None:
-    """PR #245 review #3: an in-catalog asset with no display_name and no seed
-    prompt must NOT return the raw UUID (which then times out in the picker) —
-    it must return a clear error."""
-    from gflow_cli.mcp.tools import _resolve_ref_name
-
-    repo = _FakeRepo(asset=_Asset({}), seed=None)  # found, but no name resolvable
-    name, err = _resolve_ref_name(repo, "default", _A_UUID)
-    assert name is None
+    missing = tmp_path / "pruned.png"  # never written
+    repo = _FakeRepo(asset=_Asset([_LocalFile(missing)]))
+    path, err = _resolve_ref_local_path(repo, "default", _A_UUID)
+    assert path is None
     assert err is not None
     assert _A_UUID in str(err)
+    assert "disk" in str(err).lower()
 
 
-def test_resolve_payload_ref_names_leaves_image_refs_untouched() -> None:
-    """PR #245 review #1: _resolve_payload_ref_names must only be applied to the
-    video path. Image 'refs' (media-id UUIDs) attach by id and must pass through
-    even when absent from the local catalog."""
-    from gflow_cli.mcp.tools import _resolve_payload_ref_names
+def test_resolve_ref_local_path_skips_cloud_only_files(tmp_path: Path) -> None:
+    """Cloud-only rows (storage_provider set, path None/remote) are not usable as
+    a local upload; a real on-disk file later in the list is chosen."""
+    from gflow_cli.mcp.tools import _resolve_ref_local_path
+
+    img = tmp_path / "gen.png"
+    img.write_bytes(b"\x89PNG\r\n\x1a\n")
+    repo = _FakeRepo(asset=_Asset([_LocalFile(None, storage_provider="gcs"), _LocalFile(img)]))
+    path, err = _resolve_ref_local_path(repo, "default", _A_UUID)
+    assert err is None
+    assert path == str(img)
+
+
+def test_resolve_payload_refs_i2v_frames_become_local_paths(tmp_path: Path) -> None:
+    """i2v: a start/end frame UUID is replaced by its local path (not a *_ref_name),
+    so the existing local-upload attach runs and no picker search is attempted."""
+    from gflow_cli.mcp.tools import _resolve_payload_refs
+
+    start = tmp_path / "start.png"
+    start.write_bytes(b"\x89PNG\r\n\x1a\n")
+    repo = _FakeRepo(asset=_Asset([_LocalFile(start)]))
+    payload = {"start_image_ref": _A_UUID}
+    err = _resolve_payload_refs(repo, "default", payload, task_type="i2v")
+    assert err is None
+    assert payload["start_image"] == str(start)
+    assert "start_image_ref" not in payload
+    assert "start_image_ref_name" not in payload
+
+
+def test_resolve_payload_refs_r2v_refs_merge_into_reference_images(tmp_path: Path) -> None:
+    """r2v: UUID refs resolve to local paths appended to reference_images; the raw
+    'refs' key is consumed and no 'ref_names' is produced."""
+    from gflow_cli.mcp.tools import _resolve_payload_refs
+
+    ref = tmp_path / "ref.png"
+    ref.write_bytes(b"\x89PNG\r\n\x1a\n")
+    existing = tmp_path / "already_local.png"
+    existing.write_bytes(b"\x89PNG\r\n\x1a\n")
+    repo = _FakeRepo(asset=_Asset([_LocalFile(ref)]))
+    payload = {"refs": [_A_UUID], "reference_images": [str(existing)]}
+    err = _resolve_payload_refs(repo, "default", payload, task_type="r2v")
+    assert err is None
+    assert payload["reference_images"] == [str(existing), str(ref)]
+    assert "refs" not in payload
+    assert "ref_names" not in payload
+
+
+def test_resolve_payload_refs_leaves_image_refs_untouched() -> None:
+    """PR #245 review #1: only the video path is resolved. Image 'refs' (media-id
+    UUIDs) attach by id and must pass through untouched even for a missing UUID."""
+    from gflow_cli.mcp.tools import _resolve_payload_refs
 
     repo = _FakeRepo(asset=None)  # UUID not in local catalog
     payload = {"refs": [_A_UUID]}
     # video task type: resolves (and would error on the missing UUID)
-    err_video = _resolve_payload_ref_names(repo, "default", dict(payload), task_type="r2v")
+    err_video = _resolve_payload_refs(repo, "default", dict(payload), task_type="r2v")
     assert err_video is not None
-    # image task type: passes through untouched, no ref_names added, no error
+    # image task type: passes through untouched, no error
     p_image = dict(payload)
-    err_image = _resolve_payload_ref_names(repo, "default", p_image, task_type="i2i")
+    err_image = _resolve_payload_refs(repo, "default", p_image, task_type="i2i")
     assert err_image is None
-    assert "ref_names" not in p_image
     assert p_image["refs"] == [_A_UUID]
+    assert "reference_images" not in p_image

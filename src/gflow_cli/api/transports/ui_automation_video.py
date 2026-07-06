@@ -470,6 +470,25 @@ def _summarize_request_image_inputs(request: Any) -> dict[str, Any]:
         return {"parsed": False, "error": str(e)[:60]}
 
 
+def _upload_rejection_message(status: int | None, label: str) -> str | None:
+    """Return an error message when an ``uploadImage`` response status means the
+    frame upload was rejected (>= 400), else ``None``.
+
+    A 4xx/5xx here means Flow refused the bytes (e.g. the file is not a valid
+    image — see the video-content guard in ``download_image``). The upload
+    listener otherwise only matched the route by URL and ignored the status, so
+    a rejection was treated as success: the code committed an empty slot and the
+    generation silently fell back to T2V (#125). Fail loud instead.
+    """
+    if status is not None and status >= 400:
+        return (
+            f"frame image upload for {label!r} was rejected by Flow (HTTP "
+            f"{status}) — the file may not be a valid image. Flow would drop the "
+            "frame and fall back to a text-only video (#125), so aborting."
+        )
+    return None
+
+
 class VideoGenerationMixin:
     """Video-generation methods mixed into `UiAutomationTransport`.
 
@@ -1308,11 +1327,11 @@ class VideoGenerationMixin:
         uploadImage XHR 200 (bytes stored) -> 'Add to Prompt' -> wait the dialog
         to CLOSE (commit registered) before returning, so the caller never
         submits before the image binds. Shared by I2V slots and R2V references."""
-        uploaded: list[str] = []
+        uploaded: list[int] = []  # uploadImage response statuses, in arrival order
 
         def on_response(response: Any) -> None:
             if UPLOAD_IMAGE_ROUTE in response.url:
-                uploaded.append(response.url)
+                uploaded.append(response.status)
                 log.info(
                     "ui_automation_video.image_uploaded",
                     target=log_label,
@@ -1361,6 +1380,12 @@ class VideoGenerationMixin:
                 await asyncio.sleep(0.5)
             if not uploaded:
                 log.warning("ui_automation_video.upload_incomplete", target=log_label)
+            else:
+                # Fail loud on a rejected upload instead of committing an empty
+                # slot that silently falls back to T2V (#125).
+                rejection = _upload_rejection_message(uploaded[-1], log_label)
+                if rejection is not None:
+                    raise RuntimeError(rejection)
         finally:
             page.remove_listener("response", on_response)
 

@@ -217,10 +217,10 @@ async def _run_generation_task(
             profile_dir = settings.profile_subdir(profile)
             data_repo.upsert_profile(profile, profile_dir)
 
-            # Resolve remote-ref UUIDs to the display names the UI automation
-            # searches for (video paths only); an unresolvable UUID fails fast
-            # here instead of timing out in the browser.
-            ref_err = _resolve_payload_ref_names(data_repo, profile, payload, task_type)
+            # Resolve remote-ref UUIDs to local file paths (video paths only) so
+            # the attach reuses the proven local-upload path; an unresolvable
+            # UUID fails fast here instead of timing out in the browser (#237).
+            ref_err = _resolve_payload_refs(data_repo, profile, payload, task_type)
             if ref_err is not None:
                 return ref_err
 
@@ -343,85 +343,90 @@ def _bad_param(title: str, detail: str) -> dict[str, Any]:
     }
 
 
-def _resolve_ref_name(
+def _resolve_ref_local_path(
     data_repo: DataRepository,
     profile: str,
     ref_id: str,
 ) -> tuple[str | None, dict[str, Any] | None]:
-    """Resolve a remote reference to the display name the UI automation searches.
+    """Resolve a remote media-id reference to a local image file path.
 
-    Returns ``(name, None)`` or ``(None, error_envelope)``. A ``ref_id`` that is
-    UUID-shaped but absent from the asset catalog is a mistake worth catching at
-    enqueue time: passing the raw UUID downstream surfaced as a ~120s Playwright
-    timeout (PR #237 review). A non-UUID string is treated as a literal display
-    name the caller typed directly and passed through unchanged.
+    v0.25.0 (#237 fix): generated media do not appear in Flow's frame/reference
+    picker search — Flow does not index generation prompts and generated assets
+    carry no display name — so a UUID ref cannot be attached by a picker name
+    search (that was the release-blocking bug). Instead it is attached by
+    re-using its already-on-disk file through the proven local-upload path.
+
+    Returns ``(local_path, None)`` or ``(None, error_envelope)``. Fail-fast
+    cases: a UUID absent from the catalog → *Reference Not Found*; a catalogued
+    asset with no local file on disk → *Reference Not On Disk*. (Automatic
+    download-by-media-id for the on-disk-missing case is a planned follow-up;
+    for now the caller re-generates or passes a local path.)
     """
     asset = data_repo.get_asset_by_any_id(profile, ref_id)
-    if asset is not None:
-        name = asset.metadata_json.get("display_name")
-        if not name:
-            # Fallback for images generated before display_name was extracted.
-            seed_info = data_repo.resolve_seed_image(profile, asset.flow_media_id)
-            if seed_info and seed_info.prompt:
-                name = seed_info.prompt
-        if name:
-            return name, None
-        # Asset exists but has no searchable name: returning the raw UUID here
-        # would make the picker search for the UUID and time out (PR #245
-        # review). Fail fast with a clear error instead.
-        return None, _bad_param(
-            "Reference Has No Display Name",
-            f"'{ref_id}' exists in the catalog but has no display name to search "
-            "for in the Flow picker. Re-generate it so a display name is recorded, "
-            "or pass the display name directly.",
-        )
-    if _UUID_RE.fullmatch(ref_id):
+    if asset is None:
         return None, _bad_param(
             "Reference Not Found",
             f"'{ref_id}' was not found in your asset catalog for profile "
-            f"{profile!r}. Generate the image first, or pass its display name.",
+            f"{profile!r}. Generate the image first, or pass a local file path.",
         )
-    return ref_id, None
+    for local_file in asset.local_files:
+        # A usable frame is an on-disk local file (cloud-only rows carry a
+        # storage_provider and no local path — they can't feed a file upload).
+        if (
+            local_file.storage_provider is None
+            and local_file.path is not None
+            and local_file.path.is_file()
+        ):
+            return str(local_file.path), None
+    return None, _bad_param(
+        "Reference Not On Disk",
+        f"'{ref_id}' is in your catalog but has no local image file on disk to "
+        "attach. Re-generate it, or pass a local file path for the frame.",
+    )
 
 
-# Video task types whose remote refs the UI automation attaches by DISPLAY NAME
-# (searched in the Flow picker) and therefore need UUID→name resolution. Image
-# task types attach remote refs by raw media id and MUST NOT be resolved here —
-# gating on that was the PR #245 image-i2i regression.
+# Video task types whose media-id refs are resolved to local file paths and
+# attached via the local-upload path (#237 fix — see _resolve_ref_local_path).
+# Image task types attach remote refs by raw media id and MUST NOT be resolved
+# here — gating on that was the PR #245 image-i2i regression.
 _VIDEO_TASK_TYPES = frozenset({"t2v", "i2v", "r2v"})
 
 
-def _resolve_payload_ref_names(
+def _resolve_payload_refs(
     data_repo: DataRepository,
     profile: str,
     payload: dict[str, Any],
     task_type: str,
 ) -> dict[str, Any] | None:
-    """Resolve every remote-ref field in ``payload`` to a display name in place.
+    """Rewrite every media-id ref in ``payload`` to a local file path in place.
 
-    Only the video task types need this (their refs are attached by display
-    name); image tasks attach remote refs by raw media id and are left
-    untouched. Returns an error envelope on the first unresolvable UUID, else
-    ``None``.
+    Only the video task types are resolved (image tasks attach remote refs by
+    raw media id and are left untouched — PR #245). For video, a start/end frame
+    ref becomes the local ``start_image``/``end_image`` path and r2v ``refs`` are
+    resolved and merged into ``reference_images`` — so the existing local-upload
+    attach runs and no (broken) picker name search is attempted. Returns an error
+    envelope on the first unresolvable UUID, else ``None``.
     """
     if task_type not in _VIDEO_TASK_TYPES:
         return None
     if "refs" in payload:
-        ref_names: list[str] = []
+        resolved_paths: list[str] = []
         for ref in payload["refs"]:
-            name, err = _resolve_ref_name(data_repo, profile, ref)
+            path, err = _resolve_ref_local_path(data_repo, profile, ref)
             if err is not None:
                 return err
-            # name is never falsy when err is None (see _resolve_ref_name).
-            assert name is not None
-            ref_names.append(name)
-        payload["ref_names"] = ref_names
-    for key in ("start_image_ref", "end_image_ref"):
-        if key in payload:
-            name, err = _resolve_ref_name(data_repo, profile, payload[key])
+            # path is never None when err is None (see _resolve_ref_local_path).
+            assert path is not None
+            resolved_paths.append(path)
+        payload["reference_images"] = list(payload.get("reference_images", [])) + resolved_paths
+        del payload["refs"]
+    for ref_key, path_key in (("start_image_ref", "start_image"), ("end_image_ref", "end_image")):
+        if ref_key in payload:
+            path, err = _resolve_ref_local_path(data_repo, profile, payload[ref_key])
             if err is not None:
                 return err
-            payload[f"{key}_name"] = name
+            payload[path_key] = path
+            del payload[ref_key]
     return None
 
 
