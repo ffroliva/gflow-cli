@@ -17,6 +17,7 @@ from gflow_cli.api.transports.ui_automation_video import (
     PICKER_CONTEXT_INCLUDE,
     PICKER_INCLUDE_BUTTON,
     VideoGenerationMixin,
+    _upload_rejection_message,
 )
 from gflow_cli.api.video import Aspect, GenerateVideoRequest, Mode, VideoModel, VideoStatus
 from gflow_cli.errors import (
@@ -42,6 +43,28 @@ def _make_response(*, url: str, status: int = 200, body: dict | None = None) -> 
     resp.status = status
     resp.json = AsyncMock(return_value=body if body is not None else {"media": []})
     return resp
+
+
+class TestUploadRejectionMessage:
+    """`_upload_rejection_message` decides whether the uploadImage response
+    status means the frame upload was rejected. A silent 4xx here previously
+    committed an empty slot and fell back to T2V (#125)."""
+
+    def test_ok_status_no_message(self) -> None:
+        assert _upload_rejection_message(200, "Start") is None
+
+    def test_none_status_no_message(self) -> None:
+        # No uploadImage response seen at all — handled separately (incomplete).
+        assert _upload_rejection_message(None, "Start") is None
+
+    def test_400_is_rejected(self) -> None:
+        msg = _upload_rejection_message(400, "Start")
+        assert msg is not None
+        assert "400" in msg
+        assert "Start" in msg
+
+    def test_500_is_rejected(self) -> None:
+        assert _upload_rejection_message(500, "End") is not None
 
 
 _T2V_URL = "https://aisandbox-pa.googleapis.com/v1/video:batchAsyncGenerateVideoText"

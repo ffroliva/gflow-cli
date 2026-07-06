@@ -190,6 +190,25 @@ def extension_from_magic(head: bytes) -> str | None:
     return None
 
 
+def looks_like_video(head: bytes) -> bool:
+    """True when ``head``'s magic bytes are a known video container.
+
+    Positive detection only — an unrecognised or short buffer returns ``False``
+    so callers can fail loud on *definitely* a video without misclassifying
+    arbitrary or novel image bytes. Recognises ISO-BMFF (MP4/MOV: a size box
+    followed by the ``ftyp`` box at offset 4) and Matroska/WebM (EBML header
+    ``1A 45 DF A3``).
+
+    Used to guard the image-download path: an agentic ``gflow_generate_image``
+    can have Flow's conversational agent produce a *video*, whose bytes would
+    otherwise be saved with an image extension (a silent corruption that then
+    fails far downstream when used as an i2v frame).
+    """
+    if len(head) >= 8 and head[4:8] == b"ftyp":
+        return True
+    return len(head) >= 4 and head[:4] == b"\x1a\x45\xdf\xa3"
+
+
 def adjust_key_extension(path: Path, data: bytes) -> Path:
     """Return *path* with its suffix corrected to match *data*'s magic bytes.
 
