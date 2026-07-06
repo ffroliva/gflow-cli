@@ -7,6 +7,8 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+## [0.25.0] — 2026-07-06
+
 ### Fixed
 
 - **Follow-up review fixes for remote image UUIDs (#237/#245)**: a post-merge
