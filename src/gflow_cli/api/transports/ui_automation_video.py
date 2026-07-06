@@ -1522,7 +1522,20 @@ class VideoGenerationMixin:
                 return False
 
         await tile.click()
-        await page.wait_for_timeout(300)
+        await page.wait_for_timeout(400)
+
+        # The image reference picker attaches on tile-click and auto-closes the
+        # dialog (one step). The video r2v picker instead needs an explicit
+        # "Add to Prompt" include after selecting. Handle both: if the dialog
+        # already closed, the attach registered on click; otherwise resolve and
+        # click the locale-safe include button.
+        dialog = page.locator(DIALOG_ANY).last
+        try:
+            await dialog.wait_for(state="hidden", timeout=2500)
+            return True
+        except Exception:  # noqa: BLE001 - still open -> needs explicit include
+            pass
+
         include = await VideoGenerationMixin._resolve_include_action(
             page,
             PICKER_INCLUDE_BUTTON,
@@ -1534,7 +1547,6 @@ class VideoGenerationMixin:
         )
         await include.click(timeout=3000)
         await page.wait_for_timeout(600)
-        dialog = page.locator(DIALOG_ANY).last
         try:
             await dialog.wait_for(state="hidden", timeout=dialog_timeout_s * 1000)
         except Exception as e:
