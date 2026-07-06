@@ -245,6 +245,10 @@ class OperationRecorder:
         media_type = mimetypes.guess_type(saved_path.name)[0]
         asset_id = _new_id()
         width, height = image.dimensions
+        metadata = {"fife_url": image.fife_url}
+        if image.display_name:
+            metadata["display_name"] = image.display_name
+
         repo.upsert_asset(
             AssetRecord(
                 id=asset_id,
@@ -261,7 +265,7 @@ class OperationRecorder:
                 height=height,
                 duration_seconds=None,
                 seed=image.seed,
-                metadata_json=redact_metadata({"fife_url": image.fife_url}),
+                metadata_json=redact_metadata(metadata),
             ),
         )
         repo.link_operation_asset(op_id, asset_id, OperationAssetRole.OUTPUT, i)

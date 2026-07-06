@@ -128,6 +128,7 @@ class GeneratedImage:
     fife_url: str  # CDN URL — usually expires after ~6 hours
     dimensions: tuple[int, int]  # (width, height)
     media_generation_id: str | None = None
+    display_name: str | None = None
 
     @property
     def is_signed_url(self) -> bool:
@@ -172,8 +173,30 @@ class GeneratedImage:
         if not isinstance(media, list):
             msg = "unexpected batchGenerateImages response shape: media is not a list"
             raise ValueError(msg)
+        workflows = data.get("workflows", [])
+        workflow_map: dict[str, str] = {}
+        if isinstance(workflows, list):
+            for w in workflows:
+                if not isinstance(w, dict):
+                    continue
+                w_id = w.get("name")
+                if isinstance(w_id, str):
+                    metadata = w.get("metadata")
+                    if isinstance(metadata, dict):
+                        display_name = metadata.get("displayName")
+                        if isinstance(display_name, str):
+                            workflow_map[w_id] = display_name
+
         items = cast("list[dict[str, Any]]", media)
-        return [cls.from_response_item(item) for item in items]
+        result: list[GeneratedImage] = []
+        for item in items:
+            img = cls.from_response_item(item)
+            w_id = img.workflow_id
+            if w_id in workflow_map:
+                from dataclasses import replace
+                img = replace(img, display_name=workflow_map[w_id])
+            result.append(img)
+        return result
 
 
 @dataclass(frozen=True)
