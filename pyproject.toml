@@ -70,7 +70,7 @@ chain = [
 # treated as a security-review-required bump (NOT a dependabot auto-merge) —
 # see SECURITY.md. Not a headless unlock.
 patchright = [
-    "patchright==1.60.1",
+    "patchright==1.61.2",
 ]
 
 [project.scripts]
