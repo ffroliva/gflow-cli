@@ -5,7 +5,7 @@ import json
 import sqlite3
 from datetime import UTC, datetime
 from pathlib import Path
-from typing import TYPE_CHECKING, cast
+from typing import TYPE_CHECKING, Any, cast
 
 from gflow_cli.data.models import (
     AssetKind,
@@ -30,6 +30,11 @@ if TYPE_CHECKING:
 
 def _utc_now() -> str:
     return datetime.now(UTC).isoformat(timespec="milliseconds").replace("+00:00", "Z")
+
+
+_ASSET_LOOKUP_COLUMNS = (
+    "id, profile_name, flow_project_id, flow_media_id, flow_workflow_id, metadata_json, kind"
+)
 
 
 class DataRepository:
@@ -165,12 +170,31 @@ class DataRepository:
         flow_media_id: str,
     ) -> AssetLookup | None:
         row = self._store.conn.execute(
-            """
-            SELECT id, profile_name, flow_project_id, flow_media_id, kind
+            f"""
+            SELECT {_ASSET_LOOKUP_COLUMNS}
             FROM assets
             WHERE profile_name = ? AND flow_media_id = ?
             """,
             (profile_name, flow_media_id),
+        ).fetchone()
+        if row is None:
+            return None
+        return self._hydrate_asset_lookup(row)
+
+    def get_asset_by_any_id(
+        self,
+        profile_name: str,
+        ref_id: str,
+    ) -> AssetLookup | None:
+        row = self._store.conn.execute(
+            f"""
+            SELECT {_ASSET_LOOKUP_COLUMNS}
+            FROM assets
+            WHERE profile_name = ? AND (flow_media_id = ? OR flow_workflow_id = ? OR id = ?)
+            ORDER BY created_at DESC
+            LIMIT 1
+            """,
+            (profile_name, ref_id, ref_id, ref_id),
         ).fetchone()
         if row is None:
             return None
@@ -185,8 +209,8 @@ class DataRepository:
         Closes #87.
         """
         rows = self._store.conn.execute(
-            """
-            SELECT id, profile_name, flow_project_id, flow_media_id, kind
+            f"""
+            SELECT {_ASSET_LOOKUP_COLUMNS}
             FROM assets
             WHERE flow_media_id = ?
             ORDER BY profile_name ASC, id ASC
@@ -212,8 +236,10 @@ class DataRepository:
             profile_name=str(row["profile_name"]),
             flow_project_id=row["flow_project_id"],
             flow_media_id=str(row["flow_media_id"]),
+            flow_workflow_id=row["flow_workflow_id"],
             kind=AssetKind(row["kind"]),
             local_files=local_files,
+            metadata_json=json.loads(row["metadata_json"]) if row["metadata_json"] else {},
         )
 
     def candidate_image_exists(self, profile_name: str, flow_media_id: str) -> bool:
@@ -685,25 +711,7 @@ class DataRepository:
             """,
             (OperationAssetRole.OUTPUT.value, profile_name, flow_media_id),
         ).fetchone()
-        if row is None:
-            return None
-        if row["flow_project_id"] is None:
-            return None
-        local_path = self._latest_local_path(str(row["id"]))
-        return SeedImage(
-            profile_name=str(row["profile_name"]),
-            flow_project_id=str(row["flow_project_id"]),
-            flow_media_id=str(row["flow_media_id"]),
-            flow_workflow_id=row["flow_workflow_id"],
-            kind=AssetKind(row["kind"]),
-            width=row["width"],
-            height=row["height"],
-            local_path=local_path,
-            prompt=row["prompt"],
-            model=row["model"],
-            aspect_ratio=row["aspect_ratio"],
-            created_at=str(row["created_at"]),
-        )
+        return self._row_to_seed_image(row)
 
     def resolve_seed_image_by_path(self, profile_name: str, path: Path) -> SeedImage | None:
         row = self._store.conn.execute(
@@ -723,25 +731,7 @@ class DataRepository:
             """,
             (OperationAssetRole.OUTPUT.value, profile_name, str(path)),
         ).fetchone()
-        if row is None:
-            return None
-        if row["flow_project_id"] is None:
-            return None
-        local_path = self._latest_local_path(str(row["id"]))
-        return SeedImage(
-            profile_name=str(row["profile_name"]),
-            flow_project_id=str(row["flow_project_id"]),
-            flow_media_id=str(row["flow_media_id"]),
-            flow_workflow_id=row["flow_workflow_id"],
-            kind=AssetKind(row["kind"]),
-            width=row["width"],
-            height=row["height"],
-            local_path=local_path,
-            prompt=row["prompt"],
-            model=row["model"],
-            aspect_ratio=row["aspect_ratio"],
-            created_at=str(row["created_at"]),
-        )
+        return self._row_to_seed_image(row)
 
     def resolve_latest_image(
         self,
@@ -782,25 +772,7 @@ class DataRepository:
             sql,
             [OperationAssetRole.OUTPUT.value, *params],
         ).fetchone()
-        if row is None:
-            return None
-        if row["flow_project_id"] is None:
-            return None
-        local_path = self._latest_local_path(str(row["id"]))
-        return SeedImage(
-            profile_name=str(row["profile_name"]),
-            flow_project_id=str(row["flow_project_id"]),
-            flow_media_id=str(row["flow_media_id"]),
-            flow_workflow_id=row["flow_workflow_id"],
-            kind=AssetKind(row["kind"]),
-            width=row["width"],
-            height=row["height"],
-            local_path=local_path,
-            prompt=row["prompt"],
-            model=row["model"],
-            aspect_ratio=row["aspect_ratio"],
-            created_at=str(row["created_at"]),
-        )
+        return self._row_to_seed_image(row)
 
     def list_project_images(self, profile_name: str, flow_project_id: str) -> list[SeedImage]:
         rows = self._store.conn.execute(
@@ -899,6 +871,29 @@ class DataRepository:
     # ------------------------------------------------------------------
     # Helpers
     # ------------------------------------------------------------------
+
+    def _row_to_seed_image(self, row: Any) -> SeedImage | None:
+        """Hydrate a SeedImage from an assets+prompt row, or None if the row is
+        absent or lacks a flow_project_id. Shared by the resolve_* readers."""
+        if row is None:
+            return None
+        if row["flow_project_id"] is None:
+            return None
+        local_path = self._latest_local_path(str(row["id"]))
+        return SeedImage(
+            profile_name=str(row["profile_name"]),
+            flow_project_id=str(row["flow_project_id"]),
+            flow_media_id=str(row["flow_media_id"]),
+            flow_workflow_id=row["flow_workflow_id"],
+            kind=AssetKind(row["kind"]),
+            width=row["width"],
+            height=row["height"],
+            local_path=local_path,
+            prompt=row["prompt"],
+            model=row["model"],
+            aspect_ratio=row["aspect_ratio"],
+            created_at=str(row["created_at"]),
+        )
 
     def _latest_local_path(self, asset_id: str) -> Path | None:
         row = self._store.conn.execute(

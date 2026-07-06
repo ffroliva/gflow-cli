@@ -22,11 +22,13 @@ from __future__ import annotations
 
 import os
 import warnings
+from collections.abc import Mapping
 from enum import StrEnum
 from functools import lru_cache
 from pathlib import Path
-from typing import Literal
+from typing import TYPE_CHECKING, Any, Literal
 
+from dotenv import dotenv_values
 from pydantic import AliasChoices, Field, field_validator
 from pydantic_settings import BaseSettings, SettingsConfigDict
 
@@ -58,6 +60,46 @@ def _migrate_legacy_env() -> None:
 
 
 _migrate_legacy_env()
+
+
+_HOME_KEY = (_NEW_ENV_PREFIX + "HOME").lower()  # matched case-insensitively
+
+
+def _home_key_value(mapping: Mapping[str, str | None]) -> Path | None:
+    """Non-empty ``GFLOW_CLI_HOME`` from ``mapping``, matched case-insensitively
+    (mirrors the env source's ``case_sensitive=False``); empty string = unset.
+    """
+    for key, value in mapping.items():
+        if key.lower() == _HOME_KEY and value and value.strip():
+            return Path(value)
+    return None
+
+
+def _resolve_home() -> Path:
+    """The home directory, resolved BEFORE Settings exists (chicken-and-egg).
+
+    Mirrors the ``home`` field's own precedence: process env var, then the CWD
+    ``.env`` (the only dotenv file locatable without knowing home), then the
+    platform default. By construction the home ``.env`` cannot relocate home —
+    that would be circular; set the env var or the CWD ``.env`` instead.
+    """
+    from_env = _home_key_value(os.environ)
+    if from_env is not None:
+        return from_env
+    try:
+        from_cwd_env = _home_key_value(dotenv_values(".env"))
+    except OSError:
+        from_cwd_env = None
+    if from_cwd_env is not None:
+        return from_cwd_env
+    return paths.default_home()
+
+
+def _env_files() -> tuple[str, str]:
+    """Dotenv files for :class:`Settings`, in pydantic-settings order (later wins):
+    a CWD ``.env`` takes precedence over ``<home>/.env`` (docs/CONFIGURATION.md).
+    """
+    return (str(_resolve_home() / ".env"), ".env")
 
 
 class LogLevel(StrEnum):
@@ -97,17 +139,40 @@ class Settings(BaseSettings):
 
     model_config = SettingsConfigDict(
         env_prefix="GFLOW_CLI_",
-        env_file=(".env",),
+        # env_file is intentionally absent: the values in a static tuple here
+        # could not depend on the runtime environment, so __init__ below
+        # defaults `_env_file` to `_env_files()` per construction instead
+        # (issue #240). Re-adding env_file here would be silently ignored.
         env_file_encoding="utf-8",
         case_sensitive=False,
         extra="ignore",
     )
+
+    if not TYPE_CHECKING:
+        # Runtime-only: defaulting the documented `_env_file` init kwarg keeps
+        # `Settings(_env_file=...)` / `_env_file=None` working exactly as in
+        # stock pydantic-settings. Hidden from type checkers so pyright keeps
+        # the synthesized field-typed constructor.
+        def __init__(self, **values: Any) -> None:
+            values.setdefault("_env_file", _env_files())
+            super().__init__(**values)
 
     # --- paths ------------------------------------------------------------
     home: Path = Field(
         default_factory=paths.default_home,
         description="Root for profiles, config.toml, etc.",
     )
+
+    @field_validator("home", mode="before")
+    @classmethod
+    def _empty_home_means_unset(cls, value: object) -> object:
+        """`GFLOW_CLI_HOME=` (set-but-empty, common in CI templates) means
+        "unset", not `Path('.')` — keeping the field coherent with
+        `_resolve_home()`, which treats empty the same way."""
+        if isinstance(value, str) and not value.strip():
+            return paths.default_home()
+        return value
+
     output_dir: Path = Field(
         default_factory=paths.default_output_dir,
         description="Where generated assets land (local storage).",
@@ -240,11 +305,6 @@ class Settings(BaseSettings):
             "Override via GFLOW_CLI_PREFER_CLASSIC."
         ),
     )
-    daemon_token: str | None = Field(
-        default=None,
-        description="Auth token required when binding the serve daemon to a non-localhost address.",
-    )
-
     # --- logging ----------------------------------------------------------
     log_level: LogLevel = LogLevel.INFO
     log_format: LogFormat = LogFormat.AUTO

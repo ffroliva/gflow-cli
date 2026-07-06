@@ -62,10 +62,12 @@ def e2e_profile_dir(monkeypatch: pytest.MonkeyPatch) -> Iterator[Path]:
 
     from gflow_cli.config import Settings
 
-    # Resolve real home by bypassing the isolation env var
+    # Resolve real home by bypassing the isolation env var. _env_file=None
+    # also disables dotenv loading: a GFLOW_CLI_HOME line in a CWD or home
+    # .env must not redirect the "real user data dir" this fixture looks for.
     with monkeypatch.context() as m:
         m.delenv("GFLOW_CLI_HOME", raising=False)
-        real_settings = Settings()
+        real_settings = Settings(_env_file=None)  # pyright: ignore[reportCallIssue]
         candidate = real_settings.profile_subdir(name)
 
     if not candidate.exists():

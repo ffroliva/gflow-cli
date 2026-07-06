@@ -46,7 +46,7 @@ The server registers three protocol surfaces:
 
 ### Tools (Executable actions)
 * `gflow_generate_image(prompt, model, aspect, count, seed, reference_images, tools, profile, project)`: Triggers text-to-image / image-to-image (Imagen / Nano Banana). `reference_images` switches to i2i; `project` generates into an existing Flow project id (mirrors CLI `--project`).
-* `gflow_generate_video(prompt, mode, aspect, initial_frame, end_frame, reference_images, tools, profile, project)`: Triggers vertical or landscape video generation (Veo). `mode` is `t2v`/`i2v`/`r2v`; `i2v` requires `initial_frame`, `r2v` requires `reference_images`; `project` generates into an existing Flow project id (mirrors CLI `--project`).
+* `gflow_generate_video(prompt, mode, aspect, initial_frame, end_frame, reference_images, tools, profile, project)`: Triggers vertical or landscape video generation (Veo). `mode` is `t2v`/`i2v`/`r2v`; `i2v` requires `initial_frame`, `r2v` requires `reference_images`; `project` generates into an existing Flow project id (mirrors CLI `--project`). `initial_frame`, `end_frame`, and `reference_images` each accept **either a local file path or the Flow image UUID of a generated asset** — pass a generated image's id straight in to chain image→video with no download/re-upload. A UUID that isn't in your local asset catalog is rejected up front with a clear "Reference Not Found" error.
 * `gflow_list_projects(profile, limit)`: Queries SQLite catalog for recent generation folders.
 * `gflow_list_characters(profile)`: Lists Flow Character entities (requires an active browser session).
 

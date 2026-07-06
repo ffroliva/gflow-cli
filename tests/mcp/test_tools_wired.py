@@ -414,6 +414,47 @@ class TestRunGenerationTask:
         assert "flow_media_id" in result
 
     @pytest.mark.asyncio
+    async def test_envelope_returns_media_id_not_workflow_id(
+        self, temp_db: DataStore, tmp_path: Path
+    ) -> None:
+        """PR #245 review #2: the 'flow_media_id' key must carry the real media
+        id, not the asset's flow_workflow_id, which is exposed separately."""
+        from gflow_cli.mcp.tools import _run_generation_task
+
+        with (
+            patch(
+                "gflow_cli.worker.daemon.FlowApiClient",
+                return_value=_FakeFlowApiClient(),
+            ),
+            patch(
+                "gflow_cli.mcp.tools.get_settings",
+                return_value=MagicMock(
+                    resolved_db_path=lambda: temp_db.path,
+                    profile_subdir=lambda _: tmp_path / "profile_default",
+                ),
+            ),
+            patch(
+                "gflow_cli.worker.daemon.get_settings",
+                return_value=MagicMock(
+                    profile_subdir=lambda _: tmp_path / "profile_default",
+                    headless=True,
+                    transport=None,
+                    output_dir=tmp_path / "out",
+                ),
+            ),
+        ):
+            result = await _run_generation_task(
+                profile="default",
+                task_type="t2i",
+                payload={"prompt": "envelope test", "aspect": "1:1", "count": 1},
+            )
+
+        assert result["status"] == "completed"
+        # The fake asset has flow_media_id="media-img-wired", flow_workflow_id="workflow-123".
+        assert result["flow_media_id"] == "media-img-wired"
+        assert result["flow_workflow_id"] == "workflow-123"
+
+    @pytest.mark.asyncio
     async def test_unknown_error_returns_error_status(
         self, temp_db: DataStore, tmp_path: Path
     ) -> None:

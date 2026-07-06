@@ -7,6 +7,71 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+## [0.25.0] — 2026-07-06
+
+### Fixed
+
+- **Follow-up review fixes for remote image UUIDs (#237/#245)**: a post-merge
+  multi-angle review surfaced regressions and defects now corrected:
+  - Image `i2i` with a Flow media-id ref that isn't in the local catalog is no
+    longer rejected — UUID→display-name resolution is applied only to the video
+    paths (image refs attach by media id). Restores the `i2i` pass-through.
+  - The generation result envelope's `flow_media_id` again carries the real
+    media id (it was returning the asset's `flow_workflow_id`); the workflow id
+    is exposed under its own `flow_workflow_id` key.
+  - An in-catalog asset with no display name no longer returns its raw UUID as
+    the picker search term (which timed out); it fails fast with a clear error.
+  - Remote picker tiles match the display name exactly (`get_by_role(exact=True)`),
+    so a name that is a substring of another can't silently attach the wrong image.
+  - The R2V picker-close timeout matches the I2V budget (was a too-tight 8s that
+    aborted slow-but-successful attaches).
+  - `_attach_reference_audio` selects its tile by ARIA role+name instead of an
+    apostrophe-unsafe `:has-text()` selector.
+
+### Added
+
+- **Remote image UUIDs in `gflow_generate_video` (#237)**: I2V (`initial_frame` /
+  `end_frame`) and R2V (`reference_images`) now accept a generated image's Flow UUID,
+  not just a local file path — pipe the output of an image generation straight into a
+  video generation with no download/re-upload round-trip. UUID inputs are resolved to
+  the asset's display name at enqueue time and attached via the resource picker; a UUID
+  that isn't in your asset catalog fails fast with a clear "Reference Not Found" error
+  instead of a long browser timeout. (Contributed by @C1ph3r404; hardened during
+  maintainer review — see below.)
+
+### Fixed
+
+- **Removed a shadowed duplicate `Settings.daemon_token` field definition (#243)**: the
+  class body defined `daemon_token` twice; Python silently kept only the second
+  (aliased) one, leaving the first as dead code that a future edit could touch without
+  effect. The surviving definition's contract (both `GFLOW_CLI_DAEMON_TOKEN` and
+  `GFLOW_DAEMON_TOKEN` accepted) is now pinned by tests, along with a guard that the
+  field is defined exactly once.
+
+- **`$GFLOW_CLI_HOME/.env` now loads as a dotenv fallback (#240)**: `config.py`'s own
+  module docstring promised a `.env` fallback "from CWD or `$GFLOW_CLI_HOME/.env`", but
+  the implementation only ever read the CWD file — a key placed in the home `.env` was
+  silently ignored (easy to miss under the prompt tools' never-fatal contract, and it
+  bites any process whose CWD is not a project root: the MCP server launched by a
+  desktop client, a worker service, a scheduled task). `Settings` now defaults the
+  standard pydantic-settings `_env_file` init kwarg to `($GFLOW_CLI_HOME/.env, ./.env)`
+  per construction, so explicit `Settings(_env_file=...)` — including the disable idiom
+  `_env_file=None` — keeps working. Precedence: process env vars beat both files, and a
+  CWD `.env` beats `$GFLOW_CLI_HOME/.env`.
+  - **Home resolution is coherent across every channel**: the home used to locate the
+    home `.env` now matches what `Settings.home` reports when `GFLOW_CLI_HOME` comes
+    from the process env (case-insensitively, as the env source matches it), from a
+    `GFLOW_CLI_HOME` entry in the CWD `.env`, or is set-but-empty (treated as unset
+    rather than `Path('.')`). The home `.env` itself cannot relocate home (circular).
+  - **Docs reconciled**: `docs/CONFIGURATION.md` § ".env loading", `docs/SECURITY.md`
+    (Gemini-key locations) and `.env.template` previously documented CWD-only loading
+    and now describe the two-file behavior; the `gflow serve` token hint no longer
+    points at `.env.local`, which was never a loaded file.
+  - **Worker daemon**: `FlowApiClient` constructions in `process_task` now receive the
+    daemon's cached settings instead of re-reading `.env` files live per task, so a
+    mid-run edit to the home `.env` can no longer produce a task whose client config
+    disagrees with the parameters the task derived from `get_settings()`.
+
 ## [0.24.0] — 2026-07-01
 
 ### Added

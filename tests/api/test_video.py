@@ -154,7 +154,7 @@ class TestGenerateVideoRequest:
             )
 
     def test_r2v_requires_a_reference_image(self) -> None:
-        with pytest.raises(ValueError, match="reference_images or reference_entities"):
+        with pytest.raises(ValueError, match="reference_images, ref_names, or reference_entities"):
             GenerateVideoRequest(prompt="x", mode=Mode.R2V)
 
     def test_r2v_must_not_carry_start_end(self) -> None:
