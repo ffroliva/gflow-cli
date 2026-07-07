@@ -87,7 +87,14 @@ before PR #259; cosmetic; tracked as a follow-up.
 
 ## Post-tag evidence
 
-*(filled after the v0.27.0 tag push / publish)*
+- Signed tag `v0.27.0` pushed 2026-07-07; `Release` workflow green
+  (build-and-publish 37s, digital attestations generated).
+- GitHub Release **v0.27.0** published 2026-07-07T21:16:40Z (not draft).
+- PyPI: `gflow-cli 0.27.0` live — `gflow_cli-0.27.0-py3-none-any.whl` +
+  `gflow_cli-0.27.0.tar.gz` (verified via the PyPI JSON API).
+- Release PR #260 (`chore/release-v0.27.0 → main`) merged with a merge commit
+  after a fully green matrix + SonarCloud gate; branch deleted.
+- `main` back-merged into `develop` (`2909cb6`) — branches aligned.
 
 ## Automated coverage
 
