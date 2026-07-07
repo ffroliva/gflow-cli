@@ -212,6 +212,8 @@ def _parse_style(data: object) -> StyleSpec:
             raise ConfigurationError(f"style.{key} must be a string.")
         return v.strip() if isinstance(v, str) else None
 
+    variants = _parse_style_variants(d)
+
     return StyleSpec(
         look=s("look"),
         palette=s("palette"),
@@ -220,7 +222,30 @@ def _parse_style(data: object) -> StyleSpec:
         lighting=s("lighting"),
         mood=s("mood"),
         negative=s("negative"),
+        prefix=s("prefix"),
+        suffix=s("suffix"),
+        variants=variants,
     )
+
+
+def _parse_style_variants(d: _TomlObj) -> dict[str, str]:
+    """Parse [style.variants.*] sub-tables into a name → suffix mapping."""
+    variants_raw = d.get("variants")
+    if variants_raw is None:
+        return {}
+    if not isinstance(variants_raw, dict):
+        raise ConfigurationError("[style.variants] must be a TOML table.")
+    variants: dict[str, str] = {}
+    for name, val in cast(_TomlObj, variants_raw).items():
+        if not isinstance(val, dict):
+            raise ConfigurationError(f"[style.variants.{name}] must be a TOML table.")
+        variant_d = cast(_TomlObj, val)
+        suffix_val = variant_d.get("suffix")
+        if suffix_val is not None and not isinstance(suffix_val, str):
+            raise ConfigurationError(f"style.variants.{name}.suffix must be a string.")
+        if isinstance(suffix_val, str):
+            variants[str(name)] = suffix_val.strip()
+    return variants
 
 
 def _parse_character_variants(d: _TomlObj, idx: int) -> dict[str, str]:
@@ -422,6 +447,16 @@ def _parse_scene(
         v = d.get(key)
         return v.strip() if isinstance(v, str) else None
 
+    style_variant_raw = d.get("style_variant")
+    if style_variant_raw is not None and not isinstance(style_variant_raw, str):
+        raise ConfigurationError(f"scenes[{idx}].style_variant must be a string.")
+    style_variant = str(style_variant_raw).strip() if isinstance(style_variant_raw, str) else None
+
+    style_suffix_raw = d.get("style_suffix")
+    if style_suffix_raw is not None and not isinstance(style_suffix_raw, str):
+        raise ConfigurationError(f"scenes[{idx}].style_suffix must be a string.")
+    style_suffix = str(style_suffix_raw).strip() if isinstance(style_suffix_raw, str) else None
+
     return Scene(
         id=sid.strip(),
         action=action.strip(),
@@ -439,6 +474,8 @@ def _parse_scene(
         model=model if isinstance(model, str) else None,
         aspect=aspect,
         count=1,
+        style_variant=style_variant,
+        style_suffix=style_suffix,
     )
 
 
@@ -481,6 +518,7 @@ class SceneState:
     status: str  # "completed" | "failed"
     prompt: str | None = None  # composed Veo prompt (for handoff projection)
     consistency_method: str = "text"  # "text" | "entity" | "degraded" (P2)
+    style_hash: str | None = None  # SHA-256 of composed prompt for resume detection
 
     def to_dict(self) -> dict[str, object]:
         return {
@@ -490,6 +528,7 @@ class SceneState:
             "status": self.status,
             "prompt": self.prompt,
             "consistency_method": self.consistency_method,
+            "style_hash": self.style_hash,
         }
 
     @classmethod
@@ -498,6 +537,7 @@ class SceneState:
         raw_path = d.get("local_path")
         raw_prompt = d.get("prompt")
         raw_method = d.get("consistency_method", "text")
+        raw_hash = d.get("style_hash")
         return cls(
             media_id=str(d.get("media_id") or ""),
             flow_operation_id=str(raw_op_id) if isinstance(raw_op_id, str) else None,
@@ -505,6 +545,7 @@ class SceneState:
             status=str(d.get("status") or "completed"),
             prompt=str(raw_prompt) if isinstance(raw_prompt, str) else None,
             consistency_method=str(raw_method) if isinstance(raw_method, str) else "text",
+            style_hash=str(raw_hash) if isinstance(raw_hash, str) else None,
         )
 
 
