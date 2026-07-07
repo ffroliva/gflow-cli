@@ -14,6 +14,8 @@ from dataclasses import dataclass, field
 from pathlib import Path
 from typing import Any, cast
 
+from gflow_cli import __version__
+
 
 @dataclass(frozen=True)
 class StyleSpec:
@@ -367,7 +369,7 @@ def build_handoff(
     state: Any,
     *,
     out_dir: Path,
-    version: str = "0.14.0",
+    version: str = __version__,
     include_prompts: bool = True,
 ) -> dict[str, Any]:
     """Project a completed/partial movie run into the versioned handoff manifest.
