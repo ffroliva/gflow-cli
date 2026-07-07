@@ -19,7 +19,14 @@ from dataclasses import dataclass
 from pathlib import Path
 from typing import cast
 
-from gflow_cli.composition import FRAMING, Character, DialogueLine, Scene, StyleSpec
+from gflow_cli.composition import (
+    FRAMING,
+    Character,
+    DialogueLine,
+    Scene,
+    StyleSpec,
+    resume_hash,
+)
 from gflow_cli.errors import ConfigurationError
 
 __all__ = [
@@ -244,15 +251,22 @@ def _parse_style_variants(d: _TomlObj) -> dict[str, str]:
     if not isinstance(variants_raw, dict):
         raise ConfigurationError("[style.variants] must be a TOML table.")
     variants: dict[str, str] = {}
-    for name, val in cast(_TomlObj, variants_raw).items():
+    for raw_name, val in cast(_TomlObj, variants_raw).items():
+        name = str(raw_name).strip()
+        if not name:
+            raise ConfigurationError("[style.variants] names must be non-empty.")
+        if name == "none":
+            raise ConfigurationError(
+                '[style.variants.none] is not allowed: "none" is reserved for '
+                "scenes[].style_variant to opt out of the style suffix."
+            )
         if not isinstance(val, dict):
             raise ConfigurationError(f"[style.variants.{name}] must be a TOML table.")
         variant_d = cast(_TomlObj, val)
         suffix_val = variant_d.get("suffix")
-        if suffix_val is not None and not isinstance(suffix_val, str):
+        if not isinstance(suffix_val, str):
             raise ConfigurationError(f"style.variants.{name}.suffix must be a string.")
-        if isinstance(suffix_val, str):
-            variants[str(name)] = suffix_val.strip()
+        variants[name] = suffix_val.strip()
     return variants
 
 
@@ -269,6 +283,14 @@ def _character_opt_str(d: _TomlObj, key: str, idx: int) -> str | None:
     v = d.get(key)
     if v is not None and not isinstance(v, str):
         raise ConfigurationError(f"characters[{idx}].{key} must be a string.")
+    return v.strip() if isinstance(v, str) else None
+
+
+def _scene_opt_str(d: _TomlObj, key: str, idx: int) -> str | None:
+    """Read an optional string field from a scene dict; raise on wrong type."""
+    v = d.get(key)
+    if v is not None and not isinstance(v, str):
+        raise ConfigurationError(f"scenes[{idx}].{key} must be a string.")
     return v.strip() if isinstance(v, str) else None
 
 
@@ -456,11 +478,7 @@ def _parse_scene(
         v = d.get(key)
         return v.strip() if isinstance(v, str) else None
 
-    style_variant_raw = d.get("style_variant")
-    if style_variant_raw is not None and not isinstance(style_variant_raw, str):
-        raise ConfigurationError(f"scenes[{idx}].style_variant must be a string.")
-    style_variant = str(style_variant_raw).strip() if isinstance(style_variant_raw, str) else None
-
+    style_variant = _scene_opt_str(d, "style_variant", idx)
     if (
         style_variant is not None
         and style_variant != "none"
@@ -471,10 +489,7 @@ def _parse_scene(
             f"style variant (defined: {sorted(style_variant_names)!r})."
         )
 
-    style_suffix_raw = d.get("style_suffix")
-    if style_suffix_raw is not None and not isinstance(style_suffix_raw, str):
-        raise ConfigurationError(f"scenes[{idx}].style_suffix must be a string.")
-    style_suffix = str(style_suffix_raw).strip() if isinstance(style_suffix_raw, str) else None
+    style_suffix = _scene_opt_str(d, "style_suffix", idx)
 
     return Scene(
         id=sid.strip(),
@@ -538,6 +553,19 @@ class SceneState:
     prompt: str | None = None  # composed Veo prompt (for handoff projection)
     consistency_method: str = "text"  # "text" | "entity" | "degraded" (P2)
     style_hash: str | None = None  # SHA-256 of composed prompt for resume detection
+
+    def is_stale_for(self, prompt: str) -> bool:
+        """True when *prompt* no longer matches what this scene was generated with.
+
+        Prefers the persisted ``style_hash``; falls back to comparing the stored
+        prompt text (state files written before ``style_hash`` existed). With
+        neither record, assume not stale — never re-spend credits on a guess.
+        """
+        if self.style_hash is not None:
+            return self.style_hash != resume_hash(prompt)
+        if self.prompt is not None:
+            return self.prompt != prompt
+        return False
 
     def to_dict(self) -> dict[str, object]:
         return {

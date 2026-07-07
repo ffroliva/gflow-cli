@@ -6,6 +6,7 @@ import json
 from pathlib import Path
 
 import jsonschema
+import pytest
 
 from gflow_cli.composition import (
     Character,
@@ -42,9 +43,10 @@ class TestStyleSpecExtensions:
         s = StyleSpec(suffix="Base suffix.")
         assert s.resolve_suffix(None) == "Base suffix."
 
-    def test_resolve_suffix_returns_none_for_unknown_variant(self) -> None:
+    def test_resolve_suffix_raises_for_unknown_variant(self) -> None:
         s = StyleSpec(variants={"warm": "X"})
-        assert s.resolve_suffix("nope") is None
+        with pytest.raises(ValueError, match="nope"):
+            s.resolve_suffix("nope")
 
     def test_resolve_suffix_returns_none_when_no_suffix(self) -> None:
         s = StyleSpec()
@@ -227,6 +229,25 @@ def test_handoff_style_applied_scene_suffix() -> None:
     clip = next(c for c in h["clips"] if c["id"] == "s4")
     assert clip["style_applied"]["scene_suffix"] == "golden hour"
     assert clip["style_applied"]["suffix"] == "Cinematic."
+
+
+def test_handoff_style_applied_records_prefix() -> None:
+    class _PrefixManifest:
+        title = "T"
+        project = "p"
+        style = StyleSpec(prefix="SCENE:")
+        characters: dict[str, Character] = {}
+        scenes = (Scene(id="s1", action="walks"),)
+
+    st = MovieState(title="T", project="p")
+    st.scenes["s1"] = SceneState(
+        media_id="m", flow_operation_id="op", local_path="/out/s1.mp4", status="completed"
+    )
+    h = build_handoff(_PrefixManifest(), st, out_dir=Path("/out"))
+    applied = h["clips"][0]["style_applied"]
+    assert applied["prefix"] == "SCENE:"
+    assert applied["variant"] is None
+    assert applied["suffix"] is None
 
 
 def test_handoff_validates_against_schema() -> None:
