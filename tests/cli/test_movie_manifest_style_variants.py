@@ -336,6 +336,26 @@ style_suffix = true
                 )
             )
 
+    def test_unknown_style_variant_raises(self, tmp_path: Path) -> None:
+        with pytest.raises(ConfigurationError, match="style_variant.*wram"):
+            MovieManifest.from_toml_path(
+                _write_toml(
+                    tmp_path,
+                    """
+title = "T"
+project = "p"
+[style]
+suffix = "Base."
+[style.variants.warm]
+suffix = "Warm."
+[[scenes]]
+id = "s1"
+action = "walks"
+style_variant = "wram"
+""",
+                )
+            )
+
 
 # ---------------------------------------------------------------------------
 # Backward compatibility

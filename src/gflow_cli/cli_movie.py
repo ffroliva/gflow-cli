@@ -68,6 +68,10 @@ output_dir = "./out/my-movie"  # optional
 look = "cinematic, shallow depth of field"
 palette = "warm golden tones"
 negative = "no text, no watermark"
+suffix = "Black and white cinematic street photography, photorealistic, film grain."
+
+  [style.variants.warm]
+  suffix = "Warm golden-hour cinematic grade."
 
 [[characters]]
 name = "Alice"
@@ -89,6 +93,7 @@ id = "arrival"
 action = "walks through a busy futuristic plaza, looking around with wonder"
 framing = "wide"
 characters = ["Alice"]
+style_variant = "warm"  # select [style.variants.warm]; omit for base style
 aspect = "16:9"
 duration = 8
 
@@ -99,6 +104,7 @@ framing = "close-up"
 characters = ["Alice"]
 speaker = "Alice"
 line = "We made it!"
+style_suffix = "golden hour light"  # appended after the variant/base suffix
 aspect = "16:9"
 duration = 6
 model = "veo-quality"

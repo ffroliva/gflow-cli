@@ -184,7 +184,8 @@ def _framing_camera_block(scene: Scene, style: StyleSpec) -> str:
 def _resolve_style_suffix(style: StyleSpec, scene: Scene) -> str | None:
     """Resolve the effective style suffix for a scene.
 
-    ``scene.style_variant = "none"`` → opt out (no suffix at all).
+    ``scene.style_variant = "none"`` → opt out of base and variant suffixes
+    (``scene.style_suffix`` is independent and still applied).
     ``scene.style_variant = "<name>"`` → variant suffix.
     Otherwise → base ``style.suffix``.
     """
@@ -271,7 +272,7 @@ def compose_prompt(
     return composed
 
 
-def prompt_hash(prompt: str) -> str:
+def resume_hash(prompt: str) -> str:
     """Return SHA-256 hex digest of *prompt* for resume change detection."""
     return hashlib.sha256(prompt.encode("utf-8")).hexdigest()
 
@@ -315,9 +316,9 @@ def _build_handoff_clip(
 
     # Style applied — the resolved variant + suffix for this clip.
     style_applied: dict[str, Any] = {}
-    variant_name = getattr(scene, "style_variant", None)
+    variant_name = scene.style_variant
     resolved_suffix = _resolve_style_suffix(manifest.style, scene)
-    scene_suffix = getattr(scene, "style_suffix", None)
+    scene_suffix = scene.style_suffix
     if variant_name is not None or resolved_suffix or scene_suffix:
         style_applied = {
             "variant": variant_name,

@@ -31,6 +31,18 @@ title = "E2E Stickman"
 project = "6ba50219-…"            # reusable Flow project id
 output_dir = "./out"
 
+[style]
+look = "cinematic, shallow depth of field"
+palette = "warm golden tones"
+negative = "no text, no watermark"
+suffix = "Black and white cinematic street photography, photorealistic, film grain."
+
+  [style.variants.warm]
+  suffix = "Warm golden-hour cinematic grade."
+
+  [style.variants.cool]
+  suffix = "Cool blue-toned cinematic grade."
+
 [[characters]]
 name = "Stickman"
 identity = "entity"               # reuse a Flow CHARACTER entity across scenes
@@ -47,12 +59,56 @@ line = "We finally made it to the top!"
 aspect = "9:16"
 model = "veo-lite"
 duration = 8
+
+[[scenes]]
+id = "close-up"
+action = "smiles with excitement"
+style_variant = "warm"            # selects [style.variants.warm]
+style_suffix = "golden hour light" # appended after the variant suffix
+aspect = "9:16"
+duration = 6
 ```
 
 On first run, characters with `identity = "entity"` are created once (image
 generation — **free**, no credits) and cached. Each scene then generates a clip
 that **reuses the same Flow CHARACTER entity** so the character drives every
 scene from one identity.
+
+### Style variants
+
+The `[style]` block defines a **global visual style** applied to every scene.
+For channel-format videos where the style changes across scenes (e.g. a
+monochrome → warm color arc), use **named variants**:
+
+```toml
+[style]
+prefix = ""           # optional, prepended before the composed scene text
+suffix = "Black and white cinematic street photography, photorealistic, film grain."
+
+  [style.variants.warm]
+  suffix = "Warm golden-hour cinematic grade."
+
+  [style.variants.cool]
+  suffix = "Cool blue-toned cinematic grade."
+```
+
+Per-scene selection:
+
+| Field | Effect |
+|---|---|
+| `style_variant = "warm"` | Selects `[style.variants.warm]` — its `suffix` replaces the base `suffix`. |
+| `style_variant = "none"` | Opts out of all style suffixes (base + variant). Prefix is still applied. |
+| *(omitted)* | Uses the base `[style]` suffix. |
+| `style_suffix = "sunset light"` | Scene-specific text appended **after** the variant/base suffix. |
+
+**Composition rule** (deterministic, no LLM):
+
+```
+final_prompt = [prefix] + composed_scene_text + [variant.suffix | base.suffix] + [scene.style_suffix]
+```
+
+The applied style is recorded per clip in `<manifest>-handoff.json` as
+`style_applied`, so downstream tools (Remotion, editors) can introspect it.
 
 > **Consistency is best-effort, not pixel-exact.** gflow guarantees the *right
 > entity rides the wire* (`consistency_method = entity`); the final on-screen

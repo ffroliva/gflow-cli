@@ -94,7 +94,7 @@ class MovieManifest:
         schema_version = _require_int(data, "schema_version", default=1)
         style = _parse_style(data.get("style"))
         characters = _parse_characters(data)
-        scenes = _parse_scenes(data, characters)
+        scenes = _parse_scenes(data, characters, style)
         continuity = _parse_continuity(data)
         assemble = _parse_assemble(data)
 
@@ -155,7 +155,11 @@ def _parse_characters(data: dict[str, object]) -> dict[str, Character]:
     return characters
 
 
-def _parse_scenes(data: dict[str, object], characters: dict[str, Character]) -> tuple[Scene, ...]:
+def _parse_scenes(
+    data: dict[str, object],
+    characters: dict[str, Character],
+    style: StyleSpec,
+) -> tuple[Scene, ...]:
     """Parse scenes from data."""
     scenes_raw = data.get("scenes", [])
     if not isinstance(scenes_raw, list):
@@ -164,7 +168,11 @@ def _parse_scenes(data: dict[str, object], characters: dict[str, Character]) -> 
         raise ConfigurationError("At least one [[scenes]] entry is required.")
     scenes_list = cast(_TomlList, scenes_raw)
     char_names = set(characters)
-    scenes = tuple(_parse_scene(s, i, char_names, characters) for i, s in enumerate(scenes_list))
+    style_variant_names = set(style.variants)
+    scenes = tuple(
+        _parse_scene(s, i, char_names, characters, style_variant_names)
+        for i, s in enumerate(scenes_list)
+    )
     scene_ids: set[str] = set()
     for s in scenes:
         if s.id in scene_ids:
@@ -409,6 +417,7 @@ def _parse_scene(
     idx: int,
     char_names: set[str],
     characters: dict[str, Character],
+    style_variant_names: set[str],
 ) -> Scene:
     if not isinstance(data, dict):
         raise ConfigurationError(f"scenes[{idx}] must be a TOML table.")
@@ -451,6 +460,16 @@ def _parse_scene(
     if style_variant_raw is not None and not isinstance(style_variant_raw, str):
         raise ConfigurationError(f"scenes[{idx}].style_variant must be a string.")
     style_variant = str(style_variant_raw).strip() if isinstance(style_variant_raw, str) else None
+
+    if (
+        style_variant is not None
+        and style_variant != "none"
+        and style_variant not in style_variant_names
+    ):
+        raise ConfigurationError(
+            f"scenes[{idx}].style_variant {style_variant!r} is not a defined "
+            f"style variant (defined: {sorted(style_variant_names)!r})."
+        )
 
     style_suffix_raw = d.get("style_suffix")
     if style_suffix_raw is not None and not isinstance(style_suffix_raw, str):

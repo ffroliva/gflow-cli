@@ -7,6 +7,16 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+### Added
+
+- **Global `[style]` block with named variants in `movie.toml` (Issue #239):** channel-format
+  videos can now express a visual style system (e.g. monochrome → warm color arc) once in the
+  `[style]` block and select it per-scene via `style_variant`, without repeating style text in
+  every scene's action. Adds `prefix`/`suffix` fields to `[style]`, `[style.variants.*]`
+  sub-tables, per-scene `style_variant` and `style_suffix` fields, deterministic composition
+  rule, `resume_hash()` for crash-recoverable resume, and `style_applied` per clip in the
+  handoff manifest.
+
 ## [0.26.0] — 2026-07-06
 
 ### Added
