@@ -50,6 +50,15 @@
           "dialogue": { "type": "array" },
           "prompt": { "type": ["string", "null"] },
           "status": { "enum": ["completed", "failed"] },
+          "style_applied": {
+            "type": "object",
+            "properties": {
+              "variant": { "type": ["string", "null"] },
+              "prefix": { "type": ["string", "null"] },
+              "suffix": { "type": ["string", "null"] },
+              "scene_suffix": { "type": ["string", "null"] }
+            }
+          },
           "x_gflow": { "type": "object" }
         }
       }
