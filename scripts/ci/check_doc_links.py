@@ -40,6 +40,7 @@ FILES: tuple[str, ...] = (
     "docs/USER_GUIDE.md",
     "docs/LIVE_VERIFICATION_v0.8.1.md",
     "docs/CHARACTER.md",
+    "docs/MOVIE.md",
 )
 
 # [text](target) — non-greedy text, balanced target (no nested parens).

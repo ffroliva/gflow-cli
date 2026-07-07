@@ -58,6 +58,9 @@ Browse the local project catalog.
 ### gflow_list_characters
 Browse reusable Flow Character entities.
 
+### gflow_list_tools
+List available gflow prompt tools (name, title, description, category).
+
 ## Important Rules
 1. **Use tools, not shell commands.** Do NOT run `gflow image t2i ...` via the terminal.
 2. **One generation at a time.** The rate limiter allows bursts of 8 but throttles sustained use.

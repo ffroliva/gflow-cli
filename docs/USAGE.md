@@ -1044,6 +1044,84 @@ GFLOW_EXAMPLE_PROFILE=<your-profile> python examples/batch_from_config.py
 
 The bundled `examples/sample_config.json` produces three images at three aspect ratios in `gflow-output/example-batch/`. Copy and edit for your own scenes.
 
+## `gflow movie`
+
+Sequential TOML-described multi-scene AI movie generation. New in v0.14.0.
+
+### `gflow movie template`
+
+Writes a starter `movie.toml` template.
+
+```text
+gflow movie template [OUTPUT] [--force]
+```
+
+* `OUTPUT`: The destination path for the template file (defaults to `./movie.toml`).
+* `--force`: Overwrite the destination file if it already exists.
+
+### `gflow movie run`
+
+Generates individual video clips sequentially from a single TOML manifest file, maintaining crash-recoverable state in a local state JSON file.
+
+```text
+gflow movie run MANIFEST [--out-dir DIR] [--profile NAME] [--continue-on-error|--fail-fast] [--dry-run] [--stitch]
+```
+
+Refer to the complete [Movie Manifests Guide](MOVIE.md) for detailed syntax, character entity creation, and style consistency features.
+
+### Parameters
+
+* `MANIFEST`: Path to your `movie.toml` manifest file (required positional argument).
+* `--out-dir DIR`: Output directory for generated video clips and the handoff file. Defaults to `out/` or `GFLOW_CLI_OUTPUT_DIR`.
+* `--profile NAME`: Specify Google Flow profile to use.
+* `--continue-on-error`: Skip failed scenes and continue generating subsequent scenes (default).
+* `--fail-fast`: Terminate immediately on the first failed scene generation.
+* `--dry-run`: Parse the manifest, estimate credits, and print the generation plan without calling Google Flow.
+* `--stitch`: Run a post-generation preview stitch using ffmpeg to concatenate clips into a single video file.
+
+### Manifest structure (movie.toml)
+
+```toml
+title = "My Cinematic Film"
+project = "Cinematics"
+
+[style]
+look = "3d animation"
+mood = "mysterious"
+negative = "text, watermark"
+prefix = "Cinematic film still, high detail."
+suffix = "Shot on IMAX 70mm, unreal engine 5 render."
+
+[style.variants.warm]
+suffix = "Golden hour light, warm color grading."
+
+[[characters]]
+name = "Stickman"
+identity = "text"
+voice = "alnilam"
+
+[[scenes]]
+id = "scene_01"
+action = "A mysterious stickman walks slowly through a dark forest."
+framing = "wide"
+duration = 5
+characters = ["Stickman"]
+
+[[scenes]]
+id = "scene_02"
+action = "Close up of the stickman looking back in shock."
+framing = "close-up"
+duration = 5
+characters = ["Stickman"]
+style_variant = "warm"
+```
+
+### Outputs
+
+1. **Clip Files:** Individual video files saved under `<out_dir>/scene_<id>.mp4` (or other formats).
+2. **State File:** A `<stem>-state.json` file recording completed operations, seeds, and metadata, allowing a run to resume without wasting credits.
+3. **Handoff Manifest:** A `<stem>-handoff.json` file that projects the run's metadata and clip paths, designed for downstream assemblers.
+
 ## Recipes
 
 ### Burn through a directory of inputs
