@@ -6,8 +6,9 @@ from pathlib import Path
 
 import pytest
 
+from gflow_cli.composition import resume_hash
 from gflow_cli.errors import ConfigurationError
-from gflow_cli.movie_manifest import MovieManifest
+from gflow_cli.movie_manifest import MovieManifest, SceneState
 
 
 def _write_toml(tmp_path: Path, content: str) -> Path:
@@ -336,6 +337,40 @@ style_suffix = true
                 )
             )
 
+    def test_variant_named_none_raises(self, tmp_path: Path) -> None:
+        with pytest.raises(ConfigurationError, match="reserved"):
+            MovieManifest.from_toml_path(
+                _write_toml(
+                    tmp_path,
+                    """
+title = "T"
+project = "p"
+[style.variants.none]
+suffix = "Grainy archival look."
+[[scenes]]
+id = "s1"
+action = "walks"
+""",
+                )
+            )
+
+    def test_variant_without_suffix_raises(self, tmp_path: Path) -> None:
+        with pytest.raises(ConfigurationError, match="variants.warm.suffix"):
+            MovieManifest.from_toml_path(
+                _write_toml(
+                    tmp_path,
+                    """
+title = "T"
+project = "p"
+[style.variants.warm]
+lighting = "not a suffix"
+[[scenes]]
+id = "s1"
+action = "walks"
+""",
+                )
+            )
+
     def test_unknown_style_variant_raises(self, tmp_path: Path) -> None:
         with pytest.raises(ConfigurationError, match="style_variant.*wram"):
             MovieManifest.from_toml_path(
@@ -384,3 +419,37 @@ action = "walks"
         assert m.style.variants == {}
         assert m.scenes[0].style_variant is None
         assert m.scenes[0].style_suffix is None
+
+
+# ---------------------------------------------------------------------------
+# Resume staleness — SceneState.is_stale_for
+# ---------------------------------------------------------------------------
+
+
+def _completed_state(**kwargs: object) -> SceneState:
+    return SceneState(
+        media_id="m",
+        flow_operation_id="op",
+        local_path="/out/s1.mp4",
+        status="completed",
+        **kwargs,  # type: ignore[arg-type]
+    )
+
+
+class TestSceneStateStaleness:
+    def test_matching_style_hash_is_not_stale(self) -> None:
+        ss = _completed_state(style_hash=resume_hash("Walks."))
+        assert not ss.is_stale_for("Walks.")
+
+    def test_changed_style_hash_is_stale(self) -> None:
+        ss = _completed_state(style_hash=resume_hash("Walks. Old suffix."))
+        assert ss.is_stale_for("Walks. New suffix.")
+
+    def test_no_hash_falls_back_to_stored_prompt(self) -> None:
+        ss = _completed_state(prompt="Walks. Old suffix.")
+        assert ss.is_stale_for("Walks. New suffix.")
+        assert not ss.is_stale_for("Walks. Old suffix.")
+
+    def test_no_hash_and_no_prompt_is_never_stale(self) -> None:
+        ss = _completed_state()
+        assert not ss.is_stale_for("Anything at all.")

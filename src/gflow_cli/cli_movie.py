@@ -35,7 +35,14 @@ from gflow_cli._cli_helpers import _make_provider_dir, _resolve_profile, run_wit
 from gflow_cli.api.character import CharacterImageRequest
 from gflow_cli.api.client import FlowApiClient
 from gflow_cli.api.video import Aspect, GenerateVideoRequest, Mode, VideoModel, VideoStarted
-from gflow_cli.composition import Character, Scene, build_handoff, compose_prompt
+from gflow_cli.composition import (
+    Character,
+    Scene,
+    StyleSpec,
+    build_handoff,
+    compose_prompt,
+    resume_hash,
+)
 from gflow_cli.config import get_settings
 from gflow_cli.data.recorder import OperationRecorder
 from gflow_cli.errors import ConfigurationError, DataStoreError, WireFormatError
@@ -263,15 +270,33 @@ def _print_header(manifest: MovieManifest, *, out_dir: Path, dry_run: bool) -> N
     console.print(f"  characters: {len(manifest.characters)}  scenes: {len(manifest.scenes)}")
 
 
-def _format_scene_line(s: Scene, done: bool, cost: int) -> str:
+def _style_tag(s: Scene, style: StyleSpec) -> str:
+    """Return the resolved-style fragment for the plan line, or ''."""
+    bits: list[str] = []
+    if s.style_variant:
+        bits.append(f"style={s.style_variant}")
+    elif style.suffix:
+        bits.append("style=base")
+    if s.style_suffix:
+        bits.append("+style_suffix")
+    return ("  " + " ".join(bits)) if bits else ""
+
+
+def _format_scene_line(s: Scene, style: StyleSpec, *, done: bool, stale: bool, cost: int) -> str:
     """Return the single-line plan summary for one scene."""
     mode = "r2v" if s.characters else "t2v"
     refs = f"  refs=[{', '.join(s.characters)}]" if s.characters else ""
     framing_tag = f"  {s.framing}" if s.framing else ""
     model_tag = f"  {s.model}" if s.model else ""
     dur_tag = f"  {s.duration}s" if s.duration else ""
-    status = "[dim]skip (done)[/dim]" if done else f"{cost} credit(s)"
-    return f"    [{mode}] {s.id!r}{framing_tag}{model_tag}{dur_tag}{refs}  {status}"
+    if done:
+        status = "[dim]skip (done)[/dim]"
+    elif stale:
+        status = f"re-run (style changed)  {cost} credit(s)"
+    else:
+        status = f"{cost} credit(s)"
+    style_tag = _style_tag(s, style)
+    return f"    [{mode}] {s.id!r}{framing_tag}{model_tag}{dur_tag}{refs}{style_tag}  {status}"
 
 
 def _print_plan(manifest: MovieManifest, state: MovieState) -> None:
@@ -290,10 +315,14 @@ def _print_plan(manifest: MovieManifest, state: MovieState) -> None:
     scene_credits = 0
     for s in manifest.scenes:
         done_state = state.scenes.get(s.id)
-        done = done_state is not None and done_state.status == "completed"
+        done = False
+        stale = False
+        if done_state is not None and done_state.status == "completed":
+            stale = done_state.is_stale_for(compose_prompt(manifest.style, s, manifest.characters))
+            done = not stale
         cost = 0 if done else 1
         scene_credits += cost
-        console.print(_format_scene_line(s, done, cost))
+        console.print(_format_scene_line(s, manifest.style, done=done, stale=stale, cost=cost))
 
     console.print(f"\n  Estimated credits: ~{scene_credits}")
 
@@ -370,6 +399,7 @@ async def _run_one_scene(
             status="completed",
             prompt=prompt,
             consistency_method="entity" if reference_entities else "text",
+            style_hash=resume_hash(prompt),
         )
         state.save(state_path)
         console.print(f"    saved: {video_result.local_path}")
@@ -396,6 +426,7 @@ async def _run_one_scene(
             status="failed",
             prompt=prompt,
             consistency_method=failed_method,
+            style_hash=resume_hash(prompt),
         )
         state.save(state_path)
         if continue_on_error:
@@ -474,11 +505,20 @@ async def _run_movie(
             for scene in manifest.scenes:
                 scene_state = state.scenes.get(scene.id)
                 if scene_state is not None and scene_state.status == "completed":
-                    console.print(f"  [dim]Scene {scene.id!r} — already generated, skipping.[/dim]")
-                    if scene_state.local_path:
-                        completed_local_paths.append(Path(scene_state.local_path))
-                    generated_any = True
-                    continue
+                    prompt_now = compose_prompt(manifest.style, scene, manifest.characters)
+                    if scene_state.is_stale_for(prompt_now):
+                        console.print(
+                            f"  Scene {scene.id!r} — prompt/style changed since last "
+                            "run; regenerating."
+                        )
+                    else:
+                        console.print(
+                            f"  [dim]Scene {scene.id!r} — already generated, skipping.[/dim]"
+                        )
+                        if scene_state.local_path:
+                            completed_local_paths.append(Path(scene_state.local_path))
+                        generated_any = True
+                        continue
 
                 console.print(f"\n  Generating scene [bold]{scene.id!r}[/bold]…")
                 local_path = await _run_one_scene(

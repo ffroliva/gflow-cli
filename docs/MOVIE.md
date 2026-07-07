@@ -101,6 +101,9 @@ Per-scene selection:
 | *(omitted)* | Uses the base `[style]` suffix. |
 | `style_suffix = "sunset light"` | Scene-specific text appended **after** the variant/base suffix. |
 
+`none` is a **reserved name**: defining `[style.variants.none]` is a
+configuration error, so the opt-out keyword can never shadow a real variant.
+
 **Composition rule** (deterministic, no LLM):
 
 ```
@@ -108,7 +111,15 @@ final_prompt = [prefix] + composed_scene_text + [variant.suffix | base.suffix] +
 ```
 
 The applied style is recorded per clip in `<manifest>-handoff.json` as
-`style_applied`, so downstream tools (Remotion, editors) can introspect it.
+`style_applied` (`variant`, `prefix`, `suffix`, `scene_suffix`), so downstream
+tools (Remotion, editors) can introspect it.
+
+**Resume:** each completed scene's state records a hash of its composed
+prompt. If you edit the style (or anything else that changes a scene's
+prompt) and re-run, only the affected scenes are regenerated — unchanged
+scenes are still skipped and cost no credits. State files written by older
+gflow-cli versions fall back to comparing the stored prompt text; scenes with
+no stored prompt are never re-run automatically.
 
 > **Consistency is best-effort, not pixel-exact.** gflow guarantees the *right
 > entity rides the wire* (`consistency_method = entity`); the final on-screen

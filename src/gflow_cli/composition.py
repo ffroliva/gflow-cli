@@ -36,10 +36,17 @@ class StyleSpec:
     variants: Mapping[str, str] = field(default_factory=dict[str, str])
 
     def resolve_suffix(self, variant_name: str | None) -> str | None:
-        """Return the variant suffix if *variant_name* is given, else base suffix."""
-        if variant_name is not None:
-            return self.variants.get(variant_name)
-        return self.suffix
+        """Return the named variant's suffix, or the base suffix when ``None``.
+
+        Raises ValueError on an unknown variant name (mirrors
+        ``Character.resolve_variant``).
+        """
+        if variant_name is None:
+            return self.suffix
+        if variant_name not in self.variants:
+            msg = f"unknown style variant {variant_name!r}"
+            raise ValueError(msg)
+        return self.variants[variant_name]
 
 
 @dataclass(frozen=True)
@@ -181,19 +188,18 @@ def _framing_camera_block(scene: Scene, style: StyleSpec) -> str:
     return _sentence(framing_cam) if framing_cam else ""
 
 
-def _resolve_style_suffix(style: StyleSpec, scene: Scene) -> str | None:
+def resolve_style_suffix(style: StyleSpec, scene: Scene) -> str | None:
     """Resolve the effective style suffix for a scene.
 
     ``scene.style_variant = "none"`` → opt out of base and variant suffixes
-    (``scene.style_suffix`` is independent and still applied).
-    ``scene.style_variant = "<name>"`` → variant suffix.
-    Otherwise → base ``style.suffix``.
+    (``scene.style_suffix`` is independent and still applied); the manifest
+    parser rejects a variant literally named "none" so the sentinel cannot
+    shadow a real variant. Otherwise defer to :meth:`StyleSpec.resolve_suffix`
+    (variant suffix, or base ``style.suffix`` when no variant is set).
     """
     if scene.style_variant == "none":
         return None
-    if scene.style_variant is not None:
-        return style.resolve_suffix(scene.style_variant)
-    return style.suffix
+    return style.resolve_suffix(scene.style_variant)
 
 
 def compose_prompt(
@@ -209,6 +215,10 @@ def compose_prompt(
     global+scene.  ``prefix`` / ``suffix`` wrap the entire output.
     """
     parts: list[str] = []
+
+    # 0. PREFIX (raw — wraps the entire prompt)
+    if style.prefix:
+        parts.append(style.prefix)
 
     # 1. ACTION (required)
     parts.append(_sentence(scene.action))
@@ -254,26 +264,25 @@ def compose_prompt(
     if negs:
         parts.append(f"Avoid: {', '.join(negs)}.")
 
-    composed = " ".join(p for p in parts if p)
-
-    # 11. SUFFIX (variant or base)
-    suffix = _resolve_style_suffix(style, scene)
+    # 11. SUFFIX (variant or base — raw)
+    suffix = resolve_style_suffix(style, scene)
     if suffix:
-        composed = f"{composed} {suffix}" if composed else suffix
+        parts.append(suffix)
 
-    # 12. SCENE STYLE_SUFFIX
+    # 12. SCENE STYLE_SUFFIX (raw, always last)
     if scene.style_suffix:
-        composed = f"{composed} {scene.style_suffix}" if composed else scene.style_suffix
+        parts.append(scene.style_suffix)
 
-    # 13. PREFIX (prepended last so it's always first in output)
-    if style.prefix:
-        composed = f"{style.prefix} {composed}" if composed else style.prefix
-
-    return composed
+    return " ".join(p for p in parts if p)
 
 
 def resume_hash(prompt: str) -> str:
-    """Return SHA-256 hex digest of *prompt* for resume change detection."""
+    """Return the full SHA-256 hex digest of *prompt* for resume change detection.
+
+    Same digest as ``gflow_cli.data.redaction.prompt_fields`` computes for
+    observability; duplicated here because this module deliberately imports
+    nothing from the rest of the package (pure seam).
+    """
     return hashlib.sha256(prompt.encode("utf-8")).hexdigest()
 
 
@@ -314,17 +323,18 @@ def _build_handoff_clip(
         stored = getattr(ss, "prompt", None) if ss else None
         prompt_val = stored or compose_prompt(manifest.style, scene, manifest.characters)
 
-    # Style applied — the resolved variant + suffix for this clip.
-    style_applied: dict[str, Any] = {}
-    variant_name = scene.style_variant
-    resolved_suffix = _resolve_style_suffix(manifest.style, scene)
-    scene_suffix = scene.style_suffix
-    if variant_name is not None or resolved_suffix or scene_suffix:
-        style_applied = {
-            "variant": variant_name,
-            "suffix": resolved_suffix,
-            "scene_suffix": scene_suffix,
-        }
+    # Style applied — the styling baked into this clip's prompt. Resolved from
+    # the current manifest; the resume check in cli_movie regenerates a scene
+    # whenever its composed prompt changes, so this stays consistent with the
+    # stored prompt for every clip that survives a run.
+    style_applied: dict[str, Any] = {
+        "variant": scene.style_variant,
+        "prefix": manifest.style.prefix,
+        "suffix": resolve_style_suffix(manifest.style, scene),
+        "scene_suffix": scene.style_suffix,
+    }
+    if all(v is None for v in style_applied.values()):
+        style_applied = {}
 
     return {
         "id": scene.id,
