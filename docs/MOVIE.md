@@ -5,9 +5,9 @@ clips that share the **same characters** (face + voice) across every scene. It
 is the orchestration layer on top of `gflow character` (entity creation) and
 `gflow video` (R2V generation).
 
-> Status: under active development on the movie feature branch. The wire
-> protocol and CLI surface below are live-verified but may still change before
-> release.
+> Status: shipped (since v0.14.0) and evolving. The CLI surface below is
+> release-stable per SemVer; alpha (`0.x`) minor versions may still extend or
+> adjust it, with changes noted in the CHANGELOG.
 
 ## Quick start
 
