@@ -8,6 +8,7 @@ the reusable seam a future second consumer (e.g. remotion) can import.
 
 from __future__ import annotations
 
+import hashlib
 from collections.abc import Mapping
 from dataclasses import dataclass, field
 from pathlib import Path
@@ -16,7 +17,12 @@ from typing import Any, cast
 
 @dataclass(frozen=True)
 class StyleSpec:
-    """Global guiding prompt — every field optional, reused verbatim per scene."""
+    """Global guiding prompt — every field optional, reused verbatim per scene.
+
+    ``prefix`` / ``suffix`` are raw strings prepended / appended to the composed
+    prompt.  ``variants`` is a name → suffix mapping that lets a manifest express
+    a style arc (e.g. monochrome → warm) without repeating text in every scene.
+    """
 
     look: str | None = None
     palette: str | None = None
@@ -25,6 +31,22 @@ class StyleSpec:
     lighting: str | None = None
     mood: str | None = None
     negative: str | None = None
+    prefix: str | None = None
+    suffix: str | None = None
+    variants: Mapping[str, str] = field(default_factory=dict[str, str])
+
+    def resolve_suffix(self, variant_name: str | None) -> str | None:
+        """Return the named variant's suffix, or the base suffix when ``None``.
+
+        Raises ValueError on an unknown variant name (mirrors
+        ``Character.resolve_variant``).
+        """
+        if variant_name is None:
+            return self.suffix
+        if variant_name not in self.variants:
+            msg = f"unknown style variant {variant_name!r}"
+            raise ValueError(msg)
+        return self.variants[variant_name]
 
 
 @dataclass(frozen=True)
@@ -100,6 +122,8 @@ class Scene:
     model: str | None = None
     aspect: str = "16:9"
     count: int = 1
+    style_variant: str | None = None
+    style_suffix: str | None = None
 
 
 def _sentence(text: str) -> str:
@@ -164,6 +188,20 @@ def _framing_camera_block(scene: Scene, style: StyleSpec) -> str:
     return _sentence(framing_cam) if framing_cam else ""
 
 
+def resolve_style_suffix(style: StyleSpec, scene: Scene) -> str | None:
+    """Resolve the effective style suffix for a scene.
+
+    ``scene.style_variant = "none"`` → opt out of base and variant suffixes
+    (``scene.style_suffix`` is independent and still applied); the manifest
+    parser rejects a variant literally named "none" so the sentinel cannot
+    shadow a real variant. Otherwise defer to :meth:`StyleSpec.resolve_suffix`
+    (variant suffix, or base ``style.suffix`` when no variant is set).
+    """
+    if scene.style_variant == "none":
+        return None
+    return style.resolve_suffix(scene.style_variant)
+
+
 def compose_prompt(
     style: StyleSpec,
     scene: Scene,
@@ -171,11 +209,16 @@ def compose_prompt(
 ) -> str:
     """Assemble the final Veo prompt deterministically (canonical order).
 
-    Order: action, subject(+variant), setting, look, palette, lighting,
-    framing+camera, mood, dialogue, negative. Each slot: scene override ->
-    global -> omit. `negative` MERGES global+scene.
+    Order: [prefix] + action + subject(+variant) + setting + look + palette +
+    lighting + framing+camera + mood + dialogue + negative + [suffix].
+    Each slot: scene override -> global -> omit.  ``negative`` MERGES
+    global+scene.  ``prefix`` / ``suffix`` wrap the entire output.
     """
     parts: list[str] = []
+
+    # 0. PREFIX (raw — wraps the entire prompt)
+    if style.prefix:
+        parts.append(style.prefix)
 
     # 1. ACTION (required)
     parts.append(_sentence(scene.action))
@@ -221,7 +264,26 @@ def compose_prompt(
     if negs:
         parts.append(f"Avoid: {', '.join(negs)}.")
 
+    # 11. SUFFIX (variant or base — raw)
+    suffix = resolve_style_suffix(style, scene)
+    if suffix:
+        parts.append(suffix)
+
+    # 12. SCENE STYLE_SUFFIX (raw, always last)
+    if scene.style_suffix:
+        parts.append(scene.style_suffix)
+
     return " ".join(p for p in parts if p)
+
+
+def resume_hash(prompt: str) -> str:
+    """Return the full SHA-256 hex digest of *prompt* for resume change detection.
+
+    Same digest as ``gflow_cli.data.redaction.prompt_fields`` computes for
+    observability; duplicated here because this module deliberately imports
+    nothing from the rest of the package (pure seam).
+    """
+    return hashlib.sha256(prompt.encode("utf-8")).hexdigest()
 
 
 def _build_handoff_characters(manifest: Any, state: Any) -> list[dict[str, Any]]:
@@ -261,6 +323,19 @@ def _build_handoff_clip(
         stored = getattr(ss, "prompt", None) if ss else None
         prompt_val = stored or compose_prompt(manifest.style, scene, manifest.characters)
 
+    # Style applied — the styling baked into this clip's prompt. Resolved from
+    # the current manifest; the resume check in cli_movie regenerates a scene
+    # whenever its composed prompt changes, so this stays consistent with the
+    # stored prompt for every clip that survives a run.
+    style_applied: dict[str, Any] = {
+        "variant": scene.style_variant,
+        "prefix": manifest.style.prefix,
+        "suffix": resolve_style_suffix(manifest.style, scene),
+        "scene_suffix": scene.style_suffix,
+    }
+    if all(v is None for v in style_applied.values()):
+        style_applied = {}
+
     return {
         "id": scene.id,
         "index": index,
@@ -274,6 +349,7 @@ def _build_handoff_clip(
         ],
         "prompt": prompt_val,
         "status": status,
+        "style_applied": style_applied,
         "x_gflow": {
             k: v
             for k, v in (
