@@ -4,6 +4,43 @@
 
 ## Current release
 
+**v0.27.0 — alpha.** **Global `[style]` block with named variants + prompt-aware resume
+for `gflow movie` (#239).** A `movie.toml` can now express a visual style system once —
+`prefix`/`suffix` on `[style]` plus `[style.variants.*]` sub-tables — and select it
+per-scene via `style_variant` / `style_suffix` (deterministic composition, `none`
+reserved as the opt-out keyword). The handoff manifest records `style_applied`
+(variant/prefix/suffix/scene_suffix) per clip. Resume is now prompt-aware: completed
+scenes persist a `style_hash`; a scene whose composed prompt changed is regenerated
+instead of silently skipped, and dry-run marks it `re-run (style changed)`. Carries
+forward v0.26.0 (i2i select-in-place by UUID). Verification:
+[LIVE_VERIFICATION_v0.27.0](LIVE_VERIFICATION_v0.27.0.md) (credit-free CLI ledger).
+
+**Develop (unreleased, post-v0.27.0):** *(empty — develop is the staging branch for the next release).*
+
+<details><summary>v0.26.0 — image i2i references a generated image by UUID (select in place)</summary>
+
+**v0.26.0 — alpha.** **Reference a generated image in `image i2i` by its Flow UUID.**
+A `reference_images` entry that is a media UUID is attached by **selecting the
+already-existing asset in Flow's reference picker** (located by UUID in the thumbnail
+URL, surfaced by display-name search when hidden) — no duplicate upload; local upload
+remains the fallback. Generated images also record their Flow `display_name` (credited
+@C1ph3r404). Verification: [LIVE_VERIFICATION_v0.26.0](LIVE_VERIFICATION_v0.26.0.md)
+(live e2e GREEN).
+
+</details>
+
+<details><summary>v0.25.0 — remote-UUID i2v + silent-failure guards</summary>
+
+**v0.25.0 — alpha.** **`video i2v` from a generated image's UUID proven live (#237)** —
+the picker-search attach was reworked to a local-upload path, producing a real 8s
+interpolation from a catalogued UUID. Home-`.env` config matrix (#240) verified live.
+Two silent failures made loud: video-as-image download rejection and rejected-upload
+fail-fast. Verification: [LIVE_VERIFICATION_v0.25.0](LIVE_VERIFICATION_v0.25.0.md).
+
+</details>
+
+<details><summary>v0.24.0 — `--project` parity across CLI + MCP</summary>
+
 **v0.24.0 — alpha.** **`--project` parity across CLI + MCP.** The video commands
 (`video t2v`/`i2v`/`r2v`) gain `--project <id>` to generate into an existing Flow project
 instead of a scratch one (#233/#234), matching `image t2i`/`i2i`; and the MCP
@@ -13,7 +50,7 @@ capability (`payload["project_id"]`) and validate the id identically. Carries fo
 v0.23.0 (MCP generation live + macOS 401 fix). Verification:
 [LIVE_VERIFICATION_v0.24.0](LIVE_VERIFICATION_v0.24.0.md).
 
-**Develop (unreleased, post-v0.24.0):** *(empty — develop is the staging branch for the next release).*
+</details>
 
 <details><summary>v0.23.0 — MCP generation live + macOS 401 fixed</summary>
 
@@ -99,6 +136,10 @@ reporter-verified e2e on macOS).
 | Tools framework: `gflow tools` group + `--tool` + `creative-director` + "My Tools" + MCP parity | ✅ done (v0.22.0) |
 | MCP generation wired to FlowWorker (tool→queue→download→record) + `tools` applied + i2v/r2v boundary validation | ✅ done (v0.23.0) |
 | macOS generation 401 fixed — `/fx` cookie-path read + headed-context seed (#222/#230) | ✅ done (v0.23.0) |
+| `--project <id>` on `video t2v/i2v/r2v` + MCP `project` parameter (#233/#234/#235) | ✅ done (v0.24.0) |
+| `video i2v` from a generated image's UUID (#237) + home-`.env` matrix (#240) + silent-failure guards | ✅ done (v0.25.0) |
+| `image i2i` references a generated image by UUID — select in place, no duplicate upload + `display_name` capture | ✅ done (v0.26.0) |
+| `movie.toml` `[style]` block with named variants + prompt-aware resume (`style_hash`) (#239) | ✅ done (v0.27.0) |
 | `gflow video batch` (TSV manifest) on `ui_automation` | ⏳ Phase B |
 | Persistence layer (stay-mounted batch sessions across project boundaries) | ⏳ Phase B |
 | Provider abstraction for official Veo 3.1 API | ⏳ planned |

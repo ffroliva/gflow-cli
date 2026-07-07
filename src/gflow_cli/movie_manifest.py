@@ -19,7 +19,14 @@ from dataclasses import dataclass
 from pathlib import Path
 from typing import cast
 
-from gflow_cli.composition import FRAMING, Character, DialogueLine, Scene, StyleSpec
+from gflow_cli.composition import (
+    FRAMING,
+    Character,
+    DialogueLine,
+    Scene,
+    StyleSpec,
+    resume_hash,
+)
 from gflow_cli.errors import ConfigurationError
 
 __all__ = [
@@ -94,7 +101,7 @@ class MovieManifest:
         schema_version = _require_int(data, "schema_version", default=1)
         style = _parse_style(data.get("style"))
         characters = _parse_characters(data)
-        scenes = _parse_scenes(data, characters)
+        scenes = _parse_scenes(data, characters, style)
         continuity = _parse_continuity(data)
         assemble = _parse_assemble(data)
 
@@ -155,7 +162,11 @@ def _parse_characters(data: dict[str, object]) -> dict[str, Character]:
     return characters
 
 
-def _parse_scenes(data: dict[str, object], characters: dict[str, Character]) -> tuple[Scene, ...]:
+def _parse_scenes(
+    data: dict[str, object],
+    characters: dict[str, Character],
+    style: StyleSpec,
+) -> tuple[Scene, ...]:
     """Parse scenes from data."""
     scenes_raw = data.get("scenes", [])
     if not isinstance(scenes_raw, list):
@@ -164,7 +175,11 @@ def _parse_scenes(data: dict[str, object], characters: dict[str, Character]) -> 
         raise ConfigurationError("At least one [[scenes]] entry is required.")
     scenes_list = cast(_TomlList, scenes_raw)
     char_names = set(characters)
-    scenes = tuple(_parse_scene(s, i, char_names, characters) for i, s in enumerate(scenes_list))
+    style_variant_names = set(style.variants)
+    scenes = tuple(
+        _parse_scene(s, i, char_names, characters, style_variant_names)
+        for i, s in enumerate(scenes_list)
+    )
     scene_ids: set[str] = set()
     for s in scenes:
         if s.id in scene_ids:
@@ -212,6 +227,8 @@ def _parse_style(data: object) -> StyleSpec:
             raise ConfigurationError(f"style.{key} must be a string.")
         return v.strip() if isinstance(v, str) else None
 
+    variants = _parse_style_variants(d)
+
     return StyleSpec(
         look=s("look"),
         palette=s("palette"),
@@ -220,7 +237,37 @@ def _parse_style(data: object) -> StyleSpec:
         lighting=s("lighting"),
         mood=s("mood"),
         negative=s("negative"),
+        prefix=s("prefix"),
+        suffix=s("suffix"),
+        variants=variants,
     )
+
+
+def _parse_style_variants(d: _TomlObj) -> dict[str, str]:
+    """Parse [style.variants.*] sub-tables into a name → suffix mapping."""
+    variants_raw = d.get("variants")
+    if variants_raw is None:
+        return {}
+    if not isinstance(variants_raw, dict):
+        raise ConfigurationError("[style.variants] must be a TOML table.")
+    variants: dict[str, str] = {}
+    for raw_name, val in cast(_TomlObj, variants_raw).items():
+        name = str(raw_name).strip()
+        if not name:
+            raise ConfigurationError("[style.variants] names must be non-empty.")
+        if name == "none":
+            raise ConfigurationError(
+                '[style.variants.none] is not allowed: "none" is reserved for '
+                "scenes[].style_variant to opt out of the style suffix."
+            )
+        if not isinstance(val, dict):
+            raise ConfigurationError(f"[style.variants.{name}] must be a TOML table.")
+        variant_d = cast(_TomlObj, val)
+        suffix_val = variant_d.get("suffix")
+        if not isinstance(suffix_val, str):
+            raise ConfigurationError(f"style.variants.{name}.suffix must be a string.")
+        variants[name] = suffix_val.strip()
+    return variants
 
 
 def _parse_character_variants(d: _TomlObj, idx: int) -> dict[str, str]:
@@ -236,6 +283,14 @@ def _character_opt_str(d: _TomlObj, key: str, idx: int) -> str | None:
     v = d.get(key)
     if v is not None and not isinstance(v, str):
         raise ConfigurationError(f"characters[{idx}].{key} must be a string.")
+    return v.strip() if isinstance(v, str) else None
+
+
+def _scene_opt_str(d: _TomlObj, key: str, idx: int) -> str | None:
+    """Read an optional string field from a scene dict; raise on wrong type."""
+    v = d.get(key)
+    if v is not None and not isinstance(v, str):
+        raise ConfigurationError(f"scenes[{idx}].{key} must be a string.")
     return v.strip() if isinstance(v, str) else None
 
 
@@ -384,6 +439,7 @@ def _parse_scene(
     idx: int,
     char_names: set[str],
     characters: dict[str, Character],
+    style_variant_names: set[str],
 ) -> Scene:
     if not isinstance(data, dict):
         raise ConfigurationError(f"scenes[{idx}] must be a TOML table.")
@@ -422,6 +478,19 @@ def _parse_scene(
         v = d.get(key)
         return v.strip() if isinstance(v, str) else None
 
+    style_variant = _scene_opt_str(d, "style_variant", idx)
+    if (
+        style_variant is not None
+        and style_variant != "none"
+        and style_variant not in style_variant_names
+    ):
+        raise ConfigurationError(
+            f"scenes[{idx}].style_variant {style_variant!r} is not a defined "
+            f"style variant (defined: {sorted(style_variant_names)!r})."
+        )
+
+    style_suffix = _scene_opt_str(d, "style_suffix", idx)
+
     return Scene(
         id=sid.strip(),
         action=action.strip(),
@@ -439,6 +508,8 @@ def _parse_scene(
         model=model if isinstance(model, str) else None,
         aspect=aspect,
         count=1,
+        style_variant=style_variant,
+        style_suffix=style_suffix,
     )
 
 
@@ -481,6 +552,20 @@ class SceneState:
     status: str  # "completed" | "failed"
     prompt: str | None = None  # composed Veo prompt (for handoff projection)
     consistency_method: str = "text"  # "text" | "entity" | "degraded" (P2)
+    style_hash: str | None = None  # SHA-256 of composed prompt for resume detection
+
+    def is_stale_for(self, prompt: str) -> bool:
+        """True when *prompt* no longer matches what this scene was generated with.
+
+        Prefers the persisted ``style_hash``; falls back to comparing the stored
+        prompt text (state files written before ``style_hash`` existed). With
+        neither record, assume not stale — never re-spend credits on a guess.
+        """
+        if self.style_hash is not None:
+            return self.style_hash != resume_hash(prompt)
+        if self.prompt is not None:
+            return self.prompt != prompt
+        return False
 
     def to_dict(self) -> dict[str, object]:
         return {
@@ -490,6 +575,7 @@ class SceneState:
             "status": self.status,
             "prompt": self.prompt,
             "consistency_method": self.consistency_method,
+            "style_hash": self.style_hash,
         }
 
     @classmethod
@@ -498,6 +584,7 @@ class SceneState:
         raw_path = d.get("local_path")
         raw_prompt = d.get("prompt")
         raw_method = d.get("consistency_method", "text")
+        raw_hash = d.get("style_hash")
         return cls(
             media_id=str(d.get("media_id") or ""),
             flow_operation_id=str(raw_op_id) if isinstance(raw_op_id, str) else None,
@@ -505,6 +592,7 @@ class SceneState:
             status=str(d.get("status") or "completed"),
             prompt=str(raw_prompt) if isinstance(raw_prompt, str) else None,
             consistency_method=str(raw_method) if isinstance(raw_method, str) else "text",
+            style_hash=str(raw_hash) if isinstance(raw_hash, str) else None,
         )
 
 

@@ -7,6 +7,24 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+## [0.27.0] — 2026-07-07
+
+### Added
+
+- **Global `[style]` block with named variants in `movie.toml` (Issue #239):** channel-format
+  videos can now express a visual style system (e.g. monochrome → warm color arc) once in the
+  `[style]` block and select it per-scene via `style_variant`, without repeating style text in
+  every scene's action. Adds `prefix`/`suffix` fields to `[style]`, `[style.variants.*]`
+  sub-tables, per-scene `style_variant` and `style_suffix` fields, deterministic composition
+  rule, and `style_applied` (variant/prefix/suffix/scene_suffix) per clip in the handoff
+  manifest. `none` is a reserved variant name (opt-out keyword) and may not be defined.
+- **Prompt-aware resume for `movie run`:** completed scenes now persist a SHA-256 hash of
+  their composed prompt (`style_hash`); on resume, a scene whose prompt changed (style edit,
+  variant switch, action tweak) is regenerated instead of silently skipped. Unchanged scenes
+  still cost nothing. Old state files fall back to comparing the stored prompt text and are
+  never re-run on a guess. Dry-run shows the resolved style per scene and marks stale scenes
+  as `re-run (style changed)`.
+
 ## [0.26.0] — 2026-07-06
 
 ### Added
@@ -1812,7 +1830,10 @@ shell-script template that branches on these codes.
 
 First skeleton. Not functional end-to-end yet.
 
-[Unreleased]: https://github.com/ffroliva/gflow-cli/compare/v0.24.0...HEAD
+[Unreleased]: https://github.com/ffroliva/gflow-cli/compare/v0.27.0...HEAD
+[0.27.0]: https://github.com/ffroliva/gflow-cli/compare/v0.26.0...v0.27.0
+[0.26.0]: https://github.com/ffroliva/gflow-cli/compare/v0.25.0...v0.26.0
+[0.25.0]: https://github.com/ffroliva/gflow-cli/compare/v0.24.0...v0.25.0
 [0.24.0]: https://github.com/ffroliva/gflow-cli/compare/v0.23.0...v0.24.0
 [0.23.0]: https://github.com/ffroliva/gflow-cli/compare/v0.22.0...v0.23.0
 [0.22.0]: https://github.com/ffroliva/gflow-cli/compare/v0.21.0...v0.22.0
