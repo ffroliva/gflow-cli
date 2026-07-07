@@ -13,7 +13,7 @@ from gflow_cli.composition import (
     StyleSpec,
     build_handoff,
     compose_prompt,
-    prompt_hash,
+    resume_hash,
 )
 from gflow_cli.movie_manifest import MovieState, SceneState
 
@@ -95,6 +95,13 @@ class TestComposePromptStyleVariants:
         assert out.startswith("PRE:")
         assert "Walks." in out
 
+    def test_style_none_with_scene_suffix_still_applies(self) -> None:
+        style = StyleSpec(suffix="Cinematic.")
+        scene = Scene(id="s", action="walks", style_variant="none", style_suffix="extra")
+        out = compose_prompt(style, scene, {})
+        assert "Cinematic." not in out
+        assert out.endswith("extra")
+
     def test_scene_style_suffix_appended_last(self) -> None:
         style = StyleSpec(suffix="Base.")
         scene = Scene(id="s", action="walks", style_suffix="sunset light")
@@ -121,46 +128,46 @@ class TestComposePromptStyleVariants:
 
 class TestPromptHash:
     def test_hash_is_sha256_hex(self) -> None:
-        h = prompt_hash("hello")
+        h = resume_hash("hello")
         assert len(h) == 64
         assert all(c in "0123456789abcdef" for c in h)
 
     def test_same_input_same_hash(self) -> None:
-        assert prompt_hash("abc") == prompt_hash("abc")
+        assert resume_hash("abc") == resume_hash("abc")
 
     def test_different_input_different_hash(self) -> None:
-        assert prompt_hash("abc") != prompt_hash("xyz")
+        assert resume_hash("abc") != resume_hash("xyz")
 
     def test_hash_changes_when_suffix_changes(self) -> None:
         s1 = StyleSpec(suffix="A")
         s2 = StyleSpec(suffix="B")
         scene = Scene(id="s", action="walks")
-        h1 = prompt_hash(compose_prompt(s1, scene, {}))
-        h2 = prompt_hash(compose_prompt(s2, scene, {}))
+        h1 = resume_hash(compose_prompt(s1, scene, {}))
+        h2 = resume_hash(compose_prompt(s2, scene, {}))
         assert h1 != h2
 
     def test_hash_changes_when_prefix_changes(self) -> None:
         s1 = StyleSpec(prefix="A")
         s2 = StyleSpec(prefix="B")
         scene = Scene(id="s", action="walks")
-        h1 = prompt_hash(compose_prompt(s1, scene, {}))
-        h2 = prompt_hash(compose_prompt(s2, scene, {}))
+        h1 = resume_hash(compose_prompt(s1, scene, {}))
+        h2 = resume_hash(compose_prompt(s2, scene, {}))
         assert h1 != h2
 
     def test_hash_changes_when_scene_suffix_changes(self) -> None:
         s = StyleSpec(suffix="Base.")
         s1 = Scene(id="s", action="walks", style_suffix="X")
         s2 = Scene(id="s", action="walks", style_suffix="Y")
-        h1 = prompt_hash(compose_prompt(s, s1, {}))
-        h2 = prompt_hash(compose_prompt(s, s2, {}))
+        h1 = resume_hash(compose_prompt(s, s1, {}))
+        h2 = resume_hash(compose_prompt(s, s2, {}))
         assert h1 != h2
 
     def test_hash_changes_when_variant_changes(self) -> None:
         s = StyleSpec(variants={"a": "A.", "b": "B."})
         s1 = Scene(id="s", action="walks", style_variant="a")
         s2 = Scene(id="s", action="walks", style_variant="b")
-        h1 = prompt_hash(compose_prompt(s, s1, {}))
-        h2 = prompt_hash(compose_prompt(s, s2, {}))
+        h1 = resume_hash(compose_prompt(s, s1, {}))
+        h2 = resume_hash(compose_prompt(s, s2, {}))
         assert h1 != h2
 
 
