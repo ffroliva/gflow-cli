@@ -2956,6 +2956,9 @@ async def test_instructions_on_classic_cohort_emit_warning(
     # Reach the cohort branch, then stop before the real classic capture path.
     monkeypatch.setattr(t, "_enter_editor", AsyncMock())
     monkeypatch.setattr(t, "_dismiss_blocking_overlays", AsyncMock())
+    # Instructions present → the transport tries to force agentic first; here it
+    # fails (account has no Agent mode), so the probe binds classic.
+    monkeypatch.setattr(t, "_force_agent_mode", AsyncMock(return_value=False))
     classic_driver = MagicMock()
     classic_driver.name = "classic"
     classic_driver.switch_to_image_mode = AsyncMock(side_effect=_StopFlowError)
@@ -2986,8 +2989,13 @@ async def test_instructions_on_agentic_cohort_emit_no_classic_warning(
     t._page = MagicMock()  # noqa: SLF001
     t._out_dir = None  # noqa: SLF001
 
+    # No force-env flag → the force below can only be driven by `instructions`.
+    monkeypatch.delenv("GFLOW_CLI_FORCE_AGENT_UI", raising=False)
     monkeypatch.setattr(t, "_enter_editor", AsyncMock())
     monkeypatch.setattr(t, "_dismiss_blocking_overlays", AsyncMock())
+    # Instructions present → force agentic succeeds, so the probe binds agentic.
+    force_mock = AsyncMock(return_value=True)
+    monkeypatch.setattr(t, "_force_agent_mode", force_mock)
     agentic_driver = MagicMock()
     agentic_driver.name = "agentic"
     agentic_driver.switch_to_image_mode = AsyncMock(side_effect=_StopFlowError)
@@ -3001,5 +3009,80 @@ async def test_instructions_on_agentic_cohort_emit_no_classic_warning(
     with structlog.testing.capture_logs() as caps, pytest.raises(_StopFlowError):
         await t._generate_images_locked(req)  # noqa: SLF001
 
+    # Instructions alone (no env flag) must drive the agentic force.
+    force_mock.assert_awaited()
     events = [c.get("event") for c in caps]
     assert "ui_automation.instructions_ignored_classic_cohort" not in events
+
+
+def _force_agent_page(
+    tune_counts: list[int], *, toggle_raises: bool = False, expand_count: int = 0
+) -> tuple[MagicMock, MagicMock]:
+    """Page mock for _force_agent_mode: the ``tune`` indicator count is consumed
+    from ``tune_counts`` per query (last value repeats); toggle + expand are
+    AsyncMock-driven. Returns (page, toggle_first_locator)."""
+    idx = {"i": 0}
+
+    async def _tune_count() -> int:
+        i = idx["i"]
+        idx["i"] = i + 1
+        return tune_counts[i] if i < len(tune_counts) else tune_counts[-1]
+
+    tune_loc = MagicMock()
+    tune_loc.count = _tune_count
+    toggle_first = MagicMock()
+    toggle_first.wait_for = AsyncMock(
+        side_effect=RuntimeError("not found") if toggle_raises else None
+    )
+    toggle_first.click = AsyncMock()
+    toggle_loc = MagicMock(first=toggle_first)
+    expand_first = MagicMock()
+    expand_first.count = AsyncMock(return_value=expand_count)
+    expand_first.click = AsyncMock()
+    expand_loc = MagicMock(first=expand_first)
+
+    def _locator(sel: str) -> MagicMock:
+        if "tune" in sel:
+            return tune_loc
+        if "expand_content" in sel:
+            return expand_loc
+        return toggle_loc
+
+    page = MagicMock()
+    page.locator = MagicMock(side_effect=_locator)
+    page.wait_for_timeout = AsyncMock()
+    return page, toggle_first
+
+
+@pytest.mark.asyncio
+async def test_force_agent_mode_already_active_no_click() -> None:
+    """Already agentic (tune present) → returns True without clicking the toggle."""
+    page, toggle = _force_agent_page([1])
+    assert await UiAutomationTransport._force_agent_mode(page) is True  # noqa: SLF001
+    toggle.click.assert_not_awaited()
+
+
+@pytest.mark.asyncio
+async def test_force_agent_mode_succeeds_after_render_poll() -> None:
+    """The tune indicator renders a beat after the click — polling catches it."""
+    # [already-active check=0, poll#1=0, poll#2=1]
+    page, toggle = _force_agent_page([0, 0, 1])
+    assert await UiAutomationTransport._force_agent_mode(page) is True  # noqa: SLF001
+    toggle.click.assert_awaited_once()
+
+
+@pytest.mark.asyncio
+async def test_force_agent_mode_retries_then_fails(monkeypatch: pytest.MonkeyPatch) -> None:
+    """Never activates → re-clicks up to the max, then returns False."""
+    monkeypatch.setattr("gflow_cli.api.transports.ui_automation._AGENT_ACTIVATE_TIMEOUT_S", 0.05)
+    page, toggle = _force_agent_page([0])  # always 0
+    assert await UiAutomationTransport._force_agent_mode(page) is False  # noqa: SLF001
+    assert toggle.click.await_count == 2  # noqa: PLR2004 — _AGENT_FORCE_MAX_CLICKS
+
+
+@pytest.mark.asyncio
+async def test_force_agent_mode_returns_false_when_toggle_missing() -> None:
+    """Toggle never becomes visible → returns False without clicking."""
+    page, toggle = _force_agent_page([0], toggle_raises=True)
+    assert await UiAutomationTransport._force_agent_mode(page) is False  # noqa: SLF001
+    toggle.click.assert_not_awaited()
