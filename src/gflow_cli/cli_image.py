@@ -1310,7 +1310,7 @@ class _I2IParams:
     multiple=True,
     help="Custom agent instruction to add or enable (only in agentic mode).",
 )
-def i2i(
+def i2i(  # NOSONAR
     prompt: str,
     refs: tuple[str, ...],
     model: str,

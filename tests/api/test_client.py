@@ -20,7 +20,7 @@ from gflow_cli.api.client import (
     _is_target_closed,
 )
 from gflow_cli.api.dto import GeneratedImage
-from gflow_cli.api.image import Aspect, GenerateImageRequest, Model
+from gflow_cli.api.image import AgentInstruction, Aspect, GenerateImageRequest, Model
 from gflow_cli.api.transports.ui_automation import UiAutomationTransport
 from gflow_cli.config import Settings
 from gflow_cli.errors import BrowserSessionClosedError
@@ -519,3 +519,56 @@ async def test_download_video_delegates_to_download(tmp_path: Path) -> None:
 
     mock_dl.assert_awaited_once_with("media-uuid-abc", out_path)
     assert result == out_path
+
+
+# ---------------------------------------------------------------------------
+# patch_agent_info — agentInfo PATCH + echoed brief (no live network)
+# ---------------------------------------------------------------------------
+
+
+@pytest.mark.asyncio
+async def test_patch_agent_info_returns_echoed_brief(tmp_path: Path) -> None:
+    """A successful PATCH returns the projectBrief echoed in the response and
+    sends both the enabled + cards update masks."""
+    c = FlowApiClient(profile_dir=tmp_path / "prof")
+    echoed = {"enabled": True, "cards": [{"title": "Crayon", "description": "a", "enabled": True}]}
+    c._patch_json = AsyncMock(return_value={"agentInfo": {"projectBrief": echoed}})  # type: ignore[method-assign]
+
+    brief = await c.patch_agent_info(
+        "proj-1", enabled=True, cards=(AgentInstruction(text="a", title="Crayon"),)
+    )
+
+    assert brief == echoed
+    c._patch_json.assert_awaited_once()  # type: ignore[attr-defined]
+    url = c._patch_json.await_args.args[0]  # type: ignore[attr-defined]
+    body = c._patch_json.await_args.args[1]  # type: ignore[attr-defined]
+    assert "project_brief.enabled" in url
+    assert "project_brief.cards" in url
+    assert body["projectBrief"]["enabled"] is True
+    assert body["projectBrief"]["cards"][0]["title"] == "Crayon"
+
+
+@pytest.mark.asyncio
+async def test_patch_agent_info_noop_when_nothing_to_patch(tmp_path: Path) -> None:
+    """No enabled flag and no cards → returns {} without any HTTP call."""
+    c = FlowApiClient(profile_dir=tmp_path / "prof")
+    c._patch_json = AsyncMock()  # type: ignore[method-assign]
+
+    result = await c.patch_agent_info("proj-1")
+
+    assert result == {}
+    c._patch_json.assert_not_awaited()  # type: ignore[attr-defined]
+
+
+@pytest.mark.asyncio
+async def test_patch_agent_info_enabled_only_mask(tmp_path: Path) -> None:
+    """enabled=True with no cards patches only the enabled mask."""
+    c = FlowApiClient(profile_dir=tmp_path / "prof")
+    c._patch_json = AsyncMock(return_value={})  # type: ignore[method-assign]
+
+    result = await c.patch_agent_info("proj-1", enabled=True)
+
+    assert result == {}  # empty/absent echo degrades to {}
+    url = c._patch_json.await_args.args[0]  # type: ignore[attr-defined]
+    assert "project_brief.enabled" in url
+    assert "project_brief.cards" not in url
