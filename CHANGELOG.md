@@ -7,6 +7,8 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+## [0.28.0] — 2026-07-08
+
 ### Added
 
 - **Agent instructions (`-i` / `--instruction`) now actually steer generation.** On an
@@ -1867,7 +1869,8 @@ shell-script template that branches on these codes.
 
 First skeleton. Not functional end-to-end yet.
 
-[Unreleased]: https://github.com/ffroliva/gflow-cli/compare/v0.27.1...HEAD
+[Unreleased]: https://github.com/ffroliva/gflow-cli/compare/v0.28.0...HEAD
+[0.28.0]: https://github.com/ffroliva/gflow-cli/compare/v0.27.1...v0.28.0
 [0.27.1]: https://github.com/ffroliva/gflow-cli/compare/v0.27.0...v0.27.1
 [0.27.0]: https://github.com/ffroliva/gflow-cli/compare/v0.26.0...v0.27.0
 [0.26.0]: https://github.com/ffroliva/gflow-cli/compare/v0.25.0...v0.26.0
