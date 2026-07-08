@@ -2086,6 +2086,21 @@ class UiAutomationTransport(VideoGenerationMixin):
         ui_driver = await get_ui_driver(page, prefer_classic=get_settings().prefer_classic)
         if ui_driver.name == "classic":
             ui_driver._transport = self  # type: ignore[union-attr]
+            # Agent instruction cards are an agentic-only surface — the classic
+            # driver has no brief to sync. Warn loudly (stderr) so ``-i`` never
+            # silently no-ops: the user asked for instructions but this session
+            # bound the classic cohort, so they will NOT be applied.
+            if request.instructions:
+                log.warning(
+                    "ui_automation.instructions_ignored_classic_cohort",
+                    instruction_count=len(request.instructions),
+                    detail=(
+                        "Custom agent instructions (-i) were provided but this Flow "
+                        "session is using the classic (non-agentic) UI, which has no "
+                        "instruction surface — they will be ignored for this generation. "
+                        "Instructions only apply on agentic-cohort sessions."
+                    ),
+                )
 
         # Select Image mode explicitly. If the account was last in Video mode,
         # an unguarded submission goes to the video endpoint and the image

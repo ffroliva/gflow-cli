@@ -420,7 +420,7 @@ class TestCliMcpParameterSymmetry:
         tool = mcp_server._tool_manager._tools["gflow_generate_image"]
         schema_props = set(tool.parameters.get("properties", {}).keys())
         # Core params that must be mirrored
-        required_in_both = {"prompt", "model", "aspect", "count", "seed", "profile"}
+        required_in_both = {"prompt", "model", "aspect", "count", "seed", "profile", "instructions"}
         assert required_in_both.issubset(schema_props), (
             f"MCP tool missing CLI params: {required_in_both - schema_props}"
         )

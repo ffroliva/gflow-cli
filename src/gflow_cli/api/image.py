@@ -20,6 +20,7 @@ Key wire-format observations:
 
 from __future__ import annotations
 
+import uuid
 from dataclasses import dataclass
 from enum import StrEnum
 from types import MappingProxyType
@@ -35,7 +36,9 @@ __all__ = [
     "Aspect",
     "GenerateImageRequest",
     "ImageRef",
+    "AgentInstruction",
     "Model",
+    "build_agent_brief_cards",
     "_build_batch_generate_images_body",
 ]
 
@@ -219,6 +222,74 @@ class ImageRef:
 
 
 @dataclass(frozen=True)
+class AgentInstruction:
+    """A custom instruction card for Google Flow's Agent Mode.
+
+    ``title`` is the card's human-readable label. Flow's ``agentInfo`` PATCH
+    **persists distinct per-card titles** (confirmed by live capture 2026-07-08),
+    and Task 7's ``gflow instructions`` CRUD matches cards by title — so every
+    card must carry its own title, never a shared constant. When ``title`` is
+    left blank (e.g. an ephemeral ``-i "text"`` card) :meth:`resolved_title`
+    derives a distinct label from the text so cards stay distinguishable in the
+    project brief.
+    """
+
+    text: str
+    enabled: bool = True
+    image_media_ids: tuple[str, ...] = ()
+    character_ids: tuple[str, ...] = ()
+    title: str = ""
+
+    def __post_init__(self) -> None:
+        if not self.text or not self.text.strip():
+            msg = "AgentInstruction.text must be a non-empty string"
+            raise ValueError(msg)
+
+    def resolved_title(self) -> str:
+        """Return the card's title, deriving one from ``text`` when blank.
+
+        The derivation takes the first line of ``text`` and caps it so a bare
+        ``-i "…"`` card still gets a distinct, human-readable label instead of
+        the old hardcoded ``"Instruction title"`` that collapsed every card to
+        one name (breaking title-based lookup).
+        """
+        title = self.title.strip()
+        if title:
+            return title
+        first_line = self.text.strip().splitlines()[0].strip()
+        return f"{first_line[:57]}…" if len(first_line) > 58 else first_line  # noqa: PLR2004
+
+
+def build_agent_brief_cards(
+    instructions: tuple[AgentInstruction, ...], *, project_id: str
+) -> list[dict[str, Any]]:
+    """Serialize instruction cards for the ``agentInfo`` ``projectBrief.cards`` PATCH.
+
+    Single source of truth shared by ``FlowApiClient.patch_agent_info`` and the
+    agentic driver's reconcile path so the wire shape — and the per-card
+    ``title`` (see :meth:`AgentInstruction.resolved_title`) — can never drift
+    between the two. Character ids are expanded to the project-scoped entity
+    resource names Flow expects.
+    """
+    cards: list[dict[str, Any]] = []
+    for inst in instructions:
+        card: dict[str, Any] = {
+            "id": str(uuid.uuid4()),
+            "title": inst.resolved_title(),
+            "description": inst.text,
+            "enabled": inst.enabled,
+        }
+        if inst.image_media_ids:
+            card["imageReferenceMediaIds"] = list(inst.image_media_ids)
+        if inst.character_ids:
+            card["characterReferenceEntityNames"] = [
+                f"projects/{project_id}/entities/{cid}" for cid in inst.character_ids
+            ]
+        cards.append(card)
+    return cards
+
+
+@dataclass(frozen=True)
 class GenerateImageRequest:
     """Inputs for ONE image generation.
 
@@ -251,6 +322,8 @@ class GenerateImageRequest:
     recaptcha_token: str = ""  # populated by caller right before send; "" means unminted
     # number of images to generate (1–4); UI transport uses this to set Flow's count tab
     count: int = 1
+    # Custom instructions for Flow's Agent Mode (only applicable when agentic UI cohort is active)
+    instructions: tuple[AgentInstruction, ...] | None = None
     # Tool provenance (recorded, never sent on the wire). ``original_prompt`` is
     # the user's pre-tool text when a ``--tool`` rewrote ``prompt``; ``tool`` is
     # the applied-tool snapshot for ``operations.metadata_json.tool``. Both are

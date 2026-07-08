@@ -21,7 +21,7 @@ from unittest.mock import AsyncMock, MagicMock, patch
 
 import pytest
 
-from gflow_cli.api.image import Aspect, GenerateImageRequest, Model
+from gflow_cli.api.image import AgentInstruction, Aspect, GenerateImageRequest, Model
 from gflow_cli.api.transports.ui_automation import (
     _COUNT_TAB_TEXT_RE,  # noqa: PLC2701
     _ONBOARDING_STRUCTURAL_SELECTORS,  # noqa: PLC2701
@@ -2933,3 +2933,73 @@ class TestModeSwitchExitsAgentFirst:
             await UiAutomationTransport._switch_to_video_mode(page, out_dir=None)
 
         assert order and order[0] == "exit_agent", f"expected exit_agent first, got {order}"
+
+
+class _StopFlowError(Exception):
+    """Sentinel to halt _generate_images_locked right after the cohort branch."""
+
+
+@pytest.mark.asyncio
+async def test_instructions_on_classic_cohort_emit_warning(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    """When ``-i`` instructions are provided but the session binds the CLASSIC
+    driver, a loud warning must fire so instructions never silently no-op."""
+    import structlog
+
+    from gflow_cli.api.transports.drivers import factory as _factory
+
+    t = UiAutomationTransport()
+    t._page = MagicMock()  # noqa: SLF001
+    t._out_dir = None  # noqa: SLF001
+
+    # Reach the cohort branch, then stop before the real classic capture path.
+    monkeypatch.setattr(t, "_enter_editor", AsyncMock())
+    monkeypatch.setattr(t, "_dismiss_blocking_overlays", AsyncMock())
+    classic_driver = MagicMock()
+    classic_driver.name = "classic"
+    classic_driver.switch_to_image_mode = AsyncMock(side_effect=_StopFlowError)
+    monkeypatch.setattr(_factory, "get_ui_driver", AsyncMock(return_value=classic_driver))
+
+    req = GenerateImageRequest(
+        prompt="a red apple",
+        instructions=(AgentInstruction(text="crayon style", enabled=True),),
+    )
+
+    with structlog.testing.capture_logs() as caps, pytest.raises(_StopFlowError):
+        await t._generate_images_locked(req)  # noqa: SLF001
+
+    events = [c.get("event") for c in caps]
+    assert "ui_automation.instructions_ignored_classic_cohort" in events
+
+
+@pytest.mark.asyncio
+async def test_instructions_on_agentic_cohort_emit_no_classic_warning(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    """The classic-cohort warning must NOT fire when the agentic driver binds."""
+    import structlog
+
+    from gflow_cli.api.transports.drivers import factory as _factory
+
+    t = UiAutomationTransport()
+    t._page = MagicMock()  # noqa: SLF001
+    t._out_dir = None  # noqa: SLF001
+
+    monkeypatch.setattr(t, "_enter_editor", AsyncMock())
+    monkeypatch.setattr(t, "_dismiss_blocking_overlays", AsyncMock())
+    agentic_driver = MagicMock()
+    agentic_driver.name = "agentic"
+    agentic_driver.switch_to_image_mode = AsyncMock(side_effect=_StopFlowError)
+    monkeypatch.setattr(_factory, "get_ui_driver", AsyncMock(return_value=agentic_driver))
+
+    req = GenerateImageRequest(
+        prompt="a red apple",
+        instructions=(AgentInstruction(text="crayon style", enabled=True),),
+    )
+
+    with structlog.testing.capture_logs() as caps, pytest.raises(_StopFlowError):
+        await t._generate_images_locked(req)  # noqa: SLF001
+
+    events = [c.get("event") for c in caps]
+    assert "ui_automation.instructions_ignored_classic_cohort" not in events
