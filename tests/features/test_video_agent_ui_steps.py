@@ -32,7 +32,7 @@ import pytest
 from click.testing import CliRunner
 from pytest_bdd import given, parsers, scenarios, then, when
 
-from gflow_cli.api.image import Aspect, GenerateImageRequest, Model
+from gflow_cli.api.image import AgentInstruction, Aspect, GenerateImageRequest, Model
 from gflow_cli.api.transports.drivers.agentic import (
     _MEDIA_REDIRECT_BASE,
     AgenticFlowUiDriver,
@@ -299,14 +299,16 @@ def _when_send_prompt_red_apple(driver_state: dict[str, Any]) -> None:
     driver_state["keyboard_mock"] = keyboard
 
 
-@then('keyboard.insert_text was called with "4 images" and "16:9" in the directive')
+@then('keyboard.insert_text was called with "4 pictures" and "16:9" in the directive')
 def _then_directive_contains_count_and_aspect(driver_state: dict[str, Any]) -> None:
     keyboard: MagicMock = driver_state["keyboard_mock"]
     keyboard.insert_text.assert_awaited_once()
     typed_text: str = keyboard.insert_text.call_args[0][0]
-    assert "4 images" in typed_text, f"Expected '4 images' in directive: {typed_text!r}"
+    assert "4 pictures" in typed_text, f"Expected '4 pictures' in directive: {typed_text!r}"
     assert "16:9" in typed_text, f"Expected '16:9' in directive: {typed_text!r}"
     assert "a red apple" in typed_text, f"Expected prompt text in directive: {typed_text!r}"
+    # Conversational, not imperative — the imperative form bypasses brief cards.
+    assert "Generate" not in typed_text, f"Directive must not be imperative: {typed_text!r}"
 
 
 # ---------------------------------------------------------------------------
@@ -445,3 +447,251 @@ def _then_timeout_error_with_detail(driver_state: dict[str, Any]) -> None:
     detail = str(exc)
     assert "1" in detail, f"Expected produced count '1' in detail: {detail!r}"
     assert "4" in detail, f"Expected requested count '4' in detail: {detail!r}"
+
+
+# ---------------------------------------------------------------------------
+# Instructions Reconciliation Scenarios
+# ---------------------------------------------------------------------------
+
+
+@given("an agentic page representing a custom instructions UI state")
+def _given_agentic_instructions_page(driver_state: dict[str, Any]) -> None:
+    # Set up mock DOM state list
+    ui_cards = [
+        {"text": "guideline A", "enabled": False},
+        {"text": "obsolete C", "enabled": True},
+    ]
+
+    # Track actions
+    state = {
+        "deleted": [],
+        "toggled": [],
+        "added": 0,
+        "filled": [],
+    }
+
+    # Close button mock
+    close_btn = MagicMock()
+    close_btn.first = close_btn
+    close_btn.click = AsyncMock()
+    close_btn.count = AsyncMock(return_value=1)  # Panel starts open
+
+    # Textareas mock
+    textareas = MagicMock()
+    textareas.count = AsyncMock(side_effect=lambda: len(ui_cards))
+
+    def make_textarea(idx: int):
+        ta = MagicMock()
+        ta.click = AsyncMock()
+        ta.input_value = AsyncMock(side_effect=lambda: ui_cards[idx]["text"])
+
+        async def fill_action(txt):
+            ui_cards[idx]["text"] = txt
+            state["filled"].append((idx, txt))
+
+        ta.fill = AsyncMock(side_effect=fill_action)
+        return ta
+
+    textareas.nth = MagicMock(side_effect=make_textarea)
+
+    # Switches mock
+    switches = MagicMock()
+
+    def make_switch(idx: int):
+        sw = MagicMock()
+
+        async def get_attr(attr):
+            return "true" if ui_cards[idx]["enabled"] else "false"
+
+        sw.get_attribute = AsyncMock(side_effect=get_attr)
+
+        async def click_action():
+            ui_cards[idx]["enabled"] = not ui_cards[idx]["enabled"]
+            state["toggled"].append(idx)
+
+        sw.click = AsyncMock(side_effect=click_action)
+        return sw
+
+    switches.nth = MagicMock(side_effect=make_switch)
+
+    # Delete buttons mock
+    delete_buttons = MagicMock()
+
+    def make_delete(idx: int):
+        db = MagicMock()
+
+        async def click_action():
+            card = ui_cards.pop(idx)
+            state["deleted"].append(card["text"])
+
+        db.click = AsyncMock(side_effect=click_action)
+        return db
+
+    delete_buttons.nth = MagicMock(side_effect=make_delete)
+
+    # Add button mock
+    add_btn = MagicMock()
+
+    async def add_action():
+        ui_cards.append({"text": "", "enabled": True})
+        state["added"] += 1
+
+    add_btn.click = AsyncMock(side_effect=add_action)
+
+    # Done button mock
+    done_btn = MagicMock()
+    done_btn.first = done_btn
+    done_btn.count = AsyncMock(return_value=1)
+    done_btn.click = AsyncMock()
+
+    def page_locator(sel):
+        if sel == "button:has(i.google-symbols:text-is('close'))":
+            return close_btn
+        elif "textarea" in sel:
+            return textareas
+        elif "role='switch'" in sel:
+            return switches
+        elif "Remove instruction" in sel:
+            return delete_buttons
+        elif sel == "#instruction-add-card":
+            return add_btn
+        elif "Done" in sel:
+            return done_btn
+        return MagicMock()
+
+    page = MagicMock()
+    page.locator = MagicMock(side_effect=page_locator)
+
+    driver_state["driver"] = AgenticFlowUiDriver()
+    driver_state["page"] = page
+    driver_state["reconciliation_state"] = state
+    driver_state["done_btn_mock"] = done_btn
+
+
+@when("I call configure_image_settings with custom instructions")
+def _when_call_configure_settings_instructions(driver_state: dict[str, Any]) -> None:
+    driver: AgenticFlowUiDriver = driver_state["driver"]
+    page: MagicMock = driver_state["page"]
+    req = GenerateImageRequest(
+        prompt="a cat",
+        instructions=(
+            AgentInstruction("guideline A", enabled=True),
+            AgentInstruction("guideline B", enabled=False),
+        ),
+    )
+    asyncio.run(driver.configure_image_settings(page, req))
+
+
+@then("the REST PATCH request is dispatched with projectBrief cards")
+def _then_rest_patch_dispatched_with_cards(driver_state: dict[str, Any]) -> None:
+    patch_mock: AsyncMock = driver_state["patch_mock"]
+    patch_mock.assert_called_once()
+    _, kwargs = patch_mock.call_args
+    import json
+
+    body = json.loads(kwargs.get("data") or "")
+    cards = body["projectBrief"]["cards"]
+    assert len(cards) == 2  # noqa: PLR2004
+    texts = {c["description"] for c in cards}
+    assert "guideline A" in texts
+    assert "guideline B" in texts
+    disabled = [c for c in cards if c["description"] == "guideline B"]
+    assert disabled and disabled[0]["enabled"] is False
+
+
+@when("I run \"gflow image t2i first second -i 'do X'\"")
+def _run_t2i_multi_prompt_with_instructions(
+    runner: CliRunner,
+    cli_result_holder: dict[str, Any],
+) -> None:
+    cli_result_holder["result"] = runner.invoke(
+        main, ["image", "t2i", "first", "second", "-i", "do X"]
+    )
+
+
+@given(parsers.parse('an agentic page with a mock project ID "{project_id}"'))
+def _given_agentic_page_with_project_id(driver_state: dict[str, Any], project_id: str) -> None:
+    driver_state["driver"] = AgenticFlowUiDriver()
+
+    session_response = MagicMock()
+    session_response.json = AsyncMock(return_value={"access_token": "mock-token"})
+    mock_get = AsyncMock(return_value=session_response)
+
+    mock_patch = AsyncMock()
+    mock_patch.status = 200
+
+    page = MagicMock()
+    page.url = f"https://labs.google/fx/tools/flow/project/{project_id}"
+    page.request = MagicMock()
+    page.request.get = mock_get
+    page.request.patch = mock_patch
+
+    driver_state["page"] = page
+    driver_state["patch_mock"] = mock_patch
+
+
+@given("mock REST API response for instructions patch")
+def _given_mock_rest_api_patch() -> None:
+    pass
+
+
+@when("I call configure_image_settings with relational instructions")
+def _when_configure_image_settings_relational(driver_state: dict[str, Any]) -> None:
+    driver: AgenticFlowUiDriver = driver_state["driver"]
+    page: MagicMock = driver_state["page"]
+    req = GenerateImageRequest(
+        prompt="a cat",
+        instructions=(
+            AgentInstruction(
+                text="instruction A",
+                enabled=True,
+                image_media_ids=("media-uuid-1",),
+            ),
+        ),
+    )
+    asyncio.run(driver.configure_image_settings(page, req))
+
+
+@then("the REST PATCH request is dispatched with imageReferenceMediaIds")
+def _then_patch_dispatched_with_image_ref(driver_state: dict[str, Any]) -> None:
+    patch_mock: AsyncMock = driver_state["patch_mock"]
+    patch_mock.assert_called_once()
+    _, kwargs = patch_mock.call_args
+    import json
+
+    body = json.loads(kwargs.get("data") or "")
+    card = body["projectBrief"]["cards"][0]
+    assert card["description"] == "instruction A"
+    assert card["imageReferenceMediaIds"] == ["media-uuid-1"]
+
+
+@when("I call configure_image_settings with toggled instructions")
+def _when_configure_image_settings_toggled(driver_state: dict[str, Any]) -> None:
+    driver: AgenticFlowUiDriver = driver_state["driver"]
+    page: MagicMock = driver_state["page"]
+    req = GenerateImageRequest(
+        prompt="a cat",
+        instructions=(
+            AgentInstruction(
+                text="instruction B",
+                enabled=False,
+            ),
+        ),
+    )
+    asyncio.run(driver.configure_image_settings(page, req))
+
+
+@then("the REST PATCH request is dispatched with projectBrief enabled False")
+def _then_patch_dispatched_with_enabled_false(driver_state: dict[str, Any]) -> None:
+    patch_mock: AsyncMock = driver_state["patch_mock"]
+    assert patch_mock.call_count >= 1
+    import json
+
+    found_disabled = False
+    for call in patch_mock.call_args_list:
+        kwargs = call.kwargs
+        body = json.loads(kwargs.get("data") or "")
+        cards = body.get("projectBrief", {}).get("cards", [])
+        if cards and cards[0]["enabled"] is False:
+            found_disabled = True
+    assert found_disabled is True

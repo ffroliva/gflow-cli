@@ -2,15 +2,15 @@ from __future__ import annotations
 
 import asyncio
 from pathlib import Path
-from typing import Any
+from typing import Any, cast
 
 import structlog
 
 from gflow_cli._cli_helpers import apply_tool_option
 from gflow_cli.api.client import FlowApiClient
 from gflow_cli.api.dto import ProjectInfo
+from gflow_cli.api.image import AgentInstruction, GenerateImageRequest, ImageRef
 from gflow_cli.api.image import Aspect as ImageAspect
-from gflow_cli.api.image import GenerateImageRequest, ImageRef
 from gflow_cli.api.image import Model as ImageModel
 from gflow_cli.api.video import Aspect as VideoAspect
 from gflow_cli.api.video import GenerateVideoRequest, VideoModel, VideoStarted
@@ -313,6 +313,36 @@ class FlowWorker:
         reference_entity_names = tuple(payload.get("reference_entity_names", []))
         count = payload.get("count", 1)
 
+        instructions_val = payload.get("instructions")
+        instructions: tuple[AgentInstruction, ...] | None = None
+        if instructions_val is not None and isinstance(instructions_val, (list, tuple)):
+            insts: list[AgentInstruction] = []
+            for item in cast(list[object], instructions_val):
+                if isinstance(item, str):
+                    insts.append(AgentInstruction(text=item, enabled=True))
+                elif isinstance(item, dict):
+                    dict_item = cast(dict[str, object], item)
+                    text = str(dict_item.get("text") or "")
+                    enabled = bool(
+                        dict_item.get("enabled") if dict_item.get("enabled") is not None else True
+                    )
+                    image_media_ids = tuple(
+                        str(m) for m in cast(list[object], dict_item.get("image_media_ids") or [])
+                    )
+                    character_ids = tuple(
+                        str(c) for c in cast(list[object], dict_item.get("character_ids") or [])
+                    )
+                    insts.append(
+                        AgentInstruction(
+                            text=text,
+                            enabled=enabled,
+                            image_media_ids=image_media_ids,
+                            character_ids=character_ids,
+                            title=str(dict_item.get("title") or ""),
+                        )
+                    )
+            instructions = tuple(insts)
+
         return GenerateImageRequest(
             prompt=prompt,
             aspect=aspect,
@@ -322,6 +352,7 @@ class FlowWorker:
             reference_entities=reference_entities,
             reference_entity_names=reference_entity_names,
             count=count,
+            instructions=instructions,
         )
 
     def _build_video_request(self, payload: dict[str, Any]) -> GenerateVideoRequest:

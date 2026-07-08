@@ -40,7 +40,14 @@ from gflow_cli._cli_helpers import (
 )
 from gflow_cli.api.client import FlowApiClient
 from gflow_cli.api.dto import ProjectInfo
-from gflow_cli.api.image import Aspect, GenerateImageRequest, ImageRef, Model, reference_cap_for
+from gflow_cli.api.image import (
+    AgentInstruction,
+    Aspect,
+    GenerateImageRequest,
+    ImageRef,
+    Model,
+    reference_cap_for,
+)
 from gflow_cli.api.image_upscale import TargetResolution, UpsampleImageRequest
 from gflow_cli.api.transports import transport_choices
 from gflow_cli.config import get_settings
@@ -645,6 +652,13 @@ async def _run_upscale(
     is_flag=True,
     help="Emit a machine-readable JSON result instead of a Rich table.",
 )
+@click.option(
+    "--instruction",
+    "-i",
+    "instructions",
+    multiple=True,
+    help="Custom agent instruction to add or enable (only in agentic mode).",
+)
 def t2i(  # NOSONAR
     prompts: tuple[str, ...],
     prompts_file: Path | None,
@@ -661,10 +675,15 @@ def t2i(  # NOSONAR
     reference_entities: tuple[str, ...],
     reference_entity_names: tuple[str, ...],
     as_json: bool,
+    instructions: tuple[str, ...],
 ) -> None:
     """Generate image(s) from one or more text prompts."""
     is_multi_prompt = len(prompts) > 1 or prompts_file is not None or read_stdin
     _validate_t2i_input(prompts, prompts_file, read_stdin)
+
+    if is_multi_prompt and instructions:
+        msg = "--instruction is single-prompt only; remove the extra prompts."
+        raise click.UsageError(msg)
 
     if is_multi_prompt and (project_id is not None or reference_entities):
         # The multi-prompt/batch path creates one shared project internally; a
@@ -706,6 +725,11 @@ def t2i(  # NOSONAR
                     reference_entity_names=tuple(reference_entity_names),
                     original_prompt=original_prompt,
                     tool=applied_tool,
+                    instructions=(
+                        tuple(AgentInstruction(text=i) for i in instructions)
+                        if instructions
+                        else None
+                    ),
                 ),
                 count=count,
                 out=out,
@@ -1195,6 +1219,7 @@ class _I2IParams:
     # Tool provenance (set when a --tool rewrote the prompt; recorded only).
     original_prompt: str | None = None
     tool: AppliedTool | None = None
+    instructions: tuple[AgentInstruction, ...] | None = None
 
 
 @image.command(
@@ -1278,6 +1303,13 @@ class _I2IParams:
     is_flag=True,
     help="Emit a machine-readable JSON result instead of a Rich table.",
 )
+@click.option(
+    "--instruction",
+    "-i",
+    "instructions",
+    multiple=True,
+    help="Custom agent instruction to add or enable (only in agentic mode).",
+)
 def i2i(
     prompt: str,
     refs: tuple[str, ...],
@@ -1292,6 +1324,7 @@ def i2i(
     reference_entities: tuple[str, ...],
     reference_entity_names: tuple[str, ...],
     as_json: bool,
+    instructions: tuple[str, ...],
 ) -> None:
     """Generate image(s) from PROMPT + reference image(s) (image-to-image)."""
     # Classify each --ref upfront: UUIDs become ImageRef, path-likes become
@@ -1329,6 +1362,9 @@ def i2i(
         reference_entity_names=tuple(reference_entity_names),
         original_prompt=original_prompt,
         tool=applied_tool,
+        instructions=(
+            tuple(AgentInstruction(text=i) for i in instructions) if instructions else None
+        ),
     )
     run_with_handlers(
         lambda: _run_i2i(
@@ -1392,6 +1428,7 @@ async def _run_i2i(
                 reference_entity_names=params.reference_entity_names,
                 original_prompt=params.original_prompt,
                 tool=params.tool,
+                instructions=params.instructions,
             )
 
             n_refs = len(uuid_refs) + len(local_ref_paths)
