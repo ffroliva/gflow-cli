@@ -4,6 +4,12 @@
 
 ## Current release
 
+**v0.27.1 — alpha.** **v0.27.0 release follow-up fixes and documentation sync (#239).** Patch release wiring package version dynamically to `build_handoff()` and `FastMCP` server, escaping brackets in Rich console planning output, updating MCP agent guide, and adding `gflow movie` usage documentation. Verification: [LIVE_VERIFICATION_v0.27.1](LIVE_VERIFICATION_v0.27.1.md) (credit-free baseline verification).
+
+**Develop (unreleased, post-v0.27.1):** *(empty — develop is the staging branch for the next release).*
+
+<details><summary>v0.27.0 — Global [style] block with named variants + prompt-aware resume for gflow movie</summary>
+
 **v0.27.0 — alpha.** **Global `[style]` block with named variants + prompt-aware resume
 for `gflow movie` (#239).** A `movie.toml` can now express a visual style system once —
 `prefix`/`suffix` on `[style]` plus `[style.variants.*]` sub-tables — and select it
@@ -15,7 +21,7 @@ instead of silently skipped, and dry-run marks it `re-run (style changed)`. Carr
 forward v0.26.0 (i2i select-in-place by UUID). Verification:
 [LIVE_VERIFICATION_v0.27.0](LIVE_VERIFICATION_v0.27.0.md) (credit-free CLI ledger).
 
-**Develop (unreleased, post-v0.27.0):** *(empty — develop is the staging branch for the next release).*
+</details>
 
 <details><summary>v0.26.0 — image i2i references a generated image by UUID (select in place)</summary>
 
