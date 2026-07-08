@@ -30,6 +30,20 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 - **`-i` no longer no-ops without warning on a classic-cohort session:** a clear warning is now
   emitted (instructions only apply on agentic sessions).
 
+## [0.27.1] — 2026-07-07
+
+### Fixed
+
+- **Version Wiring in Movie Handoff:** Properly imported and passed `__version__` to `build_handoff()` generator version instead of using a hardcoded stale default (`0.14.0`).
+- **Rich Markup Escaping in CLI Output:** Escaped brackets in `_format_scene_line` plan output (`[t2v]`, `[r2v]`, and `refs=[...]`) so they are not swallowed by Rich console formatting.
+- **MCP Server Stale Version:** Wired FastMCP version to `__version__` dynamically on startup, fixing the stale `0.21.0` version trap.
+- **MCP Agent Guide:** Added `gflow_list_tools` to the list of available tools in the static MCP agent guide resource.
+
+### Added
+
+- **Document Anchors:** Added HTML anchor (`style-configuration-errors`) to `docs/MOVIE.md` for reserved name `"none"` and unknown style variant `ConfigurationError` paths.
+- **Movie Usages Documentation:** Added complete documentation for `gflow movie run` and `gflow movie template` commands to `docs/USAGE.md`.
+
 ## [0.27.0] — 2026-07-07
 
 ### Added
@@ -1853,7 +1867,8 @@ shell-script template that branches on these codes.
 
 First skeleton. Not functional end-to-end yet.
 
-[Unreleased]: https://github.com/ffroliva/gflow-cli/compare/v0.27.0...HEAD
+[Unreleased]: https://github.com/ffroliva/gflow-cli/compare/v0.27.1...HEAD
+[0.27.1]: https://github.com/ffroliva/gflow-cli/compare/v0.27.0...v0.27.1
 [0.27.0]: https://github.com/ffroliva/gflow-cli/compare/v0.26.0...v0.27.0
 [0.26.0]: https://github.com/ffroliva/gflow-cli/compare/v0.25.0...v0.26.0
 [0.25.0]: https://github.com/ffroliva/gflow-cli/compare/v0.24.0...v0.25.0
