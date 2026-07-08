@@ -101,8 +101,12 @@ Per-scene selection:
 | *(omitted)* | Uses the base `[style]` suffix. |
 | `style_suffix = "sunset light"` | Scene-specific text appended **after** the variant/base suffix. |
 
-`none` is a **reserved name**: defining `[style.variants.none]` is a
-configuration error, so the opt-out keyword can never shadow a real variant.
+<a name="style-configuration-errors"></a>
+### Style Configuration Errors
+
+There are two style configuration errors that will raise a `ConfigurationError`:
+* **Reserved `none` name:** Defining `[style.variants.none]` is a configuration error, so the opt-out keyword can never shadow a real variant.
+* **Unknown variant name:** Specifying a `style_variant` in a scene that does not exist in `[style.variants]` (and is not `"none"`) is a configuration error.
 
 **Composition rule** (deterministic, no LLM):
 

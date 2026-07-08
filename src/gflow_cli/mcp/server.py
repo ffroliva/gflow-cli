@@ -17,6 +17,8 @@ from typing import TYPE_CHECKING
 import structlog
 from mcp.server.fastmcp import FastMCP
 
+from gflow_cli import __version__
+
 if TYPE_CHECKING:
     pass
 
@@ -27,11 +29,14 @@ log = structlog.get_logger()
 # ---------------------------------------------------------------------------
 
 _SERVER_NAME = "gflow-cli"
-_SERVER_VERSION = "0.21.0"
+_SERVER_VERSION = __version__
 
 server = FastMCP(
     name=_SERVER_NAME,
 )
+# FastMCP does not expose a public API to configure the server version.
+# As a workaround, we assign it directly to the underlying Server instance.
+server._mcp_server.version = _SERVER_VERSION  # pyright: ignore[reportPrivateUsage]
 
 # ---------------------------------------------------------------------------
 # Stdout isolation
