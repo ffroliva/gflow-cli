@@ -7,6 +7,7 @@ from pathlib import Path
 
 import jsonschema
 
+from gflow_cli import __version__
 from gflow_cli.composition import Character, Scene, StyleSpec, build_handoff
 from gflow_cli.movie_manifest import CharacterState, MovieState, SceneState
 
@@ -38,6 +39,8 @@ def _fake_state() -> MovieState:
 def test_build_handoff_shape_and_schema(tmp_path: Path) -> None:
     handoff = build_handoff(_FakeManifest(), _fake_state(), out_dir=Path("/out/x"))
     assert handoff["schema_version"] == 1
+    assert handoff["generator"]["name"] == "gflow-cli"
+    assert handoff["generator"]["version"] == __version__
     assert handoff["clips"][0]["index"] == 0
     assert handoff["clips"][0]["id"] == "s1"
     # relative POSIX path, no backslashes, no signed-url leak

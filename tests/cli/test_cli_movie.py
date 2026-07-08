@@ -904,3 +904,21 @@ class TestEntityIdentity:
         assert create_mock.call_args.kwargs["body"] is not None
         # Entity id was persisted to state for downstream scene resolution.
         assert state.characters["Hero"].entity_id == "ent-new"
+
+
+class TestFormatSceneLine:
+    def test_format_scene_line_escapes_brackets_for_rich(self) -> None:
+        from gflow_cli.cli_movie import _format_scene_line
+        from gflow_cli.composition import Scene, StyleSpec
+
+        # T2V scene (no characters)
+        s1 = Scene(id="s1", action="A", framing="medium", duration=4)
+        line = _format_scene_line(s1, StyleSpec(), done=False, stale=False, cost=2)
+        assert "\\[t2v]" in line
+        assert "refs=" not in line
+
+        # R2V scene (with characters)
+        s2 = Scene(id="s2", action="B", framing="wide", duration=8, characters=("Hero",))
+        line2 = _format_scene_line(s2, StyleSpec(), done=False, stale=False, cost=2)
+        assert "\\[r2v]" in line2
+        assert "refs=\\[Hero]" in line2

@@ -285,7 +285,7 @@ def _style_tag(s: Scene, style: StyleSpec) -> str:
 def _format_scene_line(s: Scene, style: StyleSpec, *, done: bool, stale: bool, cost: int) -> str:
     """Return the single-line plan summary for one scene."""
     mode = "r2v" if s.characters else "t2v"
-    refs = f"  refs=[{', '.join(s.characters)}]" if s.characters else ""
+    refs = f"  refs=\\[{', '.join(s.characters)}]" if s.characters else ""
     framing_tag = f"  {s.framing}" if s.framing else ""
     model_tag = f"  {s.model}" if s.model else ""
     dur_tag = f"  {s.duration}s" if s.duration else ""
@@ -296,7 +296,7 @@ def _format_scene_line(s: Scene, style: StyleSpec, *, done: bool, stale: bool, c
     else:
         status = f"{cost} credit(s)"
     style_tag = _style_tag(s, style)
-    return f"    [{mode}] {s.id!r}{framing_tag}{model_tag}{dur_tag}{refs}{style_tag}  {status}"
+    return f"    \\[{mode}] {s.id!r}{framing_tag}{model_tag}{dur_tag}{refs}{style_tag}  {status}"
 
 
 def _print_plan(manifest: MovieManifest, state: MovieState) -> None:
