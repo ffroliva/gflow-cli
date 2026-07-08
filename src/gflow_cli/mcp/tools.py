@@ -604,6 +604,7 @@ async def gflow_generate_image(
     tools: list[dict[str, Any]] | None = None,
     profile: str = "default",
     project: str | None = None,
+    instructions: list[str] | None = None,
 ) -> dict[str, Any]:
     """Generate an image via Google Flow's Imagen.
 
@@ -629,6 +630,8 @@ async def gflow_generate_image(
         project: Optional existing Flow project id to generate into (mirrors the
             CLI ``--project`` flag). When omitted, a scratch project is created
             as before.
+        instructions: Optional list of custom agent instructions to add or enable
+            (only in agentic mode).
 
     Returns:
         Dict with 'status', 'files' (list of local file paths), and metadata.
@@ -674,6 +677,8 @@ async def gflow_generate_image(
             "aspect": aspect,
             "count": count,
         }
+        if instructions:
+            payload["instructions"] = list(instructions)
         if seed is not None:
             payload["seed"] = seed
         if project is not None:

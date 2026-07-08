@@ -17,11 +17,13 @@ import pytest
 
 from gflow_cli.api.image import (
     MAX_IMAGE_REFERENCES,
+    AgentInstruction,
     Aspect,
     GenerateImageRequest,
     ImageRef,
     Model,
     _build_batch_generate_images_body,
+    build_agent_brief_cards,
     reference_cap_for,
 )
 
@@ -362,3 +364,54 @@ class TestBuildBatchGenerateImagesBody:
         # Must be the empty list — NOT missing, NOT null.
         assert "imageInputs" in body["requests"][0]
         assert body["requests"][0]["imageInputs"] == []
+
+
+# ---------------------------------------------------------------------------
+# AgentInstruction.resolved_title + build_agent_brief_cards
+# ---------------------------------------------------------------------------
+
+
+def test_resolved_title_uses_explicit_title_when_present() -> None:
+    inst = AgentInstruction(text="anything at all", title="  My Card  ")
+    assert inst.resolved_title() == "My Card"
+
+
+def test_resolved_title_derives_from_first_line_when_blank() -> None:
+    inst = AgentInstruction(text="Cinematic lighting\nsecond line ignored")
+    assert inst.resolved_title() == "Cinematic lighting"
+
+
+def test_resolved_title_truncates_long_text() -> None:
+    long = "x" * 100
+    title = AgentInstruction(text=long).resolved_title()
+    assert title.endswith("…")
+    assert len(title) == 58  # 57 chars + ellipsis
+
+
+def test_build_agent_brief_cards_serializes_all_fields() -> None:
+    cards = build_agent_brief_cards(
+        (
+            AgentInstruction(
+                text="crayon",
+                enabled=True,
+                image_media_ids=("m1", "m2"),
+                character_ids=("c1",),
+                title="Crayon",
+            ),
+            AgentInstruction(text="noir", enabled=False),
+        ),
+        project_id="proj-9",
+    )
+    assert len(cards) == 2
+    first = cards[0]
+    assert first["title"] == "Crayon"
+    assert first["description"] == "crayon"
+    assert first["enabled"] is True
+    assert first["imageReferenceMediaIds"] == ["m1", "m2"]
+    assert first["characterReferenceEntityNames"] == ["projects/proj-9/entities/c1"]
+    assert "id" in first  # a generated uuid
+    # The plain card omits the optional reference keys entirely.
+    assert cards[1]["enabled"] is False
+    assert "imageReferenceMediaIds" not in cards[1]
+    assert "characterReferenceEntityNames" not in cards[1]
+    assert cards[1]["title"] == "noir"

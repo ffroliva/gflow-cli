@@ -2,15 +2,15 @@ from __future__ import annotations
 
 import asyncio
 from pathlib import Path
-from typing import Any
+from typing import Any, cast
 
 import structlog
 
 from gflow_cli._cli_helpers import apply_tool_option
 from gflow_cli.api.client import FlowApiClient
 from gflow_cli.api.dto import ProjectInfo
+from gflow_cli.api.image import AgentInstruction, GenerateImageRequest, ImageRef
 from gflow_cli.api.image import Aspect as ImageAspect
-from gflow_cli.api.image import GenerateImageRequest, ImageRef
 from gflow_cli.api.image import Model as ImageModel
 from gflow_cli.api.video import Aspect as VideoAspect
 from gflow_cli.api.video import GenerateVideoRequest, VideoModel, VideoStarted
@@ -34,6 +34,42 @@ def get_profile_lock(profile_name: str) -> asyncio.Lock:
     if profile_name not in _PROFILE_LOCKS:
         _PROFILE_LOCKS[profile_name] = asyncio.Lock()
     return _PROFILE_LOCKS[profile_name]
+
+
+def _instruction_from_dict(item: dict[str, object]) -> AgentInstruction:
+    """Build one AgentInstruction from a queue-payload dict item."""
+    enabled_val = item.get("enabled")
+    return AgentInstruction(
+        text=str(item.get("text") or ""),
+        enabled=bool(enabled_val) if enabled_val is not None else True,
+        image_media_ids=tuple(
+            str(m) for m in cast(list[object], item.get("image_media_ids") or [])
+        ),
+        character_ids=tuple(str(c) for c in cast(list[object], item.get("character_ids") or [])),
+        title=str(item.get("title") or ""),
+    )
+
+
+def _parse_agent_instructions(
+    instructions_val: object,
+) -> tuple[AgentInstruction, ...] | None:
+    """Parse queue-payload ``instructions`` into ``AgentInstruction`` objects.
+
+    Accepts a list of plain strings (ephemeral enabled cards) or dicts
+    (``text``/``enabled``/``image_media_ids``/``character_ids``/``title``).
+    Returns ``None`` when absent or not a list/tuple. Extracted from
+    ``_build_image_request`` to keep that builder under the cognitive-complexity
+    limit (Sonar S3776).
+    """
+    if not isinstance(instructions_val, (list, tuple)):
+        return None
+    insts: list[AgentInstruction] = []
+    for item in cast(list[object], instructions_val):
+        if isinstance(item, str):
+            insts.append(AgentInstruction(text=item, enabled=True))
+        elif isinstance(item, dict):
+            insts.append(_instruction_from_dict(cast(dict[str, object], item)))
+    return tuple(insts)
 
 
 class FlowWorker:
@@ -322,6 +358,7 @@ class FlowWorker:
             reference_entities=reference_entities,
             reference_entity_names=reference_entity_names,
             count=count,
+            instructions=_parse_agent_instructions(payload.get("instructions")),
         )
 
     def _build_video_request(self, payload: dict[str, Any]) -> GenerateVideoRequest:
