@@ -36,6 +36,42 @@ def get_profile_lock(profile_name: str) -> asyncio.Lock:
     return _PROFILE_LOCKS[profile_name]
 
 
+def _instruction_from_dict(item: dict[str, object]) -> AgentInstruction:
+    """Build one AgentInstruction from a queue-payload dict item."""
+    enabled_val = item.get("enabled")
+    return AgentInstruction(
+        text=str(item.get("text") or ""),
+        enabled=bool(enabled_val) if enabled_val is not None else True,
+        image_media_ids=tuple(
+            str(m) for m in cast(list[object], item.get("image_media_ids") or [])
+        ),
+        character_ids=tuple(str(c) for c in cast(list[object], item.get("character_ids") or [])),
+        title=str(item.get("title") or ""),
+    )
+
+
+def _parse_agent_instructions(
+    instructions_val: object,
+) -> tuple[AgentInstruction, ...] | None:
+    """Parse queue-payload ``instructions`` into ``AgentInstruction`` objects.
+
+    Accepts a list of plain strings (ephemeral enabled cards) or dicts
+    (``text``/``enabled``/``image_media_ids``/``character_ids``/``title``).
+    Returns ``None`` when absent or not a list/tuple. Extracted from
+    ``_build_image_request`` to keep that builder under the cognitive-complexity
+    limit (Sonar S3776).
+    """
+    if not isinstance(instructions_val, (list, tuple)):
+        return None
+    insts: list[AgentInstruction] = []
+    for item in cast(list[object], instructions_val):
+        if isinstance(item, str):
+            insts.append(AgentInstruction(text=item, enabled=True))
+        elif isinstance(item, dict):
+            insts.append(_instruction_from_dict(cast(dict[str, object], item)))
+    return tuple(insts)
+
+
 class FlowWorker:
     def __init__(self, profile_name: str, db_path: str):
         self.profile_name = profile_name
@@ -313,36 +349,6 @@ class FlowWorker:
         reference_entity_names = tuple(payload.get("reference_entity_names", []))
         count = payload.get("count", 1)
 
-        instructions_val = payload.get("instructions")
-        instructions: tuple[AgentInstruction, ...] | None = None
-        if instructions_val is not None and isinstance(instructions_val, (list, tuple)):
-            insts: list[AgentInstruction] = []
-            for item in cast(list[object], instructions_val):
-                if isinstance(item, str):
-                    insts.append(AgentInstruction(text=item, enabled=True))
-                elif isinstance(item, dict):
-                    dict_item = cast(dict[str, object], item)
-                    text = str(dict_item.get("text") or "")
-                    enabled = bool(
-                        dict_item.get("enabled") if dict_item.get("enabled") is not None else True
-                    )
-                    image_media_ids = tuple(
-                        str(m) for m in cast(list[object], dict_item.get("image_media_ids") or [])
-                    )
-                    character_ids = tuple(
-                        str(c) for c in cast(list[object], dict_item.get("character_ids") or [])
-                    )
-                    insts.append(
-                        AgentInstruction(
-                            text=text,
-                            enabled=enabled,
-                            image_media_ids=image_media_ids,
-                            character_ids=character_ids,
-                            title=str(dict_item.get("title") or ""),
-                        )
-                    )
-            instructions = tuple(insts)
-
         return GenerateImageRequest(
             prompt=prompt,
             aspect=aspect,
@@ -352,7 +358,7 @@ class FlowWorker:
             reference_entities=reference_entities,
             reference_entity_names=reference_entity_names,
             count=count,
-            instructions=instructions,
+            instructions=_parse_agent_instructions(payload.get("instructions")),
         )
 
     def _build_video_request(self, payload: dict[str, Any]) -> GenerateVideoRequest:
