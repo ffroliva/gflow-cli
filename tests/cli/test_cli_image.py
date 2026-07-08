@@ -1327,3 +1327,91 @@ class TestProjectCreatedRecording:
             )
         assert result.exit_code == 0, result.output
         assert captured.get("project_created") is True
+
+
+class TestImageInstructionsFlag:
+    def test_t2i_passes_instructions(self, runner: CliRunner, tmp_path: Path) -> None:
+        client = _make_t2i_client()
+        out_dir = tmp_path / "out"
+
+        with (
+            patch("gflow_cli.cli_image.FlowApiClient", return_value=client),
+            patch("gflow_cli.cli_image._make_provider_dir", return_value=tmp_path / "prof"),
+            patch("gflow_cli.cli_image._resolve_profile", return_value="default"),
+        ):
+            from gflow_cli.cli import main
+
+            result = runner.invoke(
+                main,
+                [
+                    "image",
+                    "t2i",
+                    "a cat",
+                    "--instruction",
+                    "do X",
+                    "--instruction",
+                    "do Y",
+                    "--out",
+                    str(out_dir),
+                ],
+                catch_exceptions=False,
+            )
+
+        assert result.exit_code == 0, result.output
+        call = client.generate_image.await_args
+        assert call is not None
+        req = call.kwargs["req"]
+        from gflow_cli.api.image import AgentInstruction
+
+        assert req.instructions == (
+            AgentInstruction("do X"),
+            AgentInstruction("do Y"),
+        )
+
+    def test_i2i_passes_instructions(self, runner: CliRunner, tmp_path: Path) -> None:
+        uuid = "11111111-1111-1111-1111-111111111111"
+        client = _make_i2i_client()
+        out_dir = tmp_path / "out"
+
+        with (
+            patch("gflow_cli.cli_image.FlowApiClient", return_value=client),
+            patch("gflow_cli.cli_image._make_provider_dir", return_value=tmp_path / "prof"),
+            patch("gflow_cli.cli_image._resolve_profile", return_value="default"),
+        ):
+            from gflow_cli.cli import main
+
+            result = runner.invoke(
+                main,
+                [
+                    "image",
+                    "i2i",
+                    "stylize",
+                    "--ref",
+                    uuid,
+                    "--instruction",
+                    "do Z",
+                    "--out",
+                    str(out_dir),
+                ],
+                catch_exceptions=False,
+            )
+
+        assert result.exit_code == 0, result.output
+        call = client.generate_image.await_args
+        assert call is not None
+        req = call.kwargs["req"]
+        from gflow_cli.api.image import AgentInstruction
+
+        assert req.instructions == (AgentInstruction("do Z"),)
+
+    def test_t2i_instructions_rejects_multi_prompt(self, runner: CliRunner) -> None:
+        from gflow_cli.cli import main
+
+        result = runner.invoke(
+            main,
+            ["image", "t2i", "first", "second", "--instruction", "do X"],
+            catch_exceptions=False,
+        )
+
+        assert result.exit_code == 2, result.output
+        assert "single-prompt" in result.output
