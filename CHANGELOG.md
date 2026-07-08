@@ -7,6 +7,31 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+## [0.28.0] — 2026-07-08
+
+### Added
+
+- **Agent instructions (`-i` / `--instruction`) now actually steer generation.** On an
+  agentic-cohort Flow session, `gflow image t2i "…" -i "Every image is a flat 2D crayon
+  drawing"` makes the agent adopt that style (live-verified end-to-end). Instruction cards are
+  synced to the project's Agent brief via `PATCH /v1/projects/{id}/agentInfo`, and the agent
+  folds every **enabled** card into the generation. Cards carry distinct titles and may
+  reference image assets. Persistent CRUD (`gflow instructions`) and movie-manifest wiring are
+  planned follow-ups.
+
+### Fixed
+
+- **Instructions were silently inert (agentic transport).** Two root causes, both found via a
+  live spike: (1) the composer used an imperative `"Generate N images: …"` directive that the
+  agent passes to the image tool verbatim, bypassing the brief — now phrased conversationally
+  so the agent's reasoning step applies the cards; (2) the brief-level master switch
+  `project_brief.enabled` was never set (defaults off on a fresh project → all cards ignored) —
+  now enabled whenever cards are synced. Also fixes a wrong PATCH content-type
+  (`application/json+protobuf` → HTTP 400, silently) and a hardcoded per-card title that
+  collapsed every card to one name.
+- **`-i` no longer no-ops without warning on a classic-cohort session:** a clear warning is now
+  emitted (instructions only apply on agentic sessions).
+
 ## [0.27.1] — 2026-07-07
 
 ### Fixed
@@ -1844,7 +1869,8 @@ shell-script template that branches on these codes.
 
 First skeleton. Not functional end-to-end yet.
 
-[Unreleased]: https://github.com/ffroliva/gflow-cli/compare/v0.27.1...HEAD
+[Unreleased]: https://github.com/ffroliva/gflow-cli/compare/v0.28.0...HEAD
+[0.28.0]: https://github.com/ffroliva/gflow-cli/compare/v0.27.1...v0.28.0
 [0.27.1]: https://github.com/ffroliva/gflow-cli/compare/v0.27.0...v0.27.1
 [0.27.0]: https://github.com/ffroliva/gflow-cli/compare/v0.26.0...v0.27.0
 [0.26.0]: https://github.com/ffroliva/gflow-cli/compare/v0.25.0...v0.26.0

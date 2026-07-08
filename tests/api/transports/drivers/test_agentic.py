@@ -14,7 +14,8 @@ from unittest.mock import AsyncMock, MagicMock, patch
 
 import pytest
 
-from gflow_cli.api.image import Aspect, GenerateImageRequest, Model
+from gflow_cli.api.image import AgentInstruction, Aspect, GenerateImageRequest, Model
+from gflow_cli.api.transports.drivers import agentic as agentic_mod
 from gflow_cli.api.transports.drivers.agentic import (
     _MEDIA_REDIRECT_BASE,
     AgenticFlowUiDriver,
@@ -105,17 +106,29 @@ def test_extract_uuids_ignores_non_media_urls() -> None:
 
 def test_compose_directive_with_aspect() -> None:
     directive = AgenticFlowUiDriver._compose_directive(4, "16:9", "a red apple")
-    assert directive == "Generate 4 images in 16:9 aspect ratio: a red apple"
+    assert directive == "Make me 4 pictures of a red apple in a 16:9 aspect ratio."
 
 
 def test_compose_directive_no_aspect() -> None:
     directive = AgenticFlowUiDriver._compose_directive(1, None, "a red apple")
-    assert directive == "Generate 1 image: a red apple"
+    assert directive == "Make me a picture of a red apple."
+
+
+def test_compose_directive_is_conversational_not_imperative() -> None:
+    """Regression guard for the instructions spike: the directive must NOT use
+    the imperative ``Generate N images:`` form, which the agent passes to the
+    image tool verbatim and thereby bypasses the project-brief instruction
+    cards. It must read as a natural request so the agent's reasoning step folds
+    enabled cards into the tool prompt."""
+    directive = AgenticFlowUiDriver._compose_directive(2, "16:9", "a cat")
+    assert "Generate" not in directive
+    assert not directive.startswith("Generate")
+    assert directive.lower().startswith("make me")
 
 
 def test_compose_directive_plural_singular() -> None:
-    assert "1 image:" in AgenticFlowUiDriver._compose_directive(1, None, "x")
-    assert "2 images:" in AgenticFlowUiDriver._compose_directive(2, None, "x")
+    assert "a picture of" in AgenticFlowUiDriver._compose_directive(1, None, "x")
+    assert "2 pictures of" in AgenticFlowUiDriver._compose_directive(2, None, "x")
 
 
 # ---------------------------------------------------------------------------
@@ -206,7 +219,7 @@ async def test_send_prompt_uses_keyboard_not_fill() -> None:
     keyboard.insert_text.assert_awaited_once()
     call_args = keyboard.insert_text.call_args
     typed_text: str = call_args[0][0]
-    assert "Generate 2 images in 16:9 aspect ratio: a red apple" == typed_text
+    assert "Make me 2 pictures of a red apple in a 16:9 aspect ratio." == typed_text
 
 
 @pytest.mark.asyncio
@@ -242,7 +255,7 @@ async def test_send_prompt_includes_count_and_aspect_in_directive() -> None:
     await driver.send_prompt(page, "a mountain")
 
     typed: str = keyboard.insert_text.call_args[0][0]
-    assert "3 images" in typed
+    assert "3 pictures" in typed
     assert "1:1" in typed
     assert "a mountain" in typed
 
@@ -498,3 +511,149 @@ async def test_await_images_synthesised_fields() -> None:
     assert img.aspect_ratio == "IMAGE_ASPECT_RATIO_LANDSCAPE"
     assert img.media_generation_id is None
     assert img.dimensions == (0, 0)
+
+
+# ---------------------------------------------------------------------------
+# Instructions Reconciliation
+# ---------------------------------------------------------------------------
+
+
+@pytest.mark.asyncio
+async def test_reconcile_instructions_no_op_when_none() -> None:
+    driver = AgenticFlowUiDriver()
+    page = MagicMock()
+    req = GenerateImageRequest(prompt="a cat", instructions=None)
+    await driver.configure_image_settings(page, req)
+    page.locator.assert_not_called()
+
+
+@pytest.mark.asyncio
+async def test_reconcile_instructions_patches_rest_api() -> None:
+    """_reconcile_instructions must call page.request.patch with the full
+    card set via the REST agentInfo endpoint — no DOM loop involved."""
+    driver = AgenticFlowUiDriver()
+
+    session_response = MagicMock()
+    session_response.json = AsyncMock(return_value={"access_token": "tok-abc"})
+    mock_get = AsyncMock(return_value=session_response)
+
+    page = MagicMock()
+    page.url = "https://labs.google/fx/tools/flow/project/aaaa0000-0000-0000-0000-000000000001"
+    page.request = MagicMock()
+    page.request.get = mock_get
+    page.request.patch = AsyncMock(return_value=MagicMock(status=200))
+    mock_patch = page.request.patch
+
+    instructions = (
+        AgentInstruction("guideline A", enabled=True),
+        AgentInstruction("guideline B", enabled=False),
+    )
+    await driver._reconcile_instructions(page, instructions)
+
+    mock_patch.assert_called_once()
+    call_args, call_kwargs = mock_patch.call_args
+    url = call_args[0]
+    assert "aaaa0000-0000-0000-0000-000000000001" in url
+    assert "project_brief.cards" in url
+    # The brief-level MASTER switch must be turned on (updateMask + body), else
+    # a fresh project's brief stays off and every card is ignored.
+    assert "project_brief.enabled" in url
+
+    import json
+
+    body = json.loads(call_kwargs["data"])
+    assert body["projectBrief"]["enabled"] is True
+    cards = body["projectBrief"]["cards"]
+    assert len(cards) == 2  # noqa: PLR2004
+    texts = {c["description"] for c in cards}
+    assert "guideline A" in texts
+    assert "guideline B" in texts
+    disabled = [c for c in cards if c["description"] == "guideline B"]
+    assert disabled and disabled[0]["enabled"] is False
+    assert call_kwargs["headers"]["authorization"] == "Bearer tok-abc"
+    # Content-type MUST be text/plain — application/json+protobuf is rejected 400
+    # by Flow (instructions spike). Regression guard for the silent-sync bug.
+    assert "protobuf" not in call_kwargs["headers"]["content-type"]
+    assert call_kwargs["headers"]["content-type"].startswith("text/plain")
+    # Each card carries its OWN title (derived from text), never a shared
+    # constant — Task 7 matches cards by title.
+    titles = {c["title"] for c in cards}
+    assert titles == {"guideline A", "guideline B"}
+
+
+@pytest.mark.asyncio
+async def test_reconcile_instructions_warns_on_patch_failure() -> None:
+    """A non-2xx PATCH must be logged, not swallowed silently (spike bug #1)."""
+    driver = AgenticFlowUiDriver()
+
+    mock_patch = AsyncMock(return_value=MagicMock(status=400))
+    session_response = MagicMock()
+    session_response.json = AsyncMock(return_value={"access_token": "tok"})
+
+    page = MagicMock()
+    page.url = "https://labs.google/fx/tools/flow/project/bbbb1111-0000-0000-0000-000000000002"
+    page.request = MagicMock()
+    page.request.get = AsyncMock(return_value=session_response)
+    page.request.patch = mock_patch
+
+    with patch.object(agentic_mod.log, "warning") as mock_warning:
+        await driver._reconcile_instructions(page, (AgentInstruction("x", enabled=True),))
+
+    mock_patch.assert_called_once()
+    assert any(
+        call.args and call.args[0] == "agentic_driver.reconcile_instructions.patch_failed"
+        for call in mock_warning.call_args_list
+    )
+
+
+def test_agent_instruction_serialization_with_references() -> None:
+    inst = AgentInstruction(
+        text="A portrait of the hero",
+        enabled=True,
+        image_media_ids=("media-uuid-1",),
+        character_ids=("char-uuid-2",),
+    )
+    assert inst.image_media_ids == ("media-uuid-1",)
+    assert inst.character_ids == ("char-uuid-2",)
+
+
+@pytest.mark.asyncio
+async def test_driver_reconcile_dispatches_patch_payload() -> None:
+    driver = AgenticFlowUiDriver()
+
+    mock_patch = AsyncMock(return_value=MagicMock(status=200))
+    session_response = MagicMock()
+    session_response.json = AsyncMock(return_value={"access_token": "mock-token"})
+    mock_get = AsyncMock(return_value=session_response)
+
+    page = MagicMock()
+    page.url = "https://labs.google/fx/tools/flow/project/71aa2873-9e6b-4ed1-9bdb-629ed0490b41"
+    page.request = MagicMock()
+    page.request.get = mock_get
+    page.request.patch = mock_patch
+
+    req = GenerateImageRequest(
+        prompt="a cat",
+        instructions=(
+            AgentInstruction(
+                text="Daytime Cinematic",
+                enabled=True,
+                image_media_ids=("media-uuid-1",),
+            ),
+        ),
+    )
+
+    await driver.configure_image_settings(page, req)
+
+    mock_patch.assert_called_once()
+    args, kwargs = mock_patch.call_args
+    assert "71aa2873-9e6b-4ed1-9bdb-629ed0490b41" in args[0]
+    assert "project_brief.cards" in args[0]
+
+    import json
+
+    body = json.loads(kwargs.get("data") or "")
+    card = body["projectBrief"]["cards"][0]
+    assert card["description"] == "Daytime Cinematic"
+    assert card["enabled"] is True
+    assert card["imageReferenceMediaIds"] == ["media-uuid-1"]

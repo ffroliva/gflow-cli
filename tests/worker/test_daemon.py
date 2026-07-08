@@ -456,3 +456,49 @@ async def test_worker_loop_reraises_cancellation(temp_db: DataStore) -> None:
         await loop_task
 
     worker.close()
+
+
+def test_worker_build_image_request_parses_instructions(temp_db: DataStore) -> None:
+    from gflow_cli.api.image import AgentInstruction
+
+    worker = FlowWorker("default", str(temp_db.path))
+    payload = {
+        "prompt": "a fluffy cat",
+        "instructions": [
+            "instruction A",
+            {"text": "instruction B", "enabled": False},
+        ],
+    }
+    req = worker._build_image_request(payload)
+    assert req.instructions == (
+        AgentInstruction("instruction A", enabled=True),
+        AgentInstruction("instruction B", enabled=False),
+    )
+    worker.close()
+
+
+def test_worker_build_image_request_parses_instructions_with_references(temp_db: DataStore) -> None:
+    from gflow_cli.api.image import AgentInstruction
+
+    worker = FlowWorker("default", str(temp_db.path))
+    payload = {
+        "prompt": "a fluffy cat",
+        "instructions": [
+            {
+                "text": "instruction A",
+                "enabled": True,
+                "image_media_ids": ["media-uuid-1"],
+                "character_ids": ["char-uuid-2"],
+            }
+        ],
+    }
+    req = worker._build_image_request(payload)
+    assert req.instructions == (
+        AgentInstruction(
+            "instruction A",
+            enabled=True,
+            image_media_ids=("media-uuid-1",),
+            character_ids=("char-uuid-2",),
+        ),
+    )
+    worker.close()
