@@ -35,7 +35,7 @@ if TYPE_CHECKING:
     from playwright.async_api import Page
 
     from gflow_cli.api.dto import GeneratedImage
-    from gflow_cli.api.image import GenerateImageRequest
+    from gflow_cli.api.image import AgentInstruction, GenerateImageRequest
     from gflow_cli.api.video import GenerateVideoRequest
 
 log = structlog.get_logger(__name__)
@@ -57,6 +57,10 @@ _SLATE_COMPOSER_SELECTOR = 'div[role="textbox"][data-slate-editor="true"]'
 # DOM polling defaults — match the classic transport's _await_captured cadence.
 _POLL_INTERVAL_S = 0.5
 _AWAIT_TIMEOUT_S = 180.0
+
+# Auth session endpoint — same URL used by FlowApiClient._fetch_access_token.
+_SESSION_API_URL = "https://labs.google/fx/api/auth/session"
+_LABS_ORIGIN = "https://labs.google"
 
 # Aspect-ratio human-readable labels for the prompt directive.
 # Maps Aspect enum values to the natural-language clause injected into the
@@ -238,6 +242,94 @@ class AgenticFlowUiDriver:
             prompt_idx=prompt_idx,
         )
 
+        if request.instructions is not None:
+            await self._reconcile_instructions(page, request.instructions)
+
+    async def _reconcile_instructions(
+        self,
+        page: Page,
+        requested: tuple[AgentInstruction, ...],
+    ) -> None:
+        """Sync the agent instruction cards via the REST API (PATCH agentInfo).
+
+        Replaces the prior DOM-loop approach: directly PATCHes
+        ``/v1/projects/{projectId}/agentInfo?updateMask=project_brief.cards``
+        with the full desired card set, eliminating Playwright DOM reconciliation
+        entirely.  Auth reuses the same Bearer token path as FlowApiClient.
+
+        Content-type is ``text/plain;charset=UTF-8`` (the aisandbox default).
+        The previous ``application/json+protobuf`` value made Flow reject the
+        JSON-object body with HTTP 400 ("JSPB Fava message don't accept
+        top-level braces") — and the status was unchecked, so instruction sync
+        failed **silently** (instructions spike, 2026-07-08). We now log the
+        status and warn on any non-2xx so a broken sync is visible.
+        """
+        import json
+        import re
+
+        from gflow_cli.api.image import build_agent_brief_cards
+
+        project_id_match = re.search(r"/project/([^/?#\s]+)", str(page.url))
+        if project_id_match is None:
+            log.warning(
+                "agentic_driver.reconcile_instructions.no_project_id",
+                url=page.url,
+            )
+            return
+
+        project_id = project_id_match.group(1)
+
+        # Fetch the SPA access token via the /fx/api/auth/session endpoint —
+        # the same path used by FlowApiClient._fetch_access_token.
+        session_resp = await page.request.get(_SESSION_API_URL)
+        try:
+            session_data = await session_resp.json()
+        except Exception:  # noqa: BLE001
+            session_data = {}
+        if isinstance(session_data, dict):
+            session_dict = cast("dict[str, object]", session_data)
+            token_val = session_dict.get("access_token")
+            access_token = str(token_val) if isinstance(token_val, str) else ""
+        else:
+            access_token = ""
+
+        headers = {
+            "authorization": f"Bearer {access_token}",
+            "origin": _LABS_ORIGIN,
+            "content-type": "text/plain;charset=UTF-8",
+        }
+
+        # Serialize via the shared builder so the wire shape + per-card title
+        # stay identical to FlowApiClient.patch_agent_info (no drift).
+        cards = build_agent_brief_cards(requested, project_id=project_id)
+
+        # ``projectBrief.enabled`` is the brief-level MASTER switch: on a fresh
+        # project it defaults off, and while off the agent ignores every card
+        # regardless of per-card ``enabled`` or prompt phrasing (instructions
+        # spike e2e, 2026-07-08 — cards synced but output stayed photorealistic
+        # until the master flag was set). Turn it on whenever we sync cards so
+        # the enabled ones actually reach the agent's reasoning step.
+        body: dict[str, Any] = {"projectBrief": {"enabled": True, "cards": cards}}
+        url = (
+            f"https://aisandbox-pa.googleapis.com/v1/projects/{project_id}"
+            f"/agentInfo?updateMask=project_brief.enabled,project_brief.cards"
+        )
+        log.debug(
+            "agentic_driver.reconcile_instructions.patch",
+            project_id=project_id,
+            card_count=len(cards),
+        )
+        resp = await page.request.patch(url, data=json.dumps(body), headers=headers)
+        status = getattr(resp, "status", None)
+        if isinstance(status, int) and status >= 400:  # noqa: PLR2004
+            # Never fail the generation over a brief sync (instructions are
+            # supplementary) — but make the failure loud so it isn't silent.
+            log.warning(
+                "agentic_driver.reconcile_instructions.patch_failed",
+                project_id=project_id,
+                status=status,
+            )
+
     async def configure_video_settings(
         self,
         page: Page,
@@ -260,17 +352,31 @@ class AgenticFlowUiDriver:
 
     @staticmethod
     def _compose_directive(count: int, aspect: str | None, prompt_text: str) -> str:
-        """Build the full directive string for the Slate composer.
+        """Build the conversational request string for the Slate composer.
 
-        Template: ``Generate {n} image(s) in {aspect} aspect ratio: {prompt}``
-        When no aspect is stored, the aspect clause is omitted.
+        Template: ``Make me a picture of {prompt}[ in a {aspect} aspect ratio].``
+        (``pictures`` when ``count > 1``.) When no aspect is stored, that clause
+        is omitted.
+
+        **Why conversational, not ``Generate N images: …``** — the instructions
+        spike (2026-07-08) showed that an imperative ``"Generate one image: X"``
+        directive is passed to the image tool **verbatim**, so the project-brief
+        instruction cards are never applied. A natural-language request
+        ("Make me a picture of X") instead engages the agent's reasoning step,
+        which rewrites the tool prompt to fold in every *enabled* card (live:
+        an enabled "crayon drawing" card produced a crayon image only via this
+        phrasing). Flow's own help frames the Agent as driving generation
+        "through natural conversation". This phrasing is what makes
+        ``gflow ... -i "…"`` instructions actually take effect. See
+        docs/AGENT_UI_RECON.md and the plan's ``spike-findings.md``; the live e2e
+        (tests/e2e/test_live_agentic_instructions.py) asserts a card styles output.
 
         Kept as a staticmethod so unit tests can call it directly without
         constructing a full driver instance.
         """
-        image_word = "image" if count == 1 else "images"
-        aspect_clause = f" in {aspect} aspect ratio" if aspect else ""
-        return f"Generate {count} {image_word}{aspect_clause}: {prompt_text}"
+        subject = "a picture" if count == 1 else f"{count} pictures"
+        aspect_clause = f" in a {aspect} aspect ratio" if aspect else ""
+        return f"Make me {subject} of {prompt_text}{aspect_clause}."
 
     async def send_prompt(
         self,

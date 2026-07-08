@@ -72,7 +72,7 @@ if TYPE_CHECKING:
 
     from _typeshed import DataclassInstance
 
-    from gflow_cli.api.image import GenerateImageRequest
+    from gflow_cli.api.image import AgentInstruction, GenerateImageRequest
     from gflow_cli.api.video import GenerateVideoRequest, VideoResult, VideoStartedCallback
 
 # Shorthand for an untyped JSON-ish string-keyed mapping (request/response
@@ -976,6 +976,53 @@ class FlowApiClient:
         body = {"json": {"projectTitle": title, "toolName": "PINHOLE"}}
         data = await self._post_json(routes.CREATE_PROJECT, body, content_type=_APPLICATION_JSON)
         return ProjectInfo.from_create_response(data)
+
+    async def patch_agent_info(
+        self,
+        project_id: str,
+        *,
+        enabled: bool | None = None,
+        cards: tuple[AgentInstruction, ...] | None = None,
+    ) -> JsonObject:
+        """Patch the agentic settings / instructions for a project.
+
+        Maps to ``PATCH /v1/projects/{project_id}/agentInfo``. The endpoint
+        accepts the default ``text/plain`` content-type used by ``_patch_json``
+        (``application/json`` also works; ``application/json+protobuf`` is
+        rejected 400 — see docs/AGENT_UI_RECON / the instructions spike).
+
+        Returns the ``projectBrief`` echoed back in the PATCH response (Flow
+        replies with the full updated ``agentInfo``). There is **no**
+        ``GET /agentInfo`` route — this echo is the authoritative read-back, so
+        callers (``gflow instructions list`` / enable / disable) confirm state
+        from the return value rather than a follow-up GET. Returns ``{}`` when
+        nothing was patched or the echo was empty.
+        """
+        from gflow_cli.api.image import build_agent_brief_cards
+
+        body: dict[str, Any] = {"projectBrief": {}}
+        masks: list[str] = []
+        if enabled is not None:
+            body["projectBrief"]["enabled"] = enabled
+            masks.append("project_brief.enabled")
+
+        if cards is not None:
+            body["projectBrief"]["cards"] = build_agent_brief_cards(cards, project_id=project_id)
+            masks.append("project_brief.cards")
+
+        if not masks:
+            return {}
+
+        mask_str = ",".join(masks)
+        url = f"https://aisandbox-pa.googleapis.com/v1/projects/{project_id}/agentInfo?updateMask={mask_str}"
+        data = await self._patch_json(url, body)
+        if isinstance(data, dict):
+            agent_info = cast("JsonObject", data).get("agentInfo")
+            if isinstance(agent_info, dict):
+                brief = cast("JsonObject", agent_info).get("projectBrief")
+                if isinstance(brief, dict):
+                    return cast("JsonObject", brief)
+        return {}
 
     async def upload_image(self, project_id: str, image_path: Path) -> AssetInfo:
         """Upload an image into a Flow project's library.
