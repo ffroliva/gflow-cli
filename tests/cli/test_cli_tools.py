@@ -27,6 +27,12 @@ def test_tools_run_json_without_key_falls_back(
     install_log_capture: object,  # noqa: ARG001 — configures structlog LogCapture before invoke
 ) -> None:
     monkeypatch.delenv("GFLOW_CLI_GEMINI_API_KEY", raising=False)
+    # Isolate from any developer `.env` (issue #264): `delenv` only clears the
+    # process env, but Settings re-reads the key from a CWD/home `.env` on the
+    # next build — so on a machine that has GFLOW_CLI_GEMINI_API_KEY in `.env`
+    # the tool WOULD expand and this "no key" assertion fails. Neutralize the
+    # dotenv sources so the deleted env var actually means "no key".
+    monkeypatch.setattr("gflow_cli.config._env_files", tuple)
     # Prevent main() from overriding the LogCapture structlog config with a
     # PrintLogger that would route the "no key" warning into result.output.
     monkeypatch.setattr("gflow_cli.cli.configure_logging", lambda *_a, **_kw: None)
