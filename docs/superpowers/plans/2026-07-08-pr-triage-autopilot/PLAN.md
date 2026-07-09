@@ -126,17 +126,17 @@ PLAN.md
 - `tests/autopilot/test_pr_triage_autopilot.py` — Core tests
 
 **Steps:**
-- [ ] Implement hourly lock file acquisition (`flock` or lockfile) to prevent concurrent cron ticks.
-- [ ] Fetch the list of open PRs via `gh pr list --json`.
-- [ ] Run Stage 0 gate. If qualified, fetch `pull/<N>/head` on the host machine.
-- [ ] Run Stage 1 pre-evaluation inside the container (cheap `claude -p` call). If `PROCEED`/`TRIVIAL`, proceed to the full review.
-- [ ] Launch the sandboxed Docker container executing the `pr-council-review` skill.
-- [ ] Capture the container's stdout, parse the structured summary line, and post the review comment from the host using `gh pr comment` (via the host's comment-only bot PAT).
-- [ ] Log outcomes atomically to `pr_triage_ledger.jsonl`.
-- [ ] Implement retry limits: increment `fail_count` on crashes; limit to 3 retries before marking `FAILED_PERMANENT` and sending a Telegram alert.
-- [ ] Implement the calendar daily cap (default 5 reviews/day).
-- [ ] Notify Telegram (Flavio) of every outcome (MERGE/FLAG/SKIP/ERROR).
-- [ ] Implement unit tests in `test_pr_triage_autopilot.py` ensuring that Docker and `gh` CLI subprocess calls are mocked/stubbed so tests pass cleanly on systems without Docker or `gh` CLI installed.
+- [x] Implement hourly lock file acquisition (`flock` or lockfile) to prevent concurrent cron ticks.
+- [x] Fetch the list of open PRs via `gh pr list --json`.
+- [x] Run Stage 0 gate. If qualified, fetch `pull/<N>/head` on the host machine.
+- [x] Run Stage 1 pre-evaluation inside the container (cheap `claude -p` call). If `PROCEED`/`TRIVIAL`, proceed to the full review.
+- [x] Launch the sandboxed Docker container executing the `pr-council-review` skill.
+- [x] Capture the container's stdout, parse the structured summary line, and post the review comment from the host using `gh pr comment` (via the host's comment-only bot PAT).
+- [x] Log outcomes atomically to `pr_triage_ledger.jsonl`.
+- [x] Implement retry limits: increment `fail_count` on crashes; limit to 3 retries before marking `FAILED_PERMANENT` and sending a Telegram alert.
+- [x] Implement the calendar daily cap (default 5 reviews/day).
+- [x] Notify Telegram (Flavio) of every outcome (MERGE/FLAG/SKIP/ERROR).
+- [x] Implement unit tests in `test_pr_triage_autopilot.py` ensuring that Docker and `gh` CLI subprocess calls are mocked/stubbed so tests pass cleanly on systems without Docker or `gh` CLI installed.
 
 ---
 
