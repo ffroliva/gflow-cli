@@ -18,12 +18,17 @@ import asyncio
 import re
 import time
 import uuid
+from collections.abc import Awaitable, Callable
+from dataclasses import replace
 from pathlib import Path
-from typing import Any
+from typing import Any, cast
 
 import structlog
 
 from gflow_cli._cli_helpers import _FLOW_ID_RE
+from gflow_cli.api.client import FlowApiClient
+from gflow_cli.api.image import AgentInstruction
+from gflow_cli.cli_instructions import classify_refs
 from gflow_cli.config import get_settings
 from gflow_cli.data.queries import list_projects
 from gflow_cli.data.repository import DataRepository
@@ -69,6 +74,10 @@ class _TokenBucket:
 
 
 _rate_limiter = _TokenBucket()
+
+# Sentinel meaning "auto-resolve the profile like the CLI" (see
+# _resolve_and_validate_profile). Shared constant, not a repeated literal (S1192).
+_DEFAULT_PROFILE = "default"
 
 # Per-profile execution locks to prevent Playwright collisions
 _profile_locks: dict[str, asyncio.Lock] = {}
@@ -602,7 +611,7 @@ async def gflow_generate_image(
     seed: int | None = None,
     reference_images: list[str] | None = None,
     tools: list[dict[str, Any]] | None = None,
-    profile: str = "default",
+    profile: str = _DEFAULT_PROFILE,
     project: str | None = None,
     instructions: list[str] | None = None,
 ) -> dict[str, Any]:
@@ -737,7 +746,7 @@ async def gflow_generate_video(
     end_frame: str | None = None,
     reference_images: list[str] | None = None,
     tools: list[dict[str, Any]] | None = None,
-    profile: str = "default",
+    profile: str = _DEFAULT_PROFILE,
     project: str | None = None,
 ) -> dict[str, Any]:
     """Generate a video via Google Flow's Veo.
@@ -874,7 +883,7 @@ async def gflow_list_tools() -> dict[str, Any]:
     ),
 )
 async def gflow_list_projects(
-    profile: str = "default",
+    profile: str = _DEFAULT_PROFILE,
     limit: int = 50,
 ) -> dict[str, Any]:
     """List projects from the local SQLite catalog.
@@ -930,7 +939,7 @@ async def gflow_list_projects(
     ),
 )
 async def gflow_list_characters(
-    profile: str = "default",
+    profile: str = _DEFAULT_PROFILE,
 ) -> dict[str, Any]:
     """List Flow Character entities from the local catalog.
 
@@ -969,6 +978,360 @@ async def gflow_list_characters(
     }
 
 
+# ---------------------------------------------------------------------------
+# Instructions — persistent Agent-Mode brief cards (CLI parity: `gflow instructions`)
+# ---------------------------------------------------------------------------
+#
+# These are credits-free brief PATCHes, not queued generations, so they open a
+# FlowApiClient session directly (like the CLI `_run_*` helpers) instead of
+# going through FlowWorker. All mutations are read-modify-write against the
+# LIVE server brief with card ids preserved — same contract cli_instructions
+# pins. No token-bucket: only generations burn credits; the per-profile lock
+# still serialises browser sessions.
+
+
+def _card_dict(card: AgentInstruction) -> dict[str, Any]:
+    """One card in the stable JSON shape shared with `gflow instructions --json`."""
+    return {
+        "id": card.id,
+        "title": card.resolved_title(),
+        "enabled": card.enabled,
+        "text": card.text,
+        "image_media_ids": list(card.image_media_ids),
+        "character_ids": list(card.character_ids),
+    }
+
+
+def _ok_payload(project: str, **extra: Any) -> dict[str, Any]:
+    """Standard success envelope for the instructions tools."""
+    return {"status": "ok", "project_id": project, **extra}
+
+
+def _error_payload(error: dict[str, Any]) -> dict[str, Any]:
+    """Standard failure envelope (mirrors the generate tools' shape)."""
+    return {"status": "error", "error": error}
+
+
+def _selector_error(title: str | None, card_id: str | None) -> dict[str, Any] | None:
+    """Enforce exactly one of title / card_id (mirrors the CLI selector rule)."""
+    if (title is None) == (card_id is None):
+        return _bad_param("Invalid Card Selector", "Provide exactly one of 'title' or 'card_id'.")
+    return None
+
+
+async def _run_instructions_op(
+    *,
+    tool: str,
+    profile: str,
+    project: str,
+    op: Callable[[FlowApiClient], Awaitable[dict[str, Any]]],
+) -> dict[str, Any]:
+    """Shared plumbing for the instructions tools.
+
+    Validates the project id, resolves the profile, serialises on the
+    per-profile lock, opens a FlowApiClient session, and maps failures to the
+    standard envelopes: ``ValueError`` (card selection / card invariants) →
+    RFC 9457 bad-parameter, ``GFlowError`` → its problem details, anything
+    else → 500.
+    """
+    if not project:
+        return _bad_param(
+            "Missing Project Id",
+            "'project' is required — persistent "
+            "instruction cards only exist on a real Flow project.",
+        )
+    if (proj_err := _validate_project(project)) is not None:
+        return proj_err
+
+    resolved = _resolve_and_validate_profile(profile)
+    if isinstance(resolved, dict):
+        return resolved
+
+    settings = get_settings()
+    profile_dir = settings.profile_subdir(resolved)
+    lock = _get_profile_lock(resolved)
+    async with lock:
+        log.info("mcp.tool.instructions", tool=tool, project=project, profile=resolved)
+        try:
+            async with FlowApiClient(profile_dir=profile_dir, headless=settings.headless) as client:
+                return await op(client)
+        except ValueError as exc:
+            # brief.find (not-found / ambiguous) and AgentInstruction invariants.
+            return _bad_param("Invalid Instructions Request", str(exc))
+        except GFlowError as exc:
+            log.error("mcp.tool.instructions_gflow_error", tool=tool, error=str(exc))
+            return _error_payload(dict(exc.to_problem_details()))
+        except Exception as exc:
+            log.exception("mcp.tool.instructions_unexpected_error", tool=tool, exc_info=exc)
+            return _error_payload(
+                {
+                    "type": "https://gflow-cli.dev/errors/unknown",
+                    "title": "Unexpected Error",
+                    "status": 500,
+                    "detail": str(exc),
+                }
+            )
+
+
+@server.tool(
+    name="gflow_instructions_list",
+    description=(
+        "List a Flow project's persistent Agent-Mode instruction cards "
+        "(reads the live server brief). Credits-free."
+    ),
+)
+async def gflow_instructions_list(
+    project: str,
+    profile: str = _DEFAULT_PROFILE,
+) -> dict[str, Any]:
+    """List the instruction cards on the project's brief.
+
+    Args:
+        project: Flow project id (required — briefs are project-scoped).
+        profile: gflow-cli profile name; 'default' auto-resolves like the CLI.
+
+    Returns:
+        Dict with 'status', 'project_id', 'enabled' (brief master switch) and
+        'cards' (id/title/enabled/text/image_media_ids/character_ids each).
+    """
+
+    async def _op(client: FlowApiClient) -> dict[str, Any]:
+        brief = await client.get_agent_info(project)
+        return _ok_payload(
+            project,
+            enabled=brief.enabled,
+            cards=[_card_dict(c) for c in brief.cards],
+        )
+
+    return await _run_instructions_op(
+        tool="gflow_instructions_list", profile=profile, project=project, op=_op
+    )
+
+
+@server.tool(
+    name="gflow_instructions_add",
+    description=(
+        "Add a persistent instruction card to a Flow project's Agent-Mode brief "
+        "(credits-free). Each ref is classified automatically: local image path "
+        "→ uploaded as an image reference; asset UUID → image reference; "
+        "anything else → character id/name."
+    ),
+)
+async def gflow_instructions_add(
+    project: str,
+    title: str,
+    text: str,
+    refs: list[str] | None = None,
+    enabled: bool = True,
+    profile: str = _DEFAULT_PROFILE,
+) -> dict[str, Any]:
+    """Add an instruction card to the project's brief.
+
+    Args:
+        project: Flow project id (required).
+        title: Human-readable card label (used for later selection by title).
+        text: Guideline text the agent folds into every generation.
+        refs: Optional references — local image paths, asset UUIDs, or
+            character ids/names (classified automatically, like CLI --ref).
+        enabled: Create the card enabled (default) or disabled.
+        profile: gflow-cli profile name.
+
+    Returns:
+        Dict with 'status', 'project_id', and the created 'card'.
+    """
+
+    async def _op(client: FlowApiClient) -> dict[str, Any]:
+        brief = await client.get_agent_info(project)
+        image_ids, char_ids = await classify_refs(client, project, tuple(refs or ()))
+        card = AgentInstruction(
+            text=text,
+            enabled=enabled,
+            image_media_ids=tuple(image_ids),
+            character_ids=tuple(char_ids),
+            title=title,
+        )
+        # Send the FULL card set (existing + new): patch_agent_info REPLACES the
+        # brief's cards, and existing cards keep their ids via read-modify-write.
+        await client.patch_agent_info(project, enabled=True, cards=(*brief.cards, card))
+        return _ok_payload(project, card=_card_dict(card))
+
+    return await _run_instructions_op(
+        tool="gflow_instructions_add", profile=profile, project=project, op=_op
+    )
+
+
+@server.tool(
+    name="gflow_instructions_set_enabled",
+    description=(
+        "Enable or disable one instruction card on a Flow project's brief, "
+        "selected by title or card id (exactly one). Credits-free."
+    ),
+)
+async def gflow_instructions_set_enabled(
+    project: str,
+    enabled: bool,
+    title: str | None = None,
+    card_id: str | None = None,
+    profile: str = _DEFAULT_PROFILE,
+) -> dict[str, Any]:
+    """Flip one card's enabled flag (covers CLI `instructions enable`/`disable`).
+
+    Args:
+        project: Flow project id (required).
+        enabled: True to enable the card, False to disable it.
+        title: Select the card by title (case-insensitive, must be unambiguous).
+        card_id: Select the card by its stable server id.
+        profile: gflow-cli profile name.
+
+    Returns:
+        Dict with 'status', 'project_id', and the updated 'card'.
+    """
+    if (sel_err := _selector_error(title, card_id)) is not None:
+        return sel_err
+
+    async def _op(client: FlowApiClient) -> dict[str, Any]:
+        brief = await client.get_agent_info(project)
+        card = brief.find(title=title) if card_id is None else brief.find(card_id=card_id)
+        # Replace the target in place (preserving its id) and PATCH the FULL set.
+        updated = replace(card, enabled=enabled)
+        new_cards = tuple(updated if c is card else c for c in brief.cards)
+        await client.patch_agent_info(project, enabled=True, cards=new_cards)
+        return _ok_payload(project, card=_card_dict(updated))
+
+    return await _run_instructions_op(
+        tool="gflow_instructions_set_enabled", profile=profile, project=project, op=_op
+    )
+
+
+@server.tool(
+    name="gflow_instructions_rm",
+    description=(
+        "Remove one instruction card from a Flow project's brief, selected by "
+        "title or card id (exactly one). Credits-free."
+    ),
+)
+async def gflow_instructions_rm(
+    project: str,
+    title: str | None = None,
+    card_id: str | None = None,
+    profile: str = _DEFAULT_PROFILE,
+) -> dict[str, Any]:
+    """Remove the selected card from the project's brief.
+
+    Args:
+        project: Flow project id (required).
+        title: Select the card by title (case-insensitive, must be unambiguous).
+        card_id: Select the card by its stable server id.
+        profile: gflow-cli profile name.
+
+    Returns:
+        Dict with 'status', 'project_id', and the removed 'card'.
+    """
+    if (sel_err := _selector_error(title, card_id)) is not None:
+        return sel_err
+
+    async def _op(client: FlowApiClient) -> dict[str, Any]:
+        brief = await client.get_agent_info(project)
+        card = brief.find(title=title) if card_id is None else brief.find(card_id=card_id)
+        # Drop the target; send the remaining set (possibly empty -> clears it).
+        new_cards = tuple(c for c in brief.cards if c is not card)
+        await client.patch_agent_info(project, enabled=True, cards=new_cards)
+        return _ok_payload(project, card=_card_dict(card))
+
+    return await _run_instructions_op(
+        tool="gflow_instructions_rm", profile=profile, project=project, op=_op
+    )
+
+
+@server.tool(
+    name="gflow_instructions_toggle_mode",
+    description=(
+        "Turn a Flow project's brief master switch on or off. When off, NO "
+        "cards apply even if individually enabled. Cards are left untouched. "
+        "Credits-free."
+    ),
+)
+async def gflow_instructions_toggle_mode(
+    project: str,
+    enabled: bool,
+    profile: str = _DEFAULT_PROFILE,
+) -> dict[str, Any]:
+    """Toggle the brief-level master switch (CLI `instructions toggle-mode`).
+
+    Args:
+        project: Flow project id (required).
+        enabled: True for --on, False for --off.
+        profile: gflow-cli profile name.
+
+    Returns:
+        Dict with 'status', 'project_id', and 'agent_mode_enabled'.
+    """
+
+    async def _op(client: FlowApiClient) -> dict[str, Any]:
+        # Master switch only — cards are left untouched (no cards= mask sent).
+        await client.patch_agent_info(project, enabled=enabled)
+        return _ok_payload(project, agent_mode_enabled=enabled)
+
+    return await _run_instructions_op(
+        tool="gflow_instructions_toggle_mode", profile=profile, project=project, op=_op
+    )
+
+
+@server.tool(
+    name="gflow_instructions_apply",
+    description=(
+        "Declaratively FULL-SYNC a Flow project's brief: REPLACES all existing "
+        "instruction cards with the given set (destructive — cards not listed "
+        "are removed). Each card is {'title', 'text', 'ref': [...], 'enabled'}. "
+        "Credits-free."
+    ),
+)
+async def gflow_instructions_apply(
+    project: str,
+    cards: list[dict[str, Any]],
+    profile: str = _DEFAULT_PROFILE,
+) -> dict[str, Any]:
+    """Full-sync the project's brief from a declarative card list.
+
+    Args:
+        project: Flow project id (required).
+        cards: Declarative card entries; each is a dict with 'title' (str),
+            'text' (str), optional 'ref' (list of image paths / asset UUIDs /
+            character ids) and optional 'enabled' (bool, default True).
+            This is the same entry shape as the CLI `instructions apply` file.
+        profile: gflow-cli profile name.
+
+    Returns:
+        Dict with 'status', 'project_id', and the applied 'cards'.
+    """
+
+    async def _op(client: FlowApiClient) -> dict[str, Any]:
+        built: list[AgentInstruction] = []
+        for entry in cards:
+            raw_refs = entry.get("ref", [])
+            if not isinstance(raw_refs, list):
+                msg = "each card's 'ref' must be a list of strings."
+                raise ValueError(msg)
+            refs = tuple(str(r) for r in cast("list[Any]", raw_refs))
+            image_ids, char_ids = await classify_refs(client, project, refs)
+            built.append(
+                AgentInstruction(
+                    text=str(entry.get("text", "")),
+                    enabled=bool(entry.get("enabled", True)),
+                    image_media_ids=tuple(image_ids),
+                    character_ids=tuple(char_ids),
+                    title=str(entry.get("title", "")),
+                )
+            )
+        # Full replace: the given list is the declarative source of truth.
+        await client.patch_agent_info(project, enabled=True, cards=tuple(built))
+        return _ok_payload(project, cards=[_card_dict(c) for c in built])
+
+    return await _run_instructions_op(
+        tool="gflow_instructions_apply", profile=profile, project=project, op=_op
+    )
+
+
 # Re-export Path so tests that import it directly still work
 __all__ = [
     "gflow_generate_image",
@@ -976,6 +1339,12 @@ __all__ = [
     "gflow_list_tools",
     "gflow_list_projects",
     "gflow_list_characters",
+    "gflow_instructions_list",
+    "gflow_instructions_add",
+    "gflow_instructions_set_enabled",
+    "gflow_instructions_rm",
+    "gflow_instructions_toggle_mode",
+    "gflow_instructions_apply",
     "_TokenBucket",
     "_adapt_tools",
     "_run_generation_task",
