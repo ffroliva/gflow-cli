@@ -24,6 +24,7 @@ import structlog
 
 from gflow_cli.api import routes
 from gflow_cli.api.transports._common import extract_project_id
+from gflow_cli.api.transports.drivers.factory import AGENTIC_INDICATOR_SELECTORS
 from gflow_cli.api.video import (
     I2V_DEFAULT_MODEL,
     Aspect,
@@ -157,12 +158,12 @@ AGENT_CHAT_PANEL_CLOSE_SELECTOR = (
 )
 
 # Selectors unique to the new Agentic UI cohort. If crop settings are absent
-# and any of these are present, we are in the forced Agentic UI cohort.
+# and any of these are present, we are in the forced Agentic UI cohort. The
+# ligature probes are canonical in ``drivers/factory.py`` (detection source of
+# truth); this tuple extends them with the composer pill + chat-panel close,
+# which only the exit-loop cares about.
 AGENTIC_UI_INDICATORS = (
-    "i.google-symbols:text-is('tune')",
-    "i.google-symbols:text-is('apps_spark_2')",
-    "i.google-symbols:text-is('article_spark')",
-    "i.google-symbols:text-is('edit_square')",
+    *AGENTIC_INDICATOR_SELECTORS,
     COMPOSER_AGENT_TOGGLE_SELECTOR,
     AGENT_CHAT_PANEL_CLOSE_SELECTOR,
 )

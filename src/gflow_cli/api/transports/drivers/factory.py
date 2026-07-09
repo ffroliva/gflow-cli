@@ -14,10 +14,11 @@ rule, validated by live capture:
 The cohort flaps per page load, so callers must re-probe **per generation** —
 never cache a driver across navigations.
 
-This module is the detection source of truth; the selector probes mirror
-``ui_automation_video.{MODE_SWITCH_TRIGGER_SELECTORS, AGENTIC_UI_INDICATORS}``,
-which Task 2 consolidates onto these (the transport depends on ``drivers``, not
-the reverse).
+This module is the detection source of truth: ``AGENTIC_INDICATOR_SELECTORS``
+and ``AGENT_TUNE_INDICATOR_SELECTOR`` are canonical here, and the UI transports
+(``ui_automation``, ``ui_automation_video``) import them rather than redefining
+them (the transport depends on ``drivers``, not the reverse —
+``tests/api/transports/test_selector_symmetry.py`` locks this).
 """
 
 from __future__ import annotations
@@ -53,9 +54,12 @@ _CLASSIC_CROP_SELECTORS: tuple[str, ...] = (
 
 # Agentic cohort indicators — Material Symbols ligatures unique to the chat UI.
 # Locale-invariant (icon names, not UI text). Only consulted when no ``crop_*``
-# trigger is present.
-_AGENTIC_INDICATOR_SELECTORS: tuple[str, ...] = (
-    "i.google-symbols:text-is('tune')",
+# trigger is present. Canonical: the UI transports derive their agentic probes
+# from this tuple instead of carrying their own copies.
+AGENT_TUNE_INDICATOR_SELECTOR = "i.google-symbols:text-is('tune')"
+
+AGENTIC_INDICATOR_SELECTORS: tuple[str, ...] = (
+    AGENT_TUNE_INDICATOR_SELECTOR,
     "i.google-symbols:text-is('apps_spark_2')",
     "i.google-symbols:text-is('article_spark')",
     "i.google-symbols:text-is('edit_square')",
@@ -112,7 +116,7 @@ async def detect_ui_mode(
     while True:
         if await _any_present(page, _CLASSIC_CROP_SELECTORS):
             return "classic"
-        if await _any_present(page, _AGENTIC_INDICATOR_SELECTORS):
+        if await _any_present(page, AGENTIC_INDICATOR_SELECTORS):
             return "agentic"
         if asyncio.get_event_loop().time() >= deadline:
             return "classic"
