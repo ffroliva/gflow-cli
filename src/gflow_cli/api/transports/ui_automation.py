@@ -29,6 +29,7 @@ from gflow_cli.api.character import CHARACTER_MODELS, CharacterImageRequest
 from gflow_cli.api.dto import BatchSubmissionResult, GeneratedImage
 from gflow_cli.api.image import Aspect, GenerateImageRequest, Model
 from gflow_cli.api.transports._common import extract_project_id
+from gflow_cli.api.transports.drivers.factory import AGENT_TUNE_INDICATOR_SELECTOR
 from gflow_cli.api.transports.ui_automation_video import (
     COMPOSER_AGENT_TOGGLE_SELECTOR,
     ENTITY_ATTACH_DRIFT_HINT,
@@ -209,7 +210,6 @@ SUBMIT_BUTTON_SELECTORS = (
 # drive the agentic path regardless of the server-assigned A/B cohort (which has
 # no client-readable flag and cannot otherwise be forced).
 AGENT_FORCE_ENV_VAR = "GFLOW_CLI_FORCE_AGENT_UI"
-AGENT_TUNE_INDICATOR_SELECTOR = "i.google-symbols:text-is('tune')"
 AGENT_EXPAND_BUTTON_SELECTOR = "button:has(i.google-symbols:text-is('expand_content'))"
 
 # _force_agent_mode: after clicking the Agent toggle, POLL for the ``tune``
