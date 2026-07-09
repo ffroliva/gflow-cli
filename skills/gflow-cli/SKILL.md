@@ -87,14 +87,14 @@ gflow scene create --project <id> <clip-id> [<clip-id> ...] \
                    [-o extended.mp4]                       # --output = credit-free server-side concat
 gflow scene show <scene-id> --project <id>
 
-# Agent instructions (project brief cards, credits-free setup)
-gflow instructions add TITLE --text TEXT [--ref REF]... [--project ID] [--disabled]
-gflow instructions list [--project ID] [--json]
-gflow instructions enable (TITLE | --id ID) [--project ID]
-gflow instructions disable (TITLE | --id ID) [--project ID]
-gflow instructions rm (TITLE | --id ID) [--project ID]
-gflow instructions apply FILE [--project ID]              # declarative full-sync (TOML/JSON)
-gflow instructions toggle-mode [--on/--off] [--project ID] # toggle master agent switch
+# Agent instructions (project brief cards, credits-free setup) — --project is REQUIRED
+gflow instructions add TITLE --text TEXT [--ref REF]... --project ID [--disabled]
+gflow instructions list --project ID [--json]
+gflow instructions enable (TITLE | --id ID) --project ID
+gflow instructions disable (TITLE | --id ID) --project ID
+gflow instructions rm (TITLE | --id ID) --project ID
+gflow instructions apply FILE --project ID                # declarative full-sync (TOML/JSON)
+gflow instructions toggle-mode (--on | --off) --project ID # toggle master agent switch
 ```
 
 Every subcommand accepts `--profile <name>` (per-subcommand, not global) to drive multiple Google accounts side-by-side.
