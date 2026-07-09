@@ -22,14 +22,14 @@ from gflow_cli.api.transports.drivers.agentic import AgenticFlowUiDriver
 from gflow_cli.api.transports.drivers.base import FlowUiDriver
 from gflow_cli.api.transports.drivers.classic import ClassicFlowUiDriver
 from gflow_cli.api.transports.drivers.factory import (
-    _AGENTIC_INDICATOR_SELECTORS,
     _CLASSIC_CROP_SELECTORS,
+    AGENTIC_INDICATOR_SELECTORS,
     detect_ui_mode,
     get_ui_driver,
 )
 
 _CROP = _CLASSIC_CROP_SELECTORS[0]
-_TUNE = _AGENTIC_INDICATOR_SELECTORS[0]
+_TUNE = AGENTIC_INDICATOR_SELECTORS[0]
 
 
 def _fake_page(present: set[str], *, raising: set[str] | None = None) -> MagicMock:
