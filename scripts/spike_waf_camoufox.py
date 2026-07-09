@@ -318,7 +318,21 @@ def main() -> int:
         step("abort", "not confirmed — nothing generated.")
         return 0
 
-    result = asyncio.run(_run(args, profile_dir))
+    # A 401 during session setup (create_project) lands here, OUTSIDE the
+    # per-attempt loop. Surface it as a clean re-auth prompt, never a traceback —
+    # a locally-present cookie is not a live server session. No credits are spent
+    # on this path (it dies before the first generation).
+    from gflow_cli.errors import AuthExpiredError
+
+    try:
+        result = asyncio.run(_run(args, profile_dir))
+    except AuthExpiredError:
+        step(
+            "auth",
+            f"session for profile '{args.profile_name}' is expired (HTTP 401) — no credits "
+            f"spent. Re-auth with `gflow auth login --profile {args.profile_name}` and re-run.",
+        )
+        return 4
 
     out_path = Path(args.out) if args.out else default_out_path("waf_spike", ".json")
     out_path.parent.mkdir(parents=True, exist_ok=True)
