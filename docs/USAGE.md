@@ -652,6 +652,25 @@ gflow video chain story.jsonl --resume-from 1f2e3d4c-...
 gflow video chain story.jsonl --seed-offset 150 --yes
 ```
 
+## `gflow instructions`
+
+Manage a project's **Agent Instruction cards** — the brief Flow's agent consults when it
+generates. Enabled cards steer output (style, references) on **agentic-cohort** sessions.
+Setting up cards is **credits-free**. Full guide: [INSTRUCTIONS.md](INSTRUCTIONS.md).
+
+**Shipped (v0.28.0):** the ephemeral `-i / --instruction "text"` flag on `gflow image t2i` /
+`i2i` adds a one-off enabled text card for that generation.
+
+```bash
+gflow image t2i "a cat on a chair" -i "flat 2D children's crayon drawing"
+```
+
+**Planned:** the persistent `gflow instructions add/list/enable/disable/rm/apply/toggle-mode`
+CRUD group, with a single generic `--ref` per card that accepts an image path, a generated-image
+UUID, or a character id/name (image → `imageReferenceMediaIds`, character →
+`characterReferenceEntityNames`). Cards are selected by **title** (case-insensitive), never by
+UUID. See [INSTRUCTIONS.md](INSTRUCTIONS.md) for the full spec.
+
 ## `gflow tools`
 
 Discover and run **prompt tools** — named, single-purpose transforms applied to a prompt
