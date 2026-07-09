@@ -139,10 +139,16 @@ async def get_ui_driver(
         from gflow_cli.api.transports.ui_automation_video import (
             VideoGenerationMixin,
         )
+        from gflow_cli.errors import FlowAgentUiError
 
         try:
             log.info("ui_driver.prefer_classic.attempt_exit_agent")
             await VideoGenerationMixin._exit_agent_mode(page)  # type: ignore[reportPrivateUsage]
+        except FlowAgentUiError as exc:
+            # Expected: the server-gated agentic ("tune") cohort cannot be exited
+            # client-side. prefer_classic is best-effort (see config docstring), so
+            # falling through to the agentic driver is normal, not a fault.
+            log.info("ui_driver.prefer_classic.cohort_natively_agentic", detail=str(exc))
         except Exception as exc:
             log.warning("ui_driver.prefer_classic.exit_agent_failed", error=str(exc))
 
