@@ -858,7 +858,15 @@ class OperationRecorder:
             workflow_id = workflow_ids[slot] if slot < len(workflow_ids) else None
             path = _Path(path_str)
             media_type = mimetypes.guess_type(path.name)[0] or "image/png"
-            asset_id = _new_id()
+            # Idempotent on the (profile_name, flow_media_id) business key: under the
+            # agentic cohort the classic slot-add control is absent, so two slots can
+            # report the SAME flow_media_id. Reuse the existing asset id (mirrors
+            # record_completed_video) so upsert_asset UPDATEs instead of violating
+            # UNIQUE(profile_name, flow_media_id). See spike 2026-07-09.
+            existing_asset = (
+                repo.get_asset_by_flow_media_id(profile_name, media_id) if media_id else None
+            )
+            asset_id = existing_asset.id if existing_asset is not None else _new_id()
             repo.upsert_asset(
                 AssetRecord(
                     id=asset_id,
