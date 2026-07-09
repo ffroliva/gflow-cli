@@ -323,6 +323,80 @@ class TestGenerateVideoWired:
         assert "error" in result
         assert result["error"]["title"] == "Flow API error"
 
+    @pytest.mark.asyncio
+    async def test_video_forwards_model_duration_count_to_payload(self) -> None:
+        """model/duration/count must reach the generation payload so agents get
+        the same Veo-model / length / batch control the CLI exposes (parity)."""
+        from unittest.mock import AsyncMock
+
+        from gflow_cli.mcp.tools import _TokenBucket, gflow_generate_video
+
+        captured: dict[str, Any] = {}
+
+        async def _capture(
+            *, profile: str, task_type: str, payload: dict[str, Any]
+        ) -> dict[str, Any]:
+            captured.update(payload)
+            return {"status": "completed", "files": []}
+
+        with (
+            patch("gflow_cli.mcp.tools._rate_limiter", _TokenBucket(capacity=8, refill_rate=0.0)),
+            patch("gflow_cli.mcp.tools._resolve_and_validate_profile", return_value="default"),
+            patch("gflow_cli.mcp.tools._run_generation_task", AsyncMock(side_effect=_capture)),
+        ):
+            result = await gflow_generate_video(
+                prompt="a slow zoom", model="veo_quality", duration=8, count=2
+            )
+
+        assert result["status"] == "completed"
+        assert captured["model"] == "veo_quality"
+        assert captured["duration"] == 8
+        assert captured["count"] == 2
+        assert result["params"]["model"] == "veo_quality"
+
+    @pytest.mark.asyncio
+    async def test_video_omits_unset_model_and_duration_from_payload(self) -> None:
+        """When model/duration are omitted, the payload must NOT carry them so the
+        transport's own i2v veo-lite default (issue #125) still applies."""
+        from unittest.mock import AsyncMock
+
+        from gflow_cli.mcp.tools import _TokenBucket, gflow_generate_video
+
+        captured: dict[str, Any] = {}
+
+        async def _capture(
+            *, profile: str, task_type: str, payload: dict[str, Any]
+        ) -> dict[str, Any]:
+            captured.update(payload)
+            return {"status": "completed", "files": []}
+
+        with (
+            patch("gflow_cli.mcp.tools._rate_limiter", _TokenBucket(capacity=8, refill_rate=0.0)),
+            patch("gflow_cli.mcp.tools._resolve_and_validate_profile", return_value="default"),
+            patch("gflow_cli.mcp.tools._run_generation_task", AsyncMock(side_effect=_capture)),
+        ):
+            await gflow_generate_video(prompt="a slow zoom")
+
+        assert "model" not in captured
+        assert "duration" not in captured
+        assert captured["count"] == 1  # count always defaults to 1
+
+    @pytest.mark.asyncio
+    async def test_video_invalid_model_is_rejected_before_enqueue(self) -> None:
+        """An unknown model must fail fast at the tool boundary (400), not enqueue
+        a task that dies on a cryptic ValueError deep in the worker."""
+        from gflow_cli.mcp.tools import _TokenBucket, gflow_generate_video
+
+        with (
+            patch("gflow_cli.mcp.tools._rate_limiter", _TokenBucket(capacity=8, refill_rate=0.0)),
+            patch("gflow_cli.mcp.tools._resolve_and_validate_profile", return_value="default"),
+        ):
+            result = await gflow_generate_video(prompt="x", model="not-a-real-model")
+
+        assert result["status"] == "error"
+        assert result["error"]["status"] == 400
+        assert "model" in result["error"]["detail"].lower()
+
 
 # ---------------------------------------------------------------------------
 # gflow_list_projects — wired path
