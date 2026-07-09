@@ -146,33 +146,52 @@ So this task is parity + agent model-control, NOT a new credit guard.
 
 # PHASE 2 — WAF evidence spike (the ADR-13 gate)
 
-**Blocking gate for Phase 3.** No product code. Answers: *does Camoufox measurably beat the
-current playwright+patchright stealth story on the Flow WAF 403 rate?*
+**Blocking gate for Phase 3.** No product code. The ADR-13 question is not first "does
+Camoufox win?" but "*is the current stealth stack actually insufficient?*" — so the spike's
+first job is the **baseline**: measure the 403 rate on the default (playwright) engine. A
+~0% baseline means ADR-13's premise is unmet → **STOP, Camoufox unjustified**, and no
+Camoufox arm is ever needed. Only a materially non-zero baseline escalates to a Camoufox A/B.
 
-## Task 2.1 — Spike harness
+**Sequencing note (why the arms are staged, not parallel):** `camoufox` is **not** a valid
+`BrowserEngine` on develop — it is Phase 3, gated on this spike. So the spike **cannot** drive
+a Camoufox arm through product code today (chicken-and-egg). This is correct: the baseline
+comes first and may end the roadmap before any Camoufox code exists. The Camoufox A/B arm is
+run *during Phase 3* (once the engine is wired) by re-running the same harness with
+`--engine camoufox`.
 
-**What:** `scripts/spike_waf_camoufox.py` — run N (≥20) `batchGenerateImages` on the **same
-authed profile, same session window** under (a) default playwright + init-script and
-(b) Camoufox; count `403` / `PUBLIC_ERROR_UNUSUAL_ACTIVITY` responses per arm.
+## Task 2.1 — Spike harness — ✅ DONE
 
-**Files:** `scripts/spike_waf_camoufox.py` (excluded from SonarCloud via `scripts/**`).
+**What:** `scripts/spike_waf_camoufox.py` — drives N real image generations on one authed
+profile through a chosen engine and classifies each outcome
+(`success`/`waf_403`/`auth_401`/`rate_limited_429`/`other_error`); emits structured JSON
+(per-attempt records + summary with `waf_403_rate`/`success_rate`).
+
+**Files:** `scripts/spike_waf_camoufox.py` (scripts/ — excluded from SonarCloud; not imported
+by the package).
 
 **Steps:**
-- [ ] Parameterize engine, N, profile; capture `ui_automation.batch_response_seen` status codes.
-- [ ] Also DevTools-confirm Flow's own request carries a populated `recaptchaToken` on the
-      empty-pre-mint path (proves native mint fires — Security requirement #1).
-- [ ] Emit a structured JSON summary (per-arm 403 rate, sample size, timestamps).
+- [x] Engine-parameterized (`--engine playwright|patchright`); selects via `GFLOW_CLI_BROWSER_ENGINE`
+      + `reset_settings()`, exactly as a user would.
+- [x] `--engine camoufox` fails fast (exit 3) with the ADR-13 "measure the baseline first" pointer.
+- [x] Credit-safe by default: `--dry-run` (validate + estimate, spend nothing) and an explicit
+      `--yes`/interactive confirmation gate; non-interactive without `--yes` refuses to spend.
+- [x] Classifies `WafRejectionError`→403, `AuthExpiredError`→401 (aborts early — a dead session
+      dilutes the 403 rate), `RateLimitError`→429; `--delay` between attempts avoids self-inflicted 429s.
+- [x] Ruff clean; dry-run + both guard exit codes verified without spending.
 
-## Task 2.2 — Record the evidence
+## Task 2.2 — Run the baseline + record the evidence (owner-gated — spends credits)
 
-**What:** Write `docs/superpowers/spikes/2026-07-XX-camoufox-waf-403.md` with the 403-rate
-delta and a GO/NO-GO recommendation for Phase 3. **This is the ADR-13 artifact.**
+**What:** Run the baseline arm, then write `docs/superpowers/spikes/<date>-camoufox-waf-403.md`
+with the numbers and a GO/NO-GO for Phase 3. **This is the ADR-13 artifact.**
 
 **Steps:**
-- [ ] Run the harness (real credits — owner-gated); record raw numbers + verdict.
-- [ ] If Camoufox does **not** beat the incumbent → **STOP the engine work**; update ADR-13's
-      status with the evidence, keep Phase 1 shipped, close the roadmap at Phase 2. If it wins →
-      proceed to Phase 3 with the delta cited in the live-verification doc.
+- [ ] `uv run python scripts/spike_waf_camoufox.py --engine playwright -n 20 --profile <name>`
+      (≈20 Imagen credits). Optionally also `--engine patchright` for a second baseline point.
+- [ ] Record raw JSON + the 403 rate; if a session 401s mid-run, re-auth and re-run.
+- [ ] **Verdict:** ~0% baseline 403 → **STOP**: update ADR-13 (Decision Log #13) with the
+      evidence, keep Phase 1 shipped, close the roadmap at Phase 2. Materially non-zero →
+      proceed to Phase 3 and re-run the harness with `--engine camoufox` as the A/B comparison,
+      citing the delta in `docs/LIVE_VERIFICATION_camoufox.md`.
 
 ---
 
