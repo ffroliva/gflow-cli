@@ -101,6 +101,7 @@ select = ["E", "F", "W", "I", "B", "UP", "N", "T20"]
 [tool.ruff.lint.per-file-ignores]
 "tests/**" = ["T20"]
 "scripts/**" = ["T20"]
+"eval/**" = ["T20"]
 
 [tool.pyright]
 include = ["src", "tests"]
