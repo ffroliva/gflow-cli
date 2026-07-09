@@ -5,6 +5,11 @@
 > This plan supersedes PR #258 (closed) — it re-expresses that contributor work as a
 > gated, decomposed series. Preserve `Co-authored-by: C1ph3r404 <C1ph3r404@users.noreply.github.com>`
 > on every commit that carries their code.
+>
+> **STATUS (2026-07-09): Phase 1 shipped (PR #273); Phase 2 verdict = STOP — the Camoufox
+> engine (Phase 3) is NOT built because the current stealth fix showed a 0.0% WAF 403 rate.
+> See Phase 2 below + `docs/superpowers/spikes/2026-07-09-camoufox-waf-403.md`. Phase 4 items
+> remain independent backlog.**
 
 **Goal:** Adopt Camoufox as an optional, evidence-justified stealth browser engine for
 WAF-blocked users — without regressing the default (playwright) path — landing the
@@ -179,23 +184,31 @@ by the package).
       dilutes the 403 rate), `RateLimitError`→429; `--delay` between attempts avoids self-inflicted 429s.
 - [x] Ruff clean; dry-run + both guard exit codes verified without spending.
 
-## Task 2.2 — Run the baseline + record the evidence (owner-gated — spends credits)
+## Task 2.2 — Run the baseline + record the evidence — ✅ DONE (STOP verdict)
 
-**What:** Run the baseline arm, then write `docs/superpowers/spikes/<date>-camoufox-waf-403.md`
-with the numbers and a GO/NO-GO for Phase 3. **This is the ADR-13 artifact.**
+**What:** Ran the baseline arm; wrote the ADR-13 evidence artifact.
 
-**Steps:**
-- [ ] `uv run python scripts/spike_waf_camoufox.py --engine playwright -n 20 --profile <name>`
-      (≈20 Imagen credits). Optionally also `--engine patchright` for a second baseline point.
-- [ ] Record raw JSON + the 403 rate; if a session 401s mid-run, re-auth and re-run.
-- [ ] **Verdict:** ~0% baseline 403 → **STOP**: update ADR-13 (Decision Log #13) with the
-      evidence, keep Phase 1 shipped, close the roadmap at Phase 2. Materially non-zero →
-      proceed to Phase 3 and re-run the harness with `--engine camoufox` as the A/B comparison,
-      citing the delta in `docs/LIVE_VERIFICATION_camoufox.md`.
+**Result (2026-07-09):** 20-gen baseline on `ffroliva` through the default stealth stack →
+**0.0% WAF 403 rate** (19/20 success; the one miss was a `TransportTimeoutError` UI-scrape
+flake, not a WAF block). Evidence: [../../spikes/2026-07-09-camoufox-waf-403.md](../../spikes/2026-07-09-camoufox-waf-403.md).
+
+**Verdict: STOP.** The current stealth fix is confirmed sufficient — ADR-13's "confirm
+insufficient before implementing" gate is unmet. ADR-13 (PLAN.md Decision Log #13) updated
+with the evidence. Phase 1 stays shipped; **Phase 3 is NOT built.**
+
+- [x] Baseline run (≈20 Imagen credits; a first attempt aborted at 0 credits on an expired
+      session, which validated the harness's clean expired-session handling).
+- [x] Recorded raw JSON + the 403 rate.
+- [x] Verdict applied: ~0% → STOP; ADR-13 updated; roadmap closed at Phase 2.
 
 ---
 
-# PHASE 3 — Camoufox engine adoption (only if Phase 2 = GO)
+# PHASE 3 — Camoufox engine adoption — ❌ NOT PROCEEDING (Phase 2 = STOP)
+
+**Gate closed 2026-07-09.** The Phase 2 baseline showed a 0.0% WAF 403 rate, so per ADR-13 the
+Camoufox engine is **not built**. The tasks below are retained only as the design of record in
+case a future, repeatable WAF-403 reopens the gate (re-run `scripts/spike_waf_camoufox.py`;
+a materially non-zero rate would revive this phase). Until then, none of it is implemented.
 
 Re-expressed from PR #258 through the widened abstraction so engine logic lives in one place.
 Own branch `feature/camoufox-engine → develop`, contributor-credited.
