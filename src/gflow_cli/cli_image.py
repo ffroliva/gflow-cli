@@ -1414,8 +1414,11 @@ async def _run_i2i(
 
             # Local-file refs are attached through the editor's media dialog by the
             # ui_automation transport (the REST uploadImage path 401s — see #15/#39).
-            # Already-uploaded UUID refs go on `refs` (best-effort; binding a library
-            # asset by UUID via the UI is not wired yet — local files are the path).
+            # Already-uploaded UUID refs go on `refs`: the transport binds them by
+            # SELECTING the existing Flow asset in the reference picker (no duplicate
+            # upload — v0.26.0, `_attach_image_uuid_refs`), falling back to uploading
+            # the asset's local file, and failing loud if neither is possible. A UUID
+            # ref is never silently dropped.
             uuid_refs = tuple(r for r in params.classified_refs if isinstance(r, ImageRef))
             local_ref_paths = tuple(r for r in params.classified_refs if isinstance(r, Path))
             req = GenerateImageRequest(
