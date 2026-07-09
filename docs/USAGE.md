@@ -668,8 +668,9 @@ gflow image t2i "a cat on a chair" -i "flat 2D children's crayon drawing"
 **Planned:** the persistent `gflow instructions add/list/enable/disable/rm/apply/toggle-mode`
 CRUD group, with a single generic `--ref` per card that accepts an image path, a generated-image
 UUID, or a character id/name (image → `imageReferenceMediaIds`, character →
-`characterReferenceEntityNames`). Cards are selected by **title** (case-insensitive), never by
-UUID. See [INSTRUCTIONS.md](INSTRUCTIONS.md) for the full spec.
+`characterReferenceEntityNames`). Cards are selected by **title** (case-insensitive) by default,
+or by the stable server `--id` for the ambiguous-title / scripting case (mirrors `gflow character`'s
+`--name` / `--entity-id`). See [INSTRUCTIONS.md](INSTRUCTIONS.md) for the full spec.
 
 ## `gflow tools`
 
