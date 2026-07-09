@@ -455,7 +455,7 @@ Autonomous hourly code review helper running in a Docker sandbox. Design spec in
 
 - [x] Task 1: Stage 0 deterministic pre-filter (`pr_triage_gate.py`)
 - [x] Task 2: §9 Autonomous mode in `pr-council-review` skill
-- [ ] Task 3: Ephemeral Docker sandbox image (`Dockerfile.triage`)
+- [x] Task 3: Ephemeral Docker sandbox image (`Dockerfile.triage`)
 - [ ] Task 4: Main host orchestration script (`pr_triage_autopilot.py`)
 - [ ] Task 5: Operations runbook (`PR_TRIAGE_AUTOPILOT-OPS.md`)
 
