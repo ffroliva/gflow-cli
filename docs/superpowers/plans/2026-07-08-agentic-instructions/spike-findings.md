@@ -208,3 +208,45 @@ does not trigger them. Recommended sequence:
   references every session," used with reference images and conversational
   requests ("make five versions of this scene…"). Consistent with reasoning-time
   injection observed in Phase D.
+
+---
+
+## Task 7 de-risk spikes (2026-07-09) — all GREEN
+
+Three spikes de-risked the `gflow instructions` CRUD before implementation:
+
+### H4 — image references anchor generation ✅ CONFIRMED (live)
+Attached a crayon-drawing reference image to a card ("Style from reference",
+enabled) → a **style-neutral** prompt "a red bicycle leaning against a brick
+wall" produced an **unmistakable crayon-drawing bicycle**. So
+`imageReferenceMediaIds` on a card steers style, same reasoning path as text.
+Character refs share the same `referenceId` concept (picker: All/Images/Characters).
+
+### Upload-to-instruction ✅ CONFIRMED (free)
+The picker's "Upload media" button = a card ref can be a brand-new local image.
+Verified the clean REST path: `client.upload_image(local png)` → media id →
+`patch_agent_info(image_media_ids=(id,))` → the uploaded image **renders as the
+card reference** in the sidebar. So CLI `--ref ./local.png` uses the same REST
+`uploadImage` path as `gflow image upload` — **no UI-driving of the upload
+button, no DOM/HAR spike needed.**
+
+### Read route for `get_agent_info` ✅ FOUND (the linchpin)
+There is **no** `GET /v1/projects/{id}/agentInfo` (404). The brief is read via the
+existing tRPC call **`GET .../trpc/flow.projectInitialData?input={"json":{"projectId":…}}`**,
+whose payload contains `agentInfo.projectBrief`:
+```json
+"agentInfo": { "projectBrief": { "enabled": true, "cards": [
+  { "id": "<server-uuid>", "title": "...", "description": "...",
+    "enabled": true, "imageReferenceMediaIds": ["<media-uuid>"] } ] },
+  "agentToggleState": "AGENT_TOGGLE_STATE_ENABLED" }
+```
+Implication for Task 7:
+- **`get_agent_info(project_id)`** = mirror `list_characters` (fetch
+  projectInitialData → `_unwrap_trpc` → extract `agentInfo.projectBrief`). Cards
+  carry a server-assigned `id`, plus title/description/enabled/imageReferenceMediaIds.
+- **`list` / `enable` / `disable` / `rm`** = read via `get_agent_info` → modify the
+  card set → PATCH back via `patch_agent_info` (read-modify-write).
+- **`toggle-mode`** maps to `agentToggleState` (`AGENT_TOGGLE_STATE_ENABLED`) and/or
+  `projectBrief.enabled`.
+
+**Task 7 is now fully implementable with no remaining unknowns.**
