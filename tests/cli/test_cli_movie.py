@@ -928,7 +928,7 @@ class TestMovieInstructionsSync:
     @pytest.mark.asyncio
     async def test_sync_scene_instructions(self) -> None:
         from gflow_cli.api.image import AgentInstruction, ProjectBrief
-        from gflow_cli.cli_movie import _sync_scene_instructions
+        from gflow_cli.cli_movie import _BriefSyncCache, _sync_scene_instructions
 
         # Mock client
         client = AsyncMock()
@@ -964,6 +964,7 @@ class TestMovieInstructionsSync:
                 project_id="proj-abc",
                 global_cards=global_cards,
                 scene_inst=scene_inst,
+                cache=_BriefSyncCache(),
             )
 
         client.get_agent_info.assert_awaited_once_with("proj-abc")
@@ -985,3 +986,42 @@ class TestMovieInstructionsSync:
         assert cards[2].title == "Atmosphere"
         assert cards[2].enabled is True
         assert cards[2].id == ""
+
+    @pytest.mark.asyncio
+    async def test_sync_skips_when_card_set_unchanged(self) -> None:
+        """A shared cache makes an identical second sync a no-op (no re-upload/PATCH)."""
+        from gflow_cli.api.image import ProjectBrief
+        from gflow_cli.cli_movie import _BriefSyncCache, _sync_scene_instructions
+
+        client = AsyncMock()
+        client.get_agent_info = AsyncMock(
+            return_value=ProjectBrief(enabled=True, cards=(), agent_toggle_state=None)
+        )
+        client.patch_agent_info = AsyncMock()
+
+        global_cards = (ManifestCard(title="Crayon style", text="drawings", enabled=True),)
+        cache = _BriefSyncCache()
+
+        with patch(
+            "gflow_cli.cli_instructions.classify_refs", new=AsyncMock(return_value=((), ()))
+        ):
+            # First scene: syncs (one fetch + one PATCH).
+            await _sync_scene_instructions(
+                client=client,
+                project_id="proj-abc",
+                global_cards=global_cards,
+                scene_inst=None,
+                cache=cache,
+            )
+            # Second scene with the identical effective set: skipped entirely.
+            await _sync_scene_instructions(
+                client=client,
+                project_id="proj-abc",
+                global_cards=global_cards,
+                scene_inst=None,
+                cache=cache,
+            )
+
+        client.get_agent_info.assert_awaited_once()
+        client.patch_agent_info.assert_awaited_once()
+        assert cache.signature is not None

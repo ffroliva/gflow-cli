@@ -24,6 +24,7 @@ import shutil
 import subprocess
 import sys
 import tempfile
+from dataclasses import dataclass
 from pathlib import Path
 from typing import Any
 
@@ -34,6 +35,7 @@ from rich.console import Console
 from gflow_cli._cli_helpers import _make_provider_dir, _resolve_profile, run_with_handlers
 from gflow_cli.api.character import CharacterImageRequest
 from gflow_cli.api.client import FlowApiClient
+from gflow_cli.api.image import AgentInstruction
 from gflow_cli.api.video import Aspect, GenerateVideoRequest, Mode, VideoModel, VideoStarted
 from gflow_cli.composition import (
     Character,
@@ -334,20 +336,50 @@ def _print_plan(manifest: MovieManifest, state: MovieState) -> None:
 # ---------------------------------------------------------------------------
 
 
+# A card-set signature: (title, text, refs, enabled) per card, order-independent.
+# Comparing signatures lets consecutive scenes that resolve to the *same* brief
+# skip a redundant fetch + reference re-upload + PATCH (the common case, where
+# every scene shares the global cards and adds no per-scene override).
+_CardSetSignature = tuple[tuple[str, str, tuple[str, ...], bool], ...]
+
+
+@dataclass
+class _BriefSyncCache:
+    """Per-run memo of the last brief card-set synced to the project.
+
+    ``_sync_scene_instructions`` runs once per scene, but a movie's scenes usually
+    share one global card set. Without this memo every scene would re-fetch the
+    brief, re-upload each local reference image, and re-PATCH the identical set —
+    N round-trips and N uploads for a set that never changed. Storing the last
+    synced signature turns that into one sync for the whole run (plus one extra
+    per scene that genuinely overrides the brief, and one to restore it after).
+    """
+
+    signature: _CardSetSignature | None = None
+
+
 async def _sync_scene_instructions(
     client: FlowApiClient,
     project_id: str,
     global_cards: tuple[ManifestCard, ...],
     scene_inst: SceneInstructions | None,
+    cache: _BriefSyncCache,
 ) -> None:
-    """Resolve references and sync the combined card set to the project's brief."""
-    # 1. Resolve and construct the combined card set
-    cards_map: dict[str, ManifestCard] = {c.title.lower(): c for c in global_cards}
+    """Full-sync the scene's effective brief card set to the project.
+
+    The manifest is authoritative: the PATCH **replaces** the project's cards with
+    exactly this set (like ``gflow instructions apply``), so any card a user added
+    out-of-band in the Flow web UI that is not in the manifest is removed. This
+    keeps a version-controlled ``movie.toml`` reproducible; see ``docs/MOVIE.md``.
+
+    ``cache`` skips the fetch/upload/PATCH when the effective set is byte-for-byte
+    the set the previous scene already synced.
+    """
+    cards_map: dict[str, ManifestCard] = {c.title.casefold(): c for c in global_cards}
 
     if scene_inst is not None:
-        # Disable specified cards
         for title in scene_inst.disable:
-            key = title.lower()
+            key = title.casefold()
             if key in cards_map:
                 cards_map[key] = ManifestCard(
                     title=cards_map[key].title,
@@ -355,39 +387,48 @@ async def _sync_scene_instructions(
                     ref=cards_map[key].ref,
                     enabled=False,
                 )
-        # Add or override new cards
         for c in scene_inst.card:
-            cards_map[c.title.lower()] = c
+            cards_map[c.title.casefold()] = c
 
     if not cards_map:
         return
 
-    # Mutating commands are read-modify-write: fetch first to preserve stable card IDs
-    brief = await client.get_agent_info(project_id)
-    server_cards_map = {c.resolved_title().lower(): c for c in brief.cards}
+    # Skip the network work when this scene's brief is identical to the last synced
+    # one. Computed before any I/O so an unchanged set costs nothing.
+    desired_sig: _CardSetSignature = tuple(
+        (mc.title, mc.text, tuple(mc.ref), mc.enabled) for _, mc in sorted(cards_map.items())
+    )
+    if desired_sig == cache.signature:
+        return
 
-    # 2. For each card in cards_map, convert it to AgentInstruction and resolve its references
-    final_cards: list[Any] = []
+    # Read-modify-write: fetch first to preserve each card's stable server id.
+    brief = await client.get_agent_info(project_id)
+    server_cards_map = {c.resolved_title().casefold(): c for c in brief.cards}
+
+    # Imported at call time (not module top) so tests can patch
+    # ``gflow_cli.cli_instructions.classify_refs`` and it takes effect here.
     from gflow_cli.cli_instructions import build_card, classify_refs
 
+    final_cards: list[AgentInstruction] = []
     for key, manifest_card in cards_map.items():
         image_ids, char_ids = await classify_refs(client, project_id, manifest_card.ref)
 
         server_card = server_cards_map.get(key)
         card_id = server_card.id if server_card else ""
 
-        card = build_card(
-            title=manifest_card.title,
-            text=manifest_card.text,
-            image_ids=image_ids,
-            char_ids=char_ids,
-            enabled=manifest_card.enabled,
-            card_id=card_id,
+        final_cards.append(
+            build_card(
+                title=manifest_card.title,
+                text=manifest_card.text,
+                image_ids=image_ids,
+                char_ids=char_ids,
+                enabled=manifest_card.enabled,
+                card_id=card_id,
+            )
         )
-        final_cards.append(card)
 
-    # 3. Patch the brief (master switch = True, cards = final_cards)
     await client.patch_agent_info(project_id, enabled=True, cards=tuple(final_cards))
+    cache.signature = desired_sig
 
 
 async def _run_one_scene(
@@ -403,6 +444,7 @@ async def _run_one_scene(
     out_dir: Path,
     generated_any: bool,
     continue_on_error: bool,
+    brief_cache: _BriefSyncCache,
 ) -> Path | None:
     """Generate one scene clip and persist its state.
 
@@ -434,12 +476,14 @@ async def _run_one_scene(
         if generated_any:
             await asyncio.sleep(5)
 
-        # Sync instructions for this scene to the project brief
+        # Sync instructions for this scene to the project brief (skips the
+        # network work when this scene's set matches the last synced one).
         await _sync_scene_instructions(
             client=client,
             project_id=manifest.project,
             global_cards=manifest.instructions,
             scene_inst=scene.instructions,
+            cache=brief_cache,
         )
 
         video_result = await _generate_scene(
@@ -567,6 +611,8 @@ async def _run_movie(
             # ------------------------------------------------------------------
             console.print("\n[bold]Scenes[/bold]")
             generated_any = False
+            # One memo for the whole run so scenes sharing a brief sync it once.
+            brief_cache = _BriefSyncCache()
 
             for scene in manifest.scenes:
                 scene_state = state.scenes.get(scene.id)
@@ -599,6 +645,7 @@ async def _run_movie(
                     out_dir=out_dir,
                     generated_any=generated_any,
                     continue_on_error=continue_on_error,
+                    brief_cache=brief_cache,
                 )
                 if local_path is not None:
                     completed_local_paths.append(local_path)

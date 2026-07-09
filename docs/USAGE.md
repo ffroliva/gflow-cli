@@ -665,12 +665,23 @@ Setting up cards is **credits-free**. Full guide: [INSTRUCTIONS.md](INSTRUCTIONS
 gflow image t2i "a cat on a chair" -i "flat 2D children's crayon drawing"
 ```
 
-**Planned:** the persistent `gflow instructions add/list/enable/disable/rm/apply/toggle-mode`
-CRUD group, with a single generic `--ref` per card that accepts an image path, a generated-image
-UUID, or a character id/name (image → `imageReferenceMediaIds`, character →
-`characterReferenceEntityNames`). Cards are selected by **title** (case-insensitive) by default,
-or by the stable server `--id` for the ambiguous-title / scripting case (mirrors `gflow character`'s
-`--name` / `--entity-id`). See [INSTRUCTIONS.md](INSTRUCTIONS.md) for the full spec.
+**Persistent cards:** the `gflow instructions add/list/enable/disable/rm/apply/toggle-mode`
+CRUD group manages a project's brief, with a single generic `--ref` per card that accepts an
+image path, a generated-image UUID, or a character id/name (image → `imageReferenceMediaIds`,
+character → `characterReferenceEntityNames`). Cards are selected by **title** (case-insensitive)
+by default, or by the stable server `--id` for the ambiguous-title / scripting case (mirrors
+`gflow character`'s `--name` / `--entity-id`). Every subcommand requires `--project`. See
+[INSTRUCTIONS.md](INSTRUCTIONS.md) for the full reference.
+
+```text
+gflow instructions add   TITLE --text TEXT [--ref REF]... --project ID [--disabled]
+gflow instructions list  --project ID [--json]
+gflow instructions enable  (TITLE | --id ID) --project ID
+gflow instructions disable (TITLE | --id ID) --project ID
+gflow instructions rm      (TITLE | --id ID) --project ID
+gflow instructions apply   FILE  --project ID     # declarative full-sync (TOML/JSON)
+gflow instructions toggle-mode (--on | --off) --project ID
+```
 
 ## `gflow tools`
 
