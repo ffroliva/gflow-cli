@@ -87,7 +87,7 @@ PLAN.md
 - `skills/pr-council-review/SKILL.md` — Modify review instructions
 
 **Steps:**
-- [ ] Add `## 9. Autonomous Mode` section:
+- [x] Add `## 9. Autonomous Mode` section:
   - Instruct the agent to bypass the credit-spend gate (log as open item).
   - Bypassing memory actions (report suggestions but do not auto-write).
   - Forbid custom/unstructured output formats.
