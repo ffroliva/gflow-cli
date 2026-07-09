@@ -16,6 +16,10 @@ This file is forward-staged for a future docs site at https://ffroliva.github.io
 - [Known Issues](https://github.com/ffroliva/gflow-cli/blob/main/KNOWN_ISSUES.md): Open + mitigated issues with workarounds.
 - [Data Layer](https://github.com/ffroliva/gflow-cli/blob/main/docs/DATA_LAYER.md): Local SQLite catalog schema and the `gflow data list` query CLI.
 - [Characters](https://github.com/ffroliva/gflow-cli/blob/main/docs/CHARACTER.md): The `gflow character` command group — reusable, project-scoped Flow Character entities (reference images, optional voice, optional personality).
+- [Instructions](https://github.com/ffroliva/gflow-cli/blob/main/docs/INSTRUCTIONS.md): The `gflow instructions` command group — persistent Agent-Mode brief cards (credits-free CRUD, TOML/JSON full-sync via `apply`, image/character references).
+- [Movie](https://github.com/ffroliva/gflow-cli/blob/main/docs/MOVIE.md): The `gflow movie` command group — multi-scene `movie.toml` manifests with styles, per-scene instructions brief-sync, and resume.
+- [Tools](https://github.com/ffroliva/gflow-cli/blob/main/docs/TOOLS.md): The tools framework — `--tool creative-director` prompt rewriting on any generation command, `gflow tools list/show/run`, user-authored TOML tools.
+- [MCP](https://github.com/ffroliva/gflow-cli/blob/main/docs/MCP.md): The MCP server — `gflow mcp run` (stdio) / `gflow serve` (HTTP/SSE), generation + instructions tools, CI-enforced CLI↔MCP parity.
 - [Roadmap](https://github.com/ffroliva/gflow-cli/blob/main/ROADMAP.md): Themed milestones through v1.0.
 
 ## For AI coding agents
