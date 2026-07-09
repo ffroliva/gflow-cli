@@ -43,6 +43,10 @@ __all__ = [
     "_build_batch_generate_images_body",
 ]
 
+# Alias for the ``cast(...)`` target used when reading untyped JSON arrays off
+# the wire. Extracted so the quoted literal is not duplicated (SonarCloud S1192).
+_WireList = list[object]
+
 # Wire-format constants confirmed from samples 06 and 07.
 _CLIENT_TOOL = "PINHOLE"
 _RECAPTCHA_APP_TYPE = "RECAPTCHA_APPLICATION_TYPE_WEB"
@@ -262,8 +266,8 @@ class AgentInstruction:
         Character references arrive as project-scoped resource names
         (``projects/{pid}/entities/{id}``); only the trailing id is kept.
         """
-        char_names = cast("list[object]", card.get("characterReferenceEntityNames") or [])
-        image_ids = cast("list[object]", card.get("imageReferenceMediaIds") or [])
+        char_names = cast(_WireList, card.get("characterReferenceEntityNames") or [])
+        image_ids = cast(_WireList, card.get("imageReferenceMediaIds") or [])
         return cls(
             text=str(card.get("description") or ""),
             enabled=bool(card.get("enabled")),
@@ -346,7 +350,7 @@ class ProjectBrief:
         """Build from the ``agentInfo`` object of a projectInitialData response."""
         info = agent_info or {}
         brief = cast("Mapping[str, Any]", info.get("projectBrief") or {})
-        raw_cards = cast("list[object]", brief.get("cards") or [])
+        raw_cards = cast(_WireList, brief.get("cards") or [])
         cards = tuple(
             AgentInstruction.from_wire(cast("Mapping[str, Any]", c))
             for c in raw_cards
