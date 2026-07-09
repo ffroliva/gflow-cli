@@ -8,8 +8,8 @@ Supported tools that auto-discover this file: Cursor, Codex, Aider, Jules, Devin
 
 - Unofficial Python CLI for [Google Flow](https://labs.google/fx/tools/flow) — drives Veo (image-to-video, text-to-video) and Imagen (text-to-image) generations from the terminal by reverse-engineering Flow's private REST API at `aisandbox-pa.googleapis.com`.
 - Python 3.11+ · `uv`-managed · `hatchling` builds · Playwright Chromium transport · `pyright` strict · `ruff` · `pytest`.
-- Single-package modular monolith. Top-level modules under `src/gflow_cli/`: `api/`, `auth/`, `browser_manager.py`, `cli.py`, `_cli_helpers.py`, `cli_character.py`, `cli_data.py`, `cli_image.py`, `cli_models.py`, `cli_run.py`, `cli_scene.py`, `cli_video.py`, `config.py`, `data/`, `errors.py`, `exceptions.py`, `image_batch.py`, `manifest.py`, `observability.py`, `paths.py`, `profile_store.py`.
-- Command surface: `gflow auth`, `gflow image` (t2i/i2i/upload), `gflow video` (t2v/i2v/r2v/batch/chain), `gflow character` (create/list/show/rm/voices — reusable project-scoped Flow Character entities), `gflow scene` (create/show — Add Clip / Scenes, with `create --output` for credit-free server-side extended video), and `gflow data` (catalog queries).
+- Single-package modular monolith. Top-level modules under `src/gflow_cli/`: `api/`, `auth/`, `data/`, `mcp/`, `services/`, `tools/`, `ui/`, `worker/`, `browser_manager.py`, `cli.py`, `_cli_helpers.py`, `cli_character.py`, `cli_data.py`, `cli_image.py`, `cli_instructions.py`, `cli_models.py`, `cli_movie.py`, `cli_run.py`, `cli_scene.py`, `cli_tools.py`, `cli_video.py`, `chain.py`, `chain_manifest.py`, `composition.py`, `config.py`, `errors.py`, `exceptions.py`, `image_batch.py`, `manifest.py`, `movie_manifest.py`, `observability.py`, `paths.py`, `profile_store.py`.
+- Command surface: `gflow auth`, `gflow image` (t2i/i2i/batch/upload/upscale), `gflow video` (t2v/i2v/r2v/batch/chain), `gflow character` (create/list/show/rm/voices — reusable project-scoped Flow Character entities), `gflow scene` (create/show — Add Clip / Scenes, with `create --output` for credit-free server-side extended video), `gflow instructions` (persistent Agent-Mode brief cards — add/list/enable/disable/rm/apply/toggle-mode, credits-free, `--project` required), `gflow movie` (run/template — multi-scene manifest pipeline), `gflow tools` (list/show/run — prompt-rewriting tools, also `--tool` on generation commands), `gflow data` (catalog queries), `gflow models`, `gflow run`, `gflow mcp` (run/setup — stdio MCP server), and `gflow serve` (HTTP/SSE).
 - Requires a Google AI Ultra or Pro subscription with Flow access. All generations bill against the user's own Google account.
 
 ## Headed-browser dependency (architectural reality)
@@ -57,9 +57,9 @@ Or invoke the wrapper: `/gflow:check`.
 
 - Type hints everywhere; `pyright` strict on `src/gflow_cli`.
 - Structured logging only (`structlog`) — **never** raw `print()` or `import logging` in `src/`.
-- Errors as RFC 9457 Problem Details with stable per-class exit codes (3–22, e.g. 16 is the `DataStoreError` family, 19 `SceneConcatError`, 20 `FrameExtractionError`, 21 `ChainPartialError`, 22 `UpscaleUnavailableError`). See `src/gflow_cli/errors.py::EXIT_CODE_MAP` for the complete mapping.
+- Errors as RFC 9457 Problem Details with stable per-class exit codes (3–25, e.g. 16 is the `DataStoreError` family, 19 `SceneConcatError`, 20 `FrameExtractionError`, 21 `ChainPartialError`, 22 `UpscaleUnavailableError`, 25 `FlowAgentUiError`). See `src/gflow_cli/errors.py::EXIT_CODE_MAP` for the complete mapping.
 - 100-char line length, `ruff` configured. Imports sorted by `ruff` (isort rules).
-- **MCP & CLI Schema Symmetry**: Any updates or additions to user-facing CLI command parameters (e.g., `gflow image t2i`, `gflow video`) must be mirrored in the corresponding MCP tool definitions. Never add option/argument fields to Click commands without updating the MCP server implementation. This symmetry is enforced programmatically in CI via `tests/mcp/test_server.py`.
+- **MCP & CLI Schema Symmetry**: Any updates or additions to user-facing CLI command parameters (e.g., `gflow image t2i`, `gflow video`) must be mirrored in the corresponding MCP tool definitions. Never add option/argument fields to Click commands without updating the MCP server implementation. This symmetry is enforced programmatically in CI via `tests/mcp/test_cli_parity.py` (every CLI leaf command needs a mapped MCP tool or an explicit, reasoned exemption) plus the schema checks in `tests/mcp/test_server.py`.
 
 ## PR instructions
 

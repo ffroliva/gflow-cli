@@ -572,3 +572,62 @@ async def test_patch_agent_info_enabled_only_mask(tmp_path: Path) -> None:
     url = c._patch_json.await_args.args[0]  # type: ignore[attr-defined]
     assert "project_brief.enabled" in url
     assert "project_brief.cards" not in url
+
+
+# ---------------------------------------------------------------------------
+# get_agent_info — reads the brief from projectInitialData (no GET /agentInfo)
+# ---------------------------------------------------------------------------
+
+
+@pytest.mark.asyncio
+async def test_get_agent_info_reads_brief_from_project_initial_data(tmp_path: Path) -> None:
+    """get_agent_info unwraps the projectInitialData tRPC envelope and returns
+    the ProjectBrief — there is no GET /agentInfo route."""
+    c = FlowApiClient(profile_dir=tmp_path / "prof")
+    c._get_json = AsyncMock(  # type: ignore[method-assign]
+        return_value={
+            "result": {
+                "data": {
+                    "json": {
+                        "agentInfo": {
+                            "projectBrief": {
+                                "enabled": True,
+                                "cards": [
+                                    {
+                                        "id": "c1",
+                                        "title": "Crayon",
+                                        "description": "crayon",
+                                        "enabled": True,
+                                        "imageReferenceMediaIds": ["m1"],
+                                    }
+                                ],
+                            },
+                            "agentToggleState": "AGENT_TOGGLE_STATE_ENABLED",
+                        }
+                    }
+                }
+            }
+        }
+    )
+
+    brief = await c.get_agent_info("proj-1")
+
+    assert brief.enabled is True
+    assert brief.agent_toggle_state == "AGENT_TOGGLE_STATE_ENABLED"
+    assert len(brief.cards) == 1
+    assert brief.cards[0].id == "c1"
+    assert brief.cards[0].image_media_ids == ("m1",)
+    # URL carried the projectId as a tRPC input query.
+    url = c._get_json.await_args.args[0]  # type: ignore[attr-defined]
+    assert "projectInitialData" in url and "proj-1" in url
+
+
+@pytest.mark.asyncio
+async def test_get_agent_info_absent_brief_is_empty(tmp_path: Path) -> None:
+    c = FlowApiClient(profile_dir=tmp_path / "prof")
+    c._get_json = AsyncMock(return_value={"result": {"data": {"json": {}}}})  # type: ignore[method-assign]
+
+    brief = await c.get_agent_info("proj-1")
+
+    assert brief.enabled is False
+    assert brief.cards == ()
