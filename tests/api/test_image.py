@@ -532,3 +532,51 @@ def test_project_brief_find_requires_exactly_one_selector() -> None:
         brief.find()
     with pytest.raises(ValueError, match="exactly one"):
         brief.find(title="Crayon", card_id="a")
+
+
+# ---------------------------------------------------------------------------
+# Council fixes: resolved_title crash guard + D4 coverage gaps
+# ---------------------------------------------------------------------------
+
+
+def test_resolved_title_reference_only_card_does_not_crash() -> None:
+    # Image-only card (no title, no text) — must derive a label, not IndexError.
+    img = AgentInstruction(text="", image_media_ids=("a963f6e1-dead-beef",))
+    assert img.resolved_title() == "Reference a963f6e1"
+    # And it must be serializable (build_agent_brief_cards calls resolved_title).
+    cards = build_agent_brief_cards((img,), project_id="p1")
+    assert cards[0]["title"] == "Reference a963f6e1"
+
+    char = AgentInstruction(text="   ", character_ids=("hero-7",))
+    assert char.resolved_title() == "Reference hero-7"
+
+
+def test_resolved_title_from_wire_reference_card_does_not_crash() -> None:
+    # A Flow-UI reference card: imageReferenceMediaIds but no description/title.
+    inst = AgentInstruction.from_wire({"id": "x", "imageReferenceMediaIds": ["m1"]})
+    assert inst.resolved_title() == "Reference m1"  # short id, no truncation
+
+
+def test_project_brief_agent_toggle_state_absent_is_none() -> None:
+    brief = ProjectBrief.from_agent_info({"projectBrief": {"enabled": True, "cards": []}})
+    assert brief.agent_toggle_state is None
+
+
+def test_project_brief_find_by_id_not_found_raises() -> None:
+    brief = ProjectBrief.from_agent_info(_AGENT_INFO)
+    with pytest.raises(ValueError, match="no instruction card matches id"):
+        brief.find(card_id="does-not-exist")
+
+
+def test_project_brief_from_agent_info_skips_non_dict_cards() -> None:
+    info = {
+        "projectBrief": {
+            "cards": [
+                {"id": "a", "title": "Ok", "description": "x", "enabled": True},
+                "not-a-dict",  # malformed element — filtered out, not a crash
+                None,
+            ]
+        }
+    }
+    brief = ProjectBrief.from_agent_info(info)
+    assert tuple(c.id for c in brief.cards) == ("a",)

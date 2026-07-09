@@ -279,13 +279,20 @@ class AgentInstruction:
         The derivation takes the first line of ``text`` and caps it so a bare
         ``-i "…"`` card still gets a distinct, human-readable label instead of
         the old hardcoded ``"Instruction title"`` that collapsed every card to
-        one name (breaking title-based lookup).
+        one name (breaking title-based lookup). A reference-only card (no title
+        AND no text — valid per ``__post_init__``, and produced by ``from_wire``
+        from a Flow-UI reference card) derives its label from its first reference
+        so this never indexes an empty ``splitlines()`` (crash guard).
         """
         title = self.title.strip()
         if title:
             return title
-        first_line = self.text.strip().splitlines()[0].strip()
-        return f"{first_line[:57]}…" if len(first_line) > 58 else first_line  # noqa: PLR2004
+        text = self.text.strip()
+        if text:
+            first_line = text.splitlines()[0].strip()
+            return f"{first_line[:57]}…" if len(first_line) > 58 else first_line  # noqa: PLR2004
+        ref = self.image_media_ids or self.character_ids
+        return f"Reference {ref[0][:8]}" if ref else "Instruction"
 
 
 def build_agent_brief_cards(

@@ -198,6 +198,13 @@ See [CHARACTER.md](CHARACTER.md) for the underlying entity model and
 [CHARACTER_RECON.md](CHARACTER_RECON.md) for the reverse-engineered wire
 protocol.
 
+## Per-scene agent instructions _(planned)_
+
+A future release will let each scene declare its own Agent-Instruction cards
+(`[[…instructions.card]]` blocks in `movie.toml`) so the agent's brief — style
+guidelines and image/character references — can vary per scene. Until then, see
+[INSTRUCTIONS.md](INSTRUCTIONS.md) for the project-level instructions surface.
+
 ## `movie run` options
 
 | Flag | Default | Effect |
