@@ -72,7 +72,7 @@ if TYPE_CHECKING:
 
     from _typeshed import DataclassInstance
 
-    from gflow_cli.api.image import AgentInstruction, GenerateImageRequest
+    from gflow_cli.api.image import AgentInstruction, GenerateImageRequest, ProjectBrief
     from gflow_cli.api.video import GenerateVideoRequest, VideoResult, VideoStartedCallback
 
 # Shorthand for an untyped JSON-ish string-keyed mapping (request/response
@@ -1023,6 +1023,25 @@ class FlowApiClient:
                 if isinstance(brief, dict):
                     return cast("JsonObject", brief)
         return {}
+
+    async def get_agent_info(self, project_id: str) -> ProjectBrief:
+        """Read a project's Agent brief (instruction cards + master switch).
+
+        There is NO ``GET /v1/projects/{id}/agentInfo`` (it 404s). The brief is
+        read from the ``agentInfo`` block of ``flow.projectInitialData`` — the
+        same tRPC query ``list_characters`` uses. Session-cookie auth; FREE — no
+        reCAPTCHA, no credit. This is the read half of the ``gflow instructions``
+        read-modify-write cycle (the server is the source of truth).
+        """
+        from gflow_cli.api.image import ProjectBrief
+
+        trpc_input = json.dumps({"json": {"projectId": project_id}}, separators=(",", ":"))
+        url = f"{routes.PROJECT_INITIAL_DATA_URL}?input={quote(trpc_input, safe='')}"
+        data = await self._get_json(url, route_name="projectInitialData")
+        inner = _unwrap_trpc(data)
+        agent_info = inner.get("agentInfo")
+        typed = cast("JsonObject", agent_info) if isinstance(agent_info, dict) else None
+        return ProjectBrief.from_agent_info(typed)
 
     async def upload_image(self, project_id: str, image_path: Path) -> AssetInfo:
         """Upload an image into a Flow project's library.

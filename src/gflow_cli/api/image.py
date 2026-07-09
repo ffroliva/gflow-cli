@@ -24,7 +24,7 @@ import uuid
 from dataclasses import dataclass
 from enum import StrEnum
 from types import MappingProxyType
-from typing import TYPE_CHECKING, Any
+from typing import TYPE_CHECKING, Any, cast
 
 if TYPE_CHECKING:
     from collections.abc import Mapping
@@ -38,6 +38,7 @@ __all__ = [
     "ImageRef",
     "AgentInstruction",
     "Model",
+    "ProjectBrief",
     "build_agent_brief_cards",
     "_build_batch_generate_images_body",
 ]
@@ -239,11 +240,38 @@ class AgentInstruction:
     image_media_ids: tuple[str, ...] = ()
     character_ids: tuple[str, ...] = ()
     title: str = ""
+    # Server-assigned card id (from projectInitialData). Empty for a not-yet-
+    # persisted card; ``build_agent_brief_cards`` mints one on PATCH. Preserved
+    # across read-modify-write so ``--id`` selection stays valid and
+    # enable/disable/rm edit the same card instead of replacing it.
+    id: str = ""
 
     def __post_init__(self) -> None:
-        if not self.text or not self.text.strip():
-            msg = "AgentInstruction.text must be a non-empty string"
+        # A card must carry SOMETHING the agent can act on: guideline text or at
+        # least one reference (an image-only card is valid — the reference is the
+        # instruction). This also lets `from_wire` parse server cards that have a
+        # reference but no description.
+        if not self.text.strip() and not self.image_media_ids and not self.character_ids:
+            msg = "AgentInstruction needs non-empty text or at least one reference"
             raise ValueError(msg)
+
+    @classmethod
+    def from_wire(cls, card: Mapping[str, Any]) -> AgentInstruction:
+        """Parse one server card (``agentInfo.projectBrief.cards[*]``).
+
+        Character references arrive as project-scoped resource names
+        (``projects/{pid}/entities/{id}``); only the trailing id is kept.
+        """
+        char_names = cast("list[object]", card.get("characterReferenceEntityNames") or [])
+        image_ids = cast("list[object]", card.get("imageReferenceMediaIds") or [])
+        return cls(
+            text=str(card.get("description") or ""),
+            enabled=bool(card.get("enabled")),
+            image_media_ids=tuple(str(m) for m in image_ids),
+            character_ids=tuple(str(n).split("/")[-1] for n in char_names),
+            title=str(card.get("title") or ""),
+            id=str(card.get("id") or ""),
+        )
 
     def resolved_title(self) -> str:
         """Return the card's title, deriving one from ``text`` when blank.
@@ -274,7 +302,9 @@ def build_agent_brief_cards(
     cards: list[dict[str, Any]] = []
     for inst in instructions:
         card: dict[str, Any] = {
-            "id": str(uuid.uuid4()),
+            # Preserve the server id across read-modify-write; mint one only for a
+            # brand-new card (empty id) so `--id` selection stays stable.
+            "id": inst.id or str(uuid.uuid4()),
             "title": inst.resolved_title(),
             "description": inst.text,
             "enabled": inst.enabled,
@@ -287,6 +317,66 @@ def build_agent_brief_cards(
             ]
         cards.append(card)
     return cards
+
+
+@dataclass(frozen=True)
+class ProjectBrief:
+    """A project's Agent brief as read from ``flow.projectInitialData``.
+
+    Source of truth for ``gflow instructions`` reads — there is no
+    ``GET /agentInfo`` (404); the brief rides inside ``projectInitialData``'s
+    ``agentInfo`` block. ``enabled`` is the brief-level master switch;
+    ``agent_toggle_state`` is the project-level Agent Mode toggle
+    (``AGENT_TOGGLE_STATE_ENABLED`` / ``..._DISABLED``).
+    """
+
+    enabled: bool = False
+    cards: tuple[AgentInstruction, ...] = ()
+    agent_toggle_state: str | None = None
+
+    @classmethod
+    def from_agent_info(cls, agent_info: Mapping[str, Any] | None) -> ProjectBrief:
+        """Build from the ``agentInfo`` object of a projectInitialData response."""
+        info = agent_info or {}
+        brief = cast("Mapping[str, Any]", info.get("projectBrief") or {})
+        raw_cards = cast("list[object]", brief.get("cards") or [])
+        cards = tuple(
+            AgentInstruction.from_wire(cast("Mapping[str, Any]", c))
+            for c in raw_cards
+            if isinstance(c, dict)
+        )
+        toggle = info.get("agentToggleState")
+        return cls(
+            enabled=bool(brief.get("enabled")),
+            cards=cards,
+            agent_toggle_state=str(toggle) if isinstance(toggle, str) else None,
+        )
+
+    def find(self, *, title: str | None = None, card_id: str | None = None) -> AgentInstruction:
+        """Select one card by ``card_id`` (exact) or ``title`` (case-insensitive).
+
+        Raises ``ValueError`` when nothing matches or a title is ambiguous —
+        title matching fails fast so a typo never silently edits the wrong card.
+        """
+        if (card_id is None) == (title is None):
+            msg = "find() takes exactly one of title= or card_id="
+            raise ValueError(msg)
+        if card_id is not None:
+            match = [c for c in self.cards if c.id == card_id]
+            lookup = f"id {card_id!r}"
+        else:
+            assert title is not None
+            key = title.strip().casefold()
+            match = [c for c in self.cards if c.resolved_title().casefold() == key]
+            lookup = f"title {title!r}"
+        if not match:
+            msg = f"no instruction card matches {lookup}"
+            raise ValueError(msg)
+        if len(match) > 1:
+            ids = ", ".join(c.id for c in match)
+            msg = f"{lookup} is ambiguous — matches cards: {ids}. Use --id to disambiguate."
+            raise ValueError(msg)
+        return match[0]
 
 
 @dataclass(frozen=True)
