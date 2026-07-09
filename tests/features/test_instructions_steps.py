@@ -123,7 +123,7 @@ def _project_active_card(
     "I run \"gflow instructions add 'Crayon style' "
     "--text 'crayon drawing' "
     "--ref '44444444-4444-4444-4444-444444444444' "
-    "--project proj-123\""
+    '--project proj-123"'
 )
 def _run_add_crayon_style(
     runner: CliRunner,

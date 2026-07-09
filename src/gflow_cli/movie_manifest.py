@@ -17,7 +17,7 @@ import json
 import tomllib
 from dataclasses import dataclass
 from pathlib import Path
-from typing import Any, cast
+from typing import cast
 
 from gflow_cli.composition import (
     FRAMING,
@@ -155,7 +155,7 @@ def _require_int(data: dict[str, object], key: str, default: int = 0) -> int:
 def _parse_manifest_card(c: object, idx: int) -> ManifestCard:
     if not isinstance(c, dict):
         raise ConfigurationError(f"instructions.card[{idx}] must be a table/object.")
-    c_dict = cast("dict[str, Any]", c)
+    c_dict = cast(_TomlObj, c)
     title = c_dict.get("title")
     if not isinstance(title, str) or not title.strip():
         raise ConfigurationError(f"instructions.card[{idx}].title must be a non-empty string.")
@@ -172,7 +172,7 @@ def _parse_manifest_card(c: object, idx: int) -> ManifestCard:
     if isinstance(raw_ref, str):
         ref = (raw_ref,)
     elif isinstance(raw_ref, list):
-        ref = tuple(str(r) for r in cast("list[Any]", raw_ref))
+        ref = tuple(str(r) for r in cast(_TomlList, raw_ref))
     else:
         ref = ()
 
@@ -191,13 +191,13 @@ def _parse_global_instructions(data: dict[str, object]) -> tuple[ManifestCard, .
     if not isinstance(inst_raw, dict):
         raise ConfigurationError("'instructions' must be a table/object.")
 
-    inst_dict = cast("dict[str, Any]", inst_raw)
+    inst_dict = cast(_TomlObj, inst_raw)
     cards_raw = inst_dict.get("card", [])
     if not isinstance(cards_raw, list):
         raise ConfigurationError("'instructions.card' must be an array.")
 
     cards: list[ManifestCard] = []
-    for i, c in enumerate(cast("list[Any]", cards_raw)):
+    for i, c in enumerate(cast(_TomlList, cards_raw)):
         cards.append(_parse_manifest_card(c, i))
     return tuple(cards)
 
@@ -208,12 +208,12 @@ def _parse_scene_instructions(inst_raw: object, idx: int) -> SceneInstructions |
     if not isinstance(inst_raw, dict):
         raise ConfigurationError(f"scenes[{idx}].instructions must be a table/object.")
 
-    inst_dict = cast("dict[str, Any]", inst_raw)
+    inst_dict = cast(_TomlObj, inst_raw)
     disable_raw = inst_dict.get("disable", [])
     if isinstance(disable_raw, str):
         disable = (disable_raw,)
     elif isinstance(disable_raw, list):
-        disable = tuple(str(d) for d in cast("list[Any]", disable_raw))
+        disable = tuple(str(d) for d in cast(_TomlList, disable_raw))
     else:
         raise ConfigurationError(
             f"scenes[{idx}].instructions.disable must be a list of strings or a string."
@@ -224,7 +224,7 @@ def _parse_scene_instructions(inst_raw: object, idx: int) -> SceneInstructions |
         raise ConfigurationError(f"scenes[{idx}].instructions.card must be an array.")
 
     cards: list[ManifestCard] = []
-    for i, c in enumerate(cast("list[Any]", cards_raw)):
+    for i, c in enumerate(cast(_TomlList, cards_raw)):
         cards.append(_parse_manifest_card(c, i))
 
     return SceneInstructions(
