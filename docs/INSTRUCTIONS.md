@@ -79,9 +79,16 @@ wire field:
 
 | `--ref` value | Resolves to |
 |---|---|
-| local image path (`./hero.png`) | upload → media id → `imageReferenceMediaIds` |
+| local image path (`./hero.png`) | **upload via REST** (`uploadImage`) → media id → `imageReferenceMediaIds` |
 | generated-image UUID | `imageReferenceMediaIds` |
 | character id or name | `characterReferenceEntityNames` |
+
+> **Uploading a new image to an instruction.** Flow's reference picker has an
+> **"Upload media"** button — a card reference can be a brand-new local image, not
+> just an existing project asset. `--ref ./local.png` covers this using the same
+> **REST upload path** as `gflow image upload` (verified: upload → PATCH the card
+> with the returned media id → the image renders as the card's reference). No UI
+> automation of the picker's upload button is required.
 
 ```bash
 # A persistent card that anchors style to a reference image AND a character.
