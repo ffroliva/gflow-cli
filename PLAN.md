@@ -653,6 +653,8 @@ Records image, batch, T2V, I2V, and R2V provenance in a local SQLite catalog. Re
 
 **Status:** NOT implemented. Parked until the stealth-flag fix (`--disable-blink-features=AutomationControlled` + init script) is confirmed insufficient, or until a contributor picks it up.
 
+**2026-07-09 verification — the current stealth fix is CONFIRMED SUFFICIENT (so this stays parked).** A 20-generation baseline on a live authed profile through the default stealth stack produced a **0.0% WAF 403 rate** (19/20 success; the one miss was a UI-scrape timeout, not a WAF block). This met ADR-13's "must verify before implementing" gate and closed the [Camoufox adoption roadmap](superpowers/plans/2026-07-09-camoufox-adoption/PLAN.md) at Phase 2 — the Camoufox engine was NOT built. Evidence: [superpowers/spikes/2026-07-09-camoufox-waf-403.md](superpowers/spikes/2026-07-09-camoufox-waf-403.md). Re-run `scripts/spike_waf_camoufox.py` if a repeatable WAF-403 is later observed; a materially non-zero rate would reopen CDP-Attach / Camoufox.
+
 ---
 
 ### Phase 8 — Pluggable storage backend — BACKLOG
@@ -699,7 +701,7 @@ Today the CLI writes media to `$GFLOW_CLI_OUTPUT_DIR` on the local filesystem. P
 | 10 | Both `gflow` and `flow` binary names installed | `flow` is friendlier; `gflow` avoids conflicts with Facebook Flow / MS Power Automate |
 | 11 | LF-only line endings via `.gitattributes` | Single repo source of truth; cross-platform contributors don't think about it |
 | 12 | `Provider` indirection (legacy `providers/`) removed | Superseded by `api.FlowApiClient`. Re-introduce when we add `OfficialVeoProvider` (planned v0.5+) |
-| 13 | CDP attach transport deferred | Must first confirm whether CDP-attached Chrome still sets `navigator.webdriver=true` (which would negate any reCAPTCHA advantage over the current stealth fix). See CDP Attach backlog entry. |
+| 13 | CDP attach / stealth-engine alternatives deferred; **current stealth fix confirmed sufficient 2026-07-09** | Gate met: a 20-gen live baseline through the default stealth stack showed a **0.0% WAF 403 rate**, so the "confirm insufficient before implementing" bar is unmet — CDP-Attach and the Camoufox engine stay parked (Camoufox roadmap closed at Phase 2). Evidence: [superpowers/spikes/2026-07-09-camoufox-waf-403.md](superpowers/spikes/2026-07-09-camoufox-waf-403.md). |
 | 14 | HTTP status path (`get_video_status`) retired alongside `generate_video` | It is the same 401-dead path and would collide with the new `api/video.py:VideoStatus` value object — retiring both together keeps the domain clean. |
 
 ---
