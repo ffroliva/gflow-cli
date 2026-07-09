@@ -105,11 +105,11 @@ PLAN.md
 - `scripts/autopilot/run_sandboxed_review.sh` — Execution wrapper shell script
 
 **Steps:**
-- [ ] Define `Dockerfile.triage`:
+- [x] Define `Dockerfile.triage`:
   - Base on a lightweight image (e.g., node/python-slim).
   - Install dependencies (including the `gh` CLI required by the review skill) and Claude CLI.
   - Configure a non-root runtime user with a writable home directory `/home/nonroot` (e.g. via tmpfs mount) to allow Claude CLI internal state writes.
-- [ ] Write `run_sandboxed_review.sh`:
+- [x] Write `run_sandboxed_review.sh`:
   - Bind-mount the fetched clone of `/opt/gflow-cli` as **read-only**.
   - Mount only the project-specific memory namespace (`C:\Users\ffrol\.claude\projects\C--development-github-gflow-cli\memory` or its VPS equivalent) read-only, explicitly avoiding broad mounting of `/opt/experience-vault` to prevent cross-project exfiltration.
   - Enforce restricted network egress (block everything except `api.anthropic.com` and `github.com`), explicitly permitting DNS (UDP/TCP port 53) for host name resolution.
