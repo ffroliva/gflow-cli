@@ -313,12 +313,16 @@ silently dropped. **Do not bundle these into Phases 1–3.**
 - **4.2 — `mcp_warmup` redesign or removal.** As-is it automates Google Search on a logged-in
   account (account-level risk). If any warmup is needed: direct `labs.google` navigation, own
   env flag defaulted OFF, rate-limited, hard-stop (not swallow) on a Google captcha.
-- **4.3 — i2i remote-UUID refs / `ref_names` invariant reversal** (PR #258 `b94302c`). The PR's
-  only i2i change reverses the PR #245 image-i2i guard on the default path (adds `ref_names` to
-  `GenerateImageRequest`, routes image refs through R2V `_attach_remote_references`). This was
-  originally mis-scoped into Phase 1 as a "safe fix" — it is not. Needs its own predict + tests +
-  a decision on whether the PR #245 invariant should stand. Verify first whether i2i with a bare
-  UUID ref is genuinely broken on develop today (the contributor's premise).
+- **4.3 — i2i remote-UUID refs / `ref_names` invariant reversal** (PR #258 `b94302c`) —
+  **INVESTIGATED 2026-07-09: NOT A BUG on develop. Closed, no change needed.** The contributor's
+  premise ("i2i with a bare UUID ref is ignored → plain t2i submitted") does not reproduce:
+  develop attaches UUID refs via the v0.26.0 select-in-place path (`ui_automation.py:2175`
+  `if request.refs → _attach_image_uuid_refs`), which selects the existing Flow asset in the
+  picker, falls back to local-file upload, and **fails loud** if neither works — never a silent
+  drop. The PR's `ref_names` change would have added a SECOND, parallel R2V attach path on top,
+  likely double-attaching — good that it wasn't merged. Root cause of the false premise: a stale
+  `cli_image.py` comment claiming UUID binding was "not wired yet" (fixed). The PR #245 invariant
+  stands.
 - **4.4 — MCP `_SessionManager` client caching + idle reaper.** The idle monitor can close a
   client mid-generation. Needs in-use refcounting in the worker/service layer before any
   session-caching lands.
