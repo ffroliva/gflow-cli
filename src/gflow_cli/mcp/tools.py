@@ -735,6 +735,8 @@ async def gflow_generate_image(
         "Generate a video using Google Flow's Veo model. "
         "Modes: t2v (text-to-video), i2v (image-to-video), r2v (reference-to-video). "
         "Aspects: 9:16, 16:9. "
+        "Optional model (veo_lite/veo_fast/veo_quality/omni_flash), duration (seconds), "
+        "and count select the Veo model, clip length, and batch size (CLI parity). "
         "Returns the local file path to the generated video."
     ),
 )
@@ -745,6 +747,9 @@ async def gflow_generate_video(
     initial_frame: str | None = None,
     end_frame: str | None = None,
     reference_images: list[str] | None = None,
+    model: str | None = None,
+    duration: int | None = None,
+    count: int = 1,
     tools: list[dict[str, Any]] | None = None,
     profile: str = _DEFAULT_PROFILE,
     project: str | None = None,
@@ -758,6 +763,15 @@ async def gflow_generate_video(
         initial_frame: Path to start frame image (required for i2v).
         end_frame: Path to end frame image (optional for i2v).
         reference_images: List of reference image paths (ingredients) for r2v.
+        model: Optional Veo model — 'veo_lite', 'veo_fast', 'veo_quality',
+            'omni_flash' (aliases accepted, mirrors the CLI ``--model``). When
+            omitted, Flow's UI default applies EXCEPT for i2v with frames, where
+            the transport defaults to veo-lite to avoid the omni-flash
+            frame-drop credit burn (issue #125). Note: 'omni_flash' does not
+            support i2v interpolation and is rejected for i2v with frames.
+        duration: Optional clip length in seconds (mirrors the CLI ``--duration``).
+            When omitted, Flow's per-model default applies.
+        count: Number of videos to generate (mirrors the CLI ``--count``; default 1).
         tools: Optional list of prompt tools to apply before generation.
             Each item is ``{"name": str, "options": dict}``.  Valid names
             include ``"creative-director"`` (which supports an ``options``
@@ -779,6 +793,16 @@ async def gflow_generate_video(
     """
     if (proj_err := _validate_project(project)) is not None:
         return proj_err
+
+    # Validate the model alias up front (mirrors the CLI's pre-spend check) so an
+    # unknown model fails fast with a 400 instead of dying deep in the worker.
+    if model is not None:
+        from gflow_cli.api.video import VideoModel
+
+        try:
+            VideoModel.from_cli(model)
+        except ValueError as exc:
+            return _bad_param("Invalid Video Model", str(exc))
 
     if not await _rate_limiter.acquire():
         log.warning("mcp.tool.rate_limited", tool="gflow_generate_video")
@@ -813,7 +837,15 @@ async def gflow_generate_video(
             "prompt": prompt,
             "mode": mode,
             "aspect": aspect,
+            "count": count,
         }
+        # Only send model/duration when set — an absent model lets the transport
+        # apply its own i2v veo-lite default (issue #125); an absent duration
+        # lets Flow's per-model default stand.
+        if model is not None:
+            payload["model"] = model
+        if duration is not None:
+            payload["duration"] = duration
 
         media, media_err = _build_video_media_inputs(
             mode=mode,
@@ -846,6 +878,9 @@ async def gflow_generate_video(
             "initial_frame": initial_frame,
             "end_frame": end_frame,
             "reference_images": reference_images,
+            "model": model,
+            "duration": duration,
+            "count": count,
             "tools": tools or [],
             "tool_specs": list(tool_specs),
             "profile": resolved_profile,
