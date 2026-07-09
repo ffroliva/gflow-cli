@@ -223,6 +223,8 @@ text  = "Dense volumetric fog, low contrast"
 
 For each scene, `gflow movie` merges global manifest cards with scene overrides (applying `disable` lists and adding/overriding `card` definitions), fetches the current project brief from the Flow server, uploads any local reference images to generate media UUIDs, preserves existing card IDs to prevent state drift, and `PATCH`es the brief to set the master switch and update cards before generating that scene's clip. See [INSTRUCTIONS.md](INSTRUCTIONS.md) for the project-level instructions surface.
 
+> **The manifest is authoritative — this is a full-sync, like `gflow instructions apply`.** The `PATCH` **replaces** the project's brief with exactly the manifest's card set, so any card added out-of-band in the Flow web UI that is not in `movie.toml` is **removed** when a scene runs. Keep every card you want in the brief under `[instructions]` / `[scenes.instructions]`. Consecutive scenes that resolve to the same card set are synced only once per run (no redundant re-upload / `PATCH`).
+
 ## `movie run` options
 
 | Flag | Default | Effect |

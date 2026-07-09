@@ -2,9 +2,8 @@
 
 > **Status.** The ephemeral `-i / --instruction` flag on `gflow image t2i` / `i2i`
 > shipped in **v0.28.0** (live-verified). The persistent `gflow instructions`
-> command group described here is the **docs-first spec** for an upcoming release
-> — it is the acceptance criteria for the implementation, not yet shipped. Sections
-> describing unshipped surfaces are marked _(planned)_.
+> command group and the `movie.toml` instructions blocks described here shipped in
+> the current release — this doc now doubles as their spec and reference.
 
 ## What an instruction card is
 
@@ -34,7 +33,7 @@ session, cards do not apply and `gflow` warns.
 ```
 1. SET UP   project context   →  gflow instructions add / apply   (credits-free)
 2. GENERATE using that context →  gflow image t2i / i2i --project <id>
-3. COMPOSE  per-scene context  →  movie.toml [[…instructions.card]]   (planned)
+3. COMPOSE  per-scene context  →  movie.toml [[…instructions.card]]
 ```
 
 **Agents: always set up the brief (layer 1) before generating (layer 2).** The
@@ -42,7 +41,7 @@ brief is what makes generations consistent across a project.
 
 ## Ephemeral `-i` vs persistent cards
 
-| | `-i "text"` (shipped) | `gflow instructions` _(planned)_ |
+| | `-i "text"` | `gflow instructions` |
 |---|---|---|
 | Scope | one generation | persists on the project brief |
 | Creates | a fresh enabled text-only card each call | managed cards you can toggle/edit/remove |
@@ -54,7 +53,7 @@ brief is what makes generations consistent across a project.
 gflow image t2i "a cat on a chair" -i "flat 2D children's crayon drawing"
 ```
 
-## `gflow instructions` command surface _(planned)_
+## `gflow instructions` command surface
 
 Persistent CRUD over a project's brief cards. Cards are selected by **title**
 (case-insensitive, fail-fast on ambiguity) — the ergonomic default — or by the
@@ -62,13 +61,13 @@ stable server **`--id`** for the ambiguous-title / scripting case (`list --json`
 surfaces ids). Mirrors `gflow character` (select by `--name` or `--entity-id`).
 
 ```bash
-gflow instructions add   TITLE --text TEXT [--ref REF]... [--project ID] [--disabled]
-gflow instructions list  [--project ID] [--json]
-gflow instructions enable  (TITLE | --id ID) [--project ID]
-gflow instructions disable (TITLE | --id ID) [--project ID]
-gflow instructions rm      (TITLE | --id ID) [--project ID]
-gflow instructions apply   FILE  [--project ID]   # declarative full-sync (TOML/JSON)
-gflow instructions toggle-mode [--on/--off] [--project ID]
+gflow instructions add   TITLE --text TEXT [--ref REF]... --project ID [--disabled]
+gflow instructions list  --project ID [--json]
+gflow instructions enable  (TITLE | --id ID) --project ID
+gflow instructions disable (TITLE | --id ID) --project ID
+gflow instructions rm      (TITLE | --id ID) --project ID
+gflow instructions apply   FILE  --project ID   # declarative full-sync (TOML/JSON)
+gflow instructions toggle-mode (--on | --off) --project ID
 ```
 
 ### The generic `--ref` (one attribute for all reference types)
@@ -152,7 +151,7 @@ ref     = ["hero-character"]
 2. `gflow instructions apply brief.toml --project <id>` — set up the brief (free).
 3. `gflow image t2i "…" --project <id>` — generate using the active cards.
 4. Adjust: `gflow instructions disable "Cinematic lighting" --project <id>`, regenerate.
-5. (planned) `movie.toml` per-scene overrides for multi-scene consistency.
+5. `movie.toml` per-scene overrides for multi-scene consistency.
 
 **DO NOT** rely on `-i` for anything you want to reuse — it's per-generation.
 **PREFER** title selection; fall back to `--id` (from `list --json`) only when a
@@ -162,6 +161,6 @@ title is ambiguous.
 ## See also
 
 - [USAGE.md](USAGE.md) — full command reference.
-- [MOVIE.md](MOVIE.md) — multi-scene movies (`[[…instructions.card]]` blocks, planned).
+- [MOVIE.md](MOVIE.md) — multi-scene movies (`[[…instructions.card]]` blocks).
 - `docs/superpowers/plans/2026-07-08-agentic-instructions/` — plan + spike findings
   (mechanism, H4 confirmation, the reference-consolidation decision).
