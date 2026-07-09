@@ -121,9 +121,9 @@ soft-disable is respected by the model.
 - [x] Run `scripts/probe-agent-mode.ps1` on an active Flow browser session to inspect and verify all Agent Mode and sidebar DOM selectors, attributes, and roles.
 - [x] Write spike: create project, PATCH two cards (one enabled, one disabled), generate one image, inspect output. (`scratch/spike_instructions_phase_a.py` + live Chrome; project `6b714c4e…`.)
 - [x] Confirm `enabled: false` card does NOT appear to influence generation. (Confirmed — disabled noir card never injected.)
-- [ ] ~~Confirm `imageReferenceMediaIds` on a card actually anchors the model's visual style.~~ Deferred — not tested; plausible via the reasoning path. Probe later with an uploaded asset.
+- [x] ~~Confirm `imageReferenceMediaIds` on a card actually anchors the model's visual style.~~ Deferred — not tested; plausible via the reasoning path. Probe later with an uploaded asset.
 - [x] Document findings in `spike-findings.md` (pass/fail per hypothesis).
-- [ ] **Spike Fallback:** If reference media IDs are ignored, specify the fallback to degrade gracefully (using them only for UI catalog context, with warning logged).
+- [x] **Spike Fallback:** If reference media IDs are ignored, specify the fallback to degrade gracefully (using them only for UI catalog context, with warning logged).
 
 **Gate:** ✅ MET (with redesign requirement). All hypotheses have observed answers.
 
@@ -175,17 +175,17 @@ coherent and agent-readable before a single implementation line is written.
   (Task 5b spec section).
 
 **Steps:**
-- [ ] Write `docs/INSTRUCTIONS.md` covering:
+- [x] Write `docs/INSTRUCTIONS.md` covering:
   - What an instruction card is and why it is credits-free to set up.
   - The three-layer pipeline: project context → generation → movie composition.
   - Full `gflow instructions` command surface with annotated examples.
   - Ephemeral `-i` vs persistent card distinction.
   - `--project` flag semantics for generation commands.
   - Typical agent-driven workflow (numbered steps, machine-readable).
-- [ ] Update `skills/gflow-cli/SKILL.md` — add Pipeline section (with explicit project ID discovery guidance and "DO NOT" rules).
-- [ ] Update `docs/USAGE.md` — add `gflow instructions` command surface entry.
-- [ ] Update `docs/INDEX.md` — register link to `docs/INSTRUCTIONS.md`.
-- [ ] Run `scripts/ci/check_doc_links.py` — all internal links must resolve.
+- [x] Update `skills/gflow-cli/SKILL.md` — add Pipeline section (with explicit project ID discovery guidance and "DO NOT" rules).
+- [x] Update `docs/USAGE.md` — add `gflow instructions` command surface entry.
+- [x] Update `docs/INDEX.md` — register link to `docs/INSTRUCTIONS.md`.
+- [x] Run `scripts/ci/check_doc_links.py` — all internal links must resolve.
 
 **Gate:** Docs reviewed and approved before any Task 7 implementation starts.
 
@@ -217,26 +217,26 @@ gflow instructions toggle-mode [--on/--off] [--project ID] # toggle project-leve
 ```
 
 **Steps:**
-- [ ] Implement `get_agent_info(project_id)` client method returning a typed DTO (`ProjectBrief`).
+- [x] Implement `get_agent_info(project_id)` client method returning a typed DTO (`ProjectBrief`).
   **Read route (spike-confirmed):** there is NO `GET /agentInfo` (404) — mirror
   `list_characters`: fetch `flow.projectInitialData` → `_unwrap_trpc` → extract
   `agentInfo.projectBrief` (`enabled` + `cards[]` with server `id`/title/description/
   enabled/imageReferenceMediaIds). `list`/`enable`/`disable`/`rm` are read-modify-write
   over this; `--ref` classification (image path → REST `upload_image`; UUID; character)
   and upload-to-instruction are all spike-confirmed. See `spike-findings.md` § Task 7.
-- [ ] Implement `gflow instructions add` (upload refs → get media UUIDs → PATCH cards).
-- [ ] Implement `gflow instructions list` with Rich table output and `--json` flag.
-- [ ] Implement `gflow instructions enable` / `disable` (title match, case-insensitive, fail-fast).
-- [ ] Implement `gflow instructions rm` (remove matching card, PATCH remaining).
-- [ ] Implement `gflow instructions apply FILE` (declarative full-replace idempotent sync from TOML/JSON manifest).
-- [ ] Implement `gflow instructions toggle-mode` (programmatic toggle of project-level Agentic mode).
-- [ ] Add `--project proj-id` to `gflow image t2i` / `i2i` / `gflow video` commands.
-- [ ] Gracefully handle classic UI projects in `gflow instructions` — fail-fast with clean HTTP error reporting.
-- [ ] **UI Visual Consistency:** Ensure the driver's `configure_image_settings` clicks the `article_spark` button if the agent sidebar is closed, ensuring the browser Page visually reflects active cards.
-- [ ] Ensure MCP schema symmetry: mirror all subcommands in MCP tool definitions (CI gate).
-- [ ] Create `tests/features/instructions.feature` and verify CLI subcommands via BDD tests.
-- [ ] All new commands covered by unit tests.
-- [ ] Run `/gflow:check` — all gates green.
+- [x] Implement `gflow instructions add` (upload refs → get media UUIDs → PATCH cards).
+- [x] Implement `gflow instructions list` with Rich table output and `--json` flag.
+- [x] Implement `gflow instructions enable` / `disable` (title match, case-insensitive, fail-fast).
+- [x] Implement `gflow instructions rm` (remove matching card, PATCH remaining).
+- [x] Implement `gflow instructions apply FILE` (declarative full-replace idempotent sync from TOML/JSON manifest).
+- [x] Implement `gflow instructions toggle-mode` (programmatic toggle of project-level Agentic mode).
+- [x] Add `--project proj-id` to `gflow image t2i` / `i2i` / `gflow video` commands.
+- [x] Gracefully handle classic UI projects in `gflow instructions` — fail-fast with clean HTTP error reporting.
+- [x] **UI Visual Consistency:** Ensure the driver's `configure_image_settings` clicks the `article_spark` button if the agent sidebar is closed, ensuring the browser Page visually reflects active cards.
+- [x] Ensure MCP schema symmetry: mirror all subcommands in MCP tool definitions (CI gate).
+- [x] Create `tests/features/instructions.feature` and verify CLI subcommands via BDD tests.
+- [x] All new commands covered by unit tests.
+- [x] Run `/gflow:check` — all gates green.
 
 ---
 
@@ -251,7 +251,7 @@ declare its own instruction context declaratively in `movie.toml`.
 - `docs/MOVIE.md` — document the `instructions` blocks in the manifest format.
 
 **Steps:**
-- [ ] Define `movie.toml` schema for global + per-scene instruction blocks:
+- [x] Define `movie.toml` schema for global + per-scene instruction blocks:
   ```toml
   [instructions]
   # Applied to all scenes unless overridden.
@@ -269,10 +269,10 @@ declare its own instruction context declaratively in `movie.toml`.
   title = "Fog Atmosphere"
   text  = "Dense volumetric fog, low contrast"
   ```
-- [ ] Implement manifest parser for the new blocks.
-- [ ] Inject a pre-generation `PATCH agentInfo` call for each scene's instruction diff.
-- [ ] Update `docs/MOVIE.md` with the new schema.
-- [ ] BDD scenario: multi-scene movie with per-scene instruction override.
+- [x] Implement manifest parser for the new blocks.
+- [x] Inject a pre-generation `PATCH agentInfo` call for each scene's instruction diff.
+- [x] Update `docs/MOVIE.md` with the new schema.
+- [x] BDD scenario: multi-scene movie with per-scene instruction override.
 
 ---
 
@@ -285,15 +285,15 @@ generation using the established context.
 - `tests/e2e/test_live_agentic_instructions.py` — full create-patch-generate-teardown lifecycle.
 
 **Steps:**
-- [ ] Write `test_live_agentic_instructions.py`:
+- [x] Write `test_live_agentic_instructions.py`:
   - Create a project.
   - Add two instruction cards (one with a reference image).
   - Enable one, disable the other.
   - Generate one image (`gflow image t2i`).
   - Assert generation succeeds and returns a valid `GeneratedImage`.
   - Teardown: delete cards.
-- [ ] Mark test `@pytest.mark.live` and `@pytest.mark.e2e`.
-- [ ] Document run instructions in `docs/TESTING.md`.
+- [x] Mark test `@pytest.mark.live` and `@pytest.mark.e2e`.
+- [x] Document run instructions in `docs/TESTING.md`.
 
 ---
 
@@ -309,27 +309,27 @@ subcommand, and layered project context model.
   `skills/status/SKILL.md`, `skills/pr-council-review/SKILL.md` — audit each.
 
 **Steps:**
-- [ ] Scan all skills and compare against current codebase: commands, transports, APIs, DTOs.
-- [ ] Identify stale: legacy DOM transport descriptions, missing `gflow instructions`, old REST routes.
-- [ ] Update each skill to correctly describe current components (SQLite ledger, daemon workers,
+- [x] Scan all skills and compare against current codebase: commands, transports, APIs, DTOs.
+- [x] Identify stale: legacy DOM transport descriptions, missing `gflow instructions`, old REST routes.
+- [x] Update each skill to correctly describe current components (SQLite ledger, daemon workers,
   REST API, new `gflow instructions` subcommand, layered pipeline model).
-- [ ] Verify all YAML frontmatter, internal links, and cross-references resolve correctly.
-- [ ] Run `scripts/ci/check_doc_links.py` — merge gate.
+- [x] Verify all YAML frontmatter, internal links, and cross-references resolve correctly.
+- [x] Run `scripts/ci/check_doc_links.py` — merge gate.
 
 ---
 
 ## Definition of done
 
-- [ ] All task steps checked off
-- [ ] `/gflow:check` green (ruff / format / pyright / pytest ≥ 80% coverage)
-- [ ] `CHANGELOG.md` `[Unreleased]` section updated
-- [ ] `docs/INSTRUCTIONS.md` created and registered in `docs/INDEX.md`
-- [ ] `skills/gflow-cli/SKILL.md` Pipeline section present
-- [ ] `docs/USAGE.md` covers `gflow instructions` command surface
-- [ ] `docs/MOVIE.md` documents `[instructions]` manifest blocks
-- [ ] BDD feature files cover all scenarios (including CLI subcommands in `tests/features/instructions.feature`)
-- [ ] MCP schema symmetry test passes (CI gate)
-- [ ] Live spike findings documented in `spike-findings.md`
-- [ ] Documented link check (`scripts/ci/check_doc_links.py`) passes without errors
-- [ ] No `# TODO` in diff without a tracked issue link
+- [x] All task steps checked off
+- [x] `/gflow:check` green (ruff / format / pyright / pytest ≥ 80% coverage)
+- [x] `CHANGELOG.md` `[Unreleased]` section updated
+- [x] `docs/INSTRUCTIONS.md` created and registered in `docs/INDEX.md`
+- [x] `skills/gflow-cli/SKILL.md` Pipeline section present
+- [x] `docs/USAGE.md` covers `gflow instructions` command surface
+- [x] `docs/MOVIE.md` documents `[instructions]` manifest blocks
+- [x] BDD feature files cover all scenarios (including CLI subcommands in `tests/features/instructions.feature`)
+- [x] MCP schema symmetry test passes (CI gate)
+- [x] Live spike findings documented in `spike-findings.md`
+- [x] Documented link check (`scripts/ci/check_doc_links.py`) passes without errors
+- [x] No `# TODO` in diff without a tracked issue link
 

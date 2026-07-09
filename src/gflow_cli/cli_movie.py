@@ -37,7 +37,9 @@ from gflow_cli.api.client import FlowApiClient
 from gflow_cli.api.video import Aspect, GenerateVideoRequest, Mode, VideoModel, VideoStarted
 from gflow_cli.composition import (
     Character,
+    ManifestCard,
     Scene,
+    SceneInstructions,
     StyleSpec,
     build_handoff,
     compose_prompt,
@@ -332,6 +334,62 @@ def _print_plan(manifest: MovieManifest, state: MovieState) -> None:
 # ---------------------------------------------------------------------------
 
 
+async def _sync_scene_instructions(
+    client: FlowApiClient,
+    project_id: str,
+    global_cards: tuple[ManifestCard, ...],
+    scene_inst: SceneInstructions | None,
+) -> None:
+    """Resolve references and sync the combined card set to the project's brief."""
+    # 1. Resolve and construct the combined card set
+    cards_map: dict[str, ManifestCard] = {c.title.lower(): c for c in global_cards}
+
+    if scene_inst is not None:
+        # Disable specified cards
+        for title in scene_inst.disable:
+            key = title.lower()
+            if key in cards_map:
+                cards_map[key] = ManifestCard(
+                    title=cards_map[key].title,
+                    text=cards_map[key].text,
+                    ref=cards_map[key].ref,
+                    enabled=False,
+                )
+        # Add or override new cards
+        for c in scene_inst.card:
+            cards_map[c.title.lower()] = c
+
+    if not cards_map:
+        return
+
+    # Mutating commands are read-modify-write: fetch first to preserve stable card IDs
+    brief = await client.get_agent_info(project_id)
+    server_cards_map = {c.resolved_title().lower(): c for c in brief.cards}
+
+    # 2. For each card in cards_map, convert it to AgentInstruction and resolve its references
+    final_cards: list[Any] = []
+    from gflow_cli.cli_instructions import build_card, classify_refs
+
+    for key, manifest_card in cards_map.items():
+        image_ids, char_ids = await classify_refs(client, project_id, manifest_card.ref)
+
+        server_card = server_cards_map.get(key)
+        card_id = server_card.id if server_card else ""
+
+        card = build_card(
+            title=manifest_card.title,
+            text=manifest_card.text,
+            image_ids=image_ids,
+            char_ids=char_ids,
+            enabled=manifest_card.enabled,
+            card_id=card_id,
+        )
+        final_cards.append(card)
+
+    # 3. Patch the brief (master switch = True, cards = final_cards)
+    await client.patch_agent_info(project_id, enabled=True, cards=tuple(final_cards))
+
+
 async def _run_one_scene(
     *,
     client: FlowApiClient,
@@ -375,6 +433,14 @@ async def _run_one_scene(
         # failure here is handled per-scene and never aborts the run.
         if generated_any:
             await asyncio.sleep(5)
+
+        # Sync instructions for this scene to the project brief
+        await _sync_scene_instructions(
+            client=client,
+            project_id=manifest.project,
+            global_cards=manifest.instructions,
+            scene_inst=scene.instructions,
+        )
 
         video_result = await _generate_scene(
             client=client,
