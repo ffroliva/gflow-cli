@@ -449,7 +449,7 @@ Phase A (T2V library transport) shipped with v0.7.0 via PR #23. PR #36 (2026-05-
 
 ---
 
-### PR-Triage Autopilot — IN PROGRESS
+### PR-Triage Autopilot — COMPLETED
 
 Autonomous hourly code review helper running in a Docker sandbox. Design spec in [2026-07-04-pr-triage-autopilot-design.md](file:///C:/development/github/gflow-cli-pr-triage/docs/superpowers/specs/2026-07-04-pr-triage-autopilot-design.md).
 
@@ -457,7 +457,7 @@ Autonomous hourly code review helper running in a Docker sandbox. Design spec in
 - [x] Task 2: §9 Autonomous mode in `pr-council-review` skill
 - [x] Task 3: Ephemeral Docker sandbox image (`Dockerfile.triage`)
 - [x] Task 4: Main host orchestration script (`pr_triage_autopilot.py`)
-- [ ] Task 5: Operations runbook (`PR_TRIAGE_AUTOPILOT-OPS.md`)
+- [x] Task 5: Operations runbook (`PR_TRIAGE_AUTOPILOT-OPS.md`)
 
 ---
 
