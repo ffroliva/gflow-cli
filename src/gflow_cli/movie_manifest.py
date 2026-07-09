@@ -23,7 +23,9 @@ from gflow_cli.composition import (
     FRAMING,
     Character,
     DialogueLine,
+    ManifestCard,
     Scene,
+    SceneInstructions,
     StyleSpec,
     resume_hash,
 )
@@ -77,6 +79,7 @@ class MovieManifest:
     assemble: AssemblyDef | None = None
     output_dir: str | None = None
     schema_version: int = 1
+    instructions: tuple[ManifestCard, ...] = ()
 
     @classmethod
     def from_toml_path(cls, path: Path) -> MovieManifest:
@@ -104,6 +107,7 @@ class MovieManifest:
         scenes = _parse_scenes(data, characters, style)
         continuity = _parse_continuity(data)
         assemble = _parse_assemble(data)
+        instructions = _parse_global_instructions(data)
 
         return cls(
             title=title,
@@ -115,6 +119,7 @@ class MovieManifest:
             assemble=assemble,
             output_dir=output_dir,
             schema_version=schema_version,
+            instructions=instructions,
         )
 
 
@@ -145,6 +150,87 @@ def _require_int(data: dict[str, object], key: str, default: int = 0) -> int:
     if not isinstance(value, int):
         raise ConfigurationError(f"'{key}' must be an integer.")
     return value
+
+
+def _parse_manifest_card(c: object, idx: int) -> ManifestCard:
+    if not isinstance(c, dict):
+        raise ConfigurationError(f"instructions.card[{idx}] must be a table/object.")
+    c_dict = cast(_TomlObj, c)
+    title = c_dict.get("title")
+    if not isinstance(title, str) or not title.strip():
+        raise ConfigurationError(f"instructions.card[{idx}].title must be a non-empty string.")
+
+    text = c_dict.get("text", "")
+    if not isinstance(text, str):
+        raise ConfigurationError(f"instructions.card[{idx}].text must be a string.")
+
+    enabled = c_dict.get("enabled", True)
+    if not isinstance(enabled, bool):
+        raise ConfigurationError(f"instructions.card[{idx}].enabled must be a boolean.")
+
+    raw_ref = c_dict.get("ref", ())
+    if isinstance(raw_ref, str):
+        ref = (raw_ref,)
+    elif isinstance(raw_ref, list):
+        ref = tuple(str(r) for r in cast(_TomlList, raw_ref))
+    else:
+        ref = ()
+
+    return ManifestCard(
+        title=title.strip(),
+        text=text,
+        ref=ref,
+        enabled=enabled,
+    )
+
+
+def _parse_global_instructions(data: dict[str, object]) -> tuple[ManifestCard, ...]:
+    inst_raw = data.get("instructions")
+    if inst_raw is None:
+        return ()
+    if not isinstance(inst_raw, dict):
+        raise ConfigurationError("'instructions' must be a table/object.")
+
+    inst_dict = cast(_TomlObj, inst_raw)
+    cards_raw = inst_dict.get("card", [])
+    if not isinstance(cards_raw, list):
+        raise ConfigurationError("'instructions.card' must be an array.")
+
+    cards: list[ManifestCard] = []
+    for i, c in enumerate(cast(_TomlList, cards_raw)):
+        cards.append(_parse_manifest_card(c, i))
+    return tuple(cards)
+
+
+def _parse_scene_instructions(inst_raw: object, idx: int) -> SceneInstructions | None:
+    if inst_raw is None:
+        return None
+    if not isinstance(inst_raw, dict):
+        raise ConfigurationError(f"scenes[{idx}].instructions must be a table/object.")
+
+    inst_dict = cast(_TomlObj, inst_raw)
+    disable_raw = inst_dict.get("disable", [])
+    if isinstance(disable_raw, str):
+        disable = (disable_raw,)
+    elif isinstance(disable_raw, list):
+        disable = tuple(str(d) for d in cast(_TomlList, disable_raw))
+    else:
+        raise ConfigurationError(
+            f"scenes[{idx}].instructions.disable must be a list of strings or a string."
+        )
+
+    cards_raw = inst_dict.get("card", [])
+    if not isinstance(cards_raw, list):
+        raise ConfigurationError(f"scenes[{idx}].instructions.card must be an array.")
+
+    cards: list[ManifestCard] = []
+    for i, c in enumerate(cast(_TomlList, cards_raw)):
+        cards.append(_parse_manifest_card(c, i))
+
+    return SceneInstructions(
+        disable=disable,
+        card=tuple(cards),
+    )
 
 
 def _parse_characters(data: dict[str, object]) -> dict[str, Character]:
@@ -490,6 +576,7 @@ def _parse_scene(
         )
 
     style_suffix = _scene_opt_str(d, "style_suffix", idx)
+    instructions = _parse_scene_instructions(d.get("instructions"), idx)
 
     return Scene(
         id=sid.strip(),
@@ -510,6 +597,7 @@ def _parse_scene(
         count=1,
         style_variant=style_variant,
         style_suffix=style_suffix,
+        instructions=instructions,
     )
 
 

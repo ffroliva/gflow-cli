@@ -59,7 +59,7 @@ Or invoke the wrapper: `/gflow:check`.
 - Structured logging only (`structlog`) — **never** raw `print()` or `import logging` in `src/`.
 - Errors as RFC 9457 Problem Details with stable per-class exit codes (3–22, e.g. 16 is the `DataStoreError` family, 19 `SceneConcatError`, 20 `FrameExtractionError`, 21 `ChainPartialError`, 22 `UpscaleUnavailableError`). See `src/gflow_cli/errors.py::EXIT_CODE_MAP` for the complete mapping.
 - 100-char line length, `ruff` configured. Imports sorted by `ruff` (isort rules).
-- **MCP & CLI Schema Symmetry**: Any updates or additions to user-facing CLI command parameters (e.g., `gflow image t2i`, `gflow video`) must be mirrored in the corresponding MCP tool definitions. Never add option/argument fields to Click commands without updating the MCP server implementation. This symmetry is enforced programmatically in CI via `tests/mcp/test_server.py`.
+- **MCP & CLI Schema Symmetry**: Any updates or additions to user-facing CLI command parameters (e.g., `gflow image t2i`, `gflow video`) must be mirrored in the corresponding MCP tool definitions. Never add option/argument fields to Click commands without updating the MCP server implementation. This symmetry is enforced programmatically in CI via `tests/mcp/test_cli_parity.py` (every CLI leaf command needs a mapped MCP tool or an explicit, reasoned exemption) plus the schema checks in `tests/mcp/test_server.py`.
 
 ## PR instructions
 
