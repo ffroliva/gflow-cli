@@ -7,6 +7,24 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+## [0.29.0] — 2026-07-09
+
+### Added
+
+- **Persistent `gflow instructions` command group:** CRUD over project brief cards (add, list, enable, disable, rm, apply, toggle-mode) with title/ID selection, master toggle, and REST upload support for card reference images. Live-verified credit-free end-to-end (see `docs/LIVE_VERIFICATION_v0.29.0.md`).
+- **Declarative full-sync:** `gflow instructions apply FILE` for idempotent sync of instructions from TOML or JSON brief files.
+- **Movie manifest instructions integration:** Global `[instructions]` and per-scene `[scenes.instructions]` blocks in `movie.toml` to dynamically sync project brief cards before generating clips (per-scene re-sync memoized via `_BriefSyncCache`; documented as a destructive full-sync).
+- **`gflow_instructions_*` MCP tools:** six new tools (`list`, `add`, `set_enabled`, `rm`, `toggle_mode`, `apply`) giving MCP agents the full instructions CRUD surface — thin adapters over the same live-verified brief primitives, credits-free, RFC 9457 error envelopes. `gflow_list_tools` and the new tools are now documented in `docs/MCP.md`. Note: `gflow_generate_video` deliberately has no `instructions` param (the video pipeline has no instructions support — documented asymmetry).
+- **MCP↔CLI parity contract enforced in CI:** `tests/mcp/test_cli_parity.py` walks every CLI leaf command and fails when one has neither a mapped MCP tool nor an explicit, reasoned exemption.
+
+### Changed
+
+- **Agentic-indicator selectors consolidated:** the 4 agentic cohort ligature probes are now canonical in `drivers/factory.py` (`AGENTIC_INDICATOR_SELECTORS`, `AGENT_TUNE_INDICATOR_SELECTOR`); both UI transports import them instead of carrying drift-prone copies, locked by a new symmetry test.
+
+### Internal
+
+- **`/gflow:check` and the PR council are now CI-faithful:** the check gate runs the exact CI verify commands (`ruff format --check`), the council pre-flight gained a D0 mechanical CI gate that hard-blocks on a red run, and `check_doc_links.py` joined CI — closing the gap that let a format failure ship past an 8-agent council review.
+
 ## [0.28.0] — 2026-07-08
 
 ### Added
@@ -1869,7 +1887,8 @@ shell-script template that branches on these codes.
 
 First skeleton. Not functional end-to-end yet.
 
-[Unreleased]: https://github.com/ffroliva/gflow-cli/compare/v0.28.0...HEAD
+[Unreleased]: https://github.com/ffroliva/gflow-cli/compare/v0.29.0...HEAD
+[0.29.0]: https://github.com/ffroliva/gflow-cli/compare/v0.28.0...v0.29.0
 [0.28.0]: https://github.com/ffroliva/gflow-cli/compare/v0.27.1...v0.28.0
 [0.27.1]: https://github.com/ffroliva/gflow-cli/compare/v0.27.0...v0.27.1
 [0.27.0]: https://github.com/ffroliva/gflow-cli/compare/v0.26.0...v0.27.0

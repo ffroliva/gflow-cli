@@ -29,6 +29,7 @@ from gflow_cli.api.character import CHARACTER_MODELS, CharacterImageRequest
 from gflow_cli.api.dto import BatchSubmissionResult, GeneratedImage
 from gflow_cli.api.image import Aspect, GenerateImageRequest, Model
 from gflow_cli.api.transports._common import extract_project_id
+from gflow_cli.api.transports.drivers.factory import AGENT_TUNE_INDICATOR_SELECTOR
 from gflow_cli.api.transports.ui_automation_video import (
     COMPOSER_AGENT_TOGGLE_SELECTOR,
     ENTITY_ATTACH_DRIFT_HINT,
@@ -209,8 +210,15 @@ SUBMIT_BUTTON_SELECTORS = (
 # drive the agentic path regardless of the server-assigned A/B cohort (which has
 # no client-readable flag and cannot otherwise be forced).
 AGENT_FORCE_ENV_VAR = "GFLOW_CLI_FORCE_AGENT_UI"
-AGENT_TUNE_INDICATOR_SELECTOR = "i.google-symbols:text-is('tune')"
 AGENT_EXPAND_BUTTON_SELECTOR = "button:has(i.google-symbols:text-is('expand_content'))"
+
+# _force_agent_mode: after clicking the Agent toggle, POLL for the ``tune``
+# indicator instead of a single fixed sleep — the agentic composer renders a
+# beat after the click and a fixed-delay check races that render, so the probe
+# bound classic ~50% of the time and instructions silently no-op'd (#267).
+_AGENT_ACTIVATE_TIMEOUT_S = 6.0
+_AGENT_ACTIVATE_POLL_MS = 300
+_AGENT_FORCE_MAX_CLICKS = 2
 
 # Self-contained, locale-independent triptych instruction for body generation.
 # Live-verified 2026-06-02: produces a consistent front/side/back body image in ONE
@@ -1062,19 +1070,39 @@ class UiAutomationTransport(VideoGenerationMixin):
         except Exception:
             log.warning("ui_automation.agent_toggle_not_found")
             return False
-        await toggle.click(force=True)
-        await page.wait_for_timeout(1200)
-        # Best-effort: open the agent side panel via the expand button.
-        try:
-            expand = page.locator(AGENT_EXPAND_BUTTON_SELECTOR).first
-            if await expand.count() > 0:
-                await expand.click(force=True)
-                await page.wait_for_timeout(800)
-        except Exception as e:
-            log.debug("ui_automation.agent_expand_failed", error=str(e)[:80])
-        activated = await page.locator(AGENT_TUNE_INDICATOR_SELECTOR).count() > 0
-        log.info("ui_automation.agent_mode_forced", activated=activated)
-        return activated
+        # Click the toggle, then POLL for the ``tune`` indicator up to
+        # ``_AGENT_ACTIVATE_TIMEOUT_S`` (the render lags the click); re-click once
+        # if the first attempt doesn't take. Replaces the old single 1.2s wait
+        # that raced the render and bound classic ~50% of the time (#267).
+        for attempt in range(_AGENT_FORCE_MAX_CLICKS):
+            await toggle.click(force=True)
+            if await UiAutomationTransport._wait_selector_present(
+                page, AGENT_TUNE_INDICATOR_SELECTOR, timeout_s=_AGENT_ACTIVATE_TIMEOUT_S
+            ):
+                # Best-effort: open the agent side panel via the expand button.
+                try:
+                    expand = page.locator(AGENT_EXPAND_BUTTON_SELECTOR).first
+                    if await expand.count() > 0:
+                        await expand.click(force=True)
+                        await page.wait_for_timeout(800)
+                except Exception as e:
+                    log.debug("ui_automation.agent_expand_failed", error=str(e)[:80])
+                log.info("ui_automation.agent_mode_forced", activated=True, attempt=attempt)
+                return True
+            log.debug("ui_automation.agent_mode_force_retry", attempt=attempt)
+        log.warning("ui_automation.agent_mode_force_failed")
+        return False
+
+    @staticmethod
+    async def _wait_selector_present(page: Page, selector: str, *, timeout_s: float) -> bool:
+        """Poll until ``selector`` matches ≥1 node, or ``timeout_s`` elapses."""
+        deadline = asyncio.get_event_loop().time() + timeout_s
+        while True:
+            if await page.locator(selector).count() > 0:
+                return True
+            if asyncio.get_event_loop().time() >= deadline:
+                return False
+            await page.wait_for_timeout(_AGENT_ACTIVATE_POLL_MS)
 
     @staticmethod
     async def _switch_to_image_mode(page: Page, *, out_dir: Path | None = None) -> None:
@@ -2071,11 +2099,27 @@ class UiAutomationTransport(VideoGenerationMixin):
         # of the editor before we click into settings / submit (#26).
         await self._dismiss_blocking_overlays(page, out_dir)
 
-        # Opt-in (GFLOW_CLI_FORCE_AGENT_UI): force the agentic composer so the
-        # agentic path can be exercised deterministically (the A/B cohort can't
-        # be forced server-side). The probe below then binds the agentic driver.
-        if os.getenv(AGENT_FORCE_ENV_VAR):
-            await self._force_agent_mode(page)
+        # Force the agentic composer when it's needed or explicitly requested:
+        #  - ``request.instructions`` present → instruction cards are an
+        #    agentic-only surface, so a classic bind would silently drop them
+        #    (#267). Switching the composer to agentic first makes ``-i``
+        #    dependable instead of ~50/50.
+        #  - ``GFLOW_CLI_FORCE_AGENT_UI`` set → opt-in to exercise the agentic
+        #    path deterministically (the A/B cohort can't be forced server-side).
+        # ``_force_agent_mode`` is idempotent (no-op when already agentic) and
+        # polls for the render, so the probe below reliably binds agentic.
+        if os.getenv(AGENT_FORCE_ENV_VAR) or request.instructions:
+            forced = await self._force_agent_mode(page)
+            if not forced and request.instructions:
+                log.warning(
+                    "ui_automation.agent_force_failed_with_instructions",
+                    instruction_count=len(request.instructions),
+                    detail=(
+                        "Could not switch this session to the agentic composer; "
+                        "instruction cards (-i) may not be applied. This account "
+                        "may not offer Agent mode."
+                    ),
+                )
 
         # Probe the DOM for the active UI cohort AFTER _enter_editor so the
         # project page is fully rendered.  The cohort flaps per page load so

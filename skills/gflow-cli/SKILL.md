@@ -86,6 +86,15 @@ gflow character voices                                    # list the Gemini voic
 gflow scene create --project <id> <clip-id> [<clip-id> ...] \
                    [-o extended.mp4]                       # --output = credit-free server-side concat
 gflow scene show <scene-id> --project <id>
+
+# Agent instructions (project brief cards, credits-free setup) — --project is REQUIRED
+gflow instructions add TITLE --text TEXT [--ref REF]... --project ID [--disabled]
+gflow instructions list --project ID [--json]
+gflow instructions enable (TITLE | --id ID) --project ID
+gflow instructions disable (TITLE | --id ID) --project ID
+gflow instructions rm (TITLE | --id ID) --project ID
+gflow instructions apply FILE --project ID                # declarative full-sync (TOML/JSON)
+gflow instructions toggle-mode (--on | --off) --project ID # toggle master agent switch
 ```
 
 Every subcommand accepts `--profile <name>` (per-subcommand, not global) to drive multiple Google accounts side-by-side.
@@ -171,6 +180,16 @@ gflow video chain ./story.jsonl --out-dir ./out/ --dry-run   # preview the plan 
 gflow video chain ./story.jsonl --out-dir ./out/             # then run for real
 ```
 
+### Sync instructions and generate (3-layer pipeline)
+
+```bash
+# 1. Discover project ID from Flow editor URL (.../project/<id>/...) or create one.
+# 2. Set up the brief cards (credits-free setup).
+gflow instructions apply brief.toml --project 6b714c4e-...
+# 3. Generate using that project context (steers via reasoning path).
+gflow image t2i "a bicycle" --project 6b714c4e-...
+```
+
 ### Use as a Python library
 
 ```python
@@ -194,6 +213,19 @@ async def make_clip(image: Path, prompt: str, out: Path) -> None:
 
 asyncio.run(make_clip(Path("in.png"), "Push-in", Path("out.mp4")))
 ```
+
+## Layered Instructions Pipeline
+
+The `gflow-cli` supports a 3-layer pipeline for persistent generation context (Agent Mode brief cards):
+
+1. **Layer 1 (Setup - credits-free):** Set up the project brief cards using `gflow instructions add` or `gflow instructions apply`.
+2. **Layer 2 (Generate):** Run generations targeting that project with `--project <id>`. Enabled brief cards are automatically resolved and folded into the prompt via the agent's reasoning path.
+3. **Layer 3 (Compose):** Scene-level composition overrides via `movie.toml` `[[scene.instructions.card]]` or `[scene.instructions] disable` blocks.
+
+### Constraints & Rules:
+- **Discover Project ID First:** Persistent cards require a real project. Discover the project ID from the Flow browser editor URL (`.../project/<id>/...`) or create one.
+- **DO NOT** use the ephemeral `-i / --instruction` option for anything you want to reuse; it creates a new card every call. Prefer persistent `gflow instructions` cards.
+- **Master Switch:** Ensure agent mode is toggled on (`gflow instructions toggle-mode --on`) for cards to steer output.
 
 ## Common errors and fixes
 

@@ -76,6 +76,7 @@ Reproduce the recording with [`scripts/record_demo.ps1`](scripts/record_demo.ps1
 | 🎯 **Getting started** | [User Guide](docs/USER_GUIDE.md) · [Usage](docs/USAGE.md) · [Configuration](docs/CONFIGURATION.md) |
 | **Storage & catalog** | [External Storage](docs/EXTERNAL_STORAGE.md) · [Data Layer](docs/DATA_LAYER.md) |
 | 🎭 **Characters** | [Characters](docs/CHARACTER.md), reusable subjects (`gflow character`) |
+| 🤖 **Agentic & automation** | [Instructions](docs/INSTRUCTIONS.md) (`gflow instructions`, persistent brief cards) · [Movie](docs/MOVIE.md) (`gflow movie`, multi-scene manifests) · [Tools](docs/TOOLS.md) (`--tool`, prompt rewriting) · [MCP server](docs/MCP.md) (`gflow mcp run` / `gflow serve`) |
 | 🔐 **Auth & sessions** | [Authentication](docs/AUTHENTICATION.md) · [Known issues](KNOWN_ISSUES.md) |
 | 🏗️ **Internals** | [Architecture](docs/ARCHITECTURE.md) · [Security](docs/SECURITY.md) · [Debugging](docs/DEBUGGING.md) |
 | 📦 **Releases** | [Changelog](CHANGELOG.md) · [Roadmap](ROADMAP.md) · [Release protocol](RELEASE.md) · [Project status](docs/PROJECT_STATUS.md) |
@@ -83,7 +84,7 @@ Reproduce the recording with [`scripts/record_demo.ps1`](scripts/record_demo.ps1
 
 ## For AI agents & LLMs
 
-gflow-cli ships three agent entry points. Pick the one your tool reads first.
+gflow-cli ships four agent entry points. Pick the one your tool reads first.
 
 | File | Audience | Tools |
 |---|---|---|
@@ -114,7 +115,7 @@ gflow CLI  →  Provider (interchangeable)  →  Flow (ui_automation) / Mock (te
 
 ## Project status
 
-**Alpha.** Image (t2i, i2i, upload) and video (t2v, i2v, r2v) run end-to-end on `ui_automation`, with a 5-model Veo picker plus `--duration` and `--count`. Recent additions: `gflow character` for reusable subjects, `gflow scene` for credit-free server-side stitching, and `gflow video chain` for linked clips. Video `batch` is still queued for Phase B, so use a shell for-loop until then ([USAGE](docs/USAGE.md#gflow-video-batch)).
+**Alpha.** Image (t2i, i2i, upload, upscale, batch) and video (t2v, i2v, r2v, batch, chain) run end-to-end on `ui_automation`, with a 5-model Veo picker plus `--duration` and `--count`. Beyond single generations: `gflow movie` renders multi-scene manifests, `gflow instructions` manages persistent Agent-Mode brief cards (credits-free), `gflow character` handles reusable subjects, `gflow scene` does credit-free server-side stitching, `--tool` applies prompt-rewriting tools, and an MCP server (`gflow mcp run` stdio / `gflow serve` HTTP-SSE) exposes the core surface to AI agents with a CI-enforced CLI↔MCP parity contract.
 
 Full milestone history lives in [CHANGELOG.md](CHANGELOG.md). Where the project is heading: [ROADMAP.md](ROADMAP.md).
 

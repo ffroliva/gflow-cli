@@ -198,6 +198,33 @@ See [CHARACTER.md](CHARACTER.md) for the underlying entity model and
 [CHARACTER_RECON.md](CHARACTER_RECON.md) for the reverse-engineered wire
 protocol.
 
+## Scene instructions (project brief cards)
+
+You can manage a project's Agent-Mode brief cards per-scene. The movie manifest supports both global and scene-level instructions blocks:
+
+```toml
+[instructions]
+# Applied to all scenes unless overridden.
+[[instructions.card]]
+title = "Cinematic Lighting"
+text  = "Volumetric cinematic light from camera-left"
+ref   = ["./refs/mood.jpg"]
+enabled = true
+
+[[scenes]]
+id = "scene-1"
+action = "hero emerges from fog"
+[scenes.instructions]
+disable = ["Cinematic Lighting"]  # disable a global card for this scene
+[[scenes.instructions.card]]
+title = "Fog Atmosphere"
+text  = "Dense volumetric fog, low contrast"
+```
+
+For each scene, `gflow movie` merges global manifest cards with scene overrides (applying `disable` lists and adding/overriding `card` definitions), fetches the current project brief from the Flow server, uploads any local reference images to generate media UUIDs, preserves existing card IDs to prevent state drift, and `PATCH`es the brief to set the master switch and update cards before generating that scene's clip. See [INSTRUCTIONS.md](INSTRUCTIONS.md) for the project-level instructions surface.
+
+> **The manifest is authoritative — this is a full-sync, like `gflow instructions apply`.** The `PATCH` **replaces** the project's brief with exactly the manifest's card set, so any card added out-of-band in the Flow web UI that is not in `movie.toml` is **removed** when a scene runs. Keep every card you want in the brief under `[instructions]` / `[scenes.instructions]`. Consecutive scenes that resolve to the same card set are synced only once per run (no redundant re-upload / `PATCH`).
+
 ## `movie run` options
 
 | Flag | Default | Effect |
