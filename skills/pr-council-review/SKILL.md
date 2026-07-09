@@ -21,7 +21,7 @@ Treat **YELLOW as soft block** (per memory `[[llm-council-data-layer-fixes]]`).
 
 ## 0 · Pre-flight
 
-**All five checks are mandatory. Any failure halts before Phase 1/2.**
+**All six checks are mandatory. Any failure (except step 6, which records a finding) halts before Phase 1/2.**
 
 1. **`gh` authenticated** — run `gh auth status`. Non-zero exit → stop with: *"`gh` is not authenticated. Run `gh auth login` and re-invoke."*
 2. **Inside the repo** — assert `AGENTS.md` AND `CLAUDE.md` exist in the working directory.
@@ -30,6 +30,21 @@ Treat **YELLOW as soft block** (per memory `[[llm-council-data-layer-fixes]]`).
    - **PR number** → validate with `gh pr view <N> --json number`. If error → stop with the error verbatim.
 4. **Draft check** (PR# mode only) — if `gh pr view <N> --json isDraft` returns `true`, surface a banner citing memory `[[draft-pr-merge-trap]]`: *"PR #N is DRAFT. Reviewing is fine, but do NOT merge a draft (the merge API can close it + delete the head ref). Run `gh pr ready N` first if you intend to merge. Continue review? (yes/no)"*. Ask the user before dispatching.
 5. **Capture PR head ref + SHA (pin the review)** — `head_branch=$(gh pr view <N> --json headRefName --jq '.headRefName')` and `head_sha=$(gh pr view <N> --json headRefOid --jq '.headRefOid')`. **Pin both to a `REVIEWED_SHA` variable** and pass to every dispatched agent so the council's verdict is anchored to one commit. The local working tree is NOT on the PR head; all file reads must go through `git show $REVIEWED_SHA:<path>` (or `git show origin/$head_branch:<path>` if you fetched first). If the author pushes new commits during the review, the council still reports against `REVIEWED_SHA`; the synthesizer notes any divergence in Phase 5 step 5.
+6. **Mechanical CI gate (D0 — non-LLM, runs BEFORE dispatch).** The LLM dimensions reason about the diff; none of them run the repo's actual lint/format/link gates, so a whole-tree failure sails past the council (this happened on PR #269 — a latent `ruff format` failure in a file the diff only *touched* went green through 8 agents, then reddened CI and dragged SonarCloud `new_coverage` to 0). Run the **exact CI gate commands** (`.github/workflows/ci.yml` → Lint / Format check / Documentation links / Repo hygiene) against the reviewed tree:
+   ```bash
+   # Prefer running at REVIEWED_SHA. If HEAD is already there (reviewing your own
+   # just-pushed PR, or branch-review mode), run in place:
+   if [ "$(git rev-parse HEAD)" = "$REVIEWED_SHA" ]; then dir=.; else \
+     dir=$(mktemp -d); git worktree add --detach "$dir" "$REVIEWED_SHA"; fi
+   ( cd "$dir" && uv run ruff check src tests \
+       && uv run ruff format --check src tests \
+       && uv run python scripts/ci/check_doc_links.py \
+       && uv run python scripts/ci/check_repo_hygiene.py )
+   # if a worktree was created: git worktree remove --force "$dir" (Windows: prune later if locked)
+   ```
+   - **Any non-zero → record a `D0 — CI-mechanical` RED.** This is a hard blocker regardless of the LLM dimensions' verdicts; surface the failing command + output verbatim in the report and do NOT call the PR merge-ready. (Mirrors the SonarCloud-gate rule in the wrapper: the council must not bless a tree CI will reject.)
+   - If running the gate is impractical (no `uv`, worktree add fails), fall back to `gh pr checks <N>` and inspect the `test` job's Lint/Format steps; if they are **pending or failing**, flag D0 as `UNVERIFIED — must be confirmed green before merge`, never as GREEN.
+   - Unlike steps 1–5, a D0 failure does **not** halt — dispatch the LLM council anyway so its findings are gathered in one pass, then fold D0 into the Phase 5 verdict.
 
 ---
 
@@ -174,6 +189,15 @@ If you are NOT sure a finding is real because it depends on file content, VERIFY
 
 ### Dimension → mandatory memory slugs table
 
+> **⚠️ Slug names are conceptual anchors, not filenames.** The auto-memory store uses
+> descriptive filenames (`feedback_*.md`, `project_*.md`, `reference_*.md`, plus
+> `MEMORY.md`), **not** files named after these `[[kebab-slug]]`s. To consult a slug:
+> read `MEMORY.md` and open the file whose topic matches (e.g. `[[rest-transports-drop-ui-fields]]`
+> → whichever `project_*`/`feedback_*` entry covers transport field-drop). **If no memory
+> entry matches a referenced slug, state that explicitly in your report and move on — do
+> NOT fabricate its contents.** (Backlog: reconcile this table with the real filenames, or
+> alias memory files to their slugs, so citations resolve directly.)
+
 | Dim | Mandatory memory slugs |
 |---|---|
 | D1 | `[[pr-must-verify-on-affected-surface]]` |
@@ -222,9 +246,10 @@ If you are NOT sure a finding is real because it depends on file content, VERIFY
 1. **Tally verdicts** per dimension.
 2. **Handle missing agents:** any dimension that failed → mark `UNKNOWN`, downgrade consensus by one step (GREEN→YELLOW, YELLOW→YELLOW, RED→RED). Never wait indefinitely.
 3. **Consensus rule:**
+   - **`D0` (mechanical CI gate, Pre-flight step 6) RED or UNVERIFIED → the overall verdict cannot be GREEN.** A D0 RED forces **RED** even if every LLM dimension is GREEN — CI will reject the tree. A D0 UNVERIFIED caps the verdict at **YELLOW** with an explicit "confirm CI green before merge" action.
    - Any RED → **RED** (block merge).
    - Any YELLOW → **YELLOW** (soft block per `[[llm-council-data-layer-fixes]]`).
-   - All GREEN → **GREEN** (mergeable).
+   - All GREEN (including D0) → **GREEN** (mergeable).
 4. **Deduplicate must-fix AND confirmed-good** — same finding from two dimensions = list once + credit both.
 5. **False-positive filter + SHA divergence check (NEW v2, refined v2.1):**
    - **Spot-check 2-3 file-state claims** via `git show <REVIEWED_SHA>:<path>` (NOT `git show origin/<head>:<path>` — the remote may have moved since dispatch). If any agent claim contradicts `<REVIEWED_SHA>`, mark it FALSE POSITIVE in the report — do not silently drop, so accuracy is auditable.
