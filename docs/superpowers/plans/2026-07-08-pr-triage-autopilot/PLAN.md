@@ -62,20 +62,20 @@ PLAN.md
 - `eval/pr_triage_eval.py` — Run gate logic over fixtures
 
 **Steps:**
-- [ ] Define the `should_review(pr: dict) -> ShouldReviewResult` logic:
+- [x] Define the `should_review(pr: dict) -> ShouldReviewResult` logic:
   - Exclude author `ffroliva`, bot authors, and draft PRs.
   - Detect PRs incorrectly targeting `main` base branch (route to `NEEDS-HUMAN` to post an automated request asking contributor to retarget to `develop` rather than silently skipping).
   - Exclude diff sizes $> 30$ files or $> 1500$ additions+deletions.
   - Scan title, body, and comments for regex-based injection patterns (e.g., "ignore previous instructions").
-- [ ] Record 10+ fixtures in `eval/pr_triage_fixtures.json` covering:
+- [x] Record 10+ fixtures in `eval/pr_triage_fixtures.json` covering:
   - Valid PRs (`PROCEED`)
   - Drafts, owner, bots, and merged/closed PRs (`SKIP`)
   - Oversized diffs (`DEFERRED_SIZE`)
   - Injection matches (`NEEDS-HUMAN`)
-- [ ] Implement `eval/pr_triage_eval.py` asserting a 100% verdict match rate over the fixtures.
+- [x] Implement `eval/pr_triage_eval.py` asserting a 100% verdict match rate over the fixtures.
 
 **Tests created (red):**
-- [ ] Run `python eval/pr_triage_eval.py` and verify all fixtures pass.
+- [x] Run `python eval/pr_triage_eval.py` and verify all fixtures pass.
 
 ---
 
