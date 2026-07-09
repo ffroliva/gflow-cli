@@ -252,3 +252,51 @@ def test_signed_url_stripped_from_media_metadata(tmp_path: Path) -> None:
         # The safe field should still be present
         meta = json.loads(meta_str)
         assert meta.get("media_metadata", {}).get("display_name") == "character.png"
+
+
+# ---------------------------------------------------------------------------
+# Regression — duplicate flow_media_id across slots (agentic slot-add fallback)
+# ---------------------------------------------------------------------------
+
+
+def test_record_character_completed_duplicate_media_id_is_idempotent(tmp_path: Path) -> None:
+    """Two slots sharing one flow_media_id must not crash the recorder.
+
+    Under the agentic cohort the classic character-editor slot-add control is
+    absent, so the body prompt is submitted to the still-active face slot and
+    both slots report the SAME ``flow_media_id``.  ``_record_character_local_files``
+    minted a fresh ``id`` per slot, so the second slot violated
+    ``UNIQUE(profile_name, flow_media_id)`` -> ``DataIntegrityError``.  The recorder
+    must reuse the existing asset id (mirroring ``record_completed_video``).
+    See spike 2026-07-09.
+    """
+    with DataStore.open(tmp_path / "gflow.db") as store:
+        recorder = OperationRecorder(DataRepository(store), prompt_mode="store")
+
+        row_id = recorder.record_character_started(
+            profile_name="default",
+            profile_dir=tmp_path / "profile_default",
+            project_id="flow-project-dup",
+            entity_id="entity-dup-1",
+            name="Dup Character",
+        )
+
+        face = tmp_path / "face.png"
+        face.write_bytes(b"\x89PNG\r\n\x1a\nface-bytes")
+        body = tmp_path / "body.png"
+        body.write_bytes(b"\x89PNG\r\n\x1a\nbody-bytes")
+
+        # Both slots carry the SAME media id (the agentic fallback bug).
+        recorder.record_character_completed(
+            row_id=row_id,
+            workflow_ids=["wf-dup", "wf-dup"],
+            primary_media_ids=["dup-media", "dup-media"],
+            image_paths=[str(face), str(body)],
+        )
+
+        # Must not raise; exactly ONE asset row for the duplicated media id.
+        n = store.conn.execute(
+            "SELECT COUNT(*) AS n FROM assets WHERE profile_name = ? AND flow_media_id = ?",
+            ("default", "dup-media"),
+        ).fetchone()["n"]
+        assert n == 1, "duplicate flow_media_id must upsert to a single asset row"
