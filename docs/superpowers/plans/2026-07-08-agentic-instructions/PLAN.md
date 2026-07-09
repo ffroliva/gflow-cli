@@ -218,6 +218,12 @@ gflow instructions toggle-mode [--on/--off] [--project ID] # toggle project-leve
 
 **Steps:**
 - [ ] Implement `get_agent_info(project_id)` client method returning a typed DTO (`ProjectBrief`).
+  **Read route (spike-confirmed):** there is NO `GET /agentInfo` (404) — mirror
+  `list_characters`: fetch `flow.projectInitialData` → `_unwrap_trpc` → extract
+  `agentInfo.projectBrief` (`enabled` + `cards[]` with server `id`/title/description/
+  enabled/imageReferenceMediaIds). `list`/`enable`/`disable`/`rm` are read-modify-write
+  over this; `--ref` classification (image path → REST `upload_image`; UUID; character)
+  and upload-to-instruction are all spike-confirmed. See `spike-findings.md` § Task 7.
 - [ ] Implement `gflow instructions add` (upload refs → get media UUIDs → PATCH cards).
 - [ ] Implement `gflow instructions list` with Rich table output and `--json` flag.
 - [ ] Implement `gflow instructions enable` / `disable` (title match, case-insensitive, fail-fast).
