@@ -148,17 +148,17 @@ PLAN.md
 - `deploy/PR-TRIAGE-AUTOPILOT-OPS.md` — Deployment runbook
 
 **Steps:**
-- [ ] Document the VPS installation, environment variables (`TELEGRAM_USER_ID`, `GH_COMMENT_TOKEN`), and symlink setups.
-- [ ] Detail log locations, status checking (`hermes cron list`), and the kill-switch procedure (pausing cron / pausing docker daemon).
-- [ ] Record the golden-task baselines setup.
+- [x] Document the VPS installation, environment variables (`TELEGRAM_USER_ID`, `GH_COMMENT_TOKEN`), and symlink setups.
+- [x] Detail log locations, status checking (`hermes cron list`), and the kill-switch procedure (pausing cron / pausing docker daemon).
+- [x] Record the golden-task baselines setup.
 
 ---
 
 ## Definition of done
 
-- [ ] All task steps checked off
-- [ ] `/gflow:check` green in the worktree
-- [ ] Pure-function fixture test (`pr_triage_eval.py`) passes 100%
-- [ ] Dry-run mode verified against actual open PRs without making live comments
-- [ ] `CHANGELOG.md` updated
-- [ ] Plan written to `docs/superpowers/plans/2026-07-08-pr-triage-autopilot/PLAN.md`
+- [x] All task steps checked off
+- [x] `/gflow:check` green in the worktree
+- [x] Pure-function fixture test (`pr_triage_eval.py`) passes 100%
+- [x] Dry-run mode verified against actual open PRs without making live comments
+- [x] `CHANGELOG.md` updated
+- [x] Plan written to `docs/superpowers/plans/2026-07-08-pr-triage-autopilot/PLAN.md`
