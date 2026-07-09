@@ -10,7 +10,7 @@ import pytest
 from click.testing import CliRunner
 
 from gflow_cli.cli import main as cli_main
-from gflow_cli.composition import Character, Scene, StyleSpec
+from gflow_cli.composition import Character, ManifestCard, Scene, SceneInstructions, StyleSpec
 from gflow_cli.movie_manifest import (
     CharacterState,
     MovieManifest,
@@ -922,3 +922,66 @@ class TestFormatSceneLine:
         line2 = _format_scene_line(s2, StyleSpec(), done=False, stale=False, cost=2)
         assert "\\[r2v]" in line2
         assert "refs=\\[Hero]" in line2
+
+
+class TestMovieInstructionsSync:
+    @pytest.mark.asyncio
+    async def test_sync_scene_instructions(self) -> None:
+        from gflow_cli.api.image import AgentInstruction, ProjectBrief
+        from gflow_cli.cli_movie import _sync_scene_instructions
+
+        # Mock client
+        client = AsyncMock()
+        existing_card = AgentInstruction(
+            id="card-1",
+            title="Crayon style",
+            text="drawings",
+            enabled=True,
+        )
+        client.get_agent_info = AsyncMock(
+            return_value=ProjectBrief(
+                enabled=True,
+                cards=(existing_card,),
+                agent_toggle_state=None,
+            )
+        )
+        client.patch_agent_info = AsyncMock()
+
+        # Input manifest instructions
+        global_cards = (
+            ManifestCard(title="Crayon style", text="drawings", ref=(), enabled=True),
+            ManifestCard(title="Retro look", text="seventies style", enabled=True),
+        )
+        scene_inst = SceneInstructions(
+            disable=("Crayon style",), card=(ManifestCard(title="Atmosphere", text="heavy fog"),)
+        )
+
+        with patch(
+            "gflow_cli.cli_instructions.classify_refs", new=AsyncMock(return_value=((), ()))
+        ):
+            await _sync_scene_instructions(
+                client=client,
+                project_id="proj-abc",
+                global_cards=global_cards,
+                scene_inst=scene_inst,
+            )
+
+        client.get_agent_info.assert_awaited_once_with("proj-abc")
+        client.patch_agent_info.assert_awaited_once()
+        args, kwargs = client.patch_agent_info.call_args
+        assert kwargs["enabled"] is True
+        cards = kwargs["cards"]
+        assert len(cards) == 3
+        # Crayon style should be disabled, retro enabled, atmosphere added
+        # Ensure card-1 ID is preserved for Crayon style
+        assert cards[0].title == "Crayon style"
+        assert cards[0].enabled is False
+        assert cards[0].id == "card-1"
+
+        assert cards[1].title == "Retro look"
+        assert cards[1].enabled is True
+        assert cards[1].id == ""
+
+        assert cards[2].title == "Atmosphere"
+        assert cards[2].enabled is True
+        assert cards[2].id == ""

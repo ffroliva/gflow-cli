@@ -198,12 +198,30 @@ See [CHARACTER.md](CHARACTER.md) for the underlying entity model and
 [CHARACTER_RECON.md](CHARACTER_RECON.md) for the reverse-engineered wire
 protocol.
 
-## Per-scene agent instructions _(planned)_
+## Scene instructions (project brief cards)
 
-A future release will let each scene declare its own Agent-Instruction cards
-(`[[…instructions.card]]` blocks in `movie.toml`) so the agent's brief — style
-guidelines and image/character references — can vary per scene. Until then, see
-[INSTRUCTIONS.md](INSTRUCTIONS.md) for the project-level instructions surface.
+You can manage a project's Agent-Mode brief cards per-scene. The movie manifest supports both global and scene-level instructions blocks:
+
+```toml
+[instructions]
+# Applied to all scenes unless overridden.
+[[instructions.card]]
+title = "Cinematic Lighting"
+text  = "Volumetric cinematic light from camera-left"
+ref   = ["./refs/mood.jpg"]
+enabled = true
+
+[[scenes]]
+id = "scene-1"
+action = "hero emerges from fog"
+[scenes.instructions]
+disable = ["Cinematic Lighting"]  # disable a global card for this scene
+[[scenes.instructions.card]]
+title = "Fog Atmosphere"
+text  = "Dense volumetric fog, low contrast"
+```
+
+For each scene, `gflow movie` merges global manifest cards with scene overrides (applying `disable` lists and adding/overriding `card` definitions), fetches the current project brief from the Flow server, uploads any local reference images to generate media UUIDs, preserves existing card IDs to prevent state drift, and `PATCH`es the brief to set the master switch and update cards before generating that scene's clip. See [INSTRUCTIONS.md](INSTRUCTIONS.md) for the project-level instructions surface.
 
 ## `movie run` options
 

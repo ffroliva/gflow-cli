@@ -105,6 +105,24 @@ class DialogueLine:
 
 
 @dataclass(frozen=True)
+class ManifestCard:
+    """A card entry in the movie.toml instructions block."""
+
+    title: str
+    text: str = ""
+    ref: tuple[str, ...] = ()
+    enabled: bool = True
+
+
+@dataclass(frozen=True)
+class SceneInstructions:
+    """Instructions override for a single scene."""
+
+    disable: tuple[str, ...] = ()
+    card: tuple[ManifestCard, ...] = ()
+
+
+@dataclass(frozen=True)
 class Scene:
     """One scene = one clip = one generation."""
 
@@ -126,6 +144,7 @@ class Scene:
     count: int = 1
     style_variant: str | None = None
     style_suffix: str | None = None
+    instructions: SceneInstructions | None = None
 
 
 def _sentence(text: str) -> str:
