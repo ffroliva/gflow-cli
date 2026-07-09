@@ -56,15 +56,17 @@ gflow image t2i "a cat on a chair" -i "flat 2D children's crayon drawing"
 
 ## `gflow instructions` command surface _(planned)_
 
-Persistent CRUD over a project's brief cards. Card **selection** is always by
-**title** — never a card UUID.
+Persistent CRUD over a project's brief cards. Cards are selected by **title**
+(case-insensitive, fail-fast on ambiguity) — the ergonomic default — or by the
+stable server **`--id`** for the ambiguous-title / scripting case (`list --json`
+surfaces ids). Mirrors `gflow character` (select by `--name` or `--entity-id`).
 
 ```bash
 gflow instructions add   TITLE --text TEXT [--ref REF]... [--project ID] [--disabled]
 gflow instructions list  [--project ID] [--json]
-gflow instructions enable  TITLE [--project ID]
-gflow instructions disable TITLE [--project ID]
-gflow instructions rm      TITLE [--project ID]
+gflow instructions enable  (TITLE | --id ID) [--project ID]
+gflow instructions disable (TITLE | --id ID) [--project ID]
+gflow instructions rm      (TITLE | --id ID) [--project ID]
 gflow instructions apply   FILE  [--project ID]   # declarative full-sync (TOML/JSON)
 gflow instructions toggle-mode [--on/--off] [--project ID]
 ```
@@ -125,6 +127,24 @@ text    = "Keep the hero on-model"
 ref     = ["hero-character"]
 ```
 
+## Design notes (state, ids, persistence)
+
+- **The server is the source of truth.** The brief lives in the project's
+  `agentInfo` (read via `flow.projectInitialData`, written via `PATCH agentInfo`).
+  The web UI can edit cards out-of-band, so every `list`/`enable`/`disable`/`rm`
+  reads the cards **live** — gflow never caches card state locally (a cache would
+  silently drift).
+- **Card ids are stable and preserved.** Each card carries a server `id`. Mutating
+  commands are **read-modify-write** — read the current cards, change one, PATCH the
+  set back **keeping every card's existing id** (so `--id` stays valid and
+  `enable`/`disable`/`rm` edit *the same* card rather than replacing it).
+- **The local database records provenance, not state.** When a generation runs with
+  instructions active, the operation record notes which cards/refs were used (like
+  it already records prompt, refs, and `--tool`) — for history/repro only. It is
+  never read to drive `gflow instructions`.
+- **Declarative intent lives in the file.** For `apply brief.toml`, the
+  version-controlled TOML is the durable copy — not the database.
+
 ## Typical agent-driven workflow (machine-readable)
 
 1. Discover/choose a project id (`gflow instructions list` needs `--project`; find
@@ -135,7 +155,8 @@ ref     = ["hero-character"]
 5. (planned) `movie.toml` per-scene overrides for multi-scene consistency.
 
 **DO NOT** rely on `-i` for anything you want to reuse — it's per-generation.
-**DO NOT** pass card UUIDs — select cards by title.
+**PREFER** title selection; fall back to `--id` (from `list --json`) only when a
+title is ambiguous.
 **DO** set up the brief before generating; cards only apply on agentic sessions.
 
 ## See also
