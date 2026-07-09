@@ -7,6 +7,17 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+## [0.30.0] — 2026-07-09
+
+### Added
+
+- **MCP `gflow_generate_video` model/duration/count parameters (CLI↔MCP parity):** agents can now select the Veo model (`veo_lite`/`veo_fast`/`veo_quality`/`omni_flash`, aliases accepted), clip duration, and batch count through MCP, matching the CLI `gflow video` flags. An unknown model is rejected up front with a 400 instead of failing deep in the worker; an omitted model still lets the transport apply its i2v veo-lite default (issue #125). Co-authored-by C1ph3r404 (from the closed PR #258). Note: the pre-existing transport-level i2v veo-lite default already protected the MCP path, so this is parity + agent control, not a new credit guard.
+
+### Fixed
+
+- **Character-create recorder no longer crashes on a duplicated `flow_media_id`.** Under the agentic cohort the classic character-editor slot-add control is absent, so the body prompt lands in the still-active face slot and both slots report the same `flow_media_id`; `_record_character_local_files` minted a fresh asset `id` per slot and the second slot violated `UNIQUE(profile_name, flow_media_id)` → `DataIntegrityError`. The recorder now reuses the existing asset id (mirroring `record_completed_video`), making character local-file recording idempotent on the business key. Regression test in `tests/data/test_recorder_character.py`.
+- **`prefer_classic` no longer logs a misleading `WARNING` on the agentic cohort.** The server-gated agentic (`tune`) cohort cannot be exited client-side, and `prefer_classic` is best-effort by contract, so `get_ui_driver` now logs that expected fall-through at `INFO` (`ui_driver.prefer_classic.cohort_natively_agentic`) and reserves `WARNING` for genuinely unexpected exit failures.
+
 ## [0.29.0] — 2026-07-09
 
 ### Added
@@ -1887,7 +1898,8 @@ shell-script template that branches on these codes.
 
 First skeleton. Not functional end-to-end yet.
 
-[Unreleased]: https://github.com/ffroliva/gflow-cli/compare/v0.29.0...HEAD
+[Unreleased]: https://github.com/ffroliva/gflow-cli/compare/v0.30.0...HEAD
+[0.30.0]: https://github.com/ffroliva/gflow-cli/compare/v0.29.0...v0.30.0
 [0.29.0]: https://github.com/ffroliva/gflow-cli/compare/v0.28.0...v0.29.0
 [0.28.0]: https://github.com/ffroliva/gflow-cli/compare/v0.27.1...v0.28.0
 [0.27.1]: https://github.com/ffroliva/gflow-cli/compare/v0.27.0...v0.27.1
