@@ -4,9 +4,25 @@
 
 ## Current release
 
+**v0.29.0 — alpha.** **Persistent `gflow instructions` CRUD + movie-manifest instructions + `gflow_instructions_*` MCP parity tools (#192).** CRUD over a project's Agent-Mode brief cards (add/list/enable/disable/rm/apply/toggle-mode, title/ID selection, `--ref` image-UUID attach), declarative TOML/JSON full-sync, `movie.toml` `[instructions]` / `[scene.instructions]` brief-sync, six MCP instructions tools, and a CI-enforced MCP↔CLI parity contract (`tests/mcp/test_cli_parity.py`). Also consolidates the agentic-indicator selectors onto `drivers/factory.py` and makes `/gflow:check` + the PR council CI-faithful (D0 gate). Verification: [LIVE_VERIFICATION_v0.29.0](LIVE_VERIFICATION_v0.29.0.md) (credit-free live e2e, 11-command CRUD ledger).
+
+**Develop (unreleased, post-v0.29.0):** *(empty — develop is the staging branch for the next release).*
+
+<details><summary>v0.28.0 — agent instructions (-i) steer agentic generation</summary>
+
+**v0.28.0 — alpha.** **Agent instructions (`-i` / `--instruction`) now actually steer agentic
+image generation (PR #263).** Instruction cards sync to the project's Agent brief via
+`PATCH …/agentInfo` and the agent folds every enabled card into generation. Root causes fixed:
+conversational (not imperative) composer directive + the `project_brief.enabled` master switch.
+Verification: [LIVE_VERIFICATION_v0.28.0](LIVE_VERIFICATION_v0.28.0.md) (crayon e2e GREEN).
+
+</details>
+
+<details><summary>v0.27.1 — v0.27.0 follow-up fixes + documentation sync</summary>
+
 **v0.27.1 — alpha.** **v0.27.0 release follow-up fixes and documentation sync (#239).** Patch release wiring package version dynamically to `build_handoff()` and `FastMCP` server, escaping brackets in Rich console planning output, updating MCP agent guide, and adding `gflow movie` usage documentation. Verification: [LIVE_VERIFICATION_v0.27.1](LIVE_VERIFICATION_v0.27.1.md) (credit-free baseline verification).
 
-**Develop (unreleased, post-v0.27.1):** *(empty — develop is the staging branch for the next release).*
+</details>
 
 <details><summary>v0.27.0 — Global [style] block with named variants + prompt-aware resume for gflow movie</summary>
 
@@ -146,6 +162,8 @@ reporter-verified e2e on macOS).
 | `video i2v` from a generated image's UUID (#237) + home-`.env` matrix (#240) + silent-failure guards | ✅ done (v0.25.0) |
 | `image i2i` references a generated image by UUID — select in place, no duplicate upload + `display_name` capture | ✅ done (v0.26.0) |
 | `movie.toml` `[style]` block with named variants + prompt-aware resume (`style_hash`) (#239) | ✅ done (v0.27.0) |
+| Agent instructions (`-i`/`--instruction`) steer agentic generation — conversational directive + brief master switch (PR #263) | ✅ done (v0.28.0) |
+| Persistent `gflow instructions` CRUD + `movie.toml` instructions brief-sync + `gflow_instructions_*` MCP tools + CI-enforced MCP↔CLI parity (#192) | ✅ done (v0.29.0) |
 | `gflow video batch` (TSV manifest) on `ui_automation` | ⏳ Phase B |
 | Persistence layer (stay-mounted batch sessions across project boundaries) | ⏳ Phase B |
 | Provider abstraction for official Veo 3.1 API | ⏳ planned |

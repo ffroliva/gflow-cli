@@ -2,8 +2,9 @@
 
 > **Status.** The ephemeral `-i / --instruction` flag on `gflow image t2i` / `i2i`
 > shipped in **v0.28.0** (live-verified). The persistent `gflow instructions`
-> command group and the `movie.toml` instructions blocks described here shipped in
-> the current release — this doc now doubles as their spec and reference.
+> command group, the `movie.toml` instructions blocks, and the matching
+> `gflow_instructions_*` MCP tools described here shipped in **v0.29.0**
+> (live-verified, credit-free) — this doc now doubles as their spec and reference.
 
 ## What an instruction card is
 
@@ -44,7 +45,7 @@ brief is what makes generations consistent across a project.
 | | `-i "text"` | `gflow instructions` |
 |---|---|---|
 | Scope | one generation | persists on the project brief |
-| Creates | a fresh enabled text-only card each call | managed cards you can toggle/edit/remove |
+| Creates | a fresh enabled text-only card each call | managed cards you can toggle/remove/re-sync |
 | References | text only | image **or** character references |
 | Lookup | never — always creates | by **title** (case-insensitive, fail-fast on ambiguity) |
 
@@ -162,5 +163,7 @@ title is ambiguous.
 
 - [USAGE.md](USAGE.md) — full command reference.
 - [MOVIE.md](MOVIE.md) — multi-scene movies (`[[…instructions.card]]` blocks).
-- `docs/superpowers/plans/2026-07-08-agentic-instructions/` — plan + spike findings
-  (mechanism, H4 confirmation, the reference-consolidation decision).
+- [MCP.md](MCP.md) — the six `gflow_instructions_*` MCP tools mirroring this command group.
+- [LIVE_VERIFICATION_v0.29.0.md](LIVE_VERIFICATION_v0.29.0.md) — live e2e evidence for the
+  CRUD surface (mechanism, H4 image-reference confirmation). The original plan + spike
+  findings were consolidated and removed when the feature shipped (v0.29.0 release prep).
