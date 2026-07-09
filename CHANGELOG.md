@@ -7,6 +7,12 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+### Added
+
+- **Persistent `gflow instructions` command group:** CRUD over project brief cards (add, list, enable, disable, rm, apply, toggle-mode) with title/ID selection, master toggle, and REST upload support for card reference images.
+- **Declarative full-sync:** `gflow instructions apply FILE` for idempotent sync of instructions from TOML or JSON brief files.
+- **Movie manifest instructions integration:** Global `[instructions]` and per-scene `[scene.instructions]` blocks in `movie.toml` to dynamically sync project brief cards before generating clips.
+
 ## [0.28.0] — 2026-07-08
 
 ### Added

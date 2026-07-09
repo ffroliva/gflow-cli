@@ -18,6 +18,7 @@ from gflow_cli import auth as auth_mod
 from gflow_cli.cli_character import character as _character_group
 from gflow_cli.cli_data import data as _data_group
 from gflow_cli.cli_image import image as _image_group
+from gflow_cli.cli_instructions import instructions as _instructions_group
 from gflow_cli.cli_models import models as _models_command
 from gflow_cli.cli_movie import movie as _movie_group
 from gflow_cli.cli_run import run as _run_command
@@ -364,6 +365,7 @@ main.add_command(_data_group)
 main.add_command(_movie_group)
 main.add_command(_video_group)
 main.add_command(_image_group)
+main.add_command(_instructions_group)
 main.add_command(_run_command)
 main.add_command(_models_command)
 main.add_command(_scene_group)

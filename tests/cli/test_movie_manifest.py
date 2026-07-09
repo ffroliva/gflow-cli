@@ -191,6 +191,52 @@ duration = 8
         c = MovieManifest.from_toml_path(path).characters["X"]
         assert c.model == "nano2"
 
+    def test_instructions_parsing(self, tmp_path: Path) -> None:
+        path = _write_toml(
+            tmp_path,
+            """
+title = "Instructions Film"
+project = "proj-123"
+
+[instructions]
+[[instructions.card]]
+title = "Crayon drawing"
+text = "crayon style look"
+ref = "./crayon.png"
+enabled = true
+
+[[instructions.card]]
+title = "Retro look"
+text = "seventies polaroid"
+enabled = false
+
+[[scenes]]
+id = "s1"
+action = "walks"
+[scenes.instructions]
+disable = ["Crayon drawing"]
+[[scenes.instructions.card]]
+title = "Atmosphere"
+text = "dense fog"
+ref = ["./fog.png"]
+""",
+        )
+        m = MovieManifest.from_toml_path(path)
+        assert len(m.instructions) == 2
+        assert m.instructions[0].title == "Crayon drawing"
+        assert m.instructions[0].text == "crayon style look"
+        assert m.instructions[0].ref == ("./crayon.png",)
+        assert m.instructions[0].enabled is True
+        assert m.instructions[1].title == "Retro look"
+        assert m.instructions[1].enabled is False
+
+        s = m.scenes[0]
+        assert s.instructions is not None
+        assert s.instructions.disable == ("Crayon drawing",)
+        assert len(s.instructions.card) == 1
+        assert s.instructions.card[0].title == "Atmosphere"
+        assert s.instructions.card[0].ref == ("./fog.png",)
+
     def test_entity_identity_with_face_prompt(self, tmp_path: Path) -> None:
         path = _write_toml(
             tmp_path,

@@ -22,6 +22,7 @@ from gflow_cli.api.image import (
     GenerateImageRequest,
     ImageRef,
     Model,
+    ProjectBrief,
     _build_batch_generate_images_body,
     build_agent_brief_cards,
     reference_cap_for,
@@ -415,3 +416,167 @@ def test_build_agent_brief_cards_serializes_all_fields() -> None:
     assert "imageReferenceMediaIds" not in cards[1]
     assert "characterReferenceEntityNames" not in cards[1]
     assert cards[1]["title"] == "noir"
+
+
+# ---------------------------------------------------------------------------
+# AgentInstruction.from_wire / id preservation / relaxed validation
+# ---------------------------------------------------------------------------
+
+
+def test_agent_instruction_from_wire_parses_server_card() -> None:
+    inst = AgentInstruction.from_wire(
+        {
+            "id": "srv-id-1",
+            "title": "Style",
+            "description": "crayon",
+            "enabled": True,
+            "imageReferenceMediaIds": ["m1", "m2"],
+            "characterReferenceEntityNames": ["projects/p9/entities/char-7"],
+        }
+    )
+    assert inst.id == "srv-id-1"
+    assert inst.title == "Style"
+    assert inst.text == "crayon"
+    assert inst.enabled is True
+    assert inst.image_media_ids == ("m1", "m2")
+    assert inst.character_ids == ("char-7",)  # resource name stripped to bare id
+
+
+def test_agent_instruction_image_only_card_is_valid() -> None:
+    # A reference with no text is a valid card (the reference IS the instruction).
+    inst = AgentInstruction(text="", image_media_ids=("m1",))
+    assert inst.image_media_ids == ("m1",)
+
+
+def test_agent_instruction_empty_text_and_no_ref_raises() -> None:
+    with pytest.raises(ValueError, match="text or at least one reference"):
+        AgentInstruction(text="   ")
+
+
+def test_build_cards_preserves_existing_id_and_mints_for_new() -> None:
+    cards = build_agent_brief_cards(
+        (
+            AgentInstruction(text="keep", id="server-abc"),
+            AgentInstruction(text="fresh"),  # no id → minted
+        ),
+        project_id="p1",
+    )
+    assert cards[0]["id"] == "server-abc"
+    assert cards[1]["id"] and cards[1]["id"] != "server-abc"
+
+
+# ---------------------------------------------------------------------------
+# ProjectBrief.from_agent_info / find
+# ---------------------------------------------------------------------------
+
+_AGENT_INFO = {
+    "projectBrief": {
+        "enabled": True,
+        "cards": [
+            {"id": "a", "title": "Crayon", "description": "crayon", "enabled": True},
+            {"id": "b", "title": "Noir", "description": "noir", "enabled": False},
+        ],
+    },
+    "agentToggleState": "AGENT_TOGGLE_STATE_ENABLED",
+}
+
+
+def test_project_brief_from_agent_info() -> None:
+    brief = ProjectBrief.from_agent_info(_AGENT_INFO)
+    assert brief.enabled is True
+    assert brief.agent_toggle_state == "AGENT_TOGGLE_STATE_ENABLED"
+    assert tuple(c.id for c in brief.cards) == ("a", "b")
+    assert brief.cards[1].enabled is False
+
+
+def test_project_brief_from_none_is_empty() -> None:
+    brief = ProjectBrief.from_agent_info(None)
+    assert brief.enabled is False
+    assert brief.cards == ()
+
+
+def test_project_brief_find_by_title_case_insensitive() -> None:
+    brief = ProjectBrief.from_agent_info(_AGENT_INFO)
+    assert brief.find(title="crayon").id == "a"
+    assert brief.find(title="  NOIR ").id == "b"
+
+
+def test_project_brief_find_by_id() -> None:
+    brief = ProjectBrief.from_agent_info(_AGENT_INFO)
+    assert brief.find(card_id="b").title == "Noir"
+
+
+def test_project_brief_find_not_found_raises() -> None:
+    brief = ProjectBrief.from_agent_info(_AGENT_INFO)
+    with pytest.raises(ValueError, match="no instruction card matches"):
+        brief.find(title="missing")
+
+
+def test_project_brief_find_ambiguous_title_raises() -> None:
+    info = {
+        "projectBrief": {
+            "cards": [
+                {"id": "a", "title": "Dup", "description": "x", "enabled": True},
+                {"id": "b", "title": "dup", "description": "y", "enabled": True},
+            ]
+        }
+    }
+    brief = ProjectBrief.from_agent_info(info)
+    with pytest.raises(ValueError, match="ambiguous"):
+        brief.find(title="dup")
+
+
+def test_project_brief_find_requires_exactly_one_selector() -> None:
+    brief = ProjectBrief.from_agent_info(_AGENT_INFO)
+    with pytest.raises(ValueError, match="exactly one"):
+        brief.find()
+    with pytest.raises(ValueError, match="exactly one"):
+        brief.find(title="Crayon", card_id="a")
+
+
+# ---------------------------------------------------------------------------
+# Council fixes: resolved_title crash guard + D4 coverage gaps
+# ---------------------------------------------------------------------------
+
+
+def test_resolved_title_reference_only_card_does_not_crash() -> None:
+    # Image-only card (no title, no text) — must derive a label, not IndexError.
+    img = AgentInstruction(text="", image_media_ids=("a963f6e1-dead-beef",))
+    assert img.resolved_title() == "Reference a963f6e1"
+    # And it must be serializable (build_agent_brief_cards calls resolved_title).
+    cards = build_agent_brief_cards((img,), project_id="p1")
+    assert cards[0]["title"] == "Reference a963f6e1"
+
+    char = AgentInstruction(text="   ", character_ids=("hero-7",))
+    assert char.resolved_title() == "Reference hero-7"
+
+
+def test_resolved_title_from_wire_reference_card_does_not_crash() -> None:
+    # A Flow-UI reference card: imageReferenceMediaIds but no description/title.
+    inst = AgentInstruction.from_wire({"id": "x", "imageReferenceMediaIds": ["m1"]})
+    assert inst.resolved_title() == "Reference m1"  # short id, no truncation
+
+
+def test_project_brief_agent_toggle_state_absent_is_none() -> None:
+    brief = ProjectBrief.from_agent_info({"projectBrief": {"enabled": True, "cards": []}})
+    assert brief.agent_toggle_state is None
+
+
+def test_project_brief_find_by_id_not_found_raises() -> None:
+    brief = ProjectBrief.from_agent_info(_AGENT_INFO)
+    with pytest.raises(ValueError, match="no instruction card matches id"):
+        brief.find(card_id="does-not-exist")
+
+
+def test_project_brief_from_agent_info_skips_non_dict_cards() -> None:
+    info = {
+        "projectBrief": {
+            "cards": [
+                {"id": "a", "title": "Ok", "description": "x", "enabled": True},
+                "not-a-dict",  # malformed element — filtered out, not a crash
+                None,
+            ]
+        }
+    }
+    brief = ProjectBrief.from_agent_info(info)
+    assert tuple(c.id for c in brief.cards) == ("a",)
