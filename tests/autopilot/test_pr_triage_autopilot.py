@@ -5,6 +5,8 @@ import sys
 from pathlib import Path
 from unittest.mock import patch
 
+import pytest
+
 # Ensure scripts/autopilot is in path
 ROOT = Path(__file__).resolve().parent.parent.parent
 sys.path.insert(0, str(ROOT / "scripts" / "autopilot"))
@@ -43,9 +45,7 @@ def test_get_pr_failures_count():
 
 def test_check_daily_review_count():
     today = datetime.datetime.now(datetime.UTC).isoformat()
-    yesterday = (
-        datetime.datetime.now(datetime.UTC) - datetime.timedelta(days=1)
-    ).isoformat()
+    yesterday = (datetime.datetime.now(datetime.UTC) - datetime.timedelta(days=1)).isoformat()
 
     entries = [
         {"timestamp": today, "status": "COMPLETED"},
@@ -175,3 +175,28 @@ def test_run_triage_cycle_stage0_skipped(
     # Skip shouldn't call comment, telegram alerts, or any git branch checkout
     mock_post_comment.assert_not_called()
     mock_telegram.assert_not_called()
+
+
+def test_resolve_engine_defaults_to_council_claude(monkeypatch):
+    monkeypatch.delenv("PR_TRIAGE_ENGINE", raising=False)
+    assert pr_triage_autopilot.resolve_engine() == "council-claude"
+
+
+def test_resolve_engine_rejects_unknown(monkeypatch):
+    monkeypatch.setenv("PR_TRIAGE_ENGINE", "council-multi-cli")
+    with pytest.raises(SystemExit):
+        pr_triage_autopilot.resolve_engine()
+
+
+def test_run_review_dispatches_council_claude():
+    with patch("pr_triage_autopilot.run_docker_sandbox", return_value="out") as m:
+        out = pr_triage_autopilot.run_review(
+            "council-claude", 1, Path("/r"), Path("/m"), "key", "tok"
+        )
+    assert out == "out"
+    m.assert_called_once()
+
+
+def test_run_review_unknown_engine_raises():
+    with pytest.raises(NotImplementedError):
+        pr_triage_autopilot.run_review("council-multi-cli", 1, Path("/r"), Path("/m"), "key", "tok")

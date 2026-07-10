@@ -27,6 +27,10 @@ MAX_RETRIS = 3
 LEDGER_FILE = "pr_triage_ledger.jsonl"
 LOCK_FILE_PATH = "/tmp/pr_triage_autopilot.lock"
 
+# Review engine seam (spec addendum 2026-07-10). Only council-claude is
+# implemented; council-multi-cli is reserved backlog behind this seam.
+SUPPORTED_ENGINES = ("council-claude",)
+
 # Imports for cross-platform file locking
 try:
     import fcntl
@@ -223,6 +227,28 @@ def parse_summary_verdict(container_output: str) -> tuple[str | None, int]:
     return verdict, must_fixes
 
 
+def resolve_engine() -> str:
+    """Return the configured review engine; refuse unknown values at startup."""
+    engine = os.environ.get("PR_TRIAGE_ENGINE", "council-claude")
+    if engine not in SUPPORTED_ENGINES:
+        raise SystemExit(f"Unsupported PR_TRIAGE_ENGINE={engine!r}; supported: {SUPPORTED_ENGINES}")
+    return engine
+
+
+def run_review(
+    engine: str,
+    pr_num: int,
+    repo_dir: Path,
+    memory_dir: Path,
+    anthropic_key: str,
+    gh_token: str,
+) -> str:
+    """Run the configured review engine and return its stdout."""
+    if engine == "council-claude":
+        return run_docker_sandbox(pr_num, repo_dir, memory_dir, anthropic_key, gh_token)
+    raise NotImplementedError(f"engine {engine!r} is reserved but not implemented")
+
+
 def run_triage_cycle(
     repo: str,
     repo_dir: Path,
@@ -230,6 +256,7 @@ def run_triage_cycle(
     ledger_path: Path,
     anthropic_key: str,
     gh_token: str,
+    engine: str = "council-claude",
 ) -> None:
     """Execute the full orchestrator polling and review cycle."""
     # 1. Fetch list of open PRs
@@ -341,7 +368,7 @@ def run_triage_cycle(
                 continue
 
             # Run Stage 1 Pre-eval & Full sandboxed review
-            output = run_docker_sandbox(pr_num, repo_dir, memory_dir, anthropic_key, gh_token)
+            output = run_review(engine, pr_num, repo_dir, memory_dir, anthropic_key, gh_token)
 
             # Parse verdict & MUST-FIX count
             parsed_verdict, must_fixes = parse_summary_verdict(output)
@@ -372,6 +399,7 @@ def run_triage_cycle(
                     "status": "COMPLETED",
                     "verdict": parsed_verdict,
                     "must_fixes": must_fixes,
+                    "engine": engine,
                 },
             )
 
@@ -400,6 +428,7 @@ def run_triage_cycle(
                     "status": status,
                     "fail_count": failures,
                     "error": str(exc),
+                    "engine": engine,
                 },
             )
 
@@ -441,8 +470,11 @@ def main(argv: list[str] | None = None) -> int:
         logger.info("Another autopilot instance is running. Exiting.")
         return 0
 
-    logger.info("PR-Triage Autopilot iteration started", repo=args.repo)
-    run_triage_cycle(args.repo, repo_dir, memory_dir, ledger_path, anthropic_key, gh_token)
+    engine = resolve_engine()
+    logger.info("PR-Triage Autopilot iteration started", repo=args.repo, engine=engine)
+    run_triage_cycle(
+        args.repo, repo_dir, memory_dir, ledger_path, anthropic_key, gh_token, engine=engine
+    )
     logger.info("PR-Triage Autopilot iteration completed")
     return 0
 
