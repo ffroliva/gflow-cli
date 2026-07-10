@@ -580,7 +580,8 @@ async def test_worker_t2i_record_data_integrity_error_escalates(temp_db: DataSto
     failing_recorder = MagicMock()
     failing_recorder.is_media_recorded.return_value = False
     failing_recorder.record_generated_images.side_effect = DataIntegrityError(
-        "UNIQUE constraint failed: assets.profile_name, assets.flow_media_id"
+        "UNIQUE constraint failed: assets.profile_name, assets.flow_media_id",
+        route="data.upsert_asset",
     )
 
     with (
@@ -597,6 +598,51 @@ async def test_worker_t2i_record_data_integrity_error_escalates(temp_db: DataSto
     assert updated.error is not None
     assert updated.error["type"] == "https://gflow-cli.dev/errors/media-attribution"
     assert "media-collision" in updated.error["detail"]
+    worker.close()
+
+
+@pytest.mark.asyncio
+async def test_worker_t2i_unrelated_data_integrity_route_is_not_escalated(
+    temp_db: DataStore,
+) -> None:
+    """Route-scoped escalation (#281/#282 review): a ``DataIntegrityError``
+    whose ``route`` is NOT the asset-collision constraint (e.g. a bare
+    ``link_operation_asset`` write failure) must surface as a plain
+    ``DataIntegrityError`` — never mislabeled as ``MediaAttributionError``.
+    """
+    repo = QueueRepository(temp_db)
+    task = repo.enqueue_task(
+        task_id="task-t2i-unrelated-integrity",
+        profile_name="default",
+        task_type="t2i",
+        payload={"prompt": "scenic landscape", "aspect": "16:9", "count": 1},
+    )
+
+    worker = FlowWorker("default", str(temp_db.path))
+    fake_client = FakeFlowApiClient()
+    fake_client.create_project.return_value = MagicMock(project_id="project-abc", title="T")
+    fake_client.generate_image.return_value = FakeGeneratedImage(media_name="media-unrelated")
+
+    failing_recorder = MagicMock()
+    failing_recorder.is_media_recorded.return_value = False
+    failing_recorder.record_generated_images.side_effect = DataIntegrityError(
+        "FK constraint failed", route="data.link_operation_asset"
+    )
+
+    with (
+        patch("gflow_cli.worker.daemon.FlowApiClient", return_value=fake_client),
+        patch("gflow_cli.worker.daemon.OperationRecorder", return_value=failing_recorder),
+    ):
+        await worker.process_task(task)
+
+    fake_client.download_image.assert_called_once()
+
+    updated = repo.get_task("task-t2i-unrelated-integrity")
+    assert updated is not None
+    assert updated.status == "failed"
+    assert updated.error is not None
+    assert updated.error["type"] == "https://gflow-cli.dev/errors/data-integrity"
+    assert updated.error["type"] != "https://gflow-cli.dev/errors/media-attribution"
     worker.close()
 
 

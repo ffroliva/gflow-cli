@@ -1124,6 +1124,25 @@ class TestRecordGeneratedImagesSafeEscalation:
         assert "m1" in message
         assert "m1_1.png" in message
 
+    def test_unrelated_data_integrity_route_still_warns_and_does_not_raise(
+        self, tmp_path: Path
+    ) -> None:
+        """Route-scoped escalation (#281/#282 review): a ``DataIntegrityError``
+        whose route is NOT the asset-collision constraint (e.g. a bare
+        ``link_operation_asset`` write failure) is unrelated to media
+        attribution and must fall through to the same warn-and-continue path
+        as a plain ``DataStoreError`` — never escalated."""
+        from gflow_cli.errors import DataIntegrityError
+
+        class _RaisingRecorder(FakeRecorder):
+            def record_generated_images(self, **kwargs: object) -> None:
+                raise DataIntegrityError(
+                    detail="FK constraint failed", route="data.link_operation_asset"
+                )
+
+        # Must return normally — an unrelated DataIntegrityError route is warn-only.
+        self._call(_RaisingRecorder(), tmp_path=tmp_path)
+
     def test_generic_data_store_error_still_warns_and_does_not_raise(self, tmp_path: Path) -> None:
         from gflow_cli.errors import DataStoreError
 

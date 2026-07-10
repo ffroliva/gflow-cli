@@ -51,14 +51,13 @@ from gflow_cli.api.image import (
 from gflow_cli.api.image_upscale import TargetResolution, UpsampleImageRequest
 from gflow_cli.api.transports import transport_choices
 from gflow_cli.config import get_settings
-from gflow_cli.data.recorder import OperationRecorder
+from gflow_cli.data.recorder import OperationRecorder, escalate_asset_collision
 from gflow_cli.data.repository import DataRepository
 from gflow_cli.data.store import DataStore
 from gflow_cli.errors import (
     ConfigurationError,
     DataIntegrityError,
     DataStoreError,
-    MediaAttributionError,
 )
 from gflow_cli.image_batch import (
     ALLOWED_ASPECT_RATIOS as _ALLOWED_ASPECT_RATIOS,
@@ -945,14 +944,15 @@ def _record_generated_images_safe(
     Tool provenance (``original_prompt`` / ``tool``) travels on ``request``, so
     the recorder reads it directly — no separate kwarg to drift out of sync.
 
-    Collision escalation (issue #281, third defense layer): a ``DataIntegrityError``
-    here means the write itself violated a local DB constraint — most likely the
-    per-profile uniqueness of ``flow_media_id`` — i.e. the just-downloaded file may
-    be a pre-existing asset rather than genuinely new media. That is NOT a
-    warn-and-continue case like a generic ``DataStoreError``; it is re-raised as
-    ``MediaAttributionError`` so the caller sees a hard failure instead of a
-    silently-corrupted history row. Caught BEFORE ``DataStoreError`` since
-    ``DataIntegrityError`` is a subclass of it.
+    Collision escalation (issue #281, #282 review): a ``DataIntegrityError``
+    whose ``route`` is the asset-collision constraint means the write itself
+    violated a local DB constraint — most likely the per-profile uniqueness of
+    ``flow_media_id`` — i.e. the just-downloaded file may be a pre-existing
+    asset rather than genuinely new media. That is NOT a warn-and-continue
+    case like a generic ``DataStoreError``; ``escalate_asset_collision``
+    raises ``MediaAttributionError`` for that route and returns normally for
+    any other (unrelated) ``DataIntegrityError``, in which case this falls
+    through to the same warn-and-continue path as a plain ``DataStoreError``.
     """
     try:
         recorder.record_generated_images(
@@ -967,16 +967,9 @@ def _record_generated_images_safe(
             input_media_ids=input_media_ids,
             operation_kind=operation_kind,
         )
-    except DataIntegrityError as exc:
-        first_image = images[0] if images else None
-        first_path = saved_paths[0] if saved_paths else None
-        msg = (
-            "downloaded file is suspect — it may be a pre-existing asset (#281): "
-            f"flow_media_id={first_image.media_name if first_image else None}, "
-            f"local_path={first_path}"
-        )
-        raise MediaAttributionError(msg) from exc
     except DataStoreError as exc:
+        if isinstance(exc, DataIntegrityError):
+            escalate_asset_collision(exc, images=images, saved_paths=saved_paths)
         first_image = images[0] if images else None
         first_path = saved_paths[0] if saved_paths else None
         _warn_persistence_failed_after_success(
