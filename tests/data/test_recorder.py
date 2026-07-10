@@ -466,6 +466,76 @@ def test_record_generated_images_without_tool_writes_no_tool_metadata(tmp_path: 
         assert "tool" not in meta
 
 
+class TestIsMediaRecorded:
+    """Recorder-level half of the #281 pre-download attribution guard.
+
+    ``is_media_recorded`` is the boolean wrapper the CLI layer calls BEFORE
+    downloading anything (``cli_image._verify_media_attribution``) — see
+    ``tests/cli/test_cli_image.py``.
+    """
+
+    def test_false_when_nothing_recorded(self, tmp_path: Path) -> None:
+        with DataStore.open(tmp_path / "gflow.db") as store:
+            recorder = OperationRecorder(DataRepository(store), prompt_mode="store")
+            assert (
+                recorder.is_media_recorded(profile_name="default", flow_media_id="media-x")
+                is False
+            )
+
+    def test_true_after_generated_image_recorded(self, tmp_path: Path) -> None:
+        saved = tmp_path / "image.png"
+        saved.write_bytes(b"image-bytes")
+        with DataStore.open(tmp_path / "gflow.db") as store:
+            recorder = OperationRecorder(DataRepository(store), prompt_mode="store")
+            project = ProjectInfo(project_id="flow-project-1", title="gflow-cli t2i")
+            req = GenerateImageRequest(
+                prompt="prompt text", aspect=Aspect.PORTRAIT, model=Model.NARWHAL
+            )
+            recorder.record_generated_images(
+                profile_name="default",
+                profile_dir=tmp_path / "profile_default",
+                project=project,
+                request=req,
+                images=[_generated_image()],
+                saved_paths=[saved],
+                input_media_ids=[],
+                operation_kind="t2i",
+            )
+            assert (
+                recorder.is_media_recorded(
+                    profile_name="default", flow_media_id="media-generated-1"
+                )
+                is True
+            )
+
+    def test_is_scoped_to_profile(self, tmp_path: Path) -> None:
+        """Same flow_media_id recorded under a different profile must not count."""
+        saved = tmp_path / "image.png"
+        saved.write_bytes(b"image-bytes")
+        with DataStore.open(tmp_path / "gflow.db") as store:
+            recorder = OperationRecorder(DataRepository(store), prompt_mode="store")
+            project = ProjectInfo(project_id="flow-project-1", title="gflow-cli t2i")
+            req = GenerateImageRequest(
+                prompt="prompt text", aspect=Aspect.PORTRAIT, model=Model.NARWHAL
+            )
+            recorder.record_generated_images(
+                profile_name="default",
+                profile_dir=tmp_path / "profile_default",
+                project=project,
+                request=req,
+                images=[_generated_image()],
+                saved_paths=[saved],
+                input_media_ids=[],
+                operation_kind="t2i",
+            )
+            assert (
+                recorder.is_media_recorded(
+                    profile_name="other-profile", flow_media_id="media-generated-1"
+                )
+                is False
+            )
+
+
 def test_record_started_video_persists_tool_metadata(tmp_path: Path) -> None:
     with DataStore.open(tmp_path / "gflow.db") as store:
         recorder = OperationRecorder(DataRepository(store), prompt_mode="store")

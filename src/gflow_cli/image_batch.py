@@ -27,13 +27,15 @@ from gflow_cli.errors import (
     BatchIntegrityError,
     BatchPartialError,
     ConfigurationError,
+    DataIntegrityError,
     DataStoreError,
     GFlowError,
+    MediaAttributionError,
 )
 from gflow_cli.storage import cloud_info_from_path
 
 if TYPE_CHECKING:
-    from collections.abc import Callable, Coroutine
+    from collections.abc import Callable, Coroutine, Sequence
 
     from gflow_cli.api.dto import GeneratedImage
     from gflow_cli.data.recorder import OperationRecorder
@@ -56,6 +58,35 @@ def _warn_persistence_failed_after_success(
         local_path=str(local_path) if local_path is not None else None,
     )
     console.print("[yellow]Generated media was saved, but local history was not updated.[/yellow]")
+
+
+def _verify_media_attribution(
+    recorder: OperationRecorder,
+    *,
+    profile_name: str,
+    images: Sequence[GeneratedImage],
+) -> None:
+    """Pre-download attribution guard (issue #281) for the manifest batch path.
+
+    Duplicated from ``cli_image._verify_media_attribution`` rather than
+    imported: ``cli_image`` imports from this module, so importing back would
+    create a cycle (mirrors the existing ``_warn_persistence_failed_after_success``
+    duplication). Same contract: raise if the driver returned media that
+    already exists in local history for this profile — nothing gets
+    downloaded for an already-recorded id.
+    """
+    already_recorded = [
+        img.media_name
+        for img in images
+        if recorder.is_media_recorded(profile_name=profile_name, flow_media_id=img.media_name)
+    ]
+    if already_recorded:
+        msg = (
+            "the driver returned media that already exists in local history — "
+            "wrong-media attribution (#281); nothing was downloaded: "
+            f"{', '.join(already_recorded)}"
+        )
+        raise MediaAttributionError(msg)
 
 
 def _prompt_hash(text: str) -> str:
@@ -781,7 +812,15 @@ def _try_record_images(
     result: BatchSubmissionResult,
     saved: list[Path],
 ) -> None:
-    """Persist generated-image metadata; warn on DataStoreError (non-fatal)."""
+    """Persist generated-image metadata; warn on DataStoreError (non-fatal).
+
+    Collision escalation (issue #281, third defense layer): a ``DataIntegrityError``
+    means the write itself violated a local DB constraint — most likely the
+    per-profile uniqueness of ``flow_media_id`` — i.e. the just-downloaded file may
+    be a pre-existing asset rather than genuinely new media. Re-raised as
+    ``MediaAttributionError`` instead of the generic warn-and-continue path.
+    Caught BEFORE ``DataStoreError`` since ``DataIntegrityError`` is a subclass.
+    """
     try:
         recorder.record_generated_images(
             profile_name=profile_name,
@@ -794,6 +833,15 @@ def _try_record_images(
             input_media_ids=[],
             operation_kind="t2i",
         )
+    except DataIntegrityError as exc:
+        first_image = result.images[0] if result.images else None
+        first_path = saved[0] if saved else None
+        msg = (
+            "downloaded file is suspect — it may be a pre-existing asset (#281): "
+            f"flow_media_id={first_image.media_name if first_image else None}, "
+            f"local_path={first_path}"
+        )
+        raise MediaAttributionError(msg) from exc
     except DataStoreError as exc:
         first_image = result.images[0] if result.images else None
         first_path = saved[0] if saved else None
@@ -838,6 +886,9 @@ async def _download_results(
                 outcome="fail",
             )
             continue
+
+        if recorder is not None and profile_name is not None:
+            _verify_media_attribution(recorder, profile_name=profile_name, images=result.images)
 
         saved = await _download_item_images(
             client=client,

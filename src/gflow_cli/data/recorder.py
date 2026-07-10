@@ -77,6 +77,15 @@ class OperationRecorder:
     def close(self) -> None:
         self.repository.store.close()
 
+    def is_media_recorded(self, *, profile_name: str, flow_media_id: str) -> bool:
+        """Return True if an asset with this ``flow_media_id`` already exists in
+        local history for ``profile_name`` (issue #281 pre-download attribution
+        guard). Delegates to ``repository.get_asset_by_flow_media_id`` — pure
+        boolean convenience wrapper, no new query logic and no behaviour change
+        to any existing method.
+        """
+        return self.repository.get_asset_by_flow_media_id(profile_name, flow_media_id) is not None
+
     def _resolve_prompts(
         self,
         request: _ToolableRequest,
