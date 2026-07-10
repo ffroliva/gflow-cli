@@ -744,6 +744,22 @@ and visually verify anchor/canonical images before referencing them
 downstream in `i2i`. Follow-up hardening (a break condition stable across
 two consecutive scrapes, not one) is tracked upstream against this issue.
 
+**Known gap: the shell multi-prompt path records no history at all.**
+`gflow run --config <file>` and `gflow image t2i` with multiple prompts
+(positional, `--prompts-file`, or `--stdin`) both go through
+`image_batch.run_image_batch` / `run_one_image_prompt`, which never opens an
+`OperationRecorder` or calls `record_generated_images` — no local history row
+is written for these runs at all. Layer 1 (the agentic driver's two-pass
+baseline settle + ambiguity fail-fast in `await_images`) still applies since
+it lives in the transport, independent of recording. Layers 2 and 3
+(`verify_media_attribution`'s pre-download guard and the post-download
+collision escalation) both depend on local history via
+`OperationRecorder.is_media_recorded()` / `record_generated_images()`, so
+neither guard exists on this path — this is a pre-existing gap, not a
+regression from this fix. `gflow image batch` (the manifest path, via
+`run_manifest_image_batch`) already threads a recorder through and is covered
+by all three layers. Follow-up tracked in #283.
+
 **Workaround (pre-fix):** none — on an affected version, manually verify the
 downloaded file matches the prompt before trusting a `t2i`/`i2i` result.
 
