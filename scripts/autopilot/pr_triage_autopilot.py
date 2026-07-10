@@ -10,9 +10,11 @@ from __future__ import annotations
 
 import argparse
 import datetime
+import html as html_lib
 import json
 import os
 import subprocess
+import sys
 from pathlib import Path
 
 import httpx
@@ -74,6 +76,32 @@ def send_telegram_alert(text: str) -> None:
             )
     except Exception as exc:
         logger.error("Failed to send Telegram alert", error=str(exc))
+
+
+def send_email_alert(subject: str, html: str) -> None:
+    """High-signal email via hermes-ops' Resend notifier. NEVER fatal.
+
+    Delegates to $HERMES_OPS_DIR/scripts/notify/email_notify.py (subprocess,
+    HTML on stdin) so the single Resend implementation stays in hermes-ops.
+    Missing script / missing env / any failure degrades to a log line —
+    the ledger and GitHub-posted report remain the source of truth.
+    """
+    ops_dir = os.environ.get("HERMES_OPS_DIR", "/opt/hermes-ops")
+    script = Path(ops_dir) / "scripts" / "notify" / "email_notify.py"
+    if not script.exists():
+        logger.info("Email notifier not present; skipping email", script=str(script))
+        return
+    try:
+        subprocess.run(
+            [sys.executable, str(script), "--subject", subject, "--html", "-"],
+            input=html,
+            text=True,
+            capture_output=True,
+            timeout=60,
+            check=False,
+        )
+    except Exception as exc:
+        logger.error("Failed to send email alert", error=str(exc))
 
 
 def _gh_json(args: list[str], repo: str) -> any:
@@ -308,6 +336,12 @@ def run_triage_cycle(
                 },
             )
             send_telegram_alert(f"⚠️ PR #{pr_num} deferred: diff size too large.")
+            send_email_alert(
+                f"[gflow-cli PR #{pr_num}] Deferred: diff too large",
+                f'<p>PR <a href="https://github.com/{repo}/pull/{pr_num}">#{pr_num}</a> '
+                f"exceeds the autopilot size cap and needs a manual review.</p>"
+                f"<p>Reasons: {html_lib.escape(', '.join(gate_res['reasons']))}</p>",
+            )
             continue
 
         if verdict == "NEEDS-HUMAN":
@@ -335,6 +369,12 @@ def run_triage_cycle(
                 },
             )
             send_telegram_alert(f"🚨 PR #{pr_num} flagged for human triage: {gate_res['reasons']}")
+            send_email_alert(
+                f"[gflow-cli PR #{pr_num}] Flagged: needs human triage",
+                f'<p>PR <a href="https://github.com/{repo}/pull/{pr_num}">#{pr_num}</a> '
+                f"was flagged by the Stage-0 gate and will not be auto-reviewed.</p>"
+                f"<p>Reasons: {html_lib.escape(', '.join(gate_res['reasons']))}</p>",
+            )
             continue
 
         # PROCEED: PR is eligible
@@ -407,6 +447,16 @@ def run_triage_cycle(
             send_telegram_alert(
                 f"✅ Auto-reviewed PR #{pr_num} ({parsed_verdict}): {must_fixes} must-fixes."
             )
+            send_email_alert(
+                f"[gflow-cli PR #{pr_num}] Council verdict: {parsed_verdict or 'UNKNOWN'} "
+                f"— {must_fixes} must-fix",
+                f"<p>Autonomous council review of "
+                f'<a href="https://github.com/{repo}/pull/{pr_num}">PR #{pr_num}</a> '
+                f"completed: <b>{parsed_verdict or 'UNKNOWN'}</b>, "
+                f"{must_fixes} must-fix item(s). Full report posted as a PR comment.</p>"
+                f"<p><b>Note:</b> this is a static review — live validation "
+                f"(e2e + /gflow:benchmark) remains the final gate before merge.</p>",
+            )
 
         except Exception as exc:
             failures = get_pr_failures_count(ledger_entries, pr_num, head_sha) + 1
@@ -436,6 +486,13 @@ def run_triage_cycle(
             if status == "FAILED_PERMANENT":
                 send_telegram_alert(
                     f"❌ PR #{pr_num} review failed permanently after {MAX_RETRIS} retries: {exc}"
+                )
+                send_email_alert(
+                    f"[gflow-cli PR #{pr_num}] Review FAILED permanently",
+                    f'<p>Review of <a href="https://github.com/{repo}/pull/{pr_num}">'
+                    f"PR #{pr_num}</a> failed {MAX_RETRIS} times and auto-retry has "
+                    f"stopped. Manual ledger reset required.</p>"
+                    f"<p>Last error: {html_lib.escape(str(exc))}</p>",
                 )
             else:
                 send_telegram_alert(f"⚠️ PR #{pr_num} review attempt {failures} failed: {exc}")
