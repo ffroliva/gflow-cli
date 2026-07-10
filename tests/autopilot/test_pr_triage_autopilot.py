@@ -184,7 +184,7 @@ def test_resolve_engine_defaults_to_council_claude(monkeypatch):
 
 def test_resolve_engine_rejects_unknown(monkeypatch):
     monkeypatch.setenv("PR_TRIAGE_ENGINE", "council-multi-cli")
-    with pytest.raises(SystemExit):
+    with pytest.raises(SystemExit, match="council-multi-cli"):
         pr_triage_autopilot.resolve_engine()
 
 
@@ -194,7 +194,7 @@ def test_run_review_dispatches_council_claude():
             "council-claude", 1, Path("/r"), Path("/m"), "key", "tok"
         )
     assert out == "out"
-    m.assert_called_once()
+    m.assert_called_once_with(1, Path("/r"), Path("/m"), "key", "tok")
 
 
 def test_run_review_unknown_engine_raises():
