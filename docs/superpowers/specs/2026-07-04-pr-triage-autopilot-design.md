@@ -155,13 +155,23 @@ Fixed resolutions replacing every interactive gate, for when hermes invokes the 
 | Interactive gate (existing protocol) | Autonomous-mode resolution |
 |---|---|
 | §0 step 4, draft-PR confirmation | N/A — drafts are filtered out upstream by Stage 0 |
-| §5 step 6, live-verify credit-spend gate | Always skip; never spend Flow/Veo credits; note as an open item in the report |
+| §5 step 6, live-verify credit-spend gate | Always skip; never spend Flow/Veo credits; the report's mandatory "Next step — live validation" section (see "Live-validation ceiling" below) carries this, not a loose open-item note |
 | §5 step 7, memory-action gate | Report the suggested memory action only; never auto-apply |
 | §5 step 8, YELLOW-dismiss escape valve | Never auto-dismiss; report YELLOW as-is |
 | §6, final "How to proceed" `AskUserQuestion` | Omitted — the skill assembles the full report and prints it (plus the structured summary line) to stdout; it does **not** call `gh pr comment` itself. Posting is exclusively the host orchestrator's job, using the dedicated bot credential, after the sandboxed run has exited (see Security item 3) |
 | SonarCloud required-gate (command-level instruction) | Fork PR + skipped/missing SonarCloud check → informational note, not a blocking condition |
 
 Also defines: the machine-parseable one-line structured summary printed at the end of a run (verdict + must-fix count + PR URL, or an error marker like `POST_FAILED`) that `pr_triage_autopilot.py` greps for instead of parsing free-form markdown; the reduced D1+D2-only dimension set for `TRIVIAL` verdicts; and the injection-awareness, report-content-constraint, and harness-enforced read-only-tool-scope requirements from the Security section above as mandatory parts of every dispatched sub-agent prompt in this mode — including the Stage-1 pre-evaluation call itself, not just the council's sub-agents.
+
+### Live-validation ceiling (addendum 2026-07-10)
+
+The sandbox structurally cannot exercise the code live: network egress is restricted to `api.anthropic.com`/`github.com`, no Flow/Google auth state is mounted, and credit spend is forbidden by §9's own gate resolution. Therefore the **e2e test suite and `/gflow:benchmark` are never run in autonomous mode**, and an autonomous verdict is capped at **static-green** — it asserts the diff, tests-as-code, CI results, and council dimensions, never live behavior against Flow.
+
+Consequences, all mandatory:
+
+1. **A green autonomous verdict must never read as merge-ready.** Every green report ends with a mandatory **"Next step — live validation"** section stating that e2e + `/gflow:benchmark` (run by the operator, outside the sandbox, with real credentials/credits) is the final triage gate, that it is deliberately last (run only when everything else is green, so credits are never spent on a PR that static review would have bounced anyway), and that this step is **expected to surface issues and return the PR to development** — a bounce there is the process working, not the autopilot having missed something.
+2. **The verdict taxonomy is explicit about the ceiling:** autonomous GREEN ≡ "static review green, live validation outstanding". The structured summary line format is unchanged; the ceiling is carried in the report body and this documented semantics.
+3. **Non-green verdicts skip the section** — there is no point flagging live validation on a PR that is already going back to the contributor.
 
 ## Error handling
 
