@@ -17,10 +17,10 @@ from gflow_cli.api.video import GenerateVideoRequest, VideoModel, VideoStarted
 from gflow_cli.api.video import Mode as VideoMode
 from gflow_cli.api.video import Tier as VideoTier
 from gflow_cli.config import get_settings
-from gflow_cli.data.recorder import OperationRecorder
+from gflow_cli.data.recorder import OperationRecorder, escalate_asset_collision
 from gflow_cli.data.repository import DataRepository
 from gflow_cli.data.store import DataStore
-from gflow_cli.errors import DataIntegrityError, GFlowError, MediaAttributionError
+from gflow_cli.errors import DataIntegrityError, DataStoreError, GFlowError
 from gflow_cli.paths import image_output_path
 from gflow_cli.storage import cloud_info_from_path
 from gflow_cli.worker.queue import QueueRepository, QueueTask
@@ -195,25 +195,27 @@ class FlowWorker:
                                 operation_kind=task.task_type,
                                 cloud_storage_infos=[cloud_info_from_path(p) for p in saved_paths],
                             )
-                        except DataIntegrityError as exc:
-                            # Collision escalation (issue #281, third defense layer):
-                            # the write itself violated a local DB constraint — most
-                            # likely per-profile uniqueness of flow_media_id — i.e. the
-                            # just-downloaded file may be a pre-existing asset rather
-                            # than genuinely new media. Escalate to MediaAttributionError
-                            # instead of the generic warn-and-continue DataStoreError
-                            # path (caught below, unchanged). Mirrors
-                            # cli_image._record_generated_images_safe /
-                            # image_batch._try_record_images.
-                            first_image = images[0] if images else None
-                            first_path = saved_paths[0] if saved_paths else None
-                            msg = (
-                                "downloaded file is suspect — it may be a pre-existing "
-                                "asset (#281): flow_media_id="
-                                f"{first_image.media_name if first_image else None}, "
-                                f"local_path={first_path}"
-                            )
-                            raise MediaAttributionError(msg) from exc
+                        except DataStoreError as exc:
+                            # Collision escalation (issue #281/#282, consolidated):
+                            # delegates the route-scoped escalation decision to the
+                            # shared helper — a DataIntegrityError whose route is the
+                            # asset-collision constraint raises MediaAttributionError
+                            # (a more specific failure than the original exc); any
+                            # other DataIntegrityError, or a plain DataStoreError,
+                            # returns normally from the helper and falls through to
+                            # the bare `raise` below, re-raising the ORIGINAL
+                            # exception unchanged. Unlike cli_image.py/image_batch.py
+                            # there is no silent warn-and-continue here — the worker
+                            # always fails the task on any record_generated_images
+                            # exception (see escalate_asset_collision's docstring for
+                            # the route-scoping rationale, shared with the other two
+                            # call sites: cli_image._record_generated_images_safe /
+                            # image_batch._try_record_images).
+                            if isinstance(exc, DataIntegrityError):
+                                escalate_asset_collision(
+                                    exc, images=images, saved_paths=saved_paths
+                                )
+                            raise
                 except Exception as exc:
                     logger.warning("Failed during image generation or recording", exc_info=exc)
                     raise

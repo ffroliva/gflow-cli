@@ -33,6 +33,7 @@ if TYPE_CHECKING:
     from gflow_cli.api.scene import Scene
     from gflow_cli.api.video import GenerateVideoRequest, VideoResult, VideoStarted
     from gflow_cli.config import Settings
+    from gflow_cli.errors import DataIntegrityError
     from gflow_cli.storage import CloudStorageInfo
     from gflow_cli.tools.invocation import AppliedTool
 
@@ -61,6 +62,63 @@ def _file_bytes(path: Path) -> int | None:
         return path.stat().st_size
     except OSError:
         return None
+
+
+def escalate_asset_collision(
+    exc: DataIntegrityError,
+    *,
+    images: Sequence[GeneratedImage],
+    saved_paths: Sequence[Path],
+) -> None:
+    """Escalate a ``record_generated_images`` write failure to
+    :class:`~gflow_cli.errors.MediaAttributionError` when — and only when —
+    it is the asset-collision constraint; otherwise return normally so the
+    caller's generic ``DataStoreError`` warn-and-continue path still runs.
+
+    ``record_generated_images`` performs several writes (``upsert_asset``,
+    ``insert_operation``, ``link_operation_asset``, ...) via
+    :class:`~gflow_cli.data.repository.DataRepository`, each tagging its own
+    ``DataIntegrityError.route``. Only ``route == "data.upsert_asset"`` means
+    the per-profile ``UNIQUE(profile_name, flow_media_id)`` constraint fired
+    — i.e. the just-downloaded media may already exist in local history. Any
+    OTHER ``DataIntegrityError`` route (e.g. ``data.insert_operation`` or
+    ``data.link_operation_asset``) is an unrelated write failure and must NOT
+    be mislabeled as a media collision (issue #281/#282 review finding (a)).
+
+    Consolidated from three near-identical ``except DataIntegrityError``
+    blocks previously duplicated across ``cli_image.py``, ``image_batch.py``,
+    and ``worker/daemon.py`` (finding (b)). Call-site idiom, all three::
+
+        except DataStoreError as exc:
+            if isinstance(exc, DataIntegrityError):
+                escalate_asset_collision(exc, images=images, saved_paths=saved_paths)
+            _warn_persistence_failed_after_success(...)
+
+    A bare ``except DataIntegrityError: ... except DataStoreError: ...``
+    pair would NOT work here — a re-raise from inside the first clause
+    propagates out of the whole try/except rather than falling into the
+    sibling clause, so the "fall through to the warn path" behavior requires
+    catching ``DataStoreError`` once and branching inside, as above.
+
+    The colliding index is not recoverable from sqlite's bare UNIQUE-violation
+    error, so the raised message names the full candidate set of
+    ``flow_media_id``s and saved paths ("one of ...") rather than fingering
+    ``images[0]`` / ``saved_paths[0]``, and notes that earlier images in this
+    batch/operation may already have been recorded (issue #281/#282 review
+    finding, honesty over false precision).
+    """
+    if exc.route != "data.upsert_asset":
+        return
+    media_ids = ", ".join(img.media_name for img in images) or "(none)"
+    paths = ", ".join(str(p) for p in saved_paths) or "(none)"
+    msg = (
+        "one of the downloaded images in this batch/operation is suspect — "
+        "it may be a pre-existing asset (#281). The colliding index cannot "
+        f"be recovered from the database constraint: flow_media_id is one of "
+        f"[{media_ids}], local_path is one of [{paths}]. Earlier images in "
+        "this batch/operation may already have been recorded."
+    )
+    raise MediaAttributionError(msg) from exc
 
 
 class OperationRecorder:
@@ -111,7 +169,30 @@ class OperationRecorder:
         ``image_batch.py``, and ``worker/daemon.py`` — all three call sites
         already hold a recorder instance, so the guard belongs on the data
         layer rather than repeated per call site.
+
+        Also checks for an INTRA-list duplicate: the classic transport can
+        return the same ``media_name`` more than once for a single batch
+        submission (the agentic transport cannot — its DOM-scrape ambiguity
+        check in ``await_images`` already rules this out upstream). Two
+        "different" images sharing one ``flow_media_id`` would otherwise both
+        be attributed to the same asset row, silently losing one of them.
+        This check runs BEFORE the local-history lookup since it is cheaper
+        and needs no repository query.
         """
+        seen: set[str] = set()
+        intra_batch_duplicates: list[str] = []
+        for img in images:
+            if img.media_name in seen and img.media_name not in intra_batch_duplicates:
+                intra_batch_duplicates.append(img.media_name)
+            seen.add(img.media_name)
+        if intra_batch_duplicates:
+            msg = (
+                "the driver returned the same media more than once in a single "
+                "batch — wrong-media attribution (#281); nothing was downloaded: "
+                f"{', '.join(intra_batch_duplicates)}"
+            )
+            raise MediaAttributionError(msg)
+
         already_recorded = [
             img.media_name
             for img in images

@@ -16,6 +16,7 @@ from gflow_cli.image_batch import (
     parse_json_manifest,
     parse_manifest_file,
     parse_tsv_manifest,
+    render_image_batch_summary,
     run_manifest_image_batch,
 )
 
@@ -643,6 +644,7 @@ class TestRunManifestImageBatchAttributionGuard:
     async def test_guard_raises_before_download_when_media_already_recorded(
         self, tmp_path: Path
     ) -> None:
+        """continue_on_error=False: the guard must still abort the whole batch."""
         from gflow_cli.errors import MediaAttributionError
 
         recorder = FakeRecorder()
@@ -658,7 +660,7 @@ class TestRunManifestImageBatchAttributionGuard:
                 transport=None,
                 prompts=items,
                 output_dir=out_dir,
-                continue_on_error=True,
+                continue_on_error=False,
                 jitter_range=(0.0, 0.0),
                 client_factory=factory,
                 profile_name="default",
@@ -666,6 +668,39 @@ class TestRunManifestImageBatchAttributionGuard:
             )
 
         # Nothing should have been downloaded OR recorded for the guarded row.
+        assert recorder.generated == []
+        assert list(out_dir.rglob("*.png")) == []
+
+    @pytest.mark.asyncio
+    async def test_guard_collision_becomes_fail_outcome_when_continue_on_error(
+        self, tmp_path: Path
+    ) -> None:
+        """continue_on_error=True (Fix #281/#282 review): a single-row
+        collision must NOT propagate out of run_manifest_image_batch — it
+        becomes a 'fail' BatchOutcome, and nothing is downloaded/recorded for
+        that row, exactly as when continue_on_error=False."""
+        recorder = FakeRecorder()
+        recorder.recorded_media_ids = {"m1"}
+        factory = _make_recorder_batch_factory(project_id="flow-project-batch", n_rows=1)
+        items = _make_items(1)
+        out_dir = tmp_path / "out"
+
+        outcomes = await run_manifest_image_batch(
+            profile_dir=tmp_path,
+            headless=True,
+            transport=None,
+            prompts=items,
+            output_dir=out_dir,
+            continue_on_error=True,
+            jitter_range=(0.0, 0.0),
+            client_factory=factory,
+            profile_name="default",
+            recorder=recorder,
+        )
+
+        assert len(outcomes) == 1
+        assert outcomes[0].status == "fail"
+        assert "m1" in (outcomes[0].error or "")
         assert recorder.generated == []
         assert list(out_dir.rglob("*.png")) == []
 
@@ -697,9 +732,11 @@ class TestRunManifestImageBatchAttributionGuard:
     async def test_data_integrity_error_escalates_to_media_attribution_error(
         self, tmp_path: Path
     ) -> None:
-        """Layer-3 collision escalation: the row's file IS downloaded (record
-        happens after download), but a DataIntegrityError on the persistence
-        write must surface as MediaAttributionError, not a silent warning."""
+        """Layer-3 collision escalation, continue_on_error=False: the row's
+        file IS downloaded (record happens after download), but a
+        DataIntegrityError on the persistence write must surface as
+        MediaAttributionError, not a silent warning — and still abort the
+        whole batch when continue_on_error is False."""
         from gflow_cli.errors import DataIntegrityError, MediaAttributionError
 
         class _RaisingRecorder(FakeRecorder):
@@ -721,7 +758,7 @@ class TestRunManifestImageBatchAttributionGuard:
                 transport=None,
                 prompts=items,
                 output_dir=out_dir,
-                continue_on_error=True,
+                continue_on_error=False,
                 jitter_range=(0.0, 0.0),
                 client_factory=factory,
                 profile_name="default",
@@ -730,3 +767,164 @@ class TestRunManifestImageBatchAttributionGuard:
 
         # The file was already saved to disk before the persistence write failed.
         assert list(out_dir.rglob("*.png"))
+
+    @pytest.mark.asyncio
+    async def test_data_integrity_error_becomes_fail_outcome_when_continue_on_error(
+        self, tmp_path: Path
+    ) -> None:
+        """Same Layer-3 collision escalation as above, but continue_on_error=True
+        (Fix #281/#282 review): must NOT propagate — becomes a 'fail' outcome."""
+        from gflow_cli.errors import DataIntegrityError
+
+        class _RaisingRecorder(FakeRecorder):
+            def record_generated_images(self, **kwargs: object) -> None:
+                raise DataIntegrityError(
+                    detail="UNIQUE constraint failed: assets.profile_name, assets.flow_media_id",
+                    route="data.upsert_asset",
+                )
+
+        recorder = _RaisingRecorder()
+        factory = _make_recorder_batch_factory(project_id="flow-project-batch", n_rows=1)
+        items = _make_items(1)
+        out_dir = tmp_path / "out"
+
+        outcomes = await run_manifest_image_batch(
+            profile_dir=tmp_path,
+            headless=True,
+            transport=None,
+            prompts=items,
+            output_dir=out_dir,
+            continue_on_error=True,
+            jitter_range=(0.0, 0.0),
+            client_factory=factory,
+            profile_name="default",
+            recorder=recorder,
+        )
+
+        assert len(outcomes) == 1
+        assert outcomes[0].status == "fail"
+        assert "m1" in (outcomes[0].error or "")
+        # The file was already saved to disk before the persistence write failed.
+        assert list(out_dir.rglob("*.png"))
+
+
+class TestRunManifestImageBatchContinueOnErrorMultiRow:
+    """Fix #281/#282 review: under continue_on_error=True, a
+    MediaAttributionError collision on ONE row of a multi-row batch must not
+    abort the whole batch — the colliding row is marked 'fail' and every
+    other row's outcome survives, and the summary still renders."""
+
+    @staticmethod
+    def _make_per_row_media_factory(
+        *, project_id: str = "flow-project-batch", n_rows: int = 3
+    ) -> type:
+        """Like ``_make_recorder_batch_factory`` but each row's image gets a
+        UNIQUE ``media_name`` (``f"m{idx}"``) instead of sharing one fake
+        image — needed so only ONE row of a multi-row batch collides."""
+        from gflow_cli.api.dto import BatchSubmissionResult, GeneratedImage
+        from gflow_cli.api.transports.ui_automation import UiAutomationTransport
+
+        class _FakeTransport(UiAutomationTransport):
+            def __init__(self) -> None:
+                pass
+
+        class _FakeClient:
+            def __init__(self, **_: object) -> None:
+                transport_instance = _FakeTransport()
+
+                async def _batch_impl(prompts, jitter_range, continue_on_error=False):  # type: ignore[no-untyped-def]
+                    results = []
+                    for idx, _req in enumerate(prompts):
+                        img = GeneratedImage(
+                            media_name=f"m{idx}",
+                            workflow_id=f"wf{idx}",
+                            seed=1,
+                            prompt="p",
+                            model_name_type="NARWHAL",
+                            aspect_ratio="IMAGE_ASPECT_RATIO_PORTRAIT",
+                            fife_url="https://example.com/img.png",
+                            dimensions=(64, 64),
+                        )
+                        results.append(
+                            BatchSubmissionResult(
+                                status="ok",
+                                project_id=project_id,
+                                prompt_idx=idx,
+                                prompt_hash="aabbccdd",
+                                images=(img,),
+                            ),
+                        )
+                    return results
+
+                transport_instance.generate_images_batch = _batch_impl  # type: ignore[method-assign]
+                self.transport = transport_instance
+
+            async def __aenter__(self) -> _FakeClient:
+                return self
+
+            async def __aexit__(self, *_: object) -> None:
+                pass
+
+            async def download_image(self, img: object, target: Path) -> Path:
+                target.parent.mkdir(parents=True, exist_ok=True)
+                target.write_bytes(b"PNG")
+                return target
+
+        return _FakeClient
+
+    @pytest.mark.asyncio
+    async def test_middle_row_collision_does_not_abort_batch(self, tmp_path: Path) -> None:
+        recorder = FakeRecorder()
+        recorder.recorded_media_ids = {"m1"}  # only row index 1 collides
+        factory = self._make_per_row_media_factory(project_id="flow-project-batch", n_rows=3)
+        items = _make_items(3)
+
+        outcomes = await run_manifest_image_batch(
+            profile_dir=tmp_path,
+            headless=True,
+            transport=None,
+            prompts=items,
+            output_dir=tmp_path / "out",
+            continue_on_error=True,
+            jitter_range=(0.0, 0.0),
+            client_factory=factory,
+            profile_name="default",
+            recorder=recorder,
+        )
+
+        assert len(outcomes) == 3
+        assert outcomes[0].status == "ok"
+        assert outcomes[1].status == "fail"
+        assert "m1" in (outcomes[1].error or "")
+        assert outcomes[2].status == "ok"
+        # Only the non-colliding rows were recorded.
+        assert len(recorder.generated) == 2
+
+        # The summary must still render (no exception) with a non-zero exit code.
+        exit_code = render_image_batch_summary(outcomes, title="test")
+        assert exit_code != 0
+
+    @pytest.mark.asyncio
+    async def test_middle_row_collision_still_aborts_when_continue_on_error_false(
+        self, tmp_path: Path
+    ) -> None:
+        from gflow_cli.errors import MediaAttributionError
+
+        recorder = FakeRecorder()
+        recorder.recorded_media_ids = {"m1"}
+        factory = self._make_per_row_media_factory(project_id="flow-project-batch", n_rows=3)
+        items = _make_items(3)
+
+        with pytest.raises(MediaAttributionError, match="m1"):
+            await run_manifest_image_batch(
+                profile_dir=tmp_path,
+                headless=True,
+                transport=None,
+                prompts=items,
+                output_dir=tmp_path / "out",
+                continue_on_error=False,
+                jitter_range=(0.0, 0.0),
+                client_factory=factory,
+                profile_name="default",
+                recorder=recorder,
+            )
