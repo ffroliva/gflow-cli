@@ -21,7 +21,12 @@ from gflow_cli.api.transports.drivers.agentic import (
     AgenticFlowUiDriver,
     _extract_uuids,
 )
-from gflow_cli.errors import ContentPolicyError, FlowAgentUiError, TransportTimeoutError
+from gflow_cli.errors import (
+    ContentPolicyError,
+    FlowAgentUiError,
+    MediaAttributionError,
+    TransportTimeoutError,
+)
 
 # ---------------------------------------------------------------------------
 # Helpers
@@ -54,19 +59,37 @@ def _make_image_request(
     return GenerateImageRequest(prompt="a cat", count=count, aspect=aspect, model=model)
 
 
-def _fake_page_no_policy(*, initial_srcs: list[str], new_srcs: list[str]) -> MagicMock:
-    """Page that returns initial_srcs on the first ``img`` scrape, new_srcs after.
+def _fake_page_no_policy(
+    *,
+    initial_srcs: list[str],
+    new_srcs: list[str],
+    second_baseline_srcs: list[str] | None = None,
+) -> MagicMock:
+    """Page that returns ``initial_srcs`` on the first TWO ``img`` scrapes
+    (the baseline-settle pair — see ``await_images`` docstring) and
+    ``new_srcs`` on every scrape after.
+
+    ``second_baseline_srcs`` overrides just the second baseline call, for
+    tests exercising the baseline-union behaviour (a UUID that only renders
+    on the second baseline pass must still count as baseline, not "new").
+    Defaults to ``initial_srcs`` so existing single-baseline callers are
+    unaffected by the two-pass settle.
 
     Branches on the selector: ``img`` calls drive the scrape; the policy
     alert/dialog region scan returns no regions (no content-policy signal).
     """
     img_calls = 0
+    second_baseline = initial_srcs if second_baseline_srcs is None else second_baseline_srcs
 
     async def _eval_on_selector_all(selector: str, expr: str) -> list[str]:
         nonlocal img_calls
         if selector == "img":
             img_calls += 1
-            return initial_srcs if img_calls == 1 else new_srcs
+            if img_calls == 1:
+                return initial_srcs
+            if img_calls == 2:
+                return second_baseline
+            return new_srcs
         return []  # policy region scan: no alert/dialog regions present
 
     page = MagicMock()
@@ -327,6 +350,98 @@ async def test_await_images_only_new_uuids_counted() -> None:
     returned_uuids = {img.media_name for img in images}
     assert UUID_A not in returned_uuids, "baseline UUID must not appear as new"
     assert {UUID_B, UUID_C} == returned_uuids
+
+
+# ---------------------------------------------------------------------------
+# await_images — baseline settle (two-pass union) & ambiguity fail-fast (#281)
+# ---------------------------------------------------------------------------
+
+
+@pytest.mark.asyncio
+async def test_await_images_exactly_expected_passes_through() -> None:
+    """Exactly ``expected_count`` new UUIDs -> a clean success, no error."""
+    driver = AgenticFlowUiDriver()
+    srcs = [
+        f"https://labs.google/fx/api/trpc/media.getMediaUrlRedirect?name={UUID_A}",
+        f"https://labs.google/fx/api/trpc/media.getMediaUrlRedirect?name={UUID_B}",
+    ]
+    page = _fake_page_no_policy(initial_srcs=[], new_srcs=srcs)
+
+    images = await driver.await_images(page, expected_count=2)
+
+    assert {img.media_name for img in images} == {UUID_A, UUID_B}
+
+
+@pytest.mark.asyncio
+async def test_await_images_more_than_expected_raises_media_attribution_error() -> None:
+    """MORE new UUIDs than expected -> MediaAttributionError, NEVER a truncated success.
+
+    Regression guard for issue #281: the agentic driver must not silently pick
+    an arbitrary subset of an unordered UUID set and report it as success.
+    """
+    driver = AgenticFlowUiDriver()
+    page = _fake_page_no_policy(initial_srcs=[], new_srcs=_NINE_SRCS)  # 3 distinct UUIDs
+
+    with pytest.raises(MediaAttributionError) as exc_info:
+        await driver.await_images(page, expected_count=2)
+
+    detail = str(exc_info.value)
+    # Must name the candidate UUIDs and the expected count -- never truncate/slice.
+    assert UUID_A in detail
+    assert UUID_B in detail
+    assert UUID_C in detail
+    assert "2" in detail
+
+
+def test_build_generated_images_requires_exact_count() -> None:
+    """_build_generated_images enforces its exact-count invariant defensively.
+
+    It is only reachable with exactly ``expected_count`` UUIDs (await_images
+    raises for both too-few and too-many); a mismatch means a caller bug, so
+    it must fail loudly instead of slicing an unordered set (#281).
+    """
+    from gflow_cli.api.transports.drivers.agentic import _build_generated_images
+
+    with pytest.raises(AssertionError, match="invariant"):
+        _build_generated_images(
+            uuids={UUID_A, UUID_B, UUID_C},
+            expected_count=2,
+            pending_model="NARWHAL",
+            pending_aspect=None,
+        )
+
+
+@pytest.mark.asyncio
+async def test_await_images_baseline_union_ignores_lazy_render_in_second_pass() -> None:
+    """A UUID present only in the second baseline pass is NOT "new" (#281).
+
+    This is the exact production failure mode: a pre-existing project tile
+    lazily renders into the DOM between the first and second baseline scrape.
+    The two-pass union must absorb it into the baseline so it is never
+    miscounted as freshly generated.
+    """
+    driver = AgenticFlowUiDriver()
+    # UUID_A renders immediately; UUID_B only appears on the second (settled)
+    # baseline pass -- both must be excluded from "new". Only UUID_C, which
+    # appears after generation, is new.
+    initial = [f"https://labs.google/fx/api/trpc/media.getMediaUrlRedirect?name={UUID_A}"]
+    second_baseline = initial + [
+        f"https://labs.google/fx/api/trpc/media.getMediaUrlRedirect?name={UUID_B}"
+    ]
+    after_generation = second_baseline + [
+        f"https://labs.google/fx/api/trpc/media.getMediaUrlRedirect?name={UUID_C}"
+    ]
+    page = _fake_page_no_policy(
+        initial_srcs=initial,
+        new_srcs=after_generation,
+        second_baseline_srcs=second_baseline,
+    )
+
+    images = await driver.await_images(page, expected_count=1)
+
+    returned_uuids = {img.media_name for img in images}
+    assert returned_uuids == {UUID_C}
+    assert UUID_B not in returned_uuids, "lazy tile from the second baseline pass must not be 'new'"
 
 
 # ---------------------------------------------------------------------------

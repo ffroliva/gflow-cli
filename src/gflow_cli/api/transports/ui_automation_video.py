@@ -1502,25 +1502,63 @@ class VideoGenerationMixin:
         """In the OPEN reference picker, select the already-existing Flow asset
         identified by ``media_id`` (preferred over uploading a duplicate).
 
-        Locates the tile by the media UUID in its thumbnail URL; if it isn't
-        already visible, searches ``display_name`` to surface it, then re-locates
-        by UUID. Returns ``True`` once attached, ``False`` when the asset can't be
-        located (the caller then falls back to a local upload).
+        Locates the tile by the media UUID in its thumbnail URL. If it isn't
+        already visible, searches ``display_name`` to surface it (when given);
+        if it's STILL not visible, scrolls the virtualised picker grid
+        (react-virtuoso renders off-viewport tiles lazily — #282) and
+        re-checks between scrolls, the same strategy `_find_picker_entity_tile`
+        uses for the entity picker. Returns ``True`` once attached, ``False``
+        when the asset can't be located by any of the above (the caller then
+        falls back to a local upload).
         """
         tile = VideoGenerationMixin._existing_asset_tile(page, media_id)
+        visible = True
         try:
             await tile.wait_for(state="visible", timeout=4000)
         except Exception:  # noqa: BLE001 - not-visible is an expected branch
-            if not display_name:
-                return False
+            visible = False
+
+        attempted_search = False
+        if not visible and display_name:
             search = page.locator(PICKER_SEARCH_INPUT)
             # Human-like typing jitter to dodge WAF heuristics — not security.
             await search.press_sequentially(display_name, delay=random.randint(10, 50))  # NOSONAR
             await page.wait_for_timeout(800)
+            attempted_search = True
             try:
                 await tile.wait_for(state="visible", timeout=6000)
-            except Exception:  # noqa: BLE001 - still not found -> caller uploads
-                return False
+                visible = True
+            except Exception:  # noqa: BLE001 - still not found -> try scrolling
+                pass
+
+        if not visible:
+            # A failed display-name search leaves the grid filtered on that
+            # term — scrolling a still-filtered grid would only shuffle
+            # through the (possibly empty) filtered results rather than the
+            # full asset list, so the search box must be cleared first.
+            # Presence-guarded like `_attach_image_uuid_refs`'s per-ref clear.
+            if attempted_search:
+                clear_search = page.locator(PICKER_SEARCH_INPUT).first
+                if await clear_search.count():
+                    await clear_search.fill("")
+                    await page.wait_for_timeout(400)
+            # Neither the initial viewport nor the display-name search
+            # surfaced the tile — the Tudo grid is virtualised, so an
+            # off-screen (but existing) asset is simply absent from the DOM
+            # until scrolled into range. Scroll and re-check before giving up.
+            for _ in range(PICKER_GRID_SCROLL_ATTEMPTS):
+                if await tile.count():
+                    visible = True
+                    break
+                await VideoGenerationMixin._scroll_picker_grid(page)
+            if visible:
+                try:
+                    await tile.wait_for(state="visible", timeout=4000)
+                except Exception:  # noqa: BLE001 - rendered but never became visible
+                    visible = False
+
+        if not visible:
+            return False
 
         await tile.click()
         await page.wait_for_timeout(400)
@@ -1576,6 +1614,23 @@ class VideoGenerationMixin:
             await add.wait_for(state="visible", timeout=8000)
             await add.click()
             await page.wait_for_timeout(800)
+
+            # Fresh per-ref state (#282): a display-name search typed while
+            # locating a previous ref must not leak into this ref's lookup —
+            # every ref after the first was failing because the picker was
+            # still filtered on the prior ref's search term. (The dialog and
+            # tile locators are already re-resolved fresh each iteration below,
+            # since each is a brand new `page.locator(...)` call rather than a
+            # handle carried over from a prior loop pass.)
+            #
+            # Presence-guarded (#281 final review): a picker variant with no
+            # search box at all (#174's full-page media-library drift) must
+            # not become a hard dependency for every ref — an unconditional
+            # `.fill("")` would wait out a full actionability timeout against
+            # an element that's simply absent from the DOM.
+            search = page.locator(PICKER_SEARCH_INPUT).first
+            if await search.count():
+                await search.fill("")
 
             if await VideoGenerationMixin._select_existing_asset(
                 page, media_id, display_name, out_dir=out_dir
