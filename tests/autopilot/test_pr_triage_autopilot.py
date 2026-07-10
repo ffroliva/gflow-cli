@@ -25,6 +25,13 @@ def test_parse_summary_verdict():
     assert count == 4
 
 
+def test_parse_summary_verdict_rejects_non_allowlisted():
+    output = "SUMMARY_VERDICT: <img src=x onerror=alert(1)> | MUST_FIX_COUNT: 0 | PR_URL: x"
+    verdict, count = pr_triage_autopilot.parse_summary_verdict(output)
+    assert verdict is None
+    assert count == 0
+
+
 def test_get_pr_failures_count():
     entries = [
         {"pr": 101, "head_sha": "sha1", "status": "FAILED"},
@@ -311,3 +318,13 @@ def test_email_sent_on_failed_permanent(tmp_path):
 def test_send_email_alert_never_raises(tmp_path, monkeypatch):
     monkeypatch.setenv("HERMES_OPS_DIR", str(tmp_path))  # notifier script absent
     pr_triage_autopilot.send_email_alert("subject", "<b>html</b>")  # must not raise
+
+
+def test_send_email_alert_never_raises_on_subprocess_error(tmp_path, monkeypatch):
+    notifier = tmp_path / "scripts" / "notify" / "email_notify.py"
+    notifier.parent.mkdir(parents=True)
+    notifier.write_text("# fake notifier", encoding="utf-8")
+    monkeypatch.setenv("HERMES_OPS_DIR", str(tmp_path))
+    with patch("pr_triage_autopilot.subprocess.run", side_effect=OSError("boom")) as m_run:
+        pr_triage_autopilot.send_email_alert("s", "h")  # must not raise
+    m_run.assert_called_once()
