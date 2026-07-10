@@ -30,6 +30,7 @@ LOCK_FILE_PATH = "/tmp/pr_triage_autopilot.lock"
 # Review engine seam (spec addendum 2026-07-10). Only council-claude is
 # implemented; council-multi-cli is reserved backlog behind this seam.
 SUPPORTED_ENGINES = ("council-claude",)
+DEFAULT_ENGINE = SUPPORTED_ENGINES[0]
 
 # Imports for cross-platform file locking
 try:
@@ -229,7 +230,7 @@ def parse_summary_verdict(container_output: str) -> tuple[str | None, int]:
 
 def resolve_engine() -> str:
     """Return the configured review engine; refuse unknown values at startup."""
-    engine = os.environ.get("PR_TRIAGE_ENGINE", "council-claude")
+    engine = os.environ.get("PR_TRIAGE_ENGINE", DEFAULT_ENGINE)
     if engine not in SUPPORTED_ENGINES:
         raise SystemExit(f"Unsupported PR_TRIAGE_ENGINE={engine!r}; supported: {SUPPORTED_ENGINES}")
     return engine
@@ -256,7 +257,7 @@ def run_triage_cycle(
     ledger_path: Path,
     anthropic_key: str,
     gh_token: str,
-    engine: str = "council-claude",
+    engine: str = DEFAULT_ENGINE,
 ) -> None:
     """Execute the full orchestrator polling and review cycle."""
     # 1. Fetch list of open PRs
@@ -458,6 +459,8 @@ def main(argv: list[str] | None = None) -> int:
         logger.error("Missing credentials. Requires ANTHROPIC_API_KEY and GH_COMMENT_TOKEN.")
         return 1
 
+    engine = resolve_engine()
+
     repo_dir = Path(args.repo_dir).resolve()
     memory_dir = Path(args.memory_dir).resolve()
     ledger_path = repo_dir / LEDGER_FILE
@@ -470,7 +473,6 @@ def main(argv: list[str] | None = None) -> int:
         logger.info("Another autopilot instance is running. Exiting.")
         return 0
 
-    engine = resolve_engine()
     logger.info("PR-Triage Autopilot iteration started", repo=args.repo, engine=engine)
     run_triage_cycle(
         args.repo, repo_dir, memory_dir, ledger_path, anthropic_key, gh_token, engine=engine
