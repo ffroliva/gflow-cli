@@ -24,6 +24,14 @@ Manually reviewing PR #237 in this session also surfaced two confirmed bugs (`As
 
 hermes calls into gflow-cli's skill; gflow-cli never imports hermes. The skill runs identically whether invoked interactively (a human, this session) or autonomously (hermes) — only the interactive-gate resolutions differ, defined in §9 itself so there is one canonical protocol, not a forked copy (same rationale the skill's existing §8 branch-mode gives for being a mode, not a sibling skill).
 
+### Review engine seam (addendum 2026-07-10)
+
+The "run the review" step is pluggable: `engine ∈ {council-claude, council-multi-cli}`, config-defaulted to `council-claude`, and every ledger entry records the engine that produced its verdict. v1 implements only `council-claude` — the claude-CLI council described throughout this spec, which already fans out 5-13 persona sub-agents internally. `council-multi-cli` (an orchestrator distributing review personas across claude + codex/Antigravity headless CLI agents with a per-persona model-assignment matrix) is named here so the seam exists, but its design is explicitly backlog (see "Out of scope"); nothing in this spec's security or cost model is licensed for other CLIs without that follow-up spec.
+
+### Notifications (addendum 2026-07-10)
+
+Telegram remains the firehose: every outcome, exactly as specified in the data flow above. Email is a second, high-signal-only channel — council report posted, `NEEDS-HUMAN`, `DEFERRED_SIZE`, and `FAILED_PERMANENT` — sent by the **host orchestrator only**, after the sandboxed container has exited; the email credential (`RESEND_API_KEY`) is never mounted into the review container, extending Security item 3's credential boundary unchanged. Mechanism, recipient, provider, and the notifier module live in hermes-ops (see `hermes-ops/docs/specs/2026-07-10-autopilot-notifications-and-home-channel-design.md`); email delivery failure is non-fatal and logged, mirroring the Telegram row in "Error handling".
+
 ## Architecture — data flow
 
 ```
@@ -166,6 +174,7 @@ Also defines: the machine-parseable one-line structured summary printed at the e
 | Container hangs without crashing (no timeout hit) | A wrapper-level timeout (e.g. `timeout` around the container run, or Docker's own stop-timeout) forcibly kills the container; treated the same as a crash |
 | GitHub API rate-limited (403/429) | Respect `Retry-After`/backoff and retry within the same tick where practical; in practice the daily cap (≤5 full reviews/day) and per-PR Stage-1 cap keep total volume well within standard authenticated rate limits, so this is a defensive backstop, not an expected steady-state condition |
 | Telegram delivery itself fails | Logged locally (so it's visible on next VPS access) even though the realtime notification is lost — the ledger/report-on-GitHub remain the source of truth, not the Telegram message |
+| Email delivery fails (high-signal channel) | Same rule as Telegram: logged locally, non-fatal, no retry loop — the ledger/report-on-GitHub remain the source of truth |
 | Stale/missing memory sync | Not a failure — degraded grounding only, silently accepted |
 
 ## Operational hardening
@@ -200,9 +209,12 @@ Quick research against GitHub Copilot code review, CodeRabbit, Qodo PR-Agent (op
 - **Incremental re-review** — only re-review what changed since the last-reviewed SHA, rather than a full fresh council pass on every new commit. Cost optimization; current SHA-keyed ledger already avoids re-reviewing *unchanged* PRs, this only affects PRs that receive new commits after an initial review.
 - **On-demand comment-trigger** — force a review via a PR comment command, as an escape hatch for `DEFERRED_SIZE`/`NEEDS-HUMAN` cases. Needs its own comment-polling plumbing; manual invocation (as done throughout this session) covers the same need for v1.
 - **Safe two-workflow SonarCloud split for fork PRs** — independent CI hardening work, not required for this autopilot to ship.
+- **`council-multi-cli` review engine** — orchestrator distributing review personas across claude + codex/Antigravity headless CLI agents, with an explicit per-persona model-assignment matrix (which CLI/model runs which dimension, including freellmapi-routed free models where quality permits). Requires its own spec covering per-CLI sandboxing, auth, injection hardening, and cost model; prerequisite: codex + Antigravity CLI provisioning on the VPS (tracked in hermes-ops). The engine seam above exists so this lands without re-opening this spec.
 
 ## Provenance
 
 Designed 2026-07-04, in the same session that manually reviewed PR #237 (`ffroliva/gflow-cli`) and discovered the dependabot-autopilot's daily 06:00 UTC cadence had simply not yet ticked past that PR's creation time — not a bug, but the gap that motivated this design. Specializes hermes-ops' `autopilot-core-design.md` (draft, branch `feat/autopilot-core-spec`) as a fourth autopilot alongside dependabot/issue/release, and is the first specialization requiring a real Claude-Code harness rather than hermes' own freellmapi-routed agent.
 
 **Revised same day** after three independent fresh-agent adversarial reviews (security / operations / completeness lenses) against the first draft (published as PR #238). All three converged independently on the same core gap — unbounded retry on a permanently-failing PR, an uncapped-cost DoS vector — which is now the `fail_count`/`FAILED_PERMANENT` mechanism. Also added from that round: the concurrency lock, ledger-atomicity note, fresh-per-review container decision (vs. persistent), the credential/privilege boundary separating the container from the posting token (dedicated bot account, never the operator's broad-scope personal token), hardening Stage 1 to the same tool-scope/sandbox restrictions as the council rather than treating it as an implicitly-trusted cheap step, a per-PR Stage-1 volume cap independent of the full-council daily cap, and the report-content ("confused deputy") constraint. Nothing the reviews raised was dismissed without a corresponding spec change or an explicit "already adequately handled" call-out.
+
+**Addendum 2026-07-10** (brainstorm session, after v1 implementation completed against the 2026-07-08 plan): added the review-engine seam, the email high-signal notification channel, the email error-handling row, and the `council-multi-cli` backlog entry. Companion spec: `hermes-ops/docs/specs/2026-07-10-autopilot-notifications-and-home-channel-design.md` (email notifier mechanism + `/sethome` home-channel persistence fix).
