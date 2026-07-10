@@ -10,7 +10,7 @@ import pytest
 
 from gflow_cli.api.video import VideoResult, VideoStatus
 from gflow_cli.data.store import DataStore
-from gflow_cli.errors import DataIntegrityError, DataStoreError, FlowApiError
+from gflow_cli.errors import DataIntegrityError, DataStoreError, FlowApiError, MediaAttributionError
 from gflow_cli.worker.daemon import FlowWorker
 from gflow_cli.worker.queue import QueueRepository
 
@@ -510,6 +510,10 @@ async def test_worker_t2i_guard_blocks_already_recorded_media(temp_db: DataStore
     already recorded in local history for this profile, the worker must fail
     the task WITHOUT downloading anything — mirrors the guard already wired
     into ``cli_image._run_t2i``/``_run_i2i`` and ``image_batch._download_results``.
+
+    The guard logic itself lives on ``OperationRecorder.verify_media_attribution``
+    (issue #283 consolidation) and is unit-tested in ``tests/data/test_recorder.py``;
+    this test only proves the worker calls it before downloading.
     """
     repo = QueueRepository(temp_db)
     task = repo.enqueue_task(
@@ -526,6 +530,10 @@ async def test_worker_t2i_guard_blocks_already_recorded_media(temp_db: DataStore
 
     already_recorded_recorder = MagicMock()
     already_recorded_recorder.is_media_recorded.return_value = True
+    already_recorded_recorder.verify_media_attribution.side_effect = MediaAttributionError(
+        "the driver returned media that already exists in local history — "
+        "wrong-media attribution (#281); nothing was downloaded: already-recorded"
+    )
 
     with (
         patch("gflow_cli.worker.daemon.FlowApiClient", return_value=fake_client),

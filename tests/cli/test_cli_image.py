@@ -2,6 +2,7 @@
 
 from __future__ import annotations
 
+from collections.abc import Sequence
 from pathlib import Path
 from unittest.mock import AsyncMock, MagicMock, patch
 
@@ -31,6 +32,27 @@ class FakeRecorder:
 
     def is_media_recorded(self, *, profile_name: str, flow_media_id: str) -> bool:
         return flow_media_id in self.recorded_media_ids
+
+    def verify_media_attribution(
+        self, *, profile_name: str, images: Sequence[GeneratedImage]
+    ) -> None:
+        """Mirrors ``OperationRecorder.verify_media_attribution`` (issue #283)
+        so CLI-wiring tests exercise the same already-recorded/raise contract
+        without a real ``DataStore``."""
+        from gflow_cli.errors import MediaAttributionError
+
+        already_recorded = [
+            img.media_name
+            for img in images
+            if self.is_media_recorded(profile_name=profile_name, flow_media_id=img.media_name)
+        ]
+        if already_recorded:
+            msg = (
+                "the driver returned media that already exists in local history — "
+                "wrong-media attribution (#281); nothing was downloaded: "
+                f"{', '.join(already_recorded)}"
+            )
+            raise MediaAttributionError(msg)
 
 
 @pytest.fixture
@@ -1047,42 +1069,12 @@ class TestRecorderIntegration:
 
 # ---------------------------------------------------------------------------
 # #281 — pre-download attribution guard + collision escalation
+#
+# The guard logic itself now lives on ``OperationRecorder.verify_media_attribution``
+# (issue #283 consolidation) and is unit-tested in ``tests/data/test_recorder.py``.
+# The wiring coverage below (``TestMediaAttributionGuardWiring``) proves each CLI
+# generation flow actually calls it before downloading.
 # ---------------------------------------------------------------------------
-
-
-class TestVerifyMediaAttribution:
-    """Unit coverage for ``cli_image._verify_media_attribution``."""
-
-    def test_passes_when_no_media_recorded(self) -> None:
-        from gflow_cli.cli_image import _verify_media_attribution
-
-        recorder = FakeRecorder()
-        images = [
-            _make_generated_image(media_name="m1"),
-            _make_generated_image(media_name="m2"),
-        ]
-
-        _verify_media_attribution(recorder, profile_name="default", images=images)  # no raise
-
-    def test_raises_listing_only_already_recorded_uuids(self) -> None:
-        from gflow_cli.cli_image import _verify_media_attribution
-        from gflow_cli.errors import MediaAttributionError
-
-        recorder = FakeRecorder()
-        recorder.recorded_media_ids = {"m2"}
-        images = [
-            _make_generated_image(media_name="m1"),
-            _make_generated_image(media_name="m2"),
-            _make_generated_image(media_name="m3"),
-        ]
-
-        with pytest.raises(MediaAttributionError) as exc_info:
-            _verify_media_attribution(recorder, profile_name="default", images=images)
-
-        message = str(exc_info.value)
-        assert "m2" in message
-        assert "m1" not in message
-        assert "m3" not in message
 
 
 class TestRecordGeneratedImagesSafeEscalation:

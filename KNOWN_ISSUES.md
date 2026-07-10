@@ -700,11 +700,13 @@ warn-only outcome:**
    requested, `await_images` raises `MediaAttributionError` naming every
    candidate UUID and the expected count, rather than guessing via
    `_build_generated_images`'s old arbitrary slice.
-3. **Pre-download attribution guard + collision escalation.** `_verify_media_attribution`
-   (new in `cli_image.py`, mirrored in `image_batch.py`'s manifest batch path
-   and the worker daemon's `FlowWorker.process_task`) checks
-   `OperationRecorder.is_media_recorded()` and raises before any download if
-   the driver returned a `flow_media_id` already recorded for the profile.
+3. **Pre-download attribution guard + collision escalation.**
+   `OperationRecorder.verify_media_attribution()` (called from `cli_image.py`,
+   `image_batch.py`'s manifest batch path, and the worker daemon's
+   `FlowWorker.process_task`; consolidated onto the recorder in #283 after
+   shipping as three near-identical module-level copies) checks
+   `is_media_recorded()` and raises before any download if the driver
+   returned a `flow_media_id` already recorded for the profile.
    Separately, a `DataIntegrityError` from the recorder's
    `UNIQUE(profile_name, flow_media_id)` constraint now escalates to
    `MediaAttributionError` (naming the suspect file) instead of being caught

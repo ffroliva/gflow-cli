@@ -35,7 +35,7 @@ from gflow_cli.errors import (
 from gflow_cli.storage import cloud_info_from_path
 
 if TYPE_CHECKING:
-    from collections.abc import Callable, Coroutine, Sequence
+    from collections.abc import Callable, Coroutine
 
     from gflow_cli.api.dto import GeneratedImage
     from gflow_cli.data.recorder import OperationRecorder
@@ -58,35 +58,6 @@ def _warn_persistence_failed_after_success(
         local_path=str(local_path) if local_path is not None else None,
     )
     console.print("[yellow]Generated media was saved, but local history was not updated.[/yellow]")
-
-
-def _verify_media_attribution(
-    recorder: OperationRecorder,
-    *,
-    profile_name: str,
-    images: Sequence[GeneratedImage],
-) -> None:
-    """Pre-download attribution guard (issue #281) for the manifest batch path.
-
-    Duplicated from ``cli_image._verify_media_attribution`` rather than
-    imported: ``cli_image`` imports from this module, so importing back would
-    create a cycle (mirrors the existing ``_warn_persistence_failed_after_success``
-    duplication). Same contract: raise if the driver returned media that
-    already exists in local history for this profile — nothing gets
-    downloaded for an already-recorded id.
-    """
-    already_recorded = [
-        img.media_name
-        for img in images
-        if recorder.is_media_recorded(profile_name=profile_name, flow_media_id=img.media_name)
-    ]
-    if already_recorded:
-        msg = (
-            "the driver returned media that already exists in local history — "
-            "wrong-media attribution (#281); nothing was downloaded: "
-            f"{', '.join(already_recorded)}"
-        )
-        raise MediaAttributionError(msg)
 
 
 def _prompt_hash(text: str) -> str:
@@ -888,7 +859,7 @@ async def _download_results(
             continue
 
         if recorder is not None and profile_name is not None:
-            _verify_media_attribution(recorder, profile_name=profile_name, images=result.images)
+            recorder.verify_media_attribution(profile_name=profile_name, images=result.images)
 
         saved = await _download_item_images(
             client=client,
