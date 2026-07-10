@@ -92,7 +92,8 @@ def _fake_page_no_policy(
     initial_srcs: list[str],
     new_srcs: list[str],
 ) -> MagicMock:
-    """Page mock: first ``img`` scrape returns initial_srcs, subsequent ones new_srcs.
+    """Page mock: the first TWO ``img`` scrapes return initial_srcs (the
+    baseline-settle pair — issue #281), subsequent ones new_srcs.
 
     Branches on selector: ``img`` drives the scrape; the policy alert/dialog
     region scan returns no regions (no content-policy signal).
@@ -103,7 +104,7 @@ def _fake_page_no_policy(
         nonlocal img_calls
         if selector == "img":
             img_calls += 1
-            return initial_srcs if img_calls == 1 else new_srcs
+            return initial_srcs if img_calls <= 2 else new_srcs  # noqa: PLR2004
         return []  # policy region scan: no alert/dialog regions
 
     page = MagicMock()

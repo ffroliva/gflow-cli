@@ -17,10 +17,10 @@ from gflow_cli.api.video import GenerateVideoRequest, VideoModel, VideoStarted
 from gflow_cli.api.video import Mode as VideoMode
 from gflow_cli.api.video import Tier as VideoTier
 from gflow_cli.config import get_settings
-from gflow_cli.data.recorder import OperationRecorder
+from gflow_cli.data.recorder import OperationRecorder, escalate_asset_collision
 from gflow_cli.data.repository import DataRepository
 from gflow_cli.data.store import DataStore
-from gflow_cli.errors import GFlowError
+from gflow_cli.errors import DataIntegrityError, DataStoreError, GFlowError
 from gflow_cli.paths import image_output_path
 from gflow_cli.storage import cloud_info_from_path
 from gflow_cli.worker.queue import QueueRepository, QueueTask
@@ -166,6 +166,10 @@ class FlowWorker:
                                 count=count,
                             )
 
+                        recorder.verify_media_attribution(
+                            profile_name=self.profile_name, images=images
+                        )
+
                         flow_media_id = images[0].media_name if images else None
 
                         saved_paths: list[Path] = []
@@ -176,20 +180,42 @@ class FlowWorker:
                             saved = await client.download_image(img, target)
                             saved_paths.append(saved)
 
-                        recorder.record_generated_images(
-                            profile_name=self.profile_name,
-                            profile_dir=profile_dir,
-                            project=project,
-                            project_created=project_created,
-                            request=req,
-                            images=images,
-                            saved_paths=saved_paths,
-                            input_media_ids=(
-                                [r.name for r in req.refs] if hasattr(req, "refs") else []
-                            ),
-                            operation_kind=task.task_type,
-                            cloud_storage_infos=[cloud_info_from_path(p) for p in saved_paths],
-                        )
+                        try:
+                            recorder.record_generated_images(
+                                profile_name=self.profile_name,
+                                profile_dir=profile_dir,
+                                project=project,
+                                project_created=project_created,
+                                request=req,
+                                images=images,
+                                saved_paths=saved_paths,
+                                input_media_ids=(
+                                    [r.name for r in req.refs] if hasattr(req, "refs") else []
+                                ),
+                                operation_kind=task.task_type,
+                                cloud_storage_infos=[cloud_info_from_path(p) for p in saved_paths],
+                            )
+                        except DataStoreError as exc:
+                            # Collision escalation (issue #281/#282, consolidated):
+                            # delegates the route-scoped escalation decision to the
+                            # shared helper — a DataIntegrityError whose route is the
+                            # asset-collision constraint raises MediaAttributionError
+                            # (a more specific failure than the original exc); any
+                            # other DataIntegrityError, or a plain DataStoreError,
+                            # returns normally from the helper and falls through to
+                            # the bare `raise` below, re-raising the ORIGINAL
+                            # exception unchanged. Unlike cli_image.py/image_batch.py
+                            # there is no silent warn-and-continue here — the worker
+                            # always fails the task on any record_generated_images
+                            # exception (see escalate_asset_collision's docstring for
+                            # the route-scoping rationale, shared with the other two
+                            # call sites: cli_image._record_generated_images_safe /
+                            # image_batch._try_record_images).
+                            if isinstance(exc, DataIntegrityError):
+                                escalate_asset_collision(
+                                    exc, images=images, saved_paths=saved_paths
+                                )
+                            raise
                 except Exception as exc:
                     logger.warning("Failed during image generation or recording", exc_info=exc)
                     raise

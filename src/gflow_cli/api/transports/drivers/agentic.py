@@ -27,7 +27,12 @@ from typing import TYPE_CHECKING, Any, cast
 
 import structlog
 
-from gflow_cli.errors import ContentPolicyError, FlowAgentUiError, TransportTimeoutError
+from gflow_cli.errors import (
+    ContentPolicyError,
+    FlowAgentUiError,
+    MediaAttributionError,
+    TransportTimeoutError,
+)
 
 if TYPE_CHECKING:
     from pathlib import Path
@@ -462,6 +467,25 @@ class AgenticFlowUiDriver:
         default). On partial completion the error detail includes the
         produced-vs-requested mismatch count.
 
+        **Baseline settle (issue #281):** a single baseline scrape can miss
+        pre-existing project tiles that lazily render a moment later — those
+        would then be miscounted as "new" media and silently attributed to
+        this generation (the 2026-07-10 production incident: a pre-existing
+        logo was downloaded and reported as a fresh portrait). The baseline is
+        therefore the UNION of two scrapes separated by one
+        ``_POLL_INTERVAL_S`` sleep, so a lazy tile rendering between the two
+        passes still counts as pre-existing, not new. This adds one poll
+        interval of wall time up front; the total poll timeout budget
+        (``_AWAIT_TIMEOUT_S``) is unchanged.
+
+        **Ambiguity fail-fast (issue #281):** if more new UUIDs appear than
+        were requested, there is no reliable way to tell which ones belong to
+        this generation. Rather than arbitrarily slice the unordered set (the
+        prior, buggy behaviour), this raises ``MediaAttributionError`` naming
+        every candidate UUID and the expected count. The caller should re-run
+        the generation — ideally in a dedicated project with fewer
+        pre-existing assets, which avoids the ambiguity entirely.
+
         **Content-policy fail-fast (conservative):** scans for explicit text
         (``"content policy"`` / ``"can't create"`` / ``"violat"`` / ``"not able
         to generate"``) and the ``warning``/``error``/``block`` Material Symbol
@@ -469,10 +493,13 @@ class AgenticFlowUiDriver:
         Because no positive block-refusal sample was captured, we prefer a false
         *miss* (timeout) over a false *positive* (spurious ContentPolicyError).
         """
-        # Snapshot existing UUIDs before any new images appear so we can
-        # compute the delta against what was already rendered in the page.
-        baseline_srcs = await _scrape_img_srcs(page)
-        baseline_uuids = _extract_uuids(baseline_srcs)
+        # Baseline settle (issue #281): union two scrapes separated by one
+        # poll interval so a lazily-rendered pre-existing tile is captured as
+        # baseline, not miscounted as "new" media.
+        first_baseline_srcs = await _scrape_img_srcs(page)
+        await asyncio.sleep(_POLL_INTERVAL_S)
+        second_baseline_srcs = await _scrape_img_srcs(page)
+        baseline_uuids = _extract_uuids(first_baseline_srcs) | _extract_uuids(second_baseline_srcs)
 
         deadline = asyncio.get_event_loop().time() + _AWAIT_TIMEOUT_S
         new_uuids: set[str] = set()
@@ -511,6 +538,18 @@ class AgenticFlowUiDriver:
                 )
             raise TransportTimeoutError(detail=detail, route="agentic:await_images")
 
+        if len(new_uuids) > expected_count:
+            candidates = sorted(new_uuids)
+            raise MediaAttributionError(
+                detail=(
+                    f"Cannot attribute the generation among {len(candidates)} candidate "
+                    f"media UUIDs (expected {expected_count}): {candidates}. Re-run the "
+                    "generation; a dedicated project with fewer pre-existing assets "
+                    "avoids lazy-render ambiguity."
+                ),
+                route="agentic:await_images",
+            )
+
         return _build_generated_images(
             uuids=new_uuids,
             expected_count=expected_count,
@@ -544,7 +583,23 @@ def _build_generated_images(
     - ``dimensions``          — ``(0, 0)`` placeholder (naturalWidth/Height
                                  are unreliable for tRPC redirect URLs until
                                  the image has fully decoded; scraping deferred)
+
+    ``uuids`` MUST contain exactly ``expected_count`` entries — the caller
+    (``await_images``) raises ``TransportTimeoutError`` for fewer and
+    ``MediaAttributionError`` for more, so this is only ever reached with an
+    unambiguous, exact match (issue #281: a set is unordered and previously
+    was silently truncated to ``expected_count``, which could attribute the
+    wrong media to the request).
     """
+    if len(uuids) != expected_count:
+        msg = (
+            f"_build_generated_images invariant violated: got {len(uuids)} uuids, "
+            f"expected exactly {expected_count}. Callers must raise "
+            "TransportTimeoutError (too few) or MediaAttributionError (too many) "
+            "before reaching this helper."
+        )
+        raise AssertionError(msg)
+
     # Late import — avoid module-load-time import of dto.
     from gflow_cli.api.dto import GeneratedImage  # noqa: PLC0415
 
@@ -555,9 +610,7 @@ def _build_generated_images(
         aspect_wire = _label_to_wire.get(pending_aspect, aspect_wire)
 
     images: list[GeneratedImage] = []
-    # Take only the first ``expected_count`` UUIDs (set is unordered; the
-    # caller verified len >= expected_count before calling this helper).
-    for uuid in list(uuids)[:expected_count]:
+    for uuid in uuids:
         fife_url = _MEDIA_REDIRECT_BASE.format(uuid=uuid)
         images.append(
             GeneratedImage(

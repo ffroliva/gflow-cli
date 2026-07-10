@@ -10,7 +10,7 @@ import pytest
 
 from gflow_cli.api.video import VideoResult, VideoStatus
 from gflow_cli.data.store import DataStore
-from gflow_cli.errors import FlowApiError
+from gflow_cli.errors import DataIntegrityError, DataStoreError, FlowApiError, MediaAttributionError
 from gflow_cli.worker.daemon import FlowWorker
 from gflow_cli.worker.queue import QueueRepository
 
@@ -501,4 +501,186 @@ def test_worker_build_image_request_parses_instructions_with_references(temp_db:
             character_ids=("char-uuid-2",),
         ),
     )
+    worker.close()
+
+
+@pytest.mark.asyncio
+async def test_worker_t2i_guard_blocks_already_recorded_media(temp_db: DataStore) -> None:
+    """Pre-download attribution guard (#281): if the driver hands back media
+    already recorded in local history for this profile, the worker must fail
+    the task WITHOUT downloading anything — mirrors the guard already wired
+    into ``cli_image._run_t2i``/``_run_i2i`` and ``image_batch._download_results``.
+
+    The guard logic itself lives on ``OperationRecorder.verify_media_attribution``
+    (issue #283 consolidation) and is unit-tested in ``tests/data/test_recorder.py``;
+    this test only proves the worker calls it before downloading.
+    """
+    repo = QueueRepository(temp_db)
+    task = repo.enqueue_task(
+        task_id="task-t2i-guard",
+        profile_name="default",
+        task_type="t2i",
+        payload={"prompt": "scenic landscape", "aspect": "16:9", "count": 1},
+    )
+
+    worker = FlowWorker("default", str(temp_db.path))
+    fake_client = FakeFlowApiClient()
+    fake_client.create_project.return_value = MagicMock(project_id="project-abc", title="T")
+    fake_client.generate_image.return_value = FakeGeneratedImage(media_name="already-recorded")
+
+    already_recorded_recorder = MagicMock()
+    already_recorded_recorder.is_media_recorded.return_value = True
+    already_recorded_recorder.verify_media_attribution.side_effect = MediaAttributionError(
+        "the driver returned media that already exists in local history — "
+        "wrong-media attribution (#281); nothing was downloaded: already-recorded"
+    )
+
+    with (
+        patch("gflow_cli.worker.daemon.FlowApiClient", return_value=fake_client),
+        patch(
+            "gflow_cli.worker.daemon.OperationRecorder",
+            return_value=already_recorded_recorder,
+        ),
+    ):
+        await worker.process_task(task)
+
+    fake_client.download_image.assert_not_called()
+    already_recorded_recorder.record_generated_images.assert_not_called()
+
+    updated = repo.get_task("task-t2i-guard")
+    assert updated is not None
+    assert updated.status == "failed"
+    assert updated.error is not None
+    assert updated.error["type"] == "https://gflow-cli.dev/errors/media-attribution"
+    assert "already-recorded" in updated.error["detail"]
+    worker.close()
+
+
+@pytest.mark.asyncio
+async def test_worker_t2i_record_data_integrity_error_escalates(temp_db: DataStore) -> None:
+    """Collision escalation (#281, third defense layer): a ``DataIntegrityError``
+    from ``recorder.record_generated_images`` means the write itself violated a
+    local DB constraint (most likely per-profile ``flow_media_id`` uniqueness) —
+    the just-downloaded file may be a pre-existing asset. Must surface as
+    ``MediaAttributionError``, not the generic warn-and-continue path.
+    """
+    repo = QueueRepository(temp_db)
+    task = repo.enqueue_task(
+        task_id="task-t2i-integrity",
+        profile_name="default",
+        task_type="t2i",
+        payload={"prompt": "scenic landscape", "aspect": "16:9", "count": 1},
+    )
+
+    worker = FlowWorker("default", str(temp_db.path))
+    fake_client = FakeFlowApiClient()
+    fake_client.create_project.return_value = MagicMock(project_id="project-abc", title="T")
+    fake_client.generate_image.return_value = FakeGeneratedImage(media_name="media-collision")
+
+    failing_recorder = MagicMock()
+    failing_recorder.is_media_recorded.return_value = False
+    failing_recorder.record_generated_images.side_effect = DataIntegrityError(
+        "UNIQUE constraint failed: assets.profile_name, assets.flow_media_id",
+        route="data.upsert_asset",
+    )
+
+    with (
+        patch("gflow_cli.worker.daemon.FlowApiClient", return_value=fake_client),
+        patch("gflow_cli.worker.daemon.OperationRecorder", return_value=failing_recorder),
+    ):
+        await worker.process_task(task)
+
+    fake_client.download_image.assert_called_once()
+
+    updated = repo.get_task("task-t2i-integrity")
+    assert updated is not None
+    assert updated.status == "failed"
+    assert updated.error is not None
+    assert updated.error["type"] == "https://gflow-cli.dev/errors/media-attribution"
+    assert "media-collision" in updated.error["detail"]
+    worker.close()
+
+
+@pytest.mark.asyncio
+async def test_worker_t2i_unrelated_data_integrity_route_is_not_escalated(
+    temp_db: DataStore,
+) -> None:
+    """Route-scoped escalation (#281/#282 review): a ``DataIntegrityError``
+    whose ``route`` is NOT the asset-collision constraint (e.g. a bare
+    ``link_operation_asset`` write failure) must surface as a plain
+    ``DataIntegrityError`` — never mislabeled as ``MediaAttributionError``.
+    """
+    repo = QueueRepository(temp_db)
+    task = repo.enqueue_task(
+        task_id="task-t2i-unrelated-integrity",
+        profile_name="default",
+        task_type="t2i",
+        payload={"prompt": "scenic landscape", "aspect": "16:9", "count": 1},
+    )
+
+    worker = FlowWorker("default", str(temp_db.path))
+    fake_client = FakeFlowApiClient()
+    fake_client.create_project.return_value = MagicMock(project_id="project-abc", title="T")
+    fake_client.generate_image.return_value = FakeGeneratedImage(media_name="media-unrelated")
+
+    failing_recorder = MagicMock()
+    failing_recorder.is_media_recorded.return_value = False
+    failing_recorder.record_generated_images.side_effect = DataIntegrityError(
+        "FK constraint failed", route="data.link_operation_asset"
+    )
+
+    with (
+        patch("gflow_cli.worker.daemon.FlowApiClient", return_value=fake_client),
+        patch("gflow_cli.worker.daemon.OperationRecorder", return_value=failing_recorder),
+    ):
+        await worker.process_task(task)
+
+    fake_client.download_image.assert_called_once()
+
+    updated = repo.get_task("task-t2i-unrelated-integrity")
+    assert updated is not None
+    assert updated.status == "failed"
+    assert updated.error is not None
+    assert updated.error["type"] == "https://gflow-cli.dev/errors/data-integrity"
+    assert updated.error["type"] != "https://gflow-cli.dev/errors/media-attribution"
+    worker.close()
+
+
+@pytest.mark.asyncio
+async def test_worker_t2i_record_generic_data_store_error_unchanged(temp_db: DataStore) -> None:
+    """A generic (non-integrity) ``DataStoreError`` from the record call must
+    NOT be escalated to ``MediaAttributionError`` — this is the pre-#281
+    behaviour and must stay a plain data-store failure.
+    """
+    repo = QueueRepository(temp_db)
+    task = repo.enqueue_task(
+        task_id="task-t2i-datastore",
+        profile_name="default",
+        task_type="t2i",
+        payload={"prompt": "scenic landscape", "aspect": "16:9", "count": 1},
+    )
+
+    worker = FlowWorker("default", str(temp_db.path))
+    fake_client = FakeFlowApiClient()
+    fake_client.create_project.return_value = MagicMock(project_id="project-abc", title="T")
+    fake_client.generate_image.return_value = FakeGeneratedImage(media_name="media-db-error")
+
+    failing_recorder = MagicMock()
+    failing_recorder.is_media_recorded.return_value = False
+    failing_recorder.record_generated_images.side_effect = DataStoreError("database is locked")
+
+    with (
+        patch("gflow_cli.worker.daemon.FlowApiClient", return_value=fake_client),
+        patch("gflow_cli.worker.daemon.OperationRecorder", return_value=failing_recorder),
+    ):
+        await worker.process_task(task)
+
+    fake_client.download_image.assert_called_once()
+
+    updated = repo.get_task("task-t2i-datastore")
+    assert updated is not None
+    assert updated.status == "failed"
+    assert updated.error is not None
+    assert updated.error["type"] == "https://gflow-cli.dev/errors/data-store"
+    assert updated.error["type"] != "https://gflow-cli.dev/errors/media-attribution"
     worker.close()

@@ -22,13 +22,16 @@ from gflow_cli.api.client import FlowApiClient
 from gflow_cli.api.dto import BatchSubmissionResult, ProjectInfo
 from gflow_cli.api.image import Aspect, GenerateImageRequest, Model
 from gflow_cli.api.transports.ui_automation import UiAutomationTransport
+from gflow_cli.data.recorder import escalate_asset_collision
 from gflow_cli.errors import (
     EXIT_CODE_MAP,
     BatchIntegrityError,
     BatchPartialError,
     ConfigurationError,
+    DataIntegrityError,
     DataStoreError,
     GFlowError,
+    MediaAttributionError,
 )
 from gflow_cli.storage import cloud_info_from_path
 
@@ -781,7 +784,17 @@ def _try_record_images(
     result: BatchSubmissionResult,
     saved: list[Path],
 ) -> None:
-    """Persist generated-image metadata; warn on DataStoreError (non-fatal)."""
+    """Persist generated-image metadata; warn on DataStoreError (non-fatal).
+
+    Collision escalation (issue #281/#282 review): a ``DataIntegrityError``
+    whose ``route`` is the asset-collision constraint means the write itself
+    violated a local DB constraint — most likely the per-profile uniqueness of
+    ``flow_media_id`` — i.e. the just-downloaded file may be a pre-existing
+    asset rather than genuinely new media. ``escalate_asset_collision`` raises
+    ``MediaAttributionError`` for that route and returns normally for any
+    other (unrelated) ``DataIntegrityError``, in which case this falls through
+    to the same warn-and-continue path as a plain ``DataStoreError``.
+    """
     try:
         recorder.record_generated_images(
             profile_name=profile_name,
@@ -795,6 +808,8 @@ def _try_record_images(
             operation_kind="t2i",
         )
     except DataStoreError as exc:
+        if isinstance(exc, DataIntegrityError):
+            escalate_asset_collision(exc, images=list(result.images), saved_paths=saved)
         first_image = result.images[0] if result.images else None
         first_path = saved[0] if saved else None
         _warn_persistence_failed_after_success(
@@ -802,6 +817,47 @@ def _try_record_images(
             flow_media_id=first_image.media_name if first_image else None,
             local_path=first_path,
         )
+
+
+async def _process_ok_row(
+    *,
+    client: Any,
+    item: BatchPromptItem,
+    result: BatchSubmissionResult,
+    output_dir: Path,
+    profile_name: str | None,
+    profile_dir: Path | None,
+    recorder: OperationRecorder | None,
+) -> BatchOutcome:
+    """Verify attribution, download, and (optionally) record ONE 'ok' row.
+
+    Raises ``MediaAttributionError`` if a collision is detected — either the
+    pre-download guard (``recorder.verify_media_attribution``) or the
+    post-download collision escalation inside ``_try_record_images``. The
+    caller (``_download_results``) decides whether to propagate that or
+    convert it into a "fail" outcome, per ``continue_on_error``.
+    """
+    if recorder is not None and profile_name is not None:
+        recorder.verify_media_attribution(profile_name=profile_name, images=result.images)
+
+    saved = await _download_item_images(
+        client=client,
+        item=item,
+        result=result,
+        output_dir=output_dir,
+    )
+
+    if recorder is not None and profile_name is not None and profile_dir is not None:
+        _try_record_images(
+            recorder=recorder,
+            profile_name=profile_name,
+            profile_dir=profile_dir,
+            item=item,
+            result=result,
+            saved=saved,
+        )
+
+    return BatchOutcome(index=item.index, prompt=item, status="ok", saved_paths=saved)
 
 
 async def _download_results(
@@ -813,8 +869,23 @@ async def _download_results(
     profile_name: str | None = None,
     profile_dir: Path | None = None,
     recorder: OperationRecorder | None = None,
+    continue_on_error: bool = True,
 ) -> list[BatchOutcome]:
-    """Download images from ok BatchSubmissionResults and build BatchOutcome list."""
+    """Download images from ok BatchSubmissionResults and build BatchOutcome list.
+
+    ``continue_on_error`` contract (issue #281/#282 review): a
+    ``MediaAttributionError`` collision on one row — from the pre-download
+    guard or the post-download collision escalation, both inside
+    :func:`_process_ok_row` — is caught PER ROW when ``continue_on_error`` is
+    True. The row is marked "fail" (carrying the error message; it was NOT
+    downloaded/recorded) and the loop continues, so earlier and later rows'
+    outcomes are never discarded. Previously this propagated straight out of
+    the function, aborting the whole batch and silently violating
+    `--continue-on-error` — the same contract every OTHER row failure in this
+    loop (a non-"ok" ``BatchSubmissionResult``, just above) already honored.
+    When ``continue_on_error`` is False the collision still aborts the batch,
+    matching that same existing behavior.
+    """
     outcomes: list[BatchOutcome] = []
     for item, result in zip(prompts, results, strict=False):
         if result.status != "ok":
@@ -839,29 +910,34 @@ async def _download_results(
             )
             continue
 
-        saved = await _download_item_images(
-            client=client,
-            item=item,
-            result=result,
-            output_dir=output_dir,
-        )
-        outcomes.append(
-            BatchOutcome(
-                index=item.index,
-                prompt=item,
-                status="ok",
-                saved_paths=saved,
-            ),
-        )
-        if recorder is not None and profile_name is not None and profile_dir is not None:
-            _try_record_images(
-                recorder=recorder,
-                profile_name=profile_name,
-                profile_dir=profile_dir,
+        try:
+            outcome = await _process_ok_row(
+                client=client,
                 item=item,
                 result=result,
-                saved=saved,
+                output_dir=output_dir,
+                profile_name=profile_name,
+                profile_dir=profile_dir,
+                recorder=recorder,
             )
+        except MediaAttributionError as exc:
+            if not continue_on_error:
+                raise
+            logger.warning(
+                "image_batch.media_attribution_collision",
+                row_idx=item.index,
+                prompt_hash=result.prompt_hash,
+                project_id=result.project_id,
+                error=str(exc),
+            )
+            outcome = BatchOutcome(
+                index=item.index,
+                prompt=item,
+                status="fail",
+                error=f"{type(exc).__name__}: {exc}",
+                exit_code=resolve_exit_code(exc),
+            )
+        outcomes.append(outcome)
 
     return outcomes
 
@@ -943,6 +1019,7 @@ async def run_manifest_image_batch(
                 profile_name=profile_name,
                 profile_dir=profile_dir,
                 recorder=recorder,
+                continue_on_error=continue_on_error,
             )
             raise BatchPartialError(
                 detail=exc.detail,
@@ -991,6 +1068,7 @@ async def run_manifest_image_batch(
             profile_name=profile_name,
             profile_dir=profile_dir,
             recorder=recorder,
+            continue_on_error=continue_on_error,
         )
 
         # Post-download integrity check.

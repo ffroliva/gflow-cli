@@ -2,6 +2,7 @@
 
 from __future__ import annotations
 
+from collections.abc import Sequence
 from pathlib import Path
 from unittest.mock import AsyncMock, MagicMock, patch
 
@@ -17,6 +18,8 @@ class FakeRecorder:
         self.uploads: list[dict] = []
         self.generated: list[dict] = []
         self.closed = False
+        # media_names the guard should treat as already-recorded (#281 tests).
+        self.recorded_media_ids: set[str] = set()
 
     def close(self) -> None:
         self.closed = True
@@ -26,6 +29,30 @@ class FakeRecorder:
 
     def record_generated_images(self, **kwargs: object) -> None:
         self.generated.append(kwargs)
+
+    def is_media_recorded(self, *, profile_name: str, flow_media_id: str) -> bool:
+        return flow_media_id in self.recorded_media_ids
+
+    def verify_media_attribution(
+        self, *, profile_name: str, images: Sequence[GeneratedImage]
+    ) -> None:
+        """Mirrors ``OperationRecorder.verify_media_attribution`` (issue #283)
+        so CLI-wiring tests exercise the same already-recorded/raise contract
+        without a real ``DataStore``."""
+        from gflow_cli.errors import MediaAttributionError
+
+        already_recorded = [
+            img.media_name
+            for img in images
+            if self.is_media_recorded(profile_name=profile_name, flow_media_id=img.media_name)
+        ]
+        if already_recorded:
+            msg = (
+                "the driver returned media that already exists in local history — "
+                "wrong-media attribution (#281); nothing was downloaded: "
+                f"{', '.join(already_recorded)}"
+            )
+            raise MediaAttributionError(msg)
 
 
 @pytest.fixture
@@ -1040,6 +1067,152 @@ class TestRecorderIntegration:
         assert "data.persistence_failed_after_success" in events
 
 
+# ---------------------------------------------------------------------------
+# #281 — pre-download attribution guard + collision escalation
+#
+# The guard logic itself now lives on ``OperationRecorder.verify_media_attribution``
+# (issue #283 consolidation) and is unit-tested in ``tests/data/test_recorder.py``.
+# The wiring coverage below (``TestMediaAttributionGuardWiring``) proves each CLI
+# generation flow actually calls it before downloading.
+# ---------------------------------------------------------------------------
+
+
+class TestRecordGeneratedImagesSafeEscalation:
+    """Unit coverage for the ``_record_generated_images_safe`` collision escalation:
+    ``DataIntegrityError`` (constraint violation on write) MUST become a hard
+    ``MediaAttributionError`` — the DB is the last line of defense against a
+    downloaded file that turns out to collide with an existing asset — while a
+    generic ``DataStoreError`` keeps the pre-#281 warn-only behaviour."""
+
+    @staticmethod
+    def _call(recorder: FakeRecorder, *, tmp_path: Path) -> None:
+        from gflow_cli.api.dto import ProjectInfo
+        from gflow_cli.api.image import Aspect, GenerateImageRequest, Model
+        from gflow_cli.cli_image import _record_generated_images_safe
+
+        image = _make_generated_image(media_name="m1")
+        _record_generated_images_safe(
+            recorder,  # type: ignore[arg-type]
+            profile_name="default",
+            profile_dir=tmp_path / "prof",
+            project=ProjectInfo(project_id="p1", title="gflow-cli t2i"),
+            project_created=True,
+            request=GenerateImageRequest(
+                prompt="a cat", aspect=Aspect.PORTRAIT, model=Model.NARWHAL
+            ),
+            images=[image],
+            saved_paths=[tmp_path / "m1_1.png"],
+            input_media_ids=[],
+            operation_kind="t2i",
+        )
+
+    def test_data_integrity_error_escalates_to_media_attribution_error(
+        self, tmp_path: Path
+    ) -> None:
+        from gflow_cli.errors import DataIntegrityError, MediaAttributionError
+
+        class _RaisingRecorder(FakeRecorder):
+            def record_generated_images(self, **kwargs: object) -> None:
+                raise DataIntegrityError(
+                    detail="UNIQUE constraint failed", route="data.upsert_asset"
+                )
+
+        with pytest.raises(MediaAttributionError) as exc_info:
+            self._call(_RaisingRecorder(), tmp_path=tmp_path)
+
+        message = str(exc_info.value)
+        assert "m1" in message
+        assert "m1_1.png" in message
+
+    def test_unrelated_data_integrity_route_still_warns_and_does_not_raise(
+        self, tmp_path: Path
+    ) -> None:
+        """Route-scoped escalation (#281/#282 review): a ``DataIntegrityError``
+        whose route is NOT the asset-collision constraint (e.g. a bare
+        ``link_operation_asset`` write failure) is unrelated to media
+        attribution and must fall through to the same warn-and-continue path
+        as a plain ``DataStoreError`` — never escalated."""
+        from gflow_cli.errors import DataIntegrityError
+
+        class _RaisingRecorder(FakeRecorder):
+            def record_generated_images(self, **kwargs: object) -> None:
+                raise DataIntegrityError(
+                    detail="FK constraint failed", route="data.link_operation_asset"
+                )
+
+        # Must return normally — an unrelated DataIntegrityError route is warn-only.
+        self._call(_RaisingRecorder(), tmp_path=tmp_path)
+
+    def test_generic_data_store_error_still_warns_and_does_not_raise(self, tmp_path: Path) -> None:
+        from gflow_cli.errors import DataStoreError
+
+        class _RaisingRecorder(FakeRecorder):
+            def record_generated_images(self, **kwargs: object) -> None:
+                raise DataStoreError(detail="disk full", route="test")
+
+        # Must return normally — a generic DataStoreError is warn-only, never fatal.
+        self._call(_RaisingRecorder(), tmp_path=tmp_path)
+
+
+class TestMediaAttributionGuardWiring:
+    """CLI-level proof that the guard is actually called in each generation flow
+    (t2i, i2i) — not just defined. Exit code 26 == MediaAttributionError."""
+
+    def test_t2i_fails_fast_when_driver_returns_already_recorded_media(
+        self, runner: CliRunner, tmp_path: Path
+    ) -> None:
+        images = [_make_generated_image(media_name="m1")]
+        client = _make_t2i_client(images=images)
+        recorder = FakeRecorder()
+        recorder.recorded_media_ids = {"m1"}
+        out_dir = tmp_path / "out"
+
+        with (
+            patch("gflow_cli.cli_image.FlowApiClient", return_value=client),
+            patch("gflow_cli.cli_image._make_provider_dir", return_value=tmp_path / "prof"),
+            patch("gflow_cli.cli_image._resolve_profile", return_value="default"),
+            patch("gflow_cli.cli_image.OperationRecorder.open", return_value=recorder),
+        ):
+            from gflow_cli.cli import main
+
+            result = runner.invoke(
+                main,
+                ["image", "t2i", "a cat", "--out", str(out_dir)],
+            )
+
+        assert result.exit_code == 26, result.output
+        client.download_image.assert_not_called()
+        assert recorder.generated == []
+        assert list(out_dir.rglob("*.png")) == []
+
+    def test_i2i_fails_fast_when_driver_returns_already_recorded_media(
+        self, runner: CliRunner, tmp_path: Path
+    ) -> None:
+        existing_uuid = "ddb6ef97-262d-49f4-8269-4a28c0fae6a2"
+        images = [_make_generated_image(media_name="out-img-1")]
+        client = _make_i2i_client(images=images, upload_uuid=existing_uuid)
+        recorder = FakeRecorder()
+        recorder.recorded_media_ids = {"out-img-1"}
+        out_dir = tmp_path / "out"
+
+        with (
+            patch("gflow_cli.cli_image.FlowApiClient", return_value=client),
+            patch("gflow_cli.cli_image._make_provider_dir", return_value=tmp_path / "prof"),
+            patch("gflow_cli.cli_image._resolve_profile", return_value="default"),
+            patch("gflow_cli.cli_image.OperationRecorder.open", return_value=recorder),
+        ):
+            from gflow_cli.cli import main
+
+            result = runner.invoke(
+                main,
+                ["image", "i2i", "make cinematic", "--ref", existing_uuid, "--out", str(out_dir)],
+            )
+
+        assert result.exit_code == 26, result.output
+        client.download_image.assert_not_called()
+        assert recorder.generated == []
+
+
 class TestImageProjectFlag:
     """`--project <id>` makes image gen run in an existing project (no scratch)."""
 
@@ -1282,6 +1455,10 @@ class TestProjectCreatedRecording:
         rec = MagicMock()
         rec.close = MagicMock()
         rec.record_generated_images.side_effect = lambda **kw: captured.update(kw)
+        # A bare MagicMock() attribute call returns a (truthy) MagicMock, which
+        # would make the #281 pre-download guard think every image is already
+        # recorded. Explicitly stub "nothing recorded" like the real recorder.
+        rec.is_media_recorded.return_value = False
         return rec
 
     def test_existing_project_not_marked_created(self, runner: CliRunner, tmp_path: Path) -> None:
