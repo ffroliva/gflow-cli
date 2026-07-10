@@ -723,6 +723,25 @@ UI rollout that breaks entity attach on affected accounts — a different
 code path, but the same general theme that the media-picker surface needs
 ongoing hardening.
 
+**Residual risk (post-fix, not fully closed).** The two-pass baseline settle
+narrows the window, it doesn't remove it: the agentic poll loop still stops
+scraping the moment the new-UUID count on a single scrape equals the
+requested count. A pre-existing tile that lazy-renders *after* the 0.5s
+baseline settle but *before* the real generation actually completes
+(generations take 30–60s) lands inside that window at exactly the expected
+count — the ambiguity fail-fast in layer 2 only triggers on an *excess* of
+new UUIDs, so it never sees this case. Layers 2/3's pre-download guard and
+collision escalation then only catch it if the misattributed asset happens
+to already be in **local** history for the profile — an asset created in the
+Flow web UI, generated on another machine, or recorded under a different
+profile DB has no local history row to collide with, so it can still slip
+through all three layers: wrong file on disk, exit 0. Mitigations until this
+is closed: run generations in a dedicated, low-asset project (fewer
+pre-existing tiles means a smaller lazy-render population to collide with),
+and visually verify anchor/canonical images before referencing them
+downstream in `i2i`. Follow-up hardening (a break condition stable across
+two consecutive scrapes, not one) is tracked upstream against this issue.
+
 **Workaround (pre-fix):** none — on an affected version, manually verify the
 downloaded file matches the prompt before trusting a `t2i`/`i2i` result.
 
