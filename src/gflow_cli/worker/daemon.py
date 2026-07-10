@@ -2,7 +2,7 @@ from __future__ import annotations
 
 import asyncio
 from pathlib import Path
-from typing import Any, cast
+from typing import TYPE_CHECKING, Any, cast
 
 import structlog
 
@@ -20,10 +20,15 @@ from gflow_cli.config import get_settings
 from gflow_cli.data.recorder import OperationRecorder
 from gflow_cli.data.repository import DataRepository
 from gflow_cli.data.store import DataStore
-from gflow_cli.errors import GFlowError
+from gflow_cli.errors import DataIntegrityError, GFlowError, MediaAttributionError
 from gflow_cli.paths import image_output_path
 from gflow_cli.storage import cloud_info_from_path
 from gflow_cli.worker.queue import QueueRepository, QueueTask
+
+if TYPE_CHECKING:
+    from collections.abc import Sequence
+
+    from gflow_cli.api.dto import GeneratedImage
 
 logger = structlog.get_logger()
 
@@ -70,6 +75,41 @@ def _parse_agent_instructions(
         elif isinstance(item, dict):
             insts.append(_instruction_from_dict(cast(dict[str, object], item)))
     return tuple(insts)
+
+
+def _verify_media_attribution(
+    recorder: OperationRecorder,
+    *,
+    profile_name: str,
+    images: Sequence[GeneratedImage],
+) -> None:
+    """Pre-download attribution guard (issue #281) for the worker daemon path.
+
+    Duplicated from ``cli_image._verify_media_attribution`` rather than
+    imported: no import cycle forces this (``cli_image.py`` does not depend on
+    ``gflow_cli.worker``), but importing it here would invert the layering —
+    ``gflow_cli.worker.daemon`` is the headless execution engine driven by
+    ``mcp/tools.py`` and ``ui/app.py``, and pulling in ``cli_image.py``'s
+    Click/Rich CLI wiring just to reuse one small pure function isn't worth
+    the new dependency. Mirrors the existing duplication precedent already
+    accepted between ``cli_image.py`` and ``image_batch.py`` for this exact
+    function (and for ``_warn_persistence_failed_after_success``). Same
+    contract: raise if the driver returned media that already exists in local
+    history for this profile — nothing gets downloaded for an already-recorded
+    id.
+    """
+    already_recorded = [
+        img.media_name
+        for img in images
+        if recorder.is_media_recorded(profile_name=profile_name, flow_media_id=img.media_name)
+    ]
+    if already_recorded:
+        msg = (
+            "the driver returned media that already exists in local history — "
+            "wrong-media attribution (#281); nothing was downloaded: "
+            f"{', '.join(already_recorded)}"
+        )
+        raise MediaAttributionError(msg)
 
 
 class FlowWorker:
@@ -166,6 +206,10 @@ class FlowWorker:
                                 count=count,
                             )
 
+                        _verify_media_attribution(
+                            recorder, profile_name=self.profile_name, images=images
+                        )
+
                         flow_media_id = images[0].media_name if images else None
 
                         saved_paths: list[Path] = []
@@ -176,20 +220,42 @@ class FlowWorker:
                             saved = await client.download_image(img, target)
                             saved_paths.append(saved)
 
-                        recorder.record_generated_images(
-                            profile_name=self.profile_name,
-                            profile_dir=profile_dir,
-                            project=project,
-                            project_created=project_created,
-                            request=req,
-                            images=images,
-                            saved_paths=saved_paths,
-                            input_media_ids=(
-                                [r.name for r in req.refs] if hasattr(req, "refs") else []
-                            ),
-                            operation_kind=task.task_type,
-                            cloud_storage_infos=[cloud_info_from_path(p) for p in saved_paths],
-                        )
+                        try:
+                            recorder.record_generated_images(
+                                profile_name=self.profile_name,
+                                profile_dir=profile_dir,
+                                project=project,
+                                project_created=project_created,
+                                request=req,
+                                images=images,
+                                saved_paths=saved_paths,
+                                input_media_ids=(
+                                    [r.name for r in req.refs] if hasattr(req, "refs") else []
+                                ),
+                                operation_kind=task.task_type,
+                                cloud_storage_infos=[
+                                    cloud_info_from_path(p) for p in saved_paths
+                                ],
+                            )
+                        except DataIntegrityError as exc:
+                            # Collision escalation (issue #281, third defense layer):
+                            # the write itself violated a local DB constraint — most
+                            # likely per-profile uniqueness of flow_media_id — i.e. the
+                            # just-downloaded file may be a pre-existing asset rather
+                            # than genuinely new media. Escalate to MediaAttributionError
+                            # instead of the generic warn-and-continue DataStoreError
+                            # path (caught below, unchanged). Mirrors
+                            # cli_image._record_generated_images_safe /
+                            # image_batch._try_record_images.
+                            first_image = images[0] if images else None
+                            first_path = saved_paths[0] if saved_paths else None
+                            msg = (
+                                "downloaded file is suspect — it may be a pre-existing "
+                                "asset (#281): flow_media_id="
+                                f"{first_image.media_name if first_image else None}, "
+                                f"local_path={first_path}"
+                            )
+                            raise MediaAttributionError(msg) from exc
                 except Exception as exc:
                     logger.warning("Failed during image generation or recording", exc_info=exc)
                     raise
