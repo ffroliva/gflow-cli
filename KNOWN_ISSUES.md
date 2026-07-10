@@ -663,6 +663,71 @@ key — surfaces as a `RuntimeError` that `auth/cookies.py` normalizes to
 
 ## Resolved
 
+### Agentic image generation could silently attribute a pre-existing project asset as the "generated" image
+
+- **Status:** Resolved · **Severity:** Was-High (wrong file downloaded and reported as success, silently) · **Was-affecting:** the agentic driver through v0.30.0 (and, for the pre-download guard below, every transport) · **Fixed in:** unreleased (0.31.0) · **Tracked:** [#281](https://github.com/ffroliva/gflow-cli/issues/281); related picker fix [#282](https://github.com/ffroliva/gflow-cli/issues/282)
+
+Discovered 2026-07-10 in a live production run: `gflow image t2i` under the
+agentic driver downloaded an **old project logo** and reported it as a freshly
+generated "portrait" — no error, just the pre-existing warn-only line
+`"Generated media was saved, but local history was not updated."` — and 11
+downstream `i2i` scenes were then anchored to the wrong file.
+
+**Root cause — two defects in `await_images` (agentic driver):**
+1. The new-media baseline was a **single** DOM scrape (`_scrape_img_srcs`); a
+   pre-existing tile that rendered lazily (after generation had already
+   started) was missed by that scrape and then counted as "new" once it
+   appeared.
+2. `_build_generated_images` sliced an **unordered** UUID set down to
+   `expected_count` — an arbitrary pick when more "new" UUIDs were present
+   than were actually requested, with no signal for which UUID(s) belonged to
+   this generation.
+
+**A third, independent gap** existed downstream of the driver: even a transport
+that never hits the agentic DOM-scrape path above could still hand back a
+`flow_media_id` already present in local history for the profile. That case
+was caught by the generic `DataStoreError` path, which only warned and
+continued — a silently duplicated/misattributed history row, not a hard
+failure.
+
+**Fix — three defense layers, all raising the new `MediaAttributionError`
+(exit code 26, RFC 9457 type `media-attribution`) instead of a silent or
+warn-only outcome:**
+1. **Baseline settle.** The baseline is now the **union of two
+   `_scrape_img_srcs` passes** one poll interval apart, absorbing lazy-render
+   stragglers before they can be mistaken for new media.
+2. **Ambiguity fail-fast.** If more new UUIDs still appear than were
+   requested, `await_images` raises `MediaAttributionError` naming every
+   candidate UUID and the expected count, rather than guessing via
+   `_build_generated_images`'s old arbitrary slice.
+3. **Pre-download attribution guard + collision escalation.** `_verify_media_attribution`
+   (new in `cli_image.py`, mirrored in `image_batch.py`'s manifest batch path
+   and the worker daemon's `FlowWorker.process_task`) checks
+   `OperationRecorder.is_media_recorded()` and raises before any download if
+   the driver returned a `flow_media_id` already recorded for the profile.
+   Separately, a `DataIntegrityError` from the recorder's
+   `UNIQUE(profile_name, flow_media_id)` constraint now escalates to
+   `MediaAttributionError` (naming the suspect file) instead of being caught
+   by the generic `DataStoreError` warn-only path.
+
+Precedent for this class of fix: the `--model` silent no-op entry below (same
+section) — an error the user sees beats a wrong artifact reported as success.
+
+**Related, but distinct.** [#282](https://github.com/ffroliva/gflow-cli/issues/282)
+fixed a separate defect in the same media-picker surface (`--ref <uuid>`
+selection failing on any ref after the first once the virtualised
+(react-virtuoso) grid needed to scroll to render it) — a picker-navigation
+bug, not a data-integrity one. [#174](https://github.com/ffroliva/gflow-cli/issues/174)
+(open, in the "Open" section above) is a Flow-side full-page media-library
+UI rollout that breaks entity attach on affected accounts — a different
+code path, but the same general theme that the media-picker surface needs
+ongoing hardening.
+
+**Workaround (pre-fix):** none — on an affected version, manually verify the
+downloaded file matches the prompt before trusting a `t2i`/`i2i` result.
+
+---
+
 ### Profile named `default` is opaque — no Google account identity
 
 - **Status:** Resolved · **Severity:** Was-Low (UX confusion, no data loss) · **Was-affecting:** all versions through v0.9.x · **Fixed in:** v0.10.0 via PR #110 (2026-05-28) · **Tracked:** issue #92
