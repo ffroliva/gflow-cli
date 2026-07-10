@@ -663,6 +663,108 @@ key — surfaces as a `RuntimeError` that `auth/cookies.py` normalizes to
 
 ## Resolved
 
+### Agentic image generation could silently attribute a pre-existing project asset as the "generated" image
+
+- **Status:** Resolved · **Severity:** Was-High (wrong file downloaded and reported as success, silently) · **Was-affecting:** the agentic driver through v0.30.0 (and, for the pre-download guard below, every transport) · **Fixed in:** unreleased (0.31.0) · **Tracked:** [#281](https://github.com/ffroliva/gflow-cli/issues/281); related picker fix [#282](https://github.com/ffroliva/gflow-cli/issues/282)
+
+Discovered 2026-07-10 in a live production run: `gflow image t2i` under the
+agentic driver downloaded an **old project logo** and reported it as a freshly
+generated "portrait" — no error, just the pre-existing warn-only line
+`"Generated media was saved, but local history was not updated."` — and 11
+downstream `i2i` scenes were then anchored to the wrong file.
+
+**Root cause — two defects in `await_images` (agentic driver):**
+1. The new-media baseline was a **single** DOM scrape (`_scrape_img_srcs`); a
+   pre-existing tile that rendered lazily (after generation had already
+   started) was missed by that scrape and then counted as "new" once it
+   appeared.
+2. `_build_generated_images` sliced an **unordered** UUID set down to
+   `expected_count` — an arbitrary pick when more "new" UUIDs were present
+   than were actually requested, with no signal for which UUID(s) belonged to
+   this generation.
+
+**A third, independent gap** existed downstream of the driver: even a transport
+that never hits the agentic DOM-scrape path above could still hand back a
+`flow_media_id` already present in local history for the profile. That case
+was caught by the generic `DataStoreError` path, which only warned and
+continued — a silently duplicated/misattributed history row, not a hard
+failure.
+
+**Fix — three defense layers, all raising the new `MediaAttributionError`
+(exit code 26, RFC 9457 type `media-attribution`) instead of a silent or
+warn-only outcome:**
+1. **Baseline settle.** The baseline is now the **union of two
+   `_scrape_img_srcs` passes** one poll interval apart, absorbing lazy-render
+   stragglers before they can be mistaken for new media.
+2. **Ambiguity fail-fast.** If more new UUIDs still appear than were
+   requested, `await_images` raises `MediaAttributionError` naming every
+   candidate UUID and the expected count, rather than guessing via
+   `_build_generated_images`'s old arbitrary slice.
+3. **Pre-download attribution guard + collision escalation.**
+   `OperationRecorder.verify_media_attribution()` (called from `cli_image.py`,
+   `image_batch.py`'s manifest batch path, and the worker daemon's
+   `FlowWorker.process_task`; consolidated onto the recorder in #283 after
+   shipping as three near-identical module-level copies) checks
+   `is_media_recorded()` and raises before any download if the driver
+   returned a `flow_media_id` already recorded for the profile.
+   Separately, a `DataIntegrityError` from the recorder's
+   `UNIQUE(profile_name, flow_media_id)` constraint now escalates to
+   `MediaAttributionError` (naming the suspect file) instead of being caught
+   by the generic `DataStoreError` warn-only path.
+
+Precedent for this class of fix: the `--model` silent no-op entry below (same
+section) — an error the user sees beats a wrong artifact reported as success.
+
+**Related, but distinct.** [#282](https://github.com/ffroliva/gflow-cli/issues/282)
+fixed a separate defect in the same media-picker surface (`--ref <uuid>`
+selection failing on any ref after the first once the virtualised
+(react-virtuoso) grid needed to scroll to render it) — a picker-navigation
+bug, not a data-integrity one. [#174](https://github.com/ffroliva/gflow-cli/issues/174)
+(open, in the "Open" section above) is a Flow-side full-page media-library
+UI rollout that breaks entity attach on affected accounts — a different
+code path, but the same general theme that the media-picker surface needs
+ongoing hardening.
+
+**Residual risk (post-fix, not fully closed).** The two-pass baseline settle
+narrows the window, it doesn't remove it: the agentic poll loop still stops
+scraping the moment the new-UUID count on a single scrape equals the
+requested count. A pre-existing tile that lazy-renders *after* the 0.5s
+baseline settle but *before* the real generation actually completes
+(generations take 30–60s) lands inside that window at exactly the expected
+count — the ambiguity fail-fast in layer 2 only triggers on an *excess* of
+new UUIDs, so it never sees this case. Layer 3's pre-download guard and
+collision escalation then only catch it if the misattributed asset happens
+to already be in **local** history for the profile — an asset created in the
+Flow web UI, generated on another machine, or recorded under a different
+profile DB has no local history row to collide with, so it can still slip
+through all three layers: wrong file on disk, exit 0. Mitigations until this
+is closed: run generations in a dedicated, low-asset project (fewer
+pre-existing tiles means a smaller lazy-render population to collide with),
+and visually verify anchor/canonical images before referencing them
+downstream in `i2i`. Follow-up hardening (a break condition stable across
+two consecutive scrapes, not one) is tracked upstream against this issue.
+
+**Known gap: the shell multi-prompt path records no history at all.**
+`gflow run --config <file>` and `gflow image t2i` with multiple prompts
+(positional, `--prompts-file`, or `--stdin`) both go through
+`image_batch.run_image_batch` / `run_one_image_prompt`, which never opens an
+`OperationRecorder` or calls `record_generated_images` — no local history row
+is written for these runs at all. Layer 1 (the agentic driver's two-pass
+baseline settle + ambiguity fail-fast in `await_images`) still applies since
+it lives in the transport, independent of recording. Layers 2 and 3
+(`verify_media_attribution`'s pre-download guard and the post-download
+collision escalation) both depend on local history via
+`OperationRecorder.is_media_recorded()` / `record_generated_images()`, so
+neither guard exists on this path — this is a pre-existing gap, not a
+regression from this fix. `gflow image batch` (the manifest path, via
+`run_manifest_image_batch`) already threads a recorder through and is covered
+by all three layers. Follow-up tracked in #283.
+
+**Workaround (pre-fix):** none — on an affected version, manually verify the
+downloaded file matches the prompt before trusting a `t2i`/`i2i` result.
+
+---
+
 ### Profile named `default` is opaque — no Google account identity
 
 - **Status:** Resolved · **Severity:** Was-Low (UX confusion, no data loss) · **Was-affecting:** all versions through v0.9.x · **Fixed in:** v0.10.0 via PR #110 (2026-05-28) · **Tracked:** issue #92
