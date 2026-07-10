@@ -1610,7 +1610,15 @@ class VideoGenerationMixin:
             # tile locators are already re-resolved fresh each iteration below,
             # since each is a brand new `page.locator(...)` call rather than a
             # handle carried over from a prior loop pass.)
-            await page.locator(PICKER_SEARCH_INPUT).first.fill("")
+            #
+            # Presence-guarded (#281 final review): a picker variant with no
+            # search box at all (#174's full-page media-library drift) must
+            # not become a hard dependency for every ref — an unconditional
+            # `.fill("")` would wait out a full actionability timeout against
+            # an element that's simply absent from the DOM.
+            search = page.locator(PICKER_SEARCH_INPUT).first
+            if await search.count():
+                await search.fill("")
 
             if await VideoGenerationMixin._select_existing_asset(
                 page, media_id, display_name, out_dir=out_dir

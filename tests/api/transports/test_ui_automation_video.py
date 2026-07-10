@@ -1522,6 +1522,7 @@ class TestAttachImageUuidRefsPickerScroll:
         search.first = search
         search.press_sequentially = AsyncMock()
         search.fill = AsyncMock()
+        search.count = AsyncMock(return_value=1)
         return search
 
     @staticmethod
@@ -1534,11 +1535,11 @@ class TestAttachImageUuidRefsPickerScroll:
         return tile
 
     def _make_page(
-        self, tiles: dict[str, MagicMock]
+        self, tiles: dict[str, MagicMock], *, search: MagicMock | None = None
     ) -> tuple[MagicMock, MagicMock, MagicMock, MagicMock]:
         page = _mock_async_page()
         add_media = self._add_media_mock()
-        search = self._search_mock()
+        search = search if search is not None else self._search_mock()
         dialog = self._dialog_mock()
 
         def _locator(selector: str) -> MagicMock:
@@ -1620,3 +1621,37 @@ class TestAttachImageUuidRefsPickerScroll:
         # (#282: a leftover search term from ref 1 previously shadowed ref 2).
         assert search.fill.await_count == 2
         assert all(c.args == ("",) for c in search.fill.call_args_list)
+
+    @pytest.mark.asyncio
+    async def test_attach_refs_succeeds_when_picker_has_no_search_input(self) -> None:
+        """A picker variant without a search box (#174: the full-page
+        media-library drift) must not be a hard dependency for every ref.
+        The clear-search-state fix for #282 must be presence-guarded: if the
+        search input isn't in the DOM at all (`count() == 0`), skip clearing
+        it rather than unconditionally `.fill("")`, which would otherwise
+        wait out a full actionability timeout against a non-existent element
+        before failing."""
+        tile = MagicMock()
+        tile.first = tile
+        tile.click = AsyncMock()
+        tile.wait_for = AsyncMock()  # visible immediately, no search needed
+        tile.count = AsyncMock(return_value=0)
+
+        no_search = MagicMock()
+        no_search.first = no_search
+        no_search.count = AsyncMock(return_value=0)
+        no_search.fill = AsyncMock(
+            side_effect=TimeoutError("search input not present in this picker variant")
+        )
+        no_search.press_sequentially = AsyncMock()
+
+        page, _, search, _ = self._make_page({"uuid-1": tile}, search=no_search)
+
+        # Must not raise: the tile is found immediately, so the only thing
+        # that could break this ref is an unconditional search-box clear.
+        await VideoGenerationMixin._attach_image_uuid_refs(
+            page, [("uuid-1", "Cabin", "")], out_dir=None
+        )
+
+        tile.click.assert_awaited_once()
+        search.fill.assert_not_awaited()
