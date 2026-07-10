@@ -362,11 +362,19 @@ When invoked unattended by `hermes-ops`'s automated triage runner, the agent and
 | Interactive gate (existing protocol) | Autonomous-mode resolution |
 |---|---|
 | § 0 step 4, draft-PR confirmation | N/A — draft PRs are filtered out upstream by the Stage 0 gate. |
-| § 5 step 6, live-verify credit-spend gate | Always skip; never run live e2e tests or spend Flow/Veo credits. Log the skipped verification as an informational open item in the final report. |
+| § 5 step 6, live-verify credit-spend gate | Always skip; never run live e2e tests or spend Flow/Veo credits. On a GREEN verdict, carry this in the mandatory "Next step — live validation" report section (see Live-validation ceiling below), not as a loose informational note. |
 | § 5 step 7, memory-action gate | Report the suggested memory actions in the text, but **never** auto-apply or write them. |
 | § 5 step 8, YELLOW-dismiss escape valve | Never auto-dismiss or override. Report the consensus verdict (`YELLOW`/`RED`) exactly as-is. |
 | § 6, final "How to proceed" User Question | Omit the interactive question. Print the compiled markdown report directly to stdout. |
 | SonarCloud required-gate (CI policy) | Fork PR + skipped/missing SonarCloud check -> treat as informational note, not a block. |
+
+### Live-validation ceiling
+
+The sandbox cannot exercise the code live (network egress restricted, no Flow auth mounted, credit spend forbidden above), so the e2e suite and `/gflow:benchmark` are never run in this mode. An autonomous **GREEN means "static review green, live validation outstanding"** — never merge-ready. Rules:
+
+1. Every GREEN report must end with a **"Next step — live validation"** section stating: e2e + `/gflow:benchmark` (operator-run, outside the sandbox, with real credentials/credits) is the final triage gate; it runs deliberately last, only once everything else is green, so credits are never spent on a PR that static review would have bounced; and it is **expected to surface issues and return the PR to development** — a bounce there is the process working, not a review miss.
+2. YELLOW/RED reports omit the section — the PR is already going back to the contributor.
+3. The structured summary line below is unchanged; the ceiling lives in the report body and in this documented semantics.
 
 ### Output formatting
 The final report must end with a single, machine-parseable structured line printed to stdout. This allows the host orchestrator script to parse the outcome without parsing free-form markdown:
