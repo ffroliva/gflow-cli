@@ -730,7 +730,7 @@ requested count. A pre-existing tile that lazy-renders *after* the 0.5s
 baseline settle but *before* the real generation actually completes
 (generations take 30–60s) lands inside that window at exactly the expected
 count — the ambiguity fail-fast in layer 2 only triggers on an *excess* of
-new UUIDs, so it never sees this case. Layers 2/3's pre-download guard and
+new UUIDs, so it never sees this case. Layer 3's pre-download guard and
 collision escalation then only catch it if the misattributed asset happens
 to already be in **local** history for the profile — an asset created in the
 Flow web UI, generated on another machine, or recorded under a different
