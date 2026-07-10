@@ -328,3 +328,72 @@ def test_send_email_alert_never_raises_on_subprocess_error(tmp_path, monkeypatch
     with patch("pr_triage_autopilot.subprocess.run", side_effect=OSError("boom")) as m_run:
         pr_triage_autopilot.send_email_alert("s", "h")  # must not raise
     m_run.assert_called_once()
+
+
+def test_needs_human_dedupes_by_gate_sha(tmp_path):
+    mocks = _cycle_mocks()
+    with (
+        mocks[0] as m_email,
+        mocks[1],
+        mocks[2] as m_comment,
+        mocks[3],
+        mocks[4],
+        mocks[5],
+        mocks[6] as m_gh,
+        mocks[7] as m_gate,
+    ):
+        m_gh.return_value = [{"number": 7, "headRefOid": "sha-x"}]
+        m_gate.return_value = {"verdict": "NEEDS-HUMAN", "reasons": ["injection pattern"]}
+
+        # First tick: nothing ledgered -> alert + comment once
+        with patch("pr_triage_autopilot.get_ledger_entries", return_value=[]):
+            pr_triage_autopilot.run_triage_cycle(
+                "org/repo", tmp_path, tmp_path, tmp_path / "l.jsonl", "key", "tok"
+            )
+        assert m_email.call_count == 1
+        assert m_comment.call_count == 1
+
+        # Second tick: same SHA already ledgered -> no re-alert, no re-comment
+        with patch(
+            "pr_triage_autopilot.get_ledger_entries",
+            return_value=[{"pr": 7, "head_sha": "sha-x", "status": "NEEDS-HUMAN"}],
+        ):
+            pr_triage_autopilot.run_triage_cycle(
+                "org/repo", tmp_path, tmp_path, tmp_path / "l.jsonl", "key", "tok"
+            )
+        assert m_email.call_count == 1
+        assert m_comment.call_count == 1
+
+
+def test_deferred_size_dedupes_by_gate_sha(tmp_path):
+    mocks = _cycle_mocks()
+    with (
+        mocks[0] as m_email,
+        mocks[1],
+        mocks[2] as m_comment,
+        mocks[3],
+        mocks[4],
+        mocks[5],
+        mocks[6] as m_gh,
+        mocks[7] as m_gate,
+    ):
+        m_gh.return_value = [{"number": 7, "headRefOid": "sha-x"}]
+        m_gate.return_value = {"verdict": "DEFERRED_SIZE", "reasons": ["too big"]}
+
+        # First tick: nothing ledgered -> alert once
+        with patch("pr_triage_autopilot.get_ledger_entries", return_value=[]):
+            pr_triage_autopilot.run_triage_cycle(
+                "org/repo", tmp_path, tmp_path, tmp_path / "l.jsonl", "key", "tok"
+            )
+        assert m_email.call_count == 1
+
+        # Second tick: same SHA already ledgered -> no re-alert
+        with patch(
+            "pr_triage_autopilot.get_ledger_entries",
+            return_value=[{"pr": 7, "head_sha": "sha-x", "status": "DEFERRED_SIZE"}],
+        ):
+            pr_triage_autopilot.run_triage_cycle(
+                "org/repo", tmp_path, tmp_path, tmp_path / "l.jsonl", "key", "tok"
+            )
+        assert m_email.call_count == 1
+        assert m_comment.call_count == 0
