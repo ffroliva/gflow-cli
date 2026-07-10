@@ -233,9 +233,7 @@ class FlowWorker:
                                     [r.name for r in req.refs] if hasattr(req, "refs") else []
                                 ),
                                 operation_kind=task.task_type,
-                                cloud_storage_infos=[
-                                    cloud_info_from_path(p) for p in saved_paths
-                                ],
+                                cloud_storage_infos=[cloud_info_from_path(p) for p in saved_paths],
                             )
                         except DataIntegrityError as exc:
                             # Collision escalation (issue #281, third defense layer):

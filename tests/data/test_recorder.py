@@ -478,8 +478,7 @@ class TestIsMediaRecorded:
         with DataStore.open(tmp_path / "gflow.db") as store:
             recorder = OperationRecorder(DataRepository(store), prompt_mode="store")
             assert (
-                recorder.is_media_recorded(profile_name="default", flow_media_id="media-x")
-                is False
+                recorder.is_media_recorded(profile_name="default", flow_media_id="media-x") is False
             )
 
     def test_true_after_generated_image_recorded(self, tmp_path: Path) -> None:

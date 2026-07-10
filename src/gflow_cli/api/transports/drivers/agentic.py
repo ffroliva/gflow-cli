@@ -499,9 +499,7 @@ class AgenticFlowUiDriver:
         first_baseline_srcs = await _scrape_img_srcs(page)
         await asyncio.sleep(_POLL_INTERVAL_S)
         second_baseline_srcs = await _scrape_img_srcs(page)
-        baseline_uuids = _extract_uuids(first_baseline_srcs) | _extract_uuids(
-            second_baseline_srcs
-        )
+        baseline_uuids = _extract_uuids(first_baseline_srcs) | _extract_uuids(second_baseline_srcs)
 
         deadline = asyncio.get_event_loop().time() + _AWAIT_TIMEOUT_S
         new_uuids: set[str] = set()

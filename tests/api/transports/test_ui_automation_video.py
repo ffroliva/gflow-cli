@@ -1468,9 +1468,7 @@ class TestSelectExistingAssetPickerScroll:
         )
         page = self._page_with_tile(tile)
 
-        result = await VideoGenerationMixin._select_existing_asset(
-            page, "uuid-1", "", out_dir=None
-        )
+        result = await VideoGenerationMixin._select_existing_asset(page, "uuid-1", "", out_dir=None)
 
         assert result is True, "tile found via scrolling must be selected"
         tile.click.assert_awaited_once()
@@ -1485,9 +1483,7 @@ class TestSelectExistingAssetPickerScroll:
         )
         page = self._page_with_tile(tile)
 
-        result = await VideoGenerationMixin._select_existing_asset(
-            page, "uuid-1", "", out_dir=None
-        )
+        result = await VideoGenerationMixin._select_existing_asset(page, "uuid-1", "", out_dir=None)
 
         assert result is False, "existing fallback behaviour must be unchanged"
         tile.click.assert_not_awaited()
