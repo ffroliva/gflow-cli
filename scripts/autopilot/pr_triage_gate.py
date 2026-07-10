@@ -25,9 +25,10 @@ SKIP = "SKIP"
 DEFERRED_SIZE = "DEFERRED_SIZE"
 NEEDS_HUMAN = "NEEDS-HUMAN"
 
-# Fields required by gh command
+# Fields required by gh command (headRefOid feeds the gate-verdict ledger dedupe)
 GH_JSON_FIELDS = (
-    "number,author,baseRefName,title,body,state,isDraft,additions,deletions,changedFiles,comments"
+    "number,author,baseRefName,headRefOid,title,body,state,isDraft,"
+    "additions,deletions,changedFiles,comments"
 )
 
 # Common injection patterns to scan title, body, and comments

@@ -326,6 +326,7 @@ def run_triage_cycle(
 
     for pr in prs:
         pr_num = pr.get("number")
+        gate_sha = pr.get("headRefOid", "")
 
         # 2. Run Stage 0 Gate
         gate_res = should_review(pr)
@@ -336,6 +337,14 @@ def run_triage_cycle(
             continue
 
         if verdict == "DEFERRED_SIZE":
+            if any(
+                e.get("pr") == pr_num
+                and e.get("head_sha") == gate_sha
+                and e.get("status") == "DEFERRED_SIZE"
+                for e in ledger_entries
+            ):
+                logger.info("PR already deferred at this SHA; skipping re-alert", pr=pr_num)
+                continue
             logger.warning(
                 "PR deferred due to oversized diff", pr=pr_num, reason=gate_res["reasons"]
             )
@@ -343,7 +352,7 @@ def run_triage_cycle(
                 ledger_path,
                 {
                     "pr": pr_num,
-                    "head_sha": "",
+                    "head_sha": gate_sha,
                     "status": "DEFERRED_SIZE",
                     "reasons": gate_res["reasons"],
                 },
@@ -358,6 +367,14 @@ def run_triage_cycle(
             continue
 
         if verdict == "NEEDS-HUMAN":
+            if any(
+                e.get("pr") == pr_num
+                and e.get("head_sha") == gate_sha
+                and e.get("status") == "NEEDS-HUMAN"
+                for e in ledger_entries
+            ):
+                logger.info("PR already flagged at this SHA; skipping re-alert", pr=pr_num)
+                continue
             logger.warning(
                 "PR flagged for human triage in Stage 0", pr=pr_num, reason=gate_res["reasons"]
             )
@@ -376,7 +393,7 @@ def run_triage_cycle(
                 ledger_path,
                 {
                     "pr": pr_num,
-                    "head_sha": "",
+                    "head_sha": gate_sha,
                     "status": "NEEDS-HUMAN",
                     "reasons": gate_res["reasons"],
                 },
@@ -505,7 +522,7 @@ def run_triage_cycle(
                     f'<p>Review of <a href="https://github.com/{repo}/pull/{pr_num}">'
                     f"PR #{pr_num}</a> failed {MAX_RETRIS} times and auto-retry has "
                     f"stopped. Manual ledger reset required.</p>"
-                    f"<p>Last error: {html_lib.escape(str(exc))}</p>",
+                    f"<p>Last error: {html_lib.escape(str(exc)[:500])}</p>",
                 )
             else:
                 send_telegram_alert(f"⚠️ PR #{pr_num} review attempt {failures} failed: {exc}")
