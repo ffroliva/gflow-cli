@@ -23,6 +23,7 @@ __all__ = [
     "FlowApiError",
     "FrameExtractionError",
     "GFlowError",
+    "MediaAttributionError",
     "ModelModeIncompatibilityError",
     "NetworkError",
     "ProblemDetails",
@@ -458,6 +459,34 @@ class FlowAgentUiError(GFlowError):
     )
 
 
+class MediaAttributionError(GFlowError):
+    """Raised when generated media cannot be reliably attributed to the request
+    that produced it (issue #281).
+
+    Canonical case: the agentic driver's ``await_images`` polls the DOM for
+    new ``<img name=<uuid>>`` tiles. A lazily-rendered pre-existing project
+    asset can appear in the DOM after generation starts and be mistaken for
+    "new" media, or more new UUIDs can appear than were requested — either
+    way there is no reliable signal for WHICH uuid(s) belong to this
+    generation. Rather than guess by slicing an unordered UUID set (the
+    2026-07-10 production incident: a pre-existing logo was silently
+    downloaded and reported as a fresh generation), the driver raises this
+    error and lets the caller re-run.
+
+    Fail-fast over silent-wrong: an error the user sees beats a wrong
+    artifact reported as success (precedent: the ``--model`` silent no-op,
+    PR #48).
+    """
+
+    problem_type = "https://gflow-cli.dev/errors/media-attribution"
+    title = "Generated media could not be attributed"
+    _default_remediation = (
+        "gflow could not reliably attribute the generated media to this request. "
+        "Re-run the generation; a dedicated project with fewer pre-existing "
+        "assets avoids lazy-render ambiguity (issue #281)."
+    )
+
+
 class SecurityError(GFlowError):
     """Raised when a security boundary is violated (e.g. profile_dir outside HOME)."""
 
@@ -733,6 +762,11 @@ EXIT_CODE_MAP: dict[type[GFlowError], int] = {
     # ConfigurationError (its parent) so the isinstance walk lands on 24, not 11.
     BrowserEngineUnavailableError: 24,
     FlowAgentUiError: 25,
+    # MediaAttributionError (issue #281): generated media could not be
+    # reliably attributed (agentic DOM-scrape ambiguity, or a downstream
+    # already-recorded check). Direct GFlowError subclass; exit 26 lets
+    # scripts distinguish "wrong/ambiguous media" from a generic error (1).
+    MediaAttributionError: 26,
     ConfigurationError: 11,
     AuthExpiredError: 3,
     RateLimitError: 4,
