@@ -200,3 +200,114 @@ def test_run_review_dispatches_council_claude():
 def test_run_review_unknown_engine_raises():
     with pytest.raises(NotImplementedError):
         pr_triage_autopilot.run_review("council-multi-cli", 1, Path("/r"), Path("/m"), "key", "tok")
+
+
+def _cycle_mocks():
+    """Standard patch stack for run_triage_cycle tests. Returns the context managers."""
+    return [
+        patch("pr_triage_autopilot.send_email_alert"),
+        patch("pr_triage_autopilot.send_telegram_alert"),
+        patch("pr_triage_autopilot.post_gh_comment"),
+        patch("pr_triage_autopilot.run_docker_sandbox"),
+        patch("pr_triage_autopilot.fetch_and_checkout_pr", return_value="abc123"),
+        patch("pr_triage_autopilot.restore_repo_branch"),
+        patch("pr_triage_autopilot._gh_json", return_value=[{"number": 7}]),
+        patch("pr_triage_gate.should_review"),
+    ]
+
+
+def test_email_sent_on_completed_review(tmp_path):
+    mocks = _cycle_mocks()
+    with (
+        mocks[0] as m_email,
+        mocks[1],
+        mocks[2],
+        mocks[3] as m_sandbox,
+        mocks[4],
+        mocks[5],
+        mocks[6],
+        mocks[7] as m_gate,
+    ):
+        m_gate.return_value = {"verdict": "PROCEED", "reasons": []}
+        m_sandbox.return_value = (
+            "SUMMARY_VERDICT: GREEN | MUST_FIX_COUNT: 0 | PR_URL: https://x/pull/7"
+        )
+        pr_triage_autopilot.run_triage_cycle(
+            "org/repo", tmp_path, tmp_path, tmp_path / "l.jsonl", "key", "tok"
+        )
+    assert m_email.call_count == 1
+    subject = m_email.call_args[0][0]
+    assert "#7" in subject and "GREEN" in subject
+
+
+def test_email_sent_on_needs_human(tmp_path):
+    mocks = _cycle_mocks()
+    with (
+        mocks[0] as m_email,
+        mocks[1],
+        mocks[2],
+        mocks[3],
+        mocks[4],
+        mocks[5],
+        mocks[6],
+        mocks[7] as m_gate,
+    ):
+        m_gate.return_value = {"verdict": "NEEDS-HUMAN", "reasons": ["injection pattern"]}
+        pr_triage_autopilot.run_triage_cycle(
+            "org/repo", tmp_path, tmp_path, tmp_path / "l.jsonl", "key", "tok"
+        )
+    assert m_email.call_count == 1
+    assert "human" in m_email.call_args[0][0].lower()
+
+
+def test_email_sent_on_deferred_size(tmp_path):
+    mocks = _cycle_mocks()
+    with (
+        mocks[0] as m_email,
+        mocks[1],
+        mocks[2],
+        mocks[3],
+        mocks[4],
+        mocks[5],
+        mocks[6],
+        mocks[7] as m_gate,
+    ):
+        m_gate.return_value = {"verdict": "DEFERRED_SIZE", "reasons": ["too big"]}
+        pr_triage_autopilot.run_triage_cycle(
+            "org/repo", tmp_path, tmp_path, tmp_path / "l.jsonl", "key", "tok"
+        )
+    assert m_email.call_count == 1
+
+
+def test_email_sent_on_failed_permanent(tmp_path):
+    mocks = _cycle_mocks()
+    with (
+        mocks[0] as m_email,
+        mocks[1],
+        mocks[2],
+        mocks[3] as m_sandbox,
+        mocks[4],
+        mocks[5],
+        mocks[6],
+        mocks[7] as m_gate,
+    ):
+        m_gate.return_value = {"verdict": "PROCEED", "reasons": []}
+        m_sandbox.side_effect = RuntimeError("container died")
+        with patch(
+            "pr_triage_autopilot.get_ledger_entries",
+            return_value=[
+                {"pr": 7, "head_sha": "abc123", "status": "FAILED"},
+                {"pr": 7, "head_sha": "abc123", "status": "FAILED"},
+            ],
+        ):
+            pr_triage_autopilot.run_triage_cycle(
+                "org/repo", tmp_path, tmp_path, tmp_path / "l.jsonl", "key", "tok"
+            )
+    # third failure -> FAILED_PERMANENT -> email
+    assert m_email.call_count == 1
+    assert "permanent" in m_email.call_args[0][0].lower()
+
+
+def test_send_email_alert_never_raises(tmp_path, monkeypatch):
+    monkeypatch.setenv("HERMES_OPS_DIR", str(tmp_path))  # notifier script absent
+    pr_triage_autopilot.send_email_alert("subject", "<b>html</b>")  # must not raise
