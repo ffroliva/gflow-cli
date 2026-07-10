@@ -34,6 +34,10 @@ LOCK_FILE_PATH = "/tmp/pr_triage_autopilot.lock"
 SUPPORTED_ENGINES = ("council-claude",)
 DEFAULT_ENGINE = SUPPORTED_ENGINES[0]
 
+# Verdict allowlist: container stdout is untrusted, so anything outside this
+# set is treated as unparseable (None) rather than interpolated downstream.
+VALID_VERDICTS = ("GREEN", "YELLOW", "RED")
+
 # Imports for cross-platform file locking
 try:
     import fcntl
@@ -92,14 +96,22 @@ def send_email_alert(subject: str, html: str) -> None:
         logger.info("Email notifier not present; skipping email", script=str(script))
         return
     try:
-        subprocess.run(
+        proc = subprocess.run(
             [sys.executable, str(script), "--subject", subject, "--html", "-"],
             input=html,
             text=True,
+            encoding="utf-8",
             capture_output=True,
             timeout=60,
             check=False,
+            env={**os.environ, "PYTHONIOENCODING": "utf-8"},
         )
+        if proc.returncode != 0:
+            logger.warning(
+                "Email notifier exited non-zero",
+                returncode=proc.returncode,
+                stderr=(proc.stderr or "")[-300:],
+            )
     except Exception as exc:
         logger.error("Failed to send email alert", error=str(exc))
 
@@ -247,7 +259,8 @@ def parse_summary_verdict(container_output: str) -> tuple[str | None, int]:
             parts = [p.strip() for p in line.split("|")]
             for p in parts:
                 if p.startswith("SUMMARY_VERDICT:"):
-                    verdict = p.split(":")[1].strip()
+                    candidate = p.split(":")[1].strip()
+                    verdict = candidate if candidate in VALID_VERDICTS else None
                 elif p.startswith("MUST_FIX_COUNT:"):
                     try:
                         must_fixes = int(p.split(":")[1].strip())
