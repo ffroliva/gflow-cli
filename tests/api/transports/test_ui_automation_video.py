@@ -12,10 +12,14 @@ import structlog
 
 from gflow_cli.api.transports.ui_automation import UiAutomationTransport
 from gflow_cli.api.transports.ui_automation_video import (
+    ADD_MEDIA_BUTTON,
+    DIALOG_ANY,
     FRAME_SLOT_BY_LABEL,
     FRAME_SLOTS_STRUCT,
     PICKER_CONTEXT_INCLUDE,
+    PICKER_GRID_SCROLL_ATTEMPTS,
     PICKER_INCLUDE_BUTTON,
+    PICKER_SEARCH_INPUT,
     VideoGenerationMixin,
     _upload_rejection_message,
 )
@@ -1404,3 +1408,215 @@ class TestRemoteReferencesDialogGuard:
             await VideoGenerationMixin._attach_remote_references(
                 page, ["Wren's cabin"], out_dir=None
             )
+
+
+class TestSelectExistingAssetPickerScroll:
+    """#282: the picker grid (react-virtuoso) is virtualised — a tile that
+    isn't in the initial viewport (and isn't surfaced by the display-name
+    search) may still exist just off-screen. `_select_existing_asset` must
+    scroll and re-check between scrolls before giving up, the same way
+    `_find_picker_entity_tile` does for the entity picker."""
+
+    @staticmethod
+    def _tile_mock(
+        *,
+        wait_for_side_effect: object,
+        count_side_effect: object = 0,
+    ) -> MagicMock:
+        tile = MagicMock()
+        tile.first = tile
+        tile.click = AsyncMock()
+        tile.wait_for = AsyncMock(side_effect=wait_for_side_effect)
+        if isinstance(count_side_effect, list):
+            tile.count = AsyncMock(side_effect=count_side_effect)
+        else:
+            tile.count = AsyncMock(return_value=count_side_effect)
+        return tile
+
+    @staticmethod
+    def _page_with_tile(tile: MagicMock) -> MagicMock:
+        page = _mock_async_page()
+        dialog = MagicMock()
+        dialog.last = dialog
+        dialog.hover = AsyncMock()
+        dialog.wait_for = AsyncMock()  # closes immediately -> one-step image attach
+        search = MagicMock()
+        search.first = search
+        search.press_sequentially = AsyncMock()
+        search.fill = AsyncMock()
+
+        def _locator(selector: str) -> MagicMock:
+            if selector == DIALOG_ANY:
+                return dialog
+            if selector == PICKER_SEARCH_INPUT:
+                return search
+            return tile
+
+        page.locator = MagicMock(side_effect=_locator)
+        page.mouse = MagicMock()
+        page.mouse.wheel = AsyncMock()
+        return page
+
+    @pytest.mark.asyncio
+    async def test_tile_visible_only_after_scrolling_is_selected(self) -> None:
+        # Not visible in the initial viewport; count() reports absent for the
+        # first 3 checks, then present on the 4th — the immediate re-check
+        # right after the scroll loop breaks then succeeds.
+        tile = self._tile_mock(
+            wait_for_side_effect=[TimeoutError("not visible yet"), None],
+            count_side_effect=[0, 0, 0, 1],
+        )
+        page = self._page_with_tile(tile)
+
+        result = await VideoGenerationMixin._select_existing_asset(
+            page, "uuid-1", "", out_dir=None
+        )
+
+        assert result is True, "tile found via scrolling must be selected"
+        tile.click.assert_awaited_once()
+        # 3 scrolls before the tile rendered into the DOM.
+        assert page.mouse.wheel.await_count == 3
+
+    @pytest.mark.asyncio
+    async def test_tile_absent_after_exhausting_scrolls_returns_false(self) -> None:
+        tile = self._tile_mock(
+            wait_for_side_effect=TimeoutError("never visible"),
+            count_side_effect=0,
+        )
+        page = self._page_with_tile(tile)
+
+        result = await VideoGenerationMixin._select_existing_asset(
+            page, "uuid-1", "", out_dir=None
+        )
+
+        assert result is False, "existing fallback behaviour must be unchanged"
+        tile.click.assert_not_awaited()
+        assert page.mouse.wheel.await_count == PICKER_GRID_SCROLL_ATTEMPTS
+
+
+class TestAttachImageUuidRefsPickerScroll:
+    """#282: every UUID ref after the first raised `TransportTimeoutError`
+    because `_select_existing_asset` gave up before the virtualised grid had
+    a chance to render the tile, and a leftover display-name search term from
+    a prior ref could shadow the next ref's lookup."""
+
+    @staticmethod
+    def _dialog_mock() -> MagicMock:
+        dialog = MagicMock()
+        dialog.last = dialog
+        dialog.hover = AsyncMock()
+        dialog.wait_for = AsyncMock()  # closes immediately (one-step image attach)
+        return dialog
+
+    @staticmethod
+    def _add_media_mock() -> MagicMock:
+        add = MagicMock()
+        add.first = add
+        add.wait_for = AsyncMock()
+        add.click = AsyncMock()
+        return add
+
+    @staticmethod
+    def _search_mock() -> MagicMock:
+        search = MagicMock()
+        search.first = search
+        search.press_sequentially = AsyncMock()
+        search.fill = AsyncMock()
+        return search
+
+    @staticmethod
+    def _never_found_tile() -> MagicMock:
+        tile = MagicMock()
+        tile.first = tile
+        tile.click = AsyncMock()
+        tile.wait_for = AsyncMock(side_effect=TimeoutError("never visible"))
+        tile.count = AsyncMock(return_value=0)
+        return tile
+
+    def _make_page(
+        self, tiles: dict[str, MagicMock]
+    ) -> tuple[MagicMock, MagicMock, MagicMock, MagicMock]:
+        page = _mock_async_page()
+        add_media = self._add_media_mock()
+        search = self._search_mock()
+        dialog = self._dialog_mock()
+
+        def _locator(selector: str) -> MagicMock:
+            if selector == ADD_MEDIA_BUTTON:
+                return add_media
+            if selector == PICKER_SEARCH_INPUT:
+                return search
+            if selector == DIALOG_ANY:
+                return dialog
+            for media_id, tile in tiles.items():
+                if media_id in selector:
+                    return tile
+            raise AssertionError(f"unexpected picker selector: {selector!r}")
+
+        page.locator = MagicMock(side_effect=_locator)
+        page.mouse = MagicMock()
+        page.mouse.wheel = AsyncMock()
+        return page, add_media, search, dialog
+
+    @pytest.mark.asyncio
+    async def test_tile_never_found_falls_back_to_local_upload(
+        self, monkeypatch: pytest.MonkeyPatch
+    ) -> None:
+        tile = self._never_found_tile()
+        page, _, _, _ = self._make_page({"uuid-1": tile})
+        upload = AsyncMock()
+        monkeypatch.setattr(VideoGenerationMixin, "_upload_via_open_dialog", upload)
+
+        await VideoGenerationMixin._attach_image_uuid_refs(
+            page, [("uuid-1", "Cabin", "/tmp/cabin.png")], out_dir=None
+        )
+
+        upload.assert_awaited_once()
+        args, _ = upload.call_args
+        assert args[1] == Path("/tmp/cabin.png")
+        assert page.mouse.wheel.await_count == PICKER_GRID_SCROLL_ATTEMPTS
+
+    @pytest.mark.asyncio
+    async def test_tile_never_found_and_no_local_path_raises_same_message(self) -> None:
+        tile = self._never_found_tile()
+        page, _, _, _ = self._make_page({"uuid-1": tile})
+
+        with pytest.raises(TransportTimeoutError) as excinfo:
+            await VideoGenerationMixin._attach_image_uuid_refs(
+                page, [("uuid-1", "Cabin", "")], out_dir=None
+            )
+
+        assert excinfo.value.detail == (
+            "image ref 'uuid-1' could not be selected in the picker and "
+            "has no local file to upload — re-generate it or pass a local path."
+        )
+
+    @pytest.mark.asyncio
+    async def test_search_input_cleared_between_refs(self) -> None:
+        tile_1 = MagicMock()
+        tile_1.first = tile_1
+        tile_1.click = AsyncMock()
+        tile_1.wait_for = AsyncMock(side_effect=[TimeoutError("not visible"), None])
+        tile_1.count = AsyncMock(return_value=0)
+
+        tile_2 = MagicMock()
+        tile_2.first = tile_2
+        tile_2.click = AsyncMock()
+        tile_2.wait_for = AsyncMock()  # visible immediately, no search needed
+        tile_2.count = AsyncMock(return_value=0)
+
+        page, _, search, _ = self._make_page({"uuid-1": tile_1, "uuid-2": tile_2})
+
+        await VideoGenerationMixin._attach_image_uuid_refs(
+            page,
+            [("uuid-1", "Cabin", ""), ("uuid-2", "Lighthouse", "")],
+            out_dir=None,
+        )
+
+        # ref 1 needed the display-name search fallback...
+        search.press_sequentially.assert_awaited_once()
+        assert search.press_sequentially.call_args.args[0] == "Cabin"
+        # ...but the search box must be cleared before EVERY ref's lookup
+        # (#282: a leftover search term from ref 1 previously shadowed ref 2).
+        assert search.fill.await_count == 2
+        assert all(c.args == ("",) for c in search.fill.call_args_list)
