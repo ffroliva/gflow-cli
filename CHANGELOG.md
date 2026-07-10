@@ -7,6 +7,8 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+## [0.31.0] — 2026-07-10
+
 ### Fixed
 
 - **Agentic image generation no longer risks attributing a pre-existing project asset to the current request.** `await_images` settled its new-media baseline with a single DOM scrape, which could miss a lazily-rendered pre-existing tile and let `_build_generated_images` slice an arbitrary UUID out of an unordered set as "the" generated image — the 2026-07-10 production incident: an old project logo was silently downloaded and reported as a fresh generation. The baseline is now the **union of two `_scrape_img_srcs` passes** one poll interval apart, absorbing lazy-render stragglers before they're mistaken for new media, and if more new UUIDs still appear than were requested, `await_images` now fails fast with the new `MediaAttributionError` (**exit code 26**, RFC 9457 type `media-attribution`) naming every candidate UUID and the expected count instead of guessing (#281).
