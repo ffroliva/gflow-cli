@@ -1444,6 +1444,7 @@ class TestSelectExistingAssetPickerScroll:
         search.first = search
         search.press_sequentially = AsyncMock()
         search.fill = AsyncMock()
+        search.count = AsyncMock(return_value=1)
 
         def _locator(selector: str) -> MagicMock:
             if selector == DIALOG_ANY:
@@ -1488,6 +1489,33 @@ class TestSelectExistingAssetPickerScroll:
         assert result is False, "existing fallback behaviour must be unchanged"
         tile.click.assert_not_awaited()
         assert page.mouse.wheel.await_count == PICKER_GRID_SCROLL_ATTEMPTS
+
+    @pytest.mark.asyncio
+    async def test_failed_display_name_search_is_cleared_before_scrolling(self) -> None:
+        """A FAILED display-name search leaves the picker grid filtered on
+        that term; scrolling a still-filtered grid can never surface a tile
+        that the filter excludes. `_select_existing_asset` must clear the
+        search input before falling back to the scroll loop."""
+        tile = self._tile_mock(
+            wait_for_side_effect=[
+                TimeoutError("not visible in initial viewport"),
+                TimeoutError("not surfaced by display-name search"),
+                None,
+            ],
+            count_side_effect=[0, 0, 1],
+        )
+        page = self._page_with_tile(tile)
+        search = page.locator(PICKER_SEARCH_INPUT)
+
+        result = await VideoGenerationMixin._select_existing_asset(
+            page, "uuid-1", "Wren's cabin", out_dir=None
+        )
+
+        assert result is True, "tile found via scrolling after the search is cleared"
+        search.press_sequentially.assert_awaited_once()
+        search.fill.assert_awaited_once_with("")
+        # 2 scrolls before the tile rendered into the DOM.
+        assert page.mouse.wheel.await_count == 2
 
 
 class TestAttachImageUuidRefsPickerScroll:
