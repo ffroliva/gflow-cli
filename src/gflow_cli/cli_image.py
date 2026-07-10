@@ -54,7 +54,12 @@ from gflow_cli.config import get_settings
 from gflow_cli.data.recorder import OperationRecorder
 from gflow_cli.data.repository import DataRepository
 from gflow_cli.data.store import DataStore
-from gflow_cli.errors import ConfigurationError, DataStoreError
+from gflow_cli.errors import (
+    ConfigurationError,
+    DataIntegrityError,
+    DataStoreError,
+    MediaAttributionError,
+)
 from gflow_cli.image_batch import (
     ALLOWED_ASPECT_RATIOS as _ALLOWED_ASPECT_RATIOS,
 )
@@ -95,7 +100,7 @@ from gflow_cli.paths import image_output_path, resolve_batch_output_dir
 from gflow_cli.storage import cloud_info_from_path
 
 if TYPE_CHECKING:
-    from collections.abc import Callable
+    from collections.abc import Callable, Sequence
 
     from gflow_cli.api.dto import GeneratedImage
     from gflow_cli.tools.invocation import AppliedTool
@@ -193,6 +198,38 @@ def _warn_persistence_failed_after_success(
         local_path=str(local_path) if local_path is not None else None,
     )
     console.print("[yellow]Generated media was saved, but local history was not updated.[/yellow]")
+
+
+def _verify_media_attribution(
+    recorder: OperationRecorder,
+    *,
+    profile_name: str,
+    images: Sequence[GeneratedImage],
+) -> None:
+    """Pre-download attribution guard (issue #281): raise if the driver
+    returned media that already exists in local history for this profile.
+
+    Second defense layer after the agentic driver's own DOM-scrape ambiguity
+    check (``agentic.py await_images``): even a transport that never hits that
+    check can still hand back a ``flow_media_id`` already recorded for THIS
+    profile, meaning it isn't new. Downloading and attributing it to the
+    current generation would silently duplicate/misattribute history with a
+    pre-existing asset (the 2026-07-10 production incident). Called after
+    ``generate_images`` returns and BEFORE ``_download_images`` so nothing is
+    fetched for an already-recorded id.
+    """
+    already_recorded = [
+        img.media_name
+        for img in images
+        if recorder.is_media_recorded(profile_name=profile_name, flow_media_id=img.media_name)
+    ]
+    if already_recorded:
+        msg = (
+            "the driver returned media that already exists in local history — "
+            "wrong-media attribution (#281); nothing was downloaded: "
+            f"{', '.join(already_recorded)}"
+        )
+        raise MediaAttributionError(msg)
 
 
 def _classify_ref(ref: str) -> ImageRef | Path:
@@ -939,6 +976,15 @@ def _record_generated_images_safe(
 
     Tool provenance (``original_prompt`` / ``tool``) travels on ``request``, so
     the recorder reads it directly — no separate kwarg to drift out of sync.
+
+    Collision escalation (issue #281, third defense layer): a ``DataIntegrityError``
+    here means the write itself violated a local DB constraint — most likely the
+    per-profile uniqueness of ``flow_media_id`` — i.e. the just-downloaded file may
+    be a pre-existing asset rather than genuinely new media. That is NOT a
+    warn-and-continue case like a generic ``DataStoreError``; it is re-raised as
+    ``MediaAttributionError`` so the caller sees a hard failure instead of a
+    silently-corrupted history row. Caught BEFORE ``DataStoreError`` since
+    ``DataIntegrityError`` is a subclass of it.
     """
     try:
         recorder.record_generated_images(
@@ -953,6 +999,15 @@ def _record_generated_images_safe(
             input_media_ids=input_media_ids,
             operation_kind=operation_kind,
         )
+    except DataIntegrityError as exc:
+        first_image = images[0] if images else None
+        first_path = saved_paths[0] if saved_paths else None
+        msg = (
+            "downloaded file is suspect — it may be a pre-existing asset (#281): "
+            f"flow_media_id={first_image.media_name if first_image else None}, "
+            f"local_path={first_path}"
+        )
+        raise MediaAttributionError(msg) from exc
     except DataStoreError as exc:
         first_image = images[0] if images else None
         first_path = saved_paths[0] if saved_paths else None
@@ -1004,6 +1059,7 @@ async def _run_t2i(
                     count=count,
                 )
 
+            _verify_media_attribution(recorder, profile_name=profile_name, images=images)
             saved_paths = await _download_images(client, images, out, output_root)
 
             if as_json:
@@ -1450,6 +1506,7 @@ async def _run_i2i(
                     count=count,
                 )
 
+            _verify_media_attribution(recorder, profile_name=profile_name, images=images)
             saved_paths = await _download_images(client, images, out, output_root)
 
             if as_json:

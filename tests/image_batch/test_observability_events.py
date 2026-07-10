@@ -27,6 +27,8 @@ class FakeRecorder:
         self.uploads: list[dict] = []
         self.closed = False
         self.fail_index: int | None = None  # if set, raise DataStoreError on that 0-based call
+        # media_names the #281 pre-download guard should treat as already-recorded.
+        self.recorded_media_ids: set[str] = set()
 
     def close(self) -> None:
         self.closed = True
@@ -41,6 +43,9 @@ class FakeRecorder:
             from gflow_cli.errors import DataStoreError
 
             raise DataStoreError(detail="boom", route="test")
+
+    def is_media_recorded(self, *, profile_name: str, flow_media_id: str) -> bool:
+        return flow_media_id in self.recorded_media_ids
 
 
 def _make_fake_image() -> object:
