@@ -1518,11 +1518,13 @@ class VideoGenerationMixin:
         except Exception:  # noqa: BLE001 - not-visible is an expected branch
             visible = False
 
+        attempted_search = False
         if not visible and display_name:
             search = page.locator(PICKER_SEARCH_INPUT)
             # Human-like typing jitter to dodge WAF heuristics — not security.
             await search.press_sequentially(display_name, delay=random.randint(10, 50))  # NOSONAR
             await page.wait_for_timeout(800)
+            attempted_search = True
             try:
                 await tile.wait_for(state="visible", timeout=6000)
                 visible = True
@@ -1530,6 +1532,16 @@ class VideoGenerationMixin:
                 pass
 
         if not visible:
+            # A failed display-name search leaves the grid filtered on that
+            # term — scrolling a still-filtered grid would only shuffle
+            # through the (possibly empty) filtered results rather than the
+            # full asset list, so the search box must be cleared first.
+            # Presence-guarded like `_attach_image_uuid_refs`'s per-ref clear.
+            if attempted_search:
+                clear_search = page.locator(PICKER_SEARCH_INPUT).first
+                if await clear_search.count():
+                    await clear_search.fill("")
+                    await page.wait_for_timeout(400)
             # Neither the initial viewport nor the display-name search
             # surfaced the tile — the Tudo grid is virtualised, so an
             # off-screen (but existing) asset is simply absent from the DOM
