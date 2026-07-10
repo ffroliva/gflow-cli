@@ -19,6 +19,7 @@ from gflow_cli.errors import (
     FlowApiError,
     FrameExtractionError,
     GFlowError,
+    MediaAttributionError,
     ModelModeIncompatibilityError,
     NetworkError,
     ProblemDetails,
@@ -535,3 +536,27 @@ def test_flow_agent_ui_error_problem_details() -> None:
     assert pd["type"] == "https://gflow-cli.dev/errors/flow-agent-ui"
     assert pd["title"] == "Google Flow Agentic UI detected"
     assert "remediation_hint" in pd
+
+
+# ---------- MediaAttributionError (issue #281) ----------
+
+
+def test_media_attribution_error_exit_code_26() -> None:
+    """MediaAttributionError -> exit 26 (current max is 25, so 26 is free).
+
+    Raised when generated media cannot be reliably attributed (agentic DOM-
+    scrape ambiguity, or a downstream already-recorded check) -- fail-fast
+    over silently downloading/reporting the wrong asset (issue #281)."""
+    err = MediaAttributionError(detail="cannot attribute the generation among 3 candidates")
+    assert isinstance(err, GFlowError)
+    assert EXIT_CODE_MAP[MediaAttributionError] == 26
+    assert _exit_code_for(err) == 26
+
+
+def test_media_attribution_error_problem_details() -> None:
+    err = MediaAttributionError(detail="cannot attribute the generation among 3 candidates")
+    pd = err.to_problem_details()
+    assert pd["type"] == "https://gflow-cli.dev/errors/media-attribution"
+    assert pd["title"] == "Generated media could not be attributed"
+    assert "remediation_hint" in pd
+    assert err.remediation_hint != ""
