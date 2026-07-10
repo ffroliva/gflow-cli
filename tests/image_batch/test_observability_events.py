@@ -8,11 +8,13 @@ Spec: docs/superpowers/specs/2026-05-22-stay-mounted-batch-session-design.md §4
 from __future__ import annotations
 
 import hashlib
+from collections.abc import Sequence
 from pathlib import Path
 
 import pytest
 from structlog.testing import LogCapture
 
+from gflow_cli.api.dto import GeneratedImage
 from gflow_cli.api.transports.ui_automation import UiAutomationTransport
 from gflow_cli.image_batch import BatchPromptItem, run_manifest_image_batch
 
@@ -46,6 +48,25 @@ class FakeRecorder:
 
     def is_media_recorded(self, *, profile_name: str, flow_media_id: str) -> bool:
         return flow_media_id in self.recorded_media_ids
+
+    def verify_media_attribution(
+        self, *, profile_name: str, images: Sequence[GeneratedImage]
+    ) -> None:
+        """Mirrors ``OperationRecorder.verify_media_attribution`` (issue #283)."""
+        from gflow_cli.errors import MediaAttributionError
+
+        already_recorded = [
+            img.media_name
+            for img in images
+            if self.is_media_recorded(profile_name=profile_name, flow_media_id=img.media_name)
+        ]
+        if already_recorded:
+            msg = (
+                "the driver returned media that already exists in local history — "
+                "wrong-media attribution (#281); nothing was downloaded: "
+                f"{', '.join(already_recorded)}"
+            )
+            raise MediaAttributionError(msg)
 
 
 def _make_fake_image() -> object:

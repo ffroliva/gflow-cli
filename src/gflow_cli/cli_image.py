@@ -100,7 +100,7 @@ from gflow_cli.paths import image_output_path, resolve_batch_output_dir
 from gflow_cli.storage import cloud_info_from_path
 
 if TYPE_CHECKING:
-    from collections.abc import Callable, Sequence
+    from collections.abc import Callable
 
     from gflow_cli.api.dto import GeneratedImage
     from gflow_cli.tools.invocation import AppliedTool
@@ -198,38 +198,6 @@ def _warn_persistence_failed_after_success(
         local_path=str(local_path) if local_path is not None else None,
     )
     console.print("[yellow]Generated media was saved, but local history was not updated.[/yellow]")
-
-
-def _verify_media_attribution(
-    recorder: OperationRecorder,
-    *,
-    profile_name: str,
-    images: Sequence[GeneratedImage],
-) -> None:
-    """Pre-download attribution guard (issue #281): raise if the driver
-    returned media that already exists in local history for this profile.
-
-    Second defense layer after the agentic driver's own DOM-scrape ambiguity
-    check (``agentic.py await_images``): even a transport that never hits that
-    check can still hand back a ``flow_media_id`` already recorded for THIS
-    profile, meaning it isn't new. Downloading and attributing it to the
-    current generation would silently duplicate/misattribute history with a
-    pre-existing asset (the 2026-07-10 production incident). Called after
-    ``generate_images`` returns and BEFORE ``_download_images`` so nothing is
-    fetched for an already-recorded id.
-    """
-    already_recorded = [
-        img.media_name
-        for img in images
-        if recorder.is_media_recorded(profile_name=profile_name, flow_media_id=img.media_name)
-    ]
-    if already_recorded:
-        msg = (
-            "the driver returned media that already exists in local history — "
-            "wrong-media attribution (#281); nothing was downloaded: "
-            f"{', '.join(already_recorded)}"
-        )
-        raise MediaAttributionError(msg)
 
 
 def _classify_ref(ref: str) -> ImageRef | Path:
@@ -1059,7 +1027,7 @@ async def _run_t2i(
                     count=count,
                 )
 
-            _verify_media_attribution(recorder, profile_name=profile_name, images=images)
+            recorder.verify_media_attribution(profile_name=profile_name, images=images)
             saved_paths = await _download_images(client, images, out, output_root)
 
             if as_json:
@@ -1506,7 +1474,7 @@ async def _run_i2i(
                     count=count,
                 )
 
-            _verify_media_attribution(recorder, profile_name=profile_name, images=images)
+            recorder.verify_media_attribution(profile_name=profile_name, images=images)
             saved_paths = await _download_images(client, images, out, output_root)
 
             if as_json:

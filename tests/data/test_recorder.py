@@ -2,6 +2,8 @@ import hashlib
 import json
 from pathlib import Path
 
+import pytest
+
 from gflow_cli.api.dto import AssetInfo, GeneratedImage, ProjectInfo
 from gflow_cli.api.image import Aspect, GenerateImageRequest, Model
 from gflow_cli.api.video import Aspect as VideoAspect
@@ -533,6 +535,73 @@ class TestIsMediaRecorded:
                 )
                 is False
             )
+
+
+def _generated_image_named(media_name: str) -> GeneratedImage:
+    return GeneratedImage(
+        media_name=media_name,
+        workflow_id=f"workflow-{media_name}",
+        seed=123,
+        prompt="expanded prompt",
+        model_name_type="NARWHAL",
+        aspect_ratio="IMAGE_ASPECT_RATIO_PORTRAIT",
+        fife_url="https://flow-content.google/path?Signature=abc",
+        dimensions=(1024, 1792),
+        media_generation_id=f"generation-{media_name}",
+    )
+
+
+class TestVerifyMediaAttribution:
+    """Behavior suite for ``OperationRecorder.verify_media_attribution`` — the
+    #281 pre-download attribution guard, consolidated onto the recorder from
+    three near-identical module-level copies (issue #283). CLI-level wiring
+    coverage (the guard actually fires before download in each generation
+    flow, exit code 26) lives in ``tests/cli/test_cli_image.py``.
+    """
+
+    def test_passes_when_no_media_recorded(self, tmp_path: Path) -> None:
+        with DataStore.open(tmp_path / "gflow.db") as store:
+            recorder = OperationRecorder(DataRepository(store), prompt_mode="store")
+            images = [_generated_image_named("m1"), _generated_image_named("m2")]
+
+            recorder.verify_media_attribution(profile_name="default", images=images)  # no raise
+
+    def test_raises_listing_only_already_recorded_uuids(self, tmp_path: Path) -> None:
+        from gflow_cli.errors import MediaAttributionError
+
+        saved = tmp_path / "image.png"
+        saved.write_bytes(b"image-bytes")
+        with DataStore.open(tmp_path / "gflow.db") as store:
+            recorder = OperationRecorder(DataRepository(store), prompt_mode="store")
+            project = ProjectInfo(project_id="flow-project-1", title="gflow-cli t2i")
+            req = GenerateImageRequest(
+                prompt="prompt text", aspect=Aspect.PORTRAIT, model=Model.NARWHAL
+            )
+            # Record "m2" so the guard sees it as already-recorded local history.
+            recorder.record_generated_images(
+                profile_name="default",
+                profile_dir=tmp_path / "profile_default",
+                project=project,
+                request=req,
+                images=[_generated_image_named("m2")],
+                saved_paths=[saved],
+                input_media_ids=[],
+                operation_kind="t2i",
+            )
+
+            images = [
+                _generated_image_named("m1"),
+                _generated_image_named("m2"),
+                _generated_image_named("m3"),
+            ]
+
+            with pytest.raises(MediaAttributionError) as exc_info:
+                recorder.verify_media_attribution(profile_name="default", images=images)
+
+            message = str(exc_info.value)
+            assert "m2" in message
+            assert "m1" not in message
+            assert "m3" not in message
 
 
 def test_record_started_video_persists_tool_metadata(tmp_path: Path) -> None:

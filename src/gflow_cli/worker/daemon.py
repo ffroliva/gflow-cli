@@ -2,7 +2,7 @@ from __future__ import annotations
 
 import asyncio
 from pathlib import Path
-from typing import TYPE_CHECKING, Any, cast
+from typing import Any, cast
 
 import structlog
 
@@ -24,11 +24,6 @@ from gflow_cli.errors import DataIntegrityError, GFlowError, MediaAttributionErr
 from gflow_cli.paths import image_output_path
 from gflow_cli.storage import cloud_info_from_path
 from gflow_cli.worker.queue import QueueRepository, QueueTask
-
-if TYPE_CHECKING:
-    from collections.abc import Sequence
-
-    from gflow_cli.api.dto import GeneratedImage
 
 logger = structlog.get_logger()
 
@@ -75,41 +70,6 @@ def _parse_agent_instructions(
         elif isinstance(item, dict):
             insts.append(_instruction_from_dict(cast(dict[str, object], item)))
     return tuple(insts)
-
-
-def _verify_media_attribution(
-    recorder: OperationRecorder,
-    *,
-    profile_name: str,
-    images: Sequence[GeneratedImage],
-) -> None:
-    """Pre-download attribution guard (issue #281) for the worker daemon path.
-
-    Duplicated from ``cli_image._verify_media_attribution`` rather than
-    imported: no import cycle forces this (``cli_image.py`` does not depend on
-    ``gflow_cli.worker``), but importing it here would invert the layering —
-    ``gflow_cli.worker.daemon`` is the headless execution engine driven by
-    ``mcp/tools.py`` and ``ui/app.py``, and pulling in ``cli_image.py``'s
-    Click/Rich CLI wiring just to reuse one small pure function isn't worth
-    the new dependency. Mirrors the existing duplication precedent already
-    accepted between ``cli_image.py`` and ``image_batch.py`` for this exact
-    function (and for ``_warn_persistence_failed_after_success``). Same
-    contract: raise if the driver returned media that already exists in local
-    history for this profile — nothing gets downloaded for an already-recorded
-    id.
-    """
-    already_recorded = [
-        img.media_name
-        for img in images
-        if recorder.is_media_recorded(profile_name=profile_name, flow_media_id=img.media_name)
-    ]
-    if already_recorded:
-        msg = (
-            "the driver returned media that already exists in local history — "
-            "wrong-media attribution (#281); nothing was downloaded: "
-            f"{', '.join(already_recorded)}"
-        )
-        raise MediaAttributionError(msg)
 
 
 class FlowWorker:
@@ -206,8 +166,8 @@ class FlowWorker:
                                 count=count,
                             )
 
-                        _verify_media_attribution(
-                            recorder, profile_name=self.profile_name, images=images
+                        recorder.verify_media_attribution(
+                            profile_name=self.profile_name, images=images
                         )
 
                         flow_media_id = images[0].media_name if images else None

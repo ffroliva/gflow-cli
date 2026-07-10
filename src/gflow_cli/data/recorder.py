@@ -22,8 +22,10 @@ from gflow_cli.data.models import (
 from gflow_cli.data.redaction import PromptFields, PromptMode, prompt_fields, redact_metadata
 from gflow_cli.data.repository import DataRepository
 from gflow_cli.data.store import DataStore
+from gflow_cli.errors import MediaAttributionError
 
 if TYPE_CHECKING:
+    from collections.abc import Sequence
     from pathlib import Path
 
     from gflow_cli.api.dto import AssetInfo, GeneratedImage, ProjectInfo
@@ -85,6 +87,43 @@ class OperationRecorder:
         to any existing method.
         """
         return self.repository.get_asset_by_flow_media_id(profile_name, flow_media_id) is not None
+
+    def verify_media_attribution(
+        self,
+        *,
+        profile_name: str,
+        images: Sequence[GeneratedImage],
+    ) -> None:
+        """Pre-download attribution guard (issue #281): raise if the driver
+        returned media that already exists in local history for this profile.
+
+        Second defense layer after the agentic driver's own DOM-scrape ambiguity
+        check (``agentic.py await_images``): even a transport that never hits that
+        check can still hand back a ``flow_media_id`` already recorded for THIS
+        profile, meaning it isn't new. Downloading and attributing it to the
+        current generation would silently duplicate/misattribute history with a
+        pre-existing asset (the 2026-07-10 production incident). Callers invoke
+        this after generation returns and BEFORE downloading so nothing is
+        fetched for an already-recorded id.
+
+        Consolidated onto the recorder (issue #283) from three near-identical
+        module-level copies previously duplicated across ``cli_image.py``,
+        ``image_batch.py``, and ``worker/daemon.py`` — all three call sites
+        already hold a recorder instance, so the guard belongs on the data
+        layer rather than repeated per call site.
+        """
+        already_recorded = [
+            img.media_name
+            for img in images
+            if self.is_media_recorded(profile_name=profile_name, flow_media_id=img.media_name)
+        ]
+        if already_recorded:
+            msg = (
+                "the driver returned media that already exists in local history — "
+                "wrong-media attribution (#281); nothing was downloaded: "
+                f"{', '.join(already_recorded)}"
+            )
+            raise MediaAttributionError(msg)
 
     def _resolve_prompts(
         self,
