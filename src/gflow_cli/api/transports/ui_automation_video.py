@@ -409,6 +409,35 @@ PICKER_PROJECT_SELECTOR_TRIGGERS = (
 # Radix renders the opened (sub)menu in a PORTAL outside the dialog, stamped
 # data-state='open' — the open-verification anchor for the switch sequence.
 PICKER_PROJECT_MENU_OPEN = "[role='menu'][data-state='open']"
+# #287 round 3: the open-state flips BEFORE the project list populates —
+# matching (or dumping) too early sees an empty portal. After the menu
+# reports open, poll for element children before matching: up to POLLS steps
+# of POLL_MS each (~3s), stopping as soon as the portal has any elements.
+PICKER_PROJECT_MENU_POLLS = 10
+PICKER_PROJECT_MENU_POLL_MS = 300
+# Element count inside the open portal menu(s) — the population poll probe.
+_PICKER_PROJECT_MENU_CHILD_COUNT_JS = (
+    "() => Array.from(document.querySelectorAll(\"[role='menu'][data-state='open']\"))"
+    ".reduce((n, m) => n + m.querySelectorAll('*').length, 0)"
+)
+# Raw open-portal dump for a switch miss (#287 round 4): the round-2/3 dumps
+# were role-filtered and came back empty — raw bounded innerHTML plus a child
+# count and tag histogram can't be blinded by role assumptions.
+_PICKER_PROJECT_MENU_DUMP_JS = (
+    "() => {"
+    " const menus = Array.from(document.querySelectorAll(\"[role='menu'][data-state='open']\"));"
+    " if (!menus.length) { return null; }"
+    " const root = menus[menus.length - 1];"
+    " const els = Array.from(root.querySelectorAll('*'));"
+    " const hist = {};"
+    " els.forEach((el) => {"
+    "  const t = el.tagName.toLowerCase();"
+    "  hist[t] = (hist[t] || 0) + 1;"
+    " });"
+    " return { child_elements: els.length, tag_histogram: hist,"
+    "  inner_html: root.innerHTML.slice(0, 4000) };"
+    "}"
+)
 # Active-project probe on the CLOSED trigger: the trigger renders the active
 # project's NAME (live round 2: 'gflow-cli t2i'), so match by id-in-markup OR
 # by the resolved target name (normalized text, never a locale-dependent
@@ -421,33 +450,40 @@ _PICKER_PROJECT_TRIGGER_ACTIVE_JS = (
     " return norm(el.textContent) === norm(args.projectName);"
     "}"
 )
-# With the project (sub)menu OPEN: click the first option matching the target
-# project — by id anywhere in its markup first (exact), then by the resolved
-# project NAME (live round 2: options render names, not ids; normalized text
-# match, locale-independent). On a miss, return the first items' outerHTML
-# (truncated) — the evidence the round-2 dump was missing.
+# With the project (sub)menu OPEN: click the candidate matching the target
+# project. #287 round 3: the portal contained ZERO classic menu-item ARIA
+# roles, so the sweep covers generic clickables. Tiers: an anchor whose href
+# carries the project id (jackpot — no name needed), then the id anywhere in
+# markup, then the resolved project NAME (normalized text; locale-free).
+# Container-safe: among matches the INNERMOST element is clicked, never a
+# wrapping list container. Returns the candidate count for telemetry.
 _PICKER_PROJECT_OPTION_MATCH_JS = (
     "(args) => {"
     " const menus = Array.from(document.querySelectorAll(\"[role='menu'][data-state='open']\"));"
     " const scope = menus.length ? menus : [document];"
-    " const opts = scope.flatMap((m) => Array.from(m.querySelectorAll("
-    "\"[role='menuitem'], [role='menuitemradio'], [role='menuitemcheckbox'], [role='option']\""
+    " const candidates = scope.flatMap((m) => Array.from(m.querySelectorAll("
+    "\"a, button, li, div[role], [role='menuitem'], [role='menuitemradio'],"
+    " [role='menuitemcheckbox'], [role='option']\""
     ")));"
-    " let hit = opts.find((el) => el.outerHTML.includes(args.projectId));"
-    " let matchedBy = hit ? 'id' : null;"
+    " const innermost = (els) =>"
+    "  els.find((el) => !els.some((o) => o !== el && el.contains(o))) || els[0] || null;"
+    " let hit = innermost(candidates.filter((el) =>"
+    "  (el.getAttribute('href') || '').includes(args.projectId)));"
+    " let matchedBy = hit ? 'href' : null;"
+    " if (!hit) {"
+    "  hit = innermost(candidates.filter((el) => el.outerHTML.includes(args.projectId)));"
+    "  matchedBy = hit ? 'id' : null;"
+    " }"
     " if (!hit && args.projectName) {"
     "  const norm = (s) => (s || '').replace(/\\s+/g, ' ').trim().toLowerCase();"
     "  const wanted = norm(args.projectName);"
-    "  hit = opts.find((el) => norm(el.textContent) === wanted)"
-    "   || opts.find((el) => norm(el.textContent).includes(wanted));"
+    "  hit = innermost(candidates.filter((el) => norm(el.textContent) === wanted))"
+    "   || innermost(candidates.filter((el) => norm(el.textContent).includes(wanted)));"
     "  matchedBy = hit ? 'name' : null;"
     " }"
-    " if (!hit) {"
-    "  return { clicked: false, matched_by: null,"
-    "   items: opts.slice(0, 10).map((el) => el.outerHTML.slice(0, 300)) };"
-    " }"
+    " if (!hit) { return { clicked: false, matched_by: null, candidates: candidates.length }; }"
     " hit.click();"
-    " return { clicked: true, matched_by: matchedBy, items: [] };"
+    " return { clicked: true, matched_by: matchedBy, candidates: candidates.length };"
     "}"
 )
 # Resolve the target project's display NAME from the live editor page: the
@@ -1991,6 +2027,27 @@ class VideoGenerationMixin:
         return True
 
     @staticmethod
+    async def _wait_project_menu_populated(page: Page) -> int:
+        """Poll the OPEN portal menu for element children (#287 round 3: the
+        open-state flips before the project list populates — matching or
+        dumping too early sees an empty portal and is a guaranteed miss).
+        Bounded at PICKER_PROJECT_MENU_POLLS x PICKER_PROJECT_MENU_POLL_MS
+        (~3s); stops as soon as any elements render. Returns the final
+        element count (0 = never populated / probe failed)."""
+        elements = 0
+        for _ in range(PICKER_PROJECT_MENU_POLLS):
+            raw: object = None
+            try:
+                raw = await page.evaluate(_PICKER_PROJECT_MENU_CHILD_COUNT_JS)
+            except Exception:  # noqa: BLE001 - poll probe is best-effort
+                raw = None
+            elements = int(raw) if isinstance(raw, (int, float)) else 0
+            if elements > 0:
+                break
+            await page.wait_for_timeout(PICKER_PROJECT_MENU_POLL_MS)
+        return elements
+
+    @staticmethod
     async def _ensure_picker_project(
         page: Page,
         project_id: str,
@@ -2006,13 +2063,18 @@ class VideoGenerationMixin:
         trigger cascade; consider the target active when the trigger matches
         by id or resolved name; otherwise open the submenu (click, then hover,
         then focus+ArrowRight — Radix SubTriggers may ignore plain click),
-        verify `[role='menu'][data-state='open']`, and click the first option
-        matching by id, then by name. Returns ``None`` when the picker has no
-        project selector (older cohort — pure no-op), ``True`` when the target
-        project is (already) active, ``False`` when a selector exists but the
-        target could not be selected — a miss dumps the open menu's items to
-        the out-dir, presses Escape (never leave an open overlay), and lets
-        callers proceed: the asset lookup stays the authority."""
+        verify `[role='menu'][data-state='open']`, poll for the portal to
+        POPULATE (round 3: the open-state flips before the list renders), and
+        click the innermost candidate matching by href-with-id, id-in-markup,
+        then normalized name (round 3: the portal had ZERO classic menu-item
+        ARIA roles, so generic clickables are swept). Returns ``None`` when
+        the picker has no project selector (older cohort — pure no-op),
+        ``True`` when the target project is (already) active, ``False`` when a
+        selector exists but the target could not be selected — a miss dumps
+        the open portal's raw bounded innerHTML (+ child count and tag
+        histogram) to the out-dir, presses Escape (never leave an open
+        overlay), and lets callers proceed: the asset lookup stays the
+        authority."""
         trigger = None
         matched_selector: str | None = None
         for selector in PICKER_PROJECT_SELECTOR_TRIGGERS:
@@ -2072,10 +2134,19 @@ class VideoGenerationMixin:
             opened=opened,
             method=open_method,
         )
+        # #287 round 3: the portal populates AFTER the open-state flips —
+        # matching an empty portal was a guaranteed miss. Poll (bounded)
+        # before matching or dumping.
+        menu_elements = await VideoGenerationMixin._wait_project_menu_populated(page)
+        log.info(
+            "ui_automation_video.picker_project_menu_populated",
+            project_id=project_id,
+            elements=menu_elements,
+        )
 
         clicked = False
         matched_by: str | None = None
-        menu_items: list[str] = []
+        candidates = 0
         try:
             outcome_raw: object = await page.evaluate(_PICKER_PROJECT_OPTION_MATCH_JS, match_args)
             if isinstance(outcome_raw, dict):
@@ -2083,12 +2154,19 @@ class VideoGenerationMixin:
                 clicked = bool(outcome.get("clicked"))
                 matched_by_value = outcome.get("matched_by")
                 matched_by = str(matched_by_value) if matched_by_value else None
-                items_value = outcome.get("items")
-                if isinstance(items_value, list):
-                    menu_items = [str(item) for item in cast("list[object]", items_value)]
+                candidates_value = outcome.get("candidates")
+                if isinstance(candidates_value, (int, float)):
+                    candidates = int(candidates_value)
         except Exception:  # noqa: BLE001 - dropdown scan is best-effort
             clicked = False
         if not clicked:
+            # Raw open-portal dump (#287 round 4): role-filtered item lists
+            # blinded us twice — capture bounded raw markup instead.
+            portal: object = None
+            try:
+                portal = await page.evaluate(_PICKER_PROJECT_MENU_DUMP_JS)
+            except Exception:  # noqa: BLE001 - dump probe is best-effort
+                portal = None
             menu_dump = _write_project_menu_dump(
                 out_dir,
                 project_id,
@@ -2096,7 +2174,9 @@ class VideoGenerationMixin:
                     "project_id": project_id,
                     "project_name": project_name,
                     "menu_opened": opened,
-                    "items": menu_items,
+                    "menu_elements": menu_elements,
+                    "candidates": candidates,
+                    "portal": portal,
                 },
             )
             log.warning(
@@ -2105,9 +2185,10 @@ class VideoGenerationMixin:
                 project_name=project_name,
                 selector=matched_selector,
                 menu_opened=opened,
-                menu_items=len(menu_items),
+                menu_elements=menu_elements,
+                candidates=candidates,
                 menu_dump=str(menu_dump) if menu_dump is not None else None,
-                note="no menu option matched the target project by id or name",
+                note="no portal candidate matched the target project by href, id, or name",
             )
             # Never leave an open overlay on the pooled Page.
             await page.keyboard.press("Escape")
