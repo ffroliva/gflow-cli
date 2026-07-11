@@ -67,7 +67,7 @@ See [AUTHENTICATION § Commands](AUTHENTICATION.md#commands).
 
 ## `gflow image upload`
 
-Upload a local PNG/JPEG/WebP/GIF into a fresh Flow project and print the asset UUID + dimensions Flow inferred. The UUID is what later subcommands (`gflow image i2i --ref UUID`, `video i2v`) accept as an initial frame.
+Upload a local PNG/JPEG/WebP/GIF into a fresh Flow project and print the asset UUID + dimensions Flow inferred. The UUID is what later subcommands (`gflow image i2i --ref UUID`, `video i2v`) accept as an initial frame. Note for `video i2v`: the UUID is selected from the generation project's media picker, and `upload` puts the asset in a *fresh scratch project* — so pass `--project <id>` of the project that holds the asset, or the picker lookup fails with exit 9 (#287).
 
 ```text
 gflow image upload PATH [OPTIONS]
@@ -460,9 +460,12 @@ gflow video t2v "a dog surfing" --tool creative-director:style=cinematic
 ## `gflow video i2v`
 
 Generate a video from an INITIAL frame (+ optional END frame) and a motion prompt.
-Each image is a local PNG/JPEG; it is bound into the editor's frame slot via the
-media dialog, then Flow fires `batchAsyncGenerateVideoStartImage` (initial only) or
-`…StartAndEndImage` (initial+end interpolation).
+Each frame is a local PNG/JPEG **or the media UUID of an existing in-project asset**
+(#287 — the asset is selected in place, no duplicate upload; pair with `--project`
+so the UUID's project is the one being generated in). A local file is bound into
+the editor's frame slot via the media dialog, then Flow fires
+`batchAsyncGenerateVideoStartImage` (initial only) or `…StartAndEndImage`
+(initial+end interpolation).
 
 ```text
 gflow video i2v --initial-frame INITIAL [--end-frame LAST] PROMPT [--model] [--duration] [--count] [--aspect] [...]
@@ -474,18 +477,27 @@ Arguments:
   PROMPT  Motion prompt.  [required]
 
 Options:
-  --initial-frame PATH  Initial frame to animate. Canonical form; replaces the positional IMAGE.
-  --end-frame PATH      Optional end frame — Flow interpolates initial frame -> end frame.
-  --project ID          Generate in this EXISTING Flow project instead of a
-                        scratch project (see "Sharing one project across calls").
+  --initial-frame PATH|UUID  Initial frame to animate: local image path or in-project
+                             asset media UUID. Canonical form; replaces the positional IMAGE.
+  --end-frame PATH|UUID      Optional end frame — Flow interpolates initial frame -> end frame.
+  --project ID               Generate in this EXISTING Flow project instead of a
+                             scratch project (see "Sharing one project across calls").
 ```
 
 ```bash
 gflow video i2v --initial-frame ./hero.png "Slow camera arc, soft golden light"
 gflow video i2v --initial-frame ./first.png --end-frame ./last.png "morph between scenes" --model veo-quality
+# Reference an existing in-project asset by media UUID (no re-upload, #287):
+gflow video i2v --initial-frame d6f1927a-3eae-4626-bc90-9a6ea7637bab "pan left" --project f6caf027-...
 # Back-compat positional form:
 gflow video i2v ./hero.png "Slow camera arc, soft golden light"
 ```
+
+Exit codes specific to this surface: **27** — Flow's upload endpoint rejected a
+local frame file (`MediaUploadRejectedError`; try re-encoding, e.g.
+`ffmpeg -i in.jpg -q:v 2 -map_metadata -1 out.jpg`, or reference the asset by
+UUID instead); **9** — a frame UUID could not be located in the project's media
+picker (`TransportTimeoutError`; wrong `--project` or foreign UUID).
 
 ## `gflow video r2v`
 
@@ -1212,7 +1224,7 @@ shell scripts can branch on the failure mode without parsing stderr.
 | `6`  | `NetworkError`        | Network failure persisted across 3 attempts      | Check connectivity                                         |
 | `7`  | `WireFormatError`     | Unexpected response shape — Flow API changed     | File a bug (do NOT include captured tokens or signed URLs) |
 | `8`  | `AuthMissingError`    | Required auth credential is absent from profile   | `gflow auth login --profile <name>`                        |
-| `9`  | `TransportTimeoutError` | Browser/API operation exceeded its timeout      | Retry; raise the relevant timeout if needed                |
+| `9`  | `TransportTimeoutError` | Browser/API operation exceeded its timeout (incl. an i2v frame UUID not found in the media picker, #287) | Retry; raise the relevant timeout — or, for a frame-UUID miss, verify the UUID belongs to the `--project` passed |
 | `10` | `WafRejectionError`   | Flow security layer rejected the request          | Change prompt/request and retry                            |
 | `11` | `ConfigurationError`  | Local configuration or browser mode is invalid    | Fix the option/env var shown in the error                  |
 | `12` | `AuthLoginTimeoutError` | Browser sign-in was not completed in time       | Re-run login or raise `GFLOW_CLI_AUTH_LOGIN_TIMEOUT`       |
@@ -1228,6 +1240,9 @@ shell scripts can branch on the failure mode without parsing stderr.
 | `22` | `UpscaleUnavailableError` | 4K upscale is gated to Flow **Ultra** accounts (HTTP 403) | Use `--scale 2k`, or upgrade the Flow plan                |
 | `23` | `UiSelectorDriftError` | A Flow editor control could not be located — Google changed the frontend (issue #183) | Update gflow-cli; file a bug with the probe name + debug screenshot from the error message |
 | `24` | `BrowserEngineUnavailableError` | `GFLOW_CLI_BROWSER_ENGINE=patchright` but the engine is not installed | `pip install 'gflow-cli[patchright]'`, or unset `GFLOW_CLI_BROWSER_ENGINE` |
+| `25` | `FlowAgentUiError`    | The profile is on Flow's Agentic UI cohort and the classic media panel is unrecoverable for this operation | Use a Classic-cohort profile; see KNOWN_ISSUES on the agentic cohort |
+| `26` | `MediaAttributionError` | Generated media could not be reliably attributed to this request (issue #281) | Re-run; a dedicated project with fewer pre-existing assets avoids the ambiguity |
+| `27` | `MediaUploadRejectedError` | Flow's upload endpoint refused the input file (`uploadImage` 4xx, issue #287) | Re-encode the image (`ffmpeg -q:v 2 -map_metadata -1`), or reference the asset by its media UUID |
 | `130`| SIGINT                | User-interrupted (Ctrl-C)                        | —                                                          |
 
 **Exit code 16 — data store / migration error.** Fires when:

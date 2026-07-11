@@ -42,6 +42,7 @@ from gflow_cli.api.video import (
 from gflow_cli.errors import (
     AuthExpiredError,
     FlowAgentUiError,
+    MediaUploadRejectedError,
     ModelModeIncompatibilityError,
     TransportTimeoutError,
     UiSelectorDriftError,
@@ -1327,6 +1328,51 @@ class VideoGenerationMixin:
         log.info("ui_automation_video.remote_frame_attached", slot=label, display_name=name)
 
     @staticmethod
+    async def _attach_frame_by_media_id(
+        page: Page,
+        slot_index: int,
+        label: str,
+        media_id: str,
+        *,
+        out_dir: Path | None,
+    ) -> None:
+        """Fill the I2V first/last frame slot with an already-existing in-project
+        asset, selected by its media UUID (#287) — no duplicate upload. Opens the
+        slot's media dialog (same entry as `_attach_frame`/`_attach_remote_frame`)
+        then reuses the `_select_existing_asset` UUID picker. There is no local
+        fallback: the caller asked for THIS asset, so a miss is a hard error."""
+        slot = await VideoGenerationMixin._resolve_frame_slot(
+            page, slot_index, label, out_dir=out_dir, wait_ms=12000
+        )
+        await slot.click()
+        await page.wait_for_timeout(1000)  # media dialog opens
+
+        # Presence-guarded search clear, mirroring _attach_image_uuid_refs: a
+        # picker variant with no search box must not become a hard dependency.
+        search = page.locator(PICKER_SEARCH_INPUT).first
+        if await search.count():
+            await search.fill("")
+
+        if not await VideoGenerationMixin._select_existing_asset(
+            page, media_id, "", out_dir=out_dir
+        ):
+            # The frame-slot dialog is the one surface this picker reuse is
+            # unproven on (#237's name-search never surfaced generated media
+            # here) — capture the dialog state so a live miss is diagnosable.
+            shot = await _capture_debug_screenshot(
+                page, out_dir, f"debug_frame_ref_miss_{label.lower()}.png"
+            )
+            msg = (
+                f"{label} frame asset {media_id!r} could not be located in the "
+                "media picker — is it in the target project (missing or wrong "
+                "--project), and is the UUID from this profile's library?"
+            )
+            if shot is not None:
+                msg = f"{msg} Screenshot: {shot}"
+            raise TransportTimeoutError(msg)
+        log.info("ui_automation_video.frame_ref_attached", slot=label, media_id=media_id)
+
+    @staticmethod
     async def _upload_via_open_dialog(
         page: Page,
         image: Path,
@@ -1395,10 +1441,11 @@ class VideoGenerationMixin:
                 log.warning("ui_automation_video.upload_incomplete", target=log_label)
             else:
                 # Fail loud on a rejected upload instead of committing an empty
-                # slot that silently falls back to T2V (#125).
+                # slot that silently falls back to T2V (#125). Typed (#287) so
+                # callers get exit 27 + a re-encode hint, not "Unexpected error."
                 rejection = _upload_rejection_message(uploaded[-1], log_label)
                 if rejection is not None:
-                    raise RuntimeError(rejection)
+                    raise MediaUploadRejectedError(detail=rejection, route=UPLOAD_IMAGE_ROUTE)
         finally:
             page.remove_listener("response", on_response)
 
@@ -1520,8 +1567,9 @@ class VideoGenerationMixin:
         (react-virtuoso renders off-viewport tiles lazily — #282) and
         re-checks between scrolls, the same strategy `_find_picker_entity_tile`
         uses for the entity picker. Returns ``True`` once attached, ``False``
-        when the asset can't be located by any of the above (the caller then
-        falls back to a local upload).
+        when the asset can't be located by any of the above (callers with a
+        local file fall back to uploading it; the #287 frame-ref path has no
+        fallback and raises instead).
         """
         tile = VideoGenerationMixin._existing_asset_tile(page, media_id)
         visible = True
@@ -2102,10 +2150,15 @@ class VideoGenerationMixin:
     async def _attach_i2v_frames(
         page: Page, request: GenerateVideoRequest, *, out_dir: Path | None
     ) -> None:
-        """Attach the Start (and optional End) I2V frame, local path or remote ref."""
+        """Attach the Start (and optional End) I2V frame: local path, in-project
+        asset UUID (#287), or remote display-name ref."""
         if request.start_image is not None:
             await VideoGenerationMixin._attach_frame(
                 page, 0, "Start", request.start_image, out_dir=out_dir
+            )
+        elif request.start_image_ref_id is not None:
+            await VideoGenerationMixin._attach_frame_by_media_id(
+                page, 0, "Start", request.start_image_ref_id, out_dir=out_dir
             )
         elif request.start_image_ref_name is not None:
             await VideoGenerationMixin._attach_remote_frame(
@@ -2114,6 +2167,10 @@ class VideoGenerationMixin:
         if request.end_image is not None:
             await VideoGenerationMixin._attach_frame(
                 page, 1, "End", request.end_image, out_dir=out_dir
+            )
+        elif request.end_image_ref_id is not None:
+            await VideoGenerationMixin._attach_frame_by_media_id(
+                page, 1, "End", request.end_image_ref_id, out_dir=out_dir
             )
         elif request.end_image_ref_name is not None:
             await VideoGenerationMixin._attach_remote_frame(
