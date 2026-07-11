@@ -7,6 +7,17 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+## [0.32.0] — 2026-07-11
+
+### Added
+
+- **`gflow video i2v` accepts an in-project asset media UUID for `--initial-frame` / `--end-frame` (and the positional IMAGE).** A UUID-shaped value selects the already-existing Flow asset in place via the same `_select_existing_asset` picker the image `--ref` flow uses (#282 scroll/search fixes included) instead of forcing a duplicate local-file upload — the duplicate-asset pileup and per-run re-upload from the 2026-07-11 chalkboard pilot. Pair with `--project` so the asset's project is the one generated in; a UUID that can't be located in the picker fails with `TransportTimeoutError` (exit 9) naming the slot and UUID (#287).
+
+### Fixed
+
+- **A Flow upload-endpoint rejection is now a typed error instead of "Unexpected error." (exit 1).** An `uploadImage` 4xx during frame/reference attach (observed live: one JPEG rejected with HTTP 400 while byte-identical-format siblings uploaded fine) raised a bare `RuntimeError` that fell through to the generic handler with no hint the *input image* was refused. It now raises the new `MediaUploadRejectedError` (**exit code 27**, RFC 9457 type `media-upload-rejected`) with a re-encode remediation hint (`ffmpeg -q:v 2 -map_metadata -1`) (#287).
+- **An explicit `--duration` that cannot be applied now fails fast instead of silently producing a clip of Flow's default length.** When the video settings panel's duration tab probe missed (observed 3/3 on a live 2026-07-11 Frames-submode run: `--duration 4` returned an 8-second clip and the JSON result reported success), `_select_video_duration` demoted the failure to a warning and generation continued on Flow's default. Duration is a contract parameter — downstream timeline math sizes cuts from the requested value — so a probe miss with an explicit `--duration` now raises `UiSelectorDriftError` (**exit code 23**, the #183 selector-drift semantics) with a `debug_no_duration_tab.png` viewport screenshot and an omit-`--duration` remediation hint. Omitting `--duration` is unaffected. Root cause confirmed live 2026-07-11: the duration control is absent from the affected cohort's settings popover (#288, #289).
+
 ## [0.31.0] — 2026-07-10
 
 ### Fixed
@@ -1908,7 +1919,9 @@ shell-script template that branches on these codes.
 
 First skeleton. Not functional end-to-end yet.
 
-[Unreleased]: https://github.com/ffroliva/gflow-cli/compare/v0.30.0...HEAD
+[Unreleased]: https://github.com/ffroliva/gflow-cli/compare/v0.32.0...HEAD
+[0.32.0]: https://github.com/ffroliva/gflow-cli/compare/v0.31.0...v0.32.0
+[0.31.0]: https://github.com/ffroliva/gflow-cli/compare/v0.30.0...v0.31.0
 [0.30.0]: https://github.com/ffroliva/gflow-cli/compare/v0.29.0...v0.30.0
 [0.29.0]: https://github.com/ffroliva/gflow-cli/compare/v0.28.0...v0.29.0
 [0.28.0]: https://github.com/ffroliva/gflow-cli/compare/v0.27.1...v0.28.0
