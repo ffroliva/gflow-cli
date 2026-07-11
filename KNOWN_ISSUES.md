@@ -24,12 +24,20 @@ The `duration_tab` selector cascade (`[role='tab']:text-is('4s')` /
 `:has-text('4s')`) fails to match on Flow's current Frames-submode settings
 panel. Pre-fix this silently produced a clip of Flow's default length; since
 the #289 fix the run fails fast with `UiSelectorDriftError` (exit 23) and a
-`debug_no_duration_tab.png` screenshot. **Workaround:** omit `--duration` to
-accept Flow's default. Leading hypothesis: the tab label is rendered
-locale-sensitively (e.g. "4 с" / "4 s") — the duration tabs match visible text
-and have no locale-invariant fallback, unlike the aspect tabs' `crop_*` icon
-ligatures. Investigation needs a headed browser against the live DOM; attach
-the debug screenshot and your account locale to #288 if you hit this.
+`debug_no_duration_tab.png` screenshot — live-verified 2026-07-11 on the
+denon82 profile (aborted pre-submit, saving the 10-credit generation).
+**Workaround:** omit `--duration` to accept Flow's default.
+
+**Root cause (confirmed live 2026-07-11, screenshot evidence on #288): the
+duration control is ABSENT from this cohort's settings popover** — the panel
+renders mode tabs (Imagem/Video), sub-mode (Frames/Elementos), aspect
+(9:16/16:9), count (1x–x4), and the model dropdown (Veo 3.1 - Lite), and
+nothing else. The earlier locale hypothesis is refuted: the UI renders in
+Portuguese and the sibling count tabs (`1x`/`x2`) match fine; there is simply
+no duration row to click. Whether Flow removed clip-length selection for this
+cohort/model or moved it elsewhere is unknown — until that's answered,
+`--duration` cannot be honored on affected cohorts and the fail-fast is the
+correct behavior, not a selector bug to patch.
 
 ### macOS: generation runs logged-out → HTTP 401, even with `--browser chrome`
 
