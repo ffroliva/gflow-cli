@@ -7,6 +7,8 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+## [0.32.1] — 2026-07-11
+
 ### Fixed
 
 - **Browser teardown can no longer hang forever or leak a Chrome tree that locks the profile dir (#293).** A wedged `context.close()` used to be awaited unbounded and its failure swallowed to a warning; stopping the Playwright driver afterwards kills only the Node process, so the detached system-Chrome survived holding the profile — the next run then died at launch with an opaque `TargetClosedError` → "Unexpected error." (exit 1) (observed 3× live, 2026-07-11). Teardown now uses a shared bounded-close helper (generous 30s graceful bound — Playwright hard-kills Chrome mid-profile-flush if a second close arrives during a graceful close, so a slow-but-healthy close must not be escalated; 5s force-close fallback via `context.browser`; 10s driver-stop bound; field resets survive Ctrl-C) across **all three** owned-context teardown paths: `FlowApiClient`, the UI-automation transport's standalone path (its partial-setup guard now also closes a launched context before the driver exits), and the experimental evaluate-fetch transport. A launch-time `TargetClosedError` is now surfaced as `ProfileLockedError` (exit 11) carrying the original error and a kill-the-stale-Chrome remediation, hedged for non-lock startup crashes (#293).
@@ -1931,7 +1933,8 @@ shell-script template that branches on these codes.
 
 First skeleton. Not functional end-to-end yet.
 
-[Unreleased]: https://github.com/ffroliva/gflow-cli/compare/v0.32.0...HEAD
+[Unreleased]: https://github.com/ffroliva/gflow-cli/compare/v0.32.1...HEAD
+[0.32.1]: https://github.com/ffroliva/gflow-cli/compare/v0.32.0...v0.32.1
 [0.32.0]: https://github.com/ffroliva/gflow-cli/compare/v0.31.0...v0.32.0
 [0.31.0]: https://github.com/ffroliva/gflow-cli/compare/v0.30.0...v0.31.0
 [0.30.0]: https://github.com/ffroliva/gflow-cli/compare/v0.29.0...v0.30.0
