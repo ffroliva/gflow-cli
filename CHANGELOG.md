@@ -7,6 +7,16 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+### Fixed
+
+- **Picker grid scroll no longer misses a tile rendered by the final scroll (#283 off-by-one).** `_select_existing_asset` checked the tile count only *before* each scroll, so an asset the last scroll brought into the virtualised grid was never re-checked and the picker gave up with the tile on screen. A post-loop re-check closes it (`_find_picker_entity_tile` shares the loop shape but returns the locator unconditionally, so it was unaffected — now documented).
+- **Agentic `await_images` no longer trusts a single exact-count scrape (#283 hardening of the #281 race).** The poll loop breaks only when the new-UUID set is identical across two consecutive scrapes at the expected count (~one extra 0.5s poll); a set that transiently hits the exact count and then grows surfaces as the #281 `MediaAttributionError` instead of being returned as "the" generated media.
+- **Debug screenshots that fail to capture are no longer reported as if they existed.** `_capture_debug_screenshot` returned the target path even when `page.screenshot` raised (observed live 2026-07-11: an error message pointed at a file that was never written). It now returns `None` on capture failure and every error message appends its `Screenshot:` clause conditionally (new `screenshot_clause` helper) (#283).
+
+### Changed
+
+- **UUID-shape validation consolidated onto `gflow_cli.api.video.is_media_uuid`.** The four per-module private `_UUID_RE` copies (cli_image, cli_instructions, image_upscale, mcp/tools) now delegate to the public helper introduced in #290; no behavior change. `MediaAttributionError` raises in the recorder now carry `route=` provenance, the agentic ambiguity raise no longer duplicates the class remediation text, `image i2i --ref` help uses the same "media UUID" vocabulary as `video i2v`, and a bad value passed via the deprecated `--end-image` alias names `--end-image` (not `--end-frame`) in its usage error (#283).
+
 ## [0.32.0] — 2026-07-11
 
 ### Added

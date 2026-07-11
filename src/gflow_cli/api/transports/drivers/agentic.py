@@ -503,6 +503,7 @@ class AgenticFlowUiDriver:
 
         deadline = asyncio.get_event_loop().time() + _AWAIT_TIMEOUT_S
         new_uuids: set[str] = set()
+        prev_new_uuids: set[str] | None = None
 
         while asyncio.get_event_loop().time() < deadline:
             await asyncio.sleep(_POLL_INTERVAL_S)
@@ -522,8 +523,14 @@ class AgenticFlowUiDriver:
             current_uuids = _extract_uuids(current_srcs)
             new_uuids = current_uuids - baseline_uuids
 
-            if len(new_uuids) >= expected_count:
+            if len(new_uuids) > expected_count:
+                break  # ambiguity — fail fast below (#281)
+            # Stable-break (#283): exact-count on a single scrape can still be
+            # a lazy-render race; require the SAME set on two consecutive
+            # scrapes (~one extra poll interval) before trusting it.
+            if len(new_uuids) == expected_count and new_uuids == prev_new_uuids:
                 break
+            prev_new_uuids = set(new_uuids)
 
         if len(new_uuids) < expected_count:
             if new_uuids:
@@ -543,9 +550,7 @@ class AgenticFlowUiDriver:
             raise MediaAttributionError(
                 detail=(
                     f"Cannot attribute the generation among {len(candidates)} candidate "
-                    f"media UUIDs (expected {expected_count}): {candidates}. Re-run the "
-                    "generation; a dedicated project with fewer pre-existing assets "
-                    "avoids lazy-render ambiguity."
+                    f"media UUIDs (expected {expected_count}): {candidates}."
                 ),
                 route="agentic:await_images",
             )

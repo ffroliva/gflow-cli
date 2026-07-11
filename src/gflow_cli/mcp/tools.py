@@ -15,7 +15,6 @@ to prevent Playwright browser-context collisions.
 from __future__ import annotations
 
 import asyncio
-import re
 import time
 import uuid
 from collections.abc import Awaitable, Callable
@@ -28,6 +27,7 @@ import structlog
 from gflow_cli._cli_helpers import _FLOW_ID_RE
 from gflow_cli.api.client import FlowApiClient
 from gflow_cli.api.image import AgentInstruction
+from gflow_cli.api.video import is_media_uuid
 from gflow_cli.cli_instructions import classify_refs
 from gflow_cli.config import get_settings
 from gflow_cli.data.queries import list_projects
@@ -338,10 +338,6 @@ async def _run_generation_task(
 _BAD_PARAM_TYPE = "https://gflow-cli.dev/errors/bad-parameter"
 
 # UUID (Flow media id) vs on-disk path discriminator for image references.
-_UUID_RE = re.compile(
-    r"^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$",
-    re.IGNORECASE,
-)
 
 
 def _bad_param(title: str, detail: str) -> dict[str, Any]:
@@ -518,7 +514,7 @@ def _resolve_image_references(
     refs: list[str] = []
     ref_paths: list[str] = []
     for ref in reference_images:
-        if _UUID_RE.fullmatch(ref):
+        if is_media_uuid(ref):
             refs.append(ref)
             continue
         resolved, err = _resolve_image_path(
@@ -567,7 +563,7 @@ def _build_video_media_inputs(
     ):
         if frame is None:
             continue
-        if _UUID_RE.fullmatch(frame):
+        if is_media_uuid(frame):
             media[ref_key] = frame
             continue
         resolved, err = _resolve_image_path(

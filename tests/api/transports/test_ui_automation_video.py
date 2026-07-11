@@ -1511,6 +1511,24 @@ class TestSelectExistingAssetPickerScroll:
         assert page.mouse.wheel.await_count == PICKER_GRID_SCROLL_ATTEMPTS
 
     @pytest.mark.asyncio
+    async def test_tile_rendered_by_final_scroll_is_still_found(self) -> None:
+        """#283 off-by-one: the loop checked tile.count() BEFORE each scroll,
+        so a tile rendered into the DOM by the LAST scroll was never seen and
+        the picker gave up with the asset on screen."""
+        # count: 0 for every pre-scroll check; 1 only on the post-loop re-check.
+        tile = self._tile_mock(
+            wait_for_side_effect=[TimeoutError("not in initial viewport"), None],
+            count_side_effect=[0] * PICKER_GRID_SCROLL_ATTEMPTS + [1],
+        )
+        page = self._page_with_tile(tile)
+
+        result = await VideoGenerationMixin._select_existing_asset(page, "uuid-1", "", out_dir=None)
+
+        assert result is True, "tile rendered by the final scroll must be found"
+        assert page.mouse.wheel.await_count == PICKER_GRID_SCROLL_ATTEMPTS
+        tile.click.assert_awaited_once()
+
+    @pytest.mark.asyncio
     async def test_failed_display_name_search_is_cleared_before_scrolling(self) -> None:
         """A FAILED display-name search leaves the picker grid filtered on
         that term; scrolling a still-filtered grid can never surface a tile
@@ -1836,3 +1854,18 @@ class TestUploadRejectionTypedError:
                 page, image, log_label="Start", out_dir=None
             )
         page.remove_listener.assert_called_once()  # finally-detach on the raise path
+
+
+class TestCaptureDebugScreenshotFailure:
+    @pytest.mark.asyncio
+    async def test_capture_failure_returns_none_not_a_phantom_path(self, tmp_path: Path) -> None:
+        """#283 follow-up (observed live 2026-07-11): when page.screenshot
+        raises, the function reported a path that was never written — error
+        messages then pointed users at a nonexistent file."""
+        from gflow_cli.api.transports.ui_automation_video import _capture_debug_screenshot
+
+        page = MagicMock()
+        page.screenshot = AsyncMock(side_effect=RuntimeError("target closed"))
+        shot = await _capture_debug_screenshot(page, tmp_path, "nope.png")
+        assert shot is None
+        assert not (tmp_path / "nope.png").exists()

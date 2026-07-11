@@ -35,6 +35,7 @@ from gflow_cli.api.transports.ui_automation_video import (
     ENTITY_ATTACH_DRIFT_HINT,
     MODE_SWITCH_TRIGGER_SELECTORS,
     VideoGenerationMixin,
+    screenshot_clause,
     selector_drift_detail,
     zip_entity_refs,
 )
@@ -178,6 +179,7 @@ async def _capture_debug_screenshot(
         )
     except Exception as e:
         log.debug("ui_automation.screenshot_capture_failed", error=str(e))
+        return None  # never report a path that was not written (#283)
     return shot_path
 
 
@@ -2767,7 +2769,7 @@ class UiAutomationTransport(VideoGenerationMixin):
             )
             msg = (
                 f"Character editor not ready: prompt textbox not visible "
-                f"within 20 s. URL: {page.url}. Screenshot: {shot}"
+                f"within 20 s. URL: {page.url}.{screenshot_clause(shot)}"
             )
             raise RuntimeError(msg) from exc
 
