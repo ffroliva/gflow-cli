@@ -1096,11 +1096,16 @@ class VideoGenerationMixin:
             raise VideoModelSelectionError(detail=msg, route="model_option")
 
     @staticmethod
-    async def _select_video_duration(page: Page, seconds: int) -> None:
+    async def _select_video_duration(
+        page: Page, seconds: int, *, out_dir: Path | None = None
+    ) -> None:
         """Click the duration tab for `seconds` (4/6/8, or 10 for omni_flash).
         Disambiguated by aria-label text ('4s'..'10s'), NOT id-suffix
         (collides with count). Must run AFTER model select — the 10s tab only
-        exists once omni_flash is chosen. Non-fatal on miss."""
+        exists once omni_flash is chosen. Fatal on miss (issue #288): this
+        only runs for an explicit --duration, and duration is a contract
+        parameter — a silent fall-through to Flow's 8s default corrupts
+        downstream timeline math."""
         tab = await VideoGenerationMixin._probe_selector_cascade(
             page,
             "duration_tab",
@@ -1108,7 +1113,17 @@ class VideoGenerationMixin:
         )
         if tab is None:
             log.warning("ui_automation_video.duration_not_set", seconds=seconds)
-            return
+            shot = await _capture_debug_screenshot(page, out_dir, "debug_no_duration_tab.png")
+            raise UiSelectorDriftError(
+                selector_drift_detail(
+                    "duration_tab",
+                    f"the {seconds}s duration tab was not found on the Flow editor; "
+                    f"refusing to proceed — Flow's default duration (8s) would "
+                    f"silently replace the requested value (issue #288). Omit "
+                    f"--duration to accept Flow's default.",
+                    shot,
+                )
+            )
         await tab.click()
         await page.wait_for_timeout(400)
         log.info("ui_automation_video.duration_set", seconds=seconds)

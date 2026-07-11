@@ -349,9 +349,28 @@ class TestSelectVideoDuration:
         page.locator.assert_any_call(sel)
 
     @pytest.mark.asyncio
-    async def test_missing_duration_tab_is_non_fatal(self) -> None:
+    async def test_missing_duration_tab_raises_drift_error(self) -> None:
+        # #288: --duration is always explicit at this point (the classic driver
+        # guards on request.duration is not None) — a silent 4->8 substitution
+        # corrupts downstream timeline math, so a probe miss must fail fast.
+        from gflow_cli.errors import UiSelectorDriftError
+
         page = _cascade_page(set())
-        await VideoGenerationMixin._select_video_duration(page, 10)  # must not raise
+        with pytest.raises(UiSelectorDriftError) as exc_info:
+            await VideoGenerationMixin._select_video_duration(page, 4)
+        msg = str(exc_info.value)
+        assert "4s" in msg
+        assert "--duration" in msg  # remediation hint: omit --duration for Flow's default
+
+    @pytest.mark.asyncio
+    async def test_missing_duration_tab_captures_screenshot(self, tmp_path: Path) -> None:
+        from gflow_cli.errors import UiSelectorDriftError
+
+        page = _cascade_page(set())
+        with pytest.raises(UiSelectorDriftError) as exc_info:
+            await VideoGenerationMixin._select_video_duration(page, 6, out_dir=tmp_path)
+        assert "Screenshot:" in str(exc_info.value)
+        page.screenshot.assert_awaited()
 
 
 class TestSetOutputCount:
