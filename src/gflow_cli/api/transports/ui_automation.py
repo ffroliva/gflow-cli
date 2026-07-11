@@ -35,6 +35,7 @@ from gflow_cli.api.transports.ui_automation_video import (
     ENTITY_ATTACH_DRIFT_HINT,
     MODE_SWITCH_TRIGGER_SELECTORS,
     VideoGenerationMixin,
+    screenshot_clause,
     selector_drift_detail,
     zip_entity_refs,
 )
@@ -178,6 +179,7 @@ async def _capture_debug_screenshot(
         )
     except Exception as e:
         log.debug("ui_automation.screenshot_capture_failed", error=str(e))
+        return None  # never report a path that was not written (#283)
     return shot_path
 
 
@@ -741,6 +743,7 @@ class UiAutomationTransport(VideoGenerationMixin):
         # opt-in patchright engine routes through the resolver.
         from gflow_cli.api._engine import (
             active_engine,
+            close_context_bounded,
             log_engine_selected,
             resolve_async_playwright,
         )
@@ -766,6 +769,7 @@ class UiAutomationTransport(VideoGenerationMixin):
         # ``.chromium.launch_persistent_context`` surface; type as Any so this
         # standalone path is engine-agnostic without per-engine stubs.
         pw: Any = await pw_cm.__aenter__()
+        ctx = None
         try:
             import os
 
@@ -805,7 +809,11 @@ class UiAutomationTransport(VideoGenerationMixin):
                 profile_dir=str(profile_dir),
             )
         except Exception:
-            # Partial-setup leak guard.
+            # Partial-setup leak guard. The context must be closed BEFORE the
+            # driver exits — stopping only the driver leaves the detached
+            # system-Chrome alive holding the profile dir (issue #293).
+            if ctx is not None:
+                await close_context_bounded(ctx, owner="ui_automation")
             await pw_cm.__aexit__(None, None, None)
             raise
 
@@ -1039,8 +1047,8 @@ class UiAutomationTransport(VideoGenerationMixin):
 
         shot_path = await _capture_debug_screenshot(page, out_dir, "debug_new_project.png")
         msg = (
-            f"Could not find 'New project' CTA on Flow gallery. URL: {page.url}. "
-            f"Screenshot: {shot_path}"
+            f"Could not find 'New project' CTA on Flow gallery. "
+            f"URL: {page.url}.{screenshot_clause(shot_path)}"
         )
         raise RuntimeError(
             msg,
@@ -1182,7 +1190,7 @@ class UiAutomationTransport(VideoGenerationMixin):
                 continue
 
         shot_path = await _capture_debug_screenshot(page, out_dir, "debug_prompt_not_found.png")
-        msg = f"Prompt input not found in Flow UI. URL: {page.url}. Screenshot: {shot_path}"
+        msg = f"Prompt input not found in Flow UI. URL: {page.url}.{screenshot_clause(shot_path)}"
         raise RuntimeError(msg)
 
     async def _click_submit(self, page: Page) -> None:
@@ -2767,7 +2775,7 @@ class UiAutomationTransport(VideoGenerationMixin):
             )
             msg = (
                 f"Character editor not ready: prompt textbox not visible "
-                f"within 20 s. URL: {page.url}. Screenshot: {shot}"
+                f"within 20 s. URL: {page.url}.{screenshot_clause(shot)}"
             )
             raise RuntimeError(msg) from exc
 
@@ -3026,13 +3034,20 @@ class UiAutomationTransport(VideoGenerationMixin):
         if not self._setup_done:
             return
         if self._owns_playwright and self._pw_cm is not None:
+            from gflow_cli.api._engine import (  # noqa: PLC0415
+                DRIVER_STOP_TIMEOUT_S,
+                close_context_bounded,
+            )
+
+            if self._ctx is not None:
+                # Bounded close + force-close fallback (issue #293) — same
+                # helper as FlowApiClient's teardown; this standalone path had
+                # the identical unbounded-close-and-swallow gap.
+                await close_context_bounded(self._ctx, owner="ui_automation")
             try:
-                if self._ctx is not None:
-                    await self._ctx.close()
-            except Exception as e:
-                log.warning("ui_automation.context_close_failed", error=str(e))
-            try:
-                await self._pw_cm.__aexit__(None, None, None)
+                await asyncio.wait_for(
+                    self._pw_cm.__aexit__(None, None, None), timeout=DRIVER_STOP_TIMEOUT_S
+                )
             except Exception as e:
                 log.warning("ui_automation.playwright_exit_failed", error=str(e))
         self._pw_cm = None

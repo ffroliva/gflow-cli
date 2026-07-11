@@ -15,7 +15,6 @@ See ``docs/INSTRUCTIONS.md`` for the approved spec this module implements.
 from __future__ import annotations
 
 import json
-import re
 import tomllib
 from dataclasses import replace
 from pathlib import Path
@@ -35,6 +34,7 @@ from gflow_cli._cli_helpers import (
 from gflow_cli.api.client import FlowApiClient
 from gflow_cli.api.image import AgentInstruction
 from gflow_cli.api.transports import transport_choices
+from gflow_cli.api.video import is_media_uuid
 from gflow_cli.config import get_settings
 
 if TYPE_CHECKING:
@@ -47,13 +47,7 @@ console = Console()
 # Case-insensitive 8-4-4-4-12 hex — Flow's media/generated-asset UUIDs. A bare
 # UUID `--ref` is an already-uploaded/generated asset (routed to
 # imageReferenceMediaIds); anything else is a local image path (uploaded first)
-# or a character id/name. Same shape used by cli_image._UUID_RE /
-# image_upscale._UUID_RE — each call-site module keeps its own copy per repo
-# convention rather than cross-importing a private name.
-_UUID_RE = re.compile(
-    r"^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$",
-    re.IGNORECASE,
-)
+# or a character id/name (UUID shape check: `api.video.is_media_uuid`).
 
 _TRANSPORT_HELP = (
     "Override transport strategy. Falls back to GFLOW_CLI_TRANSPORT env var "
@@ -161,7 +155,7 @@ async def classify_refs(
     image_ids: list[str] = []
     char_ids: list[str] = []
     for ref in refs:
-        if _UUID_RE.fullmatch(ref):
+        if is_media_uuid(ref):
             image_ids.append(ref)
             continue
         try:

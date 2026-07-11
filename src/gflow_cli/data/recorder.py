@@ -118,7 +118,7 @@ def escalate_asset_collision(
         f"[{media_ids}], local_path is one of [{paths}]. Earlier images in "
         "this batch/operation may already have been recorded."
     )
-    raise MediaAttributionError(msg) from exc
+    raise MediaAttributionError(msg, route="data.escalate_asset_collision") from exc
 
 
 class OperationRecorder:
@@ -191,7 +191,7 @@ class OperationRecorder:
                 "batch — wrong-media attribution (#281); nothing was downloaded: "
                 f"{', '.join(intra_batch_duplicates)}"
             )
-            raise MediaAttributionError(msg)
+            raise MediaAttributionError(msg, route="data.verify_media_attribution")
 
         already_recorded = [
             img.media_name
@@ -204,7 +204,7 @@ class OperationRecorder:
                 "wrong-media attribution (#281); nothing was downloaded: "
                 f"{', '.join(already_recorded)}"
             )
-            raise MediaAttributionError(msg)
+            raise MediaAttributionError(msg, route="data.verify_media_attribution")
 
     def _resolve_prompts(
         self,
