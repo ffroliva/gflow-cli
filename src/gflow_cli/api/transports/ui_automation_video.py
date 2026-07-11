@@ -391,6 +391,54 @@ _PICKER_GRID_TILE_IDS_JS = (
     "document.querySelectorAll(\"[role='option'] img, [data-tile-id]\")"
     ").map((el) => el.getAttribute('data-tile-id') || el.getAttribute('src') || '')"
 )
+# #287 primary hypothesis: the media picker's library view has its OWN active
+# project — `--project` only navigates the EDITOR — so the picker can open on
+# a different project (plausibly the most recently created one) and the target
+# asset is then unreachable no matter how deep the grid is scrolled. The
+# trigger cascade below is hypothesis-driven (refined from live DOM dumps):
+# probed IN ORDER inside the open dialog, first match wins, no-op when none
+# match (older cohort).
+PICKER_PROJECT_SELECTOR_TRIGGERS = (
+    "[role='dialog'] [role='combobox']",
+    "[role='dialog'] button[aria-haspopup='listbox']",
+    "[role='dialog'] button[aria-haspopup='menu']",
+)
+# With the project dropdown OPEN: click the first option that references the
+# target project id anywhere in its markup (Flow keys tiles/links by id, not
+# localized captions). Returns whether an option was clicked.
+_PICKER_PROJECT_OPTION_CLICK_JS = (
+    "(projectId) => {"
+    " const opts = Array.from(document.querySelectorAll("
+    "\"[role='option'], [role='menuitem'], [role='listbox'] li\"));"
+    " const hit = opts.find((el) => el.outerHTML.includes(projectId));"
+    " if (!hit) { return false; }"
+    " hit.click();"
+    " return true;"
+    "}"
+)
+# Bounded picker DOM dump for a not-found asset (#287 diagnosis): tile count,
+# the first 3 tiles' outerHTML (truncated — enough to see which attribute
+# carries the media identity in this cohort), the dialog's aria/role/data
+# attributes, the project-selector candidates' outerHTML, and whether the
+# target project id appears anywhere in the dialog at all.
+_PICKER_DOM_DUMP_JS = (
+    "(projectId) => {"
+    " const dialogs = document.querySelectorAll(\"[role='dialog']\");"
+    " const root = dialogs.length ? dialogs[dialogs.length - 1] : document.body;"
+    " const tiles = Array.from(root.querySelectorAll(\"[role='option']\"));"
+    " const selectors = Array.from(root.querySelectorAll("
+    "\"[role='combobox'], button[aria-haspopup], [role='listbox']\"));"
+    " return {"
+    " tile_count: tiles.length,"
+    " tiles: tiles.slice(0, 3).map((el) => el.outerHTML.slice(0, 500)),"
+    " container_attrs: root.getAttributeNames()"
+    ".filter((n) => n === 'role' || n === 'id' || n.startsWith('aria-') || n.startsWith('data-'))"
+    ".map((n) => n + '=' + root.getAttribute(n)),"
+    " project_selector_candidates: selectors.slice(0, 5).map((el) => el.outerHTML.slice(0, 500)),"
+    " target_project_in_dialog: projectId ? root.innerHTML.includes(projectId) : null,"
+    " };"
+    "}"
+)
 VIDEO_SUBMODE_SELECTORS: dict[str, tuple[str, ...]] = {
     # I2V — "frames" (start + optional end frame). Icon: crop_free.
     "frames": (
@@ -450,6 +498,34 @@ def screenshot_clause(shot: Path | None) -> str:
     """' Screenshot: <path>' when one was captured, else '' — a capture
     failure must not put a phantom path (or 'None') in the error text."""
     return f" Screenshot: {shot}" if shot is not None else ""
+
+
+async def _capture_picker_dom_dump(
+    page: Any, out_dir: Path | None, media_id: str, project_id: str | None
+) -> Path | None:
+    """Bounded DOM dump of the open picker for a not-found asset (#287
+    diagnosis): what the picker was actually rendering when the lookup gave
+    up — see `_PICKER_DOM_DUMP_JS` for the captured fields. Same contract as
+    `_capture_debug_screenshot` (0.32.1): returns ``None`` on any capture
+    failure so callers never report a file that was not written."""
+    if out_dir is None:
+        return None
+    try:
+        picker_state = await page.evaluate(_PICKER_DOM_DUMP_JS, project_id)
+        out_dir.mkdir(parents=True, exist_ok=True)
+        dump_path = out_dir / f"debug_picker_dom_{media_id[:8]}.json"
+        dump_path.write_text(
+            json.dumps(
+                {"media_id": media_id, "project_id": project_id, "picker": picker_state},
+                indent=2,
+                ensure_ascii=False,
+            ),
+            encoding="utf-8",
+        )
+    except Exception as e:  # noqa: BLE001 - diagnosis capture must never mask the miss
+        log.debug("ui_automation_video.picker_dom_dump_failed", error=str(e))
+        return None
+    return dump_path
 
 
 def selector_drift_detail(probe: str, what: str, shot: Path | None) -> str:
@@ -1373,6 +1449,10 @@ class VideoGenerationMixin:
         await slot.click()
         await page.wait_for_timeout(1000)  # media dialog opens
 
+        # #287 primary hypothesis: the picker's library view is per-project —
+        # align it to the target project BEFORE any lookup.
+        await VideoGenerationMixin._sync_picker_project(page)
+
         # Presence-guarded search clear, mirroring _attach_image_uuid_refs: a
         # picker variant with no search box must not become a hard dependency.
         search = page.locator(PICKER_SEARCH_INPUT).first
@@ -1653,6 +1733,24 @@ class VideoGenerationMixin:
                     visible = False
 
         if not visible:
+            # #287 diagnosis telemetry: capture WHAT the picker was showing
+            # when the lookup gave up — which attribute carries the media
+            # identity, and which project the library view was on, are the
+            # key unknowns on a live miss.
+            # cast + isinstance: a unit-test fake's page.url may not be a str.
+            page_url = cast("object", page.url)
+            project_id = extract_project_id(page_url) if isinstance(page_url, str) else None
+            shot = await _capture_debug_screenshot(
+                page, out_dir, f"debug_picker_miss_{media_id[:8]}.png"
+            )
+            dump = await _capture_picker_dom_dump(page, out_dir, media_id, project_id)
+            log.warning(
+                "ui_automation_video.existing_asset_not_found",
+                media_id=media_id,
+                project_id=project_id,
+                screenshot=str(shot) if shot is not None else None,
+                dom_dump=str(dump) if dump is not None else None,
+            )
             return False
 
         await tile.click()
@@ -1710,6 +1808,12 @@ class VideoGenerationMixin:
             await add.click()
             await page.wait_for_timeout(800)
 
+            # #287 primary hypothesis: the picker's library view is
+            # per-project — align it to the target project BEFORE this ref's
+            # lookup (re-checked per dialog open; the switch itself no-ops
+            # when already aligned or when the selector is absent).
+            await VideoGenerationMixin._sync_picker_project(page)
+
             # Fresh per-ref state (#282): a display-name search typed while
             # locating a previous ref must not leak into this ref's lookup —
             # every ref after the first was failing because the picker was
@@ -1746,6 +1850,94 @@ class VideoGenerationMixin:
             )
 
     @staticmethod
+    async def _sync_picker_project(page: Page) -> None:
+        """#287 primary hypothesis: the media picker's library view has its
+        OWN active project — ``--project`` only navigates the EDITOR — so the
+        picker can open on a different project (plausibly the most recently
+        created one), making the target asset unreachable no matter how deep
+        the grid is scrolled. Derives the target project from the editor URL
+        (``--project`` navigation put it there) and aligns the picker's
+        project selector to it. No-op when the URL carries no project id or
+        the picker has no project selector (older cohort)."""
+        # cast + isinstance: a unit-test fake's page.url may not be a str.
+        page_url = cast("object", page.url)
+        project_id = extract_project_id(page_url) if isinstance(page_url, str) else None
+        if not project_id:
+            log.info(
+                "ui_automation_video.picker_project_sync_skipped",
+                reason="no_project_in_url",
+            )
+            return
+        await VideoGenerationMixin._ensure_picker_project(page, project_id)
+
+    @staticmethod
+    async def _ensure_picker_project(page: Page, project_id: str) -> bool | None:
+        """Align the OPEN picker's library view to ``project_id`` (#287).
+
+        Hypothesis-driven (selectors refined from live DOM dumps): the
+        trigger is probed as a combobox / listbox-or-menu-haspopup button
+        inside the dialog; the active project is considered correct when the
+        trigger's markup references the project id; otherwise the dropdown is
+        opened and the first option referencing the project id is clicked.
+        Returns ``None`` when the picker has no project selector (older
+        cohort — pure no-op), ``True`` when the target project is (already)
+        active, ``False`` when a selector exists but the target could not be
+        selected — callers proceed either way: the asset lookup stays the
+        authority and its not-found telemetry captures the picker state."""
+        trigger = None
+        matched_selector: str | None = None
+        for selector in PICKER_PROJECT_SELECTOR_TRIGGERS:
+            candidate = page.locator(selector).first
+            if await candidate.count():
+                trigger = candidate
+                matched_selector = selector
+                break
+        if trigger is None:
+            log.info(
+                "ui_automation_video.picker_project_selector_absent",
+                project_id=project_id,
+            )
+            return None
+        already_active = False
+        try:
+            already_active = bool(
+                await trigger.evaluate("(el, pid) => el.outerHTML.includes(pid)", project_id)
+            )
+        except Exception:  # noqa: BLE001 - probe is best-effort; fall through to a switch
+            already_active = False
+        if already_active:
+            log.info(
+                "ui_automation_video.picker_project_already_active",
+                project_id=project_id,
+                selector=matched_selector,
+            )
+            return True
+        await trigger.click()
+        await page.wait_for_timeout(600)
+        switched = False
+        try:
+            switched = bool(await page.evaluate(_PICKER_PROJECT_OPTION_CLICK_JS, project_id))
+        except Exception:  # noqa: BLE001 - dropdown scan is best-effort
+            switched = False
+        if not switched:
+            log.warning(
+                "ui_automation_video.picker_project_switch_miss",
+                project_id=project_id,
+                selector=matched_selector,
+                note="no dropdown option referenced the target project id",
+            )
+            # Never leave an open overlay on the pooled Page.
+            await page.keyboard.press("Escape")
+            return False
+        await page.wait_for_timeout(800)
+        log.info(
+            "ui_automation_video.picker_project_switched",
+            project_id=project_id,
+            selector=matched_selector,
+        )
+        return True
+
+    @staticmethod
     async def _search_picker_for_tile(page: Page, tile: Locator, term: str) -> bool | None:
         """Type ``term`` into the picker search box and report whether it
         surfaced ``tile``. Clears any previous term first so search tiers
@@ -1755,16 +1947,25 @@ class VideoGenerationMixin:
         never become a hard dependency."""
         search = page.locator(PICKER_SEARCH_INPUT).first
         if not await search.count():
+            log.info("ui_automation_video.picker_search_unavailable", term=term)
             return None
         await search.fill("")
         # Human-like typing jitter to dodge WAF heuristics — not security.
         await search.press_sequentially(term, delay=random.randint(10, 50))  # NOSONAR
         await page.wait_for_timeout(800)
+        rendered = await VideoGenerationMixin._picker_grid_fingerprint(page)
+        found = True
         try:
             await tile.wait_for(state="visible", timeout=6000)
         except Exception:  # noqa: BLE001 - not surfaced by this term
-            return False
-        return True
+            found = False
+        log.info(
+            "ui_automation_video.picker_search_tier",
+            term=term,
+            found=found,
+            rendered_tiles=len(rendered) if rendered is not None else None,
+        )
+        return found
 
     @staticmethod
     async def _scroll_picker_grid(page: Page, delta_px: int = PICKER_GRID_SCROLL_DELTA_PX) -> None:
@@ -1812,23 +2013,49 @@ class VideoGenerationMixin:
         attempts = 0
         stalls = 0
         previous: frozenset[str] | None = None
+        reason = "ceiling"
         while attempts < PICKER_GRID_SCROLL_MAX_ATTEMPTS:
             if await tile.count():
+                log.info(
+                    "ui_automation_video.picker_scroll_done",
+                    reason="found",
+                    attempts=attempts,
+                    found=True,
+                )
                 return True
             await VideoGenerationMixin._scroll_picker_grid(page)
             attempts += 1
             rendered = await VideoGenerationMixin._picker_grid_fingerprint(page)
+            log.info(
+                "ui_automation_video.picker_scroll_probe",
+                attempt=attempts,
+                rendered_tiles=len(rendered) if rendered is not None else None,
+                new_tiles=(
+                    len(rendered - previous)
+                    if rendered is not None and previous is not None
+                    else None
+                ),
+            )
             if rendered is None:
                 if attempts >= PICKER_GRID_SCROLL_ATTEMPTS:
+                    reason = "legacy_budget"
                     break
             elif rendered == previous:
                 stalls += 1
                 if stalls >= PICKER_GRID_SCROLL_STALL_LIMIT:
+                    reason = "stall"
                     break
             else:
                 stalls = 0
                 previous = rendered
-        return bool(await tile.count())
+        found = bool(await tile.count())
+        log.info(
+            "ui_automation_video.picker_scroll_done",
+            reason=reason,
+            attempts=attempts,
+            found=found,
+        )
+        return found
 
     @staticmethod
     async def _find_picker_entity_tile(page: Page, entity_id: str) -> Locator:

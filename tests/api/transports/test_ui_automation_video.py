@@ -4,6 +4,7 @@ from __future__ import annotations
 
 import asyncio
 import itertools
+import json
 from pathlib import Path
 from typing import Any, cast
 from unittest.mock import AsyncMock, MagicMock
@@ -22,6 +23,7 @@ from gflow_cli.api.transports.ui_automation_video import (
     PICKER_GRID_SCROLL_MAX_ATTEMPTS,
     PICKER_GRID_SCROLL_STALL_LIMIT,
     PICKER_INCLUDE_BUTTON,
+    PICKER_PROJECT_SELECTOR_TRIGGERS,
     PICKER_SEARCH_INPUT,
     VideoGenerationMixin,
     _upload_rejection_message,
@@ -1610,8 +1612,10 @@ class TestSelectExistingAssetLargeGrid:
         )
         page = TestSelectExistingAssetPickerScroll._page_with_tile(tile)
         # Progress evidence: each scroll renders a fresh window of tiles.
+        # (+5 headroom: the search tiers also probe the grid once each for
+        # their rendered-count telemetry before the scroll loop starts.)
         page.evaluate = AsyncMock(
-            side_effect=[[f"tile-{i}"] for i in range(self._DEEP_GRID_SCROLLS + 1)]
+            side_effect=[[f"tile-{i}"] for i in range(self._DEEP_GRID_SCROLLS + 5)]
         )
 
         result = await VideoGenerationMixin._select_existing_asset(page, "uuid-1", "", out_dir=None)
@@ -1728,6 +1732,310 @@ class TestSelectExistingAssetLargeGrid:
         search.press_sequentially.assert_not_awaited()
         search.fill.assert_not_awaited()
         assert page.mouse.wheel.await_count == 2
+
+
+_PROJECT_ID_287 = "f6caf027-0000-4000-8000-000000000287"
+_PROJECT_URL_287 = f"https://labs.google/fx/tools/flow/project/{_PROJECT_ID_287}"
+
+
+class TestPickerProjectSync:
+    """#287 primary hypothesis (project owner): the media picker's library
+    component has its OWN project selection — its search/grid is per-project,
+    and `--project` only navigates the EDITOR. If the picker's library opens
+    on a different active project (plausibly the most recently created one),
+    the target asset can never be surfaced no matter how deep the scroll.
+    `_ensure_picker_project` aligns the picker's active project to the target
+    before any lookup, and no-ops when the picker has no project selector
+    (older cohort) or the target project can't be derived."""
+
+    @staticmethod
+    def _trigger_mock(*, references_target: bool) -> MagicMock:
+        trigger = MagicMock()
+        trigger.first = trigger
+        trigger.count = AsyncMock(return_value=1)
+        trigger.click = AsyncMock()
+        # Active-project probe: does the trigger's outerHTML reference the
+        # target project id?
+        trigger.evaluate = AsyncMock(return_value=references_target)
+        return trigger
+
+    @staticmethod
+    def _selector_page(trigger: MagicMock | None) -> MagicMock:
+        page = _mock_async_page()
+        absent = MagicMock()
+        absent.first = absent
+        absent.count = AsyncMock(return_value=0)
+
+        def _locator(selector: str) -> MagicMock:
+            if trigger is not None and selector == PICKER_PROJECT_SELECTOR_TRIGGERS[0]:
+                return trigger
+            return absent
+
+        page.locator = MagicMock(side_effect=_locator)
+        page.evaluate = AsyncMock(return_value=True)  # dropdown option click succeeds
+        return page
+
+    @pytest.mark.asyncio
+    async def test_switches_picker_to_target_project_when_it_differs(self) -> None:
+        trigger = self._trigger_mock(references_target=False)
+        page = self._selector_page(trigger)
+
+        result = await VideoGenerationMixin._ensure_picker_project(page, _PROJECT_ID_287)
+
+        assert result is True
+        trigger.click.assert_awaited_once()
+        # The dropdown-option click JS receives the target project id.
+        assert page.evaluate.await_args.args[-1] == _PROJECT_ID_287
+
+    @pytest.mark.asyncio
+    async def test_noop_when_picker_already_on_target_project(self) -> None:
+        trigger = self._trigger_mock(references_target=True)
+        page = self._selector_page(trigger)
+
+        result = await VideoGenerationMixin._ensure_picker_project(page, _PROJECT_ID_287)
+
+        assert result is True
+        trigger.click.assert_not_awaited()
+        page.evaluate.assert_not_awaited()
+
+    @pytest.mark.asyncio
+    async def test_noop_when_picker_has_no_project_selector(self) -> None:
+        """Older cohort: no project selector in the picker — the sync must be
+        a pure no-op (nothing clicked, nothing evaluated)."""
+        page = self._selector_page(None)
+
+        result = await VideoGenerationMixin._ensure_picker_project(page, _PROJECT_ID_287)
+
+        assert result is None
+        page.evaluate.assert_not_awaited()
+        page.keyboard.press.assert_not_awaited()
+
+    @pytest.mark.asyncio
+    async def test_switch_miss_escapes_dropdown_and_returns_false(self) -> None:
+        """A selector exists but no dropdown option references the target
+        project id: close the dropdown (never leave an open overlay) and
+        report False — the asset lookup proceeds and its not-found telemetry
+        captures the picker state."""
+        trigger = self._trigger_mock(references_target=False)
+        page = self._selector_page(trigger)
+        page.evaluate = AsyncMock(return_value=False)
+
+        result = await VideoGenerationMixin._ensure_picker_project(page, _PROJECT_ID_287)
+
+        assert result is False
+        page.keyboard.press.assert_awaited_with("Escape")
+
+    @pytest.mark.asyncio
+    async def test_sync_derives_target_project_from_page_url(
+        self, monkeypatch: pytest.MonkeyPatch
+    ) -> None:
+        """`--project` navigation put the project id in the editor URL — the
+        sync wrapper derives the target from there (no signature threading)."""
+        ensure = AsyncMock()
+        monkeypatch.setattr(VideoGenerationMixin, "_ensure_picker_project", ensure)
+        page = _mock_async_page()
+        page.url = f"{_PROJECT_URL_287}?media=x"
+
+        await VideoGenerationMixin._sync_picker_project(page)
+
+        assert ensure.await_args.args[-1] == _PROJECT_ID_287
+
+    @pytest.mark.asyncio
+    async def test_sync_noop_when_page_url_has_no_project(
+        self, monkeypatch: pytest.MonkeyPatch
+    ) -> None:
+        ensure = AsyncMock()
+        monkeypatch.setattr(VideoGenerationMixin, "_ensure_picker_project", ensure)
+        page = _mock_async_page()  # page.url is a MagicMock, not a str
+
+        await VideoGenerationMixin._sync_picker_project(page)
+
+        ensure.assert_not_awaited()
+
+
+class TestSelectExistingAssetDiagnostics:
+    """#287 live-diagnosis telemetry: the first live verification failed with
+    ZERO events from the new code paths, so it was impossible to tell whether
+    the search tiers ran, whether the progress probe saw any tiles, or
+    whether the tile matcher missed. Every decision point now emits a
+    structured event, and a final not-found writes a bounded picker DOM dump
+    (+ screenshot) to the out-dir so the next live miss shows what the picker
+    was actually rendering."""
+
+    _FULL_UUID = "d6f1927a-3eae-4626-bc90-9a6ea7637bab"
+
+    @pytest.mark.asyncio
+    async def test_search_tier_event_reports_term_and_rendered_count(
+        self, install_log_capture: structlog.testing.LogCapture
+    ) -> None:
+        tile = TestSelectExistingAssetPickerScroll._tile_mock(
+            wait_for_side_effect=[TimeoutError("not in viewport"), None],
+            count_side_effect=0,
+        )
+        page = TestSelectExistingAssetPickerScroll._page_with_tile(tile)
+        page.evaluate = AsyncMock(return_value=["tile-a", "tile-b"])
+
+        result = await VideoGenerationMixin._select_existing_asset(
+            page, self._FULL_UUID, "", out_dir=None
+        )
+
+        assert result is True
+        tiers = [
+            e
+            for e in install_log_capture.entries
+            if e["event"] == "ui_automation_video.picker_search_tier"
+        ]
+        assert tiers, "expected a picker_search_tier event"
+        assert tiers[0]["term"] == self._FULL_UUID
+        assert tiers[0]["found"] is True
+        assert tiers[0]["rendered_tiles"] == 2
+
+    @pytest.mark.asyncio
+    async def test_stall_termination_emits_probe_and_done_events(
+        self, install_log_capture: structlog.testing.LogCapture
+    ) -> None:
+        tile = TestSelectExistingAssetPickerScroll._tile_mock(
+            wait_for_side_effect=TimeoutError("never visible"),
+            count_side_effect=0,
+        )
+        page = TestSelectExistingAssetPickerScroll._page_with_tile(tile)
+        page.evaluate = AsyncMock(return_value=["tile-a"])  # grid never advances
+
+        result = await VideoGenerationMixin._select_existing_asset(page, "uuid-1", "", out_dir=None)
+
+        assert result is False
+        probes = [
+            e
+            for e in install_log_capture.entries
+            if e["event"] == "ui_automation_video.picker_scroll_probe"
+        ]
+        assert len(probes) == PICKER_GRID_SCROLL_STALL_LIMIT + 1
+        assert probes[0]["rendered_tiles"] == 1
+        assert probes[0]["new_tiles"] is None  # no previous fingerprint yet
+        assert probes[1]["new_tiles"] == 0
+        done = [
+            e
+            for e in install_log_capture.entries
+            if e["event"] == "ui_automation_video.picker_scroll_done"
+        ]
+        assert done, "expected a picker_scroll_done event"
+        assert done[-1]["reason"] == "stall"
+        assert done[-1]["attempts"] == PICKER_GRID_SCROLL_STALL_LIMIT + 1
+        assert done[-1]["found"] is False
+
+    @pytest.mark.asyncio
+    async def test_legacy_budget_termination_is_reported_when_probe_blind(
+        self, install_log_capture: structlog.testing.LogCapture
+    ) -> None:
+        """When the DOM probe yields no evidence (cohort DOM drift — deviation
+        the first live run could not distinguish), the done event must SAY the
+        legacy budget fired, so a silent fallback is observable in the log."""
+        tile = TestSelectExistingAssetPickerScroll._tile_mock(
+            wait_for_side_effect=TimeoutError("never visible"),
+            count_side_effect=0,
+        )
+        page = TestSelectExistingAssetPickerScroll._page_with_tile(tile)
+        # page.evaluate deliberately NOT configured -> probe yields no evidence.
+
+        result = await VideoGenerationMixin._select_existing_asset(page, "uuid-1", "", out_dir=None)
+
+        assert result is False
+        done = [
+            e
+            for e in install_log_capture.entries
+            if e["event"] == "ui_automation_video.picker_scroll_done"
+        ]
+        assert done[-1]["reason"] == "legacy_budget"
+        assert done[-1]["attempts"] == PICKER_GRID_SCROLL_ATTEMPTS
+        assert done[-1]["found"] is False
+        probes = [
+            e
+            for e in install_log_capture.entries
+            if e["event"] == "ui_automation_video.picker_scroll_probe"
+        ]
+        assert probes and all(e["rendered_tiles"] is None for e in probes)
+
+    @pytest.mark.asyncio
+    async def test_not_found_writes_bounded_dom_dump(
+        self, tmp_path: Path, install_log_capture: structlog.testing.LogCapture
+    ) -> None:
+        tile = TestSelectExistingAssetPickerScroll._tile_mock(
+            wait_for_side_effect=TimeoutError("never visible"),
+            count_side_effect=0,
+        )
+        page = TestSelectExistingAssetPickerScroll._page_with_tile(tile)
+        page.url = _PROJECT_URL_287
+        page.screenshot = AsyncMock()
+        dom_state = {
+            "tile_count": 2,
+            "tiles": ["<div role='option'><img src='...other-uuid...'/></div>"],
+            "container_attrs": ["role=dialog", "aria-modal=true"],
+            "project_selector_candidates": ["<button aria-haspopup='listbox'>Scratch 3</button>"],
+            "target_project_in_dialog": False,
+        }
+
+        def _eval(js: str, *args: object) -> object:
+            # The DOM-dump JS is the only one reading outerHTML.
+            return dom_state if "outerHTML" in js else ["tile-a"]
+
+        page.evaluate = AsyncMock(side_effect=_eval)
+
+        result = await VideoGenerationMixin._select_existing_asset(
+            page, self._FULL_UUID, "", out_dir=tmp_path
+        )
+
+        assert result is False
+        dump_path = tmp_path / f"debug_picker_dom_{self._FULL_UUID[:8]}.json"
+        assert dump_path.exists(), "not-found must leave a picker DOM dump in the out-dir"
+        data = json.loads(dump_path.read_text(encoding="utf-8"))
+        assert data["media_id"] == self._FULL_UUID
+        assert data["project_id"] == _PROJECT_ID_287
+        assert data["picker"]["tile_count"] == 2
+        assert data["picker"]["project_selector_candidates"]
+        misses = [
+            e
+            for e in install_log_capture.entries
+            if e["event"] == "ui_automation_video.existing_asset_not_found"
+        ]
+        assert misses, "expected an existing_asset_not_found event"
+        assert misses[0]["media_id"] == self._FULL_UUID
+        assert misses[0]["project_id"] == _PROJECT_ID_287
+        assert misses[0]["dom_dump"] == str(dump_path)
+        assert misses[0]["screenshot"], "expected a screenshot path"
+
+    @pytest.mark.asyncio
+    async def test_dom_dump_capture_failure_reports_none(
+        self, tmp_path: Path, install_log_capture: structlog.testing.LogCapture
+    ) -> None:
+        """0.32.1 contract: a capture failure must never report a file that
+        was not written — the miss event carries None, not a phantom path."""
+        tile = TestSelectExistingAssetPickerScroll._tile_mock(
+            wait_for_side_effect=TimeoutError("never visible"),
+            count_side_effect=0,
+        )
+        page = TestSelectExistingAssetPickerScroll._page_with_tile(tile)
+        page.screenshot = AsyncMock(side_effect=RuntimeError("no screenshot either"))
+
+        def _eval(js: str, *args: object) -> object:
+            if "outerHTML" in js:
+                raise RuntimeError("cohort DOM drift")
+            return ["tile-a"]
+
+        page.evaluate = AsyncMock(side_effect=_eval)
+
+        result = await VideoGenerationMixin._select_existing_asset(
+            page, self._FULL_UUID, "", out_dir=tmp_path
+        )
+
+        assert result is False
+        misses = [
+            e
+            for e in install_log_capture.entries
+            if e["event"] == "ui_automation_video.existing_asset_not_found"
+        ]
+        assert misses[0]["dom_dump"] is None
+        assert misses[0]["screenshot"] is None
+        assert not list(tmp_path.glob("*.json"))
 
 
 class TestAttachImageUuidRefsPickerScroll:
@@ -1895,6 +2203,35 @@ class TestAttachImageUuidRefsPickerScroll:
         tile.click.assert_awaited_once()
         search.fill.assert_not_awaited()
 
+    @pytest.mark.asyncio
+    async def test_picker_project_synced_before_every_ref_lookup(
+        self, monkeypatch: pytest.MonkeyPatch
+    ) -> None:
+        """#287 primary hypothesis: the picker's library view has its own
+        active project — it must be synced to the target project BEFORE each
+        ref's lookup, or the lookup scans the wrong project's grid."""
+        calls: list[str] = []
+
+        async def _sync(page: object) -> None:
+            calls.append("sync")
+
+        async def _select(*args: object, **kwargs: object) -> bool:
+            calls.append("select")
+            return True
+
+        monkeypatch.setattr(VideoGenerationMixin, "_sync_picker_project", _sync)
+        monkeypatch.setattr(VideoGenerationMixin, "_select_existing_asset", _select)
+        tile = self._never_found_tile()
+        page, _, _, _ = self._make_page({"uuid-1": tile, "uuid-2": tile})
+
+        await VideoGenerationMixin._attach_image_uuid_refs(
+            page,
+            [("uuid-1", "", ""), ("uuid-2", "", "")],
+            out_dir=None,
+        )
+
+        assert calls == ["sync", "select", "sync", "select"]
+
 
 # ---------------------------------------------------------------------------
 # #287: i2v frame slots accept an in-project asset UUID; upload rejections
@@ -1953,6 +2290,36 @@ class TestAttachFrameByMediaId:
             await VideoGenerationMixin._attach_frame_by_media_id(
                 page, 0, "Start", _FRAME_REF_UUID, out_dir=None
             )
+
+    @pytest.mark.asyncio
+    async def test_picker_project_synced_before_frame_ref_selection(
+        self, monkeypatch: pytest.MonkeyPatch
+    ) -> None:
+        """#287 primary hypothesis: the frame-slot media dialog's library view
+        must be aligned to the target project BEFORE the UUID lookup runs."""
+        calls: list[str] = []
+        slot = MagicMock()
+        slot.click = AsyncMock()
+        monkeypatch.setattr(
+            VideoGenerationMixin, "_resolve_frame_slot", AsyncMock(return_value=slot)
+        )
+
+        async def _sync(page: object) -> None:
+            calls.append("sync")
+
+        async def _select(*args: object, **kwargs: object) -> bool:
+            calls.append("select")
+            return True
+
+        monkeypatch.setattr(VideoGenerationMixin, "_sync_picker_project", _sync)
+        monkeypatch.setattr(VideoGenerationMixin, "_select_existing_asset", _select)
+        page = _frame_dialog_page()
+
+        await VideoGenerationMixin._attach_frame_by_media_id(
+            page, 0, "Start", _FRAME_REF_UUID, out_dir=None
+        )
+
+        assert calls == ["sync", "select"]
 
 
 class TestAttachI2VFramesRefIdRouting:
