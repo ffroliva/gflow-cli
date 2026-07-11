@@ -345,13 +345,33 @@ class TestSelectVideoDuration:
     async def test_clicks_the_duration_tab(self) -> None:
         sel = "[role='tab']:text-is('6s')"
         page = _cascade_page({sel})
-        await VideoGenerationMixin._select_video_duration(page, 6)
+        await VideoGenerationMixin._select_video_duration(page, 6, out_dir=None)
         page.locator.assert_any_call(sel)
 
     @pytest.mark.asyncio
-    async def test_missing_duration_tab_is_non_fatal(self) -> None:
+    async def test_missing_duration_tab_raises_drift_error(self) -> None:
+        # #288: --duration is always explicit at this point (the classic driver
+        # guards on request.duration is not None) — a silent 4->8 substitution
+        # corrupts downstream timeline math, so a probe miss must fail fast.
+        from gflow_cli.errors import UiSelectorDriftError
+
         page = _cascade_page(set())
-        await VideoGenerationMixin._select_video_duration(page, 10)  # must not raise
+        with pytest.raises(UiSelectorDriftError) as exc_info:
+            await VideoGenerationMixin._select_video_duration(page, 4, out_dir=None)
+        msg = str(exc_info.value)
+        assert "4s" in msg
+        assert "--duration" in msg  # remediation hint: omit --duration for Flow's default
+        assert "Screenshot:" not in msg  # no out_dir -> no screenshot clause
+
+    @pytest.mark.asyncio
+    async def test_missing_duration_tab_captures_screenshot(self, tmp_path: Path) -> None:
+        from gflow_cli.errors import UiSelectorDriftError
+
+        page = _cascade_page(set())
+        with pytest.raises(UiSelectorDriftError) as exc_info:
+            await VideoGenerationMixin._select_video_duration(page, 6, out_dir=tmp_path)
+        assert "Screenshot:" in str(exc_info.value)
+        page.screenshot.assert_awaited()
 
 
 class TestSetOutputCount:
@@ -1679,3 +1699,140 @@ class TestAttachImageUuidRefsPickerScroll:
 
         tile.click.assert_awaited_once()
         search.fill.assert_not_awaited()
+
+
+# ---------------------------------------------------------------------------
+# #287: i2v frame slots accept an in-project asset UUID; upload rejections
+# surface as a typed error instead of a bare RuntimeError.
+# ---------------------------------------------------------------------------
+
+_FRAME_REF_UUID = "d6f1927a-3eae-4626-bc90-9a6ea7637bab"
+
+
+def _frame_dialog_page() -> MagicMock:
+    """Page mock for the frame-slot media dialog: locator() yields a search
+    input whose count/fill are awaitable (absent from _cascade_page's fake)."""
+    page = MagicMock()
+    loc = MagicMock()
+    loc.first = loc
+    loc.count = AsyncMock(return_value=1)
+    loc.fill = AsyncMock()
+    page.locator = MagicMock(return_value=loc)
+    page.wait_for_timeout = AsyncMock()
+    return page
+
+
+class TestAttachFrameByMediaId:
+    @pytest.mark.asyncio
+    async def test_selects_existing_asset_in_the_frame_dialog(
+        self, monkeypatch: pytest.MonkeyPatch
+    ) -> None:
+        slot = MagicMock()
+        slot.click = AsyncMock()
+        monkeypatch.setattr(
+            VideoGenerationMixin, "_resolve_frame_slot", AsyncMock(return_value=slot)
+        )
+        select = AsyncMock(return_value=True)
+        monkeypatch.setattr(VideoGenerationMixin, "_select_existing_asset", select)
+        page = _frame_dialog_page()
+        await VideoGenerationMixin._attach_frame_by_media_id(
+            page, 0, "Start", _FRAME_REF_UUID, out_dir=None
+        )
+        slot.click.assert_awaited_once()
+        assert select.await_args.args[1] == _FRAME_REF_UUID
+
+    @pytest.mark.asyncio
+    async def test_missing_asset_raises_transport_timeout(
+        self, monkeypatch: pytest.MonkeyPatch
+    ) -> None:
+        slot = MagicMock()
+        slot.click = AsyncMock()
+        monkeypatch.setattr(
+            VideoGenerationMixin, "_resolve_frame_slot", AsyncMock(return_value=slot)
+        )
+        monkeypatch.setattr(
+            VideoGenerationMixin, "_select_existing_asset", AsyncMock(return_value=False)
+        )
+        page = _frame_dialog_page()
+        with pytest.raises(TransportTimeoutError, match=_FRAME_REF_UUID):
+            await VideoGenerationMixin._attach_frame_by_media_id(
+                page, 0, "Start", _FRAME_REF_UUID, out_dir=None
+            )
+
+
+class TestAttachI2VFramesRefIdRouting:
+    @pytest.mark.asyncio
+    async def test_ref_ids_route_to_attach_frame_by_media_id(
+        self, monkeypatch: pytest.MonkeyPatch
+    ) -> None:
+        from gflow_cli.api.video import GenerateVideoRequest, Mode
+
+        by_id = AsyncMock()
+        local = AsyncMock()
+        remote = AsyncMock()
+        monkeypatch.setattr(VideoGenerationMixin, "_attach_frame_by_media_id", by_id)
+        monkeypatch.setattr(VideoGenerationMixin, "_attach_frame", local)
+        monkeypatch.setattr(VideoGenerationMixin, "_attach_remote_frame", remote)
+        request = GenerateVideoRequest(
+            prompt="x",
+            mode=Mode.I2V,
+            start_image_ref_id=_FRAME_REF_UUID,
+            end_image_ref_id=_FRAME_REF_UUID,
+        )
+        page = _cascade_page(set())
+        await VideoGenerationMixin._attach_i2v_frames(page, request, out_dir=None)
+        assert by_id.await_count == 2
+        local.assert_not_awaited()
+        remote.assert_not_awaited()
+        slots = [(c.args[1], c.args[2]) for c in by_id.await_args_list]
+        assert slots == [(0, "Start"), (1, "End")]
+
+
+class TestUploadRejectionTypedError:
+    @pytest.mark.asyncio
+    async def test_http_400_raises_media_upload_rejected_error(self, tmp_path: Path) -> None:
+        from types import SimpleNamespace
+
+        from gflow_cli.errors import MediaUploadRejectedError
+
+        handlers: dict[str, Any] = {}
+        page = MagicMock()
+        page.on = MagicMock(side_effect=handlers.__setitem__)
+        page.remove_listener = MagicMock()
+        page.wait_for_timeout = AsyncMock()
+
+        chooser = MagicMock()
+
+        async def _set_files(_path: str) -> None:
+            handlers["response"](SimpleNamespace(url="https://x/uploadImage?y", status=400))
+
+        chooser.set_files = AsyncMock(side_effect=_set_files)
+
+        class _FcInfo:
+            @property
+            def value(self) -> Any:
+                async def _get() -> MagicMock:
+                    return chooser
+
+                return _get()
+
+        class _FcCm:
+            async def __aenter__(self) -> _FcInfo:
+                return _FcInfo()
+
+            async def __aexit__(self, *args: object) -> bool:
+                return False
+
+        page.expect_file_chooser = MagicMock(return_value=_FcCm())
+        loc = MagicMock()
+        loc.first = loc
+        loc.click = AsyncMock()
+        page.locator = MagicMock(return_value=loc)
+
+        image = tmp_path / "s1.jpg"
+        image.write_bytes(b"\xff\xd8\xff")
+        with pytest.raises(MediaUploadRejectedError, match=r"HTTP\s*400"):
+            await VideoGenerationMixin._upload_via_open_dialog(
+                page, image, log_label="Start", out_dir=None
+            )
+        page.remove_listener.assert_called_once()  # finally-detach on the raise path

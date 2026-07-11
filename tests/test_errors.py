@@ -560,3 +560,14 @@ def test_media_attribution_error_problem_details() -> None:
     assert pd["title"] == "Generated media could not be attributed"
     assert "remediation_hint" in pd
     assert err.remediation_hint != ""
+
+
+def test_media_upload_rejected_error_exit_code_27():
+    """#287: a Flow upload endpoint 4xx is a typed, scriptable failure —
+    distinct from generic error (1) so callers can branch on 're-encode the
+    input image' instead of parsing stderr."""
+    from gflow_cli.errors import MediaUploadRejectedError
+
+    err = MediaUploadRejectedError(detail="frame image upload rejected (HTTP 400)")
+    assert EXIT_CODE_MAP[MediaUploadRejectedError] == 27
+    assert next(code for cls, code in EXIT_CODE_MAP.items() if isinstance(err, cls)) == 27
