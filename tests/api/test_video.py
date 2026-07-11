@@ -232,6 +232,53 @@ class TestGenerateVideoRequest:
         GenerateVideoRequest(prompt="x", mode=Mode.I2V, start_image=Path("does/not/exist.png"))
 
 
+_REF_UUID = "d6f1927a-3eae-4626-bc90-9a6ea7637bab"
+
+
+class TestI2VFrameRefIds:
+    """#287: an in-project asset UUID can stand in for a local frame file."""
+
+    def test_i2v_satisfied_by_start_ref_id_alone(self) -> None:
+        req = GenerateVideoRequest(prompt="x", mode=Mode.I2V, start_image_ref_id=_REF_UUID)
+        assert req.start_image is None
+        assert req.start_image_ref_id == _REF_UUID
+
+    def test_end_ref_id_accepted(self) -> None:
+        req = GenerateVideoRequest(
+            prompt="x",
+            mode=Mode.I2V,
+            start_image=Path("a.png"),
+            end_image_ref_id=_REF_UUID,
+        )
+        assert req.end_image_ref_id == _REF_UUID
+
+    def test_malformed_ref_id_rejected(self) -> None:
+        with pytest.raises(ValueError, match="not a valid media UUID"):
+            GenerateVideoRequest(prompt="x", mode=Mode.I2V, start_image_ref_id="not-a-uuid")
+
+    def test_start_file_and_ref_id_mutually_exclusive(self) -> None:
+        with pytest.raises(ValueError, match="at most one of"):
+            GenerateVideoRequest(
+                prompt="x",
+                mode=Mode.I2V,
+                start_image=Path("a.png"),
+                start_image_ref_id=_REF_UUID,
+            )
+
+    def test_t2v_must_not_carry_ref_ids(self) -> None:
+        with pytest.raises(ValueError, match="T2V request must not carry image inputs"):
+            GenerateVideoRequest(prompt="x", mode=Mode.T2V, start_image_ref_id=_REF_UUID)
+
+    def test_r2v_must_not_carry_ref_ids(self) -> None:
+        with pytest.raises(ValueError, match="must not carry start/end images"):
+            GenerateVideoRequest(
+                prompt="x",
+                mode=Mode.R2V,
+                ref_names=("n",),
+                end_image_ref_id=_REF_UUID,
+            )
+
+
 class TestVideoStatus:
     def test_pending_is_not_terminal(self) -> None:
         s = VideoStatus(media_id="m", status="MEDIA_GENERATION_STATUS_PENDING")

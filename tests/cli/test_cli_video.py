@@ -1055,3 +1055,76 @@ class TestVideoProjectFlag:
         for cmd in ("t2v", "i2v", "r2v"):
             result = runner.invoke(video, [cmd, "--help"])
             assert "--project" in result.output, f"{cmd} --help missing --project"
+
+
+# ---------------------------------------------------------------------------
+# #287: i2v accepts an in-project asset UUID for --initial-frame/--end-frame.
+# ---------------------------------------------------------------------------
+
+_ASSET_UUID = "d6f1927a-3eae-4626-bc90-9a6ea7637bab"
+
+
+class TestI2VAssetRef:
+    def _invoke(self, tmp_path: Path, args: list[str]) -> tuple[object, dict[str, object]]:
+        captured: dict[str, object] = {}
+
+        async def _capture(request: object, **kwargs: object) -> None:
+            captured["request"] = request
+            captured["kwargs"] = kwargs
+
+        runner = CliRunner()
+        with (
+            patch("gflow_cli.cli_video._resolve_profile", return_value="default"),
+            patch("gflow_cli.cli_video._make_provider_dir", return_value=tmp_path),
+            patch("gflow_cli.cli_video._generate_and_report", new=_capture),
+        ):
+            result = runner.invoke(video, args)
+        return result, captured
+
+    def test_uuid_initial_frame_becomes_ref_id(self, tmp_path: Path) -> None:
+        result, captured = self._invoke(
+            tmp_path, ["i2v", "--initial-frame", _ASSET_UUID, "slow push-in"]
+        )
+        assert result.exit_code == 0, result.output  # type: ignore[attr-defined]
+        request = captured["request"]
+        assert request.start_image is None  # type: ignore[attr-defined]
+        assert request.start_image_ref_id == _ASSET_UUID  # type: ignore[attr-defined]
+
+    def test_uuid_positional_image_becomes_ref_id(self, tmp_path: Path) -> None:
+        result, captured = self._invoke(tmp_path, ["i2v", _ASSET_UUID, "slow push-in"])
+        assert result.exit_code == 0, result.output  # type: ignore[attr-defined]
+        assert captured["request"].start_image_ref_id == _ASSET_UUID  # type: ignore[attr-defined]
+
+    def test_local_start_with_uuid_end_frame(self, tmp_path: Path) -> None:
+        start = tmp_path / "hero.png"
+        start.write_bytes(b"\x89PNG\r\n\x1a\n")
+        result, captured = self._invoke(
+            tmp_path, ["i2v", str(start), "pan left", "--end-frame", _ASSET_UUID]
+        )
+        assert result.exit_code == 0, result.output  # type: ignore[attr-defined]
+        request = captured["request"]
+        assert request.start_image is not None  # type: ignore[attr-defined]
+        assert request.end_image is None  # type: ignore[attr-defined]
+        assert request.end_image_ref_id == _ASSET_UUID  # type: ignore[attr-defined]
+
+    def test_nonexistent_path_still_usage_error(self, tmp_path: Path) -> None:
+        result, _ = self._invoke(tmp_path, ["i2v", "--initial-frame", "no/such/file.png", "prompt"])
+        assert result.exit_code == 2  # type: ignore[attr-defined]
+
+    def test_nonexistent_end_frame_path_usage_error(self, tmp_path: Path) -> None:
+        start = tmp_path / "hero.png"
+        start.write_bytes(b"\x89PNG\r\n\x1a\n")
+        result, _ = self._invoke(
+            tmp_path, ["i2v", str(start), "prompt", "--end-frame", "no/such/file.png"]
+        )
+        assert result.exit_code == 2  # type: ignore[attr-defined]
+
+    def test_deprecated_end_image_accepts_uuid(self, tmp_path: Path) -> None:
+        start = tmp_path / "hero.png"
+        start.write_bytes(b"\x89PNG\r\n\x1a\n")
+        with pytest.warns(DeprecationWarning):
+            result, captured = self._invoke(
+                tmp_path, ["i2v", str(start), "prompt", "--end-image", _ASSET_UUID]
+            )
+        assert result.exit_code == 0, result.output  # type: ignore[attr-defined]
+        assert captured["request"].end_image_ref_id == _ASSET_UUID  # type: ignore[attr-defined]
