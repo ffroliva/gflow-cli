@@ -423,7 +423,14 @@ async def _capture_debug_screenshot(page: Any, out_dir: Path | None, filename: s
         )
     except Exception as e:
         log.debug("ui_automation_video.screenshot_capture_failed", error=str(e))
+        return None  # never report a path that was not written (#283)
     return shot_path
+
+
+def screenshot_clause(shot: Path | None) -> str:
+    """' Screenshot: <path>' when one was captured, else '' — a capture
+    failure must not put a phantom path (or 'None') in the error text."""
+    return f" Screenshot: {shot}" if shot is not None else ""
 
 
 def selector_drift_detail(probe: str, what: str, shot: Path | None) -> str:
@@ -1050,7 +1057,7 @@ class VideoGenerationMixin:
                 msg = (
                     f"model picker trigger not found; cannot select {model.value!r} "
                     f"for i2v. Refusing to proceed (Flow's default would drop the "
-                    f"frames to T2V — issue #125). Screenshot: {shot}"
+                    f"frames to T2V — issue #125).{screenshot_clause(shot)}"
                 )
                 raise VideoModelSelectionError(detail=msg, route="model_picker_trigger")
             return
@@ -1092,7 +1099,7 @@ class VideoGenerationMixin:
                 f"could not select video model {model.value!r} for i2v after 2 "
                 f"attempts. Refusing to proceed — Flow's default model "
                 f"({VideoModel.OMNI_FLASH.value}) silently drops the start/end "
-                f"frames and routes to T2V (issue #125). Screenshot: {shot}"
+                f"frames and routes to T2V (issue #125).{screenshot_clause(shot)}"
             )
             raise VideoModelSelectionError(detail=msg, route="model_option")
 
@@ -1280,7 +1287,7 @@ class VideoGenerationMixin:
             shot = await _capture_debug_screenshot(
                 page, out_dir, f"debug_no_{label.lower()}_slot.png"
             )
-            msg = f"frame slot {label!r} not found on the Flow editor. Screenshot: {shot}"
+            msg = f"frame slot {label!r} not found on the Flow editor.{screenshot_clause(shot)}"
             raise RuntimeError(msg) from e
 
         struct_count = await structs.count()
@@ -1423,7 +1430,7 @@ class VideoGenerationMixin:
                 msg = (
                     f"Neither the icon nor the text 'Upload media' selector opened a file "
                     f"chooser for {log_label!r} — Google likely changed the media dialog "
-                    f"(issue #56). Screenshot: {shot}. Workaround: set the CHROME BROWSER "
+                    f"(issue #56).{screenshot_clause(shot)} Workaround: set the CHROME BROWSER "
                     f"PROFILE's language to English (chrome://settings/languages). NOTE: "
                     f"this is the Chrome PROFILE language, NOT the Google ACCOUNT language "
                     f"— changing only the Google account language does NOT work, because "
@@ -1488,7 +1495,8 @@ class VideoGenerationMixin:
             except Exception as e:
                 if i == 0:
                     shot = await _capture_debug_screenshot(page, out_dir, "debug_no_add_media.png")
-                    msg = f"'Add Media' button not found for first reference. Screenshot: {shot}"
+                    clause = screenshot_clause(shot)
+                    msg = f"'Add Media' button not found for first reference.{clause}"
                     raise RuntimeError(
                         msg,
                     ) from e
@@ -1611,6 +1619,10 @@ class VideoGenerationMixin:
                     visible = True
                     break
                 await VideoGenerationMixin._scroll_picker_grid(page)
+            # Final re-check (#283 off-by-one): the count runs BEFORE each
+            # scroll, so a tile rendered by the LAST scroll was never seen.
+            if not visible and await tile.count():
+                visible = True
             if visible:
                 try:
                     await tile.wait_for(state="visible", timeout=4000)
@@ -1728,7 +1740,9 @@ class VideoGenerationMixin:
         """Locate the Personagens-tab tile for a character entity. Each tile is
         keyed by the entity id as `data-tile-id="fe_id_<entityId>"` (exact — no
         display-name ambiguity). Scroll the grid until it renders, then return
-        the locator (the caller still waits for visibility)."""
+        the locator (the caller still waits for visibility — which also covers
+        a tile rendered by the final scroll, so the #283 off-by-one fixed in
+        `_select_existing_asset` has no effect here)."""
         tile = page.locator(f"[data-tile-id='fe_id_{entity_id}']").first
         for _ in range(PICKER_GRID_SCROLL_ATTEMPTS):
             if await tile.count():
@@ -1781,7 +1795,7 @@ class VideoGenerationMixin:
         await page.keyboard.press("Escape")
         raise TransportTimeoutError(
             f"{detail} include action did not appear (no selector tier "
-            f"matched on surface {surface!r}). Screenshot: {shot}",
+            f"matched on surface {surface!r}).{screenshot_clause(shot)}",
             remediation_hint=(
                 "Flow's resource picker may have changed, or your account's "
                 "UI language is not yet covered by the selector fallbacks. "

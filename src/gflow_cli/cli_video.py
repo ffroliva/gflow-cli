@@ -1020,6 +1020,7 @@ def i2v(  # NOSONAR
     """Generate a video from an initial frame + motion PROMPT."""
     resolved_image, resolved_prompt = _resolve_i2v_args(image, prompt, initial_frame)
 
+    end_hint = "'--end-frame'"
     if end_image_deprecated is not None:
         warnings.warn(
             "--end-image is deprecated and will be removed in a future release;"
@@ -1029,9 +1030,10 @@ def i2v(  # NOSONAR
         )
         if end_frame is None:
             end_frame = end_image_deprecated
+            end_hint = "'--end-image'"  # name the flag the user actually typed
 
     start_path, start_ref_id = _classify_frame(resolved_image, "'IMAGE' / '--initial-frame'")
-    end_path, end_ref_id = _classify_frame(end_frame, "'--end-frame'")
+    end_path, end_ref_id = _classify_frame(end_frame, end_hint)
 
     profile_name = _resolve_profile(profile)
     provider_dir = _make_provider_dir(profile_name)
