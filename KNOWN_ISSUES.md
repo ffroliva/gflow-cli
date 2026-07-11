@@ -798,8 +798,13 @@ through all three layers: wrong file on disk, exit 0. Mitigations until this
 is closed: run generations in a dedicated, low-asset project (fewer
 pre-existing tiles means a smaller lazy-render population to collide with),
 and visually verify anchor/canonical images before referencing them
-downstream in `i2i`. Follow-up hardening (a break condition stable across
-two consecutive scrapes, not one) is tracked upstream against this issue.
+downstream in `i2i`. The stable-break hardening shipped post-v0.32.0 (#283 /
+PR #292): the loop now requires the SAME new-UUID set on two consecutive
+scrapes at the expected count before trusting it, which narrows this window
+to a pre-existing tile that lazy-renders AND holds stable across two 0.5s
+scrapes at exactly the expected count (or first hits the count on the final
+poll before the 180s deadline). Narrowed, not closed — the dedicated-project
+mitigation still applies.
 
 **Known gap: the shell multi-prompt path records no history at all.**
 `gflow run --config <file>` and `gflow image t2i` with multiple prompts
@@ -815,7 +820,8 @@ collision escalation) both depend on local history via
 neither guard exists on this path — this is a pre-existing gap, not a
 regression from this fix. `gflow image batch` (the manifest path, via
 `run_manifest_image_batch`) already threads a recorder through and is covered
-by all three layers. Follow-up tracked in #283.
+by all three layers. Accepted low-risk gap (#283 closed with this noted as
+un-shipped remainder; re-file if it bites in practice).
 
 **Workaround (pre-fix):** none — on an affected version, manually verify the
 downloaded file matches the prompt before trusting a `t2i`/`i2i` result.

@@ -1128,3 +1128,14 @@ class TestI2VAssetRef:
             )
         assert result.exit_code == 0, result.output  # type: ignore[attr-defined]
         assert captured["request"].end_image_ref_id == _ASSET_UUID  # type: ignore[attr-defined]
+
+    def test_deprecated_end_image_bad_value_names_end_image(self, tmp_path: Path) -> None:
+        """#283 follow-up: the error must name the flag the user typed."""
+        start = tmp_path / "hero.png"
+        start.write_bytes(b"\x89PNG\r\n\x1a\n")
+        with pytest.warns(DeprecationWarning):
+            result, _ = self._invoke(
+                tmp_path, ["i2v", str(start), "prompt", "--end-image", "no/such/file.png"]
+            )
+        assert result.exit_code == 2  # type: ignore[attr-defined]
+        assert "--end-image" in result.output  # type: ignore[attr-defined]

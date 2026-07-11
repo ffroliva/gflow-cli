@@ -478,6 +478,14 @@ class AgenticFlowUiDriver:
         interval of wall time up front; the total poll timeout budget
         (``_AWAIT_TIMEOUT_S``) is unchanged.
 
+        **Stable break (issue #283):** reaching ``expected_count`` on a single
+        scrape is not trusted — a lazily-rendered pre-existing tile can
+        transiently hit the exact count. The loop breaks only when the same
+        new-UUID set holds across two consecutive scrapes (~one extra 0.5s
+        poll). Deliberate fall-through: a set that first reaches the exact
+        count on the final poll before the deadline is returned unconfirmed —
+        better a last-second success than a spurious timeout.
+
         **Ambiguity fail-fast (issue #281):** if more new UUIDs appear than
         were requested, there is no reliable way to tell which ones belong to
         this generation. Rather than arbitrarily slice the unordered set (the
@@ -503,6 +511,7 @@ class AgenticFlowUiDriver:
 
         deadline = asyncio.get_event_loop().time() + _AWAIT_TIMEOUT_S
         new_uuids: set[str] = set()
+        prev_new_uuids: set[str] | None = None
 
         while asyncio.get_event_loop().time() < deadline:
             await asyncio.sleep(_POLL_INTERVAL_S)
@@ -522,8 +531,14 @@ class AgenticFlowUiDriver:
             current_uuids = _extract_uuids(current_srcs)
             new_uuids = current_uuids - baseline_uuids
 
-            if len(new_uuids) >= expected_count:
+            if len(new_uuids) > expected_count:
+                break  # ambiguity — fail fast below (#281)
+            # Stable-break (#283): exact-count on a single scrape can still be
+            # a lazy-render race; require the SAME set on two consecutive
+            # scrapes (~one extra poll interval) before trusting it.
+            if len(new_uuids) == expected_count and new_uuids == prev_new_uuids:
                 break
+            prev_new_uuids = set(new_uuids)
 
         if len(new_uuids) < expected_count:
             if new_uuids:
@@ -543,9 +558,7 @@ class AgenticFlowUiDriver:
             raise MediaAttributionError(
                 detail=(
                     f"Cannot attribute the generation among {len(candidates)} candidate "
-                    f"media UUIDs (expected {expected_count}): {candidates}. Re-run the "
-                    "generation; a dedicated project with fewer pre-existing assets "
-                    "avoids lazy-render ambiguity."
+                    f"media UUIDs (expected {expected_count}): {candidates}."
                 ),
                 route="agentic:await_images",
             )
