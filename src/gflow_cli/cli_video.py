@@ -217,6 +217,9 @@ class _I2VParams:
     duration: int | None = None
     original_prompt: str | None = None
     tool: AppliedTool | None = None
+    # Picker project-menu display-name override (#287): the media picker's
+    # library is per-project and its project menu lists NAMES, not ids.
+    project_name: str | None = None
 
 
 async def _run_i2v(
@@ -265,6 +268,7 @@ async def _run_i2v(
         start_image_ref_id=params.image_ref_id,
         end_image=Path(params.end_frame) if params.end_frame else None,
         end_image_ref_id=params.end_frame_ref_id,
+        project_name=params.project_name,
         original_prompt=params.original_prompt,
         tool=params.tool,
     )
@@ -989,6 +993,20 @@ def _classify_frame(value: str | None, param_hint: str) -> tuple[str | None, str
 @tool_option
 @_project_option
 @click.option(
+    "--project-name",
+    "project_display_name",
+    default=None,
+    envvar="GFLOW_CLI_PROJECT_NAME",
+    type=str,
+    help=(
+        "Display name of the --project project, used to select it in the media "
+        "picker's project menu when attaching a media-UUID frame (#287 — the "
+        "menu lists projects by NAME; unnamed projects show only creation "
+        "timestamps). Escape hatch when automatic name derivation fails. "
+        "Env: GFLOW_CLI_PROJECT_NAME."
+    ),
+)
+@click.option(
     "--out-dir",
     "out_dir",
     default=None,
@@ -1014,6 +1032,7 @@ def i2v(  # NOSONAR
     profile: str | None,
     tool_specs: tuple[str, ...],
     project_id: str | None,
+    project_display_name: str | None,
     out_dir: Path | None,
     as_json: bool,
 ) -> None:
@@ -1051,6 +1070,7 @@ def i2v(  # NOSONAR
         duration=int(duration) if duration is not None else None,
         original_prompt=original_prompt,
         tool=applied_tool,
+        project_name=project_display_name,
     )
     run_with_handlers(
         lambda: _run_i2v(

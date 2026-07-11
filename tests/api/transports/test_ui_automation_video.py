@@ -1953,6 +1953,8 @@ class TestPickerProjectSync:
                 return None
             if "clicked" in js:
                 return {"clicked": False, "matched_by": None, "candidates": 0}
+            if "scrollTop" in js:
+                return None  # menu-scroll probe: nothing scrollable to advance
             poll_calls.append(js)
             return 0  # never populates
 
@@ -2050,11 +2052,13 @@ class TestPickerProjectSync:
     @pytest.mark.asyncio
     async def test_resolve_project_name_from_live_page(self) -> None:
         """The picker menu shows project NAMES; the CLI only knows the UUID.
-        The name is resolved from the live page (an element referencing the
-        project id, e.g. an href — reflects renames, works for projects not
-        created by gflow)."""
+        The name is resolved from the live page's raw signals (an element
+        referencing the project id, e.g. an href — reflects renames, works
+        for projects not created by gflow)."""
         page = _mock_async_page()
-        page.evaluate = AsyncMock(return_value={"source": "href", "name": "Chalkboard Spike"})
+        page.evaluate = AsyncMock(
+            return_value={"title": "", "href_text": "Chalkboard Spike", "class_text": ""}
+        )
 
         name = await VideoGenerationMixin._resolve_project_name(page, _PROJECT_ID_287)
 
@@ -2069,6 +2073,182 @@ class TestPickerProjectSync:
         name = await VideoGenerationMixin._resolve_project_name(page, _PROJECT_ID_287)
 
         assert name is None
+
+    def test_strip_flow_branding_variants(self) -> None:
+        """Round-5 tier 0: the editor tab title carries the project name with
+        Flow branding attached. The strip must be tolerant across separator
+        variants and fall back to the raw title when no pattern matches."""
+        strip = VideoGenerationMixin._strip_flow_branding
+        assert strip("Chalkboard Spike - Flow") == "Chalkboard Spike"
+        assert strip("Chalkboard Spike – Flow") == "Chalkboard Spike"  # en dash
+        assert strip("Chalkboard Spike — Flow") == "Chalkboard Spike"  # em dash
+        assert strip("Chalkboard Spike | Flow") == "Chalkboard Spike"
+        assert strip("Flow - Chalkboard Spike") == "Chalkboard Spike"
+        assert strip("Chalkboard Spike") == "Chalkboard Spike"  # raw fallback
+
+    @pytest.mark.asyncio
+    async def test_resolver_tier0_uses_document_title(
+        self, install_log_capture: structlog.testing.LogCapture
+    ) -> None:
+        """Round 5: we navigated to /project/<id> BEFORE the picker opened, so
+        document.title is the strongest name signal. The raw title is logged
+        on every resolution so the real branding pattern is learnable."""
+        page = _mock_async_page()
+        page.evaluate = AsyncMock(
+            return_value={
+                "title": "Chalkboard Spike – Flow",
+                "href_text": "other",
+                "class_text": "",
+            }
+        )
+
+        name = await VideoGenerationMixin._resolve_project_name(page, _PROJECT_ID_287)
+
+        assert name == "Chalkboard Spike"
+        resolved = [
+            e
+            for e in install_log_capture.entries
+            if e["event"] == "ui_automation_video.picker_project_name_resolved"
+        ]
+        assert resolved[0]["source"] == "title"
+        assert resolved[0]["raw_title"] == "Chalkboard Spike – Flow"
+
+    @pytest.mark.asyncio
+    async def test_resolver_rejects_branding_only_title(self) -> None:
+        """A title that is ONLY Flow branding must never become the candidate
+        name — 'flow' as a contains-match would hit 'gflow-cli i2i' and click
+        the wrong project. Falls through to the href tier."""
+        page = _mock_async_page()
+        page.evaluate = AsyncMock(
+            return_value={"title": "Flow", "href_text": "gflow-cli i2i", "class_text": ""}
+        )
+
+        name = await VideoGenerationMixin._resolve_project_name(page, _PROJECT_ID_287)
+
+        assert name == "gflow-cli i2i"
+
+    @pytest.mark.asyncio
+    async def test_resolver_unresolved_reports_raw_title(
+        self, install_log_capture: structlog.testing.LogCapture
+    ) -> None:
+        page = _mock_async_page()
+        page.evaluate = AsyncMock(return_value={"title": "Flow", "href_text": "", "class_text": ""})
+
+        name = await VideoGenerationMixin._resolve_project_name(page, _PROJECT_ID_287)
+
+        assert name is None
+        unresolved = [
+            e
+            for e in install_log_capture.entries
+            if e["event"] == "ui_automation_video.picker_project_name_unresolved"
+        ]
+        assert unresolved[0]["raw_title"] == "Flow"
+
+    @pytest.mark.asyncio
+    async def test_sync_project_name_override_beats_resolution(
+        self, monkeypatch: pytest.MonkeyPatch
+    ) -> None:
+        """`--project-name` / GFLOW_CLI_PROJECT_NAME is the highest-precedence
+        name source — the user-supplied display name is used verbatim and the
+        page resolver is not even consulted."""
+        ensure = AsyncMock()
+        resolver = AsyncMock(return_value="Derived Name")
+        monkeypatch.setattr(VideoGenerationMixin, "_ensure_picker_project", ensure)
+        monkeypatch.setattr(VideoGenerationMixin, "_resolve_project_name", resolver)
+        page = _mock_async_page()
+        page.url = _PROJECT_URL_287
+
+        await VideoGenerationMixin._sync_picker_project(page, project_name="User Given")
+
+        resolver.assert_not_awaited()
+        assert ensure.await_args.kwargs["project_name"] == "User Given"
+
+    @pytest.mark.asyncio
+    async def test_menu_scroll_reaches_project_below_the_fold(
+        self, install_log_capture: structlog.testing.LogCapture
+    ) -> None:
+        """Round 5: the project menu lists EVERY project (80 observed,
+        recency-ordered, timestamp labels for unnamed ones) — the target's
+        entry can sit below the visible fold. When the in-view match misses,
+        the open portal is scrolled with the progress-bounded pattern and
+        re-matched after every scroll."""
+        trigger = self._trigger_mock(references_target=False)
+        page = self._selector_page(trigger, menu=self._menu_mock())
+        match_calls = 0
+        scroll_calls = 0
+
+        def _eval(js: str, *args: object) -> object:
+            nonlocal match_calls, scroll_calls
+            if "inner_html" in js:
+                return None
+            if "clicked" in js:
+                match_calls += 1
+                if match_calls >= 4:  # in-view miss + 2 scrolled misses, hit on 3rd scroll
+                    return {"clicked": True, "matched_by": "name", "candidates": 80}
+                return {"clicked": False, "matched_by": None, "candidates": 80}
+            if "scrollTop" in js:
+                scroll_calls += 1
+                return [f"item-{scroll_calls}-{i}" for i in range(5)]  # window advances
+            return 160  # population poll
+
+        page.evaluate = AsyncMock(side_effect=_eval)
+
+        result = await VideoGenerationMixin._ensure_picker_project(
+            page, _PROJECT_ID_287, project_name="Chalkboard Spike"
+        )
+
+        assert result is True
+        assert scroll_calls == 3, "the scroll loop must re-match after each scroll"
+        probes = [
+            e
+            for e in install_log_capture.entries
+            if e["event"] == "ui_automation_video.picker_project_menu_scroll_probe"
+        ]
+        assert len(probes) == 3
+        done = [
+            e
+            for e in install_log_capture.entries
+            if e["event"] == "ui_automation_video.picker_project_menu_scroll_done"
+        ]
+        assert done and done[-1]["reason"] == "found"
+
+    @pytest.mark.asyncio
+    async def test_menu_scroll_stall_terminates(
+        self, install_log_capture: structlog.testing.LogCapture
+    ) -> None:
+        """A menu whose rendered item set stops changing (end of list) must
+        stall-terminate — never spin to the ceiling — and still fall through
+        to the miss dump."""
+        trigger = self._trigger_mock(references_target=False)
+        page = self._selector_page(trigger, menu=self._menu_mock())
+
+        def _eval(js: str, *args: object) -> object:
+            if "inner_html" in js:
+                return None
+            if "clicked" in js:
+                return {"clicked": False, "matched_by": None, "candidates": 80}
+            if "scrollTop" in js:
+                return ["item-a", "item-b"]  # never changes -> end of list
+            return 160
+
+        page.evaluate = AsyncMock(side_effect=_eval)
+
+        result = await VideoGenerationMixin._ensure_picker_project(page, _PROJECT_ID_287)
+
+        assert result is False
+        done = [
+            e
+            for e in install_log_capture.entries
+            if e["event"] == "ui_automation_video.picker_project_menu_scroll_done"
+        ]
+        assert done[-1]["reason"] == "stall"
+        assert done[-1]["attempts"] == PICKER_GRID_SCROLL_STALL_LIMIT + 1
+        misses = [
+            e
+            for e in install_log_capture.entries
+            if e["event"] == "ui_automation_video.picker_project_switch_miss"
+        ]
+        assert misses, "a stalled scroll must still produce the miss dump"
 
     @pytest.mark.asyncio
     async def test_sync_derives_target_project_from_page_url(
@@ -2612,6 +2792,26 @@ class TestAttachI2VFramesRefIdRouting:
         remote.assert_not_awaited()
         slots = [(c.args[1], c.args[2]) for c in by_id.await_args_list]
         assert slots == [(0, "Start"), (1, "End")]
+
+    @pytest.mark.asyncio
+    async def test_project_name_override_reaches_frame_by_media_id(
+        self, monkeypatch: pytest.MonkeyPatch
+    ) -> None:
+        """#287 round 5: `--project-name` rides the request into the frame-ref
+        attach, where the picker project-menu match consumes it."""
+        from gflow_cli.api.video import GenerateVideoRequest, Mode
+
+        by_id = AsyncMock()
+        monkeypatch.setattr(VideoGenerationMixin, "_attach_frame_by_media_id", by_id)
+        request = GenerateVideoRequest(
+            prompt="x",
+            mode=Mode.I2V,
+            start_image_ref_id=_FRAME_REF_UUID,
+            project_name="Chalkboard Spike",
+        )
+        page = _cascade_page(set())
+        await VideoGenerationMixin._attach_i2v_frames(page, request, out_dir=None)
+        assert by_id.await_args.kwargs["project_name"] == "Chalkboard Spike"
 
 
 class TestUploadRejectionTypedError:
