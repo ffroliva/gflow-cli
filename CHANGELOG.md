@@ -7,6 +7,10 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+### Fixed
+
+- **An explicit `--duration` that cannot be applied now fails fast instead of silently producing a clip of Flow's default length.** When the video settings panel's duration tab probe missed (observed 3/3 on a live 2026-07-11 Frames-submode run: `--duration 4` returned an 8-second clip and the JSON result reported success), `_select_video_duration` demoted the failure to a warning and generation continued on Flow's default. Duration is a contract parameter — downstream timeline math sizes cuts from the requested value — so a probe miss with an explicit `--duration` now raises `UiSelectorDriftError` (**exit code 23**, the #183 selector-drift semantics) with a `debug_no_duration_tab.png` viewport screenshot and an omit-`--duration` remediation hint. Omitting `--duration` is unaffected. The underlying `duration_tab` selector-drift investigation stays open on #288 (#288, #289).
+
 ## [0.31.0] — 2026-07-10
 
 ### Fixed
