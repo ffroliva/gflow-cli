@@ -35,6 +35,7 @@ from gflow_cli.api.transports.ui_automation_video import (
     ENTITY_ATTACH_DRIFT_HINT,
     MODE_SWITCH_TRIGGER_SELECTORS,
     VideoGenerationMixin,
+    screenshot_clause,
     selector_drift_detail,
     zip_entity_refs,
 )
@@ -178,6 +179,7 @@ async def _capture_debug_screenshot(
         )
     except Exception as e:
         log.debug("ui_automation.screenshot_capture_failed", error=str(e))
+        return None  # never report a path that was not written (#283)
     return shot_path
 
 
@@ -1039,8 +1041,8 @@ class UiAutomationTransport(VideoGenerationMixin):
 
         shot_path = await _capture_debug_screenshot(page, out_dir, "debug_new_project.png")
         msg = (
-            f"Could not find 'New project' CTA on Flow gallery. URL: {page.url}. "
-            f"Screenshot: {shot_path}"
+            f"Could not find 'New project' CTA on Flow gallery. "
+            f"URL: {page.url}.{screenshot_clause(shot_path)}"
         )
         raise RuntimeError(
             msg,
@@ -1182,7 +1184,7 @@ class UiAutomationTransport(VideoGenerationMixin):
                 continue
 
         shot_path = await _capture_debug_screenshot(page, out_dir, "debug_prompt_not_found.png")
-        msg = f"Prompt input not found in Flow UI. URL: {page.url}. Screenshot: {shot_path}"
+        msg = f"Prompt input not found in Flow UI. URL: {page.url}.{screenshot_clause(shot_path)}"
         raise RuntimeError(msg)
 
     async def _click_submit(self, page: Page) -> None:
@@ -2767,7 +2769,7 @@ class UiAutomationTransport(VideoGenerationMixin):
             )
             msg = (
                 f"Character editor not ready: prompt textbox not visible "
-                f"within 20 s. URL: {page.url}. Screenshot: {shot}"
+                f"within 20 s. URL: {page.url}.{screenshot_clause(shot)}"
             )
             raise RuntimeError(msg) from exc
 

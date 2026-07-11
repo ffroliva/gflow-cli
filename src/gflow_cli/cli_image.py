@@ -15,7 +15,6 @@ in :mod:`gflow_cli._cli_helpers` since T4b — a negative AST-based test in
 from __future__ import annotations
 
 import asyncio
-import re
 import sys
 from dataclasses import dataclass
 from datetime import date
@@ -50,6 +49,7 @@ from gflow_cli.api.image import (
 )
 from gflow_cli.api.image_upscale import TargetResolution, UpsampleImageRequest
 from gflow_cli.api.transports import transport_choices
+from gflow_cli.api.video import is_media_uuid
 from gflow_cli.config import get_settings
 from gflow_cli.data.recorder import OperationRecorder, escalate_asset_collision
 from gflow_cli.data.repository import DataRepository
@@ -106,14 +106,9 @@ if TYPE_CHECKING:
 
 _CmdFn = TypeVar("_CmdFn", bound="Callable[..., object]")
 
-# Case-insensitive 8-4-4-4-12 hex with hyphens — Flow's media UUIDs.
-# When a `--ref` value matches this regex it's treated as an already-uploaded
-# asset and passed through verbatim; anything else is treated as a local path
-# that needs to be uploaded first.
-_UUID_RE = re.compile(
-    r"^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$",
-    re.IGNORECASE,
-)
+# A `--ref` value shaped like a Flow media UUID (see `is_media_uuid`) is an
+# already-uploaded asset passed through verbatim; anything else is a local
+# path that needs to be uploaded first.
 
 _CREATING_PROJECT_MSG = "  Creating project..."
 _T2I_PROJECT_TITLE = "gflow-cli t2i"
@@ -220,7 +215,7 @@ def _classify_ref(ref: str) -> ImageRef | Path:
     Raises:
         click.UsageError: if *ref* is neither a UUID nor an existing path.
     """
-    if _UUID_RE.fullmatch(ref):
+    if is_media_uuid(ref):
         return ImageRef(name=ref)
     try:
         return Path(ref).resolve(strict=True)
@@ -451,7 +446,7 @@ def upscale(
         resolution = TargetResolution.from_cli(scale)
     except ValueError as exc:
         raise click.BadParameter(str(exc), param_hint="--scale") from exc
-    if not _UUID_RE.fullmatch(media_id):
+    if not is_media_uuid(media_id):
         raise click.BadParameter(
             "MEDIA_ID must be a bare UUID (8-4-4-4-12 hex).", param_hint="MEDIA_ID"
         )
@@ -1245,7 +1240,7 @@ class _I2IParams:
     help=(
         "Image-to-image generation: blend a text prompt with one or more "
         "reference images. Each --ref is either a local image path (auto-uploaded) "
-        "or an already-uploaded asset UUID (from a prior `gflow image upload`).\n\n"
+        "or the media UUID of an already-uploaded asset (from a prior `gflow image upload`).\n\n"
         "\b\n"
         "Examples:\n"
         '  gflow image i2i "make it cinematic" --ref hero.png\n'
@@ -1262,8 +1257,8 @@ class _I2IParams:
     multiple=True,
     required=True,
     help=(
-        "Reference image: either a local path (auto-uploaded) or an already-uploaded "
-        "asset UUID. Repeat to pass multiple refs (order is preserved). "
+        "Reference image: either a local path (auto-uploaded) or the media UUID of an "
+        "already-uploaded asset. Repeat to pass multiple refs (order is preserved). "
         "For text-only generation, use `gflow image t2i` instead."
     ),
 )
