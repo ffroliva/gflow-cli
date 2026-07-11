@@ -267,10 +267,10 @@ class EvaluateFetchTransport:
         """
         if self._owns_playwright:
             if self._ctx is not None:
+                from gflow_cli.api._engine import close_context_bounded  # noqa: PLC0415
+
                 try:
-                    await self._ctx.close()
-                except Exception:
-                    log.warning("evaluate_fetch.teardown: ctx.close() failed", exc_info=True)
+                    await close_context_bounded(self._ctx, owner="evaluate_fetch")
                 finally:
                     self._ctx = None
                     self._page = None

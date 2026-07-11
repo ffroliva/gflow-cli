@@ -19,11 +19,12 @@ Wire facts (reverse-engineered, see ``docs/IMAGE_UPSCALE_RECON.md``)::
 
 from __future__ import annotations
 
-import re
 from dataclasses import dataclass, field
 from enum import StrEnum
 from types import MappingProxyType
 from typing import Any
+
+from gflow_cli.api.video import is_media_uuid
 
 __all__ = [
     "DEFAULT_PAYGATE_TIER",
@@ -45,10 +46,6 @@ DEFAULT_PAYGATE_TIER = "PAYGATE_TIER_ONE"
 # Strict UUID allowlist for the source mediaId and the owning projectId. Both
 # are interpolated into the request body (not a URL path), but validating up
 # front rejects malformed input before any reCAPTCHA mint or network call fires
-# (scenario #9). Flow media + project ids are both 8-4-4-4-12 hex UUIDs.
-_UUID_RE = re.compile(
-    r"^[0-9a-fA-F]{8}-[0-9a-fA-F]{4}-[0-9a-fA-F]{4}-[0-9a-fA-F]{4}-[0-9a-fA-F]{12}$"
-)
 
 
 class TargetResolution(StrEnum):
@@ -114,13 +111,13 @@ class UpsampleImageRequest:
     recaptcha_token: str = field(default="")
 
     def __post_init__(self) -> None:
-        if not _UUID_RE.fullmatch(self.media_id):
+        if not is_media_uuid(self.media_id):
             msg = (
                 f"UpsampleImageRequest.media_id must be a bare UUID "
                 f"(8-4-4-4-12 hex, no whitespace); got {self.media_id!r}"
             )
             raise ValueError(msg)
-        if not _UUID_RE.fullmatch(self.project_id):
+        if not is_media_uuid(self.project_id):
             msg = (
                 f"UpsampleImageRequest.project_id must be a bare UUID "
                 f"(8-4-4-4-12 hex, no whitespace); got {self.project_id!r}"

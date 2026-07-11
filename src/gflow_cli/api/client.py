@@ -29,7 +29,9 @@ from playwright.async_api import BrowserContext, Page, Playwright, async_playwri
 
 from gflow_cli.api import routes
 from gflow_cli.api._engine import (
+    DRIVER_STOP_TIMEOUT_S,
     active_engine,
+    close_context_bounded,
     log_engine_selected,
     mint_evaluate_kwargs,
     resolve_async_playwright,
@@ -57,6 +59,7 @@ from gflow_cli.errors import (
     ContentPolicyError,
     FlowApiError,  # re-exported via gflow_cli.api.__init__
     NetworkError,
+    ProfileLockedError,
     RateLimitError,
     SceneConcatError,
     TransportTimeoutError,
@@ -547,7 +550,34 @@ class FlowApiClient:
         await self._preread_flow_session_cookies()
         kwargs = self._persistent_context_kwargs()
         self._log_and_guard_launch(kwargs)
-        self._context = await self._pw.chromium.launch_persistent_context(**kwargs)
+        try:
+            self._context = await self._pw.chromium.launch_persistent_context(**kwargs)
+        except Exception as exc:
+            if _is_target_closed(exc):
+                # A TargetClosedError at LAUNCH usually means the profile dir
+                # is held by another Chrome — most commonly a stale browser
+                # leaked by a crashed prior run (issue #293) or a concurrent
+                # gflow run. It CAN also be an unrelated startup crash, so
+                # the original error is carried in the detail and the wording
+                # hedges rather than asserts.
+                first_line = str(exc).splitlines()[0] if str(exc) else type(exc).__name__
+                raise ProfileLockedError(
+                    detail=(
+                        f"the browser exited immediately while launching on profile "
+                        f"dir {self.profile_dir} — most likely another Chrome holds "
+                        f"it (original error: {first_line})"
+                    ),
+                    remediation_hint=(
+                        "Another gflow run — or a stale Chrome left by a crashed one "
+                        "— may hold this profile. Close Chrome windows using this "
+                        "profile (or kill the Chrome processes — chrome.exe on "
+                        "Windows — whose command line names the profile dir) and "
+                        "re-run, or use a different --profile. If no such process "
+                        "exists, the browser crashed at startup for another reason; "
+                        "see the original error above."
+                    ),
+                ) from exc
+            raise
         # Hide the automation flag so reCAPTCHA Enterprise doesn't score
         # the session as a bot — navigator.webdriver=true causes low-score
         # tokens and HTTP 403 on batchGenerateImages.
@@ -655,23 +685,26 @@ class FlowApiClient:
         silently swallow). Resets the browser fields so a reused client never
         holds references to a dead BrowserContext.
         """
-        if self._context is not None:
-            try:
-                await self._context.close()
-            except Exception:
-                # Browser cleanup is best-effort but MUST be surfaced for
-                # diagnosis (CLAUDE.md: never silently swallow errors).
-                logger.warning("browser_context_close_error", exc_info=True)
-        if self._pw is not None:
-            try:
-                await self._pw.stop()
-            except Exception:
-                logger.warning("playwright_stop_error", exc_info=True)
-        self._pages = []
-        self._page_queue = None
-        self._page = None
-        self._context = None
-        self._pw = None
+        try:
+            if self._context is not None:
+                # Bounded close + force-close fallback (issue #293) — shared
+                # with the transports' own-context teardowns via _engine.
+                await close_context_bounded(self._context, owner="client")
+            if self._pw is not None:
+                try:
+                    # pw.stop() awaits the Node driver's exit with no deadline
+                    # of its own — a wedged driver would hang teardown forever.
+                    await asyncio.wait_for(self._pw.stop(), timeout=DRIVER_STOP_TIMEOUT_S)
+                except Exception:
+                    logger.warning("playwright_stop_error", exc_info=True)
+        finally:
+            # Field resets must survive even cancellation (Ctrl-C mid-close),
+            # or a reused client holds references to a dead BrowserContext.
+            self._pages = []
+            self._page_queue = None
+            self._page = None
+            self._context = None
+            self._pw = None
 
     async def _checkout_page(self) -> Page:
         """Block until a Page is available from the pool; FIFO.

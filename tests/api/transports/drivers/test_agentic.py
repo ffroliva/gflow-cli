@@ -772,3 +772,87 @@ async def test_driver_reconcile_dispatches_patch_payload() -> None:
     assert card["description"] == "Daytime Cinematic"
     assert card["enabled"] is True
     assert card["imageReferenceMediaIds"] == ["media-uuid-1"]
+
+
+# ---------------------------------------------------------------------------
+# await_images — stable-break condition (#283 hardening of the #281 race)
+# ---------------------------------------------------------------------------
+
+
+def _fake_page_poll_sequence(poll_srcs: list[list[str]]) -> MagicMock:
+    """Page whose img scrapes return: [] for both baseline passes, then each
+    entry of `poll_srcs` in order (last entry repeats). Policy scan: clean."""
+    img_calls = 0
+
+    async def _eval_on_selector_all(selector: str, expr: str) -> list[str]:
+        nonlocal img_calls
+        if selector == "img":
+            img_calls += 1
+            if img_calls <= 2:
+                return []
+            idx = min(img_calls - 3, len(poll_srcs) - 1)
+            return poll_srcs[idx]
+        return []
+
+    page = MagicMock()
+    page.eval_on_selector_all = _eval_on_selector_all
+    count_mock = AsyncMock(return_value=0)
+    locator_mock = MagicMock()
+    locator_mock.count = count_mock
+    page.locator = MagicMock(return_value=locator_mock)
+    return page
+
+
+_SRC_A = "https://lh3.googleusercontent.com/x?name=aaaaaaaa-1111-4111-8111-111111111111"
+_SRC_B = "https://lh3.googleusercontent.com/x?name=bbbbbbbb-2222-4222-8222-222222222222"
+
+
+@pytest.mark.asyncio
+async def test_await_images_does_not_break_on_first_unstable_sighting() -> None:
+    """#283 stable-break: reaching expected_count on ONE scrape is not enough —
+    a lazily-rendered pre-existing tile can transiently hit the exact count.
+    Here the set grows past expected on the next scrape, which must surface as
+    the #281 ambiguity error, NOT be returned as 'the' generated image."""
+    driver = AgenticFlowUiDriver()
+    page = _fake_page_poll_sequence([[_SRC_A], [_SRC_A, _SRC_B]])
+    with pytest.raises(MediaAttributionError):
+        await driver.await_images(page, expected_count=1)
+
+
+@pytest.mark.asyncio
+async def test_await_images_breaks_after_two_stable_scrapes() -> None:
+    driver = AgenticFlowUiDriver()
+    page = _fake_page_poll_sequence([[_SRC_A], [_SRC_A]])
+    images = await driver.await_images(page, expected_count=1)
+    assert [img.media_name for img in images] == ["aaaaaaaa-1111-4111-8111-111111111111"]
+
+
+@pytest.mark.asyncio
+async def test_await_images_oscillation_needs_two_consecutive_identical_scrapes() -> None:
+    """{x} -> {} -> {x} -> {x}: the shrink resets stability; only the final
+    consecutive pair may break the loop."""
+    driver = AgenticFlowUiDriver()
+    page = _fake_page_poll_sequence([[_SRC_A], [], [_SRC_A], [_SRC_A]])
+    images = await driver.await_images(page, expected_count=1)
+    assert [img.media_name for img in images] == ["aaaaaaaa-1111-4111-8111-111111111111"]
+
+
+@pytest.mark.asyncio
+async def test_await_images_deadline_exit_returns_last_exact_count_unconfirmed(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    """Documented fall-through: exact count first reached on the final poll
+    before the deadline is returned WITHOUT the two-scrape confirmation —
+    better a last-second success than a spurious timeout."""
+    from gflow_cli.api.transports.drivers import agentic as mod
+
+    monkeypatch.setattr(mod, "_AWAIT_TIMEOUT_S", mod._POLL_INTERVAL_S * 3.5)
+    # never stable: each poll alternates, deadline lands while set == {A}
+    page = _fake_page_poll_sequence([[], [_SRC_A]])
+    images = await driver_await(page)
+    assert [img.media_name for img in images] == ["aaaaaaaa-1111-4111-8111-111111111111"]
+
+
+async def driver_await(page: MagicMock) -> list:
+    driver = AgenticFlowUiDriver()
+    return await driver.await_images(page, expected_count=1)

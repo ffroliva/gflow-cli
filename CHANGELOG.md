@@ -7,6 +7,20 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+## [0.32.1] — 2026-07-11
+
+### Fixed
+
+- **Browser teardown can no longer hang forever or leak a Chrome tree that locks the profile dir (#293).** A wedged `context.close()` used to be awaited unbounded and its failure swallowed to a warning; stopping the Playwright driver afterwards kills only the Node process, so the detached system-Chrome survived holding the profile — the next run then died at launch with an opaque `TargetClosedError` → "Unexpected error." (exit 1) (observed 3× live, 2026-07-11). Teardown now uses a shared bounded-close helper (generous 30s graceful bound — Playwright hard-kills Chrome mid-profile-flush if a second close arrives during a graceful close, so a slow-but-healthy close must not be escalated; 5s force-close fallback via `context.browser`; 10s driver-stop bound; field resets survive Ctrl-C) across **all three** owned-context teardown paths: `FlowApiClient`, the UI-automation transport's standalone path (its partial-setup guard now also closes a launched context before the driver exits), and the experimental evaluate-fetch transport. A launch-time `TargetClosedError` is now surfaced as `ProfileLockedError` (exit 11) carrying the original error and a kill-the-stale-Chrome remediation, hedged for non-lock startup crashes (#293).
+
+- **Picker grid scroll no longer misses a tile rendered by the final scroll (#283 off-by-one).** `_select_existing_asset` checked the tile count only *before* each scroll, so an asset the last scroll brought into the virtualised grid was never re-checked and the picker gave up with the tile on screen. A post-loop re-check closes it (`_find_picker_entity_tile` shares the loop shape but returns the locator unconditionally, so it was unaffected — now documented).
+- **Agentic `await_images` no longer trusts a single exact-count scrape (#283 hardening of the #281 race).** The poll loop breaks only when the new-UUID set is identical across two consecutive scrapes at the expected count (~one extra 0.5s poll); a set that transiently hits the exact count and then grows surfaces as the #281 `MediaAttributionError` instead of being returned as "the" generated media.
+- **Debug screenshots that fail to capture are no longer reported as if they existed.** `_capture_debug_screenshot` returned the target path even when `page.screenshot` raised (observed live 2026-07-11: an error message pointed at a file that was never written). It now returns `None` on capture failure and every error message appends its `Screenshot:` clause conditionally (new `screenshot_clause` helper) (#283).
+
+### Changed
+
+- **UUID-shape validation consolidated onto `gflow_cli.api.video.is_media_uuid`.** The four per-module private `_UUID_RE` copies (cli_image, cli_instructions, image_upscale, mcp/tools) now delegate to the public helper introduced in #290; no behavior change. `MediaAttributionError` raises in the recorder now carry `route=` provenance, the agentic ambiguity raise no longer duplicates the class remediation text, `image i2i --ref` help uses the same "media UUID" vocabulary as `video i2v`, and a bad value passed via the deprecated `--end-image` alias names `--end-image` (not `--end-frame`) in its usage error (#283).
+
 ## [0.32.0] — 2026-07-11
 
 ### Added
@@ -1919,7 +1933,8 @@ shell-script template that branches on these codes.
 
 First skeleton. Not functional end-to-end yet.
 
-[Unreleased]: https://github.com/ffroliva/gflow-cli/compare/v0.32.0...HEAD
+[Unreleased]: https://github.com/ffroliva/gflow-cli/compare/v0.32.1...HEAD
+[0.32.1]: https://github.com/ffroliva/gflow-cli/compare/v0.32.0...v0.32.1
 [0.32.0]: https://github.com/ffroliva/gflow-cli/compare/v0.31.0...v0.32.0
 [0.31.0]: https://github.com/ffroliva/gflow-cli/compare/v0.30.0...v0.31.0
 [0.30.0]: https://github.com/ffroliva/gflow-cli/compare/v0.29.0...v0.30.0
