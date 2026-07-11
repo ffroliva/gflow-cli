@@ -46,6 +46,33 @@ upload). Negative check: a foreign UUID exits 9 pre-generation with a
 project must be entered via `--project`, and projects that open in the
 full-page media-library UI (#174) can fail earlier at `mode_switch_trigger`.
 
+### Video duration tab probe misses on the current Frames-submode DOM
+
+- **Status:** Open ([#288](https://github.com/ffroliva/gflow-cli/issues/288))
+- **Severity:** Medium · **Affected:** `gflow video` with an explicit `--duration`
+  on at least some Classic-profile cohorts (3/3 miss on a live 2026-07-11 run)
+
+The `duration_tab` selector cascade (`[role='tab']:text-is('4s')` /
+`:has-text('4s')`) fails to match on Flow's current Frames-submode settings
+panel. Pre-fix this silently produced a clip of Flow's default length; since
+the #289 fix the run fails fast with `UiSelectorDriftError` (exit 23) and a
+`debug_no_duration_tab.png` screenshot — live-verified 2026-07-11 on the
+denon82 profile (aborted pre-submit, saving the 10-credit generation).
+**Workaround:** omit `--duration` to accept Flow's default.
+
+**Root cause (confirmed live 2026-07-11, screenshot evidence on #288): the
+duration control is ABSENT from this cohort's settings popover** — the panel
+renders mode tabs (Imagem/Video), sub-mode (Frames/Elementos), aspect
+(9:16/16:9), count (1x–x4), and the model dropdown (Veo 3.1 - Lite), and
+nothing else. The earlier locale hypothesis is refuted: the UI renders in
+Portuguese and the sibling count tabs (`1x`/`x2`) match fine; there is simply
+no duration row to click. Whether Flow removed clip-length selection for this
+cohort/model or moved it elsewhere is unknown — until that's answered,
+`--duration` cannot be honored on affected cohorts and the fail-fast is the
+correct behavior, not a selector bug to patch.
+
+### macOS: generation runs logged-out → HTTP 401, even with `--browser chrome`
+
 - **Status:** **RESOLVED in v0.23.0** ([#222](https://github.com/ffroliva/gflow-cli/issues/222),
   fixed by [#230](https://github.com/ffroliva/gflow-cli/pull/230), @gunalak)
 - **Severity:** High · **Affected:** all `gflow` generation on **macOS** with a
