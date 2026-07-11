@@ -3,6 +3,7 @@
 from __future__ import annotations
 
 import asyncio
+import itertools
 from pathlib import Path
 from typing import Any, cast
 from unittest.mock import AsyncMock, MagicMock
@@ -18,6 +19,8 @@ from gflow_cli.api.transports.ui_automation_video import (
     FRAME_SLOTS_STRUCT,
     PICKER_CONTEXT_INCLUDE,
     PICKER_GRID_SCROLL_ATTEMPTS,
+    PICKER_GRID_SCROLL_MAX_ATTEMPTS,
+    PICKER_GRID_SCROLL_STALL_LIMIT,
     PICKER_INCLUDE_BUTTON,
     PICKER_SEARCH_INPUT,
     VideoGenerationMixin,
@@ -1480,11 +1483,17 @@ class TestSelectExistingAssetPickerScroll:
 
     @pytest.mark.asyncio
     async def test_tile_visible_only_after_scrolling_is_selected(self) -> None:
-        # Not visible in the initial viewport; count() reports absent for the
-        # first 3 checks, then present on the 4th — the immediate re-check
-        # right after the scroll loop breaks then succeeds.
+        # Not visible in the initial viewport, not surfaced by the UUID /
+        # UUID-stem search tiers (#287); count() reports absent for the first
+        # 3 checks, then present on the 4th — the immediate re-check right
+        # after the scroll loop breaks then succeeds.
         tile = self._tile_mock(
-            wait_for_side_effect=[TimeoutError("not visible yet"), None],
+            wait_for_side_effect=[
+                TimeoutError("not visible in initial viewport"),
+                TimeoutError("not surfaced by the UUID search"),
+                TimeoutError("not surfaced by the UUID-stem search"),
+                None,
+            ],
             count_side_effect=[0, 0, 0, 1],
         )
         page = self._page_with_tile(tile)
@@ -1517,7 +1526,12 @@ class TestSelectExistingAssetPickerScroll:
         the picker gave up with the asset on screen."""
         # count: 0 for every pre-scroll check; 1 only on the post-loop re-check.
         tile = self._tile_mock(
-            wait_for_side_effect=[TimeoutError("not in initial viewport"), None],
+            wait_for_side_effect=[
+                TimeoutError("not in initial viewport"),
+                TimeoutError("not surfaced by the UUID search"),
+                TimeoutError("not surfaced by the UUID-stem search"),
+                None,
+            ],
             count_side_effect=[0] * PICKER_GRID_SCROLL_ATTEMPTS + [1],
         )
         page = self._page_with_tile(tile)
@@ -1538,6 +1552,8 @@ class TestSelectExistingAssetPickerScroll:
             wait_for_side_effect=[
                 TimeoutError("not visible in initial viewport"),
                 TimeoutError("not surfaced by display-name search"),
+                TimeoutError("not surfaced by the UUID search"),
+                TimeoutError("not surfaced by the UUID-stem search"),
                 None,
             ],
             count_side_effect=[0, 0, 1],
@@ -1550,9 +1566,167 @@ class TestSelectExistingAssetPickerScroll:
         )
 
         assert result is True, "tile found via scrolling after the search is cleared"
-        search.press_sequentially.assert_awaited_once()
-        search.fill.assert_awaited_once_with("")
+        # The display name is the FIRST search tier (#287 added UUID tiers after it).
+        assert search.press_sequentially.await_args_list[0].args[0] == "Wren's cabin"
+        # Every fill is a clear: one before each search tier (so tiers don't
+        # concatenate) plus the final clear before the scroll fallback.
+        assert search.fill.await_count == 4
+        assert all(c.args == ("",) for c in search.fill.call_args_list)
         # 2 scrolls before the tile rendered into the DOM.
+        assert page.mouse.wheel.await_count == 2
+
+
+class TestSelectExistingAssetLargeGrid:
+    """#287 (live repro): in a crowded project (100+ media) the target asset
+    sits deeper in the virtualised grid than the fixed 12-scroll budget could
+    reach, so `_select_existing_asset` gave up while the asset WAS in the
+    project — the i2v frame-ref path then raised `TransportTimeoutError`
+    ("Start frame asset ... could not be located in the media picker"). The
+    scroll loop is now bounded by evidence of progress: it keeps scrolling
+    while the set of rendered tile identifiers still changes between scrolls,
+    stops after PICKER_GRID_SCROLL_STALL_LIMIT consecutive no-progress
+    scrolls, and never exceeds the PICKER_GRID_SCROLL_MAX_ATTEMPTS ceiling.
+    A search-input picker also gets UUID / UUID-stem search tiers before any
+    scrolling (the frame-ref path has no display name to search)."""
+
+    _FULL_UUID = "d6f1927a-3eae-4626-bc90-9a6ea7637bab"
+    # Deeper than the legacy fixed budget could ever reach.
+    _DEEP_GRID_SCROLLS = 30
+
+    @pytest.mark.asyncio
+    async def test_deep_tile_beyond_legacy_budget_is_reached(self) -> None:
+        """While every scroll keeps rendering NEW tiles (the grid is still
+        advancing), the loop must keep going — depth proportional to grid
+        size, not a fixed attempt count."""
+        assert self._DEEP_GRID_SCROLLS > PICKER_GRID_SCROLL_ATTEMPTS
+        tile = TestSelectExistingAssetPickerScroll._tile_mock(
+            wait_for_side_effect=[
+                TimeoutError("not visible in initial viewport"),
+                TimeoutError("not surfaced by the UUID search"),
+                TimeoutError("not surfaced by the UUID-stem search"),
+                None,
+            ],
+            count_side_effect=[0] * self._DEEP_GRID_SCROLLS + [1],
+        )
+        page = TestSelectExistingAssetPickerScroll._page_with_tile(tile)
+        # Progress evidence: each scroll renders a fresh window of tiles.
+        page.evaluate = AsyncMock(
+            side_effect=[[f"tile-{i}"] for i in range(self._DEEP_GRID_SCROLLS + 1)]
+        )
+
+        result = await VideoGenerationMixin._select_existing_asset(page, "uuid-1", "", out_dir=None)
+
+        assert result is True, "an asset deep in a large grid must still be reachable"
+        tile.click.assert_awaited_once()
+        assert page.mouse.wheel.await_count == self._DEEP_GRID_SCROLLS
+
+    @pytest.mark.asyncio
+    async def test_absent_asset_stops_after_stall_limit(self) -> None:
+        """Genuinely absent asset with the grid at its end (the rendered tile
+        set never changes): the loop must terminate after the stall limit —
+        not spin to the hard ceiling, and not even out to the legacy budget."""
+        tile = TestSelectExistingAssetPickerScroll._tile_mock(
+            wait_for_side_effect=TimeoutError("never visible"),
+            count_side_effect=0,
+        )
+        page = TestSelectExistingAssetPickerScroll._page_with_tile(tile)
+        page.evaluate = AsyncMock(return_value=["tile-a", "tile-b"])  # never changes
+
+        result = await VideoGenerationMixin._select_existing_asset(page, "uuid-1", "", out_dir=None)
+
+        assert result is False, "existing not-found contract must be unchanged"
+        tile.click.assert_not_awaited()
+        # 1 baseline scroll + STALL_LIMIT consecutive no-progress scrolls.
+        assert page.mouse.wheel.await_count == PICKER_GRID_SCROLL_STALL_LIMIT + 1
+
+    @pytest.mark.asyncio
+    async def test_endless_grid_progress_is_capped_by_hard_ceiling(self) -> None:
+        """A pathological grid that never stops rendering new tiles must not
+        scroll forever — the hard ceiling bounds the loop."""
+        tile = TestSelectExistingAssetPickerScroll._tile_mock(
+            wait_for_side_effect=TimeoutError("never visible"),
+            count_side_effect=0,
+        )
+        page = TestSelectExistingAssetPickerScroll._page_with_tile(tile)
+        counter = itertools.count()
+        page.evaluate = AsyncMock(side_effect=lambda *_: [f"tile-{next(counter)}"])
+
+        result = await VideoGenerationMixin._select_existing_asset(page, "uuid-1", "", out_dir=None)
+
+        assert result is False
+        assert page.mouse.wheel.await_count == PICKER_GRID_SCROLL_MAX_ATTEMPTS
+
+    @pytest.mark.asyncio
+    async def test_uuid_search_surfaces_tile_without_scrolling(self) -> None:
+        """The #287 frame-ref path passes NO display name, so it previously
+        went straight to scrolling. Searching the media UUID itself must be
+        tried first — a hit skips the scroll fallback entirely."""
+        tile = TestSelectExistingAssetPickerScroll._tile_mock(
+            wait_for_side_effect=[
+                TimeoutError("not visible in initial viewport"),
+                None,  # surfaced by the full-UUID search
+            ],
+            count_side_effect=0,
+        )
+        page = TestSelectExistingAssetPickerScroll._page_with_tile(tile)
+        search = page.locator(PICKER_SEARCH_INPUT)
+
+        result = await VideoGenerationMixin._select_existing_asset(
+            page, self._FULL_UUID, "", out_dir=None
+        )
+
+        assert result is True
+        tile.click.assert_awaited_once()
+        assert search.press_sequentially.await_args_list[0].args[0] == self._FULL_UUID
+        assert page.mouse.wheel.await_count == 0, "a search hit must skip scrolling"
+
+    @pytest.mark.asyncio
+    async def test_uuid_stem_search_is_tried_after_full_uuid(self) -> None:
+        """When the full UUID surfaces nothing, the UUID-derived filename stem
+        (the first dash-segment) is the next search tier."""
+        tile = TestSelectExistingAssetPickerScroll._tile_mock(
+            wait_for_side_effect=[
+                TimeoutError("not visible in initial viewport"),
+                TimeoutError("not surfaced by the full-UUID search"),
+                None,  # surfaced by the UUID-stem search
+            ],
+            count_side_effect=0,
+        )
+        page = TestSelectExistingAssetPickerScroll._page_with_tile(tile)
+        search = page.locator(PICKER_SEARCH_INPUT)
+
+        result = await VideoGenerationMixin._select_existing_asset(
+            page, self._FULL_UUID, "", out_dir=None
+        )
+
+        assert result is True
+        terms = [c.args[0] for c in search.press_sequentially.await_args_list]
+        assert terms == [self._FULL_UUID, "d6f1927a"]
+        assert page.mouse.wheel.await_count == 0
+
+    @pytest.mark.asyncio
+    async def test_no_search_box_skips_search_tiers_and_scrolls(self) -> None:
+        """A picker variant without a search input (#174's full-page
+        media-library drift) must skip the search tiers without touching the
+        input and fall straight through to the scroll loop."""
+        tile = TestSelectExistingAssetPickerScroll._tile_mock(
+            wait_for_side_effect=[
+                TimeoutError("not visible in initial viewport"),
+                None,  # visible after scrolling
+            ],
+            count_side_effect=[0, 0, 1],
+        )
+        page = TestSelectExistingAssetPickerScroll._page_with_tile(tile)
+        search = page.locator(PICKER_SEARCH_INPUT)
+        search.count = AsyncMock(return_value=0)  # no search box in this variant
+
+        result = await VideoGenerationMixin._select_existing_asset(
+            page, self._FULL_UUID, "", out_dir=None
+        )
+
+        assert result is True
+        search.press_sequentially.assert_not_awaited()
+        search.fill.assert_not_awaited()
         assert page.mouse.wheel.await_count == 2
 
 
@@ -1681,7 +1855,10 @@ class TestAttachImageUuidRefsPickerScroll:
         assert search.press_sequentially.call_args.args[0] == "Cabin"
         # ...but the search box must be cleared before EVERY ref's lookup
         # (#282: a leftover search term from ref 1 previously shadowed ref 2).
-        assert search.fill.await_count == 2
+        # 2 per-ref clears + 1 tier-level clear before ref 1's display-name
+        # search (#287: each search tier clears the box so tiers don't
+        # concatenate).
+        assert search.fill.await_count == 3
         assert all(c.args == ("",) for c in search.fill.call_args_list)
 
     @pytest.mark.asyncio

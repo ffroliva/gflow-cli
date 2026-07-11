@@ -7,6 +7,10 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+### Fixed
+
+- **`gflow video i2v <media-uuid>` no longer gives up before a large project's media grid has rendered the asset (#287 live repro).** On a crowded project (100+ media) the frame-ref path raised `TransportTimeoutError` ("Start frame asset ... could not be located in the media picker") for an asset that WAS in the project and in the local catalog — the same command worked from a small scratch project — because `_select_existing_asset`'s scroll fallback used a fixed budget (12 scrolls x 500 px), capping the reachable depth of the virtualised (react-virtuoso) grid at ~6000 px regardless of grid size. The scroll loop (now shared with `_find_picker_entity_tile` via `_scroll_picker_grid_until_rendered`) is bounded by evidence of progress instead: it keeps scrolling while the set of rendered tile identifiers (thumbnail `src`s / `data-tile-id`s, probed in one JS pass) still changes between scrolls — depth proportional to grid size — and stops after 3 consecutive no-progress scrolls (end of grid), so a genuinely absent asset now terminates in ~4 scrolls instead of 12. The legacy 12-scroll budget is retained as the bound when the DOM probe yields no evidence (so "no evidence" is never misread as "end of grid"), and a 200-scroll hard ceiling caps a pathological grid that never stops changing. Additionally, pickers with a search input get two new search tiers before any scrolling, after the existing display-name tier: the media UUID itself, then its first dash-segment (the UUID-derived filename stem) — the #287 frame-ref path passes no display name, so it previously went straight to scrolling; a search hit now skips the scroll fallback entirely, and each tier clears the box first so tiers don't concatenate (the #282 clear-before-scroll semantics are preserved). The not-found contract is unchanged: same `TransportTimeoutError` naming the slot and UUID (#287).
+
 ## [0.32.1] — 2026-07-11
 
 ### Fixed
