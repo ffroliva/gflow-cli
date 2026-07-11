@@ -156,7 +156,7 @@ class ClassicFlowUiDriver:
         )
         if request.duration is not None:
             await VideoGenerationMixin._select_video_duration(  # type: ignore[reportPrivateUsage]
-                page, request.duration
+                page, request.duration, out_dir=out_dir
             )
         await page.keyboard.press("Escape")
         await page.wait_for_timeout(600)
