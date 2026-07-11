@@ -67,7 +67,7 @@ See [AUTHENTICATION § Commands](AUTHENTICATION.md#commands).
 
 ## `gflow image upload`
 
-Upload a local PNG/JPEG/WebP/GIF into a fresh Flow project and print the asset UUID + dimensions Flow inferred. The UUID is what later subcommands (`gflow image i2i --ref UUID`, `video i2v`) accept as an initial frame.
+Upload a local PNG/JPEG/WebP/GIF into a fresh Flow project and print the asset UUID + dimensions Flow inferred. The UUID is what later subcommands (`gflow image i2i --ref UUID`, `video i2v`) accept as an initial frame. Note for `video i2v`: the UUID is selected from the generation project's media picker, and `upload` puts the asset in a *fresh scratch project* — so pass `--project <id>` of the project that holds the asset, or the picker lookup fails with exit 9 (#287).
 
 ```text
 gflow image upload PATH [OPTIONS]
@@ -1224,7 +1224,7 @@ shell scripts can branch on the failure mode without parsing stderr.
 | `6`  | `NetworkError`        | Network failure persisted across 3 attempts      | Check connectivity                                         |
 | `7`  | `WireFormatError`     | Unexpected response shape — Flow API changed     | File a bug (do NOT include captured tokens or signed URLs) |
 | `8`  | `AuthMissingError`    | Required auth credential is absent from profile   | `gflow auth login --profile <name>`                        |
-| `9`  | `TransportTimeoutError` | Browser/API operation exceeded its timeout      | Retry; raise the relevant timeout if needed                |
+| `9`  | `TransportTimeoutError` | Browser/API operation exceeded its timeout (incl. an i2v frame UUID not found in the media picker, #287) | Retry; raise the relevant timeout — or, for a frame-UUID miss, verify the UUID belongs to the `--project` passed |
 | `10` | `WafRejectionError`   | Flow security layer rejected the request          | Change prompt/request and retry                            |
 | `11` | `ConfigurationError`  | Local configuration or browser mode is invalid    | Fix the option/env var shown in the error                  |
 | `12` | `AuthLoginTimeoutError` | Browser sign-in was not completed in time       | Re-run login or raise `GFLOW_CLI_AUTH_LOGIN_TIMEOUT`       |
@@ -1240,6 +1240,9 @@ shell scripts can branch on the failure mode without parsing stderr.
 | `22` | `UpscaleUnavailableError` | 4K upscale is gated to Flow **Ultra** accounts (HTTP 403) | Use `--scale 2k`, or upgrade the Flow plan                |
 | `23` | `UiSelectorDriftError` | A Flow editor control could not be located — Google changed the frontend (issue #183) | Update gflow-cli; file a bug with the probe name + debug screenshot from the error message |
 | `24` | `BrowserEngineUnavailableError` | `GFLOW_CLI_BROWSER_ENGINE=patchright` but the engine is not installed | `pip install 'gflow-cli[patchright]'`, or unset `GFLOW_CLI_BROWSER_ENGINE` |
+| `25` | `FlowAgentUiError`    | The profile is on Flow's Agentic UI cohort and the classic media panel is unrecoverable for this operation | Use a Classic-cohort profile; see KNOWN_ISSUES on the agentic cohort |
+| `26` | `MediaAttributionError` | Generated media could not be reliably attributed to this request (issue #281) | Re-run; a dedicated project with fewer pre-existing assets avoids the ambiguity |
+| `27` | `MediaUploadRejectedError` | Flow's upload endpoint refused the input file (`uploadImage` 4xx, issue #287) | Re-encode the image (`ffmpeg -q:v 2 -map_metadata -1`), or reference the asset by its media UUID |
 | `130`| SIGINT                | User-interrupted (Ctrl-C)                        | —                                                          |
 
 **Exit code 16 — data store / migration error.** Fires when:

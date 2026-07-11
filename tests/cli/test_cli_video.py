@@ -1110,3 +1110,21 @@ class TestI2VAssetRef:
     def test_nonexistent_path_still_usage_error(self, tmp_path: Path) -> None:
         result, _ = self._invoke(tmp_path, ["i2v", "--initial-frame", "no/such/file.png", "prompt"])
         assert result.exit_code == 2  # type: ignore[attr-defined]
+
+    def test_nonexistent_end_frame_path_usage_error(self, tmp_path: Path) -> None:
+        start = tmp_path / "hero.png"
+        start.write_bytes(b"\x89PNG\r\n\x1a\n")
+        result, _ = self._invoke(
+            tmp_path, ["i2v", str(start), "prompt", "--end-frame", "no/such/file.png"]
+        )
+        assert result.exit_code == 2  # type: ignore[attr-defined]
+
+    def test_deprecated_end_image_accepts_uuid(self, tmp_path: Path) -> None:
+        start = tmp_path / "hero.png"
+        start.write_bytes(b"\x89PNG\r\n\x1a\n")
+        with pytest.warns(DeprecationWarning):
+            result, captured = self._invoke(
+                tmp_path, ["i2v", str(start), "prompt", "--end-image", _ASSET_UUID]
+            )
+        assert result.exit_code == 0, result.output  # type: ignore[attr-defined]
+        assert captured["request"].end_image_ref_id == _ASSET_UUID  # type: ignore[attr-defined]

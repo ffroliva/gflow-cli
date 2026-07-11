@@ -205,6 +205,8 @@ class _I2VParams:
     CLI option. Mirrors `cli_image.py`'s `_I2IParams`.
     """
 
+    # Exactly one of image/image_ref_id (and end_frame/end_frame_ref_id) per
+    # slot — split by _classify_frame, enforced by the GenerateVideoRequest DTO.
     image: str | None
     prompt: str
     aspect: str

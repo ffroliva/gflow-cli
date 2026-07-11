@@ -68,7 +68,7 @@ gflow image i2i "<prompt>" --ref PATH_OR_UUID [--ref ...] [...same as t2i]
 
 # Video generation (Veo 3.1)
 gflow video t2v "<prompt>" [--out-dir DIR] [--aspect ...] [--seed N]
-gflow video i2v --initial-frame <image> "<prompt>" [--out-dir DIR] [...same as t2v]
+gflow video i2v --initial-frame <image|media-UUID> "<prompt>" [--out-dir DIR] [...same as t2v]  # UUID = in-project asset, no re-upload (#287; pair with --project)
 gflow video batch <manifest.tsv> [--out-dir DIR]
 gflow video chain <manifest.jsonl> [--out-dir DIR] [--dry-run] \
                   [--max-links N] [--resume-from N]   # last-frame I2V chaining; veo models only
@@ -259,7 +259,7 @@ Documented errors agents commonly make — negative examples for the SkillOpt tr
 | `playwright install` or `playwright install --all` | `uvx --from gflow-cli playwright install chromium` (Chromium only, ~150 MB) |
 | Running two generations on the same `--profile` in parallel | Use different `--profile` names — Chromium refuses two persistent contexts on the same dir |
 | `GFLOW_CLI_HEADLESS=true` to fix reCAPTCHA failures | `GFLOW_CLI_HEADLESS=false` — headless mode *causes* bot-detection, not prevents it |
-| Calling `gflow image upload` again for an already-uploaded UUID | Pass the UUID directly to `--ref UUID` — no re-upload needed |
+| Calling `gflow image upload` again for an already-uploaded UUID | Pass the UUID directly to `--ref UUID` (i2i) or `--initial-frame/--end-frame UUID` (i2v, with `--project`) — no re-upload needed |
 | `--model imagen` / `--model quality` / `--model high` | `--model image4` (Imagen 3.5), `--model nano-pro` (Gem Pix 2), `--model nano2` (Narwhal) |
 | Python: `client = FlowApiClient(...)` then method calls | Must use `async with FlowApiClient(...) as client:` — it's an async context manager |
 | Python: `from gflow_cli import FlowApiClient` | `from gflow_cli.api.client import FlowApiClient` |
