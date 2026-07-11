@@ -106,7 +106,7 @@ async def _run(
             if full:
                 await VideoGenerationMixin._select_video_aspect(page, Aspect.PORTRAIT)  # noqa: SLF001
                 await VideoGenerationMixin._set_output_count(page, 1)  # noqa: SLF001
-                await VideoGenerationMixin._select_video_duration(page, 8)  # noqa: SLF001
+                await VideoGenerationMixin._select_video_duration(page, 8, out_dir=None)  # noqa: SLF001
                 await page.keyboard.press("Escape")
                 await page.wait_for_timeout(600)
             await page.wait_for_timeout(800)

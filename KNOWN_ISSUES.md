@@ -14,6 +14,23 @@ Living list of behaviour that's broken, surprising, or limited by design — alo
 
 ## Open
 
+### Video duration tab probe misses on the current Frames-submode DOM
+
+- **Status:** Open ([#288](https://github.com/ffroliva/gflow-cli/issues/288))
+- **Severity:** Medium · **Affected:** `gflow video` with an explicit `--duration`
+  on at least some Classic-profile cohorts (3/3 miss on a live 2026-07-11 run)
+
+The `duration_tab` selector cascade (`[role='tab']:text-is('4s')` /
+`:has-text('4s')`) fails to match on Flow's current Frames-submode settings
+panel. Pre-fix this silently produced a clip of Flow's default length; since
+the #289 fix the run fails fast with `UiSelectorDriftError` (exit 23) and a
+`debug_no_duration_tab.png` screenshot. **Workaround:** omit `--duration` to
+accept Flow's default. Leading hypothesis: the tab label is rendered
+locale-sensitively (e.g. "4 с" / "4 s") — the duration tabs match visible text
+and have no locale-invariant fallback, unlike the aspect tabs' `crop_*` icon
+ligatures. Investigation needs a headed browser against the live DOM; attach
+the debug screenshot and your account locale to #288 if you hit this.
+
 ### macOS: generation runs logged-out → HTTP 401, even with `--browser chrome`
 
 - **Status:** **RESOLVED in v0.23.0** ([#222](https://github.com/ffroliva/gflow-cli/issues/222),

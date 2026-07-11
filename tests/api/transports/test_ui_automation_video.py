@@ -345,7 +345,7 @@ class TestSelectVideoDuration:
     async def test_clicks_the_duration_tab(self) -> None:
         sel = "[role='tab']:text-is('6s')"
         page = _cascade_page({sel})
-        await VideoGenerationMixin._select_video_duration(page, 6)
+        await VideoGenerationMixin._select_video_duration(page, 6, out_dir=None)
         page.locator.assert_any_call(sel)
 
     @pytest.mark.asyncio
@@ -357,10 +357,11 @@ class TestSelectVideoDuration:
 
         page = _cascade_page(set())
         with pytest.raises(UiSelectorDriftError) as exc_info:
-            await VideoGenerationMixin._select_video_duration(page, 4)
+            await VideoGenerationMixin._select_video_duration(page, 4, out_dir=None)
         msg = str(exc_info.value)
         assert "4s" in msg
         assert "--duration" in msg  # remediation hint: omit --duration for Flow's default
+        assert "Screenshot:" not in msg  # no out_dir -> no screenshot clause
 
     @pytest.mark.asyncio
     async def test_missing_duration_tab_captures_screenshot(self, tmp_path: Path) -> None:
