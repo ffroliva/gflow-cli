@@ -25,6 +25,7 @@ This module is the single place that reconciles the two engines' differences:
 
 from __future__ import annotations
 
+import asyncio
 import importlib
 from typing import TYPE_CHECKING, Any, cast
 
@@ -46,6 +47,66 @@ _PATCHRIGHT_PIP_HINT = (
     "chromium`. Or unset GFLOW_CLI_BROWSER_ENGINE to use the default playwright "
     "engine."
 )
+
+
+# Teardown deadlines (issue #293). The graceful bound is generous on purpose:
+# for a persistent context, close() is Chrome flushing profile state (the
+# cookie DB is this product's auth store) and Playwright's driver hard-kills
+# the process if a second close arrives mid-graceful-close — so escalating a
+# merely-slow close would risk corrupting the profile. The force bound is
+# short: it only matters when the graceful close already failed, and a dead
+# driver connection would otherwise burn the full window as pure delay.
+_CONTEXT_CLOSE_TIMEOUT_S = 30.0
+_FORCE_CLOSE_TIMEOUT_S = 5.0
+DRIVER_STOP_TIMEOUT_S = 10.0
+
+
+async def _force_close_browser(context: Any, *, owner: str) -> None:
+    """Force-close ``context.browser``, bounded — never raises Exception."""
+    try:
+        browser = context.browser
+        if browser is not None:
+            await asyncio.wait_for(browser.close(), timeout=_FORCE_CLOSE_TIMEOUT_S)
+            logger.warning(
+                "browser_teardown.force_close_returned",
+                owner=owner,
+                note=(
+                    "graceful context close failed; browser.close() returned "
+                    "(the browser may also simply have been gone already)"
+                ),
+            )
+    except Exception:
+        # ponytail: an OS-level tree kill needs a chrome PID that
+        # playwright-python does not expose for persistent contexts.
+        logger.error(
+            "browser_teardown.force_close_failed",
+            owner=owner,
+            remediation=(
+                "a browser may still hold this profile dir — close Chrome "
+                "windows using it, or kill the Chrome processes (chrome.exe "
+                "on Windows) whose command line names the profile dir"
+            ),
+            exc_info=True,
+        )
+
+
+async def close_context_bounded(context: Any, *, owner: str) -> None:
+    """Close a persistent BrowserContext without hanging or leaking chrome.
+
+    Issue #293: an unbounded ``context.close()`` can hang forever on a wedged
+    page, and a close that FAILS leaves the system-Chrome tree alive holding
+    the profile dir once the driver stops — the graceful close is what asks
+    Chrome to exit. Bounds the graceful close, then force-closes the browser
+    on any failure. On cancellation (Ctrl-C mid-teardown) the force-close is
+    still attempted best-effort before the cancellation propagates.
+    """
+    try:
+        await asyncio.wait_for(context.close(), timeout=_CONTEXT_CLOSE_TIMEOUT_S)
+    except BaseException as exc:
+        logger.warning("browser_teardown.context_close_error", owner=owner, exc_info=True)
+        await _force_close_browser(context, owner=owner)
+        if not isinstance(exc, Exception):
+            raise
 
 
 def active_engine() -> BrowserEngine:
