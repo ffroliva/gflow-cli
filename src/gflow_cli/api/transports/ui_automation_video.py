@@ -391,29 +391,79 @@ _PICKER_GRID_TILE_IDS_JS = (
     "document.querySelectorAll(\"[role='option'] img, [data-tile-id]\")"
     ").map((el) => el.getAttribute('data-tile-id') || el.getAttribute('src') || '')"
 )
-# #287 primary hypothesis: the media picker's library view has its OWN active
-# project — `--project` only navigates the EDITOR — so the picker can open on
-# a different project (plausibly the most recently created one) and the target
-# asset is then unreachable no matter how deep the grid is scrolled. The
-# trigger cascade below is hypothesis-driven (refined from live DOM dumps):
-# probed IN ORDER inside the open dialog, first match wins, no-op when none
-# match (older cohort).
+# #287 CONFIRMED (live round 2): the media picker's library view has its OWN
+# active project — `--project` only navigates the EDITOR — so the picker can
+# open on a different project (observed live: an old test project, with the
+# target asset unreachable at any scroll depth). The trigger is a Radix
+# `ProjectDropdownSubTrigger` (aria-haspopup='menu', submenu semantics,
+# portal-rendered options); a sibling `SortDropdownSubTrigger` also matches a
+# generic menu-haspopup probe, so the stable class comes FIRST and the generic
+# menu tier explicitly excludes the sort trigger. Probed IN ORDER inside the
+# open dialog, first match wins, no-op when none match (older cohort).
 PICKER_PROJECT_SELECTOR_TRIGGERS = (
+    "[role='dialog'] [class*='ProjectDropdownSubTrigger']",
     "[role='dialog'] [role='combobox']",
     "[role='dialog'] button[aria-haspopup='listbox']",
-    "[role='dialog'] button[aria-haspopup='menu']",
+    "[role='dialog'] button[aria-haspopup='menu']:not([class*='SortDropdownSubTrigger'])",
 )
-# With the project dropdown OPEN: click the first option that references the
-# target project id anywhere in its markup (Flow keys tiles/links by id, not
-# localized captions). Returns whether an option was clicked.
-_PICKER_PROJECT_OPTION_CLICK_JS = (
-    "(projectId) => {"
-    " const opts = Array.from(document.querySelectorAll("
-    "\"[role='option'], [role='menuitem'], [role='listbox'] li\"));"
-    " const hit = opts.find((el) => el.outerHTML.includes(projectId));"
-    " if (!hit) { return false; }"
+# Radix renders the opened (sub)menu in a PORTAL outside the dialog, stamped
+# data-state='open' — the open-verification anchor for the switch sequence.
+PICKER_PROJECT_MENU_OPEN = "[role='menu'][data-state='open']"
+# Active-project probe on the CLOSED trigger: the trigger renders the active
+# project's NAME (live round 2: 'gflow-cli t2i'), so match by id-in-markup OR
+# by the resolved target name (normalized text, never a locale-dependent
+# label).
+_PICKER_PROJECT_TRIGGER_ACTIVE_JS = (
+    "(el, args) => {"
+    " if (el.outerHTML.includes(args.projectId)) { return true; }"
+    " if (!args.projectName) { return false; }"
+    " const norm = (s) => (s || '').replace(/\\s+/g, ' ').trim().toLowerCase();"
+    " return norm(el.textContent) === norm(args.projectName);"
+    "}"
+)
+# With the project (sub)menu OPEN: click the first option matching the target
+# project — by id anywhere in its markup first (exact), then by the resolved
+# project NAME (live round 2: options render names, not ids; normalized text
+# match, locale-independent). On a miss, return the first items' outerHTML
+# (truncated) — the evidence the round-2 dump was missing.
+_PICKER_PROJECT_OPTION_MATCH_JS = (
+    "(args) => {"
+    " const menus = Array.from(document.querySelectorAll(\"[role='menu'][data-state='open']\"));"
+    " const scope = menus.length ? menus : [document];"
+    " const opts = scope.flatMap((m) => Array.from(m.querySelectorAll("
+    "\"[role='menuitem'], [role='menuitemradio'], [role='menuitemcheckbox'], [role='option']\""
+    ")));"
+    " let hit = opts.find((el) => el.outerHTML.includes(args.projectId));"
+    " let matchedBy = hit ? 'id' : null;"
+    " if (!hit && args.projectName) {"
+    "  const norm = (s) => (s || '').replace(/\\s+/g, ' ').trim().toLowerCase();"
+    "  const wanted = norm(args.projectName);"
+    "  hit = opts.find((el) => norm(el.textContent) === wanted)"
+    "   || opts.find((el) => norm(el.textContent).includes(wanted));"
+    "  matchedBy = hit ? 'name' : null;"
+    " }"
+    " if (!hit) {"
+    "  return { clicked: false, matched_by: null,"
+    "   items: opts.slice(0, 10).map((el) => el.outerHTML.slice(0, 300)) };"
+    " }"
     " hit.click();"
-    " return true;"
+    " return { clicked: true, matched_by: matchedBy, items: [] };"
+    "}"
+)
+# Resolve the target project's display NAME from the live editor page: the
+# picker menu renders names, the CLI only knows the UUID. Primary signal: any
+# element whose href references the project id (carries the name as text);
+# fallback: a project-title-classed element. Locale-independent by design.
+_PROJECT_NAME_FROM_PAGE_JS = (
+    "(projectId) => {"
+    ' const byHref = document.querySelector(`[href*="${projectId}"]`);'
+    " const hrefText = byHref && byHref.textContent ? byHref.textContent.trim() : '';"
+    " if (hrefText) { return { source: 'href', name: hrefText }; }"
+    " const byClass = document.querySelector("
+    "\"[class*='projectTitle'], [class*='ProjectTitle'], [class*='project-title']\");"
+    " const classText = byClass && byClass.textContent ? byClass.textContent.trim() : '';"
+    " if (classText) { return { source: 'class', name: classText }; }"
+    " return null;"
     "}"
 )
 # Bounded picker DOM dump for a not-found asset (#287 diagnosis): tile count,
@@ -524,6 +574,28 @@ async def _capture_picker_dom_dump(
         )
     except Exception as e:  # noqa: BLE001 - diagnosis capture must never mask the miss
         log.debug("ui_automation_video.picker_dom_dump_failed", error=str(e))
+        return None
+    return dump_path
+
+
+def _write_project_menu_dump(
+    out_dir: Path | None, project_id: str, payload: dict[str, Any]
+) -> Path | None:
+    """Persist the OPEN project menu's items on a switch miss (#287 round 2:
+    the closed trigger's markup wasn't enough evidence). Same contract as
+    `_capture_debug_screenshot` (0.32.1): returns ``None`` on any write
+    failure so callers never report a file that was not written."""
+    if out_dir is None:
+        return None
+    try:
+        out_dir.mkdir(parents=True, exist_ok=True)
+        dump_path = out_dir / f"debug_picker_project_menu_{project_id[:8]}.json"
+        dump_path.write_text(
+            json.dumps(payload, indent=2, ensure_ascii=False),
+            encoding="utf-8",
+        )
+    except Exception as e:  # noqa: BLE001 - diagnosis capture must never mask the miss
+        log.debug("ui_automation_video.project_menu_dump_failed", error=str(e))
         return None
     return dump_path
 
@@ -1449,9 +1521,9 @@ class VideoGenerationMixin:
         await slot.click()
         await page.wait_for_timeout(1000)  # media dialog opens
 
-        # #287 primary hypothesis: the picker's library view is per-project —
+        # #287 (live-confirmed): the picker's library view is per-project —
         # align it to the target project BEFORE any lookup.
-        await VideoGenerationMixin._sync_picker_project(page)
+        await VideoGenerationMixin._sync_picker_project(page, out_dir=out_dir)
 
         # Presence-guarded search clear, mirroring _attach_image_uuid_refs: a
         # picker variant with no search box must not become a hard dependency.
@@ -1808,11 +1880,11 @@ class VideoGenerationMixin:
             await add.click()
             await page.wait_for_timeout(800)
 
-            # #287 primary hypothesis: the picker's library view is
-            # per-project — align it to the target project BEFORE this ref's
-            # lookup (re-checked per dialog open; the switch itself no-ops
-            # when already aligned or when the selector is absent).
-            await VideoGenerationMixin._sync_picker_project(page)
+            # #287 (live-confirmed): the picker's library view is per-project
+            # — align it to the target project BEFORE this ref's lookup
+            # (re-checked per dialog open; the switch itself no-ops when
+            # already aligned or when the selector is absent).
+            await VideoGenerationMixin._sync_picker_project(page, out_dir=out_dir)
 
             # Fresh per-ref state (#282): a display-name search typed while
             # locating a previous ref must not leak into this ref's lookup —
@@ -1850,15 +1922,16 @@ class VideoGenerationMixin:
             )
 
     @staticmethod
-    async def _sync_picker_project(page: Page) -> None:
-        """#287 primary hypothesis: the media picker's library view has its
-        OWN active project — ``--project`` only navigates the EDITOR — so the
-        picker can open on a different project (plausibly the most recently
-        created one), making the target asset unreachable no matter how deep
-        the grid is scrolled. Derives the target project from the editor URL
-        (``--project`` navigation put it there) and aligns the picker's
-        project selector to it. No-op when the URL carries no project id or
-        the picker has no project selector (older cohort)."""
+    async def _sync_picker_project(page: Page, *, out_dir: Path | None = None) -> None:
+        """#287 CONFIRMED (live round 2): the media picker's library view has
+        its OWN active project — ``--project`` only navigates the EDITOR — so
+        the picker can open on a different project, making the target asset
+        unreachable no matter how deep the grid is scrolled. Derives the
+        target project from the editor URL (``--project`` navigation put it
+        there), resolves its display NAME from the live page (the picker menu
+        renders names, not ids), and aligns the picker's project selector.
+        No-op when the URL carries no project id or the picker has no project
+        selector (older cohort)."""
         # cast + isinstance: a unit-test fake's page.url may not be a str.
         page_url = cast("object", page.url)
         project_id = extract_project_id(page_url) if isinstance(page_url, str) else None
@@ -1868,22 +1941,78 @@ class VideoGenerationMixin:
                 reason="no_project_in_url",
             )
             return
-        await VideoGenerationMixin._ensure_picker_project(page, project_id)
+        project_name = await VideoGenerationMixin._resolve_project_name(page, project_id)
+        await VideoGenerationMixin._ensure_picker_project(
+            page, project_id, project_name=project_name, out_dir=out_dir
+        )
 
     @staticmethod
-    async def _ensure_picker_project(page: Page, project_id: str) -> bool | None:
+    async def _resolve_project_name(page: Page, project_id: str) -> str | None:
+        """Resolve the target project's display NAME from the live page (#287
+        round 2): the picker's project menu renders project NAMES, not ids,
+        and the CLI only knows the UUID. The local catalog does record a
+        ``projects.title`` for gflow-created projects, but the transport layer
+        has no catalog access and the live page also reflects renames and
+        projects created outside gflow — so the page is the source. Best
+        effort: ``None`` when no name-bearing element is found (the menu match
+        then relies on the id tier and the switch-miss dump captures the
+        items)."""
+        raw: object = None
+        try:
+            raw = await page.evaluate(_PROJECT_NAME_FROM_PAGE_JS, project_id)
+        except Exception:  # noqa: BLE001 - name resolution is best-effort
+            raw = None
+        if isinstance(raw, dict):
+            data = cast("dict[str, object]", raw)
+            name = str(data.get("name") or "").strip()
+            if name:
+                log.info(
+                    "ui_automation_video.picker_project_name_resolved",
+                    project_id=project_id,
+                    name=name,
+                    source=str(data.get("source") or "unknown"),
+                )
+                return name
+        log.info(
+            "ui_automation_video.picker_project_name_unresolved",
+            project_id=project_id,
+        )
+        return None
+
+    @staticmethod
+    async def _wait_project_menu_open(page: Page) -> bool:
+        """Whether the (portal-rendered) project menu is open — Radix stamps
+        `data-state='open'` on the visible [role='menu'] (#287 round 2)."""
+        menu = page.locator(PICKER_PROJECT_MENU_OPEN).last
+        try:
+            await menu.wait_for(state="visible", timeout=2000)
+        except Exception:  # noqa: BLE001 - not-open is an expected branch
+            return False
+        return True
+
+    @staticmethod
+    async def _ensure_picker_project(
+        page: Page,
+        project_id: str,
+        *,
+        project_name: str | None = None,
+        out_dir: Path | None = None,
+    ) -> bool | None:
         """Align the OPEN picker's library view to ``project_id`` (#287).
 
-        Hypothesis-driven (selectors refined from live DOM dumps): the
-        trigger is probed as a combobox / listbox-or-menu-haspopup button
-        inside the dialog; the active project is considered correct when the
-        trigger's markup references the project id; otherwise the dropdown is
-        opened and the first option referencing the project id is clicked.
-        Returns ``None`` when the picker has no project selector (older
-        cohort — pure no-op), ``True`` when the target project is (already)
-        active, ``False`` when a selector exists but the target could not be
-        selected — callers proceed either way: the asset lookup stays the
-        authority and its not-found telemetry captures the picker state."""
+        Live round 2 confirmed the mechanics: the trigger is a Radix
+        `ProjectDropdownSubTrigger` rendering the ACTIVE project's name; the
+        submenu options render project NAMES in a portal. Sequence: probe the
+        trigger cascade; consider the target active when the trigger matches
+        by id or resolved name; otherwise open the submenu (click, then hover,
+        then focus+ArrowRight — Radix SubTriggers may ignore plain click),
+        verify `[role='menu'][data-state='open']`, and click the first option
+        matching by id, then by name. Returns ``None`` when the picker has no
+        project selector (older cohort — pure no-op), ``True`` when the target
+        project is (already) active, ``False`` when a selector exists but the
+        target could not be selected — a miss dumps the open menu's items to
+        the out-dir, presses Escape (never leave an open overlay), and lets
+        callers proceed: the asset lookup stays the authority."""
         trigger = None
         matched_selector: str | None = None
         for selector in PICKER_PROJECT_SELECTOR_TRIGGERS:
@@ -1898,10 +2027,11 @@ class VideoGenerationMixin:
                 project_id=project_id,
             )
             return None
+        match_args = {"projectId": project_id, "projectName": project_name}
         already_active = False
         try:
             already_active = bool(
-                await trigger.evaluate("(el, pid) => el.outerHTML.includes(pid)", project_id)
+                await trigger.evaluate(_PICKER_PROJECT_TRIGGER_ACTIVE_JS, match_args)
             )
         except Exception:  # noqa: BLE001 - probe is best-effort; fall through to a switch
             already_active = False
@@ -1912,19 +2042,72 @@ class VideoGenerationMixin:
                 selector=matched_selector,
             )
             return True
+
+        # Open the Radix submenu: click, then hover, then keyboard — each
+        # verified against the portal-rendered open-state menu (#287 round 2:
+        # SubTriggers open on hover/ArrowRight; plain click may be a no-op).
+        opened = False
+        open_method = "none"
         await trigger.click()
-        await page.wait_for_timeout(600)
-        switched = False
+        if await VideoGenerationMixin._wait_project_menu_open(page):
+            opened, open_method = True, "click"
+        if not opened:
+            try:
+                await trigger.hover(timeout=1000)
+            except Exception:  # noqa: BLE001 - hover unsupported -> keyboard tier
+                pass
+            if await VideoGenerationMixin._wait_project_menu_open(page):
+                opened, open_method = True, "hover"
+        if not opened:
+            try:
+                await trigger.focus(timeout=1000)
+                await page.keyboard.press("ArrowRight")
+            except Exception:  # noqa: BLE001 - focus unsupported -> match attempt anyway
+                pass
+            if await VideoGenerationMixin._wait_project_menu_open(page):
+                opened, open_method = True, "keyboard"
+        log.info(
+            "ui_automation_video.picker_project_menu_opened",
+            project_id=project_id,
+            opened=opened,
+            method=open_method,
+        )
+
+        clicked = False
+        matched_by: str | None = None
+        menu_items: list[str] = []
         try:
-            switched = bool(await page.evaluate(_PICKER_PROJECT_OPTION_CLICK_JS, project_id))
+            outcome_raw: object = await page.evaluate(_PICKER_PROJECT_OPTION_MATCH_JS, match_args)
+            if isinstance(outcome_raw, dict):
+                outcome = cast("dict[str, object]", outcome_raw)
+                clicked = bool(outcome.get("clicked"))
+                matched_by_value = outcome.get("matched_by")
+                matched_by = str(matched_by_value) if matched_by_value else None
+                items_value = outcome.get("items")
+                if isinstance(items_value, list):
+                    menu_items = [str(item) for item in cast("list[object]", items_value)]
         except Exception:  # noqa: BLE001 - dropdown scan is best-effort
-            switched = False
-        if not switched:
+            clicked = False
+        if not clicked:
+            menu_dump = _write_project_menu_dump(
+                out_dir,
+                project_id,
+                {
+                    "project_id": project_id,
+                    "project_name": project_name,
+                    "menu_opened": opened,
+                    "items": menu_items,
+                },
+            )
             log.warning(
                 "ui_automation_video.picker_project_switch_miss",
                 project_id=project_id,
+                project_name=project_name,
                 selector=matched_selector,
-                note="no dropdown option referenced the target project id",
+                menu_opened=opened,
+                menu_items=len(menu_items),
+                menu_dump=str(menu_dump) if menu_dump is not None else None,
+                note="no menu option matched the target project by id or name",
             )
             # Never leave an open overlay on the pooled Page.
             await page.keyboard.press("Escape")
@@ -1934,6 +2117,7 @@ class VideoGenerationMixin:
             "ui_automation_video.picker_project_switched",
             project_id=project_id,
             selector=matched_selector,
+            matched_by=matched_by,
         )
         return True
 
