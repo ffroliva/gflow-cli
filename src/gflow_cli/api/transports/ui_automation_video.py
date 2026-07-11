@@ -368,10 +368,29 @@ ENTITY_ATTACH_DRIFT_HINT = (
     "(do NOT include captured tokens or signed URLs)."
 )
 # The picker grid is virtualised (react-virtuoso): off-screen tiles are not in
-# the DOM. When the target entity tile is not initially rendered, scroll the grid
-# in steps until it appears (or we exhaust the attempts).
+# the DOM. When the target tile is not initially rendered, scroll the grid in
+# steps until it appears. #287 (live repro): a fixed scroll budget capped the
+# reachable depth at ATTEMPTS * DELTA px, so an asset deep in a crowded
+# project (100+ media) was unreachable and the picker gave up on an asset
+# that WAS in the project. The scroll loop is therefore bounded by evidence
+# of progress — keep scrolling while the set of rendered tile identifiers
+# still CHANGES between scrolls, stop after STALL_LIMIT consecutive scrolls
+# with no new tiles (end of grid) — with MAX_ATTEMPTS as a hard safety
+# ceiling against a pathological grid that never stops changing. The fixed
+# ATTEMPTS budget remains as the fallback bound when the DOM probe yields no
+# progress evidence at all.
 PICKER_GRID_SCROLL_ATTEMPTS = 12
 PICKER_GRID_SCROLL_DELTA_PX = 500
+PICKER_GRID_SCROLL_MAX_ATTEMPTS = 200
+PICKER_GRID_SCROLL_STALL_LIMIT = 3
+# One JS pass over the open picker: the identifiers of every currently
+# rendered tile — media thumbnails keyed by their src UUID, entity tiles by
+# data-tile-id. Used as the progress fingerprint for the scroll loop.
+_PICKER_GRID_TILE_IDS_JS = (
+    "() => Array.from("
+    "document.querySelectorAll(\"[role='option'] img, [data-tile-id]\")"
+    ").map((el) => el.getAttribute('data-tile-id') || el.getAttribute('src') || '')"
+)
 VIDEO_SUBMODE_SELECTORS: dict[str, tuple[str, ...]] = {
     # I2V — "frames" (start + optional end frame). Icon: crop_free.
     "frames": (
@@ -1571,14 +1590,17 @@ class VideoGenerationMixin:
         identified by ``media_id`` (preferred over uploading a duplicate).
 
         Locates the tile by the media UUID in its thumbnail URL. If it isn't
-        already visible, searches ``display_name`` to surface it (when given);
-        if it's STILL not visible, scrolls the virtualised picker grid
+        already visible, tries the picker search tiers — ``display_name``
+        (when given), then the media UUID itself, then the UUID-derived
+        filename stem (#287: the frame-ref path has no display name, and a
+        search hit skips the scroll fallback entirely on crowded grids); if
+        it's STILL not visible, scrolls the virtualised picker grid
         (react-virtuoso renders off-viewport tiles lazily — #282) and
-        re-checks between scrolls, the same strategy `_find_picker_entity_tile`
-        uses for the entity picker. Returns ``True`` once attached, ``False``
-        when the asset can't be located by any of the above (callers with a
-        local file fall back to uploading it; the #287 frame-ref path has no
-        fallback and raises instead).
+        re-checks between scrolls, bounded by evidence of progress rather
+        than a fixed attempt count (#287). Returns ``True`` once attached,
+        ``False`` when the asset can't be located by any of the above
+        (callers with a local file fall back to uploading it; the #287
+        frame-ref path has no fallback and raises instead).
         """
         tile = VideoGenerationMixin._existing_asset_tile(page, media_id)
         visible = True
@@ -1588,42 +1610,42 @@ class VideoGenerationMixin:
             visible = False
 
         attempted_search = False
-        if not visible and display_name:
-            search = page.locator(PICKER_SEARCH_INPUT)
-            # Human-like typing jitter to dodge WAF heuristics — not security.
-            await search.press_sequentially(display_name, delay=random.randint(10, 50))  # NOSONAR
-            await page.wait_for_timeout(800)
-            attempted_search = True
-            try:
-                await tile.wait_for(state="visible", timeout=6000)
-                visible = True
-            except Exception:  # noqa: BLE001 - still not found -> try scrolling
-                pass
+        if not visible:
+            # Search tiers (#287): each is best-effort — an unmatched term
+            # just filters the grid to zero rows and the next tier (or the
+            # cleared-grid scroll fallback below) takes over. The UUID tiers
+            # cover generated/uploaded media whose display name embeds the
+            # UUID (or its first segment as a filename stem).
+            uuid_stem = media_id.split("-", 1)[0]
+            terms: list[str] = []
+            for candidate in (display_name, media_id, uuid_stem):
+                if candidate and candidate not in terms:
+                    terms.append(candidate)
+            for term in terms:
+                found = await VideoGenerationMixin._search_picker_for_tile(page, tile, term)
+                if found is None:
+                    break  # picker variant with no search box (#174)
+                attempted_search = True
+                if found:
+                    visible = True
+                    break
 
         if not visible:
-            # A failed display-name search leaves the grid filtered on that
-            # term — scrolling a still-filtered grid would only shuffle
-            # through the (possibly empty) filtered results rather than the
-            # full asset list, so the search box must be cleared first.
+            # A failed search leaves the grid filtered on the last term —
+            # scrolling a still-filtered grid would only shuffle through the
+            # (possibly empty) filtered results rather than the full asset
+            # list, so the search box must be cleared first.
             # Presence-guarded like `_attach_image_uuid_refs`'s per-ref clear.
             if attempted_search:
                 clear_search = page.locator(PICKER_SEARCH_INPUT).first
                 if await clear_search.count():
                     await clear_search.fill("")
                     await page.wait_for_timeout(400)
-            # Neither the initial viewport nor the display-name search
-            # surfaced the tile — the Tudo grid is virtualised, so an
-            # off-screen (but existing) asset is simply absent from the DOM
-            # until scrolled into range. Scroll and re-check before giving up.
-            for _ in range(PICKER_GRID_SCROLL_ATTEMPTS):
-                if await tile.count():
-                    visible = True
-                    break
-                await VideoGenerationMixin._scroll_picker_grid(page)
-            # Final re-check (#283 off-by-one): the count runs BEFORE each
-            # scroll, so a tile rendered by the LAST scroll was never seen.
-            if not visible and await tile.count():
-                visible = True
+            # Neither the initial viewport nor the search tiers surfaced the
+            # tile — the Tudo grid is virtualised, so an off-screen (but
+            # existing) asset is simply absent from the DOM until scrolled
+            # into range. Scroll (progress-bounded — #287) before giving up.
+            visible = await VideoGenerationMixin._scroll_picker_grid_until_rendered(page, tile)
             if visible:
                 try:
                     await tile.wait_for(state="visible", timeout=4000)
@@ -1724,6 +1746,27 @@ class VideoGenerationMixin:
             )
 
     @staticmethod
+    async def _search_picker_for_tile(page: Page, tile: Locator, term: str) -> bool | None:
+        """Type ``term`` into the picker search box and report whether it
+        surfaced ``tile``. Clears any previous term first so search tiers
+        don't concatenate (``press_sequentially`` appends). Returns ``None``
+        (without touching the page) when this picker variant has no search
+        input at all (#174's full-page media-library drift) — search must
+        never become a hard dependency."""
+        search = page.locator(PICKER_SEARCH_INPUT).first
+        if not await search.count():
+            return None
+        await search.fill("")
+        # Human-like typing jitter to dodge WAF heuristics — not security.
+        await search.press_sequentially(term, delay=random.randint(10, 50))  # NOSONAR
+        await page.wait_for_timeout(800)
+        try:
+            await tile.wait_for(state="visible", timeout=6000)
+        except Exception:  # noqa: BLE001 - not surfaced by this term
+            return False
+        return True
+
+    @staticmethod
     async def _scroll_picker_grid(page: Page, delta_px: int = PICKER_GRID_SCROLL_DELTA_PX) -> None:
         """Wheel-scroll the open resource picker down one step. The Tudo grid is
         virtualised, so off-screen tiles are absent from the DOM until scrolled
@@ -1737,18 +1780,65 @@ class VideoGenerationMixin:
         await page.wait_for_timeout(350)
 
     @staticmethod
+    async def _picker_grid_fingerprint(page: Page) -> frozenset[str] | None:
+        """Identifiers of the tiles currently rendered in the open picker, or
+        ``None`` when there is no evidence (the probe failed, or zero tiles
+        matched — e.g. a DOM drift), so the scroll loop falls back to the
+        legacy fixed budget instead of misreading 'no evidence' as 'end of
+        grid'."""
+        try:
+            tile_ids = await page.evaluate(_PICKER_GRID_TILE_IDS_JS)
+        except Exception:  # noqa: BLE001 - probe is best-effort evidence only
+            return None
+        if not isinstance(tile_ids, list) or not tile_ids:
+            return None
+        return frozenset(str(tile_id) for tile_id in cast("list[object]", tile_ids))
+
+    @staticmethod
+    async def _scroll_picker_grid_until_rendered(page: Page, tile: Locator) -> bool:
+        """Scroll the virtualised picker grid until ``tile`` is in the DOM.
+
+        #287: bounded by evidence of progress, not a fixed attempt count —
+        keeps scrolling while the set of rendered tile identifiers still
+        CHANGES between scrolls (the grid is still advancing) and stops after
+        ``PICKER_GRID_SCROLL_STALL_LIMIT`` consecutive scrolls with no new
+        tiles (end of grid), so the reachable depth is proportional to the
+        grid size. When the DOM probe yields no evidence the legacy fixed
+        ``PICKER_GRID_SCROLL_ATTEMPTS`` budget applies, and
+        ``PICKER_GRID_SCROLL_MAX_ATTEMPTS`` is a hard safety ceiling either
+        way. Returns whether the tile ended up in the DOM — including a tile
+        rendered by the very last scroll (#283 off-by-one: the count runs
+        BEFORE each scroll, so it is re-checked once after the loop)."""
+        attempts = 0
+        stalls = 0
+        previous: frozenset[str] | None = None
+        while attempts < PICKER_GRID_SCROLL_MAX_ATTEMPTS:
+            if await tile.count():
+                return True
+            await VideoGenerationMixin._scroll_picker_grid(page)
+            attempts += 1
+            rendered = await VideoGenerationMixin._picker_grid_fingerprint(page)
+            if rendered is None:
+                if attempts >= PICKER_GRID_SCROLL_ATTEMPTS:
+                    break
+            elif rendered == previous:
+                stalls += 1
+                if stalls >= PICKER_GRID_SCROLL_STALL_LIMIT:
+                    break
+            else:
+                stalls = 0
+                previous = rendered
+        return bool(await tile.count())
+
+    @staticmethod
     async def _find_picker_entity_tile(page: Page, entity_id: str) -> Locator:
         """Locate the Personagens-tab tile for a character entity. Each tile is
         keyed by the entity id as `data-tile-id="fe_id_<entityId>"` (exact — no
-        display-name ambiguity). Scroll the grid until it renders, then return
-        the locator (the caller still waits for visibility — which also covers
-        a tile rendered by the final scroll, so the #283 off-by-one fixed in
-        `_select_existing_asset` has no effect here)."""
+        display-name ambiguity). Scroll the grid until it renders (#287:
+        progress-bounded, so a crowded character grid is fully reachable),
+        then return the locator (the caller still waits for visibility)."""
         tile = page.locator(f"[data-tile-id='fe_id_{entity_id}']").first
-        for _ in range(PICKER_GRID_SCROLL_ATTEMPTS):
-            if await tile.count():
-                break
-            await VideoGenerationMixin._scroll_picker_grid(page)
+        await VideoGenerationMixin._scroll_picker_grid_until_rendered(page, tile)
         return tile
 
     @staticmethod
