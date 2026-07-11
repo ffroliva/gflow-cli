@@ -28,22 +28,23 @@ re-encode the file, or reference the already-in-project asset by media UUID
 (`--initial-frame <UUID> --project <id>`). Root cause of Flow's metadata
 sensitivity is unidentified.
 
-### i2v frame-slot picker selection by UUID is unproven live (frame-slot dialog vs Add-Media dialog)
+### i2v frame-slot picker selection by UUID — RESOLVED live 2026-07-11
 
-- **Status:** Open ([#287](https://github.com/ffroliva/gflow-cli/issues/287) / PR [#290](https://github.com/ffroliva/gflow-cli/pull/290))
-- **Severity:** Medium until the first live run · **Affected:** `gflow video i2v --initial-frame/--end-frame <UUID>`
+- **Status:** **Verified live** ([#287](https://github.com/ffroliva/gflow-cli/issues/287) / PR [#290](https://github.com/ffroliva/gflow-cli/pull/290))
+- **Affected:** `gflow video i2v --initial-frame/--end-frame <UUID>`
 
 #290 routes i2v frame slots through `_select_existing_asset` (the UUID picker
 live-proven in the **Add-Media** dialog: v0.26.0 i2i-by-UUID, #282 scroll
-fixes). The **frame-slot** dialog is a different surface with a negative
-prior: #237's name-search in this exact dialog never surfaced generated media
-(see `docs/LIVE_VERIFICATION_v0.25.0.md` — the picker attach was reworked to
-local upload back then). The new path matches grid tiles by thumbnail URL, not
-name search, so it may well work — but until a live run confirms, treat a
-`TransportTimeoutError` (exit 9) with a `debug_frame_ref_miss_*.png`
-screenshot as possibly "this dialog has no asset grid" rather than user error.
-Evidence to capture on the first live run: `frame_ref_attached` structlog
-event, no upload events, and the `batchAsyncGenerateVideoStartImage` route.
+fixes). The **frame-slot** dialog carried a negative prior — #237's
+name-search there never surfaced generated media (v0.25.0 rework) — but the
+thumbnail-URL tile match succeeds where name search failed. Live evidence
+(2026-07-11, denon82): `frame_ref_attached {slot: Start}` → wire capture on
+`batchAsyncGenerateVideoStartImage` with the asset's `startImage` bound →
+SUCCESSFUL 720×1280 mp4; **zero** `image_uploaded` events (no duplicate
+upload). Negative check: a foreign UUID exits 9 pre-generation with a
+`debug_frame_ref_miss_start.png` screenshot. Caveat that stands: the asset's
+project must be entered via `--project`, and projects that open in the
+full-page media-library UI (#174) can fail earlier at `mode_switch_trigger`.
 
 - **Status:** **RESOLVED in v0.23.0** ([#222](https://github.com/ffroliva/gflow-cli/issues/222),
   fixed by [#230](https://github.com/ffroliva/gflow-cli/pull/230), @gunalak)
