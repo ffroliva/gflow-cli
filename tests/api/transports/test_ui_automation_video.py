@@ -1869,3 +1869,15 @@ class TestCaptureDebugScreenshotFailure:
         shot = await _capture_debug_screenshot(page, tmp_path, "nope.png")
         assert shot is None
         assert not (tmp_path / "nope.png").exists()
+
+    @pytest.mark.asyncio
+    async def test_image_module_copy_also_returns_none_on_failure(self, tmp_path: Path) -> None:
+        # The function is duplicated in ui_automation.py (circular-import
+        # discipline) — the failure-path fix must hold in BOTH copies.
+        from gflow_cli.api.transports.ui_automation import (
+            _capture_debug_screenshot as ua_capture,
+        )
+
+        page = MagicMock()
+        page.screenshot = AsyncMock(side_effect=RuntimeError("target closed"))
+        assert await ua_capture(page, tmp_path, "nope.png") is None

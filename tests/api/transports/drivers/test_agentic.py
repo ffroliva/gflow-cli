@@ -825,3 +825,34 @@ async def test_await_images_breaks_after_two_stable_scrapes() -> None:
     page = _fake_page_poll_sequence([[_SRC_A], [_SRC_A]])
     images = await driver.await_images(page, expected_count=1)
     assert [img.media_name for img in images] == ["aaaaaaaa-1111-4111-8111-111111111111"]
+
+
+@pytest.mark.asyncio
+async def test_await_images_oscillation_needs_two_consecutive_identical_scrapes() -> None:
+    """{x} -> {} -> {x} -> {x}: the shrink resets stability; only the final
+    consecutive pair may break the loop."""
+    driver = AgenticFlowUiDriver()
+    page = _fake_page_poll_sequence([[_SRC_A], [], [_SRC_A], [_SRC_A]])
+    images = await driver.await_images(page, expected_count=1)
+    assert [img.media_name for img in images] == ["aaaaaaaa-1111-4111-8111-111111111111"]
+
+
+@pytest.mark.asyncio
+async def test_await_images_deadline_exit_returns_last_exact_count_unconfirmed(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    """Documented fall-through: exact count first reached on the final poll
+    before the deadline is returned WITHOUT the two-scrape confirmation —
+    better a last-second success than a spurious timeout."""
+    from gflow_cli.api.transports.drivers import agentic as mod
+
+    monkeypatch.setattr(mod, "_AWAIT_TIMEOUT_S", mod._POLL_INTERVAL_S * 3.5)
+    # never stable: each poll alternates, deadline lands while set == {A}
+    page = _fake_page_poll_sequence([[], [_SRC_A]])
+    images = await driver_await(page)
+    assert [img.media_name for img in images] == ["aaaaaaaa-1111-4111-8111-111111111111"]
+
+
+async def driver_await(page: MagicMock) -> list:
+    driver = AgenticFlowUiDriver()
+    return await driver.await_images(page, expected_count=1)
