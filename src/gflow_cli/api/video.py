@@ -8,6 +8,7 @@ retired — see the Phase A plan).
 
 from __future__ import annotations
 
+import re
 from collections.abc import Awaitable, Callable, Mapping
 from dataclasses import dataclass
 from enum import StrEnum
@@ -174,6 +175,19 @@ def max_duration_for(model: VideoModel) -> int:
     return 10 if model is VideoModel.OMNI_FLASH else 8
 
 
+# Case-insensitive 8-4-4-4-12 hex with hyphens — Flow's media UUIDs (the same
+# shape cli_image's --ref classifier accepts).
+_MEDIA_UUID_RE = re.compile(
+    r"^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$",
+    re.IGNORECASE,
+)
+
+
+def is_media_uuid(value: str) -> bool:
+    """True when *value* is shaped like a Flow media UUID (#287)."""
+    return _MEDIA_UUID_RE.fullmatch(value) is not None
+
+
 def aspect_choices() -> dict[str, str]:
     """Map each accepted CLI aspect ratio to its wire value."""
     return {
@@ -203,8 +217,10 @@ class GenerateVideoRequest:
     seed: int | None = None
     start_image: Path | None = None  # I2V (local file path)
     start_image_ref_name: str | None = None  # I2V (remote asset display name)
+    start_image_ref_id: str | None = None  # I2V (in-project asset media UUID, #287)
     end_image: Path | None = None  # I2V (optional local file path)
     end_image_ref_name: str | None = None  # I2V (optional remote asset display name)
+    end_image_ref_id: str | None = None  # I2V (optional in-project asset media UUID, #287)
     reference_images: tuple[Path, ...] = ()  # R2V (local file paths)
     ref_names: tuple[str, ...] = ()  # R2V (remote asset display names)
     reference_entities: tuple[str, ...] = ()  # R2V — Flow CHARACTER entity ids
@@ -222,9 +238,27 @@ class GenerateVideoRequest:
         self._validate_prompt()
         self._validate_duration()
         self._validate_count()
+        self._validate_frame_ref_ids()
         self._validate_mode_symmetry()
         self._validate_r2v_caps()
         self._validate_seed()
+
+    def _validate_frame_ref_ids(self) -> None:
+        for slot, ref_id, alternatives in (
+            ("start", self.start_image_ref_id, (self.start_image, self.start_image_ref_name)),
+            ("end", self.end_image_ref_id, (self.end_image, self.end_image_ref_name)),
+        ):
+            if ref_id is None:
+                continue
+            if not is_media_uuid(ref_id):
+                msg = f"{slot}_image_ref_id {ref_id!r} is not a valid media UUID"
+                raise ValueError(msg)
+            if any(alt is not None for alt in alternatives):
+                msg = (
+                    f"at most one of {slot}_image, {slot}_image_ref_name, or "
+                    f"{slot}_image_ref_id may be set"
+                )
+                raise ValueError(msg)
 
     def _validate_prompt(self) -> None:
         if not self.prompt.strip():
@@ -254,8 +288,12 @@ class GenerateVideoRequest:
             raise ValueError(msg)
 
     def _validate_i2v_symmetry(self) -> None:
-        if self.start_image is None and self.start_image_ref_name is None:
-            msg = "I2V request requires start_image or start_image_ref_name"
+        if (
+            self.start_image is None
+            and self.start_image_ref_name is None
+            and self.start_image_ref_id is None
+        ):
+            msg = "I2V request requires start_image, start_image_ref_name, or start_image_ref_id"
             raise ValueError(msg)
         if self.reference_images or self.ref_names or self.reference_entities:
             msg = "I2V request must not carry reference_images, ref_names, or reference_entities"
@@ -268,8 +306,10 @@ class GenerateVideoRequest:
         if (
             self.start_image
             or self.start_image_ref_name
+            or self.start_image_ref_id
             or self.end_image
             or self.end_image_ref_name
+            or self.end_image_ref_id
         ):
             msg = "R2V request must not carry start/end images"
             raise ValueError(msg)
@@ -278,8 +318,10 @@ class GenerateVideoRequest:
         if self.mode is Mode.T2V and (
             self.start_image
             or self.start_image_ref_name
+            or self.start_image_ref_id
             or self.end_image
             or self.end_image_ref_name
+            or self.end_image_ref_id
             or self.reference_images
             or self.ref_names
         ):

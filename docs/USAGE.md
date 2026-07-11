@@ -460,9 +460,12 @@ gflow video t2v "a dog surfing" --tool creative-director:style=cinematic
 ## `gflow video i2v`
 
 Generate a video from an INITIAL frame (+ optional END frame) and a motion prompt.
-Each image is a local PNG/JPEG; it is bound into the editor's frame slot via the
-media dialog, then Flow fires `batchAsyncGenerateVideoStartImage` (initial only) or
-`…StartAndEndImage` (initial+end interpolation).
+Each frame is a local PNG/JPEG **or the media UUID of an existing in-project asset**
+(#287 — the asset is selected in place, no duplicate upload; pair with `--project`
+so the UUID's project is the one being generated in). A local file is bound into
+the editor's frame slot via the media dialog, then Flow fires
+`batchAsyncGenerateVideoStartImage` (initial only) or `…StartAndEndImage`
+(initial+end interpolation).
 
 ```text
 gflow video i2v --initial-frame INITIAL [--end-frame LAST] PROMPT [--model] [--duration] [--count] [--aspect] [...]
@@ -474,18 +477,27 @@ Arguments:
   PROMPT  Motion prompt.  [required]
 
 Options:
-  --initial-frame PATH  Initial frame to animate. Canonical form; replaces the positional IMAGE.
-  --end-frame PATH      Optional end frame — Flow interpolates initial frame -> end frame.
-  --project ID          Generate in this EXISTING Flow project instead of a
-                        scratch project (see "Sharing one project across calls").
+  --initial-frame PATH|UUID  Initial frame to animate: local image path or in-project
+                             asset media UUID. Canonical form; replaces the positional IMAGE.
+  --end-frame PATH|UUID      Optional end frame — Flow interpolates initial frame -> end frame.
+  --project ID               Generate in this EXISTING Flow project instead of a
+                             scratch project (see "Sharing one project across calls").
 ```
 
 ```bash
 gflow video i2v --initial-frame ./hero.png "Slow camera arc, soft golden light"
 gflow video i2v --initial-frame ./first.png --end-frame ./last.png "morph between scenes" --model veo-quality
+# Reference an existing in-project asset by media UUID (no re-upload, #287):
+gflow video i2v --initial-frame d6f1927a-3eae-4626-bc90-9a6ea7637bab "pan left" --project f6caf027-...
 # Back-compat positional form:
 gflow video i2v ./hero.png "Slow camera arc, soft golden light"
 ```
+
+Exit codes specific to this surface: **27** — Flow's upload endpoint rejected a
+local frame file (`MediaUploadRejectedError`; try re-encoding, e.g.
+`ffmpeg -i in.jpg -q:v 2 -map_metadata -1 out.jpg`, or reference the asset by
+UUID instead); **9** — a frame UUID could not be located in the project's media
+picker (`TransportTimeoutError`; wrong `--project` or foreign UUID).
 
 ## `gflow video r2v`
 
