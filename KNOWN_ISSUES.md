@@ -14,7 +14,36 @@ Living list of behaviour that's broken, surprising, or limited by design — alo
 
 ## Open
 
-### macOS: generation runs logged-out → HTTP 401, even with `--browser chrome`
+### Flow's `uploadImage` endpoint rejects some JPEGs with HTTP 400 (metadata-sensitive)
+
+- **Status:** Open ([#287](https://github.com/ffroliva/gflow-cli/issues/287))
+- **Severity:** Low (typed + remediable) · **Affected:** i2v frame / reference uploads
+
+Observed live 2026-07-11: one JPEG was rejected with HTTP 400 while
+byte-identical-format siblings uploaded fine; re-encoding with
+`ffmpeg -q:v 2 -map_metadata -1` fixed it, implicating a metadata segment.
+Since #290 the rejection raises `MediaUploadRejectedError` (exit 27) with that
+remediation instead of a generic "Unexpected error." (exit 1). **Workaround:**
+re-encode the file, or reference the already-in-project asset by media UUID
+(`--initial-frame <UUID> --project <id>`). Root cause of Flow's metadata
+sensitivity is unidentified.
+
+### i2v frame-slot picker selection by UUID is unproven live (frame-slot dialog vs Add-Media dialog)
+
+- **Status:** Open ([#287](https://github.com/ffroliva/gflow-cli/issues/287) / PR [#290](https://github.com/ffroliva/gflow-cli/pull/290))
+- **Severity:** Medium until the first live run · **Affected:** `gflow video i2v --initial-frame/--end-frame <UUID>`
+
+#290 routes i2v frame slots through `_select_existing_asset` (the UUID picker
+live-proven in the **Add-Media** dialog: v0.26.0 i2i-by-UUID, #282 scroll
+fixes). The **frame-slot** dialog is a different surface with a negative
+prior: #237's name-search in this exact dialog never surfaced generated media
+(see `docs/LIVE_VERIFICATION_v0.25.0.md` — the picker attach was reworked to
+local upload back then). The new path matches grid tiles by thumbnail URL, not
+name search, so it may well work — but until a live run confirms, treat a
+`TransportTimeoutError` (exit 9) with a `debug_frame_ref_miss_*.png`
+screenshot as possibly "this dialog has no asset grid" rather than user error.
+Evidence to capture on the first live run: `frame_ref_attached` structlog
+event, no upload events, and the `batchAsyncGenerateVideoStartImage` route.
 
 - **Status:** **RESOLVED in v0.23.0** ([#222](https://github.com/ffroliva/gflow-cli/issues/222),
   fixed by [#230](https://github.com/ffroliva/gflow-cli/pull/230), @gunalak)

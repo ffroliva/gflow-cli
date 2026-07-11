@@ -1344,11 +1344,20 @@ class VideoGenerationMixin:
         if not await VideoGenerationMixin._select_existing_asset(
             page, media_id, "", out_dir=out_dir
         ):
-            raise TransportTimeoutError(
-                f"{label} frame asset {media_id!r} could not be located in the "
-                "media picker — is it in the target project (pass --project), "
-                "and is the UUID from this profile's library?",
+            # The frame-slot dialog is the one surface this picker reuse is
+            # unproven on (#237's name-search never surfaced generated media
+            # here) — capture the dialog state so a live miss is diagnosable.
+            shot = await _capture_debug_screenshot(
+                page, out_dir, f"debug_frame_ref_miss_{label.lower()}.png"
             )
+            msg = (
+                f"{label} frame asset {media_id!r} could not be located in the "
+                "media picker — is it in the target project (missing or wrong "
+                "--project), and is the UUID from this profile's library?"
+            )
+            if shot is not None:
+                msg = f"{msg} Screenshot: {shot}"
+            raise TransportTimeoutError(msg)
         log.info("ui_automation_video.frame_ref_attached", slot=label, media_id=media_id)
 
     @staticmethod
@@ -1546,8 +1555,9 @@ class VideoGenerationMixin:
         (react-virtuoso renders off-viewport tiles lazily — #282) and
         re-checks between scrolls, the same strategy `_find_picker_entity_tile`
         uses for the entity picker. Returns ``True`` once attached, ``False``
-        when the asset can't be located by any of the above (the caller then
-        falls back to a local upload).
+        when the asset can't be located by any of the above (callers with a
+        local file fall back to uploading it; the #287 frame-ref path has no
+        fallback and raises instead).
         """
         tile = VideoGenerationMixin._existing_asset_tile(page, media_id)
         visible = True

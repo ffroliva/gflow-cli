@@ -1815,3 +1815,4 @@ class TestUploadRejectionTypedError:
             await VideoGenerationMixin._upload_via_open_dialog(
                 page, image, log_label="Start", out_dir=None
             )
+        page.remove_listener.assert_called_once()  # finally-detach on the raise path
