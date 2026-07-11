@@ -309,11 +309,21 @@ class ConfigurationError(GFlowError):
 
 
 class ProfileLockedError(ConfigurationError):
-    """Raised when the profile directory is locked by a running gflow serve daemon."""
+    """Raised when the profile directory is held by another process.
+
+    Two known causes, each raise site supplying its own remediation: a running
+    ``gflow serve`` daemon (browser_manager), or another Chrome — typically a
+    stale browser leaked by a crashed prior run — holding the dir at
+    persistent-context launch (issue #293).
+    """
 
     problem_type = "https://gflow-cli.dev/errors/profile-locked"
     title = "Profile locked"
-    _default_remediation = "Close the running gflow serve daemon or use a different profile name."
+    _default_remediation = (
+        "Another process holds this profile: close a running gflow serve "
+        "daemon or stray Chrome windows using the profile dir, or use a "
+        "different profile name."
+    )
 
 
 class BrowserEngineUnavailableError(ConfigurationError):

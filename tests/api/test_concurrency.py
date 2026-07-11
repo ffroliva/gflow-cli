@@ -225,3 +225,154 @@ async def test_aenter_partial_failure_tears_down_browser(
         assert client._context is None
         assert client._pw is None
         assert client._page_queue is None
+
+
+@pytest.mark.asyncio
+async def test_close_failure_force_closes_browser_before_stop(
+    tmp_path: Path, settings_n4: Settings, fake_context: MagicMock
+) -> None:
+    """#293: context.close() is the graceful ask for system-Chrome to exit.
+    When it fails, pw.stop() alone kills only the Node driver and the detached
+    chrome tree survives holding the profile dir — teardown must force-close
+    the browser before stopping the driver."""
+    fake_context.close = AsyncMock(side_effect=RuntimeError("simulated wedged close"))
+    fake_context.browser.close = AsyncMock()
+    with patch("gflow_cli.api.client.async_playwright") as mock_pw_factory:
+        pw = MagicMock()
+        pw.stop = AsyncMock()
+        pw.chromium.launch_persistent_context = AsyncMock(return_value=fake_context)
+        mock_pw_factory.return_value.start = AsyncMock(return_value=pw)
+        client = FlowApiClient(profile_dir=tmp_path, settings=settings_n4)
+        async with client:
+            pass
+        fake_context.browser.close.assert_awaited()
+        pw.stop.assert_awaited()
+        assert client._context is None
+
+
+@pytest.mark.asyncio
+async def test_close_hang_times_out_and_force_closes(
+    tmp_path: Path,
+    settings_n4: Settings,
+    fake_context: MagicMock,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    """#293: an UNBOUNDED context.close() can hang teardown forever on an
+    errored page; it must be deadline-bounded, then fall back to force-close."""
+    import gflow_cli.api._engine as engine_mod
+
+    monkeypatch.setattr(engine_mod, "_CONTEXT_CLOSE_TIMEOUT_S", 0.05)
+
+    async def _hang() -> None:
+        await asyncio.Event().wait()
+
+    fake_context.close = AsyncMock(side_effect=_hang)
+    fake_context.browser.close = AsyncMock()
+    with patch("gflow_cli.api.client.async_playwright") as mock_pw_factory:
+        pw = MagicMock()
+        pw.stop = AsyncMock()
+        pw.chromium.launch_persistent_context = AsyncMock(return_value=fake_context)
+        mock_pw_factory.return_value.start = AsyncMock(return_value=pw)
+        client = FlowApiClient(profile_dir=tmp_path, settings=settings_n4)
+        async with client:
+            pass
+        fake_context.browser.close.assert_awaited()
+        pw.stop.assert_awaited()
+        assert client._context is None
+
+
+@pytest.mark.asyncio
+async def test_force_close_runs_before_driver_stop(
+    tmp_path: Path, settings_n4: Settings, fake_context: MagicMock
+) -> None:
+    """#293: the ORDER is the fix — the force-close must land while the Node
+    driver is still alive; pw.stop() first would orphan the chrome tree."""
+    order: list[str] = []
+    fake_context.close = AsyncMock(side_effect=RuntimeError("wedged"))
+    fake_context.browser.close = AsyncMock(side_effect=lambda: order.append("force_close"))
+    with patch("gflow_cli.api.client.async_playwright") as mock_pw_factory:
+        pw = MagicMock()
+        pw.stop = AsyncMock(side_effect=lambda: order.append("pw_stop"))
+        pw.chromium.launch_persistent_context = AsyncMock(return_value=fake_context)
+        mock_pw_factory.return_value.start = AsyncMock(return_value=pw)
+        client = FlowApiClient(profile_dir=tmp_path, settings=settings_n4)
+        async with client:
+            pass
+        assert order == ["force_close", "pw_stop"]
+
+
+@pytest.mark.asyncio
+async def test_double_close_failure_still_stops_driver_and_resets(
+    tmp_path: Path, settings_n4: Settings, fake_context: MagicMock
+) -> None:
+    """#293 last-resort branch: context.close AND browser.close both fail —
+    teardown must not raise, must still stop the driver, and must reset the
+    pool fields (the operator breadcrumb is the browser_teardown.force_close_failed
+    log)."""
+    fake_context.close = AsyncMock(side_effect=RuntimeError("wedged"))
+    fake_context.browser.close = AsyncMock(side_effect=RuntimeError("also wedged"))
+    with patch("gflow_cli.api.client.async_playwright") as mock_pw_factory:
+        pw = MagicMock()
+        pw.stop = AsyncMock()
+        pw.chromium.launch_persistent_context = AsyncMock(return_value=fake_context)
+        mock_pw_factory.return_value.start = AsyncMock(return_value=pw)
+        client = FlowApiClient(profile_dir=tmp_path, settings=settings_n4)
+        async with client:
+            pass
+        pw.stop.assert_awaited()
+        assert client._context is None
+        assert client._pw is None
+
+
+@pytest.mark.asyncio
+async def test_launch_marker_message_raises_profile_locked_error(
+    tmp_path: Path, settings_n4: Settings
+) -> None:
+    """The message-marker branch of _is_target_closed — real Playwright launch
+    failures often arrive as a generically-named Error carrying only the
+    'Target closed' marker text (the class-name branch is tested below)."""
+    from gflow_cli.errors import ProfileLockedError
+
+    class SomePlaywrightError(Exception):
+        pass
+
+    with patch("gflow_cli.api.client.async_playwright") as mock_pw_factory:
+        pw = MagicMock()
+        pw.stop = AsyncMock()
+        pw.chromium.launch_persistent_context = AsyncMock(
+            side_effect=SomePlaywrightError("Target closed")
+        )
+        mock_pw_factory.return_value.start = AsyncMock(return_value=pw)
+        client = FlowApiClient(profile_dir=tmp_path, settings=settings_n4)
+        with pytest.raises(ProfileLockedError):
+            await client.__aenter__()
+
+
+@pytest.mark.asyncio
+async def test_launch_target_closed_raises_profile_locked_error(
+    tmp_path: Path, settings_n4: Settings
+) -> None:
+    """#293 DX half: a TargetClosedError at persistent-context LAUNCH almost
+    always means a stale Chrome (crashed/leaked prior run) still holds the
+    profile dir — surface it as ProfileLockedError with a remediation instead
+    of falling through to 'Unexpected error.' exit 1."""
+    from gflow_cli.errors import ProfileLockedError
+
+    # Named exactly like Playwright's class but carrying NO marker message —
+    # exercises the class-NAME branch of _is_target_closed in isolation (the
+    # message-marker branch has its own test above).
+    class TargetClosedError(Exception):
+        pass
+
+    with patch("gflow_cli.api.client.async_playwright") as mock_pw_factory:
+        pw = MagicMock()
+        pw.stop = AsyncMock()
+        pw.chromium.launch_persistent_context = AsyncMock(
+            side_effect=TargetClosedError("browser exited unexpectedly")
+        )
+        mock_pw_factory.return_value.start = AsyncMock(return_value=pw)
+        client = FlowApiClient(profile_dir=tmp_path, settings=settings_n4)
+        with pytest.raises(ProfileLockedError, match="holds it") as exc_info:
+            await client.__aenter__()
+        assert "stale Chrome" in (exc_info.value.remediation_hint or "")
+        pw.stop.assert_awaited()  # partial-setup guard still tears down the driver

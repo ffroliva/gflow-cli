@@ -743,6 +743,7 @@ class UiAutomationTransport(VideoGenerationMixin):
         # opt-in patchright engine routes through the resolver.
         from gflow_cli.api._engine import (
             active_engine,
+            close_context_bounded,
             log_engine_selected,
             resolve_async_playwright,
         )
@@ -768,6 +769,7 @@ class UiAutomationTransport(VideoGenerationMixin):
         # ``.chromium.launch_persistent_context`` surface; type as Any so this
         # standalone path is engine-agnostic without per-engine stubs.
         pw: Any = await pw_cm.__aenter__()
+        ctx = None
         try:
             import os
 
@@ -807,7 +809,11 @@ class UiAutomationTransport(VideoGenerationMixin):
                 profile_dir=str(profile_dir),
             )
         except Exception:
-            # Partial-setup leak guard.
+            # Partial-setup leak guard. The context must be closed BEFORE the
+            # driver exits — stopping only the driver leaves the detached
+            # system-Chrome alive holding the profile dir (issue #293).
+            if ctx is not None:
+                await close_context_bounded(ctx, owner="ui_automation")
             await pw_cm.__aexit__(None, None, None)
             raise
 
@@ -3028,13 +3034,20 @@ class UiAutomationTransport(VideoGenerationMixin):
         if not self._setup_done:
             return
         if self._owns_playwright and self._pw_cm is not None:
+            from gflow_cli.api._engine import (  # noqa: PLC0415
+                DRIVER_STOP_TIMEOUT_S,
+                close_context_bounded,
+            )
+
+            if self._ctx is not None:
+                # Bounded close + force-close fallback (issue #293) — same
+                # helper as FlowApiClient's teardown; this standalone path had
+                # the identical unbounded-close-and-swallow gap.
+                await close_context_bounded(self._ctx, owner="ui_automation")
             try:
-                if self._ctx is not None:
-                    await self._ctx.close()
-            except Exception as e:
-                log.warning("ui_automation.context_close_failed", error=str(e))
-            try:
-                await self._pw_cm.__aexit__(None, None, None)
+                await asyncio.wait_for(
+                    self._pw_cm.__aexit__(None, None, None), timeout=DRIVER_STOP_TIMEOUT_S
+                )
             except Exception as e:
                 log.warning("ui_automation.playwright_exit_failed", error=str(e))
         self._pw_cm = None
