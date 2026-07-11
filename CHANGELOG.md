@@ -7,6 +7,8 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+## [0.32.0] — 2026-07-11
+
 ### Added
 
 - **`gflow video i2v` accepts an in-project asset media UUID for `--initial-frame` / `--end-frame` (and the positional IMAGE).** A UUID-shaped value selects the already-existing Flow asset in place via the same `_select_existing_asset` picker the image `--ref` flow uses (#282 scroll/search fixes included) instead of forcing a duplicate local-file upload — the duplicate-asset pileup and per-run re-upload from the 2026-07-11 chalkboard pilot. Pair with `--project` so the asset's project is the one generated in; a UUID that can't be located in the picker fails with `TransportTimeoutError` (exit 9) naming the slot and UUID (#287).
@@ -1917,7 +1919,9 @@ shell-script template that branches on these codes.
 
 First skeleton. Not functional end-to-end yet.
 
-[Unreleased]: https://github.com/ffroliva/gflow-cli/compare/v0.30.0...HEAD
+[Unreleased]: https://github.com/ffroliva/gflow-cli/compare/v0.32.0...HEAD
+[0.32.0]: https://github.com/ffroliva/gflow-cli/compare/v0.31.0...v0.32.0
+[0.31.0]: https://github.com/ffroliva/gflow-cli/compare/v0.30.0...v0.31.0
 [0.30.0]: https://github.com/ffroliva/gflow-cli/compare/v0.29.0...v0.30.0
 [0.29.0]: https://github.com/ffroliva/gflow-cli/compare/v0.28.0...v0.29.0
 [0.28.0]: https://github.com/ffroliva/gflow-cli/compare/v0.27.1...v0.28.0
