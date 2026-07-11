@@ -23,6 +23,7 @@ from gflow_cli.api.transports.ui_automation_video import (
     PICKER_GRID_SCROLL_MAX_ATTEMPTS,
     PICKER_GRID_SCROLL_STALL_LIMIT,
     PICKER_INCLUDE_BUTTON,
+    PICKER_PROJECT_MENU_OPEN,
     PICKER_PROJECT_SELECTOR_TRIGGERS,
     PICKER_SEARCH_INPUT,
     VideoGenerationMixin,
@@ -1739,14 +1740,15 @@ _PROJECT_URL_287 = f"https://labs.google/fx/tools/flow/project/{_PROJECT_ID_287}
 
 
 class TestPickerProjectSync:
-    """#287 primary hypothesis (project owner): the media picker's library
-    component has its OWN project selection — its search/grid is per-project,
-    and `--project` only navigates the EDITOR. If the picker's library opens
-    on a different active project (plausibly the most recently created one),
-    the target asset can never be surfaced no matter how deep the scroll.
-    `_ensure_picker_project` aligns the picker's active project to the target
-    before any lookup, and no-ops when the picker has no project selector
-    (older cohort) or the target project can't be derived."""
+    """#287 CONFIRMED (live round 2): the media picker's library component has
+    its OWN project selection — the dump showed the library on an old test
+    project (`gflow-cli t2i`, 16 tiles, `target_project_in_dialog: false`)
+    while `--project` had only navigated the EDITOR. The trigger is a Radix
+    `ProjectDropdownSubTrigger` (aria-haspopup='menu', submenu semantics,
+    portal-rendered options), the menu options render project NAMES (not
+    ids), and the UI locale is not English (pt-BR observed) — so the switch
+    resolves the target project's NAME from the live page and matches menu
+    options by id first, then by name, never by locale-dependent labels."""
 
     @staticmethod
     def _trigger_mock(*, references_target: bool) -> MagicMock:
@@ -1754,38 +1756,73 @@ class TestPickerProjectSync:
         trigger.first = trigger
         trigger.count = AsyncMock(return_value=1)
         trigger.click = AsyncMock()
-        # Active-project probe: does the trigger's outerHTML reference the
-        # target project id?
+        trigger.hover = AsyncMock()
+        trigger.focus = AsyncMock()
+        # Active-project probe: does the trigger's markup/text reference the
+        # target project (by id, or by resolved name)?
         trigger.evaluate = AsyncMock(return_value=references_target)
         return trigger
 
     @staticmethod
-    def _selector_page(trigger: MagicMock | None) -> MagicMock:
+    def _menu_mock(*, wait_for: object = None) -> MagicMock:
+        menu = MagicMock()
+        menu.last = menu
+        if isinstance(wait_for, list):
+            menu.wait_for = AsyncMock(side_effect=wait_for)
+        else:
+            menu.wait_for = AsyncMock(side_effect=wait_for) if wait_for else AsyncMock()
+        return menu
+
+    @staticmethod
+    def _selector_page(trigger: MagicMock | None, *, menu: MagicMock | None = None) -> MagicMock:
         page = _mock_async_page()
         absent = MagicMock()
         absent.first = absent
+        absent.last = absent
         absent.count = AsyncMock(return_value=0)
+        absent.wait_for = AsyncMock(side_effect=TimeoutError("absent"))
 
         def _locator(selector: str) -> MagicMock:
             if trigger is not None and selector == PICKER_PROJECT_SELECTOR_TRIGGERS[0]:
                 return trigger
+            if menu is not None and selector == PICKER_PROJECT_MENU_OPEN:
+                return menu
             return absent
 
         page.locator = MagicMock(side_effect=_locator)
-        page.evaluate = AsyncMock(return_value=True)  # dropdown option click succeeds
+        # Dropdown option match JS: id-tier hit by default.
+        page.evaluate = AsyncMock(return_value={"clicked": True, "matched_by": "id", "items": []})
         return page
+
+    def test_trigger_cascade_prefers_project_dropdown_and_excludes_sort(self) -> None:
+        """Live round 2: the trigger is `.ProjectDropdownSubTrigger`, and a
+        sibling `.SortDropdownSubTrigger` ('Recentes' — pt-BR) also matches a
+        generic aria-haspopup='menu' probe. The cascade must try the stable
+        class first and must never match the sort trigger."""
+        assert "ProjectDropdownSubTrigger" in PICKER_PROJECT_SELECTOR_TRIGGERS[0]
+        menu_tiers = [s for s in PICKER_PROJECT_SELECTOR_TRIGGERS if "aria-haspopup='menu'" in s]
+        assert menu_tiers, "expected a generic menu-haspopup fallback tier"
+        assert all("SortDropdownSubTrigger" in s and ":not(" in s for s in menu_tiers), (
+            "the generic menu tier must exclude the SortDropdownSubTrigger"
+        )
 
     @pytest.mark.asyncio
     async def test_switches_picker_to_target_project_when_it_differs(self) -> None:
         trigger = self._trigger_mock(references_target=False)
-        page = self._selector_page(trigger)
+        menu = self._menu_mock()  # opens on the first click
+        page = self._selector_page(trigger, menu=menu)
 
-        result = await VideoGenerationMixin._ensure_picker_project(page, _PROJECT_ID_287)
+        result = await VideoGenerationMixin._ensure_picker_project(
+            page, _PROJECT_ID_287, project_name="Chalkboard Spike", out_dir=None
+        )
 
         assert result is True
         trigger.click.assert_awaited_once()
-        # The dropdown-option click JS receives the target project id.
-        assert page.evaluate.await_args.args[-1] == _PROJECT_ID_287
+        # The option-match JS receives BOTH the id and the resolved name —
+        # menu options render project NAMES, not ids (live round 2).
+        match_args = page.evaluate.await_args.args[-1]
+        assert match_args["projectId"] == _PROJECT_ID_287
+        assert match_args["projectName"] == "Chalkboard Spike"
 
     @pytest.mark.asyncio
     async def test_noop_when_picker_already_on_target_project(self) -> None:
@@ -1811,19 +1848,94 @@ class TestPickerProjectSync:
         page.keyboard.press.assert_not_awaited()
 
     @pytest.mark.asyncio
-    async def test_switch_miss_escapes_dropdown_and_returns_false(self) -> None:
-        """A selector exists but no dropdown option references the target
-        project id: close the dropdown (never leave an open overlay) and
-        report False — the asset lookup proceeds and its not-found telemetry
-        captures the picker state."""
+    async def test_menu_open_falls_back_to_hover_for_radix_subtrigger(self) -> None:
+        """Radix SubTrigger submenus may not open on plain click — the open
+        sequence is click -> hover -> focus+ArrowRight, each verified against
+        the portal-rendered `[role='menu'][data-state='open']`."""
         trigger = self._trigger_mock(references_target=False)
-        page = self._selector_page(trigger)
-        page.evaluate = AsyncMock(return_value=False)
+        # click does NOT open the menu; hover does.
+        menu = self._menu_mock(wait_for=[TimeoutError("closed after click"), None])
+        page = self._selector_page(trigger, menu=menu)
+
+        result = await VideoGenerationMixin._ensure_picker_project(page, _PROJECT_ID_287)
+
+        assert result is True
+        trigger.hover.assert_awaited_once()
+        arrow_presses = [
+            c for c in page.keyboard.press.call_args_list if c.args and c.args[0] == "ArrowRight"
+        ]
+        assert not arrow_presses, "keyboard tier must not fire once hover opened the menu"
+
+    @pytest.mark.asyncio
+    async def test_switch_miss_escapes_dropdown_and_returns_false(self) -> None:
+        """A selector exists but no menu option matches by id OR name: close
+        the dropdown (never leave an open overlay) and report False — the
+        asset lookup proceeds and its not-found telemetry captures state."""
+        trigger = self._trigger_mock(references_target=False)
+        page = self._selector_page(trigger, menu=self._menu_mock())
+        page.evaluate = AsyncMock(return_value={"clicked": False, "matched_by": None, "items": []})
 
         result = await VideoGenerationMixin._ensure_picker_project(page, _PROJECT_ID_287)
 
         assert result is False
         page.keyboard.press.assert_awaited_with("Escape")
+
+    @pytest.mark.asyncio
+    async def test_switch_miss_writes_open_menu_items_dump(
+        self, tmp_path: Path, install_log_capture: structlog.testing.LogCapture
+    ) -> None:
+        """Round-2 gap: on a miss we only had the CLOSED trigger's markup. The
+        match JS now returns the OPEN menu's first items (truncated) and the
+        miss path writes them to the out-dir + reports them on the event."""
+        trigger = self._trigger_mock(references_target=False)
+        page = self._selector_page(trigger, menu=self._menu_mock())
+        items = ["<div role='menuitem'>gflow-cli t2i</div>", "<div role='menuitem'>Scratch</div>"]
+        page.evaluate = AsyncMock(
+            return_value={"clicked": False, "matched_by": None, "items": items}
+        )
+
+        result = await VideoGenerationMixin._ensure_picker_project(
+            page, _PROJECT_ID_287, project_name="Chalkboard Spike", out_dir=tmp_path
+        )
+
+        assert result is False
+        dump_path = tmp_path / f"debug_picker_project_menu_{_PROJECT_ID_287[:8]}.json"
+        assert dump_path.exists(), "switch miss must leave the open-menu items in the out-dir"
+        data = json.loads(dump_path.read_text(encoding="utf-8"))
+        assert data["project_id"] == _PROJECT_ID_287
+        assert data["project_name"] == "Chalkboard Spike"
+        assert data["items"] == items
+        misses = [
+            e
+            for e in install_log_capture.entries
+            if e["event"] == "ui_automation_video.picker_project_switch_miss"
+        ]
+        assert misses, "expected a picker_project_switch_miss event"
+        assert misses[0]["menu_items"] == len(items)
+        assert misses[0]["menu_dump"] == str(dump_path)
+
+    @pytest.mark.asyncio
+    async def test_resolve_project_name_from_live_page(self) -> None:
+        """The picker menu shows project NAMES; the CLI only knows the UUID.
+        The name is resolved from the live page (an element referencing the
+        project id, e.g. an href — reflects renames, works for projects not
+        created by gflow)."""
+        page = _mock_async_page()
+        page.evaluate = AsyncMock(return_value={"source": "href", "name": "Chalkboard Spike"})
+
+        name = await VideoGenerationMixin._resolve_project_name(page, _PROJECT_ID_287)
+
+        assert name == "Chalkboard Spike"
+        assert page.evaluate.await_args.args[-1] == _PROJECT_ID_287
+
+    @pytest.mark.asyncio
+    async def test_resolve_project_name_returns_none_when_page_has_no_hint(self) -> None:
+        page = _mock_async_page()
+        page.evaluate = AsyncMock(return_value=None)
+
+        name = await VideoGenerationMixin._resolve_project_name(page, _PROJECT_ID_287)
+
+        assert name is None
 
     @pytest.mark.asyncio
     async def test_sync_derives_target_project_from_page_url(
@@ -1839,6 +1951,25 @@ class TestPickerProjectSync:
         await VideoGenerationMixin._sync_picker_project(page)
 
         assert ensure.await_args.args[-1] == _PROJECT_ID_287
+
+    @pytest.mark.asyncio
+    async def test_sync_passes_resolved_name_and_out_dir_to_ensure(
+        self, monkeypatch: pytest.MonkeyPatch, tmp_path: Path
+    ) -> None:
+        ensure = AsyncMock()
+        monkeypatch.setattr(VideoGenerationMixin, "_ensure_picker_project", ensure)
+        monkeypatch.setattr(
+            VideoGenerationMixin,
+            "_resolve_project_name",
+            AsyncMock(return_value="Chalkboard Spike"),
+        )
+        page = _mock_async_page()
+        page.url = _PROJECT_URL_287
+
+        await VideoGenerationMixin._sync_picker_project(page, out_dir=tmp_path)
+
+        assert ensure.await_args.kwargs["project_name"] == "Chalkboard Spike"
+        assert ensure.await_args.kwargs["out_dir"] == tmp_path
 
     @pytest.mark.asyncio
     async def test_sync_noop_when_page_url_has_no_project(
@@ -2212,7 +2343,7 @@ class TestAttachImageUuidRefsPickerScroll:
         ref's lookup, or the lookup scans the wrong project's grid."""
         calls: list[str] = []
 
-        async def _sync(page: object) -> None:
+        async def _sync(page: object, **kwargs: object) -> None:
             calls.append("sync")
 
         async def _select(*args: object, **kwargs: object) -> bool:
@@ -2304,7 +2435,7 @@ class TestAttachFrameByMediaId:
             VideoGenerationMixin, "_resolve_frame_slot", AsyncMock(return_value=slot)
         )
 
-        async def _sync(page: object) -> None:
+        async def _sync(page: object, **kwargs: object) -> None:
             calls.append("sync")
 
         async def _select(*args: object, **kwargs: object) -> bool:
