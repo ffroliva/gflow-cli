@@ -24,6 +24,7 @@ from gflow_cli.data.queries import (
     _LIST_IMAGES_SQL,
     _LIST_VIDEOS_ALL_COPIES_SQL,
     _LIST_VIDEOS_SQL,
+    get_asset_prompt,
     list_images,
     list_profiles,
     list_projects,
@@ -611,3 +612,20 @@ def test_list_images_with_multiple_operations_no_duplicate_rows(tmp_path: Path) 
     rows_all = list_images(db_path=db, profile=None, limit=20, offset=0, all_copies=True)
     assert len(rows_all) == 1
     assert rows_all[0].prompt in ("First prompt", "Second prompt")
+
+
+# ---------------------------------------------------------------------------
+# get_asset_prompt — #287 round 6 (picker search-hint tier)
+# ---------------------------------------------------------------------------
+
+
+def test_get_asset_prompt_by_media_id(seeded: Path) -> None:
+    """#287 round 6: the picker search-hint tier needs the asset's recorded
+    generation PROMPT (Flow's media search does not index UUIDs, but the tile
+    alt text carries the prompt). Resolved by flow_media_id."""
+    prompt = get_asset_prompt(db_path=seeded, media_id="img-media-alice-1-1")
+    assert prompt == "prompt for alice project 1 image 1"
+
+
+def test_get_asset_prompt_unknown_media_returns_none(seeded: Path) -> None:
+    assert get_asset_prompt(db_path=seeded, media_id="no-such-media") is None

@@ -391,6 +391,30 @@ _PICKER_GRID_TILE_IDS_JS = (
     "document.querySelectorAll(\"[role='option'] img, [data-tile-id]\")"
     ").map((el) => el.getAttribute('data-tile-id') || el.getAttribute('src') || '')"
 )
+# #287 round 6 audit: react-virtuoso scrolls its OWN container (usually a
+# [data-virtuoso-scroller] node), not the dialog — a mouse wheel over the
+# wrong node is a silent no-op that looks like "end of grid". Scroll the
+# actual scrollable element via JS and return evidence (which node moved,
+# scrollTop before/after) so a no-op scroll is visible in telemetry. The
+# hover+wheel fallback remains for when this probe fails.
+_PICKER_GRID_SCROLL_JS = (
+    "(delta) => {"
+    " const dialogs = document.querySelectorAll(\"[role='dialog']\");"
+    " const root = dialogs.length ? dialogs[dialogs.length - 1] : document.body;"
+    " const nodes = [root].concat(Array.from(root.querySelectorAll('*')));"
+    " const scroller = nodes.find((el) => el.hasAttribute('data-virtuoso-scroller'))"
+    "  || nodes.find((el) => el.scrollHeight > el.clientHeight + 1)"
+    "  || root;"
+    " const before = scroller.scrollTop;"
+    " scroller.scrollTop = before + delta;"
+    " return {"
+    "  tag: scroller.tagName.toLowerCase(),"
+    "  cls: (scroller.getAttribute('class') || '').slice(0, 120),"
+    "  before: before,"
+    "  after: scroller.scrollTop,"
+    " };"
+    "}"
+)
 # #287 CONFIRMED (live round 2): the media picker's library view has its OWN
 # active project — `--project` only navigates the EDITOR — so the picker can
 # open on a different project (observed live: an old test project, with the
@@ -470,12 +494,17 @@ _PICKER_PROJECT_MENU_DUMP_JS = (
 # project's NAME (live round 2: 'gflow-cli t2i'), so match by id-in-markup OR
 # by the resolved target name (normalized text, never a locale-dependent
 # label).
+# Round 6: the trigger's textContent carries the active project's name plus
+# icon-ligature noise, so exact equality missed a CORRECT project (round-5
+# waste: ~30 menu probes hunting for the project we were already in).
+# Contains is safe here: the trigger only ever shows the ACTIVE project.
 _PICKER_PROJECT_TRIGGER_ACTIVE_JS = (
     "(el, args) => {"
     " if (el.outerHTML.includes(args.projectId)) { return true; }"
     " if (!args.projectName) { return false; }"
     " const norm = (s) => (s || '').replace(/\\s+/g, ' ').trim().toLowerCase();"
-    " return norm(el.textContent) === norm(args.projectName);"
+    " return norm(el.textContent) === norm(args.projectName)"
+    "  || norm(el.textContent).includes(norm(args.projectName));"
     "}"
 )
 # With the project (sub)menu OPEN: click the candidate matching the target
@@ -1576,6 +1605,7 @@ class VideoGenerationMixin:
         *,
         out_dir: Path | None,
         project_name: str | None = None,
+        search_hints: tuple[str, ...] = (),
     ) -> None:
         """Fill the I2V first/last frame slot with an already-existing in-project
         asset, selected by its media UUID (#287) — no duplicate upload. Opens the
@@ -1602,7 +1632,7 @@ class VideoGenerationMixin:
             await search.fill("")
 
         if not await VideoGenerationMixin._select_existing_asset(
-            page, media_id, "", out_dir=out_dir
+            page, media_id, "", out_dir=out_dir, search_hints=search_hints
         ):
             # The frame-slot dialog is the one surface this picker reuse is
             # unproven on (#237's name-search never surfaced generated media
@@ -1807,6 +1837,7 @@ class VideoGenerationMixin:
         *,
         out_dir: Path | None,
         dialog_timeout_s: float = REMOTE_PICKER_CLOSE_TIMEOUT_S,
+        search_hints: tuple[str, ...] = (),
     ) -> bool:
         """In the OPEN reference picker, select the already-existing Flow asset
         identified by ``media_id`` (preferred over uploading a duplicate).
@@ -1838,9 +1869,15 @@ class VideoGenerationMixin:
             # cleared-grid scroll fallback below) takes over. The UUID tiers
             # cover generated/uploaded media whose display name embeds the
             # UUID (or its first segment as a filename stem).
+            # #287 round 6: the UUID tiers are kept as cheap first attempts,
+            # but live rounds proved Flow's search does NOT index UUIDs — the
+            # `search_hints` (CLI-resolved recorded prompts, first words) are
+            # the tier that actually matches, since tile alt text carries the
+            # generation prompt. Tile matching stays UUID-in-src, so an
+            # imprecise hint can only surface extra tiles, never a wrong one.
             uuid_stem = media_id.split("-", 1)[0]
             terms: list[str] = []
-            for candidate in (display_name, media_id, uuid_stem):
+            for candidate in (display_name, media_id, uuid_stem, *search_hints):
                 if candidate and candidate not in terms:
                     terms.append(candidate)
             for term in terms:
@@ -2035,13 +2072,16 @@ class VideoGenerationMixin:
         The raw title is logged on every resolution, so the real live pattern
         is learnable and this list can be tightened from evidence."""
         cleaned = title.strip()
-        for sep in (" - ", " – ", " — ", " | "):
-            suffix = f"{sep}Flow"
-            if cleaned.endswith(suffix):
-                return cleaned[: -len(suffix)].strip()
-            prefix = f"Flow{sep}"
-            if cleaned.startswith(prefix):
-                return cleaned[len(prefix) :].strip()
+        # 'Google Flow' first (longer, more specific) — the round-5 live run
+        # observed 'Google Flow - <project name>'.
+        for brand in ("Google Flow", "Flow"):
+            for sep in (" - ", " – ", " — ", " | "):
+                suffix = f"{sep}{brand}"
+                if cleaned.endswith(suffix):
+                    return cleaned[: -len(suffix)].strip()
+                prefix = f"{brand}{sep}"
+                if cleaned.startswith(prefix):
+                    return cleaned[len(prefix) :].strip()
         return cleaned
 
     @staticmethod
@@ -2395,10 +2435,25 @@ class VideoGenerationMixin:
         return found
 
     @staticmethod
-    async def _scroll_picker_grid(page: Page, delta_px: int = PICKER_GRID_SCROLL_DELTA_PX) -> None:
-        """Wheel-scroll the open resource picker down one step. The Tudo grid is
-        virtualised, so off-screen tiles are absent from the DOM until scrolled
-        into view. Hover the dialog first so the wheel targets the grid."""
+    async def _scroll_picker_grid(
+        page: Page, delta_px: int = PICKER_GRID_SCROLL_DELTA_PX
+    ) -> dict[str, object] | None:
+        """Scroll the open resource picker down one step. The Tudo grid is
+        virtualised, so off-screen tiles are absent from the DOM until
+        scrolled into view. #287 round 6: react-virtuoso scrolls its own
+        container, so the primary path drives the dialog's ACTUAL scrollable
+        node via JS and returns evidence (tag/class + scrollTop before/after
+        — a no-op scroll where scrollTop never moves is then visible in
+        telemetry). Falls back to the blind hover+wheel when the JS probe
+        fails, returning ``None`` (no evidence)."""
+        info_raw: object = None
+        try:
+            info_raw = await page.evaluate(_PICKER_GRID_SCROLL_JS, delta_px)
+        except Exception:  # noqa: BLE001 - JS probe is best-effort
+            info_raw = None
+        if isinstance(info_raw, dict):
+            await page.wait_for_timeout(350)
+            return cast("dict[str, object]", info_raw)
         dialog = page.locator(DIALOG_ANY).last
         try:
             await dialog.hover(timeout=2000)
@@ -2406,6 +2461,7 @@ class VideoGenerationMixin:
             pass
         await page.mouse.wheel(0, delta_px)
         await page.wait_for_timeout(350)
+        return None
 
     @staticmethod
     async def _picker_grid_fingerprint(page: Page) -> frozenset[str] | None:
@@ -2450,7 +2506,7 @@ class VideoGenerationMixin:
                     found=True,
                 )
                 return True
-            await VideoGenerationMixin._scroll_picker_grid(page)
+            scroll_info = await VideoGenerationMixin._scroll_picker_grid(page)
             attempts += 1
             rendered = await VideoGenerationMixin._picker_grid_fingerprint(page)
             log.info(
@@ -2462,6 +2518,12 @@ class VideoGenerationMixin:
                     if rendered is not None and previous is not None
                     else None
                 ),
+                # #287 round 6 audit: WHICH node scrolled, and did it move at
+                # all — a wrong-node no-op (scrollTop frozen) is now visible.
+                scrolled_tag=scroll_info.get("tag") if scroll_info is not None else None,
+                scrolled_class=scroll_info.get("cls") if scroll_info is not None else None,
+                scroll_top_before=scroll_info.get("before") if scroll_info is not None else None,
+                scroll_top_after=scroll_info.get("after") if scroll_info is not None else None,
             )
             if rendered is None:
                 if attempts >= PICKER_GRID_SCROLL_ATTEMPTS:
@@ -2923,6 +2985,7 @@ class VideoGenerationMixin:
                 request.start_image_ref_id,
                 out_dir=out_dir,
                 project_name=request.project_name,
+                search_hints=request.search_hints,
             )
         elif request.start_image_ref_name is not None:
             await VideoGenerationMixin._attach_remote_frame(
@@ -2940,6 +3003,7 @@ class VideoGenerationMixin:
                 request.end_image_ref_id,
                 out_dir=out_dir,
                 project_name=request.project_name,
+                search_hints=request.search_hints,
             )
         elif request.end_image_ref_name is not None:
             await VideoGenerationMixin._attach_remote_frame(

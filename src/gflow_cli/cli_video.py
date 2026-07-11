@@ -32,6 +32,8 @@ from gflow_cli.errors import DataStoreError
 from gflow_cli.storage import cloud_info_from_path
 
 if TYPE_CHECKING:
+    from collections.abc import Sequence
+
     from gflow_cli.chain import ChainLinkSpec
     from gflow_cli.tools.invocation import AppliedTool
 
@@ -220,6 +222,45 @@ class _I2VParams:
     # Picker project-menu display-name override (#287): the media picker's
     # library is per-project and its project menu lists NAMES, not ids.
     project_name: str | None = None
+    # Picker search hints (#287 round 6): the catalog-recorded prompts of the
+    # UUID frame refs, first words — Flow's media search indexes prompt text
+    # (tile alt), not UUIDs.
+    search_hints: tuple[str, ...] = ()
+
+
+# First words of a recorded prompt used as a picker search term (#287 round
+# 6) — long enough to be distinctive, short enough to survive alt-text
+# truncation in Flow's search index.
+_SEARCH_HINT_WORDS = 6
+
+
+def _media_search_hints(media_ids: Sequence[str | None]) -> tuple[str, ...]:
+    """Best-effort picker search hints for media-UUID frame refs (#287 round
+    6): Flow's media search does not index UUIDs, but each picker tile's alt
+    text carries the generation PROMPT — resolve each ref's recorded prompt
+    from the local catalog and use its first words as a search term.
+    Layering: the CLI resolves (it owns catalog access); the transport only
+    consumes. Never raises — a missing catalog, unknown asset, or absent
+    prompt just yields no hint."""
+    hints: list[str] = []
+    for media_id in media_ids:
+        if not media_id:
+            continue
+        prompt: str | None = None
+        try:
+            from gflow_cli.config import get_settings as _get_settings
+            from gflow_cli.data import queries
+
+            prompt = queries.get_asset_prompt(
+                db_path=_get_settings().resolved_db_path(), media_id=media_id
+            )
+        except Exception:  # noqa: BLE001 - hints are best-effort, never fatal
+            prompt = None
+        if prompt:
+            hint = " ".join(prompt.split()[:_SEARCH_HINT_WORDS])
+            if hint and hint not in hints:
+                hints.append(hint)
+    return tuple(hints)
 
 
 async def _run_i2v(
@@ -269,6 +310,7 @@ async def _run_i2v(
         end_image=Path(params.end_frame) if params.end_frame else None,
         end_image_ref_id=params.end_frame_ref_id,
         project_name=params.project_name,
+        search_hints=params.search_hints,
         original_prompt=params.original_prompt,
         tool=params.tool,
     )
@@ -1054,6 +1096,13 @@ def i2v(  # NOSONAR
     start_path, start_ref_id = _classify_frame(resolved_image, "'IMAGE' / '--initial-frame'")
     end_path, end_ref_id = _classify_frame(end_frame, end_hint)
 
+    # #287 round 6: for UUID frame refs, resolve the assets' recorded prompts
+    # into picker search hints (Flow's media search indexes prompt text, not
+    # UUIDs). Best-effort — no catalog, no hints.
+    search_hints: tuple[str, ...] = ()
+    if start_ref_id or end_ref_id:
+        search_hints = _media_search_hints([start_ref_id, end_ref_id])
+
     profile_name = _resolve_profile(profile)
     provider_dir = _make_provider_dir(profile_name)
     prompt_to_send, original_prompt, applied_tool = apply_tool_option(
@@ -1071,6 +1120,7 @@ def i2v(  # NOSONAR
         original_prompt=original_prompt,
         tool=applied_tool,
         project_name=project_display_name,
+        search_hints=search_hints,
     )
     run_with_handlers(
         lambda: _run_i2v(

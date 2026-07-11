@@ -15,6 +15,7 @@ import structlog
 from gflow_cli.api.transports.ui_automation import UiAutomationTransport
 from gflow_cli.api.transports.ui_automation_video import (
     _PICKER_PROJECT_OPTION_MATCH_JS,
+    _PICKER_PROJECT_TRIGGER_ACTIVE_JS,
     ADD_MEDIA_BUTTON,
     DIALOG_ANY,
     FRAME_SLOT_BY_LABEL,
@@ -1615,12 +1616,17 @@ class TestSelectExistingAssetLargeGrid:
             count_side_effect=[0] * self._DEEP_GRID_SCROLLS + [1],
         )
         page = TestSelectExistingAssetPickerScroll._page_with_tile(tile)
-        # Progress evidence: each scroll renders a fresh window of tiles.
-        # (+5 headroom: the search tiers also probe the grid once each for
-        # their rendered-count telemetry before the scroll loop starts.)
-        page.evaluate = AsyncMock(
-            side_effect=[[f"tile-{i}"] for i in range(self._DEEP_GRID_SCROLLS + 5)]
-        )
+        # Progress evidence: each fingerprint probe sees a fresh window of
+        # tiles. The JS grid-scroll probe is made to FAIL so this test pins
+        # the hover+wheel fallback path (round-6: JS scroll is primary).
+        counter = itertools.count()
+
+        def _eval(js: str, *args: object) -> object:
+            if "scrollTop" in js:
+                raise RuntimeError("no JS scroller in this fake")
+            return [f"tile-{next(counter)}"]
+
+        page.evaluate = AsyncMock(side_effect=_eval)
 
         result = await VideoGenerationMixin._select_existing_asset(page, "uuid-1", "", out_dir=None)
 
@@ -1736,6 +1742,93 @@ class TestSelectExistingAssetLargeGrid:
         search.press_sequentially.assert_not_awaited()
         search.fill.assert_not_awaited()
         assert page.mouse.wheel.await_count == 2
+
+    @pytest.mark.asyncio
+    async def test_search_hint_tier_runs_after_uuid_tiers(self) -> None:
+        """#287 round 6: Flow's media search does NOT index UUIDs (live rounds
+        1-5), but the tile alt text carries the generation PROMPT — a
+        CLI-resolved prompt hint typed into the search box surfaces the tile
+        (matched by UUID-in-src among the results) without any scrolling."""
+        tile = TestSelectExistingAssetPickerScroll._tile_mock(
+            wait_for_side_effect=[
+                TimeoutError("not visible in initial viewport"),
+                TimeoutError("not surfaced by the UUID search"),
+                TimeoutError("not surfaced by the UUID-stem search"),
+                None,  # surfaced by the prompt-hint search
+            ],
+            count_side_effect=0,
+        )
+        page = TestSelectExistingAssetPickerScroll._page_with_tile(tile)
+        search = page.locator(PICKER_SEARCH_INPUT)
+
+        result = await VideoGenerationMixin._select_existing_asset(
+            page,
+            self._FULL_UUID,
+            "",
+            out_dir=None,
+            search_hints=("stickman on a chalkboard, teaching",),
+        )
+
+        assert result is True
+        tile.click.assert_awaited_once()
+        terms = [c.args[0] for c in search.press_sequentially.await_args_list]
+        assert terms == [self._FULL_UUID, "d6f1927a", "stickman on a chalkboard, teaching"]
+        assert page.mouse.wheel.await_count == 0, "a hint hit must skip scrolling"
+
+    @pytest.mark.asyncio
+    async def test_grid_scroll_uses_js_scroller_and_logs_evidence(
+        self, install_log_capture: structlog.testing.LogCapture
+    ) -> None:
+        """#287 round 6 audit: react-virtuoso scrolls its own container, not
+        the dialog — a wheel over the wrong node is a silent no-op. The grid
+        scroll now drives the actual scrollable element via JS and the probe
+        event reports WHICH node moved and its scrollTop before/after, so a
+        no-op scroll (scrollTop never moves) is visible in telemetry."""
+        tile = TestSelectExistingAssetPickerScroll._tile_mock(
+            wait_for_side_effect=[
+                TimeoutError("not visible in initial viewport"),
+                TimeoutError("not surfaced by the UUID search"),
+                TimeoutError("not surfaced by the UUID-stem search"),
+                None,
+            ],
+            count_side_effect=[0, 0, 1],
+        )
+        page = TestSelectExistingAssetPickerScroll._page_with_tile(tile)
+        counter = itertools.count()
+        scroll_top = {"value": 0}
+
+        def _eval(js: str, *args: object) -> object:
+            if "scrollTop" in js:
+                before = scroll_top["value"]
+                scroll_top["value"] = before + 500
+                return {
+                    "tag": "div",
+                    "cls": "virtuoso-scroller",
+                    "before": before,
+                    "after": scroll_top["value"],
+                }
+            return [f"tile-{next(counter)}"]
+
+        page.evaluate = AsyncMock(side_effect=_eval)
+
+        result = await VideoGenerationMixin._select_existing_asset(
+            page, self._FULL_UUID, "", out_dir=None
+        )
+
+        assert result is True
+        # JS scroll must replace the blind wheel when the scroller is found.
+        page.mouse.wheel.assert_not_awaited()
+        probes = [
+            e
+            for e in install_log_capture.entries
+            if e["event"] == "ui_automation_video.picker_scroll_probe"
+        ]
+        assert probes, "expected picker_scroll_probe events"
+        assert probes[0]["scrolled_tag"] == "div"
+        assert probes[0]["scrolled_class"] == "virtuoso-scroller"
+        assert probes[0]["scroll_top_before"] == 0
+        assert probes[0]["scroll_top_after"] == 500
+        assert probes[1]["scroll_top_before"] == 500
 
 
 _PROJECT_ID_287 = "f6caf027-0000-4000-8000-000000000287"
@@ -2084,7 +2177,19 @@ class TestPickerProjectSync:
         assert strip("Chalkboard Spike — Flow") == "Chalkboard Spike"  # em dash
         assert strip("Chalkboard Spike | Flow") == "Chalkboard Spike"
         assert strip("Flow - Chalkboard Spike") == "Chalkboard Spike"
+        # Live round 5: the REAL observed pattern is a 'Google Flow - ' prefix.
+        assert strip("Google Flow - gflow-cli t2i") == "gflow-cli t2i"
+        assert strip("gflow-cli t2i - Google Flow") == "gflow-cli t2i"
         assert strip("Chalkboard Spike") == "Chalkboard Spike"  # raw fallback
+
+    def test_trigger_active_probe_matches_name_by_contains(self) -> None:
+        """Round 5 waste: the trigger's textContent carries the active project
+        NAME plus icon-ligature noise, so an exact-equality probe missed and
+        ~30 menu probes hunted for the project we were already in. The
+        already-active probe must accept a contains-match on the resolved
+        name (the trigger only ever shows the ACTIVE project, so a substring
+        hit cannot select a wrong one)."""
+        assert ".includes(norm(args.projectName))" in _PICKER_PROJECT_TRIGGER_ACTIVE_JS
 
     @pytest.mark.asyncio
     async def test_resolver_tier0_uses_document_title(
@@ -2718,6 +2823,30 @@ class TestAttachFrameByMediaId:
         assert select.await_args.args[1] == _FRAME_REF_UUID
 
     @pytest.mark.asyncio
+    async def test_search_hints_flow_through_to_select(
+        self, monkeypatch: pytest.MonkeyPatch
+    ) -> None:
+        """#287 round 6: prompt hints handed to the frame-ref attach must
+        reach `_select_existing_asset`'s search-hint tier."""
+        slot = MagicMock()
+        slot.click = AsyncMock()
+        monkeypatch.setattr(
+            VideoGenerationMixin, "_resolve_frame_slot", AsyncMock(return_value=slot)
+        )
+        select = AsyncMock(return_value=True)
+        monkeypatch.setattr(VideoGenerationMixin, "_select_existing_asset", select)
+        page = _frame_dialog_page()
+        await VideoGenerationMixin._attach_frame_by_media_id(
+            page,
+            0,
+            "Start",
+            _FRAME_REF_UUID,
+            out_dir=None,
+            search_hints=("stickman on a chalkboard, teaching",),
+        )
+        assert select.await_args.kwargs["search_hints"] == ("stickman on a chalkboard, teaching",)
+
+    @pytest.mark.asyncio
     async def test_missing_asset_raises_transport_timeout(
         self, monkeypatch: pytest.MonkeyPatch
     ) -> None:
@@ -2812,6 +2941,26 @@ class TestAttachI2VFramesRefIdRouting:
         page = _cascade_page(set())
         await VideoGenerationMixin._attach_i2v_frames(page, request, out_dir=None)
         assert by_id.await_args.kwargs["project_name"] == "Chalkboard Spike"
+
+    @pytest.mark.asyncio
+    async def test_search_hints_reach_frame_by_media_id(
+        self, monkeypatch: pytest.MonkeyPatch
+    ) -> None:
+        """#287 round 6: CLI-resolved prompt hints ride the request into the
+        frame-ref attach, where the picker search-hint tier consumes them."""
+        from gflow_cli.api.video import GenerateVideoRequest, Mode
+
+        by_id = AsyncMock()
+        monkeypatch.setattr(VideoGenerationMixin, "_attach_frame_by_media_id", by_id)
+        request = GenerateVideoRequest(
+            prompt="x",
+            mode=Mode.I2V,
+            start_image_ref_id=_FRAME_REF_UUID,
+            search_hints=("stickman on a chalkboard, teaching",),
+        )
+        page = _cascade_page(set())
+        await VideoGenerationMixin._attach_i2v_frames(page, request, out_dir=None)
+        assert by_id.await_args.kwargs["search_hints"] == ("stickman on a chalkboard, teaching",)
 
 
 class TestUploadRejectionTypedError:
