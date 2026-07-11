@@ -1041,8 +1041,8 @@ class UiAutomationTransport(VideoGenerationMixin):
 
         shot_path = await _capture_debug_screenshot(page, out_dir, "debug_new_project.png")
         msg = (
-            f"Could not find 'New project' CTA on Flow gallery. URL: {page.url}. "
-            f"Screenshot: {shot_path}"
+            f"Could not find 'New project' CTA on Flow gallery. "
+            f"URL: {page.url}.{screenshot_clause(shot_path)}"
         )
         raise RuntimeError(
             msg,
@@ -1184,7 +1184,7 @@ class UiAutomationTransport(VideoGenerationMixin):
                 continue
 
         shot_path = await _capture_debug_screenshot(page, out_dir, "debug_prompt_not_found.png")
-        msg = f"Prompt input not found in Flow UI. URL: {page.url}. Screenshot: {shot_path}"
+        msg = f"Prompt input not found in Flow UI. URL: {page.url}.{screenshot_clause(shot_path)}"
         raise RuntimeError(msg)
 
     async def _click_submit(self, page: Page) -> None:

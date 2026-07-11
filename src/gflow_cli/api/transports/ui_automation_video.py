@@ -1430,12 +1430,13 @@ class VideoGenerationMixin:
                 msg = (
                     f"Neither the icon nor the text 'Upload media' selector opened a file "
                     f"chooser for {log_label!r} — Google likely changed the media dialog "
-                    f"(issue #56).{screenshot_clause(shot)} Workaround: set the CHROME BROWSER "
+                    f"(issue #56). Workaround: set the CHROME BROWSER "
                     f"PROFILE's language to English (chrome://settings/languages). NOTE: "
                     f"this is the Chrome PROFILE language, NOT the Google ACCOUNT language "
                     f"— changing only the Google account language does NOT work, because "
                     f"Flow follows the Chrome profile locale (and the --lang=en-US launch "
                     f"arg cannot override an already-configured profile)."
+                    f"{screenshot_clause(shot)}"
                 )
                 raise RuntimeError(
                     msg,

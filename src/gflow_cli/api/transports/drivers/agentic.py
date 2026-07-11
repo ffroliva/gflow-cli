@@ -478,6 +478,14 @@ class AgenticFlowUiDriver:
         interval of wall time up front; the total poll timeout budget
         (``_AWAIT_TIMEOUT_S``) is unchanged.
 
+        **Stable break (issue #283):** reaching ``expected_count`` on a single
+        scrape is not trusted — a lazily-rendered pre-existing tile can
+        transiently hit the exact count. The loop breaks only when the same
+        new-UUID set holds across two consecutive scrapes (~one extra 0.5s
+        poll). Deliberate fall-through: a set that first reaches the exact
+        count on the final poll before the deadline is returned unconfirmed —
+        better a last-second success than a spurious timeout.
+
         **Ambiguity fail-fast (issue #281):** if more new UUIDs appear than
         were requested, there is no reliable way to tell which ones belong to
         this generation. Rather than arbitrarily slice the unordered set (the
