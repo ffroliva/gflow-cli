@@ -684,6 +684,57 @@ def test_i2v_initial_frame_takes_precedence_over_positional(tmp_path: Path) -> N
     assert captured["request"].prompt == "motion prompt"  # type: ignore[attr-defined]
 
 
+def test_i2v_project_name_flag_reaches_the_request(tmp_path: Path) -> None:
+    """#287: `--project-name` is the picker project-menu display-name override
+    (the menu lists projects by NAME; unnamed projects show only creation
+    timestamps) — it must land on the GenerateVideoRequest."""
+    captured: dict[str, object] = {}
+
+    async def _capture(request: object, **_kwargs: object) -> None:
+        captured["request"] = request
+
+    start = tmp_path / "hero.png"
+    start.write_bytes(b"\x89PNG\r\n\x1a\n")
+
+    runner = CliRunner()
+    with (
+        patch("gflow_cli.cli_video._resolve_profile", return_value="default"),
+        patch("gflow_cli.cli_video._make_provider_dir", return_value=tmp_path),
+        patch("gflow_cli.cli_video._generate_and_report", new=_capture),
+    ):
+        result = runner.invoke(
+            video,
+            ["i2v", str(start), "pan", "--project-name", "Chalkboard Spike"],
+        )
+    assert result.exit_code == 0, result.output
+    assert captured["request"].project_name == "Chalkboard Spike"  # type: ignore[attr-defined]
+
+
+def test_i2v_project_name_env_var(tmp_path: Path) -> None:
+    """GFLOW_CLI_PROJECT_NAME is the env-var form of `--project-name`."""
+    captured: dict[str, object] = {}
+
+    async def _capture(request: object, **_kwargs: object) -> None:
+        captured["request"] = request
+
+    start = tmp_path / "hero.png"
+    start.write_bytes(b"\x89PNG\r\n\x1a\n")
+
+    runner = CliRunner()
+    with (
+        patch("gflow_cli.cli_video._resolve_profile", return_value="default"),
+        patch("gflow_cli.cli_video._make_provider_dir", return_value=tmp_path),
+        patch("gflow_cli.cli_video._generate_and_report", new=_capture),
+    ):
+        result = runner.invoke(
+            video,
+            ["i2v", str(start), "pan"],
+            env={"GFLOW_CLI_PROJECT_NAME": "Env Given Name"},
+        )
+    assert result.exit_code == 0, result.output
+    assert captured["request"].project_name == "Env Given Name"  # type: ignore[attr-defined]
+
+
 def test_i2v_no_image_raises_usage_error(tmp_path: Path) -> None:
     """Omitting both the positional IMAGE and --initial-frame is a usage error."""
     runner = CliRunner()

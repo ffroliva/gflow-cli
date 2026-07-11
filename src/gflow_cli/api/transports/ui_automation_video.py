@@ -415,10 +415,38 @@ PICKER_PROJECT_MENU_OPEN = "[role='menu'][data-state='open']"
 # of POLL_MS each (~3s), stopping as soon as the portal has any elements.
 PICKER_PROJECT_MENU_POLLS = 10
 PICKER_PROJECT_MENU_POLL_MS = 300
+# #287 round 5: the project menu is the full recency-ordered project list (80
+# items observed) — the target's entry can sit below the visible fold or
+# outside a virtualised window. When the in-view match misses, the open
+# portal is scrolled with the progress-bounded pattern (re-match after each
+# scroll, stall-terminate on no new items, hard ceiling).
+PICKER_PROJECT_MENU_SCROLL_MAX = 30
+PICKER_PROJECT_MENU_SCROLL_DELTA_PX = 400
+PICKER_PROJECT_MENU_SCROLL_SETTLE_MS = 250
 # Element count inside the open portal menu(s) — the population poll probe.
 _PICKER_PROJECT_MENU_CHILD_COUNT_JS = (
     "() => Array.from(document.querySelectorAll(\"[role='menu'][data-state='open']\"))"
     ".reduce((n, m) => n + m.querySelectorAll('*').length, 0)"
+)
+# Scroll the open portal menu one step (finds the first scrollable node) and
+# return the rendered item texts — the progress fingerprint for the loop.
+_PICKER_PROJECT_MENU_SCROLL_JS = (
+    "(delta) => {"
+    " const menus = Array.from(document.querySelectorAll(\"[role='menu'][data-state='open']\"));"
+    " if (!menus.length) { return null; }"
+    " const root = menus[menus.length - 1];"
+    " const nodes = [root].concat(Array.from(root.querySelectorAll('*')));"
+    " const scrollable = nodes.find((el) => el.scrollHeight > el.clientHeight + 1) || root;"
+    " scrollable.scrollTop = scrollable.scrollTop + delta;"
+    " const items = Array.from(root.querySelectorAll("
+    "\"a, button, li, [role='menuitem'], [role='menuitemradio'], [role='option']\"));"
+    " return items.map((el) => (el.textContent || '').trim()).filter(Boolean);"
+    "}"
+)
+# Titles that are ONLY Flow branding — never usable as a project-name
+# candidate ('flow' as a contains-match would hit e.g. 'gflow-cli i2i').
+_FLOW_BRANDING_TITLES = frozenset(
+    {"flow", "google flow", "flow by google", "google labs flow", "labs.google", "google labs"}
 )
 # Raw open-portal dump for a switch miss (#287 round 4): the round-2/3 dumps
 # were role-filtered and came back empty — raw bounded innerHTML plus a child
@@ -486,20 +514,22 @@ _PICKER_PROJECT_OPTION_MATCH_JS = (
     " return { clicked: true, matched_by: matchedBy, candidates: candidates.length };"
     "}"
 )
-# Resolve the target project's display NAME from the live editor page: the
-# picker menu renders names, the CLI only knows the UUID. Primary signal: any
-# element whose href references the project id (carries the name as text);
-# fallback: a project-title-classed element. Locale-independent by design.
+# Raw name signals from the live editor page: the picker menu renders names,
+# the CLI only knows the UUID. Tier 0 (#287 round 5): document.title — we
+# navigated to /project/<id> before the picker opened, so the tab title is
+# the strongest signal (Python strips the Flow branding and logs the raw
+# title so the real pattern is learnable from live runs). Then: an element
+# whose href references the project id; a project-title-classed element.
 _PROJECT_NAME_FROM_PAGE_JS = (
     "(projectId) => {"
     ' const byHref = document.querySelector(`[href*="${projectId}"]`);'
-    " const hrefText = byHref && byHref.textContent ? byHref.textContent.trim() : '';"
-    " if (hrefText) { return { source: 'href', name: hrefText }; }"
     " const byClass = document.querySelector("
     "\"[class*='projectTitle'], [class*='ProjectTitle'], [class*='project-title']\");"
-    " const classText = byClass && byClass.textContent ? byClass.textContent.trim() : '';"
-    " if (classText) { return { source: 'class', name: classText }; }"
-    " return null;"
+    " return {"
+    "  title: (document.title || '').trim(),"
+    "  href_text: byHref && byHref.textContent ? byHref.textContent.trim() : '',"
+    "  class_text: byClass && byClass.textContent ? byClass.textContent.trim() : '',"
+    " };"
     "}"
 )
 # Bounded picker DOM dump for a not-found asset (#287 diagnosis): tile count,
@@ -1545,6 +1575,7 @@ class VideoGenerationMixin:
         media_id: str,
         *,
         out_dir: Path | None,
+        project_name: str | None = None,
     ) -> None:
         """Fill the I2V first/last frame slot with an already-existing in-project
         asset, selected by its media UUID (#287) — no duplicate upload. Opens the
@@ -1558,8 +1589,11 @@ class VideoGenerationMixin:
         await page.wait_for_timeout(1000)  # media dialog opens
 
         # #287 (live-confirmed): the picker's library view is per-project —
-        # align it to the target project BEFORE any lookup.
-        await VideoGenerationMixin._sync_picker_project(page, out_dir=out_dir)
+        # align it to the target project BEFORE any lookup. `project_name` is
+        # the user's --project-name override for the menu's name-based match.
+        await VideoGenerationMixin._sync_picker_project(
+            page, out_dir=out_dir, project_name=project_name
+        )
 
         # Presence-guarded search clear, mirroring _attach_image_uuid_refs: a
         # picker variant with no search box must not become a hard dependency.
@@ -1958,16 +1992,20 @@ class VideoGenerationMixin:
             )
 
     @staticmethod
-    async def _sync_picker_project(page: Page, *, out_dir: Path | None = None) -> None:
+    async def _sync_picker_project(
+        page: Page, *, out_dir: Path | None = None, project_name: str | None = None
+    ) -> None:
         """#287 CONFIRMED (live round 2): the media picker's library view has
         its OWN active project — ``--project`` only navigates the EDITOR — so
         the picker can open on a different project, making the target asset
         unreachable no matter how deep the grid is scrolled. Derives the
         target project from the editor URL (``--project`` navigation put it
-        there), resolves its display NAME from the live page (the picker menu
-        renders names, not ids), and aligns the picker's project selector.
-        No-op when the URL carries no project id or the picker has no project
-        selector (older cohort)."""
+        there), resolves its display NAME (the picker menu lists projects by
+        NAME, not id — round 4 dump), and aligns the picker's project
+        selector. ``project_name`` is the user-supplied override
+        (``--project-name`` / ``GFLOW_CLI_PROJECT_NAME``) and takes precedence
+        over page-derived resolution. No-op when the URL carries no project id
+        or the picker has no project selector (older cohort)."""
         # cast + isinstance: a unit-test fake's page.url may not be a str.
         page_url = cast("object", page.url)
         project_id = extract_project_id(page_url) if isinstance(page_url, str) else None
@@ -1977,41 +2015,80 @@ class VideoGenerationMixin:
                 reason="no_project_in_url",
             )
             return
-        project_name = await VideoGenerationMixin._resolve_project_name(page, project_id)
+        if project_name:
+            log.info(
+                "ui_automation_video.picker_project_name_override",
+                project_id=project_id,
+                name=project_name,
+            )
+            resolved_name: str | None = project_name
+        else:
+            resolved_name = await VideoGenerationMixin._resolve_project_name(page, project_id)
         await VideoGenerationMixin._ensure_picker_project(
-            page, project_id, project_name=project_name, out_dir=out_dir
+            page, project_id, project_name=resolved_name, out_dir=out_dir
         )
 
     @staticmethod
+    def _strip_flow_branding(title: str) -> str:
+        """Strip Flow branding from a tab title, tolerantly (#287 round 5):
+        try the suffix/prefix separator variants; fall back to the raw title.
+        The raw title is logged on every resolution, so the real live pattern
+        is learnable and this list can be tightened from evidence."""
+        cleaned = title.strip()
+        for sep in (" - ", " – ", " — ", " | "):
+            suffix = f"{sep}Flow"
+            if cleaned.endswith(suffix):
+                return cleaned[: -len(suffix)].strip()
+            prefix = f"Flow{sep}"
+            if cleaned.startswith(prefix):
+                return cleaned[len(prefix) :].strip()
+        return cleaned
+
+    @staticmethod
     async def _resolve_project_name(page: Page, project_id: str) -> str | None:
-        """Resolve the target project's display NAME from the live page (#287
-        round 2): the picker's project menu renders project NAMES, not ids,
-        and the CLI only knows the UUID. The local catalog does record a
-        ``projects.title`` for gflow-created projects, but the transport layer
-        has no catalog access and the live page also reflects renames and
-        projects created outside gflow — so the page is the source. Best
-        effort: ``None`` when no name-bearing element is found (the menu match
-        then relies on the id tier and the switch-miss dump captures the
-        items)."""
+        """Resolve the target project's display NAME (#287 rounds 2/5): the
+        picker's project menu lists projects by NAME (unnamed projects show
+        only creation timestamps), and the CLI only knows the UUID. Tier 0:
+        the editor tab title (document.title — the editor was navigated to
+        /project/<id> before the picker opened), stripped of Flow branding
+        and rejected when branding-only. Tier 1: an element whose href
+        references the project id. Tier 2: a project-title-classed element.
+        The ``--project-name`` override in `_sync_picker_project` beats all
+        of this. The local catalog's ``projects.title`` was considered but
+        the transport layer has no catalog access, and the live page also
+        reflects renames and non-gflow projects. Best-effort: ``None`` when
+        nothing usable is found."""
         raw: object = None
         try:
             raw = await page.evaluate(_PROJECT_NAME_FROM_PAGE_JS, project_id)
         except Exception:  # noqa: BLE001 - name resolution is best-effort
             raw = None
+        raw_title = ""
+        candidates: list[tuple[str, str]] = []
         if isinstance(raw, dict):
             data = cast("dict[str, object]", raw)
-            name = str(data.get("name") or "").strip()
-            if name:
-                log.info(
-                    "ui_automation_video.picker_project_name_resolved",
-                    project_id=project_id,
-                    name=name,
-                    source=str(data.get("source") or "unknown"),
-                )
-                return name
+            raw_title = str(data.get("title") or "").strip()
+            title_name = VideoGenerationMixin._strip_flow_branding(raw_title)
+            if title_name and title_name.lower() not in _FLOW_BRANDING_TITLES:
+                candidates.append(("title", title_name))
+            for source_key, source in (("href_text", "href"), ("class_text", "class")):
+                text = str(data.get(source_key) or "").strip()
+                if text:
+                    candidates.append((source, text))
+        if candidates:
+            source, name = candidates[0]
+            log.info(
+                "ui_automation_video.picker_project_name_resolved",
+                project_id=project_id,
+                name=name,
+                source=source,
+                raw_title=raw_title,
+            )
+            return name
         log.info(
             "ui_automation_video.picker_project_name_unresolved",
             project_id=project_id,
+            raw_title=raw_title,
         )
         return None
 
@@ -2046,6 +2123,95 @@ class VideoGenerationMixin:
                 break
             await page.wait_for_timeout(PICKER_PROJECT_MENU_POLL_MS)
         return elements
+
+    @staticmethod
+    async def _match_project_option(
+        page: Page, match_args: dict[str, str | None]
+    ) -> tuple[bool, str | None, int]:
+        """One pass of the option-match JS over the open portal. Returns
+        ``(clicked, matched_by, candidate_count)`` — best-effort, never
+        raises (a failed probe is a miss)."""
+        try:
+            outcome_raw: object = await page.evaluate(_PICKER_PROJECT_OPTION_MATCH_JS, match_args)
+        except Exception:  # noqa: BLE001 - dropdown scan is best-effort
+            return False, None, 0
+        if not isinstance(outcome_raw, dict):
+            return False, None, 0
+        outcome = cast("dict[str, object]", outcome_raw)
+        matched_by_value = outcome.get("matched_by")
+        candidates_value = outcome.get("candidates")
+        return (
+            bool(outcome.get("clicked")),
+            str(matched_by_value) if matched_by_value else None,
+            int(candidates_value) if isinstance(candidates_value, (int, float)) else 0,
+        )
+
+    @staticmethod
+    async def _scroll_project_menu_and_match(
+        page: Page, match_args: dict[str, str | None]
+    ) -> tuple[bool, str | None, int]:
+        """#287 round 5: the project menu is the full recency-ordered project
+        list (80 items observed) — the target's entry can sit below the
+        visible fold or outside a virtualised window. Scroll the open portal
+        with the progress-bounded pattern: scroll one step, re-match, keep
+        going while the rendered item set still changes, stall-terminate
+        after ``PICKER_GRID_SCROLL_STALL_LIMIT`` no-progress scrolls, hard
+        ceiling at ``PICKER_PROJECT_MENU_SCROLL_MAX``. Same return shape as
+        `_match_project_option`."""
+        stalls = 0
+        previous: frozenset[str] | None = None
+        attempts = 0
+        reason = "ceiling"
+        clicked = False
+        matched_by: str | None = None
+        candidates = 0
+        while attempts < PICKER_PROJECT_MENU_SCROLL_MAX:
+            raw: object = None
+            try:
+                raw = await page.evaluate(
+                    _PICKER_PROJECT_MENU_SCROLL_JS, PICKER_PROJECT_MENU_SCROLL_DELTA_PX
+                )
+            except Exception:  # noqa: BLE001 - scroll probe is best-effort
+                raw = None
+            attempts += 1
+            fingerprint: frozenset[str] | None = None
+            if isinstance(raw, list) and raw:
+                fingerprint = frozenset(str(item) for item in cast("list[object]", raw))
+            await page.wait_for_timeout(PICKER_PROJECT_MENU_SCROLL_SETTLE_MS)
+            clicked, matched_by, candidates = await VideoGenerationMixin._match_project_option(
+                page, match_args
+            )
+            log.info(
+                "ui_automation_video.picker_project_menu_scroll_probe",
+                attempt=attempts,
+                items=len(fingerprint) if fingerprint is not None else None,
+                new_items=(
+                    len(fingerprint - previous)
+                    if fingerprint is not None and previous is not None
+                    else None
+                ),
+            )
+            if clicked:
+                reason = "found"
+                break
+            if fingerprint is None:
+                reason = "no_menu"
+                break
+            if fingerprint == previous:
+                stalls += 1
+                if stalls >= PICKER_GRID_SCROLL_STALL_LIMIT:
+                    reason = "stall"
+                    break
+            else:
+                stalls = 0
+                previous = fingerprint
+        log.info(
+            "ui_automation_video.picker_project_menu_scroll_done",
+            reason=reason,
+            attempts=attempts,
+            found=clicked,
+        )
+        return clicked, matched_by, candidates
 
     @staticmethod
     async def _ensure_picker_project(
@@ -2144,21 +2310,17 @@ class VideoGenerationMixin:
             elements=menu_elements,
         )
 
-        clicked = False
-        matched_by: str | None = None
-        candidates = 0
-        try:
-            outcome_raw: object = await page.evaluate(_PICKER_PROJECT_OPTION_MATCH_JS, match_args)
-            if isinstance(outcome_raw, dict):
-                outcome = cast("dict[str, object]", outcome_raw)
-                clicked = bool(outcome.get("clicked"))
-                matched_by_value = outcome.get("matched_by")
-                matched_by = str(matched_by_value) if matched_by_value else None
-                candidates_value = outcome.get("candidates")
-                if isinstance(candidates_value, (int, float)):
-                    candidates = int(candidates_value)
-        except Exception:  # noqa: BLE001 - dropdown scan is best-effort
-            clicked = False
+        clicked, matched_by, candidates = await VideoGenerationMixin._match_project_option(
+            page, match_args
+        )
+        if not clicked:
+            # #287 round 5: the target's entry may be below the menu's fold —
+            # scroll the open portal (progress-bounded) and re-match.
+            (
+                clicked,
+                matched_by,
+                candidates,
+            ) = await VideoGenerationMixin._scroll_project_menu_and_match(page, match_args)
         if not clicked:
             # Raw open-portal dump (#287 round 4): role-filtered item lists
             # blinded us twice — capture bounded raw markup instead.
@@ -2755,7 +2917,12 @@ class VideoGenerationMixin:
             )
         elif request.start_image_ref_id is not None:
             await VideoGenerationMixin._attach_frame_by_media_id(
-                page, 0, "Start", request.start_image_ref_id, out_dir=out_dir
+                page,
+                0,
+                "Start",
+                request.start_image_ref_id,
+                out_dir=out_dir,
+                project_name=request.project_name,
             )
         elif request.start_image_ref_name is not None:
             await VideoGenerationMixin._attach_remote_frame(
@@ -2767,7 +2934,12 @@ class VideoGenerationMixin:
             )
         elif request.end_image_ref_id is not None:
             await VideoGenerationMixin._attach_frame_by_media_id(
-                page, 1, "End", request.end_image_ref_id, out_dir=out_dir
+                page,
+                1,
+                "End",
+                request.end_image_ref_id,
+                out_dir=out_dir,
+                project_name=request.project_name,
             )
         elif request.end_image_ref_name is not None:
             await VideoGenerationMixin._attach_remote_frame(
