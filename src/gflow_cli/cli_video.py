@@ -25,7 +25,7 @@ from gflow_cli._cli_helpers import (
     tool_option,
 )
 from gflow_cli.api.client import FlowApiClient
-from gflow_cli.api.video import VideoModel, reference_cap_for
+from gflow_cli.api.video import VideoModel, is_media_uuid, reference_cap_for
 from gflow_cli.config import get_settings
 from gflow_cli.data.recorder import OperationRecorder
 from gflow_cli.errors import DataStoreError
@@ -205,10 +205,12 @@ class _I2VParams:
     CLI option. Mirrors `cli_image.py`'s `_I2IParams`.
     """
 
-    image: str
+    image: str | None
     prompt: str
     aspect: str
+    image_ref_id: str | None = None  # in-project asset media UUID (#287)
     end_frame: str | None = None
+    end_frame_ref_id: str | None = None  # in-project asset media UUID (#287)
     model: str | None = None
     duration: int | None = None
     original_prompt: str | None = None
@@ -257,8 +259,10 @@ async def _run_i2v(
         model=resolved_model,
         duration=params.duration,
         count=count,
-        start_image=Path(params.image),
+        start_image=Path(params.image) if params.image else None,
+        start_image_ref_id=params.image_ref_id,
         end_image=Path(params.end_frame) if params.end_frame else None,
+        end_image_ref_id=params.end_frame_ref_id,
         original_prompt=params.original_prompt,
         tool=params.tool,
     )
@@ -855,13 +859,13 @@ def _resolve_i2v_args(
     prompt: str | None,
     initial_frame: str | None,
 ) -> tuple[str, str]:
-    """Resolve the (image_path, prompt) pair from i2v's positional/flag arguments.
+    """Resolve the (frame, prompt) pair from i2v's positional/flag arguments.
 
     Click fills positional arguments left-to-right (greedy). When --initial-frame
     is used without a positional IMAGE, the sole remaining positional (the PROMPT
     text) lands in the ``image`` slot and ``prompt`` is None. This helper detects
-    the swap, validates the resolved image path, and returns ``(resolved_image,
-    resolved_prompt)``.
+    the swap and returns ``(resolved_frame, resolved_prompt)``; the frame value is
+    validated (existing file OR media UUID, #287) by :func:`_classify_frame`.
     """
     if initial_frame is not None and prompt is None and image is not None:
         return initial_frame, image
@@ -872,23 +876,34 @@ def _resolve_i2v_args(
             raise click.UsageError(
                 "Provide an initial frame via --initial-frame or as the first positional argument."
             )
-        # Validate the positional IMAGE path manually (click.Path can't be used on this
-        # argument because the positional slot doubles as PROMPT text in the swap branch).
-        if initial_frame is None:
-            resolved_image_path = Path(resolved_image)
-            if not resolved_image_path.is_file():
-                raise click.BadParameter(
-                    f"Path '{resolved_image}' does not exist or is a directory.",
-                    param_hint="'IMAGE'",
-                )
-            return str(resolved_image_path.resolve()), prompt
-        # Also normalize --initial-frame if passed as flag
-        return str(Path(resolved_image).resolve()), prompt
+        return resolved_image, prompt
 
     raise click.UsageError(
         "Missing arguments. Provide PROMPT and an initial frame"
         " (via --initial-frame or as a positional argument)."
     )
+
+
+def _classify_frame(value: str | None, param_hint: str) -> tuple[str | None, str | None]:
+    """Split a frame argument into ``(local_path, media_uuid)`` — #287.
+
+    A value shaped like a Flow media UUID references an existing in-project
+    asset (no upload); anything else must be an existing local image file
+    (resolved, so symlinks can't launder an arbitrary read — mirrors
+    cli_image's ``_classify_ref``).
+    """
+    if value is None:
+        return None, None
+    if is_media_uuid(value):
+        return None, value
+    path = Path(value)
+    if not path.is_file():
+        raise click.BadParameter(
+            f"'{value}' is neither an existing image file nor a media UUID "
+            "(32-char hex with hyphens, from the Flow project library).",
+            param_hint=param_hint,
+        )
+    return str(path.resolve()), None
 
 
 @video.command(
@@ -905,6 +920,8 @@ def _resolve_i2v_args(
         '  gflow video i2v --initial-frame hero.png "slow cinematic push-in"\n'
         '  gflow video i2v --initial-frame hero.png --end-frame last.png "pan left" --aspect 16:9\n'
         '  gflow video i2v hero.png "it leaps" --model veo-quality --duration 8\n'
+        '  gflow video i2v --initial-frame d6f1927a-3eae-4626-bc90-9a6ea7637bab "pan" '
+        "--project f6caf027-...\n"
     ),
 )
 @click.argument("image", required=False, default=None)
@@ -913,22 +930,28 @@ def _resolve_i2v_args(
     "--initial-frame",
     "initial_frame",
     default=None,
-    type=click.Path(exists=True, dir_okay=False, path_type=str),
-    help="Initial frame to animate (canonical form of the positional IMAGE argument).",
+    type=str,
+    help=(
+        "Initial frame to animate: a local image path, or the media UUID of an "
+        "existing in-project asset (#287 — no duplicate upload; pair with --project)."
+    ),
 )
 @click.option(
     "--end-frame",
     "end_frame",
     default=None,
-    type=click.Path(exists=True, dir_okay=False, path_type=str),
-    help="Optional end frame — Flow interpolates initial frame -> end frame.",
+    type=str,
+    help=(
+        "Optional end frame (local path or in-project media UUID) — Flow "
+        "interpolates initial frame -> end frame."
+    ),
 )
 @click.option(
     "--end-image",
     "end_image_deprecated",
     default=None,
     hidden=True,
-    type=click.Path(exists=True, dir_okay=False, path_type=str),
+    type=str,
     help="Deprecated: use --end-frame.",
 )
 @click.option(
@@ -1005,16 +1028,21 @@ def i2v(  # NOSONAR
         if end_frame is None:
             end_frame = end_image_deprecated
 
+    start_path, start_ref_id = _classify_frame(resolved_image, "'IMAGE' / '--initial-frame'")
+    end_path, end_ref_id = _classify_frame(end_frame, "'--end-frame'")
+
     profile_name = _resolve_profile(profile)
     provider_dir = _make_provider_dir(profile_name)
     prompt_to_send, original_prompt, applied_tool = apply_tool_option(
         resolved_prompt, tool_specs, category="video", quiet=as_json
     )
     i2v_params = _I2VParams(
-        image=resolved_image,
+        image=start_path,
         prompt=prompt_to_send,
         aspect=aspect,
-        end_frame=end_frame,
+        image_ref_id=start_ref_id,
+        end_frame=end_path,
+        end_frame_ref_id=end_ref_id,
         model=model,
         duration=int(duration) if duration is not None else None,
         original_prompt=original_prompt,

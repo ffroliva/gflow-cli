@@ -7,6 +7,14 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+### Added
+
+- **`gflow video i2v` accepts an in-project asset media UUID for `--initial-frame` / `--end-frame` (and the positional IMAGE).** A UUID-shaped value selects the already-existing Flow asset in place via the same `_select_existing_asset` picker the image `--ref` flow uses (#282 scroll/search fixes included) instead of forcing a duplicate local-file upload — the duplicate-asset pileup and per-run re-upload from the 2026-07-11 chalkboard pilot. Pair with `--project` so the asset's project is the one generated in; a UUID that can't be located in the picker fails with `TransportTimeoutError` (exit 9) naming the slot and UUID (#287).
+
+### Fixed
+
+- **A Flow upload-endpoint rejection is now a typed error instead of "Unexpected error." (exit 1).** An `uploadImage` 4xx during frame/reference attach (observed live: one JPEG rejected with HTTP 400 while byte-identical-format siblings uploaded fine) raised a bare `RuntimeError` that fell through to the generic handler with no hint the *input image* was refused. It now raises the new `MediaUploadRejectedError` (**exit code 27**, RFC 9457 type `media-upload-rejected`) with a re-encode remediation hint (`ffmpeg -q:v 2 -map_metadata -1`) (#287).
+
 ## [0.31.0] — 2026-07-10
 
 ### Fixed

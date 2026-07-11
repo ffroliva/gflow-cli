@@ -24,6 +24,7 @@ __all__ = [
     "FrameExtractionError",
     "GFlowError",
     "MediaAttributionError",
+    "MediaUploadRejectedError",
     "ModelModeIncompatibilityError",
     "NetworkError",
     "ProblemDetails",
@@ -487,6 +488,26 @@ class MediaAttributionError(GFlowError):
     )
 
 
+class MediaUploadRejectedError(GFlowError):
+    """Raised when Flow's upload endpoint refuses a media file (issue #287).
+
+    Canonical case: the ``uploadImage`` XHR for an i2v frame returns a 4xx —
+    some byte-identical-format siblings upload fine while one file's metadata
+    segment upsets the endpoint. Previously this surfaced as a bare
+    ``RuntimeError`` → generic "Unexpected error." (exit 1) with no hint that
+    the *input image* was refused, costing a diagnosis round-trip.
+    """
+
+    problem_type = "https://gflow-cli.dev/errors/media-upload-rejected"
+    title = "Flow rejected a media upload"
+    _default_remediation = (
+        "Flow's upload endpoint refused the file, so the generation was aborted "
+        "before spending credits. Try re-encoding the image to strip metadata "
+        "(e.g. `ffmpeg -i in.jpg -q:v 2 -map_metadata -1 out.jpg`), or reference "
+        "the asset by its media UUID if it already exists in the project."
+    )
+
+
 class SecurityError(GFlowError):
     """Raised when a security boundary is violated (e.g. profile_dir outside HOME)."""
 
@@ -767,6 +788,10 @@ EXIT_CODE_MAP: dict[type[GFlowError], int] = {
     # already-recorded check). Direct GFlowError subclass; exit 26 lets
     # scripts distinguish "wrong/ambiguous media" from a generic error (1).
     MediaAttributionError: 26,
+    # MediaUploadRejectedError (issue #287): Flow's upload endpoint refused the
+    # input file (uploadImage 4xx). Direct GFlowError subclass; exit 27 lets
+    # scripts branch on "re-encode the input image" vs generic error (1).
+    MediaUploadRejectedError: 27,
     ConfigurationError: 11,
     AuthExpiredError: 3,
     RateLimitError: 4,
