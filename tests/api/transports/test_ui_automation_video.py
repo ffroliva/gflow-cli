@@ -14,6 +14,7 @@ import structlog
 
 from gflow_cli.api.transports.ui_automation import UiAutomationTransport
 from gflow_cli.api.transports.ui_automation_video import (
+    _PICKER_PROJECT_OPTION_MATCH_JS,
     ADD_MEDIA_BUTTON,
     DIALOG_ANY,
     FRAME_SLOT_BY_LABEL,
@@ -24,6 +25,8 @@ from gflow_cli.api.transports.ui_automation_video import (
     PICKER_GRID_SCROLL_STALL_LIMIT,
     PICKER_INCLUDE_BUTTON,
     PICKER_PROJECT_MENU_OPEN,
+    PICKER_PROJECT_MENU_POLL_MS,
+    PICKER_PROJECT_MENU_POLLS,
     PICKER_PROJECT_SELECTOR_TRIGGERS,
     PICKER_SEARCH_INPUT,
     VideoGenerationMixin,
@@ -1790,8 +1793,18 @@ class TestPickerProjectSync:
             return absent
 
         page.locator = MagicMock(side_effect=_locator)
-        # Dropdown option match JS: id-tier hit by default.
-        page.evaluate = AsyncMock(return_value={"clicked": True, "matched_by": "id", "items": []})
+
+        # page.evaluate router keyed on JS markers (#287 round 4): the portal
+        # dump JS reads inner_html, the option-match JS returns `clicked`,
+        # anything else is the menu-population poll (element count).
+        def _default_eval(js: str, *args: object) -> object:
+            if "inner_html" in js:
+                return None
+            if "clicked" in js:
+                return {"clicked": True, "matched_by": "id", "candidates": 3}
+            return 5
+
+        page.evaluate = AsyncMock(side_effect=_default_eval)
         return page
 
     def test_trigger_cascade_prefers_project_dropdown_and_excludes_sort(self) -> None:
@@ -1868,31 +1881,148 @@ class TestPickerProjectSync:
 
     @pytest.mark.asyncio
     async def test_switch_miss_escapes_dropdown_and_returns_false(self) -> None:
-        """A selector exists but no menu option matches by id OR name: close
-        the dropdown (never leave an open overlay) and report False — the
-        asset lookup proceeds and its not-found telemetry captures state."""
+        """A selector exists but no portal candidate matches by href, id, OR
+        name: close the dropdown (never leave an open overlay) and report
+        False — the asset lookup proceeds and its telemetry captures state."""
         trigger = self._trigger_mock(references_target=False)
         page = self._selector_page(trigger, menu=self._menu_mock())
-        page.evaluate = AsyncMock(return_value={"clicked": False, "matched_by": None, "items": []})
+
+        def _eval(js: str, *args: object) -> object:
+            if "inner_html" in js:
+                return None
+            if "clicked" in js:
+                return {"clicked": False, "matched_by": None, "candidates": 0}
+            return 5
+
+        page.evaluate = AsyncMock(side_effect=_eval)
 
         result = await VideoGenerationMixin._ensure_picker_project(page, _PROJECT_ID_287)
 
         assert result is False
         page.keyboard.press.assert_awaited_with("Escape")
 
+    def test_option_match_js_covers_non_aria_clickables(self) -> None:
+        """Round-3 live miss: the OPEN portal contained ZERO elements with the
+        classic menu-item ARIA roles (`menu_items: 0`) — the project list
+        renders as something else. The matcher must sweep generic clickables
+        (anchors FIRST: `href*=<project-id>` is the jackpot case that makes
+        name resolution unnecessary) and never rely on ARIA roles alone."""
+        assert "a, button, li, div[role]" in _PICKER_PROJECT_OPTION_MATCH_JS
+        assert "getAttribute('href')" in _PICKER_PROJECT_OPTION_MATCH_JS
+        # Name tier retained for markup without ids.
+        assert "projectName" in _PICKER_PROJECT_OPTION_MATCH_JS
+
     @pytest.mark.asyncio
-    async def test_switch_miss_writes_open_menu_items_dump(
-        self, tmp_path: Path, install_log_capture: structlog.testing.LogCapture
-    ) -> None:
-        """Round-2 gap: on a miss we only had the CLOSED trigger's markup. The
-        match JS now returns the OPEN menu's first items (truncated) and the
-        miss path writes them to the out-dir + reports them on the event."""
+    async def test_menu_population_is_polled_before_matching(self) -> None:
+        """Round-3 live miss: the open-state flips before the project list
+        populates — matching (or dumping) an empty portal is a guaranteed
+        miss. After the menu opens, poll for element children (300ms steps,
+        bounded) and only then match."""
         trigger = self._trigger_mock(references_target=False)
         page = self._selector_page(trigger, menu=self._menu_mock())
-        items = ["<div role='menuitem'>gflow-cli t2i</div>", "<div role='menuitem'>Scratch</div>"]
-        page.evaluate = AsyncMock(
-            return_value={"clicked": False, "matched_by": None, "items": items}
-        )
+        poll_calls: list[str] = []
+
+        def _eval(js: str, *args: object) -> object:
+            if "inner_html" in js:
+                return None
+            if "clicked" in js:
+                return {"clicked": True, "matched_by": "href", "candidates": 12}
+            poll_calls.append(js)
+            return 0 if len(poll_calls) < 3 else 7  # populates on the 3rd poll
+
+        page.evaluate = AsyncMock(side_effect=_eval)
+
+        result = await VideoGenerationMixin._ensure_picker_project(page, _PROJECT_ID_287)
+
+        assert result is True
+        assert len(poll_calls) == 3, "polling must stop as soon as the portal has children"
+
+    @pytest.mark.asyncio
+    async def test_menu_never_populates_still_matches_and_dumps(
+        self, install_log_capture: structlog.testing.LogCapture
+    ) -> None:
+        """A portal that never populates must not spin: the poll is bounded,
+        the match is still attempted, and the miss telemetry reports zero
+        elements."""
+        trigger = self._trigger_mock(references_target=False)
+        page = self._selector_page(trigger, menu=self._menu_mock())
+        poll_calls: list[str] = []
+
+        def _eval(js: str, *args: object) -> object:
+            if "inner_html" in js:
+                return None
+            if "clicked" in js:
+                return {"clicked": False, "matched_by": None, "candidates": 0}
+            poll_calls.append(js)
+            return 0  # never populates
+
+        page.evaluate = AsyncMock(side_effect=_eval)
+
+        result = await VideoGenerationMixin._ensure_picker_project(page, _PROJECT_ID_287)
+
+        assert result is False
+        assert len(poll_calls) == PICKER_PROJECT_MENU_POLLS
+        waits = [c for c in page.wait_for_timeout.call_args_list if c.args]
+        assert any(c.args[0] == PICKER_PROJECT_MENU_POLL_MS for c in waits)
+        misses = [
+            e
+            for e in install_log_capture.entries
+            if e["event"] == "ui_automation_video.picker_project_switch_miss"
+        ]
+        assert misses[0]["menu_elements"] == 0
+
+    @pytest.mark.asyncio
+    async def test_switched_event_reports_href_match(
+        self, install_log_capture: structlog.testing.LogCapture
+    ) -> None:
+        """An anchor with `href*=<project-id>` is the strongest match signal —
+        the switched event must say which tier landed the click."""
+        trigger = self._trigger_mock(references_target=False)
+        page = self._selector_page(trigger, menu=self._menu_mock())
+
+        def _eval(js: str, *args: object) -> object:
+            if "inner_html" in js:
+                return None
+            if "clicked" in js:
+                return {"clicked": True, "matched_by": "href", "candidates": 8}
+            return 5
+
+        page.evaluate = AsyncMock(side_effect=_eval)
+
+        result = await VideoGenerationMixin._ensure_picker_project(page, _PROJECT_ID_287)
+
+        assert result is True
+        switched = [
+            e
+            for e in install_log_capture.entries
+            if e["event"] == "ui_automation_video.picker_project_switched"
+        ]
+        assert switched and switched[0]["matched_by"] == "href"
+
+    @pytest.mark.asyncio
+    async def test_switch_miss_writes_portal_dump(
+        self, tmp_path: Path, install_log_capture: structlog.testing.LogCapture
+    ) -> None:
+        """Round-3 gap: the role-filtered items list came back empty and left
+        us blind. The miss dump now captures the OPEN portal's raw innerHTML
+        (bounded) plus a child count and tag histogram — raw markup can't
+        lie about how the project list is really structured."""
+        trigger = self._trigger_mock(references_target=False)
+        page = self._selector_page(trigger, menu=self._menu_mock())
+        portal_state = {
+            "child_elements": 42,
+            "tag_histogram": {"div": 30, "a": 6, "span": 6},
+            "inner_html": "<div class='ScrollArea'><a href='/project/other'>gflow-cli t2i</a>",
+        }
+
+        def _eval(js: str, *args: object) -> object:
+            if "inner_html" in js:
+                return portal_state
+            if "clicked" in js:
+                return {"clicked": False, "matched_by": None, "candidates": 2}
+            return 42
+
+        page.evaluate = AsyncMock(side_effect=_eval)
 
         result = await VideoGenerationMixin._ensure_picker_project(
             page, _PROJECT_ID_287, project_name="Chalkboard Spike", out_dir=tmp_path
@@ -1900,18 +2030,21 @@ class TestPickerProjectSync:
 
         assert result is False
         dump_path = tmp_path / f"debug_picker_project_menu_{_PROJECT_ID_287[:8]}.json"
-        assert dump_path.exists(), "switch miss must leave the open-menu items in the out-dir"
+        assert dump_path.exists(), "switch miss must leave the portal dump in the out-dir"
         data = json.loads(dump_path.read_text(encoding="utf-8"))
         assert data["project_id"] == _PROJECT_ID_287
         assert data["project_name"] == "Chalkboard Spike"
-        assert data["items"] == items
+        assert data["candidates"] == 2
+        assert data["menu_elements"] == 42
+        assert data["portal"] == portal_state
         misses = [
             e
             for e in install_log_capture.entries
             if e["event"] == "ui_automation_video.picker_project_switch_miss"
         ]
         assert misses, "expected a picker_project_switch_miss event"
-        assert misses[0]["menu_items"] == len(items)
+        assert misses[0]["menu_elements"] == 42
+        assert misses[0]["candidates"] == 2
         assert misses[0]["menu_dump"] == str(dump_path)
 
     @pytest.mark.asyncio
