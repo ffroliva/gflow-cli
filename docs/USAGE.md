@@ -184,6 +184,11 @@ Options:
   -t, --tool NAME[:k=v]     Apply a prompt tool before generating, e.g.
                             `creative-director:style=cinema`. Repeatable; applied
                             per prompt on multi-prompt/batch. See "Prompt tools".
+  --ui-mode [auto|classic|agentic]
+                            Require a Flow UI arm: classic (hard aspect
+                            controls) / agentic (chat surface; forced by -i) /
+                            auto (default). Aborts exit 28 if unreachable.
+                            Single-prompt only; batch uses GFLOW_CLI_UI_MODE.
   --profile NAME            Profile name (overrides default).
 ```
 

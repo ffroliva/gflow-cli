@@ -2114,8 +2114,9 @@ class UiAutomationTransport(VideoGenerationMixin):
         # cohort flaps per page load, so this runs every generation (no caching).
         from gflow_cli.config import infer_required_ui_mode, resolve_ui_mode
 
+        base_mode = request.ui_mode if request.ui_mode is not None else resolve_ui_mode(None)
         required_mode = infer_required_ui_mode(
-            resolve_ui_mode(None), has_instructions=bool(request.instructions)
+            base_mode, has_instructions=bool(request.instructions)
         )
         ui_driver = await get_ui_driver(page, ui_mode=required_mode)
         if ui_driver.name == "classic":

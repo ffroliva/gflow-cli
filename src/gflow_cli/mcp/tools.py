@@ -29,7 +29,7 @@ from gflow_cli.api.client import FlowApiClient
 from gflow_cli.api.image import AgentInstruction
 from gflow_cli.api.video import is_media_uuid
 from gflow_cli.cli_instructions import classify_refs
-from gflow_cli.config import get_settings
+from gflow_cli.config import UiMode, get_settings
 from gflow_cli.data.queries import list_projects
 from gflow_cli.data.repository import DataRepository
 from gflow_cli.data.store import DataStore
@@ -610,6 +610,7 @@ async def gflow_generate_image(
     profile: str = _DEFAULT_PROFILE,
     project: str | None = None,
     instructions: list[str] | None = None,
+    ui_mode: str | None = None,
 ) -> dict[str, Any]:
     """Generate an image via Google Flow's Imagen.
 
@@ -637,6 +638,11 @@ async def gflow_generate_image(
             as before.
         instructions: Optional list of custom agent instructions to add or enable
             (only in agentic mode).
+        ui_mode: Required Flow UI arm — 'classic' (hard aspect controls),
+            'agentic' (chat surface; forced automatically when instructions are
+            given), or 'auto' (bind whatever renders, the default). If the arm
+            can't be reached, generation aborts before submitting (no credits).
+            Overrides GFLOW_CLI_UI_MODE.
 
     Returns:
         Dict with 'status', 'files' (list of local file paths), and metadata.
@@ -644,6 +650,12 @@ async def gflow_generate_image(
     """
     if (proj_err := _validate_project(project)) is not None:
         return proj_err
+
+    if ui_mode is not None and ui_mode not in {m.value for m in UiMode}:
+        return {
+            "status": "error",
+            "error": f"Invalid ui_mode {ui_mode!r}; expected one of {[m.value for m in UiMode]}.",
+        }
 
     if not await _rate_limiter.acquire():
         log.warning("mcp.tool.rate_limited", tool="gflow_generate_image")
@@ -684,6 +696,8 @@ async def gflow_generate_image(
         }
         if instructions:
             payload["instructions"] = list(instructions)
+        if ui_mode is not None:
+            payload["ui_mode"] = ui_mode
         if seed is not None:
             payload["seed"] = seed
         if project is not None:
