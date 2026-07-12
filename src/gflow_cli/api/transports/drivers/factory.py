@@ -30,6 +30,7 @@ import structlog
 
 from gflow_cli.api.transports.drivers.agentic import AgenticFlowUiDriver
 from gflow_cli.api.transports.drivers.classic import ClassicFlowUiDriver
+from gflow_cli.config import UiMode
 
 if TYPE_CHECKING:
     from collections.abc import Iterable
@@ -128,32 +129,60 @@ async def get_ui_driver(
     *,
     timeout_s: float | None = None,
     poll_interval_s: float | None = None,
-    prefer_classic: bool = False,
+    ui_mode: UiMode = UiMode.AUTO,
 ) -> FlowUiDriver:
     """Probe the DOM and return the matching :class:`FlowUiDriver`.
+
+    ``ui_mode`` (issue #299) is the caller's policy:
+      * ``AUTO`` — bind whatever the composer renders.
+      * ``CLASSIC`` — attempt to recover the classic composer (best-effort exit
+        of the agentic chat), then, if the arm is STILL agentic, raise
+        ``UiModeUnavailableError`` (exit 28) **before** any generation — zero
+        credits. The DOM probe is the authority; the arm flaps per load, so a
+        re-run often lands classic.
+      * ``AGENTIC`` — switch the composer to agentic, verify, and raise
+        ``UiModeUnavailableError`` if the arm can't be reached.
 
     Call per generation — the cohort flaps per page load, so a cached driver
     goes stale on the next navigation / batch item.
     """
-    if prefer_classic:
+    # Prerequisite switch: when a specific arm is required and the current one
+    # differs, attempt the DOM toggle for that direction (best-effort — the
+    # server can pin the arm). The re-probe below VERIFIES whether it took.
+    if ui_mode is UiMode.CLASSIC:
         from gflow_cli.api.transports.ui_automation_video import (
             VideoGenerationMixin,
         )
         from gflow_cli.errors import FlowAgentUiError
 
         try:
-            log.info("ui_driver.prefer_classic.attempt_exit_agent")
+            log.info("ui_driver.ui_mode.attempt_exit_agent")
             await VideoGenerationMixin._exit_agent_mode(page)  # type: ignore[reportPrivateUsage]
         except FlowAgentUiError as exc:
-            # Expected: the server-gated agentic ("tune") cohort cannot be exited
-            # client-side. prefer_classic is best-effort (see config docstring), so
-            # falling through to the agentic driver is normal, not a fault.
-            log.info("ui_driver.prefer_classic.cohort_natively_agentic", detail=str(exc))
+            # Expected: a server-pinned agentic cohort cannot be exited
+            # client-side. The verify check below turns this into a clean abort.
+            log.info("ui_driver.ui_mode.cohort_natively_agentic", detail=str(exc))
         except Exception as exc:
-            log.warning("ui_driver.prefer_classic.exit_agent_failed", error=str(exc))
+            log.warning("ui_driver.ui_mode.exit_agent_failed", error=str(exc))
+    elif ui_mode is UiMode.AGENTIC:
+        from gflow_cli.api.transports.ui_automation import UiAutomationTransport
+
+        try:
+            log.info("ui_driver.ui_mode.attempt_force_agent")
+            await UiAutomationTransport._force_agent_mode(page)  # type: ignore[reportPrivateUsage]
+        except Exception as exc:  # noqa: BLE001 - best-effort switch, verified below
+            log.warning("ui_driver.ui_mode.force_agent_failed", error=str(exc))
+
+    # Verify: re-probe the DOM ground truth after any switch attempt.
+    from gflow_cli.errors import UiModeUnavailableError
 
     mode = await detect_ui_mode(page, timeout_s=timeout_s, poll_interval_s=poll_interval_s)
-    log.info("ui_driver.bound", mode=mode)
+    log.info("ui_driver.bound", mode=mode, ui_mode=ui_mode.value)
     if mode == "agentic":
+        if ui_mode is UiMode.CLASSIC:
+            raise UiModeUnavailableError(UiMode.CLASSIC)
         return AgenticFlowUiDriver()
+    # classic rendered
+    if ui_mode is UiMode.AGENTIC:
+        raise UiModeUnavailableError(UiMode.AGENTIC)
     return ClassicFlowUiDriver()

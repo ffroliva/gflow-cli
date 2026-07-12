@@ -16,7 +16,6 @@ from __future__ import annotations
 import asyncio
 import hashlib
 import json
-import os
 import random
 import re
 import time
@@ -208,10 +207,9 @@ SUBMIT_BUTTON_SELECTORS = (
 # agentic chat layout — the ``crop_*`` media trigger disappears and the ``tune``
 # settings gear + ``expand_content`` open button appear. Captured live
 # 2026-06-14 via ``scripts/e2e/capture_agent_toggle.py`` (cropPresent true→false,
-# tune false→true). Opt-in via ``GFLOW_CLI_FORCE_AGENT_UI`` to deterministically
-# drive the agentic path regardless of the server-assigned A/B cohort (which has
-# no client-readable flag and cannot otherwise be forced).
-AGENT_FORCE_ENV_VAR = "GFLOW_CLI_FORCE_AGENT_UI"
+# tune false→true). Reached via ``GFLOW_CLI_UI_MODE=agentic`` (or an inferred
+# agentic requirement) to drive the agentic path regardless of the
+# server-assigned A/B cohort (which has no client-readable flag).
 AGENT_EXPAND_BUTTON_SELECTOR = "button:has(i.google-symbols:text-is('expand_content'))"
 
 # _force_agent_mode: after clicking the Agent toggle, POLL for the ``tune``
@@ -1058,7 +1056,7 @@ class UiAutomationTransport(VideoGenerationMixin):
     async def _force_agent_mode(page: Page) -> bool:
         """Force the agentic composer by clicking the in-composer Agent toggle.
 
-        Opt-in helper (gated by :data:`AGENT_FORCE_ENV_VAR`) used to drive the
+        Opt-in helper (reached via ``GFLOW_CLI_UI_MODE=agentic``) used to drive the
         agentic path deterministically — the server-assigned A/B cohort has no
         client-readable flag, but the in-composer "Agent" toggle switches the
         classic composer into the same agentic layout (``crop_*`` → ``tune``).
@@ -2107,52 +2105,22 @@ class UiAutomationTransport(VideoGenerationMixin):
         # of the editor before we click into settings / submit (#26).
         await self._dismiss_blocking_overlays(page, out_dir)
 
-        # Force the agentic composer when it's needed or explicitly requested:
-        #  - ``request.instructions`` present → instruction cards are an
-        #    agentic-only surface, so a classic bind would silently drop them
-        #    (#267). Switching the composer to agentic first makes ``-i``
-        #    dependable instead of ~50/50.
-        #  - ``GFLOW_CLI_FORCE_AGENT_UI`` set → opt-in to exercise the agentic
-        #    path deterministically (the A/B cohort can't be forced server-side).
-        # ``_force_agent_mode`` is idempotent (no-op when already agentic) and
-        # polls for the render, so the probe below reliably binds agentic.
-        if os.getenv(AGENT_FORCE_ENV_VAR) or request.instructions:
-            forced = await self._force_agent_mode(page)
-            if not forced and request.instructions:
-                log.warning(
-                    "ui_automation.agent_force_failed_with_instructions",
-                    instruction_count=len(request.instructions),
-                    detail=(
-                        "Could not switch this session to the agentic composer; "
-                        "instruction cards (-i) may not be applied. This account "
-                        "may not offer Agent mode."
-                    ),
-                )
+        # Determine the arm this command REQUIRES: explicit --ui-mode / env, or
+        # inferred — agent instructions (-i) are an agentic-only surface, so they
+        # force agentic. get_ui_driver switches to the required arm as a
+        # PREREQUISITE, VERIFIES via a DOM re-probe, and fails fast
+        # (UiModeUnavailableError, exit 28) if the arm is unreachable — so -i can
+        # never silently no-op on a classic bind, and no credits are spent. The
+        # cohort flaps per page load, so this runs every generation (no caching).
+        from gflow_cli.config import infer_required_ui_mode, resolve_ui_mode
 
-        # Probe the DOM for the active UI cohort AFTER _enter_editor so the
-        # project page is fully rendered.  The cohort flaps per page load so
-        # we re-probe every generation — never cache across calls.
-        # Classic driver requires a transport reference for send_prompt.
-        from gflow_cli.config import get_settings
-
-        ui_driver = await get_ui_driver(page, prefer_classic=get_settings().prefer_classic)
+        base_mode = request.ui_mode if request.ui_mode is not None else resolve_ui_mode(None)
+        required_mode = infer_required_ui_mode(
+            base_mode, has_instructions=bool(request.instructions)
+        )
+        ui_driver = await get_ui_driver(page, ui_mode=required_mode)
         if ui_driver.name == "classic":
             ui_driver._transport = self  # type: ignore[union-attr]
-            # Agent instruction cards are an agentic-only surface — the classic
-            # driver has no brief to sync. Warn loudly (stderr) so ``-i`` never
-            # silently no-ops: the user asked for instructions but this session
-            # bound the classic cohort, so they will NOT be applied.
-            if request.instructions:
-                log.warning(
-                    "ui_automation.instructions_ignored_classic_cohort",
-                    instruction_count=len(request.instructions),
-                    detail=(
-                        "Custom agent instructions (-i) were provided but this Flow "
-                        "session is using the classic (non-agentic) UI, which has no "
-                        "instruction surface — they will be ignored for this generation. "
-                        "Instructions only apply on agentic-cohort sessions."
-                    ),
-                )
 
         # Select Image mode explicitly. If the account was last in Video mode,
         # an unguarded submission goes to the video endpoint and the image
@@ -2538,9 +2506,13 @@ class UiAutomationTransport(VideoGenerationMixin):
         # cohort flaps per page load; bind once per batch (the editor stays
         # mounted so the cohort is stable for this batch's lifetime).
         # Classic driver requires a transport reference for send_prompt.
-        from gflow_cli.config import get_settings
+        # No instruction inference here: the image-batch manifest carries no
+        # per-item -i instructions (single-prompt only), so the required arm is
+        # just the resolved --ui-mode / env. Route through infer_required_ui_mode
+        # if batch ever gains instruction support.
+        from gflow_cli.config import resolve_ui_mode
 
-        ui_driver = await get_ui_driver(page, prefer_classic=get_settings().prefer_classic)
+        ui_driver = await get_ui_driver(page, ui_mode=resolve_ui_mode(None))
         if ui_driver.name == "classic":
             ui_driver._transport = self  # type: ignore[union-attr]
 
