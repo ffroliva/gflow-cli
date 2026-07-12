@@ -163,6 +163,10 @@ Options:
   --continue-on-error /
   --fail-fast               Continue after per-prompt failures or stop at the
                             first failed prompt. [default: continue-on-error]
+  --jitter SPEC             Anti-bot pause between multi-prompt submissions:
+                            'MIN-MAX' seconds, a single number for 0-N, or 0
+                            to disable. [default: 3-7; GFLOW_CLI_JITTER_RANGE
+                            overrides the default]
   --model [nano2|nano-pro|image4]
                             Image model alias.                [default: nano2]
   --aspect [9:16|16:9|1:1|4:3|3:4]
@@ -394,11 +398,12 @@ Example: [`test_assets/sample_batch.json`](../test_assets/sample_batch.json).
 
 ### Session behaviour
 
-All prompts in a batch share one Flow project. The editor is opened once; each prompt is submitted in turn with a random 3–7 second pause between submissions. This jitter is a **submission-cadence anti-bot-detection measure** — it spaces out the submission clicks, not the generation wait. All generations run in parallel inside Flow; only the click timing is jittered. The command returns once every submitted generation has resolved (success or failure), not after the last click.
+All prompts in a batch share one Flow project. The editor is opened once; each prompt is submitted in turn with a random pause between submissions (default 3–7 seconds; tune with `--jitter` or `GFLOW_CLI_JITTER_RANGE`). This jitter is a **submission-cadence anti-bot-detection measure** — it spaces out the submission clicks, not the generation wait. All generations run in parallel inside Flow; only the click timing is jittered. The command returns once every submitted generation has resolved (success or failure), not after the last click. See [DEBUGGING § WAF cadence](DEBUGGING.md#waf-cadence) for why pacing matters.
 
 ### Flags
 
 - `--continue-on-error` / `--fail-fast` — keep going past row failures or stop at the first one (default: `--fail-fast`). On fail-fast, already-completed images are downloaded before the error is surfaced.
+- `--jitter SPEC` — anti-bot pause between submissions: `MIN-MAX` seconds (e.g. `10-30`), a single number for `0`–`N`, or `0` to disable. Default `3-7`; `GFLOW_CLI_JITTER_RANGE` overrides the default, the flag beats both.
 
 ### Limits
 

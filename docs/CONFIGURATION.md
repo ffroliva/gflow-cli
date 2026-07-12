@@ -153,6 +153,14 @@ GFLOW_CLI_AUTH_LOGIN_TIMEOUT=120 gflow auth login   # abort after 2 minutes
 **Default:** `600`
 **Note:** This is a single-request ceiling; the *batch* timeout you experience is sum of all per-clip waits.
 
+### `GFLOW_CLI_JITTER_RANGE`
+
+**What:** Anti-bot pause between prompt submissions in multi-prompt image runs (`gflow image batch` and `gflow image t2i --prompts-file` / `--stdin` / multiple positional prompts). Spaces out the *submission clicks* only — generations still run in parallel inside Flow.
+**Values:** `MIN-MAX` seconds (e.g. `10-30`), a single number `N` (uniform `0`–`N`, mirrors `video chain --jitter`), or `0` to disable.
+**Default:** `3-7`
+**CLI override:** `--jitter` on `image t2i` and `image batch` (flag beats env).
+**Why:** Flow's WAF reacts to cumulative submission cadence — see [DEBUGGING § WAF cadence](DEBUGGING.md#waf-cadence) before raising throughput.
+
 ### `GFLOW_CLI_LOG_LEVEL`
 
 **What:** Logging verbosity.
