@@ -20,6 +20,7 @@ Use `get_settings()` to access the cached singleton. Tests should call
 
 from __future__ import annotations
 
+import math
 import os
 import warnings
 from collections.abc import Mapping
@@ -100,6 +101,43 @@ def _env_files() -> tuple[str, str]:
     a CWD ``.env`` takes precedence over ``<home>/.env`` (docs/CONFIGURATION.md).
     """
     return (str(_resolve_home() / ".env"), ".env")
+
+
+# Ceiling for a jitter bound (seconds). Anything above this is almost
+# certainly a fat-finger (milliseconds pasted as seconds) or 'inf'.
+MAX_JITTER_SECONDS = 3600.0
+
+
+def parse_jitter_range(spec: str) -> tuple[float, float]:
+    """Parse a jitter spec: ``MIN-MAX`` seconds, a single ``N`` (uniform 0-N),
+    or ``0`` to disable. Raises ``ValueError`` with a user-facing message on an
+    unparseable spec, negative/non-finite values, MIN > MAX, or a bound above
+    ``MAX_JITTER_SECONDS``.
+    """
+    parts = spec.split("-")
+    try:
+        if len(parts) == 1:
+            low, high = 0.0, float(parts[0])
+        elif len(parts) == 2:
+            low, high = float(parts[0]), float(parts[1])
+        else:
+            raise ValueError(spec)
+    except ValueError:
+        msg = f"Invalid jitter spec {spec!r}: expected 'MIN-MAX' or a single number (seconds)."
+        raise ValueError(msg) from None
+    if not (math.isfinite(low) and math.isfinite(high)):
+        msg = f"Invalid jitter range {spec!r}: bounds must be finite seconds."
+        raise ValueError(msg)
+    if low > high:
+        msg = f"Invalid jitter range {spec!r}: MIN ({low}) must be <= MAX ({high})."
+        raise ValueError(msg)
+    if high > MAX_JITTER_SECONDS:
+        msg = (
+            f"Invalid jitter range {spec!r}: MAX ({high}) exceeds "
+            f"{MAX_JITTER_SECONDS:.0f}s — jitter is expressed in seconds."
+        )
+        raise ValueError(msg)
+    return (low, high)
 
 
 class LogLevel(StrEnum):
@@ -305,6 +343,26 @@ class Settings(BaseSettings):
             "Override via GFLOW_CLI_PREFER_CLASSIC."
         ),
     )
+    jitter_range: str | None = Field(
+        default=None,
+        description=(
+            "Anti-bot pause between prompt submissions in multi-prompt image "
+            "runs: 'MIN-MAX' seconds, a single number for 0-N, or 0 to disable. "
+            "Unset means the built-in small default (0.5-1.5s). "
+            "Override per-run with --jitter."
+        ),
+    )
+
+    @field_validator("jitter_range")
+    @classmethod
+    def _jitter_range_must_parse(cls, value: str | None) -> str | None:
+        """Fail at settings load (clean pydantic error) instead of mid-run."""
+        if value is None or not value.strip():
+            # Set-but-empty (common in CI templates) means "unset".
+            return None
+        parse_jitter_range(value)
+        return value
+
     # --- logging ----------------------------------------------------------
     log_level: LogLevel = LogLevel.INFO
     log_format: LogFormat = LogFormat.AUTO

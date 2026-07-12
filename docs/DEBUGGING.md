@@ -189,12 +189,14 @@ requests. Field data (issue [#241](https://github.com/ffroliva/gflow-cli/issues/
 
 Practical guidance:
 
-- **Pace multi-prompt runs.** All multi-prompt image paths (`image batch`,
-  `image t2i --prompts-file` / `--stdin` / multiple prompts) apply a random
-  3–7 s pause between submissions by default; tune with `--jitter MIN-MAX` or
-  `GFLOW_CLI_JITTER_RANGE` ([CONFIGURATION § GFLOW_CLI_JITTER_RANGE](CONFIGURATION.md#gflow_cli_jitter_range)).
-  Widen (e.g. `10-30`) when composing several runs in one sitting; `--jitter 0`
-  disables pacing (only sensible for single-prompt smoke checks).
+- **Pace multi-prompt runs — escalate only when needed.** All multi-prompt
+  image paths (`image batch`, `image t2i --prompts-file` / `--stdin` /
+  multiple prompts, `gflow run` image batches) apply a small random
+  0.5–1.5 s pause between submissions by default — enough to break a
+  perfectly uniform burst signature without wasting wall-clock. If runs
+  start returning 403s, widen with `--jitter 10-30` or
+  `GFLOW_CLI_JITTER_RANGE` ([CONFIGURATION § GFLOW_CLI_JITTER_RANGE](CONFIGURATION.md#gflow_cli_jitter_range)),
+  then dial back once the score decays. `--jitter 0` disables pacing.
 - **Cool down after a 403.** Wait 30–60 min, then probe with a single small
   generation before batching again.
 - **Reuse a project.** Repeated project churn (`project.createProject` calls
