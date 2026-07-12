@@ -1179,11 +1179,12 @@ async def test_configure_generation_settings_resets_count_between_prompts() -> N
 
 
 @pytest.mark.asyncio
-async def test_generate_images_batch_threads_prefer_classic(
+async def test_generate_images_batch_threads_ui_mode(
     monkeypatch: pytest.MonkeyPatch,
 ) -> None:
     import gflow_cli.api.transports.ui_automation as uia_mod
     from gflow_cli.api.image import Aspect, GenerateImageRequest, Model
+    from gflow_cli.config import UiMode
 
     transport = UiAutomationTransport.__new__(UiAutomationTransport)
     transport._setup_done = True
@@ -1196,8 +1197,8 @@ async def test_generate_images_batch_threads_prefer_classic(
     transport._dismiss_blocking_overlays = AsyncMock()
     transport._send_prompt = AsyncMock()
 
-    # Set prefer_classic in settings to True
-    monkeypatch.setenv("GFLOW_CLI_PREFER_CLASSIC", "true")
+    # GFLOW_CLI_UI_MODE=classic resolves to UiMode.CLASSIC (subsumes prefer_classic)
+    monkeypatch.setenv("GFLOW_CLI_UI_MODE", "classic")
     from gflow_cli.config import reset_settings
 
     reset_settings()
@@ -1232,4 +1233,4 @@ async def test_generate_images_batch_threads_prefer_classic(
             prompts=prompts, jitter_range=(0.0, 0.0), continue_on_error=False
         )
 
-    mock_get_driver.assert_called_once_with(transport._page, prefer_classic=True)
+    mock_get_driver.assert_called_once_with(transport._page, ui_mode=UiMode.CLASSIC)

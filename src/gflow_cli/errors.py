@@ -14,6 +14,7 @@ __all__ = [
     "BrowserEngineUnavailableError",
     "ChainManifestError",
     "ChainPartialError",
+    "ClassicUiUnavailableError",
     "ConfigurationError",
     "ContentPolicyError",
     "DataIntegrityError",
@@ -470,6 +471,33 @@ class FlowAgentUiError(GFlowError):
     )
 
 
+class ClassicUiUnavailableError(FlowAgentUiError):
+    """Raised when `--ui-mode classic` was requested but the live Flow arm is
+    agentic and could not be recovered to classic (issue #299).
+
+    Distinct from the parent `FlowAgentUiError` (exit 25 = "gflow cannot drive
+    the agentic UI at all"): here gflow *can* drive agentic, but the caller
+    demanded classic, so we abort **before** submitting — zero credits spent.
+    The cohort is server-assigned per page load and flaps, so this failure is
+    **retryable**: a re-run often lands classic. Subclasses `FlowAgentUiError`
+    to keep `except FlowAgentUiError` catch-compatibility; its own exit code 28
+    (ordered before the parent in `EXIT_CODE_MAP`) lets scripts branch on
+    "retry / switch profile" vs the parent's "unsupported".
+    """
+
+    problem_type = "https://gflow-cli.dev/errors/classic-ui-unavailable"
+    title = "Classic Flow UI unavailable (requested --ui-mode classic)"
+    _default_remediation = (
+        "You requested the classic Flow UI (--ui-mode classic / "
+        "GFLOW_CLI_UI_MODE=classic) but this profile is currently on Flow's "
+        "agentic arm. Aborted before submitting — no credits were spent. The "
+        "cohort flaps per page load, so RETRY (a re-run often lands classic); "
+        "or try a different --profile; or pass --ui-mode agentic (or auto) to "
+        "proceed on the agentic driver. Note: a server-side experiment can pin "
+        "agentic, in which case classic cannot be reached from the client."
+    )
+
+
 class MediaAttributionError(GFlowError):
     """Raised when generated media cannot be reliably attributed to the request
     that produced it (issue #281).
@@ -792,6 +820,10 @@ EXIT_CODE_MAP: dict[type[GFlowError], int] = {
     # BrowserEngineUnavailableError (Patchright engine opt-in): BEFORE
     # ConfigurationError (its parent) so the isinstance walk lands on 24, not 11.
     BrowserEngineUnavailableError: 24,
+    # ClassicUiUnavailableError (issue #299): --ui-mode classic requested but the
+    # live arm is agentic. BEFORE FlowAgentUiError (its parent) so the isinstance
+    # walk lands on 28, not 25 — retryable policy abort vs "can't drive agentic".
+    ClassicUiUnavailableError: 28,
     FlowAgentUiError: 25,
     # MediaAttributionError (issue #281): generated media could not be
     # reliably attributed (agentic DOM-scrape ambiguity, or a downstream

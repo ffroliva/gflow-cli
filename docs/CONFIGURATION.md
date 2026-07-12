@@ -231,13 +231,21 @@ GFLOW_CLI_HISTORY_PROMPTS=redacted gflow image t2i "confidential brief"
 **Reverting:** unset the variable (or set `playwright`) — the default path is byte-identical to a build without this feature, with no profile migration.
 **Security note:** the `patchright` extra ships a *patched Chromium driver* that handles your live Google session cookies; it is exact-pinned and treated as a security-review-required dependency. See [SECURITY.md § Dependencies](SECURITY.md).
 
-### `GFLOW_CLI_PREFER_CLASSIC`
+### `GFLOW_CLI_UI_MODE`
 
-**What:** Try to force the Classic Flow UI mode for image generation by clicking the Agent toggle pill if the page mounts in Agentic mode.
-**Values:** `true` | `false`
-**Default:** `false`
-**Why use it:** The Agentic UI cohort (conversational chat) treats requested aspect ratios as a soft prompt hint, which can result in inconsistent aspect ratios (e.g. producing landscape when portrait 9:16 was requested). Exposing this setting allows callers to opt into switching the UI back to Classic mode where aspect ratios are enforced deterministically (via hard Flow crop controls).
-**Fallback:** If the page cannot be switched back to Classic (e.g., in a forced A/B cohort where the toggle is not available), the driver gracefully falls back to Agentic mode rather than blocking execution.
+**What:** Which Flow UI arm to use for generation. Flow serves a **classic** composer (hard crop/aspect controls) or an **agentic** chat cohort, server-assigned and flapping per page load ([#299](https://github.com/ffroliva/gflow-cli/issues/299)).
+**Values:**
+- `auto` (default) — bind whatever the composer renders.
+- `classic` — require the classic composer; attempt to recover it, and if the arm is still agentic **abort before submitting** with `ClassicUiUnavailableError` (**exit 28**) — no credits spent. Use when deterministic aspect ratios matter.
+- `agentic` — skip the classic-recovery attempt and bind the agentic driver.
+**Default:** `auto`
+**Why `classic`:** the agentic cohort treats aspect ratio as a soft prompt hint (portrait 9:16 can come back landscape). `classic` enforces it or fails fast instead of silently degrading.
+**Retry note:** the cohort flaps per load, so an exit-28 abort is **retryable** — a re-run often lands classic. A server experiment can pin agentic, in which case classic is unreachable from the client (the abort still saves the credits).
+**Supersedes:** `GFLOW_CLI_PREFER_CLASSIC` (below).
+
+### `GFLOW_CLI_PREFER_CLASSIC` *(deprecated — use `GFLOW_CLI_UI_MODE=classic`)*
+
+**Deprecated** in favor of [`GFLOW_CLI_UI_MODE`](#gflow_cli_ui_mode). `true` now maps to `ui_mode=classic` (emits a `DeprecationWarning`). **Behavior change:** the old silent fallback to agentic when the toggle was unavailable is gone — a classic-strict run now **aborts with exit 28** instead of producing an agentic-cohort result. `GFLOW_CLI_UI_MODE` (and `--ui-mode`) take precedence when both are set.
 
 ### `GFLOW_CLI_LOCALE`
 

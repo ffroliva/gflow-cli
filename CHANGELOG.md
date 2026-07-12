@@ -7,6 +7,14 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+### Added
+
+- **`GFLOW_CLI_UI_MODE` — fail fast when the wanted Flow UI arm isn't the live one (#299).** Flow serves a **classic** composer or an **agentic** chat cohort, server-assigned and flapping per page load. `GFLOW_CLI_UI_MODE=classic` now **aborts before submitting** with the new `ClassicUiUnavailableError` (**exit 28**, retryable) when the arm is agentic — no credits spent — instead of silently producing an agentic-cohort result with soft-hint aspect ratios. `auto` (default) binds whatever renders; `agentic` skips classic recovery. Grounded in the #299 spike (the arm is a per-load server assignment; `docs/superpowers/spikes/2026-07-12-ui-cohort-backend-config.md`). Applies to every generation command via the shared driver seam.
+
+### Changed
+
+- **`GFLOW_CLI_PREFER_CLASSIC` is deprecated (#299)** in favor of `GFLOW_CLI_UI_MODE=classic`. `true` still works (maps to `ui_mode=classic`, emits a `DeprecationWarning`), **but the behavior changed**: the old silent fallback to the agentic UI when the classic toggle was unavailable is gone — a classic-strict run now aborts with exit 28. Pipelines that relied on "always yields a file" from `PREFER_CLASSIC=1` must handle exit 28 (retry / switch profile / set `GFLOW_CLI_UI_MODE=agentic`).
+
 ## [0.33.0] — 2026-07-12
 
 ### Added
