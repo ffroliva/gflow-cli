@@ -146,11 +146,11 @@ async def get_ui_driver(
       * ``AUTO`` — bind whatever the composer renders.
       * ``CLASSIC`` — attempt to recover the classic composer (best-effort exit
         of the agentic chat), then, if the arm is STILL agentic, raise
-        ``ClassicUiUnavailableError`` (exit 28) **before** any generation —
-        zero credits. The DOM probe is the authority; the arm flaps per load,
-        so a re-run often lands classic.
-      * ``AGENTIC`` — skip the classic-recovery attempt and bind whatever
-        renders (expected agentic).
+        ``UiModeUnavailableError`` (exit 28) **before** any generation — zero
+        credits. The DOM probe is the authority; the arm flaps per load, so a
+        re-run often lands classic.
+      * ``AGENTIC`` — switch the composer to agentic, verify, and raise
+        ``UiModeUnavailableError`` if the arm can't be reached.
 
     Call per generation — the cohort flaps per page load, so a cached driver
     goes stale on the next navigation / batch item.
@@ -181,17 +181,15 @@ async def get_ui_driver(
             log.warning("ui_driver.ui_mode.force_agent_failed", error=str(exc))
 
     # Verify: re-probe the DOM ground truth after any switch attempt.
+    from gflow_cli.errors import UiModeUnavailableError
+
     mode = await detect_ui_mode(page, timeout_s=timeout_s, poll_interval_s=poll_interval_s)
     log.info("ui_driver.bound", mode=mode, ui_mode=ui_mode.value)
     if mode == "agentic":
         if ui_mode is UiMode.CLASSIC:
-            from gflow_cli.errors import UiModeUnavailableError
-
             raise UiModeUnavailableError(UiMode.CLASSIC)
         return AgenticFlowUiDriver()
     # classic rendered
     if ui_mode is UiMode.AGENTIC:
-        from gflow_cli.errors import UiModeUnavailableError
-
         raise UiModeUnavailableError(UiMode.AGENTIC)
     return ClassicFlowUiDriver()
