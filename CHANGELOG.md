@@ -9,7 +9,12 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ### Added
 
+- **Configurable anti-bot jitter (#241).** The pause between multi-prompt image submissions is now tunable via `--jitter MIN-MAX` on `gflow image t2i` / `gflow image batch` or the `GFLOW_CLI_JITTER_RANGE` setting (env var or `.env`; flag beats env; a single number `N` means uniform 0–N like `video chain --jitter`; `0` disables; bounds must be finite and ≤ 3600 s). The previously **unpaced** paths — `t2i --prompts-file` / `--stdin` / multi-positional and `gflow run` image batches — now pace by default too; field data showed unpaced bursts tripping Flow's WAF (403 `PUBLIC_ERROR_UNUSUAL_ACTIVITY`). WAF cadence behavior and cooldown guidance documented in [DEBUGGING § WAF cadence](docs/DEBUGGING.md#waf-cadence).
 - **`--project-name TEXT` on `gflow video i2v` (env: `GFLOW_CLI_PROJECT_NAME`).** The media picker's project menu lists projects by display NAME only — no ids anywhere in its markup, and unnamed projects show nothing but creation timestamps (live round-4 dump: 80 recency-ordered `menuitem`s). When gflow attaches an in-project asset by media UUID it must first select the right project in that menu, so it needs the project's display name. Automatic derivation is best-effort but live-validated (round 5 confirmed the editor tab title carries the name: `Google Flow - <project name>`); `--project-name` is the explicit, highest-precedence override for when derivation fails on other cohorts/locales — a permanent escape hatch, not a workaround. Threads `GenerateVideoRequest.project_name` through to the picker project-menu match; documented in `.env.template`. CLI-only for now: the MCP `gflow_generate_video` tool has no media-UUID frame inputs yet, so the override has no consumer there (command-level parity unaffected; the field rides along when ref-id support lands) (#287).
+
+### Changed
+
+- **Default image-batch jitter lowered from 3–7 s to 0.5–1.5 s (#241).** The default is deliberately minimal — enough to break a perfectly uniform burst signature without wasting wall-clock. Widen (`--jitter 10-30` / `GFLOW_CLI_JITTER_RANGE=10-30`) when runs start hitting WAF 403s, then dial back once the score decays.
 
 ### Fixed
 
