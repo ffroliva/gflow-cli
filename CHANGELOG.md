@@ -7,6 +7,8 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+## [0.33.0] — 2026-07-12
+
 ### Added
 
 - **Configurable anti-bot jitter (#241).** The pause between multi-prompt image submissions is now tunable via `--jitter MIN-MAX` on `gflow image t2i` / `gflow image batch` or the `GFLOW_CLI_JITTER_RANGE` setting (env var or `.env`; flag beats env; a single number `N` means uniform 0–N like `video chain --jitter`; `0` disables; bounds must be finite and ≤ 3600 s). The previously **unpaced** paths — `t2i --prompts-file` / `--stdin` / multi-positional and `gflow run` image batches — now pace by default too; field data showed unpaced bursts tripping Flow's WAF (403 `PUBLIC_ERROR_UNUSUAL_ACTIVITY`). WAF cadence behavior and cooldown guidance documented in [DEBUGGING § WAF cadence](docs/DEBUGGING.md#waf-cadence).
@@ -1949,7 +1951,8 @@ shell-script template that branches on these codes.
 
 First skeleton. Not functional end-to-end yet.
 
-[Unreleased]: https://github.com/ffroliva/gflow-cli/compare/v0.32.1...HEAD
+[Unreleased]: https://github.com/ffroliva/gflow-cli/compare/v0.33.0...HEAD
+[0.33.0]: https://github.com/ffroliva/gflow-cli/compare/v0.32.1...v0.33.0
 [0.32.1]: https://github.com/ffroliva/gflow-cli/compare/v0.32.0...v0.32.1
 [0.32.0]: https://github.com/ffroliva/gflow-cli/compare/v0.31.0...v0.32.0
 [0.31.0]: https://github.com/ffroliva/gflow-cli/compare/v0.30.0...v0.31.0
