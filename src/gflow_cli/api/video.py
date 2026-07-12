@@ -221,6 +221,17 @@ class GenerateVideoRequest:
     end_image: Path | None = None  # I2V (optional local file path)
     end_image_ref_name: str | None = None  # I2V (optional remote asset display name)
     end_image_ref_id: str | None = None  # I2V (optional in-project asset media UUID, #287)
+    # Display name of the target project for the media picker's project-menu
+    # match (#287: the menu lists projects by NAME, not id). Optional override
+    # (--project-name / GFLOW_CLI_PROJECT_NAME); when None the transport
+    # derives a name from the live page.
+    project_name: str | None = None
+    # Picker search hints for UUID frame refs (#287 round 6): Flow's media
+    # search does not index UUIDs, but tile alt text carries the generation
+    # prompt — the CLI resolves each ref's recorded prompt from the local
+    # catalog and passes its first words here; the transport types them into
+    # the picker search box and matches results by UUID-in-src.
+    search_hints: tuple[str, ...] = ()
     reference_images: tuple[Path, ...] = ()  # R2V (local file paths)
     ref_names: tuple[str, ...] = ()  # R2V (remote asset display names)
     reference_entities: tuple[str, ...] = ()  # R2V — Flow CHARACTER entity ids
