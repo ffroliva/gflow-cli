@@ -50,7 +50,7 @@ from gflow_cli.api.image import (
 from gflow_cli.api.image_upscale import TargetResolution, UpsampleImageRequest
 from gflow_cli.api.transports import transport_choices
 from gflow_cli.api.video import is_media_uuid
-from gflow_cli.config import get_settings
+from gflow_cli.config import get_settings, parse_jitter_range
 from gflow_cli.data.recorder import OperationRecorder, escalate_asset_collision
 from gflow_cli.data.repository import DataRepository
 from gflow_cli.data.store import DataStore
@@ -566,8 +566,8 @@ def _validate_jitter_spec(
     """Fail fast (usage error) on an unparseable --jitter spec."""
     if value is not None:
         try:
-            resolve_jitter_range(value)
-        except ConfigurationError as exc:
+            parse_jitter_range(value)
+        except ValueError as exc:
             raise click.BadParameter(str(exc), param=param) from None
     return value
 
@@ -580,7 +580,8 @@ _jitter_option = click.option(
     help=(
         "Anti-bot pause between prompt submissions in multi-prompt runs: "
         "'MIN-MAX' seconds (e.g. 10-30), a single number for 0-N, or 0 to "
-        "disable. Defaults to 3-7; GFLOW_CLI_JITTER_RANGE overrides the default."
+        "disable. Defaults to a small 0.5-1.5; GFLOW_CLI_JITTER_RANGE "
+        "overrides the default. Widen if runs start hitting WAF 403s."
     ),
 )
 
@@ -1106,9 +1107,9 @@ _BATCH_TITLE = "gflow-cli image batch"
     help=(
         "Generate images from a JSON or TSV manifest file "
         f"(up to {_MAX_BATCH_PROMPTS} prompts).\n\n"
-        "All prompts share one Flow project (stay-mounted editor). A 3-7s\n"
-        "jitter is applied between submissions as an anti-bot courtesy\n"
-        "(configurable via --jitter or GFLOW_CLI_JITTER_RANGE).\n\n"
+        "All prompts share one Flow project (stay-mounted editor). A small\n"
+        "0.5-1.5s jitter is applied between submissions as an anti-bot\n"
+        "courtesy (configurable via --jitter or GFLOW_CLI_JITTER_RANGE).\n\n"
         "To generate each prompt in its own project, loop `gflow image t2i` instead.\n\n"
         "\b\n"
         "TSV format (tab-separated): prompt[\\tcount[\\taspect_ratio[\\tmodel]]]\n"

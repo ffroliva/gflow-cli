@@ -9,7 +9,11 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ### Added
 
-- **Configurable anti-bot jitter (#241).** The 3–7 s pause between multi-prompt image submissions is now tunable via `--jitter MIN-MAX` on `gflow image t2i` / `gflow image batch` or the `GFLOW_CLI_JITTER_RANGE` env var (flag beats env; a single number `N` means uniform 0–N like `video chain --jitter`; `0` disables). The previously **unpaced** `t2i --prompts-file` / `--stdin` / multi-positional path now applies the same default 3–7 s pacing between submissions — field data showed unpaced bursts tripping Flow's WAF (403 `PUBLIC_ERROR_UNUSUAL_ACTIVITY`). WAF cadence behavior and cooldown guidance documented in [DEBUGGING § WAF cadence](docs/DEBUGGING.md#waf-cadence).
+- **Configurable anti-bot jitter (#241).** The pause between multi-prompt image submissions is now tunable via `--jitter MIN-MAX` on `gflow image t2i` / `gflow image batch` or the `GFLOW_CLI_JITTER_RANGE` setting (env var or `.env`; flag beats env; a single number `N` means uniform 0–N like `video chain --jitter`; `0` disables; bounds must be finite and ≤ 3600 s). The previously **unpaced** paths — `t2i --prompts-file` / `--stdin` / multi-positional and `gflow run` image batches — now pace by default too; field data showed unpaced bursts tripping Flow's WAF (403 `PUBLIC_ERROR_UNUSUAL_ACTIVITY`). WAF cadence behavior and cooldown guidance documented in [DEBUGGING § WAF cadence](docs/DEBUGGING.md#waf-cadence).
+
+### Changed
+
+- **Default image-batch jitter lowered from 3–7 s to 0.5–1.5 s (#241).** The default is deliberately minimal — enough to break a perfectly uniform burst signature without wasting wall-clock. Widen (`--jitter 10-30` / `GFLOW_CLI_JITTER_RANGE=10-30`) when runs start hitting WAF 403s, then dial back once the score decays.
 
 ## [0.32.1] — 2026-07-11
 

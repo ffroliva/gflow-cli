@@ -1,16 +1,22 @@
 """Configurable anti-bot jitter (issue #241).
 
-``resolve_jitter_range`` parses the ``--jitter`` flag / ``GFLOW_CLI_JITTER_RANGE``
-env var, and ``run_sequential_batch`` paces multi-prompt submissions.
+``parse_jitter_range`` (config) parses the spec; ``resolve_jitter_range``
+applies flag > settings (env/.env) > small-default precedence; and
+``run_sequential_batch`` paces multi-prompt submissions.
 """
 
 from __future__ import annotations
 
+import asyncio
+import unittest.mock
 from pathlib import Path
+from unittest.mock import patch
 
 import pytest
+from click.testing import CliRunner
 
 from gflow_cli.api.dto import ProjectInfo
+from gflow_cli.config import Settings, parse_jitter_range, reset_settings
 from gflow_cli.errors import ConfigurationError
 from gflow_cli.image_batch import (
     JITTER_MAX_SECONDS,
@@ -20,53 +26,73 @@ from gflow_cli.image_batch import (
     run_sequential_batch,
 )
 
-# ---------------------------------------------------------------------------
-# resolve_jitter_range
-# ---------------------------------------------------------------------------
 
-
-def test_default_when_no_flag_and_no_env(monkeypatch: pytest.MonkeyPatch) -> None:
+@pytest.fixture(autouse=True)
+def _clean_jitter_env(monkeypatch: pytest.MonkeyPatch):
+    """Isolate each test from ambient env and the cached Settings singleton."""
     monkeypatch.delenv("GFLOW_CLI_JITTER_RANGE", raising=False)
+    reset_settings()
+    yield
+    reset_settings()
+
+
+# ---------------------------------------------------------------------------
+# parse_jitter_range / resolve_jitter_range
+# ---------------------------------------------------------------------------
+
+
+@pytest.mark.parametrize(
+    ("spec", "expected"),
+    [
+        ("10-30", (10.0, 30.0)),
+        ("2.5-7.5", (2.5, 7.5)),
+        # Single value mirrors `gflow video chain --jitter N`: uniform [0, N).
+        ("5", (0.0, 5.0)),
+        ("0", (0.0, 0.0)),
+    ],
+)
+def test_valid_specs_parse(spec: str, expected: tuple[float, float]) -> None:
+    assert parse_jitter_range(spec) == expected
+    assert resolve_jitter_range(spec) == expected
+
+
+@pytest.mark.parametrize(
+    "bad",
+    ["abc", "30-10", "-5", "1-2-3", "", "3-", "-", "5-inf", "nan", "5000", "10-99999"],
+)
+def test_invalid_specs_rejected(bad: str) -> None:
+    with pytest.raises(ValueError, match="[Ii]nvalid jitter"):
+        parse_jitter_range(bad)
+    with pytest.raises(ConfigurationError):
+        resolve_jitter_range(bad)
+
+
+def test_default_when_no_flag_and_no_env() -> None:
     assert resolve_jitter_range(None) == (JITTER_MIN_SECONDS, JITTER_MAX_SECONDS)
-
-
-def test_range_spec_parses_min_max() -> None:
-    assert resolve_jitter_range("10-30") == (10.0, 30.0)
-
-
-def test_decimal_range_spec() -> None:
-    assert resolve_jitter_range("2.5-7.5") == (2.5, 7.5)
-
-
-def test_single_value_means_zero_to_n() -> None:
-    # Mirrors `gflow video chain --jitter N` semantics: uniform [0, N).
-    assert resolve_jitter_range("5") == (0.0, 5.0)
-
-
-def test_zero_disables() -> None:
-    assert resolve_jitter_range("0") == (0.0, 0.0)
 
 
 def test_env_var_used_when_no_flag(monkeypatch: pytest.MonkeyPatch) -> None:
     monkeypatch.setenv("GFLOW_CLI_JITTER_RANGE", "10-30")
+    reset_settings()
     assert resolve_jitter_range(None) == (10.0, 30.0)
 
 
 def test_flag_overrides_env(monkeypatch: pytest.MonkeyPatch) -> None:
     monkeypatch.setenv("GFLOW_CLI_JITTER_RANGE", "10-30")
+    reset_settings()
     assert resolve_jitter_range("1-2") == (1.0, 2.0)
 
 
-@pytest.mark.parametrize("bad", ["abc", "30-10", "-5", "1-2-3", "", "3-", "-"])
-def test_invalid_specs_raise_configuration_error(bad: str) -> None:
-    with pytest.raises(ConfigurationError):
-        resolve_jitter_range(bad)
-
-
-def test_invalid_env_raises_configuration_error(monkeypatch: pytest.MonkeyPatch) -> None:
+def test_invalid_env_fails_at_settings_load(monkeypatch: pytest.MonkeyPatch) -> None:
     monkeypatch.setenv("GFLOW_CLI_JITTER_RANGE", "banana")
-    with pytest.raises(ConfigurationError):
-        resolve_jitter_range(None)
+    with pytest.raises(Exception, match="[Ii]nvalid jitter"):
+        Settings(_env_file=None)
+
+
+def test_empty_env_means_unset(monkeypatch: pytest.MonkeyPatch) -> None:
+    monkeypatch.setenv("GFLOW_CLI_JITTER_RANGE", "")
+    reset_settings()
+    assert resolve_jitter_range(None) == (JITTER_MIN_SECONDS, JITTER_MAX_SECONDS)
 
 
 # ---------------------------------------------------------------------------
@@ -95,8 +121,6 @@ async def _ok_worker(_client: object, _project_id: str, idx: int, item: object) 
 
 def _run_batch(jitter_range: tuple[float, float] | None, n_items: int = 3) -> list[float]:
     """Run a fake batch, returning the recorded sleep durations."""
-    import asyncio
-
     sleeps: list[float] = []
     real_sleep = asyncio.sleep
 
@@ -105,8 +129,6 @@ def _run_batch(jitter_range: tuple[float, float] | None, n_items: int = 3) -> li
         await real_sleep(0)
 
     async def _go() -> None:
-        import unittest.mock
-
         with unittest.mock.patch("gflow_cli.image_batch.asyncio.sleep", recording_sleep):
             await run_sequential_batch(
                 profile_dir=Path("unused"),
@@ -133,7 +155,17 @@ def test_sequential_batch_zero_range_never_sleeps() -> None:
     assert _run_batch((0.0, 0.0), n_items=3) == []
 
 
-def test_sequential_batch_default_none_never_sleeps() -> None:
+def test_sequential_batch_none_resolves_configured_default() -> None:
+    # None = "use the configured range" — the small built-in default here.
+    # This is the contract that keeps every caller (incl. `gflow run`) paced.
+    sleeps = _run_batch(None, n_items=3)
+    assert len(sleeps) == 2
+    assert all(JITTER_MIN_SECONDS <= s <= JITTER_MAX_SECONDS for s in sleeps)
+
+
+def test_sequential_batch_none_honours_env(monkeypatch: pytest.MonkeyPatch) -> None:
+    monkeypatch.setenv("GFLOW_CLI_JITTER_RANGE", "0")
+    reset_settings()
     assert _run_batch(None, n_items=3) == []
 
 
@@ -150,10 +182,6 @@ def test_sequential_batch_sleep_within_range() -> None:
 
 def _invoke_cli(args: list[str], tmp_path: Path) -> tuple[object, dict[str, object]]:
     """Invoke the CLI with the batch runners patched; return (result, runner kwargs)."""
-    from unittest.mock import patch
-
-    from click.testing import CliRunner
-
     from gflow_cli.cli import main
 
     async def _fake_run(**_kwargs: object) -> list[object]:
@@ -176,10 +204,7 @@ def _invoke_cli(args: list[str], tmp_path: Path) -> tuple[object, dict[str, obje
     return result, captured
 
 
-def test_t2i_jitter_flag_passes_range_to_batch_runner(
-    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
-) -> None:
-    monkeypatch.delenv("GFLOW_CLI_JITTER_RANGE", raising=False)
+def test_t2i_jitter_flag_passes_range_to_batch_runner(tmp_path: Path) -> None:
     result, kwargs = _invoke_cli(
         ["image", "t2i", "p1", "p2", "--jitter", "1-2", "--out", str(tmp_path / "out")],
         tmp_path,
@@ -188,8 +213,7 @@ def test_t2i_jitter_flag_passes_range_to_batch_runner(
     assert kwargs["jitter_range"] == (1.0, 2.0)
 
 
-def test_t2i_defaults_to_3_7_jitter(tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> None:
-    monkeypatch.delenv("GFLOW_CLI_JITTER_RANGE", raising=False)
+def test_t2i_defaults_to_small_jitter(tmp_path: Path) -> None:
     result, kwargs = _invoke_cli(
         ["image", "t2i", "p1", "p2", "--out", str(tmp_path / "out")],
         tmp_path,
@@ -200,6 +224,7 @@ def test_t2i_defaults_to_3_7_jitter(tmp_path: Path, monkeypatch: pytest.MonkeyPa
 
 def test_t2i_env_var_sets_jitter(tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> None:
     monkeypatch.setenv("GFLOW_CLI_JITTER_RANGE", "10-30")
+    reset_settings()
     result, kwargs = _invoke_cli(
         ["image", "t2i", "p1", "p2", "--out", str(tmp_path / "out")],
         tmp_path,
@@ -217,10 +242,7 @@ def test_t2i_invalid_jitter_flag_is_usage_error(tmp_path: Path) -> None:
     assert kwargs == {}
 
 
-def test_batch_jitter_flag_passes_range_to_manifest_runner(
-    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
-) -> None:
-    monkeypatch.delenv("GFLOW_CLI_JITTER_RANGE", raising=False)
+def test_batch_jitter_flag_passes_range_to_manifest_runner(tmp_path: Path) -> None:
     manifest = tmp_path / "prompts.tsv"
     manifest.write_text("a prompt\n", encoding="utf-8")
     result, kwargs = _invoke_cli(
