@@ -2941,79 +2941,73 @@ class _StopFlowError(Exception):
 
 
 @pytest.mark.asyncio
-async def test_instructions_on_classic_cohort_emit_warning(
+async def test_instructions_infer_agentic_required_mode(
     monkeypatch: pytest.MonkeyPatch,
 ) -> None:
-    """When ``-i`` instructions are provided but the session binds the CLASSIC
-    driver, a loud warning must fire so instructions never silently no-op."""
-    import structlog
-
+    """``-i`` instructions are agentic-only, so the transport must REQUIRE the
+    agentic arm (get_ui_driver ui_mode=AGENTIC). The switch/verify/fail-fast is
+    then owned by get_ui_driver (see test_ui_mode.py) — the transport never
+    binds classic with instructions, so the old silent-drop warning is gone."""
     from gflow_cli.api.transports.drivers import factory as _factory
+    from gflow_cli.config import UiMode, reset_settings
+
+    monkeypatch.delenv("GFLOW_CLI_UI_MODE", raising=False)
+    reset_settings()
 
     t = UiAutomationTransport()
     t._page = MagicMock()  # noqa: SLF001
     t._out_dir = None  # noqa: SLF001
-
-    # Reach the cohort branch, then stop before the real classic capture path.
     monkeypatch.setattr(t, "_enter_editor", AsyncMock())
     monkeypatch.setattr(t, "_dismiss_blocking_overlays", AsyncMock())
-    # Instructions present → the transport tries to force agentic first; here it
-    # fails (account has no Agent mode), so the probe binds classic.
-    monkeypatch.setattr(t, "_force_agent_mode", AsyncMock(return_value=False))
-    classic_driver = MagicMock()
-    classic_driver.name = "classic"
-    classic_driver.switch_to_image_mode = AsyncMock(side_effect=_StopFlowError)
-    monkeypatch.setattr(_factory, "get_ui_driver", AsyncMock(return_value=classic_driver))
 
-    req = GenerateImageRequest(
-        prompt="a red apple",
-        instructions=(AgentInstruction(text="crayon style", enabled=True),),
-    )
-
-    with structlog.testing.capture_logs() as caps, pytest.raises(_StopFlowError):
-        await t._generate_images_locked(req)  # noqa: SLF001
-
-    events = [c.get("event") for c in caps]
-    assert "ui_automation.instructions_ignored_classic_cohort" in events
-
-
-@pytest.mark.asyncio
-async def test_instructions_on_agentic_cohort_emit_no_classic_warning(
-    monkeypatch: pytest.MonkeyPatch,
-) -> None:
-    """The classic-cohort warning must NOT fire when the agentic driver binds."""
-    import structlog
-
-    from gflow_cli.api.transports.drivers import factory as _factory
-
-    t = UiAutomationTransport()
-    t._page = MagicMock()  # noqa: SLF001
-    t._out_dir = None  # noqa: SLF001
-
-    # No force-env flag → the force below can only be driven by `instructions`.
-    monkeypatch.delenv("GFLOW_CLI_FORCE_AGENT_UI", raising=False)
-    monkeypatch.setattr(t, "_enter_editor", AsyncMock())
-    monkeypatch.setattr(t, "_dismiss_blocking_overlays", AsyncMock())
-    # Instructions present → force agentic succeeds, so the probe binds agentic.
-    force_mock = AsyncMock(return_value=True)
-    monkeypatch.setattr(t, "_force_agent_mode", force_mock)
     agentic_driver = MagicMock()
     agentic_driver.name = "agentic"
     agentic_driver.switch_to_image_mode = AsyncMock(side_effect=_StopFlowError)
-    monkeypatch.setattr(_factory, "get_ui_driver", AsyncMock(return_value=agentic_driver))
+    get_driver = AsyncMock(return_value=agentic_driver)
+    monkeypatch.setattr(_factory, "get_ui_driver", get_driver)
 
     req = GenerateImageRequest(
         prompt="a red apple",
         instructions=(AgentInstruction(text="crayon style", enabled=True),),
     )
 
-    with structlog.testing.capture_logs() as caps, pytest.raises(_StopFlowError):
+    with pytest.raises(_StopFlowError):
         await t._generate_images_locked(req)  # noqa: SLF001
 
-    # Instructions alone (no env flag) must drive the agentic force.
-    force_mock.assert_awaited()
-    events = [c.get("event") for c in caps]
-    assert "ui_automation.instructions_ignored_classic_cohort" not in events
+    assert get_driver.await_args.kwargs["ui_mode"] is UiMode.AGENTIC
+
+
+@pytest.mark.asyncio
+async def test_no_instructions_defaults_to_auto_ui_mode(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    """No instructions and no explicit mode → the transport requires nothing
+    (ui_mode=AUTO): bind whatever renders."""
+    from gflow_cli.api.transports.drivers import factory as _factory
+    from gflow_cli.config import UiMode, reset_settings
+
+    for var in ("GFLOW_CLI_UI_MODE", "GFLOW_CLI_PREFER_CLASSIC", "GFLOW_CLI_FORCE_AGENT_UI"):
+        monkeypatch.delenv(var, raising=False)
+    reset_settings()
+
+    t = UiAutomationTransport()
+    t._page = MagicMock()  # noqa: SLF001
+    t._out_dir = None  # noqa: SLF001
+    monkeypatch.setattr(t, "_enter_editor", AsyncMock())
+    monkeypatch.setattr(t, "_dismiss_blocking_overlays", AsyncMock())
+
+    classic_driver = MagicMock()
+    classic_driver.name = "classic"
+    classic_driver.switch_to_image_mode = AsyncMock(side_effect=_StopFlowError)
+    get_driver = AsyncMock(return_value=classic_driver)
+    monkeypatch.setattr(_factory, "get_ui_driver", get_driver)
+
+    req = GenerateImageRequest(prompt="a red apple")
+
+    with pytest.raises(_StopFlowError):
+        await t._generate_images_locked(req)  # noqa: SLF001
+
+    assert get_driver.await_args.kwargs["ui_mode"] is UiMode.AUTO
 
 
 def _force_agent_page(

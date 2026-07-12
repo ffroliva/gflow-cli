@@ -16,7 +16,6 @@ from __future__ import annotations
 import asyncio
 import hashlib
 import json
-import os
 import random
 import re
 import time
@@ -2107,52 +2106,21 @@ class UiAutomationTransport(VideoGenerationMixin):
         # of the editor before we click into settings / submit (#26).
         await self._dismiss_blocking_overlays(page, out_dir)
 
-        # Force the agentic composer when it's needed or explicitly requested:
-        #  - ``request.instructions`` present → instruction cards are an
-        #    agentic-only surface, so a classic bind would silently drop them
-        #    (#267). Switching the composer to agentic first makes ``-i``
-        #    dependable instead of ~50/50.
-        #  - ``GFLOW_CLI_FORCE_AGENT_UI`` set → opt-in to exercise the agentic
-        #    path deterministically (the A/B cohort can't be forced server-side).
-        # ``_force_agent_mode`` is idempotent (no-op when already agentic) and
-        # polls for the render, so the probe below reliably binds agentic.
-        if os.getenv(AGENT_FORCE_ENV_VAR) or request.instructions:
-            forced = await self._force_agent_mode(page)
-            if not forced and request.instructions:
-                log.warning(
-                    "ui_automation.agent_force_failed_with_instructions",
-                    instruction_count=len(request.instructions),
-                    detail=(
-                        "Could not switch this session to the agentic composer; "
-                        "instruction cards (-i) may not be applied. This account "
-                        "may not offer Agent mode."
-                    ),
-                )
+        # Determine the arm this command REQUIRES: explicit --ui-mode / env, or
+        # inferred — agent instructions (-i) are an agentic-only surface, so they
+        # force agentic. get_ui_driver switches to the required arm as a
+        # PREREQUISITE, VERIFIES via a DOM re-probe, and fails fast
+        # (UiModeUnavailableError, exit 28) if the arm is unreachable — so -i can
+        # never silently no-op on a classic bind, and no credits are spent. The
+        # cohort flaps per page load, so this runs every generation (no caching).
+        from gflow_cli.config import infer_required_ui_mode, resolve_ui_mode
 
-        # Probe the DOM for the active UI cohort AFTER _enter_editor so the
-        # project page is fully rendered.  The cohort flaps per page load so
-        # we re-probe every generation — never cache across calls.
-        # Classic driver requires a transport reference for send_prompt.
-        from gflow_cli.config import resolve_ui_mode
-
-        ui_driver = await get_ui_driver(page, ui_mode=resolve_ui_mode(None))
+        required_mode = infer_required_ui_mode(
+            resolve_ui_mode(None), has_instructions=bool(request.instructions)
+        )
+        ui_driver = await get_ui_driver(page, ui_mode=required_mode)
         if ui_driver.name == "classic":
             ui_driver._transport = self  # type: ignore[union-attr]
-            # Agent instruction cards are an agentic-only surface — the classic
-            # driver has no brief to sync. Warn loudly (stderr) so ``-i`` never
-            # silently no-ops: the user asked for instructions but this session
-            # bound the classic cohort, so they will NOT be applied.
-            if request.instructions:
-                log.warning(
-                    "ui_automation.instructions_ignored_classic_cohort",
-                    instruction_count=len(request.instructions),
-                    detail=(
-                        "Custom agent instructions (-i) were provided but this Flow "
-                        "session is using the classic (non-agentic) UI, which has no "
-                        "instruction surface — they will be ignored for this generation. "
-                        "Instructions only apply on agentic-cohort sessions."
-                    ),
-                )
 
         # Select Image mode explicitly. If the account was last in Video mode,
         # an unguarded submission goes to the video endpoint and the image
