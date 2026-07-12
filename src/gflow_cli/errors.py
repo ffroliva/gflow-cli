@@ -32,6 +32,7 @@ __all__ = [
     "SceneConcatError",
     "SecurityError",
     "TransportTimeoutError",
+    "UiModeUnavailableError",
     "UiSelectorDriftError",
     "UpscaleUnavailableError",
     "VideoModelSelectionError",
@@ -470,6 +471,43 @@ class FlowAgentUiError(GFlowError):
     )
 
 
+class UiModeUnavailableError(GFlowError):
+    """Raised when the Flow UI arm a command REQUIRES (``--ui-mode`` /
+    ``GFLOW_CLI_UI_MODE``, or inferred — e.g. ``-i`` instructions force agentic)
+    could not be reached, after a best-effort switch + re-probe (issue #299).
+
+    Distinct from ``FlowAgentUiError`` (exit 25 = "gflow cannot drive the
+    agentic UI at all"): here gflow *can* drive both arms, but the caller needs
+    a specific one and the server would not switch to it, so we abort **before**
+    submitting — zero credits spent. The cohort is server-assigned per page load
+    and flaps, so this failure is **retryable**: a re-run often lands the wanted
+    arm. Exit code 28 lets scripts branch on "retry / switch profile / relax
+    --ui-mode" vs a generic error.
+
+    ``requested`` carries the ``UiMode`` that could not be reached.
+    """
+
+    problem_type = "https://gflow-cli.dev/errors/ui-mode-unavailable"
+    title = "Requested Flow UI mode unavailable"
+
+    def __init__(self, requested: object, *, remediation_hint: str | None = None) -> None:
+        self.requested = requested
+        arm = getattr(requested, "value", str(requested))
+        other = "agentic" if arm == "classic" else "classic"
+        self._default_remediation = (
+            f"This command required the '{arm}' Flow UI but the arm could not be "
+            f"reached on this profile. Aborted before submitting — no credits were "
+            f"spent. The cohort flaps per page load, so RETRY (a re-run often lands "
+            f"'{arm}'); or try a different --profile; or relax to --ui-mode "
+            f"{other}/auto if the command allows it. Note: a server-side experiment "
+            f"can pin the arm, in which case '{arm}' cannot be reached from the client."
+        )
+        super().__init__(
+            f"Required Flow UI mode '{arm}' is unavailable on this profile.",
+            remediation_hint=remediation_hint,
+        )
+
+
 class MediaAttributionError(GFlowError):
     """Raised when generated media cannot be reliably attributed to the request
     that produced it (issue #281).
@@ -793,6 +831,10 @@ EXIT_CODE_MAP: dict[type[GFlowError], int] = {
     # ConfigurationError (its parent) so the isinstance walk lands on 24, not 11.
     BrowserEngineUnavailableError: 24,
     FlowAgentUiError: 25,
+    # UiModeUnavailableError (issue #299): a command's required arm (--ui-mode /
+    # inferred) couldn't be reached after a best-effort switch. Direct GFlowError
+    # subclass — retryable policy abort, distinct from FlowAgentUiError (25).
+    UiModeUnavailableError: 28,
     # MediaAttributionError (issue #281): generated media could not be
     # reliably attributed (agentic DOM-scrape ambiguity, or a downstream
     # already-recorded check). Direct GFlowError subclass; exit 26 lets

@@ -158,6 +158,77 @@ class Provider(StrEnum):
     OFFICIAL = "official"  # planned v0.3+ via googleapis/python-genai
 
 
+class UiMode(StrEnum):
+    """Requested Flow UI arm for generation commands (issue #299).
+
+    ``auto`` binds whatever the composer renders (classic or agentic).
+    ``classic`` recovers the classic composer and, if the arm is still agentic,
+    fails fast (``UiModeUnavailableError``, exit 28) BEFORE submitting — zero
+    credits. ``agentic`` switches to (and requires) the agentic surface.
+    Subsumes the deprecated ``prefer_classic`` / ``force_agent_ui``.
+    """
+
+    AUTO = "auto"
+    CLASSIC = "classic"
+    AGENTIC = "agentic"
+
+
+def resolve_ui_mode(cli_value: str | None = None) -> UiMode:
+    """Resolve the effective UI mode.
+
+    Precedence: explicit ``cli_value`` (the ``--ui-mode`` flag) > the
+    ``GFLOW_CLI_UI_MODE`` setting > the deprecated ``GFLOW_CLI_PREFER_CLASSIC``
+    (True → ``classic``, with a one-time deprecation warning) > ``auto``.
+    """
+    if cli_value is not None:
+        return UiMode(cli_value.lower())
+    settings = get_settings()
+    if settings.ui_mode is not None:
+        return settings.ui_mode
+    if settings.prefer_classic:
+        warnings.warn(
+            "GFLOW_CLI_PREFER_CLASSIC is deprecated; use GFLOW_CLI_UI_MODE=classic "
+            "(or --ui-mode classic). Note the behavior change: the classic arm is now "
+            "required — a run aborts with exit 28 instead of silently falling back to "
+            "the agentic UI.",
+            DeprecationWarning,
+            stacklevel=2,
+        )
+        return UiMode.CLASSIC
+    if settings.force_agent_ui:
+        warnings.warn(
+            "GFLOW_CLI_FORCE_AGENT_UI is deprecated; use GFLOW_CLI_UI_MODE=agentic "
+            "(or --ui-mode agentic).",
+            DeprecationWarning,
+            stacklevel=2,
+        )
+        return UiMode.AGENTIC
+    return UiMode.AUTO
+
+
+def infer_required_ui_mode(base: UiMode, *, has_instructions: bool) -> UiMode:
+    """Resolve the arm a command actually REQUIRES from its explicit mode + needs.
+
+    Agent instructions (``-i``) are an agentic-only surface, so they force
+    agentic when the caller didn't already ask for a specific arm. Explicitly
+    demanding ``classic`` *and* passing instructions is contradictory (classic
+    cannot apply cards) — a hard :class:`ConfigurationError` instead of a silent
+    drop. Without instructions, ``base`` passes through unchanged.
+    """
+    if not has_instructions:
+        return base
+    if base is UiMode.CLASSIC:
+        from gflow_cli.errors import ConfigurationError
+
+        msg = (
+            "Agent instructions (-i) require the agentic Flow UI, which is "
+            "incompatible with --ui-mode classic. Drop --ui-mode classic (or "
+            "GFLOW_CLI_UI_MODE=classic), or remove the -i instructions."
+        )
+        raise ConfigurationError(msg)
+    return UiMode.AGENTIC
+
+
 class BrowserEngine(StrEnum):
     """Browser-automation engine backing the Playwright API.
 
@@ -333,14 +404,30 @@ class Settings(BaseSettings):
             "stays playwright and is unaffected. Override via GFLOW_CLI_BROWSER_ENGINE."
         ),
     )
+    ui_mode: UiMode | None = Field(
+        default=None,
+        description=(
+            "Requested Flow UI arm: 'auto' (bind whatever renders), 'classic' "
+            "(require the classic composer; abort with exit 28 if the arm is "
+            "agentic — no credits spent), or 'agentic' (skip classic recovery). "
+            "Unset resolves via --ui-mode, then the deprecated "
+            "GFLOW_CLI_PREFER_CLASSIC, then 'auto'. Override via GFLOW_CLI_UI_MODE."
+        ),
+    )
     prefer_classic: bool = Field(
         default=False,
         description=(
-            "Try to force the Classic Flow UI mode for image generation by clicking "
-            "the Agent toggle pill if the page mounts in Agentic mode. This ensures "
-            "deterministic aspect ratio controls. "
-            "If the page cannot be switched back to Classic, falls back to Agentic mode. "
-            "Override via GFLOW_CLI_PREFER_CLASSIC."
+            "DEPRECATED — use GFLOW_CLI_UI_MODE=classic (or --ui-mode classic). "
+            "True maps to ui_mode=classic, but note the behavior change: the "
+            "classic arm is now REQUIRED (abort with exit 28) instead of silently "
+            "falling back to the agentic UI. Override via GFLOW_CLI_PREFER_CLASSIC."
+        ),
+    )
+    force_agent_ui: bool = Field(
+        default=False,
+        description=(
+            "DEPRECATED — use GFLOW_CLI_UI_MODE=agentic (or --ui-mode agentic). "
+            "True maps to ui_mode=agentic. Override via GFLOW_CLI_FORCE_AGENT_UI."
         ),
     )
     jitter_range: str | None = Field(

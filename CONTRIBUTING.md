@@ -102,6 +102,19 @@ pip install pre-commit && pre-commit install
 
 The `.pre-commit-config.yaml` already ships ruff and the hygiene gate.
 
+### Review lenses (over-engineering matters)
+
+`gflow-cli` values **YAGNI / least-code** (see [AGENTS.md § Code style](AGENTS.md)):
+the smallest change that works, no speculative abstractions, no dead code. This is a
+first-class review dimension — **D14 over-engineering** in
+[`pr-council-review`](skills/pr-council-review/SKILL.md), which always runs and carries
+its own portable rubric.
+
+Optionally, the `ponytail` Claude Code plugin (from the plugin marketplace) encodes
+exactly this review taste — `/ponytail-review` audits a diff for over-engineering. It's a
+**recommended, not required** accelerant: the D14 rubric applies with or without it, so no
+contributor is blocked for lacking the plugin.
+
 ### SonarCloud quality gate
 
 On top of the six gates, CI runs a **SonarCloud** analysis whose quality gate must be
