@@ -186,6 +186,43 @@ _LIST_IMAGES_ALL_COPIES_SQL = """
 """
 
 
+_ASSET_PROMPT_SQL = """
+    SELECT o.prompt AS prompt
+      FROM assets a
+      JOIN operation_assets oa ON oa.asset_id = a.id AND oa.role = 'output'
+      JOIN operations o ON o.id = oa.operation_id
+     WHERE a.flow_media_id = :media_id
+       AND o.prompt IS NOT NULL
+     ORDER BY o.started_at DESC
+     LIMIT 1
+"""
+
+
+def get_asset_prompt(*, db_path: Path, media_id: str) -> str | None:
+    """Recorded generation prompt for an asset, by its Flow media UUID.
+
+    #287 round 6: the media picker's search does not index UUIDs, but each
+    picker tile's alt text carries the generation PROMPT — the CLI resolves
+    the prompt here (the CLI layer owns catalog access) and hands its first
+    words to the transport as picker search hints. The latest
+    output-operation prompt wins.
+
+    Args:
+        db_path: Absolute path to the SQLite catalog.
+        media_id: The asset's ``flow_media_id`` (Flow media UUID).
+
+    Returns:
+        The prompt text, or ``None`` when the asset is unknown or has no
+        recorded prompt.
+    """
+    params = {"media_id": media_id}
+    with _safe_db(db_path) as conn:
+        row = conn.execute(_ASSET_PROMPT_SQL, params).fetchone()
+    if row is None or row["prompt"] is None:
+        return None
+    return str(row["prompt"])
+
+
 def list_images(
     *,
     db_path: Path,
