@@ -50,7 +50,7 @@ from gflow_cli.api.image import (
 from gflow_cli.api.image_upscale import TargetResolution, UpsampleImageRequest
 from gflow_cli.api.transports import transport_choices
 from gflow_cli.api.video import is_media_uuid
-from gflow_cli.config import get_settings, parse_jitter_range
+from gflow_cli.config import UiMode, get_settings, parse_jitter_range
 from gflow_cli.data.recorder import OperationRecorder, escalate_asset_collision
 from gflow_cli.data.repository import DataRepository
 from gflow_cli.data.store import DataStore
@@ -585,6 +585,19 @@ _jitter_option = click.option(
     ),
 )
 
+_ui_mode_option = click.option(
+    "--ui-mode",
+    "ui_mode",
+    type=click.Choice([m.value for m in UiMode], case_sensitive=False),
+    default=None,
+    help=(
+        "Which Flow UI arm to require: 'classic' (hard aspect controls), "
+        "'agentic' (chat surface; needed for -i), or 'auto' (bind whatever "
+        "renders). gflow switches to it and aborts (exit 28, retryable) if it "
+        "can't be reached. Overrides GFLOW_CLI_UI_MODE. Single-prompt only."
+    ),
+)
+
 
 @image.command(
     "t2i",
@@ -686,12 +699,14 @@ _jitter_option = click.option(
     multiple=True,
     help="Custom agent instruction to add or enable (only in agentic mode).",
 )
+@_ui_mode_option
 def t2i(  # NOSONAR
     prompts: tuple[str, ...],
     prompts_file: Path | None,
     read_stdin: bool,
     continue_on_error: bool,
     jitter_spec: str | None,
+    ui_mode: str | None,
     model: str,
     aspect: str,
     count: int,
@@ -727,6 +742,17 @@ def t2i(  # NOSONAR
         msg = "--json is single-prompt only; remove the extra prompts."
         raise click.UsageError(msg)
 
+    if is_multi_prompt and ui_mode is not None:
+        # The batch path is env-controlled (GFLOW_CLI_UI_MODE); a per-command
+        # arm override isn't threaded through the batch runner.
+        msg = "--ui-mode is single-prompt only; set GFLOW_CLI_UI_MODE for batch runs."
+        raise click.UsageError(msg)
+
+    if ui_mode == UiMode.CLASSIC.value and instructions:
+        # Agent instructions are agentic-only; requiring classic contradicts them.
+        msg = "--ui-mode classic is incompatible with -i (instructions need the agentic UI)."
+        raise click.UsageError(msg)
+
     if not is_multi_prompt:
         if not prompts:
             msg = "Provide a prompt, multiple prompts, --prompts-file, or --stdin."
@@ -758,6 +784,7 @@ def t2i(  # NOSONAR
                         if instructions
                         else None
                     ),
+                    ui_mode=UiMode(ui_mode) if ui_mode else None,
                 ),
                 count=count,
                 out=out,
@@ -1270,6 +1297,7 @@ class _I2IParams:
     original_prompt: str | None = None
     tool: AppliedTool | None = None
     instructions: tuple[AgentInstruction, ...] | None = None
+    ui_mode: UiMode | None = None
 
 
 @image.command(
@@ -1360,6 +1388,7 @@ class _I2IParams:
     multiple=True,
     help="Custom agent instruction to add or enable (only in agentic mode).",
 )
+@_ui_mode_option
 def i2i(  # NOSONAR
     prompt: str,
     refs: tuple[str, ...],
@@ -1375,8 +1404,12 @@ def i2i(  # NOSONAR
     reference_entity_names: tuple[str, ...],
     as_json: bool,
     instructions: tuple[str, ...],
+    ui_mode: str | None,
 ) -> None:
     """Generate image(s) from PROMPT + reference image(s) (image-to-image)."""
+    if ui_mode == UiMode.CLASSIC.value and instructions:
+        msg = "--ui-mode classic is incompatible with -i (instructions need the agentic UI)."
+        raise click.UsageError(msg)
     # Classify each --ref upfront: UUIDs become ImageRef, path-likes become
     # canonical Paths (with symlinks resolved). _classify_ref raises
     # click.UsageError on missing/broken paths, which Click maps to exit 2.
@@ -1415,6 +1448,7 @@ def i2i(  # NOSONAR
         instructions=(
             tuple(AgentInstruction(text=i) for i in instructions) if instructions else None
         ),
+        ui_mode=UiMode(ui_mode) if ui_mode else None,
     )
     run_with_handlers(
         lambda: _run_i2i(
@@ -1482,6 +1516,7 @@ async def _run_i2i(
                 original_prompt=params.original_prompt,
                 tool=params.tool,
                 instructions=params.instructions,
+                ui_mode=params.ui_mode,
             )
 
             n_refs = len(uuid_refs) + len(local_ref_paths)

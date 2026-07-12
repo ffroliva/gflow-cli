@@ -30,6 +30,7 @@ if TYPE_CHECKING:
     from collections.abc import Mapping
     from pathlib import Path
 
+    from gflow_cli.config import UiMode
     from gflow_cli.tools.invocation import AppliedTool
 
 __all__ = [
@@ -431,6 +432,9 @@ class GenerateImageRequest:
     # ignored by the body builders. (PR2 §8)
     original_prompt: str | None = None
     tool: AppliedTool | None = None
+    # Requested Flow UI arm (#299) from --ui-mode; None → resolve from
+    # GFLOW_CLI_UI_MODE / default at the transport. Not sent on the wire.
+    ui_mode: UiMode | None = None
 
     def __post_init__(self) -> None:
         if not self.prompt or not self.prompt.strip():

@@ -16,7 +16,7 @@ from gflow_cli.api.video import Aspect as VideoAspect
 from gflow_cli.api.video import GenerateVideoRequest, VideoModel, VideoStarted
 from gflow_cli.api.video import Mode as VideoMode
 from gflow_cli.api.video import Tier as VideoTier
-from gflow_cli.config import get_settings
+from gflow_cli.config import UiMode, get_settings
 from gflow_cli.data.recorder import OperationRecorder, escalate_asset_collision
 from gflow_cli.data.repository import DataRepository
 from gflow_cli.data.store import DataStore
@@ -385,6 +385,7 @@ class FlowWorker:
             reference_entity_names=reference_entity_names,
             count=count,
             instructions=_parse_agent_instructions(payload.get("instructions")),
+            ui_mode=UiMode(payload["ui_mode"]) if payload.get("ui_mode") else None,
         )
 
     def _build_video_request(self, payload: dict[str, Any]) -> GenerateVideoRequest:

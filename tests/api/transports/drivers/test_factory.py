@@ -143,39 +143,7 @@ async def test_get_ui_driver_default_is_classic() -> None:
     assert isinstance(driver, ClassicFlowUiDriver)
 
 
-@pytest.mark.asyncio
-async def test_get_ui_driver_with_prefer_classic() -> None:
-    from unittest.mock import patch
-
-    # 1. When prefer_classic=True and exit succeeds:
-    page = _fake_page({_TUNE})
-
-    with patch(
-        "gflow_cli.api.transports.ui_automation_video.VideoGenerationMixin._exit_agent_mode"
-    ) as mock_exit:
-
-        async def mock_exit_action(p, *, out_dir=None):
-            def new_locator(sel: str) -> MagicMock:
-                loc = MagicMock()
-                loc.count = AsyncMock(return_value=1 if sel == _CROP else 0)
-                return loc
-
-            p.locator.side_effect = new_locator
-            return True
-
-        mock_exit.side_effect = mock_exit_action
-
-        driver = await get_ui_driver(page, prefer_classic=True)
-        assert isinstance(driver, ClassicFlowUiDriver)
-        mock_exit.assert_called_once_with(page)
-
-    # 2. When prefer_classic=True but exit fails:
-    page = _fake_page({_TUNE})
-
-    with patch(
-        "gflow_cli.api.transports.ui_automation_video.VideoGenerationMixin._exit_agent_mode"
-    ) as mock_exit:
-        mock_exit.side_effect = RuntimeError("Failed to exit agent mode")
-        driver = await get_ui_driver(page, prefer_classic=True)
-        assert isinstance(driver, AgenticFlowUiDriver)
-        mock_exit.assert_called_once_with(page)
+# The classic-recovery / fail-fast behavior of `ui_mode=CLASSIC` (superseding
+# the old best-effort `prefer_classic`) is covered in test_ui_mode.py (#299),
+# including the intentional behavior change: a still-agentic arm now raises
+# ClassicUiUnavailableError instead of silently binding the agentic driver.

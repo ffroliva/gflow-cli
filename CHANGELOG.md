@@ -7,6 +7,14 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+### Added
+
+- **`--ui-mode` / `GFLOW_CLI_UI_MODE` — the CLI can drive the Flow UI arm the command needs, both directions (#299).** Flow serves a **classic** composer or an **agentic** chat cohort, server-assigned and flapping per page load. Before generating, gflow now determines the **required** arm, switches to it as a prerequisite (classic↔agentic DOM toggle), **verifies** via a DOM re-probe, and — if the arm is unreachable — aborts *before* submitting with the new `UiModeUnavailableError` (**exit 28**, retryable), no credits spent. Values: `auto` (default; bind whatever renders), `classic` (require the hard aspect controls), `agentic` (require the chat surface). The required arm is also **inferred**: agent instructions (`-i`) are agentic-only, so they force agentic — closing the #267 gap where `-i` on a classic roll was *silently dropped* (now it either binds agentic or fails fast). Exposed as the **`--ui-mode` flag** on `gflow image t2i` / `i2i` (single-prompt; batch uses the env var) and the **`ui_mode` param** on the `gflow_generate_image` MCP tool; `--ui-mode classic` + `-i` is a fail-fast usage error. Grounded in the #299 spike (`docs/superpowers/spikes/2026-07-12-ui-cohort-backend-config.md`). Applies to every image generation via the shared driver seam. Honest ceiling: a server-side experiment can pin the arm, in which case the switch can't win — the abort still saves the credits.
+
+### Changed
+
+- **`GFLOW_CLI_PREFER_CLASSIC` and `GFLOW_CLI_FORCE_AGENT_UI` are deprecated (#299)** in favor of `GFLOW_CLI_UI_MODE=classic` / `=agentic` (both still work, mapping to the new modes with a `DeprecationWarning`). **Behavior change:** the old `prefer_classic` silent fallback to agentic when the classic toggle was unavailable is gone — a classic-required run now aborts with exit 28 instead. Pipelines that relied on "always yields a file" from `PREFER_CLASSIC=1` must handle exit 28 (retry / switch profile / `GFLOW_CLI_UI_MODE=agentic`).
+
 ## [0.33.0] — 2026-07-12
 
 ### Added
