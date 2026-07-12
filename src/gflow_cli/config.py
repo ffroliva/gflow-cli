@@ -162,10 +162,10 @@ class UiMode(StrEnum):
     """Requested Flow UI arm for generation commands (issue #299).
 
     ``auto`` binds whatever the composer renders (classic or agentic).
-    ``classic`` attempts to recover the classic composer and, if the arm is
-    still agentic, fails fast (``ClassicUiUnavailableError``, exit 28) BEFORE
-    submitting — zero credits. ``agentic`` skips the classic-recovery attempt
-    and binds the agentic driver. Subsumes the deprecated ``prefer_classic``.
+    ``classic`` recovers the classic composer and, if the arm is still agentic,
+    fails fast (``UiModeUnavailableError``, exit 28) BEFORE submitting — zero
+    credits. ``agentic`` switches to (and requires) the agentic surface.
+    Subsumes the deprecated ``prefer_classic`` / ``force_agent_ui``.
     """
 
     AUTO = "auto"
