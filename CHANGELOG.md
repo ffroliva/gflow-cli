@@ -7,6 +7,8 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+## [0.34.0] — 2026-07-12
+
 ### Added
 
 - **`--ui-mode` / `GFLOW_CLI_UI_MODE` — the CLI can drive the Flow UI arm the command needs, both directions (#299).** Flow serves a **classic** composer or an **agentic** chat cohort, server-assigned and flapping per page load. Before generating, gflow now determines the **required** arm, switches to it as a prerequisite (classic↔agentic DOM toggle), **verifies** via a DOM re-probe, and — if the arm is unreachable — aborts *before* submitting with the new `UiModeUnavailableError` (**exit 28**, retryable), no credits spent. Values: `auto` (default; bind whatever renders), `classic` (require the hard aspect controls), `agentic` (require the chat surface). The required arm is also **inferred**: agent instructions (`-i`) are agentic-only, so they force agentic — closing the #267 gap where `-i` on a classic roll was *silently dropped* (now it either binds agentic or fails fast). Exposed as the **`--ui-mode` flag** on `gflow image t2i` / `i2i` (single-prompt; batch uses the env var) and the **`ui_mode` param** on the `gflow_generate_image` MCP tool; `--ui-mode classic` + `-i` is a fail-fast usage error. Grounded in the #299 spike (`docs/superpowers/spikes/2026-07-12-ui-cohort-backend-config.md`). Applies to every image generation via the shared driver seam. Honest ceiling: a server-side experiment can pin the arm, in which case the switch can't win — the abort still saves the credits.
@@ -1959,7 +1961,8 @@ shell-script template that branches on these codes.
 
 First skeleton. Not functional end-to-end yet.
 
-[Unreleased]: https://github.com/ffroliva/gflow-cli/compare/v0.33.0...HEAD
+[Unreleased]: https://github.com/ffroliva/gflow-cli/compare/v0.34.0...HEAD
+[0.34.0]: https://github.com/ffroliva/gflow-cli/compare/v0.33.0...v0.34.0
 [0.33.0]: https://github.com/ffroliva/gflow-cli/compare/v0.32.1...v0.33.0
 [0.32.1]: https://github.com/ffroliva/gflow-cli/compare/v0.32.0...v0.32.1
 [0.32.0]: https://github.com/ffroliva/gflow-cli/compare/v0.31.0...v0.32.0
