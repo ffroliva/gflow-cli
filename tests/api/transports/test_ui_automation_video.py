@@ -3,6 +3,8 @@
 from __future__ import annotations
 
 import asyncio
+import itertools
+import json
 from pathlib import Path
 from typing import Any, cast
 from unittest.mock import AsyncMock, MagicMock
@@ -12,13 +14,21 @@ import structlog
 
 from gflow_cli.api.transports.ui_automation import UiAutomationTransport
 from gflow_cli.api.transports.ui_automation_video import (
+    _PICKER_PROJECT_OPTION_MATCH_JS,
+    _PICKER_PROJECT_TRIGGER_ACTIVE_JS,
     ADD_MEDIA_BUTTON,
     DIALOG_ANY,
     FRAME_SLOT_BY_LABEL,
     FRAME_SLOTS_STRUCT,
     PICKER_CONTEXT_INCLUDE,
     PICKER_GRID_SCROLL_ATTEMPTS,
+    PICKER_GRID_SCROLL_MAX_ATTEMPTS,
+    PICKER_GRID_SCROLL_STALL_LIMIT,
     PICKER_INCLUDE_BUTTON,
+    PICKER_PROJECT_MENU_OPEN,
+    PICKER_PROJECT_MENU_POLL_MS,
+    PICKER_PROJECT_MENU_POLLS,
+    PICKER_PROJECT_SELECTOR_TRIGGERS,
     PICKER_SEARCH_INPUT,
     VideoGenerationMixin,
     _upload_rejection_message,
@@ -1480,11 +1490,17 @@ class TestSelectExistingAssetPickerScroll:
 
     @pytest.mark.asyncio
     async def test_tile_visible_only_after_scrolling_is_selected(self) -> None:
-        # Not visible in the initial viewport; count() reports absent for the
-        # first 3 checks, then present on the 4th — the immediate re-check
-        # right after the scroll loop breaks then succeeds.
+        # Not visible in the initial viewport, not surfaced by the UUID /
+        # UUID-stem search tiers (#287); count() reports absent for the first
+        # 3 checks, then present on the 4th — the immediate re-check right
+        # after the scroll loop breaks then succeeds.
         tile = self._tile_mock(
-            wait_for_side_effect=[TimeoutError("not visible yet"), None],
+            wait_for_side_effect=[
+                TimeoutError("not visible in initial viewport"),
+                TimeoutError("not surfaced by the UUID search"),
+                TimeoutError("not surfaced by the UUID-stem search"),
+                None,
+            ],
             count_side_effect=[0, 0, 0, 1],
         )
         page = self._page_with_tile(tile)
@@ -1517,7 +1533,12 @@ class TestSelectExistingAssetPickerScroll:
         the picker gave up with the asset on screen."""
         # count: 0 for every pre-scroll check; 1 only on the post-loop re-check.
         tile = self._tile_mock(
-            wait_for_side_effect=[TimeoutError("not in initial viewport"), None],
+            wait_for_side_effect=[
+                TimeoutError("not in initial viewport"),
+                TimeoutError("not surfaced by the UUID search"),
+                TimeoutError("not surfaced by the UUID-stem search"),
+                None,
+            ],
             count_side_effect=[0] * PICKER_GRID_SCROLL_ATTEMPTS + [1],
         )
         page = self._page_with_tile(tile)
@@ -1538,6 +1559,8 @@ class TestSelectExistingAssetPickerScroll:
             wait_for_side_effect=[
                 TimeoutError("not visible in initial viewport"),
                 TimeoutError("not surfaced by display-name search"),
+                TimeoutError("not surfaced by the UUID search"),
+                TimeoutError("not surfaced by the UUID-stem search"),
                 None,
             ],
             count_side_effect=[0, 0, 1],
@@ -1550,10 +1573,1018 @@ class TestSelectExistingAssetPickerScroll:
         )
 
         assert result is True, "tile found via scrolling after the search is cleared"
-        search.press_sequentially.assert_awaited_once()
-        search.fill.assert_awaited_once_with("")
+        # The display name is the FIRST search tier (#287 added UUID tiers after it).
+        assert search.press_sequentially.await_args_list[0].args[0] == "Wren's cabin"
+        # Every fill is a clear: one before each search tier (so tiers don't
+        # concatenate) plus the final clear before the scroll fallback.
+        assert search.fill.await_count == 4
+        assert all(c.args == ("",) for c in search.fill.call_args_list)
         # 2 scrolls before the tile rendered into the DOM.
         assert page.mouse.wheel.await_count == 2
+
+
+class TestSelectExistingAssetLargeGrid:
+    """#287 (live repro): in a crowded project (100+ media) the target asset
+    sits deeper in the virtualised grid than the fixed 12-scroll budget could
+    reach, so `_select_existing_asset` gave up while the asset WAS in the
+    project — the i2v frame-ref path then raised `TransportTimeoutError`
+    ("Start frame asset ... could not be located in the media picker"). The
+    scroll loop is now bounded by evidence of progress: it keeps scrolling
+    while the set of rendered tile identifiers still changes between scrolls,
+    stops after PICKER_GRID_SCROLL_STALL_LIMIT consecutive no-progress
+    scrolls, and never exceeds the PICKER_GRID_SCROLL_MAX_ATTEMPTS ceiling.
+    A search-input picker also gets UUID / UUID-stem search tiers before any
+    scrolling (the frame-ref path has no display name to search)."""
+
+    _FULL_UUID = "d6f1927a-3eae-4626-bc90-9a6ea7637bab"
+    # Deeper than the legacy fixed budget could ever reach.
+    _DEEP_GRID_SCROLLS = 30
+
+    @pytest.mark.asyncio
+    async def test_deep_tile_beyond_legacy_budget_is_reached(self) -> None:
+        """While every scroll keeps rendering NEW tiles (the grid is still
+        advancing), the loop must keep going — depth proportional to grid
+        size, not a fixed attempt count."""
+        assert self._DEEP_GRID_SCROLLS > PICKER_GRID_SCROLL_ATTEMPTS
+        tile = TestSelectExistingAssetPickerScroll._tile_mock(
+            wait_for_side_effect=[
+                TimeoutError("not visible in initial viewport"),
+                TimeoutError("not surfaced by the UUID search"),
+                TimeoutError("not surfaced by the UUID-stem search"),
+                None,
+            ],
+            count_side_effect=[0] * self._DEEP_GRID_SCROLLS + [1],
+        )
+        page = TestSelectExistingAssetPickerScroll._page_with_tile(tile)
+        # Progress evidence: each fingerprint probe sees a fresh window of
+        # tiles. The JS grid-scroll probe is made to FAIL so this test pins
+        # the hover+wheel fallback path (round-6: JS scroll is primary).
+        counter = itertools.count()
+
+        def _eval(js: str, *args: object) -> object:
+            if "scrollTop" in js:
+                raise RuntimeError("no JS scroller in this fake")
+            return [f"tile-{next(counter)}"]
+
+        page.evaluate = AsyncMock(side_effect=_eval)
+
+        result = await VideoGenerationMixin._select_existing_asset(page, "uuid-1", "", out_dir=None)
+
+        assert result is True, "an asset deep in a large grid must still be reachable"
+        tile.click.assert_awaited_once()
+        assert page.mouse.wheel.await_count == self._DEEP_GRID_SCROLLS
+
+    @pytest.mark.asyncio
+    async def test_absent_asset_stops_after_stall_limit(self) -> None:
+        """Genuinely absent asset with the grid at its end (the rendered tile
+        set never changes): the loop must terminate after the stall limit —
+        not spin to the hard ceiling, and not even out to the legacy budget."""
+        tile = TestSelectExistingAssetPickerScroll._tile_mock(
+            wait_for_side_effect=TimeoutError("never visible"),
+            count_side_effect=0,
+        )
+        page = TestSelectExistingAssetPickerScroll._page_with_tile(tile)
+        page.evaluate = AsyncMock(return_value=["tile-a", "tile-b"])  # never changes
+
+        result = await VideoGenerationMixin._select_existing_asset(page, "uuid-1", "", out_dir=None)
+
+        assert result is False, "existing not-found contract must be unchanged"
+        tile.click.assert_not_awaited()
+        # 1 baseline scroll + STALL_LIMIT consecutive no-progress scrolls.
+        assert page.mouse.wheel.await_count == PICKER_GRID_SCROLL_STALL_LIMIT + 1
+
+    @pytest.mark.asyncio
+    async def test_endless_grid_progress_is_capped_by_hard_ceiling(self) -> None:
+        """A pathological grid that never stops rendering new tiles must not
+        scroll forever — the hard ceiling bounds the loop."""
+        tile = TestSelectExistingAssetPickerScroll._tile_mock(
+            wait_for_side_effect=TimeoutError("never visible"),
+            count_side_effect=0,
+        )
+        page = TestSelectExistingAssetPickerScroll._page_with_tile(tile)
+        counter = itertools.count()
+        page.evaluate = AsyncMock(side_effect=lambda *_: [f"tile-{next(counter)}"])
+
+        result = await VideoGenerationMixin._select_existing_asset(page, "uuid-1", "", out_dir=None)
+
+        assert result is False
+        assert page.mouse.wheel.await_count == PICKER_GRID_SCROLL_MAX_ATTEMPTS
+
+    @pytest.mark.asyncio
+    async def test_uuid_search_surfaces_tile_without_scrolling(self) -> None:
+        """The #287 frame-ref path passes NO display name, so it previously
+        went straight to scrolling. Searching the media UUID itself must be
+        tried first — a hit skips the scroll fallback entirely."""
+        tile = TestSelectExistingAssetPickerScroll._tile_mock(
+            wait_for_side_effect=[
+                TimeoutError("not visible in initial viewport"),
+                None,  # surfaced by the full-UUID search
+            ],
+            count_side_effect=0,
+        )
+        page = TestSelectExistingAssetPickerScroll._page_with_tile(tile)
+        search = page.locator(PICKER_SEARCH_INPUT)
+
+        result = await VideoGenerationMixin._select_existing_asset(
+            page, self._FULL_UUID, "", out_dir=None
+        )
+
+        assert result is True
+        tile.click.assert_awaited_once()
+        assert search.press_sequentially.await_args_list[0].args[0] == self._FULL_UUID
+        assert page.mouse.wheel.await_count == 0, "a search hit must skip scrolling"
+
+    @pytest.mark.asyncio
+    async def test_uuid_stem_search_is_tried_after_full_uuid(self) -> None:
+        """When the full UUID surfaces nothing, the UUID-derived filename stem
+        (the first dash-segment) is the next search tier."""
+        tile = TestSelectExistingAssetPickerScroll._tile_mock(
+            wait_for_side_effect=[
+                TimeoutError("not visible in initial viewport"),
+                TimeoutError("not surfaced by the full-UUID search"),
+                None,  # surfaced by the UUID-stem search
+            ],
+            count_side_effect=0,
+        )
+        page = TestSelectExistingAssetPickerScroll._page_with_tile(tile)
+        search = page.locator(PICKER_SEARCH_INPUT)
+
+        result = await VideoGenerationMixin._select_existing_asset(
+            page, self._FULL_UUID, "", out_dir=None
+        )
+
+        assert result is True
+        terms = [c.args[0] for c in search.press_sequentially.await_args_list]
+        assert terms == [self._FULL_UUID, "d6f1927a"]
+        assert page.mouse.wheel.await_count == 0
+
+    @pytest.mark.asyncio
+    async def test_no_search_box_skips_search_tiers_and_scrolls(self) -> None:
+        """A picker variant without a search input (#174's full-page
+        media-library drift) must skip the search tiers without touching the
+        input and fall straight through to the scroll loop."""
+        tile = TestSelectExistingAssetPickerScroll._tile_mock(
+            wait_for_side_effect=[
+                TimeoutError("not visible in initial viewport"),
+                None,  # visible after scrolling
+            ],
+            count_side_effect=[0, 0, 1],
+        )
+        page = TestSelectExistingAssetPickerScroll._page_with_tile(tile)
+        search = page.locator(PICKER_SEARCH_INPUT)
+        search.count = AsyncMock(return_value=0)  # no search box in this variant
+
+        result = await VideoGenerationMixin._select_existing_asset(
+            page, self._FULL_UUID, "", out_dir=None
+        )
+
+        assert result is True
+        search.press_sequentially.assert_not_awaited()
+        search.fill.assert_not_awaited()
+        assert page.mouse.wheel.await_count == 2
+
+    @pytest.mark.asyncio
+    async def test_search_hint_tier_runs_after_uuid_tiers(self) -> None:
+        """#287 round 6: Flow's media search does NOT index UUIDs (live rounds
+        1-5), but the tile alt text carries the generation PROMPT — a
+        CLI-resolved prompt hint typed into the search box surfaces the tile
+        (matched by UUID-in-src among the results) without any scrolling."""
+        tile = TestSelectExistingAssetPickerScroll._tile_mock(
+            wait_for_side_effect=[
+                TimeoutError("not visible in initial viewport"),
+                TimeoutError("not surfaced by the UUID search"),
+                TimeoutError("not surfaced by the UUID-stem search"),
+                None,  # surfaced by the prompt-hint search
+            ],
+            count_side_effect=0,
+        )
+        page = TestSelectExistingAssetPickerScroll._page_with_tile(tile)
+        search = page.locator(PICKER_SEARCH_INPUT)
+
+        result = await VideoGenerationMixin._select_existing_asset(
+            page,
+            self._FULL_UUID,
+            "",
+            out_dir=None,
+            search_hints=("stickman on a chalkboard, teaching",),
+        )
+
+        assert result is True
+        tile.click.assert_awaited_once()
+        terms = [c.args[0] for c in search.press_sequentially.await_args_list]
+        assert terms == [self._FULL_UUID, "d6f1927a", "stickman on a chalkboard, teaching"]
+        assert page.mouse.wheel.await_count == 0, "a hint hit must skip scrolling"
+
+    @pytest.mark.asyncio
+    async def test_grid_scroll_uses_js_scroller_and_logs_evidence(
+        self, install_log_capture: structlog.testing.LogCapture
+    ) -> None:
+        """#287 round 6 audit: react-virtuoso scrolls its own container, not
+        the dialog — a wheel over the wrong node is a silent no-op. The grid
+        scroll now drives the actual scrollable element via JS and the probe
+        event reports WHICH node moved and its scrollTop before/after, so a
+        no-op scroll (scrollTop never moves) is visible in telemetry."""
+        tile = TestSelectExistingAssetPickerScroll._tile_mock(
+            wait_for_side_effect=[
+                TimeoutError("not visible in initial viewport"),
+                TimeoutError("not surfaced by the UUID search"),
+                TimeoutError("not surfaced by the UUID-stem search"),
+                None,
+            ],
+            count_side_effect=[0, 0, 1],
+        )
+        page = TestSelectExistingAssetPickerScroll._page_with_tile(tile)
+        counter = itertools.count()
+        scroll_top = {"value": 0}
+
+        def _eval(js: str, *args: object) -> object:
+            if "scrollTop" in js:
+                before = scroll_top["value"]
+                scroll_top["value"] = before + 500
+                return {
+                    "tag": "div",
+                    "cls": "virtuoso-scroller",
+                    "before": before,
+                    "after": scroll_top["value"],
+                }
+            return [f"tile-{next(counter)}"]
+
+        page.evaluate = AsyncMock(side_effect=_eval)
+
+        result = await VideoGenerationMixin._select_existing_asset(
+            page, self._FULL_UUID, "", out_dir=None
+        )
+
+        assert result is True
+        # JS scroll must replace the blind wheel when the scroller is found.
+        page.mouse.wheel.assert_not_awaited()
+        probes = [
+            e
+            for e in install_log_capture.entries
+            if e["event"] == "ui_automation_video.picker_scroll_probe"
+        ]
+        assert probes, "expected picker_scroll_probe events"
+        assert probes[0]["scrolled_tag"] == "div"
+        assert probes[0]["scrolled_class"] == "virtuoso-scroller"
+        assert probes[0]["scroll_top_before"] == 0
+        assert probes[0]["scroll_top_after"] == 500
+        assert probes[1]["scroll_top_before"] == 500
+
+
+_PROJECT_ID_287 = "f6caf027-0000-4000-8000-000000000287"
+_PROJECT_URL_287 = f"https://labs.google/fx/tools/flow/project/{_PROJECT_ID_287}"
+
+
+class TestPickerProjectSync:
+    """#287 CONFIRMED (live round 2): the media picker's library component has
+    its OWN project selection — the dump showed the library on an old test
+    project (`gflow-cli t2i`, 16 tiles, `target_project_in_dialog: false`)
+    while `--project` had only navigated the EDITOR. The trigger is a Radix
+    `ProjectDropdownSubTrigger` (aria-haspopup='menu', submenu semantics,
+    portal-rendered options), the menu options render project NAMES (not
+    ids), and the UI locale is not English (pt-BR observed) — so the switch
+    resolves the target project's NAME from the live page and matches menu
+    options by id first, then by name, never by locale-dependent labels."""
+
+    @staticmethod
+    def _trigger_mock(*, references_target: bool) -> MagicMock:
+        trigger = MagicMock()
+        trigger.first = trigger
+        trigger.count = AsyncMock(return_value=1)
+        trigger.click = AsyncMock()
+        trigger.hover = AsyncMock()
+        trigger.focus = AsyncMock()
+        # Active-project probe: does the trigger's markup/text reference the
+        # target project (by id, or by resolved name)?
+        trigger.evaluate = AsyncMock(return_value=references_target)
+        return trigger
+
+    @staticmethod
+    def _menu_mock(*, wait_for: object = None) -> MagicMock:
+        menu = MagicMock()
+        menu.last = menu
+        if isinstance(wait_for, list):
+            menu.wait_for = AsyncMock(side_effect=wait_for)
+        else:
+            menu.wait_for = AsyncMock(side_effect=wait_for) if wait_for else AsyncMock()
+        return menu
+
+    @staticmethod
+    def _selector_page(trigger: MagicMock | None, *, menu: MagicMock | None = None) -> MagicMock:
+        page = _mock_async_page()
+        absent = MagicMock()
+        absent.first = absent
+        absent.last = absent
+        absent.count = AsyncMock(return_value=0)
+        absent.wait_for = AsyncMock(side_effect=TimeoutError("absent"))
+
+        def _locator(selector: str) -> MagicMock:
+            if trigger is not None and selector == PICKER_PROJECT_SELECTOR_TRIGGERS[0]:
+                return trigger
+            if menu is not None and selector == PICKER_PROJECT_MENU_OPEN:
+                return menu
+            return absent
+
+        page.locator = MagicMock(side_effect=_locator)
+
+        # page.evaluate router keyed on JS markers (#287 round 4): the portal
+        # dump JS reads inner_html, the option-match JS returns `clicked`,
+        # anything else is the menu-population poll (element count).
+        def _default_eval(js: str, *args: object) -> object:
+            if "inner_html" in js:
+                return None
+            if "clicked" in js:
+                return {"clicked": True, "matched_by": "id", "candidates": 3}
+            return 5
+
+        page.evaluate = AsyncMock(side_effect=_default_eval)
+        return page
+
+    def test_trigger_cascade_prefers_project_dropdown_and_excludes_sort(self) -> None:
+        """Live round 2: the trigger is `.ProjectDropdownSubTrigger`, and a
+        sibling `.SortDropdownSubTrigger` ('Recentes' — pt-BR) also matches a
+        generic aria-haspopup='menu' probe. The cascade must try the stable
+        class first and must never match the sort trigger."""
+        assert "ProjectDropdownSubTrigger" in PICKER_PROJECT_SELECTOR_TRIGGERS[0]
+        menu_tiers = [s for s in PICKER_PROJECT_SELECTOR_TRIGGERS if "aria-haspopup='menu'" in s]
+        assert menu_tiers, "expected a generic menu-haspopup fallback tier"
+        assert all("SortDropdownSubTrigger" in s and ":not(" in s for s in menu_tiers), (
+            "the generic menu tier must exclude the SortDropdownSubTrigger"
+        )
+
+    @pytest.mark.asyncio
+    async def test_switches_picker_to_target_project_when_it_differs(self) -> None:
+        trigger = self._trigger_mock(references_target=False)
+        menu = self._menu_mock()  # opens on the first click
+        page = self._selector_page(trigger, menu=menu)
+
+        result = await VideoGenerationMixin._ensure_picker_project(
+            page, _PROJECT_ID_287, project_name="Chalkboard Spike", out_dir=None
+        )
+
+        assert result is True
+        trigger.click.assert_awaited_once()
+        # The option-match JS receives BOTH the id and the resolved name —
+        # menu options render project NAMES, not ids (live round 2).
+        match_args = page.evaluate.await_args.args[-1]
+        assert match_args["projectId"] == _PROJECT_ID_287
+        assert match_args["projectName"] == "Chalkboard Spike"
+
+    @pytest.mark.asyncio
+    async def test_noop_when_picker_already_on_target_project(self) -> None:
+        trigger = self._trigger_mock(references_target=True)
+        page = self._selector_page(trigger)
+
+        result = await VideoGenerationMixin._ensure_picker_project(page, _PROJECT_ID_287)
+
+        assert result is True
+        trigger.click.assert_not_awaited()
+        page.evaluate.assert_not_awaited()
+
+    @pytest.mark.asyncio
+    async def test_noop_when_picker_has_no_project_selector(self) -> None:
+        """Older cohort: no project selector in the picker — the sync must be
+        a pure no-op (nothing clicked, nothing evaluated)."""
+        page = self._selector_page(None)
+
+        result = await VideoGenerationMixin._ensure_picker_project(page, _PROJECT_ID_287)
+
+        assert result is None
+        page.evaluate.assert_not_awaited()
+        page.keyboard.press.assert_not_awaited()
+
+    @pytest.mark.asyncio
+    async def test_menu_open_falls_back_to_hover_for_radix_subtrigger(self) -> None:
+        """Radix SubTrigger submenus may not open on plain click — the open
+        sequence is click -> hover -> focus+ArrowRight, each verified against
+        the portal-rendered `[role='menu'][data-state='open']`."""
+        trigger = self._trigger_mock(references_target=False)
+        # click does NOT open the menu; hover does.
+        menu = self._menu_mock(wait_for=[TimeoutError("closed after click"), None])
+        page = self._selector_page(trigger, menu=menu)
+
+        result = await VideoGenerationMixin._ensure_picker_project(page, _PROJECT_ID_287)
+
+        assert result is True
+        trigger.hover.assert_awaited_once()
+        arrow_presses = [
+            c for c in page.keyboard.press.call_args_list if c.args and c.args[0] == "ArrowRight"
+        ]
+        assert not arrow_presses, "keyboard tier must not fire once hover opened the menu"
+
+    @pytest.mark.asyncio
+    async def test_switch_miss_escapes_dropdown_and_returns_false(self) -> None:
+        """A selector exists but no portal candidate matches by href, id, OR
+        name: close the dropdown (never leave an open overlay) and report
+        False — the asset lookup proceeds and its telemetry captures state."""
+        trigger = self._trigger_mock(references_target=False)
+        page = self._selector_page(trigger, menu=self._menu_mock())
+
+        def _eval(js: str, *args: object) -> object:
+            if "inner_html" in js:
+                return None
+            if "clicked" in js:
+                return {"clicked": False, "matched_by": None, "candidates": 0}
+            return 5
+
+        page.evaluate = AsyncMock(side_effect=_eval)
+
+        result = await VideoGenerationMixin._ensure_picker_project(page, _PROJECT_ID_287)
+
+        assert result is False
+        page.keyboard.press.assert_awaited_with("Escape")
+
+    def test_option_match_js_covers_non_aria_clickables(self) -> None:
+        """Round-3 live miss: the OPEN portal contained ZERO elements with the
+        classic menu-item ARIA roles (`menu_items: 0`) — the project list
+        renders as something else. The matcher must sweep generic clickables
+        (anchors FIRST: `href*=<project-id>` is the jackpot case that makes
+        name resolution unnecessary) and never rely on ARIA roles alone."""
+        assert "a, button, li, div[role]" in _PICKER_PROJECT_OPTION_MATCH_JS
+        assert "getAttribute('href')" in _PICKER_PROJECT_OPTION_MATCH_JS
+        # Name tier retained for markup without ids.
+        assert "projectName" in _PICKER_PROJECT_OPTION_MATCH_JS
+
+    @pytest.mark.asyncio
+    async def test_menu_population_is_polled_before_matching(self) -> None:
+        """Round-3 live miss: the open-state flips before the project list
+        populates — matching (or dumping) an empty portal is a guaranteed
+        miss. After the menu opens, poll for element children (300ms steps,
+        bounded) and only then match."""
+        trigger = self._trigger_mock(references_target=False)
+        page = self._selector_page(trigger, menu=self._menu_mock())
+        poll_calls: list[str] = []
+
+        def _eval(js: str, *args: object) -> object:
+            if "inner_html" in js:
+                return None
+            if "clicked" in js:
+                return {"clicked": True, "matched_by": "href", "candidates": 12}
+            poll_calls.append(js)
+            return 0 if len(poll_calls) < 3 else 7  # populates on the 3rd poll
+
+        page.evaluate = AsyncMock(side_effect=_eval)
+
+        result = await VideoGenerationMixin._ensure_picker_project(page, _PROJECT_ID_287)
+
+        assert result is True
+        assert len(poll_calls) == 3, "polling must stop as soon as the portal has children"
+
+    @pytest.mark.asyncio
+    async def test_menu_never_populates_still_matches_and_dumps(
+        self, install_log_capture: structlog.testing.LogCapture
+    ) -> None:
+        """A portal that never populates must not spin: the poll is bounded,
+        the match is still attempted, and the miss telemetry reports zero
+        elements."""
+        trigger = self._trigger_mock(references_target=False)
+        page = self._selector_page(trigger, menu=self._menu_mock())
+        poll_calls: list[str] = []
+
+        def _eval(js: str, *args: object) -> object:
+            if "inner_html" in js:
+                return None
+            if "clicked" in js:
+                return {"clicked": False, "matched_by": None, "candidates": 0}
+            if "scrollTop" in js:
+                return None  # menu-scroll probe: nothing scrollable to advance
+            poll_calls.append(js)
+            return 0  # never populates
+
+        page.evaluate = AsyncMock(side_effect=_eval)
+
+        result = await VideoGenerationMixin._ensure_picker_project(page, _PROJECT_ID_287)
+
+        assert result is False
+        assert len(poll_calls) == PICKER_PROJECT_MENU_POLLS
+        waits = [c for c in page.wait_for_timeout.call_args_list if c.args]
+        assert any(c.args[0] == PICKER_PROJECT_MENU_POLL_MS for c in waits)
+        misses = [
+            e
+            for e in install_log_capture.entries
+            if e["event"] == "ui_automation_video.picker_project_switch_miss"
+        ]
+        assert misses[0]["menu_elements"] == 0
+
+    @pytest.mark.asyncio
+    async def test_switched_event_reports_href_match(
+        self, install_log_capture: structlog.testing.LogCapture
+    ) -> None:
+        """An anchor with `href*=<project-id>` is the strongest match signal —
+        the switched event must say which tier landed the click."""
+        trigger = self._trigger_mock(references_target=False)
+        page = self._selector_page(trigger, menu=self._menu_mock())
+
+        def _eval(js: str, *args: object) -> object:
+            if "inner_html" in js:
+                return None
+            if "clicked" in js:
+                return {"clicked": True, "matched_by": "href", "candidates": 8}
+            return 5
+
+        page.evaluate = AsyncMock(side_effect=_eval)
+
+        result = await VideoGenerationMixin._ensure_picker_project(page, _PROJECT_ID_287)
+
+        assert result is True
+        switched = [
+            e
+            for e in install_log_capture.entries
+            if e["event"] == "ui_automation_video.picker_project_switched"
+        ]
+        assert switched and switched[0]["matched_by"] == "href"
+
+    @pytest.mark.asyncio
+    async def test_switch_miss_writes_portal_dump(
+        self, tmp_path: Path, install_log_capture: structlog.testing.LogCapture
+    ) -> None:
+        """Round-3 gap: the role-filtered items list came back empty and left
+        us blind. The miss dump now captures the OPEN portal's raw innerHTML
+        (bounded) plus a child count and tag histogram — raw markup can't
+        lie about how the project list is really structured."""
+        trigger = self._trigger_mock(references_target=False)
+        page = self._selector_page(trigger, menu=self._menu_mock())
+        portal_state = {
+            "child_elements": 42,
+            "tag_histogram": {"div": 30, "a": 6, "span": 6},
+            "inner_html": "<div class='ScrollArea'><a href='/project/other'>gflow-cli t2i</a>",
+        }
+
+        def _eval(js: str, *args: object) -> object:
+            if "inner_html" in js:
+                return portal_state
+            if "clicked" in js:
+                return {"clicked": False, "matched_by": None, "candidates": 2}
+            return 42
+
+        page.evaluate = AsyncMock(side_effect=_eval)
+
+        result = await VideoGenerationMixin._ensure_picker_project(
+            page, _PROJECT_ID_287, project_name="Chalkboard Spike", out_dir=tmp_path
+        )
+
+        assert result is False
+        dump_path = tmp_path / f"debug_picker_project_menu_{_PROJECT_ID_287[:8]}.json"
+        assert dump_path.exists(), "switch miss must leave the portal dump in the out-dir"
+        data = json.loads(dump_path.read_text(encoding="utf-8"))
+        assert data["project_id"] == _PROJECT_ID_287
+        assert data["project_name"] == "Chalkboard Spike"
+        assert data["candidates"] == 2
+        assert data["menu_elements"] == 42
+        assert data["portal"] == portal_state
+        misses = [
+            e
+            for e in install_log_capture.entries
+            if e["event"] == "ui_automation_video.picker_project_switch_miss"
+        ]
+        assert misses, "expected a picker_project_switch_miss event"
+        assert misses[0]["menu_elements"] == 42
+        assert misses[0]["candidates"] == 2
+        assert misses[0]["menu_dump"] == str(dump_path)
+
+    @pytest.mark.asyncio
+    async def test_resolve_project_name_from_live_page(self) -> None:
+        """The picker menu shows project NAMES; the CLI only knows the UUID.
+        The name is resolved from the live page's raw signals (an element
+        referencing the project id, e.g. an href — reflects renames, works
+        for projects not created by gflow)."""
+        page = _mock_async_page()
+        page.evaluate = AsyncMock(
+            return_value={"title": "", "href_text": "Chalkboard Spike", "class_text": ""}
+        )
+
+        name = await VideoGenerationMixin._resolve_project_name(page, _PROJECT_ID_287)
+
+        assert name == "Chalkboard Spike"
+        assert page.evaluate.await_args.args[-1] == _PROJECT_ID_287
+
+    @pytest.mark.asyncio
+    async def test_resolve_project_name_returns_none_when_page_has_no_hint(self) -> None:
+        page = _mock_async_page()
+        page.evaluate = AsyncMock(return_value=None)
+
+        name = await VideoGenerationMixin._resolve_project_name(page, _PROJECT_ID_287)
+
+        assert name is None
+
+    def test_strip_flow_branding_variants(self) -> None:
+        """Round-5 tier 0: the editor tab title carries the project name with
+        Flow branding attached. The strip must be tolerant across separator
+        variants and fall back to the raw title when no pattern matches."""
+        strip = VideoGenerationMixin._strip_flow_branding
+        assert strip("Chalkboard Spike - Flow") == "Chalkboard Spike"
+        assert strip("Chalkboard Spike – Flow") == "Chalkboard Spike"  # en dash
+        assert strip("Chalkboard Spike — Flow") == "Chalkboard Spike"  # em dash
+        assert strip("Chalkboard Spike | Flow") == "Chalkboard Spike"
+        assert strip("Flow - Chalkboard Spike") == "Chalkboard Spike"
+        # Live round 5: the REAL observed pattern is a 'Google Flow - ' prefix.
+        assert strip("Google Flow - gflow-cli t2i") == "gflow-cli t2i"
+        assert strip("gflow-cli t2i - Google Flow") == "gflow-cli t2i"
+        assert strip("Chalkboard Spike") == "Chalkboard Spike"  # raw fallback
+
+    def test_trigger_active_probe_matches_name_by_contains(self) -> None:
+        """Round 5 waste: the trigger's textContent carries the active project
+        NAME plus icon-ligature noise, so an exact-equality probe missed and
+        ~30 menu probes hunted for the project we were already in. The
+        already-active probe must accept a contains-match on the resolved
+        name (the trigger only ever shows the ACTIVE project, so a substring
+        hit cannot select a wrong one)."""
+        assert ".includes(norm(args.projectName))" in _PICKER_PROJECT_TRIGGER_ACTIVE_JS
+
+    @pytest.mark.asyncio
+    async def test_resolver_tier0_uses_document_title(
+        self, install_log_capture: structlog.testing.LogCapture
+    ) -> None:
+        """Round 5: we navigated to /project/<id> BEFORE the picker opened, so
+        document.title is the strongest name signal. The raw title is logged
+        on every resolution so the real branding pattern is learnable."""
+        page = _mock_async_page()
+        page.evaluate = AsyncMock(
+            return_value={
+                "title": "Chalkboard Spike – Flow",
+                "href_text": "other",
+                "class_text": "",
+            }
+        )
+
+        name = await VideoGenerationMixin._resolve_project_name(page, _PROJECT_ID_287)
+
+        assert name == "Chalkboard Spike"
+        resolved = [
+            e
+            for e in install_log_capture.entries
+            if e["event"] == "ui_automation_video.picker_project_name_resolved"
+        ]
+        assert resolved[0]["source"] == "title"
+        assert resolved[0]["raw_title"] == "Chalkboard Spike – Flow"
+
+    @pytest.mark.asyncio
+    async def test_resolver_rejects_branding_only_title(self) -> None:
+        """A title that is ONLY Flow branding must never become the candidate
+        name — 'flow' as a contains-match would hit 'gflow-cli i2i' and click
+        the wrong project. Falls through to the href tier."""
+        page = _mock_async_page()
+        page.evaluate = AsyncMock(
+            return_value={"title": "Flow", "href_text": "gflow-cli i2i", "class_text": ""}
+        )
+
+        name = await VideoGenerationMixin._resolve_project_name(page, _PROJECT_ID_287)
+
+        assert name == "gflow-cli i2i"
+
+    @pytest.mark.asyncio
+    async def test_resolver_unresolved_reports_raw_title(
+        self, install_log_capture: structlog.testing.LogCapture
+    ) -> None:
+        page = _mock_async_page()
+        page.evaluate = AsyncMock(return_value={"title": "Flow", "href_text": "", "class_text": ""})
+
+        name = await VideoGenerationMixin._resolve_project_name(page, _PROJECT_ID_287)
+
+        assert name is None
+        unresolved = [
+            e
+            for e in install_log_capture.entries
+            if e["event"] == "ui_automation_video.picker_project_name_unresolved"
+        ]
+        assert unresolved[0]["raw_title"] == "Flow"
+
+    @pytest.mark.asyncio
+    async def test_sync_project_name_override_beats_resolution(
+        self, monkeypatch: pytest.MonkeyPatch
+    ) -> None:
+        """`--project-name` / GFLOW_CLI_PROJECT_NAME is the highest-precedence
+        name source — the user-supplied display name is used verbatim and the
+        page resolver is not even consulted."""
+        ensure = AsyncMock()
+        resolver = AsyncMock(return_value="Derived Name")
+        monkeypatch.setattr(VideoGenerationMixin, "_ensure_picker_project", ensure)
+        monkeypatch.setattr(VideoGenerationMixin, "_resolve_project_name", resolver)
+        page = _mock_async_page()
+        page.url = _PROJECT_URL_287
+
+        await VideoGenerationMixin._sync_picker_project(page, project_name="User Given")
+
+        resolver.assert_not_awaited()
+        assert ensure.await_args.kwargs["project_name"] == "User Given"
+
+    @pytest.mark.asyncio
+    async def test_menu_scroll_reaches_project_below_the_fold(
+        self, install_log_capture: structlog.testing.LogCapture
+    ) -> None:
+        """Round 5: the project menu lists EVERY project (80 observed,
+        recency-ordered, timestamp labels for unnamed ones) — the target's
+        entry can sit below the visible fold. When the in-view match misses,
+        the open portal is scrolled with the progress-bounded pattern and
+        re-matched after every scroll."""
+        trigger = self._trigger_mock(references_target=False)
+        page = self._selector_page(trigger, menu=self._menu_mock())
+        match_calls = 0
+        scroll_calls = 0
+
+        def _eval(js: str, *args: object) -> object:
+            nonlocal match_calls, scroll_calls
+            if "inner_html" in js:
+                return None
+            if "clicked" in js:
+                match_calls += 1
+                if match_calls >= 4:  # in-view miss + 2 scrolled misses, hit on 3rd scroll
+                    return {"clicked": True, "matched_by": "name", "candidates": 80}
+                return {"clicked": False, "matched_by": None, "candidates": 80}
+            if "scrollTop" in js:
+                scroll_calls += 1
+                return [f"item-{scroll_calls}-{i}" for i in range(5)]  # window advances
+            return 160  # population poll
+
+        page.evaluate = AsyncMock(side_effect=_eval)
+
+        result = await VideoGenerationMixin._ensure_picker_project(
+            page, _PROJECT_ID_287, project_name="Chalkboard Spike"
+        )
+
+        assert result is True
+        assert scroll_calls == 3, "the scroll loop must re-match after each scroll"
+        probes = [
+            e
+            for e in install_log_capture.entries
+            if e["event"] == "ui_automation_video.picker_project_menu_scroll_probe"
+        ]
+        assert len(probes) == 3
+        done = [
+            e
+            for e in install_log_capture.entries
+            if e["event"] == "ui_automation_video.picker_project_menu_scroll_done"
+        ]
+        assert done and done[-1]["reason"] == "found"
+
+    @pytest.mark.asyncio
+    async def test_menu_scroll_stall_terminates(
+        self, install_log_capture: structlog.testing.LogCapture
+    ) -> None:
+        """A menu whose rendered item set stops changing (end of list) must
+        stall-terminate — never spin to the ceiling — and still fall through
+        to the miss dump."""
+        trigger = self._trigger_mock(references_target=False)
+        page = self._selector_page(trigger, menu=self._menu_mock())
+
+        def _eval(js: str, *args: object) -> object:
+            if "inner_html" in js:
+                return None
+            if "clicked" in js:
+                return {"clicked": False, "matched_by": None, "candidates": 80}
+            if "scrollTop" in js:
+                return ["item-a", "item-b"]  # never changes -> end of list
+            return 160
+
+        page.evaluate = AsyncMock(side_effect=_eval)
+
+        result = await VideoGenerationMixin._ensure_picker_project(page, _PROJECT_ID_287)
+
+        assert result is False
+        done = [
+            e
+            for e in install_log_capture.entries
+            if e["event"] == "ui_automation_video.picker_project_menu_scroll_done"
+        ]
+        assert done[-1]["reason"] == "stall"
+        assert done[-1]["attempts"] == PICKER_GRID_SCROLL_STALL_LIMIT + 1
+        misses = [
+            e
+            for e in install_log_capture.entries
+            if e["event"] == "ui_automation_video.picker_project_switch_miss"
+        ]
+        assert misses, "a stalled scroll must still produce the miss dump"
+
+    @pytest.mark.asyncio
+    async def test_sync_derives_target_project_from_page_url(
+        self, monkeypatch: pytest.MonkeyPatch
+    ) -> None:
+        """`--project` navigation put the project id in the editor URL — the
+        sync wrapper derives the target from there (no signature threading)."""
+        ensure = AsyncMock()
+        monkeypatch.setattr(VideoGenerationMixin, "_ensure_picker_project", ensure)
+        page = _mock_async_page()
+        page.url = f"{_PROJECT_URL_287}?media=x"
+
+        await VideoGenerationMixin._sync_picker_project(page)
+
+        assert ensure.await_args.args[-1] == _PROJECT_ID_287
+
+    @pytest.mark.asyncio
+    async def test_sync_passes_resolved_name_and_out_dir_to_ensure(
+        self, monkeypatch: pytest.MonkeyPatch, tmp_path: Path
+    ) -> None:
+        ensure = AsyncMock()
+        monkeypatch.setattr(VideoGenerationMixin, "_ensure_picker_project", ensure)
+        monkeypatch.setattr(
+            VideoGenerationMixin,
+            "_resolve_project_name",
+            AsyncMock(return_value="Chalkboard Spike"),
+        )
+        page = _mock_async_page()
+        page.url = _PROJECT_URL_287
+
+        await VideoGenerationMixin._sync_picker_project(page, out_dir=tmp_path)
+
+        assert ensure.await_args.kwargs["project_name"] == "Chalkboard Spike"
+        assert ensure.await_args.kwargs["out_dir"] == tmp_path
+
+    @pytest.mark.asyncio
+    async def test_sync_noop_when_page_url_has_no_project(
+        self, monkeypatch: pytest.MonkeyPatch
+    ) -> None:
+        ensure = AsyncMock()
+        monkeypatch.setattr(VideoGenerationMixin, "_ensure_picker_project", ensure)
+        page = _mock_async_page()  # page.url is a MagicMock, not a str
+
+        await VideoGenerationMixin._sync_picker_project(page)
+
+        ensure.assert_not_awaited()
+
+
+class TestSelectExistingAssetDiagnostics:
+    """#287 live-diagnosis telemetry: the first live verification failed with
+    ZERO events from the new code paths, so it was impossible to tell whether
+    the search tiers ran, whether the progress probe saw any tiles, or
+    whether the tile matcher missed. Every decision point now emits a
+    structured event, and a final not-found writes a bounded picker DOM dump
+    (+ screenshot) to the out-dir so the next live miss shows what the picker
+    was actually rendering."""
+
+    _FULL_UUID = "d6f1927a-3eae-4626-bc90-9a6ea7637bab"
+
+    @pytest.mark.asyncio
+    async def test_search_tier_event_reports_term_and_rendered_count(
+        self, install_log_capture: structlog.testing.LogCapture
+    ) -> None:
+        tile = TestSelectExistingAssetPickerScroll._tile_mock(
+            wait_for_side_effect=[TimeoutError("not in viewport"), None],
+            count_side_effect=0,
+        )
+        page = TestSelectExistingAssetPickerScroll._page_with_tile(tile)
+        page.evaluate = AsyncMock(return_value=["tile-a", "tile-b"])
+
+        result = await VideoGenerationMixin._select_existing_asset(
+            page, self._FULL_UUID, "", out_dir=None
+        )
+
+        assert result is True
+        tiers = [
+            e
+            for e in install_log_capture.entries
+            if e["event"] == "ui_automation_video.picker_search_tier"
+        ]
+        assert tiers, "expected a picker_search_tier event"
+        assert tiers[0]["term"] == self._FULL_UUID
+        assert tiers[0]["found"] is True
+        assert tiers[0]["rendered_tiles"] == 2
+
+    @pytest.mark.asyncio
+    async def test_stall_termination_emits_probe_and_done_events(
+        self, install_log_capture: structlog.testing.LogCapture
+    ) -> None:
+        tile = TestSelectExistingAssetPickerScroll._tile_mock(
+            wait_for_side_effect=TimeoutError("never visible"),
+            count_side_effect=0,
+        )
+        page = TestSelectExistingAssetPickerScroll._page_with_tile(tile)
+        page.evaluate = AsyncMock(return_value=["tile-a"])  # grid never advances
+
+        result = await VideoGenerationMixin._select_existing_asset(page, "uuid-1", "", out_dir=None)
+
+        assert result is False
+        probes = [
+            e
+            for e in install_log_capture.entries
+            if e["event"] == "ui_automation_video.picker_scroll_probe"
+        ]
+        assert len(probes) == PICKER_GRID_SCROLL_STALL_LIMIT + 1
+        assert probes[0]["rendered_tiles"] == 1
+        assert probes[0]["new_tiles"] is None  # no previous fingerprint yet
+        assert probes[1]["new_tiles"] == 0
+        done = [
+            e
+            for e in install_log_capture.entries
+            if e["event"] == "ui_automation_video.picker_scroll_done"
+        ]
+        assert done, "expected a picker_scroll_done event"
+        assert done[-1]["reason"] == "stall"
+        assert done[-1]["attempts"] == PICKER_GRID_SCROLL_STALL_LIMIT + 1
+        assert done[-1]["found"] is False
+
+    @pytest.mark.asyncio
+    async def test_legacy_budget_termination_is_reported_when_probe_blind(
+        self, install_log_capture: structlog.testing.LogCapture
+    ) -> None:
+        """When the DOM probe yields no evidence (cohort DOM drift — deviation
+        the first live run could not distinguish), the done event must SAY the
+        legacy budget fired, so a silent fallback is observable in the log."""
+        tile = TestSelectExistingAssetPickerScroll._tile_mock(
+            wait_for_side_effect=TimeoutError("never visible"),
+            count_side_effect=0,
+        )
+        page = TestSelectExistingAssetPickerScroll._page_with_tile(tile)
+        # page.evaluate deliberately NOT configured -> probe yields no evidence.
+
+        result = await VideoGenerationMixin._select_existing_asset(page, "uuid-1", "", out_dir=None)
+
+        assert result is False
+        done = [
+            e
+            for e in install_log_capture.entries
+            if e["event"] == "ui_automation_video.picker_scroll_done"
+        ]
+        assert done[-1]["reason"] == "legacy_budget"
+        assert done[-1]["attempts"] == PICKER_GRID_SCROLL_ATTEMPTS
+        assert done[-1]["found"] is False
+        probes = [
+            e
+            for e in install_log_capture.entries
+            if e["event"] == "ui_automation_video.picker_scroll_probe"
+        ]
+        assert probes and all(e["rendered_tiles"] is None for e in probes)
+
+    @pytest.mark.asyncio
+    async def test_not_found_writes_bounded_dom_dump(
+        self, tmp_path: Path, install_log_capture: structlog.testing.LogCapture
+    ) -> None:
+        tile = TestSelectExistingAssetPickerScroll._tile_mock(
+            wait_for_side_effect=TimeoutError("never visible"),
+            count_side_effect=0,
+        )
+        page = TestSelectExistingAssetPickerScroll._page_with_tile(tile)
+        page.url = _PROJECT_URL_287
+        page.screenshot = AsyncMock()
+        dom_state = {
+            "tile_count": 2,
+            "tiles": ["<div role='option'><img src='...other-uuid...'/></div>"],
+            "container_attrs": ["role=dialog", "aria-modal=true"],
+            "project_selector_candidates": ["<button aria-haspopup='listbox'>Scratch 3</button>"],
+            "target_project_in_dialog": False,
+        }
+
+        def _eval(js: str, *args: object) -> object:
+            # The DOM-dump JS is the only one reading outerHTML.
+            return dom_state if "outerHTML" in js else ["tile-a"]
+
+        page.evaluate = AsyncMock(side_effect=_eval)
+
+        result = await VideoGenerationMixin._select_existing_asset(
+            page, self._FULL_UUID, "", out_dir=tmp_path
+        )
+
+        assert result is False
+        dump_path = tmp_path / f"debug_picker_dom_{self._FULL_UUID[:8]}.json"
+        assert dump_path.exists(), "not-found must leave a picker DOM dump in the out-dir"
+        data = json.loads(dump_path.read_text(encoding="utf-8"))
+        assert data["media_id"] == self._FULL_UUID
+        assert data["project_id"] == _PROJECT_ID_287
+        assert data["picker"]["tile_count"] == 2
+        assert data["picker"]["project_selector_candidates"]
+        misses = [
+            e
+            for e in install_log_capture.entries
+            if e["event"] == "ui_automation_video.existing_asset_not_found"
+        ]
+        assert misses, "expected an existing_asset_not_found event"
+        assert misses[0]["media_id"] == self._FULL_UUID
+        assert misses[0]["project_id"] == _PROJECT_ID_287
+        assert misses[0]["dom_dump"] == str(dump_path)
+        assert misses[0]["screenshot"], "expected a screenshot path"
+
+    @pytest.mark.asyncio
+    async def test_dom_dump_capture_failure_reports_none(
+        self, tmp_path: Path, install_log_capture: structlog.testing.LogCapture
+    ) -> None:
+        """0.32.1 contract: a capture failure must never report a file that
+        was not written — the miss event carries None, not a phantom path."""
+        tile = TestSelectExistingAssetPickerScroll._tile_mock(
+            wait_for_side_effect=TimeoutError("never visible"),
+            count_side_effect=0,
+        )
+        page = TestSelectExistingAssetPickerScroll._page_with_tile(tile)
+        page.screenshot = AsyncMock(side_effect=RuntimeError("no screenshot either"))
+
+        def _eval(js: str, *args: object) -> object:
+            if "outerHTML" in js:
+                raise RuntimeError("cohort DOM drift")
+            return ["tile-a"]
+
+        page.evaluate = AsyncMock(side_effect=_eval)
+
+        result = await VideoGenerationMixin._select_existing_asset(
+            page, self._FULL_UUID, "", out_dir=tmp_path
+        )
+
+        assert result is False
+        misses = [
+            e
+            for e in install_log_capture.entries
+            if e["event"] == "ui_automation_video.existing_asset_not_found"
+        ]
+        assert misses[0]["dom_dump"] is None
+        assert misses[0]["screenshot"] is None
+        assert not list(tmp_path.glob("*.json"))
 
 
 class TestAttachImageUuidRefsPickerScroll:
@@ -1681,7 +2712,10 @@ class TestAttachImageUuidRefsPickerScroll:
         assert search.press_sequentially.call_args.args[0] == "Cabin"
         # ...but the search box must be cleared before EVERY ref's lookup
         # (#282: a leftover search term from ref 1 previously shadowed ref 2).
-        assert search.fill.await_count == 2
+        # 2 per-ref clears + 1 tier-level clear before ref 1's display-name
+        # search (#287: each search tier clears the box so tiers don't
+        # concatenate).
+        assert search.fill.await_count == 3
         assert all(c.args == ("",) for c in search.fill.call_args_list)
 
     @pytest.mark.asyncio
@@ -1717,6 +2751,35 @@ class TestAttachImageUuidRefsPickerScroll:
 
         tile.click.assert_awaited_once()
         search.fill.assert_not_awaited()
+
+    @pytest.mark.asyncio
+    async def test_picker_project_synced_before_every_ref_lookup(
+        self, monkeypatch: pytest.MonkeyPatch
+    ) -> None:
+        """#287 primary hypothesis: the picker's library view has its own
+        active project — it must be synced to the target project BEFORE each
+        ref's lookup, or the lookup scans the wrong project's grid."""
+        calls: list[str] = []
+
+        async def _sync(page: object, **kwargs: object) -> None:
+            calls.append("sync")
+
+        async def _select(*args: object, **kwargs: object) -> bool:
+            calls.append("select")
+            return True
+
+        monkeypatch.setattr(VideoGenerationMixin, "_sync_picker_project", _sync)
+        monkeypatch.setattr(VideoGenerationMixin, "_select_existing_asset", _select)
+        tile = self._never_found_tile()
+        page, _, _, _ = self._make_page({"uuid-1": tile, "uuid-2": tile})
+
+        await VideoGenerationMixin._attach_image_uuid_refs(
+            page,
+            [("uuid-1", "", ""), ("uuid-2", "", "")],
+            out_dir=None,
+        )
+
+        assert calls == ["sync", "select", "sync", "select"]
 
 
 # ---------------------------------------------------------------------------
@@ -1760,6 +2823,30 @@ class TestAttachFrameByMediaId:
         assert select.await_args.args[1] == _FRAME_REF_UUID
 
     @pytest.mark.asyncio
+    async def test_search_hints_flow_through_to_select(
+        self, monkeypatch: pytest.MonkeyPatch
+    ) -> None:
+        """#287 round 6: prompt hints handed to the frame-ref attach must
+        reach `_select_existing_asset`'s search-hint tier."""
+        slot = MagicMock()
+        slot.click = AsyncMock()
+        monkeypatch.setattr(
+            VideoGenerationMixin, "_resolve_frame_slot", AsyncMock(return_value=slot)
+        )
+        select = AsyncMock(return_value=True)
+        monkeypatch.setattr(VideoGenerationMixin, "_select_existing_asset", select)
+        page = _frame_dialog_page()
+        await VideoGenerationMixin._attach_frame_by_media_id(
+            page,
+            0,
+            "Start",
+            _FRAME_REF_UUID,
+            out_dir=None,
+            search_hints=("stickman on a chalkboard, teaching",),
+        )
+        assert select.await_args.kwargs["search_hints"] == ("stickman on a chalkboard, teaching",)
+
+    @pytest.mark.asyncio
     async def test_missing_asset_raises_transport_timeout(
         self, monkeypatch: pytest.MonkeyPatch
     ) -> None:
@@ -1776,6 +2863,36 @@ class TestAttachFrameByMediaId:
             await VideoGenerationMixin._attach_frame_by_media_id(
                 page, 0, "Start", _FRAME_REF_UUID, out_dir=None
             )
+
+    @pytest.mark.asyncio
+    async def test_picker_project_synced_before_frame_ref_selection(
+        self, monkeypatch: pytest.MonkeyPatch
+    ) -> None:
+        """#287 primary hypothesis: the frame-slot media dialog's library view
+        must be aligned to the target project BEFORE the UUID lookup runs."""
+        calls: list[str] = []
+        slot = MagicMock()
+        slot.click = AsyncMock()
+        monkeypatch.setattr(
+            VideoGenerationMixin, "_resolve_frame_slot", AsyncMock(return_value=slot)
+        )
+
+        async def _sync(page: object, **kwargs: object) -> None:
+            calls.append("sync")
+
+        async def _select(*args: object, **kwargs: object) -> bool:
+            calls.append("select")
+            return True
+
+        monkeypatch.setattr(VideoGenerationMixin, "_sync_picker_project", _sync)
+        monkeypatch.setattr(VideoGenerationMixin, "_select_existing_asset", _select)
+        page = _frame_dialog_page()
+
+        await VideoGenerationMixin._attach_frame_by_media_id(
+            page, 0, "Start", _FRAME_REF_UUID, out_dir=None
+        )
+
+        assert calls == ["sync", "select"]
 
 
 class TestAttachI2VFramesRefIdRouting:
@@ -1804,6 +2921,46 @@ class TestAttachI2VFramesRefIdRouting:
         remote.assert_not_awaited()
         slots = [(c.args[1], c.args[2]) for c in by_id.await_args_list]
         assert slots == [(0, "Start"), (1, "End")]
+
+    @pytest.mark.asyncio
+    async def test_project_name_override_reaches_frame_by_media_id(
+        self, monkeypatch: pytest.MonkeyPatch
+    ) -> None:
+        """#287 round 5: `--project-name` rides the request into the frame-ref
+        attach, where the picker project-menu match consumes it."""
+        from gflow_cli.api.video import GenerateVideoRequest, Mode
+
+        by_id = AsyncMock()
+        monkeypatch.setattr(VideoGenerationMixin, "_attach_frame_by_media_id", by_id)
+        request = GenerateVideoRequest(
+            prompt="x",
+            mode=Mode.I2V,
+            start_image_ref_id=_FRAME_REF_UUID,
+            project_name="Chalkboard Spike",
+        )
+        page = _cascade_page(set())
+        await VideoGenerationMixin._attach_i2v_frames(page, request, out_dir=None)
+        assert by_id.await_args.kwargs["project_name"] == "Chalkboard Spike"
+
+    @pytest.mark.asyncio
+    async def test_search_hints_reach_frame_by_media_id(
+        self, monkeypatch: pytest.MonkeyPatch
+    ) -> None:
+        """#287 round 6: CLI-resolved prompt hints ride the request into the
+        frame-ref attach, where the picker search-hint tier consumes them."""
+        from gflow_cli.api.video import GenerateVideoRequest, Mode
+
+        by_id = AsyncMock()
+        monkeypatch.setattr(VideoGenerationMixin, "_attach_frame_by_media_id", by_id)
+        request = GenerateVideoRequest(
+            prompt="x",
+            mode=Mode.I2V,
+            start_image_ref_id=_FRAME_REF_UUID,
+            search_hints=("stickman on a chalkboard, teaching",),
+        )
+        page = _cascade_page(set())
+        await VideoGenerationMixin._attach_i2v_frames(page, request, out_dir=None)
+        assert by_id.await_args.kwargs["search_hints"] == ("stickman on a chalkboard, teaching",)
 
 
 class TestUploadRejectionTypedError:
