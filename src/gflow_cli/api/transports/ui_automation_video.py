@@ -368,10 +368,222 @@ ENTITY_ATTACH_DRIFT_HINT = (
     "(do NOT include captured tokens or signed URLs)."
 )
 # The picker grid is virtualised (react-virtuoso): off-screen tiles are not in
-# the DOM. When the target entity tile is not initially rendered, scroll the grid
-# in steps until it appears (or we exhaust the attempts).
+# the DOM. When the target tile is not initially rendered, scroll the grid in
+# steps until it appears. #287 (live repro): a fixed scroll budget capped the
+# reachable depth at ATTEMPTS * DELTA px, so an asset deep in a crowded
+# project (100+ media) was unreachable and the picker gave up on an asset
+# that WAS in the project. The scroll loop is therefore bounded by evidence
+# of progress — keep scrolling while the set of rendered tile identifiers
+# still CHANGES between scrolls, stop after STALL_LIMIT consecutive scrolls
+# with no new tiles (end of grid) — with MAX_ATTEMPTS as a hard safety
+# ceiling against a pathological grid that never stops changing. The fixed
+# ATTEMPTS budget remains as the fallback bound when the DOM probe yields no
+# progress evidence at all.
 PICKER_GRID_SCROLL_ATTEMPTS = 12
 PICKER_GRID_SCROLL_DELTA_PX = 500
+PICKER_GRID_SCROLL_MAX_ATTEMPTS = 200
+PICKER_GRID_SCROLL_STALL_LIMIT = 3
+# One JS pass over the open picker: the identifiers of every currently
+# rendered tile — media thumbnails keyed by their src UUID, entity tiles by
+# data-tile-id. Used as the progress fingerprint for the scroll loop.
+_PICKER_GRID_TILE_IDS_JS = (
+    "() => Array.from("
+    "document.querySelectorAll(\"[role='option'] img, [data-tile-id]\")"
+    ").map((el) => el.getAttribute('data-tile-id') || el.getAttribute('src') || '')"
+)
+# #287 round 6 audit: react-virtuoso scrolls its OWN container (usually a
+# [data-virtuoso-scroller] node), not the dialog — a mouse wheel over the
+# wrong node is a silent no-op that looks like "end of grid". Scroll the
+# actual scrollable element via JS and return evidence (which node moved,
+# scrollTop before/after) so a no-op scroll is visible in telemetry. The
+# hover+wheel fallback remains for when this probe fails.
+_PICKER_GRID_SCROLL_JS = (
+    "(delta) => {"
+    " const dialogs = document.querySelectorAll(\"[role='dialog']\");"
+    " const root = dialogs.length ? dialogs[dialogs.length - 1] : document.body;"
+    " const nodes = [root].concat(Array.from(root.querySelectorAll('*')));"
+    " const scroller = nodes.find((el) => el.hasAttribute('data-virtuoso-scroller'))"
+    "  || nodes.find((el) => el.scrollHeight > el.clientHeight + 1)"
+    "  || root;"
+    " const before = scroller.scrollTop;"
+    " scroller.scrollTop = before + delta;"
+    " return {"
+    "  tag: scroller.tagName.toLowerCase(),"
+    "  cls: (scroller.getAttribute('class') || '').slice(0, 120),"
+    "  before: before,"
+    "  after: scroller.scrollTop,"
+    " };"
+    "}"
+)
+# #287 CONFIRMED (live round 2): the media picker's library view has its OWN
+# active project — `--project` only navigates the EDITOR — so the picker can
+# open on a different project (observed live: an old test project, with the
+# target asset unreachable at any scroll depth). The trigger is a Radix
+# `ProjectDropdownSubTrigger` (aria-haspopup='menu', submenu semantics,
+# portal-rendered options); a sibling `SortDropdownSubTrigger` also matches a
+# generic menu-haspopup probe, so the stable class comes FIRST and the generic
+# menu tier explicitly excludes the sort trigger. Probed IN ORDER inside the
+# open dialog, first match wins, no-op when none match (older cohort).
+PICKER_PROJECT_SELECTOR_TRIGGERS = (
+    "[role='dialog'] [class*='ProjectDropdownSubTrigger']",
+    "[role='dialog'] [role='combobox']",
+    "[role='dialog'] button[aria-haspopup='listbox']",
+    "[role='dialog'] button[aria-haspopup='menu']:not([class*='SortDropdownSubTrigger'])",
+)
+# Radix renders the opened (sub)menu in a PORTAL outside the dialog, stamped
+# data-state='open' — the open-verification anchor for the switch sequence.
+PICKER_PROJECT_MENU_OPEN = "[role='menu'][data-state='open']"
+# #287 round 3: the open-state flips BEFORE the project list populates —
+# matching (or dumping) too early sees an empty portal. After the menu
+# reports open, poll for element children before matching: up to POLLS steps
+# of POLL_MS each (~3s), stopping as soon as the portal has any elements.
+PICKER_PROJECT_MENU_POLLS = 10
+PICKER_PROJECT_MENU_POLL_MS = 300
+# #287 round 5: the project menu is the full recency-ordered project list (80
+# items observed) — the target's entry can sit below the visible fold or
+# outside a virtualised window. When the in-view match misses, the open
+# portal is scrolled with the progress-bounded pattern (re-match after each
+# scroll, stall-terminate on no new items, hard ceiling).
+PICKER_PROJECT_MENU_SCROLL_MAX = 30
+PICKER_PROJECT_MENU_SCROLL_DELTA_PX = 400
+PICKER_PROJECT_MENU_SCROLL_SETTLE_MS = 250
+# Element count inside the open portal menu(s) — the population poll probe.
+_PICKER_PROJECT_MENU_CHILD_COUNT_JS = (
+    "() => Array.from(document.querySelectorAll(\"[role='menu'][data-state='open']\"))"
+    ".reduce((n, m) => n + m.querySelectorAll('*').length, 0)"
+)
+# Scroll the open portal menu one step (finds the first scrollable node) and
+# return the rendered item texts — the progress fingerprint for the loop.
+_PICKER_PROJECT_MENU_SCROLL_JS = (
+    "(delta) => {"
+    " const menus = Array.from(document.querySelectorAll(\"[role='menu'][data-state='open']\"));"
+    " if (!menus.length) { return null; }"
+    " const root = menus[menus.length - 1];"
+    " const nodes = [root].concat(Array.from(root.querySelectorAll('*')));"
+    " const scrollable = nodes.find((el) => el.scrollHeight > el.clientHeight + 1) || root;"
+    " scrollable.scrollTop = scrollable.scrollTop + delta;"
+    " const items = Array.from(root.querySelectorAll("
+    "\"a, button, li, [role='menuitem'], [role='menuitemradio'], [role='option']\"));"
+    " return items.map((el) => (el.textContent || '').trim()).filter(Boolean);"
+    "}"
+)
+# Titles that are ONLY Flow branding — never usable as a project-name
+# candidate ('flow' as a contains-match would hit e.g. 'gflow-cli i2i').
+_FLOW_BRANDING_TITLES = frozenset(
+    {"flow", "google flow", "flow by google", "google labs flow", "labs.google", "google labs"}
+)
+# Raw open-portal dump for a switch miss (#287 round 4): the round-2/3 dumps
+# were role-filtered and came back empty — raw bounded innerHTML plus a child
+# count and tag histogram can't be blinded by role assumptions.
+_PICKER_PROJECT_MENU_DUMP_JS = (
+    "() => {"
+    " const menus = Array.from(document.querySelectorAll(\"[role='menu'][data-state='open']\"));"
+    " if (!menus.length) { return null; }"
+    " const root = menus[menus.length - 1];"
+    " const els = Array.from(root.querySelectorAll('*'));"
+    " const hist = {};"
+    " els.forEach((el) => {"
+    "  const t = el.tagName.toLowerCase();"
+    "  hist[t] = (hist[t] || 0) + 1;"
+    " });"
+    " return { child_elements: els.length, tag_histogram: hist,"
+    "  inner_html: root.innerHTML.slice(0, 4000) };"
+    "}"
+)
+# Active-project probe on the CLOSED trigger: the trigger renders the active
+# project's NAME (live round 2: 'gflow-cli t2i'), so match by id-in-markup OR
+# by the resolved target name (normalized text, never a locale-dependent
+# label).
+# Round 6: the trigger's textContent carries the active project's name plus
+# icon-ligature noise, so exact equality missed a CORRECT project (round-5
+# waste: ~30 menu probes hunting for the project we were already in).
+# Contains is safe here: the trigger only ever shows the ACTIVE project.
+_PICKER_PROJECT_TRIGGER_ACTIVE_JS = (
+    "(el, args) => {"
+    " if (el.outerHTML.includes(args.projectId)) { return true; }"
+    " if (!args.projectName) { return false; }"
+    " const norm = (s) => (s || '').replace(/\\s+/g, ' ').trim().toLowerCase();"
+    " return norm(el.textContent) === norm(args.projectName)"
+    "  || norm(el.textContent).includes(norm(args.projectName));"
+    "}"
+)
+# With the project (sub)menu OPEN: click the candidate matching the target
+# project. #287 round 3: the portal contained ZERO classic menu-item ARIA
+# roles, so the sweep covers generic clickables. Tiers: an anchor whose href
+# carries the project id (jackpot — no name needed), then the id anywhere in
+# markup, then the resolved project NAME (normalized text; locale-free).
+# Container-safe: among matches the INNERMOST element is clicked, never a
+# wrapping list container. Returns the candidate count for telemetry.
+_PICKER_PROJECT_OPTION_MATCH_JS = (
+    "(args) => {"
+    " const menus = Array.from(document.querySelectorAll(\"[role='menu'][data-state='open']\"));"
+    " const scope = menus.length ? menus : [document];"
+    " const candidates = scope.flatMap((m) => Array.from(m.querySelectorAll("
+    "\"a, button, li, div[role], [role='menuitem'], [role='menuitemradio'],"
+    " [role='menuitemcheckbox'], [role='option']\""
+    ")));"
+    " const innermost = (els) =>"
+    "  els.find((el) => !els.some((o) => o !== el && el.contains(o))) || els[0] || null;"
+    " let hit = innermost(candidates.filter((el) =>"
+    "  (el.getAttribute('href') || '').includes(args.projectId)));"
+    " let matchedBy = hit ? 'href' : null;"
+    " if (!hit) {"
+    "  hit = innermost(candidates.filter((el) => el.outerHTML.includes(args.projectId)));"
+    "  matchedBy = hit ? 'id' : null;"
+    " }"
+    " if (!hit && args.projectName) {"
+    "  const norm = (s) => (s || '').replace(/\\s+/g, ' ').trim().toLowerCase();"
+    "  const wanted = norm(args.projectName);"
+    "  hit = innermost(candidates.filter((el) => norm(el.textContent) === wanted))"
+    "   || innermost(candidates.filter((el) => norm(el.textContent).includes(wanted)));"
+    "  matchedBy = hit ? 'name' : null;"
+    " }"
+    " if (!hit) { return { clicked: false, matched_by: null, candidates: candidates.length }; }"
+    " hit.click();"
+    " return { clicked: true, matched_by: matchedBy, candidates: candidates.length };"
+    "}"
+)
+# Raw name signals from the live editor page: the picker menu renders names,
+# the CLI only knows the UUID. Tier 0 (#287 round 5): document.title — we
+# navigated to /project/<id> before the picker opened, so the tab title is
+# the strongest signal (Python strips the Flow branding and logs the raw
+# title so the real pattern is learnable from live runs). Then: an element
+# whose href references the project id; a project-title-classed element.
+_PROJECT_NAME_FROM_PAGE_JS = (
+    "(projectId) => {"
+    ' const byHref = document.querySelector(`[href*="${projectId}"]`);'
+    " const byClass = document.querySelector("
+    "\"[class*='projectTitle'], [class*='ProjectTitle'], [class*='project-title']\");"
+    " return {"
+    "  title: (document.title || '').trim(),"
+    "  href_text: byHref && byHref.textContent ? byHref.textContent.trim() : '',"
+    "  class_text: byClass && byClass.textContent ? byClass.textContent.trim() : '',"
+    " };"
+    "}"
+)
+# Bounded picker DOM dump for a not-found asset (#287 diagnosis): tile count,
+# the first 3 tiles' outerHTML (truncated — enough to see which attribute
+# carries the media identity in this cohort), the dialog's aria/role/data
+# attributes, the project-selector candidates' outerHTML, and whether the
+# target project id appears anywhere in the dialog at all.
+_PICKER_DOM_DUMP_JS = (
+    "(projectId) => {"
+    " const dialogs = document.querySelectorAll(\"[role='dialog']\");"
+    " const root = dialogs.length ? dialogs[dialogs.length - 1] : document.body;"
+    " const tiles = Array.from(root.querySelectorAll(\"[role='option']\"));"
+    " const selectors = Array.from(root.querySelectorAll("
+    "\"[role='combobox'], button[aria-haspopup], [role='listbox']\"));"
+    " return {"
+    " tile_count: tiles.length,"
+    " tiles: tiles.slice(0, 3).map((el) => el.outerHTML.slice(0, 500)),"
+    " container_attrs: root.getAttributeNames()"
+    ".filter((n) => n === 'role' || n === 'id' || n.startsWith('aria-') || n.startsWith('data-'))"
+    ".map((n) => n + '=' + root.getAttribute(n)),"
+    " project_selector_candidates: selectors.slice(0, 5).map((el) => el.outerHTML.slice(0, 500)),"
+    " target_project_in_dialog: projectId ? root.innerHTML.includes(projectId) : null,"
+    " };"
+    "}"
+)
 VIDEO_SUBMODE_SELECTORS: dict[str, tuple[str, ...]] = {
     # I2V — "frames" (start + optional end frame). Icon: crop_free.
     "frames": (
@@ -431,6 +643,56 @@ def screenshot_clause(shot: Path | None) -> str:
     """' Screenshot: <path>' when one was captured, else '' — a capture
     failure must not put a phantom path (or 'None') in the error text."""
     return f" Screenshot: {shot}" if shot is not None else ""
+
+
+async def _capture_picker_dom_dump(
+    page: Any, out_dir: Path | None, media_id: str, project_id: str | None
+) -> Path | None:
+    """Bounded DOM dump of the open picker for a not-found asset (#287
+    diagnosis): what the picker was actually rendering when the lookup gave
+    up — see `_PICKER_DOM_DUMP_JS` for the captured fields. Same contract as
+    `_capture_debug_screenshot` (0.32.1): returns ``None`` on any capture
+    failure so callers never report a file that was not written."""
+    if out_dir is None:
+        return None
+    try:
+        picker_state = await page.evaluate(_PICKER_DOM_DUMP_JS, project_id)
+        out_dir.mkdir(parents=True, exist_ok=True)
+        dump_path = out_dir / f"debug_picker_dom_{media_id[:8]}.json"
+        dump_path.write_text(
+            json.dumps(
+                {"media_id": media_id, "project_id": project_id, "picker": picker_state},
+                indent=2,
+                ensure_ascii=False,
+            ),
+            encoding="utf-8",
+        )
+    except Exception as e:  # noqa: BLE001 - diagnosis capture must never mask the miss
+        log.debug("ui_automation_video.picker_dom_dump_failed", error=str(e))
+        return None
+    return dump_path
+
+
+def _write_project_menu_dump(
+    out_dir: Path | None, project_id: str, payload: dict[str, Any]
+) -> Path | None:
+    """Persist the OPEN project menu's items on a switch miss (#287 round 2:
+    the closed trigger's markup wasn't enough evidence). Same contract as
+    `_capture_debug_screenshot` (0.32.1): returns ``None`` on any write
+    failure so callers never report a file that was not written."""
+    if out_dir is None:
+        return None
+    try:
+        out_dir.mkdir(parents=True, exist_ok=True)
+        dump_path = out_dir / f"debug_picker_project_menu_{project_id[:8]}.json"
+        dump_path.write_text(
+            json.dumps(payload, indent=2, ensure_ascii=False),
+            encoding="utf-8",
+        )
+    except Exception as e:  # noqa: BLE001 - diagnosis capture must never mask the miss
+        log.debug("ui_automation_video.project_menu_dump_failed", error=str(e))
+        return None
+    return dump_path
 
 
 def selector_drift_detail(probe: str, what: str, shot: Path | None) -> str:
@@ -1342,6 +1604,8 @@ class VideoGenerationMixin:
         media_id: str,
         *,
         out_dir: Path | None,
+        project_name: str | None = None,
+        search_hints: tuple[str, ...] = (),
     ) -> None:
         """Fill the I2V first/last frame slot with an already-existing in-project
         asset, selected by its media UUID (#287) — no duplicate upload. Opens the
@@ -1354,6 +1618,13 @@ class VideoGenerationMixin:
         await slot.click()
         await page.wait_for_timeout(1000)  # media dialog opens
 
+        # #287 (live-confirmed): the picker's library view is per-project —
+        # align it to the target project BEFORE any lookup. `project_name` is
+        # the user's --project-name override for the menu's name-based match.
+        await VideoGenerationMixin._sync_picker_project(
+            page, out_dir=out_dir, project_name=project_name
+        )
+
         # Presence-guarded search clear, mirroring _attach_image_uuid_refs: a
         # picker variant with no search box must not become a hard dependency.
         search = page.locator(PICKER_SEARCH_INPUT).first
@@ -1361,7 +1632,7 @@ class VideoGenerationMixin:
             await search.fill("")
 
         if not await VideoGenerationMixin._select_existing_asset(
-            page, media_id, "", out_dir=out_dir
+            page, media_id, "", out_dir=out_dir, search_hints=search_hints
         ):
             # The frame-slot dialog is the one surface this picker reuse is
             # unproven on (#237's name-search never surfaced generated media
@@ -1566,19 +1837,23 @@ class VideoGenerationMixin:
         *,
         out_dir: Path | None,
         dialog_timeout_s: float = REMOTE_PICKER_CLOSE_TIMEOUT_S,
+        search_hints: tuple[str, ...] = (),
     ) -> bool:
         """In the OPEN reference picker, select the already-existing Flow asset
         identified by ``media_id`` (preferred over uploading a duplicate).
 
         Locates the tile by the media UUID in its thumbnail URL. If it isn't
-        already visible, searches ``display_name`` to surface it (when given);
-        if it's STILL not visible, scrolls the virtualised picker grid
+        already visible, tries the picker search tiers — ``display_name``
+        (when given), then the media UUID itself, then the UUID-derived
+        filename stem (#287: the frame-ref path has no display name, and a
+        search hit skips the scroll fallback entirely on crowded grids); if
+        it's STILL not visible, scrolls the virtualised picker grid
         (react-virtuoso renders off-viewport tiles lazily — #282) and
-        re-checks between scrolls, the same strategy `_find_picker_entity_tile`
-        uses for the entity picker. Returns ``True`` once attached, ``False``
-        when the asset can't be located by any of the above (callers with a
-        local file fall back to uploading it; the #287 frame-ref path has no
-        fallback and raises instead).
+        re-checks between scrolls, bounded by evidence of progress rather
+        than a fixed attempt count (#287). Returns ``True`` once attached,
+        ``False`` when the asset can't be located by any of the above
+        (callers with a local file fall back to uploading it; the #287
+        frame-ref path has no fallback and raises instead).
         """
         tile = VideoGenerationMixin._existing_asset_tile(page, media_id)
         visible = True
@@ -1588,42 +1863,48 @@ class VideoGenerationMixin:
             visible = False
 
         attempted_search = False
-        if not visible and display_name:
-            search = page.locator(PICKER_SEARCH_INPUT)
-            # Human-like typing jitter to dodge WAF heuristics — not security.
-            await search.press_sequentially(display_name, delay=random.randint(10, 50))  # NOSONAR
-            await page.wait_for_timeout(800)
-            attempted_search = True
-            try:
-                await tile.wait_for(state="visible", timeout=6000)
-                visible = True
-            except Exception:  # noqa: BLE001 - still not found -> try scrolling
-                pass
+        if not visible:
+            # Search tiers (#287): each is best-effort — an unmatched term
+            # just filters the grid to zero rows and the next tier (or the
+            # cleared-grid scroll fallback below) takes over. The UUID tiers
+            # cover generated/uploaded media whose display name embeds the
+            # UUID (or its first segment as a filename stem).
+            # #287 round 6: the UUID tiers are kept as cheap first attempts,
+            # but live rounds proved Flow's search does NOT index UUIDs — the
+            # `search_hints` (CLI-resolved recorded prompts, first words) are
+            # the tier that actually matches, since tile alt text carries the
+            # generation prompt. Tile matching stays UUID-in-src, so an
+            # imprecise hint can only surface extra tiles, never a wrong one.
+            uuid_stem = media_id.split("-", 1)[0]
+            terms: list[str] = []
+            for candidate in (display_name, media_id, uuid_stem, *search_hints):
+                if candidate and candidate not in terms:
+                    terms.append(candidate)
+            for term in terms:
+                found = await VideoGenerationMixin._search_picker_for_tile(page, tile, term)
+                if found is None:
+                    break  # picker variant with no search box (#174)
+                attempted_search = True
+                if found:
+                    visible = True
+                    break
 
         if not visible:
-            # A failed display-name search leaves the grid filtered on that
-            # term — scrolling a still-filtered grid would only shuffle
-            # through the (possibly empty) filtered results rather than the
-            # full asset list, so the search box must be cleared first.
+            # A failed search leaves the grid filtered on the last term —
+            # scrolling a still-filtered grid would only shuffle through the
+            # (possibly empty) filtered results rather than the full asset
+            # list, so the search box must be cleared first.
             # Presence-guarded like `_attach_image_uuid_refs`'s per-ref clear.
             if attempted_search:
                 clear_search = page.locator(PICKER_SEARCH_INPUT).first
                 if await clear_search.count():
                     await clear_search.fill("")
                     await page.wait_for_timeout(400)
-            # Neither the initial viewport nor the display-name search
-            # surfaced the tile — the Tudo grid is virtualised, so an
-            # off-screen (but existing) asset is simply absent from the DOM
-            # until scrolled into range. Scroll and re-check before giving up.
-            for _ in range(PICKER_GRID_SCROLL_ATTEMPTS):
-                if await tile.count():
-                    visible = True
-                    break
-                await VideoGenerationMixin._scroll_picker_grid(page)
-            # Final re-check (#283 off-by-one): the count runs BEFORE each
-            # scroll, so a tile rendered by the LAST scroll was never seen.
-            if not visible and await tile.count():
-                visible = True
+            # Neither the initial viewport nor the search tiers surfaced the
+            # tile — the Tudo grid is virtualised, so an off-screen (but
+            # existing) asset is simply absent from the DOM until scrolled
+            # into range. Scroll (progress-bounded — #287) before giving up.
+            visible = await VideoGenerationMixin._scroll_picker_grid_until_rendered(page, tile)
             if visible:
                 try:
                     await tile.wait_for(state="visible", timeout=4000)
@@ -1631,6 +1912,24 @@ class VideoGenerationMixin:
                     visible = False
 
         if not visible:
+            # #287 diagnosis telemetry: capture WHAT the picker was showing
+            # when the lookup gave up — which attribute carries the media
+            # identity, and which project the library view was on, are the
+            # key unknowns on a live miss.
+            # cast + isinstance: a unit-test fake's page.url may not be a str.
+            page_url = cast("object", page.url)
+            project_id = extract_project_id(page_url) if isinstance(page_url, str) else None
+            shot = await _capture_debug_screenshot(
+                page, out_dir, f"debug_picker_miss_{media_id[:8]}.png"
+            )
+            dump = await _capture_picker_dom_dump(page, out_dir, media_id, project_id)
+            log.warning(
+                "ui_automation_video.existing_asset_not_found",
+                media_id=media_id,
+                project_id=project_id,
+                screenshot=str(shot) if shot is not None else None,
+                dom_dump=str(dump) if dump is not None else None,
+            )
             return False
 
         await tile.click()
@@ -1688,6 +1987,12 @@ class VideoGenerationMixin:
             await add.click()
             await page.wait_for_timeout(800)
 
+            # #287 (live-confirmed): the picker's library view is per-project
+            # — align it to the target project BEFORE this ref's lookup
+            # (re-checked per dialog open; the switch itself no-ops when
+            # already aligned or when the selector is absent).
+            await VideoGenerationMixin._sync_picker_project(page, out_dir=out_dir)
+
             # Fresh per-ref state (#282): a display-name search typed while
             # locating a previous ref must not leak into this ref's lookup —
             # every ref after the first was failing because the picker was
@@ -1724,10 +2029,431 @@ class VideoGenerationMixin:
             )
 
     @staticmethod
-    async def _scroll_picker_grid(page: Page, delta_px: int = PICKER_GRID_SCROLL_DELTA_PX) -> None:
-        """Wheel-scroll the open resource picker down one step. The Tudo grid is
-        virtualised, so off-screen tiles are absent from the DOM until scrolled
-        into view. Hover the dialog first so the wheel targets the grid."""
+    async def _sync_picker_project(
+        page: Page, *, out_dir: Path | None = None, project_name: str | None = None
+    ) -> None:
+        """#287 CONFIRMED (live round 2): the media picker's library view has
+        its OWN active project — ``--project`` only navigates the EDITOR — so
+        the picker can open on a different project, making the target asset
+        unreachable no matter how deep the grid is scrolled. Derives the
+        target project from the editor URL (``--project`` navigation put it
+        there), resolves its display NAME (the picker menu lists projects by
+        NAME, not id — round 4 dump), and aligns the picker's project
+        selector. ``project_name`` is the user-supplied override
+        (``--project-name`` / ``GFLOW_CLI_PROJECT_NAME``) and takes precedence
+        over page-derived resolution. No-op when the URL carries no project id
+        or the picker has no project selector (older cohort)."""
+        # cast + isinstance: a unit-test fake's page.url may not be a str.
+        page_url = cast("object", page.url)
+        project_id = extract_project_id(page_url) if isinstance(page_url, str) else None
+        if not project_id:
+            log.info(
+                "ui_automation_video.picker_project_sync_skipped",
+                reason="no_project_in_url",
+            )
+            return
+        if project_name:
+            log.info(
+                "ui_automation_video.picker_project_name_override",
+                project_id=project_id,
+                name=project_name,
+            )
+            resolved_name: str | None = project_name
+        else:
+            resolved_name = await VideoGenerationMixin._resolve_project_name(page, project_id)
+        await VideoGenerationMixin._ensure_picker_project(
+            page, project_id, project_name=resolved_name, out_dir=out_dir
+        )
+
+    @staticmethod
+    def _strip_flow_branding(title: str) -> str:
+        """Strip Flow branding from a tab title, tolerantly (#287 round 5):
+        try the suffix/prefix separator variants; fall back to the raw title.
+        The raw title is logged on every resolution, so the real live pattern
+        is learnable and this list can be tightened from evidence."""
+        cleaned = title.strip()
+        # 'Google Flow' first (longer, more specific) — the round-5 live run
+        # observed 'Google Flow - <project name>'.
+        for brand in ("Google Flow", "Flow"):
+            for sep in (" - ", " – ", " — ", " | "):
+                suffix = f"{sep}{brand}"
+                if cleaned.endswith(suffix):
+                    return cleaned[: -len(suffix)].strip()
+                prefix = f"{brand}{sep}"
+                if cleaned.startswith(prefix):
+                    return cleaned[len(prefix) :].strip()
+        return cleaned
+
+    @staticmethod
+    async def _resolve_project_name(page: Page, project_id: str) -> str | None:
+        """Resolve the target project's display NAME (#287 rounds 2/5): the
+        picker's project menu lists projects by NAME (unnamed projects show
+        only creation timestamps), and the CLI only knows the UUID. Tier 0:
+        the editor tab title (document.title — the editor was navigated to
+        /project/<id> before the picker opened), stripped of Flow branding
+        and rejected when branding-only. Tier 1: an element whose href
+        references the project id. Tier 2: a project-title-classed element.
+        The ``--project-name`` override in `_sync_picker_project` beats all
+        of this. The local catalog's ``projects.title`` was considered but
+        the transport layer has no catalog access, and the live page also
+        reflects renames and non-gflow projects. Best-effort: ``None`` when
+        nothing usable is found."""
+        raw: object = None
+        try:
+            raw = await page.evaluate(_PROJECT_NAME_FROM_PAGE_JS, project_id)
+        except Exception:  # noqa: BLE001 - name resolution is best-effort
+            raw = None
+        raw_title = ""
+        candidates: list[tuple[str, str]] = []
+        if isinstance(raw, dict):
+            data = cast("dict[str, object]", raw)
+            raw_title = str(data.get("title") or "").strip()
+            title_name = VideoGenerationMixin._strip_flow_branding(raw_title)
+            if title_name and title_name.lower() not in _FLOW_BRANDING_TITLES:
+                candidates.append(("title", title_name))
+            for source_key, source in (("href_text", "href"), ("class_text", "class")):
+                text = str(data.get(source_key) or "").strip()
+                if text:
+                    candidates.append((source, text))
+        if candidates:
+            source, name = candidates[0]
+            log.info(
+                "ui_automation_video.picker_project_name_resolved",
+                project_id=project_id,
+                name=name,
+                source=source,
+                raw_title=raw_title,
+            )
+            return name
+        log.info(
+            "ui_automation_video.picker_project_name_unresolved",
+            project_id=project_id,
+            raw_title=raw_title,
+        )
+        return None
+
+    @staticmethod
+    async def _wait_project_menu_open(page: Page) -> bool:
+        """Whether the (portal-rendered) project menu is open — Radix stamps
+        `data-state='open'` on the visible [role='menu'] (#287 round 2)."""
+        menu = page.locator(PICKER_PROJECT_MENU_OPEN).last
+        try:
+            await menu.wait_for(state="visible", timeout=2000)
+        except Exception:  # noqa: BLE001 - not-open is an expected branch
+            return False
+        return True
+
+    @staticmethod
+    async def _wait_project_menu_populated(page: Page) -> int:
+        """Poll the OPEN portal menu for element children (#287 round 3: the
+        open-state flips before the project list populates — matching or
+        dumping too early sees an empty portal and is a guaranteed miss).
+        Bounded at PICKER_PROJECT_MENU_POLLS x PICKER_PROJECT_MENU_POLL_MS
+        (~3s); stops as soon as any elements render. Returns the final
+        element count (0 = never populated / probe failed)."""
+        elements = 0
+        for _ in range(PICKER_PROJECT_MENU_POLLS):
+            raw: object = None
+            try:
+                raw = await page.evaluate(_PICKER_PROJECT_MENU_CHILD_COUNT_JS)
+            except Exception:  # noqa: BLE001 - poll probe is best-effort
+                raw = None
+            elements = int(raw) if isinstance(raw, (int, float)) else 0
+            if elements > 0:
+                break
+            await page.wait_for_timeout(PICKER_PROJECT_MENU_POLL_MS)
+        return elements
+
+    @staticmethod
+    async def _match_project_option(
+        page: Page, match_args: dict[str, str | None]
+    ) -> tuple[bool, str | None, int]:
+        """One pass of the option-match JS over the open portal. Returns
+        ``(clicked, matched_by, candidate_count)`` — best-effort, never
+        raises (a failed probe is a miss)."""
+        try:
+            outcome_raw: object = await page.evaluate(_PICKER_PROJECT_OPTION_MATCH_JS, match_args)
+        except Exception:  # noqa: BLE001 - dropdown scan is best-effort
+            return False, None, 0
+        if not isinstance(outcome_raw, dict):
+            return False, None, 0
+        outcome = cast("dict[str, object]", outcome_raw)
+        matched_by_value = outcome.get("matched_by")
+        candidates_value = outcome.get("candidates")
+        return (
+            bool(outcome.get("clicked")),
+            str(matched_by_value) if matched_by_value else None,
+            int(candidates_value) if isinstance(candidates_value, (int, float)) else 0,
+        )
+
+    @staticmethod
+    async def _scroll_project_menu_and_match(
+        page: Page, match_args: dict[str, str | None]
+    ) -> tuple[bool, str | None, int]:
+        """#287 round 5: the project menu is the full recency-ordered project
+        list (80 items observed) — the target's entry can sit below the
+        visible fold or outside a virtualised window. Scroll the open portal
+        with the progress-bounded pattern: scroll one step, re-match, keep
+        going while the rendered item set still changes, stall-terminate
+        after ``PICKER_GRID_SCROLL_STALL_LIMIT`` no-progress scrolls, hard
+        ceiling at ``PICKER_PROJECT_MENU_SCROLL_MAX``. Same return shape as
+        `_match_project_option`."""
+        stalls = 0
+        previous: frozenset[str] | None = None
+        attempts = 0
+        reason = "ceiling"
+        clicked = False
+        matched_by: str | None = None
+        candidates = 0
+        while attempts < PICKER_PROJECT_MENU_SCROLL_MAX:
+            raw: object = None
+            try:
+                raw = await page.evaluate(
+                    _PICKER_PROJECT_MENU_SCROLL_JS, PICKER_PROJECT_MENU_SCROLL_DELTA_PX
+                )
+            except Exception:  # noqa: BLE001 - scroll probe is best-effort
+                raw = None
+            attempts += 1
+            fingerprint: frozenset[str] | None = None
+            if isinstance(raw, list) and raw:
+                fingerprint = frozenset(str(item) for item in cast("list[object]", raw))
+            await page.wait_for_timeout(PICKER_PROJECT_MENU_SCROLL_SETTLE_MS)
+            clicked, matched_by, candidates = await VideoGenerationMixin._match_project_option(
+                page, match_args
+            )
+            log.info(
+                "ui_automation_video.picker_project_menu_scroll_probe",
+                attempt=attempts,
+                items=len(fingerprint) if fingerprint is not None else None,
+                new_items=(
+                    len(fingerprint - previous)
+                    if fingerprint is not None and previous is not None
+                    else None
+                ),
+            )
+            if clicked:
+                reason = "found"
+                break
+            if fingerprint is None:
+                reason = "no_menu"
+                break
+            if fingerprint == previous:
+                stalls += 1
+                if stalls >= PICKER_GRID_SCROLL_STALL_LIMIT:
+                    reason = "stall"
+                    break
+            else:
+                stalls = 0
+                previous = fingerprint
+        log.info(
+            "ui_automation_video.picker_project_menu_scroll_done",
+            reason=reason,
+            attempts=attempts,
+            found=clicked,
+        )
+        return clicked, matched_by, candidates
+
+    @staticmethod
+    async def _ensure_picker_project(
+        page: Page,
+        project_id: str,
+        *,
+        project_name: str | None = None,
+        out_dir: Path | None = None,
+    ) -> bool | None:
+        """Align the OPEN picker's library view to ``project_id`` (#287).
+
+        Live round 2 confirmed the mechanics: the trigger is a Radix
+        `ProjectDropdownSubTrigger` rendering the ACTIVE project's name; the
+        submenu options render project NAMES in a portal. Sequence: probe the
+        trigger cascade; consider the target active when the trigger matches
+        by id or resolved name; otherwise open the submenu (click, then hover,
+        then focus+ArrowRight — Radix SubTriggers may ignore plain click),
+        verify `[role='menu'][data-state='open']`, poll for the portal to
+        POPULATE (round 3: the open-state flips before the list renders), and
+        click the innermost candidate matching by href-with-id, id-in-markup,
+        then normalized name (round 3: the portal had ZERO classic menu-item
+        ARIA roles, so generic clickables are swept). Returns ``None`` when
+        the picker has no project selector (older cohort — pure no-op),
+        ``True`` when the target project is (already) active, ``False`` when a
+        selector exists but the target could not be selected — a miss dumps
+        the open portal's raw bounded innerHTML (+ child count and tag
+        histogram) to the out-dir, presses Escape (never leave an open
+        overlay), and lets callers proceed: the asset lookup stays the
+        authority."""
+        trigger = None
+        matched_selector: str | None = None
+        for selector in PICKER_PROJECT_SELECTOR_TRIGGERS:
+            candidate = page.locator(selector).first
+            if await candidate.count():
+                trigger = candidate
+                matched_selector = selector
+                break
+        if trigger is None:
+            log.info(
+                "ui_automation_video.picker_project_selector_absent",
+                project_id=project_id,
+            )
+            return None
+        match_args = {"projectId": project_id, "projectName": project_name}
+        already_active = False
+        try:
+            already_active = bool(
+                await trigger.evaluate(_PICKER_PROJECT_TRIGGER_ACTIVE_JS, match_args)
+            )
+        except Exception:  # noqa: BLE001 - probe is best-effort; fall through to a switch
+            already_active = False
+        if already_active:
+            log.info(
+                "ui_automation_video.picker_project_already_active",
+                project_id=project_id,
+                selector=matched_selector,
+            )
+            return True
+
+        # Open the Radix submenu: click, then hover, then keyboard — each
+        # verified against the portal-rendered open-state menu (#287 round 2:
+        # SubTriggers open on hover/ArrowRight; plain click may be a no-op).
+        opened = False
+        open_method = "none"
+        await trigger.click()
+        if await VideoGenerationMixin._wait_project_menu_open(page):
+            opened, open_method = True, "click"
+        if not opened:
+            try:
+                await trigger.hover(timeout=1000)
+            except Exception:  # noqa: BLE001 - hover unsupported -> keyboard tier
+                pass
+            if await VideoGenerationMixin._wait_project_menu_open(page):
+                opened, open_method = True, "hover"
+        if not opened:
+            try:
+                await trigger.focus(timeout=1000)
+                await page.keyboard.press("ArrowRight")
+            except Exception:  # noqa: BLE001 - focus unsupported -> match attempt anyway
+                pass
+            if await VideoGenerationMixin._wait_project_menu_open(page):
+                opened, open_method = True, "keyboard"
+        log.info(
+            "ui_automation_video.picker_project_menu_opened",
+            project_id=project_id,
+            opened=opened,
+            method=open_method,
+        )
+        # #287 round 3: the portal populates AFTER the open-state flips —
+        # matching an empty portal was a guaranteed miss. Poll (bounded)
+        # before matching or dumping.
+        menu_elements = await VideoGenerationMixin._wait_project_menu_populated(page)
+        log.info(
+            "ui_automation_video.picker_project_menu_populated",
+            project_id=project_id,
+            elements=menu_elements,
+        )
+
+        clicked, matched_by, candidates = await VideoGenerationMixin._match_project_option(
+            page, match_args
+        )
+        if not clicked:
+            # #287 round 5: the target's entry may be below the menu's fold —
+            # scroll the open portal (progress-bounded) and re-match.
+            (
+                clicked,
+                matched_by,
+                candidates,
+            ) = await VideoGenerationMixin._scroll_project_menu_and_match(page, match_args)
+        if not clicked:
+            # Raw open-portal dump (#287 round 4): role-filtered item lists
+            # blinded us twice — capture bounded raw markup instead.
+            portal: object = None
+            try:
+                portal = await page.evaluate(_PICKER_PROJECT_MENU_DUMP_JS)
+            except Exception:  # noqa: BLE001 - dump probe is best-effort
+                portal = None
+            menu_dump = _write_project_menu_dump(
+                out_dir,
+                project_id,
+                {
+                    "project_id": project_id,
+                    "project_name": project_name,
+                    "menu_opened": opened,
+                    "menu_elements": menu_elements,
+                    "candidates": candidates,
+                    "portal": portal,
+                },
+            )
+            log.warning(
+                "ui_automation_video.picker_project_switch_miss",
+                project_id=project_id,
+                project_name=project_name,
+                selector=matched_selector,
+                menu_opened=opened,
+                menu_elements=menu_elements,
+                candidates=candidates,
+                menu_dump=str(menu_dump) if menu_dump is not None else None,
+                note="no portal candidate matched the target project by href, id, or name",
+            )
+            # Never leave an open overlay on the pooled Page.
+            await page.keyboard.press("Escape")
+            return False
+        await page.wait_for_timeout(800)
+        log.info(
+            "ui_automation_video.picker_project_switched",
+            project_id=project_id,
+            selector=matched_selector,
+            matched_by=matched_by,
+        )
+        return True
+
+    @staticmethod
+    async def _search_picker_for_tile(page: Page, tile: Locator, term: str) -> bool | None:
+        """Type ``term`` into the picker search box and report whether it
+        surfaced ``tile``. Clears any previous term first so search tiers
+        don't concatenate (``press_sequentially`` appends). Returns ``None``
+        (without touching the page) when this picker variant has no search
+        input at all (#174's full-page media-library drift) — search must
+        never become a hard dependency."""
+        search = page.locator(PICKER_SEARCH_INPUT).first
+        if not await search.count():
+            log.info("ui_automation_video.picker_search_unavailable", term=term)
+            return None
+        await search.fill("")
+        # Human-like typing jitter to dodge WAF heuristics — not security.
+        await search.press_sequentially(term, delay=random.randint(10, 50))  # NOSONAR
+        await page.wait_for_timeout(800)
+        rendered = await VideoGenerationMixin._picker_grid_fingerprint(page)
+        found = True
+        try:
+            await tile.wait_for(state="visible", timeout=6000)
+        except Exception:  # noqa: BLE001 - not surfaced by this term
+            found = False
+        log.info(
+            "ui_automation_video.picker_search_tier",
+            term=term,
+            found=found,
+            rendered_tiles=len(rendered) if rendered is not None else None,
+        )
+        return found
+
+    @staticmethod
+    async def _scroll_picker_grid(
+        page: Page, delta_px: int = PICKER_GRID_SCROLL_DELTA_PX
+    ) -> dict[str, object] | None:
+        """Scroll the open resource picker down one step. The Tudo grid is
+        virtualised, so off-screen tiles are absent from the DOM until
+        scrolled into view. #287 round 6: react-virtuoso scrolls its own
+        container, so the primary path drives the dialog's ACTUAL scrollable
+        node via JS and returns evidence (tag/class + scrollTop before/after
+        — a no-op scroll where scrollTop never moves is then visible in
+        telemetry). Falls back to the blind hover+wheel when the JS probe
+        fails, returning ``None`` (no evidence)."""
+        info_raw: object = None
+        try:
+            info_raw = await page.evaluate(_PICKER_GRID_SCROLL_JS, delta_px)
+        except Exception:  # noqa: BLE001 - JS probe is best-effort
+            info_raw = None
+        if isinstance(info_raw, dict):
+            await page.wait_for_timeout(350)
+            return cast("dict[str, object]", info_raw)
         dialog = page.locator(DIALOG_ANY).last
         try:
             await dialog.hover(timeout=2000)
@@ -1735,20 +2461,100 @@ class VideoGenerationMixin:
             pass
         await page.mouse.wheel(0, delta_px)
         await page.wait_for_timeout(350)
+        return None
+
+    @staticmethod
+    async def _picker_grid_fingerprint(page: Page) -> frozenset[str] | None:
+        """Identifiers of the tiles currently rendered in the open picker, or
+        ``None`` when there is no evidence (the probe failed, or zero tiles
+        matched — e.g. a DOM drift), so the scroll loop falls back to the
+        legacy fixed budget instead of misreading 'no evidence' as 'end of
+        grid'."""
+        try:
+            tile_ids = await page.evaluate(_PICKER_GRID_TILE_IDS_JS)
+        except Exception:  # noqa: BLE001 - probe is best-effort evidence only
+            return None
+        if not isinstance(tile_ids, list) or not tile_ids:
+            return None
+        return frozenset(str(tile_id) for tile_id in cast("list[object]", tile_ids))
+
+    @staticmethod
+    async def _scroll_picker_grid_until_rendered(page: Page, tile: Locator) -> bool:
+        """Scroll the virtualised picker grid until ``tile`` is in the DOM.
+
+        #287: bounded by evidence of progress, not a fixed attempt count —
+        keeps scrolling while the set of rendered tile identifiers still
+        CHANGES between scrolls (the grid is still advancing) and stops after
+        ``PICKER_GRID_SCROLL_STALL_LIMIT`` consecutive scrolls with no new
+        tiles (end of grid), so the reachable depth is proportional to the
+        grid size. When the DOM probe yields no evidence the legacy fixed
+        ``PICKER_GRID_SCROLL_ATTEMPTS`` budget applies, and
+        ``PICKER_GRID_SCROLL_MAX_ATTEMPTS`` is a hard safety ceiling either
+        way. Returns whether the tile ended up in the DOM — including a tile
+        rendered by the very last scroll (#283 off-by-one: the count runs
+        BEFORE each scroll, so it is re-checked once after the loop)."""
+        attempts = 0
+        stalls = 0
+        previous: frozenset[str] | None = None
+        reason = "ceiling"
+        while attempts < PICKER_GRID_SCROLL_MAX_ATTEMPTS:
+            if await tile.count():
+                log.info(
+                    "ui_automation_video.picker_scroll_done",
+                    reason="found",
+                    attempts=attempts,
+                    found=True,
+                )
+                return True
+            scroll_info = await VideoGenerationMixin._scroll_picker_grid(page)
+            attempts += 1
+            rendered = await VideoGenerationMixin._picker_grid_fingerprint(page)
+            log.info(
+                "ui_automation_video.picker_scroll_probe",
+                attempt=attempts,
+                rendered_tiles=len(rendered) if rendered is not None else None,
+                new_tiles=(
+                    len(rendered - previous)
+                    if rendered is not None and previous is not None
+                    else None
+                ),
+                # #287 round 6 audit: WHICH node scrolled, and did it move at
+                # all — a wrong-node no-op (scrollTop frozen) is now visible.
+                scrolled_tag=scroll_info.get("tag") if scroll_info is not None else None,
+                scrolled_class=scroll_info.get("cls") if scroll_info is not None else None,
+                scroll_top_before=scroll_info.get("before") if scroll_info is not None else None,
+                scroll_top_after=scroll_info.get("after") if scroll_info is not None else None,
+            )
+            if rendered is None:
+                if attempts >= PICKER_GRID_SCROLL_ATTEMPTS:
+                    reason = "legacy_budget"
+                    break
+            elif rendered == previous:
+                stalls += 1
+                if stalls >= PICKER_GRID_SCROLL_STALL_LIMIT:
+                    reason = "stall"
+                    break
+            else:
+                stalls = 0
+                previous = rendered
+        found = bool(await tile.count())
+        log.info(
+            "ui_automation_video.picker_scroll_done",
+            reason=reason,
+            attempts=attempts,
+            found=found,
+        )
+        return found
 
     @staticmethod
     async def _find_picker_entity_tile(page: Page, entity_id: str) -> Locator:
         """Locate the Personagens-tab tile for a character entity. Each tile is
         keyed by the entity id as `data-tile-id="fe_id_<entityId>"` (exact — no
-        display-name ambiguity). Scroll the grid until it renders, then return
-        the locator (the caller still waits for visibility — which also covers
-        a tile rendered by the final scroll, so the #283 off-by-one fixed in
-        `_select_existing_asset` has no effect here)."""
+        display-name ambiguity). Scroll the grid until it renders (#287:
+        progress-bounded, so a crowded character grid is fully reachable),
+        then return the locator (the caller still waits for visibility)."""
         tile = page.locator(f"[data-tile-id='fe_id_{entity_id}']").first
-        for _ in range(PICKER_GRID_SCROLL_ATTEMPTS):
-            if await tile.count():
-                break
-            await VideoGenerationMixin._scroll_picker_grid(page)
+        await VideoGenerationMixin._scroll_picker_grid_until_rendered(page, tile)
         return tile
 
     @staticmethod
@@ -2173,7 +2979,13 @@ class VideoGenerationMixin:
             )
         elif request.start_image_ref_id is not None:
             await VideoGenerationMixin._attach_frame_by_media_id(
-                page, 0, "Start", request.start_image_ref_id, out_dir=out_dir
+                page,
+                0,
+                "Start",
+                request.start_image_ref_id,
+                out_dir=out_dir,
+                project_name=request.project_name,
+                search_hints=request.search_hints,
             )
         elif request.start_image_ref_name is not None:
             await VideoGenerationMixin._attach_remote_frame(
@@ -2185,7 +2997,13 @@ class VideoGenerationMixin:
             )
         elif request.end_image_ref_id is not None:
             await VideoGenerationMixin._attach_frame_by_media_id(
-                page, 1, "End", request.end_image_ref_id, out_dir=out_dir
+                page,
+                1,
+                "End",
+                request.end_image_ref_id,
+                out_dir=out_dir,
+                project_name=request.project_name,
+                search_hints=request.search_hints,
             )
         elif request.end_image_ref_name is not None:
             await VideoGenerationMixin._attach_remote_frame(

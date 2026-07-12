@@ -684,6 +684,130 @@ def test_i2v_initial_frame_takes_precedence_over_positional(tmp_path: Path) -> N
     assert captured["request"].prompt == "motion prompt"  # type: ignore[attr-defined]
 
 
+def test_i2v_project_name_flag_reaches_the_request(tmp_path: Path) -> None:
+    """#287: `--project-name` is the picker project-menu display-name override
+    (the menu lists projects by NAME; unnamed projects show only creation
+    timestamps) — it must land on the GenerateVideoRequest."""
+    captured: dict[str, object] = {}
+
+    async def _capture(request: object, **_kwargs: object) -> None:
+        captured["request"] = request
+
+    start = tmp_path / "hero.png"
+    start.write_bytes(b"\x89PNG\r\n\x1a\n")
+
+    runner = CliRunner()
+    with (
+        patch("gflow_cli.cli_video._resolve_profile", return_value="default"),
+        patch("gflow_cli.cli_video._make_provider_dir", return_value=tmp_path),
+        patch("gflow_cli.cli_video._generate_and_report", new=_capture),
+    ):
+        result = runner.invoke(
+            video,
+            ["i2v", str(start), "pan", "--project-name", "Chalkboard Spike"],
+        )
+    assert result.exit_code == 0, result.output
+    assert captured["request"].project_name == "Chalkboard Spike"  # type: ignore[attr-defined]
+
+
+def test_i2v_project_name_env_var(tmp_path: Path) -> None:
+    """GFLOW_CLI_PROJECT_NAME is the env-var form of `--project-name`."""
+    captured: dict[str, object] = {}
+
+    async def _capture(request: object, **_kwargs: object) -> None:
+        captured["request"] = request
+
+    start = tmp_path / "hero.png"
+    start.write_bytes(b"\x89PNG\r\n\x1a\n")
+
+    runner = CliRunner()
+    with (
+        patch("gflow_cli.cli_video._resolve_profile", return_value="default"),
+        patch("gflow_cli.cli_video._make_provider_dir", return_value=tmp_path),
+        patch("gflow_cli.cli_video._generate_and_report", new=_capture),
+    ):
+        result = runner.invoke(
+            video,
+            ["i2v", str(start), "pan"],
+            env={"GFLOW_CLI_PROJECT_NAME": "Env Given Name"},
+        )
+    assert result.exit_code == 0, result.output
+    assert captured["request"].project_name == "Env Given Name"  # type: ignore[attr-defined]
+
+
+def test_media_search_hints_resolves_prompt_first_words(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    """#287 round 6: the CLI (which owns catalog access) resolves each ref's
+    recorded generation prompt and passes its first words as picker search
+    hints — Flow's media search doesn't index UUIDs, but tile alt text
+    carries the prompt. Best-effort: unknown media yields no hint."""
+    from gflow_cli import cli_video
+
+    def _get_prompt(*, db_path: Path, media_id: str) -> str | None:
+        if media_id == "uuid-1":
+            return "stickman on a chalkboard, teaching a lesson about compound interest"
+        return None
+
+    monkeypatch.setattr("gflow_cli.data.queries.get_asset_prompt", _get_prompt)
+    settings = MagicMock()
+    settings.resolved_db_path.return_value = Path("unused.db")
+
+    def _fake_get_settings() -> MagicMock:
+        return settings
+
+    # config.get_settings is lru_cached; conftest teardown calls cache_clear().
+    _fake_get_settings.cache_clear = lambda: None  # type: ignore[attr-defined]
+    monkeypatch.setattr("gflow_cli.config.get_settings", _fake_get_settings)
+
+    hints = cli_video._media_search_hints(["uuid-1", "uuid-unknown", None])
+
+    assert hints == ("stickman on a chalkboard, teaching a",)
+
+
+def test_media_search_hints_swallows_catalog_errors(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    from gflow_cli import cli_video
+
+    def _boom(**_kwargs: object) -> str:
+        raise RuntimeError("catalog unavailable")
+
+    monkeypatch.setattr("gflow_cli.data.queries.get_asset_prompt", _boom)
+
+    assert cli_video._media_search_hints(["uuid-1"]) == ()
+
+
+def test_i2v_uuid_frame_gets_catalog_prompt_hints(tmp_path: Path) -> None:
+    """A media-UUID --initial-frame triggers hint resolution and the hints
+    land on the request for the transport's search tier."""
+    captured: dict[str, object] = {}
+
+    async def _capture(request: object, **_kwargs: object) -> None:
+        captured["request"] = request
+
+    uuid_ref = "d6f1927a-3eae-4626-bc90-9a6ea7637bab"
+    runner = CliRunner()
+    with (
+        patch("gflow_cli.cli_video._resolve_profile", return_value="default"),
+        patch("gflow_cli.cli_video._make_provider_dir", return_value=tmp_path),
+        patch("gflow_cli.cli_video._generate_and_report", new=_capture),
+        patch(
+            "gflow_cli.cli_video._media_search_hints",
+            return_value=("stickman on a chalkboard, teaching a",),
+        ) as hints,
+    ):
+        result = runner.invoke(
+            video,
+            ["i2v", "--initial-frame", uuid_ref, "pan", "--project", "f6caf027-aaaa"],
+        )
+    assert result.exit_code == 0, result.output
+    assert captured["request"].search_hints == (  # type: ignore[attr-defined]
+        "stickman on a chalkboard, teaching a",
+    )
+    assert uuid_ref in hints.call_args.args[0]
+
+
 def test_i2v_no_image_raises_usage_error(tmp_path: Path) -> None:
     """Omitting both the positional IMAGE and --initial-frame is a usage error."""
     runner = CliRunner()
