@@ -166,13 +166,13 @@ async def test_classic_unreachable_fails_fast(monkeypatch: pytest.MonkeyPatch) -
 @pytest.mark.asyncio
 async def test_agentic_switch_and_bind(monkeypatch: pytest.MonkeyPatch) -> None:
     import gflow_cli.api.transports.drivers.factory as factory_mod
+    from gflow_cli.api.transports.ui_automation import UiAutomationTransport
 
     # Page starts classic; the force switch "succeeds" -> re-detect reads agentic.
-    switched = _fake_page({_TUNE})
     force = AsyncMock(return_value=True)
-    monkeypatch.setattr(factory_mod, "_force_agent_mode", force)
+    monkeypatch.setattr(UiAutomationTransport, "_force_agent_mode", force)
     monkeypatch.setattr(factory_mod, "detect_ui_mode", AsyncMock(return_value="agentic"))
-    driver = await get_ui_driver(switched, ui_mode=UiMode.AGENTIC)
+    driver = await get_ui_driver(_fake_page({_TUNE}), ui_mode=UiMode.AGENTIC)
     assert isinstance(driver, AgenticFlowUiDriver)
     force.assert_awaited_once()
 
@@ -180,9 +180,10 @@ async def test_agentic_switch_and_bind(monkeypatch: pytest.MonkeyPatch) -> None:
 @pytest.mark.asyncio
 async def test_agentic_unreachable_fails_fast(monkeypatch: pytest.MonkeyPatch) -> None:
     import gflow_cli.api.transports.drivers.factory as factory_mod
+    from gflow_cli.api.transports.ui_automation import UiAutomationTransport
 
     # Force does not take: page stays classic after the switch attempt.
-    monkeypatch.setattr(factory_mod, "_force_agent_mode", AsyncMock(return_value=False))
+    monkeypatch.setattr(UiAutomationTransport, "_force_agent_mode", AsyncMock(return_value=False))
     monkeypatch.setattr(factory_mod, "detect_ui_mode", AsyncMock(return_value="classic"))
     with pytest.raises(UiModeUnavailableError) as exc:
         await get_ui_driver(_fake_page({_CROP}), ui_mode=UiMode.AGENTIC)

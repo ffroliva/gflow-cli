@@ -207,10 +207,9 @@ SUBMIT_BUTTON_SELECTORS = (
 # agentic chat layout — the ``crop_*`` media trigger disappears and the ``tune``
 # settings gear + ``expand_content`` open button appear. Captured live
 # 2026-06-14 via ``scripts/e2e/capture_agent_toggle.py`` (cropPresent true→false,
-# tune false→true). Opt-in via ``GFLOW_CLI_FORCE_AGENT_UI`` to deterministically
-# drive the agentic path regardless of the server-assigned A/B cohort (which has
-# no client-readable flag and cannot otherwise be forced).
-AGENT_FORCE_ENV_VAR = "GFLOW_CLI_FORCE_AGENT_UI"
+# tune false→true). Reached via ``GFLOW_CLI_UI_MODE=agentic`` (or an inferred
+# agentic requirement) to drive the agentic path regardless of the
+# server-assigned A/B cohort (which has no client-readable flag).
 AGENT_EXPAND_BUTTON_SELECTOR = "button:has(i.google-symbols:text-is('expand_content'))"
 
 # _force_agent_mode: after clicking the Agent toggle, POLL for the ``tune``
@@ -1057,7 +1056,7 @@ class UiAutomationTransport(VideoGenerationMixin):
     async def _force_agent_mode(page: Page) -> bool:
         """Force the agentic composer by clicking the in-composer Agent toggle.
 
-        Opt-in helper (gated by :data:`AGENT_FORCE_ENV_VAR`) used to drive the
+        Opt-in helper (reached via ``GFLOW_CLI_UI_MODE=agentic``) used to drive the
         agentic path deterministically — the server-assigned A/B cohort has no
         client-readable flag, but the in-composer "Agent" toggle switches the
         classic composer into the same agentic layout (``crop_*`` → ``tune``).
