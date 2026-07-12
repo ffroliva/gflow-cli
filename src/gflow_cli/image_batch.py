@@ -2,8 +2,10 @@
 
 from __future__ import annotations
 
+import asyncio
 import hashlib
 import json
+import random
 import re
 import time
 from dataclasses import dataclass, field
@@ -22,6 +24,7 @@ from gflow_cli.api.client import FlowApiClient
 from gflow_cli.api.dto import BatchSubmissionResult, ProjectInfo
 from gflow_cli.api.image import Aspect, GenerateImageRequest, Model
 from gflow_cli.api.transports.ui_automation import UiAutomationTransport
+from gflow_cli.config import get_settings, parse_jitter_range
 from gflow_cli.data.recorder import escalate_asset_collision
 from gflow_cli.errors import (
     EXIT_CODE_MAP,
@@ -78,9 +81,37 @@ MAX_TEXT_LEN = 2000
 MIN_COUNT = 1
 MAX_COUNT = 4
 DEFAULT_ASPECT_RATIO = "9:16"
-# Jitter range (seconds) between prompts when --same-project is used.
-JITTER_MIN_SECONDS: float = 3.0
-JITTER_MAX_SECONDS: float = 7.0
+# Default anti-bot jitter range (seconds) between prompt submissions in
+# multi-prompt runs. Deliberately small — enough to break a perfectly uniform
+# burst signature without wasting wall-clock. Widen via --jitter or
+# GFLOW_CLI_JITTER_RANGE (e.g. 10-30) when runs start tripping the WAF.
+JITTER_MIN_SECONDS: float = 0.5
+JITTER_MAX_SECONDS: float = 1.5
+
+
+def resolve_jitter_range(spec: str | None) -> tuple[float, float]:
+    """Resolve the anti-bot jitter range.
+
+    Precedence: explicit ``spec`` (the ``--jitter`` flag) > the ``jitter_range``
+    setting (``GFLOW_CLI_JITTER_RANGE`` env var or ``.env``) > the small
+    0.5-1.5 s default. Formats per :func:`gflow_cli.config.parse_jitter_range`:
+    ``MIN-MAX`` (e.g. ``10-30``), a single number ``N`` meaning uniform
+    ``[0, N]`` (mirrors ``video chain --jitter``), or ``0`` to disable.
+
+    Raises:
+        ConfigurationError: when an explicit ``spec`` is unparseable. (A bad
+            settings value fails earlier, at settings load.)
+    """
+    if spec is None:
+        spec = get_settings().jitter_range
+    if spec is None:
+        return (JITTER_MIN_SECONDS, JITTER_MAX_SECONDS)
+    try:
+        return parse_jitter_range(spec)
+    except ValueError as exc:
+        raise ConfigurationError(str(exc)) from None
+
+
 DEFAULT_MODEL = "nano2"
 DEFAULT_COUNT = 1
 MAX_PROMPT_FILE_BYTES = 512 * 1024
@@ -438,6 +469,7 @@ async def run_image_batch(
     continue_on_error: bool,
     project_title: str,
     client_factory: Callable[..., Any] | None = None,
+    jitter_range: tuple[float, float] | None = None,
     _profile_name: str | None = None,
     _recorder: OperationRecorder | None = None,
 ) -> list[BatchOutcome]:
@@ -467,6 +499,7 @@ async def run_image_batch(
         worker=image_worker,
         client_factory=client_factory,
         output_dir=output_dir,
+        jitter_range=jitter_range,
     )
 
 
@@ -481,8 +514,17 @@ async def run_sequential_batch(
     worker: Callable[[Any, str, int, Any], Coroutine[Any, Any, BatchOutcome]],
     output_dir: Path | None = None,
     client_factory: Callable[..., Any] | None = None,
+    jitter_range: tuple[float, float] | None = None,
 ) -> list[BatchOutcome]:
-    """Generic sequential orchestrator for Flow API batches."""
+    """Generic sequential orchestrator for Flow API batches.
+
+    ``jitter_range`` paces submissions with a random ``uniform(min, max)`` sleep
+    before every prompt after the first (anti-bot cadence, same contract as the
+    manifest batch path). ``None`` (the default) resolves the configured range
+    via :func:`resolve_jitter_range`; ``(0, 0)`` disables pacing.
+    """
+    if jitter_range is None:
+        jitter_range = resolve_jitter_range(None)
     if output_dir:
         output_dir.mkdir(parents=True, exist_ok=True)
 
@@ -491,6 +533,10 @@ async def run_sequential_batch(
     async with factory(profile_dir=profile_dir, headless=headless, transport=transport) as client:
         project = await client.create_project(title=project_title)
         for idx, item in enumerate(items):
+            if idx > 0 and jitter_range and jitter_range[1] > 0:
+                delay = random.uniform(*jitter_range)  # noqa: S311 - pacing, not crypto
+                logger.info("batch_jitter_sleep", seconds=round(delay, 2), index=idx)
+                await asyncio.sleep(delay)
             outcome = await worker(client, project.project_id, idx, item)
             outcomes.append(outcome)
             if outcome.status == "fail" and not continue_on_error:
@@ -950,7 +996,7 @@ async def run_manifest_image_batch(
     prompts: tuple[BatchPromptItem, ...],
     output_dir: Path,
     continue_on_error: bool,
-    jitter_range: tuple[float, float] = (JITTER_MIN_SECONDS, JITTER_MAX_SECONDS),
+    jitter_range: tuple[float, float] | None = None,
     client_factory: Callable[..., Any] | None = None,
     profile_name: str | None = None,
     recorder: OperationRecorder | None = None,
@@ -959,9 +1005,10 @@ async def run_manifest_image_batch(
 
     All prompts share one Flow project (always-same-project semantics; there
     is no per-prompt project toggle). The transport opens the editor once,
-    submits all prompts sequentially with a random 3–7 s pause between each
-    submission, awaits every generation in submission order, and returns
-    per-prompt ``BatchSubmissionResult`` records.
+    submits all prompts sequentially with a random ``jitter_range`` pause
+    between each submission (``None`` resolves the configured range via
+    :func:`resolve_jitter_range`), awaits every generation in submission
+    order, and returns per-prompt ``BatchSubmissionResult`` records.
 
     Jitter is the *submission-cadence* anti-bot control — it spaces out the
     submission clicks, not the generation wait. All generations run in parallel
@@ -979,6 +1026,8 @@ async def run_manifest_image_batch(
         BatchIntegrityError: when the post-download file count does not match
             the expected count (silent mis-delivery guard).
     """
+    if jitter_range is None:
+        jitter_range = resolve_jitter_range(None)
     output_dir.mkdir(parents=True, exist_ok=True)
     factory = client_factory or FlowApiClient
     async with factory(

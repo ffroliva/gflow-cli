@@ -50,7 +50,7 @@ from gflow_cli.api.image import (
 from gflow_cli.api.image_upscale import TargetResolution, UpsampleImageRequest
 from gflow_cli.api.transports import transport_choices
 from gflow_cli.api.video import is_media_uuid
-from gflow_cli.config import get_settings
+from gflow_cli.config import get_settings, parse_jitter_range
 from gflow_cli.data.recorder import OperationRecorder, escalate_asset_collision
 from gflow_cli.data.repository import DataRepository
 from gflow_cli.data.store import DataStore
@@ -89,6 +89,7 @@ from gflow_cli.image_batch import (
     prompt_items_from_texts,
     read_prompt_file,
     render_image_batch_summary,
+    resolve_jitter_range,
     run_image_batch,
     run_manifest_image_batch,
 )
@@ -559,6 +560,32 @@ async def _run_upscale(
 # ---------------------------------------------------------------------------
 
 
+def _validate_jitter_spec(
+    _ctx: click.Context, param: click.Parameter, value: str | None
+) -> str | None:
+    """Fail fast (usage error) on an unparseable --jitter spec."""
+    if value is not None:
+        try:
+            parse_jitter_range(value)
+        except ValueError as exc:
+            raise click.BadParameter(str(exc), param=param) from None
+    return value
+
+
+_jitter_option = click.option(
+    "--jitter",
+    "jitter_spec",
+    default=None,
+    callback=_validate_jitter_spec,
+    help=(
+        "Anti-bot pause between prompt submissions in multi-prompt runs: "
+        "'MIN-MAX' seconds (e.g. 10-30), a single number for 0-N, or 0 to "
+        "disable. Defaults to a small 0.5-1.5; GFLOW_CLI_JITTER_RANGE "
+        "overrides the default. Widen if runs start hitting WAF 403s."
+    ),
+)
+
+
 @image.command(
     "t2i",
     short_help="Generate image(s) from a text prompt.",
@@ -598,6 +625,7 @@ async def _run_upscale(
     show_default=True,
     help="In multi-prompt mode, continue after per-prompt failures or stop at the first failure.",
 )
+@_jitter_option
 @click.option(
     "--model",
     default=_DEFAULT_MODEL,
@@ -663,6 +691,7 @@ def t2i(  # NOSONAR
     prompts_file: Path | None,
     read_stdin: bool,
     continue_on_error: bool,
+    jitter_spec: str | None,
     model: str,
     aspect: str,
     count: int,
@@ -755,7 +784,9 @@ def t2i(  # NOSONAR
     # unknown tool/style raises a UsageError here, before any browser opens.
     if tool_specs:
         batch_prompts = _apply_tools_to_batch_prompts(batch_prompts, tool_specs)
-    _execute_t2i_batch(batch_prompts, count, continue_on_error, profile, out, transport)
+    _execute_t2i_batch(
+        batch_prompts, count, continue_on_error, profile, out, transport, jitter_spec
+    )
 
 
 def _apply_tools_to_batch_prompts(
@@ -827,8 +858,10 @@ def _execute_t2i_batch(
     profile: str | None,
     out: Path | None,
     transport: str | None,
+    jitter_spec: str | None = None,
 ) -> None:
     """Run a multi-prompt t2i batch and print the summary table."""
+    jitter_range = resolve_jitter_range(jitter_spec)
     profile_name = _resolve_profile(profile)
     provider_dir = _make_provider_dir(profile_name)
     settings = get_settings()
@@ -855,6 +888,7 @@ def _execute_t2i_batch(
                 output_dir=output_dir,
                 continue_on_error=continue_on_error,
                 project_title=_T2I_PROJECT_TITLE,
+                jitter_range=jitter_range,
                 _profile_name=profile_name,
                 _recorder=recorder,
             ),
@@ -1073,8 +1107,9 @@ _BATCH_TITLE = "gflow-cli image batch"
     help=(
         "Generate images from a JSON or TSV manifest file "
         f"(up to {_MAX_BATCH_PROMPTS} prompts).\n\n"
-        "All prompts share one Flow project (stay-mounted editor). A 3-7s\n"
-        "jitter is applied between submissions as an anti-bot courtesy.\n\n"
+        "All prompts share one Flow project (stay-mounted editor). A small\n"
+        "0.5-1.5s jitter is applied between submissions as an anti-bot\n"
+        "courtesy (configurable via --jitter or GFLOW_CLI_JITTER_RANGE).\n\n"
         "To generate each prompt in its own project, loop `gflow image t2i` instead.\n\n"
         "\b\n"
         "TSV format (tab-separated): prompt[\\tcount[\\taspect_ratio[\\tmodel]]]\n"
@@ -1124,6 +1159,7 @@ _BATCH_TITLE = "gflow-cli image batch"
     show_default=True,
     help="Continue after per-prompt failures (default) or stop at the first failure.",
 )
+@_jitter_option
 @click.option(
     "--out",
     "out",
@@ -1148,6 +1184,7 @@ def batch(
     aspect: str,
     model: str,
     continue_on_error: bool,
+    jitter_spec: str | None,
     out: Path | None,
     profile: str | None,
     tool_specs: tuple[str, ...],
@@ -1197,6 +1234,7 @@ def batch(
                 prompts=prompts,
                 output_dir=output_dir,
                 continue_on_error=continue_on_error,
+                jitter_range=resolve_jitter_range(jitter_spec),
                 profile_name=profile_name,
                 recorder=recorder,
             ),
