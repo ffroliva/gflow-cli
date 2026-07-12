@@ -30,6 +30,7 @@ import structlog
 
 from gflow_cli.api.transports.drivers.agentic import AgenticFlowUiDriver
 from gflow_cli.api.transports.drivers.classic import ClassicFlowUiDriver
+from gflow_cli.config import UiMode
 
 if TYPE_CHECKING:
     from collections.abc import Iterable
@@ -128,32 +129,45 @@ async def get_ui_driver(
     *,
     timeout_s: float | None = None,
     poll_interval_s: float | None = None,
-    prefer_classic: bool = False,
+    ui_mode: UiMode = UiMode.AUTO,
 ) -> FlowUiDriver:
     """Probe the DOM and return the matching :class:`FlowUiDriver`.
+
+    ``ui_mode`` (issue #299) is the caller's policy:
+      * ``AUTO`` — bind whatever the composer renders.
+      * ``CLASSIC`` — attempt to recover the classic composer (best-effort exit
+        of the agentic chat), then, if the arm is STILL agentic, raise
+        ``ClassicUiUnavailableError`` (exit 28) **before** any generation —
+        zero credits. The DOM probe is the authority; the arm flaps per load,
+        so a re-run often lands classic.
+      * ``AGENTIC`` — skip the classic-recovery attempt and bind whatever
+        renders (expected agentic).
 
     Call per generation — the cohort flaps per page load, so a cached driver
     goes stale on the next navigation / batch item.
     """
-    if prefer_classic:
+    if ui_mode is UiMode.CLASSIC:
         from gflow_cli.api.transports.ui_automation_video import (
             VideoGenerationMixin,
         )
         from gflow_cli.errors import FlowAgentUiError
 
         try:
-            log.info("ui_driver.prefer_classic.attempt_exit_agent")
+            log.info("ui_driver.ui_mode.attempt_exit_agent")
             await VideoGenerationMixin._exit_agent_mode(page)  # type: ignore[reportPrivateUsage]
         except FlowAgentUiError as exc:
             # Expected: the server-gated agentic ("tune") cohort cannot be exited
-            # client-side. prefer_classic is best-effort (see config docstring), so
-            # falling through to the agentic driver is normal, not a fault.
-            log.info("ui_driver.prefer_classic.cohort_natively_agentic", detail=str(exc))
+            # client-side. The fail-fast check below turns this into a clean abort.
+            log.info("ui_driver.ui_mode.cohort_natively_agentic", detail=str(exc))
         except Exception as exc:
-            log.warning("ui_driver.prefer_classic.exit_agent_failed", error=str(exc))
+            log.warning("ui_driver.ui_mode.exit_agent_failed", error=str(exc))
 
     mode = await detect_ui_mode(page, timeout_s=timeout_s, poll_interval_s=poll_interval_s)
-    log.info("ui_driver.bound", mode=mode)
+    log.info("ui_driver.bound", mode=mode, ui_mode=ui_mode.value)
     if mode == "agentic":
+        if ui_mode is UiMode.CLASSIC:
+            from gflow_cli.errors import ClassicUiUnavailableError
+
+            raise ClassicUiUnavailableError
         return AgenticFlowUiDriver()
     return ClassicFlowUiDriver()
