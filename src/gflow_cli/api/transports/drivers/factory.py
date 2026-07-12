@@ -124,15 +124,6 @@ async def detect_ui_mode(
         await asyncio.sleep(poll_interval_s)
 
 
-async def _force_agent_mode(page: Page) -> bool:
-    """Switch the composer to agentic (classic → agentic), late-importing the
-    transport helper to avoid a drivers→transport import cycle. Best-effort;
-    returns True if the composer is agentic on exit."""
-    from gflow_cli.api.transports.ui_automation import UiAutomationTransport
-
-    return await UiAutomationTransport._force_agent_mode(page)  # type: ignore[reportPrivateUsage]
-
-
 async def get_ui_driver(
     page: Page,
     *,
@@ -174,9 +165,11 @@ async def get_ui_driver(
         except Exception as exc:
             log.warning("ui_driver.ui_mode.exit_agent_failed", error=str(exc))
     elif ui_mode is UiMode.AGENTIC:
+        from gflow_cli.api.transports.ui_automation import UiAutomationTransport
+
         try:
             log.info("ui_driver.ui_mode.attempt_force_agent")
-            await _force_agent_mode(page)
+            await UiAutomationTransport._force_agent_mode(page)  # type: ignore[reportPrivateUsage]
         except Exception as exc:  # noqa: BLE001 - best-effort switch, verified below
             log.warning("ui_driver.ui_mode.force_agent_failed", error=str(exc))
 
