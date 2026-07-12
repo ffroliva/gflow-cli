@@ -197,3 +197,80 @@ async def test_agentic_unreachable_fails_fast(monkeypatch: pytest.MonkeyPatch) -
 
 def test_ui_mode_unavailable_exit_code_is_28() -> None:
     assert EXIT_CODE_MAP[UiModeUnavailableError] == 28
+
+
+# ---------------------------------------------------------------------------
+# CLI --ui-mode flag → GenerateImageRequest.ui_mode threading
+# ---------------------------------------------------------------------------
+
+
+def test_t2i_ui_mode_flag_threads_onto_request() -> None:
+    from unittest.mock import AsyncMock, patch
+
+    from click.testing import CliRunner
+
+    from gflow_cli.cli import main
+
+    run_t2i = AsyncMock()
+    with (
+        patch("gflow_cli.cli_image._resolve_profile", return_value="default"),
+        patch("gflow_cli.cli_image._make_provider_dir"),
+        patch("gflow_cli.cli_image._run_t2i", run_t2i),
+    ):
+        result = CliRunner().invoke(
+            main, ["image", "t2i", "a prompt", "--ui-mode", "classic"], catch_exceptions=False
+        )
+
+    assert result.exit_code == 0, result.output
+    assert run_t2i.await_args.kwargs["req"].ui_mode is UiMode.CLASSIC
+
+
+def test_t2i_ui_mode_multi_prompt_rejected() -> None:
+    from click.testing import CliRunner
+
+    from gflow_cli.cli import main
+
+    result = CliRunner().invoke(
+        main, ["image", "t2i", "a", "b", "--ui-mode", "classic"], catch_exceptions=False
+    )
+    assert result.exit_code == 2
+    assert "single-prompt only" in result.output
+
+
+def test_t2i_ui_mode_classic_with_instructions_conflict() -> None:
+    from click.testing import CliRunner
+
+    from gflow_cli.cli import main
+
+    result = CliRunner().invoke(
+        main,
+        ["image", "t2i", "a", "--ui-mode", "classic", "-i", "crayon"],
+        catch_exceptions=False,
+    )
+    assert result.exit_code == 2
+    assert "incompatible" in result.output.lower()
+
+
+# ---------------------------------------------------------------------------
+# Worker payload → GenerateImageRequest.ui_mode (MCP path)
+# ---------------------------------------------------------------------------
+
+
+def test_worker_builds_ui_mode_from_payload() -> None:
+    from gflow_cli.worker.daemon import FlowWorker
+
+    req = FlowWorker._build_image_request(  # type: ignore[arg-type]
+        object.__new__(FlowWorker),
+        {"prompt": "a", "model": "nano2", "aspect": "1:1", "ui_mode": "agentic"},
+    )
+    assert req.ui_mode is UiMode.AGENTIC
+
+
+def test_worker_ui_mode_absent_is_none() -> None:
+    from gflow_cli.worker.daemon import FlowWorker
+
+    req = FlowWorker._build_image_request(  # type: ignore[arg-type]
+        object.__new__(FlowWorker),
+        {"prompt": "a", "model": "nano2", "aspect": "1:1"},
+    )
+    assert req.ui_mode is None
