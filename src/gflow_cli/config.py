@@ -195,7 +195,38 @@ def resolve_ui_mode(cli_value: str | None = None) -> UiMode:
             stacklevel=2,
         )
         return UiMode.CLASSIC
+    if settings.force_agent_ui:
+        warnings.warn(
+            "GFLOW_CLI_FORCE_AGENT_UI is deprecated; use GFLOW_CLI_UI_MODE=agentic "
+            "(or --ui-mode agentic).",
+            DeprecationWarning,
+            stacklevel=2,
+        )
+        return UiMode.AGENTIC
     return UiMode.AUTO
+
+
+def infer_required_ui_mode(base: UiMode, *, has_instructions: bool) -> UiMode:
+    """Resolve the arm a command actually REQUIRES from its explicit mode + needs.
+
+    Agent instructions (``-i``) are an agentic-only surface, so they force
+    agentic when the caller didn't already ask for a specific arm. Explicitly
+    demanding ``classic`` *and* passing instructions is contradictory (classic
+    cannot apply cards) — a hard :class:`ConfigurationError` instead of a silent
+    drop. Without instructions, ``base`` passes through unchanged.
+    """
+    if not has_instructions:
+        return base
+    if base is UiMode.CLASSIC:
+        from gflow_cli.errors import ConfigurationError
+
+        msg = (
+            "Agent instructions (-i) require the agentic Flow UI, which is "
+            "incompatible with --ui-mode classic. Drop --ui-mode classic (or "
+            "GFLOW_CLI_UI_MODE=classic), or remove the -i instructions."
+        )
+        raise ConfigurationError(msg)
+    return UiMode.AGENTIC
 
 
 class BrowserEngine(StrEnum):
@@ -390,6 +421,13 @@ class Settings(BaseSettings):
             "True maps to ui_mode=classic, but note the behavior change: the "
             "classic arm is now REQUIRED (abort with exit 28) instead of silently "
             "falling back to the agentic UI. Override via GFLOW_CLI_PREFER_CLASSIC."
+        ),
+    )
+    force_agent_ui: bool = Field(
+        default=False,
+        description=(
+            "DEPRECATED — use GFLOW_CLI_UI_MODE=agentic (or --ui-mode agentic). "
+            "True maps to ui_mode=agentic. Override via GFLOW_CLI_FORCE_AGENT_UI."
         ),
     )
     jitter_range: str | None = Field(

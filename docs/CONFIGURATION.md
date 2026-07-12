@@ -236,16 +236,21 @@ GFLOW_CLI_HISTORY_PROMPTS=redacted gflow image t2i "confidential brief"
 **What:** Which Flow UI arm to use for generation. Flow serves a **classic** composer (hard crop/aspect controls) or an **agentic** chat cohort, server-assigned and flapping per page load ([#299](https://github.com/ffroliva/gflow-cli/issues/299)).
 **Values:**
 - `auto` (default) — bind whatever the composer renders.
-- `classic` — require the classic composer; attempt to recover it, and if the arm is still agentic **abort before submitting** with `ClassicUiUnavailableError` (**exit 28**) — no credits spent. Use when deterministic aspect ratios matter.
-- `agentic` — skip the classic-recovery attempt and bind the agentic driver.
+- `classic` — require the classic composer (hard aspect controls). gflow switches to it, re-probes to verify, and if the arm is still agentic **aborts before submitting** with `UiModeUnavailableError` (**exit 28**) — no credits spent.
+- `agentic` — require the agentic chat surface (needed for `-i` agent instructions). gflow switches to it, verifies, and aborts (exit 28) if it can't be reached.
 **Default:** `auto`
+**How it works:** before each generation, gflow determines the required arm, clicks the classic↔agentic toggle as a **prerequisite**, **verifies** with a DOM re-probe, then binds — or fails fast. The required arm is also **inferred**: `-i` instructions are agentic-only, so they force `agentic` automatically (and `--ui-mode classic` + `-i` is a hard conflict, not a silent drop).
 **Why `classic`:** the agentic cohort treats aspect ratio as a soft prompt hint (portrait 9:16 can come back landscape). `classic` enforces it or fails fast instead of silently degrading.
-**Retry note:** the cohort flaps per load, so an exit-28 abort is **retryable** — a re-run often lands classic. A server experiment can pin agentic, in which case classic is unreachable from the client (the abort still saves the credits).
-**Supersedes:** `GFLOW_CLI_PREFER_CLASSIC` (below).
+**Retry note:** the cohort flaps per load, so an exit-28 abort is **retryable** — a re-run often lands the wanted arm. A server experiment can pin the arm, in which case it's unreachable from the client (the abort still saves the credits).
+**Supersedes:** `GFLOW_CLI_PREFER_CLASSIC` and `GFLOW_CLI_FORCE_AGENT_UI` (below).
 
 ### `GFLOW_CLI_PREFER_CLASSIC` *(deprecated — use `GFLOW_CLI_UI_MODE=classic`)*
 
-**Deprecated** in favor of [`GFLOW_CLI_UI_MODE`](#gflow_cli_ui_mode). `true` now maps to `ui_mode=classic` (emits a `DeprecationWarning`). **Behavior change:** the old silent fallback to agentic when the toggle was unavailable is gone — a classic-strict run now **aborts with exit 28** instead of producing an agentic-cohort result. `GFLOW_CLI_UI_MODE` (and `--ui-mode`) take precedence when both are set.
+**Deprecated** in favor of [`GFLOW_CLI_UI_MODE`](#gflow_cli_ui_mode). `true` now maps to `ui_mode=classic` (emits a `DeprecationWarning`). **Behavior change:** the old silent fallback to agentic when the toggle was unavailable is gone — a classic-required run now **aborts with exit 28** instead of producing an agentic-cohort result. `GFLOW_CLI_UI_MODE` (and `--ui-mode`) take precedence when both are set.
+
+### `GFLOW_CLI_FORCE_AGENT_UI` *(deprecated — use `GFLOW_CLI_UI_MODE=agentic`)*
+
+**Deprecated** in favor of [`GFLOW_CLI_UI_MODE`](#gflow_cli_ui_mode). `true` maps to `ui_mode=agentic` (emits a `DeprecationWarning`). `-i` instructions already force agentic automatically, so this is rarely needed explicitly.
 
 ### `GFLOW_CLI_LOCALE`
 
