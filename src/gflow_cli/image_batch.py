@@ -2,8 +2,11 @@
 
 from __future__ import annotations
 
+import asyncio
 import hashlib
 import json
+import os
+import random
 import re
 import time
 from dataclasses import dataclass, field
@@ -78,9 +81,50 @@ MAX_TEXT_LEN = 2000
 MIN_COUNT = 1
 MAX_COUNT = 4
 DEFAULT_ASPECT_RATIO = "9:16"
-# Jitter range (seconds) between prompts when --same-project is used.
+# Default anti-bot jitter range (seconds) between prompt submissions in
+# multi-prompt runs. Override via --jitter or GFLOW_CLI_JITTER_RANGE.
 JITTER_MIN_SECONDS: float = 3.0
 JITTER_MAX_SECONDS: float = 7.0
+JITTER_ENV_VAR = "GFLOW_CLI_JITTER_RANGE"
+
+
+def resolve_jitter_range(spec: str | None) -> tuple[float, float]:
+    """Resolve the anti-bot jitter range from a spec string.
+
+    Precedence: explicit ``spec`` (the ``--jitter`` flag) > ``GFLOW_CLI_JITTER_RANGE``
+    env var > the 3-7 s default. Formats: ``MIN-MAX`` (e.g. ``10-30``), a single
+    number ``N`` meaning uniform ``[0, N]`` (mirrors ``video chain --jitter``),
+    or ``0`` to disable pacing entirely.
+
+    Raises:
+        ConfigurationError: on an unparseable spec, negative values, or MIN > MAX.
+    """
+    source = "--jitter"
+    if spec is None:
+        spec = os.environ.get(JITTER_ENV_VAR)
+        source = JITTER_ENV_VAR
+    if spec is None:
+        return (JITTER_MIN_SECONDS, JITTER_MAX_SECONDS)
+    parts = spec.split("-")
+    try:
+        if len(parts) == 1:
+            low, high = 0.0, float(parts[0])
+        elif len(parts) == 2:
+            low, high = float(parts[0]), float(parts[1])
+        else:
+            raise ValueError(spec)
+    except ValueError:
+        msg = (
+            f"Invalid jitter spec {spec!r} from {source}: "
+            "expected 'MIN-MAX' or a single number (seconds)."
+        )
+        raise ConfigurationError(msg) from None
+    if low > high:
+        msg = f"Invalid jitter range {spec!r} from {source}: MIN ({low}) must be <= MAX ({high})."
+        raise ConfigurationError(msg)
+    return (low, high)
+
+
 DEFAULT_MODEL = "nano2"
 DEFAULT_COUNT = 1
 MAX_PROMPT_FILE_BYTES = 512 * 1024
@@ -438,6 +482,7 @@ async def run_image_batch(
     continue_on_error: bool,
     project_title: str,
     client_factory: Callable[..., Any] | None = None,
+    jitter_range: tuple[float, float] | None = None,
     _profile_name: str | None = None,
     _recorder: OperationRecorder | None = None,
 ) -> list[BatchOutcome]:
@@ -467,6 +512,7 @@ async def run_image_batch(
         worker=image_worker,
         client_factory=client_factory,
         output_dir=output_dir,
+        jitter_range=jitter_range,
     )
 
 
@@ -481,8 +527,14 @@ async def run_sequential_batch(
     worker: Callable[[Any, str, int, Any], Coroutine[Any, Any, BatchOutcome]],
     output_dir: Path | None = None,
     client_factory: Callable[..., Any] | None = None,
+    jitter_range: tuple[float, float] | None = None,
 ) -> list[BatchOutcome]:
-    """Generic sequential orchestrator for Flow API batches."""
+    """Generic sequential orchestrator for Flow API batches.
+
+    ``jitter_range`` paces submissions with a random ``uniform(min, max)`` sleep
+    before every prompt after the first (anti-bot cadence, same contract as the
+    manifest batch path). ``None`` or ``(0, 0)`` disables pacing.
+    """
     if output_dir:
         output_dir.mkdir(parents=True, exist_ok=True)
 
@@ -491,6 +543,10 @@ async def run_sequential_batch(
     async with factory(profile_dir=profile_dir, headless=headless, transport=transport) as client:
         project = await client.create_project(title=project_title)
         for idx, item in enumerate(items):
+            if idx > 0 and jitter_range and jitter_range[1] > 0:
+                delay = random.uniform(*jitter_range)  # noqa: S311 - pacing, not crypto
+                logger.info("batch_jitter_sleep", seconds=round(delay, 2), index=idx)
+                await asyncio.sleep(delay)
             outcome = await worker(client, project.project_id, idx, item)
             outcomes.append(outcome)
             if outcome.status == "fail" and not continue_on_error:
@@ -959,9 +1015,10 @@ async def run_manifest_image_batch(
 
     All prompts share one Flow project (always-same-project semantics; there
     is no per-prompt project toggle). The transport opens the editor once,
-    submits all prompts sequentially with a random 3–7 s pause between each
-    submission, awaits every generation in submission order, and returns
-    per-prompt ``BatchSubmissionResult`` records.
+    submits all prompts sequentially with a random ``jitter_range`` pause
+    (default 3–7 s; see :func:`resolve_jitter_range`) between each submission,
+    awaits every generation in submission order, and returns per-prompt
+    ``BatchSubmissionResult`` records.
 
     Jitter is the *submission-cadence* anti-bot control — it spaces out the
     submission clicks, not the generation wait. All generations run in parallel

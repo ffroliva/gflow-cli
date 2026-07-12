@@ -450,6 +450,9 @@ batch — so it is not a global incompatibility but a per-profile WAF state.
    the score).
 3. **Avoid same-day repeated batch runs** on a profile after a 403 — each
    rejected request can raise the score further.
+4. **Widen the submission jitter** when composing multiple runs — `--jitter 10-30`
+   or `GFLOW_CLI_JITTER_RANGE` (#241); cadence guidance in
+   [DEBUGGING § WAF cadence](docs/DEBUGGING.md#waf-cadence).
 
 **Tracked separately from** the architectural ["first-attempt listener-miss
 flake"](https://github.com/ffroliva/gflow-cli/pull/40) — that one was caused

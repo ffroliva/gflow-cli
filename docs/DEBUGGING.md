@@ -173,6 +173,36 @@ $env:PYTHONUTF8 = "1"
 
 Bash users on Git Bash / WSL inherit a UTF-8 locale and don't need this.
 
+## WAF cadence
+
+Flow's WAF reacts to **cumulative submission cadence**, not individual
+requests. Field data (issue [#241](https://github.com/ffroliva/gflow-cli/issues/241),
+2026-07-05, real account):
+
+- 3-prompt multi-prompt runs spread 30–60 min apart all passed.
+- A burst of ~14 image submissions in ~10 min ended in a **403**
+  (`Flow returned 403; blocked by WAF or fingerprint check`,
+  `PUBLIC_ERROR_UNUSUAL_ACTIVITY` — see
+  [KNOWN_ISSUES § batchGenerateImages HTTP 403](../KNOWN_ISSUES.md)).
+- After ~30 min of cooldown, individually-paced calls (45–120 s apart) on the
+  same profile and project passed 4/4.
+
+Practical guidance:
+
+- **Pace multi-prompt runs.** All multi-prompt image paths (`image batch`,
+  `image t2i --prompts-file` / `--stdin` / multiple prompts) apply a random
+  3–7 s pause between submissions by default; tune with `--jitter MIN-MAX` or
+  `GFLOW_CLI_JITTER_RANGE` ([CONFIGURATION § GFLOW_CLI_JITTER_RANGE](CONFIGURATION.md#gflow_cli_jitter_range)).
+  Widen (e.g. `10-30`) when composing several runs in one sitting; `--jitter 0`
+  disables pacing (only sensible for single-prompt smoke checks).
+- **Cool down after a 403.** Wait 30–60 min, then probe with a single small
+  generation before batching again.
+- **Reuse a project.** Repeated project churn (`project.createProject` calls
+  between generations) adds to the bot-like signature. For repeated
+  single-prompt runs (`t2i`, `i2i`), pass `--project` to reuse a standing
+  project. Multi-prompt runs already create only **one** shared project per
+  run (never one per prompt).
+
 ## Common failure modes
 
 See [`KNOWN_ISSUES.md`](../KNOWN_ISSUES.md) for the canonical list and
