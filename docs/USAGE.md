@@ -184,6 +184,11 @@ Options:
   -t, --tool NAME[:k=v]     Apply a prompt tool before generating, e.g.
                             `creative-director:style=cinema`. Repeatable; applied
                             per prompt on multi-prompt/batch. See "Prompt tools".
+  --ui-mode [auto|classic|agentic]
+                            Require a Flow UI arm: classic (hard aspect
+                            controls) / agentic (chat surface; forced by -i) /
+                            auto (default). Aborts exit 28 if unreachable.
+                            Single-prompt only; batch uses GFLOW_CLI_UI_MODE.
   --profile NAME            Profile name (overrides default).
 ```
 
@@ -1249,6 +1254,7 @@ shell scripts can branch on the failure mode without parsing stderr.
 | `25` | `FlowAgentUiError`    | The profile is on Flow's Agentic UI cohort and the classic media panel is unrecoverable for this operation | Use a Classic-cohort profile; see KNOWN_ISSUES on the agentic cohort |
 | `26` | `MediaAttributionError` | Generated media could not be reliably attributed to this request (issue #281) | Re-run; a dedicated project with fewer pre-existing assets avoids the ambiguity |
 | `27` | `MediaUploadRejectedError` | Flow's upload endpoint refused the input file (`uploadImage` 4xx, issue #287) | Re-encode the image (`ffmpeg -q:v 2 -map_metadata -1`), or reference the asset by its media UUID |
+| `28` | `UiModeUnavailableError` | The Flow UI arm this command required (`GFLOW_CLI_UI_MODE`, or inferred — `-i` forces agentic) couldn't be reached after a switch attempt; aborted before submitting — no credits spent (issue #299) | Retry (the cohort flaps per load); try another `--profile`; or relax `GFLOW_CLI_UI_MODE` |
 | `130`| SIGINT                | User-interrupted (Ctrl-C)                        | —                                                          |
 
 **Exit code 16 — data store / migration error.** Fires when:
