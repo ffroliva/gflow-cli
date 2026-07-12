@@ -6,7 +6,7 @@ description: Multi-dimensional LLM council review of an open PR (default) or a l
 
 # `pr-council-review` — PR Council Review skill
 
-Council-driven PR review. Dispatches **5 baseline + N adaptive** parallel reviewers, each scoped to one dimension, each invoking the relevant Claude Code specialized skill (e.g. `security-review`, `code-review`, `verify`), then synthesizes a single consensus verdict.
+Council-driven PR review. Dispatches **6 baseline + N adaptive** parallel reviewers, each scoped to one dimension, each invoking the relevant Claude Code specialized skill (e.g. `security-review`, `code-review`, `verify`), then synthesizes a single consensus verdict.
 
 This skill is the canonical body. The Claude Code slash command at `.claude/commands/gflow/pr-council-review.md` is a thin wrapper that invokes this skill. Non-Claude tools (Gemini CLI / Codex / Cursor / Aider) can consume this SKILL.md directly via their own skill loaders.
 
@@ -117,8 +117,9 @@ Pull in parallel via `ctx_batch_execute`:
 | **D11 — Release-gate compliance** | adaptive | `pyproject.toml`, `src/gflow_cli/__init__.py`, `.github/workflows/`, `release/*` branch |
 | **D12 — BDD step-stub signatures** | adaptive | any path under `tests/features/` |
 | **D13 — Dev / release scripts** | adaptive | any path under `scripts/` |
+| **D14 — Over-engineering / YAGNI** | ✅ baseline (NEW v3) | always |
 
-**Baseline floor is non-negotiable.** D1–D5 ALWAYS run. **Docs-only PRs** (100% paths under `*.md`, `docs/**`, `CHANGELOG.md`, `README.md`, `LICENSE`, `AUTHORS`) → D4 reframes from "test code coverage" to "docs-verification"; D5 still runs unchanged.
+**Baseline floor is non-negotiable.** D1–D5 and D14 ALWAYS run. **Docs-only PRs** (100% paths under `*.md`, `docs/**`, `CHANGELOG.md`, `README.md`, `LICENSE`, `AUTHORS`) → D4 reframes from "test code coverage" to "docs-verification"; D5 still runs unchanged.
 
 ---
 
@@ -145,6 +146,9 @@ Each agent is a `general-purpose` agent (only subagent type that supports arbitr
 | D11 Release-gate | (none — direct config inspection) | |
 | D12 BDD | (none — direct stub-signature inspection) | |
 | D13 Scripts | (none — direct script inspection) | |
+| D14 Over-engineering | `ponytail:ponytail-review` *(soft dep — invoke if installed; else apply the inline YAGNI rubric in § Per-dimension specifics)* | "Should this code exist at all?" — the lens D1–D2 don't cover |
+
+**On the D14 soft dependency:** `ponytail:ponytail-review` is a user-local plugin, not shipped with this repo, so it is **optional** (same pattern as the `agy` extra reviewer in `issue-resolve`). The over-engineering **lens is owned by this skill** (the rubric below); the plugin only accelerates it. An agent without the plugin applies the rubric directly and still produces a D14 verdict — never skip D14 because the plugin is absent.
 
 ### Per-agent prompt skeleton (mandatory v2 changes in bold)
 
@@ -213,6 +217,7 @@ If you are NOT sure a finding is real because it depends on file content, VERIFY
 | D11 | `[[release-back-merge-gap-recovery]]`, `[[wheel-build-sanity-gate]]`, `[[pypi-rejected-filename-reusable]]`, `[[draft-pr-merge-trap]]` |
 | D12 | `[[bdd-stubs-mirror-runtime-signatures]]` |
 | D13 | `[[wheel-build-sanity-gate]]` |
+| D14 | (none mandatory; apply the YAGNI rubric below) |
 
 ### Per-dimension specifics
 
@@ -238,6 +243,13 @@ If you are NOT sure a finding is real because it depends on file content, VERIFY
 - **D11 Release-gate:** version match `pyproject.toml` ↔ `src/gflow_cli/__init__.py` (RED if drift). `[Unreleased]` emptied + new version added. Wheel build clean. Back-merge gap addressed.
 - **D12 BDD:** new `_run_*` kwarg → mirror in `tests/features/_fake_*` stubs (silent TypeError trap).
 - **D13 Scripts:** Windows-clean (memory `[[windows-dev-quirks]]`); release scripts include wheel-build sanity gate.
+- **D14 Over-engineering / YAGNI:** *should this code exist at all?* — the lens D1 (correctness) and D2 (quality) don't ask. If `ponytail:ponytail-review` is installed, invoke it; otherwise apply this rubric directly to the **added** lines:
+  - **Dead / orphaned:** a constant, helper, field, or branch with no live caller after the change (e.g. a module constant only its own definition + a docstring reference now use). Cut it.
+  - **Speculative flexibility:** an interface/factory/abstraction with one implementation, a config knob or flag nobody sets, a parameter only ever passed one value, a layer with one caller. Inline until a second caller exists.
+  - **Reinvented stdlib / platform:** a hand-rolled parser/validator/date-format the standard library or the platform already ships. Name the built-in.
+  - **One-caller indirection:** a wrapper function whose only value is a test seam, when the callee could be patched directly (match how sibling code does it).
+  - **Scaffolding "for later":** boilerplate, placeholder modules, or generality added for a use case not in this PR.
+  - Output the concrete cut per finding (`file:Lline: delete/inline/shrink — what replaces it`) and, when meaningful, `net: -N lines possible`. A single smoke test / `assert`-based self-check is the minimum, never flag it as bloat. RED only for genuinely dead/unreachable code; over-generality is Nice-to-have unless it's load-bearing.
 
 ---
 
@@ -303,7 +315,7 @@ Always end with an `AskUserQuestion`.
 
 > **Provenance:** v1 protocol validated on PR #93 (locale selectors, 2026-05-26). v2 evolved 2026-05-27 after running on PR #95 surfaced two real defects: (a) sub-agents read stale working-tree files producing 5+ false positives (memory `[[pr-council-review-stale-tree-reads]]`), (b) baseline missed memory-hygiene as a dimension. Both fixed in v2.
 
-- Council baseline = 5 dimensions (D1–D5). Adaptive ceiling = D6–D13. Going beyond ~13 adds noise faster than signal — split into two reviews instead.
+- Council baseline = 6 dimensions (D1–D5 + D14 over-engineering). Adaptive ceiling = D6–D13. Going beyond ~14 adds noise faster than signal — split into two reviews instead.
 - Sub-agents are `general-purpose` agents that invoke specialized skills (`security-review`, `code-review`, `verify`, `review`) inside their prompt for dimension-specific capability.
 - The command is **stateless** and **read-only** — concurrent invocations on different PRs don't share data. No `gh pr merge`, no `git push`, no `gh pr close`.
 - **Idempotence:** same PR SHA → comparable verdicts on different days. Drift usually means memory grew new precedents or the mandatory-slug table needs an update.
