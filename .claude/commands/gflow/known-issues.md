@@ -4,17 +4,6 @@ description: Surface open known issues. Call before touching auth, reCAPTCHA, or
 
 # `/gflow:known-issues` — Open issues
 
-Read KNOWN_ISSUES.md and return items that are still open or mitigated (not resolved).
+**Read `skills/known-issues/SKILL.md` and follow the protocol**, passing `$ARGUMENTS` if given.
 
-## Steps
-
-1. Read [KNOWN_ISSUES.md](../../../KNOWN_ISSUES.md)
-2. Return only items with status **open** or **mitigated**
-3. Flag any that are relevant to the current task context
-
-## When to call
-
-- Before touching `src/gflow_cli/auth.py`
-- Before touching `src/gflow_cli/api/recaptcha.py`
-- Before any work the user flags as "this felt flaky before"
-- When a test or behaviour feels unexpectedly broken
+> Do **not** call `Skill(skill="known-issues")` — read the file directly.
