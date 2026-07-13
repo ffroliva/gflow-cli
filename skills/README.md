@@ -10,6 +10,14 @@ This directory ships installable agent skill docs for `gflow-cli`. Each `SKILL.m
 | pr-council-review | [`pr-council-review/SKILL.md`](pr-council-review/SKILL.md) | 2.1 |
 | plan | [`plan/SKILL.md`](plan/SKILL.md) | 1.0 |
 | status | [`status/SKILL.md`](status/SKILL.md) | 1.0 |
+| issue-assessment | [`issue-assessment/SKILL.md`](issue-assessment/SKILL.md) | — |
+| issue-resolve | [`issue-resolve/SKILL.md`](issue-resolve/SKILL.md) | — |
+| check | [`check/SKILL.md`](check/SKILL.md) | 1.0 |
+| changelog | [`changelog/SKILL.md`](changelog/SKILL.md) | 1.0 |
+| known-issues | [`known-issues/SKILL.md`](known-issues/SKILL.md) | 1.0 |
+| sonar | [`sonar/SKILL.md`](sonar/SKILL.md) | 1.0 |
+| doc-review | [`doc-review/SKILL.md`](doc-review/SKILL.md) | 1.0 |
+| release | [`release/SKILL.md`](release/SKILL.md) | 1.0 |
 
 ## gflow-cli skill
 
