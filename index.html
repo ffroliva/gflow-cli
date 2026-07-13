@@ -1,0 +1,306 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<meta name="description" content="gflow-cli — an unofficial, alpha CLI and MCP server that drives Google Flow (Veo + Imagen) from the terminal, or lets your AI assistant drive it.">
+<link rel="icon" href="data:image/svg+xml,%3Csvg xmlns=%22http://www.w3.org/2000/svg%22 viewBox=%220 0 100 100%22%3E%3Ctext y=%22.9em%22 font-size=%2290%22%3E%F0%9F%8E%AC%3C/text%3E%3C/svg%3E">
+<title>gflow-cli — drive Google Flow from your terminal</title>
+<style>
+  :root{
+    --ground:#0e1014; --surface:#161a21; --raised:#1c212a; --hair:#272d38;
+    --ink:#ecebe5; --muted:#8c939d; --faint:#5c636e;
+    --accent:#ffb03a; --accent-dim:#c9852c; --accent-ghost:rgba(255,176,58,.12);
+    --risk:#e5674f; --risk-ghost:rgba(229,103,79,.10);
+    --mono:ui-monospace,"Cascadia Code","SF Mono","JetBrains Mono",Menlo,Consolas,monospace;
+    --sans:-apple-system,BlinkMacSystemFont,"Segoe UI",system-ui,Roboto,Helvetica,Arial,sans-serif;
+    --maxw:74ch;
+  }
+  @media (prefers-color-scheme: light){
+    :root{
+      --ground:#f6f3ec; --surface:#fffefa; --raised:#fbf8f1; --hair:#e5e0d4;
+      --ink:#1b1d22; --muted:#6a7079; --faint:#9aa0a7;
+      --accent:#b9740f; --accent-dim:#9c610b; --accent-ghost:rgba(185,116,15,.10);
+      --risk:#c4442c; --risk-ghost:rgba(196,68,44,.08);
+    }
+  }
+  :root[data-theme="dark"]{
+    --ground:#0e1014; --surface:#161a21; --raised:#1c212a; --hair:#272d38;
+    --ink:#ecebe5; --muted:#8c939d; --faint:#5c636e;
+    --accent:#ffb03a; --accent-dim:#c9852c; --accent-ghost:rgba(255,176,58,.12);
+    --risk:#e5674f; --risk-ghost:rgba(229,103,79,.10);
+  }
+  :root[data-theme="light"]{
+    --ground:#f6f3ec; --surface:#fffefa; --raised:#fbf8f1; --hair:#e5e0d4;
+    --ink:#1b1d22; --muted:#6a7079; --faint:#9aa0a7;
+    --accent:#b9740f; --accent-dim:#9c610b; --accent-ghost:rgba(185,116,15,.10);
+    --risk:#c4442c; --risk-ghost:rgba(196,68,44,.08);
+  }
+  *{box-sizing:border-box}
+  html{-webkit-text-size-adjust:100%}
+  body{
+    margin:0; background:var(--ground); color:var(--ink);
+    font-family:var(--sans); font-size:17px; line-height:1.65;
+    -webkit-font-smoothing:antialiased; text-rendering:optimizeLegibility;
+    overflow-x:hidden;
+  }
+  .wrap{max-width:1080px; margin:0 auto; padding:0 24px}
+  .col{max-width:var(--maxw)}
+  a{color:var(--accent); text-decoration:none}
+  a:hover{text-decoration:underline; text-underline-offset:3px}
+  :focus-visible{outline:2px solid var(--accent); outline-offset:3px; border-radius:3px}
+  h1,h2,h3{font-family:var(--mono); font-weight:600; letter-spacing:-.01em; text-wrap:balance; line-height:1.15; margin:0}
+  .eyebrow{font-family:var(--mono); font-size:12.5px; letter-spacing:.18em; text-transform:uppercase; color:var(--accent-dim); margin:0 0 18px}
+  .muted{color:var(--muted)}
+
+  /* top bar */
+  header{position:sticky; top:0; z-index:20; background:color-mix(in srgb,var(--ground) 88%, transparent); backdrop-filter:blur(8px); border-bottom:1px solid var(--hair)}
+  .bar{display:flex; align-items:center; gap:20px; height:60px}
+  .brand{font-family:var(--mono); font-weight:600; font-size:16px; letter-spacing:-.02em; color:var(--ink); white-space:nowrap}
+  .brand .caret{color:var(--accent)}
+  .bar nav{display:flex; gap:22px; margin-left:auto; font-size:14px; font-family:var(--mono)}
+  .bar nav a{color:var(--muted)}
+  .bar nav a:hover{color:var(--ink); text-decoration:none}
+  .ghost-btn{font-family:var(--mono); font-size:13.5px; padding:8px 14px; border:1px solid var(--hair); border-radius:8px; color:var(--ink); white-space:nowrap}
+  .ghost-btn:hover{border-color:var(--accent); text-decoration:none}
+  @media(max-width:720px){ .bar nav{display:none} }
+
+  /* hero */
+  .hero{padding:76px 0 34px}
+  .hero h1{font-size:clamp(30px,5.4vw,52px)}
+  .hero h1 .amber{color:var(--accent)}
+  .lede{font-size:clamp(17px,2.2vw,20px); color:var(--muted); margin:22px 0 0; max-width:60ch; line-height:1.55}
+
+  /* terminal */
+  .term{margin:34px 0 0; background:var(--surface); border:1px solid var(--hair); border-radius:12px; overflow:hidden; box-shadow:0 24px 60px -30px rgba(0,0,0,.6)}
+  .term-bar{display:flex; align-items:center; gap:8px; padding:12px 15px; border-bottom:1px solid var(--hair); background:var(--raised)}
+  .dot{width:11px; height:11px; border-radius:50%; background:var(--faint); opacity:.5}
+  .term-title{font-family:var(--mono); font-size:12px; color:var(--faint); margin-left:8px}
+  .term-body{padding:20px 20px 24px; font-family:var(--mono); font-size:14.5px; line-height:1.85; overflow-x:auto}
+  .term-body .ln{white-space:pre; display:block}
+  .prompt{color:var(--accent)}
+  .cmd{color:var(--ink)}
+  .out{color:var(--muted)}
+  .ok{color:var(--accent)}
+  .cursor{display:inline-block; width:8px; height:1.05em; background:var(--accent); vertical-align:-2px; margin-left:2px; animation:blink 1.1s steps(1) infinite}
+  @keyframes blink{50%{opacity:0}}
+
+  .cta-row{display:flex; flex-wrap:wrap; gap:12px; align-items:center; margin:30px 0 0}
+  .install{display:inline-flex; align-items:center; gap:12px; font-family:var(--mono); font-size:15px; background:var(--surface); border:1px solid var(--hair); border-radius:10px; padding:12px 14px}
+  .install .p{color:var(--accent)}
+  .install button{font-family:var(--mono); font-size:12px; letter-spacing:.06em; text-transform:uppercase; color:var(--muted); background:transparent; border:1px solid var(--hair); border-radius:6px; padding:5px 9px; cursor:pointer}
+  .install button:hover{color:var(--ink); border-color:var(--accent)}
+  .btn{display:inline-flex; align-items:center; gap:9px; font-family:var(--mono); font-size:14.5px; font-weight:600; padding:12px 18px; border-radius:10px; cursor:pointer; border:1px solid transparent}
+  .btn.primary{background:var(--accent); color:#0e1014}
+  .btn.primary:hover{background:var(--accent-dim); text-decoration:none}
+  .btn.line{border-color:var(--hair); color:var(--ink)}
+  .btn.line:hover{border-color:var(--accent); text-decoration:none}
+
+  /* sections */
+  section{padding:64px 0; border-top:1px solid var(--hair)}
+  .sec-head{max-width:60ch}
+  .sec-head h2{font-size:clamp(23px,3.2vw,30px)}
+  .sec-head p{color:var(--muted); margin:16px 0 0; font-size:17px}
+
+  /* drive-it split */
+  .drive{display:grid; grid-template-columns:1.05fr .95fr; gap:44px; align-items:center}
+  @media(max-width:820px){ .drive{grid-template-columns:1fr; gap:30px} }
+  .drive .steps{list-style:none; margin:26px 0 0; padding:0; display:flex; flex-direction:column; gap:18px}
+  .drive .steps li{display:flex; gap:14px; align-items:flex-start}
+  .drive .steps .n{font-family:var(--mono); font-size:13px; color:var(--accent); border:1px solid var(--hair); border-radius:7px; padding:3px 8px; margin-top:2px; flex:none}
+  .drive .steps b{font-family:var(--mono); font-weight:600; font-size:15.5px}
+  .drive .steps span{color:var(--muted); font-size:15px}
+
+  /* feature grid */
+  .grid{display:grid; grid-template-columns:repeat(2,1fr); gap:1px; background:var(--hair); border:1px solid var(--hair); border-radius:14px; overflow:hidden; margin-top:34px}
+  @media(max-width:720px){ .grid{grid-template-columns:1fr} }
+  .cell{background:var(--surface); padding:26px 24px}
+  .cell code{font-family:var(--mono); font-size:13.5px; color:var(--accent); background:var(--accent-ghost); padding:2px 7px; border-radius:6px}
+  .cell h3{font-size:16px; margin:14px 0 8px}
+  .cell p{color:var(--muted); font-size:15px; margin:0; line-height:1.6}
+
+  /* honest band */
+  .honest{background:var(--risk-ghost); border-top:1px solid var(--hair); border-bottom:1px solid var(--hair)}
+  .honest .eyebrow{color:var(--risk)}
+  .honest ul{list-style:none; margin:22px 0 0; padding:0; display:grid; grid-template-columns:repeat(2,1fr); gap:14px 34px}
+  @media(max-width:720px){ .honest ul{grid-template-columns:1fr} }
+  .honest li{display:flex; gap:11px; font-size:15px; color:var(--ink); align-items:flex-start}
+  .honest li::before{content:"—"; color:var(--risk); font-family:var(--mono); flex:none}
+  .honest strong{font-family:var(--mono); font-weight:600}
+
+  /* demo */
+  .demo-card{display:flex; align-items:center; gap:20px; flex-wrap:wrap; background:var(--surface); border:1px solid var(--hair); border-radius:14px; padding:24px; margin-top:28px}
+  .play{width:52px; height:52px; border-radius:50%; background:var(--accent); color:#0e1014; display:grid; place-items:center; flex:none; font-size:18px}
+  .demo-card .t{flex:1; min-width:220px}
+  .demo-card .t b{font-family:var(--mono)}
+  .demo-card .t p{margin:4px 0 0; color:var(--muted); font-size:15px}
+
+  footer{border-top:1px solid var(--hair); padding:46px 0 60px}
+  .foot{display:flex; flex-wrap:wrap; gap:18px 40px; align-items:baseline}
+  .foot .brand{font-size:15px}
+  .foot nav{display:flex; gap:22px; font-family:var(--mono); font-size:14px}
+  .foot nav a{color:var(--muted)}
+  .foot .fine{width:100%; color:var(--faint); font-size:13px; font-family:var(--mono); margin-top:6px}
+
+  @media (prefers-reduced-motion: reduce){ .cursor{animation:none} *{animation-duration:.001ms !important; transition:none !important} }
+</style>
+</head>
+<body>
+
+<header>
+  <div class="wrap bar">
+    <span class="brand"><span class="caret">›</span> gflow-cli</span>
+    <nav>
+      <a href="#drive">Agent-driven</a>
+      <a href="#features">Features</a>
+      <a href="docs/">Docs</a>
+      <a href="https://github.com/ffroliva/gflow-cli">GitHub ↗</a>
+    </nav>
+    <a class="ghost-btn" href="https://github.com/ffroliva/gflow-cli">★ Star on GitHub</a>
+  </div>
+</header>
+
+<main>
+  <div class="wrap hero">
+    <p class="eyebrow">Unofficial · Alpha · MCP-native</p>
+    <h1>Drive Google Flow from your terminal.<br><span class="amber">Or let your AI assistant drive it.</span></h1>
+    <p class="lede">A command-line tool and MCP server for Google Flow — script Veo video and Imagen stills instead of clicking through the web UI. Point Claude, Cursor, or Copilot at it and the agent picks the models, prompt tooling, and settings for you.</p>
+
+    <div class="term" role="img" aria-label="Terminal: an agent runs gflow to generate a Veo clip">
+      <div class="term-bar"><span class="dot"></span><span class="dot"></span><span class="dot"></span><span class="term-title">claude — gflow mcp</span></div>
+      <div class="term-body" id="term">
+        <span class="ln"><span class="out"># you, to your assistant:</span></span>
+        <span class="ln"><span class="cmd">"make a 9:16 clip of a lighthouse in a storm, moody, slow push-in"</span></span>
+        <span class="ln" id="typed"><span class="prompt">gflow&nbsp;›</span> <span class="cmd" id="typetarget"></span><span class="cursor" id="cur"></span></span>
+        <span class="ln reveal" style="display:none"><span class="out">  ↳ tool: creative-director  ·  model: veo-3  ·  aspect: 9:16</span></span>
+        <span class="ln reveal" style="display:none"><span class="out">  ↳ paced batch · reusing project · no re-upload</span></span>
+        <span class="ln reveal" style="display:none"><span class="ok">  ✓ lighthouse_storm.mp4  ·  8s  ·  1080×1920</span></span>
+      </div>
+    </div>
+
+    <div class="cta-row">
+      <span class="install"><span><span class="p">$</span> uv tool install gflow-cli</span><button id="copy" aria-label="Copy install command">Copy</button></span>
+      <a class="btn primary" href="docs/">Get started →</a>
+      <a class="btn line" href="https://www.youtube.com/shorts/SyJb2jfLMrw">▶ Watch the demo</a>
+    </div>
+  </div>
+
+  <section id="drive">
+    <div class="wrap">
+      <div class="drive">
+        <div class="sec-head">
+          <p class="eyebrow">The agent-native part</p>
+          <h2>You describe it. The agent runs it.</h2>
+          <p>gflow-cli ships an MCP server, so an AI assistant connects to it natively — no pasting docs, no copying commands back and forth. CLI-to-MCP parity is enforced in CI: anything the terminal can do, your assistant can do.</p>
+          <ol class="steps">
+            <li><span class="n">01</span><div><b>gflow mcp run</b><br><span>Claude / Cursor / Copilot connects over MCP.</span></div></li>
+            <li><span class="n">02</span><div><b>Ask in plain language</b><br><span>The agent picks the Veo/Imagen model, aspect, and prompt tooling.</span></div></li>
+            <li><span class="n">03</span><div><b>Get files back</b><br><span>It runs the generation on your own Flow session and hands you the output.</span></div></li>
+          </ol>
+        </div>
+        <div class="term" aria-hidden="true">
+          <div class="term-bar"><span class="dot"></span><span class="dot"></span><span class="dot"></span><span class="term-title">~/.config — AGENTS.md</span></div>
+          <div class="term-body">
+<span class="ln"><span class="out">$</span> <span class="cmd">gflow mcp run</span></span>
+<span class="ln"><span class="out">  serving 2 tools over stdio:</span></span>
+<span class="ln"><span class="ok">  • gflow_generate_image</span></span>
+<span class="ln"><span class="ok">  • gflow_generate_video</span></span>
+<span class="ln"><span class="out">  ready — your assistant can drive Flow.</span></span>
+          </div>
+        </div>
+      </div>
+    </div>
+  </section>
+
+  <section id="features">
+    <div class="wrap">
+      <div class="sec-head">
+        <p class="eyebrow">What it handles for you</p>
+        <h2>Built for real runs, not just a demo.</h2>
+        <p>The knobs an agent (or you) leans on, plus the reliability work that keeps batch jobs and big projects from falling over.</p>
+      </div>
+      <div class="grid">
+        <div class="cell"><code>--tool creative-director</code><h3>Prompt-crafting, built in</h3><p>Rewrites a terse line with Google's 5-component formula before a single credit is spent.</p></div>
+        <div class="cell"><code>gflow instructions</code><h3>Instruction cards</h3><p>Persistent, credit-free brief cards that steer look and tone across every generation.</p></div>
+        <div class="cell"><code>reuse by UUID</code><h3>Reference an asset, don't re-upload</h3><p>Chain a still into a video by its id — no duplicate uploads, no shuffling files.</p></div>
+        <div class="cell"><code>--ui-mode</code><h3>Fail fast, before credits</h3><p>Aborts up front when Flow's UI cohort isn't what the command needs — instead of burning a generation.</p></div>
+        <div class="cell"><code>GFLOW_CLI_JITTER_RANGE</code><h3>Configurable batch pacing</h3><p>Tunable jitter between submissions so multi-prompt runs stop tripping rate limits.</p></div>
+        <div class="cell"><code>movie.toml</code><h3>Multi-scene pipeline</h3><p>Direct a whole sequence from one manifest — chain clips, compose scenes, render.</p></div>
+      </div>
+    </div>
+  </section>
+
+  <section class="honest" id="honest">
+    <div class="wrap">
+      <p class="eyebrow">Read this before you install</p>
+      <h2 class="sec-head" style="font-size:clamp(22px,3vw,28px)">Unofficial, alpha, and honest about it.</h2>
+      <ul>
+        <li><span><strong>Not affiliated with Google.</strong> gflow-cli is an independent, unofficial project. Flow, Veo, and Imagen are Google's.</span></li>
+        <li><span><strong>Reverse-engineered &amp; alpha.</strong> It drives Flow's private API; things break and change.</span></li>
+        <li><span><strong>Runs a headed browser on your own Flow session.</strong> Treat it as your own account risk.</span></li>
+        <li><span><strong>Needs Google AI Ultra or Pro</strong> with Flow access. Every generation bills your own account.</span></li>
+      </ul>
+    </div>
+  </section>
+
+  <section>
+    <div class="wrap">
+      <div class="sec-head">
+        <p class="eyebrow">See it move</p>
+        <h2>A short made entirely with it.</h2>
+      </div>
+      <a class="demo-card" href="https://www.youtube.com/shorts/SyJb2jfLMrw">
+        <span class="play" aria-hidden="true">▶</span>
+        <span class="t"><b>Watch the 100-second demo</b><p>Generated end to end through gflow-cli — YouTube Shorts.</p></span>
+        <span class="btn line" aria-hidden="true">Open ↗</span>
+      </a>
+      <div class="cta-row" style="margin-top:34px">
+        <span class="install"><span><span class="p">$</span> uv tool install gflow-cli</span><button id="copy2" aria-label="Copy install command">Copy</button></span>
+        <a class="btn primary" href="docs/">Read the docs →</a>
+      </div>
+    </div>
+  </section>
+</main>
+
+<footer>
+  <div class="wrap foot">
+    <span class="brand"><span class="caret">›</span> gflow-cli</span>
+    <nav>
+      <a href="docs/">Docs</a>
+      <a href="https://github.com/ffroliva/gflow-cli">GitHub</a>
+      <a href="https://www.youtube.com/shorts/SyJb2jfLMrw">Demo</a>
+      <a href="https://github.com/ffroliva/gflow-cli/issues">Issues</a>
+    </nav>
+    <p class="fine">Unofficial · not affiliated with Google · MIT-licensed · your credits, your account, your risk.</p>
+  </div>
+</footer>
+
+<script>
+(function(){
+  var reduce = window.matchMedia && window.matchMedia('(prefers-reduced-motion: reduce)').matches;
+  var target = document.getElementById('typetarget');
+  var cur = document.getElementById('cur');
+  var reveals = document.querySelectorAll('.reveal');
+  var text = 'video i2v --tool creative-director --aspect 9:16';
+  function showAll(){ target.textContent = text; reveals.forEach(function(r){ r.style.display=''; }); if(cur) cur.style.display='none'; }
+  if(reduce){ showAll(); }
+  else{
+    var i=0;
+    function tick(){
+      if(i<=text.length){ target.textContent = text.slice(0,i); i++; setTimeout(tick, 34 + Math.random()*40); }
+      else{ var d=380; reveals.forEach(function(r){ setTimeout(function(){ r.style.display=''; }, d); d+=340; }); if(cur) setTimeout(function(){cur.style.display='none';}, d); }
+    }
+    setTimeout(tick, 650);
+  }
+  function wireCopy(id){
+    var b=document.getElementById(id); if(!b) return;
+    b.addEventListener('click', function(){
+      var t='uv tool install gflow-cli';
+      if(navigator.clipboard){ navigator.clipboard.writeText(t).then(function(){ var o=b.textContent; b.textContent='Copied'; setTimeout(function(){b.textContent=o;},1400); }); }
+    });
+  }
+  wireCopy('copy'); wireCopy('copy2');
+})();
+</script>
+</body>
+</html>

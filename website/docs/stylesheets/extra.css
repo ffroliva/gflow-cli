@@ -1,0 +1,86 @@
+/* gflow-cli docs — amber-on-ink identity layered over Material for MkDocs.
+   Overrides Material's CSS custom properties so both light and dark schemes
+   carry the terminal-cinema look (amber accent, cool ink ground, mono display). */
+
+:root {
+  --gf-mono: ui-monospace, "Cascadia Code", "SF Mono", "JetBrains Mono", Menlo, Consolas, monospace;
+  --gf-sans: -apple-system, BlinkMacSystemFont, "Segoe UI", system-ui, Roboto, Helvetica, Arial, sans-serif;
+  --md-text-font-family: var(--gf-sans);
+  --md-code-font-family: var(--gf-mono);
+}
+
+/* ---- light scheme (default) ---- */
+[data-md-color-scheme="default"] {
+  --md-primary-fg-color:        #b9740f;
+  --md-primary-fg-color--light: #c9852c;
+  --md-primary-fg-color--dark:  #9c610b;
+  --md-accent-fg-color:         #9c610b;
+  --md-default-bg-color:        #fdfcf9;
+  --md-default-fg-color:        #1b1d22;
+  --md-default-fg-color--light: #4a5058;
+  --md-typeset-a-color:         #b9740f;
+  --md-code-bg-color:           #1b1f27;
+  --md-code-fg-color:           #d7dae0;
+}
+
+/* ---- dark scheme (slate) ---- */
+[data-md-color-scheme="slate"] {
+  --md-hue: 220;
+  --md-primary-fg-color:        #ffb03a;
+  --md-primary-fg-color--light: #ffbf5e;
+  --md-primary-fg-color--dark:  #c9852c;
+  --md-accent-fg-color:         #ffb03a;
+  --md-default-bg-color:        #0e1014;
+  --md-default-fg-color:        #eceae4;
+  --md-default-fg-color--light: #b7bdc6;
+  --md-default-fg-color--lighter:#8b929c;
+  --md-typeset-a-color:         #ffb03a;
+  --md-code-bg-color:           #0b0d12;
+  --md-code-fg-color:           #d7dae0;
+  --md-footer-bg-color:         #0b0d12;
+}
+[data-md-color-scheme="slate"] .md-header,
+[data-md-color-scheme="slate"] .md-tabs {
+  background-color: #0b0d12;
+}
+/* keep the header text legible on the dark ground instead of amber-on-amber */
+[data-md-color-scheme="slate"] .md-header {
+  color: var(--md-default-fg-color);
+  border-bottom: 1px solid #242a34;
+}
+
+/* mono display voice for headings + brand */
+.md-typeset h1,
+.md-typeset h2,
+.md-typeset h3,
+.md-header__title {
+  font-family: var(--gf-mono);
+  letter-spacing: -0.01em;
+  font-weight: 600;
+}
+.md-typeset h1 { letter-spacing: -0.02em; }
+
+/* inline code as an amber chip */
+.md-typeset code {
+  font-family: var(--gf-mono);
+}
+[data-md-color-scheme="slate"] .md-typeset :not(pre) > code {
+  background-color: rgba(255, 176, 58, 0.12);
+  color: #ffb03a;
+}
+[data-md-color-scheme="default"] .md-typeset :not(pre) > code {
+  background-color: rgba(185, 116, 15, 0.10);
+  color: #9c610b;
+}
+
+/* code-copy + admonition accents stay on-brand */
+.md-typeset .admonition.warning,
+.md-typeset details.warning {
+  border-color: #e5674f;
+}
+
+/* subtle amber focus ring, consistent with the landing */
+:focus-visible {
+  outline: 2px solid var(--md-primary-fg-color);
+  outline-offset: 2px;
+}
