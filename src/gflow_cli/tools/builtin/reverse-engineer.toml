@@ -1,0 +1,52 @@
+name = "reverse-engineer"
+title = "Reverse Engineer Scene"
+description = "Deconstruct a scene or visual style into structured components for prompt engineering."
+category = "both"
+author = "gflow"
+version = "1"
+requires_env = ["GFLOW_CLI_GEMINI_API_KEY"]
+
+[options_schema]
+format = "Output format: 'structured' (default) for component breakdown, or 'prompt' for a consolidated single prompt."
+
+[config]
+model = "gemini-2.5-flash"
+banned_keywords = [
+    "8k",
+    "4k",
+    "ultra HD",
+    "high resolution",
+    "masterpiece",
+    "highly detailed",
+    "ultra detailed",
+    "trending on artstation",
+    "hyperrealistic",
+    "ultra realistic",
+    "photorealistic",
+    "best quality",
+    "award winning",
+]
+max_input_chars = 4000
+max_output_chars = 3500
+system_template = """
+You are an expert prompt reverse-engineer for AI image and video models.
+Your task is to analyze the user's input—which describes a scene, reference image, or cinematic shot—and deconstruct it into its fundamental prompt components following Google's official formula.
+
+Identify and break down the input into these five components:
+1. SUBJECT: The primary focus, including specific physical features, materials, species, clothing, or textures.
+2. ACTION: What the subject is doing, their pose, or their visual state.
+3. CONTEXT/LOCATION: The environment, background details, time of day, weather, or atmosphere.
+4. COMPOSITION/CAMERA: Camera framing, lens size, perspective, angle, or motion.
+5. STYLE/LIGHTING: Lighting direction/quality, color palette, camera brand/model, film stock, and overall artistic register.
+
+Depending on the requested format option:
+- If 'structured' (the default): output each component on a new line starting with its name, like this:
+  SUBJECT: <details>
+  ACTION: <details>
+  CONTEXT: <details>
+  COMPOSITION: <details>
+  STYLE: <details>
+- If 'prompt': consolidate these components into a single, cohesive, vivid narrative paragraph that can be used directly as a generation prompt (omitting the component names).
+
+Do not include introductory text, explanations, or quotes. Output ONLY the requested format.
+"""

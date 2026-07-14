@@ -264,10 +264,92 @@ class PromptExpander:
         # Unreachable: the loop always returns. Kept for type-checker exhaustiveness.
         return ExpansionResult(prompt, prompt, was_expanded=False)  # pragma: no cover
 
+    def expand_multimodal(self, prompt: str, image_paths: list[str]) -> ExpansionResult:
+        """Expand a prompt using multimodal input (e.g. video frames or images)."""
+        if not self._api_key:
+            log.info("prompt_expander_no_key", reason="GFLOW_CLI_GEMINI_API_KEY unset")
+            return ExpansionResult(original=prompt, expanded=prompt, was_expanded=False)
+
+        import base64
+
+        parts: list[dict[str, Any]] = [{"text": self._instruction + prompt}]
+        for path in image_paths:
+            try:
+                with open(path, "rb") as image_file:
+                    encoded = base64.b64encode(image_file.read()).decode("utf-8")
+                    parts.append({"inlineData": {"mimeType": "image/jpeg", "data": encoded}})
+            except Exception as e:
+                log.warning("prompt_expander_multimodal_read_error", path=path, error=str(e))
+
+        # Build payload
+        token_budget = max(512, min(8192, self._max_output_chars // 4))
+        payload: dict[str, object] = {
+            "contents": [{"parts": parts}],
+            "generationConfig": {"temperature": 0.4, "maxOutputTokens": token_budget},
+        }
+
+        url = _ENDPOINT.format(model=self._model)
+        start = self._clock()
+        delay = 1.0
+        for attempt in range(self._max_retries + 1):
+            remaining = self._max_total_seconds - (self._clock() - start)
+            if remaining <= 0:
+                log.warning(
+                    "prompt_expander_budget_exhausted",
+                    max_total_seconds=self._max_total_seconds,
+                )
+                return ExpansionResult(prompt, prompt, was_expanded=False)
+            attempt_timeout = min(self._timeout, remaining)
+            try:
+                data = self._transport(url, payload, attempt_timeout)
+            except GeminiHttpError as exc:
+                if exc.status in _RETRYABLE_STATUS and attempt < self._max_retries:
+                    if (self._clock() - start) + delay >= self._max_total_seconds:
+                        log.warning(
+                            "prompt_expander_budget_exhausted",
+                            max_total_seconds=self._max_total_seconds,
+                        )
+                        return ExpansionResult(prompt, prompt, was_expanded=False)
+                    log.warning(
+                        "prompt_expander_retry",
+                        status=exc.status,
+                        attempt=attempt + 1,
+                        max_retries=self._max_retries,
+                    )
+                    self._sleep(delay)
+                    delay *= 2
+                    continue
+                log.warning("prompt_expander_failed", status=exc.status, detail=exc.detail)
+                return ExpansionResult(prompt, prompt, was_expanded=False)
+            except (urllib.error.URLError, TimeoutError, OSError, json.JSONDecodeError) as exc:
+                log.warning("prompt_expander_error", error=str(exc))
+                return ExpansionResult(prompt, prompt, was_expanded=False)
+
+            expanded = self._extract_text(data)
+            if not expanded:
+                log.warning("prompt_expander_empty_response")
+                return ExpansionResult(prompt, prompt, was_expanded=False)
+
+            cleaned = _clean(expanded)[: self._max_output_chars]
+            if not cleaned:
+                log.warning("prompt_expander_empty_response")
+                return ExpansionResult(prompt, prompt, was_expanded=False)
+            log.info(
+                "prompt_expanded_multimodal",
+                original_len=len(prompt),
+                expanded_len=len(cleaned),
+                model=self._model,
+            )
+            return ExpansionResult(prompt, cleaned, was_expanded=True)
+
+        return ExpansionResult(prompt, prompt, was_expanded=False)
+
     def _build_payload(self, prompt: str) -> dict[str, object]:
+        # Approximate token budget: 1 token ≈ 4 chars. Clamp to [512, 8192].
+        token_budget = max(512, min(8192, self._max_output_chars // 4))
         return {
             "contents": [{"parts": [{"text": self._instruction + prompt}]}],
-            "generationConfig": {"temperature": 0.7, "maxOutputTokens": 1024},
+            "generationConfig": {"temperature": 0.7, "maxOutputTokens": token_budget},
         }
 
     @staticmethod

@@ -291,9 +291,37 @@ gflow video batch ./batch-a.tsv --profile work
 gflow video batch ./batch-b.tsv --profile personal
 ```
 
-**Roadmap:** Phase 4 (v0.4.0a2) added concurrency *inside* one `gflow video batch` process via `GFLOW_CLI_CONCURRENCY=N` (per-worker Page pool on one shared BrowserContext). Cross-process same-profile serialization is a Chromium constraint we cannot work around without rewriting the auth model — multiple shells against the same profile remains a "use different profiles" workaround.
+**Roadmap:** Phase 4 (v0.4.0a2) added concurrency *inside* one `gflow-cli` process via `GFLOW_CLI_CONCURRENCY=N` (per-worker Page pool on one shared BrowserContext). Cross-process same-profile serialization is a Chromium constraint we cannot work around without rewriting the auth model — multiple shells against the same profile remains a "use different profiles" workaround.
 
 ---
+
+### Chromium cookie database locks block yt-dlp integrations (Instagram/restricted download paths)
+
+- **Status:** Mitigated · **Severity:** Low-Medium · **Affects:** any downstream helper calling `yt-dlp` (including `claude-video`, `cg-decode`/`refanalyzer`, or `experience-vault`)
+
+When executing `yt-dlp` from automated shell calls or Python wrappers while a Chromium-based browser (Chrome or Edge) is active, you may see:
+```text
+ERROR: Could not copy Chrome cookie database.
+```
+This is because Chromium holds an exclusive lock on its SQLite cookie database while active, causing `yt-dlp` to crash when attempting to extract cookies from the browser.
+
+**Mitigation & Workaround:**
+1. **Cookie Export:** Export Netscape-formatted cookies from your logged-in browser session to a static file (e.g. `ig_cookies.txt` or `.auth/ig_cookies.txt`).
+2. **Configuration Isolation:** Prevent `yt-dlp` from reading global user configurations that might force browser-cookie loading (e.g. `%APPDATA%\yt-dlp\config.txt` containing `--cookies-from-browser chrome`).
+   - In CLI calls, pass `--no-config` (or `--ignore-config`):
+     ```bash
+     yt-dlp --no-config --cookies path/to/cookies.txt [URL]
+     ```
+   - In Python `YoutubeDL` constructors, pass `"ignoreconfig": True` in the options dictionary:
+     ```python
+     opts = {
+         "cookiefile": "path/to/cookies.txt",
+         "ignoreconfig": True,
+     }
+     ```
+
+---
+
 
 ### Flow's first-upload terms-of-use dialog ("Aviso") blocks the worker (worker-only)
 

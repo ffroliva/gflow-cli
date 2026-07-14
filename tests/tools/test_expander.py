@@ -293,3 +293,35 @@ def test_custom_system_instruction_is_used() -> None:
     sent = captured["payload"]["contents"][0]["parts"][0]["text"]  # type: ignore[index]
     assert sent.startswith("CINEMA MODE: ")
     assert "a cat" in sent
+
+
+def test_token_budget_derived_from_max_output_chars() -> None:
+    """maxOutputTokens in the Gemini payload must scale with max_output_chars.
+
+    Storyboard uses max_output_chars=8000 → budget 2000.
+    Default (3500) → budget 875.
+    Minimum floor is 512 regardless of how small max_output_chars is.
+    """
+    captured: list[dict[str, object]] = []
+
+    def transport(url: str, payload: dict[str, object], timeout: float) -> dict[str, object]:
+        captured.append(payload)
+        return {"candidates": [{"content": {"parts": [{"text": "ok"}]}}]}
+
+    # Storyboard-sized budget
+    exp_large = PromptExpander("key", transport=transport, max_output_chars=8000)
+    exp_large.expand("test")
+    tokens_large = captured[-1]["generationConfig"]["maxOutputTokens"]  # type: ignore[index]
+    assert tokens_large == 2000  # 8000 // 4
+
+    # Default budget
+    exp_default = PromptExpander("key", transport=transport, max_output_chars=3500)
+    exp_default.expand("test")
+    tokens_default = captured[-1]["generationConfig"]["maxOutputTokens"]  # type: ignore[index]
+    assert tokens_default == 875  # 3500 // 4
+
+    # Minimum floor: tiny max_output_chars should not go below 512
+    exp_tiny = PromptExpander("key", transport=transport, max_output_chars=100)
+    exp_tiny.expand("test")
+    tokens_tiny = captured[-1]["generationConfig"]["maxOutputTokens"]  # type: ignore[index]
+    assert tokens_tiny == 512
