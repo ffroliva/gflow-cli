@@ -78,6 +78,72 @@ def build_instruction(
     return "\n\n".join(parts) + "\n\nUser prompt: "
 
 
+def _collect_frames(prompt: str) -> list[str]:
+    """Return frame image paths from a video/URL prompt via watch.py, or [] on failure."""
+    watch_py = Path(DEFAULT_CLAUDE_VIDEO_DIR) / "scripts" / "watch.py"
+    if not watch_py.exists():
+        log.warning(
+            "watch_py_not_found",
+            path=str(watch_py),
+            reason="falling back to text-only reverse engineering",
+        )
+        return []
+
+    clean_name = _get_clean_name(prompt)
+    out_dir = Path("tmp/watch") / clean_name
+    out_dir.mkdir(parents=True, exist_ok=True)
+
+    cmd = [sys.executable, str(watch_py), prompt, "--no-whisper", "--out-dir", str(out_dir)]
+    log.info("running_watch_py", cmd=cmd)
+    log.info("saving_collateral_under", path=str(out_dir))
+
+    res = subprocess.run(cmd, capture_output=True, text=True, timeout=120)  # noqa: S603
+    if res.returncode != 0:
+        log.warning("watch_py_failed", code=res.returncode, stderr=res.stderr)
+        return []
+
+    frames_dir = out_dir / "frames"
+    if not frames_dir.exists():
+        return []
+
+    frames = sorted(frames_dir.glob("*.jpg"))
+    if len(frames) > 5:
+        frames = [frames[int(i * len(frames) / 5)] for i in range(5)]
+    image_paths = [str(f.resolve()) for f in frames]
+    log.info("extracted_frames_for_analysis", count=len(image_paths))
+    return image_paths
+
+
+def _apply_multimodal_reverse_engineering(
+    spec: ToolSpec,
+    prompt: str,
+    expander: PromptExpander,
+) -> ExpansionResult | None:
+    """Attempt multimodal reverse engineering; return result or None to fall through."""
+    log.info("multimodal_reverse_engineering_detected", prompt=prompt)
+    log.info("engine_inspired_by_claude_video_watch_skill")
+    try:
+        if _is_image_file(prompt):
+            image_paths: list[str] = [str(Path(prompt).resolve())]
+        else:
+            image_paths = _collect_frames(prompt)
+
+        if not image_paths:
+            return None
+
+        result = expander.expand_multimodal(prompt, image_paths)
+        if not result.was_expanded:
+            return None
+
+        cleaned, removed = strip_banned_keywords(result.expanded, spec.config.banned_keywords)
+        if removed:
+            log.info("tool_banned_keywords_stripped", tool=spec.name, removed=removed)
+        return ExpansionResult(original=result.original, expanded=cleaned, was_expanded=True)
+    except Exception as e:  # noqa: BLE001
+        log.warning("multimodal_reverse_engineering_error", error=str(e))
+        return None
+
+
 def apply_tool(
     spec: ToolSpec,
     prompt: str,
@@ -98,77 +164,13 @@ def apply_tool(
             max_output_chars=spec.config.max_output_chars,
         )
 
-    # 1. Check if we should use multimodal reverse engineering
-    is_multimodal = spec.name == "reverse-engineer" and (
+    # 1. Attempt multimodal reverse engineering for qualifying inputs
+    if spec.name == "reverse-engineer" and (
         _is_url(prompt) or _is_video_file(prompt) or _is_image_file(prompt)
-    )
-
-    if is_multimodal:
-        log.info("multimodal_reverse_engineering_detected", prompt=prompt)
-        log.info("engine_inspired_by_claude_video_watch_skill")
-        image_paths: list[str] = []
-
-        try:
-            if _is_image_file(prompt):
-                image_paths.append(str(Path(prompt).resolve()))
-            else:
-                # Video file or URL: extract frames using watch.py
-                watch_py = Path(DEFAULT_CLAUDE_VIDEO_DIR) / "scripts" / "watch.py"
-                if not watch_py.exists():
-                    log.warning(
-                        "watch_py_not_found",
-                        path=str(watch_py),
-                        reason="falling back to text-only reverse engineering",
-                    )
-                else:
-                    # Save collateral persistently in the project's tmp/watch/ folder
-                    clean_name = _get_clean_name(prompt)
-                    out_dir = Path("tmp/watch") / clean_name
-                    out_dir.mkdir(parents=True, exist_ok=True)
-
-                    cmd = [
-                        sys.executable,
-                        str(watch_py),
-                        prompt,
-                        "--no-whisper",
-                        "--out-dir",
-                        str(out_dir),
-                    ]
-                    log.info("running_watch_py", cmd=cmd)
-                    log.info("saving_collateral_under", path=str(out_dir))
-
-                    # Run watch.py subprocess with a generous 120s timeout
-                    res = subprocess.run(cmd, capture_output=True, text=True, timeout=120)
-                    if res.returncode != 0:
-                        log.warning("watch_py_failed", code=res.returncode, stderr=res.stderr)
-                    else:
-                        frames_dir = out_dir / "frames"
-                        if frames_dir.exists():
-                            frames = sorted(frames_dir.glob("*.jpg"))
-                            # Select up to 5 frames evenly spaced to fit context/rate limits
-                            if len(frames) > 5:
-                                frames = [frames[int(i * len(frames) / 5)] for i in range(5)]
-                            image_paths = [str(f.resolve()) for f in frames]
-                            log.info("extracted_frames_for_analysis", count=len(image_paths))
-
-            if image_paths:
-                result = expander.expand_multimodal(prompt, image_paths)
-
-                if result.was_expanded:
-                    cleaned, removed = strip_banned_keywords(
-                        result.expanded,
-                        spec.config.banned_keywords,
-                    )
-                    if removed:
-                        log.info("tool_banned_keywords_stripped", tool=spec.name, removed=removed)
-                    return ExpansionResult(
-                        original=result.original,
-                        expanded=cleaned,
-                        was_expanded=True,
-                    )
-
-        except Exception as e:
-            log.warning("multimodal_reverse_engineering_error", error=str(e))
+    ):
+        result = _apply_multimodal_reverse_engineering(spec, prompt, expander)
+        if result is not None:
+            return result
 
     # 2. Fall back to standard text-only expansion
     result = expander.expand(prompt)

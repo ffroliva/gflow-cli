@@ -325,3 +325,60 @@ def test_token_budget_derived_from_max_output_chars() -> None:
     exp_tiny.expand("test")
     tokens_tiny = captured[-1]["generationConfig"]["maxOutputTokens"]  # type: ignore[index]
     assert tokens_tiny == 512
+
+
+class TestExpanderMultimodal:
+    """Tests for :meth:`PromptExpander.expand_multimodal` (shared retry path)."""
+
+    def test_expand_multimodal_success(self, tmp_path: object) -> None:
+        from pathlib import Path as _Path
+
+        img = _Path(str(tmp_path)) / "frame.jpg"
+        img.write_bytes(b"FAKEJPEG")
+
+        transport = _RecordingTransport(returns=_candidates("expanded multimodal result"))
+        expander = PromptExpander("key", transport=transport)
+
+        result = expander.expand_multimodal("describe this", [str(img)])
+
+        assert result.was_expanded is True
+        assert result.expanded == "expanded multimodal result"
+        assert len(transport.calls) == 1
+
+    def test_expand_multimodal_missing_key(self) -> None:
+        transport = _RecordingTransport(returns=_candidates("never called"))
+        expander = PromptExpander(None, transport=transport)
+
+        result = expander.expand_multimodal("describe this", [])
+
+        assert result.was_expanded is False
+        assert result.expanded == "describe this"
+        assert transport.calls == []
+
+    def test_expand_multimodal_bad_image_path_is_skipped(self) -> None:
+        """An unreadable image path logs a warning and is skipped; expansion still runs."""
+        transport = _RecordingTransport(returns=_candidates("expanded without image"))
+        expander = PromptExpander("key", transport=transport)
+
+        result = expander.expand_multimodal("describe this", ["/nonexistent/frame.jpg"])
+
+        # The bad path is skipped; expand_multimodal still calls the API with just the text part.
+        assert len(transport.calls) == 1
+        assert result.was_expanded is True
+
+    def test_expand_multimodal_network_error_falls_back(self) -> None:
+        transport = _RecordingTransport(raises=OSError("connection refused"))
+        expander = PromptExpander("key", transport=transport, sleep=lambda _s: None)
+
+        result = expander.expand_multimodal("describe this", [])
+
+        assert result.was_expanded is False
+        assert result.expanded == "describe this"
+
+    def test_expand_multimodal_empty_response_falls_back(self) -> None:
+        transport = _RecordingTransport(returns={"candidates": []})
+        expander = PromptExpander("key", transport=transport)
+
+        result = expander.expand_multimodal("describe this", [])
+
+        assert result.was_expanded is False
