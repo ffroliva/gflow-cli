@@ -1,86 +1,115 @@
-/* gflow-cli docs — amber-on-ink identity layered over Material for MkDocs.
-   Overrides Material's CSS custom properties so both light and dark schemes
-   carry the terminal-cinema look (amber accent, cool ink ground, mono display). */
+/* gflow-cli docs — palette kept consistent with the landing page
+   (https://ffroliva.github.io/gflow-cli/). Same amber-on-ink identity, same
+   tokens per scheme, same top-bar treatment (ground color + hairline). */
 
 :root {
   --gf-mono: ui-monospace, "Cascadia Code", "SF Mono", "JetBrains Mono", Menlo, Consolas, monospace;
   --gf-sans: -apple-system, BlinkMacSystemFont, "Segoe UI", system-ui, Roboto, Helvetica, Arial, sans-serif;
+  --gf-amber: #ffb03a;
   --md-text-font-family: var(--gf-sans);
   --md-code-font-family: var(--gf-mono);
 }
 
-/* ---- light scheme (default) ---- */
+/* ---------- light: matches the landing's light theme ---------- */
 [data-md-color-scheme="default"] {
+  --gf-hair: #e3dfd5;
+  --gf-surface: #fffefa;
   --md-primary-fg-color:        #b9740f;
   --md-primary-fg-color--light: #c9852c;
   --md-primary-fg-color--dark:  #9c610b;
   --md-accent-fg-color:         #9c610b;
-  --md-default-bg-color:        #fdfcf9;
-  --md-default-fg-color:        #1b1d22;
+  --md-default-bg-color:        #f6f3ec;   /* landing --ground (warm paper) */
+  --md-default-fg-color:        #1b1d22;   /* landing --ink */
   --md-default-fg-color--light: #4a5058;
+  --md-default-fg-color--lighter:#6a7079;  /* landing --muted */
+  --md-default-fg-color--lightest:#9aa0a7; /* landing --faint */
   --md-typeset-a-color:         #b9740f;
-  --md-code-bg-color:           #1b1f27;
+  --md-code-bg-color:           #0b0d12;
   --md-code-fg-color:           #d7dae0;
 }
-
-/* ---- dark scheme (slate) ---- */
+/* ---------- dark: matches the landing's dark theme ---------- */
 [data-md-color-scheme="slate"] {
   --md-hue: 220;
+  --gf-hair: #262b34;
+  --gf-surface: #161a21;
   --md-primary-fg-color:        #ffb03a;
   --md-primary-fg-color--light: #ffbf5e;
   --md-primary-fg-color--dark:  #c9852c;
   --md-accent-fg-color:         #ffb03a;
-  --md-default-bg-color:        #0e1014;
-  --md-default-fg-color:        #eceae4;
+  --md-default-bg-color:        #0e1014;   /* landing --ground */
+  --md-default-fg-color:        #ecebe5;   /* landing --ink */
   --md-default-fg-color--light: #b7bdc6;
-  --md-default-fg-color--lighter:#8b929c;
+  --md-default-fg-color--lighter:#8c939d;  /* landing --muted */
+  --md-default-fg-color--lightest:#5c636e; /* landing --faint */
   --md-typeset-a-color:         #ffb03a;
   --md-code-bg-color:           #0b0d12;
   --md-code-fg-color:           #d7dae0;
   --md-footer-bg-color:         #0b0d12;
 }
-[data-md-color-scheme="slate"] .md-header,
-[data-md-color-scheme="slate"] .md-tabs {
-  background-color: #0b0d12;
-}
-/* keep the header text legible on the dark ground instead of amber-on-amber */
-[data-md-color-scheme="slate"] .md-header {
-  color: var(--md-default-fg-color);
-  border-bottom: 1px solid #242a34;
-}
 
-/* mono display voice for headings + brand */
+/* ---------- chrome: the scheme's ground + a hairline, like the landing top bar ---------- */
+.md-header,
+.md-tabs {
+  background-color: var(--md-default-bg-color);
+  color: var(--md-default-fg-color);
+  box-shadow: none;
+  border-bottom: 1px solid var(--gf-hair);
+  backdrop-filter: blur(6px);
+}
+.md-header__title { color: var(--md-default-fg-color); font-family: var(--gf-mono); font-weight: 600; letter-spacing: -.01em; }
+.md-header__button { color: var(--md-default-fg-color); }
+.md-header__button.md-logo :is(img, svg) { fill: var(--gf-amber); color: var(--gf-amber); }
+.md-header .md-source { color: var(--md-default-fg-color--light); }
+
+/* search field: a subtle raised surface on the ground-colored header */
+.md-search__form { background-color: var(--gf-surface); border: 1px solid var(--gf-hair); border-radius: 8px; box-shadow: none; }
+.md-search__form:hover { background-color: var(--gf-surface); border-color: var(--md-primary-fg-color); }
+[data-md-toggle="search"]:checked ~ .md-header .md-search__form { background-color: var(--gf-surface); }
+.md-search__input { color: var(--md-default-fg-color); }
+.md-search__input::placeholder { color: var(--md-default-fg-color--lighter); }
+.md-search__icon { color: var(--md-default-fg-color--lighter); }
+
+/* ---------- typography ---------- */
+.md-typeset { font-size: .82rem; line-height: 1.72; }
 .md-typeset h1,
 .md-typeset h2,
 .md-typeset h3,
-.md-header__title {
-  font-family: var(--gf-mono);
-  letter-spacing: -0.01em;
-  font-weight: 600;
-}
-.md-typeset h1 { letter-spacing: -0.02em; }
+.md-typeset h4 { font-family: var(--gf-mono); font-weight: 600; color: var(--md-default-fg-color); }
+.md-typeset h1 { font-size: 2rem; letter-spacing: -.035em; line-height: 1.15; margin: 0 0 .5em; text-wrap: balance; }
+.md-typeset h2 { font-size: 1.4rem; letter-spacing: -.025em; line-height: 1.2; margin: 2.4em 0 .7em; }
+.md-typeset h3 { font-size: 1.08rem; letter-spacing: -.02em; margin: 1.8em 0 .5em; }
 
-/* inline code as an amber chip */
-.md-typeset code {
-  font-family: var(--gf-mono);
+/* ---------- links & inline code ---------- */
+.md-typeset a { text-underline-offset: 3px; }
+.md-typeset code { font-family: var(--gf-mono); }
+[data-md-color-scheme="slate"] .md-typeset :not(pre):not(.md-code__content) > code {
+  background-color: rgba(255,176,58,.13); color: #ffb03a;
 }
-[data-md-color-scheme="slate"] .md-typeset :not(pre) > code {
-  background-color: rgba(255, 176, 58, 0.12);
-  color: #ffb03a;
-}
-[data-md-color-scheme="default"] .md-typeset :not(pre) > code {
-  background-color: rgba(185, 116, 15, 0.10);
-  color: #9c610b;
+[data-md-color-scheme="default"] .md-typeset :not(pre):not(.md-code__content) > code {
+  background-color: rgba(185,116,15,.10); color: #9c610b;
 }
 
-/* code-copy + admonition accents stay on-brand */
+/* ---------- code blocks ---------- */
+.md-typeset .highlight { border-radius: 11px; }
+.highlight .c, .highlight .ch, .highlight .cm, .highlight .c1, .highlight .cs,
+.highlight .cp, .highlight .cpf { color: #7d8794 !important; font-style: normal; }
+.highlight .go { color: #9aa2ad !important; }
+.highlight .gp { color: #ffb03a !important; }
+
+/* copy-to-clipboard button — visible + on-brand (was rendering as an empty box) */
+.md-clipboard { color: #7a828d; }
+.md-clipboard:hover, .md-code__nav .md-clipboard:hover { color: var(--gf-amber); }
+.md-clipboard::after { background-color: currentColor; }
+
+/* ---------- nav ---------- */
+.md-nav__title { font-family: var(--gf-mono); font-size: .68rem; letter-spacing: .12em; text-transform: uppercase; color: var(--md-default-fg-color--lightest); }
+.md-nav__link--active,
+.md-nav__link--active:focus,
+.md-nav__link--active:hover,
+.md-nav__item .md-nav__link--active { color: var(--gf-amber); font-weight: 600; }
+
+/* ---------- misc ---------- */
 .md-typeset .admonition.warning,
-.md-typeset details.warning {
-  border-color: #e5674f;
-}
-
-/* subtle amber focus ring, consistent with the landing */
-:focus-visible {
-  outline: 2px solid var(--md-primary-fg-color);
-  outline-offset: 2px;
-}
+.md-typeset details.warning { border-color: #e5674f; }
+:focus-visible { outline: 2px solid var(--md-primary-fg-color); outline-offset: 2px; }
+.md-typeset table:not([class]) { font-size: .78rem; }
