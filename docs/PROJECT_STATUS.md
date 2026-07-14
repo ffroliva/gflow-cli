@@ -4,9 +4,47 @@
 
 ## Current release
 
-**v0.29.0 — alpha.** **Persistent `gflow instructions` CRUD + movie-manifest instructions + `gflow_instructions_*` MCP parity tools (#192).** CRUD over a project's Agent-Mode brief cards (add/list/enable/disable/rm/apply/toggle-mode, title/ID selection, `--ref` image-UUID attach), declarative TOML/JSON full-sync, `movie.toml` `[instructions]` / `[scene.instructions]` brief-sync, six MCP instructions tools, and a CI-enforced MCP↔CLI parity contract (`tests/mcp/test_cli_parity.py`). Also consolidates the agentic-indicator selectors onto `drivers/factory.py` and makes `/gflow:check` + the PR council CI-faithful (D0 gate). Verification: [LIVE_VERIFICATION_v0.29.0](LIVE_VERIFICATION_v0.29.0.md) (credit-free live e2e, 11-command CRUD ledger).
+**v0.35.0 — alpha.** **Multimodal reverse-engineering + Storyboard tool + Dynamic Token Budgeting (#305-follow-up).** Adds `gflow tools run storyboard` to generate sequential visual prompts from single ideas, and integrates `gflow tools run reverse-engineer` with `claude-video`'s `watch.py` script for frame extraction and multimodal deconstruction of video/URL references using Gemini. Token budgets now scale dynamically with character limits. Verification: [LIVE_VERIFICATION_v0.35.0](LIVE_VERIFICATION_v0.35.0.md) (proven live storyboard expansion + frame extraction).
 
-**Develop (unreleased, post-v0.29.0):** *(empty — develop is the staging branch for the next release).*
+**Develop (unreleased, post-v0.35.0):** *(empty — develop is the staging branch for the next release).*
+
+<details><summary>v0.34.0 — bidirectional UI cohort switching</summary>
+
+**v0.34.0 — alpha.** **Bidirectional UI cohort switching (#299).** Introduces `--ui-mode` / `GFLOW_CLI_UI_MODE` to force classic or agentic Flow UI cohort layouts on the fly, with verification and an exit-28 fail-fast when a required layout cannot be reached. Verification: [LIVE_VERIFICATION_v0.34.0](LIVE_VERIFICATION_v0.34.0.md).
+
+</details>
+
+<details><summary>v0.33.0 — anti-bot jitter and video i2v project name overrides</summary>
+
+**v0.33.0 — alpha.** **Anti-bot jitter and video i2v project name overrides (#241, #287).** Configurable anti-bot jitter range via `--jitter` / `GFLOW_CLI_JITTER_RANGE`, lower default batch jitter (0.5–1.5 s), and `--project-name` overrides for resolving in-project assets on localized or virtualized project dropdowns. Verification: [LIVE_VERIFICATION_v0.33.0](LIVE_VERIFICATION_v0.33.0.md).
+
+</details>
+
+<details><summary>v0.32.1 — browser teardown hardening</summary>
+
+**v0.32.1 — alpha.** **Browser teardown hardening and profile lock translation (#293, #283).** Fixed Chrome process leaks on aborted context teardowns, translated launch failures to `ProfileLockedError` (exit 11), and fixed picker grid off-by-one scroll bounds. Verification: [LIVE_VERIFICATION_v0.32.1](LIVE_VERIFICATION_v0.32.1.md).
+
+</details>
+
+<details><summary>v0.32.0 — in-project asset i2v frame selection</summary>
+
+**v0.32.0 — alpha.** **In-project asset i2v frame selection by UUID (#287, #288).** Select existing assets for video initial/end frames by UUID in place without re-uploading, and add fail-fast for duration settings control presence. Verification: [LIVE_VERIFICATION_v0.32.0](LIVE_VERIFICATION_v0.32.0.md).
+
+</details>
+
+<details><summary>v0.31.0 — wrong-media attribution defenses</summary>
+
+**v0.31.0 — alpha.** **Wrong-media attribution defenses and multi-ref picker scrolling (#281, #282).** Added pre-download verification guards against ambiguous agentic-cohort image downloads (`MediaAttributionError` exit 26), and added viewport-scrolling fallback to resolve multiple sequential `--ref` selections in the virtualized picker grid. Verification: [LIVE_VERIFICATION_v0.31.0](LIVE_VERIFICATION_v0.31.0.md).
+
+</details>
+
+<details><summary>v0.30.0 — agentic-cohort image path support</summary>
+
+**v0.30.0 — alpha.** **Agentic-cohort image path support and MCP video parameters (#258).** Supported native 768x1376 still generations in the agentic cohort, added character-creation integrity guards, and mapped model/duration/count video parameters on the MCP server. Verification: [LIVE_VERIFICATION_v0.30.0](LIVE_VERIFICATION_v0.30.0.md).
+
+</details>
+
+<details><summary>v0.29.0 — persistent gflow instructions CRUD</summary>
 
 <details><summary>v0.28.0 — agent instructions (-i) steer agentic generation</summary>
 
