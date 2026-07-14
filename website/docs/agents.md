@@ -40,4 +40,4 @@ The agent picks the Veo model, aspect, and prompt tooling, runs the generation o
 !!! note "It runs on your account"
     Even when an agent drives it, gflow-cli still uses your own headed Flow session and bills your own credits. The same alpha/account-risk caveats apply.
 
-Next: [**Known issues →**](known-issues.md).
+Next: [**Known issues →**](KNOWN_ISSUES.md).

@@ -58,6 +58,6 @@ Then just ask, in plain language — the agent picks the model, aspect, and prom
 
 ## Where to next
 
-- [**Authentication →**](authentication.md) — profiles, reCAPTCHA, and the headed-browser transport in depth.
+- [**Authentication →**](AUTHENTICATION.md) — profiles, reCAPTCHA, and the headed-browser transport in depth.
 - [**Let your assistant drive it →**](agents.md) — wire gflow-cli into your agent via MCP.
-- [**Known issues →**](known-issues.md) — WAF/403 pacing, credit traps, and current limitations.
+- [**Known issues →**](KNOWN_ISSUES.md) — WAF/403 pacing, credit traps, and current limitations.
