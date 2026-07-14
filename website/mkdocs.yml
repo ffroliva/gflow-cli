@@ -1,0 +1,100 @@
+site_name: gflow-cli
+site_description: >-
+  Unofficial CLI and MCP server for Google Flow — script Veo video and Imagen
+  stills from the terminal, or let your AI assistant drive it.
+site_url: https://ffroliva.github.io/gflow-cli/docs/
+repo_url: https://github.com/ffroliva/gflow-cli
+repo_name: ffroliva/gflow-cli
+copyright: >-
+  Unofficial · not affiliated with Google · MIT-licensed · your credits, your account, your risk.
+docs_dir: docs
+site_dir: site
+
+theme:
+  name: material
+  language: en
+  # System fonts only — no Google Fonts fetch (matches the site identity, works offline).
+  font: false
+  icon:
+    repo: fontawesome/brands/github
+  palette:
+    - media: "(prefers-color-scheme: light)"
+      scheme: default
+      toggle:
+        icon: material/weather-night
+        name: Switch to dark
+    - media: "(prefers-color-scheme: dark)"
+      scheme: slate
+      toggle:
+        icon: material/weather-sunny
+        name: Switch to light
+  features:
+    - navigation.instant
+    - navigation.tracking
+    - navigation.sections
+    - navigation.top
+    - navigation.footer
+    - toc.follow
+    - search.suggest
+    - search.highlight
+    - content.code.copy
+    - content.code.annotate
+
+extra_css:
+  - stylesheets/extra.css
+
+markdown_extensions:
+  - admonition
+  - attr_list
+  - md_in_html
+  - toc:
+      permalink: true
+  - pymdownx.highlight:
+      anchor_linenums: true
+  - pymdownx.superfences
+  - pymdownx.inlinehilite
+  - pymdownx.tabbed:
+      alternate_style: true
+  - pymdownx.details
+  - pymdownx.emoji:
+      emoji_index: !!python/name:material.extensions.emoji.twemoji
+      emoji_generator: !!python/name:material.extensions.emoji.to_svg
+
+nav:
+  - Home ↗: https://ffroliva.github.io/gflow-cli/
+  - Getting started:
+      - Introduction: index.md
+      - Quickstart: quickstart.md
+      - Installation: installation.md
+      - Authentication: AUTHENTICATION.md
+  - User Guide: USER_GUIDE.md
+  - Command Reference: USAGE.md
+  - Features:
+      - Characters: CHARACTER.md
+      - Movie Generation: MOVIE.md
+      - Prompt Tools: TOOLS.md
+      - Agent Instructions: INSTRUCTIONS.md
+      - Prompt Expansion: PROMPT_EXPANSION.md
+  - Agent-driven (MCP):
+      - Let your assistant drive it: agents.md
+      - MCP Server: MCP.md
+  - Reference & Internals:
+      - Architecture: ARCHITECTURE.md
+      - Configuration: CONFIGURATION.md
+      - Data Layer: DATA_LAYER.md
+      - Debugging: DEBUGGING.md
+      - External Storage: EXTERNAL_STORAGE.md
+      - Development: DEVELOPMENT.md
+      - E2E Testing: E2E_TESTING.md
+      - Security: SECURITY.md
+      - Known issues: KNOWN_ISSUES.md
+
+plugins:
+  - search
+
+extra:
+  social:
+    - icon: fontawesome/brands/github
+      link: https://github.com/ffroliva/gflow-cli
+    - icon: fontawesome/brands/youtube
+      link: https://www.youtube.com/shorts/SyJb2jfLMrw

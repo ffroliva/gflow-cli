@@ -91,6 +91,19 @@ The `skills/` directory ships installable agent skill docs in plain Markdown wit
 | `plan` | [`skills/plan/SKILL.md`](skills/plan/SKILL.md) | Create a structured task-by-task implementation plan for a feature |
 | `status` | [`skills/status/SKILL.md`](skills/status/SKILL.md) | Show current plan state, progress, and next unchecked task |
 | `pr-council-review` | [`skills/pr-council-review/SKILL.md`](skills/pr-council-review/SKILL.md) | Multi-dimensional PR council review |
+| `issue-assessment` | [`skills/issue-assessment/SKILL.md`](skills/issue-assessment/SKILL.md) | Triage a GitHub issue (read-only) before any fix work |
+| `issue-resolve` | [`skills/issue-resolve/SKILL.md`](skills/issue-resolve/SKILL.md) | Drive an assessed issue to a test-first fix + draft PR |
+| `check` | [`skills/check/SKILL.md`](skills/check/SKILL.md) | Quality gates (lint/format/types/tests) before every commit |
+| `changelog` | [`skills/changelog/SKILL.md`](skills/changelog/SKILL.md) | Unreleased changes + last tagged version |
+| `known-issues` | [`skills/known-issues/SKILL.md`](skills/known-issues/SKILL.md) | Open/mitigated known issues — before auth/reCAPTCHA work |
+| `sonar` | [`skills/sonar/SKILL.md`](skills/sonar/SKILL.md) | Drive the SonarCloud quality gate to zero for a PR/branch |
+| `doc-review` | [`skills/doc-review/SKILL.md`](skills/doc-review/SKILL.md) | Council-driven documentation audit before a release |
+| `release` | [`skills/release/SKILL.md`](skills/release/SKILL.md) | Cut a release — bump, CHANGELOG, tag, push, back-merge |
+
+**RULE — agent-agnostic by construction.** Core skills live in `skills/<name>/SKILL.md`
+and must be resolvable by ANY agent via this file. Vendor directories hold thin wrappers
+only (`.claude/commands/gflow/*.md` are pointers into `skills/`); never put protocol
+content in a vendor directory.
 
 **Cursor / Aider / Codex / Gemini CLI (`agy`):** paste or include the relevant `SKILL.md` in your system context. Note: in the `agy` TUI prompt, custom slash commands (e.g. `/gflow:pr-council-review`) are blocked by the TUI's command parser. Type them as plain text without the leading slash (e.g. `gflow:pr-council-review`, `gflow:branch-review`, or `gflow:check`) to trigger the corresponding agent skill workflow.
 **Claude Code:** the `/gflow:` slash commands in `.claude/commands/gflow/` are auto-discovered when the project is open — no extra setup needed. To register a skill globally, copy the command file to `~/.claude/commands/`.
