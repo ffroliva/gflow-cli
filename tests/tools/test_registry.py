@@ -43,7 +43,7 @@ def test_unknown_tool_raises_with_valid_names() -> None:
 class TestMyToolsLoader:
     def test_absent_user_dir_loads_only_builtins(self) -> None:
         # No <home>/tools dir exists in a fresh isolated home → only builtins.
-        assert tool_names() == ("creative-director",)
+        assert tool_names() == ("creative-director", "reverse-engineer", "storyboard")
 
     def test_user_tool_is_registered_alongside_builtins(self) -> None:
         _write_tool(get_settings().user_tools_dir(), "my-custom")
