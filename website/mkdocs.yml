@@ -56,6 +56,9 @@ markdown_extensions:
   - pymdownx.tabbed:
       alternate_style: true
   - pymdownx.details
+  - pymdownx.emoji:
+      emoji_index: !!python/name:material.extensions.emoji.twemoji
+      emoji_generator: !!python/name:material.extensions.emoji.to_svg
 
 nav:
   - Home ↗: https://ffroliva.github.io/gflow-cli/
@@ -63,11 +66,28 @@ nav:
       - Introduction: index.md
       - Quickstart: quickstart.md
       - Installation: installation.md
-      - Authentication: authentication.md
-  - Agent-driven:
+      - Authentication: AUTHENTICATION.md
+  - User Guide: USER_GUIDE.md
+  - Command Reference: USAGE.md
+  - Features:
+      - Characters: CHARACTER.md
+      - Movie Generation: MOVIE.md
+      - Prompt Tools: TOOLS.md
+      - Agent Instructions: INSTRUCTIONS.md
+      - Prompt Expansion: PROMPT_EXPANSION.md
+  - Agent-driven (MCP):
       - Let your assistant drive it: agents.md
-  - Reference:
-      - Known issues: known-issues.md
+      - MCP Server: MCP.md
+  - Reference & Internals:
+      - Architecture: ARCHITECTURE.md
+      - Configuration: CONFIGURATION.md
+      - Data Layer: DATA_LAYER.md
+      - Debugging: DEBUGGING.md
+      - External Storage: EXTERNAL_STORAGE.md
+      - Development: DEVELOPMENT.md
+      - E2E Testing: E2E_TESTING.md
+      - Security: SECURITY.md
+      - Known issues: KNOWN_ISSUES.md
 
 plugins:
   - search

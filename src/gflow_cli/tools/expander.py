@@ -191,28 +191,23 @@ class PromptExpander:
         """
         return cls(settings.gemini_api_key, model=settings.gemini_model, **overrides)  # type: ignore[arg-type]
 
-    def expand(self, prompt: str) -> ExpansionResult:
-        """Return an :class:`ExpansionResult`. Never raises for API/network faults."""
-        if not self._api_key:
-            log.info("prompt_expander_no_key", reason="GFLOW_CLI_GEMINI_API_KEY unset")
-            return ExpansionResult(original=prompt, expanded=prompt, was_expanded=False)
+    def _execute_expansion_payload(self, url: str, payload: dict[str, object]) -> str | None:
+        """Run the Gemini request with retry/backoff; return the raw expanded text or None.
 
-        truncated = prompt[: self._max_input_chars]
-        url = _ENDPOINT.format(model=self._model)
-        payload = self._build_payload(truncated)
-
+        Handles budget management, exponential backoff on retryable HTTP errors,
+        and network fault tolerance. Never raises — callers treat ``None`` as
+        a signal to fall back to the original prompt.
+        """
         start = self._clock()
         delay = 1.0
         for attempt in range(self._max_retries + 1):
             remaining = self._max_total_seconds - (self._clock() - start)
             if remaining <= 0:
-                # Wall-clock budget spent (e.g. earlier attempts + backoff sleeps
-                # under sustained rate limiting). Stop rather than block further.
                 log.warning(
                     "prompt_expander_budget_exhausted",
                     max_total_seconds=self._max_total_seconds,
                 )
-                return ExpansionResult(prompt, prompt, was_expanded=False)
+                return None
             attempt_timeout = min(self._timeout, remaining)
             try:
                 data = self._transport(url, payload, attempt_timeout)
@@ -225,7 +220,7 @@ class PromptExpander:
                             "prompt_expander_budget_exhausted",
                             max_total_seconds=self._max_total_seconds,
                         )
-                        return ExpansionResult(prompt, prompt, was_expanded=False)
+                        return None
                     log.warning(
                         "prompt_expander_retry",
                         status=exc.status,
@@ -236,33 +231,46 @@ class PromptExpander:
                     delay *= 2
                     continue
                 log.warning("prompt_expander_failed", status=exc.status, detail=exc.detail)
-                return ExpansionResult(prompt, prompt, was_expanded=False)
-            except (urllib.error.URLError, TimeoutError, OSError, json.JSONDecodeError) as exc:
+                return None
+            except (OSError, json.JSONDecodeError) as exc:
+                # OSError covers urllib.error.URLError, TimeoutError, and socket errors.
                 log.warning("prompt_expander_error", error=str(exc))
-                return ExpansionResult(prompt, prompt, was_expanded=False)
+                return None
 
             expanded = self._extract_text(data)
             if not expanded:
                 log.warning("prompt_expander_empty_response")
-                return ExpansionResult(prompt, prompt, was_expanded=False)
+                return None
+            return expanded
 
-            cleaned = _clean(expanded)[: self._max_output_chars]
-            if not cleaned:
-                # Whitespace/quote-only candidate cleans to empty. Returning it
-                # would feed an empty prompt to the generator and abort a valid
-                # run — fall back to the original to honor the "never fatal" contract.
-                log.warning("prompt_expander_empty_response")
-                return ExpansionResult(prompt, prompt, was_expanded=False)
-            log.info(
-                "prompt_expanded",
-                original_len=len(prompt),
-                expanded_len=len(cleaned),
-                model=self._model,
-            )
-            return ExpansionResult(prompt, cleaned, was_expanded=True)
+        return None  # pragma: no cover
 
-        # Unreachable: the loop always returns. Kept for type-checker exhaustiveness.
-        return ExpansionResult(prompt, prompt, was_expanded=False)  # pragma: no cover
+    def expand(self, prompt: str) -> ExpansionResult:
+        """Return an :class:`ExpansionResult`. Never raises for API/network faults."""
+        if not self._api_key:
+            log.info("prompt_expander_no_key", reason="GFLOW_CLI_GEMINI_API_KEY unset")
+            return ExpansionResult(original=prompt, expanded=prompt, was_expanded=False)
+
+        truncated = prompt[: self._max_input_chars]
+        url = _ENDPOINT.format(model=self._model)
+        expanded = self._execute_expansion_payload(url, self._build_payload(truncated))
+        if not expanded:
+            return ExpansionResult(prompt, prompt, was_expanded=False)
+
+        cleaned = _clean(expanded)[: self._max_output_chars]
+        if not cleaned:
+            # Whitespace/quote-only candidate cleans to empty. Returning it
+            # would feed an empty prompt to the generator and abort a valid
+            # run — fall back to the original to honor the "never fatal" contract.
+            log.warning("prompt_expander_empty_response")
+            return ExpansionResult(prompt, prompt, was_expanded=False)
+        log.info(
+            "prompt_expanded",
+            original_len=len(prompt),
+            expanded_len=len(cleaned),
+            model=self._model,
+        )
+        return ExpansionResult(prompt, cleaned, was_expanded=True)
 
     def expand_multimodal(self, prompt: str, image_paths: list[str]) -> ExpansionResult:
         """Expand a prompt using multimodal input (e.g. video frames or images)."""
@@ -275,74 +283,33 @@ class PromptExpander:
         parts: list[dict[str, Any]] = [{"text": self._instruction + prompt}]
         for path in image_paths:
             try:
-                with open(path, "rb") as image_file:
+                with open(path, "rb") as image_file:  # noqa: PTH123
                     encoded = base64.b64encode(image_file.read()).decode("utf-8")
                     parts.append({"inlineData": {"mimeType": "image/jpeg", "data": encoded}})
-            except Exception as e:
+            except OSError as e:
                 log.warning("prompt_expander_multimodal_read_error", path=path, error=str(e))
 
-        # Build payload
         token_budget = max(512, min(8192, self._max_output_chars // 4))
         payload: dict[str, object] = {
             "contents": [{"parts": parts}],
             "generationConfig": {"temperature": 0.4, "maxOutputTokens": token_budget},
         }
-
         url = _ENDPOINT.format(model=self._model)
-        start = self._clock()
-        delay = 1.0
-        for attempt in range(self._max_retries + 1):
-            remaining = self._max_total_seconds - (self._clock() - start)
-            if remaining <= 0:
-                log.warning(
-                    "prompt_expander_budget_exhausted",
-                    max_total_seconds=self._max_total_seconds,
-                )
-                return ExpansionResult(prompt, prompt, was_expanded=False)
-            attempt_timeout = min(self._timeout, remaining)
-            try:
-                data = self._transport(url, payload, attempt_timeout)
-            except GeminiHttpError as exc:
-                if exc.status in _RETRYABLE_STATUS and attempt < self._max_retries:
-                    if (self._clock() - start) + delay >= self._max_total_seconds:
-                        log.warning(
-                            "prompt_expander_budget_exhausted",
-                            max_total_seconds=self._max_total_seconds,
-                        )
-                        return ExpansionResult(prompt, prompt, was_expanded=False)
-                    log.warning(
-                        "prompt_expander_retry",
-                        status=exc.status,
-                        attempt=attempt + 1,
-                        max_retries=self._max_retries,
-                    )
-                    self._sleep(delay)
-                    delay *= 2
-                    continue
-                log.warning("prompt_expander_failed", status=exc.status, detail=exc.detail)
-                return ExpansionResult(prompt, prompt, was_expanded=False)
-            except (urllib.error.URLError, TimeoutError, OSError, json.JSONDecodeError) as exc:
-                log.warning("prompt_expander_error", error=str(exc))
-                return ExpansionResult(prompt, prompt, was_expanded=False)
+        expanded = self._execute_expansion_payload(url, payload)
+        if not expanded:
+            return ExpansionResult(prompt, prompt, was_expanded=False)
 
-            expanded = self._extract_text(data)
-            if not expanded:
-                log.warning("prompt_expander_empty_response")
-                return ExpansionResult(prompt, prompt, was_expanded=False)
-
-            cleaned = _clean(expanded)[: self._max_output_chars]
-            if not cleaned:
-                log.warning("prompt_expander_empty_response")
-                return ExpansionResult(prompt, prompt, was_expanded=False)
-            log.info(
-                "prompt_expanded_multimodal",
-                original_len=len(prompt),
-                expanded_len=len(cleaned),
-                model=self._model,
-            )
-            return ExpansionResult(prompt, cleaned, was_expanded=True)
-
-        return ExpansionResult(prompt, prompt, was_expanded=False)
+        cleaned = _clean(expanded)[: self._max_output_chars]
+        if not cleaned:
+            log.warning("prompt_expander_empty_response")
+            return ExpansionResult(prompt, prompt, was_expanded=False)
+        log.info(
+            "prompt_expanded_multimodal",
+            original_len=len(prompt),
+            expanded_len=len(cleaned),
+            model=self._model,
+        )
+        return ExpansionResult(prompt, cleaned, was_expanded=True)
 
     def _build_payload(self, prompt: str) -> dict[str, object]:
         # Approximate token budget: 1 token ≈ 4 chars. Clamp to [512, 8192].

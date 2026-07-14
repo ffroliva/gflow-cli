@@ -7,6 +7,25 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+## [0.35.0] — 2026-07-14
+
+### Added
+
+- **Multimodal Reverse-Engineering:** Integrated `gflow reverse-engineer` with `claude-video`'s `watch.py` script. When a video file or URL is passed, gflow now automatically extracts frames and uses the multimodal capabilities of Gemini to reconstruct a detailed, structured prompt.
+- **Storyboard Creator:** Added a new built-in tool `storyboard` designed to scaffold a cohesive multi-panel storyboard from a narrative concept or scene description, ensuring visual and stylistic continuity across all panels.
+- **GitHub Pages Site:** Created a static site structure for GitHub Pages, including a landing page and material-based documentation layout, with a polished theme aligned with project aesthetics (#308, #309).
+
+### Changed
+
+- **Dynamic Token Budget:** The `maxOutputTokens` parameter for Gemini prompt expansion now dynamically scales as a fraction of `max_output_chars` (approx. 1 token per 4 characters), clamped to a minimum floor of 512 tokens.
+- **Agent-Agnostic Skills:** Refactored six command protocols and relocated them to the `skills/` directory to ensure they are accessible by any developer or AI coding agent regardless of the tool being used (#305).
+- **Security Updates:** Bumped the `pillow` dependency to `>=12.3.0` to address 5 CVEs (PYSEC-2026-2253..2257) (#306).
+- **Ruff Dependency:** Updated the dev-dependency `ruff` from `0.15.20` to `0.15.21` (#304).
+
+### Fixed
+
+- **Type Safety:** Added explicit `dict[str, object]` type annotations to the payload building in `PromptExpander` to satisfy strict Pyright invariance checks on dictionary values.
+
 ## [0.34.0] — 2026-07-12
 
 ### Added
