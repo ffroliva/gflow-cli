@@ -1,0 +1,55 @@
+name: Deploy site to GitHub Pages
+
+# Publishes the marketing landing (index.html) at the site root and the
+# Material for MkDocs docs portal (website/) at /docs. One site, two parts.
+
+on:
+  push:
+    branches: [develop]
+    paths:
+      - "index.html"
+      - "website/**"
+      - ".github/workflows/pages.yml"
+  workflow_dispatch:
+
+permissions:
+  contents: read
+  pages: write
+  id-token: write
+
+# Never cancel an in-progress deploy; queue instead.
+concurrency:
+  group: pages
+  cancel-in-progress: false
+
+jobs:
+  build:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-python@v5
+        with:
+          python-version: "3.12"
+      - name: Install MkDocs Material
+        run: pip install "mkdocs-material>=9,<10"
+      - name: Build docs portal
+        working-directory: website
+        run: mkdocs build
+      - name: Assemble site (landing at /, docs at /docs)
+        run: |
+          mkdir -p _site
+          cp index.html _site/
+          cp -r website/site _site/docs
+      - uses: actions/upload-pages-artifact@v3
+        with:
+          path: _site
+
+  deploy:
+    needs: build
+    runs-on: ubuntu-latest
+    environment:
+      name: github-pages
+      url: ${{ steps.deployment.outputs.page_url }}
+    steps:
+      - id: deployment
+        uses: actions/deploy-pages@v4

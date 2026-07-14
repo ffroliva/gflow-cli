@@ -99,3 +99,6 @@ worktrees/
 
 # Subagent-driven-development scratch (ledger + task reports)
 .superpowers/
+
+# MkDocs build output
+website/site/
