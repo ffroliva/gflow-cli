@@ -64,7 +64,13 @@ def traceability_signals(paths: list[str], commit_messages: str = "") -> dict[st
     """Report-only signals. Never gate on these."""
     src_touched = any(p.startswith("src/") for p in paths)
     tests_touched = any(p.startswith("tests/") for p in paths)
-    docs_touched = any(p.endswith(".md") for p in paths)
+    docs_touched = any(
+        p.endswith(".md")
+        or p.startswith("website/")
+        or p.startswith("docs/")
+        or p in ("index.html", "llms.txt")
+        for p in paths
+    )
     plan_referenced = any("docs/superpowers/plans/" in p for p in paths) or (
         "superpowers/plans" in commit_messages
     )
