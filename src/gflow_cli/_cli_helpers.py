@@ -270,7 +270,7 @@ def _handle_unhandled_error(exc: BaseException, *, cli_command: str) -> int:
             "[yellow]GFLOW_CLI_DEBUG_TRACEBACK is set — the output below may "
             "contain tokens/cookies. Do not share it publicly.[/yellow]"
         )
-        _console.print("".join(traceback.format_exception(exc)))
+        _console.print("".join(traceback.format_exception(exc)), markup=False)
     else:
         _console.print(
             "[red]Unexpected error.[/red] Re-run with GFLOW_CLI_DEBUG_TRACEBACK=1 "
