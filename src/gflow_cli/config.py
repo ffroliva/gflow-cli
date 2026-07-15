@@ -450,6 +450,34 @@ class Settings(BaseSettings):
         parse_jitter_range(value)
         return value
 
+    # --- debugging ---------------------------------------------------------
+    har_path: Path | None = Field(
+        default=None,
+        description=(
+            "When set, captures full Playwright network traffic (requests, "
+            "responses, headers, cookies) to this HAR file for the session. "
+            "SECURITY: HAR files can contain auth cookies and bearer tokens — "
+            "never share one publicly; the file is chmod 0o600 on POSIX. "
+            "Concurrent gflow processes pointed at the same path will overwrite "
+            "each other's HAR (last-writer-wins) — use a distinct path per run. "
+            "Override via GFLOW_CLI_HAR_PATH."
+        ),
+    )
+    debug_traceback: bool = Field(
+        default=False,
+        description=(
+            "Prints the real message + traceback for unhandled (non-GFlowError) "
+            "exceptions to the console and, under --json, into the payload's "
+            "error.traceback field, instead of the generic placeholder. The "
+            "structured telemetry event stays hashed either way — this only "
+            "affects what the operator/caller sees. SECURITY: may leak "
+            "tokens/cookies present in exception text — for local debugging "
+            "only. Never pipe --json output under this flag to a "
+            "shared/persistent system (CI logs, log aggregators, webhooks) "
+            "without redacting it first. Override via GFLOW_CLI_DEBUG_TRACEBACK."
+        ),
+    )
+
     # --- logging ----------------------------------------------------------
     log_level: LogLevel = LogLevel.INFO
     log_format: LogFormat = LogFormat.AUTO
