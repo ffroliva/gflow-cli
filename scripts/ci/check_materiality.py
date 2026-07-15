@@ -64,12 +64,14 @@ def traceability_signals(paths: list[str], commit_messages: str = "") -> dict[st
     """Report-only signals. Never gate on these."""
     src_touched = any(p.startswith("src/") for p in paths)
     tests_touched = any(p.startswith("tests/") for p in paths)
+    docs_touched = any(p.endswith(".md") for p in paths)
     plan_referenced = any("docs/superpowers/plans/" in p for p in paths) or (
         "superpowers/plans" in commit_messages
     )
     return {
         "src_touched": src_touched,
         "tests_touched": tests_touched,
+        "docs_touched": docs_touched,
         "plan_referenced": plan_referenced,
     }
 
@@ -100,6 +102,7 @@ def build_report(material: list[str], routine: list[str], signals: dict[str, boo
     # Report-only traceability checklist.
     plan = "x" if signals["plan_referenced"] else " "
     tests = "x" if signals["tests_touched"] else " "
+    docs = "x" if signals["docs_touched"] else " "
     lines += [
         "### Traceability (report-only — never blocks)",
         f"- [{plan}] references a plan in `docs/superpowers/plans/`",
@@ -107,6 +110,13 @@ def build_report(material: list[str], routine: list[str], signals: dict[str, boo
         + (
             "  — _src changed without test changes; verify this is a refactor/docstring/deletion_"
             if signals["src_touched"] and not signals["tests_touched"]
+            else ""
+        ),
+        f"- [{docs}] touches documentation (`.md` files)"
+        + (
+            "  — _src changed without documentation changes; "
+            "run `/gflow:doc-review` or verify if docs are current_"
+            if signals["src_touched"] and not signals["docs_touched"]
             else ""
         ),
         "",
