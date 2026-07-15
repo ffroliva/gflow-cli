@@ -2,7 +2,7 @@
 
 > **For agentic workers:** REQUIRED SUB-SKILL: Use superpowers:subagent-driven-development (recommended) or superpowers:executing-plans to implement this plan task-by-task. Steps use checkbox (`- [ ]`) syntax for tracking.
 
-**Goal:** Add two opt-in, env-var-driven debug knobs to gflow-cli — `GFLOW_CLI_HAR_PATH` (Playwright HAR network-traffic capture) and `GFLOW_CLI_DEBUG_TRACEBACK` (bypass the SHA-256 hash redaction on unhandled exceptions, in both console and `--json` output) — closing GitHub issue #316.
+**Goal:** Add two opt-in, env-var-driven debug knobs to gflow-cli — `GFLOW_CLI_HAR_PATH` (Playwright HAR network-traffic capture) and `GFLOW_CLI_DEBUG_TRACEBACK` (print the real message + traceback for unhandled exceptions, in both console and `--json` output, instead of today's generic placeholder) — closing GitHub issue #316. Note: only the structured telemetry event (`observability.emit_unhandled_event`) currently hashes anything; the console and `--json` surfaces already show nothing but a generic message today, so `debug_traceback` doesn't "bypass a hash" on those two paths — it replaces a placeholder with the real content. Telemetry stays hashed unconditionally either way (see Task 2/3).
 
 **Architecture:** Two independent `Settings` fields feed two independent code paths: `har_path` is consumed once, at the single production browser-launch site (`FlowApiClient._persistent_context_kwargs()`), plus a permission-hardening step at context close; `debug_traceback` is consumed at the two `_cli_helpers.py` exception-boundary call sites (console + `--json`), which already hold the live exception object and build their own raw output directly — `observability.emit_unhandled_event()` is untouched and keeps hashing unconditionally forever.
 
@@ -82,12 +82,30 @@ async def test_close_browser_resources_chmods_har_file(tmp_path: Path) -> None:
         await client._close_browser_resources()  # noqa: SLF001
     if sys.platform != "win32":
         assert stat.S_IMODE(har_path.stat().st_mode) == 0o600
+
+
+def test_har_path_resolves_from_env_var(monkeypatch: pytest.MonkeyPatch, tmp_path: Path) -> None:
+    """GFLOW_CLI_HAR_PATH (not just constructor injection) actually parses into
+    Settings.har_path — the other tests in this file inject har_path directly via
+    the constructor, which proves the consuming code works but never proves the
+    advertised env var name/wiring does."""
+    from gflow_cli.config import Settings, reset_settings
+
+    har_path = tmp_path / "env.har"
+    monkeypatch.setenv("GFLOW_CLI_HAR_PATH", str(har_path))
+    reset_settings()
+    assert Settings().har_path == har_path
 ```
 
 - [ ] **Step 2: Run tests to verify they fail**
 
 Run: `.venv/Scripts/python.exe -m pytest tests/api/test_client_launch_kwargs.py -v -k "har_path or chmods_har"`
-Expected: 3 FAIL — `Settings(har_path=...)` raises (unknown field), and `record_har_path` never appears in kwargs.
+
+Expected — 2 of the 4 new tests genuinely fail pre-implementation; the other 2 pass trivially and are regression guards, not red steps (worth knowing going in, not a plan defect — `Settings.model_config` has `extra="ignore"`, so an unrecognized `har_path=...` constructor kwarg is silently dropped rather than raising):
+- `test_persistent_context_kwargs_omits_har_path_when_unset` — PASSES already (no `har_path` involved either way).
+- `test_persistent_context_kwargs_includes_har_path_when_set` — FAILS (the field doesn't exist yet, so it's silently dropped and `record_har_path` never appears in `kwargs`).
+- `test_close_browser_resources_chmods_har_file` — FAILS on POSIX (the chmod code doesn't exist yet, so the file keeps its default `write_bytes` permissions, not `0o600`); passes **trivially** on Windows today, since the whole assertion is skipped there — the chmod code path still needs Step 5 to exist, this test just can't catch its absence on Windows.
+- `test_har_path_resolves_from_env_var` — FAILS (`Settings().har_path` doesn't exist as an attribute yet).
 
 - [ ] **Step 3: Add the two Settings fields**
 
@@ -110,14 +128,15 @@ In `src/gflow_cli/config.py`, insert immediately before line 453 (`    # --- log
     debug_traceback: bool = Field(
         default=False,
         description=(
-            "Bypasses hash redaction for unhandled (non-GFlowError) exceptions: "
-            "prints the real message + traceback to the console and, under "
-            "--json, into the payload's error.traceback field, instead of "
-            "SHA-256 hashes. SECURITY: may leak tokens/cookies present in "
-            "exception text — for local debugging only. Never pipe --json "
-            "output under this flag to a shared/persistent system (CI logs, "
-            "log aggregators, webhooks) without redacting it first. "
-            "Override via GFLOW_CLI_DEBUG_TRACEBACK."
+            "Prints the real message + traceback for unhandled (non-GFlowError) "
+            "exceptions to the console and, under --json, into the payload's "
+            "error.traceback field, instead of the generic placeholder. The "
+            "structured telemetry event stays hashed either way — this only "
+            "affects what the operator/caller sees. SECURITY: may leak "
+            "tokens/cookies present in exception text — for local debugging "
+            "only. Never pipe --json output under this flag to a "
+            "shared/persistent system (CI logs, log aggregators, webhooks) "
+            "without redacting it first. Override via GFLOW_CLI_DEBUG_TRACEBACK."
         ),
     )
 ```
@@ -156,9 +175,10 @@ In `src/gflow_cli/api/client.py`, replace the entire method — signature, docst
             # flag and merely relied on Playwright's internal default; on macOS
             # that let Chrome read cookies via the OS Keychain ("Chrome Safe
             # Storage"), which cannot decrypt the basic-sealed cookies -> a
-            # logged-out context -> HTTP 401 at project.createProject. #225 added
-            # a comment but never the flag here. Passing it explicitly keeps all
-            # paths symmetric regardless of Playwright's defaults.
+            # logged-out context -> HTTP 401 at project.createProject (login and
+            # verify succeed, generation fails). #225 added a comment but never
+            # the flag here. Passing it explicitly keeps all paths symmetric
+            # regardless of Playwright's defaults.
             "args": [
                 "--password-store=basic",
                 "--disable-blink-features=AutomationControlled",
@@ -205,17 +225,17 @@ to:
                 # best-effort only (never fail teardown over a permission tweak).
                 if self.settings.har_path is not None:
                     try:
-                        os.chmod(self.settings.har_path, 0o600)
+                        self.settings.har_path.chmod(0o600)
                     except OSError:
                         logger.warning("client.har_chmod_failed", exc_info=True)
 ```
 
-(the rest of the method — the `if self._pw is not None:` block and the `finally:` — is unchanged.)
+(the rest of the method — the `if self._pw is not None:` block and the `finally:` — is unchanged. `Path.chmod()` matches the existing precedent for hardening a token-bearing file in `src/gflow_cli/api/transports/experimental/bearer.py:102` — same effect as `os.chmod(path, mode)`, method style. `close_context_bounded` never re-raises a plain `Exception` internally — on a graceful-close failure it force-closes instead — so this chmod call is reached whichever of those two paths `close_context_bounded` took; the `try/except OSError` around it only needs to cover the file not existing or being unwritable.)
 
 - [ ] **Step 6: Run tests to verify they pass**
 
 Run: `.venv/Scripts/python.exe -m pytest tests/api/test_client_launch_kwargs.py -v`
-Expected: all PASS (including the 8 pre-existing tests in this file — confirms no regression).
+Expected: all 20 PASS (16 pre-existing + 4 new — confirms no regression to the pre-existing 16).
 
 - [ ] **Step 7: Lint + format**
 
@@ -280,7 +300,17 @@ def test_cli_unhandled_exception_default_hides_real_error_from_console(
 ) -> None:
     """Default (GFLOW_CLI_DEBUG_TRACEBACK unset) -> console never shows the raw
     message, and the hint now points at the real env var, not the misleading
-    --verbose claim."""
+    --verbose claim.
+
+    Explicitly clears GFLOW_CLI_DEBUG_TRACEBACK: the autouse _isolate_settings
+    fixture (tests/conftest.py) only pins GFLOW_CLI_HOME/GFLOW_CLI_DB_PATH, so
+    a developer's shell or .env.local exporting this var would otherwise leak
+    into "default" behavior and make this test flaky outside CI.
+    """
+    from gflow_cli.config import reset_settings
+
+    monkeypatch.delenv("GFLOW_CLI_DEBUG_TRACEBACK", raising=False)
+    reset_settings()
     _patch_profile_resolution(monkeypatch, tmp_path, "gflow_cli.cli_image")
     monkeypatch.setattr(
         "gflow_cli.cli_image._run_t2i",
@@ -307,7 +337,7 @@ Add near the top of `src/gflow_cli/_cli_helpers.py`, in the import block (after 
 import traceback
 ```
 
-Add to the `from gflow_cli...` import group (after the `from gflow_cli import auth as auth_mod` line, i.e. after line 47):
+Add to the `from gflow_cli...` import group — **after** `from gflow_cli import json_output, profile_store` (line 48), **before** `from gflow_cli.errors import (` (line 49). Ruff's isort rule (`I001`) sorts `gflow_cli.config` after the two plain `gflow_cli`/`gflow_cli as X` import lines, not between them:
 
 ```python
 from gflow_cli.config import get_settings
@@ -317,11 +347,12 @@ Replace `_handle_unhandled_error` (lines 257-266) with:
 
 ```python
 def _handle_unhandled_error(exc: BaseException, *, cli_command: str) -> int:
-    """Catch-all for non-:class:`GFlowError`. Privacy-safe by default: hashes
-    message + stack, never prints the raw payload. Set
-    GFLOW_CLI_DEBUG_TRACEBACK=1 to print the real exception + traceback
-    instead (local debugging only — the output may contain tokens/cookies).
-    Always returns exit code 1.
+    """Catch-all for non-:class:`GFlowError`. Privacy-safe by default: the
+    console shows only a generic message (the structured telemetry event is
+    always SHA-256-hashed regardless of this setting — see
+    ``emit_unhandled_event``). Set GFLOW_CLI_DEBUG_TRACEBACK=1 to print the
+    real exception + traceback to the console instead (local debugging only —
+    the output may contain tokens/cookies). Always returns exit code 1.
     """
     emit_unhandled_event(_logger, exc, cli_command=cli_command)
     if get_settings().debug_traceback:
@@ -433,9 +464,19 @@ def test_cli_json_unhandled_exception_default_stays_privacy_safe(
     tmp_path: Path,
     install_log_capture: structlog.testing.LogCapture,
 ) -> None:
-    """--json without the debug flag -> no detail/traceback fields, same as today."""
+    """--json without the debug flag -> no detail/traceback fields, same as today.
+
+    Explicitly clears GFLOW_CLI_DEBUG_TRACEBACK for the same reason as
+    test_cli_unhandled_exception_default_hides_real_error_from_console (Task 2)
+    — the autouse fixture doesn't isolate this var, so a developer's shell
+    exporting it would otherwise make this test environment-dependent.
+    """
     import json as json_mod
 
+    from gflow_cli.config import reset_settings
+
+    monkeypatch.delenv("GFLOW_CLI_DEBUG_TRACEBACK", raising=False)
+    reset_settings()
     _patch_profile_resolution(monkeypatch, tmp_path, "gflow_cli.cli_image")
     monkeypatch.setattr(
         "gflow_cli.cli_image._run_t2i",
@@ -540,9 +581,9 @@ git commit -m "feat(json): GFLOW_CLI_DEBUG_TRACEBACK --json path (#316)"
 
 - [ ] **Step 1: Insert the two entries**
 
-In `docs/CONFIGURATION.md`, insert immediately after line 262 (the last line of the `GFLOW_CLI_LOCALE` entry) and before line 264 (`## Output paths`):
+In `docs/CONFIGURATION.md`, insert immediately after line 262 (the last line of the `GFLOW_CLI_LOCALE` entry) and before line 264 (`## Output paths`). The block below is wrapped in a 4-backtick fence purely so it renders correctly in THIS plan document — the nested ```bash examples inside it are real content to paste verbatim into `CONFIGURATION.md`, not part of the fence syntax itself:
 
-```markdown
+````markdown
 
 ### `GFLOW_CLI_HAR_PATH`
 
@@ -558,7 +599,7 @@ $env:GFLOW_CLI_HAR_PATH = "C:\gflow-debug\session.har"      # PowerShell
 
 ### `GFLOW_CLI_DEBUG_TRACEBACK`
 
-**What:** Bypasses this CLI's default privacy-safe hash redaction for unhandled (non-typed) errors — prints the real exception message + full traceback to the console, and under `--json`, into the payload's `error.detail` / `error.traceback` fields, instead of SHA-256 hashes.
+**What:** Prints the real exception message + full traceback for unhandled (non-typed) errors — to the console, and under `--json`, into the payload's `error.detail` / `error.traceback` fields — instead of the default generic "Unexpected error" placeholder. This CLI's structured telemetry event is always SHA-256-hashed regardless of this setting; this flag only changes what you see, not what's logged.
 **Values:** `true` | `false`
 **Default:** `false`
 **Override examples:**
@@ -568,12 +609,12 @@ $env:GFLOW_CLI_DEBUG_TRACEBACK = "1"                                # PowerShell
 ```
 
 **SECURITY:** the real error text may contain tokens/cookies present in exception state — for local debugging only. `--json` output under this flag is a materially higher-risk surface than the interactive console: a human watches the console live and can react to the yellow warning, but `--json` output is designed to be piped into CI logs, log aggregators, and webhooks that persist or forward it unreviewed. **Never pipe `--json` output under this flag to a shared or persistent system without redacting it first.**
-```
+````
 
 - [ ] **Step 2: Verify the doc-links checker still passes**
 
 Run: `.venv/Scripts/python.exe scripts/ci/check_doc_links.py`
-Expected: exits 0, no broken links reported (this change adds no links, but the checker also validates overall markdown structure — confirms the insertion didn't break heading nesting).
+Expected: exits 0, no broken links reported. Note this only validates relative-link targets, NOT general markdown structure — it will not catch a malformed fence or broken heading nesting. Manually confirm the two new `###` entries render correctly (e.g. preview the file, or diff against the `GFLOW_CLI_LOCALE` entry immediately above them for matching structure) before committing.
 
 - [ ] **Step 3: Commit**
 
