@@ -245,6 +245,34 @@ def test_cli_unhandled_exception_debug_traceback_prints_real_error(
     assert "Unexpected error." not in result.output
 
 
+def test_cli_unhandled_exception_debug_traceback_disables_markup_parsing(
+    monkeypatch: pytest.MonkeyPatch,
+    tmp_path: Path,
+    install_log_capture: structlog.testing.LogCapture,
+) -> None:
+    """A raw exception message containing Rich-markup-like brackets (e.g. a
+    Playwright locator string) must NOT crash the catch-all handler with
+    rich.errors.MarkupError, and must be printed verbatim -- not stripped or
+    mangled by Rich's markup parser. Regression test for the ``markup=False``
+    fix on the raw-traceback print in `_handle_unhandled_error`."""
+    from gflow_cli.config import reset_settings
+
+    monkeypatch.setenv("GFLOW_CLI_DEBUG_TRACEBACK", "1")
+    reset_settings()
+
+    _patch_profile_resolution(monkeypatch, tmp_path, "gflow_cli.cli_image")
+    bracketed = 'selector not found: [data-testid="foo"]'
+    monkeypatch.setattr(
+        "gflow_cli.cli_image._run_t2i",
+        _make_raiser(ValueError(bracketed)),
+    )
+
+    runner = CliRunner()
+    result = runner.invoke(main, ["image", "t2i", "test prompt"])
+    assert result.exit_code == 1, result.output
+    assert bracketed in result.output
+
+
 def test_cli_unhandled_exception_default_hides_real_error_from_console(
     monkeypatch: pytest.MonkeyPatch,
     tmp_path: Path,
