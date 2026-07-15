@@ -139,10 +139,24 @@ class TestErrorPayload:
         assert payload["error"]["retryable"] is False
         assert payload["error"]["exit_code"] == 5
 
-    def test_unexpected_is_privacy_safe(self) -> None:
+    def test_unexpected_is_privacy_safe_by_default(self) -> None:
         payload = json_output.unexpected_payload()
         assert payload["error"]["class"] == "UnexpectedError"
         assert payload["error"]["retryable"] is False
         assert payload["error"]["exit_code"] == 1
-        # The raw exception message/stack must never leak into the payload.
+        # The raw exception message/stack must never leak into the payload
+        # unless the caller explicitly opts in via debug=.
         assert "detail" not in payload["error"]
+        assert "traceback" not in payload["error"]
+
+    def test_unexpected_with_debug_includes_detail_and_traceback(self) -> None:
+        try:
+            raise ValueError("boom")
+        except ValueError as exc:
+            payload = json_output.unexpected_payload(debug=exc)
+        assert payload["error"]["detail"] == "boom"
+        assert "ValueError" in payload["error"]["traceback"]
+        assert "boom" in payload["error"]["traceback"]
+        # Non-debug fields stay identical to the default shape.
+        assert payload["error"]["class"] == "UnexpectedError"
+        assert payload["error"]["exit_code"] == 1

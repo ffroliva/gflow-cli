@@ -261,6 +261,31 @@ GFLOW_CLI_HISTORY_PROMPTS=redacted gflow image t2i "confidential brief"
 **When to set it:** capturing locale-invariant DOM via `scripts/dev/capture_locale_invariants.py`, or live-verifying a generation under a non-EN account language.
 **Important:** Chrome's *UI* language is independently forced to `en-US` via the `--lang=en-US` launch arg (so Flow keeps serving `/fx/tools/flow/` and the editor's localized text selectors keep working). This env var only affects request headers — not the editor UI you see. See [KNOWN_ISSUES § issue #24](../KNOWN_ISSUES.md) for the path to dropping `--lang=en-US`.
 
+### `GFLOW_CLI_HAR_PATH`
+
+**What:** Captures full Playwright network traffic (requests, responses, headers, cookies) to a HAR file for the session — useful for diagnosing wire-format surprises or WAF rejections.
+**Default:** unset (no capture).
+**Override examples:**
+```bash
+export GFLOW_CLI_HAR_PATH=/tmp/gflow-debug/session.har       # POSIX
+$env:GFLOW_CLI_HAR_PATH = "C:\gflow-debug\session.har"      # PowerShell
+```
+
+**SECURITY:** a HAR file contains live auth cookies and bearer tokens — never share one publicly. The file is chmod'd `0o600` on POSIX after Playwright writes it (best-effort; no-op on Windows). Two concurrent `gflow` processes pointed at the same path will overwrite each other's HAR (last-writer-wins, no error) — use a distinct path per run if running more than one profile/command at once.
+
+### `GFLOW_CLI_DEBUG_TRACEBACK`
+
+**What:** Prints the real exception message + full traceback for unhandled (non-typed) errors — to the console, and under `--json`, into the payload's `error.detail` / `error.traceback` fields — instead of the default generic "Unexpected error" placeholder. This CLI's structured telemetry event is always SHA-256-hashed regardless of this setting; this flag only changes what you see, not what's logged.
+**Values:** `true` | `false`
+**Default:** `false`
+**Override examples:**
+```bash
+GFLOW_CLI_DEBUG_TRACEBACK=1 gflow image t2i "a cat" --profile dev   # POSIX
+$env:GFLOW_CLI_DEBUG_TRACEBACK = "1"                                # PowerShell
+```
+
+**SECURITY:** the real error text may contain tokens/cookies present in exception state — for local debugging only. `--json` output under this flag is a materially higher-risk surface than the interactive console: a human watches the console live and can react to the yellow warning, but `--json` output is designed to be piped into CI logs, log aggregators, and webhooks that persist or forward it unreviewed. **Never pipe `--json` output under this flag to a shared or persistent system without redacting it first.**
+
 ## Output paths
 
 The default output scheme keeps generated assets sortable, dated, and grouped by job:

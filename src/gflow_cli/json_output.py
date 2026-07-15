@@ -13,6 +13,7 @@ that shells out to ``gflow``) parses instead of scraping the Rich tables.
 from __future__ import annotations
 
 import json
+import traceback
 from typing import TYPE_CHECKING, Any
 
 from gflow_cli.errors import (
@@ -90,21 +91,25 @@ def error_payload(exc: GFlowError) -> dict[str, Any]:
     }
 
 
-def unexpected_payload() -> dict[str, Any]:
-    """Privacy-safe payload for a non-:class:`GFlowError`.
+def unexpected_payload(debug: BaseException | None = None) -> dict[str, Any]:
+    """Privacy-safe payload for a non-:class:`GFlowError`, by default.
 
     Mirrors ``_handle_unhandled_error``: never leaks the raw message or stack —
-    only the fact that an unclassified error occurred. Always exit code 1.
+    only the fact that an unclassified error occurred — unless ``debug`` is
+    passed (the caller has already confirmed GFLOW_CLI_DEBUG_TRACEBACK=1), in
+    which case ``detail``/``traceback`` carry the real exception. Always exit
+    code 1.
     """
-    return {
-        "status": "fail",
-        "error": {
-            "class": "UnexpectedError",
-            "title": "Unexpected error",
-            "exit_code": 1,
-            "retryable": False,
-        },
+    error: dict[str, Any] = {
+        "class": "UnexpectedError",
+        "title": "Unexpected error",
+        "exit_code": 1,
+        "retryable": False,
     }
+    if debug is not None:
+        error["detail"] = str(debug)
+        error["traceback"] = "".join(traceback.format_exception(debug))
+    return {"status": "fail", "error": error}
 
 
 def image_result(
