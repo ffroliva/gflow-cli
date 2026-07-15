@@ -336,9 +336,10 @@ class FlowApiClient:
         Extracted as an overridable seam so out-of-core tooling (e.g. a
         dev-scoped recording subclass that adds ``record_video_dir``) can
         augment the launch without any recording/test concern living in this
-        core path. The returned dict is identical to the previous inline call.
+        core path. The returned dict is identical to the previous inline call,
+        plus an optional ``record_har_path`` when ``GFLOW_CLI_HAR_PATH`` is set.
         """
-        return {
+        kwargs: JsonObject = {
             "user_data_dir": str(self.profile_dir),
             "headless": self.headless,
             "viewport": {"width": 1280, "height": 720},
@@ -368,6 +369,17 @@ class FlowApiClient:
                 "--disable-dev-shm-usage",
             ],
         }
+        if self.settings.har_path is not None:
+            self.settings.har_path.parent.mkdir(parents=True, exist_ok=True)
+            kwargs["record_har_path"] = str(self.settings.har_path)
+            logger.warning(
+                "client.har_capture_enabled",
+                har_path=str(self.settings.har_path),
+                hint="HAR file will contain full request/response bodies, headers, "
+                "and cookies — do not share it publicly or attach it to a public "
+                "bug report.",
+            )
+        return kwargs
 
     def _log_and_guard_launch(self, kwargs: dict[str, Any]) -> None:
         """Log the resolved browser-launch identity and fail loud on a silent
@@ -690,6 +702,16 @@ class FlowApiClient:
                 # Bounded close + force-close fallback (issue #293) — shared
                 # with the transports' own-context teardowns via _engine.
                 await close_context_bounded(self._context, owner="client")
+                # HAR files hold live auth cookies/bearer tokens — higher
+                # sensitivity than the CDP lockfile _write_lock already hardens
+                # in browser_manager.py. Playwright writes the HAR lazily on
+                # this close, so this is the earliest point the file exists;
+                # best-effort only (never fail teardown over a permission tweak).
+                if self.settings.har_path is not None:
+                    try:
+                        self.settings.har_path.chmod(0o600)
+                    except OSError:
+                        logger.warning("client.har_chmod_failed", exc_info=True)
             if self._pw is not None:
                 try:
                     # pw.stop() awaits the Node driver's exit with no deadline

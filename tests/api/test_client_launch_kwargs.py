@@ -56,6 +56,66 @@ def test_persistent_context_kwargs_are_unchanged(tmp_path: Path) -> None:
     assert kwargs["channel"] is None
 
 
+def test_persistent_context_kwargs_omits_har_path_when_unset(tmp_path: Path) -> None:
+    """No GFLOW_CLI_HAR_PATH -> no record_har_path key at all (not just None)."""
+    client = FlowApiClient(profile_dir=tmp_path, headless=True)
+    kwargs = client._persistent_context_kwargs()  # noqa: SLF001
+    assert "record_har_path" not in kwargs
+
+
+def test_persistent_context_kwargs_includes_har_path_when_set(tmp_path: Path) -> None:
+    """har_path set -> record_har_path passed through + parent dir created."""
+    from gflow_cli.config import Settings
+
+    har_path = tmp_path / "captures" / "session.har"
+    settings = Settings(har_path=har_path)
+    client = FlowApiClient(profile_dir=tmp_path, headless=True, settings=settings)
+    kwargs = client._persistent_context_kwargs()  # noqa: SLF001
+    assert kwargs["record_har_path"] == str(har_path)
+    assert har_path.parent.is_dir()
+
+
+@pytest.mark.asyncio
+async def test_close_browser_resources_chmods_har_file(tmp_path: Path) -> None:
+    """After context close, an existing HAR file is hardened to 0o600 on POSIX.
+
+    Windows has no POSIX permission bits, so the assertion is skipped there —
+    the chmod call itself is still exercised (must not raise on Windows).
+    """
+    import stat
+    import sys
+
+    from gflow_cli.config import Settings
+
+    har_path = tmp_path / "session.har"
+    har_path.write_bytes(b"{}")  # simulate Playwright having already written it
+    settings = Settings(har_path=har_path)
+    client = FlowApiClient(profile_dir=tmp_path, headless=True, settings=settings)
+    # _close_browser_resources only enters its close-block (where the chmod
+    # lives) when self._context is not None — a fresh client that never
+    # entered __aenter__ has _context=None, so a fake context is required
+    # here, matching the _client_with_cookies pattern used elsewhere in this
+    # file (e.g. test_context_cookie_state_present_and_unexpired).
+    client._context = MagicMock()  # noqa: SLF001
+    with patch("gflow_cli.api.client.close_context_bounded", AsyncMock()):
+        await client._close_browser_resources()  # noqa: SLF001
+    if sys.platform != "win32":
+        assert stat.S_IMODE(har_path.stat().st_mode) == 0o600
+
+
+def test_har_path_resolves_from_env_var(monkeypatch: pytest.MonkeyPatch, tmp_path: Path) -> None:
+    """GFLOW_CLI_HAR_PATH (not just constructor injection) actually parses into
+    Settings.har_path — the other tests in this file inject har_path directly via
+    the constructor, which proves the consuming code works but never proves the
+    advertised env var name/wiring does."""
+    from gflow_cli.config import Settings, reset_settings
+
+    har_path = tmp_path / "env.har"
+    monkeypatch.setenv("GFLOW_CLI_HAR_PATH", str(har_path))
+    reset_settings()
+    assert Settings().har_path == har_path
+
+
 @pytest.mark.asyncio
 async def test_ui_automation_setup_passes_disable_dev_shm_usage(tmp_path: Path) -> None:
     """setup() must pass --disable-dev-shm-usage in args to launch_persistent_context."""
