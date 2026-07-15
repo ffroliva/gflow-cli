@@ -218,6 +218,64 @@ def test_cli_unhandled_exception_exits_1_and_emits_unhandled_event(
     assert "bad input" not in str(e)
 
 
+def test_cli_unhandled_exception_debug_traceback_prints_real_error(
+    monkeypatch: pytest.MonkeyPatch,
+    tmp_path: Path,
+    install_log_capture: structlog.testing.LogCapture,
+) -> None:
+    """GFLOW_CLI_DEBUG_TRACEBACK=1 -> console shows the real message + traceback,
+    with a yellow leak-risk warning, instead of the generic 'Unexpected error.'"""
+    from gflow_cli.config import reset_settings
+
+    monkeypatch.setenv("GFLOW_CLI_DEBUG_TRACEBACK", "1")
+    reset_settings()
+
+    _patch_profile_resolution(monkeypatch, tmp_path, "gflow_cli.cli_image")
+    monkeypatch.setattr(
+        "gflow_cli.cli_image._run_t2i",
+        _make_raiser(ValueError("bad input")),
+    )
+
+    runner = CliRunner()
+    result = runner.invoke(main, ["image", "t2i", "test prompt"])
+    assert result.exit_code == 1
+    assert "bad input" in result.output
+    assert "ValueError" in result.output
+    assert "GFLOW_CLI_DEBUG_TRACEBACK" in result.output  # the leak-risk warning
+    assert "Unexpected error." not in result.output
+
+
+def test_cli_unhandled_exception_default_hides_real_error_from_console(
+    monkeypatch: pytest.MonkeyPatch,
+    tmp_path: Path,
+    install_log_capture: structlog.testing.LogCapture,
+) -> None:
+    """Default (GFLOW_CLI_DEBUG_TRACEBACK unset) -> console never shows the raw
+    message, and the hint now points at the real env var, not the misleading
+    --verbose claim.
+
+    Explicitly clears GFLOW_CLI_DEBUG_TRACEBACK: the autouse _isolate_settings
+    fixture (tests/conftest.py) only pins GFLOW_CLI_HOME/GFLOW_CLI_DB_PATH, so
+    a developer's shell or .env.local exporting this var would otherwise leak
+    into "default" behavior and make this test flaky outside CI.
+    """
+    from gflow_cli.config import reset_settings
+
+    monkeypatch.delenv("GFLOW_CLI_DEBUG_TRACEBACK", raising=False)
+    reset_settings()
+    _patch_profile_resolution(monkeypatch, tmp_path, "gflow_cli.cli_image")
+    monkeypatch.setattr(
+        "gflow_cli.cli_image._run_t2i",
+        _make_raiser(ValueError("bad input")),
+    )
+
+    runner = CliRunner()
+    result = runner.invoke(main, ["image", "t2i", "test prompt"])
+    assert result.exit_code == 1
+    assert "bad input" not in result.output
+    assert "GFLOW_CLI_DEBUG_TRACEBACK=1" in result.output
+
+
 def test_cli_gflow_error_emits_error_raised_event_with_correlation_id(
     monkeypatch: pytest.MonkeyPatch,
     tmp_path: Path,
