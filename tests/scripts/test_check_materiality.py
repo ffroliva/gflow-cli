@@ -92,6 +92,14 @@ def test_docs_touched_signals() -> None:
     assert sig["docs_touched"] is False
     assert sig["src_touched"] is True
 
+    # website configuration touched
+    sig = mat.traceability_signals(["website/mkdocs.yml"])
+    assert sig["docs_touched"] is True
+
+    # index.html touched
+    sig = mat.traceability_signals(["index.html"])
+    assert sig["docs_touched"] is True
+
 
 # --- single-source sync check ----------------------------------------------
 def test_material_list_sync_catches_drift() -> None:
