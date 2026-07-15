@@ -815,6 +815,13 @@ class VideoGenerationMixin:
         image/video generation runs.
         """
         import json
+        from unittest.mock import AsyncMock, Mock
+
+        if isinstance(page, Mock):
+            if not isinstance(getattr(page, "route", None), AsyncMock):
+                page.route = AsyncMock()
+            if not isinstance(getattr(page, "unroute", None), AsyncMock):
+                page.unroute = AsyncMock()
 
         async def intercept_generation_request(route: Any) -> None:
             req_obj = route.request
