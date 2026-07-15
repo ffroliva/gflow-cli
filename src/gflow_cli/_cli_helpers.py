@@ -330,7 +330,8 @@ def run_with_handlers(
     except BaseException as e:
         if as_json:
             emit_unhandled_event(_logger, e, cli_command=cli_command)
-            json_output.emit(json_output.unexpected_payload())
+            debug_exc = e if get_settings().debug_traceback else None
+            json_output.emit(json_output.unexpected_payload(debug=debug_exc))
             sys.exit(1)
         sys.exit(_handle_unhandled_error(e, cli_command=cli_command))
 

@@ -304,6 +304,66 @@ def test_cli_unhandled_exception_default_hides_real_error_from_console(
     assert "GFLOW_CLI_DEBUG_TRACEBACK=1" in result.output
 
 
+def test_cli_json_unhandled_exception_debug_traceback_includes_raw_detail(
+    monkeypatch: pytest.MonkeyPatch,
+    tmp_path: Path,
+    install_log_capture: structlog.testing.LogCapture,
+) -> None:
+    """--json + GFLOW_CLI_DEBUG_TRACEBACK=1 -> the JSON payload's error.detail /
+    error.traceback carry the real exception, same observability as console."""
+    import json as json_mod
+
+    from gflow_cli.config import reset_settings
+
+    monkeypatch.setenv("GFLOW_CLI_DEBUG_TRACEBACK", "1")
+    reset_settings()
+
+    _patch_profile_resolution(monkeypatch, tmp_path, "gflow_cli.cli_image")
+    monkeypatch.setattr(
+        "gflow_cli.cli_image._run_t2i",
+        _make_raiser(ValueError("bad input")),
+    )
+
+    runner = CliRunner()
+    result = runner.invoke(main, ["image", "t2i", "test prompt", "--json"])
+    assert result.exit_code == 1
+    payload = json_mod.loads(result.output)
+    assert payload["error"]["detail"] == "bad input"
+    assert "ValueError" in payload["error"]["traceback"]
+
+
+def test_cli_json_unhandled_exception_default_stays_privacy_safe(
+    monkeypatch: pytest.MonkeyPatch,
+    tmp_path: Path,
+    install_log_capture: structlog.testing.LogCapture,
+) -> None:
+    """--json without the debug flag -> no detail/traceback fields, same as today.
+
+    Explicitly clears GFLOW_CLI_DEBUG_TRACEBACK for the same reason as
+    test_cli_unhandled_exception_default_hides_real_error_from_console (Task 2)
+    — the autouse fixture doesn't isolate this var, so a developer's shell
+    exporting it would otherwise make this test environment-dependent.
+    """
+    import json as json_mod
+
+    from gflow_cli.config import reset_settings
+
+    monkeypatch.delenv("GFLOW_CLI_DEBUG_TRACEBACK", raising=False)
+    reset_settings()
+    _patch_profile_resolution(monkeypatch, tmp_path, "gflow_cli.cli_image")
+    monkeypatch.setattr(
+        "gflow_cli.cli_image._run_t2i",
+        _make_raiser(ValueError("bad input")),
+    )
+
+    runner = CliRunner()
+    result = runner.invoke(main, ["image", "t2i", "test prompt", "--json"])
+    assert result.exit_code == 1
+    payload = json_mod.loads(result.output)
+    assert "detail" not in payload["error"]
+    assert "traceback" not in payload["error"]
+
+
 def test_cli_gflow_error_emits_error_raised_event_with_correlation_id(
     monkeypatch: pytest.MonkeyPatch,
     tmp_path: Path,
