@@ -92,7 +92,7 @@ Playwright writes the HAR lazily on context close (`_close_browser_resources` �
 
   **Security caveat (D3 must-fix) — JSON is a materially different risk surface than the console line.** A human watches the interactive console live and can react to the yellow warning; `--json` output is designed to be piped into CI logs, log aggregators, and webhooks that persist or forward it unreviewed. The `debug_traceback` `Field` description and `docs/CONFIGURATION.md` entry must carry an explicit, JSON-specific line: *"Under `--json`, the raw traceback lands in the JSON payload's `error.traceback` field — never pipe `--json` output under this flag to a shared or persistent system (CI logs, log aggregators, chat webhooks) without redacting it first."*
 
-Net effect: 4 files touched (`config.py`, `client.py`, `_cli_helpers.py`, `docs/CONFIGURATION.md`) instead of 5 — `observability.py` drops out of the diff entirely.
+Net effect: still 5 files touched, but `observability.py` swaps out for `json_output.py` (`config.py`, `client.py`, `_cli_helpers.py`, `json_output.py`, `docs/CONFIGURATION.md`) — the D14 cut removes a redundant *surface*, not a file, since `unexpected_payload()`'s new optional `debug` param already lived in the plan as part of the JSON-output change.
 
 ### Non-goals
 
