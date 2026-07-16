@@ -132,7 +132,9 @@ class AlreadySentResponse(Response):
     """Response that does nothing; used when response was already written to ASGI send."""
 
     async def __call__(self, scope: Scope, receive: Receive, send: Send) -> None:
-        pass
+        # Intentional no-op: the response was already written directly to the ASGI
+        # `send` upstream, so this placeholder must not emit anything further.
+        return
 
 
 @app.post("/mcp/message")
