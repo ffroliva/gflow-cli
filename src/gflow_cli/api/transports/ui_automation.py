@@ -109,8 +109,13 @@ IMAGE_TAB_IN_MENU_SELECTORS = (
     "[role='menu'] [role='tab']:has(i:text('image'))",
 )
 
-# Browser viewport — matches the validated smoke (also matches the CG Worker).
-_VIEWPORT = {"width": 1280, "height": 800}
+# Browser viewport — 1920×1080, the most common real desktop resolution (#315).
+# Enlarged from 1280×800 to reduce the static-fingerprint signal; bigger stays in
+# Flow's desktop layout (smaller would cross the responsive breakpoint and drift the
+# selectors). NOTE: the sibling CG Worker assumes the old size — reconcile there
+# separately. The REST client's own viewport
+# (client.py, 1280×720) is an independent, selector-irrelevant context and is unchanged.
+_VIEWPORT = {"width": 1920, "height": 1080}
 
 # Hosts allowed when downloading generated PNGs. Flow's fifeUrl currently
 # resolves to lh3.googleusercontent.com; the broader allow-list covers
