@@ -115,7 +115,26 @@ jobs:
           name: coverage-xml
         continue-on-error: true  # graceful if coverage upload was skipped
 
+      # SonarCloud is a third-party service; it does have outages (seen live
+      # 2026-07-16, ~504s across its whole API including the unauthenticated
+      # /api/system/status endpoint). Reassessed fresh on every run — no manual
+      # flag to remember to flip back once it recovers. A skip here still lets
+      # the job COMPLETE (green), it just doesn't run the scan step; local
+      # coverage during an outage comes from the shared SonarQube instance
+      # (scripts/dev/sonar-local-scan.sh) — see docs/GITHUB.md § SonarCloud
+      # outage handling.
+      - name: Check SonarCloud availability
+        id: sonarcloud_health
+        run: |
+          if curl -sf -m 10 "https://sonarcloud.io/api/system/status" | grep -q '"status":"UP"'; then
+            echo "up=true" >> "$GITHUB_OUTPUT"
+          else
+            echo "up=false" >> "$GITHUB_OUTPUT"
+            echo "::warning::SonarCloud is unreachable or degraded — skipping the scan for this run (not a code quality failure). Verify locally with scripts/dev/sonar-local-scan.sh before merging if this persists, and re-run this job once SonarCloud recovers."
+          fi
+
       - name: SonarCloud scan
+        if: steps.sonarcloud_health.outputs.up == 'true'
         uses: SonarSource/sonarcloud-github-action@v5.0.0
         env:
           GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}  # PR decoration
