@@ -17,7 +17,9 @@ import pytest
 from gflow_cli.api.image import AgentInstruction, Aspect, GenerateImageRequest, Model
 from gflow_cli.api.transports.drivers import agentic as agentic_mod
 from gflow_cli.api.transports.drivers.agentic import (
+    _IMAGE_COUNT_TABLIST_SELECTOR,
     _MEDIA_REDIRECT_BASE,
+    _TUNE_BUTTON_SELECTOR,
     AgenticFlowUiDriver,
     _extract_uuids,
 )
@@ -57,6 +59,18 @@ def _make_image_request(
     model: Model = Model.NARWHAL,
 ) -> GenerateImageRequest:
     return GenerateImageRequest(prompt="a cat", count=count, aspect=aspect, model=model)
+
+
+def _mock_page_no_settings_panel() -> MagicMock:
+    """Page where the Agent settings panel's tune button is absent (count 0) —
+    exercises the graceful-skip path so configure_image_settings tests don't
+    need to model the full settings-panel click sequence."""
+    page = MagicMock()
+    locator_mock = MagicMock()
+    locator_mock.first = locator_mock
+    locator_mock.count = AsyncMock(return_value=0)
+    page.locator = MagicMock(return_value=locator_mock)
+    return page
 
 
 def _fake_page_no_policy(
@@ -162,7 +176,7 @@ def test_compose_directive_plural_singular() -> None:
 @pytest.mark.asyncio
 async def test_configure_image_settings_stores_count_and_aspect() -> None:
     driver = AgenticFlowUiDriver()
-    page = MagicMock()
+    page = _mock_page_no_settings_panel()
     req = _make_image_request(count=4, aspect=Aspect.LANDSCAPE)
     await driver.configure_image_settings(page, req)
     assert driver._pending_count == 4  # noqa: SLF001
@@ -173,7 +187,7 @@ async def test_configure_image_settings_stores_count_and_aspect() -> None:
 async def test_configure_image_settings_portrait_aspect() -> None:
     driver = AgenticFlowUiDriver()
     req = _make_image_request(count=1, aspect=Aspect.PORTRAIT)
-    await driver.configure_image_settings(MagicMock(), req)
+    await driver.configure_image_settings(_mock_page_no_settings_panel(), req)
     assert driver._pending_aspect == "9:16"  # noqa: SLF001
 
 
@@ -181,8 +195,146 @@ async def test_configure_image_settings_portrait_aspect() -> None:
 async def test_configure_image_settings_square_aspect() -> None:
     driver = AgenticFlowUiDriver()
     req = _make_image_request(count=2, aspect=Aspect.SQUARE)
-    await driver.configure_image_settings(MagicMock(), req)
+    await driver.configure_image_settings(_mock_page_no_settings_panel(), req)
     assert driver._pending_aspect == "1:1"  # noqa: SLF001
+
+
+# ---------------------------------------------------------------------------
+# _enforce_image_count_via_settings_panel — issue #313 fallback
+# ---------------------------------------------------------------------------
+
+
+def _mock_page_with_settings_panel(
+    *, already_selected: str = "x2"
+) -> tuple[MagicMock, MagicMock, MagicMock]:
+    """Page where the tune button, count tablist, and Save button are all
+    present. Returns (page, target_btn_mock, tune_btn_mock) so tests can
+    assert on click() call counts for specific elements.
+
+    ``already_selected`` is unused by the mock itself (the production code
+    always clicks the target button unconditionally — see Step 3) but is
+    kept as a documented parameter for readability at call sites that care
+    about the pre-click state being irrelevant to the assertion.
+    """
+    del already_selected  # documented no-op — see docstring
+
+    tune_btn = MagicMock()
+    tune_btn.count = AsyncMock(return_value=1)
+    tune_btn.click = AsyncMock()
+
+    target_btn = MagicMock()
+    target_btn.first = target_btn  # production does count_tablist.locator(...).first
+    target_btn.count = AsyncMock(return_value=1)
+    target_btn.click = AsyncMock()
+
+    count_tablist = MagicMock()
+    count_tablist.locator = MagicMock(return_value=target_btn)
+
+    save_btn = MagicMock()
+    save_btn.click = AsyncMock()
+
+    def _locator(selector: str) -> MagicMock:
+        result = MagicMock()
+        if selector == _TUNE_BUTTON_SELECTOR:
+            result.first = tune_btn
+        elif selector == _IMAGE_COUNT_TABLIST_SELECTOR:
+            result.first = count_tablist
+        elif selector == "[data-gflow-save-target='1']":
+            result.first = save_btn
+        else:
+            result.first = MagicMock()
+        return result
+
+    page = MagicMock()
+    page.locator = MagicMock(side_effect=_locator)
+    page.evaluate = AsyncMock(return_value=True)
+
+    return page, target_btn, tune_btn
+
+
+@pytest.mark.asyncio
+async def test_enforce_count_clicks_matching_button_and_saves() -> None:
+    driver = AgenticFlowUiDriver()
+    page, target_btn, tune_btn = _mock_page_with_settings_panel()
+    await driver._enforce_image_count_via_settings_panel(page, 3)  # noqa: SLF001
+    tune_btn.click.assert_awaited_once()
+    target_btn.click.assert_awaited_once()
+    page.evaluate.assert_awaited_once()
+
+
+@pytest.mark.asyncio
+async def test_enforce_count_maps_all_valid_counts_to_button_labels() -> None:
+    """1..4 must each resolve to a locator call for the matching '<n>x' label
+    (or '1x' for count=1) — a regression here means a future count silently
+    clicks the wrong tab."""
+    for count, expected_label in agentic_mod._COUNT_BUTTON_TEXT.items():
+        driver = AgenticFlowUiDriver()
+        page, target_btn, _ = _mock_page_with_settings_panel()
+        await driver._enforce_image_count_via_settings_panel(page, count)  # noqa: SLF001
+        count_tablist_locator = page.locator(agentic_mod._IMAGE_COUNT_TABLIST_SELECTOR).first
+        count_tablist_locator.locator.assert_any_call(f"button:text-is('{expected_label}')")
+
+
+@pytest.mark.asyncio
+async def test_enforce_count_skips_gracefully_when_tune_button_absent() -> None:
+    """Older UI cohort / no settings panel at all — must return quietly, not raise."""
+    driver = AgenticFlowUiDriver()
+    page = MagicMock()
+    absent = MagicMock()
+    absent.count = AsyncMock(return_value=0)
+    page.locator = MagicMock(return_value=absent)
+    await driver._enforce_image_count_via_settings_panel(page, 1)  # noqa: SLF001
+    # No exception raised is the assertion; nothing else to check.
+
+
+@pytest.mark.asyncio
+async def test_enforce_count_skips_gracefully_when_count_button_absent() -> None:
+    driver = AgenticFlowUiDriver()
+    tune_btn = MagicMock()
+    tune_btn.count = AsyncMock(return_value=1)
+    tune_btn.click = AsyncMock()
+
+    absent_target = MagicMock()
+    absent_target.first = absent_target  # production does count_tablist.locator(...).first
+    absent_target.count = AsyncMock(return_value=0)
+
+    count_tablist = MagicMock()
+    count_tablist.locator = MagicMock(return_value=absent_target)
+
+    def _locator(selector: str) -> MagicMock:
+        result = MagicMock()
+        if selector == _TUNE_BUTTON_SELECTOR:
+            result.first = tune_btn
+        elif selector == _IMAGE_COUNT_TABLIST_SELECTOR:
+            result.first = count_tablist
+        else:
+            result.first = MagicMock()
+        return result
+
+    page = MagicMock()
+    page.locator = MagicMock(side_effect=_locator)
+    await driver._enforce_image_count_via_settings_panel(page, 1)  # noqa: SLF001
+    # No exception — graceful skip.
+
+
+@pytest.mark.asyncio
+async def test_enforce_count_skips_save_click_when_save_button_not_found() -> None:
+    driver = AgenticFlowUiDriver()
+    page, target_btn, tune_btn = _mock_page_with_settings_panel()
+    page.evaluate = AsyncMock(return_value=False)  # _FIND_SAVE_BUTTON_JS found nothing
+    await driver._enforce_image_count_via_settings_panel(page, 1)  # noqa: SLF001
+    tune_btn.click.assert_awaited_once()
+    target_btn.click.assert_awaited_once()
+    # No exception, and no attempt to click a nonexistent save button.
+
+
+@pytest.mark.asyncio
+async def test_enforce_count_swallows_exceptions_and_never_raises() -> None:
+    driver = AgenticFlowUiDriver()
+    page = MagicMock()
+    page.locator = MagicMock(side_effect=RuntimeError("boom"))
+    # Must not raise.
+    await driver._enforce_image_count_via_settings_panel(page, 1)  # noqa: SLF001
 
 
 # ---------------------------------------------------------------------------
@@ -636,10 +788,15 @@ async def test_await_images_synthesised_fields() -> None:
 @pytest.mark.asyncio
 async def test_reconcile_instructions_no_op_when_none() -> None:
     driver = AgenticFlowUiDriver()
-    page = MagicMock()
+    page = _mock_page_no_settings_panel()
     req = GenerateImageRequest(prompt="a cat", instructions=None)
     await driver.configure_image_settings(page, req)
-    page.locator.assert_not_called()
+    # instructions=None means _reconcile_instructions's REST PATCH path must
+    # not run. The settings-panel count-enforcement step (unrelated) DOES
+    # call page.locator now, so the original "locator never called"
+    # assertion no longer holds — assert the instructions-specific behavior
+    # instead.
+    assert not page.request.patch.called
 
 
 @pytest.mark.asyncio
