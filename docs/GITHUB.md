@@ -130,6 +130,26 @@ Open the PR Summary at `sonarcloud.io/summary/new_code?id=ffroliva_gflow-cli&pul
   `cast(T, ...)  # pyright: ignore[reportUnnecessaryCast]` pattern that satisfies
   S5655/S5890 (removing those casts reintroduces the finding).
 
+### SonarCloud outage handling
+
+SonarCloud is a third-party service and does have outages (seen live
+2026-07-16 — a ~504 across its whole API, including the unauthenticated
+`/api/system/status` endpoint). The `sonar` job's `Check SonarCloud
+availability` step probes that endpoint fresh on every run and skips the
+`SonarCloud scan` step (job stays green) when it's down — no manual flag to
+remember to flip back once it recovers.
+
+During an outage there's still local coverage: `git push` runs
+`scripts/dev/sonar-pre-push-gate.sh` (wired via `.pre-commit-config.yaml`'s
+`pre-push` stage — install with `pre-commit install --hook-type pre-push`).
+It re-checks SonarCloud itself and only falls back to a scan against the
+shared local SonarQube instance
+(`../shared-infra/sonarqube`, via `scripts/dev/sonar-local-scan.sh`) when
+SonarCloud is unreachable. Both scripts skip gracefully (exit 0) if that
+optional local infra isn't checked out — most contributors won't have it,
+and that must never block a push. If the outage persists past your push,
+re-run the `sonar` job once SonarCloud recovers before merging.
+
 ## If Sonar Did Not Run
 
 For small PRs, merge to `develop` after review when tests and gitleaks are
