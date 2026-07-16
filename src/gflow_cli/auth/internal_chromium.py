@@ -148,7 +148,9 @@ class InternalChromiumStrategy(AuthStrategy):
             ctx = await pw.chromium.launch_persistent_context(
                 user_data_dir=str(profile_dir),
                 headless=headless,
-                viewport={"width": 1280, "height": 800},
+                # Match the generation viewport (#315) so a profile logs in at the
+                # same size it later generates with; login-window only, not selector-bound.
+                viewport={"width": 1920, "height": 1080},
                 args=["--password-store=basic"],
             )
             try:
