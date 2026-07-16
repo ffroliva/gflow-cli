@@ -7,6 +7,10 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+### Changed
+
+- **UI-automation viewport enlarged to 1920×1080** (from 1280×800) to reduce the static browser-fingerprint signal with the most common real desktop resolution. Only the `UiAutomationTransport` context is affected; the `FlowApiClient` REST context (1280×720, selector-irrelevant) is unchanged. Enlarging stays within Flow's desktop layout, so selectors are unaffected. Timing/click humanization from #315 remains out of scope — parked under ADR-13 (the current stealth stack already measures a 0.0% WAF-403 rate). (#315)
+
 ## [0.36.0] — 2026-07-16
 
 ### Added
