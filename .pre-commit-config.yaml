@@ -20,6 +20,8 @@
 #      during an outage. Gracefully skips (never blocks) if the optional
 #      local Sonar infra isn't set up -- most contributors won't have it.
 
+default_stages: [pre-commit]
+
 repos:
   - repo: https://github.com/astral-sh/ruff-pre-commit
     rev: v0.11.10
@@ -52,4 +54,4 @@ repos:
       - id: detect-secrets
         name: Detect secrets
         args: ["--baseline", ".secrets.baseline"]
-        exclude: "\.secrets\.baseline$"
+        exclude: '\.secrets\.baseline$'
