@@ -7,6 +7,8 @@
 | Asset | Threat | Severity |
 |---|---|---|
 | Google session cookies (in `$GFLOW_CLI_HOME/profile_<name>/Default/Cookies`) | Theft → full access to user's Google account | **High** |
+| HAR capture file (`GFLOW_CLI_HAR_PATH`, opt-in, off by default) | Contains live auth cookies + bearer tokens in plaintext — theft is equivalent to session cookie theft | **High** |
+| Console/JSON output under `GFLOW_CLI_DEBUG_TRACEBACK` (opt-in, off by default) | Raw exception text may echo tokens/cookies present in error state, especially if piped to a shared/persistent system (CI logs, aggregators) | Medium–High (depends on destination) |
 | Generated outputs (`$GFLOW_CLI_OUTPUT_DIR/...`) | Unwanted disclosure | Medium (depends on content) |
 | Local database (`$GFLOW_CLI_HOME/gflow.db`) | Disclosure of prompt history and asset provenance | Low–Medium (depends on prompt content; use `GFLOW_CLI_HISTORY_PROMPTS=redacted` to reduce) |
 | `.env` file with `GFLOW_CLI_GEMINI_API_KEY` | Theft → API quota theft, billing | Medium |
@@ -48,6 +50,20 @@ Not used by v0.4.0a2's reverse-engineered Flow provider. Documented here in adva
 
 - **Location:** stdout/stderr by default. No log file unless you redirect.
 - **Content scrubbing:** Prompts, asset UUIDs, job IDs, profile names. No cookies, no tokens, no API keys.
+- The structured `error_unhandled` telemetry event is **always** SHA-256-hashed, regardless of any debug flag below — this guarantee is unconditional.
+
+### HAR capture (`GFLOW_CLI_HAR_PATH`, opt-in)
+
+- **Location:** wherever you point the env var. Not created unless explicitly set.
+- **Content:** full Playwright network traffic for the session — every request/response, including headers and cookies. This means live Flow session cookies and bearer tokens are written to the file in plaintext.
+- **Access:** chmod'd `0600` on POSIX after Playwright finishes writing it (best-effort; no-op on Windows, which has no equivalent POSIX permission bit).
+- **Handling:** treat exactly like a session-cookie leak (see "I committed a session by mistake" below) if a HAR file is ever shared, committed, or uploaded anywhere. Never attach one to a public bug report.
+
+### Debug tracebacks (`GFLOW_CLI_DEBUG_TRACEBACK`, opt-in)
+
+- **Effect:** unhandled (non-typed) exceptions print their real message + full traceback — to the console, and under `--json`, into the payload's `error.detail`/`error.traceback` fields — instead of the default generic placeholder.
+- **Risk:** the real exception text may contain tokens/cookies present in exception state. `--json` output under this flag is a materially higher-risk surface than the console: a human watches the console live, but `--json` is designed to be piped into CI logs, log aggregators, and webhooks that persist or forward it unreviewed. Never pipe `--json` output under this flag to a shared/persistent system without redacting it first.
+- **Unaffected:** the structured telemetry event (`error_unhandled`) stays hashed regardless of this setting — only what the operator/caller sees changes.
 
 ## Local data layer
 

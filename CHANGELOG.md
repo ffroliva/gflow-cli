@@ -7,6 +7,18 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+## [0.36.0] — 2026-07-16
+
+### Added
+
+- **`GFLOW_CLI_HAR_PATH`:** captures full Playwright network traffic (requests, responses, headers, cookies) to a HAR file for the session — useful for diagnosing wire-format surprises or WAF rejections. Opt-in, env-var only; the file is hardened to `0600` on POSIX after Playwright writes it (#316).
+- **`GFLOW_CLI_DEBUG_TRACEBACK`:** prints the real exception message + traceback for unhandled errors — to the console and, under `--json`, into the payload's `error.detail`/`error.traceback` fields — instead of the generic placeholder. The structured telemetry event stays SHA-256-hashed unconditionally either way; this only changes what the operator/caller sees (#316).
+- **`llm-council` skill:** `/gflow:llm-council` composes with `pr-council-review`, adding `codex`/`gemini` (opt-in `agy`) as independent external reviewers alongside the internal Claude-subagent council for high-stakes reviews (#320).
+
+### Fixed
+
+- **Reference entity smuggling:** a poisoned character entity (from a `gflow character create` that failed mid-workflow, e.g. the body-triptych step) could leak its `referenceEntities` into unrelated `gflow image i2i` calls in the same project workspace, even when the caller never passed `--reference-entity`. The UI-automation interceptor now strips unrequested `referenceEntities` before submit (#312).
+
 ## [0.35.0] — 2026-07-14
 
 ### Added
@@ -1980,7 +1992,9 @@ shell-script template that branches on these codes.
 
 First skeleton. Not functional end-to-end yet.
 
-[Unreleased]: https://github.com/ffroliva/gflow-cli/compare/v0.34.0...HEAD
+[Unreleased]: https://github.com/ffroliva/gflow-cli/compare/v0.36.0...HEAD
+[0.36.0]: https://github.com/ffroliva/gflow-cli/compare/v0.35.0...v0.36.0
+[0.35.0]: https://github.com/ffroliva/gflow-cli/compare/v0.34.0...v0.35.0
 [0.34.0]: https://github.com/ffroliva/gflow-cli/compare/v0.33.0...v0.34.0
 [0.33.0]: https://github.com/ffroliva/gflow-cli/compare/v0.32.1...v0.33.0
 [0.32.1]: https://github.com/ffroliva/gflow-cli/compare/v0.32.0...v0.32.1
