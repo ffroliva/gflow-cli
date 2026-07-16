@@ -37,6 +37,7 @@ from __future__ import annotations
 
 import re
 import sys
+import traceback
 from pathlib import Path
 from typing import TYPE_CHECKING, Any, Literal
 
@@ -46,6 +47,7 @@ from rich.console import Console
 
 from gflow_cli import auth as auth_mod
 from gflow_cli import json_output, profile_store
+from gflow_cli.config import get_settings
 from gflow_cli.errors import (
     EXIT_CODE_MAP,
     GFlowError,
@@ -255,14 +257,26 @@ def _handle_gflow_error(exc: GFlowError, *, cli_command: str) -> int:
 
 
 def _handle_unhandled_error(exc: BaseException, *, cli_command: str) -> int:
-    """Catch-all for non-:class:`GFlowError`. Privacy-safe: hashes message + stack,
-    never logs raw payload. Always returns exit code 1.
+    """Catch-all for non-:class:`GFlowError`. Privacy-safe by default: the
+    console shows only a generic message (the structured telemetry event is
+    always SHA-256-hashed regardless of this setting — see
+    ``emit_unhandled_event``). Set GFLOW_CLI_DEBUG_TRACEBACK=1 to print the
+    real exception + traceback to the console instead (local debugging only —
+    the output may contain tokens/cookies). Always returns exit code 1.
     """
     emit_unhandled_event(_logger, exc, cli_command=cli_command)
-    _console.print(
-        "[red]Unexpected error.[/red] Re-run with --verbose to capture details. "
-        "If this persists, file a bug at https://github.com/ffroliva/gflow-cli/issues.",
-    )
+    if get_settings().debug_traceback:
+        _console.print(
+            "[yellow]GFLOW_CLI_DEBUG_TRACEBACK is set — the output below may "
+            "contain tokens/cookies. Do not share it publicly.[/yellow]"
+        )
+        _console.print("".join(traceback.format_exception(exc)), markup=False)
+    else:
+        _console.print(
+            "[red]Unexpected error.[/red] Re-run with GFLOW_CLI_DEBUG_TRACEBACK=1 "
+            "to see the real error. If this persists, file a bug at "
+            "https://github.com/ffroliva/gflow-cli/issues.",
+        )
     return 1
 
 
@@ -316,7 +330,8 @@ def run_with_handlers(
     except BaseException as e:
         if as_json:
             emit_unhandled_event(_logger, e, cli_command=cli_command)
-            json_output.emit(json_output.unexpected_payload())
+            debug_exc = e if get_settings().debug_traceback else None
+            json_output.emit(json_output.unexpected_payload(debug=debug_exc))
             sys.exit(1)
         sys.exit(_handle_unhandled_error(e, cli_command=cli_command))
 
