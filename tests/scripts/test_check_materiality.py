@@ -81,6 +81,26 @@ def test_no_block_when_tests_absent(monkeypatch: pytest.MonkeyPatch) -> None:
     assert mat.main([]) == 0
 
 
+def test_docs_touched_signals() -> None:
+    # docs (.md) touched
+    sig = mat.traceability_signals(["docs/USAGE.md"])
+    assert sig["docs_touched"] is True
+    assert sig["src_touched"] is False
+
+    # code touched, no docs
+    sig = mat.traceability_signals(["src/gflow_cli/auth/x.py"])
+    assert sig["docs_touched"] is False
+    assert sig["src_touched"] is True
+
+    # website configuration touched
+    sig = mat.traceability_signals(["website/mkdocs.yml"])
+    assert sig["docs_touched"] is True
+
+    # index.html touched
+    sig = mat.traceability_signals(["index.html"])
+    assert sig["docs_touched"] is True
+
+
 # --- single-source sync check ----------------------------------------------
 def test_material_list_sync_catches_drift() -> None:
     out = mat._check_material_list_sync("only mentions src/gflow_cli/auth/ and data/")

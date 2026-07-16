@@ -4,9 +4,15 @@
 
 ## Current release
 
+**v0.36.0 — alpha.** **Diagnostic tooling (`GFLOW_CLI_HAR_PATH` + `GFLOW_CLI_DEBUG_TRACEBACK`) + reference-entity-smuggling fix (#312/#316).** Two opt-in, env-var-only debug knobs: `GFLOW_CLI_HAR_PATH` captures full Playwright network traffic to a HAR file (0600-hardened on POSIX); `GFLOW_CLI_DEBUG_TRACEBACK` prints the real exception + traceback for unhandled errors (console and `--json`) instead of the generic placeholder, while structured telemetry stays hashed unconditionally either way. Also fixes a poisoned character entity leaking `referenceEntities` into unrelated `image i2i` calls in the same project workspace. Also ships the `llm-council` skill (`/gflow:llm-council`), adding external CLI reviewers (`codex`/`gemini`, opt-in `agy`) alongside the internal council for high-stakes reviews. Verification: [LIVE_VERIFICATION_v0.36.0](LIVE_VERIFICATION_v0.36.0.md) (live HAR capture against real Flow traffic; typed-error scoping confirmed live; unhandled path covered by 6 new tests, 30 total across both files).
+
+**Develop (unreleased, post-v0.36.0):** *(empty — develop is the staging branch for the next release).*
+
+<details><summary>v0.35.0 — multimodal reverse-engineering + storyboard tool</summary>
+
 **v0.35.0 — alpha.** **Multimodal reverse-engineering + Storyboard tool + Dynamic Token Budgeting (#305-follow-up).** Adds `gflow tools run storyboard` to generate sequential visual prompts from single ideas, and integrates `gflow tools run reverse-engineer` with `claude-video`'s `watch.py` script for frame extraction and multimodal deconstruction of video/URL references using Gemini. Token budgets now scale dynamically with character limits. Verification: [LIVE_VERIFICATION_v0.35.0](LIVE_VERIFICATION_v0.35.0.md) (proven live storyboard expansion + frame extraction).
 
-**Develop (unreleased, post-v0.35.0):** *(empty — develop is the staging branch for the next release).*
+</details>
 
 <details><summary>v0.34.0 — bidirectional UI cohort switching</summary>
 
@@ -202,6 +208,7 @@ reporter-verified e2e on macOS).
 | `movie.toml` `[style]` block with named variants + prompt-aware resume (`style_hash`) (#239) | ✅ done (v0.27.0) |
 | Agent instructions (`-i`/`--instruction`) steer agentic generation — conversational directive + brief master switch (PR #263) | ✅ done (v0.28.0) |
 | Persistent `gflow instructions` CRUD + `movie.toml` instructions brief-sync + `gflow_instructions_*` MCP tools + CI-enforced MCP↔CLI parity (#192) | ✅ done (v0.29.0) |
+| Diagnostic tooling (`GFLOW_CLI_HAR_PATH` + `GFLOW_CLI_DEBUG_TRACEBACK`) + reference-entity-smuggling fix (#312/#316) | ✅ done (v0.36.0) |
 | `gflow video batch` (TSV manifest) on `ui_automation` | ⏳ Phase B |
 | Persistence layer (stay-mounted batch sessions across project boundaries) | ⏳ Phase B |
 | Provider abstraction for official Veo 3.1 API | ⏳ planned |

@@ -2167,41 +2167,47 @@ class UiAutomationTransport(VideoGenerationMixin):
                 out_dir=out_dir,
             )
 
-        # Agentic path: DOM scraping (page-level network capture is dead in this
-        # cohort — requests are Web-Worker-delegated, so 0 entries are captured).
-        if ui_driver.name == "agentic":
-            await ui_driver.send_prompt(page, request.prompt, out_dir=out_dir)
-            return await ui_driver.await_images(page, request.count, out_dir=out_dir)
+        # Wrap generation submission in the reference entities interceptor context.
+        # This programmatically filters outgoing batchGenerateImages requests so that
+        # only the explicitly requested reference_entities are permitted to go to the server,
+        # preventing stale or poisoned entities from smuggling themselves into unrelated runs.
+        expected_ents = set(request.reference_entities)
+        async with self._intercept_reference_entities(page, expected_ents):
+            # Agentic path: DOM scraping (page-level network capture is dead in this
+            # cohort — requests are Web-Worker-delegated, so 0 entries are captured).
+            if ui_driver.name == "agentic":
+                await ui_driver.send_prompt(page, request.prompt, out_dir=out_dir)
+                return await ui_driver.await_images(page, request.count, out_dir=out_dir)
 
-        # Classic path: network-capture via response listener (unchanged).
-        # Attach the response listener SYNCHRONOUSLY before any prompt
-        # action. asyncio.create_task is unsafe here: it defers the listener
-        # registration until the new task gets event-loop scheduling, which
-        # could happen AFTER _send_prompt's click on a busy loop. Splitting
-        # attach/await eliminates that race. Project-ID filter prevents stale
-        # responses from previously-visited projects accumulating in the list.
-        captured, detach = self._attach_batch_response_listener(page, project_id=nav_project_id)
-        # Also log the OUTGOING request body summary AND collect the entity ids
-        # it carries — the #170 submit backstop reads the sink after the run.
-        request_bodies: list[dict[str, Any]] = []
-        req_log_detach = self._attach_batch_request_logger(
-            page, project_id=nav_project_id, sink=request_bodies
-        )
-        # Record submit_time BEFORE the click so the post-submit-time filter
-        # in _await_captured can distinguish this prompt's responses from any
-        # stale entries that arrived between listener attach and the click.
-        submit_time = time.monotonic()
-        responses: list[dict[str, Any]] = []
-        try:
-            await ui_driver.send_prompt(page, request.prompt, out_dir=out_dir)
-            responses = await self._await_captured(
-                captured,
-                expected_count=request.count,
-                submit_time=submit_time,
+            # Classic path: network-capture via response listener (unchanged).
+            # Attach the response listener SYNCHRONOUSLY before any prompt
+            # action. asyncio.create_task is unsafe here: it defers the listener
+            # registration until the new task gets event-loop scheduling, which
+            # could happen AFTER _send_prompt's click on a busy loop. Splitting
+            # attach/await eliminates that race. Project-ID filter prevents stale
+            # responses from previously-visited projects accumulating in the list.
+            captured, detach = self._attach_batch_response_listener(page, project_id=nav_project_id)
+            # Also log the OUTGOING request body summary AND collect the entity ids
+            # it carries — the #170 submit backstop reads the sink after the run.
+            request_bodies: list[dict[str, Any]] = []
+            req_log_detach = self._attach_batch_request_logger(
+                page, project_id=nav_project_id, sink=request_bodies
             )
-        finally:
-            detach()
-            req_log_detach()
+            # Record submit_time BEFORE the click so the post-submit-time filter
+            # in _await_captured can distinguish this prompt's responses from any
+            # stale entries that arrived between listener attach and the click.
+            submit_time = time.monotonic()
+            responses: list[dict[str, Any]] = []
+            try:
+                await ui_driver.send_prompt(page, request.prompt, out_dir=out_dir)
+                responses = await self._await_captured(
+                    captured,
+                    expected_count=request.count,
+                    submit_time=submit_time,
+                )
+            finally:
+                detach()
+                req_log_detach()
 
         # Collect images from ALL captured responses (Flow makes one API call
         # per image when count > 1).

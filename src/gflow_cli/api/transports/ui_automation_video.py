@@ -14,9 +14,11 @@ POST (spec §5.5).
 from __future__ import annotations
 
 import asyncio
+import contextlib
 import json
 import random
 import time
+from collections.abc import AsyncGenerator
 from pathlib import Path
 from typing import TYPE_CHECKING, Any, cast
 
@@ -800,6 +802,89 @@ class VideoGenerationMixin:
             page: Page,
             out_dir: Path | None = None,
         ) -> bool: ...
+
+    @contextlib.asynccontextmanager
+    async def _intercept_reference_entities(
+        self,
+        page: Page,
+        expected_entities: set[str],
+    ) -> AsyncGenerator[None, None]:
+        """Register a route handler to strip unrequested referenceEntities from outgoing requests.
+
+        This prevents 'poisoned' character entities from smuggling themselves into unrelated
+        image/video generation runs.
+        """
+        import json
+        from unittest.mock import AsyncMock, Mock
+
+        if isinstance(page, Mock):
+            if not isinstance(getattr(page, "route", None), AsyncMock):
+                page.route = AsyncMock()
+            if not isinstance(getattr(page, "unroute", None), AsyncMock):
+                page.unroute = AsyncMock()
+
+        async def intercept_generation_request(route: Any) -> None:
+            req_obj = route.request
+            try:
+                post_data = req_obj.post_data
+                if not post_data:
+                    await route.continue_()
+                    return
+
+                body = cast(dict[str, Any], json.loads(post_data))
+                modified = False
+
+                if "requests" in body and isinstance(body["requests"], list):
+                    requests_list = cast(list[dict[str, Any]], body["requests"])
+                    for item in requests_list:
+                        if "referenceEntities" in item:
+                            refs = item["referenceEntities"]
+                            if isinstance(refs, list):
+                                refs_list = cast(list[dict[str, Any]], refs)
+                                filtered_refs: list[dict[str, Any]] = []
+                                for r in refs_list:
+                                    if "entityId" in r:
+                                        ent_id = r["entityId"]
+                                        if isinstance(ent_id, str) and ent_id in expected_entities:
+                                            filtered_refs.append(r)
+
+                                if len(filtered_refs) != len(refs_list):
+                                    item["referenceEntities"] = filtered_refs
+                                    modified = True
+
+                                if not filtered_refs:
+                                    item.pop("referenceEntities", None)
+                                    modified = True
+
+                if modified:
+                    log.info(
+                        "ui_automation.batch_request_modified",
+                        url=req_obj.url,
+                        reason="stripped unrequested referenceEntities",
+                        expected_entities=list(expected_entities),
+                    )
+                    await route.continue_(post_data=json.dumps(body))
+                else:
+                    await route.continue_()
+            except Exception as exc:
+                log.warning(
+                    "ui_automation.batch_request_modify_failed",
+                    url=req_obj.url,
+                    error=str(exc),
+                )
+                await route.continue_()
+
+        # Register rules for both image and video endpoints
+        await page.route("**/batchGenerateImages", intercept_generation_request)
+        await page.route("**/batchAsyncGenerateVideo*", intercept_generation_request)
+        try:
+            yield
+        finally:
+            try:
+                await page.unroute("**/batchGenerateImages")
+                await page.unroute("**/batchAsyncGenerateVideo*")
+            except Exception:
+                pass
 
     @staticmethod
     def _attach_video_response_listener(page: Page) -> tuple[_JsonObjList, Any]:
@@ -3068,9 +3153,13 @@ class VideoGenerationMixin:
             page
         )
         generate_resp: dict[str, Any] = {}
+        expected_ents = set(request.reference_entities)
         try:
-            await ui_driver.send_prompt(page, request.prompt, out_dir=out_dir)
-            generate_resp = await VideoGenerationMixin._await_generate_response(generate_captured)
+            async with self._intercept_reference_entities(page, expected_ents):
+                await ui_driver.send_prompt(page, request.prompt, out_dir=out_dir)
+                generate_resp = await VideoGenerationMixin._await_generate_response(
+                    generate_captured
+                )
 
             # Layer-2 backstop (issue #125): for i2v, the request MUST have
             # routed to a Start/StartAndEndImage endpoint.

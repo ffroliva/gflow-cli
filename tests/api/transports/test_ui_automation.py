@@ -17,7 +17,7 @@ import inspect
 import json
 from pathlib import Path
 from typing import Any
-from unittest.mock import AsyncMock, MagicMock, patch
+from unittest.mock import ANY, AsyncMock, MagicMock, patch
 
 import pytest
 
@@ -3081,3 +3081,70 @@ async def test_force_agent_mode_returns_false_when_toggle_missing() -> None:
     page, toggle = _force_agent_page([0], toggle_raises=True)
     assert await UiAutomationTransport._force_agent_mode(page) is False  # noqa: SLF001
     toggle.click.assert_not_awaited()
+
+
+class TestReferenceEntitiesInterception:
+    """Tests the _intercept_reference_entities context manager's ability to
+    filter/strip referenceEntities from outgoing HTTP request bodies.
+    """
+
+    @pytest.mark.asyncio
+    async def test_intercept_reference_entities_strips_unrequested(self) -> None:
+        transport = UiAutomationTransport()
+        mock_page = MagicMock()
+        mock_page.route = AsyncMock()
+        mock_page.unroute = AsyncMock()
+
+        expected = {"requested-character-id"}
+
+        async with transport._intercept_reference_entities(mock_page, expected):  # noqa: SLF001
+            # Verify routes were registered
+            mock_page.route.assert_any_call("**/batchGenerateImages", ANY)
+            mock_page.route.assert_any_call("**/batchAsyncGenerateVideo*", ANY)
+
+        # Verify unroute was called
+        mock_page.unroute.assert_any_call("**/batchGenerateImages")
+        mock_page.unroute.assert_any_call("**/batchAsyncGenerateVideo*")
+
+        # Now test the route handler logic
+        intercept_handler = mock_page.route.call_args_list[0][0][1]
+
+        # Case 1: unrequested entity (should be stripped)
+        mock_route = MagicMock()
+        mock_route.request.post_data = json.dumps(
+            {
+                "requests": [
+                    {
+                        "prompt": "some prompt",
+                        "referenceEntities": [{"entityId": "poisoned-character-id"}],
+                    }
+                ]
+            }
+        )
+        mock_route.continue_ = AsyncMock()
+
+        await intercept_handler(mock_route)
+
+        mock_route.continue_.assert_awaited_once()
+        sent_body = json.loads(mock_route.continue_.call_args[1]["post_data"])
+        # Should be stripped entirely
+        assert "referenceEntities" not in sent_body["requests"][0]
+
+        # Case 2: requested entity (should be kept)
+        mock_route = MagicMock()
+        mock_route.request.post_data = json.dumps(
+            {
+                "requests": [
+                    {
+                        "prompt": "some prompt",
+                        "referenceEntities": [{"entityId": "requested-character-id"}],
+                    }
+                ]
+            }
+        )
+        mock_route.continue_ = AsyncMock()
+
+        await intercept_handler(mock_route)
+
+        # If unmodified, continue_ is called with no post_data argument
+        mock_route.continue_.assert_awaited_once_with()
