@@ -17,9 +17,7 @@ import pytest
 from gflow_cli.api.image import AgentInstruction, Aspect, GenerateImageRequest, Model
 from gflow_cli.api.transports.drivers import agentic as agentic_mod
 from gflow_cli.api.transports.drivers.agentic import (
-    _IMAGE_COUNT_TABLIST_SELECTOR,
     _MEDIA_REDIRECT_BASE,
-    _TUNE_BUTTON_SELECTOR,
     AgenticFlowUiDriver,
     _extract_uuids,
 )
@@ -200,141 +198,298 @@ async def test_configure_image_settings_square_aspect() -> None:
 
 
 # ---------------------------------------------------------------------------
-# _enforce_image_count_via_settings_panel — issue #313 fallback
+# _enforce_image_count_via_settings_panel — issue #313 fallback (reworked)
 # ---------------------------------------------------------------------------
 
 
-def _mock_page_with_settings_panel(
-    *, already_selected: str = "x2"
-) -> tuple[MagicMock, MagicMock, MagicMock]:
-    """Page where the tune button, count tablist, and Save button are all
-    present. Returns (page, target_btn_mock, tune_btn_mock) so tests can
-    assert on click() call counts for specific elements.
+def _mock_settings_panel_page(
+    *,
+    tune_button_present: bool = True,
+    tab_count: int = 8,
+    target_initially_selected: bool = False,
+    converges_on_click: bool = True,
+    save_button_found: bool = True,
+    panel_back_button_found: bool = True,
+) -> tuple[MagicMock, MagicMock, MagicMock, MagicMock, MagicMock]:
+    """Build a page mock for the reworked enforcement method.
 
-    ``already_selected`` is unused by the mock itself (the production code
-    always clicks the target button unconditionally — see Step 3) but is
-    kept as a documented parameter for readability at call sites that care
-    about the pre-click state being irrelevant to the assertion.
+    Returns (page, tune_btn, target_tab, back_btn) so tests can assert on
+    click() call counts for specific elements. Patches
+    ``UiAutomationTransport._is_settings_panel_open`` and
+    ``_count_tabs_locator`` via ``unittest.mock.patch`` in each test (they
+    are imported inside the method under test via a late import, so the
+    patch target is the real module, not the local re-export).
+
+    ``page.evaluate`` is called for TWO distinct JS blobs (find-Save and
+    find-panel-back-button) — distinguished by a unique marker string each
+    one sets via ``setAttribute``, matching how the two real JS constants
+    differ (``data-gflow-save-target`` vs ``data-gflow-panel-back-target``).
     """
-    del already_selected  # documented no-op — see docstring
-
     tune_btn = MagicMock()
-    tune_btn.count = AsyncMock(return_value=1)
+    tune_btn.count = AsyncMock(return_value=1 if tune_button_present else 0)
     tune_btn.click = AsyncMock()
 
-    target_btn = MagicMock()
-    target_btn.first = target_btn  # production does count_tablist.locator(...).first
-    target_btn.count = AsyncMock(return_value=1)
-    target_btn.click = AsyncMock()
+    selected_state = {"value": target_initially_selected}
 
-    count_tablist = MagicMock()
-    count_tablist.locator = MagicMock(return_value=target_btn)
+    async def _get_attribute(name: str) -> str | None:
+        if name != "aria-selected":
+            return None
+        return "true" if selected_state["value"] else "false"
+
+    async def _click_target(**_kwargs: object) -> None:
+        if converges_on_click:
+            selected_state["value"] = True
+
+    target_tab = MagicMock()
+    target_tab.get_attribute = AsyncMock(side_effect=_get_attribute)
+    target_tab.click = AsyncMock(side_effect=_click_target)
+
+    tabs = MagicMock()
+    tabs.count = AsyncMock(return_value=tab_count)
+    tabs.nth = MagicMock(return_value=target_tab)
+
+    back_btn = MagicMock()
+    back_btn.click = AsyncMock()
 
     save_btn = MagicMock()
     save_btn.click = AsyncMock()
 
     def _locator(selector: str) -> MagicMock:
         result = MagicMock()
-        if selector == _TUNE_BUTTON_SELECTOR:
-            result.first = tune_btn
-        elif selector == _IMAGE_COUNT_TABLIST_SELECTOR:
-            result.first = count_tablist
-        elif selector == "[data-gflow-save-target='1']":
+        if "data-gflow-panel-back-target" in selector:
+            result.first = back_btn
+        elif "data-gflow-save-target" in selector:
             result.first = save_btn
+        elif "tune" in selector:
+            result.first = tune_btn
         else:
             result.first = MagicMock()
         return result
 
+    async def _evaluate(js: str) -> bool:
+        if "data-gflow-save-target" in js:
+            return save_button_found
+        if "data-gflow-panel-back-target" in js:
+            return panel_back_button_found
+        return False
+
     page = MagicMock()
     page.locator = MagicMock(side_effect=_locator)
-    page.evaluate = AsyncMock(return_value=True)
+    page.evaluate = AsyncMock(side_effect=_evaluate)
+    page.wait_for_timeout = AsyncMock()  # method awaits it; MagicMock isn't awaitable
 
-    return page, target_btn, tune_btn
+    return page, tune_btn, target_tab, back_btn, tabs
 
 
 @pytest.mark.asyncio
-async def test_enforce_count_clicks_matching_button_and_saves() -> None:
+async def test_enforce_count_opens_panel_clicks_and_saves() -> None:
     driver = AgenticFlowUiDriver()
-    page, target_btn, tune_btn = _mock_page_with_settings_panel()
-    await driver._enforce_image_count_via_settings_panel(page, 3)  # noqa: SLF001
+    page, tune_btn, target_tab, back_btn, tabs = _mock_settings_panel_page(
+        target_initially_selected=False,
+    )
+    with (
+        patch(
+            "gflow_cli.api.transports.ui_automation.UiAutomationTransport._is_settings_panel_open",
+            new=AsyncMock(return_value=False),
+        ),
+        patch(
+            "gflow_cli.api.transports.ui_automation._count_tabs_locator",
+            return_value=tabs,
+        ),
+    ):
+        await driver._enforce_image_count_via_settings_panel(page, 3)  # noqa: SLF001
     tune_btn.click.assert_awaited_once()
-    target_btn.click.assert_awaited_once()
+    target_tab.click.assert_awaited_once()
     page.evaluate.assert_awaited_once()
+    back_btn.click.assert_not_awaited()  # Save auto-closes; no separate back-arrow click needed
 
 
 @pytest.mark.asyncio
-async def test_enforce_count_maps_all_valid_counts_to_button_labels() -> None:
-    """1..4 must each resolve to a locator call for the matching '<n>x' label
-    (or '1x' for count=1) — a regression here means a future count silently
-    clicks the wrong tab."""
-    for count, expected_label in agentic_mod._COUNT_BUTTON_TEXT.items():
-        driver = AgenticFlowUiDriver()
-        page, target_btn, _ = _mock_page_with_settings_panel()
-        await driver._enforce_image_count_via_settings_panel(page, count)  # noqa: SLF001
-        count_tablist_locator = page.locator(agentic_mod._IMAGE_COUNT_TABLIST_SELECTOR).first
-        count_tablist_locator.locator.assert_any_call(f"button:text-is('{expected_label}')")
+async def test_enforce_count_skips_click_and_save_when_already_correct() -> None:
+    driver = AgenticFlowUiDriver()
+    page, tune_btn, target_tab, back_btn, tabs = _mock_settings_panel_page(
+        target_initially_selected=True,
+    )
+    with (
+        patch(
+            "gflow_cli.api.transports.ui_automation.UiAutomationTransport._is_settings_panel_open",
+            new=AsyncMock(return_value=False),
+        ),
+        patch(
+            "gflow_cli.api.transports.ui_automation._count_tabs_locator",
+            return_value=tabs,
+        ),
+    ):
+        await driver._enforce_image_count_via_settings_panel(page, 1)  # noqa: SLF001
+    target_tab.click.assert_not_awaited()
+    save_evaluate_calls = [c for c in page.evaluate.await_args_list if "save-target" in c.args[0]]
+    assert not save_evaluate_calls, "Save JS must not run when nothing changed"
+    back_btn.click.assert_awaited_once()  # but the panel we opened must still be closed
+
+
+@pytest.mark.asyncio
+async def test_enforce_count_does_not_reopen_already_open_panel() -> None:
+    driver = AgenticFlowUiDriver()
+    page, tune_btn, target_tab, back_btn, tabs = _mock_settings_panel_page(
+        target_initially_selected=True,
+    )
+    with (
+        patch(
+            "gflow_cli.api.transports.ui_automation.UiAutomationTransport._is_settings_panel_open",
+            new=AsyncMock(return_value=True),
+        ),
+        patch(
+            "gflow_cli.api.transports.ui_automation._count_tabs_locator",
+            return_value=tabs,
+        ),
+    ):
+        await driver._enforce_image_count_via_settings_panel(page, 1)  # noqa: SLF001
+    tune_btn.click.assert_not_awaited()  # already open — must not toggle it closed
+
+
+@pytest.mark.asyncio
+async def test_enforce_count_closes_panel_on_target_not_found() -> None:
+    driver = AgenticFlowUiDriver()
+    page, tune_btn, target_tab, back_btn, tabs = _mock_settings_panel_page(tab_count=2)
+    with (
+        patch(
+            "gflow_cli.api.transports.ui_automation.UiAutomationTransport._is_settings_panel_open",
+            new=AsyncMock(return_value=False),
+        ),
+        patch(
+            "gflow_cli.api.transports.ui_automation._count_tabs_locator",
+            return_value=tabs,
+        ),
+    ):
+        await driver._enforce_image_count_via_settings_panel(page, 4)  # noqa: SLF001
+    back_btn.click.assert_awaited_once()  # panel opened, target missing — must still close
+
+
+@pytest.mark.asyncio
+async def test_enforce_count_closes_panel_when_click_never_converges() -> None:
+    driver = AgenticFlowUiDriver()
+    page, tune_btn, target_tab, back_btn, tabs = _mock_settings_panel_page(
+        converges_on_click=False,
+    )
+    with (
+        patch(
+            "gflow_cli.api.transports.ui_automation.UiAutomationTransport._is_settings_panel_open",
+            new=AsyncMock(return_value=False),
+        ),
+        patch(
+            "gflow_cli.api.transports.ui_automation._count_tabs_locator",
+            return_value=tabs,
+        ),
+    ):
+        await driver._enforce_image_count_via_settings_panel(page, 2)  # noqa: SLF001
+    assert target_tab.click.await_count == 3  # noqa: PLR2004  # exhausted all 3 attempts
+    back_btn.click.assert_awaited_once()
+
+
+@pytest.mark.asyncio
+async def test_enforce_count_closes_panel_when_save_not_found() -> None:
+    driver = AgenticFlowUiDriver()
+    page, tune_btn, target_tab, back_btn, tabs = _mock_settings_panel_page(
+        save_button_found=False,
+    )
+    with (
+        patch(
+            "gflow_cli.api.transports.ui_automation.UiAutomationTransport._is_settings_panel_open",
+            new=AsyncMock(return_value=False),
+        ),
+        patch(
+            "gflow_cli.api.transports.ui_automation._count_tabs_locator",
+            return_value=tabs,
+        ),
+    ):
+        await driver._enforce_image_count_via_settings_panel(page, 2)  # noqa: SLF001
+    target_tab.click.assert_awaited_once()
+    back_btn.click.assert_awaited_once()
 
 
 @pytest.mark.asyncio
 async def test_enforce_count_skips_gracefully_when_tune_button_absent() -> None:
-    """Older UI cohort / no settings panel at all — must return quietly, not raise."""
     driver = AgenticFlowUiDriver()
-    page = MagicMock()
-    absent = MagicMock()
-    absent.count = AsyncMock(return_value=0)
-    page.locator = MagicMock(return_value=absent)
-    await driver._enforce_image_count_via_settings_panel(page, 1)  # noqa: SLF001
-    # No exception raised is the assertion; nothing else to check.
+    page, tune_btn, target_tab, back_btn, tabs = _mock_settings_panel_page(
+        tune_button_present=False,
+    )
+    with patch(
+        "gflow_cli.api.transports.ui_automation.UiAutomationTransport._is_settings_panel_open",
+        new=AsyncMock(return_value=False),
+    ):
+        await driver._enforce_image_count_via_settings_panel(page, 1)  # noqa: SLF001
+    # No exception — graceful skip before the panel was ever touched.
+    back_btn.click.assert_not_awaited()
 
 
 @pytest.mark.asyncio
-async def test_enforce_count_skips_gracefully_when_count_button_absent() -> None:
+async def test_enforce_count_swallows_exceptions_and_still_closes_panel() -> None:
     driver = AgenticFlowUiDriver()
-    tune_btn = MagicMock()
-    tune_btn.count = AsyncMock(return_value=1)
-    tune_btn.click = AsyncMock()
+    page, tune_btn, target_tab, back_btn, tabs = _mock_settings_panel_page()
+    tabs.count = AsyncMock(side_effect=RuntimeError("boom"))
+    with (
+        patch(
+            "gflow_cli.api.transports.ui_automation.UiAutomationTransport._is_settings_panel_open",
+            new=AsyncMock(return_value=False),
+        ),
+        patch(
+            "gflow_cli.api.transports.ui_automation._count_tabs_locator",
+            return_value=tabs,
+        ),
+    ):
+        # Must not raise.
+        await driver._enforce_image_count_via_settings_panel(page, 1)  # noqa: SLF001
+    back_btn.click.assert_awaited_once()  # even the exception path closes the panel
 
-    absent_target = MagicMock()
-    absent_target.first = absent_target  # production does count_tablist.locator(...).first
-    absent_target.count = AsyncMock(return_value=0)
 
-    count_tablist = MagicMock()
-    count_tablist.locator = MagicMock(return_value=absent_target)
+@pytest.mark.asyncio
+async def test_close_agent_settings_panel_is_noop_when_no_panel_root_found() -> None:
+    """The panel-root JS walk finds nothing (panel already closed, or no
+    matching arrow_back candidate at all) — must not attempt any click."""
+    page = MagicMock()
+    page.evaluate = AsyncMock(return_value=False)
+    back_btn = MagicMock()
+    back_btn.click = AsyncMock()
+    result = MagicMock()
+    result.first = back_btn
+    page.locator = MagicMock(return_value=result)
+    await AgenticFlowUiDriver._close_agent_settings_panel(page)  # noqa: SLF001
+    back_btn.click.assert_not_awaited()
+
+
+@pytest.mark.asyncio
+async def test_close_agent_settings_panel_clicks_the_tagged_scoped_element() -> None:
+    """When the JS walk finds the panel root (tags the CORRECT arrow_back —
+    see _FIND_PANEL_ROOT_JS_PRELUDE's shallowest-depth disambiguation, which
+    is what distinguishes the panel's own back arrow from the main
+    toolbar's unrelated back-to-gallery button), the tagged element is
+    clicked via its data attribute, not an unscoped selector."""
+    page = MagicMock()
+    page.evaluate = AsyncMock(return_value=True)
+    back_btn = MagicMock()
+    back_btn.click = AsyncMock()
 
     def _locator(selector: str) -> MagicMock:
         result = MagicMock()
-        if selector == _TUNE_BUTTON_SELECTOR:
-            result.first = tune_btn
-        elif selector == _IMAGE_COUNT_TABLIST_SELECTOR:
-            result.first = count_tablist
-        else:
-            result.first = MagicMock()
+        result.first = back_btn if "data-gflow-panel-back-target" in selector else MagicMock()
         return result
 
-    page = MagicMock()
     page.locator = MagicMock(side_effect=_locator)
-    await driver._enforce_image_count_via_settings_panel(page, 1)  # noqa: SLF001
-    # No exception — graceful skip.
+    await AgenticFlowUiDriver._close_agent_settings_panel(page)  # noqa: SLF001
+    back_btn.click.assert_awaited_once()
 
 
 @pytest.mark.asyncio
-async def test_enforce_count_skips_save_click_when_save_button_not_found() -> None:
-    driver = AgenticFlowUiDriver()
-    page, target_btn, tune_btn = _mock_page_with_settings_panel()
-    page.evaluate = AsyncMock(return_value=False)  # _FIND_SAVE_BUTTON_JS found nothing
-    await driver._enforce_image_count_via_settings_panel(page, 1)  # noqa: SLF001
-    tune_btn.click.assert_awaited_once()
-    target_btn.click.assert_awaited_once()
-    # No exception, and no attempt to click a nonexistent save button.
-
-
-@pytest.mark.asyncio
-async def test_enforce_count_swallows_exceptions_and_never_raises() -> None:
-    driver = AgenticFlowUiDriver()
+async def test_close_agent_settings_panel_swallows_click_errors() -> None:
     page = MagicMock()
-    page.locator = MagicMock(side_effect=RuntimeError("boom"))
+    page.evaluate = AsyncMock(return_value=True)
+    back_btn = MagicMock()
+    back_btn.click = AsyncMock(side_effect=RuntimeError("boom"))
+    result = MagicMock()
+    result.first = back_btn
+    page.locator = MagicMock(return_value=result)
     # Must not raise.
-    await driver._enforce_image_count_via_settings_panel(page, 1)  # noqa: SLF001
+    await AgenticFlowUiDriver._close_agent_settings_panel(page)  # noqa: SLF001
 
 
 # ---------------------------------------------------------------------------
