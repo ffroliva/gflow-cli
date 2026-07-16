@@ -137,10 +137,16 @@ duration** (4/6/8/10 s), and likely **aspect ratio** and **model** — can be ex
 the agent resolves the selection itself.
 
 Implications for `AgenticFlowUiDriver`:
-- **`configure_settings` becomes optional.** Encoding settings as a directive prompt
-  avoids driving the fragile `tune` → Radix-popover dropdowns — the most drift-prone
-  surface on a volatile A/B UI. Prefer prompt-encoding; treat popover automation as a
-  fallback only if prompt-steering proves unreliable.
+- **`configure_settings` drives count as a fallback (2026-07-16, issue #313).**
+  Prompt-encoding alone proved unreliable: Agent mode's `tune` panel has a
+  STICKY "Image generation default" count that silently overrode the
+  natural-language directive when stale. `AgenticFlowUiDriver` now sets that
+  control to match the request (best-effort, never raises — falls through to
+  prompt-only on any selector miss) in addition to the natural-language
+  phrasing. Aspect/model are NOT automated via this panel — count only, to
+  keep the newly-added surface area minimal. See
+  `flow-agent-settings-panel-sticky-defaults` project memory for the full
+  selector write-up.
 - **The agent *interprets* the request → verify, don't trust.** It may produce a
   different count or ignore a duration. This is precisely why scrape-and-dedup-by-UUID
   is load-bearing: request N → poll until N distinct new media UUIDs → if the produced
