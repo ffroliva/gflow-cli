@@ -83,49 +83,87 @@ _SLATE_COMPOSER_SELECTOR = 'div[role="textbox"][data-slate-editor="true"]'
 # instead) are the genuine differences that prevent calling _set_count
 # directly.
 
-# The panel's "Save" button has no icon ligature, no data-* attribute, no
-# type="submit", and its text ("Salvar"/"Save"/etc.) is locale-dependent —
-# per memory flow-locale-leak-icon-ligatures this cannot be text-matched.
-# Locate it structurally instead: walk up from the panel's arrow_back header
-# icon to the nearest ancestor that ALSO contains a count tablist (i.e. the
-# panel root), then take the last visible <button> in that scope — that
-# button is Save in every live-verified capture (2026-07-16). Tags the match
-# with a data attribute so Playwright can locate it without re-running the
-# walk in a second round-trip.
-_FIND_SAVE_BUTTON_JS = """
-() => {
-  const backBtn = [...document.querySelectorAll('button')].find((b) => {
+# The page has TWO ``arrow_back`` icon buttons when the panel is open: the
+# main toolbar's "Voltar"/back-to-gallery button (live-verified 2026-07-16 —
+# present at all times, NOT removed while the panel is open) and the panel's
+# OWN header back arrow. Both happen to satisfy "walk up N ancestors and find
+# a count-tablist" (Flow's DOM nests broadly enough that even the toolbar
+# button reaches a shared ancestor within a few levels) — so picking the
+# FIRST candidate that satisfies the walk (as an earlier version of this code
+# did) can silently grab the WRONG one and navigate away from the project
+# entirely. The fix: check EVERY arrow_back candidate and take the one with
+# the SHALLOWEST (closest) matching ancestor — the panel's own back arrow is
+# always structurally adjacent to its tablist (depth 1, live-verified);
+# the toolbar's only reaches a shared ancestor much further up (depth 4+).
+_FIND_PANEL_ROOT_JS_PRELUDE = """
+  const backBtns = [...document.querySelectorAll('button')].filter((b) => {
     const i = b.querySelector('i.google-symbols');
     return i && (i.textContent || '').trim() === 'arrow_back';
   });
-  if (!backBtn) return false;
-  let node = backBtn.parentElement;
-  for (let i = 0; i < 8 && node; i++) {
-    const hasCountTablist = [...node.querySelectorAll("[role='tab']")].some((t) =>
-      /^(1x|x[2-4])$/.test((t.textContent || '').trim())
-    );
-    if (hasCountTablist) {
-      const visible = [...node.querySelectorAll('button')].filter((b) => {
-        const r = b.getBoundingClientRect();
-        return r.width > 0 && r.height > 0;
-      });
-      const save = visible[visible.length - 1];
-      if (!save) return false;
-      save.setAttribute('data-gflow-save-target', '1');
-      return true;
+  let panelRoot = null;
+  let backBtnEl = null;
+  let bestDepth = Infinity;
+  for (const backBtn of backBtns) {
+    let node = backBtn.parentElement;
+    for (let depth = 0; depth < 8 && node; depth++) {
+      const hasCountTablist = [...node.querySelectorAll("[role='tab']")].some((t) =>
+        /^(1x|x[2-4])$/.test((t.textContent || '').trim())
+      );
+      if (hasCountTablist) {
+        if (depth < bestDepth) { panelRoot = node; backBtnEl = backBtn; bestDepth = depth; }
+        break;
+      }
+      node = node.parentElement;
     }
-    node = node.parentElement;
   }
-  return false;
-}
 """
 
-# The panel's own header "back" arrow — the verified way to abandon/close the
+# The panel's "Save" button has no icon ligature, no data-* attribute, no
+# type="submit", and its text ("Salvar"/"Save"/etc.) is locale-dependent —
+# per memory flow-locale-leak-icon-ligatures this cannot be text-matched.
+# Locate it structurally instead: within the correctly-identified panel root
+# (see _FIND_PANEL_ROOT_JS_PRELUDE), take the last visible <button> — that
+# button is Save in every live-verified capture (2026-07-16). Tags the match
+# with a data attribute so Playwright can locate it without re-running the
+# walk in a second round-trip.
+_FIND_SAVE_BUTTON_JS = (
+    """
+() => {
+"""
+    + _FIND_PANEL_ROOT_JS_PRELUDE
+    + """
+  if (!panelRoot) return false;
+  const visible = [...panelRoot.querySelectorAll('button')].filter((b) => {
+    const r = b.getBoundingClientRect();
+    return r.width > 0 && r.height > 0;
+  });
+  const save = visible[visible.length - 1];
+  if (!save) return false;
+  save.setAttribute('data-gflow-save-target', '1');
+  return true;
+}
+"""
+)
+
+# The panel's own header back arrow — the verified way to abandon/close the
 # panel WITHOUT saving (user-confirmed live: "the back arrow returns to the
-# main area"). Used to guarantee the panel is never left open on a
-# failure/short-circuit path, which is what caused send_prompt's composer
-# click to hang in the version this replaces.
-_ARROW_BACK_SELECTOR = "button:has(i.google-symbols:text-is('arrow_back'))"
+# main area"). Uses the same panel-root disambiguation as Save (see
+# _FIND_PANEL_ROOT_JS_PRELUDE) rather than an unscoped selector, which was
+# live-verified to sometimes click the main toolbar's back-to-gallery button
+# instead and navigate away from the project entirely — the root cause of
+# send_prompt's composer never becoming visible again on that path.
+_FIND_PANEL_BACK_BUTTON_JS = (
+    """
+() => {
+"""
+    + _FIND_PANEL_ROOT_JS_PRELUDE
+    + """
+  if (!backBtnEl) return false;
+  backBtnEl.setAttribute('data-gflow-panel-back-target', '1');
+  return true;
+}
+"""
+)
 
 # DOM polling defaults — match the classic transport's _await_captured cadence.
 _POLL_INTERVAL_S = 0.5
@@ -428,18 +466,25 @@ class AgenticFlowUiDriver:
 
     @staticmethod
     async def _close_agent_settings_panel(page: Page) -> None:
-        """Best-effort: click the panel's back arrow to abandon it WITHOUT
-        saving, restoring the composer. Never raises — this is itself a
-        failure-path cleanup step, so any error here is logged and
+        """Best-effort: click the panel's OWN back arrow to abandon it
+        WITHOUT saving, restoring the composer. Never raises — this is
+        itself a failure-path cleanup step, so any error here is logged and
         swallowed rather than propagated.
 
-        Safe to call even if the panel is already closed (the back-arrow
-        locator simply won't match, `.count() == 0` short-circuits).
+        Uses the panel-root-scoped lookup (:data:`_FIND_PANEL_BACK_BUTTON_JS`)
+        rather than an unscoped arrow_back selector — live-verified
+        2026-07-16 that the page has a SECOND, unrelated arrow_back button
+        (the main toolbar's back-to-gallery control) that an unscoped
+        `.first` can grab instead, navigating away from the project entirely.
+
+        Safe to call even if the panel is already closed (the JS walk simply
+        finds no matching panel root and returns ``false``).
         """
         try:
-            back_btn = page.locator(_ARROW_BACK_SELECTOR).first
-            if await back_btn.count() == 0:
+            found = await page.evaluate(_FIND_PANEL_BACK_BUTTON_JS)
+            if not found:
                 return
+            back_btn = page.locator("[data-gflow-panel-back-target='1']").first
             await back_btn.click(timeout=3_000)
             await page.wait_for_timeout(300)
         except Exception as e:  # noqa: BLE001
