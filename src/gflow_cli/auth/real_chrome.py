@@ -65,7 +65,7 @@ def _build_chrome_args(chrome_exe: str, profile_dir: Path, headless: bool) -> li
         f"--user-data-dir={profile_dir}",
         "--no-first-run",
         "--no-default-browser-check",
-        "--window-size=1280,800",
+        "--window-size=1920,1080",  # match the generation viewport (#315 consistency)
         "--password-store=basic",
         # No --remote-debugging-port: zero automation surface.
         GEMINI_URL,  # open straight on the Flow sign-in page

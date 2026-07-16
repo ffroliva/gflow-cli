@@ -72,6 +72,8 @@ class TestRealChromeStrategy:
         assert "--enable-automation" not in args_list
         assert not any("--remote-debugging-port" in a for a in args_list)
         assert GEMINI_URL in args_list  # Chrome opens directly on the Flow page
+        # Login window matches the generation viewport (#315 consistency).
+        assert "--window-size=1920,1080" in args_list
 
     @pytest.mark.asyncio
     async def test_real_chrome_success_writes_marker(self, tmp_path: Path) -> None:
@@ -299,6 +301,8 @@ class TestInternalChromiumStrategy:
         _, kwargs = mock_launch_pctx.call_args
         assert "channel" not in kwargs or kwargs["channel"] != "chrome"
         assert "--disable-blink-features=AutomationControlled" not in kwargs.get("args", [])
+        # Login viewport matches the generation viewport (#315 consistency).
+        assert kwargs.get("viewport") == {"width": 1920, "height": 1080}
         mock_page.request.get.assert_awaited()
         account_file = profile_dir / ".gflow_account"
         assert account_file.exists(), ".gflow_account must be written on successful login"
