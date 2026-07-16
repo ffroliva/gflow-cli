@@ -60,6 +60,8 @@ _MEDIA_UUID_RE = re.compile(r"[?&]name=([0-9a-fA-F-]+)")
 # The ``data-slate-editor="true"`` attribute distinguishes the primary input
 # from any secondary contenteditable nodes that may exist in the page.
 _SLATE_COMPOSER_SELECTOR = 'div[role="textbox"][data-slate-editor="true"]'
+# structlog route tag for the await-images generation wait (used in 3 error paths).
+_ROUTE_AWAIT_IMAGES = "agentic:await_images"
 
 # Agent settings panel (issue #313, reworked 2026-07-16 after code review) —
 # driven as a best-effort FALLBACK only, because prompt-encoding is the
@@ -764,7 +766,7 @@ class AgenticFlowUiDriver:
                         "(explicit text or block symbol detected). "
                         "Prompt may violate Flow's content policy."
                     ),
-                    route="agentic:await_images",
+                    route=_ROUTE_AWAIT_IMAGES,
                 )
 
             current_srcs = await _scrape_img_srcs(page)
@@ -791,7 +793,7 @@ class AgenticFlowUiDriver:
                     f"Agentic DOM scraping timed out after {_AWAIT_TIMEOUT_S:.0f}s: "
                     f"0/{expected_count} distinct media UUIDs appeared"
                 )
-            raise TransportTimeoutError(detail=detail, route="agentic:await_images")
+            raise TransportTimeoutError(detail=detail, route=_ROUTE_AWAIT_IMAGES)
 
         if len(new_uuids) > expected_count:
             candidates = sorted(new_uuids)
@@ -800,7 +802,7 @@ class AgenticFlowUiDriver:
                     f"Cannot attribute the generation among {len(candidates)} candidate "
                     f"media UUIDs (expected {expected_count}): {candidates}."
                 ),
-                route="agentic:await_images",
+                route=_ROUTE_AWAIT_IMAGES,
             )
 
         return _build_generated_images(

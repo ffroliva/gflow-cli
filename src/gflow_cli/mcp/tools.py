@@ -1238,7 +1238,8 @@ async def gflow_instructions_set_enabled(
         brief = await client.get_agent_info(project)
         card = brief.find(title=title) if card_id is None else brief.find(card_id=card_id)
         # Replace the target in place (preserving its id) and PATCH the FULL set.
-        updated = replace(card, enabled=enabled)
+        # cast: replace() loses the concrete type for Sonar S5655 (see sonar-dataclasses-replace).
+        updated = cast("AgentInstruction", replace(card, enabled=enabled))  # pyright: ignore[reportUnnecessaryCast]
         new_cards = tuple(updated if c is card else c for c in brief.cards)
         await client.patch_agent_info(project, enabled=True, cards=new_cards)
         return _ok_payload(project, card=_card_dict(updated))
