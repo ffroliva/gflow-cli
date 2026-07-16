@@ -12,15 +12,11 @@ from __future__ import annotations
 import asyncio
 import io
 import sys
-from typing import TYPE_CHECKING
 
 import structlog
 from mcp.server.fastmcp import FastMCP
 
 from gflow_cli import __version__
-
-if TYPE_CHECKING:
-    pass
 
 log = structlog.get_logger()
 
