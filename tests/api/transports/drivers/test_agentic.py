@@ -204,13 +204,13 @@ async def test_configure_image_settings_square_aspect() -> None:
 
 def _mock_settings_panel_page(
     *,
-    panel_already_open: bool = False,
     tune_button_present: bool = True,
     tab_count: int = 8,
     target_initially_selected: bool = False,
     converges_on_click: bool = True,
     save_button_found: bool = True,
-) -> tuple[MagicMock, MagicMock, MagicMock, MagicMock]:
+    panel_back_button_found: bool = True,
+) -> tuple[MagicMock, MagicMock, MagicMock, MagicMock, MagicMock]:
     """Build a page mock for the reworked enforcement method.
 
     Returns (page, tune_btn, target_tab, back_btn) so tests can assert on
@@ -219,6 +219,11 @@ def _mock_settings_panel_page(
     ``_count_tabs_locator`` via ``unittest.mock.patch`` in each test (they
     are imported inside the method under test via a late import, so the
     patch target is the real module, not the local re-export).
+
+    ``page.evaluate`` is called for TWO distinct JS blobs (find-Save and
+    find-panel-back-button) — distinguished by a unique marker string each
+    one sets via ``setAttribute``, matching how the two real JS constants
+    differ (``data-gflow-save-target`` vs ``data-gflow-panel-back-target``).
     """
     tune_btn = MagicMock()
     tune_btn.count = AsyncMock(return_value=1 if tune_button_present else 0)
@@ -244,7 +249,6 @@ def _mock_settings_panel_page(
     tabs.nth = MagicMock(return_value=target_tab)
 
     back_btn = MagicMock()
-    back_btn.count = AsyncMock(return_value=1)
     back_btn.click = AsyncMock()
 
     save_btn = MagicMock()
@@ -252,7 +256,7 @@ def _mock_settings_panel_page(
 
     def _locator(selector: str) -> MagicMock:
         result = MagicMock()
-        if "arrow_back" in selector:
+        if "data-gflow-panel-back-target" in selector:
             result.first = back_btn
         elif "data-gflow-save-target" in selector:
             result.first = save_btn
@@ -262,9 +266,16 @@ def _mock_settings_panel_page(
             result.first = MagicMock()
         return result
 
+    async def _evaluate(js: str) -> bool:
+        if "data-gflow-save-target" in js:
+            return save_button_found
+        if "data-gflow-panel-back-target" in js:
+            return panel_back_button_found
+        return False
+
     page = MagicMock()
     page.locator = MagicMock(side_effect=_locator)
-    page.evaluate = AsyncMock(return_value=save_button_found)
+    page.evaluate = AsyncMock(side_effect=_evaluate)
     page.wait_for_timeout = AsyncMock()  # method awaits it; MagicMock isn't awaitable
 
     return page, tune_btn, target_tab, back_btn, tabs
@@ -274,7 +285,6 @@ def _mock_settings_panel_page(
 async def test_enforce_count_opens_panel_clicks_and_saves() -> None:
     driver = AgenticFlowUiDriver()
     page, tune_btn, target_tab, back_btn, tabs = _mock_settings_panel_page(
-        panel_already_open=False,
         target_initially_selected=False,
     )
     with (
@@ -312,7 +322,8 @@ async def test_enforce_count_skips_click_and_save_when_already_correct() -> None
     ):
         await driver._enforce_image_count_via_settings_panel(page, 1)  # noqa: SLF001
     target_tab.click.assert_not_awaited()
-    page.evaluate.assert_not_awaited()  # no Save needed
+    save_evaluate_calls = [c for c in page.evaluate.await_args_list if "save-target" in c.args[0]]
+    assert not save_evaluate_calls, "Save JS must not run when nothing changed"
     back_btn.click.assert_awaited_once()  # but the panel we opened must still be closed
 
 
@@ -432,20 +443,47 @@ async def test_enforce_count_swallows_exceptions_and_still_closes_panel() -> Non
 
 
 @pytest.mark.asyncio
-async def test_close_agent_settings_panel_is_noop_when_already_closed() -> None:
+async def test_close_agent_settings_panel_is_noop_when_no_panel_root_found() -> None:
+    """The panel-root JS walk finds nothing (panel already closed, or no
+    matching arrow_back candidate at all) — must not attempt any click."""
     page = MagicMock()
-    absent = MagicMock()
-    absent.count = AsyncMock(return_value=0)
-    page.locator = MagicMock(return_value=absent)
+    page.evaluate = AsyncMock(return_value=False)
+    back_btn = MagicMock()
+    back_btn.click = AsyncMock()
+    result = MagicMock()
+    result.first = back_btn
+    page.locator = MagicMock(return_value=result)
     await AgenticFlowUiDriver._close_agent_settings_panel(page)  # noqa: SLF001
-    # No exception, no click attempted on a nonexistent element.
+    back_btn.click.assert_not_awaited()
+
+
+@pytest.mark.asyncio
+async def test_close_agent_settings_panel_clicks_the_tagged_scoped_element() -> None:
+    """When the JS walk finds the panel root (tags the CORRECT arrow_back —
+    see _FIND_PANEL_ROOT_JS_PRELUDE's shallowest-depth disambiguation, which
+    is what distinguishes the panel's own back arrow from the main
+    toolbar's unrelated back-to-gallery button), the tagged element is
+    clicked via its data attribute, not an unscoped selector."""
+    page = MagicMock()
+    page.evaluate = AsyncMock(return_value=True)
+    back_btn = MagicMock()
+    back_btn.click = AsyncMock()
+
+    def _locator(selector: str) -> MagicMock:
+        result = MagicMock()
+        result.first = back_btn if "data-gflow-panel-back-target" in selector else MagicMock()
+        return result
+
+    page.locator = MagicMock(side_effect=_locator)
+    await AgenticFlowUiDriver._close_agent_settings_panel(page)  # noqa: SLF001
+    back_btn.click.assert_awaited_once()
 
 
 @pytest.mark.asyncio
 async def test_close_agent_settings_panel_swallows_click_errors() -> None:
     page = MagicMock()
+    page.evaluate = AsyncMock(return_value=True)
     back_btn = MagicMock()
-    back_btn.count = AsyncMock(return_value=1)
     back_btn.click = AsyncMock(side_effect=RuntimeError("boom"))
     result = MagicMock()
     result.first = back_btn
