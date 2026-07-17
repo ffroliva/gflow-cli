@@ -32,7 +32,9 @@ from typing import TYPE_CHECKING, Literal
 import structlog
 
 if TYPE_CHECKING:
-    from playwright.async_api import Page
+    from collections.abc import Awaitable, Callable
+
+    from playwright.async_api import Locator, Page
 
 log = structlog.get_logger(__name__)
 
@@ -102,7 +104,9 @@ async def _composer_present(page: Page) -> bool:
     return False
 
 
-async def _wait_until(page: Page, probe, timeout_ms: int) -> bool:  # type: ignore[no-untyped-def]
+async def _wait_until(
+    page: Page, probe: Callable[[Page], Awaitable[bool]], timeout_ms: int
+) -> bool:
     """Poll ``probe(page)`` until true or ``timeout_ms`` elapses (logical time).
 
     Uses ``page.wait_for_timeout`` for the pacing so test fakes stay
@@ -163,57 +167,83 @@ async def ensure_media_mode(page: Page, *, allow_reload: bool = False) -> bool:
     acted = False
     persisted_off = False  # a REAL (unforced) toggle click succeeded → server pref persisted
     for round_no in range(2):
-        for _ in range(_MAX_STEPS):
-            if await _crop_present(page):
-                return acted
-            # The expanded sidebar suppresses the in-composer toggle → close it first.
-            sidebar_x = page.locator(SIDEBAR_CLOSE_SELECTOR).first
-            if await sidebar_x.count() > 0:
-                await sidebar_x.click(force=True, timeout=_CLICK_TIMEOUT_MS)
-                await page.wait_for_timeout(_SETTLE_MS)
-                acted = True
-                continue
-            toggle = page.locator(AGENT_TOGGLE_SELECTOR).first
-            if await toggle.count() > 0 and await toggle.get_attribute("aria-pressed") == "true":
-                # A REAL click (actionability-checked), never force-first: a forced
-                # click can flip the DOM node without firing the React handler that
-                # persists ``isAgentModeToggled=false`` server-side (the 2026-07-17
-                # both-accounts pin) — force remains only as a last-resort fallback.
-                try:
-                    await toggle.click(timeout=_CLICK_TIMEOUT_MS)
-                    persisted_off = True
-                except Exception as exc:  # noqa: BLE001 - fall back, verified below
-                    log.warning("mode_control.toggle_click_fallback_force", error=str(exc))
-                    # Playwright can raise AFTER the click events dispatched
-                    # (post-click instability). Re-read the pill state first: a
-                    # blind force click on a now-OFF toggle re-enables agent
-                    # mode and re-persists it server-side.
-                    if await toggle.get_attribute("aria-pressed") == "true":
-                        await toggle.click(force=True, timeout=_CLICK_TIMEOUT_MS)
-                await page.wait_for_timeout(_SETTLE_MS)
-                acted = True
-                continue
-            break  # nothing actionable and no crop_* — give up (caller probe fails loudly)
+        stepped, persisted = await _run_dismiss_steps(page)
+        acted = acted or stepped
+        persisted_off = persisted_off or persisted
+        if await _crop_present(page):
+            return acted
         # Absorb a slow in-place mount before giving up or navigating (the old
         # code delegated this tolerance to the callers' 4s trigger probes).
         if acted and await _wait_until(page, _crop_present, _CROP_GRACE_TIMEOUT_MS):
             return acted
         if round_no == 0 and allow_reload and persisted_off:
-            # Real toggle click landed but the classic panel never mounted in
-            # place: reload. A fresh load both re-rolls the server's per-load
-            # arm AND mounts the now-persisted ``isAgentModeToggled=false``
-            # preference. Opt-in only (see the docstring's navigation caveat).
-            log.info("mode_control.reload_retry", note="toggle clicked, panel absent — reloading")
-            await page.reload()
-            # SPA re-mount: wait for a composer signal (either arm) so the
-            # round-2 probes and the caller's cohort re-detect see a settled
-            # page, not the post-``load`` shell.
-            await _wait_until(page, _composer_present, _COMPOSER_READY_TIMEOUT_MS)
+            await _reload_for_persisted_pref(page)
         else:
             break  # no reload sanctioned — keep the old single-round give-up
-    if not await _crop_present(page):
-        log.warning(
-            "mode_control.ensure_media_incomplete",
-            note="classic media panel not restored after mode-control attempts",
-        )
+    log.warning(
+        "mode_control.ensure_media_incomplete",
+        note="classic media panel not restored after mode-control attempts",
+    )
     return acted
+
+
+async def _run_dismiss_steps(page: Page) -> tuple[bool, bool]:
+    """One bounded pass of (sidebar → toggle → re-check) steps.
+
+    Returns ``(acted, persisted_off)``: whether anything was clicked, and
+    whether a REAL (unforced) toggle click landed (→ server pref persisted).
+    """
+    acted = False
+    persisted_off = False
+    for _ in range(_MAX_STEPS):
+        if await _crop_present(page):
+            break
+        # The expanded sidebar suppresses the in-composer toggle → close it first.
+        sidebar_x = page.locator(SIDEBAR_CLOSE_SELECTOR).first
+        if await sidebar_x.count() > 0:
+            await sidebar_x.click(force=True, timeout=_CLICK_TIMEOUT_MS)
+            await page.wait_for_timeout(_SETTLE_MS)
+            acted = True
+            continue
+        toggle = page.locator(AGENT_TOGGLE_SELECTOR).first
+        if await toggle.count() > 0 and await toggle.get_attribute("aria-pressed") == "true":
+            persisted_off = await _click_toggle_off(toggle) or persisted_off
+            await page.wait_for_timeout(_SETTLE_MS)
+            acted = True
+            continue
+        break  # nothing actionable and no crop_* — give up (caller probe fails loudly)
+    return acted, persisted_off
+
+
+async def _click_toggle_off(toggle: Locator) -> bool:
+    """Click the Agent pill OFF; return ``True`` only for a REAL (unforced) click.
+
+    A REAL click (actionability-checked), never force-first: a forced click can
+    flip the DOM node without firing the React handler that persists
+    ``isAgentModeToggled=false`` server-side (the 2026-07-17 both-accounts pin)
+    — force remains only as a last-resort fallback, and only after re-reading
+    ``aria-pressed``: Playwright can raise AFTER the click events dispatched
+    (post-click instability), and a blind force click on a now-OFF toggle
+    re-enables agent mode and re-persists it server-side.
+    """
+    try:
+        await toggle.click(timeout=_CLICK_TIMEOUT_MS)
+    except Exception as exc:  # noqa: BLE001  # NOSONAR
+        log.warning("mode_control.toggle_click_fallback_force", error=str(exc))
+        if await toggle.get_attribute("aria-pressed") == "true":
+            await toggle.click(force=True, timeout=_CLICK_TIMEOUT_MS)
+        return False
+    return True
+
+
+async def _reload_for_persisted_pref(page: Page) -> None:
+    """Reload once after a real toggle-off failed to mount the classic panel.
+
+    A fresh load both re-rolls the server's per-load arm AND mounts the
+    now-persisted ``isAgentModeToggled=false`` preference; afterwards wait for a
+    composer signal (either arm) so the next probes and the caller's cohort
+    re-detect see a settled page, not the post-``load`` shell.
+    """
+    log.info("mode_control.reload_retry", note="toggle clicked, panel absent — reloading")
+    await page.reload()
+    await _wait_until(page, _composer_present, _COMPOSER_READY_TIMEOUT_MS)
