@@ -3092,6 +3092,12 @@ class TestAttachReferencesDedup:
     @pytest.mark.asyncio
     async def test_returns_false_and_clears_search_on_no_match(self, monkeypatch) -> None:
         monkeypatch.setattr(VideoGenerationMixin, "_sync_picker_project", AsyncMock())
+        # Not in the initial DOM AND not surfaced by a virtualised-grid scroll.
+        monkeypatch.setattr(
+            VideoGenerationMixin,
+            "_scroll_picker_grid_until_rendered",
+            AsyncMock(return_value=False),
+        )
         page, search, tile = self._picker(tile_present=False)
 
         got = await VideoGenerationMixin._try_select_existing_by_filename(
@@ -3102,6 +3108,25 @@ class TestAttachReferencesDedup:
         tile.click.assert_not_awaited()
         # Cleared the filter so the upload fallback starts from a clean grid.
         assert search.fill.await_args_list[-1].args == ("",)
+
+    @pytest.mark.asyncio
+    async def test_scroll_fallback_finds_offscreen_match(self, monkeypatch) -> None:
+        # An existing match absent from the initial DOM is surfaced by scrolling
+        # the virtualised grid → it must be selected, NOT re-uploaded (finding #1).
+        monkeypatch.setattr(VideoGenerationMixin, "_sync_picker_project", AsyncMock())
+        monkeypatch.setattr(
+            VideoGenerationMixin,
+            "_scroll_picker_grid_until_rendered",
+            AsyncMock(return_value=True),
+        )
+        page, _search, tile = self._picker(tile_present=False)  # count 0 initially
+
+        got = await VideoGenerationMixin._try_select_existing_by_filename(
+            page, "offscreen.png", out_dir=None
+        )
+
+        assert got is True
+        tile.click.assert_awaited()  # attached via the scrolled-into-view tile
 
     @pytest.mark.asyncio
     async def test_returns_false_when_no_search_box(self, monkeypatch) -> None:
