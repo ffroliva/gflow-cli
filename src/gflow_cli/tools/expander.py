@@ -213,22 +213,10 @@ class PromptExpander:
                 data = self._transport(url, payload, attempt_timeout)
             except GeminiHttpError as exc:
                 if exc.status in _RETRYABLE_STATUS and attempt < self._max_retries:
-                    if (self._clock() - start) + delay >= self._max_total_seconds:
-                        # No budget left to sleep + run another attempt — fall back
-                        # now instead of sleeping into a guaranteed-skipped retry.
-                        log.warning(
-                            "prompt_expander_budget_exhausted",
-                            max_total_seconds=self._max_total_seconds,
-                        )
+                    next_delay = self._retry_after_gemini_error(exc, attempt, start, delay)
+                    if next_delay is None:
                         return None
-                    log.warning(
-                        "prompt_expander_retry",
-                        status=exc.status,
-                        attempt=attempt + 1,
-                        max_retries=self._max_retries,
-                    )
-                    self._sleep(delay)
-                    delay *= 2
+                    delay = next_delay
                     continue
                 log.warning("prompt_expander_failed", status=exc.status, detail=exc.detail)
                 return None
@@ -244,6 +232,31 @@ class PromptExpander:
             return expanded
 
         return None  # pragma: no cover
+
+    def _retry_after_gemini_error(
+        self, exc: GeminiHttpError, attempt: int, start: float, delay: float
+    ) -> float | None:
+        """Sleep and return the next backoff delay for a retryable error, or None to abort.
+
+        Caller has already confirmed the error is retry-eligible
+        (``exc.status in _RETRYABLE_STATUS and attempt < self._max_retries``).
+        """
+        if (self._clock() - start) + delay >= self._max_total_seconds:
+            # No budget left to sleep + run another attempt — fall back
+            # now instead of sleeping into a guaranteed-skipped retry.
+            log.warning(
+                "prompt_expander_budget_exhausted",
+                max_total_seconds=self._max_total_seconds,
+            )
+            return None
+        log.warning(
+            "prompt_expander_retry",
+            status=exc.status,
+            attempt=attempt + 1,
+            max_retries=self._max_retries,
+        )
+        self._sleep(delay)
+        return delay * 2
 
     def expand(self, prompt: str) -> ExpansionResult:
         """Return an :class:`ExpansionResult`. Never raises for API/network faults."""
