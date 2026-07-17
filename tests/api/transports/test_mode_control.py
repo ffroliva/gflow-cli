@@ -28,21 +28,37 @@ class _FakeLocator:
     async def get_attribute(self, name: str) -> str | None:
         return self._page.attr(self._sel, name)
 
-    async def click(self, **_kw: object) -> None:
-        self._page.click(self._sel)
+    async def click(self, **kw: object) -> None:
+        mode = self._page.raise_unforced_click
+        if mode and not kw.get("force") and self._sel == mc.AGENT_TOGGLE_SELECTOR:
+            self._page.raise_unforced_click = None  # raise once
+            if mode == "after":
+                self._page.click(self._sel, kw)
+            raise RuntimeError(f"click failed ({mode}-dispatch)")
+        self._page.click(self._sel, kw)
 
 
 class _FakePage:
-    """Models Flow's composer: state in {media, agent, sidebar}.
+    """Models Flow's composer: state in {media, agent, sidebar, pinned, stuck}.
 
     - media:  crop_* present; toggle present with aria-pressed=false.
     - agent:  no crop; toggle present with aria-pressed=true; expand available.
     - sidebar: no crop; no in-composer toggle; the sidebar X (close) present.
+    - pinned: server-pinned agentic arm — toggle present (aria-pressed=true),
+      clicking flips aria to false BUT the crop panel never mounts in place
+      (state → pinned_off); only a reload after the persisted toggle-off
+      brings classic back (pinned_off → media). Models the 2026-07-17 incident.
     """
 
-    def __init__(self, state: str = "media") -> None:
+    def __init__(self, state: str = "media", raise_unforced_click: str | None = None) -> None:
         self.state = state
         self.clicks: list[str] = []
+        self.click_kwargs: list[dict[str, object]] = []
+        self.reloads = 0
+        # "before": unforced toggle click raises WITHOUT dispatching;
+        # "after": dispatches the state change, THEN raises (post-click
+        # instability — Playwright can raise after the events fired).
+        self.raise_unforced_click = raise_unforced_click
 
     def locator(self, sel: str) -> _FakeLocator:
         return _FakeLocator(self, sel)
@@ -50,27 +66,38 @@ class _FakePage:
     async def wait_for_timeout(self, _ms: int) -> None:
         return None
 
+    async def reload(self, **_kw: object) -> None:
+        self.reloads += 1
+        if self.state == "pinned_off":
+            # The toggle click persisted isAgentModeToggled=false server-side;
+            # the fresh load mounts the classic composer.
+            self.state = "media"
+
     def count(self, sel: str) -> int:
-        if sel in mc._CROP_SELECTORS:
+        if sel in mc.CROP_SELECTORS:
             return 1 if self.state == "media" else 0
         if sel == mc.AGENT_TOGGLE_SELECTOR:
-            return 1 if self.state in ("media", "agent") else 0
+            return 1 if self.state in ("media", "agent", "pinned", "pinned_off") else 0
         if sel == mc.SIDEBAR_CLOSE_SELECTOR:
             return 1 if self.state == "sidebar" else 0
         return 0
 
     def attr(self, sel: str, name: str) -> str | None:
         if sel == mc.AGENT_TOGGLE_SELECTOR and name == "aria-pressed":
-            if self.state == "agent":
+            if self.state in ("agent", "pinned"):
                 return "true"
-            if self.state == "media":
+            if self.state in ("media", "pinned_off"):
                 return "false"
         return None
 
-    def click(self, sel: str) -> None:
+    def click(self, sel: str, kw: dict[str, object] | None = None) -> None:
         self.clicks.append(sel)
+        self.click_kwargs.append(kw or {})
         if sel == mc.AGENT_TOGGLE_SELECTOR:
-            self.state = "agent" if self.state == "media" else "media"
+            if self.state == "pinned":
+                self.state = "pinned_off"
+            else:
+                self.state = "agent" if self.state == "media" else "media"
         elif sel == mc.SIDEBAR_CLOSE_SELECTOR:
             # Closing the sidebar returns to the composer, still agent-on
             # (aria-pressed=true) — matches the live round-trip (03_after_close).
@@ -121,3 +148,74 @@ async def test_ensure_media_gives_up_when_nothing_actionable() -> None:
     acted = await mc.ensure_media_mode(page)  # type: ignore[arg-type]
     assert acted is False
     assert page.clicks == []
+    # No toggle was clicked, so the reload rescue must not fire either.
+    assert page.reloads == 0
+
+
+@pytest.mark.asyncio
+async def test_pinned_arm_recovers_via_reload() -> None:
+    # 2026-07-17 incident shape: the toggle flips aria-pressed but the classic
+    # panel never mounts in place — only a reload (which re-rolls the arm AND
+    # mounts the server-persisted isAgentModeToggled=false) restores classic.
+    page = _FakePage("pinned")
+    acted = await mc.ensure_media_mode(page, allow_reload=True)  # type: ignore[arg-type]
+    assert acted is True
+    assert page.reloads == 1
+    assert page.state == "media"
+    assert mc.AGENT_TOGGLE_SELECTOR in page.clicks
+
+
+@pytest.mark.asyncio
+async def test_reload_requires_opt_in() -> None:
+    # Mid-flow callers (image/video mode switches after driver binding) must
+    # NEVER get a surprise navigation — reload is opt-in for the pre-bind
+    # get_ui_driver path only.
+    page = _FakePage("pinned")
+    await mc.ensure_media_mode(page)  # type: ignore[arg-type]
+    assert page.reloads == 0
+    assert page.state == "pinned_off"  # toggle still clicked (old semantics)
+
+
+@pytest.mark.asyncio
+async def test_clean_toggle_does_not_reload() -> None:
+    page = _FakePage("agent")
+    await mc.ensure_media_mode(page, allow_reload=True)  # type: ignore[arg-type]
+    assert page.reloads == 0
+
+
+@pytest.mark.asyncio
+async def test_force_fallback_does_not_arm_reload() -> None:
+    # Unforced click fails WITHOUT dispatching → force fallback lands the DOM
+    # flip, but nothing was persisted server-side — the reload premise is
+    # false, so no navigation may fire even with allow_reload=True.
+    page = _FakePage("pinned", raise_unforced_click="before")
+    await mc.ensure_media_mode(page, allow_reload=True)  # type: ignore[arg-type]
+    assert any(kw.get("force") for kw in page.click_kwargs)  # fallback used
+    assert page.reloads == 0
+    assert page.state == "pinned_off"
+
+
+@pytest.mark.asyncio
+async def test_post_dispatch_click_failure_never_double_clicks() -> None:
+    # Playwright can raise AFTER the click events dispatched. A blind force
+    # fallback would click the now-OFF toggle and re-enable agent mode; the
+    # fallback must re-read aria-pressed first.
+    page = _FakePage("agent", raise_unforced_click="after")
+    await mc.ensure_media_mode(page)  # type: ignore[arg-type]
+    assert page.state == "media"
+    assert page.clicks == [mc.AGENT_TOGGLE_SELECTOR]  # exactly one dispatch
+    assert not any(kw.get("force") for kw in page.click_kwargs)
+
+
+@pytest.mark.asyncio
+async def test_toggle_click_is_unforced() -> None:
+    # force=True bypasses actionability AND can skip the React handler that
+    # fires the persisting tRPC mutation — the toggle must get a real click.
+    page = _FakePage("agent")
+    await mc.ensure_media_mode(page)  # type: ignore[arg-type]
+    toggle_kwargs = [
+        kw
+        for sel, kw in zip(page.clicks, page.click_kwargs, strict=True)
+        if sel == mc.AGENT_TOGGLE_SELECTOR
+    ]
+    assert toggle_kwargs and all(not kw.get("force") for kw in toggle_kwargs)
