@@ -90,39 +90,49 @@ class LogMcpRequestsMiddleware:
         path = scope.get("path", "")
         if path.startswith("/mcp"):
             if path in ("/mcp/message", "/mcp/messages"):
-                try:
-                    # Read all body chunks safely
-                    body_bytes = b""
-                    more_body = True
-                    chunks: list[bytes] = []
-                    while more_body:
-                        message = await receive()
-                        chunks.append(message.get("body", b""))
-                        more_body = message.get("more_body", False)
-                    body_bytes = b"".join(chunks)
-
-                    if body_bytes:
-                        try:
-                            body_json = json.loads(body_bytes)
-                            redacted = redact_metadata(body_json)
-                            logger.info("Incoming MCP request payload", path=path, payload=redacted)
-                        except Exception:
-                            logger.info(
-                                "Incoming MCP request raw payload", path=path, size=len(body_bytes)
-                            )
-
-                    # Reconstruct receive so downstream handlers can read it
-                    async def wrapped_receive() -> dict[str, Any]:
-                        return {"type": "http.request", "body": body_bytes, "more_body": False}
-
-                    await self.app(scope, wrapped_receive, send)
+                if await self._forward_logged_mcp_message(scope, receive, send, path):
                     return
-                except Exception as exc:
-                    logger.warning("Failed to parse request body in middleware", exc_info=exc)
             else:
                 logger.info("Incoming MCP request", path=path)
 
         await self.app(scope, receive, send)
+
+    def _log_mcp_payload(self, path: str, body_bytes: bytes) -> None:
+        """Log the decoded MCP request payload (redacted), or raw bytes if not JSON."""
+        try:
+            body_json = json.loads(body_bytes)
+            redacted = redact_metadata(body_json)
+            logger.info("Incoming MCP request payload", path=path, payload=redacted)
+        except Exception:
+            logger.info("Incoming MCP request raw payload", path=path, size=len(body_bytes))
+
+    async def _forward_logged_mcp_message(
+        self, scope: Scope, receive: Receive, send: Send, path: str
+    ) -> bool:
+        """Read+log the body of an /mcp/message(s) POST, then forward it; True if forwarded."""
+        try:
+            # Read all body chunks safely
+            body_bytes = b""
+            more_body = True
+            chunks: list[bytes] = []
+            while more_body:
+                message = await receive()
+                chunks.append(message.get("body", b""))
+                more_body = message.get("more_body", False)
+            body_bytes = b"".join(chunks)
+
+            if body_bytes:
+                self._log_mcp_payload(path, body_bytes)
+
+            # Reconstruct receive so downstream handlers can read it
+            async def wrapped_receive() -> dict[str, Any]:
+                return {"type": "http.request", "body": body_bytes, "more_body": False}
+
+            await self.app(scope, wrapped_receive, send)
+            return True
+        except Exception as exc:
+            logger.warning("Failed to parse request body in middleware", exc_info=exc)
+            return False
 
 
 app.add_middleware(LogMcpRequestsMiddleware)
