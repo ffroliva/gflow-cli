@@ -164,6 +164,11 @@ async def ensure_media_mode(page: Page, *, allow_reload: bool = False) -> bool:
     switches after driver binding) must keep the default: their cohort is bound
     for the flow's lifetime and must not be re-rolled underneath them.
     """
+    # The editor renders a beat after navigation — probing the blank shell reads
+    # as "nothing actionable" and the whole recovery no-ops in milliseconds
+    # WITHOUT ever reaching the toggle (live-verified on the pinned arm,
+    # docs/LIVE_VERIFICATION_v0.38.1.md). Absorb the render race first.
+    await _wait_until(page, _composer_present, _COMPOSER_READY_TIMEOUT_MS)
     acted = False
     persisted_off = False  # a REAL (unforced) toggle click succeeded → server pref persisted
     for round_no in range(2):
