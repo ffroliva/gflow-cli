@@ -7,10 +7,20 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+## [0.37.0] — 2026-07-17
+
+### Fixed
+
+- **Agentic image count enforcement** (#313): in the agentic (conversational) Flow UI cohort, the requested image count (`-n`) is now reliably enforced via the Agent settings panel, reworked to reuse classic mode's robust count-tab primitives (a stale sticky default there could previously override the natural-language directive). Covered by a live regression test.
+
 ### Changed
 
 - **UI-automation viewport enlarged to 1920×1080** (from 1280×800) to reduce the static browser-fingerprint signal with the most common real desktop resolution. Only the `UiAutomationTransport` context is affected; the `FlowApiClient` REST context (1280×720, selector-irrelevant) is unchanged. Enlarging stays within Flow's desktop layout, so selectors are unaffected. Timing/click humanization from #315 remains out of scope — parked under ADR-13 (the current stealth stack already measures a 0.0% WAF-403 rate). (#315)
 - **Auth-login viewports harmonized to 1920×1080** so a profile logs in at the same size it later generates with — `internal_chromium` (Playwright viewport) and `real_chrome` (`--window-size`). Login-window only, not selector-bound. (#315)
+
+### Security
+
+- **FIPS-safe SAPISIDHASH:** the protocol-mandated SHA-1 in Google's SAPISIDHASH computation is now marked `usedforsecurity=False` — it is a protocol hash, not a security primitive, and this lets the call succeed under FIPS-mode Python (which otherwise rejects SHA-1). The digest is byte-identical, so authentication is unchanged. (#329)
 
 ## [0.36.0] — 2026-07-16
 
@@ -1997,7 +2007,8 @@ shell-script template that branches on these codes.
 
 First skeleton. Not functional end-to-end yet.
 
-[Unreleased]: https://github.com/ffroliva/gflow-cli/compare/v0.36.0...HEAD
+[Unreleased]: https://github.com/ffroliva/gflow-cli/compare/v0.37.0...HEAD
+[0.37.0]: https://github.com/ffroliva/gflow-cli/compare/v0.36.0...v0.37.0
 [0.36.0]: https://github.com/ffroliva/gflow-cli/compare/v0.35.0...v0.36.0
 [0.35.0]: https://github.com/ffroliva/gflow-cli/compare/v0.34.0...v0.35.0
 [0.34.0]: https://github.com/ffroliva/gflow-cli/compare/v0.33.0...v0.34.0
