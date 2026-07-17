@@ -7,6 +7,18 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+## [0.38.0] — 2026-07-17
+
+### Added
+
+- **Robust agentic↔classic UI mode control** (#332): `--ui-mode` is now driven by a state-aware mode controller that reads Flow's Agent toggle (`aria-pressed`, locale-invariant) instead of icon heuristics — the "Tools" icon present in both modes could previously be misread as a forced-agentic cohort, causing spurious "not recoverable" aborts. `--ui-mode classic` now reliably reaches the classic editor: the controller closes the chat sidebar, toggles off only when actually in agent mode, and verifies the result. Live-verified with a full classic→agent→classic round-trip on real Flow.
+- **i2i reference dedup via picker filename search** (#314): repeated local `--ref` images in `gflow image i2i` are attached by selecting the already-uploaded library tile (exact-filename picker search, project-scoped) instead of re-uploading — ending duplicate library pile-ups (the reported 8× `son.jpg`). Falls back to upload when the filename isn't found, and scrolls the virtualised picker grid so off-screen matches are still selected rather than silently re-uploaded (#335). R2V video refs keep upload-only behavior.
+- **PR-Triage Autopilot (#238, #333)**: deterministic Stage 0 pre-filter and ephemeral Docker container sandbox executing the `/gflow:pr-council-review` skill against qualified external PRs hourly on the host VPS. Includes Telegram notifications and a persistent audit ledger. Implementation + fixture evals ship in this release; host-side deployment is staged separately.
+
+### Changed
+
+- **Cognitive-complexity refactor of 5 pure-logic functions** (#331): extracted cohesive private helpers to bring them under the Sonar S3776 threshold with zero behavior change (verified by types, scoped tests, and an adversarial behavior-diff review). The remaining S3776/S107 findings in essential-complexity live-automation code were accepted in SonarCloud with justification.
+
 ## [0.37.0] — 2026-07-17
 
 ### Fixed
@@ -318,6 +330,7 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
     daemon's cached settings instead of re-reading `.env` files live per task, so a
     mid-run edit to the home `.env` can no longer produce a task whose client config
     disagrees with the parameters the task derived from `get_settings()`.
+
 
 ## [0.24.0] — 2026-07-01
 
@@ -2007,7 +2020,8 @@ shell-script template that branches on these codes.
 
 First skeleton. Not functional end-to-end yet.
 
-[Unreleased]: https://github.com/ffroliva/gflow-cli/compare/v0.37.0...HEAD
+[Unreleased]: https://github.com/ffroliva/gflow-cli/compare/v0.38.0...HEAD
+[0.38.0]: https://github.com/ffroliva/gflow-cli/compare/v0.37.0...v0.38.0
 [0.37.0]: https://github.com/ffroliva/gflow-cli/compare/v0.36.0...v0.37.0
 [0.36.0]: https://github.com/ffroliva/gflow-cli/compare/v0.35.0...v0.36.0
 [0.35.0]: https://github.com/ffroliva/gflow-cli/compare/v0.34.0...v0.35.0

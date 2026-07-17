@@ -171,16 +171,6 @@ AGENTIC_UI_INDICATORS = (
     AGENT_CHAT_PANEL_CLOSE_SELECTOR,
 )
 
-# Timing for the Agent-exit loop. The clicks are force=True (immediate), so the
-# click timeout is only a safety cap, not a wait we expect to spend. The settle
-# pause lets Flow re-render the composer (pill → media panel, or panel-close →
-# pill) before the loop re-checks ``crop_*``.
-_AGENT_CLICK_TIMEOUT_MS = 1500
-_AGENT_SETTLE_MS = 500
-# Iteration cap for the Agent-exit loop. At most a couple of transitions are
-# expected (chat-panel close → pill reveal → pill click); the cap is a backstop
-# against a pathological flip-flop, not a value tuned to a specific shape.
-_AGENT_EXIT_MAX_ITERS = 3
 # Output-count + duration tabs are selected by aria-label text in
 # `_set_output_count` / `_select_video_duration` — NOT by id-suffix: the count
 # tab '-trigger-4' and the duration tab '-trigger-4' (4s) share a suffix, so an
@@ -1155,39 +1145,21 @@ class VideoGenerationMixin:
 
     @staticmethod
     async def _dismiss_agent_affordances(page: Page) -> bool:
-        """Run a bounded loop to dismiss Agent-mode affordances until the media panel returns.
+        """Bring the composer back to classic media mode; return True if it acted.
 
-        Returns ``(acted, panel_restored)`` encoded as a single bool: True when
-        the media panel is back after at least one click, False when nothing was
-        clicked or the panel never re-mounted. Raises ``FlowAgentUiError`` if a
-        forced Agentic UI indicator is detected.
+        Delegates to the robust :func:`mode_control.ensure_media_mode`, which is
+        **state-aware**: it reads the Agent toggle's ``aria-pressed`` (the
+        locale-invariant source of truth) and clicks it OFF only when actually
+        on, and closes the expanded chat sidebar (X) first — replacing the older
+        blind single pill-click that gave up on a still-open composer. Does not
+        raise; the caller (:meth:`_exit_agent_mode`) re-checks the media panel
+        and escalates via :meth:`_check_forced_agentic_ui` only if it never
+        returned.
         """
-        acted = False
-        clicked_pill = False
-        for _ in range(_AGENT_EXIT_MAX_ITERS):
-            if await VideoGenerationMixin._media_panel_present(page):
-                break
-            # Shape 2 first: the chat side-panel suppresses the pill entirely,
-            # so it must go before the pill can be found.
-            chat_close = page.locator(AGENT_CHAT_PANEL_CLOSE_SELECTOR).first
-            if await chat_close.count() > 0:
-                await chat_close.click(force=True, timeout=_AGENT_CLICK_TIMEOUT_MS)
-                await page.wait_for_timeout(_AGENT_SETTLE_MS)
-                acted = True
-                continue
-            # Shape 1: the in-composer pill — click AT MOST ONCE (binary toggle).
-            if clicked_pill:
-                break
-            pill = page.locator(COMPOSER_AGENT_TOGGLE_SELECTOR).first
-            if await pill.count() > 0:
-                await pill.click(force=True, timeout=_AGENT_CLICK_TIMEOUT_MS)
-                await page.wait_for_timeout(_AGENT_SETTLE_MS)
-                acted = True
-                clicked_pill = True
-                continue
-            # Neither affordance present — nothing more to do.
-            break
-        return acted
+        # Local import keeps mode_control a leaf and avoids any import cycle.
+        from gflow_cli.api.transports import mode_control
+
+        return await mode_control.ensure_media_mode(page)
 
     @staticmethod
     async def _check_forced_agentic_ui(page: Page, out_dir: Path | None) -> None:
@@ -1836,10 +1808,19 @@ class VideoGenerationMixin:
         *,
         out_dir: Path | None,
         timeout_s: float = 120.0,
+        prefer_existing: bool = False,
     ) -> None:
         """R2V: attach up to MAX_REFERENCE_IMAGES reference images. References
         have no Start/End slots — each is added via the 'Add Media' button, which
-        opens the same media dialog. Must run with the settings panel closed."""
+        opens the same media dialog. Must run with the settings panel closed.
+
+        When ``prefer_existing`` is set (image i2i), each ref is first looked up
+        in the open picker by its filename before uploading: Flow names an
+        uploaded file by its exact filename, so a repeated local ref is DEDUPED —
+        selected in place — instead of re-uploaded, avoiding the duplicate
+        library entries of #314. Upload stays the fallback when no library match
+        exists (fresh file, or a picker cohort without a search box). Off by
+        default so the R2V video path keeps its upload-every-time behaviour."""
         missing = [str(p) for p in images if not p.exists()]
         if missing:
             msg = f"reference image(s) not found: {missing}"
@@ -1870,6 +1851,12 @@ class VideoGenerationMixin:
                 break
             await add_media.click()
             await page.wait_for_timeout(1000)
+            if prefer_existing and await VideoGenerationMixin._try_select_existing_by_filename(
+                page, img.name, out_dir=out_dir
+            ):
+                attached += 1
+                log.info("ui_automation_video.reference_attached", index=i, deduped=True)
+                continue
             await VideoGenerationMixin._upload_via_open_dialog(
                 page,
                 img,
@@ -1879,6 +1866,72 @@ class VideoGenerationMixin:
             )
             attached += 1
             log.info("ui_automation_video.reference_attached", index=i)
+
+    @staticmethod
+    async def _try_select_existing_by_filename(
+        page: Page, filename: str, *, out_dir: Path | None
+    ) -> bool:
+        """In the OPEN reference picker, try to select an existing library asset
+        whose display name equals ``filename`` — dedup instead of re-upload (#314).
+
+        Flow names an uploaded file by its exact filename (live-verified: an
+        upload of ``zzdedupprobe.png`` surfaces as a picker option named
+        ``zzdedupprobe.png``), and the picker search filters on that name. So a
+        repeated local ref can be attached by selecting the existing tile rather
+        than uploading a duplicate — without persisting or trusting any media
+        UUID across runs.
+
+        Contract: returns ``True`` once a matching asset is attached; ``False``
+        when the search + a virtualised-grid scroll surface no match, having
+        cleared the filter so the caller's upload path starts from a clean grid.
+        A match that is *found but then fails to attach* (the include never
+        registers) raises ``TransportTimeoutError`` — a real UI failure is
+        surfaced rather than silently uploading a duplicate, matching the
+        media-UUID path. Keyed on the exact filename: a name Flow sanitises on
+        upload (stored display name then differs) simply misses and falls back to
+        upload; verified for ASCII-safe names.
+        """
+        # The picker library has its OWN active project (#287) — align it to the
+        # editor's project so the search sees this project's media, where the
+        # duplicate uploads accumulate.
+        await VideoGenerationMixin._sync_picker_project(page, out_dir=out_dir)
+
+        search = page.locator(PICKER_SEARCH_INPUT).first
+        if not await search.count():
+            return False  # no search box (older / #174 full-page cohort) → upload
+        await search.fill("")
+        # Human-like typing jitter to dodge WAF heuristics — not security.
+        await search.press_sequentially(filename, delay=random.randint(10, 50))  # NOSONAR
+        await page.wait_for_timeout(600)
+
+        # Match the tile by its image ALT (= the exact filename, locale-invariant).
+        # The option's accessible NAME also carries a localised media-type suffix
+        # ("Image"/"Imagem"), so an exact name match would miss; the img alt is
+        # exactly the filename. get_by_alt_text avoids CSS-quoting a filename.
+        tile = (
+            page.get_by_role("option").filter(has=page.get_by_alt_text(filename, exact=True)).first
+        )
+        # The library grid is virtualised (react-virtuoso) — a real match can sit
+        # off-screen after a broad search, absent from the DOM until scrolled into
+        # range. Scroll (progress-bounded, #287) before concluding there is no
+        # existing asset, so a still-existing dup isn't re-uploaded.
+        if not await tile.count() and not (
+            await VideoGenerationMixin._scroll_picker_grid_until_rendered(page, tile)
+        ):
+            await search.fill("")  # clear the filter for the upload fallback
+            return False
+
+        await VideoGenerationMixin._attach_selected_tile(
+            page,
+            tile,
+            out_dir=out_dir,
+            detail=f"filename ref {filename!r}",
+            surface="filename_ref_include",
+            screenshot_name="filename_ref_include_missing.png",
+            dialog_timeout_s=REMOTE_PICKER_CLOSE_TIMEOUT_S,
+        )
+        log.info("ui_automation_video.reference_deduped_by_filename", filename=filename)
+        return True
 
     @staticmethod
     async def _attach_remote_references(
@@ -2017,18 +2070,45 @@ class VideoGenerationMixin:
             )
             return False
 
+        await VideoGenerationMixin._attach_selected_tile(
+            page,
+            tile,
+            out_dir=out_dir,
+            detail=f"image ref {media_id}",
+            surface="image_ref_include",
+            screenshot_name="image_ref_include_missing.png",
+            dialog_timeout_s=dialog_timeout_s,
+        )
+        return True
+
+    @staticmethod
+    async def _attach_selected_tile(
+        page: Page,
+        tile: Locator,
+        *,
+        out_dir: Path | None,
+        detail: str,
+        surface: str,
+        screenshot_name: str,
+        dialog_timeout_s: float,
+    ) -> None:
+        """Attach an already-located picker ``tile`` and confirm the dialog closed.
+
+        The image reference picker attaches on tile-click and auto-closes the
+        dialog (one step); the video r2v picker instead needs an explicit
+        "Add to Prompt" include after selecting. Handle both: click, and if the
+        dialog did not auto-close, resolve the locale-safe include button and
+        click it, then verify the dialog closed. Shared by the media-UUID
+        (:meth:`_select_existing_asset`) and filename
+        (:meth:`_try_select_existing_by_filename`) selection paths. Raises
+        ``TransportTimeoutError`` if the dialog never closes after the include —
+        a tile matched but the attach did not register."""
         await tile.click()
         await page.wait_for_timeout(400)
-
-        # The image reference picker attaches on tile-click and auto-closes the
-        # dialog (one step). The video r2v picker instead needs an explicit
-        # "Add to Prompt" include after selecting. Handle both: if the dialog
-        # already closed, the attach registered on click; otherwise resolve and
-        # click the locale-safe include button.
         dialog = page.locator(DIALOG_ANY).last
         try:
             await dialog.wait_for(state="hidden", timeout=2500)
-            return True
+            return
         except Exception:  # noqa: BLE001 - still open -> needs explicit include
             pass
 
@@ -2036,10 +2116,10 @@ class VideoGenerationMixin:
             page,
             PICKER_INCLUDE_BUTTON,
             _INCLUDE_BUTTON_TIER_NAMES,
-            surface="image_ref_include",
-            detail=f"image ref {media_id}",
+            surface=surface,
+            detail=detail,
             out_dir=out_dir,
-            screenshot_name="image_ref_include_missing.png",
+            screenshot_name=screenshot_name,
         )
         await include.click(timeout=3000)
         await page.wait_for_timeout(600)
@@ -2047,10 +2127,9 @@ class VideoGenerationMixin:
             await dialog.wait_for(state="hidden", timeout=dialog_timeout_s * 1000)
         except Exception as e:
             raise TransportTimeoutError(
-                f"image ref {media_id} picker dialog did not close after "
-                f"{dialog_timeout_s}s (the include action may not have registered)",
+                f"{detail} picker dialog did not close after {dialog_timeout_s}s "
+                "(the include action may not have registered)",
             ) from e
-        return True
 
     @staticmethod
     async def _attach_image_uuid_refs(

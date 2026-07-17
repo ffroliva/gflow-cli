@@ -520,6 +520,41 @@ def _parse_scene_numeric_fields(d: _TomlObj, idx: int) -> tuple[str, object]:
     return str(aspect), duration
 
 
+def _validate_scene_framing(framing: object, idx: int) -> None:
+    """Validate that scene framing, if given, is one of the allowed values."""
+    if framing is not None and framing not in FRAMING:
+        raise ConfigurationError(
+            f"scenes[{idx}].framing must be one of {sorted(FRAMING)} (got {framing!r})."
+        )
+
+
+def _validate_scene_model(model: object, idx: int) -> None:
+    """Validate that scene model, if given, is a string."""
+    if model is not None and not isinstance(model, str):
+        raise ConfigurationError(f"scenes[{idx}].model must be a string.")
+
+
+def _validate_scene_style_variant(
+    style_variant: str | None, idx: int, style_variant_names: set[str]
+) -> None:
+    """Validate that style_variant, if given, is 'none' or a defined style variant."""
+    if (
+        style_variant is not None
+        and style_variant != "none"
+        and style_variant not in style_variant_names
+    ):
+        raise ConfigurationError(
+            f"scenes[{idx}].style_variant {style_variant!r} is not a defined "
+            f"style variant (defined: {sorted(style_variant_names)!r})."
+        )
+
+
+def _scene_opt_field(d: _TomlObj, key: str) -> str | None:
+    """Read an optional string field from a scene dict, stripped; non-str values become None."""
+    v = d.get(key)
+    return v.strip() if isinstance(v, str) else None
+
+
 def _parse_scene(
     data: object,
     idx: int,
@@ -540,10 +575,7 @@ def _parse_scene(
         raise ConfigurationError(f"scenes[{idx}].action must be a non-empty string.")
 
     framing = d.get("framing")
-    if framing is not None and framing not in FRAMING:
-        raise ConfigurationError(
-            f"scenes[{idx}].framing must be one of {sorted(FRAMING)} (got {framing!r})."
-        )
+    _validate_scene_framing(framing, idx)
 
     chars = _parse_scene_chars(d, idx, char_names)
 
@@ -557,23 +589,10 @@ def _parse_scene(
     aspect, duration = _parse_scene_numeric_fields(d, idx)
 
     model = d.get("model")
-    if model is not None and not isinstance(model, str):
-        raise ConfigurationError(f"scenes[{idx}].model must be a string.")
-
-    def opt(key: str) -> str | None:
-        v = d.get(key)
-        return v.strip() if isinstance(v, str) else None
+    _validate_scene_model(model, idx)
 
     style_variant = _scene_opt_str(d, "style_variant", idx)
-    if (
-        style_variant is not None
-        and style_variant != "none"
-        and style_variant not in style_variant_names
-    ):
-        raise ConfigurationError(
-            f"scenes[{idx}].style_variant {style_variant!r} is not a defined "
-            f"style variant (defined: {sorted(style_variant_names)!r})."
-        )
+    _validate_scene_style_variant(style_variant, idx, style_variant_names)
 
     style_suffix = _scene_opt_str(d, "style_suffix", idx)
     instructions = _parse_scene_instructions(d.get("instructions"), idx)
@@ -581,13 +600,13 @@ def _parse_scene(
     return Scene(
         id=sid.strip(),
         action=action.strip(),
-        title=opt("title"),
-        setting=opt("setting"),
+        title=_scene_opt_field(d, "title"),
+        setting=_scene_opt_field(d, "setting"),
         framing=str(framing) if framing else None,
-        camera=opt("camera"),
-        lighting=opt("lighting"),
-        mood=opt("mood"),
-        negative=opt("negative"),
+        camera=_scene_opt_field(d, "camera"),
+        lighting=_scene_opt_field(d, "lighting"),
+        mood=_scene_opt_field(d, "mood"),
+        negative=_scene_opt_field(d, "negative"),
         characters=tuple(chars),
         variant=str(variant) if isinstance(variant, str) else None,
         dialogue=tuple(dialogue),

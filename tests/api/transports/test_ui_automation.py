@@ -2594,8 +2594,8 @@ def _exit_agent_page(initial: dict) -> tuple[MagicMock, dict]:
     ``(page, state)`` so a test can assert final counts + click tallies (the
     state dict also accrues ``pill_clicks`` / ``chat_clicks``).
     """
+    from gflow_cli.api.transports import mode_control
     from gflow_cli.api.transports.ui_automation_video import (
-        AGENT_CHAT_PANEL_CLOSE_SELECTOR,
         COMPOSER_AGENT_TOGGLE_SELECTOR,
     )
 
@@ -2608,11 +2608,15 @@ def _exit_agent_page(initial: dict) -> tuple[MagicMock, dict]:
         "crop_after_pill": 1,
         "pill_after_chat": 1,
         "chat_after_chat": 0,
+        # The Agent toggle's aria-pressed (the mode-control source of truth).
+        # "true" = agent-on; a pill click flips it to "false" (binary toggle).
+        "agent_pressed": "true",
         **initial,
     }
 
     async def _pill_click(*_a, **_k) -> None:
         state["pill_clicks"] += 1
+        state["agent_pressed"] = "false"  # binary toggle flips off
         state["crop"] = state["crop_after_pill"]
 
     async def _chat_click(*_a, **_k) -> None:
@@ -2620,22 +2624,32 @@ def _exit_agent_page(initial: dict) -> tuple[MagicMock, dict]:
         state["chat"] = state["chat_after_chat"]
         state["pill"] = state["pill_after_chat"]
 
-    def _loc(key: str, on_click=None) -> MagicMock:
+    def _loc(key: str, on_click=None, aria_key: str | None = None) -> MagicMock:
         loc = MagicMock()
         loc.first = loc
         loc.count = AsyncMock(side_effect=lambda: state[key])
         loc.click = AsyncMock(side_effect=on_click) if on_click else AsyncMock()
+        loc.get_attribute = AsyncMock(
+            side_effect=lambda name: (
+                state[aria_key] if aria_key and name == "aria-pressed" else None
+            )
+        )
         return loc
 
     def locator(sel: str) -> MagicMock:
-        if sel == COMPOSER_AGENT_TOGGLE_SELECTOR:
-            return _loc("pill", _pill_click)
-        if sel == AGENT_CHAT_PANEL_CLOSE_SELECTOR:
+        if sel == mode_control.AGENT_TOGGLE_SELECTOR:
+            return _loc("pill", _pill_click, aria_key="agent_pressed")
+        if sel == mode_control.SIDEBAR_CLOSE_SELECTOR:
             return _loc("chat", _chat_click)
+        # The legacy pill selector is still a "still-stuck" indicator consulted by
+        # _check_forced_agentic_ui (AGENTIC_UI_INDICATORS) — map it to the pill so
+        # the forced-agentic escalation fires when recovery leaves the pill up.
+        if sel == COMPOSER_AGENT_TOGGLE_SELECTOR:
+            return _loc("pill")
         for k in state:
-            if k in sel:
+            if isinstance(state[k], int) and k in sel:
                 return _loc(k)
-        return _loc("crop")  # any MODE_SWITCH_TRIGGER_SELECTORS probe
+        return _loc("crop")  # any crop_* MODE_SWITCH_TRIGGER probe
 
     page = AsyncMock()
     page.locator = MagicMock(side_effect=locator)

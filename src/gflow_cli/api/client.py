@@ -562,8 +562,52 @@ class FlowApiClient:
         await self._preread_flow_session_cookies()
         kwargs = self._persistent_context_kwargs()
         self._log_and_guard_launch(kwargs)
+        self._context = await self._launch_persistent_context(kwargs)
+        # Hide the automation flag so reCAPTCHA Enterprise doesn't score
+        # the session as a bot — navigator.webdriver=true causes low-score
+        # tokens and HTTP 403 on batchGenerateImages.
+        await self._context.add_init_script(
+            "Object.defineProperty(navigator,'webdriver',{get:()=>undefined})",
+        )
+        # issue #222: log whether the headed context loaded the Flow session
+        # cookie and, if not (macOS can't decrypt the on-disk store), seed it
+        # from the pre-launch snapshot.
+        await self._ensure_context_session_cookie()
+        # Open ``Settings.concurrency`` Pages inside the one persistent
+        # BrowserContext. ``launch_persistent_context`` opens one Page by
+        # default; reuse it as slot 0 to avoid an unused N+1 Page.
+        n = max(1, self.settings.concurrency)
+        self._pages = await self._open_page_pool(n)
+        # asyncio.Queue gives FIFO checkout/checkin with no manual locking.
+        # ``maxsize=n`` makes the upper bound STRUCTURAL — a double-checkin
+        # (bug in a future caller) raises QueueFull rather than silently
+        # corrupting the pool. The generic parameter satisfies pyright strict.
+        self._page_queue = asyncio.Queue[Page](maxsize=n)
+        for p in self._pages:
+            self._page_queue.put_nowait(p)
+        # Back-compat alias for callers that still touch ``self._page``
+        # directly. T3 removes the field entirely.
+        self._page = self._pages[0]
+        # Bootstrap navigation so cookies + JS context are loaded before any
+        # API call. Many endpoints 401 if you POST cold without an active page.
+        # (Phase 3 deferred ``_new_session_id`` flake is addressed in T3 by
+        # re-minting reCAPTCHA inside each retry loop on the worker's own
+        # Page; no session-id work happens in T2.)
+        await self._page.goto(
+            routes.EDITOR_BOOTSTRAP_URL,
+            wait_until="domcontentloaded",
+            timeout=60_000,
+        )
+
+        # --- Step 2: Resolve and set up transport, passing the live Page so
+        # S1 can share this context rather than opening its own.
+        await self._setup_transport()
+
+    async def _launch_persistent_context(self, kwargs: JsonObject) -> BrowserContext:
+        """Launch the persistent context; translate a launch-time crash into ProfileLockedError."""
+        assert self._pw is not None
         try:
-            self._context = await self._pw.chromium.launch_persistent_context(**kwargs)
+            return await self._pw.chromium.launch_persistent_context(**kwargs)
         except Exception as exc:
             if _is_target_closed(exc):
                 # A TargetClosedError at LAUNCH usually means the profile dir
@@ -590,55 +634,28 @@ class FlowApiClient:
                     ),
                 ) from exc
             raise
-        # Hide the automation flag so reCAPTCHA Enterprise doesn't score
-        # the session as a bot — navigator.webdriver=true causes low-score
-        # tokens and HTTP 403 on batchGenerateImages.
-        await self._context.add_init_script(
-            "Object.defineProperty(navigator,'webdriver',{get:()=>undefined})",
-        )
-        # issue #222: log whether the headed context loaded the Flow session
-        # cookie and, if not (macOS can't decrypt the on-disk store), seed it
-        # from the pre-launch snapshot.
-        await self._ensure_context_session_cookie()
-        # Open ``Settings.concurrency`` Pages inside the one persistent
-        # BrowserContext. ``launch_persistent_context`` opens one Page by
-        # default; reuse it as slot 0 to avoid an unused N+1 Page.
-        n = max(1, self.settings.concurrency)
-        self._pages = []
+
+    async def _open_page_pool(self, n: int) -> list[Page]:
+        """Open ``n`` Pages in the context, reusing the default Page as slot 0."""
+        assert self._context is not None
+        pages: list[Page] = []
         if self._context.pages:
-            self._pages.append(self._context.pages[0])
+            pages.append(self._context.pages[0])
             for _ in range(n - 1):
-                self._pages.append(await self._context.new_page())
+                pages.append(await self._context.new_page())
         else:
             for _ in range(n):
-                self._pages.append(await self._context.new_page())
-        # asyncio.Queue gives FIFO checkout/checkin with no manual locking.
-        # ``maxsize=n`` makes the upper bound STRUCTURAL — a double-checkin
-        # (bug in a future caller) raises QueueFull rather than silently
-        # corrupting the pool. The generic parameter satisfies pyright strict.
-        self._page_queue = asyncio.Queue[Page](maxsize=n)
-        for p in self._pages:
-            self._page_queue.put_nowait(p)
-        # Back-compat alias for callers that still touch ``self._page``
-        # directly. T3 removes the field entirely.
-        self._page = self._pages[0]
-        # Bootstrap navigation so cookies + JS context are loaded before any
-        # API call. Many endpoints 401 if you POST cold without an active page.
-        # (Phase 3 deferred ``_new_session_id`` flake is addressed in T3 by
-        # re-minting reCAPTCHA inside each retry loop on the worker's own
-        # Page; no session-id work happens in T2.)
-        await self._page.goto(
-            routes.EDITOR_BOOTSTRAP_URL,
-            wait_until="domcontentloaded",
-            timeout=60_000,
-        )
+                pages.append(await self._context.new_page())
+        return pages
 
-        # --- Step 2: Resolve and set up transport, passing the live Page so
-        # S1 can share this context rather than opening its own.
-        # Branch on the discriminating types (str, None) so pyright narrows
-        # the else-branch to FlowTransportStrategy. We deliberately avoid
-        # `@runtime_checkable` on the Protocol — that would freeze its
-        # public surface and constrain future evolution.
+    async def _setup_transport(self) -> None:
+        """Resolve and set up ``self.transport``, passing the live Page so S1 can share it.
+
+        Branch on the discriminating types (str, None) so pyright narrows
+        the else-branch to FlowTransportStrategy. We deliberately avoid
+        `@runtime_checkable` on the Protocol — that would freeze its
+        public surface and constrain future evolution.
+        """
         inp = self._transport_input
         if inp is None or isinstance(inp, str):
             # Client-owned: resolve from factory, run full lifecycle.

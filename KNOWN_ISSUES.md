@@ -751,6 +751,21 @@ key — surfaces as a `RuntimeError` that `auth/cookies.py` normalizes to
 
 ## Resolved
 
+### False "forced agentic — not recoverable" aborts from an icon-heuristic cohort probe
+
+- **Status:** Resolved · **Severity:** Was-Medium (spurious exit-25 aborts on profiles that could in fact reach classic mode) · **Was-affecting:** `--ui-mode classic` and classic-only operations through v0.37.0 · **Fixed in:** 0.38.0 · **Tracked:** [#299](https://github.com/ffroliva/gflow-cli/issues/299), [#332](https://github.com/ffroliva/gflow-cli/issues/332)
+
+The forced-agentic detection keyed on UI icons including `apps_spark_2` — which is
+Flow's **Tools** button, present in BOTH cohorts — so a classic-capable profile could
+be misclassified as an unrecoverable agentic cohort and abort with exit 25. Recovery
+was a blind single click on the Agent pill with no state verification. v0.38.0
+replaces this with a state-aware mode controller (`mode_control.py`) that reads the
+Agent toggle's `aria-pressed` attribute (false = classic media, true = agent —
+locale-invariant), closes the expanded chat sidebar first, toggles off only when
+actually in agent mode, and re-verifies. Live-verified with a full
+classic→agent→classic round-trip and a real agentic→classic recovery in the v0.38.0
+release run ([evidence](docs/LIVE_VERIFICATION_v0.38.0.md)).
+
 ### Agentic image generation could silently attribute a pre-existing project asset as the "generated" image
 
 - **Status:** Resolved · **Severity:** Was-High (wrong file downloaded and reported as success, silently) · **Was-affecting:** the agentic driver through v0.30.0 (and, for the pre-download guard below, every transport) · **Fixed in:** unreleased (0.31.0) · **Tracked:** [#281](https://github.com/ffroliva/gflow-cli/issues/281); related picker fix [#282](https://github.com/ffroliva/gflow-cli/issues/282)
