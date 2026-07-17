@@ -1808,10 +1808,19 @@ class VideoGenerationMixin:
         *,
         out_dir: Path | None,
         timeout_s: float = 120.0,
+        prefer_existing: bool = False,
     ) -> None:
         """R2V: attach up to MAX_REFERENCE_IMAGES reference images. References
         have no Start/End slots — each is added via the 'Add Media' button, which
-        opens the same media dialog. Must run with the settings panel closed."""
+        opens the same media dialog. Must run with the settings panel closed.
+
+        When ``prefer_existing`` is set (image i2i), each ref is first looked up
+        in the open picker by its filename before uploading: Flow names an
+        uploaded file by its exact filename, so a repeated local ref is DEDUPED —
+        selected in place — instead of re-uploaded, avoiding the duplicate
+        library entries of #314. Upload stays the fallback when no library match
+        exists (fresh file, or a picker cohort without a search box). Off by
+        default so the R2V video path keeps its upload-every-time behaviour."""
         missing = [str(p) for p in images if not p.exists()]
         if missing:
             msg = f"reference image(s) not found: {missing}"
@@ -1842,6 +1851,12 @@ class VideoGenerationMixin:
                 break
             await add_media.click()
             await page.wait_for_timeout(1000)
+            if prefer_existing and await VideoGenerationMixin._try_select_existing_by_filename(
+                page, img.name, out_dir=out_dir
+            ):
+                attached += 1
+                log.info("ui_automation_video.reference_attached", index=i, deduped=True)
+                continue
             await VideoGenerationMixin._upload_via_open_dialog(
                 page,
                 img,
@@ -1851,6 +1866,71 @@ class VideoGenerationMixin:
             )
             attached += 1
             log.info("ui_automation_video.reference_attached", index=i)
+
+    @staticmethod
+    async def _try_select_existing_by_filename(
+        page: Page, filename: str, *, out_dir: Path | None
+    ) -> bool:
+        """In the OPEN reference picker, try to select an existing library asset
+        whose display name equals ``filename`` — dedup instead of re-upload (#314).
+
+        Flow names an uploaded file by its exact filename (live-verified: an
+        upload of ``zzdedupprobe.png`` surfaces as a picker option named
+        ``zzdedupprobe.png``), and the picker search filters on that name. So a
+        repeated local ref can be attached by selecting the existing tile rather
+        than uploading a duplicate — without persisting or trusting any media
+        UUID across runs.
+
+        Soft by design: a quick presence check (no long actionability wait), and
+        it clears the search filter on a miss so the caller's upload path starts
+        from a clean grid. Returns ``True`` when a matching asset was attached,
+        ``False`` when none matched (caller uploads).
+        """
+        # The picker library has its OWN active project (#287) — align it to the
+        # editor's project so the search sees this project's media, where the
+        # duplicate uploads accumulate.
+        await VideoGenerationMixin._sync_picker_project(page, out_dir=out_dir)
+
+        search = page.locator(PICKER_SEARCH_INPUT).first
+        if not await search.count():
+            return False  # no search box (older / #174 full-page cohort) → upload
+        await search.fill("")
+        # Human-like typing jitter to dodge WAF heuristics — not security.
+        await search.press_sequentially(filename, delay=random.randint(10, 50))  # NOSONAR
+        await page.wait_for_timeout(600)
+
+        # Match the tile by its image ALT (= the exact filename, locale-invariant).
+        # The option's accessible NAME also carries a localised media-type suffix
+        # ("Image"/"Imagem"), so an exact name match would miss; the img alt is
+        # exactly the filename. get_by_alt_text avoids CSS-quoting a filename.
+        tile = (
+            page.get_by_role("option").filter(has=page.get_by_alt_text(filename, exact=True)).first
+        )
+        if not await tile.count():
+            await search.fill("")  # clear the filter for the upload fallback
+            return False
+
+        await tile.click()
+        await page.wait_for_timeout(400)
+        # The image picker attaches on tile-click and auto-closes; if the dialog
+        # is still open (video-style picker), fire the locale-safe include.
+        dialog = page.locator(DIALOG_ANY).last
+        try:
+            await dialog.wait_for(state="hidden", timeout=2500)
+        except Exception:  # noqa: BLE001 - still open → needs explicit include
+            include = await VideoGenerationMixin._resolve_include_action(
+                page,
+                PICKER_INCLUDE_BUTTON,
+                _INCLUDE_BUTTON_TIER_NAMES,
+                surface="filename_ref_include",
+                detail=f"filename ref {filename!r}",
+                out_dir=out_dir,
+                screenshot_name="filename_ref_include_missing.png",
+            )
+            await include.click(timeout=3000)
+            await page.wait_for_timeout(600)
+        log.info("ui_automation_video.reference_deduped_by_filename", filename=filename)
+        return True
 
     @staticmethod
     async def _attach_remote_references(

@@ -2148,7 +2148,12 @@ class UiAutomationTransport(VideoGenerationMixin):
         # The REST uploadImage path 401s, and passive capture needs the refs IN
         # the UI (not just a wire body), so we attach + let Flow's JS include them.
         if request.ref_paths:
-            await self._attach_references(page, list(request.ref_paths), out_dir=out_dir)
+            # prefer_existing: dedup a repeated local ref by selecting the
+            # already-uploaded library asset (named by its filename) instead of
+            # re-uploading it (#314). Image i2i only; R2V keeps upload-every-time.
+            await self._attach_references(
+                page, list(request.ref_paths), out_dir=out_dir, prefer_existing=True
+            )
 
         # Pre-generated image UUID refs: attach by selecting the EXISTING Flow
         # asset in the reference picker (no duplicate upload — founder principle),
