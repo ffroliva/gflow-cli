@@ -3038,3 +3038,164 @@ class TestCaptureDebugScreenshotFailure:
         page = MagicMock()
         page.screenshot = AsyncMock(side_effect=RuntimeError("target closed"))
         assert await ua_capture(page, tmp_path, "nope.png") is None
+
+
+class TestAttachReferencesDedup:
+    """#314: image i2i dedups a repeated local ref by selecting the existing
+    library asset (Flow names uploads by their exact filename) instead of
+    re-uploading a duplicate. R2V video keeps upload-every-time (default)."""
+
+    @staticmethod
+    def _picker(*, search_present: bool = True, tile_present: bool = True) -> tuple:
+        page = MagicMock()
+        search = MagicMock()
+        search.first = search
+        search.count = AsyncMock(return_value=1 if search_present else 0)
+        search.fill = AsyncMock()
+        search.press_sequentially = AsyncMock()
+        tile = MagicMock()
+        tile.first = tile
+        tile.count = AsyncMock(return_value=1 if tile_present else 0)
+        tile.click = AsyncMock()
+        role_loc = MagicMock()
+        role_loc.filter = MagicMock(return_value=tile)  # get_by_role("option").filter(...)
+        dialog = MagicMock()
+        dialog.last = dialog
+        dialog.wait_for = AsyncMock()  # goes hidden → image auto-attach on click
+
+        def _locator(sel: str) -> MagicMock:
+            return dialog if sel == DIALOG_ANY else search
+
+        page.locator = MagicMock(side_effect=_locator)
+        page.get_by_role = MagicMock(return_value=role_loc)
+        page.get_by_alt_text = MagicMock(return_value=MagicMock())
+        page.wait_for_timeout = AsyncMock()
+        return page, search, tile
+
+    @pytest.mark.asyncio
+    async def test_selects_existing_when_filename_matches(self, monkeypatch) -> None:
+        monkeypatch.setattr(VideoGenerationMixin, "_sync_picker_project", AsyncMock())
+        page, search, tile = self._picker(tile_present=True)
+
+        got = await VideoGenerationMixin._try_select_existing_by_filename(
+            page, "zzdedupprobe.png", out_dir=None
+        )
+
+        assert got is True
+        tile.click.assert_awaited()
+        # Matched by the img ALT = the EXACT filename (locale-invariant; the
+        # option's accessible name also carries a localised "Image" suffix).
+        assert page.get_by_alt_text.call_args.args[0] == "zzdedupprobe.png"
+        assert page.get_by_alt_text.call_args.kwargs.get("exact") is True
+        search.press_sequentially.assert_awaited()
+
+    @pytest.mark.asyncio
+    async def test_returns_false_and_clears_search_on_no_match(self, monkeypatch) -> None:
+        monkeypatch.setattr(VideoGenerationMixin, "_sync_picker_project", AsyncMock())
+        # Not in the initial DOM AND not surfaced by a virtualised-grid scroll.
+        monkeypatch.setattr(
+            VideoGenerationMixin,
+            "_scroll_picker_grid_until_rendered",
+            AsyncMock(return_value=False),
+        )
+        page, search, tile = self._picker(tile_present=False)
+
+        got = await VideoGenerationMixin._try_select_existing_by_filename(
+            page, "novel.png", out_dir=None
+        )
+
+        assert got is False
+        tile.click.assert_not_awaited()
+        # Cleared the filter so the upload fallback starts from a clean grid.
+        assert search.fill.await_args_list[-1].args == ("",)
+
+    @pytest.mark.asyncio
+    async def test_scroll_fallback_finds_offscreen_match(self, monkeypatch) -> None:
+        # An existing match absent from the initial DOM is surfaced by scrolling
+        # the virtualised grid → it must be selected, NOT re-uploaded (finding #1).
+        monkeypatch.setattr(VideoGenerationMixin, "_sync_picker_project", AsyncMock())
+        monkeypatch.setattr(
+            VideoGenerationMixin,
+            "_scroll_picker_grid_until_rendered",
+            AsyncMock(return_value=True),
+        )
+        page, _search, tile = self._picker(tile_present=False)  # count 0 initially
+
+        got = await VideoGenerationMixin._try_select_existing_by_filename(
+            page, "offscreen.png", out_dir=None
+        )
+
+        assert got is True
+        tile.click.assert_awaited()  # attached via the scrolled-into-view tile
+
+    @pytest.mark.asyncio
+    async def test_returns_false_when_no_search_box(self, monkeypatch) -> None:
+        monkeypatch.setattr(VideoGenerationMixin, "_sync_picker_project", AsyncMock())
+        page, _search, tile = self._picker(search_present=False)
+
+        got = await VideoGenerationMixin._try_select_existing_by_filename(
+            page, "x.png", out_dir=None
+        )
+
+        assert got is False
+        tile.click.assert_not_awaited()
+
+    @staticmethod
+    def _attach_page() -> MagicMock:
+        page = MagicMock()
+        add = MagicMock()
+        add.first = add
+        add.wait_for = AsyncMock()
+        add.click = AsyncMock()
+        page.locator = MagicMock(return_value=add)
+        page.wait_for_timeout = AsyncMock()
+        return page
+
+    @pytest.mark.asyncio
+    async def test_prefer_existing_selects_and_skips_upload(self, monkeypatch, tmp_path) -> None:
+        ref = tmp_path / "son.jpg"
+        ref.write_bytes(b"x")
+        select = AsyncMock(return_value=True)
+        upload = AsyncMock()
+        monkeypatch.setattr(VideoGenerationMixin, "_try_select_existing_by_filename", select)
+        monkeypatch.setattr(VideoGenerationMixin, "_upload_via_open_dialog", upload)
+
+        await VideoGenerationMixin._attach_references(
+            self._attach_page(), [ref], out_dir=None, prefer_existing=True
+        )
+
+        select.assert_awaited_once()
+        upload.assert_not_awaited()  # deduped → no re-upload
+
+    @pytest.mark.asyncio
+    async def test_prefer_existing_uploads_when_no_match(self, monkeypatch, tmp_path) -> None:
+        ref = tmp_path / "fresh.jpg"
+        ref.write_bytes(b"x")
+        monkeypatch.setattr(
+            VideoGenerationMixin,
+            "_try_select_existing_by_filename",
+            AsyncMock(return_value=False),
+        )
+        upload = AsyncMock()
+        monkeypatch.setattr(VideoGenerationMixin, "_upload_via_open_dialog", upload)
+
+        await VideoGenerationMixin._attach_references(
+            self._attach_page(), [ref], out_dir=None, prefer_existing=True
+        )
+
+        upload.assert_awaited_once()  # fallback upload for a fresh file
+
+    @pytest.mark.asyncio
+    async def test_default_never_dedups_video_path(self, monkeypatch, tmp_path) -> None:
+        ref = tmp_path / "frame.jpg"
+        ref.write_bytes(b"x")
+        select = AsyncMock(return_value=True)
+        upload = AsyncMock()
+        monkeypatch.setattr(VideoGenerationMixin, "_try_select_existing_by_filename", select)
+        monkeypatch.setattr(VideoGenerationMixin, "_upload_via_open_dialog", upload)
+
+        # prefer_existing defaults False → R2V video path is unchanged.
+        await VideoGenerationMixin._attach_references(self._attach_page(), [ref], out_dir=None)
+
+        select.assert_not_awaited()
+        upload.assert_awaited_once()

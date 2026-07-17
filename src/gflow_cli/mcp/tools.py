@@ -30,6 +30,7 @@ from gflow_cli.api.image import AgentInstruction
 from gflow_cli.api.video import is_media_uuid
 from gflow_cli.cli_instructions import classify_refs
 from gflow_cli.config import UiMode, get_settings
+from gflow_cli.data.models import AssetLookup
 from gflow_cli.data.queries import list_projects
 from gflow_cli.data.repository import DataRepository
 from gflow_cli.data.store import DataStore
@@ -419,22 +420,28 @@ def _enrich_image_refs(
         asset = data_repo.get_asset_by_any_id(profile, ref)
         if asset is None:
             continue
-        entry: dict[str, str] = {}
-        name = asset.metadata_json.get("display_name")
-        if isinstance(name, str) and name:
-            entry["display_name"] = name
-        for local_file in asset.local_files:
-            if (
-                local_file.storage_provider is None
-                and local_file.path is not None
-                and local_file.path.is_file()
-            ):
-                entry["local_path"] = str(local_file.path)
-                break
+        entry = _ref_meta_entry(asset)
         if entry:
             meta[ref] = entry
     if meta:
         payload["ref_meta"] = meta
+
+
+def _ref_meta_entry(asset: AssetLookup) -> dict[str, str]:
+    """Build the ``display_name``/``local_path`` metadata entry for one catalog asset."""
+    entry: dict[str, str] = {}
+    name = asset.metadata_json.get("display_name")
+    if isinstance(name, str) and name:
+        entry["display_name"] = name
+    for local_file in asset.local_files:
+        if (
+            local_file.storage_provider is None
+            and local_file.path is not None
+            and local_file.path.is_file()
+        ):
+            entry["local_path"] = str(local_file.path)
+            break
+    return entry
 
 
 def _resolve_payload_refs(

@@ -24,9 +24,7 @@ when deciding what to do with an external or internal PR.
 
 ## Automated External PR Triage
 
-External PR routing is handled by
-`.github/workflows/external-pr-triage.yml`. It uses `pull_request_target`, but
-only for repository metadata operations:
+External PR routing starts with `.github/workflows/external-pr-triage.yml` (triggered via `pull_request_target`), which performs basic repository metadata operations:
 
 - label external PRs as `external-contribution`
 - label them as `needs-maintainer-review`
@@ -34,12 +32,17 @@ only for repository metadata operations:
 - request `@ffroliva` as reviewer
 - post or update the external-contribution checklist comment
 
-Bot PRs such as Dependabot updates are skipped by this human-contributor
-triage. They still run normal CI and remain subject to branch protection.
+Bot PRs such as Dependabot updates are skipped by this human-contributor triage. They still run normal CI and remain subject to branch protection.
 
-This workflow must not checkout the PR branch, install dependencies, run tests,
-or execute contributor code. Keep all code execution in the normal `pull_request`
-CI workflow, where forked PRs do not receive repository secrets.
+This workflow must not checkout the PR branch, install dependencies, run tests, or execute contributor code. Keep all code execution in the normal `pull_request` CI workflow, where forked PRs do not receive repository secrets.
+
+### PR-Triage Autopilot (VPS Sandbox)
+
+To automate deeper verification, an hourly `hermes-ops` cron job runs on the host VPS to triage eligible external PRs. 
+- It uses the deterministic **Stage 0 pre-filter** (`pr_triage_gate.py`) to confirm eligibility.
+- It fetches the PR branch and runs the full `/gflow:pr-council-review` inside an **ephemeral, non-root, read-only Docker container sandbox** (with restricted network egress and no write credentials).
+- The host orchestrator posts the review comment to the PR and alerts the maintainer via Telegram.
+- For design details, see [2026-07-04-pr-triage-autopilot-design.md](superpowers/specs/2026-07-04-pr-triage-autopilot-design.md) and the implementation plan [PLAN.md](superpowers/plans/2026-07-08-pr-triage-autopilot/PLAN.md).
 
 ## GitHub Copilot Code Review
 

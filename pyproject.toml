@@ -1,6 +1,6 @@
 [project]
 name = "gflow-cli"
-version = "0.37.0"
+version = "0.38.0"
 description = "Unofficial CLI for Google Flow — drive Veo image-to-video generations from the terminal."
 readme = "README.md"
 license = { file = "LICENSE" }
@@ -101,6 +101,7 @@ select = ["E", "F", "W", "I", "B", "UP", "N", "T20"]
 [tool.ruff.lint.per-file-ignores]
 "tests/**" = ["T20"]
 "scripts/**" = ["T20"]
+"eval/**" = ["T20"]
 
 [tool.pyright]
 include = ["src", "tests"]
