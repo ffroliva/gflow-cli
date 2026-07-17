@@ -11,8 +11,10 @@ validation", "Settings via prompt, not the tune popover"):
   scraping is the only viable capture path in the agentic cohort.
 - The ``flag`` ligature is a normal per-message chat affordance (matched 11×
   on a successful generation) — it MUST NOT be treated as a policy signal.
-- Settings are encoded in the prompt directive, not driven via the ``tune``
-  Radix-popover (avoids the most drift-prone surface on a volatile A/B UI).
+- Settings are encoded in the prompt directive AS THE PRIMARY mechanism; the
+  ``tune`` Radix-popover is driven as a best-effort FALLBACK for image count
+  only (issue #313 — a stale sticky default there can silently override the
+  natural-language directive). See ``_enforce_image_count_via_settings_panel``.
 
 **Circular-import discipline:** this module must never import ``ui_automation``
 or ``ui_automation_video`` at module load time. All such imports happen inside
@@ -58,6 +60,112 @@ _MEDIA_UUID_RE = re.compile(r"[?&]name=([0-9a-fA-F-]+)")
 # The ``data-slate-editor="true"`` attribute distinguishes the primary input
 # from any secondary contenteditable nodes that may exist in the page.
 _SLATE_COMPOSER_SELECTOR = 'div[role="textbox"][data-slate-editor="true"]'
+# structlog route tag for the await-images generation wait (used in 3 error paths).
+_ROUTE_AWAIT_IMAGES = "agentic:await_images"
+
+# Agent settings panel (issue #313, reworked 2026-07-16 after code review) —
+# driven as a best-effort FALLBACK only, because prompt-encoding is the
+# primary mechanism and this popover is the most drift-prone surface on
+# Flow's UI (docs/AGENT_UI_RECON.md § "Settings via prompt, not the tune
+# popover"). A sticky prior value in this panel can silently override the
+# natural-language directive's requested count — that mismatch is issue
+# #313's root cause.
+#
+# Reuses classic mode's count-tab primitives (_count_tabs_locator,
+# _COUNT_TAB_TEXT_RE, UiAutomationTransport._is_settings_panel_open) via late
+# import — live-verified 2026-07-16 that Flow's Agent settings panel uses the
+# SAME role="tab"/aria-selected Radix pattern as classic mode's count
+# popover: 8 matching [role="tab"] elements appear when the panel is open (4
+# for "Image generation default", 4 for "Video generation default"), with
+# the image section's 4 tabs always rendering first in DOM order. The tune
+# open-trigger, the explicit Save requirement (classic's popover applies
+# live, this panel does not), and the never-raise contract (classic's
+# _set_count raises on failure since it has no fallback; this method DOES
+# have a fallback — the natural-language directive — so it must degrade
+# instead) are the genuine differences that prevent calling _set_count
+# directly.
+
+# The page has TWO ``arrow_back`` icon buttons when the panel is open: the
+# main toolbar's "Voltar"/back-to-gallery button (live-verified 2026-07-16 —
+# present at all times, NOT removed while the panel is open) and the panel's
+# OWN header back arrow. Both happen to satisfy "walk up N ancestors and find
+# a count-tablist" (Flow's DOM nests broadly enough that even the toolbar
+# button reaches a shared ancestor within a few levels) — so picking the
+# FIRST candidate that satisfies the walk (as an earlier version of this code
+# did) can silently grab the WRONG one and navigate away from the project
+# entirely. The fix: check EVERY arrow_back candidate and take the one with
+# the SHALLOWEST (closest) matching ancestor — the panel's own back arrow is
+# always structurally adjacent to its tablist (depth 1, live-verified);
+# the toolbar's only reaches a shared ancestor much further up (depth 4+).
+_FIND_PANEL_ROOT_JS_PRELUDE = """
+  const backBtns = [...document.querySelectorAll('button')].filter((b) => {
+    const i = b.querySelector('i.google-symbols');
+    return i && (i.textContent || '').trim() === 'arrow_back';
+  });
+  let panelRoot = null;
+  let backBtnEl = null;
+  let bestDepth = Infinity;
+  for (const backBtn of backBtns) {
+    let node = backBtn.parentElement;
+    for (let depth = 0; depth < 8 && node; depth++) {
+      const hasCountTablist = [...node.querySelectorAll("[role='tab']")].some((t) =>
+        /^(1x|x[2-4])$/.test((t.textContent || '').trim())
+      );
+      if (hasCountTablist) {
+        if (depth < bestDepth) { panelRoot = node; backBtnEl = backBtn; bestDepth = depth; }
+        break;
+      }
+      node = node.parentElement;
+    }
+  }
+"""
+
+# The panel's "Save" button has no icon ligature, no data-* attribute, no
+# type="submit", and its text ("Salvar"/"Save"/etc.) is locale-dependent —
+# per memory flow-locale-leak-icon-ligatures this cannot be text-matched.
+# Locate it structurally instead: within the correctly-identified panel root
+# (see _FIND_PANEL_ROOT_JS_PRELUDE), take the last visible <button> — that
+# button is Save in every live-verified capture (2026-07-16). Tags the match
+# with a data attribute so Playwright can locate it without re-running the
+# walk in a second round-trip.
+_FIND_SAVE_BUTTON_JS = (
+    """
+() => {
+"""
+    + _FIND_PANEL_ROOT_JS_PRELUDE
+    + """
+  if (!panelRoot) return false;
+  const visible = [...panelRoot.querySelectorAll('button')].filter((b) => {
+    const r = b.getBoundingClientRect();
+    return r.width > 0 && r.height > 0;
+  });
+  const save = visible[visible.length - 1];
+  if (!save) return false;
+  save.setAttribute('data-gflow-save-target', '1');
+  return true;
+}
+"""
+)
+
+# The panel's own header back arrow — the verified way to abandon/close the
+# panel WITHOUT saving (user-confirmed live: "the back arrow returns to the
+# main area"). Uses the same panel-root disambiguation as Save (see
+# _FIND_PANEL_ROOT_JS_PRELUDE) rather than an unscoped selector, which was
+# live-verified to sometimes click the main toolbar's back-to-gallery button
+# instead and navigate away from the project entirely — the root cause of
+# send_prompt's composer never becoming visible again on that path.
+_FIND_PANEL_BACK_BUTTON_JS = (
+    """
+() => {
+"""
+    + _FIND_PANEL_ROOT_JS_PRELUDE
+    + """
+  if (!backBtnEl) return false;
+  backBtnEl.setAttribute('data-gflow-panel-back-target', '1');
+  return true;
+}
+"""
+)
 
 # DOM polling defaults — match the classic transport's _await_captured cadence.
 _POLL_INTERVAL_S = 0.5
@@ -227,12 +335,13 @@ class AgenticFlowUiDriver:
         out_dir: Path | None = None,  # NOSONAR
         prompt_idx: int | None = None,
     ) -> None:
-        """Encode settings on the instance for prompt-directive composition.
+        """Encode settings on the instance for prompt-directive composition,
+        and best-effort enforce the count via the Agent settings panel.
 
-        Does NOT drive the ``tune`` popover — the agentic UI resolves count,
-        aspect, and model from natural language in the prompt. Storing the
-        values here lets ``send_prompt`` compose the directive from a single
-        place.
+        Does NOT drive the ``tune`` popover for aspect/model — only count,
+        as a fallback for issue #313 (a stale sticky default there can
+        override the natural-language directive). See
+        ``_enforce_image_count_via_settings_panel``.
         """
         # request.model / request.aspect are non-optional StrEnums — str() yields
         # the wire value ("NARWHAL", "IMAGE_ASPECT_RATIO_PORTRAIT", …).
@@ -249,6 +358,139 @@ class AgenticFlowUiDriver:
 
         if request.instructions is not None:
             await self._reconcile_instructions(page, request.instructions)
+
+        await self._enforce_image_count_via_settings_panel(page, request.count)
+
+    async def _enforce_image_count_via_settings_panel(self, page: Page, count: int) -> None:
+        """Best-effort: set Agent mode's sticky "Image generation default"
+        count to match ``count`` via the ``tune`` Settings panel.
+
+        Fallback mechanism for issue #313 — see the module-level selector
+        comments for why this reuses classic mode's count-tab primitives and
+        why it cannot simply call classic's ``_set_count`` unmodified.
+
+        **Never raises, and always leaves the panel closed / composer
+        visible before returning** — on every path (success, short-circuit,
+        or failure), so ``send_prompt``'s composer click is never blocked by
+        a panel this method left open. Any selector miss (older UI cohort
+        with no ``tune`` panel at all, a future Flow redesign, a transient
+        render delay) degrades to the natural-language directive alone —
+        the pre-existing behavior — rather than a hard failure.
+        """
+        # Late imports — agentic.py must not import ui_automation or
+        # drivers.factory at module load time (circular: factory imports
+        # this module to build AgenticFlowUiDriver).
+        from gflow_cli.api.transports.drivers.factory import (  # noqa: PLC0415
+            AGENT_TUNE_INDICATOR_SELECTOR,
+        )
+        from gflow_cli.api.transports.ui_automation import (  # noqa: PLC0415
+            UiAutomationTransport,
+            _count_tabs_locator,  # type: ignore[reportPrivateUsage]
+        )
+
+        try:
+            already_open = await UiAutomationTransport._is_settings_panel_open(  # type: ignore[reportPrivateUsage]
+                page
+            )
+            if not already_open:
+                tune_btn = page.locator(f"button:has({AGENT_TUNE_INDICATOR_SELECTOR})").first
+                if await tune_btn.count() == 0:
+                    log.debug("agentic_driver.settings_panel.tune_not_found")
+                    return
+                await tune_btn.click(timeout=5_000)
+                # Allow the panel to render — matches classic mode's
+                # _open_gen_settings_panel wait, needed for the same reason
+                # (React re-render lag; Locator.count() does not auto-wait).
+                await page.wait_for_timeout(600)
+
+            tabs = _count_tabs_locator(page)
+            total = await tabs.count()
+            if total < count:
+                log.warning(
+                    "agentic_driver.settings_panel.count_button_not_found",
+                    count=count,
+                    tabs_found=total,
+                )
+                await self._close_agent_settings_panel(page)
+                return
+
+            # Image section's tabs render first in DOM order (live-verified
+            # 2026-07-16) — nth(count - 1) targets the image count tab, not
+            # the video section's tabs that follow it.
+            target_tab = tabs.nth(count - 1)
+
+            if await target_tab.get_attribute("aria-selected") == "true":
+                # Already correct — the common case. No click, no Save
+                # needed; just restore the composer.
+                log.debug("agentic_driver.settings_panel.count_already_correct", count=count)
+                await self._close_agent_settings_panel(page)
+                return
+
+            _max_attempts = 3
+            converged = False
+            for attempt in range(1, _max_attempts + 1):
+                await target_tab.click(timeout=5_000)
+                await page.wait_for_timeout(300)
+                if await target_tab.get_attribute("aria-selected") == "true":
+                    converged = True
+                    break
+                if attempt < _max_attempts:
+                    # Brief pause before retry to allow React re-render —
+                    # same rationale as classic mode's _set_count.
+                    await page.wait_for_timeout(500)
+
+            if not converged:
+                log.warning(
+                    "agentic_driver.settings_panel.count_not_converged",
+                    count=count,
+                    attempts=_max_attempts,
+                )
+                await self._close_agent_settings_panel(page)
+                return
+
+            found_save = await page.evaluate(_FIND_SAVE_BUTTON_JS)
+            if not found_save:
+                log.warning("agentic_driver.settings_panel.save_button_not_found")
+                await self._close_agent_settings_panel(page)
+                return
+
+            # Save auto-closes the panel back to the composer (live-verified
+            # 2026-07-16) — no further close step needed on this path.
+            await page.locator("[data-gflow-save-target='1']").first.click(timeout=5_000)
+            await page.wait_for_timeout(300)
+            log.debug("agentic_driver.settings_panel.count_enforced", count=count)
+        except Exception as e:  # noqa: BLE001
+            log.warning(
+                "agentic_driver.settings_panel.enforce_count_failed",
+                error=str(e)[:120],
+            )
+            await self._close_agent_settings_panel(page)
+
+    @staticmethod
+    async def _close_agent_settings_panel(page: Page) -> None:
+        """Best-effort: click the panel's OWN back arrow to abandon it
+        WITHOUT saving, restoring the composer. Never raises — this is
+        itself a failure-path cleanup step, so any error here is logged and
+        swallowed rather than propagated.
+
+        Uses the panel-root-scoped lookup (:data:`_FIND_PANEL_BACK_BUTTON_JS`)
+        rather than an unscoped arrow_back selector — live-verified
+        2026-07-16 that the page has a SECOND, unrelated arrow_back button
+        (the main toolbar's back-to-gallery control) that an unscoped
+        `.first` can grab instead, navigating away from the project entirely.
+
+        Safe to call even if the panel is already closed (the JS walk simply
+        finds no matching panel root and returns ``false``).
+        """
+        try:
+            found = await page.evaluate(_FIND_PANEL_BACK_BUTTON_JS)
+            if not found:
+                return
+            back_btn = page.locator("[data-gflow-panel-back-target='1']").first
+            await back_btn.click(timeout=3_000)
+            await page.wait_for_timeout(300)
+        except Exception as e:  # noqa: BLE001
+            log.debug("agentic_driver.settings_panel.close_failed", error=str(e)[:120])
 
     async def _reconcile_instructions(
         self,
@@ -524,7 +766,7 @@ class AgenticFlowUiDriver:
                         "(explicit text or block symbol detected). "
                         "Prompt may violate Flow's content policy."
                     ),
-                    route="agentic:await_images",
+                    route=_ROUTE_AWAIT_IMAGES,
                 )
 
             current_srcs = await _scrape_img_srcs(page)
@@ -551,7 +793,7 @@ class AgenticFlowUiDriver:
                     f"Agentic DOM scraping timed out after {_AWAIT_TIMEOUT_S:.0f}s: "
                     f"0/{expected_count} distinct media UUIDs appeared"
                 )
-            raise TransportTimeoutError(detail=detail, route="agentic:await_images")
+            raise TransportTimeoutError(detail=detail, route=_ROUTE_AWAIT_IMAGES)
 
         if len(new_uuids) > expected_count:
             candidates = sorted(new_uuids)
@@ -560,7 +802,7 @@ class AgenticFlowUiDriver:
                     f"Cannot attribute the generation among {len(candidates)} candidate "
                     f"media UUIDs (expected {expected_count}): {candidates}."
                 ),
-                route="agentic:await_images",
+                route=_ROUTE_AWAIT_IMAGES,
             )
 
         return _build_generated_images(

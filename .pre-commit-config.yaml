@@ -1,8 +1,9 @@
 # Pre-commit hooks for gflow-cli
-# Install: pip install pre-commit && pre-commit install
+# Install (commit-time hooks): pip install pre-commit && pre-commit install
+# Install (pre-push hook too):  pre-commit install --hook-type pre-push
 # Run manually: pre-commit run --all-files
 #
-# Gates enforced:
+# Gates enforced on commit:
 #   1. ruff lint + format (fast, catches import order / style / unused imports)
 #   2. repo-hygiene (blocks tracked images, CDP lock files, hardcoded Windows paths)
 #
@@ -10,6 +11,16 @@
 #   - generated output artefacts (*.jpg, *.jpeg, test_assets/smoke_*/, test_assets/debug_*/)
 #   - CDP lock files (.gflow-cdp.lock) that contain browser session metadata
 #   - hardcoded machine-specific paths in scripts/ (C:\Users\<name>\...)
+#
+# Gate enforced on push:
+#   3. sonar-outage-fallback — SonarCloud (CI's primary gate) is reachable in
+#      the overwhelming majority of pushes, so this SKIPS in that case (CI
+#      does the real enforcement); it only runs a local SonarQube scan when
+#      SonarCloud itself is unreachable, so a push isn't silently unassessed
+#      during an outage. Gracefully skips (never blocks) if the optional
+#      local Sonar infra isn't set up -- most contributors won't have it.
+
+default_stages: [pre-commit]
 
 repos:
   - repo: https://github.com/astral-sh/ruff-pre-commit
@@ -29,10 +40,18 @@ repos:
         always_run: true
         additional_dependencies: []
 
+      - id: sonar-outage-fallback
+        name: Sonar (SonarCloud primary; local fallback only on outage)
+        language: system
+        entry: bash scripts/dev/sonar-pre-push-gate.sh
+        pass_filenames: false
+        always_run: true
+        stages: [pre-push]
+
   - repo: https://github.com/Yelp/detect-secrets
     rev: v1.5.0
     hooks:
       - id: detect-secrets
         name: Detect secrets
         args: ["--baseline", ".secrets.baseline"]
-        exclude: "\.secrets\.baseline$"
+        exclude: '\.secrets\.baseline$'

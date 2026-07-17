@@ -35,7 +35,7 @@ class AppliedTool:
     params: tuple[tuple[str, str], ...] = ()
 
     def params_dict(self) -> dict[str, str]:
-        return {k: v for k, v in self.params}
+        return dict(self.params)
 
 
 def config_hash(config: ToolConfig) -> str:

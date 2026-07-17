@@ -212,7 +212,7 @@ class TestSetup:
         call_args = fake_pw.chromium.launch_persistent_context.call_args.args
         assert call_args[0] == str(tmp_path)
         assert call_kwargs.get("headless") is False
-        assert call_kwargs.get("viewport") == {"width": 1280, "height": 800}
+        assert call_kwargs.get("viewport") == {"width": 1920, "height": 1080}
         assert call_kwargs.get("locale") == "en-US"
         assert t._owns_playwright is True  # type: ignore[attr-defined]
         assert t._setup_done is True  # type: ignore[attr-defined]
