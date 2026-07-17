@@ -47,6 +47,8 @@ Welcome to the `gflow-cli` documentation. This index is the routing layer: it te
 | **[skills/README.md](../skills/README.md)** | Installable agent skill docs (gflow-cli, predict, pr-council-review, scenario) — cross-tool portable Markdown consumed by Claude Code, Cursor, Codex, Gemini CLI, Aider, etc. | Any agent wanting to use gflow-cli correctly |
 | **[scripts/dev/skillopt/README.md](../scripts/dev/skillopt/README.md)** | SkillOpt mock harness — rollout→score loop for measuring and improving skill doc accuracy across multiple LLM providers | Measuring a skill edit's impact; comparing Claude vs GPT-4o vs Gemini on gflow tasks |
 | **[scripts/diag/README.md](../scripts/diag/README.md)** | Diagnostic investigation scripts — run against a live authenticated profile to capture wire samples, measure Chrome memory, or mint reCAPTCHA tokens | Running a one-off investigation against a live Flow session; establishing baseline measurements for issue #155 |
+| [docs/superpowers/specs/2026-07-04-pr-triage-autopilot-design.md](superpowers/specs/2026-07-04-pr-triage-autopilot-design.md) | PR-triage autopilot design spec: Stage 0/1 gate, Docker sandboxing, Telegram and audit ledger | Reviewing or auditing the automated PR-triage setup |
+| [docs/superpowers/plans/2026-07-08-pr-triage-autopilot/PLAN.md](superpowers/plans/2026-07-08-pr-triage-autopilot/PLAN.md) | Implementation plan for the PR-Triage Autopilot | Tracking task-by-task execution |
 
 ## Agent commands
 

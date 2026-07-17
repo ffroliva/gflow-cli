@@ -7,6 +7,10 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+### Added
+
+- **PR-Triage Autopilot (#238)**: deterministic Stage 0 pre-filter and ephemeral Docker container sandbox executing the `/gflow:pr-council-review` skill against qualified external PRs hourly on the host VPS. Includes Telegram notifications and a persistent audit ledger.
+
 ## [0.37.0] — 2026-07-17
 
 ### Fixed
@@ -318,6 +322,7 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
     daemon's cached settings instead of re-reading `.env` files live per task, so a
     mid-run edit to the home `.env` can no longer produce a task whose client config
     disagrees with the parameters the task derived from `get_settings()`.
+
 
 ## [0.24.0] — 2026-07-01
 
