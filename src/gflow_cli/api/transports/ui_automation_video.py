@@ -171,16 +171,6 @@ AGENTIC_UI_INDICATORS = (
     AGENT_CHAT_PANEL_CLOSE_SELECTOR,
 )
 
-# Timing for the Agent-exit loop. The clicks are force=True (immediate), so the
-# click timeout is only a safety cap, not a wait we expect to spend. The settle
-# pause lets Flow re-render the composer (pill → media panel, or panel-close →
-# pill) before the loop re-checks ``crop_*``.
-_AGENT_CLICK_TIMEOUT_MS = 1500
-_AGENT_SETTLE_MS = 500
-# Iteration cap for the Agent-exit loop. At most a couple of transitions are
-# expected (chat-panel close → pill reveal → pill click); the cap is a backstop
-# against a pathological flip-flop, not a value tuned to a specific shape.
-_AGENT_EXIT_MAX_ITERS = 3
 # Output-count + duration tabs are selected by aria-label text in
 # `_set_output_count` / `_select_video_duration` — NOT by id-suffix: the count
 # tab '-trigger-4' and the duration tab '-trigger-4' (4s) share a suffix, so an
@@ -1155,39 +1145,21 @@ class VideoGenerationMixin:
 
     @staticmethod
     async def _dismiss_agent_affordances(page: Page) -> bool:
-        """Run a bounded loop to dismiss Agent-mode affordances until the media panel returns.
+        """Bring the composer back to classic media mode; return True if it acted.
 
-        Returns ``(acted, panel_restored)`` encoded as a single bool: True when
-        the media panel is back after at least one click, False when nothing was
-        clicked or the panel never re-mounted. Raises ``FlowAgentUiError`` if a
-        forced Agentic UI indicator is detected.
+        Delegates to the robust :func:`mode_control.ensure_media_mode`, which is
+        **state-aware**: it reads the Agent toggle's ``aria-pressed`` (the
+        locale-invariant source of truth) and clicks it OFF only when actually
+        on, and closes the expanded chat sidebar (X) first — replacing the older
+        blind single pill-click that gave up on a still-open composer. Does not
+        raise; the caller (:meth:`_exit_agent_mode`) re-checks the media panel
+        and escalates via :meth:`_check_forced_agentic_ui` only if it never
+        returned.
         """
-        acted = False
-        clicked_pill = False
-        for _ in range(_AGENT_EXIT_MAX_ITERS):
-            if await VideoGenerationMixin._media_panel_present(page):
-                break
-            # Shape 2 first: the chat side-panel suppresses the pill entirely,
-            # so it must go before the pill can be found.
-            chat_close = page.locator(AGENT_CHAT_PANEL_CLOSE_SELECTOR).first
-            if await chat_close.count() > 0:
-                await chat_close.click(force=True, timeout=_AGENT_CLICK_TIMEOUT_MS)
-                await page.wait_for_timeout(_AGENT_SETTLE_MS)
-                acted = True
-                continue
-            # Shape 1: the in-composer pill — click AT MOST ONCE (binary toggle).
-            if clicked_pill:
-                break
-            pill = page.locator(COMPOSER_AGENT_TOGGLE_SELECTOR).first
-            if await pill.count() > 0:
-                await pill.click(force=True, timeout=_AGENT_CLICK_TIMEOUT_MS)
-                await page.wait_for_timeout(_AGENT_SETTLE_MS)
-                acted = True
-                clicked_pill = True
-                continue
-            # Neither affordance present — nothing more to do.
-            break
-        return acted
+        # Local import keeps mode_control a leaf and avoids any import cycle.
+        from gflow_cli.api.transports import mode_control
+
+        return await mode_control.ensure_media_mode(page)
 
     @staticmethod
     async def _check_forced_agentic_ui(page: Page, out_dir: Path | None) -> None:
