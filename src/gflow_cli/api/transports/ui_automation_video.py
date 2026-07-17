@@ -1144,7 +1144,7 @@ class VideoGenerationMixin:
         return False
 
     @staticmethod
-    async def _dismiss_agent_affordances(page: Page) -> bool:
+    async def _dismiss_agent_affordances(page: Page, *, allow_reload: bool = False) -> bool:
         """Bring the composer back to classic media mode; return True if it acted.
 
         Delegates to the robust :func:`mode_control.ensure_media_mode`, which is
@@ -1155,11 +1155,15 @@ class VideoGenerationMixin:
         raise; the caller (:meth:`_exit_agent_mode`) re-checks the media panel
         and escalates via :meth:`_check_forced_agentic_ui` only if it never
         returned.
+
+        ``allow_reload`` passes through to ``ensure_media_mode``'s pinned-arm
+        reload rescue — only the pre-bind ``get_ui_driver`` path may set it (a
+        reload re-rolls the cohort arm; see the mode_control docstring).
         """
         # Local import keeps mode_control a leaf and avoids any import cycle.
         from gflow_cli.api.transports import mode_control
 
-        return await mode_control.ensure_media_mode(page)
+        return await mode_control.ensure_media_mode(page, allow_reload=allow_reload)
 
     @staticmethod
     async def _check_forced_agentic_ui(page: Page, out_dir: Path | None) -> None:
@@ -1182,7 +1186,9 @@ class VideoGenerationMixin:
                 )
 
     @staticmethod
-    async def _exit_agent_mode(page: Page, *, out_dir: Path | None = None) -> bool:
+    async def _exit_agent_mode(
+        page: Page, *, out_dir: Path | None = None, allow_reload: bool = False
+    ) -> bool:
         """Ensure the composer is in media (Image/Video) mode, not Agent mode.
 
         Flow's "Agent" mode hides the media-generation panel — the ``crop_*``
@@ -1217,7 +1223,9 @@ class VideoGenerationMixin:
             if await VideoGenerationMixin._media_panel_present(page):
                 return False
 
-            acted = await VideoGenerationMixin._dismiss_agent_affordances(page)
+            acted = await VideoGenerationMixin._dismiss_agent_affordances(
+                page, allow_reload=allow_reload
+            )
 
             if await VideoGenerationMixin._media_panel_present(page):
                 if acted:

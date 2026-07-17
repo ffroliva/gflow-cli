@@ -14,11 +14,14 @@ rule, validated by live capture:
 The cohort flaps per page load, so callers must re-probe **per generation** —
 never cache a driver across navigations.
 
-This module is the detection source of truth: ``AGENTIC_INDICATOR_SELECTORS``
-and ``AGENT_TUNE_INDICATOR_SELECTOR`` are canonical here, and the UI transports
-(``ui_automation``, ``ui_automation_video``) import them rather than redefining
-them (the transport depends on ``drivers``, not the reverse —
-``tests/api/transports/test_selector_symmetry.py`` locks this).
+This module is the detection source of truth for the AGENTIC indicators:
+``AGENTIC_INDICATOR_SELECTORS`` and ``AGENT_TUNE_INDICATOR_SELECTOR`` are
+canonical here, and the UI transports (``ui_automation``,
+``ui_automation_video``) import them rather than redefining them. The CLASSIC
+crop tuple is the one exception: its canonical home is ``mode_control`` (the
+leaf module — it may import nothing from ``drivers``, so the dependency points
+factory→mode_control for that tuple only).
+``tests/api/transports/test_selector_symmetry.py`` locks both directions.
 """
 
 from __future__ import annotations
@@ -30,6 +33,7 @@ import structlog
 
 from gflow_cli.api.transports.drivers.agentic import AgenticFlowUiDriver
 from gflow_cli.api.transports.drivers.classic import ClassicFlowUiDriver
+from gflow_cli.api.transports.mode_control import CROP_SELECTORS
 from gflow_cli.config import UiMode
 
 if TYPE_CHECKING:
@@ -41,17 +45,11 @@ if TYPE_CHECKING:
 
 log = structlog.get_logger(__name__)
 
-# Classic media panel — the locale-stable ``crop_*`` aspect/mode trigger. Its
-# presence means the composer is in classic media mode (all 6 ratio icons are
-# enumerated so the probe is ratio-invariant).
-_CLASSIC_CROP_SELECTORS: tuple[str, ...] = (
-    "button[aria-haspopup='menu']:has(i.google-symbols:text('crop_16_9'))",
-    "button[aria-haspopup='menu']:has(i.google-symbols:text('crop_9_16'))",
-    "button[aria-haspopup='menu']:has(i.google-symbols:text('crop_square'))",
-    "button[aria-haspopup='menu']:has(i.google-symbols:text('crop_portrait'))",
-    "button[aria-haspopup='menu']:has(i.google-symbols:text('crop_landscape'))",
-    "button[aria-haspopup='menu']:has(i.google-symbols:text('crop_original'))",
-)
+# Classic media panel — the locale-stable ``crop_*`` aspect/mode trigger (all 6
+# ratio icons, ratio-invariant). Canonical tuple lives in ``mode_control`` (the
+# leaf module) so both this detector and the mode controller probe the SAME
+# panel — they had drifted (2 vs 6 icons) before the 2026-07-17 pin incident.
+_CLASSIC_CROP_SELECTORS: tuple[str, ...] = CROP_SELECTORS
 
 # Agentic cohort indicators — Material Symbols ligatures unique to the chat UI.
 # Locale-invariant (icon names, not UI text). Only consulted when no ``crop_*``
@@ -157,7 +155,12 @@ async def get_ui_driver(
 
         try:
             log.info("ui_driver.ui_mode.attempt_exit_agent")
-            await VideoGenerationMixin._exit_agent_mode(page)  # type: ignore[reportPrivateUsage]
+            # allow_reload: this is the ONE sanctioned reload site — it runs
+            # BEFORE any driver is bound and the re-probe below re-verifies the
+            # cohort after any navigation (mode_control docstring caveat).
+            await VideoGenerationMixin._exit_agent_mode(  # type: ignore[reportPrivateUsage]
+                page, allow_reload=True
+            )
         except FlowAgentUiError as exc:
             # Expected: a server-pinned agentic cohort cannot be exited
             # client-side. The verify check below turns this into a clean abort.
