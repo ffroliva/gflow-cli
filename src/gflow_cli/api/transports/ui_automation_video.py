@@ -1881,10 +1881,15 @@ class VideoGenerationMixin:
         than uploading a duplicate — without persisting or trusting any media
         UUID across runs.
 
-        Soft by design: a quick presence check (no long actionability wait), and
-        it clears the search filter on a miss so the caller's upload path starts
-        from a clean grid. Returns ``True`` when a matching asset was attached,
-        ``False`` when none matched (caller uploads).
+        Contract: returns ``True`` once a matching asset is attached; ``False``
+        when the search + a virtualised-grid scroll surface no match, having
+        cleared the filter so the caller's upload path starts from a clean grid.
+        A match that is *found but then fails to attach* (the include never
+        registers) raises ``TransportTimeoutError`` — a real UI failure is
+        surfaced rather than silently uploading a duplicate, matching the
+        media-UUID path. Keyed on the exact filename: a name Flow sanitises on
+        upload (stored display name then differs) simply misses and falls back to
+        upload; verified for ASCII-safe names.
         """
         # The picker library has its OWN active project (#287) — align it to the
         # editor's project so the search sees this project's media, where the
@@ -1906,29 +1911,25 @@ class VideoGenerationMixin:
         tile = (
             page.get_by_role("option").filter(has=page.get_by_alt_text(filename, exact=True)).first
         )
-        if not await tile.count():
+        # The library grid is virtualised (react-virtuoso) — a real match can sit
+        # off-screen after a broad search, absent from the DOM until scrolled into
+        # range. Scroll (progress-bounded, #287) before concluding there is no
+        # existing asset, so a still-existing dup isn't re-uploaded.
+        if not await tile.count() and not (
+            await VideoGenerationMixin._scroll_picker_grid_until_rendered(page, tile)
+        ):
             await search.fill("")  # clear the filter for the upload fallback
             return False
 
-        await tile.click()
-        await page.wait_for_timeout(400)
-        # The image picker attaches on tile-click and auto-closes; if the dialog
-        # is still open (video-style picker), fire the locale-safe include.
-        dialog = page.locator(DIALOG_ANY).last
-        try:
-            await dialog.wait_for(state="hidden", timeout=2500)
-        except Exception:  # noqa: BLE001 - still open → needs explicit include
-            include = await VideoGenerationMixin._resolve_include_action(
-                page,
-                PICKER_INCLUDE_BUTTON,
-                _INCLUDE_BUTTON_TIER_NAMES,
-                surface="filename_ref_include",
-                detail=f"filename ref {filename!r}",
-                out_dir=out_dir,
-                screenshot_name="filename_ref_include_missing.png",
-            )
-            await include.click(timeout=3000)
-            await page.wait_for_timeout(600)
+        await VideoGenerationMixin._attach_selected_tile(
+            page,
+            tile,
+            out_dir=out_dir,
+            detail=f"filename ref {filename!r}",
+            surface="filename_ref_include",
+            screenshot_name="filename_ref_include_missing.png",
+            dialog_timeout_s=REMOTE_PICKER_CLOSE_TIMEOUT_S,
+        )
         log.info("ui_automation_video.reference_deduped_by_filename", filename=filename)
         return True
 
@@ -2069,18 +2070,45 @@ class VideoGenerationMixin:
             )
             return False
 
+        await VideoGenerationMixin._attach_selected_tile(
+            page,
+            tile,
+            out_dir=out_dir,
+            detail=f"image ref {media_id}",
+            surface="image_ref_include",
+            screenshot_name="image_ref_include_missing.png",
+            dialog_timeout_s=dialog_timeout_s,
+        )
+        return True
+
+    @staticmethod
+    async def _attach_selected_tile(
+        page: Page,
+        tile: Locator,
+        *,
+        out_dir: Path | None,
+        detail: str,
+        surface: str,
+        screenshot_name: str,
+        dialog_timeout_s: float,
+    ) -> None:
+        """Attach an already-located picker ``tile`` and confirm the dialog closed.
+
+        The image reference picker attaches on tile-click and auto-closes the
+        dialog (one step); the video r2v picker instead needs an explicit
+        "Add to Prompt" include after selecting. Handle both: click, and if the
+        dialog did not auto-close, resolve the locale-safe include button and
+        click it, then verify the dialog closed. Shared by the media-UUID
+        (:meth:`_select_existing_asset`) and filename
+        (:meth:`_try_select_existing_by_filename`) selection paths. Raises
+        ``TransportTimeoutError`` if the dialog never closes after the include —
+        a tile matched but the attach did not register."""
         await tile.click()
         await page.wait_for_timeout(400)
-
-        # The image reference picker attaches on tile-click and auto-closes the
-        # dialog (one step). The video r2v picker instead needs an explicit
-        # "Add to Prompt" include after selecting. Handle both: if the dialog
-        # already closed, the attach registered on click; otherwise resolve and
-        # click the locale-safe include button.
         dialog = page.locator(DIALOG_ANY).last
         try:
             await dialog.wait_for(state="hidden", timeout=2500)
-            return True
+            return
         except Exception:  # noqa: BLE001 - still open -> needs explicit include
             pass
 
@@ -2088,10 +2116,10 @@ class VideoGenerationMixin:
             page,
             PICKER_INCLUDE_BUTTON,
             _INCLUDE_BUTTON_TIER_NAMES,
-            surface="image_ref_include",
-            detail=f"image ref {media_id}",
+            surface=surface,
+            detail=detail,
             out_dir=out_dir,
-            screenshot_name="image_ref_include_missing.png",
+            screenshot_name=screenshot_name,
         )
         await include.click(timeout=3000)
         await page.wait_for_timeout(600)
@@ -2099,10 +2127,9 @@ class VideoGenerationMixin:
             await dialog.wait_for(state="hidden", timeout=dialog_timeout_s * 1000)
         except Exception as e:
             raise TransportTimeoutError(
-                f"image ref {media_id} picker dialog did not close after "
-                f"{dialog_timeout_s}s (the include action may not have registered)",
+                f"{detail} picker dialog did not close after {dialog_timeout_s}s "
+                "(the include action may not have registered)",
             ) from e
-        return True
 
     @staticmethod
     async def _attach_image_uuid_refs(
