@@ -40,3 +40,14 @@ def test_ui_automation_reuses_factory_tune_selector() -> None:
     # ``is`` (not ``==``): ui_automation must import the factory constant, not
     # carry an equal-looking local copy that can silently drift.
     assert ui_automation.AGENT_TUNE_INDICATOR_SELECTOR is AGENT_TUNE_INDICATOR_SELECTOR
+
+
+def test_factory_crop_detector_is_mode_control_canonical() -> None:
+    # The crop tuples had drifted (mode_control probed 2 icons, factory 6) —
+    # the 2026-07-17 pin incident's controller/verify asymmetry. Canonical lives
+    # in mode_control (the leaf); factory must import it, never redefine.
+    from gflow_cli.api.transports import mode_control
+    from gflow_cli.api.transports.drivers import factory
+
+    assert factory._CLASSIC_CROP_SELECTORS is mode_control.CROP_SELECTORS  # noqa: SLF001
+    assert len(mode_control.CROP_SELECTORS) == 6

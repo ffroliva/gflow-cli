@@ -7,6 +7,33 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+## [0.38.1] — 2026-07-17
+
+### Fixed
+
+- **Agentic-pin recovery: opt-in reload after a real toggle-off** (#338): when a REAL
+  (actionability-checked, unforced) Agent-toggle click lands but the classic media panel
+  never mounts in place (the 2026-07-17 both-accounts pin), `ensure_media_mode` can now
+  reload the page once and re-run its loop — a fresh load both re-rolls the server's
+  per-load cohort arm and mounts the server-persisted `isAgentModeToggled=false`
+  preference (`docs/superpowers/spikes/2026-07-12-ui-cohort-backend-config.md`). The
+  reload is **opt-in** (`allow_reload`, threaded via `_exit_agent_mode`) and sanctioned
+  only from `get_ui_driver`'s pre-bind CLASSIC path, which re-verifies the cohort after
+  any navigation — mid-flow image/video mode switches keep strict no-navigation
+  semantics (their bound driver's cohort must not be re-rolled underneath them).
+  Robustness details from the review pass: a slow in-place panel mount gets a 4s grace
+  poll before any reload (parity with the callers' old trigger-probe tolerance); after
+  the reload a composer-readiness poll (up to 8s) replaces the fixed settle so the SPA
+  re-mount is never probed as a blank shell; the toggle click is unforced-first (a
+  forced click can flip the DOM without firing the React handler that persists the
+  setting), and the force fallback re-reads `aria-pressed` before clicking — Playwright
+  can raise AFTER the events dispatched, and a blind second click would re-enable agent
+  mode. A force-fallback click never arms the reload (nothing was persisted).
+- **Crop-selector drift between the mode controller and the cohort detector**: `mode_control`
+  probed only 2 of the 6 `crop_*` ratio icons while `drivers/factory` probed all 6 — the
+  canonical 6-icon tuple now lives in `mode_control` (the leaf module) and `factory` imports
+  it; `test_selector_symmetry.py` locks the identity.
+
 ## [0.38.0] — 2026-07-17
 
 ### Added
