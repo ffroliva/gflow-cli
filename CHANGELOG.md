@@ -29,6 +29,12 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   setting), and the force fallback re-reads `aria-pressed` before clicking — Playwright
   can raise AFTER the events dispatched, and a blind second click would re-enable agent
   mode. A force-fallback click never arms the reload (nothing was persisted).
+- **Composer-render race in mode control (found by the v0.38.1 live-verification gate)**:
+  `ensure_media_mode` probed the freshly-navigated page before the SPA composer rendered —
+  every selector counted 0, the loop broke as "nothing actionable" in ~100 ms, and the Agent
+  toggle was likely never clicked at all in the prior production failures. An initial
+  composer-readiness poll (up to 8s) now absorbs the render race; live-verified breaking a
+  real ~2h agentic pin on the affected account (`docs/LIVE_VERIFICATION_v0.38.1.md`).
 - **Crop-selector drift between the mode controller and the cohort detector**: `mode_control`
   probed only 2 of the 6 `crop_*` ratio icons while `drivers/factory` probed all 6 — the
   canonical 6-icon tuple now lives in `mode_control` (the leaf module) and `factory` imports
@@ -2047,7 +2053,8 @@ shell-script template that branches on these codes.
 
 First skeleton. Not functional end-to-end yet.
 
-[Unreleased]: https://github.com/ffroliva/gflow-cli/compare/v0.38.0...HEAD
+[Unreleased]: https://github.com/ffroliva/gflow-cli/compare/v0.38.1...HEAD
+[0.38.1]: https://github.com/ffroliva/gflow-cli/compare/v0.38.0...v0.38.1
 [0.38.0]: https://github.com/ffroliva/gflow-cli/compare/v0.37.0...v0.38.0
 [0.37.0]: https://github.com/ffroliva/gflow-cli/compare/v0.36.0...v0.37.0
 [0.36.0]: https://github.com/ffroliva/gflow-cli/compare/v0.35.0...v0.36.0

@@ -22,6 +22,25 @@ permissions:
   contents: read
 
 jobs:
+  release-artifacts:
+    # Releases must follow /gflow:release (owner directive 2026-07-17): a PR into
+    # `main` must carry the protocol's documentation artifacts — version parity,
+    # CHANGELOG section + footer links, and the LIVE_VERIFICATION doc (step 4b).
+    # Passes trivially on non-main PRs so it is safe as a required check.
+    name: Release must carry /gflow:release artifacts
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - name: Verify release artifacts
+        env:
+          BASE_REF: ${{ github.base_ref }}
+        run: |
+          if [ "$BASE_REF" != "main" ]; then
+            echo "Base is '$BASE_REF' (not main) — nothing to enforce."
+            exit 0
+          fi
+          python scripts/ci/check_release_artifacts.py
+
   guard:
     name: Only release/hotfix branches may target main
     runs-on: ubuntu-latest
