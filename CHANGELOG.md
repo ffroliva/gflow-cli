@@ -7,6 +7,39 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+## [0.38.1] — 2026-07-17
+
+### Fixed
+
+- **Agentic-pin recovery: opt-in reload after a real toggle-off** (#338): when a REAL
+  (actionability-checked, unforced) Agent-toggle click lands but the classic media panel
+  never mounts in place (the 2026-07-17 both-accounts pin), `ensure_media_mode` can now
+  reload the page once and re-run its loop — a fresh load both re-rolls the server's
+  per-load cohort arm and mounts the server-persisted `isAgentModeToggled=false`
+  preference (`docs/superpowers/spikes/2026-07-12-ui-cohort-backend-config.md`). The
+  reload is **opt-in** (`allow_reload`, threaded via `_exit_agent_mode`) and sanctioned
+  only from `get_ui_driver`'s pre-bind CLASSIC path, which re-verifies the cohort after
+  any navigation — mid-flow image/video mode switches keep strict no-navigation
+  semantics (their bound driver's cohort must not be re-rolled underneath them).
+  Robustness details from the review pass: a slow in-place panel mount gets a 4s grace
+  poll before any reload (parity with the callers' old trigger-probe tolerance); after
+  the reload a composer-readiness poll (up to 8s) replaces the fixed settle so the SPA
+  re-mount is never probed as a blank shell; the toggle click is unforced-first (a
+  forced click can flip the DOM without firing the React handler that persists the
+  setting), and the force fallback re-reads `aria-pressed` before clicking — Playwright
+  can raise AFTER the events dispatched, and a blind second click would re-enable agent
+  mode. A force-fallback click never arms the reload (nothing was persisted).
+- **Composer-render race in mode control (found by the v0.38.1 live-verification gate)**:
+  `ensure_media_mode` probed the freshly-navigated page before the SPA composer rendered —
+  every selector counted 0, the loop broke as "nothing actionable" in ~100 ms, and the Agent
+  toggle was likely never clicked at all in the prior production failures. An initial
+  composer-readiness poll (up to 8s) now absorbs the render race; live-verified breaking a
+  real ~2h agentic pin on the affected account (`docs/LIVE_VERIFICATION_v0.38.1.md`).
+- **Crop-selector drift between the mode controller and the cohort detector**: `mode_control`
+  probed only 2 of the 6 `crop_*` ratio icons while `drivers/factory` probed all 6 — the
+  canonical 6-icon tuple now lives in `mode_control` (the leaf module) and `factory` imports
+  it; `test_selector_symmetry.py` locks the identity.
+
 ## [0.38.0] — 2026-07-17
 
 ### Added
@@ -2020,7 +2053,8 @@ shell-script template that branches on these codes.
 
 First skeleton. Not functional end-to-end yet.
 
-[Unreleased]: https://github.com/ffroliva/gflow-cli/compare/v0.38.0...HEAD
+[Unreleased]: https://github.com/ffroliva/gflow-cli/compare/v0.38.1...HEAD
+[0.38.1]: https://github.com/ffroliva/gflow-cli/compare/v0.38.0...v0.38.1
 [0.38.0]: https://github.com/ffroliva/gflow-cli/compare/v0.37.0...v0.38.0
 [0.37.0]: https://github.com/ffroliva/gflow-cli/compare/v0.36.0...v0.37.0
 [0.36.0]: https://github.com/ffroliva/gflow-cli/compare/v0.35.0...v0.36.0
