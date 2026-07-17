@@ -50,7 +50,12 @@ class _FakePage:
       brings classic back (pinned_off → media). Models the 2026-07-17 incident.
     """
 
-    def __init__(self, state: str = "media", raise_unforced_click: str | None = None) -> None:
+    def __init__(
+        self,
+        state: str = "media",
+        raise_unforced_click: str | None = None,
+        blank_waits: int = 0,
+    ) -> None:
         self.state = state
         self.clicks: list[str] = []
         self.click_kwargs: list[dict[str, object]] = []
@@ -59,11 +64,16 @@ class _FakePage:
         # "after": dispatches the state change, THEN raises (post-click
         # instability — Playwright can raise after the events fired).
         self.raise_unforced_click = raise_unforced_click
+        # SPA render race: while > 0 the page is a blank shell (every selector
+        # counts 0); each wait_for_timeout tick "renders" one step closer.
+        self.blank_waits = blank_waits
 
     def locator(self, sel: str) -> _FakeLocator:
         return _FakeLocator(self, sel)
 
     async def wait_for_timeout(self, _ms: int) -> None:
+        if self.blank_waits > 0:
+            self.blank_waits -= 1
         return None
 
     async def reload(self, **_kw: object) -> None:
@@ -74,6 +84,8 @@ class _FakePage:
             self.state = "media"
 
     def count(self, sel: str) -> int:
+        if self.blank_waits > 0:
+            return 0  # nothing has rendered yet
         if sel in mc.CROP_SELECTORS:
             return 1 if self.state == "media" else 0
         if sel == mc.AGENT_TOGGLE_SELECTOR:
@@ -193,6 +205,20 @@ async def test_force_fallback_does_not_arm_reload() -> None:
     assert any(kw.get("force") for kw in page.click_kwargs)  # fallback used
     assert page.reloads == 0
     assert page.state == "pinned_off"
+
+
+@pytest.mark.asyncio
+async def test_waits_for_composer_render_before_probing() -> None:
+    # LIVE_VERIFICATION_v0.38.1 finding: on a fresh navigation the composer
+    # renders a beat later — probing the blank shell read as "nothing
+    # actionable" and the whole rescue no-op'd in ~100ms without ever clicking
+    # the toggle. The initial readiness wait must absorb the render race.
+    page = _FakePage("pinned", blank_waits=3)
+    acted = await mc.ensure_media_mode(page, allow_reload=True)  # type: ignore[arg-type]
+    assert acted is True
+    assert mc.AGENT_TOGGLE_SELECTOR in page.clicks  # toggle WAS reached
+    assert page.reloads == 1
+    assert page.state == "media"
 
 
 @pytest.mark.asyncio
