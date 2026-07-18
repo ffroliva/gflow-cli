@@ -888,6 +888,7 @@ gflow data list projects   [--profile NAME] [--limit N] [--offset N] [--json]
 gflow data list images     [--profile NAME] [--limit N] [--offset N] [--json] [--all-copies]
 gflow data list videos     [--profile NAME] [--limit N] [--offset N] [--json] [--all-copies]
 gflow data list profiles                    [--limit N] [--offset N] [--json]
+gflow data list errors     [--profile NAME] [--limit N] [--offset N] [--json]
 
 Options:
   --profile NAME        Filter to one profile (not available on `profiles`).
@@ -925,7 +926,18 @@ gflow data list videos --json | jq '.media_id'
 
 # Profiles with at least one recorded generation
 gflow data list profiles
+
+# Failed generations, newest first (v0.39.0+, #341): started_at, command, mode,
+# model, profile, error_type (waf-rejection, content-policy, ...), redacted detail
+gflow data list errors --profile denon82 --json | jq '{started_at, error_type}'
 ```
+
+`errors` lists terminal `status="failed"` operation rows — every paid
+generation that raised (WAF 403, content policy, cohort pin, timeout, auth)
+is recorded before the CLI exits, so block onset/recovery windows are
+measurable. `error_detail` is redacted before persistence (no tokens, cookies,
+or signed URLs). See
+[`DATA_LAYER.md § Failure recording`](DATA_LAYER.md#failure-recording-341-v0390).
 
 > **`data list profiles` vs `gflow auth list`** — `data list profiles` shows profiles that have **recorded generations** in the catalog; `gflow auth list` shows profiles that have ever **logged in** via `gflow auth login`. A profile that logged in but never generated anything will appear in `auth list` but not in `data list profiles`.
 

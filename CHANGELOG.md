@@ -7,6 +7,44 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+## [0.39.0] — 2026-07-19
+
+### Added
+
+- **Failed generations are now persisted to the local catalog** ([#341]):
+  every paid-generation path (`video t2v/i2v/r2v`, `video chain`,
+  `image t2i/i2i`, multi-prompt t2i, `gflow run`, `image batch`, `movie run`,
+  and the async worker) records a terminal `status="failed"` operation row —
+  with a stable `error_type` derived from the exception's RFC 9457
+  `problem_type` (`waf-rejection`, `content-policy`, `auth-expired`, ...) and
+  a redacted `error_detail` — before the error propagates. WAF-403 block
+  onset, duration, and recovery windows are now measurable instead of
+  reconstructed from memory.
+- New `gflow data list errors [--profile] [--limit] [--offset] [--json]`
+  subcommand: browse failed operations newest-first (Rich table on a TTY,
+  JSONL otherwise).
+- Videos whose poll completes with a Flow-reported failure
+  (`succeeded=false`, e.g. `PUBLIC_ERROR_UNSAFE_GENERATION`) are now recorded
+  as `failed` with `error_type=generation-failed` — previously they were
+  recorded as `succeeded` (all paths: CLI, chain, movie, worker).
+
+### Security
+
+- `error_detail` values are scrubbed before persistence
+  (`Bearer`/`SAPISIDHASH` tokens, auth-cookie pairs, signed URLs; 500-char
+  cap) and non-`GFlowError` messages are stored only as SHA-256 hashes.
+  Prompts on failed rows honor `GFLOW_CLI_HISTORY_PROMPTS`; note `store` mode
+  therefore also stores prompts of content-policy-rejected generations.
+- The experimental REST transports (`bearer`, `sapisidhash`,
+  `evaluate_fetch`) now redact response bodies BEFORE truncating them into
+  exception messages, closing a partial-secret leak into logs and (new) the
+  catalog DB.
+- The worker queue's `generation_queue.error_json` now applies the same
+  redaction: `GFlowError` details are scrubbed and non-`GFlowError` messages
+  are stored as SHA-256 hashes instead of raw text.
+
+[#341]: https://github.com/ffroliva/gflow-cli/issues/341
+
 ## [0.38.1] — 2026-07-17
 
 ### Fixed
@@ -2053,7 +2091,8 @@ shell-script template that branches on these codes.
 
 First skeleton. Not functional end-to-end yet.
 
-[Unreleased]: https://github.com/ffroliva/gflow-cli/compare/v0.38.1...HEAD
+[Unreleased]: https://github.com/ffroliva/gflow-cli/compare/v0.39.0...HEAD
+[0.39.0]: https://github.com/ffroliva/gflow-cli/compare/v0.38.1...v0.39.0
 [0.38.1]: https://github.com/ffroliva/gflow-cli/compare/v0.38.0...v0.38.1
 [0.38.0]: https://github.com/ffroliva/gflow-cli/compare/v0.37.0...v0.38.0
 [0.37.0]: https://github.com/ffroliva/gflow-cli/compare/v0.36.0...v0.37.0
