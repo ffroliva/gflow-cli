@@ -149,9 +149,13 @@ async worker (which mirrors its `generation_queue.error_json` failure into
   subclass, never hand-mapped. Non-`GFlowError` exceptions store the class
   name, with `error_detail` reduced to a SHA-256 hash of the message (never
   the text — it may carry tokens).
-- Video failures UPDATE the `on_started` STARTED row to `failed` (mirroring
-  `record_completed_video`); failures before `on_started`, and all image
-  failures, INSERT a fresh row with full request metadata.
+- Video failures UPDATE every `on_started` STARTED row to `failed` (a
+  `count>1` request fires the callback per output — no sibling row is
+  stranded); failures before `on_started`, and all image failures, INSERT a
+  fresh row with full request metadata.
+- A poll that COMPLETES with a Flow-reported failure (`succeeded=false`) is
+  recorded as `failed` with `error_type=generation-failed` and the
+  `failure_reasons` as detail — not as a success.
 - The write itself is best-effort: `record_failed_operation_safe` wraps it in
   a broad warn-only guard (`failure_record_skipped` structlog event) so a
   data-layer fault can never mask the generation error or change the exit code.

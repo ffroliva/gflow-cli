@@ -199,7 +199,7 @@ def test_record_failed_operation_updates_started_video_row(tmp_path: Path) -> No
             mode=OperationKind.T2V,
             exc=WafRejectionError("poll blocked", status=403),
             request=req,
-            flow_media_id="media-1",
+            flow_media_ids=["media-1"],
         )
         (op,) = _fetch_operations(store)  # updated in place — still exactly one row
         assert op["status"] == OperationStatus.FAILED.value
@@ -218,7 +218,7 @@ def test_record_failed_operation_inserts_when_no_started_row(tmp_path: Path) -> 
             mode=OperationKind.T2V,
             exc=WafRejectionError("pre-submit block", status=403),
             request=req,
-            flow_media_id="media-never-inserted",
+            flow_media_ids=["media-never-inserted"],
         )
         (op,) = _fetch_operations(store)
         assert op["status"] == OperationStatus.FAILED.value
@@ -239,7 +239,7 @@ def test_record_failed_operation_never_downgrades_succeeded_row(tmp_path: Path) 
             mode=OperationKind.T2V,
             exc=RuntimeError("late failure"),
             request=req,
-            flow_media_id="media-1",
+            flow_media_ids=["media-1"],
         )
         ops = _fetch_operations(store)
         statuses = sorted(str(op["status"]) for op in ops)
@@ -279,3 +279,118 @@ def test_record_failed_operation_safe_accepts_none_recorder(tmp_path: Path) -> N
         mode=OperationKind.T2I,
         exc=RuntimeError("original"),
     )
+
+
+# ---------------------------------------------------------------------------
+# #341 review-round additions
+# ---------------------------------------------------------------------------
+
+
+def test_redact_error_detail_scrubs_bare_sid_and_equals_sapisidhash() -> None:
+    scrubbed = redact_error_detail(
+        "cookie: sapisid=xyz; SID=g.a000abc; OSID=o1; SAPISIDHASH=169_deadbeef"
+    )
+    assert "g.a000abc" not in scrubbed
+    assert "xyz" not in scrubbed
+    assert "o1" not in scrubbed
+    assert "deadbeef" not in scrubbed
+
+
+def test_redact_error_detail_scrubs_uppercase_and_bare_signed_query() -> None:
+    scrubbed = redact_error_detail(
+        "fail at HTTPS://cdn.example/x?X-Goog-Signature=abc123 and path?expires=999&sig"
+    )
+    assert "abc123" not in scrubbed
+    assert "expires=999" not in scrubbed
+
+
+def test_all_gflow_error_slugs_unique_and_nonempty() -> None:
+    """The error_type vocabulary is derived from problem_type URIs — pin that
+    every subclass yields a distinct, non-empty slug so the taxonomy can't
+    silently collapse (#341 review)."""
+    import gflow_cli.errors as errors_mod
+    from gflow_cli.errors import GFlowError
+
+    def _subclasses(cls: type) -> set[type]:
+        out: set[type] = set()
+        for sub in cls.__subclasses__():
+            out.add(sub)
+            out |= _subclasses(sub)
+        return out
+
+    slugs: dict[str, str] = {}
+    for cls in _subclasses(GFlowError):
+        if cls.__module__ != errors_mod.__name__:
+            continue
+        error_type, _ = _classify_failure(cls("x"))
+        assert error_type, f"{cls.__name__} produced an empty error_type"
+        prior = slugs.get(error_type)
+        # Parent/child pairs sharing a URI would collapse — only identical
+        # problem_type inheritance (no override) is allowed to collide.
+        if prior is not None:
+            assert cls.problem_type == getattr(errors_mod, prior).problem_type, (
+                f"slug {error_type!r} claimed by both {prior} and {cls.__name__} "
+                "with DIFFERENT problem_type URIs"
+            )
+        slugs[error_type] = cls.__name__
+
+
+def test_record_failed_operation_updates_all_started_rows_count_gt_1(tmp_path: Path) -> None:
+    """count>1 fires on_started per output; a failure must not strand siblings."""
+    with DataStore.open(tmp_path / "gflow.db") as store:
+        recorder = OperationRecorder(DataRepository(store), prompt_mode="store")
+        req = GenerateVideoRequest(prompt="two outputs", mode=Mode.T2V, count=2)
+        for media_id in ("media-a", "media-b"):
+            recorder.record_started_video(
+                profile_name="default",
+                profile_dir=tmp_path / "p",
+                request=req,
+                started=VideoStarted(media_id=media_id, project_id="proj-1"),
+            )
+        recorder.record_failed_operation(
+            profile_name="default",
+            profile_dir=tmp_path / "p",
+            command="video t2v",
+            mode=OperationKind.T2V,
+            exc=WafRejectionError("blocked", status=403),
+            request=req,
+            flow_media_ids=["media-a", "media-b"],
+        )
+        statuses = [
+            str(row["status"])
+            for row in (
+                dict(zip(("status",), r, strict=True))
+                for r in store.conn.execute("SELECT status FROM operations").fetchall()
+            )
+        ]
+    assert statuses == ["failed", "failed"]  # no stranded STARTED sibling, no extra insert
+
+
+def test_record_completed_video_records_failed_when_not_succeeded(tmp_path: Path) -> None:
+    """A poll that completes with succeeded=False is a FAILED generation (#341
+    review) — previously recorded SUCCEEDED and invisible to `data list errors`."""
+    from gflow_cli.api.video import VideoResult, VideoStatus
+
+    with DataStore.open(tmp_path / "gflow.db") as store:
+        recorder = OperationRecorder(DataRepository(store), prompt_mode="store")
+        req = _started_video(recorder, tmp_path)
+        result = VideoResult(
+            status=VideoStatus(
+                media_id="media-1",
+                status="MEDIA_GENERATION_STATUS_FAILED",
+                failure_reasons=("PUBLIC_ERROR_UNSAFE_GENERATION",),
+            ),
+            local_path=None,
+            project_id="proj-1",
+            flow_operation_id="op-1",
+        )
+        recorder.record_completed_video(
+            profile_name="default",
+            _profile_dir=tmp_path / "p",
+            request=req,
+            result=result,
+        )
+        (op,) = _fetch_operations(store)
+        assert op["status"] == OperationStatus.FAILED.value
+        assert op["error_type"] == "generation-failed"
+        assert op["error_detail"] == "PUBLIC_ERROR_UNSAFE_GENERATION"

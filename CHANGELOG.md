@@ -21,6 +21,10 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 - New `gflow data list errors [--profile] [--limit] [--offset] [--json]`
   subcommand: browse failed operations newest-first (Rich table on a TTY,
   JSONL otherwise).
+- Videos whose poll completes with a Flow-reported failure
+  (`succeeded=false`, e.g. `PUBLIC_ERROR_UNSAFE_GENERATION`) are now recorded
+  as `failed` with `error_type=generation-failed` — previously they were
+  recorded as `succeeded` (all paths: CLI, chain, movie, worker).
 
 ### Security
 
@@ -33,6 +37,9 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   `evaluate_fetch`) now redact response bodies BEFORE truncating them into
   exception messages, closing a partial-secret leak into logs and (new) the
   catalog DB.
+- The worker queue's `generation_queue.error_json` now applies the same
+  redaction: `GFlowError` details are scrubbed and non-`GFlowError` messages
+  are stored as SHA-256 hashes instead of raw text.
 
 [#341]: https://github.com/ffroliva/gflow-cli/issues/341
 

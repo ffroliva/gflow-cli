@@ -923,6 +923,7 @@ def _execute_t2i_batch(
                 jitter_range=jitter_range,
                 _profile_name=profile_name,
                 _recorder=recorder,
+                _command="image t2i",
             ),
         )
     finally:

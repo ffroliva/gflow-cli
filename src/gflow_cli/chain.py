@@ -208,8 +208,7 @@ async def _generate_link(
     try:
         return await client.generate_video(req=req, on_started=link_on_started)
     except Exception as exc:
-        if on_link_failed is not None:
-            on_link_failed(req, exc)
+        _notify_link_failed(on_link_failed, req, exc)
         if not isinstance(exc, WireFormatError | WafRejectionError):
             raise
         _log.warning(
@@ -223,6 +222,26 @@ async def _generate_link(
             partial_results=list(completed_paths),
             cause=exc,
         ) from exc
+
+
+def _notify_link_failed(
+    hook: LinkFailedHook | None,
+    req: GenerateVideoRequest,
+    exc: BaseException,
+) -> None:
+    """Invoke the failure hook, absorbing ITS failures (#341 review finding).
+
+    The hook runs on the error path; letting a hook exception propagate would
+    replace the original error and skip the ChainPartialError partial-results
+    contract, so the orchestrator enforces the absorb rule at the seam instead
+    of trusting every hook implementer.
+    """
+    if hook is None:
+        return
+    try:
+        hook(req, exc)
+    except Exception as hook_exc:  # noqa: BLE001 — double-fault guard, see docstring
+        _log.warning("chain_link_failed_hook_error", error=str(hook_exc))
 
 
 def _build_link_result(
@@ -331,7 +350,12 @@ async def run_chain(
 
         if result.local_path is None:
             msg = f"link {index} returned no local_path (download failed)"
-            raise ChainPartialError(detail=msg, partial_results=list(completed_paths))
+            exc = ChainPartialError(detail=msg, partial_results=list(completed_paths))
+            # #341: this abort path must also reach the failure hook, else the
+            # link's STARTED catalog row is stranded and the abort is invisible
+            # to `gflow data list errors`.
+            _notify_link_failed(on_link_failed, req, exc)
+            raise exc
 
         is_last = index == len(links) - 1
 

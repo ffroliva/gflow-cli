@@ -884,7 +884,7 @@ async def _generate_scene(
             exc=exc,
             request=request,
             flow_project_id=project_id,
-            flow_media_id=started_media_ids[-1] if started_media_ids else None,
+            flow_media_ids=started_media_ids,
         )
         raise
 
