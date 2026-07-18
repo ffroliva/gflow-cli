@@ -133,6 +133,31 @@ For T2V the sequence is split: `record_started_video(...)` fires the moment the 
 
 For batches, each row is recorded individually in a per-row `try/except DataStoreError`, so one row's persistence failure does not stop the rest of the batch.
 
+### Failure recording (#341, v0.39.0+)
+
+Failed generations are first-class catalog citizens: every paid-generation
+orchestrator records a terminal `status="failed"` operation row before
+re-raising the error. The funnel covers `video t2v/i2v/r2v`, `video chain`
+(per-link, via the `on_link_failed` hook), `image t2i/i2i`, multi-prompt
+t2i / `gflow run` / `image batch` manifest rows, `movie run` scenes, and the
+async worker (which mirrors its `generation_queue.error_json` failure into
+`operations` — the operations table owns terminal truth).
+
+- `error_type` is the last segment of the exception's RFC 9457 `problem_type`
+  URI (`waf-rejection`, `content-policy`, `auth-expired`,
+  `transport-timeout`, ...) — the taxonomy is declared per `GFlowError`
+  subclass, never hand-mapped. Non-`GFlowError` exceptions store the class
+  name, with `error_detail` reduced to a SHA-256 hash of the message (never
+  the text — it may carry tokens).
+- Video failures UPDATE the `on_started` STARTED row to `failed` (mirroring
+  `record_completed_video`); failures before `on_started`, and all image
+  failures, INSERT a fresh row with full request metadata.
+- The write itself is best-effort: `record_failed_operation_safe` wraps it in
+  a broad warn-only guard (`failure_record_skipped` structlog event) so a
+  data-layer fault can never mask the generation error or change the exit code.
+- The character-create saga deliberately keeps its STARTED rows for resume —
+  it is excluded from the failure funnel by design.
+
 ---
 
 ## Persistence-failure handling
@@ -179,6 +204,20 @@ The hash is always stored so you can correlate without the plaintext.
 
 This means the recorder OWNS redaction — call sites cannot leak signed URLs into the DB even by accident, because `OperationRecorder` always pipes metadata through `redact_metadata` before writing.
 
+### `error_detail` redaction (#341)
+
+Failure rows persist the exception's Problem-Details `detail` string through
+[`redact_error_detail`](../src/gflow_cli/data/redaction.py): free-text
+`Bearer …` / `SAPISIDHASH …` tokens and auth-cookie pairs become
+`<redacted:secret>`, URLs carrying signed-query markers become
+`<redacted:url>`, and the result is truncated to 500 chars post-redaction as
+defense-in-depth. The experimental REST transports also redact response bodies
+BEFORE truncating them into exception messages, so a clipped secret can't
+reach the DB. Non-`GFlowError` details are stored only as SHA-256 hashes.
+Prompts on FAILED rows honor `GFLOW_CLI_HISTORY_PROMPTS` exactly like success
+rows — note that in `store` mode this includes prompts of content-policy
+REJECTED generations (the same opt-in that stores successful prompts).
+
 ### What the DB still contains
 
 Even with `redacted` mode and metadata stripping, the DB stores: profile names, Flow project/media/workflow/operation IDs, local file paths or cloud URIs, asset dimensions/seeds/timestamps, model and aspect choices, and prompt hashes. If your threat model requires hiding even profile-level activity, exclude `<GFLOW_CLI_HOME>/gflow.db` from backups or set `GFLOW_CLI_DB_PATH` to a per-task ephemeral location.
@@ -189,7 +228,7 @@ See [`SECURITY.md`](SECURITY.md) for the broader threat model.
 
 ## Querying the data layer
 
-### `gflow data list {projects,images,videos,profiles}` — browse the catalog (v0.9.0+)
+### `gflow data list {projects,images,videos,profiles,errors}` — browse the catalog (v0.9.0+)
 
 ```bash
 # Newest 20 projects across all profiles
@@ -206,9 +245,14 @@ gflow data list videos --json | jq '.media_id'
 
 # Profiles with at least one recorded generation
 gflow data list profiles
+
+# Failed generations, newest first (#341): when, which command/mode/model,
+# stable error_type (waf-rejection, content-policy, ...) + redacted detail.
+# The dataset for WAF-cadence and reliability analysis.
+gflow data list errors --profile denon82 --json | jq '{started_at, error_type}'
 ```
 
-Flags shared by all four subcommands:
+Flags shared by all five subcommands:
 
 | Flag | Default | Notes |
 |---|---|---|
@@ -391,6 +435,13 @@ All three errors map to **exit code 16**:
 All three are subclasses of `GFlowError` and re-exported through `gflow_cli.exceptions`. They follow the project's RFC 9457 Problem Details pattern.
 
 See [`errors.py::EXIT_CODE_MAP`](../src/gflow_cli/errors.py) for the complete exit-code mapping.
+
+Distinct from the above (which are errors OF the data layer), the
+`operations.error_type` column stores the taxonomy of RECORDED generation
+failures — the last segment of each exception's `problem_type` URI. Common
+values: `waf-rejection` (HTTP 403 / WAF), `content-policy`, `auth-expired`,
+`transport-timeout`, `wire-format`, `rate-limit`, `ui-mode-unavailable`
+(cohort pin), `media-attribution`. Query them with `gflow data list errors`.
 
 ---
 
