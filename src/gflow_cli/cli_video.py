@@ -27,7 +27,8 @@ from gflow_cli._cli_helpers import (
 from gflow_cli.api.client import FlowApiClient
 from gflow_cli.api.video import VideoModel, is_media_uuid, reference_cap_for
 from gflow_cli.config import get_settings
-from gflow_cli.data.recorder import OperationRecorder
+from gflow_cli.data.models import OperationKind
+from gflow_cli.data.recorder import OperationRecorder, record_failed_operation_safe
 from gflow_cli.errors import DataStoreError
 from gflow_cli.storage import cloud_info_from_path
 
@@ -96,6 +97,7 @@ async def _generate_and_report(
         console.print("[dim]Generating video — this takes ~2 minutes…[/dim]")
     settings = get_settings()
     recorder = OperationRecorder.open(settings)
+    started_media_ids: list[str] = []
     try:
         async with FlowApiClient(profile_dir=profile_dir, out_dir=out_dir) as client:
             # RESOLVE MENTIONS & EXPAND TOOLS
@@ -156,6 +158,7 @@ async def _generate_and_report(
                 )
 
             def on_started(started: VideoStarted) -> None:
+                started_media_ids.append(started.media_id)
                 try:
                     recorder.record_started_video(
                         profile_name=profile_name,
@@ -196,6 +199,21 @@ async def _generate_and_report(
                 flow_media_id=result.status.media_id,
                 local_path=result.local_path,
             )
+    except Exception as exc:
+        # #341: persist the failure before re-raising — the STARTED row (if
+        # on_started fired) is updated to FAILED, else a fresh row is inserted.
+        record_failed_operation_safe(
+            recorder,
+            logger=logger,
+            profile_name=profile_name,
+            profile_dir=profile_dir,
+            command=f"video {request.mode.value}",
+            mode=OperationKind(request.mode.value),
+            exc=exc,
+            request=request,
+            flow_media_ids=started_media_ids,
+        )
+        raise
     finally:
         recorder.close()
 
@@ -566,10 +584,17 @@ async def _execute_chain_links(
     from gflow_cli.api.video import GenerateVideoRequest, VideoResult, VideoStarted
     from gflow_cli.errors import ChainPartialError
 
+    # (request, media_id) pairs — matched by object IDENTITY in _on_link_failed.
+    # A dict keyed by id(request) would hold no reference to the request, so a
+    # GC'd earlier link's address could be reused by a later link (review
+    # finding); keeping the object itself in the pair removes the hazard.
+    started_media_pairs: list[tuple[GenerateVideoRequest, str]] = []
+
     def _on_link_started(request: GenerateVideoRequest) -> Any:
         """Build the per-link ``on_started`` forwarded into ``generate_video``."""
 
         def on_started(started: VideoStarted) -> None:
+            started_media_pairs.append((request, started.media_id))
             try:
                 catalog_recorder.record_started_video(
                     profile_name=profile_name,
@@ -585,6 +610,20 @@ async def _execute_chain_links(
                 )
 
         return on_started
+
+    def _on_link_failed(request: GenerateVideoRequest, exc: BaseException) -> None:
+        """Persist a FAILED catalog row for the aborted link (#341)."""
+        record_failed_operation_safe(
+            catalog_recorder,
+            logger=logger,
+            profile_name=profile_name,
+            profile_dir=profile_dir,
+            command="video chain",
+            mode=OperationKind(request.mode.value),
+            exc=exc,
+            request=request,
+            flow_media_ids=[mid for req, mid in started_media_pairs if req is request],
+        )
 
     def _on_link_completed(request: GenerateVideoRequest, result: VideoResult) -> None:
         """Finalize the catalog row for a downloaded link."""
@@ -620,6 +659,7 @@ async def _execute_chain_links(
             recorder=recorder,
             on_link_started=_on_link_started,
             on_link_completed=_on_link_completed,
+            on_link_failed=_on_link_failed,
             aspect=aspect_enum,
             seed_offset_ms=seed_offset,
             jitter=jitter,

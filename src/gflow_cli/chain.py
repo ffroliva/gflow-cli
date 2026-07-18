@@ -64,6 +64,7 @@ __all__ = [
     "ChainRecorder",
     "FrameExtractor",
     "LinkCompletedHook",
+    "LinkFailedHook",
     "LinkStartedHook",
     "run_chain",
 ]
@@ -157,6 +158,19 @@ class LinkCompletedHook(Protocol):
     def __call__(self, request: GenerateVideoRequest, result: VideoResult) -> None: ...
 
 
+class LinkFailedHook(Protocol):
+    """Hook called when a link's ``generate_video`` raises (#341).
+
+    Receives the link's own request + the exception BEFORE the orchestrator
+    wraps/re-raises it, so the CLI can persist a FAILED catalog row with full
+    request context. The implementation MUST absorb its own persistence
+    failures — it runs on the error path and must never mask the original
+    exception; the orchestrator does not guard the call.
+    """
+
+    def __call__(self, request: GenerateVideoRequest, exc: BaseException) -> None: ...
+
+
 def _build_link_request(
     *,
     spec: ChainLinkSpec,
@@ -187,12 +201,16 @@ async def _generate_link(
     index: int,
     completed_paths: list[Path],
     on_link_started: LinkStartedHook | None,
+    on_link_failed: LinkFailedHook | None,
 ) -> VideoResult:
     """Call generate_video for one link; raise ChainPartialError on abort."""
     link_on_started = on_link_started(req) if on_link_started is not None else None
     try:
         return await client.generate_video(req=req, on_started=link_on_started)
-    except (WireFormatError, WafRejectionError) as exc:
+    except Exception as exc:
+        _notify_link_failed(on_link_failed, req, exc)
+        if not isinstance(exc, WireFormatError | WafRejectionError):
+            raise
         _log.warning(
             "chain_link_aborted",
             index=index,
@@ -204,6 +222,26 @@ async def _generate_link(
             partial_results=list(completed_paths),
             cause=exc,
         ) from exc
+
+
+def _notify_link_failed(
+    hook: LinkFailedHook | None,
+    req: GenerateVideoRequest,
+    exc: BaseException,
+) -> None:
+    """Invoke the failure hook, absorbing ITS failures (#341 review finding).
+
+    The hook runs on the error path; letting a hook exception propagate would
+    replace the original error and skip the ChainPartialError partial-results
+    contract, so the orchestrator enforces the absorb rule at the seam instead
+    of trusting every hook implementer.
+    """
+    if hook is None:
+        return
+    try:
+        hook(req, exc)
+    except Exception as hook_exc:  # noqa: BLE001 — double-fault guard, see docstring
+        _log.warning("chain_link_failed_hook_error", error=str(hook_exc))
 
 
 def _build_link_result(
@@ -238,6 +276,7 @@ async def run_chain(
     recorder: ChainRecorder | None = None,
     on_link_started: LinkStartedHook | None = None,
     on_link_completed: LinkCompletedHook | None = None,
+    on_link_failed: LinkFailedHook | None = None,
     aspect: Aspect = Aspect.PORTRAIT,
     seed_offset_ms: int = 0,
     jitter: float = 0.0,
@@ -306,11 +345,17 @@ async def run_chain(
             index=index,
             completed_paths=completed_paths,
             on_link_started=on_link_started,
+            on_link_failed=on_link_failed,
         )
 
         if result.local_path is None:
             msg = f"link {index} returned no local_path (download failed)"
-            raise ChainPartialError(detail=msg, partial_results=list(completed_paths))
+            exc = ChainPartialError(detail=msg, partial_results=list(completed_paths))
+            # #341: this abort path must also reach the failure hook, else the
+            # link's STARTED catalog row is stranded and the abort is invisible
+            # to `gflow data list errors`.
+            _notify_link_failed(on_link_failed, req, exc)
+            raise exc
 
         is_last = index == len(links) - 1
 

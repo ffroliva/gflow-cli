@@ -25,7 +25,12 @@ from gflow_cli.api.dto import BatchSubmissionResult, ProjectInfo
 from gflow_cli.api.image import Aspect, GenerateImageRequest, Model
 from gflow_cli.api.transports.ui_automation import UiAutomationTransport
 from gflow_cli.config import get_settings, parse_jitter_range
-from gflow_cli.data.recorder import escalate_asset_collision
+from gflow_cli.data.models import OperationKind
+from gflow_cli.data.recorder import (
+    OperationRecorder,
+    escalate_asset_collision,
+    record_failed_operation_safe,
+)
 from gflow_cli.errors import (
     EXIT_CODE_MAP,
     BatchIntegrityError,
@@ -42,7 +47,6 @@ if TYPE_CHECKING:
     from collections.abc import Callable, Coroutine
 
     from gflow_cli.api.dto import GeneratedImage
-    from gflow_cli.data.recorder import OperationRecorder
     from gflow_cli.tools.invocation import AppliedTool
 
 console = Console()
@@ -419,11 +423,19 @@ async def run_one_image_prompt(
     idx: int,
     item: BatchPromptItem,
     output_dir: Path,
+    recorder: OperationRecorder | None = None,
+    profile_name: str | None = None,
+    profile_dir: Path | None = None,
+    command: str = "image t2i",
 ) -> BatchOutcome:
     """Generate images for one prompt and download them.
 
     When ``project_id`` is ``None``, the client creates a new Flow project for
     this prompt (isolation mode). Pass an explicit ID to reuse a shared project.
+
+    When ``recorder``/``profile_name``/``profile_dir`` are provided, a failed
+    prompt also persists a FAILED operation row (#341) before the outcome is
+    returned.
     """
     req = GenerateImageRequest(
         prompt=item.text,
@@ -449,7 +461,25 @@ async def run_one_image_prompt(
             path = await client.download_image(img, target)
             saved.append(path)
         return BatchOutcome(index=idx, prompt=item, status="ok", saved_paths=saved)
-    except GFlowError as exc:
+    except Exception as exc:
+        # #341: both typed and unexpected failures reach the funnel (the
+        # single-prompt CLI paths catch `Exception`; batch coverage must not
+        # be narrower). Batch semantics unchanged: GFlowError becomes a "fail"
+        # outcome, anything else still propagates.
+        if profile_name is not None and profile_dir is not None:
+            record_failed_operation_safe(
+                recorder,
+                logger=logger,
+                profile_name=profile_name,
+                profile_dir=profile_dir,
+                command=command,
+                mode=OperationKind.T2I,
+                exc=exc,
+                request=req,
+                flow_project_id=project_id,
+            )
+        if not isinstance(exc, GFlowError):
+            raise
         return BatchOutcome(
             index=idx,
             prompt=item,
@@ -472,6 +502,9 @@ async def run_image_batch(
     jitter_range: tuple[float, float] | None = None,
     _profile_name: str | None = None,
     _recorder: OperationRecorder | None = None,
+    # Required (no default): a mislabeling default would silently stamp a new
+    # caller's failure rows with another command's name (#341 review).
+    _command: str,
 ) -> list[BatchOutcome]:
     """Run prompts sequentially through one FlowApiClient session."""
 
@@ -487,6 +520,10 @@ async def run_image_batch(
             idx=idx,
             item=item,
             output_dir=output_dir,
+            recorder=_recorder,
+            profile_name=_profile_name,
+            profile_dir=profile_dir,
+            command=_command,
         )
 
     return await run_sequential_batch(
@@ -935,6 +972,18 @@ async def _download_results(
     outcomes: list[BatchOutcome] = []
     for item, result in zip(prompts, results, strict=False):
         if result.status != "ok":
+            if result.error is not None and profile_name is not None and profile_dir is not None:
+                record_failed_operation_safe(
+                    recorder,
+                    logger=logger,
+                    profile_name=profile_name,
+                    profile_dir=profile_dir,
+                    command="image batch",
+                    mode=OperationKind.T2I,
+                    exc=result.error,
+                    request=_to_request(item),
+                    flow_project_id=result.project_id,
+                )
             outcomes.append(
                 BatchOutcome(
                     index=item.index,
@@ -976,6 +1025,10 @@ async def _download_results(
                 project_id=result.project_id,
                 error=str(exc),
             )
+            # NOT recorded as a FAILED operation (#341 review): by this point
+            # the generation itself succeeded and credits were spent — the
+            # collision is local attribution bookkeeping, and recording it
+            # would pollute the failure dataset the feature exists to build.
             outcome = BatchOutcome(
                 index=item.index,
                 prompt=item,
