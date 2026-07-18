@@ -357,11 +357,7 @@ def test_record_failed_operation_updates_all_started_rows_count_gt_1(tmp_path: P
             flow_media_ids=["media-a", "media-b"],
         )
         statuses = [
-            str(row["status"])
-            for row in (
-                dict(zip(("status",), r, strict=True))
-                for r in store.conn.execute("SELECT status FROM operations").fetchall()
-            )
+            str(r[0]) for r in store.conn.execute("SELECT status FROM operations").fetchall()
         ]
     assert statuses == ["failed", "failed"]  # no stranded STARTED sibling, no extra insert
 
