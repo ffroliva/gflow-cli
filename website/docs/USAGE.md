@@ -306,7 +306,7 @@ Options:
 **Path-or-UUID semantics.** Each `--ref` value is classified at the CLI boundary:
 
 - **Looks like a Flow asset UUID** (case-insensitive 8-4-4-4-12 hex, e.g. `ddb6ef97-262d-49f4-8269-4a28c0fae6a2`) → passed through verbatim. No upload, no extra round-trip.
-- **Anything else** → treated as a local path. The CLI canonicalises it (resolving symlinks once at validation time, closing the symlink-laundering vector where `./hero.png -> ~/.ssh/id_rsa` could exfiltrate secrets), uploads it, then uses the resulting UUID.
+- **Anything else** → treated as a local path. The CLI canonicalises it (resolving symlinks once at validation time, closing the symlink-laundering vector where `./hero.png -> ~/.ssh/id_rsa` could exfiltrate secrets), then attaches it — **deduplicated by filename since v0.38.0 (#314):** if the target project's library already holds an asset with the exact same filename, that existing tile is selected in the picker instead of re-uploading, so repeating a ref across runs no longer piles up duplicate library entries. On a picker miss the file is uploaded as before. Caveat: the match is by exact filename only — a *different* image that happens to share the name of one already in the project will be reused, not uploaded; rename the file if you need a fresh upload. (Video `r2v` refs keep upload-only behavior.)
 
 Mix and match in a single call. UUIDs and paths can co-exist on the same command line; order is preserved so `imageInputs[]` matches the order you typed.
 
@@ -888,6 +888,7 @@ gflow data list projects   [--profile NAME] [--limit N] [--offset N] [--json]
 gflow data list images     [--profile NAME] [--limit N] [--offset N] [--json] [--all-copies]
 gflow data list videos     [--profile NAME] [--limit N] [--offset N] [--json] [--all-copies]
 gflow data list profiles                    [--limit N] [--offset N] [--json]
+gflow data list errors     [--profile NAME] [--limit N] [--offset N] [--json]
 
 Options:
   --profile NAME        Filter to one profile (not available on `profiles`).
@@ -925,7 +926,18 @@ gflow data list videos --json | jq '.media_id'
 
 # Profiles with at least one recorded generation
 gflow data list profiles
+
+# Failed generations, newest first (v0.39.0+, #341): started_at, command, mode,
+# model, profile, error_type (waf-rejection, content-policy, ...), redacted detail
+gflow data list errors --profile denon82 --json | jq '{started_at, error_type}'
 ```
+
+`errors` lists terminal `status="failed"` operation rows — every paid
+generation that raised (WAF 403, content policy, cohort pin, timeout, auth)
+is recorded before the CLI exits, so block onset/recovery windows are
+measurable. `error_detail` is redacted before persistence (no tokens, cookies,
+or signed URLs). See
+[`DATA_LAYER.md § Failure recording`](DATA_LAYER.md#failure-recording-341-v0390).
 
 > **`data list profiles` vs `gflow auth list`** — `data list profiles` shows profiles that have **recorded generations** in the catalog; `gflow auth list` shows profiles that have ever **logged in** via `gflow auth login`. A profile that logged in but never generated anything will appear in `auth list` but not in `data list profiles`.
 
@@ -1251,7 +1263,7 @@ shell scripts can branch on the failure mode without parsing stderr.
 | `22` | `UpscaleUnavailableError` | 4K upscale is gated to Flow **Ultra** accounts (HTTP 403) | Use `--scale 2k`, or upgrade the Flow plan                |
 | `23` | `UiSelectorDriftError` | A Flow editor control could not be located — Google changed the frontend (issue #183) | Update gflow-cli; file a bug with the probe name + debug screenshot from the error message |
 | `24` | `BrowserEngineUnavailableError` | `GFLOW_CLI_BROWSER_ENGINE=patchright` but the engine is not installed | `pip install 'gflow-cli[patchright]'`, or unset `GFLOW_CLI_BROWSER_ENGINE` |
-| `25` | `FlowAgentUiError`    | The profile is on Flow's Agentic UI cohort and the classic media panel is unrecoverable for this operation | Use a Classic-cohort profile; see KNOWN_ISSUES on the agentic cohort |
+| `25` | `FlowAgentUiError`    | The profile is on Flow's Agentic UI cohort and the classic media panel is unrecoverable for this operation | Rare since v0.38.0 (#332): the mode controller reliably recovers agentic→classic, so first retry with `--ui-mode classic`; if it persists, see KNOWN_ISSUES on the agentic cohort |
 | `26` | `MediaAttributionError` | Generated media could not be reliably attributed to this request (issue #281) | Re-run; a dedicated project with fewer pre-existing assets avoids the ambiguity |
 | `27` | `MediaUploadRejectedError` | Flow's upload endpoint refused the input file (`uploadImage` 4xx, issue #287) | Re-encode the image (`ffmpeg -q:v 2 -map_metadata -1`), or reference the asset by its media UUID |
 | `28` | `UiModeUnavailableError` | The Flow UI arm this command required (`GFLOW_CLI_UI_MODE`, or inferred — `-i` forces agentic) couldn't be reached after a switch attempt; aborted before submitting — no credits spent (issue #299) | Retry (the cohort flaps per load); try another `--profile`; or relax `GFLOW_CLI_UI_MODE` |

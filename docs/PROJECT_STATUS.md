@@ -4,9 +4,21 @@
 
 ## Current release
 
+**v0.39.0 — alpha.** **Failed generations are now persisted to the local catalog (#341).** Every paid-generation path (`video t2v/i2v/r2v`, `video chain`, `image t2i/i2i`, multi-prompt t2i, `gflow run`, `image batch`, `movie run`, and the async worker) now records a terminal `status="failed"` operation row — with a stable `error_type` derived from the exception's RFC 9457 `problem_type` and a redacted `error_detail` — before the error propagates, so WAF-403 block onset, duration, and recovery windows are measurable instead of reconstructed from memory. The new `gflow data list errors` subcommand browses failed operations newest-first, and videos whose poll returns `succeeded=false` are now recorded as `failed` (previously mis-recorded as `succeeded`). Bounded retention + export deferred to #345. Verification: [LIVE_VERIFICATION_v0.39.0](LIVE_VERIFICATION_v0.39.0.md) (a real `image t2i` HTTP-400 wire failure produced the first `failed` row in the production catalog, $0).
+
+**Develop (unreleased, post-v0.39.0):** *(empty — develop is the staging branch for the next release).*
+
+<details><summary>v0.38.1 — agentic-pin recovery (opt-in reload after a real toggle-off)</summary>
+
+**v0.38.1 — alpha.** **Agentic-pin recovery (#338).** When a real, unforced Agent-toggle click lands but the classic media panel never mounts in place (the 2026-07-17 both-accounts pin), `ensure_media_mode` can now reload the page once — opt-in and sanctioned only from the pre-bind classic path — to re-roll the server's per-load cohort and mount the persisted `isAgentModeToggled=false` preference; a composer-render race that made the toggle unreachable was also fixed. Verification: [LIVE_VERIFICATION_v0.38.1](LIVE_VERIFICATION_v0.38.1.md) (classic recovered on denon82 after ~2h of active server pin).
+
+</details>
+
+<details><summary>v0.38.0 — robust agentic↔classic mode control + i2i ref dedup</summary>
+
 **v0.38.0 — alpha.** **Robust agentic↔classic mode control + i2i reference dedup (#332, #314).** `--ui-mode` is now driven by a state-aware mode controller reading Flow's Agent toggle `aria-pressed` state (locale-invariant), ending spurious "forced agentic — not recoverable" aborts caused by an icon heuristic that matched both modes; `--ui-mode classic` reliably reaches the classic editor. Repeated local `--ref` images in `gflow image i2i` are now attached by selecting the already-uploaded library tile via exact-filename picker search (with a virtualised-grid scroll fallback, #335) instead of re-uploading duplicates. Also ships the PR-triage autopilot implementation (#238/#333, host deployment staged separately) and a behavior-preserving cognitive-complexity refactor (#331). Verification: [LIVE_VERIFICATION_v0.38.0](LIVE_VERIFICATION_v0.38.0.md) (agentic→classic recovery observed in a real run; dedup contract proven with an upload-then-dedup run pair; veo-fast t2v successful).
 
-**Develop (unreleased, post-v0.38.0):** *(empty — develop is the staging branch for the next release).*
+</details>
 
 <details><summary>v0.37.0 — viewport 1920×1080 + agentic count enforcement</summary>
 
@@ -223,6 +235,8 @@ reporter-verified e2e on macOS).
 | Diagnostic tooling (`GFLOW_CLI_HAR_PATH` + `GFLOW_CLI_DEBUG_TRACEBACK`) + reference-entity-smuggling fix (#312/#316) | ✅ done (v0.36.0) |
 | Viewports 1920×1080 + agentic count enforcement + FIPS-safe SAPISIDHASH (#313/#315/#329) | ✅ done (v0.37.0) |
 | Robust `aria-pressed` agentic↔classic mode control (#332) + i2i ref dedup via picker filename search (#314) | ✅ done (v0.38.0) |
+| Agentic-pin recovery: opt-in reload after a real Agent-toggle click (#338) | ✅ done (v0.38.1) |
+| Failed generations persisted to the local catalog + `gflow data list errors` (#341) | ✅ done (v0.39.0) |
 | `gflow video batch` (TSV manifest) on `ui_automation` | ⏳ Phase B |
 | Persistence layer (stay-mounted batch sessions across project boundaries) | ⏳ Phase B |
 | Provider abstraction for official Veo 3.1 API | ⏳ planned |
