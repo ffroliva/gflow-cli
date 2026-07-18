@@ -12,16 +12,27 @@ SENSITIVE_QUERY_KEYS = ("signature=", "x-goog-signature=", "x-goog-credential=",
 # Free-text secret patterns for error_detail scrubbing (#341). `redact_metadata`
 # redacts by dict key name / URL markers only, so a secret interpolated into an
 # exception message ("HTTP 403: ... Bearer ya29.xxx") would pass through it
-# verbatim — these patterns cover the prose case.
+# verbatim — these patterns cover the prose case. All case-insensitive: header
+# dumps are frequently lowercased ("cookie: sapisid=...").
 _SECRET_TEXT_PATTERNS = (
     re.compile(r"Bearer\s+[A-Za-z0-9._~+/=-]+", re.IGNORECASE),
     re.compile(r"SAPISIDHASH\s+\S+", re.IGNORECASE),
+    # Google auth cookie pairs — both header ("SAPISID=x") and equals forms.
+    # SAPISIDHASH before SAPISID before the bare SID family so the longest
+    # name wins; \b keeps bare SID from firing inside unrelated words.
     re.compile(
-        r"(?:__Secure-(?:next-auth\.session-token|[13]PSID[A-Z]*)|SAPISID|APISID|SSID|HSID)"
+        r"\b(?:__Secure-(?:next-auth\.session-token|[13]PSID[A-Z]*)"
+        r"|SAPISIDHASH|SAPISID|APISID|SSID|HSID|OSID|LSID|SID)"
         r"\s*=\s*\S+",
+        re.IGNORECASE,
     ),
 )
-_URL_PATTERN = re.compile(r"https?://\S+")
+# Any whitespace-delimited token carrying signed-query material — covers full
+# URLs and bare "path?X-Goog-Signature=..." fragments alike.
+_SIGNED_QUERY_TOKEN_PATTERN = re.compile(
+    r"\S*(?:signature=|x-goog-signature=|x-goog-credential=|expires=)\S*",
+    re.IGNORECASE,
+)
 ERROR_DETAIL_MAX_CHARS = 500
 
 
@@ -74,6 +85,5 @@ def redact_error_detail(detail: str) -> str:
     """
     for pattern in _SECRET_TEXT_PATTERNS:
         detail = pattern.sub("<redacted:secret>", detail)
-    if any(marker in detail.lower() for marker in SENSITIVE_QUERY_KEYS):
-        detail = _URL_PATTERN.sub("<redacted:url>", detail)
+    detail = _SIGNED_QUERY_TOKEN_PATTERN.sub("<redacted:url>", detail)
     return detail[:ERROR_DETAIL_MAX_CHARS]

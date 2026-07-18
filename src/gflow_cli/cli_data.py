@@ -164,12 +164,14 @@ def _emit_errors_table(rows: list[OperationErrorRow]) -> None:
     for col in ("STARTED", "COMMAND", "MODE", "MODEL", "PROFILE", "ERROR_TYPE", "ERROR_DETAIL"):
         tbl.add_column(col)
     for r in rows:
+        # Every column comes from the persisted DB, not live enums — escape
+        # them all so bracketed content can't be parsed as Rich markup.
         tbl.add_row(
             r.started_at.strftime("%Y-%m-%d %H:%M"),
             escape(r.command or ""),
-            r.mode,
-            r.model or "",
-            r.profile,
+            escape(r.mode),
+            escape(r.model or ""),
+            escape(r.profile),
             escape(r.error_type or ""),
             escape(_truncate(r.error_detail)),
         )

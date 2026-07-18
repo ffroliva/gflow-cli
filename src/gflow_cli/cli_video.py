@@ -154,7 +154,7 @@ async def _generate_and_report(
             mode=OperationKind(request.mode.value),
             exc=exc,
             request=request,
-            flow_media_id=started_media_ids[-1] if started_media_ids else None,
+            flow_media_ids=started_media_ids,
         )
         raise
     finally:
@@ -523,13 +523,17 @@ async def _execute_chain_links(
     from gflow_cli.api.video import GenerateVideoRequest, VideoResult, VideoStarted
     from gflow_cli.errors import ChainPartialError
 
-    started_media_by_req: dict[int, str] = {}
+    # (request, media_id) pairs — matched by object IDENTITY in _on_link_failed.
+    # A dict keyed by id(request) would hold no reference to the request, so a
+    # GC'd earlier link's address could be reused by a later link (review
+    # finding); keeping the object itself in the pair removes the hazard.
+    started_media_pairs: list[tuple[GenerateVideoRequest, str]] = []
 
     def _on_link_started(request: GenerateVideoRequest) -> Any:
         """Build the per-link ``on_started`` forwarded into ``generate_video``."""
 
         def on_started(started: VideoStarted) -> None:
-            started_media_by_req[id(request)] = started.media_id
+            started_media_pairs.append((request, started.media_id))
             try:
                 catalog_recorder.record_started_video(
                     profile_name=profile_name,
@@ -557,7 +561,7 @@ async def _execute_chain_links(
             mode=OperationKind(request.mode.value),
             exc=exc,
             request=request,
-            flow_media_id=started_media_by_req.get(id(request)),
+            flow_media_ids=[mid for req, mid in started_media_pairs if req is request],
         )
 
     def _on_link_completed(request: GenerateVideoRequest, result: VideoResult) -> None:

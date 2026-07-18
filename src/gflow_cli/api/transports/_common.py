@@ -81,21 +81,20 @@ def interpret_response(strategy_name: str, resp: Any) -> list[GeneratedImage]:
     """
     status: int = resp.status_code
     text: str = resp.text or ""
-    # Redact BEFORE truncating (same rationale as client._build_wire_format_discovery,
-    # audit gap #11): a token clipped at char 200 is still a partial secret, and
-    # since #341 these messages persist to the catalog DB as `error_detail`.
-    snippet = redact_error_detail(text)[:200]
 
     if status == 200:
         try:
             payload = json.loads(text)
         except json.JSONDecodeError as exc:
-            msg = f"{strategy_name}: non-JSON response body: {snippet}"
+            msg = f"{strategy_name}: non-JSON response body: {_redacted_snippet(text)}"
             raise WireFormatError(msg) from exc
 
         media = payload.get("media")
         if not isinstance(media, list):
-            msg = f"{strategy_name}: missing or invalid 'media' list in response: {snippet}"
+            msg = (
+                f"{strategy_name}: missing or invalid 'media' list in response: "
+                f"{_redacted_snippet(text)}"
+            )
             raise WireFormatError(
                 msg,
             )
@@ -108,16 +107,31 @@ def interpret_response(strategy_name: str, resp: Any) -> list[GeneratedImage]:
         msg = f"{strategy_name}: HTTP 401 from Flow API — session expired"
         raise AuthExpiredError(msg)
     if status == 403:
-        msg = f"{strategy_name}: HTTP 403 — likely WAF/fingerprint mismatch: {snippet}"
+        msg = (
+            f"{strategy_name}: HTTP 403 — likely WAF/fingerprint mismatch: "
+            f"{_redacted_snippet(text)}"
+        )
         raise WafRejectionError(
             msg,
         )
     if status == 429:
-        msg = f"{strategy_name}: HTTP 429 — rate limit hit: {snippet}"
+        msg = f"{strategy_name}: HTTP 429 — rate limit hit: {_redacted_snippet(text)}"
         raise RateLimitError(msg)
     if status >= 500:
-        msg = f"{strategy_name}: HTTP {status} server error: {snippet}"
+        msg = f"{strategy_name}: HTTP {status} server error: {_redacted_snippet(text)}"
         raise NetworkError(msg)
 
-    msg = f"{strategy_name}: unexpected HTTP status {status}: {snippet}"
+    msg = f"{strategy_name}: unexpected HTTP status {status}: {_redacted_snippet(text)}"
     raise WireFormatError(msg)
+
+
+def _redacted_snippet(text: str) -> str:
+    """Redact-then-truncate a response body for an exception message.
+
+    Redaction runs BEFORE truncation (same rationale as
+    ``client._build_wire_format_discovery``, audit gap #11): a token clipped at
+    char 200 is still a partial secret, and since #341 these messages persist
+    to the catalog DB as ``error_detail``. Called only at raise sites so the
+    success path pays nothing.
+    """
+    return redact_error_detail(text)[:200]

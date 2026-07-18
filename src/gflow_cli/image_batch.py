@@ -462,7 +462,7 @@ async def run_one_image_prompt(
             saved.append(path)
         return BatchOutcome(index=idx, prompt=item, status="ok", saved_paths=saved)
     except GFlowError as exc:
-        if recorder is not None and profile_name is not None and profile_dir is not None:
+        if profile_name is not None and profile_dir is not None:
             record_failed_operation_safe(
                 recorder,
                 logger=logger,
@@ -481,6 +481,24 @@ async def run_one_image_prompt(
             error=f"{type(exc).__name__}: {exc}",
             exit_code=resolve_exit_code(exc),
         )
+    except Exception as exc:
+        # #341 review: non-GFlowError failures (transport crash, OSError on
+        # write) must reach the failure funnel too — the single-prompt CLI
+        # paths catch `Exception`, and batch coverage must not be narrower.
+        # Batch semantics are unchanged: these still propagate, not BatchOutcome.
+        if profile_name is not None and profile_dir is not None:
+            record_failed_operation_safe(
+                recorder,
+                logger=logger,
+                profile_name=profile_name,
+                profile_dir=profile_dir,
+                command=command,
+                mode=OperationKind.T2I,
+                exc=exc,
+                request=req,
+                flow_project_id=project_id,
+            )
+        raise
 
 
 async def run_image_batch(
@@ -496,7 +514,9 @@ async def run_image_batch(
     jitter_range: tuple[float, float] | None = None,
     _profile_name: str | None = None,
     _recorder: OperationRecorder | None = None,
-    _command: str = "image t2i",
+    # Required (no default): a mislabeling default would silently stamp a new
+    # caller's failure rows with another command's name (#341 review).
+    _command: str,
 ) -> list[BatchOutcome]:
     """Run prompts sequentially through one FlowApiClient session."""
 
@@ -1017,18 +1037,10 @@ async def _download_results(
                 project_id=result.project_id,
                 error=str(exc),
             )
-            if profile_name is not None and profile_dir is not None:
-                record_failed_operation_safe(
-                    recorder,
-                    logger=logger,
-                    profile_name=profile_name,
-                    profile_dir=profile_dir,
-                    command="image batch",
-                    mode=OperationKind.T2I,
-                    exc=exc,
-                    request=_to_request(item),
-                    flow_project_id=result.project_id,
-                )
+            # NOT recorded as a FAILED operation (#341 review): by this point
+            # the generation itself succeeded and credits were spent — the
+            # collision is local attribution bookkeeping, and recording it
+            # would pollute the failure dataset the feature exists to build.
             outcome = BatchOutcome(
                 index=item.index,
                 prompt=item,

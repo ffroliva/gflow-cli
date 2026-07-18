@@ -23,9 +23,11 @@ from gflow_cli.data.recorder import (
     escalate_asset_collision,
     record_failed_operation_safe,
 )
+from gflow_cli.data.redaction import redact_error_detail
 from gflow_cli.data.repository import DataRepository
 from gflow_cli.data.store import DataStore
 from gflow_cli.errors import DataIntegrityError, DataStoreError, GFlowError
+from gflow_cli.observability import exception_message_hash
 from gflow_cli.paths import image_output_path
 from gflow_cli.storage import cloud_info_from_path
 from gflow_cli.worker.queue import QueueRepository, QueueTask
@@ -339,12 +341,18 @@ class FlowWorker:
                 error_payload["exit_code"] = exit_code
                 if "status" not in error_payload:
                     error_payload["status"] = 500
+                # #341: the queue row persists to the same DB as the redacted
+                # operations row — scrub its detail with the same rules.
+                if "detail" in error_payload:
+                    error_payload["detail"] = redact_error_detail(str(error_payload["detail"]))
             else:
                 error_payload = {
                     "type": "https://gflow-cli.dev/errors/unknown",
                     "title": "Unknown Error",
                     "status": 500,
-                    "detail": str(exc),
+                    # Hash, never the raw message — it may carry tokens (#341,
+                    # same privacy rule as operations.error_detail).
+                    "detail": f"sha256:{exception_message_hash(exc)}",
                     "exit_code": 1,
                 }
 
@@ -356,6 +364,11 @@ class FlowWorker:
             except ValueError:
                 op_kind = None
             if op_kind is not None:
+                # Prefer the mode the STARTED row was written with (the built
+                # request's mode) over task_type — they can disagree when the
+                # payload omits 'mode', and the STARTED-row lookup filters on it.
+                if isinstance(req, GenerateVideoRequest):
+                    op_kind = OperationKind(req.mode.value)
                 record_failed_operation_safe(
                     recorder,
                     logger=logger,
@@ -365,7 +378,7 @@ class FlowWorker:
                     mode=op_kind,
                     exc=exc,
                     request=req,
-                    flow_media_id=started_media_ids[-1] if started_media_ids else None,
+                    flow_media_ids=started_media_ids,
                 )
 
             self.repo.update_task_status(
