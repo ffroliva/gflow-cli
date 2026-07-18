@@ -161,6 +161,10 @@ async worker (which mirrors its `generation_queue.error_json` failure into
   data-layer fault can never mask the generation error or change the exit code.
 - The character-create saga deliberately keeps its STARTED rows for resume —
   it is excluded from the failure funnel by design.
+- `failed` rows accumulate without an automatic cap in this release: `gflow
+  data prune` targets stale in-flight/completed entries, not failed-operation
+  history. Bounded retention and a dedicated export are tracked in
+  [#345](https://github.com/ffroliva/gflow-cli/issues/345).
 
 ---
 
