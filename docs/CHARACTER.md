@@ -271,7 +271,7 @@ yet implemented*). `gflow character rm` is **shipped** (see the table below).
 | `gflow character voices [--json]` *(SHIPPED v0.12.0)* | list the 29 preset voices (name / description / sample-url); language-agnostic discovery, mirrors `gflow models --json` |
 | `gflow video … --character <id>` *(repeatable → multi-ref)* | **not yet implemented** (Phase 3) — `referenceEntities` on `video:batchAsyncGenerateVideoReferenceImages` |
 | `gflow character rm` (`--id`/`--name`) | **Shipped v0.13.0 (#150)** — `POST flow:batchDeleteAssets` (Bearer; FREE — no reCAPTCHA/credit) |
-| `gflow image … --character <id>` | **not yet implemented** — image-path `referenceEntities` uncaptured |
+| `gflow image … --character <id>` | id-based reuse **shipped** as `gflow image t2i/i2i --reference-entity <id>` (wire captured 2026-06-08, `api/image.py`); a name-based `--character`/`@`-mention layer is planned — see [ASSET_TAGGING_RECON](ASSET_TAGGING_RECON.md) |
 
 All commands take **`--project <id>` (required)** — every endpoint (`createEntity`, `projectInitialData`,
 reuse) is project-scoped; mirrors `gflow scene` / `gflow data` ergonomics. Use `--id`/`--name` flags, never a
@@ -496,8 +496,11 @@ The following are explicitly **out of the shipped scope** and tracked for future
 - **Extra body angles beyond the built-in triptych.** The shipped body slot generates a single front/side/back
   triptych. Generating additional angles/poses (e.g. re-feeding the front view as a reference seed for a new
   slot) is a future enhancement.
-- **`gflow image --character`.** The **image-path** reuse (`referenceEntities` on the image endpoint) is
-  uncaptured — deferred until its wire shape is reverse-engineered. (`gflow character rm` is now shipped, #150.)
+- **`gflow image --character` (name-based).** The image-path wire shape is **captured and shipped**:
+  `gflow image t2i/i2i --reference-entity <id>` rides `referenceEntities` on the image submit (live
+  capture 2026-06-08, `api/image.py`; asserted by `_assert_image_entities_attached`). What remains is
+  only the name-based ergonomic layer (`--character <name>` / `@`-mentions) — see
+  [ASSET_TAGGING_RECON](ASSET_TAGGING_RECON.md). (`gflow character rm` is now shipped, #150.)
 - **Set the Flow editor title field** so the editor isn't "Untitled Character" (see [§13.1 Known issues](#131-known-issues)).
   Investigate either the UI title box (with a Ctrl+A merge-bug workaround) or finding the dedicated title
   field/endpoint that the editor widget reads from, distinct from `entityInfo.displayName`.
