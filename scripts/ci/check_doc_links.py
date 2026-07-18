@@ -41,6 +41,7 @@ FILES: tuple[str, ...] = (
     "docs/LIVE_VERIFICATION_v0.8.1.md",
     "docs/CHARACTER.md",
     "docs/MOVIE.md",
+    "docs/ASSET_TAGGING_RECON.md",
     "docs/LIVE_VERIFICATION_v0.27.1.md",
 )
 
