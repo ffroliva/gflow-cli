@@ -19,6 +19,14 @@ research: [docs/ASSET_TAGGING_RECON.md](../../../ASSET_TAGGING_RECON.md).
 **Predict verdict:** pending — run `/gflow:predict` on the spec after the Task 2 spike verdict,
 before starting Task 3.
 
+**⛔ Environment constraint (hard gate):** this feature **cannot be called done — and its PR cannot
+be marked ready or merged — until the Task 9 live e2e suite has passed on an operator machine** with
+a logged-in Chrome-strategy profile and real credits. Cloud/CI sessions (no authenticated profile,
+no display, no credits) can deliver everything up to and including unit/BDD/mocked-CLI green, but
+per AGENTS.md ("not verifiable in the current environment → LIKELY, not CONFIRMED") that state is
+**LIKELY-working, never CONFIRMED**. Tasks 2 and 9 are operator-run only; any PR produced from a
+non-live environment must leave the live-verification checkboxes unchecked and say so explicitly.
+
 **Risk register:**
 | Severity | Risk | Mitigation |
 |---|---|---|
@@ -90,7 +98,8 @@ bodies; ingredient-mention capture).
 
 ## Task 2 — Record the spike verdict (GATE)
 
-**What:** Run the spike on the live account; append captured payloads + the verdict to
+**What:** Run the spike on the live account (**operator-run only — a cloud/CI session has no
+authenticated profile and cannot execute this task**); append captured payloads + the verdict to
 `docs/ASSET_TAGGING_RECON.md`. The verdict is one of **H1 / H2 / INCONCLUSIVE** (recorded per-path
 if results are mixed). **H2, INCONCLUSIVE, or mixed → STOP: re-run `/gflow:predict` with the
 evidence before Task 3.** Only a clean H1 proceeds directly.
@@ -238,26 +247,40 @@ update schema descriptions, keep `tests/mcp/test_cli_parity.py` green.
 
 ---
 
-## Task 9 — Full gates + live verification
+## Task 9 — Committed e2e suite + operator-run live verification (OPERATOR GATE)
 
-**What:** `/gflow:check` green across the tree; live e2e per verification-ledger norms.
+**What:** `/gflow:check` green across the tree, then the live e2e gate — **committed, repeatable
+pytest e2e tests** (not ad-hoc runs) executed on an operator machine per the
+[E2E_TESTING](../../../E2E_TESTING.md) layer/marker framework. This task cannot run in cloud/CI;
+until it passes live, the feature is LIKELY-working, not CONFIRMED, and the PR stays draft.
 
 **Files:**
+- `tests/e2e/test_asset_tagging_e2e.py` — profile-gated e2e tests (`e2e` + cost sub-markers;
+  `e2e_profile_dir` fixture so they skip cleanly when `GFLOW_CLI_E2E_PROFILE` is unset)
 - `docs/LIVE_VERIFICATION_v<next>.md` — evidence ledger entry
 - `KNOWN_ISSUES.md` — only if a cohort-specific behaviour surfaces
 
 **Steps:**
 - [ ] `/gflow:check` green (ruff / format / pyright / pytest ≥80%)
-- [ ] Live e2e: video character mention → `videoGenerationEntityInputs[].entityId` echo via
-      `_assert_entities_attached`
-- [ ] Live e2e: image character mention → `requests[].referenceEntities[].entityId` echo via
-      `_assert_image_entities_attached`
-- [ ] Live e2e: image media mention → zero re-upload events
-- [ ] Live e2e: multi-mention video run (the spec § 1 two-character example)
+- [ ] e2e tests committed with correct markers:
+      image character mention → `requests[].referenceEntities[].entityId` echo via
+      `_assert_image_entities_attached` (`e2e_image` + `e2e_data`, ~1 Imagen);
+      image media mention → zero re-upload events (`e2e_image`, ~1 Imagen);
+      video character mention → `videoGenerationEntityInputs[].entityId` echo via
+      `_assert_entities_attached` (`e2e_video`, ~1 Veo);
+      multi-mention video run — the spec § 1 two-character example (`e2e_video`, ~1 Veo)
+- [ ] **Operator run** (live machine):
+      `export GFLOW_CLI_E2E_PROFILE=<profile>` then
+      `uv run pytest -m "e2e_image" tests/e2e/test_asset_tagging_e2e.py -v` (image tier) and
+      `GFLOW_CLI_E2E_RUN_VIDEO=1 uv run pytest -m "e2e_video" tests/e2e/test_asset_tagging_e2e.py -v`
+      (video tier — Veo credits, opt-in)
 - [ ] Agentic-cohort run of one of the above (if the cohort is available on the account)
-- [ ] Evidence recorded (structlog events + wire echo + file magic/dims)
+- [ ] Evidence recorded in the ledger (structlog events + wire echo + file magic/dims + credits
+      spent), per verification-ledger norms
+- [ ] Only after all boxes above: PR may be marked ready
 
-**Tests created:** none — evidence task.
+**Tests created:** the committed `tests/e2e/test_asset_tagging_e2e.py` suite (skip-clean without a
+profile, so CI stays green).
 
 ---
 
@@ -277,5 +300,7 @@ was proven and output differences are demonstrated.
 - [ ] Docs updated (`USAGE.md` / `USER_GUIDE.md` / `CHARACTER.md` / recon doc)
 - [ ] BDD feature file covers all Critical + High scenarios (the six named in Task 4)
 - [ ] MCP ↔ CLI parity test green
-- [ ] Live e2e evidence recorded per verification-ledger norms
+- [ ] **Operator gate:** committed e2e suite passed on a live machine and evidence recorded in the
+      LIVE_VERIFICATION ledger — without this the feature is LIKELY, not CONFIRMED, and must not be
+      declared done or merged
 - [ ] No `# TODO` in diff without a tracked issue link

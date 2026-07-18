@@ -169,11 +169,17 @@ No schema migration. `metadata_json` gains an optional `mentions` array (additiv
   ambiguous disambiguation, cap enforcement; High: `@me` refusal, video-path media refusal,
   happy-path entity + media staging.
 - **MCP parity:** parity + handler test with a mention-bearing prompt.
-- **Live e2e (verification-ledger norms):** video generation with a character mention proving the
-  `videoGenerationEntityInputs[].entityId` echo (`_assert_entities_attached`); image generation with
-  a character mention proving the `requests[].referenceEntities[].entityId` echo
-  (`_assert_image_entities_attached`); image generation with a media mention proving zero re-upload.
-  A multi-mention video run (the § 1 two-character example) closes the ledger.
+- **Live e2e (verification-ledger norms — the quality gate, operator-run only):** a **committed**
+  `tests/e2e/test_asset_tagging_e2e.py` suite (profile-gated via `GFLOW_CLI_E2E_PROFILE`, `e2e` +
+  cost sub-markers per [E2E_TESTING](../../E2E_TESTING.md), skip-clean without a profile): video
+  generation with a character mention proving the `videoGenerationEntityInputs[].entityId` echo
+  (`_assert_entities_attached`); image generation with a character mention proving the
+  `requests[].referenceEntities[].entityId` echo (`_assert_image_entities_attached`); image
+  generation with a media mention proving zero re-upload. A multi-mention video run (the § 1
+  two-character example) closes the ledger. **Unit/BDD/mocked green without this gate is
+  LIKELY-working, never CONFIRMED** — the mention layer's whole value is what rides the real wire,
+  and only a live run can prove the echo. Cloud/CI sessions cannot execute it; the PR stays draft
+  until an operator has.
 
 ## 9. Spike gate (must complete before implementation Tasks 3+)
 
