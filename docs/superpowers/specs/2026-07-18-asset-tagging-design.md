@@ -57,7 +57,9 @@ Phase-3 limitation. This keeps the Phase-2 promise honest: **no transport change
   the escape, so `@@Zoro` is the literal text `@Zoro` — never a mention.
 - **Candidate extraction vs matching (layering):** `parse_mentions(text)` is pure and index-free — it
   emits a `MentionToken` per mention site carrying the site's position and the **maximal candidate
-  span** (text from `@` up to the next mention site or end-of-sentence punctuation). Name matching is
+  span** (text from `@` up to the next mention site or the next of `.` `!` `?` `,` `;` `:` or a
+  newline — the span is only an upper bound for prefix matching, so this set is not
+  behaviour-critical for single-word names). Name matching is
   the **resolver's** job: `resolve_mentions` greedily matches the longest prefix of the candidate span
   against the project's asset names (case-insensitive, **literal string comparison — never
   names-as-regex**), falling back to the single `\w[\w-]*` token. `"@Captain Zoro walks"` matches

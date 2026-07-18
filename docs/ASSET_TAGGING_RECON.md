@@ -52,7 +52,8 @@ gflow has already reverse-engineered and partially shipped:
 2. **Image references ride today — with one path-specific gap.** `gflow video r2v --ref` stages
    `referenceImages` from **local paths only** (`click.Path(exists=True)`; upload-every-time by design —
    #314). UUID-addressed zero-re-upload selection of existing assets is live-verified on
-   `image i2i --ref` (v0.26.0) and `video i2v` frame refs (v0.33.0, #287) — but an **r2v** UUID-selection
+   `image i2i --ref` (v0.26.0) and `video i2v` frame refs (shipped v0.32.0, live-verified v0.33.0 —
+   #287) — but an **r2v** UUID-selection
    primitive does not exist yet, so media mentions on the *video* path are net-new transport work.
 3. **Image-path character reuse already ships.** `gflow image t2i/i2i --reference-entity` puts
    `referenceEntities:[{entityId}]` on the image submit — wire shape captured live 2026-06-08
@@ -145,9 +146,9 @@ Rules:
   `--ref`), deduped against explicitly passed `--ref` / `--reference-entity` flags; model reference caps
   (`reference_cap_for`) enforced pre-submit. Prompt text keeps the name (minus `@`) so the model sees the
   sentence Flow's chip would render.
-- **Provenance:** record resolved mentions in `metadata_json` (ids only, prompts redacted per
-  `GFLOW_CLI_HISTORY_PROMPTS`); structlog event per resolution (`mention_resolved`,
-  `mention_unresolved`).
+- **Provenance:** record resolved mentions in `metadata_json` as `{name, kind, id}` (ids always;
+  names hashed under `GFLOW_CLI_HISTORY_PROMPTS=redacted` — see the spec § 6); structlog event per
+  resolution (`mention_resolved`, `mention_unresolved`).
 - **MCP & CLI symmetry:** mention parsing lives in a shared service (`services/`), so the MCP generation
   tools get it for free; parity enforced by `tests/mcp/test_cli_parity.py` (AGENTS.md § MCP & CLI Schema
   Symmetry).
