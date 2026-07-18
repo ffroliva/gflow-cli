@@ -49,9 +49,7 @@ def test_list_errors_filters_by_profile(tmp_path: Path) -> None:
     assert [r.profile for r in rows] == ["alpha"]
 
 
-def test_data_list_errors_cli_emits_jsonl(
-    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
-) -> None:
+def test_data_list_errors_cli_emits_jsonl(tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> None:
     db = tmp_path / "gflow.db"
     _seed_failed_op(db)
     monkeypatch.setenv("GFLOW_CLI_DB_PATH", str(db))

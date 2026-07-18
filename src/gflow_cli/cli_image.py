@@ -51,7 +51,12 @@ from gflow_cli.api.image_upscale import TargetResolution, UpsampleImageRequest
 from gflow_cli.api.transports import transport_choices
 from gflow_cli.api.video import is_media_uuid
 from gflow_cli.config import UiMode, get_settings, parse_jitter_range
-from gflow_cli.data.recorder import OperationRecorder, escalate_asset_collision
+from gflow_cli.data.models import OperationKind
+from gflow_cli.data.recorder import (
+    OperationRecorder,
+    escalate_asset_collision,
+    record_failed_operation_safe,
+)
 from gflow_cli.data.repository import DataRepository
 from gflow_cli.data.store import DataStore
 from gflow_cli.errors import (
@@ -1104,6 +1109,20 @@ async def _run_t2i(
                 input_media_ids=[],
                 operation_kind="t2i",
             )
+    except Exception as exc:
+        # #341: persist the failure before re-raising (images have no STARTED
+        # pre-insert, so this is always a fresh FAILED row).
+        record_failed_operation_safe(
+            recorder,
+            logger=logger,
+            profile_name=profile_name,
+            profile_dir=profile_dir,
+            command="image t2i",
+            mode=OperationKind.T2I,
+            exc=exc,
+            request=req,
+        )
+        raise
     finally:
         recorder.close()
 
@@ -1483,6 +1502,7 @@ async def _run_i2i(
 ) -> None:
     settings = get_settings()
     recorder = OperationRecorder.open(settings)
+    req: GenerateImageRequest | None = None
     try:
         async with FlowApiClient(
             profile_dir=profile_dir,
@@ -1569,6 +1589,20 @@ async def _run_i2i(
                 input_media_ids=[ref.name for ref in uuid_refs],
                 operation_kind="i2i",
             )
+    except Exception as exc:
+        # #341: persist the failure before re-raising. ``req`` is None when the
+        # failure predates request construction (e.g. project resolution).
+        record_failed_operation_safe(
+            recorder,
+            logger=logger,
+            profile_name=profile_name,
+            profile_dir=profile_dir,
+            command="image i2i",
+            mode=OperationKind.I2I,
+            exc=exc,
+            request=req,
+        )
+        raise
     finally:
         recorder.close()
 
