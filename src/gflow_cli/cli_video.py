@@ -78,6 +78,7 @@ async def _generate_and_report(
     command: str = "video",
     as_json: bool = False,
     project_id: str | None = None,
+    tool_specs: tuple[str, ...] = (),
 ) -> None:
     """Drive FlowApiClient for a single GenerateVideoRequest and print the
     result (or fail with a non-zero exit). Shared by t2v, i2v, and r2v.
@@ -97,6 +98,62 @@ async def _generate_and_report(
     recorder = OperationRecorder.open(settings)
     try:
         async with FlowApiClient(profile_dir=profile_dir, out_dir=out_dir) as client:
+            # RESOLVE MENTIONS & EXPAND TOOLS
+            from gflow_cli.services.mentions import AssetIndex, parse_mentions, resolve_mentions
+
+            tokens = parse_mentions(request.prompt)
+            if tokens and not project_id:
+                from gflow_cli.errors import ConfigurationError
+
+                raise ConfigurationError(
+                    detail="Mentions require an explicit --project <id>.",
+                    remediation_hint="Pass --project <id> to specify the project scope.",
+                )
+
+            if tokens:
+                assert project_id is not None
+                index = await AssetIndex.build_for_project(client, project_id)
+                resolved = resolve_mentions(
+                    tokens,
+                    index,
+                    path="video",
+                    model=request.model.value
+                    if hasattr(request.model, "value")
+                    else str(request.model),
+                    prompt=request.prompt,
+                    existing_refs=list(request.reference_entities),
+                )
+                de_tagged = resolved.de_tagged_prompt
+                new_entities = list(request.reference_entities)
+                new_entity_names = list(request.reference_entity_names)
+                for m in resolved.mentions:
+                    if m.kind == "entity":
+                        new_entities.append(m.id)
+                        new_entity_names.append(m.name)
+                import dataclasses
+
+                request = dataclasses.replace(
+                    request,
+                    prompt=de_tagged,
+                    reference_entities=tuple(new_entities),
+                    reference_entity_names=tuple(new_entity_names),
+                )
+
+            if tool_specs:
+                prompt_to_send, original_prompt, applied_tool = apply_tool_option(
+                    request.prompt,
+                    tool_specs,
+                    category="video",
+                    quiet=as_json,
+                )
+                import dataclasses
+
+                request = dataclasses.replace(
+                    request,
+                    prompt=prompt_to_send,
+                    original_prompt=original_prompt,
+                    tool=applied_tool,
+                )
 
             def on_started(started: VideoStarted) -> None:
                 try:
@@ -174,6 +231,7 @@ async def _run_t2v(
     original_prompt: str | None = None,
     tool: AppliedTool | None = None,
     project_id: str | None = None,
+    tool_specs: tuple[str, ...] = (),
 ) -> None:
     from gflow_cli.api.video import Aspect, GenerateVideoRequest, Mode, VideoModel
 
@@ -195,6 +253,7 @@ async def _run_t2v(
         command="video t2v",
         as_json=as_json,
         project_id=project_id,
+        tool_specs=tool_specs,
     )
 
 
@@ -340,6 +399,7 @@ async def _run_r2v(
     original_prompt: str | None = None,
     tool: AppliedTool | None = None,
     project_id: str | None = None,
+    tool_specs: tuple[str, ...] = (),
 ) -> None:
     from gflow_cli.api.video import Aspect, GenerateVideoRequest, Mode, VideoModel
 
@@ -362,6 +422,7 @@ async def _run_r2v(
         command="video r2v",
         as_json=as_json,
         project_id=project_id,
+        tool_specs=tool_specs,
     )
 
 
@@ -879,23 +940,21 @@ def t2v(
     """Generate a video from PROMPT."""
     profile_name = _resolve_profile(profile)
     provider_dir = _make_provider_dir(profile_name)
-    prompt_to_send, original_prompt, applied_tool = apply_tool_option(
-        prompt, tool_specs, category="video", quiet=as_json
-    )
     run_with_handlers(
         lambda: _run_t2v(
             profile_name=profile_name,
             profile_dir=provider_dir,
-            prompt=prompt_to_send,
+            prompt=prompt,
             aspect=aspect,
             out_dir=out_dir,
             model=model,
             duration=int(duration) if duration is not None else None,
             count=count,
             as_json=as_json,
-            original_prompt=original_prompt,
-            tool=applied_tool,
+            original_prompt=None,
+            tool=None,
             project_id=project_id,
+            tool_specs=tool_specs,
         ),
         cli_command="video t2v",
         as_json=as_json,
@@ -1239,14 +1298,11 @@ def r2v(
 
     profile_name = _resolve_profile(profile)
     provider_dir = _make_provider_dir(profile_name)
-    prompt_to_send, original_prompt, applied_tool = apply_tool_option(
-        prompt, tool_specs, category="video", quiet=as_json
-    )
     run_with_handlers(
         lambda: _run_r2v(
             profile_name=profile_name,
             profile_dir=provider_dir,
-            prompt=prompt_to_send,
+            prompt=prompt,
             refs=refs,
             aspect=aspect,
             model=model,
@@ -1254,9 +1310,10 @@ def r2v(
             count=count,
             out_dir=out_dir,
             as_json=as_json,
-            original_prompt=original_prompt,
-            tool=applied_tool,
+            original_prompt=None,
+            tool=None,
             project_id=project_id,
+            tool_specs=tool_specs,
         ),
         cli_command="video r2v",
         as_json=as_json,

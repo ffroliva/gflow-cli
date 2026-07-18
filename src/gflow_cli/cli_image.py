@@ -763,22 +763,19 @@ def t2i(  # NOSONAR
         profile_name = _resolve_profile(profile)
         provider_dir = _make_provider_dir(profile_name)
         settings = get_settings()
-        prompt_to_send, original_prompt, applied_tool = apply_tool_option(
-            prompt, tool_specs, category="image", quiet=as_json
-        )
         run_with_handlers(
             lambda: _run_t2i(
                 profile_name=profile_name,
                 profile_dir=provider_dir,
                 headless=settings.headless,
                 req=GenerateImageRequest(
-                    prompt=prompt_to_send,
+                    prompt=prompt,
                     aspect=Aspect.from_cli(aspect),
                     model=Model.from_cli(model),
                     reference_entities=tuple(reference_entities),
                     reference_entity_names=tuple(reference_entity_names),
-                    original_prompt=original_prompt,
-                    tool=applied_tool,
+                    original_prompt=None,
+                    tool=None,
                     instructions=(
                         tuple(AgentInstruction(text=i) for i in instructions)
                         if instructions
@@ -792,10 +789,12 @@ def t2i(  # NOSONAR
                 transport=transport,
                 project_id=project_id,
                 as_json=as_json,
+                tool_specs=tool_specs,
             ),
             cli_command="image t2i",
             as_json=as_json,
         )
+
         return
 
     batch_prompts = _build_t2i_batch_prompts(
@@ -1047,6 +1046,7 @@ async def _run_t2i(
     transport: str | None = None,
     project_id: str | None = None,
     as_json: bool = False,
+    tool_specs: tuple[str, ...] = (),
 ) -> None:
     settings = get_settings()
     recorder = OperationRecorder.open(settings)
@@ -1062,10 +1062,70 @@ async def _run_t2i(
             project, project_created = await _resolve_project(
                 client, project_id=project_id, title=_T2I_PROJECT_TITLE, as_json=as_json
             )
+
+            # RESOLVE MENTIONS & EXPAND TOOLS
+            from gflow_cli.services.mentions import AssetIndex, parse_mentions, resolve_mentions
+
+            tokens = parse_mentions(req.prompt)
+            if tokens and not project.project_id:
+                from gflow_cli.errors import ConfigurationError
+
+                raise ConfigurationError(
+                    detail="Mentions require an explicit --project <id>.",
+                    remediation_hint="Pass --project <id> to specify the project scope.",
+                )
+
+            if tokens:
+                index = await AssetIndex.build_for_project(client, project.project_id)
+                resolved = resolve_mentions(
+                    tokens,
+                    index,
+                    path="image",
+                    model=req.model.value if hasattr(req.model, "value") else str(req.model),
+                    prompt=req.prompt,
+                    existing_refs=list(req.reference_entities),
+                )
+                de_tagged = resolved.de_tagged_prompt
+                new_entities = list(req.reference_entities)
+                new_entity_names = list(req.reference_entity_names)
+                new_refs = list(req.refs)
+                for m in resolved.mentions:
+                    if m.kind == "entity":
+                        new_entities.append(m.id)
+                        new_entity_names.append(m.name)
+                    elif m.kind == "media":
+                        new_refs.append(ImageRef(name=m.id, display_name=m.name))
+                import dataclasses
+
+                req = dataclasses.replace(
+                    req,
+                    prompt=de_tagged,
+                    reference_entities=tuple(new_entities),
+                    reference_entity_names=tuple(new_entity_names),
+                    refs=tuple(new_refs),
+                )
+
+            if tool_specs:
+                prompt_to_send, original_prompt, applied_tool = apply_tool_option(
+                    req.prompt,
+                    tool_specs,
+                    category="image",
+                    quiet=as_json,
+                )
+                import dataclasses
+
+                req = dataclasses.replace(
+                    req,
+                    prompt=prompt_to_send,
+                    original_prompt=original_prompt,
+                    tool=applied_tool,
+                )
+
             if not as_json:
                 console.print(
                     f"  Generating {count} image(s) ({req.model.value}, {req.aspect.value})...",
                 )
+
             if count == 1:
                 img = await client.generate_image(project_id=project.project_id, req=req)
                 images: list[GeneratedImage] = [img]
@@ -1433,18 +1493,15 @@ def i2i(  # NOSONAR
     profile_name = _resolve_profile(profile)
     provider_dir = _make_provider_dir(profile_name)
     settings = get_settings()
-    prompt_to_send, original_prompt, applied_tool = apply_tool_option(
-        prompt, tool_specs, category="image", quiet=as_json
-    )
     i2i_params = _I2IParams(
-        prompt=prompt_to_send,
+        prompt=prompt,
         classified_refs=classified_refs,
         aspect=Aspect.from_cli(aspect),
         model=model_enum,
         reference_entities=tuple(reference_entities),
         reference_entity_names=tuple(reference_entity_names),
-        original_prompt=original_prompt,
-        tool=applied_tool,
+        original_prompt=None,
+        tool=None,
         instructions=(
             tuple(AgentInstruction(text=i) for i in instructions) if instructions else None
         ),
@@ -1462,6 +1519,7 @@ def i2i(  # NOSONAR
             transport=transport,
             project_id=project_id,
             as_json=as_json,
+            tool_specs=tool_specs,
         ),
         cli_command="image i2i",
         as_json=as_json,
@@ -1480,6 +1538,7 @@ async def _run_i2i(
     transport: str | None = None,
     project_id: str | None = None,
     as_json: bool = False,
+    tool_specs: tuple[str, ...] = (),
 ) -> None:
     settings = get_settings()
     recorder = OperationRecorder.open(settings)
@@ -1496,6 +1555,62 @@ async def _run_i2i(
                 client, project_id=project_id, title=_I2I_PROJECT_TITLE, as_json=as_json
             )
 
+            # RESOLVE MENTIONS & EXPAND TOOLS
+            from gflow_cli.services.mentions import AssetIndex, parse_mentions, resolve_mentions
+
+            tokens = parse_mentions(params.prompt)
+            if tokens and not project.project_id:
+                from gflow_cli.errors import ConfigurationError
+
+                raise ConfigurationError(
+                    detail="Mentions require an explicit --project <id>.",
+                    remediation_hint="Pass --project <id> to specify the project scope.",
+                )
+
+            uuid_refs_initial = list(r for r in params.classified_refs if isinstance(r, ImageRef))
+            existing_refs = list(params.reference_entities) + [
+                ref.name for ref in uuid_refs_initial
+            ]
+
+            if tokens:
+                index = await AssetIndex.build_for_project(client, project.project_id)
+                resolved = resolve_mentions(
+                    tokens,
+                    index,
+                    path="image",
+                    model=params.model.value
+                    if hasattr(params.model, "value")
+                    else str(params.model),
+                    prompt=params.prompt,
+                    existing_refs=existing_refs,
+                )
+                de_tagged = resolved.de_tagged_prompt
+                new_entities = list(params.reference_entities)
+                new_entity_names = list(params.reference_entity_names)
+                for m in resolved.mentions:
+                    if m.kind == "entity":
+                        new_entities.append(m.id)
+                        new_entity_names.append(m.name)
+                    elif m.kind == "media":
+                        uuid_refs_initial.append(ImageRef(name=m.id, display_name=m.name))
+                prompt_text = de_tagged
+            else:
+                prompt_text = params.prompt
+                new_entities = list(params.reference_entities)
+                new_entity_names = list(params.reference_entity_names)
+
+            if tool_specs:
+                prompt_to_send, original_prompt, applied_tool = apply_tool_option(
+                    prompt_text,
+                    tool_specs,
+                    category="image",
+                    quiet=as_json,
+                )
+            else:
+                prompt_to_send = prompt_text
+                original_prompt = params.original_prompt
+                applied_tool = params.tool
+
             # Local-file refs are attached through the editor's media dialog by the
             # ui_automation transport (the REST uploadImage path 401s — see #15/#39).
             # Already-uploaded UUID refs go on `refs`: the transport binds them by
@@ -1503,18 +1618,18 @@ async def _run_i2i(
             # upload — v0.26.0, `_attach_image_uuid_refs`), falling back to uploading
             # the asset's local file, and failing loud if neither is possible. A UUID
             # ref is never silently dropped.
-            uuid_refs = tuple(r for r in params.classified_refs if isinstance(r, ImageRef))
+            uuid_refs = tuple(uuid_refs_initial)
             local_ref_paths = tuple(r for r in params.classified_refs if isinstance(r, Path))
             req = GenerateImageRequest(
-                prompt=params.prompt,
+                prompt=prompt_to_send,
                 aspect=params.aspect,
                 model=params.model,
                 refs=uuid_refs,
                 ref_paths=local_ref_paths,
-                reference_entities=params.reference_entities,
-                reference_entity_names=params.reference_entity_names,
-                original_prompt=params.original_prompt,
-                tool=params.tool,
+                reference_entities=tuple(new_entities),
+                reference_entity_names=tuple(new_entity_names),
+                original_prompt=original_prompt,
+                tool=applied_tool,
                 instructions=params.instructions,
                 ui_mode=params.ui_mode,
             )

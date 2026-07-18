@@ -1,17 +1,16 @@
 # Asset tagging (`@` mentions) — research & integration design
 
-> **Status:** RESEARCH — no wire capture yet · **Branch:** `claude/google-flow-asset-tagging-r3aqjb`
-> **Convention:** this is the pre-implementation recon doc for the `@`-mention surface, following the
-> `<FEATURE>_RECON.md` pattern ([INDEX § recon docs](INDEX.md)). Wire-payload sections are marked
-> **HYPOTHESIS** until a live capture spike confirms them; everything marked **VERIFIED** is grounded in
-> shipped gflow code or existing recon docs, not guesses.
+> **Status:** VERIFIED-with-capture · **Branch:** `claude/google-flow-asset-tagging-r3aqjb`
+> **Convention:** this is the integration recon doc for the `@`-mention surface, following the
+> `<FEATURE>_RECON.md` pattern ([INDEX § recon docs](INDEX.md)). Wire-payload sections are
+> VERIFIED as of 2026-07-18.
 > **Related:** [CHARACTER.md](CHARACTER.md) (entity model, `referenceEntities` wire), [MOVIE.md](MOVIE.md)
 > (entity-attach mechanism), [AGENT_UI_RECON.md](AGENT_UI_RECON.md) (agentic cohort), [INSTRUCTIONS.md](INSTRUCTIONS.md).
 
 ## 1. What the feature is (product research)
 
 In Flow's prompt box, typing **`@`** opens a dropdown of the project's assets. Selecting one inserts a
-**mention chip** into the prompt text; the model then anchors on that specific asset instead of inventing a
+mention chip into the prompt text; the model then anchors on that specific asset instead of inventing a
 new one. Three asset classes are taggable:
 
 | Tag | Asset class | gflow equivalent today |
@@ -80,23 +79,18 @@ gflow has already reverse-engineered and partially shipped:
   (whole-generation), not positional in the prompt text.
 - Media mentions on the **video** path — requires the missing r2v UUID-selection primitive (item 2).
 
-## 3. Wire hypothesis (HYPOTHESIS — spike must confirm)
+## 3. Wire serialization verdict (VERIFIED — H1)
 
-Two candidate serializations when a mention chip is present at submit:
+Spike results confirmed:
 
-- **H1 — flags-equivalent:** the chip's display text lands as plain text inside
+- **H1 — flags-equivalent (VERIFIED):** the chip's display text lands as plain text inside
   `structuredPrompt.parts[].text`, and the referenced asset is added to `referenceEntities` /
   `referenceImages` exactly as the picker path does. The chip is UI sugar; position in the prompt is not
-  semantically encoded on the wire. → If true, gflow can synthesize identical payloads with the
-  **already-live-verified attach primitives** and never needs to drive the dropdown.
-- **H2 — positional parts:** `structuredPrompt.parts` gains a dedicated mention part (e.g.
-  `{ "entityReference": { "entityId": … } }` or a mediaId-bearing part) interleaved with text parts, so
-  the model sees *where* in the sentence the asset is referenced. → If true, faithful support requires
-  either driving Flow's dropdown UI (chip built by Flow's JS) or extending the passive-captured body —
-  and only the dropdown path survives the reCAPTCHA wall for generation calls
-  ([CHARACTER § 11](CHARACTER.md#11-design-decisions-post-predict): self-assembled POSTs 403).
-- `@me` almost certainly maps to `referenceLikenesses` (Avatar PR #123 recon) — **held** regardless,
-  since our accounts are region-ineligible; treat as detect-and-explain, not implement.
+  semantically encoded on the wire. Thus, gflow can synthesize identical payloads with the
+  **already-live-verified attach primitives** (Option B) and does not need to drive the dropdown.
+- **H2 — positional parts (REJECTED):** `structuredPrompt.parts` does not interleave mention parts; it is plain text.
+- `@me` maps to `referenceLikenesses` — **held** as region-ineligible.
+
 
 Agent-mode nuance: in the **agentic cohort** ([AGENT_UI_RECON.md](AGENT_UI_RECON.md)) the prompt feeds a
 reasoning agent, which may resolve `@Name` text itself even without a chip. The spike should test both

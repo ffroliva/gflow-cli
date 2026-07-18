@@ -156,6 +156,73 @@ class FlowWorker:
                             project_flow_id = project.project_id
                             project_created = True
 
+                        # RESOLVE MENTIONS & EXPAND TOOLS
+                        from gflow_cli.services.mentions import (
+                            AssetIndex,
+                            parse_mentions,
+                            resolve_mentions,
+                        )
+
+                        tokens = parse_mentions(req.prompt)
+                        if tokens and not project_flow_id:
+                            from gflow_cli.errors import ConfigurationError
+
+                            raise ConfigurationError(
+                                detail="Mentions require an explicit --project <id>.",
+                                remediation_hint=(
+                                    "Pass --project <id> to specify the project scope."
+                                ),
+                            )
+
+                        if tokens:
+                            index = await AssetIndex.build_for_project(client, project_flow_id)
+                            resolved = resolve_mentions(
+                                tokens,
+                                index,
+                                path="image",
+                                model=req.model.value
+                                if hasattr(req.model, "value")
+                                else str(req.model),
+                                prompt=req.prompt,
+                                existing_refs=list(req.reference_entities),
+                            )
+                            de_tagged = resolved.de_tagged_prompt
+                            new_entities = list(req.reference_entities)
+                            new_entity_names = list(req.reference_entity_names)
+                            new_refs = list(req.refs)
+                            for m in resolved.mentions:
+                                if m.kind == "entity":
+                                    new_entities.append(m.id)
+                                    new_entity_names.append(m.name)
+                                elif m.kind == "media":
+                                    new_refs.append(ImageRef(name=m.id, display_name=m.name))
+                            import dataclasses
+
+                            req = dataclasses.replace(
+                                req,
+                                prompt=de_tagged,
+                                reference_entities=tuple(new_entities),
+                                reference_entity_names=tuple(new_entity_names),
+                                refs=tuple(new_refs),
+                            )
+
+                        tool_specs = tuple(task.payload.get("tool_specs", ()))
+                        if tool_specs:
+                            prompt_to_send, original_prompt, applied_tool = apply_tool_option(
+                                req.prompt,
+                                tool_specs,
+                                category="image",
+                                quiet=True,
+                            )
+                            import dataclasses
+
+                            req = dataclasses.replace(
+                                req,
+                                prompt=prompt_to_send,
+                                original_prompt=original_prompt,
+                                tool=applied_tool,
+                            )
+
                         if count == 1:
                             img = await client.generate_image(project_id=project_flow_id, req=req)
                             images = [img]
@@ -244,6 +311,69 @@ class FlowWorker:
                         out_dir=out_dir,
                         settings=settings,  # same rationale as the image path above
                     ) as client:
+                        # RESOLVE MENTIONS & EXPAND TOOLS
+                        from gflow_cli.services.mentions import (
+                            AssetIndex,
+                            parse_mentions,
+                            resolve_mentions,
+                        )
+
+                        tokens = parse_mentions(req.prompt)
+                        if tokens and not project_id:
+                            from gflow_cli.errors import ConfigurationError
+
+                            raise ConfigurationError(
+                                detail="Mentions require an explicit --project <id>.",
+                                remediation_hint=(
+                                    "Pass --project <id> to specify the project scope."
+                                ),
+                            )
+
+                        if tokens:
+                            assert project_id is not None
+                            index = await AssetIndex.build_for_project(client, project_id)
+                            resolved = resolve_mentions(
+                                tokens,
+                                index,
+                                path="video",
+                                model=req.model.value
+                                if (req.model and hasattr(req.model, "value"))
+                                else str(req.model or ""),
+                                prompt=req.prompt,
+                                existing_refs=list(req.reference_entities),
+                            )
+                            de_tagged = resolved.de_tagged_prompt
+                            new_entities = list(req.reference_entities)
+                            new_entity_names = list(req.reference_entity_names)
+                            for m in resolved.mentions:
+                                if m.kind == "entity":
+                                    new_entities.append(m.id)
+                                    new_entity_names.append(m.name)
+                            import dataclasses
+
+                            req = dataclasses.replace(
+                                req,
+                                prompt=de_tagged,
+                                reference_entities=tuple(new_entities),
+                                reference_entity_names=tuple(new_entity_names),
+                            )
+
+                        tool_specs = tuple(task.payload.get("tool_specs", ()))
+                        if tool_specs:
+                            prompt_to_send, original_prompt, applied_tool = apply_tool_option(
+                                req.prompt,
+                                tool_specs,
+                                category="video",
+                                quiet=True,
+                            )
+                            import dataclasses
+
+                            req = dataclasses.replace(
+                                req,
+                                prompt=prompt_to_send,
+                                original_prompt=original_prompt,
+                                tool=applied_tool,
+                            )
 
                         def on_started(started: VideoStarted) -> None:
                             try:
@@ -342,11 +472,6 @@ class FlowWorker:
     def _build_image_request(self, payload: dict[str, Any]) -> GenerateImageRequest:
         prompt = payload["prompt"]
 
-        tool_specs = tuple(payload.get("tool_specs", ()))
-        if tool_specs:
-            # Mirror the CLI --tool flag: expand the prompt before generation.
-            prompt = apply_tool_option(prompt, tool_specs, category="image", quiet=True)[0]
-
         aspect_val = payload.get("aspect")
         aspect = ImageAspect.from_cli(aspect_val) if aspect_val else ImageAspect.PORTRAIT
 
@@ -390,11 +515,6 @@ class FlowWorker:
 
     def _build_video_request(self, payload: dict[str, Any]) -> GenerateVideoRequest:
         prompt = payload["prompt"]
-
-        tool_specs = tuple(payload.get("tool_specs", ()))
-        if tool_specs:
-            # Mirror the CLI --tool flag: expand the prompt before generation.
-            prompt = apply_tool_option(prompt, tool_specs, category="video", quiet=True)[0]
 
         mode_val = payload.get("mode")
         mode = VideoMode(mode_val) if mode_val else VideoMode.T2V
