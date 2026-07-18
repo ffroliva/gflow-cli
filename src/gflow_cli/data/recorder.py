@@ -3,7 +3,6 @@ from __future__ import annotations
 import hashlib
 import json
 import mimetypes
-import sqlite3
 import uuid
 from datetime import UTC, datetime
 from typing import TYPE_CHECKING
@@ -29,7 +28,7 @@ from gflow_cli.data.redaction import (
 )
 from gflow_cli.data.repository import DataRepository
 from gflow_cli.data.store import DataStore
-from gflow_cli.errors import DataStoreError, GFlowError, MediaAttributionError
+from gflow_cli.errors import GFlowError, MediaAttributionError
 
 if TYPE_CHECKING:
     from collections.abc import Sequence
@@ -111,10 +110,12 @@ def record_failed_operation_safe(
     """Best-effort wrapper around :meth:`OperationRecorder.record_failed_operation`.
 
     The FAILED write runs inside an ``except`` block that is about to re-raise
-    the real generation error — a data-layer fault here must warn and step
-    aside, never mask it. Catches ``sqlite3.Error`` too because repository
-    read/update helpers are not all mapped to :class:`DataStoreError`.
-    ``recorder`` may be ``None`` (recorder never opened) for caller symmetry.
+    the real generation error — ANY fault here must warn and step aside, never
+    mask it. The broad catch is deliberate (double-fault guard): a
+    ``DataStoreError``/``sqlite3.Error`` from the repository, or an
+    ``AttributeError`` from a duck-typed recorder stand-in, must not replace
+    the original exception the caller is re-raising. ``recorder`` may be
+    ``None`` (recorder never opened) for caller symmetry.
     """
     if recorder is None:
         return
@@ -130,7 +131,7 @@ def record_failed_operation_safe(
             flow_media_id=flow_media_id,
             flow_operation_id=flow_operation_id,
         )
-    except (DataStoreError, sqlite3.Error) as record_exc:
+    except Exception as record_exc:  # noqa: BLE001 — see docstring (double-fault guard)
         logger.warning("failure_record_skipped", error=str(record_exc))
 
 

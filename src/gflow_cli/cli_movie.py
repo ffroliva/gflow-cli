@@ -48,7 +48,8 @@ from gflow_cli.composition import (
     resume_hash,
 )
 from gflow_cli.config import get_settings
-from gflow_cli.data.recorder import OperationRecorder
+from gflow_cli.data.models import OperationKind
+from gflow_cli.data.recorder import OperationRecorder, record_failed_operation_safe
 from gflow_cli.errors import ConfigurationError, DataStoreError, WireFormatError
 from gflow_cli.movie_manifest import (
     CharacterState,
@@ -848,7 +849,10 @@ async def _generate_scene(
         reference_entity_names=reference_entity_names,
     )
 
+    started_media_ids: list[str] = []
+
     def on_started(started: VideoStarted) -> None:
+        started_media_ids.append(started.media_id)
         try:
             recorder.record_started_video(
                 profile_name=profile_name,
@@ -859,13 +863,30 @@ async def _generate_scene(
         except DataStoreError as exc:
             log.warning("movie.persistence_failed_on_start", error=str(exc))
 
-    result = await client.generate_video(
-        req=request,
-        project_id=project_id,
-        out_dir=out_dir,
-        download=True,
-        on_started=on_started,
-    )
+    try:
+        result = await client.generate_video(
+            req=request,
+            project_id=project_id,
+            out_dir=out_dir,
+            download=True,
+            on_started=on_started,
+        )
+    except Exception as exc:
+        # #341: persist the scene failure before the per-scene handler in
+        # `_run_one_scene` decides continue-vs-abort.
+        record_failed_operation_safe(
+            recorder,
+            logger=log,
+            profile_name=profile_name,
+            profile_dir=profile_dir,
+            command="movie run",
+            mode=OperationKind(mode.value),
+            exc=exc,
+            request=request,
+            flow_project_id=project_id,
+            flow_media_id=started_media_ids[-1] if started_media_ids else None,
+        )
+        raise
 
     try:
         recorder.record_completed_video(

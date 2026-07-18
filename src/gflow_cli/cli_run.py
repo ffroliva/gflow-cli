@@ -26,6 +26,7 @@ from gflow_cli._cli_helpers import _make_provider_dir, _resolve_profile
 from gflow_cli.api.client import FlowApiClient
 from gflow_cli.api.transports import EXPERIMENTAL_TRANSPORTS
 from gflow_cli.config import get_settings
+from gflow_cli.data.recorder import OperationRecorder
 from gflow_cli.errors import ConfigurationError
 from gflow_cli.image_batch import (
     MAX_PROMPTS,
@@ -180,6 +181,8 @@ async def _run_batch(
     prompts: tuple[BatchPromptItem, ...],
     output_dir: Path,
     continue_on_error: bool,
+    profile_name: str | None = None,
+    recorder: OperationRecorder | None = None,
 ) -> list[BatchOutcome]:
     """Run ``prompts`` sequentially through ONE FlowApiClient session.
 
@@ -197,6 +200,9 @@ async def _run_batch(
         continue_on_error=continue_on_error,
         project_title="gflow-cli run",
         client_factory=FlowApiClient,
+        _profile_name=profile_name,
+        _recorder=recorder,
+        _command="run",
     )
     return outcomes
 
@@ -267,16 +273,22 @@ def run(
     if not continue_on_error:
         console.print("  mode: [yellow]fail-fast[/yellow]")
 
-    outcomes = asyncio.run(
-        _run_batch(
-            profile_dir=provider_dir,
-            headless=settings.headless,
-            transport=cfg.transport,
-            prompts=cfg.prompts,
-            output_dir=output_dir,
-            continue_on_error=continue_on_error,
-        ),
-    )
+    recorder = OperationRecorder.open(settings)
+    try:
+        outcomes = asyncio.run(
+            _run_batch(
+                profile_dir=provider_dir,
+                headless=settings.headless,
+                transport=cfg.transport,
+                prompts=cfg.prompts,
+                output_dir=output_dir,
+                continue_on_error=continue_on_error,
+                profile_name=profile_name,
+                recorder=recorder,
+            ),
+        )
+    finally:
+        recorder.close()
     exit_code = render_image_batch_summary(outcomes, title="gflow run")
     if exit_code != 0:
         sys.exit(exit_code)
