@@ -7,6 +7,8 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+## [0.39.0] — 2026-07-19
+
 ### Added
 
 - **Failed generations are now persisted to the local catalog** ([#341]):
@@ -2089,7 +2091,8 @@ shell-script template that branches on these codes.
 
 First skeleton. Not functional end-to-end yet.
 
-[Unreleased]: https://github.com/ffroliva/gflow-cli/compare/v0.38.1...HEAD
+[Unreleased]: https://github.com/ffroliva/gflow-cli/compare/v0.39.0...HEAD
+[0.39.0]: https://github.com/ffroliva/gflow-cli/compare/v0.38.1...v0.39.0
 [0.38.1]: https://github.com/ffroliva/gflow-cli/compare/v0.38.0...v0.38.1
 [0.38.0]: https://github.com/ffroliva/gflow-cli/compare/v0.37.0...v0.38.0
 [0.37.0]: https://github.com/ffroliva/gflow-cli/compare/v0.36.0...v0.37.0
