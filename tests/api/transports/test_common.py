@@ -220,3 +220,23 @@ def test_extract_project_id_from_flow_url() -> None:
 
 def test_extract_project_id_returns_none_for_gallery_url() -> None:
     assert extract_project_id("https://labs.google/fx/tools/flow") is None
+
+
+# ---------------------------------------------------------------------------
+# #341: response bodies are redacted BEFORE truncation into error messages
+# ---------------------------------------------------------------------------
+
+
+def test_interpret_response_403_redacts_bearer_token_in_body() -> None:
+    body = "denied; auth was Bearer ya29.a0Af-verysecrettoken1234567890 for this call"
+    with pytest.raises(WafRejectionError) as excinfo:
+        interpret_response("sapisidhash", _resp(403, body))
+    assert "ya29" not in str(excinfo.value)
+    assert "<redacted:secret>" in str(excinfo.value)
+
+
+def test_interpret_response_500_redacts_signed_url_in_body() -> None:
+    body = "err at https://cdn.example/x?X-Goog-Signature=abcdef123456"
+    with pytest.raises(NetworkError) as excinfo:
+        interpret_response("bearer", _resp(500, body))
+    assert "abcdef123456" not in str(excinfo.value)
