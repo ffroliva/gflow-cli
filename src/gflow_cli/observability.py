@@ -157,12 +157,20 @@ def emit_unhandled_event(
     storing PII or tokens that may have ended up in ``str(exc)`` or a frame
     local.
     """
-    msg_bytes = str(exc).encode("utf-8", errors="replace")
     tb_bytes = "".join(traceback.format_tb(exc.__traceback__)).encode("utf-8", errors="replace")
     logger.error(
         "error_unhandled",
         exception_class=type(exc).__name__,
-        message_hash=hashlib.sha256(msg_bytes).hexdigest(),
+        message_hash=exception_message_hash(exc),
         stack_hash=hashlib.sha256(tb_bytes).hexdigest(),
         cli_command=cli_command,
     )
+
+
+def exception_message_hash(exc: BaseException) -> str:
+    """SHA-256 hex digest of ``str(exc)`` — the privacy-safe stand-in for a
+    message that may carry PII or tokens. Shared by ``emit_unhandled_event``
+    and the data layer's FAILED-operation recorder (#341) so log events and
+    catalog rows hash identically and can be correlated.
+    """
+    return hashlib.sha256(str(exc).encode("utf-8", errors="replace")).hexdigest()
