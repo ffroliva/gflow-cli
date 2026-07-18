@@ -50,6 +50,8 @@ Welcome to the `gflow-cli` documentation. This index is the routing layer: it te
 | **[scripts/diag/README.md](../scripts/diag/README.md)** | Diagnostic investigation scripts — run against a live authenticated profile to capture wire samples, measure Chrome memory, or mint reCAPTCHA tokens | Running a one-off investigation against a live Flow session; establishing baseline measurements for issue #155 |
 | [docs/superpowers/specs/2026-07-04-pr-triage-autopilot-design.md](superpowers/specs/2026-07-04-pr-triage-autopilot-design.md) | PR-triage autopilot design spec: Stage 0/1 gate, Docker sandboxing, Telegram and audit ledger | Reviewing or auditing the automated PR-triage setup |
 | [docs/superpowers/plans/2026-07-08-pr-triage-autopilot/PLAN.md](superpowers/plans/2026-07-08-pr-triage-autopilot/PLAN.md) | Implementation plan for the PR-Triage Autopilot | Tracking task-by-task execution |
+| [docs/superpowers/specs/2026-07-18-asset-tagging-design.md](superpowers/specs/2026-07-18-asset-tagging-design.md) | Asset-tagging (`@`-mention) design spec: mention grammar, resolution contract, Option-B architecture, error taxonomy, spike gate | Reviewing or implementing the `@`-mention feature |
+| [docs/superpowers/plans/2026-07-18-asset-tagging/PLAN.md](superpowers/plans/2026-07-18-asset-tagging/PLAN.md) | Task-by-task implementation plan for asset tagging (spike gate → resolver → CLI/MCP → live e2e) | Tracking task-by-task execution of the `@`-mention feature |
 
 ## Agent commands
 
