@@ -7,6 +7,35 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+### Added
+
+- **Failed generations are now persisted to the local catalog** ([#341]):
+  every paid-generation path (`video t2v/i2v/r2v`, `video chain`,
+  `image t2i/i2i`, multi-prompt t2i, `gflow run`, `image batch`, `movie run`,
+  and the async worker) records a terminal `status="failed"` operation row —
+  with a stable `error_type` derived from the exception's RFC 9457
+  `problem_type` (`waf-rejection`, `content-policy`, `auth-expired`, ...) and
+  a redacted `error_detail` — before the error propagates. WAF-403 block
+  onset, duration, and recovery windows are now measurable instead of
+  reconstructed from memory.
+- New `gflow data list errors [--profile] [--limit] [--offset] [--json]`
+  subcommand: browse failed operations newest-first (Rich table on a TTY,
+  JSONL otherwise).
+
+### Security
+
+- `error_detail` values are scrubbed before persistence
+  (`Bearer`/`SAPISIDHASH` tokens, auth-cookie pairs, signed URLs; 500-char
+  cap) and non-`GFlowError` messages are stored only as SHA-256 hashes.
+  Prompts on failed rows honor `GFLOW_CLI_HISTORY_PROMPTS`; note `store` mode
+  therefore also stores prompts of content-policy-rejected generations.
+- The experimental REST transports (`bearer`, `sapisidhash`,
+  `evaluate_fetch`) now redact response bodies BEFORE truncating them into
+  exception messages, closing a partial-secret leak into logs and (new) the
+  catalog DB.
+
+[#341]: https://github.com/ffroliva/gflow-cli/issues/341
+
 ## [0.38.1] — 2026-07-17
 
 ### Fixed

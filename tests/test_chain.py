@@ -370,3 +370,39 @@ async def test_aspect_propagates_to_every_link(tmp_path: Path) -> None:
 
     aspects = {c.kwargs["req"].aspect for c in client.generate_video.await_args_list}
     assert aspects == {Aspect.LANDSCAPE}
+
+
+async def test_on_link_failed_hook_receives_request_and_error(tmp_path: Path) -> None:
+    """#341: a link failure invokes on_link_failed with the link's own request
+    and the original exception, before ChainPartialError is raised."""
+    ok = _ok_result("m0", tmp_path / "link0.mp4")
+    client = MagicMock(name="FlowApiClient")
+    calls: list[Any] = [ok, WireFormatError("i2v routed to t2v backstop")]
+
+    async def _gen(*, req: GenerateVideoRequest, **_: Any) -> VideoResult:
+        item = calls.pop(0)
+        if isinstance(item, Exception):
+            raise item
+        assert item.local_path is not None
+        item.local_path.parent.mkdir(parents=True, exist_ok=True)
+        item.local_path.write_bytes(b"\x00\x00\x00\x18ftypmp42fake-clip")
+        return item
+
+    client.generate_video = AsyncMock(side_effect=_gen)
+    written: list[Path] = []
+    failed: list[tuple[GenerateVideoRequest, BaseException]] = []
+
+    with pytest.raises(ChainPartialError):
+        await run_chain(
+            client=client,
+            links=_two_link_specs(),
+            out_dir=tmp_path,
+            model=VideoModel.VEO_3_1_LITE,
+            extractor=_fake_extractor(written),
+            on_link_failed=lambda request, exc: failed.append((request, exc)),
+        )
+
+    assert len(failed) == 1
+    failed_req, failed_exc = failed[0]
+    assert failed_req.prompt == "the cat stretches and walks off"
+    assert isinstance(failed_exc, WireFormatError)
