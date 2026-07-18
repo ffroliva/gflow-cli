@@ -389,6 +389,82 @@ def list_videos(
     ]
 
 
+# ─── OperationErrorRow + list_errors ──────────────────────────────────────────
+
+
+@dataclass(frozen=True)
+class OperationErrorRow:
+    started_at: datetime
+    completed_at: datetime | None
+    profile: str
+    command: str | None
+    mode: str
+    model: str | None
+    error_type: str | None
+    error_detail: str | None
+
+
+_LIST_ERRORS_SQL = """
+    SELECT
+        o.started_at   AS started_at,
+        o.completed_at AS completed_at,
+        o.profile_name AS profile,
+        o.command      AS command,
+        o.mode         AS mode,
+        o.model        AS model,
+        o.error_type   AS error_type,
+        o.error_detail AS error_detail
+    FROM operations o
+    WHERE o.status = 'failed'
+      AND (:profile IS NULL OR o.profile_name = :profile)
+    ORDER BY o.started_at DESC
+    LIMIT :limit OFFSET :offset
+"""
+
+
+def list_errors(
+    *,
+    db_path: Path,
+    profile: str | None,
+    limit: int,
+    offset: int,
+) -> list[OperationErrorRow]:
+    """Return FAILED operations newest-first, filtered by profile if given (#341).
+
+    Reads only the persisted (already-redacted) ``error_type``/``error_detail``
+    columns — never re-derives detail from a live exception.
+
+    Args:
+        db_path: Absolute path to the SQLite catalog.
+        profile: If given, only return failures belonging to this profile name.
+        limit: Maximum number of rows to return.
+        offset: Number of rows to skip (for pagination).
+
+    Returns:
+        A list of :class:`OperationErrorRow` instances ordered newest-first.
+    """
+    params = {"profile": profile, "limit": limit, "offset": offset}
+    with _safe_db(db_path) as conn:
+        rows = conn.execute(_LIST_ERRORS_SQL, params).fetchall()
+    return [
+        OperationErrorRow(
+            started_at=datetime.fromisoformat(str(r["started_at"])),
+            completed_at=(
+                datetime.fromisoformat(str(r["completed_at"]))
+                if r["completed_at"] is not None
+                else None
+            ),
+            profile=str(r["profile"]),
+            command=str(r["command"]) if r["command"] is not None else None,
+            mode=str(r["mode"]),
+            model=str(r["model"]) if r["model"] is not None else None,
+            error_type=str(r["error_type"]) if r["error_type"] is not None else None,
+            error_detail=str(r["error_detail"]) if r["error_detail"] is not None else None,
+        )
+        for r in rows
+    ]
+
+
 # ─── ProfileRow + list_profiles ───────────────────────────────────────────────
 
 

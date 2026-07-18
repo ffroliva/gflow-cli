@@ -17,10 +17,17 @@ from gflow_cli.api.video import GenerateVideoRequest, VideoModel, VideoStarted
 from gflow_cli.api.video import Mode as VideoMode
 from gflow_cli.api.video import Tier as VideoTier
 from gflow_cli.config import UiMode, get_settings
-from gflow_cli.data.recorder import OperationRecorder, escalate_asset_collision
+from gflow_cli.data.models import OperationKind
+from gflow_cli.data.recorder import (
+    OperationRecorder,
+    escalate_asset_collision,
+    record_failed_operation_safe,
+)
+from gflow_cli.data.redaction import redact_error_detail
 from gflow_cli.data.repository import DataRepository
 from gflow_cli.data.store import DataStore
 from gflow_cli.errors import DataIntegrityError, DataStoreError, GFlowError
+from gflow_cli.observability import exception_message_hash
 from gflow_cli.paths import image_output_path
 from gflow_cli.storage import cloud_info_from_path
 from gflow_cli.worker.queue import QueueRepository, QueueTask
@@ -125,6 +132,12 @@ class FlowWorker:
         out_dir = (
             Path(task.payload["out_dir"]) if "out_dir" in task.payload else settings.output_dir
         )
+
+        # #341: bound before the try so the failure funnel below can persist a
+        # FAILED operation with whatever context was reached before the raise.
+        req: GenerateImageRequest | GenerateVideoRequest | None = None
+        recorder: OperationRecorder | None = None
+        started_media_ids: list[str] = []
 
         try:
             if task.task_type in ("t2i", "i2i"):
@@ -236,6 +249,9 @@ class FlowWorker:
                 recorder = OperationRecorder(
                     DataRepository(self.db), prompt_mode=settings.history_prompts
                 )
+                # Non-optional alias for the closure below (`recorder` is
+                # declared Optional at method scope for the #341 failure funnel).
+                video_recorder = recorder
                 try:
                     async with FlowApiClient(
                         profile_dir=profile_dir,
@@ -246,8 +262,9 @@ class FlowWorker:
                     ) as client:
 
                         def on_started(started: VideoStarted) -> None:
+                            started_media_ids.append(started.media_id)
                             try:
-                                recorder.record_started_video(
+                                video_recorder.record_started_video(
                                     profile_name=self.profile_name,
                                     profile_dir=profile_dir,
                                     request=req,
@@ -324,14 +341,45 @@ class FlowWorker:
                 error_payload["exit_code"] = exit_code
                 if "status" not in error_payload:
                     error_payload["status"] = 500
+                # #341: the queue row persists to the same DB as the redacted
+                # operations row — scrub its detail with the same rules.
+                if "detail" in error_payload:
+                    error_payload["detail"] = redact_error_detail(str(error_payload["detail"]))
             else:
                 error_payload = {
                     "type": "https://gflow-cli.dev/errors/unknown",
                     "title": "Unknown Error",
                     "status": 500,
-                    "detail": str(exc),
+                    # Hash, never the raw message — it may carry tokens (#341,
+                    # same privacy rule as operations.error_detail).
+                    "detail": f"sha256:{exception_message_hash(exc)}",
                     "exit_code": 1,
                 }
+
+            # #341: mirror the queue's failure record into the operations table
+            # (single authoritative failure history). Skipped for unknown task
+            # types — they never reached a generation.
+            try:
+                op_kind: OperationKind | None = OperationKind(task.task_type)
+            except ValueError:
+                op_kind = None
+            if op_kind is not None:
+                # Prefer the mode the STARTED row was written with (the built
+                # request's mode) over task_type — they can disagree when the
+                # payload omits 'mode', and the STARTED-row lookup filters on it.
+                if isinstance(req, GenerateVideoRequest):
+                    op_kind = OperationKind(req.mode.value)
+                record_failed_operation_safe(
+                    recorder,
+                    logger=logger,
+                    profile_name=self.profile_name,
+                    profile_dir=profile_dir,
+                    command=f"worker {task.task_type}",
+                    mode=op_kind,
+                    exc=exc,
+                    request=req,
+                    flow_media_ids=started_media_ids,
+                )
 
             self.repo.update_task_status(
                 task.task_id,

@@ -684,3 +684,39 @@ async def test_worker_t2i_record_generic_data_store_error_unchanged(temp_db: Dat
     assert updated.error["type"] == "https://gflow-cli.dev/errors/data-store"
     assert updated.error["type"] != "https://gflow-cli.dev/errors/media-attribution"
     worker.close()
+
+
+@pytest.mark.asyncio
+async def test_worker_failure_persists_failed_operation(temp_db: DataStore) -> None:
+    """#341: a failed task writes BOTH generation_queue.error_json AND a
+    terminal FAILED row in the operations table (operations own terminal truth)."""
+    from gflow_cli.errors import WafRejectionError
+
+    repo = QueueRepository(temp_db)
+    task = repo.enqueue_task(
+        task_id="task-t2i-fail",
+        profile_name="default",
+        task_type="t2i",
+        payload={"prompt": "blocked prompt"},
+    )
+
+    worker = FlowWorker("default", str(temp_db.path))
+    fake_client = FakeFlowApiClient()
+    fake_client.create_project.return_value = MagicMock(project_id="project-abc", title="T")
+    fake_client.generate_image.side_effect = WafRejectionError("blocked by WAF", status=403)
+
+    with patch("gflow_cli.worker.daemon.FlowApiClient", return_value=fake_client):
+        await worker.process_task(task)
+
+    updated = repo.get_task("task-t2i-fail")
+    assert updated is not None
+    assert updated.status == "failed"
+
+    row = temp_db.conn.execute(
+        "SELECT command, mode, status, error_type FROM operations WHERE status='failed'"
+    ).fetchone()
+    assert row is not None
+    assert row[0] == "worker t2i"
+    assert row[1] == "t2i"
+    assert row[3] == "waf-rejection"
+    worker.close()
