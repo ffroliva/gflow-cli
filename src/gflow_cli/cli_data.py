@@ -18,9 +18,11 @@ from gflow_cli.config import get_settings
 from gflow_cli.data.models import AssetLookup
 from gflow_cli.data.queries import (
     ImageRow,
+    OperationErrorRow,
     ProfileRow,
     ProjectRow,
     VideoRow,
+    list_errors,
     list_images,
     list_profiles,
     list_projects,
@@ -148,6 +150,28 @@ def _emit_videos_table(rows: list[VideoRow]) -> None:
             r.created_at.strftime("%Y-%m-%d %H:%M"),
             str(r.copy_count),
             r.local_path or "",
+        )
+    Console().print(tbl)
+
+
+def _emit_errors_table(rows: list[OperationErrorRow]) -> None:
+    # error_type / error_detail / command originate from exception text —
+    # escape so bracketed content can't be parsed as Rich markup (#341,
+    # prior Console(markup=True) incident class).
+    from rich.markup import escape
+
+    tbl = Table(show_header=True, header_style="bold")
+    for col in ("STARTED", "COMMAND", "MODE", "MODEL", "PROFILE", "ERROR_TYPE", "ERROR_DETAIL"):
+        tbl.add_column(col)
+    for r in rows:
+        tbl.add_row(
+            r.started_at.strftime("%Y-%m-%d %H:%M"),
+            escape(r.command or ""),
+            r.mode,
+            r.model or "",
+            r.profile,
+            escape(r.error_type or ""),
+            escape(_truncate(r.error_detail)),
         )
     Console().print(tbl)
 
@@ -391,6 +415,23 @@ def list_videos_cmd(
         all_copies=all_copies,
     )
     _emit(rows, as_json, _emit_videos_table, "No videos recorded.")
+
+
+@list_group.command(name="errors")
+@_PROFILE_OPT
+@_LIMIT_OPT
+@_OFFSET_OPT
+@_JSON_OPT
+@_guard
+def list_errors_cmd(profile: str | None, limit: int, offset: int, as_json: bool) -> None:
+    """List failed generation operations newest-first (#341).
+
+    Shows when each failure happened, which command/mode/model it hit, and the
+    stable error_type (waf-rejection, content-policy, ...) plus redacted
+    detail — the dataset for WAF-cadence and reliability analysis.
+    """
+    rows = list_errors(db_path=_db_path(), profile=profile, limit=limit, offset=offset)
+    _emit(rows, as_json, _emit_errors_table, "No failed operations recorded.")
 
 
 @list_group.command(name="profiles")

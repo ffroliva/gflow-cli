@@ -3,6 +3,7 @@ from __future__ import annotations
 import hashlib
 import json
 import mimetypes
+import sqlite3
 import uuid
 from datetime import UTC, datetime
 from typing import TYPE_CHECKING
@@ -19,14 +20,22 @@ from gflow_cli.data.models import (
     SceneClipRecord,
     SceneRecord,
 )
-from gflow_cli.data.redaction import PromptFields, PromptMode, prompt_fields, redact_metadata
+from gflow_cli.data.redaction import (
+    PromptFields,
+    PromptMode,
+    prompt_fields,
+    redact_error_detail,
+    redact_metadata,
+)
 from gflow_cli.data.repository import DataRepository
 from gflow_cli.data.store import DataStore
-from gflow_cli.errors import MediaAttributionError
+from gflow_cli.errors import DataStoreError, GFlowError, MediaAttributionError
 
 if TYPE_CHECKING:
     from collections.abc import Sequence
     from pathlib import Path
+
+    from structlog.typing import FilteringBoundLogger
 
     from gflow_cli.api.dto import AssetInfo, GeneratedImage, ProjectInfo
     from gflow_cli.api.image import GenerateImageRequest
@@ -62,6 +71,67 @@ def _file_bytes(path: Path) -> int | None:
         return path.stat().st_size
     except OSError:
         return None
+
+
+def _classify_failure(exc: BaseException) -> tuple[str, str | None]:
+    """Map an exception to the persisted ``(error_type, error_detail)`` pair (#341).
+
+    :class:`GFlowError`: ``error_type`` is the last segment of the per-class
+    RFC 9457 ``problem_type`` URI (falling back to the class name for the base
+    ``about:blank``); ``error_detail`` is the problem-details detail passed
+    through :func:`redact_error_detail`. Anything else: class name plus a
+    SHA-256 digest of the message — never the message text (privacy rule
+    shared with ``observability.emit_unhandled_event``).
+    """
+    if isinstance(exc, GFlowError):
+        if exc.problem_type.startswith("http"):
+            error_type = exc.problem_type.rsplit("/", 1)[-1]
+        else:
+            error_type = type(exc).__name__
+        detail = exc.to_problem_details().get("detail", "")
+        return error_type, redact_error_detail(detail) if detail else None
+    digest = hashlib.sha256(str(exc).encode("utf-8", errors="replace")).hexdigest()
+    return type(exc).__name__, f"sha256:{digest}"
+
+
+def record_failed_operation_safe(
+    recorder: OperationRecorder | None,
+    *,
+    logger: FilteringBoundLogger,
+    profile_name: str,
+    profile_dir: Path,
+    command: str,
+    mode: OperationKind,
+    exc: BaseException,
+    request: _ToolableRequest | None = None,
+    flow_project_id: str | None = None,
+    flow_media_id: str | None = None,
+    flow_operation_id: str | None = None,
+) -> None:
+    """Best-effort wrapper around :meth:`OperationRecorder.record_failed_operation`.
+
+    The FAILED write runs inside an ``except`` block that is about to re-raise
+    the real generation error — a data-layer fault here must warn and step
+    aside, never mask it. Catches ``sqlite3.Error`` too because repository
+    read/update helpers are not all mapped to :class:`DataStoreError`.
+    ``recorder`` may be ``None`` (recorder never opened) for caller symmetry.
+    """
+    if recorder is None:
+        return
+    try:
+        recorder.record_failed_operation(
+            profile_name=profile_name,
+            profile_dir=profile_dir,
+            command=command,
+            mode=mode,
+            exc=exc,
+            request=request,
+            flow_project_id=flow_project_id,
+            flow_media_id=flow_media_id,
+            flow_operation_id=flow_operation_id,
+        )
+    except (DataStoreError, sqlite3.Error) as record_exc:
+        logger.warning("failure_record_skipped", error=str(record_exc))
 
 
 def escalate_asset_collision(
@@ -803,6 +873,92 @@ class OperationRecorder:
                 local_path=result.local_path,
                 cloud_storage_info=cloud_storage_info,
             )
+
+    # ------------------------------------------------------------------
+    # Failed generations (#341)
+    # ------------------------------------------------------------------
+
+    def record_failed_operation(
+        self,
+        *,
+        profile_name: str,
+        profile_dir: Path,
+        command: str,
+        mode: OperationKind,
+        exc: BaseException,
+        request: _ToolableRequest | None = None,
+        flow_project_id: str | None = None,
+        flow_media_id: str | None = None,
+        flow_operation_id: str | None = None,
+    ) -> None:
+        """Persist a terminal FAILED operation for a generation error (#341).
+
+        ``error_type`` is the last segment of the exception's RFC 9457
+        ``problem_type`` URI (``waf-rejection``, ``content-policy``, ...) —
+        the taxonomy already declared per :class:`~gflow_cli.errors.GFlowError`
+        subclass, so no parallel slug map can drift. Non-``GFlowError``
+        exceptions store the class name and a SHA-256 hash of ``str(exc)``
+        (never the message itself — it may carry tokens; same privacy rule as
+        ``observability.emit_unhandled_event``).
+
+        When ``flow_media_id`` is known and a STARTED row exists for it (the
+        video ``on_started`` pre-insert), that row is updated to FAILED —
+        mirroring ``record_completed_video``. Otherwise a fresh FAILED row is
+        inserted. Rows in any other status are never touched, and the
+        character saga (``services/character_create.py``) deliberately keeps
+        its STARTED rows for resume — do not wire this into it.
+
+        Callers must re-raise the original exception after recording; use
+        :func:`record_failed_operation_safe` so a data-layer fault here can
+        never mask the generation error.
+        """
+        error_type, error_detail = _classify_failure(exc)
+        completed_at = _now_utc_iso()
+        repo = self.repository
+        repo.upsert_profile(profile_name, profile_dir)
+
+        if flow_media_id is not None:
+            op = repo.get_operation_for_output_asset(profile_name, flow_media_id, mode)
+            if op is not None and op.status == OperationStatus.STARTED:
+                repo.update_operation_status(
+                    op.id, OperationStatus.FAILED, completed_at, error_type, error_detail
+                )
+                return
+
+        if request is not None:
+            pf, expanded_prompt = self._resolve_prompts(request)
+            model = request.model.value if request.model is not None else None
+            aspect_ratio = request.aspect.value
+        else:
+            pf, expanded_prompt = prompt_fields(None, mode=self.prompt_mode), None
+            model = None
+            aspect_ratio = None
+
+        op_id = _new_id()
+        repo.insert_operation(
+            OperationRecord(
+                id=op_id,
+                profile_name=profile_name,
+                flow_project_id=flow_project_id,
+                command=command,
+                mode=mode,
+                status=OperationStatus.FAILED,
+                flow_operation_id=flow_operation_id,
+                flow_batch_id=None,
+                prompt=pf.prompt,
+                prompt_hash=pf.prompt_hash,
+                prompt_redacted=pf.prompt_redacted,
+                model=model,
+                aspect_ratio=aspect_ratio,
+                error_type=error_type,
+                error_detail=error_detail,
+                completed_at=completed_at,
+                expanded_prompt=expanded_prompt,
+            ),
+        )
+        tool_meta = self._tool_metadata(request.tool) if request is not None else None
+        if tool_meta is not None:
+            repo.set_operation_metadata(op_id, {"tool": tool_meta})
 
     # ------------------------------------------------------------------
     # Character — started / completed (persist-before-spend saga)
