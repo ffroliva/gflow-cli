@@ -15,8 +15,6 @@ from pathlib import Path
 import pytest
 
 from gflow_cli.api.client import FlowApiClient
-from gflow_cli.auth import profile_dir as _resolve_profile_dir
-from gflow_cli.config import reset_settings
 from gflow_cli.data.repository import DataRepository
 from gflow_cli.data.store import DataStore
 
@@ -28,6 +26,15 @@ pytestmark = pytest.mark.e2e
 async def test_e2e_asset_tagging_resolution(
     monkeypatch: pytest.MonkeyPatch, tmp_path: Path
 ) -> None:
+    # Reset CLI settings to avoid isolation overrides
+    monkeypatch.delenv("GFLOW_CLI_HOME", raising=False)
+    monkeypatch.delenv("GFLOW_CLI_DB_PATH", raising=False)
+    from gflow_cli.config import reset_settings
+
+    reset_settings()
+
+    from gflow_cli.auth import profile_dir as _resolve_profile_dir
+
     # Check profile environment
     name = os.environ.get("GFLOW_CLI_E2E_PROFILE", "").strip()
     if not name:
@@ -35,11 +42,6 @@ async def test_e2e_asset_tagging_resolution(
     e2e_profile_dir = _resolve_profile_dir(name)
     if not e2e_profile_dir.exists():
         pytest.skip(f"profile dir not found: {e2e_profile_dir}")
-
-    # Reset CLI settings to avoid isolation overrides
-    monkeypatch.delenv("GFLOW_CLI_HOME", raising=False)
-    monkeypatch.delenv("GFLOW_CLI_DB_PATH", raising=False)
-    reset_settings()
 
     out_dir = tmp_path / "out"
     out_dir.mkdir()
