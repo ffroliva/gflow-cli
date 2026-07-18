@@ -11,6 +11,7 @@ from typing import Any
 
 import click
 from rich.console import Console
+from rich.markup import escape
 from rich.table import Table
 
 from gflow_cli._cli_helpers import run_with_handlers, safe_path_text
@@ -155,11 +156,6 @@ def _emit_videos_table(rows: list[VideoRow]) -> None:
 
 
 def _emit_errors_table(rows: list[OperationErrorRow]) -> None:
-    # error_type / error_detail / command originate from exception text —
-    # escape so bracketed content can't be parsed as Rich markup (#341,
-    # prior Console(markup=True) incident class).
-    from rich.markup import escape
-
     tbl = Table(show_header=True, header_style="bold")
     for col in ("STARTED", "COMMAND", "MODE", "MODEL", "PROFILE", "ERROR_TYPE", "ERROR_DETAIL"):
         tbl.add_column(col)

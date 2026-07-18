@@ -461,7 +461,11 @@ async def run_one_image_prompt(
             path = await client.download_image(img, target)
             saved.append(path)
         return BatchOutcome(index=idx, prompt=item, status="ok", saved_paths=saved)
-    except GFlowError as exc:
+    except Exception as exc:
+        # #341: both typed and unexpected failures reach the funnel (the
+        # single-prompt CLI paths catch `Exception`; batch coverage must not
+        # be narrower). Batch semantics unchanged: GFlowError becomes a "fail"
+        # outcome, anything else still propagates.
         if profile_name is not None and profile_dir is not None:
             record_failed_operation_safe(
                 recorder,
@@ -474,6 +478,8 @@ async def run_one_image_prompt(
                 request=req,
                 flow_project_id=project_id,
             )
+        if not isinstance(exc, GFlowError):
+            raise
         return BatchOutcome(
             index=idx,
             prompt=item,
@@ -481,24 +487,6 @@ async def run_one_image_prompt(
             error=f"{type(exc).__name__}: {exc}",
             exit_code=resolve_exit_code(exc),
         )
-    except Exception as exc:
-        # #341 review: non-GFlowError failures (transport crash, OSError on
-        # write) must reach the failure funnel too — the single-prompt CLI
-        # paths catch `Exception`, and batch coverage must not be narrower.
-        # Batch semantics are unchanged: these still propagate, not BatchOutcome.
-        if profile_name is not None and profile_dir is not None:
-            record_failed_operation_safe(
-                recorder,
-                logger=logger,
-                profile_name=profile_name,
-                profile_dir=profile_dir,
-                command=command,
-                mode=OperationKind.T2I,
-                exc=exc,
-                request=req,
-                flow_project_id=project_id,
-            )
-        raise
 
 
 async def run_image_batch(

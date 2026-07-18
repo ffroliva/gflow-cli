@@ -772,7 +772,7 @@ class OperationRecorder:
                 aspect_ratio=request.aspect.value,
                 error_type=terminal[1],
                 error_detail=terminal[2],
-                completed_at=_now_utc_iso() if terminal[0] is not OperationStatus.STARTED else None,
+                completed_at=_now_utc_iso(),
                 expanded_prompt=expanded_prompt,
             ),
         )
