@@ -571,3 +571,25 @@ def test_media_upload_rejected_error_exit_code_27():
     err = MediaUploadRejectedError(detail="frame image upload rejected (HTTP 400)")
     assert EXIT_CODE_MAP[MediaUploadRejectedError] == 27
     assert next(code for cls, code in EXIT_CODE_MAP.items() if isinstance(err, cls)) == 27
+
+
+def test_mention_index_unavailable_error_exit_code_29():
+    """Task B1: an @mention was present but its catalog source (character or
+    media) failed to load. Distinct exit code 29 lets callers branch on 'the
+    catalog is unreachable' vs an unknown-mention ConfigurationError (11)."""
+    from gflow_cli.errors import MentionIndexUnavailableError
+
+    err = MentionIndexUnavailableError(detail="the character source is unavailable")
+    assert EXIT_CODE_MAP[MentionIndexUnavailableError] == 29
+    assert next(code for cls, code in EXIT_CODE_MAP.items() if isinstance(err, cls)) == 29
+
+
+def test_mention_index_unavailable_error_problem_details():
+    from gflow_cli.errors import MentionIndexUnavailableError
+
+    err = MentionIndexUnavailableError(detail="the media source is unavailable")
+    pd = err.to_problem_details()
+    assert pd["type"] == "https://gflow-cli.dev/errors/mention-index-unavailable"
+    assert pd["title"] == "Mention index unavailable"
+    assert "remediation_hint" in pd
+    assert err.remediation_hint != ""

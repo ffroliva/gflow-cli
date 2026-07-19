@@ -1,15 +1,37 @@
 from __future__ import annotations
 
 from types import SimpleNamespace
+from typing import Any
 
 import pytest
 
-from gflow_cli.errors import ConfigurationError
+from gflow_cli.errors import (
+    ConfigurationError,
+    DataStoreError,
+    MentionIndexUnavailableError,
+    NetworkError,
+)
 from gflow_cli.services.mentions import (
     AssetIndex,
     parse_mentions,
     resolve_mentions,
 )
+
+
+class _FailingCharacterClient:
+    """Fake FlowApiClient whose list_characters() always raises, simulating an
+    upstream Flow API outage (network/auth/rate-limit/etc.)."""
+
+    async def list_characters(self, project_id: str) -> list[Any]:
+        raise NetworkError("connection reset")
+
+
+class _EmptyCharacterClient:
+    """Fake FlowApiClient whose list_characters() succeeds with zero rows —
+    distinct from an outage."""
+
+    async def list_characters(self, project_id: str) -> list[Any]:
+        return []
 
 
 def _character(entity_id: str, name: str, workflow_ids: tuple[str, ...]) -> SimpleNamespace:
@@ -240,3 +262,35 @@ def test_resolve_metacharacters_and_ansi() -> None:
         resolve_mentions(tokens, index, path="image", model="nano2", prompt="Hello @nonexistent")
     assert "RedName" in str(exc_info.value)
     assert "\x1b[31m" not in str(exc_info.value)
+
+
+# ---------- AssetIndex.build_for_project: outage vs. empty source (Task B1) ----------
+
+
+async def test_build_for_project_raises_when_character_source_unavailable() -> None:
+    # An outage on the character (entity) source must fail closed with a
+    # stable typed error naming the source, not silently degrade to an
+    # empty index (which would be indistinguishable from "no characters").
+    with pytest.raises(MentionIndexUnavailableError, match="character") as exc_info:
+        await AssetIndex.build_for_project(_FailingCharacterClient(), "proj-1")
+    assert isinstance(exc_info.value.__cause__, NetworkError)
+
+
+async def test_build_for_project_raises_when_media_source_unavailable(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    def _raise(*, db_path: Any, project_id: str) -> list[Any]:
+        raise DataStoreError("disk I/O error")
+
+    monkeypatch.setattr("gflow_cli.data.queries.list_project_media_assets", _raise)
+
+    with pytest.raises(MentionIndexUnavailableError, match="media") as exc_info:
+        await AssetIndex.build_for_project(_EmptyCharacterClient(), "proj-1")
+    assert isinstance(exc_info.value.__cause__, DataStoreError)
+
+
+async def test_build_for_project_empty_sources_are_not_unavailable() -> None:
+    # A source that loads fine with zero rows is NOT an outage — it just
+    # means no characters/media exist yet for this project.
+    index = await AssetIndex.build_for_project(_EmptyCharacterClient(), "proj-1")
+    assert index.entries == []
