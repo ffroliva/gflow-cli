@@ -26,6 +26,7 @@ from gflow_cli.api.dto import GeneratedImage, GenerationCheckpoint
 from gflow_cli.api.image import Aspect, GenerateImageRequest
 from gflow_cli.api.video import GenerateVideoRequest, VideoResult, VideoStarted, VideoStatus
 from gflow_cli.data.store import DataStore
+from gflow_cli.errors import DataStoreError
 from gflow_cli.worker.daemon import FlowWorker
 from gflow_cli.worker.queue import QueueRepository, recover_processing
 
@@ -297,6 +298,47 @@ async def test_cancel_after_submit_without_handle_is_indeterminate(temp_db: Data
     assert checkpoint is not None
     assert checkpoint["phase"] == "submit_attempted"
     assert checkpoint["may_have_spent"] is True
+    worker.close()
+
+
+async def test_cancel_persistence_failure_still_raises_cancelled(temp_db: DataStore) -> None:
+    """A DataStoreError raised while persisting the interrupted-task state
+    (read_checkpoint / mark_interrupted -> update_task_status) must be logged
+    and swallowed — the original CancelledError must still propagate, never
+    be replaced by the persistence failure (Important finding on C5)."""
+    repo = QueueRepository(temp_db)
+    repo.enqueue_task(
+        "t2b",
+        "default",
+        "t2i",
+        {"prompt": "x", "aspect": "1:1", "count": 1, "project_id": "proj-1"},
+    )
+    claimed = repo.claim_next_pending("default", "worker:default:1")
+    assert claimed is not None
+
+    worker = FlowWorker("default", str(temp_db.path))
+    fake = _FakeClient()
+
+    async def _submit_then_cancel(
+        *, on_checkpoint: object = None, **_: Any
+    ) -> list[GeneratedImage]:
+        if on_checkpoint is not None:
+            on_checkpoint(GenerationCheckpoint(phase="submit_attempted"))  # type: ignore[operator]
+        raise asyncio.CancelledError
+
+    fake.generate_image = _submit_then_cancel  # type: ignore[assignment]
+
+    def _boom(*_: Any, **__: Any) -> None:
+        raise DataStoreError(detail="disk full")
+
+    worker.repo.update_task_status = _boom  # type: ignore[method-assign]
+
+    with (  # noqa: PT012
+        patch("gflow_cli.worker.daemon.FlowApiClient", return_value=fake),
+        pytest.raises(asyncio.CancelledError),
+    ):
+        await worker.process_task(claimed)
+
     worker.close()
 
 
