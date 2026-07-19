@@ -197,14 +197,25 @@ class OperationRecorder:
     def __init__(self, repository: DataRepository, *, prompt_mode: PromptMode) -> None:
         self.repository = repository
         self.prompt_mode = prompt_mode
+        self._owns_store = False
 
     @classmethod
     def open(cls, settings: Settings) -> OperationRecorder:
         store = DataStore.open(settings.resolved_db_path())
-        return cls(DataRepository(store), prompt_mode=settings.history_prompts)
+        recorder = cls(DataRepository(store), prompt_mode=settings.history_prompts)
+        recorder._owns_store = True
+        return recorder
 
     def close(self) -> None:
-        self.repository.store.close()
+        """Close the underlying store — but only when this recorder created it.
+
+        A repository handed in via ``__init__`` (e.g. the worker daemon reusing
+        its own long-lived ``DataStore``) is never owned here, so ``close()``
+        on an injected recorder is a no-op; only :meth:`open` sets
+        ``_owns_store``.
+        """
+        if self._owns_store:
+            self.repository.store.close()
 
     def is_media_recorded(self, *, profile_name: str, flow_media_id: str) -> bool:
         """Return True if an asset with this ``flow_media_id`` already exists in
