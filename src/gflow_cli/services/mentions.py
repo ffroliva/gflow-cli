@@ -9,7 +9,12 @@ from typing import TYPE_CHECKING, Any, Literal, TypeVar, cast
 import structlog
 
 from gflow_cli.config import get_settings
-from gflow_cli.errors import ConfigurationError
+from gflow_cli.errors import (
+    ConfigurationError,
+    DataStoreError,
+    GFlowError,
+    MentionIndexUnavailableError,
+)
 
 if TYPE_CHECKING:
     # Avoid circular imports for type hints
@@ -80,10 +85,23 @@ class AssetIndex:
 
     @classmethod
     async def build_for_project(cls, client: FlowApiClient, project_id: str) -> AssetIndex:
+        """Build the mention index from the character and media catalog sources.
+
+        Only called once a prompt has been found to contain an ``@mention``
+        (see ``resolve_and_apply``) — a mention-free prompt never reaches here,
+        so its sources are never queried. A source that loads fine with zero
+        rows is a legitimate empty catalog, not an outage, and is returned as
+        such. A source that RAISES its documented typed error is an outage:
+        fail closed with ``MentionIndexUnavailableError`` (naming which source)
+        instead of silently degrading to an empty index, which would make an
+        outage indistinguishable from "no matching asset".
+        """
         try:
             entities = await client.list_characters(project_id)
-        except Exception:
-            entities = []
+        except GFlowError as exc:
+            raise MentionIndexUnavailableError(
+                detail="the character source is unavailable"
+            ) from exc
 
         settings = get_settings()
         db_path = settings.resolved_db_path()
@@ -91,8 +109,8 @@ class AssetIndex:
             from gflow_cli.data.queries import list_project_media_assets
 
             media_assets = list_project_media_assets(db_path=db_path, project_id=project_id)
-        except Exception:
-            media_assets = []
+        except DataStoreError as exc:
+            raise MentionIndexUnavailableError(detail="the media source is unavailable") from exc
 
         return cls(entities=entities, media_assets=media_assets)
 

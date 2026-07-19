@@ -25,6 +25,7 @@ __all__ = [
     "GFlowError",
     "MediaAttributionError",
     "MediaUploadRejectedError",
+    "MentionIndexUnavailableError",
     "ModelModeIncompatibilityError",
     "NetworkError",
     "ProblemDetails",
@@ -556,6 +557,32 @@ class MediaUploadRejectedError(GFlowError):
     )
 
 
+class MentionIndexUnavailableError(GFlowError):
+    """Raised when a prompt contains an ``@mention`` but a catalog source
+    needed to resolve it (character entities or media assets) is unavailable.
+
+    Distinct from an empty source: a source that loads successfully with zero
+    rows is NOT an outage -- resolution proceeds and reports the mention as
+    unknown via the normal ``resolve_mentions()`` path. This error is raised
+    only when the source loader itself failed (a Flow API error for
+    characters, a data-store error for media), so an outage is never silently
+    indistinguishable from "no matching asset" (fail closed instead of
+    degrading to an empty index).
+
+    ``detail`` names WHICH source failed ("character" or "media") but never
+    includes prompt text or catalog content. The original failure is
+    preserved as ``__cause__`` for diagnostics.
+    """
+
+    problem_type = "https://gflow-cli.dev/errors/mention-index-unavailable"
+    title = "Mention index unavailable"
+    _default_remediation = (
+        "gflow could not load the asset catalog needed to resolve an @mention. "
+        "Check network connectivity (character source) or GFLOW_CLI_DB_PATH / "
+        "filesystem permissions (media source), then retry."
+    )
+
+
 class SecurityError(GFlowError):
     """Raised when a security boundary is violated (e.g. profile_dir outside HOME)."""
 
@@ -844,6 +871,11 @@ EXIT_CODE_MAP: dict[type[GFlowError], int] = {
     # input file (uploadImage 4xx). Direct GFlowError subclass; exit 27 lets
     # scripts branch on "re-encode the input image" vs generic error (1).
     MediaUploadRejectedError: 27,
+    # MentionIndexUnavailableError: an @mention was present but the catalog
+    # source needed to resolve it (character or media) failed to load.
+    # Direct GFlowError subclass; exit 29 lets scripts distinguish "the
+    # catalog is unreachable" from an unknown-mention ConfigurationError (11).
+    MentionIndexUnavailableError: 29,
     ConfigurationError: 11,
     AuthExpiredError: 3,
     RateLimitError: 4,
