@@ -30,6 +30,13 @@ class IndexEntry:
     id: str
     name: str
     kind: str  # "entity" or "media"
+    # False only when we KNOW a character entity has no reference images (its
+    # workflow_ids are empty). Such an entity cannot stage as a referenceEntity,
+    # so tagging it would fail deep in the UI attach with a cryptic
+    # WireFormatError. Defaults True so entries built from shapes that don't
+    # carry the info (dict fixtures, media assets) are never falsely rejected —
+    # the runtime integrity guard remains the last-resort safety net.
+    has_reference_images: bool = True
 
 
 class AssetIndex:
@@ -41,7 +48,14 @@ class AssetIndex:
         for e in entities or []:
             if hasattr(e, "entity_id") and hasattr(e, "display_name"):
                 self.entries.append(
-                    IndexEntry(id=str(e.entity_id), name=str(e.display_name), kind="entity")
+                    IndexEntry(
+                        id=str(e.entity_id),
+                        name=str(e.display_name),
+                        kind="entity",
+                        # Character.workflow_ids is empty for a bare, image-less
+                        # entity — not taggable.
+                        has_reference_images=bool(getattr(e, "workflow_ids", None)),
+                    )
                 )
             elif isinstance(e, dict):
                 d = cast(dict[str, Any], e)
@@ -237,6 +251,24 @@ def resolve_mentions(
                     f"Invalid asset ID format resolved for mention "
                     f"'@{matched_entry.name}': {matched_entry.id}"
                 )
+            )
+
+        # A character with no reference images can never stage as a
+        # referenceEntity — fail early and clearly here instead of letting the
+        # tag drift all the way to the UI attach and abort with a cryptic
+        # WireFormatError ("never rode the wire", exit 7).
+        if matched_entry.kind == "entity" and not matched_entry.has_reference_images:
+            log.info("mention_unresolved", name=matched_entry.name)
+            raise ConfigurationError(
+                detail=(
+                    f"@{matched_entry.name} has no reference images — a character "
+                    "needs at least one reference image before it can be tagged."
+                ),
+                remediation_hint=(
+                    "Generate the character's reference image first, e.g. "
+                    "`gflow character create --name <name> --face-prompt ...`, "
+                    "then re-run."
+                ),
             )
 
         settings = get_settings()

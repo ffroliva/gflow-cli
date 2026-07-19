@@ -1,5 +1,7 @@
 from __future__ import annotations
 
+from types import SimpleNamespace
+
 import pytest
 
 from gflow_cli.errors import ConfigurationError
@@ -8,6 +10,37 @@ from gflow_cli.services.mentions import (
     parse_mentions,
     resolve_mentions,
 )
+
+
+def _character(entity_id: str, name: str, workflow_ids: tuple[str, ...]) -> SimpleNamespace:
+    """A minimal Character-shaped stub (entity_id/display_name/workflow_ids) —
+    the shape AssetIndex reads from client.list_characters."""
+    return SimpleNamespace(entity_id=entity_id, display_name=name, workflow_ids=workflow_ids)
+
+
+def test_resolve_entity_without_reference_images_fails_early() -> None:
+    # A bare, image-less character (empty workflow_ids) cannot stage as a
+    # referenceEntity — resolution must fail here, not deep in the UI attach.
+    index = AssetIndex(
+        entities=[_character("e1-uuid-12345678901234567890123456", "Zoro", ())],
+        media_assets=[],
+    )
+    tokens = parse_mentions("Hello @Zoro walks")
+    with pytest.raises(ConfigurationError, match="no reference images"):
+        resolve_mentions(tokens, index, path="image", model="nano2", prompt="Hello @Zoro walks")
+
+
+def test_resolve_entity_with_reference_images_ok() -> None:
+    # Same entity but WITH a reference image (non-empty workflow_ids) resolves.
+    index = AssetIndex(
+        entities=[_character("e1-uuid-12345678901234567890123456", "Zoro", ("wf-1",))],
+        media_assets=[],
+    )
+    tokens = parse_mentions("Hello @Zoro walks")
+    res = resolve_mentions(tokens, index, path="image", model="nano2", prompt="Hello @Zoro walks")
+    assert len(res.mentions) == 1
+    assert res.mentions[0].id == "e1-uuid-12345678901234567890123456"
+    assert res.de_tagged_prompt == "Hello Zoro walks"
 
 
 def test_resolve_empty_mentions() -> None:
