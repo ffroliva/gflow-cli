@@ -71,6 +71,26 @@ supersedes it.
 
 - Offline: repo hygiene, doc-links, `ruff check`, `ruff format --check`,
   `pyright src` (0 errors) all clean on `develop@25ed124`.
+- `/gflow:doc-review`: mechanical sections 1–7 pass. Council verdict:
+  **YELLOW** across 3 auditors (Completeness YELLOW, Cross-reference YELLOW,
+  Drift GREEN). 6 findings; 4 Tier 1/2 fixed in the release-prep commit
+  (`docs/CHARACTER.md`'s 5 stale "not yet implemented" references corrected
+  to reflect shipped `@Name` mention resolution; `CHANGELOG.md` and
+  `docs/PROJECT_STATUS.md` scope wording tightened — character mentions
+  ship on both image/video paths, media-asset mentions are image-only;
+  the design spec's stale `DRAFT` status marker updated to `SHIPPED`). 2
+  Tier 3 deferred to backlog (`docs/USAGE.md` and `docs/USER_GUIDE.md` lack
+  `@Name` syntax coverage — tracked as a fast-follow, not blocking since the
+  feature is fully documented in `CHARACTER.md`/`REFERENCE_STRATEGIES.md`;
+  `PLAN.md` task checkboxes left unchecked despite shipping — internal
+  bookkeeping only). Council reports at `tmp/council/0{1,2,3}-*.md`
+  (local-only, not committed).
+
+## Post-tag evidence
+
+- Tag: TBD (filled after `git push origin v0.40.0`)
+- Release workflow: TBD (filled after CI confirms)
+- PyPI: TBD (filled after publish confirms)
 
 [#344]: https://github.com/ffroliva/gflow-cli/issues/344
 [#174]: https://github.com/ffroliva/gflow-cli/issues/174

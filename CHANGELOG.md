@@ -12,11 +12,13 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 ### Added
 
 - **Prompt `@`-mention resolution for asset tagging** ([#344]): `@Name` in a
-  t2i/i2i/video prompt resolves to a staged, taggable character entity or
-  media asset reference (`services/mentions.py`), across the `image`/`video`
-  CLI paths, the async worker, and MCP tools. A bare character with no
-  reference images is rejected early with a clear error instead of failing
-  deep in the UI attach. De-tagged prompts are persisted to the catalog. See
+  t2i/i2i/video prompt resolves to a staged, taggable character entity
+  (`services/mentions.py`), across the `image`/`video` CLI paths, the async
+  worker, and MCP tools. Media-asset (non-character) `@`-mentions also work,
+  but on the **image path only** — video-path media mentions are Phase 3. A
+  bare character with no reference images is rejected early with a clear
+  error instead of failing deep in the UI attach. De-tagged prompts are
+  persisted to the catalog. See
   [`docs/REFERENCE_STRATEGIES.md`](docs/REFERENCE_STRATEGIES.md) for
   `@`-mention vs `--reference-entity` vs `--ref`, and
   [`docs/LIVE_VERIFICATION_v0.40.0.md`](docs/LIVE_VERIFICATION_v0.40.0.md)
@@ -2108,7 +2110,8 @@ shell-script template that branches on these codes.
 
 First skeleton. Not functional end-to-end yet.
 
-[Unreleased]: https://github.com/ffroliva/gflow-cli/compare/v0.39.0...HEAD
+[Unreleased]: https://github.com/ffroliva/gflow-cli/compare/v0.40.0...HEAD
+[0.40.0]: https://github.com/ffroliva/gflow-cli/compare/v0.39.0...v0.40.0
 [0.39.0]: https://github.com/ffroliva/gflow-cli/compare/v0.38.1...v0.39.0
 [0.38.1]: https://github.com/ffroliva/gflow-cli/compare/v0.38.0...v0.38.1
 [0.38.0]: https://github.com/ffroliva/gflow-cli/compare/v0.37.0...v0.38.0
