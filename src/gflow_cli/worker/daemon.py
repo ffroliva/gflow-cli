@@ -382,13 +382,25 @@ class FlowWorker:
             # checkpoint reached (pre-submit -> failed; after submit_attempted ->
             # indeterminate — a submitted task is NEVER silently failed and NEVER
             # resubmitted), then re-raise so the poll loop / lifespan sees the ack.
-            status = mark_interrupted(
-                self.repo,
-                task.task_id,
-                self.repo.read_checkpoint(task.task_id),
-                "cancelled",
-            )
-            logger.info("task_cancelled", task_id=task.task_id, status=status)
+            #
+            # Same observer-exception policy as save_checkpoint above: a DB
+            # failure here (e.g. DataStoreError) must never replace the
+            # cancellation being handled — log and continue, `raise` stays
+            # outside the guard so the original CancelledError always wins.
+            try:
+                status = mark_interrupted(
+                    self.repo,
+                    task.task_id,
+                    self.repo.read_checkpoint(task.task_id),
+                    "cancelled",
+                )
+                logger.info("task_cancelled", task_id=task.task_id, status=status)
+            except Exception as exc:
+                logger.warning(
+                    "cancel_state_persist_failed",
+                    task_id=task.task_id,
+                    exc_info=exc,
+                )
             raise
 
         except Exception as exc:
