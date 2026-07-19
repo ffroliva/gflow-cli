@@ -1,4 +1,4 @@
-# `/gflow:e2e-gate` — live-verification enforcement design
+# `/gflow:live-verify` — live-verification enforcement design
 
 > **Status:** DRAFT — pre-implementation · **Date:** 2026-07-19
 > **Origin:** two failures in the same session shipping v0.40.0 — (1) an hour spent chasing a bug that
@@ -9,6 +9,12 @@
 > fact per-feature — only at release time (`skills/release/SKILL.md` step 4b).
 > **Scope:** gflow-cli only. Generalizing to other repos (e.g. compile-growth-monorepo) is a
 > deliberate future follow-up, not baked in here.
+> **Council-reviewed 2026-07-19:** a 3-agent audit (HLD coherence / LLD cross-reference /
+> evidence-drift) reviewed this spec plus its implementation plan before execution. Findings folded
+> in below; reports at `tmp/council-skillstack/0{1,2,3}-*.md` (local-only, not committed). Most
+> important finding: the council independently reconstructed the real commit graph of today's
+> incident and confirmed the Pre-flight check in 3.2 *would* have caught it — the failure was that
+> the check didn't exist and wasn't run, not a design gap.
 
 ## 1. Problem
 
@@ -33,7 +39,7 @@ Today's session hit two distinct, related failures:
 ## 2. Goal
 
 Enforce two things, both scoped to gflow-cli, both evidence-based (no claim without a fresh
-verification artifact, per `verification-before-completion`):
+verification artifact, per `superpowers:verification-before-completion`):
 
 1. **Before investing effort** on a feature/fix, confirm the checkout actually reflects current
    `develop` — catch the stale-branch trap before it wastes time, not after.
@@ -43,16 +49,20 @@ verification artifact, per `verification-before-completion`):
 
 Non-goals: this does not replace `/gflow:check` (offline gates before commit) or `/gflow:doc-review`
 (release-time doc council) — it fills the gap between them: a state check before work starts, and a
-live-verify gate before work is called finished, independent of whether a release is imminent.
+live-verify gate before work is called finished, independent of whether a release is imminent. It
+also does not modify `skills/release/SKILL.md` step 4b itself (see §5, deferred).
 
 ## 3. Design
 
 ### 3.1 One skill, two entry points
 
-`skills/e2e-gate/SKILL.md` + `.claude/commands/gflow/e2e-gate.md` → `/gflow:e2e-gate`, matching the
-existing `/gflow:check` / `/gflow:release` / `/gflow:doc-review` convention. Two clearly delineated
-sections within the one file (mirroring how `release.md` already handles multiple phases in one
-skill), each referenced from a different moment in the workflow rather than invoked together:
+`skills/live-verify/SKILL.md` + `.claude/commands/gflow/live-verify.md` → `/gflow:live-verify`,
+matching the existing `/gflow:check` / `/gflow:release` / `/gflow:doc-review` convention. (Named
+`live-verify`, not `e2e-gate` — this repo already uses "e2e" for a distinct concept, the
+`@pytest.mark.e2e` test marker; "live-verify" matches the skill's own vocabulary and avoids the
+collision.) Two clearly delineated sections within the one file (mirroring how `release.md` already
+handles multiple phases in one skill), each referenced from a different moment in the workflow
+rather than invoked together:
 
 - **Part 1 — Pre-flight**, referenced at the *start* of feature/fix work.
 - **Part 2 — Live-verify**, referenced *before claiming done* (after `/code-review` and
@@ -60,12 +70,15 @@ skill), each referenced from a different moment in the workflow rather than invo
 
 **Trigger mechanism:** this project's skills are proactively invoked, not manually remembered — per
 `using-superpowers`, "if you think there is even a 1% chance a skill might apply, you MUST invoke
-it." `skills/e2e-gate/SKILL.md`'s frontmatter `description` must therefore name both moments
+it." `skills/live-verify/SKILL.md`'s frontmatter `description` must therefore name both moments
 explicitly (e.g. "Use when starting work on a gflow-cli feature/fix — Part 1; use before claiming
 gflow-cli work done, especially anything touching a generation path — Part 2") so the standard
 proactive-invocation mechanism fires it at both points, the same way `brainstorming` already
-auto-triggers on "let's build X." The `AGENTS.md` bullet (3.5) and the `/gflow:check` pointer are
-reinforcement, not the primary trigger.
+auto-triggers on "let's build X." This mechanism is specific to agents that honor the
+`using-superpowers` convention (this project's primary Claude Code workflow) — it is not a
+substitute for discoverability by other agents this repo explicitly supports (Cursor/Codex/Gemini
+CLI/Aider), which is why the `AGENTS.md` skills-reference table row (3.5) is required, not optional
+reinforcement.
 
 ### 3.2 Part 1 — Pre-flight
 
@@ -76,9 +89,17 @@ git rev-list --count HEAD..origin/develop   # am I behind?
 git log --oneline -5                        # do recent commits match what I expect?
 ```
 
-- If the checkout is behind `origin/develop`, or the branch's last real commit predates recent
-  `develop` activity in a way that smells like stale WIP: **stop and surface it** before investing
-  further effort. Don't silently proceed, don't silently switch — name the divergence and ask.
+`git rev-list --count HEAD..origin/develop` is an asymmetric DAG set-difference — it counts commits
+`develop` has that the current `HEAD` lacks, regardless of whether `HEAD` has its *own* private
+unmerged history. This is precisely what catches a diverged stale branch, not just a
+behind-by-fast-forward one: the council confirmed against today's real incident that this exact
+command returns nonzero (2) against the stale `pr-344` checkout, because a guard commit
+`develop` had (`c1f19f6`) predated the stale branch's last commit — it would have fired mid-session
+had it existed and been run.
+
+- If the checkout is behind `origin/develop` (nonzero count above): **stop and surface it** before
+  investing further effort. Don't silently proceed, don't silently switch — name the divergence and
+  ask.
 - Working in a separate sibling checkout is a normal pattern in this project's workflow and is not
   itself a red flag — a real feature branch is *supposed* to differ from `develop`. The actual
   signal is "differs from `develop` in a way that suggests staleness" (e.g. missing a
@@ -96,31 +117,39 @@ it touches a generation code path; skipping requires a named reason, not silence
 1. **Define the live matrix** before running anything: which command(s) does the change touch, and
    which variations actually exercise it (e.g. for a mention-resolution fix: a character mention, a
    media mention, an ambiguous-name case, an unresolvable name)?
-2. **Cost tiers gate confirmation, not existence:**
-   - `t2i` / `i2i` / character CRUD are **credit-free** — run as needed to cover the matrix without a
-     separate confirm each time, but still mindful of WAF/volume discipline (cumulative daily volume,
-     not burst-rate — don't fire dozens of live calls back-to-back without surfacing it).
-   - `i2v` and other video-generation paths are **credited** — always requires explicit operator
-     go-ahead before running, batched (name what will run and why) rather than one-off asks per call.
-3. **Run each variation, capture evidence per run** using the release skill's 5-layer ledger shape
-   (row count / field value / structlog invariant / user-confirmable artifact / test result), written
-   to a lightweight per-feature evidence note — not the full `docs/LIVE_VERIFICATION_vX.Y.Z.md`
-   ceremony (that stays release-scoped); the per-feature note gets folded into the real
-   `LIVE_VERIFICATION` doc when the feature actually ships in a release.
+2. **Cost tiers gate confirmation, not existence — and the tier follows the operation, not the
+   command family:**
+   - Bare entity CRUD with no image generation (`create_entity`, `list_characters`,
+     `patch_entity` at the API level; `t2i`/`i2i` themselves) are **credit-free** — run as needed to
+     cover the matrix without a separate confirm each time, but still mindful of WAF/volume
+     discipline (cumulative daily volume, not burst-rate — don't fire dozens of live calls
+     back-to-back without surfacing it).
+   - **Anything that generates real media is costed**, even on an otherwise-free command family —
+     e.g. `gflow character create --face-prompt` generates real face/body images and costs Imagen
+     credits despite being "character CRUD" in name; `i2v` and other video-generation paths are
+     always costed. Costed operations always require explicit operator go-ahead before running,
+     batched (name what will run and why) rather than one-off asks per call.
+3. **Run each variation, capture evidence per run** using the release skill's actual 5-layer ledger
+   shape (file count + magic bytes + dimensions/shape + structlog invariants + a user-confirmable
+   artifact — `skills/release/SKILL.md` §4b), adapted per-field to what the change under test
+   actually produces, written to a lightweight per-feature evidence note at
+   `tmp/live-verify/<feature-slug>.md` (gitignored, not the full `docs/LIVE_VERIFICATION_vX.Y.Z.md`
+   release ceremony) — the per-feature note gets folded into the real `LIVE_VERIFICATION` doc when
+   the feature actually ships in a release.
 4. **On pass** — all matrix variations green, proceed to commit.
 5. **On fail** — Part 2 hands off to the failure-routing logic (3.4).
 
 ### 3.4 Failure-routing (reproducibility re-test)
 
 1. **Re-test once before concluding anything.** Free for `t2i`/`i2i` (just re-run). For a costed
-   failure (`i2v`), re-testing needs the same operator confirm as any costed run.
+   failure, re-testing needs the same operator confirm as any costed run.
 2. **Before re-testing a costed failure, check for a known match first** — grep `KNOWN_ISSUES.md` /
    open GitHub issues for a matching error signature. If matched, skip the costed re-test; treat as
    known external flake immediately.
 3. **Compare outcomes:**
    - **Same failure, same code, no known-issue match** → real bug. Route back to execution (fix it;
-     use `systematic-debugging` for root-causing if the cause isn't obvious). Re-run the gate after
-     the fix.
+     use `superpowers:systematic-debugging` for root-causing if the cause isn't obvious). Re-run the
+     gate after the fix.
    - **Different outcome, same code, no changes in between** (or a known-issue match) → external
      flake (e.g. issue [#174]). Do not loop trying to "fix" it. Record it in the evidence note —
      what failed, that it's not reproducible against unchanged code, and a link to the matching
@@ -132,42 +161,63 @@ it touches a generation code path; skipping requires a named reason, not silence
 4. Every branch's outcome is recorded in the evidence note — passes, fails, and flakes are all
    evidence, not just the final green state.
 
-### 3.5 Standing awareness (AGENTS.md)
+### 3.5 Standing awareness and discoverability
 
-New bullet in `AGENTS.md`'s existing "Working discipline — verify before you act" section, next to
-"If a claim can't be verified in the current environment, it's LIKELY — not CONFIRMED":
+**New bullet in `AGENTS.md`'s existing "Working discipline — verify before you act" section**, next
+to "If a claim can't be verified in the current environment, it's LIKELY — not CONFIRMED":
 
 > **This project reverse-engineers a blackbox.** gflow-cli doesn't own Google Flow — it drives real
 > Flow through inspected HAR/DOM/browser-log behavior. Offline checks (types, lint, unit/BDD tests)
 > verify *our* code does what we think it does; they cannot verify Flow still behaves the way we
 > captured it. Every feature that touches a generation path is **live-verified**, not just
-> offline-tested, before it's called done — see `/gflow:e2e-gate`.
+> offline-tested, before it's called done — see `/gflow:live-verify`.
 
-Plus a one-line pointer added to `skills/check/SKILL.md`'s output/notes section, so anyone running
+**New row in `AGENTS.md`'s "Skills reference (cross-tool)" table** — this table is explicitly stated
+as resolvable by any agent (not just Claude Code's proactive-invocation mechanism), so it is the
+real cross-agent discovery path, not optional reinforcement.
+
+**New row in `docs/INDEX.md`** pointing to this spec and its implementation plan — required by
+`doc-review`'s own mechanical check (§2, "every `.md` in `docs/` needs an entry"), which will FAIL
+next release if skipped.
+
+**One-line pointer appended to `skills/check/SKILL.md`'s final paragraph**, so anyone running
 `/gflow:check` before commit is reminded that offline-green isn't done-done for generation-path
 changes.
 
+**Note on the doc-links gate:** `scripts/ci/check_doc_links.py` scans a hardcoded allowlist of
+top-level `docs/*.md` files and does **not** cover `skills/*.md` — it cannot verify links inside the
+new skill file. The relative link from `skills/live-verify/SKILL.md` to this spec must be verified
+manually (path resolution, not the doc-links gate) when the skill file is created.
+
 ### 3.6 Driver
 
-Main context or `subagent-driven-development` — never a stateless one-shot subagent. Diagnosing a
-live failure needs memory of what's already been tried (today's spike → fix → re-test loop would
-break across fresh, context-less subagent calls).
+Main context or `superpowers:subagent-driven-development` — never a stateless one-shot subagent.
+Diagnosing a live failure needs memory of what's already been tried (today's spike → fix → re-test
+loop would break across fresh, context-less subagent calls).
 
 ## 4. Testing
 
 This is a prose skill file, not code — "testing" it means dry-running it on the next real feature
 that touches a generation path, and confirming: (a) the pre-flight check actually fires and would
-catch today's stale-branch case if re-run against it; (b) the live-verify matrix produces a real
-evidence note; (c) the `AGENTS.md` pointer is where a fresh agent would actually look. No synthetic
-self-test — the first real usage is the test, per this project's own "verify third-party runtime
-behavior empirically" principle applied to itself.
+catch today's stale-branch case if re-run against it (independently confirmed by the review council,
+see header); (b) the live-verify matrix produces a real evidence note; (c) the `AGENTS.md` pointer
+and skills-table row are where a fresh agent would actually look. No synthetic self-test — the first
+real usage is the test, per this project's own "verify third-party runtime behavior empirically"
+principle applied to itself.
 
 ## 5. Explicitly deferred
 
 - Generalizing this skill (or its pattern) to other repos, e.g. compile-growth-monorepo's own live
   surfaces (n8n pipeline, Supabase, MinIO).
-- A follow-up, broader council audit of the *entire* gflow-cli skill set (`release`, `check`,
-  `doc-review`, and this new `e2e-gate`) for HLD coherence and LLD cross-reference correctness —
-  planned as a separate initiative immediately after this skill ships, not part of this spec.
+- **Updating `skills/release/SKILL.md` step 4b to delegate to or aggregate per-feature
+  `tmp/live-verify/*.md` evidence notes**, rather than the two gates operating independently. The
+  council flagged this as a real coherence gap (release step 4b duplicates rather than reuses this
+  skill's logic), but modifying the release protocol itself is a separate, higher-risk change
+  deserving its own review, not bundled into this skill's first ship.
+- Fixing `doc-review/SKILL.md`'s pre-existing, unrelated drift bug (§ header says "step 9", the
+  real integration point in `release.md` is step 10) — found incidentally by the council, tracked
+  separately, not this spec's concern.
+- A further, broader council audit beyond this one — this spec's own council pass already covers
+  HLD/LLD/evidence-drift for the skill set as it stands after this ships.
 
 [#174]: https://github.com/ffroliva/gflow-cli/issues/174
