@@ -720,10 +720,11 @@ class FlowApiClient:
                 # with the transports' own-context teardowns via _engine.
                 await close_context_bounded(self._context, owner="client")
                 # HAR files hold live auth cookies/bearer tokens — higher
-                # sensitivity than the CDP lockfile _write_lock already hardens
-                # in browser_manager.py. Playwright writes the HAR lazily on
-                # this close, so this is the earliest point the file exists;
-                # best-effort only (never fail teardown over a permission tweak).
+                # sensitivity than the CDP lockfile the (now-removed) packaged
+                # CDP lifecycle used to harden in browser_manager.py. Playwright
+                # writes the HAR lazily on this close, so this is the earliest
+                # point the file exists; best-effort only (never fail teardown
+                # over a permission tweak).
                 if self.settings.har_path is not None:
                     try:
                         self.settings.har_path.chmod(0o600)

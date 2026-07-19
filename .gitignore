@@ -58,10 +58,6 @@ gflow-output/
 !test_assets/fixtures/**/*.jpeg
 samples/*.captured.json # sandbox-recorded API exchanges may contain PII
 
-# CDP browser session lock files (contain PID, port, profile name)
-.gflow-cdp.lock
-**/.gflow-cdp.lock
-
 # Runtime artefact dirs written by smoke/debug scripts — belong under tmp/ only
 test_assets/smoke_*/
 test_assets/debug_*/
