@@ -29,6 +29,7 @@ __all__ = [
     "ModelModeIncompatibilityError",
     "NetworkError",
     "ProblemDetails",
+    "QueueSchemaError",
     "RateLimitError",
     "SceneConcatError",
     "SecurityError",
@@ -583,6 +584,33 @@ class MentionIndexUnavailableError(GFlowError):
     )
 
 
+class QueueSchemaError(GFlowError):
+    """Raised when a worker-queue task payload's schema is invalid or unknown
+    (Task C2 — versioned queue codec, design spec §3).
+
+    Covers: an unrecognized ``schema_version`` (anything other than the
+    implicit legacy 0 or the current 1), an unknown ``task_type``
+    discriminator, or a payload that fails structural validation (missing
+    required field, invalid enum, out-of-range count, malformed path) when
+    mapped onto the existing typed ``GenerateImageRequest`` /
+    ``GenerateVideoRequest`` DTOs.
+
+    Raised by ``worker/codec.py`` BEFORE Playwright starts — no browser
+    launch, no credit spend. An unknown version is a stable, typed failure;
+    it is never interpreted optimistically. ``detail`` is redacted and never
+    echoes prompt text.
+    """
+
+    problem_type = "https://gflow-cli.dev/errors/queue-schema"
+    title = "Worker queue payload schema is invalid"
+    _default_remediation = (
+        "The queued task's payload could not be decoded. This usually means "
+        "gflow-cli was downgraded after a newer version enqueued the task, or "
+        "the payload was hand-edited. Re-enqueue the task with a compatible "
+        "gflow-cli version."
+    )
+
+
 class SecurityError(GFlowError):
     """Raised when a security boundary is violated (e.g. profile_dir outside HOME)."""
 
@@ -876,6 +904,11 @@ EXIT_CODE_MAP: dict[type[GFlowError], int] = {
     # Direct GFlowError subclass; exit 29 lets scripts distinguish "the
     # catalog is unreachable" from an unknown-mention ConfigurationError (11).
     MentionIndexUnavailableError: 29,
+    # QueueSchemaError (Task C2): a worker-queue payload's schema_version is
+    # unknown, or its fields fail validation against the typed request DTOs.
+    # Direct GFlowError subclass; exit 30 lets scripts distinguish "the queue
+    # row is malformed/from an incompatible version" from generic error (1).
+    QueueSchemaError: 30,
     ConfigurationError: 11,
     AuthExpiredError: 3,
     RateLimitError: 4,

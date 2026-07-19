@@ -37,6 +37,7 @@ from gflow_cli.data.store import DataStore
 from gflow_cli.errors import GFlowError
 from gflow_cli.mcp.server import server
 from gflow_cli.profile_store import NoDefaultProfileError, NoProfilesError, resolve_profile
+from gflow_cli.worker import codec
 from gflow_cli.worker.daemon import FlowWorker
 from gflow_cli.worker.queue import QueueRepository
 
@@ -234,11 +235,19 @@ async def _run_generation_task(
             if ref_err is not None:
                 return ref_err
 
+            # Task C2: stamp the current queue schema version onto every
+            # freshly built payload at the enqueue site (additive, top-level —
+            # setdefault so it never overwrites a version already present).
+            # Encoding is centralized here; decoding is centralized at
+            # claim/execution.
+            versioned_payload = dict(payload)
+            versioned_payload.setdefault("schema_version", codec.CURRENT_SCHEMA_VERSION)
+
             task = QueueRepository(store).enqueue_task(
                 task_id=task_id,
                 profile_name=profile,
                 task_type=task_type,
-                payload=payload,
+                payload=versioned_payload,
             )
 
         log.info(

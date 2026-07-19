@@ -2,20 +2,15 @@ from __future__ import annotations
 
 import asyncio
 from pathlib import Path
-from typing import Any, cast
+from typing import Any
 
 import structlog
 
 from gflow_cli.api.client import FlowApiClient
 from gflow_cli.api.dto import ProjectInfo
-from gflow_cli.api.image import AgentInstruction, GenerateImageRequest, ImageRef
-from gflow_cli.api.image import Aspect as ImageAspect
-from gflow_cli.api.image import Model as ImageModel
-from gflow_cli.api.video import Aspect as VideoAspect
-from gflow_cli.api.video import GenerateVideoRequest, VideoModel, VideoStarted
-from gflow_cli.api.video import Mode as VideoMode
-from gflow_cli.api.video import Tier as VideoTier
-from gflow_cli.config import UiMode, get_settings
+from gflow_cli.api.image import GenerateImageRequest
+from gflow_cli.api.video import GenerateVideoRequest, VideoStarted
+from gflow_cli.config import get_settings
 from gflow_cli.data.models import OperationKind
 from gflow_cli.data.recorder import (
     OperationRecorder,
@@ -29,6 +24,7 @@ from gflow_cli.errors import DataIntegrityError, DataStoreError, GFlowError
 from gflow_cli.observability import exception_message_hash
 from gflow_cli.paths import image_output_path
 from gflow_cli.storage import cloud_info_from_path
+from gflow_cli.worker import codec
 from gflow_cli.worker.queue import QueueRepository, QueueTask
 
 logger = structlog.get_logger()
@@ -40,42 +36,6 @@ def get_profile_lock(profile_name: str) -> asyncio.Lock:
     if profile_name not in _PROFILE_LOCKS:
         _PROFILE_LOCKS[profile_name] = asyncio.Lock()
     return _PROFILE_LOCKS[profile_name]
-
-
-def _instruction_from_dict(item: dict[str, object]) -> AgentInstruction:
-    """Build one AgentInstruction from a queue-payload dict item."""
-    enabled_val = item.get("enabled")
-    return AgentInstruction(
-        text=str(item.get("text") or ""),
-        enabled=bool(enabled_val) if enabled_val is not None else True,
-        image_media_ids=tuple(
-            str(m) for m in cast(list[object], item.get("image_media_ids") or [])
-        ),
-        character_ids=tuple(str(c) for c in cast(list[object], item.get("character_ids") or [])),
-        title=str(item.get("title") or ""),
-    )
-
-
-def _parse_agent_instructions(
-    instructions_val: object,
-) -> tuple[AgentInstruction, ...] | None:
-    """Parse queue-payload ``instructions`` into ``AgentInstruction`` objects.
-
-    Accepts a list of plain strings (ephemeral enabled cards) or dicts
-    (``text``/``enabled``/``image_media_ids``/``character_ids``/``title``).
-    Returns ``None`` when absent or not a list/tuple. Extracted from
-    ``_build_image_request`` to keep that builder under the cognitive-complexity
-    limit (Sonar S3776).
-    """
-    if not isinstance(instructions_val, (list, tuple)):
-        return None
-    insts: list[AgentInstruction] = []
-    for item in cast(list[object], instructions_val):
-        if isinstance(item, str):
-            insts.append(AgentInstruction(text=item, enabled=True))
-        elif isinstance(item, dict):
-            insts.append(_instruction_from_dict(cast(dict[str, object], item)))
-    return tuple(insts)
 
 
 class FlowWorker:
@@ -410,94 +370,11 @@ class FlowWorker:
             )
 
     def _build_image_request(self, payload: dict[str, Any]) -> GenerateImageRequest:
-        prompt = payload["prompt"]
-
-        aspect_val = payload.get("aspect")
-        aspect = ImageAspect.from_cli(aspect_val) if aspect_val else ImageAspect.PORTRAIT
-
-        model_val = payload.get("model")
-        model = ImageModel.from_cli(model_val) if model_val else ImageModel.NARWHAL
-
-        # ref_meta (set by the MCP layer's _enrich_image_refs) carries the
-        # display_name + on-disk local_path per media-id ref, so the transport
-        # can select the EXISTING asset in the picker (preferred, no duplicate)
-        # and fall back to uploading local_path only if it can't be located.
-        ref_meta: dict[str, dict[str, str]] = payload.get("ref_meta", {})
-        refs = tuple(
-            ImageRef(
-                r,
-                display_name=ref_meta.get(r, {}).get("display_name", ""),
-                local_path=ref_meta.get(r, {}).get("local_path", ""),
-            )
-            for r in payload.get("refs", [])
-        )
-        ref_paths = tuple(Path(p) for p in payload.get("ref_paths", []))
-        # NOTE: the payload may carry "ref_names" (the MCP layer resolves them
-        # for the video request); the image transport attaches remote refs by
-        # media id, so GenerateImageRequest has no ref_names field and must
-        # not receive one.
-        reference_entities = tuple(payload.get("reference_entities", []))
-        reference_entity_names = tuple(payload.get("reference_entity_names", []))
-        count = payload.get("count", 1)
-
-        return GenerateImageRequest(
-            prompt=prompt,
-            aspect=aspect,
-            model=model,
-            refs=refs,
-            ref_paths=ref_paths,
-            reference_entities=reference_entities,
-            reference_entity_names=reference_entity_names,
-            count=count,
-            instructions=_parse_agent_instructions(payload.get("instructions")),
-            ui_mode=UiMode(payload["ui_mode"]) if payload.get("ui_mode") else None,
-        )
+        # Delegates to the codec (Task C2) — the single mapping from a queue
+        # payload dict to GenerateImageRequest, shared with decode_payload's
+        # pre-flight validation so the two can never drift apart.
+        return codec.build_image_request(payload)
 
     def _build_video_request(self, payload: dict[str, Any]) -> GenerateVideoRequest:
-        prompt = payload["prompt"]
-
-        mode_val = payload.get("mode")
-        mode = VideoMode(mode_val) if mode_val else VideoMode.T2V
-
-        aspect_val = payload.get("aspect")
-        aspect = VideoAspect.from_cli(aspect_val) if aspect_val else VideoAspect.PORTRAIT
-
-        tier_val = payload.get("tier")
-        tier = VideoTier(tier_val) if tier_val else VideoTier.FAST
-
-        model_val = payload.get("model")
-        model = VideoModel.from_cli(model_val) if model_val else None
-
-        duration = payload.get("duration")
-        count = payload.get("count", 1)
-        seed = payload.get("seed")
-
-        start_image = Path(payload["start_image"]) if payload.get("start_image") else None
-        start_image_ref_name = payload.get("start_image_ref_name")
-        end_image = Path(payload["end_image"]) if payload.get("end_image") else None
-        end_image_ref_name = payload.get("end_image_ref_name")
-        reference_images = tuple(Path(p) for p in payload.get("reference_images", []))
-        ref_names = tuple(payload.get("ref_names", []))
-        reference_entities = tuple(payload.get("reference_entities", []))
-        reference_entity_names = tuple(payload.get("reference_entity_names", []))
-        reference_audio = payload.get("reference_audio")
-
-        return GenerateVideoRequest(
-            prompt=prompt,
-            mode=mode,
-            aspect=aspect,
-            tier=tier,
-            model=model,
-            duration=duration,
-            count=count,
-            seed=seed,
-            start_image=start_image,
-            start_image_ref_name=start_image_ref_name,
-            end_image=end_image,
-            end_image_ref_name=end_image_ref_name,
-            reference_images=reference_images,
-            ref_names=ref_names,
-            reference_entities=reference_entities,
-            reference_entity_names=reference_entity_names,
-            reference_audio=reference_audio,
-        )
+        # Delegates to the codec (Task C2) — see _build_image_request.
+        return codec.build_video_request(payload)
