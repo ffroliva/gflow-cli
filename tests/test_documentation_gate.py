@@ -53,6 +53,12 @@ CURRENT_OPERATOR_DOCS: tuple[str, ...] = (
     "docs/ARCHITECTURE.md",
     "docs/AUTHENTICATION.md",
     "docs/PROJECT_STATUS.md",
+    "website/docs/USAGE.md",
+    "website/docs/ARCHITECTURE.md",
+    "website/docs/AUTHENTICATION.md",
+    "website/docs/CONFIGURATION.md",
+    "website/docs/KNOWN_ISSUES.md",
+    "website/docs/USER_GUIDE.md",
 )
 
 

@@ -543,22 +543,18 @@ gflow video t2v "establishing shot" --project PROJ123
 gflow video t2v "close-up reaction" --project PROJ123
 ```
 
-## `gflow video batch`
+## Batch video generation (shell loop)
 
-> ⚠️ **Not yet implemented.** The `batch` subcommand currently exits with
-> `[yellow]gflow video batch is not yet available.[/yellow]` (exit 1).
-> Manifest-driven batching on `UiAutomationTransport` is queued for a later
-> release (see Phase B follow-ups).
-
-### Workaround — shell for-loop
-
-Until the manifest runner lands, you can drive sequential video generations
-through a plain shell loop. Without `--project`, each `gflow video t2v` /
-`i2v` / `r2v` call opens its **own Flow project**, so the resulting videos
-will NOT share a `project_id` (unlike `gflow image batch`, which mounts one
-project across all prompts) — but they DO get generated and downloaded. Pass
-the same `--project <id>` to every call in the loop (see "Sharing one project
-across calls" above) if you want them to land in one project instead:
+`gflow video` has no `batch` subcommand — a manifest-driven video runner
+was scaffolded early on but never worked and was removed. `gflow image
+batch` (manifest-driven image generation) is unaffected and still ships. For
+video, drive sequential generations through a plain shell loop instead.
+Without `--project`, each `gflow video t2v` / `i2v` / `r2v` call opens its
+**own Flow project**, so the resulting videos will NOT share a `project_id`
+(unlike `gflow image batch`, which mounts one project across all prompts) —
+but they DO get generated and downloaded. Pass the same `--project <id>` to
+every call in the loop (see "Sharing one project across calls" above) if you
+want them to land in one project instead:
 
 ```bash
 # bash / WSL / macOS — one prompt per line
@@ -574,11 +570,11 @@ Get-Content prompts.txt | ForEach-Object {
 }
 ```
 
-The trade-off vs. a true manifest runner: separate `project_id`s mean each
+The trade-off vs. a manifest runner: separate `project_id`s mean each
 generation re-mints a reCAPTCHA (a few extra seconds per shot) and the
-videos won't appear together in your Flow gallery. The files on disk are
-identical to what `batch` would produce. The same pattern works for
-`gflow video i2v <image> "<prompt>"` and `gflow video r2v "<prompt>" --ref <img>`.
+videos won't appear together in your Flow gallery. The same pattern works
+for `gflow video i2v <image> "<prompt>"` and
+`gflow video r2v "<prompt>" --ref <img>`.
 
 ## `gflow video chain`
 
@@ -1217,10 +1213,10 @@ gflow image t2i "variations of a minimalist fox logo" -n 4 --aspect 1:1 --out ./
 
 ```bash
 # Terminal 1
-gflow video batch ./batch-a.tsv --profile work
+gflow image batch ./batch-a.tsv --profile work
 
 # Terminal 2 (different profile = different Chromium context = OK)
-gflow video batch ./batch-b.tsv --profile personal
+gflow image batch ./batch-b.tsv --profile personal
 ```
 
 (Same profile concurrently → second invocation fails with "Chromium profile locked". Use different profiles or wait.)
