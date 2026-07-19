@@ -70,6 +70,7 @@ class ChainLinkRecorder:
         self.profile_name = profile_name
         self.profile_dir = profile_dir
         self.chain_id = chain_id
+        self._owns_store = False
 
     @classmethod
     def open(
@@ -81,15 +82,20 @@ class ChainLinkRecorder:
         chain_id: str,
     ) -> ChainLinkRecorder:
         store = DataStore.open(settings.resolved_db_path())
-        return cls(
+        recorder = cls(
             DataRepository(store),
             profile_name=profile_name,
             profile_dir=profile_dir,
             chain_id=chain_id,
         )
+        recorder._owns_store = True
+        return recorder
 
     def close(self) -> None:
-        self.repository.store.close()
+        """Close the underlying store — but only when this recorder created it
+        (see :meth:`OperationRecorder.close` for the shared rationale)."""
+        if self._owns_store:
+            self.repository.store.close()
 
     def record_chain_link(self, result: ChainLinkResult) -> None:
         """Persist one link's downloaded clip (record-before-extract).

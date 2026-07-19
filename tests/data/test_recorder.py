@@ -1,5 +1,6 @@
 import hashlib
 import json
+import sqlite3
 from pathlib import Path
 
 import pytest
@@ -8,6 +9,7 @@ from gflow_cli.api.dto import AssetInfo, GeneratedImage, ProjectInfo
 from gflow_cli.api.image import Aspect, GenerateImageRequest, Model
 from gflow_cli.api.video import Aspect as VideoAspect
 from gflow_cli.api.video import GenerateVideoRequest, Mode, VideoResult, VideoStarted, VideoStatus
+from gflow_cli.config import Settings
 from gflow_cli.data.recorder import OperationRecorder
 from gflow_cli.data.repository import DataRepository
 from gflow_cli.data.store import DataStore
@@ -723,3 +725,26 @@ def test_record_started_video_persists_tool_metadata(tmp_path: Path) -> None:
         assert tool["name"] == "creative-director"
         assert tool["model"] == "gemini-2.5-flash"
         assert tool["params"] == {"style": "cinema"}
+
+
+# ---------------------------------------------------------------------------
+# Store ownership (Task B2): a recorder built from an INJECTED repository
+# must never close the caller's store; only OperationRecorder.open() (which
+# creates its own store) may close it.
+# ---------------------------------------------------------------------------
+
+
+def test_injected_repository_is_not_closed(tmp_path: Path) -> None:
+    store = DataStore.open(tmp_path / "db.sqlite")
+    recorder = OperationRecorder(DataRepository(store), prompt_mode="store")
+    recorder.close()
+    store.conn.execute("SELECT 1")  # still usable — recorder did not close it
+    store.close()
+
+
+def test_factory_owned_store_is_closed(tmp_path: Path) -> None:
+    recorder = OperationRecorder.open(Settings(home=tmp_path))
+    owned = recorder.repository.store
+    recorder.close()
+    with pytest.raises(sqlite3.ProgrammingError):
+        owned.conn.execute("SELECT 1")
