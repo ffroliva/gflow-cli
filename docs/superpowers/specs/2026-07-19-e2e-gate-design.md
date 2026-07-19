@@ -58,6 +58,15 @@ skill), each referenced from a different moment in the workflow rather than invo
 - **Part 2 — Live-verify**, referenced *before claiming done* (after `/code-review` and
   `/ponytail:ponytail-review`, before commit/PR).
 
+**Trigger mechanism:** this project's skills are proactively invoked, not manually remembered — per
+`using-superpowers`, "if you think there is even a 1% chance a skill might apply, you MUST invoke
+it." `skills/e2e-gate/SKILL.md`'s frontmatter `description` must therefore name both moments
+explicitly (e.g. "Use when starting work on a gflow-cli feature/fix — Part 1; use before claiming
+gflow-cli work done, especially anything touching a generation path — Part 2") so the standard
+proactive-invocation mechanism fires it at both points, the same way `brainstorming` already
+auto-triggers on "let's build X." The `AGENTS.md` bullet (3.5) and the `/gflow:check` pointer are
+reinforcement, not the primary trigger.
+
 ### 3.2 Part 1 — Pre-flight
 
 ```bash
