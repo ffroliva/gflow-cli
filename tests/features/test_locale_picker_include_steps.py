@@ -94,6 +94,7 @@ def _mock_recording_runner(monkeypatch: pytest.MonkeyPatch, runner_state: dict[s
         transport: str | None = None,
         project_id: str | None = None,
         as_json: bool = False,
+        **kwargs: Any,
     ) -> None:
         runner_state["req"] = req
         base = out if out is not None else output_root / "images"

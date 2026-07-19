@@ -617,7 +617,9 @@ _ui_mode_option = click.option(
         "  gflow image t2i --prompts-file prompts.txt\n"
         "  cat prompts.txt | gflow image t2i --stdin\n"
         '  gflow image t2i "neon cyberpunk alley" --model nano-pro --aspect 16:9\n'
-        '  gflow image t2i "variations of a logo" -n 4 --aspect 1:1'
+        '  gflow image t2i "variations of a logo" -n 4 --aspect 1:1\n\n'
+        "Tag a saved character/asset by name inline with @Name (same wire as "
+        "--reference-entity; use --ref for a one-off image). See docs/REFERENCE_STRATEGIES.md."
     ),
 )
 @click.argument("prompts", nargs=-1, required=False)
@@ -768,22 +770,19 @@ def t2i(  # NOSONAR
         profile_name = _resolve_profile(profile)
         provider_dir = _make_provider_dir(profile_name)
         settings = get_settings()
-        prompt_to_send, original_prompt, applied_tool = apply_tool_option(
-            prompt, tool_specs, category="image", quiet=as_json
-        )
         run_with_handlers(
             lambda: _run_t2i(
                 profile_name=profile_name,
                 profile_dir=provider_dir,
                 headless=settings.headless,
                 req=GenerateImageRequest(
-                    prompt=prompt_to_send,
+                    prompt=prompt,
                     aspect=Aspect.from_cli(aspect),
                     model=Model.from_cli(model),
                     reference_entities=tuple(reference_entities),
                     reference_entity_names=tuple(reference_entity_names),
-                    original_prompt=original_prompt,
-                    tool=applied_tool,
+                    original_prompt=None,
+                    tool=None,
                     instructions=(
                         tuple(AgentInstruction(text=i) for i in instructions)
                         if instructions
@@ -797,10 +796,12 @@ def t2i(  # NOSONAR
                 transport=transport,
                 project_id=project_id,
                 as_json=as_json,
+                tool_specs=tool_specs,
             ),
             cli_command="image t2i",
             as_json=as_json,
         )
+
         return
 
     batch_prompts = _build_t2i_batch_prompts(
@@ -1053,6 +1054,7 @@ async def _run_t2i(
     transport: str | None = None,
     project_id: str | None = None,
     as_json: bool = False,
+    tool_specs: tuple[str, ...] = (),
 ) -> None:
     settings = get_settings()
     recorder = OperationRecorder.open(settings)
@@ -1068,10 +1070,24 @@ async def _run_t2i(
             project, project_created = await _resolve_project(
                 client, project_id=project_id, title=_T2I_PROJECT_TITLE, as_json=as_json
             )
+
+            # Resolve @-mentions and expand --tool specs (shared helper).
+            from gflow_cli.services.mentions import resolve_and_apply
+
+            req = await resolve_and_apply(
+                client,
+                req,
+                path="image",
+                project_id=project.project_id,
+                tool_specs=tool_specs,
+                quiet=as_json,
+            )
+
             if not as_json:
                 console.print(
                     f"  Generating {count} image(s) ({req.model.value}, {req.aspect.value})...",
                 )
+
             if count == 1:
                 img = await client.generate_image(project_id=project.project_id, req=req)
                 images: list[GeneratedImage] = [img]
@@ -1333,7 +1349,9 @@ class _I2IParams:
         '  gflow image i2i "blend these" --ref a.png --ref b.png\n'
         '  gflow image i2i "stylize" --ref ddb6ef97-262d-49f4-8269-4a28c0fae6a2\n'
         '  gflow image i2i "mix" --ref hero.png --ref ddb6ef97-262d-49f4-8269-4a28c0fae6a2\n\n'
-        "For text-only generation, use `gflow image t2i` instead."
+        "For text-only generation, use `gflow image t2i` instead.\n"
+        "Tag a saved character/asset by name inline with @Name (same wire as "
+        "--reference-entity; --ref is for one-off images). See docs/REFERENCE_STRATEGIES.md."
     ),
 )
 @click.argument("prompt")
@@ -1453,18 +1471,15 @@ def i2i(  # NOSONAR
     profile_name = _resolve_profile(profile)
     provider_dir = _make_provider_dir(profile_name)
     settings = get_settings()
-    prompt_to_send, original_prompt, applied_tool = apply_tool_option(
-        prompt, tool_specs, category="image", quiet=as_json
-    )
     i2i_params = _I2IParams(
-        prompt=prompt_to_send,
+        prompt=prompt,
         classified_refs=classified_refs,
         aspect=Aspect.from_cli(aspect),
         model=model_enum,
         reference_entities=tuple(reference_entities),
         reference_entity_names=tuple(reference_entity_names),
-        original_prompt=original_prompt,
-        tool=applied_tool,
+        original_prompt=None,
+        tool=None,
         instructions=(
             tuple(AgentInstruction(text=i) for i in instructions) if instructions else None
         ),
@@ -1482,6 +1497,7 @@ def i2i(  # NOSONAR
             transport=transport,
             project_id=project_id,
             as_json=as_json,
+            tool_specs=tool_specs,
         ),
         cli_command="image i2i",
         as_json=as_json,
@@ -1500,6 +1516,7 @@ async def _run_i2i(
     transport: str | None = None,
     project_id: str | None = None,
     as_json: bool = False,
+    tool_specs: tuple[str, ...] = (),
 ) -> None:
     settings = get_settings()
     recorder = OperationRecorder.open(settings)
@@ -1524,13 +1541,13 @@ async def _run_i2i(
             # upload — v0.26.0, `_attach_image_uuid_refs`), falling back to uploading
             # the asset's local file, and failing loud if neither is possible. A UUID
             # ref is never silently dropped.
-            uuid_refs = tuple(r for r in params.classified_refs if isinstance(r, ImageRef))
+            uuid_refs_initial = [r for r in params.classified_refs if isinstance(r, ImageRef)]
             local_ref_paths = tuple(r for r in params.classified_refs if isinstance(r, Path))
             req = GenerateImageRequest(
                 prompt=params.prompt,
                 aspect=params.aspect,
                 model=params.model,
-                refs=uuid_refs,
+                refs=tuple(uuid_refs_initial),
                 ref_paths=local_ref_paths,
                 reference_entities=params.reference_entities,
                 reference_entity_names=params.reference_entity_names,
@@ -1540,7 +1557,20 @@ async def _run_i2i(
                 ui_mode=params.ui_mode,
             )
 
-            n_refs = len(uuid_refs) + len(local_ref_paths)
+            # Resolve @-mentions (entities → reference_entities, media → refs) and
+            # expand --tool specs (shared helper).
+            from gflow_cli.services.mentions import resolve_and_apply
+
+            req = await resolve_and_apply(
+                client,
+                req,
+                path="image",
+                project_id=project.project_id,
+                tool_specs=tool_specs,
+                quiet=as_json,
+            )
+
+            n_refs = len(req.refs) + len(req.ref_paths)
             if not as_json:
                 console.print(
                     f"  Generating {count} image(s) with {n_refs} ref(s) "
@@ -1587,7 +1617,7 @@ async def _run_i2i(
                 # dialog don't surface a media_id at this layer; the recorder
                 # will skip them silently (record_generated_images guards on
                 # repo.get_asset_by_flow_media_id returning None).
-                input_media_ids=[ref.name for ref in uuid_refs],
+                input_media_ids=[ref.name for ref in req.refs],
                 operation_kind="i2i",
             )
     except Exception as exc:
