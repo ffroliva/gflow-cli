@@ -1,13 +1,16 @@
 # Asset tagging (`@` mentions) — design spec
 
-> **Status:** DRAFT — pre-implementation · **Date:** 2026-07-18 · **Council-reviewed:** 2026-07-18
+> **Status:** SHIPPED v0.40.0 (2026-07-19) · **Date:** 2026-07-18 · **Council-reviewed:** 2026-07-18
 > (internal 8-dimension council on PR #344; must-fixes folded in — see the PR thread for the verdict)
 > **Research base:** [docs/ASSET_TAGGING_RECON.md](../../ASSET_TAGGING_RECON.md) (product research,
-> wire hypothesis H1/H2, options analysis). This spec fixes the design for the recommended
-> **Option B** (CLI-side mention resolver over existing attach primitives) and defines the contract
-> the implementation plan ([plans/2026-07-18-asset-tagging/PLAN.md](../plans/2026-07-18-asset-tagging/PLAN.md))
-> executes. Wire-dependent details are gated on the capture spike (§ 9).
-> **Predict:** pending — run `/gflow:predict` on this spec before Task 3 of the plan.
+> wire hypothesis H1/H2, options analysis). This spec fixed the design for the recommended
+> **Option B** (CLI-side mention resolver over existing attach primitives), implemented per
+> ([plans/2026-07-18-asset-tagging/PLAN.md](../plans/2026-07-18-asset-tagging/PLAN.md)) and merged via
+> PR #344. Living docs for the shipped feature: [CHARACTER.md](../../CHARACTER.md),
+> [REFERENCE_STRATEGIES.md](../../REFERENCE_STRATEGIES.md),
+> [LIVE_VERIFICATION_v0.40.0.md](../../LIVE_VERIFICATION_v0.40.0.md). This spec and its companion plan
+> are kept as historical design record; update the living docs above for any future behavioral change,
+> not this file.
 
 ## 1. Goal
 
