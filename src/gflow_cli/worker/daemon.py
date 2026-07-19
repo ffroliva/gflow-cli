@@ -1,8 +1,9 @@
 from __future__ import annotations
 
 import asyncio
+import os
 from pathlib import Path
-from typing import Any
+from typing import Any, cast
 
 import structlog
 
@@ -29,14 +30,6 @@ from gflow_cli.worker.queue import QueueRepository, QueueTask
 
 logger = structlog.get_logger()
 
-_PROFILE_LOCKS: dict[str, asyncio.Lock] = {}
-
-
-def get_profile_lock(profile_name: str) -> asyncio.Lock:
-    if profile_name not in _PROFILE_LOCKS:
-        _PROFILE_LOCKS[profile_name] = asyncio.Lock()
-    return _PROFILE_LOCKS[profile_name]
-
 
 class FlowWorker:
     def __init__(self, profile_name: str, db_path: str):
@@ -54,13 +47,17 @@ class FlowWorker:
 
     async def start(self) -> None:
         logger.info("Starting FlowWorker", profile_name=self.profile_name)
+        claimant = f"worker:{self.profile_name}:{os.getpid()}"
         while not self._stop:
             try:
-                task = self.repo.get_next_pending_task(self.profile_name)
+                # Atomic claim (C3/C4): pending -> processing in one
+                # BEGIN IMMEDIATE txn, so the MCP direct-exec path and this
+                # poll loop can never both take the same row. An invalid
+                # payload is failed inside the claim (no browser) and returns
+                # None here — same as an empty queue.
+                task = self.repo.claim_next_pending(self.profile_name, claimant)
                 if task:
-                    lock = get_profile_lock(self.profile_name)
-                    async with lock:
-                        await self.process_task(task)
+                    await self.process_task(task)
                 else:
                     await asyncio.sleep(1)
             except asyncio.CancelledError:
@@ -76,13 +73,21 @@ class FlowWorker:
                 await asyncio.sleep(5)
 
     async def process_task(self, task: QueueTask) -> None:
+        """Execute an ALREADY-CLAIMED (processing) task.
+
+        The pending -> processing transition belongs to the atomic claim
+        (``QueueRepository.claim_next_pending`` / ``claim_task``), never to
+        this method — that is what stops the MCP direct-exec path and the
+        daemon poll loop from both running the same row. ``task.decoded``
+        (when the caller went through a claim) carries the request validated
+        at claim time, so the payload mapping is not re-derived here.
+        """
         logger.info(
             "Processing task",
             task_id=task.task_id,
             task_type=task.task_type,
             profile_name=self.profile_name,
         )
-        self.repo.update_task_status(task.task_id, status="processing")
 
         settings = get_settings()
         profile_dir = settings.profile_subdir(task.profile_name)
@@ -100,7 +105,11 @@ class FlowWorker:
 
         try:
             if task.task_type in ("t2i", "i2i"):
-                req = self._build_image_request(task.payload)
+                req = (
+                    cast("GenerateImageRequest", task.decoded.request)
+                    if task.decoded is not None
+                    else self._build_image_request(task.payload)
+                )
                 count = task.payload.get("count", 1)
                 project_id = task.payload.get("project_id")
 
@@ -214,7 +223,11 @@ class FlowWorker:
                 )
 
             elif task.task_type in ("t2v", "i2v", "r2v"):
-                req = self._build_video_request(task.payload)
+                req = (
+                    cast("GenerateVideoRequest", task.decoded.request)
+                    if task.decoded is not None
+                    else self._build_video_request(task.payload)
+                )
                 project_id = task.payload.get("project_id")
 
                 recorder = OperationRecorder(
