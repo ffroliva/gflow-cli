@@ -78,6 +78,7 @@ These rules exist because docs alone don't bind under momentum: a "check open PR
 - **Truth is the CLI and running the code — not IDE/LSP "reminder" diagnostics.** Editor / `pyright`-in-worktree warnings go stale for an entire session and throw false positives (especially across multiple worktrees). Confirm with `ruff` / `pyright` / `pytest` from the terminal — or trust the worktree's own venv — never an IDE squiggle.
 - **Verify third-party runtime behavior empirically before wiring it in.** Don't assume how an external library, API, or browser actually behaves — exercise it once and observe, then build on the observed contract.
 - **If a claim can't be verified in the current environment, it's LIKELY — not CONFIRMED.** Keep the issue open, reference it with `Refs #N` (not `Closes #N`), and ship diagnostics rather than a blind fix. When you can't reproduce it, hand the fix to whoever can.
+- **This project reverse-engineers a blackbox.** gflow-cli doesn't own Google Flow — it drives real Flow through inspected HAR/DOM/browser-log behavior. Offline checks (types, lint, unit/BDD tests) verify *our* code does what we think it does; they cannot verify Flow still behaves the way we captured it. Every feature that touches a generation path is **live-verified**, not just offline-tested, before it's called done — see `/gflow:live-verify`.
 
 ## Skills reference (cross-tool)
 
@@ -98,6 +99,7 @@ The `skills/` directory ships installable agent skill docs in plain Markdown wit
 | `changelog` | [`skills/changelog/SKILL.md`](skills/changelog/SKILL.md) | Unreleased changes + last tagged version |
 | `known-issues` | [`skills/known-issues/SKILL.md`](skills/known-issues/SKILL.md) | Open/mitigated known issues — before auth/reCAPTCHA work |
 | `sonar` | [`skills/sonar/SKILL.md`](skills/sonar/SKILL.md) | Drive the SonarCloud quality gate to zero for a PR/branch |
+| `live-verify` | [`skills/live-verify/SKILL.md`](skills/live-verify/SKILL.md) | Pre-flight state check at start of work; live-verification against real Flow before claiming done |
 | `doc-review` | [`skills/doc-review/SKILL.md`](skills/doc-review/SKILL.md) | Council-driven documentation audit before a release |
 | `release` | [`skills/release/SKILL.md`](skills/release/SKILL.md) | Cut a release — bump, CHANGELOG, tag, push, back-merge |
 
