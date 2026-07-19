@@ -78,7 +78,6 @@ _MCP_EXEMPT: dict[str, str] = {
     "image batch": "batch pipelines — not yet ported",
     "image upload": "asset upload — covered indirectly by reference_images paths",
     "image upscale": "not yet ported",
-    "video batch": "batch pipelines — not yet ported",
     "video chain": "chain pipeline — not yet ported",
     "movie run": "movie pipeline — not yet ported (skills-audit Task 7 backlog)",
     "movie template": "movie pipeline — not yet ported (skills-audit Task 7 backlog)",
