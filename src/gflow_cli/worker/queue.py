@@ -145,18 +145,21 @@ class QueueRepository:
         ).fetchone()
         return _row_to_task(row) if row is not None else None
 
-    def get_next_pending_task(self, profile_name: str) -> QueueTask | None:
-        # Pulls the oldest pending task for the given profile
-        row = self._store.conn.execute(
+    def get_processing_tasks(self, profile_name: str) -> list[QueueTask]:
+        """All currently-``processing`` rows for a profile, oldest first.
+
+        Startup crash recovery (:func:`recover_processing`) reads each row's
+        checkpoint to classify it, rather than blanket-failing them all.
+        """
+        rows = self._store.conn.execute(
             f"""
             SELECT {_TASK_COLUMNS} FROM generation_queue
-            WHERE profile_name = ? AND status = 'pending'
+            WHERE profile_name = ? AND status = 'processing'
             ORDER BY created_at ASC
-            LIMIT 1
             """,
             (profile_name,),
-        ).fetchone()
-        return _row_to_task(row) if row is not None else None
+        ).fetchall()
+        return [_row_to_task(row) for row in rows]
 
     def claim_next_pending(self, profile_name: str, claimant: str) -> QueueTask | None:
         """Atomically claim the oldest pending task for a profile.
@@ -231,6 +234,36 @@ class QueueRepository:
         ).fetchone()
         return _row_to_task(claimed, decoded=decoded)
 
+    def update_checkpoint(
+        self,
+        task_id: str,
+        *,
+        claimant: str,
+        phase: str,
+        may_have_spent: bool,
+        project_id: str | None = None,
+        operation_id: str | None = None,
+        media_ids: Sequence[str] = (),
+        workflow_ids: Sequence[str] = (),
+    ) -> None:
+        """Build (via :func:`make_checkpoint_document` — the redaction allow-list)
+        and persist a checkpoint. This is the writer callers SHOULD use: routing
+        every checkpoint write through the builder is the privacy guarantee (the
+        low-level :meth:`write_checkpoint` accepts any dict and stays only for the
+        C3 roundtrip test)."""
+        self.write_checkpoint(
+            task_id,
+            make_checkpoint_document(
+                claimant=claimant,
+                phase=phase,
+                may_have_spent=may_have_spent,
+                project_id=project_id,
+                operation_id=operation_id,
+                media_ids=media_ids,
+                workflow_ids=workflow_ids,
+            ),
+        )
+
     def write_checkpoint(self, task_id: str, checkpoint: dict[str, Any]) -> None:
         """Persist a versioned checkpoint document (see
         :func:`make_checkpoint_document`) onto a task row."""
@@ -300,3 +333,82 @@ class QueueRepository:
                 return cursor.rowcount
         except sqlite3.IntegrityError as exc:
             raise DataIntegrityError(detail=str(exc), route="queue.fail_processing_tasks") from exc
+
+
+def classify_interrupted(checkpoint: dict[str, Any] | None) -> str:
+    """Truthful terminal status for a task interrupted (cancelled or crashed)
+    while ``processing``, keyed on how far its checkpoint got.
+
+    * pre-submit — no checkpoint, or ``phase`` still ``claimed`` → ``failed``
+      (the credit-spending gesture never fired; nothing was spent, safe to retry).
+    * post-submit — ``phase`` is ``submit_attempted`` or ``remote_started`` →
+      ``indeterminate`` (a credit MAY have been spent and the outcome is unknown;
+      it must NEVER be silently reported as ``failed`` and NEVER auto-resubmitted).
+    """
+    phase = (checkpoint or {}).get("phase")
+    if phase in ("submit_attempted", "remote_started"):
+        return "indeterminate"
+    return "failed"
+
+
+def _recovery_error(status: str, reason: str) -> dict[str, Any]:
+    if status == "indeterminate":
+        return {
+            "type": "https://gflow-cli.dev/errors/indeterminate-outcome",
+            "title": "Indeterminate Generation Outcome",
+            "status": 202,
+            "detail": (
+                f"Task interrupted ({reason}) after submit was attempted; a credit "
+                "may have been spent and the outcome is unknown. NOT retried automatically."
+            ),
+        }
+    return {
+        "type": "https://gflow-cli.dev/errors/daemon-recovery",
+        "title": "Interrupted Before Submit",
+        "status": 500,
+        "detail": f"Task interrupted ({reason}) before any submit; nothing spent, safe to retry.",
+    }
+
+
+def mark_interrupted(
+    repo: QueueRepository,
+    task_id: str,
+    checkpoint: dict[str, Any] | None,
+    reason: str,
+) -> str:
+    """Persist the truthful terminal state for one interrupted task and return it.
+
+    Shared by the daemon's ``CancelledError`` handler and startup
+    :func:`recover_processing` so the phase→status classification lives in exactly
+    one place.
+    """
+    status = classify_interrupted(checkpoint)
+    repo.update_task_status(task_id, status=status, error=_recovery_error(status, reason))
+    return status
+
+
+def recover_processing(
+    repo: QueueRepository,
+    profile_name: str,
+    client: object | None = None,
+) -> dict[str, int]:
+    """Startup crash recovery: move every ``processing`` row for the profile to a
+    truthful terminal state based on its checkpoint, instead of blanket-failing.
+
+    NEVER calls generation — a task whose submit may have spent a credit is marked
+    ``indeterminate`` (with its handle preserved in the checkpoint), never retried.
+
+    ``client`` is the handle-only reconcile hook. Per the C1 spike (design-spec
+    Appendix A) an offline handle→status readback is impossible — the Flow status
+    endpoint 401s a bare ``page.request``, so only a live SPA re-poll can turn a
+    handle into status. Until F1 confirms credit-free project-page re-entry, a
+    ``remote_started`` task is left ``indeterminate`` and ``client`` is unused;
+    it is here so the no-resubmit contract stays testable (``submit_count == 0``)
+    and so D3/D4's live reconciler has its seam.
+    """
+    _ = client  # ponytail: reconcile hook, unused until F1 live-page readback lands
+    counts = {"failed": 0, "indeterminate": 0}
+    for task in repo.get_processing_tasks(profile_name):
+        status = mark_interrupted(repo, task.task_id, task.checkpoint, "daemon restart")
+        counts[status] += 1
+    return counts

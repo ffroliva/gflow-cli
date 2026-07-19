@@ -14,16 +14,24 @@ identifiers + phase — never prompts, headers, cookies, or signed URLs.
 
 from __future__ import annotations
 
+import asyncio
 from pathlib import Path
-from typing import TYPE_CHECKING
-from unittest.mock import AsyncMock, MagicMock
+from typing import TYPE_CHECKING, Any
+from unittest.mock import AsyncMock, MagicMock, patch
+
+import pytest
 
 from gflow_cli.api.client import FlowApiClient
 from gflow_cli.api.dto import GeneratedImage, GenerationCheckpoint
 from gflow_cli.api.image import Aspect, GenerateImageRequest
 from gflow_cli.api.video import GenerateVideoRequest, VideoResult, VideoStarted, VideoStatus
+from gflow_cli.data.store import DataStore
+from gflow_cli.worker.daemon import FlowWorker
+from gflow_cli.worker.queue import QueueRepository, recover_processing
 
 if TYPE_CHECKING:
+    from collections.abc import Iterator
+
     from gflow_cli.api.video import VideoStartedCallback
 
 
@@ -176,3 +184,160 @@ async def test_none_observer_is_zero_behaviour_change(tmp_path: Path) -> None:
 
     assert events == ["gesture"]
     assert result == [_IMAGE]
+
+
+# --- Task C5: cancellation + crash recovery persist truthful outcomes ---------
+#
+# A submitted-but-uncertain task must NEVER be silently failed and NEVER
+# resubmitted: pre-submit cancel -> failed, post-submit cancel -> indeterminate,
+# restart with a persisted handle -> reconcile without a new submit.
+
+
+@pytest.fixture
+def temp_db(tmp_path: Path) -> Iterator[DataStore]:
+    store = DataStore.open(tmp_path / "recovery.db")
+    store.conn.execute(
+        "INSERT INTO profiles(name, profile_dir, first_seen_at) "
+        "VALUES ('default', 'C:/profiles/default', '2026-06-24T00:00:00Z')"
+    )
+    try:
+        yield store
+    finally:
+        store.close()
+
+
+class _FakeClient:
+    """Async-context client stub for driving process_task."""
+
+    def __init__(self, **_: Any) -> None:
+        self.create_project = AsyncMock()
+        self.generate_image = AsyncMock()
+        self.generate_images_batch = AsyncMock()
+        self.download_image = AsyncMock(return_value=Path("/tmp/x.png"))
+
+    async def __aenter__(self) -> _FakeClient:
+        return self
+
+    async def __aexit__(self, *_: object) -> bool:
+        return False
+
+
+class _CountingClient:
+    """Recovery reconcile-hook stub; proves recovery never resubmits."""
+
+    def __init__(self) -> None:
+        self.submit_count = 0
+
+    async def generate_image(self, **_: Any) -> None:
+        self.submit_count += 1
+
+    async def generate_video(self, **_: Any) -> None:
+        self.submit_count += 1
+
+
+async def test_cancel_before_submit_is_safe_failure(temp_db: DataStore) -> None:
+    repo = QueueRepository(temp_db)
+    repo.enqueue_task("t1", "default", "t2i", {"prompt": "x", "aspect": "1:1", "count": 1})
+    claimed = repo.claim_next_pending("default", "worker:default:1")
+    assert claimed is not None
+
+    worker = FlowWorker("default", str(temp_db.path))
+    fake = _FakeClient()
+    # Cancelled during project creation — BEFORE any submit_attempted checkpoint.
+    fake.create_project.side_effect = asyncio.CancelledError
+
+    with (  # noqa: PT012
+        patch("gflow_cli.worker.daemon.FlowApiClient", return_value=fake),
+        pytest.raises(asyncio.CancelledError),
+    ):
+        await worker.process_task(claimed)
+
+    task = repo.get_task("t1")
+    assert task is not None
+    assert task.status == "failed"
+    checkpoint = repo.read_checkpoint("t1")
+    assert checkpoint is not None
+    assert checkpoint["phase"] == "claimed"
+    assert checkpoint["may_have_spent"] is False
+    worker.close()
+
+
+async def test_cancel_after_submit_without_handle_is_indeterminate(temp_db: DataStore) -> None:
+    repo = QueueRepository(temp_db)
+    repo.enqueue_task(
+        "t2", "default", "t2i", {"prompt": "x", "aspect": "1:1", "count": 1, "project_id": "proj-1"}
+    )
+    claimed = repo.claim_next_pending("default", "worker:default:1")
+    assert claimed is not None
+
+    worker = FlowWorker("default", str(temp_db.path))
+    fake = _FakeClient()
+
+    async def _submit_then_cancel(
+        *, on_checkpoint: object = None, **_: Any
+    ) -> list[GeneratedImage]:
+        # Mirror the real client: emit submit_attempted, then the gesture is
+        # cancelled before a handle (remote_started) is ever observed.
+        if on_checkpoint is not None:
+            on_checkpoint(GenerationCheckpoint(phase="submit_attempted"))  # type: ignore[operator]
+        raise asyncio.CancelledError
+
+    fake.generate_image = _submit_then_cancel  # type: ignore[assignment]
+
+    with (  # noqa: PT012
+        patch("gflow_cli.worker.daemon.FlowApiClient", return_value=fake),
+        pytest.raises(asyncio.CancelledError),
+    ):
+        await worker.process_task(claimed)
+
+    task = repo.get_task("t2")
+    assert task is not None
+    assert task.status == "indeterminate"
+    checkpoint = repo.read_checkpoint("t2")
+    assert checkpoint is not None
+    assert checkpoint["phase"] == "submit_attempted"
+    assert checkpoint["may_have_spent"] is True
+    worker.close()
+
+
+def test_restart_reconciles_handle_without_resubmitting(temp_db: DataStore) -> None:
+    repo = QueueRepository(temp_db)
+    repo.enqueue_task("t3", "default", "t2v", {"prompt": "a walk"})
+    repo.update_task_status("t3", "processing")
+    repo.update_checkpoint(
+        "t3",
+        claimant="worker:default:1",
+        phase="remote_started",
+        may_have_spent=True,
+        operation_id="operations/1",
+        project_id="proj-1",
+        media_ids=("vid-1",),
+    )
+
+    client = _CountingClient()
+    counts = recover_processing(repo, "default", client)
+
+    # Recovery must NOT resubmit a task that already has a remote handle.
+    assert client.submit_count == 0
+    task = repo.get_task("t3")
+    assert task is not None
+    assert task.status == "indeterminate"
+    # Handle is preserved in the checkpoint for a future live-page reconcile (F1).
+    checkpoint = repo.read_checkpoint("t3")
+    assert checkpoint is not None
+    assert checkpoint["operation_id"] == "operations/1"
+    assert counts["indeterminate"] == 1
+
+
+def test_recover_pre_submit_task_is_failed(temp_db: DataStore) -> None:
+    repo = QueueRepository(temp_db)
+    repo.enqueue_task("t4", "default", "t2v", {"prompt": "a walk"})
+    repo.update_task_status("t4", "processing")
+    repo.update_checkpoint("t4", claimant="worker:default:1", phase="claimed", may_have_spent=False)
+
+    counts = recover_processing(repo, "default")
+
+    task = repo.get_task("t4")
+    assert task is not None
+    assert task.status == "failed"
+    assert counts["failed"] == 1
