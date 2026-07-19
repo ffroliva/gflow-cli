@@ -15,7 +15,7 @@ import sqlite3
 from contextlib import contextmanager
 from dataclasses import dataclass
 from datetime import datetime
-from typing import TYPE_CHECKING
+from typing import TYPE_CHECKING, Any
 
 from gflow_cli.data.store import DataStore
 from gflow_cli.errors import DataStoreError
@@ -537,3 +537,37 @@ def list_profiles(
         )
         for r in rows
     ]
+
+
+def list_project_media_assets(*, db_path: Path, project_id: str) -> list[dict[str, Any]]:
+    """Return all media assets in the catalog for the specified project.
+
+    Args:
+        db_path: Absolute path to the SQLite catalog.
+        project_id: Flow project ID.
+
+    Returns:
+        A list of dicts carrying media_id and display_name keys.
+    """
+    import json
+
+    sql = "SELECT flow_media_id, metadata_json FROM assets WHERE flow_project_id = ?"
+    params = (project_id,)
+    with _safe_db(db_path) as conn:
+        rows = conn.execute(sql, params).fetchall()
+
+    results: list[dict[str, Any]] = []
+    for r in rows:
+        meta: dict[str, Any] = {}
+        if r["metadata_json"]:
+            try:
+                meta = json.loads(r["metadata_json"])
+            except Exception:
+                pass
+        results.append(
+            {
+                "media_id": str(r["flow_media_id"]),
+                "display_name": str(meta.get("display_name") or ""),
+            }
+        )
+    return results

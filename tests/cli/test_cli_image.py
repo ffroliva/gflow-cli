@@ -492,7 +492,6 @@ class TestImageI2I:
     ) -> None:
         """`--tool` on i2i rewrites the prompt and threads original_prompt + tool
         onto the GenerateImageRequest for recording (PR2 broaden)."""
-        from gflow_cli import cli_image
         from gflow_cli.tools.invocation import AppliedTool
 
         png = tmp_path / "hero.png"
@@ -507,7 +506,9 @@ class TestImageI2I:
             assert category == "image"
             return "EXPANDED CINEMATIC", text, sentinel
 
-        monkeypatch.setattr(cli_image, "apply_tool_option", fake_apply)
+        # i2i tool expansion now flows through services.mentions.resolve_and_apply,
+        # which imports apply_tool_option from its source module at call time.
+        monkeypatch.setattr("gflow_cli._cli_helpers.apply_tool_option", fake_apply)
 
         with (
             patch("gflow_cli.cli_image.FlowApiClient", return_value=client),

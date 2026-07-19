@@ -6,7 +6,6 @@ from typing import Any, cast
 
 import structlog
 
-from gflow_cli._cli_helpers import apply_tool_option
 from gflow_cli.api.client import FlowApiClient
 from gflow_cli.api.dto import ProjectInfo
 from gflow_cli.api.image import AgentInstruction, GenerateImageRequest, ImageRef
@@ -169,6 +168,18 @@ class FlowWorker:
                             project_flow_id = project.project_id
                             project_created = True
 
+                        # Resolve @-mentions and expand --tool specs (shared helper).
+                        from gflow_cli.services.mentions import resolve_and_apply
+
+                        req = await resolve_and_apply(
+                            client,
+                            req,
+                            path="image",
+                            project_id=project_flow_id,
+                            tool_specs=tuple(task.payload.get("tool_specs", ())),
+                            quiet=True,
+                        )
+
                         if count == 1:
                             img = await client.generate_image(project_id=project_flow_id, req=req)
                             images = [img]
@@ -260,6 +271,17 @@ class FlowWorker:
                         out_dir=out_dir,
                         settings=settings,  # same rationale as the image path above
                     ) as client:
+                        # Resolve @-mentions and expand --tool specs (shared helper).
+                        from gflow_cli.services.mentions import resolve_and_apply
+
+                        req = await resolve_and_apply(
+                            client,
+                            req,
+                            path="video",
+                            project_id=project_id,
+                            tool_specs=tuple(task.payload.get("tool_specs", ())),
+                            quiet=True,
+                        )
 
                         def on_started(started: VideoStarted) -> None:
                             started_media_ids.append(started.media_id)
@@ -390,11 +412,6 @@ class FlowWorker:
     def _build_image_request(self, payload: dict[str, Any]) -> GenerateImageRequest:
         prompt = payload["prompt"]
 
-        tool_specs = tuple(payload.get("tool_specs", ()))
-        if tool_specs:
-            # Mirror the CLI --tool flag: expand the prompt before generation.
-            prompt = apply_tool_option(prompt, tool_specs, category="image", quiet=True)[0]
-
         aspect_val = payload.get("aspect")
         aspect = ImageAspect.from_cli(aspect_val) if aspect_val else ImageAspect.PORTRAIT
 
@@ -438,11 +455,6 @@ class FlowWorker:
 
     def _build_video_request(self, payload: dict[str, Any]) -> GenerateVideoRequest:
         prompt = payload["prompt"]
-
-        tool_specs = tuple(payload.get("tool_specs", ()))
-        if tool_specs:
-            # Mirror the CLI --tool flag: expand the prompt before generation.
-            prompt = apply_tool_option(prompt, tool_specs, category="video", quiet=True)[0]
 
         mode_val = payload.get("mode")
         mode = VideoMode(mode_val) if mode_val else VideoMode.T2V

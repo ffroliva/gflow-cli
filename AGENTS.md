@@ -116,6 +116,7 @@ The SkillOpt harness at `scripts/dev/skillopt/` measures how accurately each ski
 
 - **Architecture & target shape** → [docs/ARCHITECTURE.md](docs/ARCHITECTURE.md)
 - **Mandates & routing rules** → [docs/AGENT_GUIDE.md](docs/AGENT_GUIDE.md)
+- **Referencing assets** (`@Name` mention vs `--reference-entity` vs `--ref`) → [docs/REFERENCE_STRATEGIES.md](docs/REFERENCE_STRATEGIES.md)
 - **Full docs index** → [docs/INDEX.md](docs/INDEX.md)
 - **Known issues** (read before touching auth / reCAPTCHA) → [KNOWN_ISSUES.md](KNOWN_ISSUES.md)
 - **Current task** → `/gflow:status` · **Create a feature plan** → `/gflow:plan <feature>` · **Full roadmap** → [PLAN.md](PLAN.md)
