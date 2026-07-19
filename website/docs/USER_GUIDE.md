@@ -15,11 +15,11 @@
 
 - [Journey 1 — First-time setup (10 minutes)](#journey-1--first-time-setup-10-minutes)
 - [Journey 2 — Your first video (single t2v)](#journey-2--your-first-video-single-t2v)
-- [Journey 3 — Batch video with concurrency](#journey-3--batch-video-with-concurrency)
+- [Journey 3 — Batch video from a prompt list (shell loop)](#journey-3--batch-video-from-a-prompt-list-shell-loop)
 - [Journey 4 — Multi-image text-to-image fan-out](#journey-4--multi-image-text-to-image-fan-out)
 - [Journey 5 — Image-to-image with reference images](#journey-5--image-to-image-with-reference-images)
 - [Journey 6 — Reading structured logs (`jq` recipes)](#journey-6--reading-structured-logs-jq-recipes)
-- [Journey 7 — Recovering from an `AuthExpiredError` mid-batch](#journey-7--recovering-from-an-authexpirederror-mid-batch)
+- [Journey 7 — Recovering from an `AuthExpiredError` mid-run](#journey-7--recovering-from-an-authexpirederror-mid-run)
 - [Journey 8 — Switching between Google accounts (profiles)](#journey-8--switching-between-google-accounts-profiles)
 - [Journey 9 — Migrating from `FLOW_CLI_*` to `GFLOW_CLI_*` (v0.3.x → v0.4.x)](#journey-9--migrating-from-flow_cli_-to-gflow_cli_-v03x--v04x)
 - [Journey 10 — Budgeting credits before a batch run](#journey-10--budgeting-credits-before-a-batch-run)
@@ -120,55 +120,67 @@ gflow video t2v "a steam locomotive at dusk" \
 
 ---
 
-## Journey 3 — Batch video with concurrency
+## Journey 3 — Batch video from a prompt list (shell loop)
 
-You want to render 20 clips overnight from a TSV manifest.
+You want to render 20 clips overnight. `gflow video` has no `batch`
+subcommand — a manifest-driven runner was scaffolded early on but never
+worked and has been removed. (`gflow image batch` is a different, working
+command — see [Journey 4](#journey-4--multi-image-text-to-image-fan-out) and
+[Journey 10](#journey-10--budgeting-credits-before-a-batch-run).) For video,
+drive each generation from a plain shell loop instead — one `gflow`
+invocation per prompt, sequential, so a bad row doesn't torpedo the rest.
 
-### 3.1 Write the manifest
+### 3.1 Write the prompt list
 
-Five tab-separated columns, all but `prompt` optional:
+One prompt per line:
 
 ```
-# columns: initial_frame  prompt  end_frame  aspect  output_dir
-	a kite over a beach		16:9	out/
-./hero.png	a hot air balloon takes off				out/
-	a candle flickering in a window		1:1	out/
+a kite over a beach
+a hot air balloon takes off
+a candle flickering in a window
 ```
 
-`parse_manifest` treats every non-blank, non-`#`-prefixed line as data — **there is no header row.** The column-name line above is `#`-prefixed so the parser skips it. To leave a column blank, write nothing between the tabs.
+Save as e.g. `prompts.txt`.
 
-Lines starting with `#` (after any leading whitespace) and blank lines are comments / spacing.
-
-Save as e.g. `manifest.tsv`.
-
-### 3.2 Run with concurrency
+### 3.2 Run the loop
 
 ```bash
-GFLOW_CLI_CONCURRENCY=4 gflow video batch manifest.tsv --out-dir ./out
+# bash / WSL / macOS
+while IFS= read -r prompt; do
+    [ -z "$prompt" ] && continue
+    gflow video t2v "$prompt" --aspect 16:9 --out-dir ./out || echo "failed: $prompt (exit $?)"
+done < prompts.txt
 ```
 
-`GFLOW_CLI_CONCURRENCY=4` opens 4 Playwright Pages inside the same persistent BrowserContext (they share cookies — same Google session) and fans out manifest entries via `asyncio.gather`. With 20 entries you'll see 4 in flight at any moment until the queue drains.
-
-**Memory budget:** ~30-60 MiB per Page on Chromium. Don't raise `N` above 8 without measuring.
-
-**Failure mode (today):** if any one entry fails (e.g. `AuthExpiredError` mid-batch), `asyncio.gather` cancels the siblings and the whole batch exits with the appropriate code (3, 4, 5, 6, or 7). In-flight requests that Flow had already accepted **may still consume credits** — Flow's private API does not give us a "cancel-and-refund" handshake. Inspect the output directory before rerunning; trim the manifest to only the rows whose `output_path` does not yet exist (recipe in [Journey 11](#journey-11--wiring-gflow-outputs-into-a-downstream-pipeline)).
-
-**Soft-fail-and-continue (workaround):** if you'd rather have one bad row not torpedo the rest, drive each row from a shell loop instead of `gflow video batch`:
-
-```bash
-while IFS=$'\t' read -r initial prompt _ aspect out; do
-    [ -z "$prompt" ] || [ "${prompt:0:1}" = "#" ] && continue
-    gflow video i2v "$initial" "$prompt" --out-dir "$out" || echo "skipped: $out (exit $?)"
-done < manifest.tsv
+```powershell
+# PowerShell
+Get-Content prompts.txt | Where-Object { $_ -ne "" } | ForEach-Object {
+    gflow video t2v $_ --aspect 16:9 --out-dir ./out
+    if ($LASTEXITCODE -ne 0) { Write-Warning "failed: $_ (exit $LASTEXITCODE)" }
+}
 ```
 
-Native soft-fail handling for `gflow video batch` is in the backlog (see `KNOWN_ISSUES.md`).
+Each iteration is its own process, so one bad prompt (e.g. `AuthExpiredError`
+mid-run) exits with the appropriate code (3, 4, 5, 6, or 7) without
+cancelling the rest of the loop the way a single fanned-out batch would.
+In-flight requests that Flow had already accepted when a failure occurs
+**may still consume credits** — Flow's private API does not give us a
+"cancel-and-refund" handshake. Inspect the output directory before
+rerunning; skip prompts whose expected `output_path` already exists (recipe
+in [Journey 11](#journey-11--wiring-gflow-outputs-into-a-downstream-pipeline)).
+
+By default each call opens its own Flow project; pass the same `--project
+<id>` to every call if you want the clips to land in one project instead
+(see [`docs/USAGE.md` § Sharing one project across calls](USAGE.md#sharing-one-project-across-calls)).
 
 **Watch progress:**
 
 ```bash
-GFLOW_CLI_LOG_FORMAT=json GFLOW_CLI_CONCURRENCY=4 \
-    gflow video batch manifest.tsv 2> events.jsonl &
+GFLOW_CLI_LOG_FORMAT=json bash -c '
+while IFS= read -r prompt; do
+    gflow video t2v "$prompt" --aspect 16:9 --out-dir ./out
+done < prompts.txt
+' 2> events.jsonl &
 tail -f events.jsonl | jq -c 'select(.event != "")'
 ```
 
@@ -291,24 +303,24 @@ jq -c 'select(.event == "error_unhandled") | .message_hash' events.jsonl | sort 
 
 ---
 
-## Journey 7 — Recovering from an `AuthExpiredError` mid-batch
+## Journey 7 — Recovering from an `AuthExpiredError` mid-run
 
-You started an overnight 50-clip batch. You wake up. The batch died on entry 23 with exit code 3.
+You started an overnight 50-clip shell loop (see [Journey 3](#journey-3--batch-video-from-a-prompt-list-shell-loop)). You wake up. Prompt 23 onward all failed with exit code 3.
 
 ### 7.1 Diagnose
 
-`$?` reflects the **most recently completed foreground command**, so read it before running anything else (including `gflow auth status`):
+The loop from Journey 3 prints `failed: <prompt> (exit $?)` for each failing iteration, so scroll back to find where it started. If you've lost the terminal scrollback, the same information is in the structured log:
 
 ```bash
-# In the same shell the batch ran in, immediately after the batch returned:
-echo "Batch exit code was: $?"      # 3 — AuthExpiredError
+jq -r 'select(.error_class == "AuthExpiredError")' events.jsonl
+```
 
-# Then check session state (this command will overwrite $?):
+Then check current session state:
+
+```bash
 gflow auth status
 # Likely output: cookies_present: True, but Google has invalidated the session.
 ```
-
-If you've already lost the original `$?` (closed the terminal, ran other commands), the same information landed in the structured log: `jq -r 'select(.error_class == "AuthExpiredError")' events.jsonl`.
 
 ### 7.2 Refresh
 
@@ -320,10 +332,10 @@ A Chromium window opens. Sign in again. Cookies overwrite.
 
 ### 7.3 Skip already-rendered entries
 
-`asyncio.gather` cancels siblings on first failure, so SOME entries beyond 23 may have completed. Check `$GFLOW_CLI_OUTPUT_DIR/videos/<today>/` for what exists, then:
+A shell loop doesn't cancel remaining iterations on failure — once auth expires, every remaining prompt fails the same way (fast, before submission, so no extra credits burn) but the loop keeps grinding to the end of the list. Check `$GFLOW_CLI_OUTPUT_DIR/videos/<today>/` for what already rendered, then:
 
-- Either: copy the surviving rows out of `manifest.tsv` and rerun the rest.
-- Or: rerun the full manifest — **be aware that doing so may re-issue paid generations.** Flow's private API does not expose a "have I generated this before?" predicate, and `gflow video batch` does not yet maintain a local manifest-of-outputs to skip already-rendered rows. Filed in [KNOWN_ISSUES § `gflow video batch` does not skip already-completed entries](../KNOWN_ISSUES.md#gflow-video-batch-does-not-skip-already-completed-entries) with a one-liner `awk` workaround.
+- Either: trim `prompts.txt` down to the prompts with no matching output file, and rerun just those.
+- Or: rerun the full prompt list — **be aware that doing so may re-issue paid generations** for prompts that already succeeded. gflow-cli does not maintain a local manifest-of-outputs to skip already-rendered prompts, so dedup is on you (compare against `$GFLOW_CLI_OUTPUT_DIR` before rerunning).
 
 ### 7.4 Prevent recurrence
 
@@ -391,7 +403,7 @@ Only the **Python import path** changed (`flow_cli` → `gflow_cli`). The PyPI d
 
 ## Journey 10 — Budgeting credits before a batch run
 
-Your AI Ultra/Pro subscription includes a finite Veo / Imagen credit allowance — these journeys spend real money. Before kicking off a 200-row manifest, get a rough cost estimate.
+Your AI Ultra/Pro subscription includes a finite Veo / Imagen credit allowance — these journeys spend real money. Before kicking off a 200-prompt run, get a rough cost estimate.
 
 ### 10.1 Check the balance
 
@@ -417,31 +429,33 @@ Costs are not published by Google. The numbers below are **rough observations fr
 | `gflow image i2i "..." --ref PATH -n 1` | Same as t2i for the model | Reference uploads are free. |
 | `gflow image t2i "..." -n 4` | 4× the single-shot cost | Fan-out issues N parallel POSTs, one credit-event per shot. |
 
-**Failed generations may still bill.** Retries inside the tenacity loop are atomic — only the final accepted attempt is what counts — but if Flow accepts a generation and then returns a `ContentPolicyError` or your manifest later cancels via `asyncio.gather`, **the credit is generally already gone**.
+**Failed generations may still bill.** Retries inside the tenacity loop are atomic — only the final accepted attempt is what counts — but if Flow accepts a generation and then returns a `ContentPolicyError`, **the credit is generally already gone**.
 
 ### 10.3 Batch-cost math
 
-For a 50-row manifest of `gflow video i2v` clips at ~1 credit / clip:
+For a 50-line `prompts.txt` of `gflow video i2v` clips (driven from the shell loop in [Journey 3](#journey-3--batch-video-from-a-prompt-list-shell-loop)) at ~1 credit / clip:
 
 ```text
 50 clips × ~1 credit/clip = ~50 credits.
-+ Retries: tenacity caps at 3 attempts per row, but only the successful attempt
++ Retries: tenacity caps at 3 attempts per prompt, but only the successful attempt
   is "the" generation. Budget +5-10% headroom for transient failures that did
   succeed on the first try (≈ 55 credits worst case).
 ```
 
 ### 10.4 Dry-run before committing the batch
 
-The cheapest "dry run" today is to **run the manifest's first 2 rows** end-to-end and inspect the outputs + log:
+The cheapest "dry run" today is to **run the first 2 lines of `prompts.txt`** end-to-end and inspect the outputs + log:
 
 ```bash
-head -3 manifest.tsv > manifest.preview.tsv     # 1 comment line + 2 data rows
-gflow video batch manifest.preview.tsv --out-dir ./preview/
+head -2 prompts.txt > prompts.preview.txt
+while IFS= read -r prompt; do
+    gflow video t2v "$prompt" --aspect 16:9 --out-dir ./preview/
+done < prompts.preview.txt
 ```
 
-If the preview clips look right, run the full manifest. If they're wrong, fix the prompts before spending credits at scale.
+If the preview clips look right, run the full prompt list. If they're wrong, fix the prompts before spending credits at scale.
 
-A `--dry-run` flag that validates the manifest + estimates cost without making any paid calls is planned (not yet scheduled).
+A `--dry-run` flag that validates prompts + estimates cost without making any paid calls is planned (not yet scheduled).
 
 ---
 
@@ -497,17 +511,18 @@ DIR="$GFLOW_CLI_OUTPUT_DIR/videos/$TODAY"
 ffmpeg -f concat -safe 0 -i "$DIR/concat.txt" -c copy "$DIR/_compiled.mp4"
 ```
 
-### 11.5 Trim the manifest to unrendered rows only (skip-existing workaround)
+### 11.5 Trim the prompt list to unrendered prompts only (skip-existing workaround)
 
-`gflow video batch` does not skip-existing yet. To rerun only the rows whose `output_path` does not exist:
+The shell loop from [Journey 3](#journey-3--batch-video-from-a-prompt-list-shell-loop) doesn't skip-existing yet. To rerun only the prompts whose expected output doesn't exist yet, keep a sidecar mapping of prompt → expected filename and filter against it:
 
 ```bash
-awk -F'\t' 'NR==1 || /^#/ || /^$/ { print; next } { if (system("test -e " $NF) != 0) print }' \
-    manifest.tsv > manifest.remaining.tsv
-gflow video batch manifest.remaining.tsv
+awk -F'\t' 'NR==FNR { done[$1]; next } !($0 in done)' rendered.txt prompts.txt > prompts.remaining.txt
+while IFS= read -r prompt; do
+    gflow video t2v "$prompt" --aspect 16:9 --out-dir ./out
+done < prompts.remaining.txt
 ```
 
-(`$NF` is the last column = `output_path`.)
+(`rendered.txt` is whatever record you keep of prompts already rendered — e.g. `ls ./out/*.mp4` mapped back to the prompt that produced each file, or a log you append to after each successful call.)
 
 ### 11.6 Subscribe a Python pipeline to new files (inotify / FSEvents / watchdog)
 
@@ -562,7 +577,7 @@ Re-run the single failing row in isolation while iterating:
 gflow video t2v "your rewritten prompt" -o ./debug/test.mp4
 ```
 
-Once it passes, edit the manifest and rerun the batch.
+Once it passes, fix the prompt in `prompts.txt` and rerun the loop.
 
 ### 12.2 Exit 4 — `RateLimitError`
 
@@ -574,15 +589,18 @@ Flow returned `429 Too Many Requests`. The `tenacity` retry layer already retrie
 **Recovery steps, in order:**
 
 ```bash
-# 1. Drop the concurrency to 1 (sequential) and try again — sometimes the limit
-#    is per-N-in-flight rather than per-N-per-minute.
-GFLOW_CLI_CONCURRENCY=1 gflow video batch manifest.remaining.tsv
+# 1. A shell loop is already sequential — the lever here is spacing out
+#    requests. Add a sleep between prompts and rerun the remaining ones
+#    (see Journey 11.5 for building prompts.remaining.txt):
+while IFS= read -r prompt; do
+    gflow video t2v "$prompt" --aspect 16:9 --out-dir ./out
+    sleep 5
+done < prompts.remaining.txt
 
 # 2. If still 429: wait. 60 seconds for transient, up to a few hours for daily.
 sleep 300
 
-# 3. If a 60-second wait clears it, gradually ramp concurrency back up:
-GFLOW_CLI_CONCURRENCY=2 gflow video batch manifest.remaining.tsv
+# 3. If the wait clears it, shrink or drop the inter-prompt sleep again.
 
 # 4. If the wait does not clear it: check Flow's web UI. If credits are zero or
 #    the dashboard shows quota exhausted, you must wait for the quota window
