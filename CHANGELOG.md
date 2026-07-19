@@ -7,6 +7,23 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+## [0.40.0] — 2026-07-19
+
+### Added
+
+- **Prompt `@`-mention resolution for asset tagging** ([#344]): `@Name` in a
+  t2i/i2i/video prompt resolves to a staged, taggable character entity or
+  media asset reference (`services/mentions.py`), across the `image`/`video`
+  CLI paths, the async worker, and MCP tools. A bare character with no
+  reference images is rejected early with a clear error instead of failing
+  deep in the UI attach. De-tagged prompts are persisted to the catalog. See
+  [`docs/REFERENCE_STRATEGIES.md`](docs/REFERENCE_STRATEGIES.md) for
+  `@`-mention vs `--reference-entity` vs `--ref`, and
+  [`docs/LIVE_VERIFICATION_v0.40.0.md`](docs/LIVE_VERIFICATION_v0.40.0.md)
+  for the live e2e evidence.
+
+[#344]: https://github.com/ffroliva/gflow-cli/issues/344
+
 ## [0.39.0] — 2026-07-19
 
 ### Added
