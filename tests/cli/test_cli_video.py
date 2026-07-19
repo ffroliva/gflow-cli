@@ -1263,3 +1263,48 @@ class TestI2VAssetRef:
             )
         assert result.exit_code == 2  # type: ignore[attr-defined]
         assert "--end-image" in result.output  # type: ignore[attr-defined]
+
+
+# ---------------------------------------------------------------------------
+# `video batch` removal (Task 1, production-readiness-hardening): the stub
+# never worked (always printed "not yet available" and exited 1). It must be
+# gone from the Click group entirely — not just erroring a different way.
+# ---------------------------------------------------------------------------
+
+
+def test_video_help_does_not_advertise_batch() -> None:
+    """`batch` must not be registered on the video Click group, and must not
+    appear in `gflow video --help`'s output (registration-level check, not
+    just a substring scan, so this can't false-positive on incidental prose)."""
+    assert "batch" not in video.commands
+    result = CliRunner().invoke(video, ["--help"])
+    assert result.exit_code == 0
+    assert "batch" not in result.output
+
+
+def test_video_batch_is_rejected_before_profile_resolution(monkeypatch: pytest.MonkeyPatch) -> None:
+    """`video batch` must be rejected by Click's own command routing (exit 2,
+    "No such command") without ever reaching profile resolution.
+
+    A tripwire on `_resolve_profile` (rather than merely asserting on the exit
+    code) rules out the coincidental case where a still-registered stub fails
+    for an unrelated reason (e.g. no profile configured) that happens to also
+    exit 2.
+    """
+
+    def _must_not_run(*_a: object, **_k: object) -> str:
+        raise AssertionError("_resolve_profile must not run for a removed command")
+
+    monkeypatch.setattr("gflow_cli.cli_video._resolve_profile", _must_not_run)
+    result = CliRunner().invoke(video, ["batch", "manifest.tsv"])
+    assert result.exit_code == 2
+    assert "No such command" in result.output
+
+
+def test_image_batch_remains_a_leaf_command() -> None:
+    """`gflow image batch` (the working manifest path, image_batch.py) must be
+    completely unaffected by the video-batch stub removal."""
+    from gflow_cli.cli_image import image
+
+    result = CliRunner().invoke(image, ["batch", "--help"])
+    assert result.exit_code == 0

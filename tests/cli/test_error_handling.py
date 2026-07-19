@@ -99,13 +99,6 @@ def _make_image_file(parent: Path, name: str = "in.png") -> Path:
     return p
 
 
-def _make_manifest_file(parent: Path, name: str = "manifest.tsv") -> Path:
-    """Create a real TSV manifest with one valid prompt row."""
-    p = parent / name
-    p.write_text("prompt\toutput\nhello world\tout.mp4\n", encoding="utf-8")
-    return p
-
-
 def test_image_upload_wires_run_with_handlers(
     monkeypatch: pytest.MonkeyPatch, tmp_path: Path
 ) -> None:
@@ -155,17 +148,15 @@ def test_video_i2v_wires_run_with_handlers(monkeypatch: pytest.MonkeyPatch, tmp_
     assert result.exit_code == 3, result.output
 
 
-def test_video_batch_wires_run_with_handlers(
-    monkeypatch: pytest.MonkeyPatch, tmp_path: Path
-) -> None:
+def test_video_r2v_wires_run_with_handlers(monkeypatch: pytest.MonkeyPatch, tmp_path: Path) -> None:
     _patch_profile_resolution(monkeypatch, tmp_path, "gflow_cli.cli_video")
-    manifest = _make_manifest_file(tmp_path)
+    ref = _make_image_file(tmp_path, "ref.png")
     monkeypatch.setattr(
-        "gflow_cli.cli_video._run_batch",
+        "gflow_cli.cli_video._run_r2v",
         _make_raiser(AuthExpiredError(detail="401", status=401, route="generateVideo")),
     )
     runner = CliRunner()
-    result = runner.invoke(main, ["video", "batch", str(manifest)])
+    result = runner.invoke(main, ["video", "r2v", "knight walks forward", "--ref", str(ref)])
     assert result.exit_code == 3, result.output
 
 
