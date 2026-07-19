@@ -76,3 +76,17 @@ def test_parse_unicode_names() -> None:
     tokens = parse_mentions("Hello @Capit\u00e3oZoro!")
     assert len(tokens) == 1
     assert tokens[0].candidate_text == "Capit\u00e3oZoro"
+
+
+def test_parse_odd_escape_run_starts_mention() -> None:
+    # ``@@`` is consumed as a literal-@ escape; the trailing third @ starts a
+    # real mention. Locks the finditer escape-pairing against a regex regression.
+    tokens = parse_mentions("@@@Zoro")
+    assert len(tokens) == 1
+    assert tokens[0].start_idx == 2
+    assert tokens[0].candidate_text == "Zoro"
+
+
+def test_parse_no_mentions_returns_empty() -> None:
+    assert parse_mentions("just some plain text") == []
+    assert parse_mentions("") == []

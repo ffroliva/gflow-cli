@@ -1069,63 +1069,17 @@ async def _run_t2i(
                 client, project_id=project_id, title=_T2I_PROJECT_TITLE, as_json=as_json
             )
 
-            # RESOLVE MENTIONS & EXPAND TOOLS
-            from gflow_cli.services.mentions import AssetIndex, parse_mentions, resolve_mentions
+            # Resolve @-mentions and expand --tool specs (shared helper).
+            from gflow_cli.services.mentions import resolve_and_apply
 
-            tokens = parse_mentions(req.prompt)
-            if tokens and not project.project_id:
-                from gflow_cli.errors import ConfigurationError
-
-                raise ConfigurationError(
-                    detail="Mentions require an explicit --project <id>.",
-                    remediation_hint="Pass --project <id> to specify the project scope.",
-                )
-
-            if tokens:
-                index = await AssetIndex.build_for_project(client, project.project_id)
-                resolved = resolve_mentions(
-                    tokens,
-                    index,
-                    path="image",
-                    model=req.model.value if hasattr(req.model, "value") else str(req.model),
-                    prompt=req.prompt,
-                    existing_refs=list(req.reference_entities),
-                )
-                de_tagged = resolved.de_tagged_prompt
-                new_entities = list(req.reference_entities)
-                new_entity_names = list(req.reference_entity_names)
-                new_refs = list(req.refs)
-                for m in resolved.mentions:
-                    if m.kind == "entity":
-                        new_entities.append(m.id)
-                        new_entity_names.append(m.name)
-                    elif m.kind == "media":
-                        new_refs.append(ImageRef(name=m.id, display_name=m.name))
-                import dataclasses
-
-                req = dataclasses.replace(
-                    req,
-                    prompt=de_tagged,
-                    reference_entities=tuple(new_entities),
-                    reference_entity_names=tuple(new_entity_names),
-                    refs=tuple(new_refs),
-                )
-
-            if tool_specs:
-                prompt_to_send, original_prompt, applied_tool = apply_tool_option(
-                    req.prompt,
-                    tool_specs,
-                    category="image",
-                    quiet=as_json,
-                )
-                import dataclasses
-
-                req = dataclasses.replace(
-                    req,
-                    prompt=prompt_to_send,
-                    original_prompt=original_prompt,
-                    tool=applied_tool,
-                )
+            req = await resolve_and_apply(
+                client,
+                req,
+                path="image",
+                project_id=project.project_id,
+                tool_specs=tool_specs,
+                quiet=as_json,
+            )
 
             if not as_json:
                 console.print(
@@ -1576,62 +1530,6 @@ async def _run_i2i(
                 client, project_id=project_id, title=_I2I_PROJECT_TITLE, as_json=as_json
             )
 
-            # RESOLVE MENTIONS & EXPAND TOOLS
-            from gflow_cli.services.mentions import AssetIndex, parse_mentions, resolve_mentions
-
-            tokens = parse_mentions(params.prompt)
-            if tokens and not project.project_id:
-                from gflow_cli.errors import ConfigurationError
-
-                raise ConfigurationError(
-                    detail="Mentions require an explicit --project <id>.",
-                    remediation_hint="Pass --project <id> to specify the project scope.",
-                )
-
-            uuid_refs_initial = list(r for r in params.classified_refs if isinstance(r, ImageRef))
-            existing_refs = list(params.reference_entities) + [
-                ref.name for ref in uuid_refs_initial
-            ]
-
-            if tokens:
-                index = await AssetIndex.build_for_project(client, project.project_id)
-                resolved = resolve_mentions(
-                    tokens,
-                    index,
-                    path="image",
-                    model=params.model.value
-                    if hasattr(params.model, "value")
-                    else str(params.model),
-                    prompt=params.prompt,
-                    existing_refs=existing_refs,
-                )
-                de_tagged = resolved.de_tagged_prompt
-                new_entities = list(params.reference_entities)
-                new_entity_names = list(params.reference_entity_names)
-                for m in resolved.mentions:
-                    if m.kind == "entity":
-                        new_entities.append(m.id)
-                        new_entity_names.append(m.name)
-                    elif m.kind == "media":
-                        uuid_refs_initial.append(ImageRef(name=m.id, display_name=m.name))
-                prompt_text = de_tagged
-            else:
-                prompt_text = params.prompt
-                new_entities = list(params.reference_entities)
-                new_entity_names = list(params.reference_entity_names)
-
-            if tool_specs:
-                prompt_to_send, original_prompt, applied_tool = apply_tool_option(
-                    prompt_text,
-                    tool_specs,
-                    category="image",
-                    quiet=as_json,
-                )
-            else:
-                prompt_to_send = prompt_text
-                original_prompt = params.original_prompt
-                applied_tool = params.tool
-
             # Local-file refs are attached through the editor's media dialog by the
             # ui_automation transport (the REST uploadImage path 401s — see #15/#39).
             # Already-uploaded UUID refs go on `refs`: the transport binds them by
@@ -1639,23 +1537,36 @@ async def _run_i2i(
             # upload — v0.26.0, `_attach_image_uuid_refs`), falling back to uploading
             # the asset's local file, and failing loud if neither is possible. A UUID
             # ref is never silently dropped.
-            uuid_refs = tuple(uuid_refs_initial)
+            uuid_refs_initial = [r for r in params.classified_refs if isinstance(r, ImageRef)]
             local_ref_paths = tuple(r for r in params.classified_refs if isinstance(r, Path))
             req = GenerateImageRequest(
-                prompt=prompt_to_send,
+                prompt=params.prompt,
                 aspect=params.aspect,
                 model=params.model,
-                refs=uuid_refs,
+                refs=tuple(uuid_refs_initial),
                 ref_paths=local_ref_paths,
-                reference_entities=tuple(new_entities),
-                reference_entity_names=tuple(new_entity_names),
-                original_prompt=original_prompt,
-                tool=applied_tool,
+                reference_entities=params.reference_entities,
+                reference_entity_names=params.reference_entity_names,
+                original_prompt=params.original_prompt,
+                tool=params.tool,
                 instructions=params.instructions,
                 ui_mode=params.ui_mode,
             )
 
-            n_refs = len(uuid_refs) + len(local_ref_paths)
+            # Resolve @-mentions (entities → reference_entities, media → refs) and
+            # expand --tool specs (shared helper).
+            from gflow_cli.services.mentions import resolve_and_apply
+
+            req = await resolve_and_apply(
+                client,
+                req,
+                path="image",
+                project_id=project.project_id,
+                tool_specs=tool_specs,
+                quiet=as_json,
+            )
+
+            n_refs = len(req.refs) + len(req.ref_paths)
             if not as_json:
                 console.print(
                     f"  Generating {count} image(s) with {n_refs} ref(s) "
@@ -1702,7 +1613,7 @@ async def _run_i2i(
                 # dialog don't surface a media_id at this layer; the recorder
                 # will skip them silently (record_generated_images guards on
                 # repo.get_asset_by_flow_media_id returning None).
-                input_media_ids=[ref.name for ref in uuid_refs],
+                input_media_ids=[ref.name for ref in req.refs],
                 operation_kind="i2i",
             )
     except Exception as exc:

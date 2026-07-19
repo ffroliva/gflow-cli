@@ -27,6 +27,7 @@ from gflow_cli.data.queries import (
     get_asset_prompt,
     list_images,
     list_profiles,
+    list_project_media_assets,
     list_projects,
     list_videos,
 )
@@ -66,6 +67,50 @@ def test_list_all_kinds_on_freshly_created_db_returns_empty(tmp_path: Path) -> N
     assert list_projects(db_path=fresh, profile=None, limit=20, offset=0) == []
     assert list_images(db_path=fresh, profile=None, limit=20, offset=0) == []
     assert list_videos(db_path=fresh, profile=None, limit=20, offset=0) == []
+
+
+def test_list_project_media_assets(seeded: Path, tmp_path: Path) -> None:
+    """The @-mention AssetIndex reads media by project from the catalog: it
+    returns ``media_id`` + ``display_name`` (from ``metadata_json``), falls back
+    to ``""`` when the name is absent, and returns ``[]`` for an unknown project.
+    """
+    from gflow_cli.data.repository import DataRepository
+    from gflow_cli.data.store import DataStore
+
+    project = "flow-proj-alice-000"
+
+    # Add one asset that carries a display_name in its metadata_json.
+    with DataStore.open(seeded) as store:
+        repo = DataRepository(store)
+        repo.upsert_asset(
+            AssetRecord(
+                id=str(uuid.uuid4()),
+                profile_name="alice",
+                flow_project_id=project,
+                flow_media_id="named-media-1",
+                flow_workflow_id=None,
+                flow_media_generation_id=None,
+                kind=AssetKind.IMAGE,
+                status="ready",
+                model="imagen-3.0-fast-generate-001",
+                aspect_ratio="16:9",
+                width=1280,
+                height=720,
+                duration_seconds=None,
+                seed=9,
+                metadata_json={"display_name": "Logo"},
+                created_at=datetime.now(UTC).isoformat(),
+            )
+        )
+
+    rows = list_project_media_assets(db_path=seeded, project_id=project)
+    by_id = {r["media_id"]: r["display_name"] for r in rows}
+
+    assert by_id["named-media-1"] == "Logo"
+    # Seeded assets carry an empty metadata_json → display_name falls back to "".
+    assert by_id["img-media-alice-0-0"] == ""
+    # An unknown project has no media.
+    assert list_project_media_assets(db_path=seeded, project_id="flow-proj-none") == []
 
 
 def test_list_projects_returns_all_by_default(seeded: Path) -> None:

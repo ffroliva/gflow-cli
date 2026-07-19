@@ -1,9 +1,10 @@
 from __future__ import annotations
 
+import dataclasses
 import hashlib
 import re
 from dataclasses import dataclass
-from typing import TYPE_CHECKING, Any, cast
+from typing import TYPE_CHECKING, Any, Literal, TypeVar, cast
 
 import structlog
 
@@ -96,41 +97,21 @@ class ResolvedMentions:
     de_tagged_prompt: str
 
 
+# A mention is an ``@`` that is NOT escaped (``@@`` → literal ``@``) and NOT
+# preceded by a word char (so ``user@example`` is not a mention). Its candidate
+# span runs until the next ``.!?,;:`` / newline / ``@``. finditer scans left to
+# right and consumes ``@@`` escapes as whole units, so the second ``@`` of a pair
+# never starts a mention. Group 1 is present only on the mention branch.
+_MENTION_RE = re.compile(r"@@|(?<!\w)@([^.!?,;:\n@]*)")
+
+
 def parse_mentions(text: str) -> list[MentionToken]:
     tokens: list[MentionToken] = []
-    i = 0
-    n = len(text)
-    while i < n:
-        if text[i] == "@":
-            # Check escape @@
-            if i + 1 < n and text[i + 1] == "@":
-                i += 2
-                continue
-
-            # Check word boundary
-            if i > 0 and re.match(r"\w", text[i - 1], re.UNICODE):
-                i += 1
-                continue
-
-            start_idx = i
-            j = i + 1
-            while j < n:
-                if text[j] in (".", "!", "?", ",", ";", ":", "\n"):
-                    break
-                if text[j] == "@":
-                    is_escape = j + 1 < n and text[j + 1] == "@"
-                    is_preceded_by_word = j > 0 and re.match(r"\w", text[j - 1], re.UNICODE)
-                    if not is_escape and not is_preceded_by_word:
-                        break
-                j += 1
-
-            candidate_text = text[start_idx + 1 : j]
-            tokens.append(
-                MentionToken(start_idx=start_idx, end_idx=j, candidate_text=candidate_text)
-            )
-            i = j
-        else:
-            i += 1
+    for m in _MENTION_RE.finditer(text):
+        candidate = m.group(1)
+        if candidate is None:  # matched an "@@" escape, not a mention
+            continue
+        tokens.append(MentionToken(start_idx=m.start(), end_idx=m.end(), candidate_text=candidate))
     return tokens
 
 
@@ -233,7 +214,7 @@ def resolve_mentions(
             def strip_ansi(s: str) -> str:
                 return re.sub(r"\x1b\[[0-9;]*m", "", s)
 
-            available_names = sorted(list({strip_ansi(ent.name) for ent in index.entries}))
+            available_names = sorted({strip_ansi(ent.name) for ent in index.entries})
             available_str = ", ".join(available_names) if available_names else "<none>"
 
             log.info("mention_unresolved", name=unknown_name)
@@ -300,3 +281,103 @@ def resolve_mentions(
     current_prompt = current_prompt.replace("@@", "@")
 
     return ResolvedMentions(mentions=resolved_list, de_tagged_prompt=current_prompt)
+
+
+_ReqT = TypeVar("_ReqT")
+
+
+def _model_str(model: object) -> str:
+    """Best-effort model identifier for the reference-cap lookup.
+
+    Enums expose ``.value``; ``None`` (a video request with no model yet) maps
+    to the empty string, matching the historical inline expressions.
+    """
+    if model is None:
+        return ""
+    value = cast("Any", model)
+    return str(value.value) if hasattr(model, "value") else str(model)
+
+
+async def resolve_and_apply(
+    client: FlowApiClient,
+    req: _ReqT,
+    *,
+    path: Literal["image", "video"],
+    project_id: str | None,
+    tool_specs: tuple[str, ...],
+    quiet: bool = False,
+) -> _ReqT:
+    """Resolve ``@``-mentions in ``req.prompt`` and expand ``--tool`` specs.
+
+    Shared by the t2i / i2i / video CLI paths and the worker daemon (both image
+    and video), which each previously inlined this block. Mentions parse →
+    require an explicit project → resolve against the project's ``AssetIndex`` →
+    append entity ids (both paths) and media refs (image path only) → de-tag the
+    prompt. ``tool_specs``, when present, rewrite the prompt afterwards. Returns
+    an updated request of the same type (or ``req`` unchanged when there is
+    nothing to do).
+    """
+    r: Any = req
+
+    tokens = parse_mentions(r.prompt)
+    if tokens:
+        if not project_id:
+            raise ConfigurationError(
+                detail="Mentions require an explicit --project <id>.",
+                remediation_hint="Pass --project <id> to specify the project scope.",
+            )
+
+        is_image = path == "image"
+        index = await AssetIndex.build_for_project(client, project_id)
+
+        existing_refs = list(r.reference_entities)
+        current_refs: list[Any] = list(r.refs) if is_image else []
+        if is_image:
+            existing_refs += [ref.name for ref in current_refs]
+
+        resolved = resolve_mentions(
+            tokens,
+            index,
+            path=path,
+            model=_model_str(r.model),
+            prompt=r.prompt,
+            existing_refs=existing_refs,
+        )
+
+        new_entities = list(r.reference_entities)
+        new_entity_names = list(r.reference_entity_names)
+        for m in resolved.mentions:
+            if m.kind == "entity":
+                new_entities.append(m.id)
+                new_entity_names.append(m.name)
+            elif m.kind == "media" and is_image:
+                from gflow_cli.api.image import ImageRef
+
+                current_refs.append(ImageRef(name=m.id, display_name=m.name))
+
+        changes: dict[str, Any] = {
+            "prompt": resolved.de_tagged_prompt,
+            "reference_entities": tuple(new_entities),
+            "reference_entity_names": tuple(new_entity_names),
+        }
+        if is_image:
+            changes["refs"] = tuple(current_refs)
+        r = dataclasses.replace(r, **changes)
+
+    if tool_specs:
+        from gflow_cli._cli_helpers import apply_tool_option
+
+        prompt_to_send, original_prompt, applied_tool = apply_tool_option(
+            r.prompt,
+            tool_specs,
+            category=path,
+            quiet=quiet,
+        )
+        r = dataclasses.replace(
+            r,
+            prompt=prompt_to_send,
+            original_prompt=original_prompt,
+            tool=applied_tool,
+        )
+
+    return cast("_ReqT", r)

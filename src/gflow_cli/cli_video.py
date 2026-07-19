@@ -100,62 +100,17 @@ async def _generate_and_report(
     started_media_ids: list[str] = []
     try:
         async with FlowApiClient(profile_dir=profile_dir, out_dir=out_dir) as client:
-            # RESOLVE MENTIONS & EXPAND TOOLS
-            from gflow_cli.services.mentions import AssetIndex, parse_mentions, resolve_mentions
+            # Resolve @-mentions and expand --tool specs (shared helper).
+            from gflow_cli.services.mentions import resolve_and_apply
 
-            tokens = parse_mentions(request.prompt)
-            if tokens and not project_id:
-                from gflow_cli.errors import ConfigurationError
-
-                raise ConfigurationError(
-                    detail="Mentions require an explicit --project <id>.",
-                    remediation_hint="Pass --project <id> to specify the project scope.",
-                )
-
-            if tokens:
-                assert project_id is not None
-                index = await AssetIndex.build_for_project(client, project_id)
-                resolved = resolve_mentions(
-                    tokens,
-                    index,
-                    path="video",
-                    model=request.model.value
-                    if hasattr(request.model, "value")
-                    else str(request.model),
-                    prompt=request.prompt,
-                    existing_refs=list(request.reference_entities),
-                )
-                de_tagged = resolved.de_tagged_prompt
-                new_entities = list(request.reference_entities)
-                new_entity_names = list(request.reference_entity_names)
-                for m in resolved.mentions:
-                    if m.kind == "entity":
-                        new_entities.append(m.id)
-                        new_entity_names.append(m.name)
-                import dataclasses
-
-                request = dataclasses.replace(
-                    request,
-                    prompt=de_tagged,
-                    reference_entities=tuple(new_entities),
-                    reference_entity_names=tuple(new_entity_names),
-                )
-
-            if tool_specs:
-                prompt_to_send, original_prompt, applied_tool = apply_tool_option(
-                    request.prompt,
-                    tool_specs,
-                    category="video",
-                    quiet=as_json,
-                )
-                import dataclasses
-
-                request = dataclasses.replace(
-                    request,
-                    prompt=prompt_to_send,
-                    original_prompt=original_prompt,
-                    tool=applied_tool,
-                )
+            request = await resolve_and_apply(
+                client,
+                request,
+                path="video",
+                project_id=project_id,
+                tool_specs=tool_specs,
+                quiet=as_json,
+            )
 
             def on_started(started: VideoStarted) -> None:
                 started_media_ids.append(started.media_id)
