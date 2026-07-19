@@ -244,7 +244,7 @@ reporter-verified e2e on macOS).
 | Agentic-pin recovery: opt-in reload after a real Agent-toggle click (#338) | ✅ done (v0.38.1) |
 | Failed generations persisted to the local catalog + `gflow data list errors` (#341) | ✅ done (v0.39.0) |
 | Prompt `@`-mention resolution for asset tagging (#344) | ✅ done (v0.40.0) |
-| `gflow video batch` (TSV manifest) on `ui_automation` | ⏳ Phase B |
+| Manifest-driven video batch runner on `ui_automation` | ❌ removed — never worked end-to-end, shipped as a nonfunctional stub; see [CHANGELOG § Unreleased](../CHANGELOG.md#unreleased). For multi-clip video, loop `gflow video t2v`/`i2v` from the shell; `gflow image batch` remains supported for images. |
 | Persistence layer (stay-mounted batch sessions across project boundaries) | ⏳ Phase B |
 | Provider abstraction for official Veo 3.1 API | ⏳ planned |
 | Signed-tag CI verification automation (no manual signing in CI yet) | ⏳ planned |

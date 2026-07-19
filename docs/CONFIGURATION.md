@@ -178,10 +178,10 @@ GFLOW_CLI_AUTH_LOGIN_TIMEOUT=120 gflow auth login   # abort after 2 minutes
 
 ### `GFLOW_CLI_CONCURRENCY`
 
-**What:** Per-worker Playwright Page-pool size for batch runs. `FlowApiClient.__aenter__` opens N Pages inside one shared persistent BrowserContext; operations check out a Page via an `asyncio.Queue` (FIFO, bounded by `maxsize=N`). `gflow video batch` fans out manifest entries via `asyncio.gather`.
+**What:** Per-worker Playwright Page-pool size. `FlowApiClient.__aenter__` opens N Pages inside one shared persistent BrowserContext; operations check out a Page via an `asyncio.Queue` (FIFO, bounded by `maxsize=N`). No current CLI command fans out multiple generations concurrently through this pool — `gflow image batch` processes prompts sequentially, and the manifest-driven video runner that used to fan out via `asyncio.gather` was removed as nonfunctional — so raising this above `1` has no effect until a concurrent caller exists.
 **Values:** `1`–`16`
 **Default:** `1` (no fan-out)
-**Recommended starting point:** `4`. Each Page costs ~30–60 MiB of memory on Chromium headless; don't exceed `8` without measuring resident-set size. Cookies and storage state are shared at Context level, so every Page inherits the signed-in profile for free.
+**Recommended starting point:** `1` until a concurrent caller lands. Each additional Page would cost ~30–60 MiB of memory on Chromium headless; don't exceed `8` without measuring resident-set size. Cookies and storage state are shared at Context level, so every Page would inherit the signed-in profile for free.
 **Shipped in:** v0.4.0a2.
 
 ### `GFLOW_CLI_DB_PATH`
@@ -311,8 +311,8 @@ gflow image t2i "..." --out ./shots/
 # Video: --out-dir is a directory for the generated mp4
 gflow video t2v "..." --out-dir ./out/
 
-# Video batch: --out-dir overrides the videos/<date>/ root
-gflow video batch ./manifest.tsv --out-dir ./batch-out/
+# Image batch: --out overrides the images/<date>/ root
+gflow image batch ./manifest.tsv --out ./batch-out/
 
 # Video chain: --out-dir holds the per-link mp4s + seed frames
 gflow video chain ./story.jsonl --out-dir ./chain-out/ --yes
@@ -397,7 +397,7 @@ See [EXTERNAL_STORAGE.md](EXTERNAL_STORAGE.md) for MinIO and GCS examples.
 ```bash
 GFLOW_CLI_LOG_FORMAT=json \
 GFLOW_CLI_TIMEOUT_SECONDS=300 \
-gflow video batch ./manifest.tsv
+gflow image batch ./manifest.tsv
 ```
 
 ### "I want to test against the official Veo SDK"

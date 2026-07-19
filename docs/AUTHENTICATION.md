@@ -344,7 +344,7 @@ gflow image t2i "client work"   --profile client-a
 
 Each profile is fully isolated (its own cookies, its own Flow project history). You can run multiple `gflow` calls concurrently across profiles since each launches its own Chromium context — but **never run two concurrent calls against the same profile**, because Chromium will refuse to open a second persistent context on a locked user-data-dir.
 
-For automated multi-account batching: concurrency *within* one profile shipped in v0.4.0a2 — set `GFLOW_CLI_CONCURRENCY=N` (1–16) and `gflow video batch` fans out across N Playwright Pages on one shared BrowserContext. Cross-profile parallel batches are still "one shell per profile" (Chromium per-profile lock; see [KNOWN_ISSUES § Same profile can't be used in parallel](../KNOWN_ISSUES.md#same-profile-cant-be-used-in-parallel)).
+For automated multi-account work: a per-profile Page pool (`GFLOW_CLI_CONCURRENCY=N`, 1–16, shipped in v0.4.0a2) opens N Playwright Pages on one shared BrowserContext within a single profile, but no current CLI command drives more than one generation concurrently through it — the one caller that used to (a manifest-driven video batch runner) never worked and was removed. Cross-profile parallel runs are still "one shell per profile" (Chromium per-profile lock; see [KNOWN_ISSUES § Same profile can't be used in parallel](../KNOWN_ISSUES.md#same-profile-cant-be-used-in-parallel)).
 
 ## Refresh / expiry
 
