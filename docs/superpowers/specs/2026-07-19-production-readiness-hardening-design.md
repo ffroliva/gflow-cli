@@ -354,3 +354,80 @@ or a post-submit task cannot be classified without being recorded as indetermina
 
 Each slice remains a separate commit so failures can be bisected and the overlapping open avatar PR
 can rebase against narrow contracts rather than one monolithic rewrite.
+
+## Appendix A: Empirical handle spike (Task C1)
+
+This appendix records the code-archaeology behind the C1 submit-boundary seam: which Flow handles
+exist at each generation boundary, when they first become observable, and whether they support
+**handle-only reconciliation** (learning an in-flight generation's fate WITHOUT a new credit-spending
+submit). Conclusions are marked **[code-derived]** (proven from the transport source cited) or
+**[needs F1]** (a hypothesis requiring live confirmation in the approved F1 matrix — no live runs were
+done in C1).
+
+### A.1 The seam (as built)
+
+`GenerationCheckpoint` (`src/gflow_cli/api/dto.py`) is a frozen dataclass carrying only
+`phase` + handle identifiers (`operation_id`, `media_ids`, `workflow_ids`) — never prompts, headers,
+cookies, or signed URLs. `GenerationCheckpointObserver = Callable[[GenerationCheckpoint], None]` is an
+optional, default-`None` sync callback on `FlowApiClient.generate_image/generate_images_batch/generate_video`.
+A `None` observer is zero behaviour change. Emission sites:
+
+- **Image** — `client._drive_images_generation` (the single mint/submit funnel for both image entry
+  points): `submit_attempted` immediately before `self.transport.generate_images(...)`
+  (`src/gflow_cli/api/client.py`), then `remote_started` after the returned images are validated.
+- **Video** — `client.generate_video`: `submit_attempted` before `self.transport.generate_video(...)`,
+  and `remote_started` by wrapping the existing `on_started` hook so the handle is relayed the moment
+  the transport parses it.
+
+Phase granularity is **client-boundary**, not exact-gesture: `submit_attempted` fires just before the
+client hands off to the transport call that performs the credit-spending gesture. This is conservative
+(strictly earlier than the gesture) and correct for checkpoint semantics — intent is recorded before
+any UI is driven. Tightening to the exact submit click would require threading the observer through the
+transport ABC + classic/agentic/video drivers; deferred as unjustified for C1. **[code-derived]**
+
+### A.2 Handle inventory
+
+| Boundary | Handle that exists | First observable | Source (file:line) |
+|---|---|---|---|
+| Video submit (veo-*) | operation name (`operations[0].operation.name`) **and** media_id | In the `batchAsyncGenerateVideo*` generate response, parsed right after submit, before polling | `ui_automation_video.py:3086` (`operation_name_from_generate_response`), `:3283-3288` (fires `on_started`); `video.py:403-411,436` |
+| Video submit (omni-flash) | media_id only — operation name is **NULL** (response omits it) | Same point; `flow_operation_id` comes back `None` | `ui_automation_video.py:3085-3087` (`str \| None`); `docs/CONFIGURATION.md:335` (omni-flash caveats) |
+| Video status | Flow's own `batchCheckAsyncVideoGenerationStatus` responses (captured passively) | Only while a live page is polling — `page.on('response')` scrape | `ui_automation_video.py:9-10,81,921-940` |
+| Image submit (classic) | media UUID + workflow UUID per generated image | Only AFTER submit, when the `batchGenerateImages` response is drained | `drivers/base.py:94-100`; `dto.py` `GeneratedImage.from_response` |
+| Image submit (agentic) | media UUID (distinct-UUID DOM scrape; page network capture is dead in that cohort) | Only AFTER submit, from the rendered tiles | `drivers/base.py:96-100` |
+
+### A.3 Can handle-only reconciliation work?
+
+**Video — partial, by page re-entry only.** The status endpoint `batchCheckAsyncVideoGenerationStatus`
+returns **HTTP 401 to `page.request.post`** even from the authenticated page
+(`ui_automation_video.py:9-10`), so the tool can never turn `operation_id` into a status via a direct
+REST call. The only credit-free way to check an operation's fate is to **re-enter the project page** in
+an authenticated browser and let Flow's SPA re-poll / render the finished media, then read the rendered
+tile (media UUID) or the re-captured status traffic. Therefore:
+- With a persisted `operation_id` (or `media_id`) **and** the project, a dead-process recovery can
+  reconcile by page re-entry — **no new submit, no credit spend**. **[needs F1]** (must confirm the
+  finished tile / status is actually re-readable after the original page is gone).
+- With **no** live page and **no** handle (crash before `remote_started`), the operation's fate is
+  necessarily **`indeterminate`** — C5 must treat this as "may have spent a credit," not "safe to
+  retry." **[code-derived]** from the 401 + passive-capture design.
+- omni-flash has no `operation_id`; reconciliation must fall back to `media_id` + project scraping.
+
+**Image — reconciliation is library existence, not status.** There is no async operation handle for
+images; the media/workflow UUIDs exist only once the response/DOM is read post-submit. A dead image
+process is reconciled by checking whether the media UUID is present in the project library (page
+re-entry / library scrape). A crash before the handle is observed leaves **no handle → `indeterminate`**,
+but image generation (t2i/i2i) is credit-free, so the stakes are low. **[code-derived]** for the
+handle timing; **[needs F1]** for library-existence readback.
+
+### A.4 What the checkpoint schema therefore needs (informs C3/C5)
+
+- Persist `phase` + `operation_id` (nullable) + `media_ids` + `workflow_ids` — already carried by
+  `GenerationCheckpoint`.
+- **Add `project_id` in C3.** Reconciliation-by-page-re-entry is the ONLY credit-free recovery path for
+  video (and image), and it requires the project id to re-open the project. C1 deliberately kept the
+  seam to the operation/workflow/media identifiers named in §4; C3's persisted checkpoint row must add
+  `project_id`. **[code-derived]** from A.3.
+- C5 recovery states map directly: `submit_attempted` with no later `remote_started` on a dead process
+  → **`indeterminate`** (may have spent credits); `remote_started` with a handle → reconcile by page
+  re-entry before any retry. A retry that re-submits without reconciling risks double-spend on video.
+- No new REST status capability is available (401 wall), so C5 must NOT assume a headless
+  handle→status call exists. **[code-derived]**
