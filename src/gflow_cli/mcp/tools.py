@@ -8,8 +8,13 @@ Rate limiting: a token-bucket (capacity=8, refill=1/20s) prevents runaway
 agentic loops from burning credits. Session and daily budget limits are
 enforced by checking spent amounts against SQLite records.
 
-Profile locking: an asyncio.Lock per profile serialises tool executions
-to prevent Playwright browser-context collisions.
+Task claiming: the direct-execution path enqueues a task then claims it via
+the atomic ``QueueRepository.claim_task`` (the same BEGIN IMMEDIATE claim the
+daemon poll loop uses), so the two paths can never execute the same row. The
+former per-profile asyncio lock is gone — serialising concurrent same-profile
+BROWSER sessions is the browser lease's job (production-readiness plan slice
+D); until it lands, two distinct same-profile tasks may drive two browsers
+concurrently (the claim still prevents double-executing one task).
 """
 
 from __future__ import annotations
@@ -80,16 +85,6 @@ _rate_limiter = _TokenBucket()
 # Sentinel meaning "auto-resolve the profile like the CLI" (see
 # _resolve_and_validate_profile). Shared constant, not a repeated literal (S1192).
 _DEFAULT_PROFILE = "default"
-
-# Per-profile execution locks to prevent Playwright collisions
-_profile_locks: dict[str, asyncio.Lock] = {}
-
-
-def _get_profile_lock(profile: str) -> asyncio.Lock:
-    """Get or create an asyncio.Lock for the given profile name."""
-    if profile not in _profile_locks:
-        _profile_locks[profile] = asyncio.Lock()
-    return _profile_locks[profile]
 
 
 def _adapt_tools(tools: list[dict[str, Any]] | None) -> tuple[str, ...] | dict[str, Any]:
@@ -199,16 +194,18 @@ async def _run_generation_task(
     task_type: str,
     payload: dict[str, Any],
 ) -> dict[str, Any]:
-    """Enqueue a generation task, run it via FlowWorker, and return the result.
-
-    This helper is called while holding the per-profile lock (via the callers
-    in gflow_generate_image / gflow_generate_video).  It:
+    """Enqueue a generation task, claim it atomically, run it, return the result.
 
     1. Opens the DataStore (applying any pending migrations on first open).
     2. Ensures the profile row exists in the ``profiles`` table (FK requirement).
     3. Enqueues the task in ``generation_queue``.
-    4. Instantiates a :class:`FlowWorker` and directly awaits
-       ``process_task()`` — no separate daemon process needed.
+    4. Instantiates a :class:`FlowWorker`, atomically CLAIMS the task by id
+       (``claim_task`` — the same BEGIN IMMEDIATE claim the daemon uses, so
+       the two paths can never run the same row), then awaits
+       ``process_task()`` on the claimed task — no separate daemon needed.
+       A claim that returns ``None`` means the payload was rejected at claim
+       time (marked failed, no browser) or the row was already taken; the
+       read-back in step 5 reports that terminal state.
     5. Reads the completed / failed status back from the queue row.
     6. On success, resolves local file paths from the ``assets`` / ``local_files``
        tables and returns them.  On failure, surfaces the RFC 9457 error dict.
@@ -243,7 +240,7 @@ async def _run_generation_task(
             versioned_payload = dict(payload)
             versioned_payload.setdefault("schema_version", codec.CURRENT_SCHEMA_VERSION)
 
-            task = QueueRepository(store).enqueue_task(
+            QueueRepository(store).enqueue_task(
                 task_id=task_id,
                 profile_name=profile,
                 task_type=task_type,
@@ -257,10 +254,15 @@ async def _run_generation_task(
             profile=profile,
         )
 
-        # 2. Run the worker synchronously (we already hold the profile lock).
+        # 2. Atomically claim the task we just enqueued, then run it. The claim
+        #    (shared with the daemon poll loop) is what guarantees this row is
+        #    executed at most once. A None claim = invalid payload failed at
+        #    claim time (no browser) or already taken; the read-back reports it.
         worker = FlowWorker(profile_name=profile, db_path=str(db_path))
         try:
-            await worker.process_task(task)
+            claimed = worker.repo.claim_task(task_id, claimant=f"mcp:{profile}")
+            if claimed is not None:
+                await worker.process_task(claimed)
         finally:
             worker.close()
 
@@ -695,72 +697,70 @@ async def gflow_generate_image(
         return resolved  # profile error — bail out early
     resolved_profile = resolved
 
-    lock = _get_profile_lock(resolved_profile)
-    async with lock:
-        log.info(
-            "mcp.tool.generate_image",
-            prompt=prompt[:80],
-            model=model,
-            aspect=aspect,
-            count=count,
-            profile=resolved_profile,
-        )
+    log.info(
+        "mcp.tool.generate_image",
+        prompt=prompt[:80],
+        model=model,
+        aspect=aspect,
+        count=count,
+        profile=resolved_profile,
+    )
 
-        # Validate + adapt the agent-supplied tools array to CLI --tool specs.
-        adapted = _adapt_tools(tools)
-        if isinstance(adapted, dict):
-            return adapted
-        tool_specs = adapted
+    # Validate + adapt the agent-supplied tools array to CLI --tool specs.
+    adapted = _adapt_tools(tools)
+    if isinstance(adapted, dict):
+        return adapted
+    tool_specs = adapted
 
-        payload: dict[str, Any] = {
-            "prompt": prompt,
-            "model": model,
-            "aspect": aspect,
-            "count": count,
-        }
-        if instructions:
-            payload["instructions"] = list(instructions)
-        if ui_mode is not None:
-            payload["ui_mode"] = ui_mode
-        if seed is not None:
-            payload["seed"] = seed
-        if project is not None:
-            payload["project_id"] = project
+    payload: dict[str, Any] = {
+        "prompt": prompt,
+        "model": model,
+        "aspect": aspect,
+        "count": count,
+    }
+    if instructions:
+        payload["instructions"] = list(instructions)
+    if ui_mode is not None:
+        payload["ui_mode"] = ui_mode
+    if seed is not None:
+        payload["seed"] = seed
+    if project is not None:
+        payload["project_id"] = project
 
-        task_type = "t2i"
-        if reference_images:
-            ref_data, err = _resolve_image_references(reference_images)
-            if err is not None:
-                return err
-            assert ref_data is not None
-            payload["refs"] = ref_data["refs"]
-            payload["ref_paths"] = ref_data["ref_paths"]
-            task_type = "i2i"
+    task_type = "t2i"
+    if reference_images:
+        ref_data, err = _resolve_image_references(reference_images)
+        if err is not None:
+            return err
+        assert ref_data is not None
+        payload["refs"] = ref_data["refs"]
+        payload["ref_paths"] = ref_data["ref_paths"]
+        task_type = "i2i"
 
-        if tool_specs:
-            payload["tool_specs"] = list(tool_specs)
+    if tool_specs:
+        payload["tool_specs"] = list(tool_specs)
 
-        result = await _run_generation_task(
-            profile=resolved_profile,
-            task_type=task_type,
-            payload=payload,
-        )
+    result = await _run_generation_task(
+        profile=resolved_profile,
+        task_type=task_type,
+        payload=payload,
+    )
 
-        # Annotate the result with the original request parameters for context.
-        result["params"] = {
-            "prompt": prompt,
-            "model": model,
-            "aspect": aspect,
-            "count": count,
-            "seed": seed,
-            "reference_images": reference_images,
-            "tools": tools or [],
-            "tool_specs": list(tool_specs),
-            "profile": resolved_profile,
-            "requested_profile": profile,
-            "project": project,
-        }
-        return result
+    # Annotate the result with the original request parameters for context.
+    result["params"] = {
+        "prompt": prompt,
+        "model": model,
+        "aspect": aspect,
+        "count": count,
+        "seed": seed,
+        "reference_images": reference_images,
+        "tools": tools or [],
+        "tool_specs": list(tool_specs),
+        "profile": resolved_profile,
+        "requested_profile": profile,
+        "project": project,
+    }
+    return result
 
 
 @server.tool(
@@ -858,76 +858,74 @@ async def gflow_generate_video(
         return resolved  # profile error — bail out early
     resolved_profile = resolved
 
-    lock = _get_profile_lock(resolved_profile)
-    async with lock:
-        log.info(
-            "mcp.tool.generate_video",
-            prompt=prompt[:80],
-            mode=mode,
-            aspect=aspect,
-            profile=resolved_profile,
-        )
+    log.info(
+        "mcp.tool.generate_video",
+        prompt=prompt[:80],
+        mode=mode,
+        aspect=aspect,
+        profile=resolved_profile,
+    )
 
-        adapted = _adapt_tools(tools)
-        if isinstance(adapted, dict):
-            return adapted
-        tool_specs = adapted
+    adapted = _adapt_tools(tools)
+    if isinstance(adapted, dict):
+        return adapted
+    tool_specs = adapted
 
-        payload: dict[str, Any] = {
-            "prompt": prompt,
-            "mode": mode,
-            "aspect": aspect,
-            "count": count,
-        }
-        # Only send model/duration when set — an absent model lets the transport
-        # apply its own i2v veo-lite default (issue #125); an absent duration
-        # lets Flow's per-model default stand.
-        if model is not None:
-            payload["model"] = model
-        if duration is not None:
-            payload["duration"] = duration
+    payload: dict[str, Any] = {
+        "prompt": prompt,
+        "mode": mode,
+        "aspect": aspect,
+        "count": count,
+    }
+    # Only send model/duration when set — an absent model lets the transport
+    # apply its own i2v veo-lite default (issue #125); an absent duration
+    # lets Flow's per-model default stand.
+    if model is not None:
+        payload["model"] = model
+    if duration is not None:
+        payload["duration"] = duration
 
-        media, media_err = _build_video_media_inputs(
-            mode=mode,
-            initial_frame=initial_frame,
-            end_frame=end_frame,
-            reference_images=reference_images,
-        )
-        if media_err is not None:
-            return media_err
-        assert media is not None
-        payload.update(media)
+    media, media_err = _build_video_media_inputs(
+        mode=mode,
+        initial_frame=initial_frame,
+        end_frame=end_frame,
+        reference_images=reference_images,
+    )
+    if media_err is not None:
+        return media_err
+    assert media is not None
+    payload.update(media)
 
-        if tool_specs:
-            payload["tool_specs"] = list(tool_specs)
-        if project is not None:
-            payload["project_id"] = project
+    if tool_specs:
+        payload["tool_specs"] = list(tool_specs)
+    if project is not None:
+        payload["project_id"] = project
 
-        # task_type matches the mode ("t2v", "i2v", "r2v")
-        result = await _run_generation_task(
-            profile=resolved_profile,
-            task_type=mode,
-            payload=payload,
-        )
+    # task_type matches the mode ("t2v", "i2v", "r2v")
+    result = await _run_generation_task(
+        profile=resolved_profile,
+        task_type=mode,
+        payload=payload,
+    )
 
-        # Annotate the result with the original request parameters for context.
-        result["params"] = {
-            "prompt": prompt,
-            "mode": mode,
-            "aspect": aspect,
-            "initial_frame": initial_frame,
-            "end_frame": end_frame,
-            "reference_images": reference_images,
-            "model": model,
-            "duration": duration,
-            "count": count,
-            "tools": tools or [],
-            "tool_specs": list(tool_specs),
-            "profile": resolved_profile,
-            "requested_profile": profile,
-            "project": project,
-        }
-        return result
+    # Annotate the result with the original request parameters for context.
+    result["params"] = {
+        "prompt": prompt,
+        "mode": mode,
+        "aspect": aspect,
+        "initial_frame": initial_frame,
+        "end_frame": end_frame,
+        "reference_images": reference_images,
+        "model": model,
+        "duration": duration,
+        "count": count,
+        "tools": tools or [],
+        "tool_specs": list(tool_specs),
+        "profile": resolved_profile,
+        "requested_profile": profile,
+        "project": project,
+    }
+    return result
 
 
 @server.tool(
@@ -1124,28 +1122,26 @@ async def _run_instructions_op(
 
     settings = get_settings()
     profile_dir = settings.profile_subdir(resolved)
-    lock = _get_profile_lock(resolved)
-    async with lock:
-        log.info("mcp.tool.instructions", tool=tool, project=project, profile=resolved)
-        try:
-            async with FlowApiClient(profile_dir=profile_dir, headless=settings.headless) as client:
-                return await op(client)
-        except ValueError as exc:
-            # brief.find (not-found / ambiguous) and AgentInstruction invariants.
-            return _bad_param("Invalid Instructions Request", str(exc))
-        except GFlowError as exc:
-            log.error("mcp.tool.instructions_gflow_error", tool=tool, error=str(exc))
-            return _error_payload(dict(exc.to_problem_details()))
-        except Exception as exc:
-            log.exception("mcp.tool.instructions_unexpected_error", tool=tool, exc_info=exc)
-            return _error_payload(
-                {
-                    "type": "https://gflow-cli.dev/errors/unknown",
-                    "title": "Unexpected Error",
-                    "status": 500,
-                    "detail": str(exc),
-                }
-            )
+    log.info("mcp.tool.instructions", tool=tool, project=project, profile=resolved)
+    try:
+        async with FlowApiClient(profile_dir=profile_dir, headless=settings.headless) as client:
+            return await op(client)
+    except ValueError as exc:
+        # brief.find (not-found / ambiguous) and AgentInstruction invariants.
+        return _bad_param("Invalid Instructions Request", str(exc))
+    except GFlowError as exc:
+        log.error("mcp.tool.instructions_gflow_error", tool=tool, error=str(exc))
+        return _error_payload(dict(exc.to_problem_details()))
+    except Exception as exc:
+        log.exception("mcp.tool.instructions_unexpected_error", tool=tool, exc_info=exc)
+        return _error_payload(
+            {
+                "type": "https://gflow-cli.dev/errors/unknown",
+                "title": "Unexpected Error",
+                "status": 500,
+                "detail": str(exc),
+            }
+        )
 
 
 @server.tool(

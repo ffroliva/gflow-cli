@@ -72,9 +72,13 @@ class QueueTask:
     checkpoint: dict[str, Any] | None = None
     created_at: str | None = None
     updated_at: str | None = None
+    # Transient (never persisted): the validated request from the claim-time
+    # decode, threaded to the executor so it does not re-derive the payload
+    # mapping post-claim. Populated ONLY by the claim path; None everywhere else.
+    decoded: codec.DecodedPayload | None = None
 
 
-def _row_to_task(row: sqlite3.Row) -> QueueTask:
+def _row_to_task(row: sqlite3.Row, decoded: codec.DecodedPayload | None = None) -> QueueTask:
     return QueueTask(
         task_id=row["task_id"],
         profile_name=row["profile_name"],
@@ -88,6 +92,7 @@ def _row_to_task(row: sqlite3.Row) -> QueueTask:
         checkpoint=json.loads(row["checkpoint_json"]) if row["checkpoint_json"] else None,
         created_at=row["created_at"],
         updated_at=row["updated_at"],
+        decoded=decoded,
     )
 
 
@@ -200,7 +205,7 @@ class QueueRepository:
         task_id = row["task_id"]
         now = _utc_now()
         try:
-            codec.decode_payload(row["task_type"], json.loads(row["payload_json"]))
+            decoded = codec.decode_payload(row["task_type"], json.loads(row["payload_json"]))
         except QueueSchemaError as exc:
             error_payload = dict(exc.to_problem_details())
             error_payload.setdefault("status", 400)
@@ -224,7 +229,7 @@ class QueueRepository:
             f"SELECT {_TASK_COLUMNS} FROM generation_queue WHERE task_id = ?",
             (task_id,),
         ).fetchone()
-        return _row_to_task(claimed)
+        return _row_to_task(claimed, decoded=decoded)
 
     def write_checkpoint(self, task_id: str, checkpoint: dict[str, Any]) -> None:
         """Persist a versioned checkpoint document (see
