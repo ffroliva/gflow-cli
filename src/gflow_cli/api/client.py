@@ -38,7 +38,13 @@ from gflow_cli.api._engine import (
 )
 from gflow_cli.api._retry import parse_retry_after, post_with_retry
 from gflow_cli.api.character import Character, CharacterImageRequest, parse_characters
-from gflow_cli.api.dto import AssetInfo, GeneratedImage, ProjectInfo
+from gflow_cli.api.dto import (
+    AssetInfo,
+    GeneratedImage,
+    GenerationCheckpoint,
+    GenerationCheckpointObserver,
+    ProjectInfo,
+)
 from gflow_cli.api.image_upscale import (
     TargetResolution,
     UpsampleImageRequest,
@@ -71,12 +77,18 @@ from gflow_cli.paths import adjust_key_extension, character_output_path, looks_l
 from gflow_cli.storage import AnyPath, storage_path, write_asset_async
 
 if TYPE_CHECKING:
+    from collections.abc import Awaitable
     from pathlib import Path
 
     from _typeshed import DataclassInstance
 
     from gflow_cli.api.image import AgentInstruction, GenerateImageRequest, ProjectBrief
-    from gflow_cli.api.video import GenerateVideoRequest, VideoResult, VideoStartedCallback
+    from gflow_cli.api.video import (
+        GenerateVideoRequest,
+        VideoResult,
+        VideoStarted,
+        VideoStartedCallback,
+    )
 
 # Shorthand for an untyped JSON-ish string-keyed mapping (request/response
 # bodies, launch kwargs, etc.). A single definition avoids the duplicated-literal
@@ -1627,6 +1639,7 @@ class FlowApiClient:
         project_id: str,
         req: GenerateImageRequest,
         recaptcha_action: str,
+        on_checkpoint: GenerationCheckpointObserver | None = None,
     ) -> list[GeneratedImage]:
         """Mint a token, call the transport once, and return all images.
 
@@ -1634,6 +1647,11 @@ class FlowApiClient:
         transport clicks the matching x{N} tab so one submission produces N
         images; other transports may fan-out internally, but that is their
         concern. This method is the single place reCAPTCHA minting happens.
+
+        ``on_checkpoint`` (Task C1) receives a ``submit_attempted`` observation
+        immediately before the credit-spending transport call, then a
+        ``remote_started`` observation carrying the generated media/workflow
+        UUIDs — the first point the image handle is observable.
         """
         if self.transport is None:
             msg = "FlowApiClient.transport is None — call generate_image inside 'async with client'"
@@ -1642,6 +1660,8 @@ class FlowApiClient:
             )
         token = await self._mint_recaptcha_token(recaptcha_action)
         req_with_token = _dc_replace(req, recaptcha_token=token)
+        if on_checkpoint is not None:
+            on_checkpoint(GenerationCheckpoint(phase="submit_attempted"))
         images = await self.transport.generate_images(
             project_id=project_id,
             request=req_with_token,
@@ -1652,6 +1672,14 @@ class FlowApiClient:
                 instance=_make_instance(),
                 route=routes.batch_generate_images_url(project_id),
             )
+        if on_checkpoint is not None:
+            on_checkpoint(
+                GenerationCheckpoint(
+                    phase="remote_started",
+                    media_ids=tuple(img.media_name for img in images),
+                    workflow_ids=tuple(img.workflow_id for img in images),
+                ),
+            )
         return images
 
     async def _drive_image_generation(
@@ -1660,6 +1688,7 @@ class FlowApiClient:
         project_id: str,
         req: GenerateImageRequest,
         recaptcha_action: str,
+        on_checkpoint: GenerationCheckpointObserver | None = None,
     ) -> GeneratedImage:
         """Single-image shortcut — delegates to ``_drive_images_generation`` with count=1.
 
@@ -1679,6 +1708,7 @@ class FlowApiClient:
             project_id=project_id,
             req=req_one,
             recaptcha_action=recaptcha_action,
+            on_checkpoint=on_checkpoint,
         )
         if len(images) > 1:
             logger.warning(
@@ -1702,6 +1732,7 @@ class FlowApiClient:
         project_id: str | None = None,
         req: GenerateImageRequest,
         recaptcha_action: str = "imageGeneration",
+        on_checkpoint: GenerationCheckpointObserver | None = None,
     ) -> GeneratedImage:
         """Single-shot Imagen/Narwhal image generation.
 
@@ -1727,6 +1758,7 @@ class FlowApiClient:
                 project_id=resolved_project_id,
                 req=req,
                 recaptcha_action=recaptcha_action,
+                on_checkpoint=on_checkpoint,
             )
         except Exception as e:
             if _is_target_closed(e):
@@ -1740,6 +1772,7 @@ class FlowApiClient:
         req: GenerateImageRequest,
         count: int = 1,
         recaptcha_action: str = "imageGeneration",
+        on_checkpoint: GenerationCheckpointObserver | None = None,
     ) -> list[GeneratedImage]:
         """Generate ``count`` images using Flow's native count selector (1–4).
 
@@ -1772,6 +1805,7 @@ class FlowApiClient:
                 project_id=resolved_project_id,
                 req=req_with_count,
                 recaptcha_action=recaptcha_action,
+                on_checkpoint=on_checkpoint,
             )
         except Exception as e:
             if _is_target_closed(e):
@@ -1787,11 +1821,19 @@ class FlowApiClient:
         poll_timeout_s: float = 600.0,
         download: bool = True,
         on_started: VideoStartedCallback | None = None,
+        on_checkpoint: GenerationCheckpointObserver | None = None,
     ) -> VideoResult:
         """Generate a video via the transport's ``generate_video`` method.
 
         Routes all video generation through a single client boundary so the
         data-layer recorder (Task 8) can hook in at one place.
+
+        ``on_checkpoint`` (Task C1) receives a ``submit_attempted`` observation
+        immediately before the credit-spending transport call, then a
+        ``remote_started`` observation carrying the ``batchAsyncGenerateVideo*``
+        operation name (via the transport's ``on_started`` hook — the first
+        point the video handle is observable; ``operation_id`` is ``None`` for
+        models whose response omits it, e.g. omni-flash).
 
         Raises:
             RuntimeError: transport is None (client not entered) or the transport
@@ -1809,6 +1851,23 @@ class FlowApiClient:
                 msg,
             )
 
+        wrapped_on_started = on_started
+        if on_checkpoint is not None:
+            observer: GenerationCheckpointObserver = on_checkpoint
+            observer(GenerationCheckpoint(phase="submit_attempted"))
+
+            def _relay(started: VideoStarted) -> Awaitable[None] | None:
+                observer(
+                    GenerationCheckpoint(
+                        phase="remote_started",
+                        operation_id=started.flow_operation_id,
+                        media_ids=(started.media_id,),
+                    ),
+                )
+                return on_started(started) if on_started is not None else None
+
+            wrapped_on_started = _relay
+
         try:
             return await self.transport.generate_video(
                 request=req,
@@ -1816,7 +1875,7 @@ class FlowApiClient:
                 out_dir=out_dir,
                 poll_timeout_s=poll_timeout_s,
                 download=download,
-                on_started=on_started,
+                on_started=wrapped_on_started,
             )
 
         except Exception as e:
