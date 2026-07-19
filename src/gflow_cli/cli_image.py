@@ -617,7 +617,9 @@ _ui_mode_option = click.option(
         "  gflow image t2i --prompts-file prompts.txt\n"
         "  cat prompts.txt | gflow image t2i --stdin\n"
         '  gflow image t2i "neon cyberpunk alley" --model nano-pro --aspect 16:9\n'
-        '  gflow image t2i "variations of a logo" -n 4 --aspect 1:1'
+        '  gflow image t2i "variations of a logo" -n 4 --aspect 1:1\n\n'
+        "Tag a saved character/asset by name inline with @Name (same wire as "
+        "--reference-entity; use --ref for a one-off image). See docs/REFERENCE_STRATEGIES.md."
     ),
 )
 @click.argument("prompts", nargs=-1, required=False)
@@ -1347,7 +1349,9 @@ class _I2IParams:
         '  gflow image i2i "blend these" --ref a.png --ref b.png\n'
         '  gflow image i2i "stylize" --ref ddb6ef97-262d-49f4-8269-4a28c0fae6a2\n'
         '  gflow image i2i "mix" --ref hero.png --ref ddb6ef97-262d-49f4-8269-4a28c0fae6a2\n\n'
-        "For text-only generation, use `gflow image t2i` instead."
+        "For text-only generation, use `gflow image t2i` instead.\n"
+        "Tag a saved character/asset by name inline with @Name (same wire as "
+        "--reference-entity; --ref is for one-off images). See docs/REFERENCE_STRATEGIES.md."
     ),
 )
 @click.argument("prompt")

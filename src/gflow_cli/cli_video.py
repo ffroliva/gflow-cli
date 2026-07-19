@@ -864,7 +864,9 @@ def video() -> None:
         "Examples:\n"
         '  gflow video t2v "a golden sunset over mountains"\n'
         '  gflow video t2v "timelapse of a city" --aspect 16:9\n'
-        '  gflow video t2v "portrait of a dancer" --out-dir ./videos\n'
+        '  gflow video t2v "portrait of a dancer" --out-dir ./videos\n\n'
+        "Tag a saved character by name inline with @Name (the video path has no "
+        "--reference-entity flag). See docs/REFERENCE_STRATEGIES.md."
     ),
 )
 @click.argument("prompt")
@@ -1202,7 +1204,9 @@ def i2v(  # NOSONAR
         "\b\n"
         "Examples:\n"
         '  gflow video r2v "knight walks forward" --ref armor.png --model omni-flash\n'
-        '  gflow video r2v "they meet" --ref a.png --ref b.png --model veo-fast\n'
+        '  gflow video r2v "they meet" --ref a.png --ref b.png --model veo-fast\n\n'
+        "Tag a saved character by name inline with @Name (--ref stays for one-off "
+        "ingredient images). See docs/REFERENCE_STRATEGIES.md."
     ),
 )
 @click.argument("prompt")
