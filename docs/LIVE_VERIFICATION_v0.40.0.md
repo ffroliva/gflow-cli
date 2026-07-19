@@ -88,9 +88,11 @@ supersedes it.
 
 ## Post-tag evidence
 
-- Tag: TBD (filled after `git push origin v0.40.0`)
-- Release workflow: TBD (filled after CI confirms)
-- PyPI: TBD (filled after publish confirms)
+- Tag: [`v0.40.0`](https://github.com/ffroliva/gflow-cli/releases/tag/v0.40.0), signed (SSH), verified by CI's signed-tag gate.
+- Release workflow: [run 29686563296](https://github.com/ffroliva/gflow-cli/actions/runs/29686563296) — `build-and-publish` completed in 41s (Build → Publish to PyPI → Create GitHub Release, all green).
+- GitHub Release: published (not draft, not prerelease), 2026-07-19T12:13:23Z.
+- PyPI: publish step succeeded as part of the above run.
+- Release PR: [#350](https://github.com/ffroliva/gflow-cli/pull/350) merged into `main` via `--merge` (11/11 checks green, incl. SonarCloud); `main` back-merged into `develop` clean, no conflicts.
 
 [#344]: https://github.com/ffroliva/gflow-cli/issues/344
 [#174]: https://github.com/ffroliva/gflow-cli/issues/174
