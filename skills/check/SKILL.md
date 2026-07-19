@@ -79,3 +79,6 @@ same tree (e.g. the just-merged PR) satisfies step 6 for release purposes.**
 The OOM allowance applies to step 6 (coverage) ONLY. Step 4 (`ruff check` + `ruff
 format --check src tests`) is cheap, never OOMs, and must ALWAYS be run repo-wide
 against the exact tree you are about to push — no scoping, no skipping.
+
+Offline-green here is not done-done for a change touching a generation code path (t2i/i2i/
+i2v/t2v/r2v) — see `/gflow:live-verify` Part 2 before claiming that kind of feature complete.
