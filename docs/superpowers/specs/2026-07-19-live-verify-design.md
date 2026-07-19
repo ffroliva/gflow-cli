@@ -141,11 +141,11 @@ it touches a generation code path; skipping requires a named reason, not silence
 
 ### 3.4 Failure-routing (reproducibility re-test)
 
-1. **Re-test once before concluding anything.** Free for `t2i`/`i2i` (just re-run). For a costed
-   failure, re-testing needs the same operator confirm as any costed run.
-2. **Before re-testing a costed failure, check for a known match first** — grep `KNOWN_ISSUES.md` /
-   open GitHub issues for a matching error signature. If matched, skip the costed re-test; treat as
-   known external flake immediately.
+1. **Check for a known match first** (costed failures only, to avoid an unnecessary re-spend) —
+   grep `KNOWN_ISSUES.md` / open GitHub issues for a matching error signature. If matched, skip the
+   costed re-test; treat as known external flake immediately.
+2. **If no match, re-test once before concluding anything.** Free for `t2i`/`i2i` (just re-run).
+   For a costed failure, re-testing needs the same operator confirm as any costed run.
 3. **Compare outcomes:**
    - **Same failure, same code, no known-issue match** → real bug. Route back to execution (fix it;
      use `superpowers:systematic-debugging` for root-causing if the cause isn't obvious). Re-run the
