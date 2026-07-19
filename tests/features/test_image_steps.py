@@ -85,6 +85,7 @@ def _make_fake_t2i(file_count: int):
         transport: str | None = None,
         project_id: str | None = None,
         as_json: bool = False,
+        tool_specs: tuple[str, ...] = (),
     ) -> None:
         # Honor ``count`` if the scenario set it; otherwise fall back to the
         # builder-bound ``file_count`` (lets us write exactly the right

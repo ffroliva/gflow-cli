@@ -603,6 +603,10 @@ def _build_video_media_inputs(
         "Produces 1-4 images from a text prompt. "
         "Models: nano2 (fast), nano-pro (balanced), image4 (highest quality). "
         "Aspects: 1:1, 9:16, 16:9, 4:3, 3:4. "
+        "The prompt supports @AssetName mentions to tag saved project characters/assets by name "
+        "(resolves to referenceEntities/referenceImages). Reference a SAVED named asset via "
+        "@Name; reference an arbitrary one-off image via reference_images. See "
+        "docs/REFERENCE_STRATEGIES.md. "
         "Returns local file paths to the generated images."
     ),
 )
@@ -622,7 +626,11 @@ async def gflow_generate_image(
     """Generate an image via Google Flow's Imagen.
 
     Args:
-        prompt: The text prompt describing the desired image.
+        prompt: The text prompt describing the desired image. Supports ``@AssetName``
+            mentions to tag a saved project character or media asset by name (resolves to
+            referenceEntities / referenceImages, deduped against reference_images). Use
+            ``@Name`` for a saved named asset; use ``reference_images`` for an arbitrary
+            one-off image. See ``docs/REFERENCE_STRATEGIES.md``.
         model: Model to use — 'nano2', 'nano-pro', or 'image4'.
         aspect: Aspect ratio — '1:1', '9:16', '16:9', '4:3', '3:4'.
         count: Number of images to generate (1-4).
@@ -754,6 +762,9 @@ async def gflow_generate_image(
         "Aspects: 9:16, 16:9. "
         "Optional model (veo_lite/veo_fast/veo_quality/omni_flash), duration (seconds), "
         "and count select the Veo model, clip length, and batch size (CLI parity). "
+        "The prompt supports @CharacterName mentions to tag saved project characters by name "
+        "(resolves to referenceEntities). Reference a SAVED character via @Name; pass one-off "
+        "ingredient images via reference_images. See docs/REFERENCE_STRATEGIES.md. "
         "Returns the local file path to the generated video."
     ),
 )
@@ -774,7 +785,10 @@ async def gflow_generate_video(
     """Generate a video via Google Flow's Veo.
 
     Args:
-        prompt: The text prompt describing the desired video.
+        prompt: The text prompt describing the desired video. Supports ``@CharacterName``
+            mentions to tag a saved project character by name (resolves to referenceEntities).
+            Use ``@Name`` for a saved character; use ``reference_images`` for one-off ingredient
+            images. See ``docs/REFERENCE_STRATEGIES.md``.
         mode: Generation mode — 't2v', 'i2v', or 'r2v'.
         aspect: Aspect ratio — '9:16' or '16:9'.
         initial_frame: Path to start frame image (required for i2v).

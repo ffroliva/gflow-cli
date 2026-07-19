@@ -322,7 +322,7 @@ async def test_worker_applies_tool_specs_to_prompt(
     def _fake_apply(text: str, specs: tuple[str, ...], *, category: str, quiet: bool):
         return (f"EXPANDED::{text}", text, None)
 
-    monkeypatch.setattr("gflow_cli.worker.daemon.apply_tool_option", _fake_apply)
+    monkeypatch.setattr("gflow_cli._cli_helpers.apply_tool_option", _fake_apply)
 
     with patch("gflow_cli.worker.daemon.FlowApiClient", return_value=fake_client):
         await worker.process_task(task)
@@ -352,7 +352,7 @@ async def test_worker_applies_tool_specs_to_video_prompt(
     def _fake_apply(text: str, specs: tuple[str, ...], *, category: str, quiet: bool):
         return (f"EXPANDED::{text}", text, None)
 
-    monkeypatch.setattr("gflow_cli.worker.daemon.apply_tool_option", _fake_apply)
+    monkeypatch.setattr("gflow_cli._cli_helpers.apply_tool_option", _fake_apply)
 
     with patch("gflow_cli.worker.daemon.FlowApiClient", return_value=fake_client):
         await worker.process_task(task)
