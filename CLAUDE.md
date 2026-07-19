@@ -14,6 +14,7 @@
    - Current task / where we left off → `/gflow:status`
    - Starting a new feature → `/gflow:predict` → `/gflow:scenario` → `/gflow:plan <feature>`
    - Touching auth or reCAPTCHA → `/gflow:known-issues`
+   - Referencing a saved asset (`@Name` mention vs `--ref`/`--reference-entity`) → [docs/REFERENCE_STRATEGIES.md](docs/REFERENCE_STRATEGIES.md)
    - Cutting a release → `/gflow:release`
    - Before any commit → `/gflow:check`
 

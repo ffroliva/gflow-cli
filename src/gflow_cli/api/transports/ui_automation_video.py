@@ -2815,7 +2815,7 @@ class VideoGenerationMixin:
             await page.wait_for_timeout(800)
             ptab = page.locator(PICKER_PERSONAGENS_TAB).first
             await ptab.wait_for(state="visible", timeout=8000)
-            await ptab.click()
+            await ptab.click(force=True)
             await page.wait_for_timeout(700)
             tile = await VideoGenerationMixin._find_picker_entity_tile(page, entity_id)
             await tile.wait_for(state="visible", timeout=8000)
