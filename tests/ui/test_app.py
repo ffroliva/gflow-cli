@@ -59,37 +59,50 @@ def test_message_proxying(mock_worker) -> None:
             assert calls[0]["path"] == "/messages"
 
 
-def test_startup_db_sweep(mock_worker) -> None:
+def test_startup_recovery_classifies_by_checkpoint(mock_worker) -> None:
+    """Startup recovery (C5) replaces the blanket sweep with per-task
+    classification: a processing task with NO/pre-submit checkpoint is failed
+    (nothing spent); one whose checkpoint reached submit_attempted is
+    indeterminate (a credit may have been spent — never silently failed)."""
     settings = get_settings()
     db_path = settings.resolved_db_path()
     profile_name = "default"
 
-    # Pre-populate database with a task that is "processing"
+    # Pre-populate two processing tasks: one pre-submit, one post-submit.
     with DataStore.open(db_path) as store:
         repo = QueueRepository(store)
         store.conn.execute(
             "INSERT OR IGNORE INTO profiles(name, profile_dir, first_seen_at) "
             "VALUES ('default', 'C:/profiles/default', '2026-06-24T00:00:00Z')"
         )
-        repo.enqueue_task(
-            task_id="task-swept",
-            profile_name=profile_name,
-            task_type="t2i",
-            payload={"prompt": "sweep me"},
+        repo.enqueue_task("task-presubmit", profile_name, "t2i", {"prompt": "safe fail"})
+        repo.update_task_status("task-presubmit", "processing")
+
+        repo.enqueue_task("task-postsubmit", profile_name, "t2i", {"prompt": "uncertain"})
+        repo.update_task_status("task-postsubmit", "processing")
+        repo.update_checkpoint(
+            "task-postsubmit",
+            claimant="worker:default:1",
+            phase="submit_attempted",
+            may_have_spent=True,
         )
-        repo.update_task_status("task-swept", "processing")
 
     with TestClient(app):
         pass
 
-    # Verify task has been swept to "failed"
     with DataStore.open(db_path) as store:
         repo = QueueRepository(store)
-        task_after = repo.get_task("task-swept")
-        assert task_after is not None
-        assert task_after.status == "failed"
-        assert task_after.error is not None
-        assert "Daemon shut down or restarted unexpectedly." in task_after.error["detail"]
+        pre = repo.get_task("task-presubmit")
+        assert pre is not None
+        assert pre.status == "failed"
+        assert pre.error is not None
+        assert "before any submit" in pre.error["detail"]
+
+        post = repo.get_task("task-postsubmit")
+        assert post is not None
+        assert post.status == "indeterminate"
+        assert post.error is not None
+        assert "credit may have been spent" in post.error["detail"]
 
 
 def test_profile_lockfile_lifecycle(mock_worker) -> None:

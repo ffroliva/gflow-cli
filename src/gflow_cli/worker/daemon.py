@@ -8,7 +8,7 @@ from typing import Any, cast
 import structlog
 
 from gflow_cli.api.client import FlowApiClient
-from gflow_cli.api.dto import ProjectInfo
+from gflow_cli.api.dto import GenerationCheckpoint, ProjectInfo
 from gflow_cli.api.image import GenerateImageRequest
 from gflow_cli.api.video import GenerateVideoRequest, VideoStarted
 from gflow_cli.config import get_settings
@@ -26,7 +26,7 @@ from gflow_cli.observability import exception_message_hash
 from gflow_cli.paths import image_output_path
 from gflow_cli.storage import cloud_info_from_path
 from gflow_cli.worker import codec
-from gflow_cli.worker.queue import QueueRepository, QueueTask
+from gflow_cli.worker.queue import QueueRepository, QueueTask, mark_interrupted
 
 logger = structlog.get_logger()
 
@@ -89,6 +89,57 @@ class FlowWorker:
             profile_name=self.profile_name,
         )
 
+        claimant = task.claimant or f"worker:{self.profile_name}:{os.getpid()}"
+        # Mutable holder so the observer sees the project id once it is resolved —
+        # an image task may auto-create its Flow project inside the client block.
+        checkpoint_project_id: list[str | None] = [task.payload.get("project_id")]
+
+        def save_checkpoint(
+            phase: str,
+            *,
+            may_have_spent: bool,
+            operation_id: str | None = None,
+            media_ids: tuple[str, ...] = (),
+            workflow_ids: tuple[str, ...] = (),
+        ) -> None:
+            # Observer-exception policy (C1 deferred decision): a checkpoint-persist
+            # failure MUST NOT abort a generation already in flight — that would
+            # waste a submit. Log and continue. Every write routes through
+            # update_checkpoint -> make_checkpoint_document (the redaction allow-list).
+            try:
+                self.repo.update_checkpoint(
+                    task.task_id,
+                    claimant=claimant,
+                    phase=phase,
+                    may_have_spent=may_have_spent,
+                    project_id=checkpoint_project_id[0],
+                    operation_id=operation_id,
+                    media_ids=media_ids,
+                    workflow_ids=workflow_ids,
+                )
+            except Exception as exc:
+                logger.warning(
+                    "checkpoint_persist_failed",
+                    task_id=task.task_id,
+                    phase=phase,
+                    exc_info=exc,
+                )
+
+        def observe_checkpoint(cp: GenerationCheckpoint) -> None:
+            # Any emitted phase is at/after submit_attempted (C1 emits it right
+            # before the credit gesture), so may_have_spent is always True here.
+            save_checkpoint(
+                cp.phase,
+                may_have_spent=True,
+                operation_id=cp.operation_id,
+                media_ids=cp.media_ids,
+                workflow_ids=cp.workflow_ids,
+            )
+
+        # Pre-submit checkpoint: nothing spent yet. A crash/cancel before the
+        # observer fires classifies as a safe failure (queue.classify_interrupted).
+        save_checkpoint("claimed", may_have_spent=False)
+
         settings = get_settings()
         profile_dir = settings.profile_subdir(task.profile_name)
         headless = task.payload.get("headless", settings.headless)
@@ -136,6 +187,9 @@ class FlowWorker:
                             project = await client.create_project(title=project_title)
                             project_flow_id = project.project_id
                             project_created = True
+                        # Now that the project is resolved, the observer can persist
+                        # it (the credit-free video recovery key; harmless for images).
+                        checkpoint_project_id[0] = project_flow_id
 
                         # Resolve @-mentions and expand --tool specs (shared helper).
                         from gflow_cli.services.mentions import resolve_and_apply
@@ -150,13 +204,18 @@ class FlowWorker:
                         )
 
                         if count == 1:
-                            img = await client.generate_image(project_id=project_flow_id, req=req)
+                            img = await client.generate_image(
+                                project_id=project_flow_id,
+                                req=req,
+                                on_checkpoint=observe_checkpoint,
+                            )
                             images = [img]
                         else:
                             images = await client.generate_images_batch(
                                 project_id=project_flow_id,
                                 req=req,
                                 count=count,
+                                on_checkpoint=observe_checkpoint,
                             )
 
                         recorder.verify_media_attribution(
@@ -274,6 +333,7 @@ class FlowWorker:
                             out_dir=out_dir,
                             download=True,
                             on_started=on_started,
+                            on_checkpoint=observe_checkpoint,
                         )
                         flow_media_id = result.status.media_id
 
@@ -316,6 +376,20 @@ class FlowWorker:
                 )
             else:
                 raise ValueError(f"Unknown task type: {task.task_type}")
+
+        except asyncio.CancelledError:
+            # Cooperative cancellation: persist a truthful terminal state from the
+            # checkpoint reached (pre-submit -> failed; after submit_attempted ->
+            # indeterminate — a submitted task is NEVER silently failed and NEVER
+            # resubmitted), then re-raise so the poll loop / lifespan sees the ack.
+            status = mark_interrupted(
+                self.repo,
+                task.task_id,
+                self.repo.read_checkpoint(task.task_id),
+                "cancelled",
+            )
+            logger.info("task_cancelled", task_id=task.task_id, status=status)
+            raise
 
         except Exception as exc:
             logger.exception(

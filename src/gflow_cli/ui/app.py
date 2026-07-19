@@ -15,7 +15,7 @@ from gflow_cli.data.redaction import redact_metadata
 from gflow_cli.data.store import DataStore
 from gflow_cli.mcp.server import server
 from gflow_cli.worker.daemon import FlowWorker
-from gflow_cli.worker.queue import QueueRepository
+from gflow_cli.worker.queue import QueueRepository, recover_processing
 
 logger = structlog.get_logger()
 
@@ -31,14 +31,19 @@ async def lifespan(app: FastAPI):
         "Initializing gflow-daemon lifespan", profile_name=profile_name, db_path=str(db_path)
     )
 
-    # 1. Database sweep: clear processing tasks
+    # 1. Startup crash recovery: classify each hung 'processing' row by its
+    #    checkpoint instead of blanket-failing. A task whose submit may have spent
+    #    a credit becomes 'indeterminate' (never silently failed, never resubmit);
+    #    a pre-submit task becomes 'failed'. Never calls generation.
     with DataStore.open(db_path) as store:
         repo = QueueRepository(store)
-        swept_count = repo.fail_processing_tasks(
-            profile_name, "Daemon shut down or restarted unexpectedly."
-        )
-        if swept_count > 0:
-            logger.info("Swept hung processing tasks to failed on startup", count=swept_count)
+        recovered = recover_processing(repo, profile_name)
+        if recovered["failed"] or recovered["indeterminate"]:
+            logger.info(
+                "Recovered hung processing tasks on startup",
+                failed=recovered["failed"],
+                indeterminate=recovered["indeterminate"],
+            )
 
     # Write daemon lockfile
     import os
