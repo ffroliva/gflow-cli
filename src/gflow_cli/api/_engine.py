@@ -70,7 +70,7 @@ CONTEXT_TEARDOWN_TIMEOUT_S = _CONTEXT_CLOSE_TIMEOUT_S + _FORCE_CLOSE_TIMEOUT_S +
 async def run_teardown_step(
     coro: Coroutine[Any, Any, Any],
     *,
-    timeout: float,
+    timeout: float,  # NOSONAR S7483 - bounded-teardown helper; timeout is its contract
     owner: str,
     step: str,
 ) -> BaseException | None:
@@ -96,7 +96,7 @@ async def run_teardown_step(
     inner = asyncio.ensure_future(asyncio.wait_for(coro, timeout=timeout))
     try:
         await asyncio.shield(inner)
-    except asyncio.CancelledError as exc:
+    except asyncio.CancelledError as exc:  # NOSONAR S7497 - caller re-raises last (docstring)
         # Our task was cancelled. shield left ``inner`` running detached; it is
         # bounded by its own wait_for, but abandon it now (the driver stop that
         # runs next force-kills chrome anyway) so the lease release the caller

@@ -57,6 +57,9 @@ _KNOWN_TASK_TYPES = _IMAGE_TASK_TYPES | _VIDEO_TASK_TYPES
 CURRENT_SCHEMA_VERSION = 1
 _KNOWN_SCHEMA_VERSIONS = (0, CURRENT_SCHEMA_VERSION)
 
+# RFC 9457 `route` stamped on every QueueSchemaError raised from this codec.
+_CODEC_ROUTE = "worker.queue.codec"
+
 
 @dataclass(frozen=True)
 class DecodedPayload:
@@ -89,12 +92,12 @@ def decode_payload(task_type: str, payload: dict[str, Any]) -> DecodedPayload:
     if version not in _KNOWN_SCHEMA_VERSIONS:
         raise QueueSchemaError(
             f"unknown schema_version {version!r} (known: {_KNOWN_SCHEMA_VERSIONS})",
-            route="worker.queue.codec",
+            route=_CODEC_ROUTE,
         )
     if task_type not in _KNOWN_TASK_TYPES:
         raise QueueSchemaError(
             f"unknown task_type {task_type!r} (known: {sorted(_KNOWN_TASK_TYPES)})",
-            route="worker.queue.codec",
+            route=_CODEC_ROUTE,
         )
 
     fields = {k: v for k, v in payload.items() if k != "schema_version"}
@@ -107,7 +110,7 @@ def decode_payload(task_type: str, payload: dict[str, Any]) -> DecodedPayload:
         )
     except (KeyError, ValueError, TypeError) as exc:
         detail = redact_error_detail(f"{task_type} payload rejected: {exc}")
-        raise QueueSchemaError(detail, route="worker.queue.codec") from exc
+        raise QueueSchemaError(detail, route=_CODEC_ROUTE) from exc
 
     return DecodedPayload(
         schema_version=version, task_type=task_type, request=request, fields=fields
