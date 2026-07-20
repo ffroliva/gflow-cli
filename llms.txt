@@ -24,7 +24,7 @@ This file is forward-staged for a future docs site at https://ffroliva.github.io
 
 ## For AI coding agents
 
-- [AGENTS.md](https://github.com/ffroliva/gflow-cli/blob/main/AGENTS.md): Universal coding-agent spec (Cursor, Codex, Aider, Gemini CLI, Claude Code, etc.).
+- [AGENTS.md](https://github.com/ffroliva/gflow-cli/blob/main/AGENTS.md): Universal coding-agent spec (Cursor, Codex, Aider, Antigravity, Claude Code, etc.).
 - [CLAUDE.md](https://github.com/ffroliva/gflow-cli/blob/main/CLAUDE.md): Claude Code's auto-loaded memory hub.
 - [docs/AGENT_GUIDE.md](https://github.com/ffroliva/gflow-cli/blob/main/docs/AGENT_GUIDE.md): Mandates and routing rules for agents.
 

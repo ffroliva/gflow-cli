@@ -90,7 +90,7 @@ gflow-cli ships four agent entry points. Pick the one your tool reads first.
 
 | File | Audience | Tools |
 |---|---|---|
-| [**AGENTS.md**](AGENTS.md) | Universal coding-agent spec | Cursor · Codex · Aider · Gemini CLI · Jules · Devin · Windsurf · Zed · Warp · opencode · Copilot |
+| [**AGENTS.md**](AGENTS.md) | Universal coding-agent spec | Cursor · Codex · Aider · Antigravity · Jules · Devin · Windsurf · Zed · Warp · opencode · Copilot |
 | [**CLAUDE.md**](CLAUDE.md) | Claude Code's auto-loaded memory | Claude Code |
 | [**llms.txt**](llms.txt) | LLM-readable summary (llmstxt.org format) | Paste into ChatGPT, Claude, or Gemini to onboard the model |
 | [`skills/gflow-cli/SKILL.md`](skills/gflow-cli/SKILL.md) | Claude Code Skill | Symlink into `~/.claude/skills/` |

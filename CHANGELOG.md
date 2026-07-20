@@ -9,14 +9,21 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ### Changed
 
-- **`llm-council` skill:** deprecated Gemini CLI as the pinned `high`-tier
-  external reviewer. The tier's second external slot is now generalized to
-  "any external CLI coding agent" — probe `<tool> --version`, prefer a
-  non-interactive read-only exec mode, discover the recipe on first use — so
-  cross-model corroboration no longer depends on one specific product. The
-  `gemini` registry entry is kept as a deprecated pointer to the generic slot.
-  Forward-looking references in `AGENTS.md`, `docs/INDEX.md`, and the
-  `/gflow:llm-council` command updated for consistency.
+- **Replaced Gemini CLI with Antigravity (`agy`) as the supported Google
+  coding agent** across skills and docs (Google retired Gemini CLI in favor
+  of the Antigravity harness). Antigravity auto-discovers `AGENTS.md`
+  natively, so the dedicated `GEMINI.md` hub is **removed** and Antigravity
+  is listed among the auto-discovering tools in `AGENTS.md`.
+- **`llm-council` skill:** the `high` tier's second external reviewer is now
+  Antigravity (`agy`) instead of Gemini CLI (`codex` + `agy`); `agy` is
+  promoted from an opt-in tool to the pinned `high`-tier slot and the
+  `--include-agy` flag is dropped. When `agy` is unavailable or fails
+  non-interactively, the skill now suggests installing Antigravity or
+  substituting another external CLI coding agent rather than failing.
+- Forward-looking agent references updated for consistency across
+  `AGENTS.md`, `CLAUDE.md`, `README.md`, `llms.txt`, `docs/INDEX.md`,
+  `docs/AGENT_GUIDE.md`, `skills/*`, and CI helper strings. Historical
+  release notes and past verification records are left unchanged.
 
 ## [0.41.0] — 2026-07-20
 

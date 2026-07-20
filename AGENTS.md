@@ -2,7 +2,7 @@
 
 > Universal entry point for AI coding agents. Read this first; everything else routes from here.
 
-Supported tools that auto-discover this file: Cursor, Codex, Aider, Jules, Devin, Windsurf, Zed, Warp, opencode, RooCode, Amp, Junie, Phoenix, GitHub Copilot, VS Code, Factory, Augment, Semgrep, Kilo Code, UiPath. Gemini CLI reads [GEMINI.md](GEMINI.md) and Claude Code reads [CLAUDE.md](CLAUDE.md), both of which cross-reference this file.
+Supported tools that auto-discover this file: Cursor, Codex, Aider, Antigravity (`agy`), Jules, Devin, Windsurf, Zed, Warp, opencode, RooCode, Amp, Junie, Phoenix, GitHub Copilot, VS Code, Factory, Augment, Semgrep, Kilo Code, UiPath. Claude Code reads [CLAUDE.md](CLAUDE.md), which cross-references this file.
 
 ## Project at a glance
 
@@ -92,7 +92,7 @@ The `skills/` directory ships installable agent skill docs in plain Markdown wit
 | `plan` | [`skills/plan/SKILL.md`](skills/plan/SKILL.md) | Create a structured task-by-task implementation plan for a feature |
 | `status` | [`skills/status/SKILL.md`](skills/status/SKILL.md) | Show current plan state, progress, and next unchecked task |
 | `pr-council-review` | [`skills/pr-council-review/SKILL.md`](skills/pr-council-review/SKILL.md) | Multi-dimensional PR council review |
-| `llm-council` | [`skills/llm-council/SKILL.md`](skills/llm-council/SKILL.md) | Wraps `pr-council-review` with external CLI reviewers (`codex`, opt-in `agy`, plus any additional CLI coding agent) for high-stakes reviews |
+| `llm-council` | [`skills/llm-council/SKILL.md`](skills/llm-council/SKILL.md) | Wraps `pr-council-review` with external CLI reviewers (`codex` + Antigravity `agy`) for high-stakes reviews |
 | `issue-assessment` | [`skills/issue-assessment/SKILL.md`](skills/issue-assessment/SKILL.md) | Triage a GitHub issue (read-only) before any fix work |
 | `issue-resolve` | [`skills/issue-resolve/SKILL.md`](skills/issue-resolve/SKILL.md) | Drive an assessed issue to a test-first fix + draft PR |
 | `check` | [`skills/check/SKILL.md`](skills/check/SKILL.md) | Quality gates (lint/format/types/tests) before every commit |
@@ -108,7 +108,7 @@ and must be resolvable by ANY agent via this file. Vendor directories hold thin 
 only (`.claude/commands/gflow/*.md` are pointers into `skills/`); never put protocol
 content in a vendor directory.
 
-**Cursor / Aider / Codex / Gemini CLI (`agy`):** paste or include the relevant `SKILL.md` in your system context. Note: in the `agy` TUI prompt, custom slash commands (e.g. `/gflow:pr-council-review`) are blocked by the TUI's command parser. Type them as plain text without the leading slash (e.g. `gflow:pr-council-review`, `gflow:branch-review`, or `gflow:check`) to trigger the corresponding agent skill workflow.
+**Cursor / Aider / Codex / Antigravity (`agy`):** paste or include the relevant `SKILL.md` in your system context. Note: in the `agy` TUI prompt, custom slash commands (e.g. `/gflow:pr-council-review`) are blocked by the TUI's command parser. Type them as plain text without the leading slash (e.g. `gflow:pr-council-review`, `gflow:branch-review`, or `gflow:check`) to trigger the corresponding agent skill workflow.
 **Claude Code:** the `/gflow:` slash commands in `.claude/commands/gflow/` are auto-discovered when the project is open — no extra setup needed. To register a skill globally, copy the command file to `~/.claude/commands/`.
 **Custom agents:** fetch `skills/gflow-cli/SKILL.md` into your knowledge base before answering gflow questions.
 

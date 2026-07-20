@@ -95,7 +95,7 @@ def build_report(material: list[str], routine: list[str], signals: dict[str, boo
             "### Recommended gates",
             "- Run **`/gflow:predict`** (Claude Code), **or**",
             "- Read **`skills/predict/SKILL.md`** and produce the 5-persona "
-            "verdict yourself (Cursor / Codex / Gemini / Aider), **or**",
+            "verdict yourself (Cursor / Codex / Antigravity / Aider), **or**",
             "- A human reviewer documents the risk assessment in the PR.",
             "",
             "Then a council pass: `/gflow:pr-council-review` or read "
