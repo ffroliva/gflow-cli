@@ -265,6 +265,7 @@ def _given_driver_count4_landscape(driver_state: dict[str, Any]) -> None:
     page = MagicMock()
     asyncio.run(driver.configure_image_settings(page, req))
     driver_state["driver"] = driver
+    driver_state["request"] = req
 
 
 @when('I call send_prompt with text "a red apple"')
@@ -296,7 +297,13 @@ def _when_send_prompt_red_apple(driver_state: dict[str, Any]) -> None:
 
     page.locator = MagicMock(side_effect=_locator)
 
-    asyncio.run(driver.send_prompt(page, "a red apple"))
+    # The configured request's count / aspect are threaded into the directive
+    # at submit time (no pending driver state) — mirrors AgenticFlowUiDriver.submit_images.
+    from gflow_cli.api.transports.drivers.agentic import _ASPECT_PROMPT_LABEL
+
+    req = driver_state["request"]
+    aspect = _ASPECT_PROMPT_LABEL.get(str(req.aspect))
+    asyncio.run(driver.send_prompt(page, "a red apple", count=req.count, aspect=aspect))
     driver_state["keyboard_mock"] = keyboard
 
 

@@ -850,6 +850,33 @@ class TestSendPrompt:
         page.screenshot.assert_not_called()
 
 
+@pytest.mark.asyncio
+async def test_submit_listener_is_registered_before_click() -> None:
+    """Classic path invariant: the ``batchGenerateImages`` response listener is
+    attached BEFORE the submit button is clicked, so a fast response is never
+    missed. Exercises the real building blocks the classic ``_generate_images_locked``
+    runs back-to-back: ``_attach_batch_response_listener`` (``page.on``) then the
+    classic driver's ``send_prompt`` (which clicks submit via the typed transport
+    seam)."""
+    from gflow_cli.api.transports.drivers.classic import ClassicFlowUiDriver
+
+    events: list[str] = []
+    page = _make_prompt_page(input_visible=True, submit_visible=True)
+    page.on = MagicMock(side_effect=lambda _event, _cb: events.append("listener_registered"))
+    page._submit_loc.click = AsyncMock(  # type: ignore[attr-defined]
+        side_effect=lambda *_a, **_k: events.append("submit_clicked")
+    )
+
+    t = UiAutomationTransport()
+    driver = ClassicFlowUiDriver(transport=t)
+
+    # Production ordering: attach the listener, THEN submit.
+    t._attach_batch_response_listener(page, project_id="abc-123")  # type: ignore[attr-defined]
+    await driver.send_prompt(page, "hello")
+
+    assert events.index("listener_registered") < events.index("submit_clicked")
+
+
 # ---------------------------------------------------------------------------
 # Unit 3.6 — _capture_batch_response(page, timeout_s, poll_interval_s)
 # ---------------------------------------------------------------------------
@@ -1158,7 +1185,7 @@ class TestGenerateImages:
         ):
             await t.generate_images(project_id="ignored", request=_req())
 
-        mock_get_driver.assert_called_once_with(t._page, ui_mode=UiMode.CLASSIC)
+        mock_get_driver.assert_called_once_with(t._page, ui_mode=UiMode.CLASSIC, transport=t)
 
     @pytest.mark.asyncio
     async def test_non_200_response_raises(self) -> None:

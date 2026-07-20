@@ -2157,9 +2157,9 @@ class UiAutomationTransport(VideoGenerationMixin):
         required_mode = infer_required_ui_mode(
             base_mode, has_instructions=bool(request.instructions)
         )
-        ui_driver = await get_ui_driver(page, ui_mode=required_mode)
-        if ui_driver.name == "classic":
-            ui_driver._transport = self  # type: ignore[union-attr]
+        # Inject ``self`` into the classic driver at construction (via the
+        # factory) — never mutate ``_transport`` onto the driver after the fact.
+        ui_driver = await get_ui_driver(page, ui_mode=required_mode, transport=self)
 
         # Select Image mode explicitly. If the account was last in Video mode,
         # an unguarded submission goes to the video endpoint and the image
@@ -2219,9 +2219,13 @@ class UiAutomationTransport(VideoGenerationMixin):
         async with self._intercept_reference_entities(page, expected_ents):
             # Agentic path: DOM scraping (page-level network capture is dead in this
             # cohort — requests are Web-Worker-delegated, so 0 entries are captured).
-            if ui_driver.name == "agentic":
-                await ui_driver.send_prompt(page, request.prompt, out_dir=out_dir)
-                return await ui_driver.await_images(page, request.count, out_dir=out_dir)
+            # The request + expected count are handed to the driver directly.
+            from gflow_cli.api.transports.drivers.agentic import (  # noqa: PLC0415
+                AgenticFlowUiDriver,
+            )
+
+            if isinstance(ui_driver, AgenticFlowUiDriver):
+                return await ui_driver.submit_images(page, request, request.count, out_dir=out_dir)
 
             # Classic path: network-capture via response listener (unchanged).
             # Attach the response listener SYNCHRONOUSLY before any prompt
@@ -2404,10 +2408,13 @@ class UiAutomationTransport(VideoGenerationMixin):
             return _fail(exc)
 
         # Agentic path: DOM scraping — no page-level listener (Web-Worker-delegated).
-        if ui_driver.name == "agentic":
+        from gflow_cli.api.transports.drivers.agentic import (  # noqa: PLC0415
+            AgenticFlowUiDriver,
+        )
+
+        if isinstance(ui_driver, AgenticFlowUiDriver):
             try:
-                await ui_driver.send_prompt(page, req.prompt, out_dir=out_dir)
-                images = await ui_driver.await_images(page, req.count, out_dir=out_dir)
+                images = await ui_driver.submit_images(page, req, req.count, out_dir=out_dir)
             except Exception as exc:
                 return _fail(exc)
             return (
@@ -2562,9 +2569,9 @@ class UiAutomationTransport(VideoGenerationMixin):
         # if batch ever gains instruction support.
         from gflow_cli.config import resolve_ui_mode
 
-        ui_driver = await get_ui_driver(page, ui_mode=resolve_ui_mode(None))
-        if ui_driver.name == "classic":
-            ui_driver._transport = self  # type: ignore[union-attr]
+        # Inject ``self`` into the classic driver at construction (via the
+        # factory) — never mutate ``_transport`` onto the driver after the fact.
+        ui_driver = await get_ui_driver(page, ui_mode=resolve_ui_mode(None), transport=self)
 
         try:
             await ui_driver.switch_to_image_mode(page, out_dir=out_dir)
