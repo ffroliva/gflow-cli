@@ -196,7 +196,7 @@ class ProfileLease:
 
     # -- async pass-through (see module docstring) --------------------------
 
-    async def aacquire(self) -> ProfileLease:
+    async def aacquire(self) -> ProfileLease:  # NOSONAR S7503 - deliberate async symmetry
         """Async convenience wrapper for D3's async call sites. See module docstring."""
         return self.acquire()
 
