@@ -820,13 +820,34 @@ class UiAutomationTransport(VideoGenerationMixin):
                 "ui_automation.setup_own_context",
                 profile_dir=str(profile_dir),
             )
-        except Exception:
-            # Partial-setup leak guard. The context must be closed BEFORE the
+        except BaseException:
+            # Partial-setup leak guard. Catches BaseException (not just
+            # Exception) so a CancelledError mid-setup ALSO tears down the
+            # launched context (D4) — otherwise a cancelled launch would orphan
+            # chrome and leak the lease. The context must be closed BEFORE the
             # driver exits — stopping only the driver leaves the detached
-            # system-Chrome alive holding the profile dir (issue #293).
+            # system-Chrome alive holding the profile dir (issue #293). Each
+            # cleanup step is bounded + shielded so the cleanup itself cannot be
+            # interrupted before the lease release; the original error re-raises.
+            from gflow_cli.api._engine import (  # noqa: PLC0415
+                CONTEXT_TEARDOWN_TIMEOUT_S,
+                DRIVER_STOP_TIMEOUT_S,
+                run_teardown_step,
+            )
+
             if ctx is not None:
-                await close_context_bounded(ctx, owner="ui_automation")
-            await pw_cm.__aexit__(None, None, None)
+                await run_teardown_step(
+                    close_context_bounded(ctx, owner="ui_automation"),
+                    timeout=CONTEXT_TEARDOWN_TIMEOUT_S,
+                    owner="ui_automation",
+                    step="setup_context_close",
+                )
+            await run_teardown_step(
+                pw_cm.__aexit__(None, None, None),
+                timeout=DRIVER_STOP_TIMEOUT_S,
+                owner="ui_automation",
+                step="setup_driver_exit",
+            )
             # Release the lease last — after context + driver are down (D3).
             if self._lease is not None:
                 self._lease.release()
@@ -3034,30 +3055,53 @@ class UiAutomationTransport(VideoGenerationMixin):
         """
         if not self._setup_done:
             return
-        if self._owns_playwright and self._pw_cm is not None:
-            from gflow_cli.api._engine import (  # noqa: PLC0415
-                DRIVER_STOP_TIMEOUT_S,
-                close_context_bounded,
-            )
+        from gflow_cli.api._engine import (  # noqa: PLC0415
+            CONTEXT_TEARDOWN_TIMEOUT_S,
+            DRIVER_STOP_TIMEOUT_S,
+            close_context_bounded,
+            run_teardown_step,
+        )
 
-            if self._ctx is not None:
-                # Bounded close + force-close fallback (issue #293) — same
-                # helper as FlowApiClient's teardown; this standalone path had
-                # the identical unbounded-close-and-swallow gap.
-                await close_context_bounded(self._ctx, owner="ui_automation")
-            try:
-                await asyncio.wait_for(
-                    self._pw_cm.__aexit__(None, None, None), timeout=DRIVER_STOP_TIMEOUT_S
+        # Cancellation-complete teardown (D4): each step is bounded + shielded so
+        # a CancelledError landing mid-close cannot skip the driver exit or the
+        # lease release in `finally`; the original cancellation re-raises last.
+        # Teardown order: (4) close context -> exit driver; (6) release lease.
+        cancelled: BaseException | None = None
+        try:
+            if self._owns_playwright and self._pw_cm is not None:
+                if self._ctx is not None:
+                    # Bounded close + force-close fallback (issue #293) — same
+                    # helper as FlowApiClient's teardown; this standalone path
+                    # had the identical unbounded-close-and-swallow gap.
+                    cancelled = (
+                        await run_teardown_step(
+                            close_context_bounded(self._ctx, owner="ui_automation"),
+                            timeout=CONTEXT_TEARDOWN_TIMEOUT_S,
+                            owner="ui_automation",
+                            step="context_close",
+                        )
+                        or cancelled
+                    )
+                cancelled = (
+                    await run_teardown_step(
+                        self._pw_cm.__aexit__(None, None, None),
+                        timeout=DRIVER_STOP_TIMEOUT_S,
+                        owner="ui_automation",
+                        step="driver_exit",
+                    )
+                    or cancelled
                 )
-            except Exception as e:
-                log.warning("ui_automation.playwright_exit_failed", error=str(e))
-        # Release the profile lease last — after the context is closed and the
-        # driver stopped (D3). No-op on the shared-page path (lease is None).
-        if self._lease is not None:
-            self._lease.release()
-            self._lease = None
-        self._pw_cm = None
-        self._ctx = None
-        self._page = None
-        self._setup_done = False
-        self._owns_playwright = False
+        finally:
+            # Release the profile lease last — after the context is closed and
+            # the driver stopped (D3). No-op on the shared-page path (lease is
+            # None). Field resets survive even a cancelled teardown.
+            if self._lease is not None:
+                self._lease.release()
+                self._lease = None
+            self._pw_cm = None
+            self._ctx = None
+            self._page = None
+            self._setup_done = False
+            self._owns_playwright = False
+        if cancelled is not None:
+            raise cancelled

@@ -29,12 +29,14 @@ from playwright.async_api import BrowserContext, Page, Playwright, async_playwri
 
 from gflow_cli.api import routes
 from gflow_cli.api._engine import (
+    CONTEXT_TEARDOWN_TIMEOUT_S,
     DRIVER_STOP_TIMEOUT_S,
     active_engine,
     close_context_bounded,
     log_engine_selected,
     mint_evaluate_kwargs,
     resolve_async_playwright,
+    run_teardown_step,
 )
 from gflow_cli.api._retry import parse_retry_after, post_with_retry
 from gflow_cli.api.character import Character, CharacterImageRequest, parse_characters
@@ -737,16 +739,30 @@ class FlowApiClient:
 
         Shared by :meth:`__aexit__` and :meth:`__aenter__`'s partial-setup
         guard so a failed launch can't orphan a chrome process that then locks
-        the profile dir. Each step is independently guarded so one failure
-        still runs the next; errors surface as warnings (CLAUDE.md: never
-        silently swallow). Resets the browser fields so a reused client never
-        holds references to a dead BrowserContext.
+        the profile dir.
+
+        Cancellation-complete (D4): each teardown step runs through
+        :func:`run_teardown_step` (bounded + shielded), so a ``CancelledError``
+        landing mid-context-close cannot skip the driver stop below and cannot
+        skip the lease release in ``finally``. The original cancellation is
+        captured and re-raised LAST, after every ownership-release step has run.
+        Teardown order: (4) close context/browser -> stop driver;
+        (6) release the profile lease.
         """
+        cancelled: BaseException | None = None
         try:
             if self._context is not None:
                 # Bounded close + force-close fallback (issue #293) — shared
                 # with the transports' own-context teardowns via _engine.
-                await close_context_bounded(self._context, owner="client")
+                cancelled = (
+                    await run_teardown_step(
+                        close_context_bounded(self._context, owner="client"),
+                        timeout=CONTEXT_TEARDOWN_TIMEOUT_S,
+                        owner="client",
+                        step="context_close",
+                    )
+                    or cancelled
+                )
                 # HAR files hold live auth cookies/bearer tokens — higher
                 # sensitivity than the CDP lockfile the (now-removed) packaged
                 # CDP lifecycle used to harden in browser_manager.py. Playwright
@@ -759,12 +775,19 @@ class FlowApiClient:
                     except OSError:
                         logger.warning("client.har_chmod_failed", exc_info=True)
             if self._pw is not None:
-                try:
-                    # pw.stop() awaits the Node driver's exit with no deadline
-                    # of its own — a wedged driver would hang teardown forever.
-                    await asyncio.wait_for(self._pw.stop(), timeout=DRIVER_STOP_TIMEOUT_S)
-                except Exception:
-                    logger.warning("playwright_stop_error", exc_info=True)
+                # pw.stop() awaits the Node driver's exit with no deadline of
+                # its own — a wedged driver would hang teardown forever, so it
+                # is bounded here. It runs even when the context close above was
+                # abandoned by cancellation (driver stop force-kills chrome).
+                cancelled = (
+                    await run_teardown_step(
+                        self._pw.stop(),
+                        timeout=DRIVER_STOP_TIMEOUT_S,
+                        owner="client",
+                        step="driver_stop",
+                    )
+                    or cancelled
+                )
         finally:
             # Field resets must survive even cancellation (Ctrl-C mid-close),
             # or a reused client holds references to a dead BrowserContext.
@@ -780,6 +803,10 @@ class FlowApiClient:
             if self._lease is not None:
                 self._lease.release()
                 self._lease = None
+        # Re-raise the original cancellation only after teardown completed, so a
+        # cancelled close still stopped Playwright and released the lease.
+        if cancelled is not None:
+            raise cancelled
 
     async def _checkout_page(self) -> Page:
         """Block until a Page is available from the pool; FIFO.

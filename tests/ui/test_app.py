@@ -156,3 +156,47 @@ async def test_lifespan_cancels_running_worker() -> None:
     # Reaching here means shutdown cancelled the worker and returned cleanly.
     instance.stop.assert_called_once()
     instance.close.assert_called_once()
+
+
+@pytest.mark.asyncio
+async def test_daemon_lifespan_releases_lease_after_worker_cancellation() -> None:
+    """D4: when the lifespan itself is cancelled mid-run, its try/finally
+    shutdown still runs (stop -> cancel worker -> close store), leaving the
+    profile free — a fresh ProfileLease.try_acquire succeeds (nothing leaked)."""
+    from gflow_cli.profile_lease import ProfileLease
+
+    settings = get_settings()
+    profile_dir = settings.profile_subdir("default")
+
+    started = asyncio.Event()
+
+    async def _never_ending() -> None:
+        started.set()
+        await asyncio.Event().wait()  # blocks until cancelled
+
+    with patch("gflow_cli.ui.app.FlowWorker") as mock_cls:
+        instance = MagicMock()
+        instance.start = _never_ending
+        instance.stop = MagicMock()
+        instance.close = MagicMock()
+        mock_cls.return_value = instance
+
+        async def _run() -> None:
+            # Block forever INSIDE the lifespan body so cancelling this task
+            # exercises the lifespan's try/finally shutdown path.
+            async with lifespan(app):
+                await asyncio.Event().wait()
+
+        task = asyncio.create_task(_run())
+        await asyncio.wait_for(started.wait(), timeout=1)
+        task.cancel()
+        with pytest.raises(asyncio.CancelledError):
+            await task
+
+    # Shutdown ran despite the cancellation.
+    instance.stop.assert_called_once()
+    instance.close.assert_called_once()
+    # Nothing leaked the profile: it acquires cleanly afterwards.
+    lease = ProfileLease(profile_dir)
+    assert lease.try_acquire() is True
+    lease.release()
