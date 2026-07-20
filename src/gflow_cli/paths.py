@@ -74,6 +74,16 @@ def user_tools_dir(home: Path) -> Path:
     return home / "tools"
 
 
+def locks_dir(home: Path) -> Path:
+    """Where cross-process profile-lease lock files live, under GFLOW_CLI_HOME.
+
+    See `gflow_cli.profile_lease.ProfileLease` — one file per canonical
+    resolved profile directory, holding a kernel advisory lock plus
+    diagnostic-only metadata. Never deleted while (or after) held.
+    """
+    return home / "locks"
+
+
 def validate_job_id(job_id: str) -> str:
     if not _SAFE_ID_RE.match(job_id):
         msg = f"Unsafe job_id returned by API: {job_id!r}"
