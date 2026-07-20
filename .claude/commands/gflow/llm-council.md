@@ -1,5 +1,5 @@
 ---
-description: Run pr-council-review (PR or branch mode) plus an external-tools corroboration layer (codex, gemini, opt-in agy) for high-stakes reviews where a same-model-family blind spot is a real risk. Tiers: small (internal only, default) / medium (+codex) / high (+codex+gemini). Wrapper around skills/llm-council/SKILL.md.
+description: Run pr-council-review (PR or branch mode) plus an external-tools corroboration layer (codex, opt-in agy, plus any additional CLI coding agent) for high-stakes reviews where a same-model-family blind spot is a real risk. Tiers: small (internal only, default) / medium (+codex) / high (+codex+one additional external CLI). Wrapper around skills/llm-council/SKILL.md.
 ---
 
 # `/gflow:llm-council [PR# | --base <ref>] [--tier small|medium|high] [--include-agy]`

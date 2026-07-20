@@ -1,13 +1,13 @@
 ---
 name: llm-council
-description: Use when a pr-council-review (PR or branch mode) result needs independent corroboration from a different model family before trusting a GREEN verdict — high-stakes, security-sensitive, or architecturally significant reviews where same-model-family Claude subagents might share a blind spot. Also use when the user asks for "external", "second opinion", "cross-model", or names codex/gemini/agy alongside a review.
+description: Use when a pr-council-review (PR or branch mode) result needs independent corroboration from a different model family before trusting a GREEN verdict — high-stakes, security-sensitive, or architecturally significant reviews where same-model-family Claude subagents might share a blind spot. Also use when the user asks for "external", "second opinion", "cross-model", or names codex/agy, gemini (deprecated), or any external CLI coding agent alongside a review.
 ---
 
 # `llm-council` — external-tools review layer
 
 ## Overview
 
-Wraps `pr-council-review` (unchanged) and adds a layer of external CLI coding agents (`codex`, `gemini`, opt-in `agy`) as additional independent reviewers, then folds their verdicts into the same synthesis. Internal Claude subagents are independent per-dimension but share one model family's blind spots — a phrasing choice, a Windows-vs-POSIX nuance, or a syntax error that reads fine to one Claude reviewer reads fine to all of them. A different model family catches a different error distribution. Confirmed live: on one review, external tools caught 6 real, distinct issues (a wording-accuracy bug, a wrong test count, a Windows-only test-triviality nuance, a test-isolation gap, a missing test, a malformed markdown fence) that 12 internal Claude-subagent dispatches (6 dimensions × 2 rounds) had all missed.
+Wraps `pr-council-review` (unchanged) and adds a layer of external CLI coding agents (`codex`, opt-in `agy`, plus any additional CLI coding agent) as additional independent reviewers, then folds their verdicts into the same synthesis. Internal Claude subagents are independent per-dimension but share one model family's blind spots — a phrasing choice, a Windows-vs-POSIX nuance, or a syntax error that reads fine to one Claude reviewer reads fine to all of them. A different model family catches a different error distribution. Confirmed live: on one review, external tools caught 6 real, distinct issues (a wording-accuracy bug, a wrong test count, a Windows-only test-triviality nuance, a test-isolation gap, a missing test, a malformed markdown fence) that 12 internal Claude-subagent dispatches (6 dimensions × 2 rounds) had all missed.
 
 ## When to Use
 
@@ -20,14 +20,14 @@ Wraps `pr-council-review` (unchanged) and adds a layer of external CLI coding ag
 |---|---|---|
 | `small` (default) | ✅ full dimension council | none — identical to running `pr-council-review` directly |
 | `medium` | ✅ | `codex` |
-| `high` | ✅ | `codex` + `gemini` |
+| `high` | ✅ | `codex` + one additional external CLI (any coding agent — see registry) |
 | any tier + `--include-agy` | ✅ | + `agy` (opt-in only — see registry) |
 
 Tier controls **tool breadth**, not review rounds. Fix → re-verify → repeat until GREEN (or a round cap) happens at every tier — that's how council review works, not a tier knob.
 
 ## Tool Registry
 
-Fixed, tested invocation recipes. Do not improvise a command for a listed tool — the "obvious" invocation is often a trap (see `codex` below).
+Fixed, tested invocation recipes where one exists (`codex`, `agy`), plus a generic discovery slot for any other CLI coding agent. Do not improvise a command for a tool that has a proven recipe — the "obvious" invocation is often a trap (see `codex` below).
 
 ### `codex`
 
@@ -37,9 +37,16 @@ Fixed, tested invocation recipes. Do not improvise a command for a listed tool �
 - **Timeout budget:** real calls run 10-20 min at default (`xhigh`) reasoning effort. Always background it — never block synchronously.
 - **Orphan risk:** a killed/timed-out `codex exec` can leave `codex.exe` / `codex-code-mode-host.exe` / sandbox-helper processes running on Windows. After any kill, verify via `tasklist`/`ps` that the named PIDs are actually gone before retrying — a retry racing an orphan still writing the same output path silently corrupts the result.
 
-### `gemini`
+### Any external CLI (the `high`-tier second slot)
 
-- No proven recipe yet — first real use in a given environment IS the recipe-discovery pass. Probe with `gemini --version` first regardless.
+- The second external tool in the `high` tier is **not** pinned to a specific binary — it's any CLI coding agent available in the environment (a different-vendor agent, a local model runner, etc.). This is what lets the tier corroborate across a different model family without depending on one product.
+- **No pre-proven recipe** — the first real use of a given tool in a given environment IS the recipe-discovery pass. Always probe with `<tool> --version` first regardless.
+- Prefer a **non-interactive, read-only / sandboxed exec** mode (as with `codex exec -s read-only`). Avoid a tool's built-in "review" subcommand until proven safe — they can wedge on their own prompt (see `codex review` above).
+- Once an invocation works, record it as a new named registry entry so the next run doesn't rediscover it.
+
+### `gemini` *(deprecated)*
+
+- Gemini CLI was the original `high`-tier external tool; it is **deprecated** and no longer the pinned choice — treat it as just one instance of the generic "any external CLI" slot above. The discovery-pass guidance there applies unchanged if you do reach for it: probe `gemini --version` first, prefer a non-interactive read-only mode, no pre-proven recipe.
 
 ### `agy` (opt-in only — excluded from all default tiers)
 

@@ -74,7 +74,7 @@ Slash commands for Claude Code, stored in `.claude/commands/gflow/`. All prefixe
 | `/gflow:scenario <feature>` | 12-dimension edge-case explorer → severity-ranked scenario table + BDD skeleton | After predict GO/CAUTION; before `/gflow:plan` |
 | `/gflow:pr-council-review [PR#]` | Multi-dimensional council review of an open PR (5 baseline + adaptive dimensions) | Before merging any non-trivial PR; mandatory for auth/transport/data changes |
 | `/gflow:branch-review` | Same council review run against the current local feature branch (no PR needed) | Pre-PR self-audit; after predict/scenario on a high-stakes branch |
-| `/gflow:llm-council [PR#\|--base <ref>] [--tier small\|medium\|high]` | Wraps `pr-council-review` with external CLI reviewers (`codex`/`gemini`, opt-in `agy`) for cross-model corroboration | High-stakes reviews where a same-model-family blind spot is a real risk |
+| `/gflow:llm-council [PR#\|--base <ref>] [--tier small\|medium\|high]` | Wraps `pr-council-review` with external CLI reviewers (`codex`, opt-in `agy`, plus any additional CLI coding agent) for cross-model corroboration | High-stakes reviews where a same-model-family blind spot is a real risk |
 | `/gflow:doc-review` | Systematic council-driven audit of documentation completeness and drift | Before cutting a release; after major documentation changes |
 
 **Governance:** commands are executable docs — they decay like any doc. When a phase advances or a file path changes, update the relevant command in the same commit. `/gflow:release` includes a staleness review step.

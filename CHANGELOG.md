@@ -7,6 +7,17 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+### Changed
+
+- **`llm-council` skill:** deprecated Gemini CLI as the pinned `high`-tier
+  external reviewer. The tier's second external slot is now generalized to
+  "any external CLI coding agent" — probe `<tool> --version`, prefer a
+  non-interactive read-only exec mode, discover the recipe on first use — so
+  cross-model corroboration no longer depends on one specific product. The
+  `gemini` registry entry is kept as a deprecated pointer to the generic slot.
+  Forward-looking references in `AGENTS.md`, `docs/INDEX.md`, and the
+  `/gflow:llm-council` command updated for consistency.
+
 ## [0.41.0] — 2026-07-20
 
 ### Added
