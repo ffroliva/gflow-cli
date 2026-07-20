@@ -104,7 +104,7 @@ Onboard any agent in one line. Paste this into your agent of choice:
 ```text
 gflow CLI  →  Provider (interchangeable)  →  Flow (ui_automation) / Mock (tests) / [planned: Official Veo]
                                               ↓
-                                      Playwright Chromium (headed login, headless after)
+                                      Playwright Chromium (headed — login AND generation, by default)
                                               ↓
                               aisandbox-pa.googleapis.com  (Google's private Flow API)
 ```
@@ -117,7 +117,7 @@ gflow CLI  →  Provider (interchangeable)  →  Flow (ui_automation) / Mock (te
 
 ## Project status
 
-**Alpha.** Image (t2i, i2i, upload, upscale, batch) and video (t2v, i2v, r2v, batch, chain) run end-to-end on `ui_automation`, with a 5-model Veo picker plus `--duration` and `--count`. Beyond single generations: `gflow movie` renders multi-scene manifests, `gflow instructions` manages persistent Agent-Mode brief cards (credits-free), `gflow character` handles reusable subjects, `gflow scene` does credit-free server-side stitching, `--tool` applies prompt-rewriting tools, and an MCP server (`gflow mcp run` stdio / `gflow serve` HTTP-SSE) exposes the core surface to AI agents with a CI-enforced CLI↔MCP parity contract.
+**Alpha.** Image (t2i, i2i, upload, upscale, batch) and video (t2v, i2v, r2v, chain) run end-to-end on `ui_automation`, with a 5-model Veo picker plus `--duration` and `--count`. Beyond single generations: `gflow movie` renders multi-scene manifests, `gflow instructions` manages persistent Agent-Mode brief cards (credits-free), `gflow character` handles reusable subjects, `gflow scene` does credit-free server-side stitching, `--tool` applies prompt-rewriting tools, and an MCP server (`gflow mcp run` stdio / `gflow serve` HTTP-SSE) exposes the core surface to AI agents with a CI-enforced CLI↔MCP parity contract.
 
 Full milestone history lives in [CHANGELOG.md](CHANGELOG.md). Where the project is heading: [ROADMAP.md](ROADMAP.md).
 

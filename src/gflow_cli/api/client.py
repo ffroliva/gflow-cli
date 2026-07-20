@@ -29,16 +29,24 @@ from playwright.async_api import BrowserContext, Page, Playwright, async_playwri
 
 from gflow_cli.api import routes
 from gflow_cli.api._engine import (
+    CONTEXT_TEARDOWN_TIMEOUT_S,
     DRIVER_STOP_TIMEOUT_S,
     active_engine,
     close_context_bounded,
     log_engine_selected,
     mint_evaluate_kwargs,
     resolve_async_playwright,
+    run_teardown_step,
 )
 from gflow_cli.api._retry import parse_retry_after, post_with_retry
 from gflow_cli.api.character import Character, CharacterImageRequest, parse_characters
-from gflow_cli.api.dto import AssetInfo, GeneratedImage, ProjectInfo
+from gflow_cli.api.dto import (
+    AssetInfo,
+    GeneratedImage,
+    GenerationCheckpoint,
+    GenerationCheckpointObserver,
+    ProjectInfo,
+)
 from gflow_cli.api.image_upscale import (
     TargetResolution,
     UpsampleImageRequest,
@@ -47,7 +55,12 @@ from gflow_cli.api.image_upscale import (
 from gflow_cli.api.recaptcha import TokenMinter
 from gflow_cli.api.scene import ConcatInput, Scene, SceneWorkflow
 from gflow_cli.api.transports import make_transport
-from gflow_cli.api.transports.base import FlowTransportStrategy, VideoCapableTransport
+from gflow_cli.api.transports.base import (
+    FlowTransportStrategy,
+    SupportsTransportSetup,
+    TransportSetup,
+    VideoCapableTransport,
+)
 from gflow_cli.browser_manager import channel_for_profile
 from gflow_cli.config import BrowserEngine, Settings
 from gflow_cli.errors import (
@@ -68,15 +81,22 @@ from gflow_cli.errors import (
     WireFormatError,
 )
 from gflow_cli.paths import adjust_key_extension, character_output_path, looks_like_video
+from gflow_cli.profile_lease import ProfileLease
 from gflow_cli.storage import AnyPath, storage_path, write_asset_async
 
 if TYPE_CHECKING:
+    from collections.abc import Awaitable
     from pathlib import Path
 
     from _typeshed import DataclassInstance
 
     from gflow_cli.api.image import AgentInstruction, GenerateImageRequest, ProjectBrief
-    from gflow_cli.api.video import GenerateVideoRequest, VideoResult, VideoStartedCallback
+    from gflow_cli.api.video import (
+        GenerateVideoRequest,
+        VideoResult,
+        VideoStarted,
+        VideoStartedCallback,
+    )
 
 # Shorthand for an untyped JSON-ish string-keyed mapping (request/response
 # bodies, launch kwargs, etc.). A single definition avoids the duplicated-literal
@@ -281,6 +301,14 @@ class FlowApiClient:
         self._access_token_exp: float = 0.0  # epoch seconds; 0 = unknown/expired
         self._pw: Playwright | None = None
         self._context: BrowserContext | None = None
+        # Cross-process profile lease (D3). Acquired in _enter_setup immediately
+        # BEFORE the persistent context launches (so contention fails fast with
+        # ProfileLockedError instead of racing two Chromes onto one profile dir)
+        # and released in _close_browser_resources AFTER the context + driver
+        # shut down. This client is the owning boundary for its own context;
+        # transports it drives reuse this context (shared-page path) and never
+        # take a second lease.
+        self._lease: ProfileLease | None = None
         # Per-worker Page pool (Phase 4 T2). All Pages live inside ONE
         # persistent BrowserContext and therefore SHARE cookies + auth state
         # at the Context level — this is intentional and matches Playwright's
@@ -562,6 +590,13 @@ class FlowApiClient:
         await self._preread_flow_session_cookies()
         kwargs = self._persistent_context_kwargs()
         self._log_and_guard_launch(kwargs)
+        # Own the profile BEFORE Chrome launches. Acquire here (not earlier):
+        # _preread_flow_session_cookies above may itself momentarily own a
+        # headless context on this profile (its cookie-decrypt fallback), which
+        # takes and releases its own lease first — acquiring earlier would make
+        # this a same-process double-acquire. Contention raises ProfileLockedError
+        # (exit 11) here, before any Chrome process starts.
+        self._lease = ProfileLease(self.profile_dir).acquire()
         self._context = await self._launch_persistent_context(kwargs)
         # Hide the automation flag so reCAPTCHA Enterprise doesn't score
         # the session as a bot — navigator.webdriver=true causes low-score
@@ -657,41 +692,44 @@ class FlowApiClient:
         public surface and constrain future evolution.
         """
         inp = self._transport_input
+        config = self._build_transport_setup()
         if inp is None or isinstance(inp, str):
             # Client-owned: resolve from factory, run full lifecycle.
             # Pass self._page so S1 can reuse the already-open context.
             # S2 and S3 accept and ignore the page= kwarg.
             self.transport = make_transport(inp)
-            # Plumb the client's out_dir to the transport so debug screenshots
-            # taken inside `_generate_images_locked` land somewhere the caller
-            # can inspect (#18). Guarded by hasattr so transports without an
-            # `_out_dir` slot are unaffected.
-            self._plumb_out_dir(self.transport)
-            self._plumb_storage_uri(self.transport)
+            # Hand the transport its output/storage wiring through the public
+            # typed seam so debug screenshots (#18) + video downloads land where
+            # the caller expects. Transports that don't opt in are left alone.
+            self._apply_transport_setup(self.transport, config)
             await self.transport.setup(self.profile_dir, page=self._page)
             self._owns_transport = True
         else:
             # Caller-owned: pre-initialized FlowTransportStrategy instance.
-            # Do NOT call setup() — the caller already did that.
+            # Do NOT call setup() — the caller already did that. Config is still
+            # applied (it's plain wiring, not a lifecycle resource we own).
             self.transport = inp
             self._owns_transport = False
-            self._plumb_out_dir(self.transport)
-            self._plumb_storage_uri(self.transport)
+            self._apply_transport_setup(self.transport, config)
 
-    def _plumb_out_dir(self, transport: FlowTransportStrategy) -> None:
-        """Forward ``self._out_dir`` onto a transport that exposes the slot."""
-        if self._out_dir is None:
-            return
-        if not hasattr(transport, "_out_dir"):
-            return
-        transport._out_dir = self._out_dir  # type: ignore[attr-defined]
+    def _build_transport_setup(self) -> TransportSetup:
+        """Assemble the immutable output/storage wiring handed to the transport."""
+        return TransportSetup(
+            out_dir=self._out_dir,
+            storage_uri=self.settings.storage_uri,
+            output_dir=self.settings.output_dir,
+        )
 
-    def _plumb_storage_uri(self, transport: FlowTransportStrategy) -> None:
-        """Forward ``self.settings.storage_uri`` and ``output_dir`` onto the transport."""
-        if not hasattr(transport, "_storage_uri"):
-            return
-        transport._storage_uri = self.settings.storage_uri  # type: ignore[attr-defined]
-        transport._output_dir = self.settings.output_dir  # type: ignore[attr-defined]
+    def _apply_transport_setup(
+        self, transport: FlowTransportStrategy, config: TransportSetup
+    ) -> None:
+        """Pass typed setup through the public seam, if the transport opts in.
+
+        Replaces the old ``hasattr``-guarded writes into ``transport.__dict__``:
+        the ``isinstance`` gate keeps transports that need no such wiring
+        untouched, exactly as the old guard did."""
+        if isinstance(transport, SupportsTransportSetup):
+            transport.apply_setup(config)
 
     async def __aexit__(self, *exc: object) -> None:
         # _close_browser_resources is fully guarded internally and always resets
@@ -709,33 +747,55 @@ class FlowApiClient:
 
         Shared by :meth:`__aexit__` and :meth:`__aenter__`'s partial-setup
         guard so a failed launch can't orphan a chrome process that then locks
-        the profile dir. Each step is independently guarded so one failure
-        still runs the next; errors surface as warnings (CLAUDE.md: never
-        silently swallow). Resets the browser fields so a reused client never
-        holds references to a dead BrowserContext.
+        the profile dir.
+
+        Cancellation-complete (D4): each teardown step runs through
+        :func:`run_teardown_step` (bounded + shielded), so a ``CancelledError``
+        landing mid-context-close cannot skip the driver stop below and cannot
+        skip the lease release in ``finally``. The original cancellation is
+        captured and re-raised LAST, after every ownership-release step has run.
+        Teardown order: (4) close context/browser -> stop driver;
+        (6) release the profile lease.
         """
+        cancelled: BaseException | None = None
         try:
             if self._context is not None:
                 # Bounded close + force-close fallback (issue #293) — shared
                 # with the transports' own-context teardowns via _engine.
-                await close_context_bounded(self._context, owner="client")
+                cancelled = (
+                    await run_teardown_step(
+                        close_context_bounded(self._context, owner="client"),
+                        timeout=CONTEXT_TEARDOWN_TIMEOUT_S,
+                        owner="client",
+                        step="context_close",
+                    )
+                    or cancelled
+                )
                 # HAR files hold live auth cookies/bearer tokens — higher
-                # sensitivity than the CDP lockfile _write_lock already hardens
-                # in browser_manager.py. Playwright writes the HAR lazily on
-                # this close, so this is the earliest point the file exists;
-                # best-effort only (never fail teardown over a permission tweak).
+                # sensitivity than the CDP lockfile the (now-removed) packaged
+                # CDP lifecycle used to harden in browser_manager.py. Playwright
+                # writes the HAR lazily on this close, so this is the earliest
+                # point the file exists; best-effort only (never fail teardown
+                # over a permission tweak).
                 if self.settings.har_path is not None:
                     try:
                         self.settings.har_path.chmod(0o600)
                     except OSError:
                         logger.warning("client.har_chmod_failed", exc_info=True)
             if self._pw is not None:
-                try:
-                    # pw.stop() awaits the Node driver's exit with no deadline
-                    # of its own — a wedged driver would hang teardown forever.
-                    await asyncio.wait_for(self._pw.stop(), timeout=DRIVER_STOP_TIMEOUT_S)
-                except Exception:
-                    logger.warning("playwright_stop_error", exc_info=True)
+                # pw.stop() awaits the Node driver's exit with no deadline of
+                # its own — a wedged driver would hang teardown forever, so it
+                # is bounded here. It runs even when the context close above was
+                # abandoned by cancellation (driver stop force-kills chrome).
+                cancelled = (
+                    await run_teardown_step(
+                        self._pw.stop(),
+                        timeout=DRIVER_STOP_TIMEOUT_S,
+                        owner="client",
+                        step="driver_stop",
+                    )
+                    or cancelled
+                )
         finally:
             # Field resets must survive even cancellation (Ctrl-C mid-close),
             # or a reused client holds references to a dead BrowserContext.
@@ -744,6 +804,17 @@ class FlowApiClient:
             self._page = None
             self._context = None
             self._pw = None
+            # Release the profile lease LAST — after the context is closed and
+            # the driver stopped — so the profile dir is genuinely free before
+            # another process can acquire it (D3 release ordering). release() is
+            # idempotent and never unlinks the lock file.
+            if self._lease is not None:
+                self._lease.release()
+                self._lease = None
+        # Re-raise the original cancellation only after teardown completed, so a
+        # cancelled close still stopped Playwright and released the lease.
+        if cancelled is not None:
+            raise cancelled
 
     async def _checkout_page(self) -> Page:
         """Block until a Page is available from the pool; FIFO.
@@ -1626,6 +1697,7 @@ class FlowApiClient:
         project_id: str,
         req: GenerateImageRequest,
         recaptcha_action: str,
+        on_checkpoint: GenerationCheckpointObserver | None = None,
     ) -> list[GeneratedImage]:
         """Mint a token, call the transport once, and return all images.
 
@@ -1633,6 +1705,11 @@ class FlowApiClient:
         transport clicks the matching x{N} tab so one submission produces N
         images; other transports may fan-out internally, but that is their
         concern. This method is the single place reCAPTCHA minting happens.
+
+        ``on_checkpoint`` (Task C1) receives a ``submit_attempted`` observation
+        immediately before the credit-spending transport call, then a
+        ``remote_started`` observation carrying the generated media/workflow
+        UUIDs — the first point the image handle is observable.
         """
         if self.transport is None:
             msg = "FlowApiClient.transport is None — call generate_image inside 'async with client'"
@@ -1641,6 +1718,8 @@ class FlowApiClient:
             )
         token = await self._mint_recaptcha_token(recaptcha_action)
         req_with_token = _dc_replace(req, recaptcha_token=token)
+        if on_checkpoint is not None:
+            on_checkpoint(GenerationCheckpoint(phase="submit_attempted"))
         images = await self.transport.generate_images(
             project_id=project_id,
             request=req_with_token,
@@ -1651,6 +1730,14 @@ class FlowApiClient:
                 instance=_make_instance(),
                 route=routes.batch_generate_images_url(project_id),
             )
+        if on_checkpoint is not None:
+            on_checkpoint(
+                GenerationCheckpoint(
+                    phase="remote_started",
+                    media_ids=tuple(img.media_name for img in images),
+                    workflow_ids=tuple(img.workflow_id for img in images),
+                ),
+            )
         return images
 
     async def _drive_image_generation(
@@ -1659,6 +1746,7 @@ class FlowApiClient:
         project_id: str,
         req: GenerateImageRequest,
         recaptcha_action: str,
+        on_checkpoint: GenerationCheckpointObserver | None = None,
     ) -> GeneratedImage:
         """Single-image shortcut — delegates to ``_drive_images_generation`` with count=1.
 
@@ -1678,6 +1766,7 @@ class FlowApiClient:
             project_id=project_id,
             req=req_one,
             recaptcha_action=recaptcha_action,
+            on_checkpoint=on_checkpoint,
         )
         if len(images) > 1:
             logger.warning(
@@ -1701,6 +1790,7 @@ class FlowApiClient:
         project_id: str | None = None,
         req: GenerateImageRequest,
         recaptcha_action: str = "imageGeneration",
+        on_checkpoint: GenerationCheckpointObserver | None = None,
     ) -> GeneratedImage:
         """Single-shot Imagen/Narwhal image generation.
 
@@ -1726,6 +1816,7 @@ class FlowApiClient:
                 project_id=resolved_project_id,
                 req=req,
                 recaptcha_action=recaptcha_action,
+                on_checkpoint=on_checkpoint,
             )
         except Exception as e:
             if _is_target_closed(e):
@@ -1739,6 +1830,7 @@ class FlowApiClient:
         req: GenerateImageRequest,
         count: int = 1,
         recaptcha_action: str = "imageGeneration",
+        on_checkpoint: GenerationCheckpointObserver | None = None,
     ) -> list[GeneratedImage]:
         """Generate ``count`` images using Flow's native count selector (1–4).
 
@@ -1771,6 +1863,7 @@ class FlowApiClient:
                 project_id=resolved_project_id,
                 req=req_with_count,
                 recaptcha_action=recaptcha_action,
+                on_checkpoint=on_checkpoint,
             )
         except Exception as e:
             if _is_target_closed(e):
@@ -1786,11 +1879,19 @@ class FlowApiClient:
         poll_timeout_s: float = 600.0,
         download: bool = True,
         on_started: VideoStartedCallback | None = None,
+        on_checkpoint: GenerationCheckpointObserver | None = None,
     ) -> VideoResult:
         """Generate a video via the transport's ``generate_video`` method.
 
         Routes all video generation through a single client boundary so the
         data-layer recorder (Task 8) can hook in at one place.
+
+        ``on_checkpoint`` (Task C1) receives a ``submit_attempted`` observation
+        immediately before the credit-spending transport call, then a
+        ``remote_started`` observation carrying the ``batchAsyncGenerateVideo*``
+        operation name (via the transport's ``on_started`` hook — the first
+        point the video handle is observable; ``operation_id`` is ``None`` for
+        models whose response omits it, e.g. omni-flash).
 
         Raises:
             RuntimeError: transport is None (client not entered) or the transport
@@ -1808,6 +1909,23 @@ class FlowApiClient:
                 msg,
             )
 
+        wrapped_on_started = on_started
+        if on_checkpoint is not None:
+            observer: GenerationCheckpointObserver = on_checkpoint
+            observer(GenerationCheckpoint(phase="submit_attempted"))
+
+            def _relay(started: VideoStarted) -> Awaitable[None] | None:
+                observer(
+                    GenerationCheckpoint(
+                        phase="remote_started",
+                        operation_id=started.flow_operation_id,
+                        media_ids=(started.media_id,),
+                    ),
+                )
+                return on_started(started) if on_started is not None else None
+
+            wrapped_on_started = _relay
+
         try:
             return await self.transport.generate_video(
                 request=req,
@@ -1815,7 +1933,7 @@ class FlowApiClient:
                 out_dir=out_dir,
                 poll_timeout_s=poll_timeout_s,
                 download=download,
-                on_started=on_started,
+                on_started=wrapped_on_started,
             )
 
         except Exception as e:

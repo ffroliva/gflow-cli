@@ -85,6 +85,66 @@ def _make_fake_playwright(fake_ctx: MagicMock) -> MagicMock:
     return fake_pw
 
 
+def _record_lease_events(monkeypatch: pytest.MonkeyPatch, events: list[str]) -> None:
+    """Patch ProfileLease.acquire/release to append to ``events`` — no real locks."""
+    from gflow_cli.profile_lease import ProfileLease
+
+    def acq(self: ProfileLease) -> ProfileLease:
+        events.append("acquire")
+        return self
+
+    def rel(self: ProfileLease) -> None:
+        events.append("release")
+
+    monkeypatch.setattr(ProfileLease, "acquire", acq)
+    monkeypatch.setattr(ProfileLease, "release", rel)
+
+
+async def test_own_context_setup_acquires_and_releases_profile_lease(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    """Standalone path (page=None): acquire the lease BEFORE launch, release
+    AFTER teardown closes the context (D3)."""
+    events: list[str] = []
+    _record_lease_events(monkeypatch, events)
+
+    fake_page = MagicMock()
+    fake_page.goto = AsyncMock()
+    fake_ctx = MagicMock()
+    fake_ctx.new_page = AsyncMock(return_value=fake_page)
+    fake_ctx.close = AsyncMock()
+    fake_pw = MagicMock()
+
+    async def _launch(*_a: object, **_k: object) -> MagicMock:
+        events.append("launch")
+        return fake_ctx
+
+    fake_pw.chromium.launch_persistent_context = AsyncMock(side_effect=_launch)
+
+    transport = EvaluateFetchTransport()
+    with patch(
+        "playwright.async_api.async_playwright",
+        return_value=_AsyncCtxManager(fake_pw),
+    ):
+        await transport.setup(tmp_path)
+        assert events == ["acquire", "launch"]  # acquire strictly before launch
+        await transport.teardown()
+    assert events == ["acquire", "launch", "release"]  # released after close
+
+
+async def test_shared_page_setup_acquires_no_lease(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    """Shared-page path: the caller owns the context, so the transport takes no
+    lease of its own (D3 — no double-acquire)."""
+    events: list[str] = []
+    _record_lease_events(monkeypatch, events)
+    transport = EvaluateFetchTransport()
+    await transport.setup(tmp_path, page=MagicMock())
+    await transport.teardown()
+    assert events == []
+
+
 # ---------------------------------------------------------------------------
 # T1 — class attribute
 # ---------------------------------------------------------------------------

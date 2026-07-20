@@ -9,6 +9,7 @@ from rich.console import Console
 
 from gflow_cli.config import get_settings
 from gflow_cli.errors import AuthBrowserRejectedError, AuthLoginTimeoutError, SecurityError
+from gflow_cli.profile_lease import ProfileLease
 
 from .base import AuthStrategy
 from .verification import SESSION_API_URL, FlowSessionOutcome, evaluate_session_response
@@ -143,7 +144,10 @@ class InternalChromiumStrategy(AuthStrategy):
         logger.info("auth_login_started", profile_dir=str(profile_dir), strategy=self.name)
 
         user_email: str | None = None
-        async with async_playwright() as pw:
+        # Own the profile for this login context (D3). The lease is the OUTER
+        # context so it releases only after the driver stops. Contention raises
+        # ProfileLockedError before Chromium launches.
+        async with ProfileLease(profile_dir), async_playwright() as pw:
             # We use launch_persistent_context to ensure cookies are saved to profile_dir
             ctx = await pw.chromium.launch_persistent_context(
                 user_data_dir=str(profile_dir),

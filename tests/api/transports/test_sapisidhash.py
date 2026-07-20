@@ -387,3 +387,65 @@ def test_compute_sapisidhash_pinned_reference() -> None:
         timestamp=1700000000, sapisid="testSAPISID", origin="https://labs.google"
     )
     assert h == f"1700000000_{expected_sha1}"
+
+
+# ---------------------------------------------------------------------------
+# D3 — profile-lease ownership around the momentary fingerprint-capture context
+# ---------------------------------------------------------------------------
+
+
+class _FakePwCM:
+    def __init__(self, pw: object) -> None:
+        self._pw = pw
+
+    async def __aenter__(self) -> object:
+        return self._pw
+
+    async def __aexit__(self, *_a: object) -> bool:
+        return False
+
+
+def _record_lease_events(monkeypatch: pytest.MonkeyPatch, events: list[str]) -> None:
+    from gflow_cli.profile_lease import ProfileLease
+
+    def acq(self: ProfileLease) -> ProfileLease:
+        events.append("acquire")
+        return self
+
+    def rel(self: ProfileLease) -> None:
+        events.append("release")
+
+    monkeypatch.setattr(ProfileLease, "acquire", acq)
+    monkeypatch.setattr(ProfileLease, "release", rel)
+
+
+async def test_capture_fingerprint_wraps_launch_in_profile_lease(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    """_capture_fingerprint_via_playwright owns the profile for its momentary
+    context: acquire before launch, release after the context closes."""
+    events: list[str] = []
+    _record_lease_events(monkeypatch, events)
+
+    page = MagicMock()
+    page.goto = AsyncMock()
+    ctx = MagicMock()
+    ctx.new_page = AsyncMock(return_value=page)
+    ctx.close = AsyncMock()
+
+    async def _launch(*_a: object, **_k: object) -> MagicMock:
+        events.append("launch")
+        return ctx
+
+    pw = MagicMock()
+    pw.chromium.launch_persistent_context = AsyncMock(side_effect=_launch)
+
+    monkeypatch.setattr("playwright.async_api.async_playwright", lambda: _FakePwCM(pw))
+    monkeypatch.setattr(
+        "gflow_cli.api.transports.experimental.sapisidhash.capture_fingerprint",
+        AsyncMock(return_value=BrowserFingerprint()),
+    )
+
+    transport = SapisidhashTransport()
+    await transport._capture_fingerprint_via_playwright(tmp_path)
+    assert events == ["acquire", "launch", "release"]

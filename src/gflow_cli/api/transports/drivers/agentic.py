@@ -269,10 +269,14 @@ async def _check_content_policy(page: Page) -> bool:
 class AgenticFlowUiDriver:
     """Driver for the agentic chat UI (prompt-encoded settings, DOM-scraped responses).
 
-    ``configure_image_settings`` stores the requested parameters on the instance;
-    ``send_prompt`` composes the final directive and submits via ``insert_text``
-    (the Slate-friendly path; ``fill()`` is ignored by Slate's contenteditable
-    editor).
+    The driver holds **no per-request state**: ``submit_images`` takes the
+    :class:`GenerateImageRequest` and the expected image count directly and
+    threads the request-derived count / aspect / model into ``send_prompt``
+    (which composes the Slate directive and submits via ``insert_text`` — the
+    Slate-friendly path; ``fill()`` is ignored by Slate's contenteditable
+    editor) and ``await_images``. This matters because the transport reuses ONE
+    driver across every prompt in a batch, so any stashed ``_pending_*`` field
+    would be shared mutable state between prompts.
 
     ``await_images`` polls the DOM for new ``<img>`` nodes, deduplicates by
     ``name=<uuid>`` from the tRPC redirect URL, and builds ``GeneratedImage``
@@ -281,13 +285,6 @@ class AgenticFlowUiDriver:
     """
 
     name = "agentic"
-
-    def __init__(self) -> None:
-        # Pending settings stored by configure_image_settings for send_prompt.
-        self._pending_count: int = 1
-        self._pending_aspect: str | None = None  # human-readable label or None
-        self._pending_model: str = "NARWHAL"
-        self._pending_prompt: str | None = None
 
     # ------------------------------------------------------------------
     # FlowUiDriver protocol — mode switching
@@ -335,24 +332,20 @@ class AgenticFlowUiDriver:
         out_dir: Path | None = None,  # NOSONAR
         prompt_idx: int | None = None,
     ) -> None:
-        """Encode settings on the instance for prompt-directive composition,
-        and best-effort enforce the count via the Agent settings panel.
+        """Reconcile agent instruction cards and best-effort enforce the count
+        via the Agent settings panel.
 
-        Does NOT drive the ``tune`` popover for aspect/model — only count,
-        as a fallback for issue #313 (a stale sticky default there can
-        override the natural-language directive). See
-        ``_enforce_image_count_via_settings_panel``.
+        Stores **nothing** on the driver — the count / aspect / model reach the
+        directive through ``submit_images`` at submit time. Does NOT drive the
+        ``tune`` popover for aspect/model — only count, as a fallback for issue
+        #313 (a stale sticky default there can override the natural-language
+        directive). See ``_enforce_image_count_via_settings_panel``.
         """
-        # request.model / request.aspect are non-optional StrEnums — str() yields
-        # the wire value ("NARWHAL", "IMAGE_ASPECT_RATIO_PORTRAIT", …).
-        self._pending_count = request.count
-        self._pending_model = str(request.model)
-        self._pending_aspect = _ASPECT_PROMPT_LABEL.get(str(request.aspect))
         log.debug(
-            "agentic_driver.configure_image_settings.stored",
-            count=self._pending_count,
-            aspect=self._pending_aspect,
-            model=self._pending_model,
+            "agentic_driver.configure_image_settings",
+            count=request.count,
+            aspect=_ASPECT_PROMPT_LABEL.get(str(request.aspect)),
+            model=str(request.model),
             prompt_idx=prompt_idx,
         )
 
@@ -631,8 +624,15 @@ class AgenticFlowUiDriver:
         prompt_text: str,
         *,
         out_dir: Path | None = None,  # NOSONAR
+        count: int = 1,
+        aspect: str | None = None,
     ) -> None:
-        """Type the directive into the Slate composer and submit.
+        """Compose the directive from ``prompt_text`` + ``count`` / ``aspect``
+        and submit it into the Slate composer.
+
+        ``count`` / ``aspect`` are passed in per call (by ``submit_images``) —
+        never read from driver state — so the batch-reused driver carries no
+        cross-prompt bleed.
 
         Slate's contenteditable editor ignores Playwright's ``fill()`` method
         because ``fill()`` dispatches an ``input`` event with ``isTrusted=false``
@@ -649,7 +649,7 @@ class AgenticFlowUiDriver:
             SUBMIT_BUTTON_SELECTORS,
         )
 
-        directive = self._compose_directive(self._pending_count, self._pending_aspect, prompt_text)
+        directive = self._compose_directive(count, aspect, prompt_text)
 
         # Locate the Slate composer.  Playwright raises if it times out.
         composer = page.locator(_SLATE_COMPOSER_SELECTOR).first
@@ -685,7 +685,41 @@ class AgenticFlowUiDriver:
             log.debug("agentic_driver.send_prompt.enter_fallback")
 
     # ------------------------------------------------------------------
-    # FlowUiDriver protocol — await_images (DOM scraping)
+    # Agentic image generation — submit + DOM-scrape (cohort-specific)
+    # ------------------------------------------------------------------
+
+    async def submit_images(
+        self,
+        page: Page,
+        request: GenerateImageRequest,
+        expected_count: int,
+        *,
+        out_dir: Path | None = None,
+    ) -> list[GeneratedImage]:
+        """Submit ``request`` and return the scraped images.
+
+        The single entry point the transport calls for the agentic cohort. It
+        takes the request and expected count **directly** (there is no
+        ``configure``-then-``send`` handshake carrying state on the driver):
+        derives the human-readable aspect label once, composes + submits the
+        directive via :meth:`send_prompt`, then DOM-scrapes via
+        :meth:`await_images` — threading the request's model / aspect straight
+        into the built ``GeneratedImage`` DTOs.
+        """
+        aspect = _ASPECT_PROMPT_LABEL.get(str(request.aspect))
+        await self.send_prompt(
+            page, request.prompt, out_dir=out_dir, count=request.count, aspect=aspect
+        )
+        return await self.await_images(
+            page,
+            expected_count,
+            out_dir=out_dir,
+            model=str(request.model),
+            aspect=aspect,
+        )
+
+    # ------------------------------------------------------------------
+    # DOM scraping — await_images
     # ------------------------------------------------------------------
 
     async def await_images(
@@ -694,6 +728,8 @@ class AgenticFlowUiDriver:
         expected_count: int,
         *,
         out_dir: Path | None = None,  # NOSONAR
+        model: str = "NARWHAL",
+        aspect: str | None = None,
     ) -> list[GeneratedImage]:
         """Poll the DOM until ``expected_count`` distinct new media UUIDs appear.
 
@@ -808,8 +844,8 @@ class AgenticFlowUiDriver:
         return _build_generated_images(
             uuids=new_uuids,
             expected_count=expected_count,
-            pending_model=self._pending_model,
-            pending_aspect=self._pending_aspect,
+            pending_model=model,
+            pending_aspect=aspect,
         )
 
 

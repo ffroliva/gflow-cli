@@ -98,3 +98,25 @@ async def test_tool_specs_rewrite_prompt(
 def test_mentions_module_exports_helper() -> None:
     # Guard against an accidental rename breaking the 5 call sites.
     assert hasattr(mentions, "resolve_and_apply")
+
+
+async def test_mention_free_prompt_never_touches_catalog_sources(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    # A mention-free prompt must stay pass-through even when the catalog
+    # sources are unavailable -- the source loaders must not even be called,
+    # since resolve_and_apply only builds an AssetIndex when tokens are found.
+    async def _fail_characters(self: Any, project_id: str) -> Any:
+        raise AssertionError("list_characters must not be called for a mention-free prompt")
+
+    def _fail_media(*, db_path: Any, project_id: str) -> Any:
+        raise AssertionError(
+            "list_project_media_assets must not be called for a mention-free prompt"
+        )
+
+    monkeypatch.setattr("gflow_cli.api.client.FlowApiClient.list_characters", _fail_characters)
+    monkeypatch.setattr("gflow_cli.data.queries.list_project_media_assets", _fail_media)
+
+    req = GenerateImageRequest(prompt="plain prompt, no mentions")
+    out = await resolve_and_apply(None, req, path="image", project_id="proj-1", tool_specs=())
+    assert out is req
