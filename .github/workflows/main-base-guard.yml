@@ -30,7 +30,7 @@ jobs:
     name: Release must carry /gflow:release artifacts
     runs-on: ubuntu-latest
     steps:
-      - uses: actions/checkout@v4
+      - uses: actions/checkout@v7
       - name: Verify release artifacts
         env:
           BASE_REF: ${{ github.base_ref }}
