@@ -725,3 +725,122 @@ async def test_get_agent_info_absent_brief_is_empty(tmp_path: Path) -> None:
 
     assert brief.enabled is False
     assert brief.cards == ()
+
+
+# ---------------------------------------------------------------------------
+# Cancellation-complete teardown (Task D4)
+# ---------------------------------------------------------------------------
+
+
+def _recording_playwright(
+    monkeypatch: pytest.MonkeyPatch,
+    order: list[str],
+    *,
+    context_close: object = None,
+) -> tuple[object, object]:
+    """Fake the Playwright stack, recording context.close / pw.stop into ``order``.
+
+    ``context_close`` overrides the context-close coroutine (e.g. one that
+    blocks so a cancellation can land mid-close). Returns (fake_context, fake_pw).
+    """
+    import asyncio
+    from unittest.mock import AsyncMock, MagicMock
+
+    fake_page = MagicMock()
+    fake_page.goto = AsyncMock()
+
+    fake_context = MagicMock()
+    fake_context.pages = [fake_page]
+    fake_context.new_page = AsyncMock(return_value=fake_page)
+    fake_context.add_init_script = AsyncMock()
+    # No real browser so close_context_bounded's force-close path is a no-op.
+    fake_context.browser = None
+
+    async def _default_close() -> None:
+        order.append("context_close")
+
+    fake_context.close = context_close or _default_close
+
+    fake_pw = MagicMock()
+
+    async def _stop() -> None:
+        order.append("driver_stop")
+
+    fake_pw.stop = _stop
+    fake_pw.chromium.launch_persistent_context = AsyncMock(return_value=fake_context)
+
+    starter = MagicMock()
+    starter.start = AsyncMock(return_value=fake_pw)
+    monkeypatch.setattr("gflow_cli.api.client.async_playwright", lambda: starter)
+    _ = asyncio  # keep the import referenced for symmetry with callers
+    return fake_context, fake_pw
+
+
+@pytest.mark.asyncio
+async def test_teardown_order_browser_before_lease(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    """D4 teardown order: the context closes and the driver stops (step 4)
+    BEFORE the profile lease is released (step 6) — proven with recording fakes."""
+    monkeypatch.delenv("GFLOW_CLI_TRANSPORT", raising=False)
+    from gflow_cli.profile_lease import ProfileLease
+
+    order: list[str] = []
+
+    def acq(self: ProfileLease) -> ProfileLease:
+        order.append("lease_acquire")
+        return self
+
+    def rel(self: ProfileLease) -> None:
+        order.append("lease_release")
+
+    monkeypatch.setattr(ProfileLease, "acquire", acq)
+    monkeypatch.setattr(ProfileLease, "release", rel)
+    _recording_playwright(monkeypatch, order)
+
+    async with FlowApiClient(profile_dir=tmp_path, transport=_FakeTransport()):
+        pass
+
+    assert order == ["lease_acquire", "context_close", "driver_stop", "lease_release"]
+
+
+@pytest.mark.asyncio
+async def test_cancel_during_context_close_still_stops_playwright(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    """D4: a CancelledError landing while the BrowserContext is still closing
+    must NOT skip the driver stop or the lease release, and must propagate."""
+    import asyncio
+
+    monkeypatch.delenv("GFLOW_CLI_TRANSPORT", raising=False)
+    from gflow_cli.profile_lease import ProfileLease
+
+    order: list[str] = []
+    released: list[bool] = []
+    monkeypatch.setattr(ProfileLease, "acquire", lambda self: self)
+    monkeypatch.setattr(ProfileLease, "release", lambda self: released.append(True))
+
+    close_started = asyncio.Event()
+
+    async def _blocking_close() -> None:
+        # Signal that we are inside context.close, then block until cancelled so
+        # the cancellation is guaranteed to land mid-close.
+        order.append("context_close_started")
+        close_started.set()
+        await asyncio.Event().wait()
+
+    _recording_playwright(monkeypatch, order, context_close=_blocking_close)
+
+    client = FlowApiClient(profile_dir=tmp_path, transport=_FakeTransport())
+    await client.__aenter__()
+
+    close_task = asyncio.create_task(client._close_browser_resources())
+    await asyncio.wait_for(close_started.wait(), timeout=1)
+    close_task.cancel()
+    with pytest.raises(asyncio.CancelledError):
+        await close_task
+
+    # Driver was still stopped despite the cancel landing mid-context-close, and
+    # the lease was released last.
+    assert "driver_stop" in order
+    assert released == [True]

@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 import asyncio
+import contextlib
 import os
 import sys
 from typing import TYPE_CHECKING
@@ -69,12 +70,12 @@ def _build_chrome_args(chrome_exe: str, profile_dir: Path, headless: bool) -> li
         "--window-size=1920,1080",  # match the generation viewport (#315 consistency)
         "--password-store=basic",
         # No --remote-debugging-port: zero automation surface.
-        GEMINI_URL,  # open straight on the Flow sign-in page
     ]
     if headless:
         args.append("--headless=new")
-    # Open Flow directly so the user lands on the sign-in / app surface
-    # instead of a blank new-tab page.
+    # Open Flow directly (ONCE) so the user lands on the sign-in / app surface
+    # instead of a blank new-tab page. A second GEMINI_URL positional made
+    # Chrome open a duplicate Flow tab on every login.
     args.append(GEMINI_URL)
     return args
 
@@ -101,16 +102,38 @@ def _print_login_instructions() -> None:
     _console.print("Launching Chrome...")
 
 
+async def _terminate_and_reap(proc: asyncio.subprocess.Process) -> None:
+    """Terminate the child, then kill+reap it if it doesn't exit promptly.
+
+    Bounded so a wedged Chrome cannot hang teardown, and the final ``wait()``
+    reaps the process so it never lingers as a zombie holding the profile lock.
+    """
+    proc.terminate()
+    try:
+        await asyncio.wait_for(proc.wait(), timeout=5)
+    except (TimeoutError, asyncio.CancelledError):
+        proc.kill()
+        with contextlib.suppress(BaseException):
+            await proc.wait()
+
+
 async def _await_chrome_close(proc: asyncio.subprocess.Process, timeout_seconds: int) -> None:
-    """Wait for Chrome to exit; terminate/kill it when the timeout elapses."""
+    """Wait for Chrome to exit; terminate/kill it on timeout OR cancellation.
+
+    On cancellation (Ctrl-C / task cancel while waiting for the user to close
+    Chrome) the child would otherwise be orphaned — keeping the profile's
+    SQLite cookie lock (and therefore the ProfileLease) held. Terminate + reap
+    it before the cancellation propagates out through the enclosing
+    ``async with ProfileLease`` (which releases the lease), so chrome is dead
+    BEFORE the profile is freed.
+    """
     try:
         await asyncio.wait_for(proc.wait(), timeout=float(timeout_seconds))
+    except asyncio.CancelledError:
+        await _terminate_and_reap(proc)
+        raise
     except TimeoutError:
-        proc.terminate()
-        try:
-            await asyncio.wait_for(proc.wait(), timeout=5)
-        except TimeoutError:
-            proc.kill()
+        await _terminate_and_reap(proc)
         msg = f"Sign-in timed out after {timeout_seconds}s; Chrome was stopped."
         raise AuthLoginTimeoutError(
             msg,

@@ -56,18 +56,23 @@ async def lifespan(app: FastAPI):
     app.state.worker = worker
     app.state.worker_task = worker_task
 
-    yield
-
-    # Shutdown
-    logger.info("Shutting down gflow-daemon lifespan")
-    worker.stop()
-    worker_task.cancel()
-    # Await the worker's completion. gather(..., return_exceptions=True) captures
-    # the worker task's own CancelledError as a result instead of swallowing a
-    # genuine cancellation of this lifespan task, which is re-raised.
-    await asyncio.gather(worker_task, return_exceptions=True)
-    worker.close()
-    logger.info("gflow-daemon worker stopped cleanly")
+    # try/finally (D4): shutdown MUST run even if the lifespan body is cancelled
+    # (Ctrl-C / ASGI server shutdown) — otherwise the worker task and its DB
+    # store leak. Teardown order: (1) stop accepting work -> (2) cancel + await
+    # the worker -> (5) close the store this component owns. The worker releases
+    # any per-task browser lease itself (D3/D4) as its own client tears down.
+    try:
+        yield
+    finally:
+        logger.info("Shutting down gflow-daemon lifespan")
+        worker.stop()  # (1) stop accepting new work
+        worker_task.cancel()  # (2) cancel...
+        # ...and await completion. gather(..., return_exceptions=True) captures
+        # the worker's own CancelledError as a result instead of swallowing a
+        # genuine cancellation of this lifespan task, which propagates out.
+        await asyncio.gather(worker_task, return_exceptions=True)
+        worker.close()  # (5) close the DB store owned here
+        logger.info("gflow-daemon worker stopped cleanly")
 
 
 app = FastAPI(title="gflow-daemon", lifespan=lifespan)

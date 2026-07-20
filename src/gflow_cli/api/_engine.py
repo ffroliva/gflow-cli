@@ -26,6 +26,7 @@ This module is the single place that reconciles the two engines' differences:
 from __future__ import annotations
 
 import asyncio
+import contextlib
 import importlib
 from typing import TYPE_CHECKING, Any, cast
 
@@ -35,7 +36,7 @@ from gflow_cli.config import BrowserEngine, get_settings
 from gflow_cli.errors import BrowserEngineUnavailableError
 
 if TYPE_CHECKING:
-    from collections.abc import Callable
+    from collections.abc import Callable, Coroutine
 
 logger = structlog.get_logger(__name__)
 
@@ -59,6 +60,54 @@ _PATCHRIGHT_PIP_HINT = (
 _CONTEXT_CLOSE_TIMEOUT_S = 30.0
 _FORCE_CLOSE_TIMEOUT_S = 5.0
 DRIVER_STOP_TIMEOUT_S = 10.0
+# Backstop for the whole context-teardown step (graceful close + force-close
+# fallback). close_context_bounded already bounds each inner await; this is the
+# outer wait_for in run_teardown_step, generous so it never pre-empts a normal
+# close.
+CONTEXT_TEARDOWN_TIMEOUT_S = _CONTEXT_CLOSE_TIMEOUT_S + _FORCE_CLOSE_TIMEOUT_S + 5.0
+
+
+async def run_teardown_step(
+    coro: Coroutine[Any, Any, Any],
+    *,
+    timeout: float,
+    owner: str,
+    step: str,
+) -> BaseException | None:
+    """Run one browser-teardown coroutine, bounded and shielded from an outer
+    cancellation (D4).
+
+    Each teardown step (close context/browser, stop the driver, exit the pw
+    context manager) is run through here so that:
+
+    * a slow/wedged step cannot hang the caller — it is bounded by ``timeout``;
+    * an outer ``CancelledError`` cannot interrupt a step *and* skip a later
+      ownership-release step — ``asyncio.shield`` keeps the cancellation from
+      propagating into ``coro``, so the caller keeps control and runs the
+      remaining steps (driver stop, store close, lease release) before
+      re-raising;
+    * a failure never propagates — it is logged, so it can never abort teardown
+      partway and leak the profile lease.
+
+    Returns the ``CancelledError`` if the CALLER's task was cancelled while this
+    step ran (the caller re-raises it *last*, after the remaining teardown),
+    else ``None``. Never raises ``Exception``.
+    """
+    inner = asyncio.ensure_future(asyncio.wait_for(coro, timeout=timeout))
+    try:
+        await asyncio.shield(inner)
+    except asyncio.CancelledError as exc:
+        # Our task was cancelled. shield left ``inner`` running detached; it is
+        # bounded by its own wait_for, but abandon it now (the driver stop that
+        # runs next force-kills chrome anyway) so the lease release the caller
+        # does after this can never be held hostage by a wedged close.
+        inner.cancel()
+        with contextlib.suppress(BaseException):
+            await inner
+        return exc
+    except Exception:
+        logger.warning("browser_teardown.step_failed", owner=owner, step=step, exc_info=True)
+    return None
 
 
 async def _force_close_browser(context: Any, *, owner: str) -> None:
