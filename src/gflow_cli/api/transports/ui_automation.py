@@ -55,6 +55,8 @@ if TYPE_CHECKING:
 
     from playwright.async_api import Locator, Page, ViewportSize
 
+    from gflow_cli.api.transports.base import TransportSetup
+
 # Lazy-imported at call time so ``import gflow_cli`` doesn't pay the
 # Playwright import cost when another transport is selected.
 try:  # pragma: no cover — re-bound at module import in production
@@ -703,12 +705,17 @@ class UiAutomationTransport(VideoGenerationMixin):
         # context. On the shared-page path the caller (FlowApiClient) owns both
         # the context and the lease, so this stays None.
         self._lease: ProfileLease | None = None
-        # Optional directory for debug screenshots — set by FlowApiClient
-        # from its `out_dir` constructor arg (#18). When None, the internal
+        # Typed output/storage wiring handed in by FlowApiClient through the
+        # public apply_setup() seam (SupportsTransportSetup). The private slots
+        # below are this transport's own derived state — the client no longer
+        # writes them directly.
+        self.setup_config: TransportSetup | None = None
+        # Optional directory for debug screenshots — derived from the client's
+        # `out_dir` constructor arg (#18). When None, the internal
         # _capture_debug_screenshot helper is a no-op.
         self._out_dir: Path | None = None
-        # Optional cloud-storage configuration set by FlowApiClient. Video
-        # downloads read these slots inside VideoGenerationMixin._download_video.
+        # Optional cloud-storage configuration. Video downloads read these slots
+        # inside VideoGenerationMixin._download_video.
         self._storage_uri: str | None = None
         self._output_dir: Path | None = None
         # Serialize concurrent generate_images calls — a single Playwright Page
@@ -717,6 +724,20 @@ class UiAutomationTransport(VideoGenerationMixin):
         # converts the N-parallel fan-out from generate_images_batch into N
         # sequential Page interactions, eliminating all race conditions.
         self._generate_lock: asyncio.Lock = asyncio.Lock()
+
+    def apply_setup(self, config: TransportSetup) -> None:
+        """Accept output/storage wiring publicly (SupportsTransportSetup seam).
+
+        Stores the immutable record and derives the private slots the debug-
+        screenshot and video-download paths read. ``out_dir`` is only adopted
+        when set, preserving the prior "don't clobber with None" plumbing
+        behaviour; ``storage_uri``/``output_dir`` mirror the config as-is.
+        """
+        self.setup_config = config
+        if config.out_dir is not None:
+            self._out_dir = config.out_dir
+        self._storage_uri = config.storage_uri
+        self._output_dir = config.output_dir
 
     # ------------------------------------------------------------------
     # Lifecycle
