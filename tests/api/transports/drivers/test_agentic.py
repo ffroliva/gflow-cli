@@ -166,35 +166,89 @@ def test_compose_directive_plural_singular() -> None:
     assert "2 pictures of" in AgenticFlowUiDriver._compose_directive(2, None, "x")
 
 
+def _fake_page_submit_and_scrape(*, new_srcs: list[str]) -> MagicMock:
+    """Page supporting BOTH send_prompt (Slate composer + submit button) and
+    the await_images DOM scrape — used to drive submit_images end-to-end."""
+    img_calls = 0
+
+    async def _eval_on_selector_all(selector: str, expr: str) -> list[str]:
+        nonlocal img_calls
+        if selector == "img":
+            img_calls += 1
+            # Two empty baseline passes, then the new srcs on every poll.
+            return [] if img_calls <= 2 else new_srcs
+        return []  # policy region scan: clean
+
+    page = MagicMock()
+    page.eval_on_selector_all = _eval_on_selector_all
+
+    keyboard = MagicMock()
+    keyboard.press = AsyncMock()
+    keyboard.insert_text = AsyncMock()
+    page.keyboard = keyboard
+
+    composer = MagicMock()
+    composer.wait_for = AsyncMock()
+    composer.click = AsyncMock()
+
+    submit_btn = MagicMock()
+    submit_btn.count = AsyncMock(return_value=1)
+    submit_btn.click = AsyncMock()
+
+    def _locator(sel: str) -> MagicMock:
+        if "textbox" in sel or "slate" in sel:
+            return MagicMock(first=composer)
+        loc = MagicMock()
+        loc.first = submit_btn
+        loc.count = AsyncMock(return_value=0)
+        return loc
+
+    page.locator = MagicMock(side_effect=_locator)
+    return page
+
+
 # ---------------------------------------------------------------------------
-# configure_image_settings → stores values for send_prompt
+# configure_image_settings / submit_images — no pending driver state
 # ---------------------------------------------------------------------------
 
 
 @pytest.mark.asyncio
-async def test_configure_image_settings_stores_count_and_aspect() -> None:
+async def test_configure_image_settings_stores_no_pending_state() -> None:
+    """configure_image_settings must NOT stash per-request state on the driver —
+    the batch path reuses one driver across prompts, so any ``_pending_*`` field
+    would bleed between prompts."""
     driver = AgenticFlowUiDriver()
     page = _mock_page_no_settings_panel()
     req = _make_image_request(count=4, aspect=Aspect.LANDSCAPE)
     await driver.configure_image_settings(page, req)
-    assert driver._pending_count == 4  # noqa: SLF001
-    assert driver._pending_aspect == "16:9"  # noqa: SLF001
+    assert not hasattr(driver, "_pending_count")
+    assert not hasattr(driver, "_pending_aspect")
+    assert not hasattr(driver, "_pending_model")
+    assert not hasattr(driver, "pending_request")
 
 
 @pytest.mark.asyncio
-async def test_configure_image_settings_portrait_aspect() -> None:
+async def test_agentic_image_request_is_passed_without_pending_driver_state() -> None:
+    """submit_images takes the request + expected count DIRECTLY and threads the
+    request's model / aspect into the built images — the long-lived driver keeps
+    no per-request state."""
     driver = AgenticFlowUiDriver()
-    req = _make_image_request(count=1, aspect=Aspect.PORTRAIT)
-    await driver.configure_image_settings(_mock_page_no_settings_panel(), req)
-    assert driver._pending_aspect == "9:16"  # noqa: SLF001
+    req = _make_image_request(count=1, aspect=Aspect.LANDSCAPE, model=Model.NARWHAL)
+    page = _fake_page_submit_and_scrape(
+        new_srcs=[f"https://labs.google/fx/api/trpc/media.getMediaUrlRedirect?name={UUID_A}"]
+    )
 
+    images = await driver.submit_images(page, req, expected_count=1)
 
-@pytest.mark.asyncio
-async def test_configure_image_settings_square_aspect() -> None:
-    driver = AgenticFlowUiDriver()
-    req = _make_image_request(count=2, aspect=Aspect.SQUARE)
-    await driver.configure_image_settings(_mock_page_no_settings_panel(), req)
-    assert driver._pending_aspect == "1:1"  # noqa: SLF001
+    assert [img.media_name for img in images] == [UUID_A]
+    # model / aspect came straight from the request, not stored state.
+    assert images[0].model_name_type == "NARWHAL"
+    assert images[0].aspect_ratio == "IMAGE_ASPECT_RATIO_LANDSCAPE"
+    # No mutable per-request state left on the driver.
+    assert not hasattr(driver, "pending_request")
+    assert not hasattr(driver, "_pending_count")
+    assert not hasattr(driver, "_pending_aspect")
+    assert not hasattr(driver, "_pending_model")
 
 
 # ---------------------------------------------------------------------------
@@ -514,8 +568,6 @@ async def test_switch_to_image_mode_is_noop() -> None:
 async def test_send_prompt_uses_keyboard_not_fill() -> None:
     """Slate ignores fill() — send_prompt must use keyboard.insert_text."""
     driver = AgenticFlowUiDriver()
-    driver._pending_count = 2  # noqa: SLF001
-    driver._pending_aspect = "16:9"  # noqa: SLF001
 
     page = MagicMock()
     keyboard = MagicMock()
@@ -541,7 +593,7 @@ async def test_send_prompt_uses_keyboard_not_fill() -> None:
 
     page.locator = MagicMock(side_effect=_locator)
 
-    await driver.send_prompt(page, "a red apple")
+    await driver.send_prompt(page, "a red apple", count=2, aspect="16:9")
 
     # fill() must NOT have been called.
     assert not hasattr(page, "fill") or not page.fill.called
@@ -556,8 +608,6 @@ async def test_send_prompt_uses_keyboard_not_fill() -> None:
 async def test_send_prompt_includes_count_and_aspect_in_directive() -> None:
     """The composed directive contains both count and aspect directives."""
     driver = AgenticFlowUiDriver()
-    driver._pending_count = 3  # noqa: SLF001
-    driver._pending_aspect = "1:1"  # noqa: SLF001
 
     page = MagicMock()
     keyboard = MagicMock()
@@ -582,7 +632,7 @@ async def test_send_prompt_includes_count_and_aspect_in_directive() -> None:
 
     page.locator = MagicMock(side_effect=_locator)
 
-    await driver.send_prompt(page, "a mountain")
+    await driver.send_prompt(page, "a mountain", count=3, aspect="1:1")
 
     typed: str = keyboard.insert_text.call_args[0][0]
     assert "3 pictures" in typed
@@ -916,15 +966,13 @@ async def test_switch_to_image_mode_does_not_call_fill() -> None:
 async def test_await_images_synthesised_fields() -> None:
     """Scrape-synthesised fields have sentinel values documented in the module."""
     driver = AgenticFlowUiDriver()
-    driver._pending_model = "NARWHAL"  # noqa: SLF001
-    driver._pending_aspect = "16:9"  # noqa: SLF001
 
     srcs = [
         f"https://labs.google/fx/api/trpc/media.getMediaUrlRedirect?name={UUID_A}",
     ]
     page = _fake_page_no_policy(initial_srcs=[], new_srcs=srcs)
 
-    images = await driver.await_images(page, expected_count=1)
+    images = await driver.await_images(page, expected_count=1, model="NARWHAL", aspect="16:9")
     img = images[0]
 
     assert img.seed == 0

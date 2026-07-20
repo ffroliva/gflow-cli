@@ -18,7 +18,6 @@ if TYPE_CHECKING:
 
     from playwright.async_api import Page
 
-    from gflow_cli.api.dto import GeneratedImage
     from gflow_cli.api.image import GenerateImageRequest
     from gflow_cli.api.video import GenerateVideoRequest
 
@@ -37,6 +36,14 @@ class FlowUiDriver(Protocol):
     screenshots; misses on optional settings are non-fatal (logged), while a
     missing prompt box or an unrecoverable mode is a hard error in the concrete
     implementation.
+
+    Awaiting the generated images is deliberately **not** on this protocol: the
+    two cohorts observe results by different mechanisms that do not share a
+    signature. Classic captures the ``batchGenerateImages`` wire response and
+    the transport drains it inline; agentic scrapes the DOM via its own
+    :meth:`AgenticFlowUiDriver.submit_images` / ``await_images`` (page-level
+    network capture is dead in that cohort). Callers branch on the concrete
+    driver type rather than a dishonest shared method.
     """
 
     name: str  # "classic" | "agentic"
@@ -84,19 +91,18 @@ class FlowUiDriver(Protocol):
         """Type ``prompt_text`` into the composer and submit it."""
         ...
 
-    async def await_images(
-        self,
-        page: Page,
-        expected_count: int,
-        *,
-        out_dir: Path | None = None,
-    ) -> list[GeneratedImage]:
-        """Return the images produced by the just-submitted generation.
 
-        Classic drains the ``batchGenerateImages`` responses captured via
-        ``page.on('response')``; agentic scrapes the DOM (page-level network
-        capture is dead in that cohort — requests are Web-Worker-delegated),
-        counting **distinct media UUIDs** and failing fast on a content-policy
-        block. ``expected_count`` is the requested image count.
-        """
-        ...
+class SupportsSendPrompt(Protocol):
+    """The single transport capability the classic driver depends on.
+
+    ``ClassicFlowUiDriver.send_prompt`` delegates to the transport's
+    ``_send_prompt`` (which owns the prompt-box locate + submit-click). Typing
+    the injected dependency as *this* narrow structural protocol — rather than
+    the whole ``UiAutomationTransport`` — keeps the seam honest (the driver
+    asks for exactly what it uses) and lets both ``UiAutomationTransport`` and
+    the ``VideoGenerationMixin`` half satisfy it without an import cycle.
+    """
+
+    async def _send_prompt(
+        self, page: Page, prompt_text: str, out_dir: Path | None = None
+    ) -> None: ...

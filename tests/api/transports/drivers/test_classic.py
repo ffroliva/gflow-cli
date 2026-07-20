@@ -39,6 +39,14 @@ def _stub_settings_helpers(monkeypatch: pytest.MonkeyPatch) -> AsyncMock:
     return duration
 
 
+def test_classic_driver_does_not_advertise_unimplemented_await_images() -> None:
+    """The classic cohort observes results by draining the batchGenerateImages
+    wire response inside the transport — not via a driver method. The driver
+    must NOT expose an ``await_images`` that only raises ``NotImplementedError``
+    (advertising a capability it refuses)."""
+    assert not hasattr(ClassicFlowUiDriver(), "await_images")
+
+
 class TestConfigureVideoSettingsDuration:
     @pytest.mark.asyncio
     async def test_explicit_duration_forwards_out_dir(
