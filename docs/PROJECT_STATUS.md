@@ -4,9 +4,15 @@
 
 ## Current release
 
+**v0.41.0 — alpha.** **Production-readiness hardening** ([#357]): queue safety (versioned payloads, atomic claims, checkpointed execution phases), cross-process profile lease (`ProfileLockedError` exit 11), cancellation-safe browser teardown, driver honesty (typed `SupportsSendPrompt` injection, frozen `TransportSetup`), mention-index fail-closed (`MentionIndexUnavailableError` exit 29), and external-CDP lifecycle removal. Removed nonfunctional `gflow video batch` command. Also: `/gflow:live-verify` skill for per-feature live-verification enforcement. 2513 tests pass; live-verified against real Flow (stale-session fail-fast, free image gen, paid veo-lite T2V). See [LIVE_VERIFICATION_v0.40.0-production-readiness.md](LIVE_VERIFICATION_v0.40.0-production-readiness.md).
+
+**Develop (unreleased, post-v0.41.0):** *(empty — develop is the staging branch for the next release).*
+
+<details><summary>v0.40.0 — prompt @-mention resolution for asset tagging (#344)</summary>
+
 **v0.40.0 — alpha.** **Prompt `@`-mention resolution for asset tagging (#344).** `@Name` in a t2i/i2i/video prompt resolves to a staged, taggable character entity via `services/mentions.py`'s `resolve_and_apply`, shared by the `image`/`video` CLI paths, the async worker, and MCP tools. Media-asset (non-character) `@`-mentions also work, but on the **image path only** — video-path media mentions are Phase 3. A bare character with no reference images is rejected early with a clear error instead of failing deep in the UI attach. De-tagged prompts are persisted to the catalog. See [REFERENCE_STRATEGIES](REFERENCE_STRATEGIES.md) for `@`-mention vs `--reference-entity` vs `--ref`. Verification: [LIVE_VERIFICATION_v0.40.0](LIVE_VERIFICATION_v0.40.0.md) (`gflow character create` + `@Zoro` t2i passed live end-to-end against unmodified `develop`, ~2 Imagen credits; also records a same-cycle investigation dead end where a stale local WIP branch was mistaken for `develop`'s real state).
 
-**Develop (unreleased, post-v0.40.0):** *(empty — develop is the staging branch for the next release).*
+</details>
 
 <details><summary>v0.39.0 — failed-generation persistence + gflow data list errors</summary>
 
