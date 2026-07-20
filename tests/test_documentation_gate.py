@@ -71,12 +71,13 @@ def test_current_docs_do_not_instruct_video_batch() -> None:
 
 def test_changelog_unreleased_notes_video_batch_removal() -> None:
     changelog = (ROOT / "CHANGELOG.md").read_text(encoding="utf-8")
-    start = changelog.index("## [Unreleased]")
+    # The video batch removal shipped in v0.41.0; check the release section.
+    start = changelog.index("## [0.41.0]")
     end = changelog.index("\n## [", start + 1)
-    unreleased = changelog[start:end].lower()
+    section = changelog[start:end].lower()
 
-    assert "video batch" in unreleased
-    assert "removed" in unreleased
+    assert "video batch" in section
+    assert "removed" in section
 
 
 # Production-readiness hardening (task F1, design spec §9): headed real Chrome
