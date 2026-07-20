@@ -65,7 +65,7 @@ lease = ProfileLease(profile_dir)
 lease.acquire()
 ready_marker.write_text(str(lease.lock_path), encoding="utf-8")
 
-deadline = time.monotonic() + 60.0
+deadline = time.monotonic() + 150.0  # must exceed _READY_TIMEOUT + _CONTENDER_TIMEOUT
 while not stop_marker.exists() and time.monotonic() < deadline:
     time.sleep(0.05)
 
