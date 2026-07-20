@@ -41,7 +41,7 @@ if TYPE_CHECKING:
 
     from playwright.async_api import Page
 
-    from gflow_cli.api.transports.drivers.base import FlowUiDriver
+    from gflow_cli.api.transports.drivers.base import FlowUiDriver, SupportsSendPrompt
 
 log = structlog.get_logger(__name__)
 
@@ -128,8 +128,16 @@ async def get_ui_driver(
     timeout_s: float | None = None,
     poll_interval_s: float | None = None,
     ui_mode: UiMode = UiMode.AUTO,
+    transport: SupportsSendPrompt | None = None,
 ) -> FlowUiDriver:
     """Probe the DOM and return the matching :class:`FlowUiDriver`.
+
+    ``transport`` is the live transport (as the narrow
+    :class:`SupportsSendPrompt` seam); it is injected into the classic driver at
+    construction (``ClassicFlowUiDriver.send_prompt`` delegates to
+    ``transport._send_prompt``) instead of being mutated onto the driver after
+    the fact. Agentic ignores it. It is optional so the pure detection tests can
+    call the factory without a transport.
 
     ``ui_mode`` (issue #299) is the caller's policy:
       * ``AUTO`` — bind whatever the composer renders.
@@ -188,4 +196,4 @@ async def get_ui_driver(
     # classic rendered
     if ui_mode is UiMode.AGENTIC:
         raise UiModeUnavailableError(UiMode.AGENTIC)
-    return ClassicFlowUiDriver()
+    return ClassicFlowUiDriver(transport=transport)

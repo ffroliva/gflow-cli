@@ -25,9 +25,11 @@ __all__ = [
     "GFlowError",
     "MediaAttributionError",
     "MediaUploadRejectedError",
+    "MentionIndexUnavailableError",
     "ModelModeIncompatibilityError",
     "NetworkError",
     "ProblemDetails",
+    "QueueSchemaError",
     "RateLimitError",
     "SceneConcatError",
     "SecurityError",
@@ -556,6 +558,59 @@ class MediaUploadRejectedError(GFlowError):
     )
 
 
+class MentionIndexUnavailableError(GFlowError):
+    """Raised when a prompt contains an ``@mention`` but a catalog source
+    needed to resolve it (character entities or media assets) is unavailable.
+
+    Distinct from an empty source: a source that loads successfully with zero
+    rows is NOT an outage -- resolution proceeds and reports the mention as
+    unknown via the normal ``resolve_mentions()`` path. This error is raised
+    only when the source loader itself failed (a Flow API error for
+    characters, a data-store error for media), so an outage is never silently
+    indistinguishable from "no matching asset" (fail closed instead of
+    degrading to an empty index).
+
+    ``detail`` names WHICH source failed ("character" or "media") but never
+    includes prompt text or catalog content. The original failure is
+    preserved as ``__cause__`` for diagnostics.
+    """
+
+    problem_type = "https://gflow-cli.dev/errors/mention-index-unavailable"
+    title = "Mention index unavailable"
+    _default_remediation = (
+        "gflow could not load the asset catalog needed to resolve an @mention. "
+        "Check network connectivity (character source) or GFLOW_CLI_DB_PATH / "
+        "filesystem permissions (media source), then retry."
+    )
+
+
+class QueueSchemaError(GFlowError):
+    """Raised when a worker-queue task payload's schema is invalid or unknown
+    (Task C2 — versioned queue codec, design spec §3).
+
+    Covers: an unrecognized ``schema_version`` (anything other than the
+    implicit legacy 0 or the current 1), an unknown ``task_type``
+    discriminator, or a payload that fails structural validation (missing
+    required field, invalid enum, out-of-range count, malformed path) when
+    mapped onto the existing typed ``GenerateImageRequest`` /
+    ``GenerateVideoRequest`` DTOs.
+
+    Raised by ``worker/codec.py`` BEFORE Playwright starts — no browser
+    launch, no credit spend. An unknown version is a stable, typed failure;
+    it is never interpreted optimistically. ``detail`` is redacted and never
+    echoes prompt text.
+    """
+
+    problem_type = "https://gflow-cli.dev/errors/queue-schema"
+    title = "Worker queue payload schema is invalid"
+    _default_remediation = (
+        "The queued task's payload could not be decoded. This usually means "
+        "gflow-cli was downgraded after a newer version enqueued the task, or "
+        "the payload was hand-edited. Re-enqueue the task with a compatible "
+        "gflow-cli version."
+    )
+
+
 class SecurityError(GFlowError):
     """Raised when a security boundary is violated (e.g. profile_dir outside HOME)."""
 
@@ -844,6 +899,16 @@ EXIT_CODE_MAP: dict[type[GFlowError], int] = {
     # input file (uploadImage 4xx). Direct GFlowError subclass; exit 27 lets
     # scripts branch on "re-encode the input image" vs generic error (1).
     MediaUploadRejectedError: 27,
+    # MentionIndexUnavailableError: an @mention was present but the catalog
+    # source needed to resolve it (character or media) failed to load.
+    # Direct GFlowError subclass; exit 29 lets scripts distinguish "the
+    # catalog is unreachable" from an unknown-mention ConfigurationError (11).
+    MentionIndexUnavailableError: 29,
+    # QueueSchemaError (Task C2): a worker-queue payload's schema_version is
+    # unknown, or its fields fail validation against the typed request DTOs.
+    # Direct GFlowError subclass; exit 30 lets scripts distinguish "the queue
+    # row is malformed/from an incompatible version" from generic error (1).
+    QueueSchemaError: 30,
     ConfigurationError: 11,
     AuthExpiredError: 3,
     RateLimitError: 4,

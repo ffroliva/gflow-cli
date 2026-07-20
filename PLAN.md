@@ -667,6 +667,8 @@ Records image, batch, T2V, I2V, and R2V provenance in a local SQLite catalog. Re
 
 **2026-07-09 verification — the current stealth fix is CONFIRMED SUFFICIENT (so this stays parked).** A 20-generation baseline on a live authed profile through the default stealth stack produced a **0.0% WAF 403 rate** (19/20 success; the one miss was a UI-scrape timeout, not a WAF block). This met ADR-13's "must verify before implementing" gate and closed the [Camoufox adoption roadmap](superpowers/plans/2026-07-09-camoufox-adoption/PLAN.md) at Phase 2 — the Camoufox engine was NOT built. Evidence: [superpowers/spikes/2026-07-09-camoufox-waf-403.md](superpowers/spikes/2026-07-09-camoufox-waf-403.md). Re-run `scripts/spike_waf_camoufox.py` if a repeatable WAF-403 is later observed; a materially non-zero rate would reopen CDP-Attach / Camoufox.
 
+**2026-07-19 — packaged CDP lifecycle removed.** The unused CDP attach/spawn lockfile lifecycle that previously shipped in `browser_manager.py` (`get_or_launch_browser` / `close_browser` and its port/lockfile/singleton-lock helpers) was deleted: zero production consumers, an unsafe no-lock attach-to-any-Chrome path, and no positive evidence outweighing the 2026-05-12 WAF rejection above. Chrome discovery/channel helpers (`is_chrome_available`, `channel_for_profile`, etc.) — used by the real auth/UI-automation path — were kept. This ADR's "parked" status is unchanged: CDP-attach as a distinct opt-in transport remains a backlog idea for a future contributor with a safe ownership model; see `.superpowers/sdd/cdp-decision.md` for the evidence.
+
 ---
 
 ### Phase 8 — Pluggable storage backend — BACKLOG

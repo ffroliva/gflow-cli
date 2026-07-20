@@ -275,26 +275,6 @@ Re-running `auth login` reuses the existing profile dir (you typically just clic
 
 ---
 
-### Same profile can't be used in parallel
-
-- **Status:** Open (by design) · **Severity:** Low · **Affects:** all versions
-
-Chromium refuses to open two persistent contexts on the same `user-data-dir` simultaneously. So running two concurrent `gflow ...` calls with the same `--profile` will fail the second one with a "ProcessSingleton: profile is locked" error.
-
-**Workaround:** use different profiles for parallel work.
-
-```bash
-# Terminal 1
-gflow video batch ./batch-a.tsv --profile work
-
-# Terminal 2 — different profile, same time, OK
-gflow video batch ./batch-b.tsv --profile personal
-```
-
-**Roadmap:** Phase 4 (v0.4.0a2) added concurrency *inside* one `gflow-cli` process via `GFLOW_CLI_CONCURRENCY=N` (per-worker Page pool on one shared BrowserContext). Cross-process same-profile serialization is a Chromium constraint we cannot work around without rewriting the auth model — multiple shells against the same profile remains a "use different profiles" workaround.
-
----
-
 ### Chromium cookie database locks block yt-dlp integrations (Instagram/restricted download paths)
 
 - **Status:** Mitigated · **Severity:** Low-Medium · **Affects:** any downstream helper calling `yt-dlp` (including `claude-video`, `cg-decode`/`refanalyzer`, or `experience-vault`)
@@ -364,6 +344,22 @@ playwright._impl._errors.TimeoutError: Locator.click: Timeout 30000ms exceeded.
 
 ---
 
+### `gflow serve` / MCP worker queue: interrupted post-submit tasks need manual reconciliation
+
+- **Status:** Open (by design — no automated reconciliation) · **Severity:** Low · **Affects:** `gflow serve` daemon and MCP worker paths only (not the plain CLI, which has no queue)
+
+The worker queue (`generation_queue`, used by the `gflow serve` daemon and MCP tool calls) checkpoints every task's progress through `claimed` → `submit_attempted` → `remote_started` → terminal. If a task is interrupted (daemon restart, crash, or cancellation) while still `claimed` (before any submit), gflow-cli safely marks it `failed` — nothing was spent, safe to retry. But if it's interrupted at `submit_attempted` or `remote_started` — **after** the credit-spending submit click may have fired — it is marked `indeterminate` instead: a credit *may* have been spent and the outcome is unknown. An `indeterminate` task is **never** silently reported as `failed` and **never** auto-resubmitted (that could double-spend a credit for one generation).
+
+**Why this can't be resolved automatically today:** Flow's generation-status REST endpoint rejects a bare, cookie-only `page.request` re-check with HTTP 401 — only a live, authenticated Playwright SPA re-poll (opening the project page and reading the DOM) can turn a preserved handle back into a real status, and that live re-poll path is not wired into recovery yet (tracked for a future phase; see the C1 handle-spike notes in `docs/superpowers/specs/2026-07-19-production-readiness-hardening-design.md` Appendix A).
+
+**Manual reconciliation:** an `indeterminate` row's checkpoint retains whatever handle/project info was captured before interruption. To resolve one by hand: open the relevant Flow project in the browser and check whether the expected asset appears.
+- **Found** — the generation completed; no action needed (the credit was spent as intended, just not auto-recorded locally).
+- **Not found after a few minutes** — it likely never completed; safe to resubmit the same prompt manually.
+
+**Queue payload schema (V0/V1):** the queue's `payload_json` carries an additive `schema_version` key. A payload with no `schema_version` key is legacy **V0** and decodes with the same field lookups as **V1** (the shape is otherwise identical) — both remain readable. The codec always *writes* the current version (`1`) on any re-encode. Any other version is treated as unknown and rejected with `QueueSchemaError` (**exit code 30**) rather than interpreted optimistically — this is a fail-closed guard against decoding a payload written by an incompatible future (or hand-edited) version.
+
+---
+
 ### Aspect-ratio support depends on the Veo / Imagen model version
 
 - **Status:** Open · **Severity:** Low
@@ -376,23 +372,6 @@ Other ratios may be silently rejected or coerced server-side. We validate in the
 
 ---
 
-### `gflow video batch` does not skip already-completed entries
-
-- **Status:** Open · **Severity:** Medium · **Affects:** v0.2.0a1+
-
-If a `gflow video batch` run dies partway through (auth expiry, network blip, Ctrl-C) and you rerun the same TSV manifest, every row is re-submitted to Flow. Flow's private API does not expose a "have I generated this before?" predicate, and `gflow-cli` does not yet maintain a local manifest-of-outputs to compare against.
-
-**Cost implication:** re-running a partially completed manifest **may consume additional Veo / Imagen credits**. We cannot guarantee that Flow de-duplicates server-side — credit accounting on a private API is not contractual.
-
-**Workaround:** before rerunning, trim the manifest down to the rows whose `output_path` does not yet exist on disk:
-```bash
-awk -F'\t' 'NR==1 || (system("test -e " $NF) != 0)' manifest.tsv > manifest.remaining.tsv
-gflow video batch manifest.remaining.tsv
-```
-
-**Roadmap:** under consideration for Phase 6 (operations history with a local SQLite ledger — see `PLAN.md`).
-
----
 
 ### REST API 401 — all `aisandbox-pa.googleapis.com` generation endpoints blocked
 
@@ -749,7 +728,43 @@ key — surfaces as a `RuntimeError` that `auth/cookies.py` normalizes to
 
 ---
 
+### Same profile can't be used in parallel
+
+- **Status:** Mitigated (crash → typed fail-fast rejection) · **Severity:** Low · **Affects:** all versions
+
+Chromium refuses to open two persistent contexts on the same `user-data-dir` simultaneously. Historically this surfaced as an unhelpful Chromium "ProcessSingleton: profile is locked" error partway through a run. As of the profile-lease hardening (production-readiness plan, slice D1/D3), gflow-cli enforces this itself: a cross-process advisory lock (`ProfileLease`, kernel `flock` on POSIX / `msvcrt.locking` on Windows) guards every profile directory. A second `gflow` invocation, `gflow serve` daemon task, or MCP call against an already-leased profile is rejected **immediately** — before any Chrome process starts — with a typed `ProfileLockedError` (**exit code 11**); it never waits and never silently corrupts the profile.
+
+**Workaround:** use different profiles for parallel work — different profiles acquire independent leases and run fully concurrently.
+
+```bash
+# Terminal 1
+gflow image batch ./batch-a.tsv --profile work
+
+# Terminal 2 — different profile, same time, OK
+gflow image batch ./batch-b.tsv --profile personal
+```
+
+**Roadmap:** Phase 4 (v0.4.0a2) added a per-worker Page pool on one shared BrowserContext (`GFLOW_CLI_CONCURRENCY=N`), intended to let one `gflow-cli` process fan out multiple in-flight generations, but no current CLI command drives more than one generation at a time through it — the only feature that did (a manifest-driven video batch runner) never worked and was removed. Cross-process same-profile serialization remains a hard constraint (Chromium can only own one persistent context per `user-data-dir`) — but it is now a clean, typed, fail-fast rejection instead of an unstructured crash. Multiple shells against the same profile remains a "use different profiles" workaround; there is no queueing/waiting mode.
+
+---
+
 ## Resolved
+
+### `gflow video`'s manifest-driven batch subcommand didn't skip already-completed entries — RESOLVED as obsolete
+
+- **Status:** Resolved (obsolete) · **Severity:** Was-Medium · **Was-affecting:** v0.2.0a1 through the command's removal · **Fixed in:** n/a — removed in production-readiness hardening (see `fix: remove nonfunctional video batch command`)
+
+This entry described a gap in `gflow video`'s `batch` subcommand: it never
+maintained a local manifest-of-outputs, so rerunning a partially completed
+TSV manifest after a mid-run failure would re-submit already-rendered rows
+and could burn additional credits. The command itself, however, never
+actually worked end-to-end — it always exited with a stub error before
+reaching Flow — so no run could have been "partially completed" in the
+first place. It has since been removed entirely as a nonfunctional stub.
+The underlying command no longer exists, so this gap is moot rather than
+fixed; kept here for searchability. `gflow image batch` (the real, working
+batch command) is unaffected. For video, loop `gflow video t2v`/`i2v` from
+the shell — see [`docs/USAGE.md` § Batch video generation (shell loop)](docs/USAGE.md#batch-video-generation-shell-loop).
 
 ### False "forced agentic — not recoverable" aborts from an icon-heuristic cohort probe
 

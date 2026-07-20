@@ -8,11 +8,41 @@ KeyErrors leak.
 
 from __future__ import annotations
 
+from collections.abc import Callable
 from dataclasses import dataclass, replace
 from typing import TYPE_CHECKING, Any, Literal, cast
 
 if TYPE_CHECKING:
     from gflow_cli.errors import GFlowError
+
+
+GenerationPhase = Literal["submit_attempted", "remote_started"]
+
+
+@dataclass(frozen=True)
+class GenerationCheckpoint:
+    """A phase observation emitted at the generation submit boundary (Task C1).
+
+    Monotonic phases: ``submit_attempted`` is emitted immediately BEFORE the
+    credit-spending UI gesture; ``remote_started`` is emitted when the
+    authoritative Flow handle is first observed (video: the
+    ``batchAsyncGenerateVideo*`` operation name; image: the generated media and
+    workflow UUIDs).
+
+    Records ONLY Flow handle identifiers + phase — never prompts, headers,
+    cookies, or signed URLs. The seam only observes; later queue tasks (C3/C5)
+    persist these checkpoints for handle-only reconciliation.
+    """
+
+    phase: GenerationPhase
+    operation_id: str | None = None
+    media_ids: tuple[str, ...] = ()
+    workflow_ids: tuple[str, ...] = ()
+
+
+# Sync observer invoked by FlowApiClient at each generation phase boundary.
+# A ``None`` observer means zero behaviour change.
+GenerationCheckpointObserver = Callable[[GenerationCheckpoint], None]
 
 
 @dataclass(frozen=True)

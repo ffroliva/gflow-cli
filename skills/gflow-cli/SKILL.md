@@ -2,7 +2,7 @@
 name: gflow-cli
 version: "1.2"
 skillopt_epoch: 0
-description: Use when the user wants to drive Google Flow (Veo image-to-video, Veo text-to-video, Imagen / Nano Banana image generation) from the terminal or a script — including text-to-video, image-to-video, image-to-image, batch video pipelines, or burning Flow Ultra/Pro credits programmatically. The CLI is `gflow` (or `flow`); install with `uv tool install gflow-cli` or run ad-hoc with `uvx --from gflow-cli gflow ...`. Bypasses the web UI entirely after a one-time browser sign-in.
+description: Use when the user wants to drive Google Flow (Veo image-to-video, Veo text-to-video, Imagen / Nano Banana image generation) from the terminal or a script — including text-to-video, image-to-video, image-to-image, batch image pipelines, or burning Flow Ultra/Pro credits programmatically. The CLI is `gflow` (or `flow`); install with `uv tool install gflow-cli` or run ad-hoc with `uvx --from gflow-cli gflow ...`. Drives the real Flow web UI through a headed Chrome session (Playwright) after a one-time browser sign-in — it does not bypass the UI, it automates it.
 optimization_notes: |
   Known weak spots for the SkillOpt training loop (targets for epoch 1+):
   - Wrong subcommand: agents emit 'gflow video generate' / 'gflow video create' instead of 'gflow video t2v' or 'gflow video i2v'
@@ -17,7 +17,7 @@ optimization_notes: |
 
 # gflow-cli skill
 
-`gflow-cli` is an unofficial Python CLI that drives [Google Flow](https://labs.google/fx/tools/flow) — Veo (T2V/I2V) and Imagen / Nano Banana — from the terminal, bypassing the web UI. Source: <https://github.com/ffroliva/gflow-cli>. Canonical command reference: [`docs/USAGE.md`](https://github.com/ffroliva/gflow-cli/blob/main/docs/USAGE.md).
+`gflow-cli` is an unofficial Python CLI that drives [Google Flow](https://labs.google/fx/tools/flow) — Veo (T2V/I2V) and Imagen / Nano Banana — from the terminal by automating the real Flow web UI in a headed Chrome session (Playwright), not by bypassing it. Source: <https://github.com/ffroliva/gflow-cli>. Canonical command reference: [`docs/USAGE.md`](https://github.com/ffroliva/gflow-cli/blob/main/docs/USAGE.md).
 
 ## When to invoke this skill
 
@@ -65,11 +65,13 @@ gflow image t2i "<prompt>" [--model {nano2|nano-pro|image4}] \
                             [--aspect {9:16|16:9|1:1|4:3|3:4}] \
                             [-n 1..4] [--seed N] [--out DIR]
 gflow image i2i "<prompt>" --ref PATH_OR_UUID [--ref ...] [...same as t2i]
+gflow image batch <manifest.tsv|manifest.json> [-n 1..4] [--aspect ...] [--out DIR]  # shared project, up to 5 prompts
 
 # Video generation (Veo 3.1)
 gflow video t2v "<prompt>" [--out-dir DIR] [--aspect ...] [--seed N]
 gflow video i2v --initial-frame <image|media-UUID> "<prompt>" [--out-dir DIR] [...same as t2v]  # UUID = in-project asset, no re-upload (#287; pair with --project)
-gflow video batch <manifest.tsv> [--out-dir DIR]
+# `gflow video` has no `batch` subcommand — that stub never worked and was
+# removed. For multi-clip runs, loop `gflow video t2v`/`i2v` from the shell.
 gflow video chain <manifest.jsonl> [--out-dir DIR] [--dry-run] \
                   [--max-links N] [--resume-from N]   # last-frame I2V chaining; veo models only
 
@@ -134,6 +136,9 @@ gflow video i2v --initial-frame ./input.png "Slow cinematic push-in, soft golden
 
 ### Batch from a directory of inputs (bash)
 
+There is no manifest-driven video batch command — that stub never worked and
+was removed. Loop `gflow video t2v`/`i2v` from the shell instead:
+
 ```bash
 mkdir -p out
 for img in ./inputs/*.png; do
@@ -142,12 +147,11 @@ for img in ./inputs/*.png; do
 done
 ```
 
-### Batch via a TSV manifest
-
-```bash
-# manifest.tsv columns: initial_frame \t prompt \t end_frame? \t aspect? \t output_path?
-# Empty initial_frame = T2V; lines starting with `# ` are comments.
-gflow video batch ./manifest.tsv --out-dir ./out/
+```powershell
+New-Item -ItemType Directory -Force -Path out | Out-Null
+Get-ChildItem ./inputs/*.png | ForEach-Object {
+    gflow video i2v --initial-frame $_.FullName "Cinematic push-in" --out-dir out
+}
 ```
 
 ### Create a reusable Character for consistent subjects
@@ -263,7 +267,7 @@ Documented errors agents commonly make — negative examples for the SkillOpt tr
 | `--model imagen` / `--model quality` / `--model high` | `--model image4` (Imagen 3.5), `--model nano-pro` (Gem Pix 2), `--model nano2` (Narwhal) |
 | Python: `client = FlowApiClient(...)` then method calls | Must use `async with FlowApiClient(...) as client:` — it's an async context manager |
 | Python: `from gflow_cli import FlowApiClient` | `from gflow_cli.api.client import FlowApiClient` |
-| Piping `gflow video t2v` output into a shell loop for batch | Use `gflow video batch manifest.tsv` — the CLI has a native batch runner |
+| Suggesting a native `batch` subcommand under `gflow video` | It doesn't exist — that stub never worked and was removed. Loop `gflow video t2v`/`i2v` from the shell for multi-clip runs (`gflow image batch manifest.tsv\|json` is the real, working batch command, but it's image-only) |
 
 ## Disclaimer
 

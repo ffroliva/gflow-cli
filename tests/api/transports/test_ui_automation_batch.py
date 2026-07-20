@@ -1233,4 +1233,6 @@ async def test_generate_images_batch_threads_ui_mode(
             prompts=prompts, jitter_range=(0.0, 0.0), continue_on_error=False
         )
 
-    mock_get_driver.assert_called_once_with(transport._page, ui_mode=UiMode.CLASSIC)
+    mock_get_driver.assert_called_once_with(
+        transport._page, ui_mode=UiMode.CLASSIC, transport=transport
+    )

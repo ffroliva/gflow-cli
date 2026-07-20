@@ -41,6 +41,7 @@ from gflow_cli.errors import (
     NetworkError,
     TransportTimeoutError,
 )
+from gflow_cli.profile_lease import ProfileLease
 
 log = structlog.get_logger(__name__)
 
@@ -221,7 +222,9 @@ class BearerTransport:
         captured_token: str | None = None
         captured_fp = BrowserFingerprint()
 
-        async with async_playwright() as pw:
+        # Own the profile for this momentary Bearer-capture context (D3). Lease
+        # is the OUTER context so it releases only after the driver stops.
+        async with ProfileLease(profile_dir), async_playwright() as pw:
             ctx = await pw.chromium.launch_persistent_context(
                 user_data_dir=str(profile_dir),
                 headless=True,

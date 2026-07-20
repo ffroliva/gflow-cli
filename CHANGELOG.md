@@ -7,6 +7,19 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+### Removed
+
+- **`gflow video batch`** — the manifest-driven video batch command was removed.
+  It never worked end-to-end; every invocation exited immediately with a stub
+  error before reaching Flow. Prior documentation (README, AGENTS.md,
+  `docs/USAGE.md`, `docs/USER_GUIDE.md`, `docs/CONFIGURATION.md`,
+  `.env.template`, `skills/gflow-cli/SKILL.md`, `KNOWN_ISSUES.md`) described
+  it as a real or near-term feature (TSV manifest format, concurrency
+  fan-out, skip-existing workarounds) — those claims were inaccurate and have
+  been corrected to point at a shell `for`-loop over `gflow video t2v`/`i2v`
+  instead. `gflow image batch` (manifest-driven image generation) is
+  unaffected and remains supported.
+
 ## [0.40.0] — 2026-07-19
 
 ### Added

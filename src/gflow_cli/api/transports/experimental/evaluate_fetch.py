@@ -46,6 +46,7 @@ from gflow_cli.errors import (
     TransportTimeoutError,
     WafRejectionError,
 )
+from gflow_cli.profile_lease import ProfileLease
 
 log = structlog.get_logger(__name__)
 
@@ -103,6 +104,9 @@ class EvaluateFetchTransport:
         # False when setup() was called with page= (shared-page path, spec § 5.4.4).
         # teardown() is a no-op for Playwright resources when False.
         self._owns_playwright: bool = False
+        # Cross-process profile lease (D3). Held only on the own-context path;
+        # None on the shared-page path (caller owns the context and its lease).
+        self._lease: ProfileLease | None = None
 
     # ------------------------------------------------------------------
     # Lifecycle
@@ -147,6 +151,10 @@ class EvaluateFetchTransport:
         # guard would skip the close).
         self._owns_playwright = True
         try:
+            # Own the profile BEFORE Chrome launches (D3). Contention raises
+            # ProfileLockedError here; the except below routes to teardown, which
+            # releases the lease.
+            self._lease = ProfileLease(profile_dir).acquire()
             pw = await pw_cm.__aenter__()
             ctx = await pw.chromium.launch_persistent_context(
                 str(profile_dir),
@@ -283,6 +291,11 @@ class EvaluateFetchTransport:
                 finally:
                     self._pw_cm = None
 
+        # Release the profile lease last — after context + driver are down (D3).
+        # No-op on the shared-page path (lease is None).
+        if self._lease is not None:
+            self._lease.release()
+            self._lease = None
         self._setup_done = False
         self._owns_playwright = False
         log.info("evaluate_fetch.teardown_done")

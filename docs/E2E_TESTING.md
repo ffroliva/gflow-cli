@@ -230,8 +230,13 @@ environment:
   never write to the real profile directory
 
 **No parallel execution with `-n`.** Chrome refuses two persistent contexts on
-the same `user-data-dir`; running e2e tests in parallel risks OOM and profile
-corruption. Always run e2e single-threaded.
+the same `user-data-dir`, and the cross-process `ProfileLease` now enforces
+that fail-fast: a second test (or a leftover daemon/task) touching an
+already-leased profile is rejected immediately with `ProfileLockedError`
+(exit code 11) instead of racing Chrome into a corrupted profile. That's a
+clean failure, not a crash — but it still means two e2e runs against the same
+profile can't proceed concurrently. Always run e2e single-threaded against a
+given profile.
 
 ---
 

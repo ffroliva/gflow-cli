@@ -1,7 +1,6 @@
 """`gflow video` command group.
 
 `t2v` and `i2v` drive `UiAutomationTransport.generate_video` with auto-download.
-`batch` remains stubbed pending a manifest-driven runner.
 """
 
 from __future__ import annotations
@@ -62,12 +61,6 @@ def _warn_persistence_failed_after_success(
         flow_media_id=flow_media_id,
         local_path=str(local_path) if local_path is not None else None,
     )
-
-
-_BATCH_UNAVAILABLE = (
-    "[yellow]`gflow video batch` is not yet available.[/yellow]\n"
-    "Batch video on UiAutomationTransport lands in a later release."
-)
 
 
 async def _generate_and_report(
@@ -397,11 +390,6 @@ async def _run_r2v(
         project_id=project_id,
         tool_specs=tool_specs,
     )
-
-
-async def _run_batch(**kwargs: Any) -> None:  # pragma: no cover  # NOSONAR
-    console.print(_BATCH_UNAVAILABLE)
-    raise SystemExit(1)
 
 
 def _resolve_chain_model(model: str | None) -> VideoModel:
@@ -1453,16 +1441,4 @@ def chain(
         ),
         cli_command="video chain",
         as_json=as_json,
-    )
-
-
-@video.command("batch")
-@click.argument("manifest", required=False)
-def batch(manifest: str | None) -> None:
-    """Run a manifest of video generations (not yet available)."""
-    profile_name = _resolve_profile(None)
-    provider_dir = _make_provider_dir(profile_name)
-    run_with_handlers(
-        lambda: _run_batch(manifest=manifest, provider_dir=provider_dir),
-        cli_command="video batch",
     )
