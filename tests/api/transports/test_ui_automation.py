@@ -81,6 +81,21 @@ def _make_fake_context(*, pages: list[MagicMock] | None = None) -> MagicMock:
     return ctx
 
 
+def _record_lease_events(monkeypatch: pytest.MonkeyPatch, events: list[str]) -> None:
+    """Patch ProfileLease.acquire/release to append to ``events`` — no real locks."""
+    from gflow_cli.profile_lease import ProfileLease
+
+    def acq(self: ProfileLease) -> ProfileLease:
+        events.append("acquire")
+        return self
+
+    def rel(self: ProfileLease) -> None:
+        events.append("release")
+
+    monkeypatch.setattr(ProfileLease, "acquire", acq)
+    monkeypatch.setattr(ProfileLease, "release", rel)
+
+
 # ---------------------------------------------------------------------------
 # Helpers — shared across units
 # ---------------------------------------------------------------------------
@@ -216,6 +231,45 @@ class TestSetup:
         assert call_kwargs.get("locale") == "en-US"
         assert t._owns_playwright is True  # type: ignore[attr-defined]
         assert t._setup_done is True  # type: ignore[attr-defined]
+
+    @pytest.mark.asyncio
+    async def test_own_context_acquires_and_releases_profile_lease(
+        self, tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+    ) -> None:
+        """Standalone path (page=None): acquire the profile lease BEFORE the
+        persistent context launches and release it AFTER teardown (D3)."""
+        events: list[str] = []
+        _record_lease_events(monkeypatch, events)
+        t = UiAutomationTransport()
+        ctx = _make_fake_context(pages=[])
+        pw_cm, fake_pw = _make_fake_playwright(ctx)
+
+        async def _launch(*_a: object, **_k: object) -> MagicMock:
+            events.append("launch")
+            return ctx
+
+        fake_pw.chromium.launch_persistent_context = AsyncMock(side_effect=_launch)
+        with patch(
+            "gflow_cli.api.transports.ui_automation.async_playwright",
+            return_value=pw_cm,
+        ):
+            await t.setup(tmp_path)
+        assert events == ["acquire", "launch"]  # acquire strictly before launch
+        await t.teardown()
+        assert events == ["acquire", "launch", "release"]  # released after close
+
+    @pytest.mark.asyncio
+    async def test_shared_page_path_acquires_no_lease(
+        self, tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+    ) -> None:
+        """Shared-page path (caller owns the context): the transport must NOT
+        take a second lease (D3 — no double-acquire)."""
+        events: list[str] = []
+        _record_lease_events(monkeypatch, events)
+        t = UiAutomationTransport()
+        await t.setup(tmp_path, page=MagicMock())
+        await t.teardown()
+        assert events == []
 
     @pytest.mark.asyncio
     async def test_own_context_uses_existing_page_if_present(self, tmp_path: Path) -> None:

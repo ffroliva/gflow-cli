@@ -1,7 +1,6 @@
 from __future__ import annotations
 
 import asyncio
-import contextlib
 import json
 from contextlib import asynccontextmanager
 from typing import Any
@@ -45,13 +44,11 @@ async def lifespan(app: FastAPI):
                 indeterminate=recovered["indeterminate"],
             )
 
-    # Write daemon lockfile
-    import os
-
-    profile_dir = settings.profile_subdir(profile_name)
-    profile_dir.mkdir(parents=True, exist_ok=True)
-    daemon_lock = profile_dir / "profile.lock"
-    daemon_lock.write_text(str(os.getpid()))
+    # No daemon-lifetime profile lock (D3): the daemon does NOT own the profile
+    # while idle. Each browser-owning task acquires the cross-process
+    # ProfileLease inside FlowApiClient's launch path for exactly its own
+    # lifetime, so an overwriteable daemon-lifetime lock file would be both
+    # redundant and unsafe (any process could clobber it).
 
     # 2. Start FlowWorker loop in background
     worker = FlowWorker(profile_name, str(db_path))
@@ -63,11 +60,6 @@ async def lifespan(app: FastAPI):
 
     # Shutdown
     logger.info("Shutting down gflow-daemon lifespan")
-    daemon_lock = settings.profile_subdir(profile_name) / "profile.lock"
-    if daemon_lock.exists():
-        with contextlib.suppress(FileNotFoundError):
-            daemon_lock.unlink()
-
     worker.stop()
     worker_task.cancel()
     # Await the worker's completion. gather(..., return_exceptions=True) captures

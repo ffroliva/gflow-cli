@@ -446,3 +446,69 @@ async def test_refresh_auth_wraps_arbitrary_exception_as_auth_expired(
 
     with pytest.raises(_AuthExpiredError, match="bearer: refresh failed"):
         await transport.refresh_auth()
+
+
+# ---------------------------------------------------------------------------
+# D3 — profile-lease ownership around the momentary Bearer-capture context
+# ---------------------------------------------------------------------------
+
+
+class _FakePwCM:
+    def __init__(self, pw: object) -> None:
+        self._pw = pw
+
+    async def __aenter__(self) -> object:
+        return self._pw
+
+    async def __aexit__(self, *_a: object) -> bool:
+        return False
+
+
+def _record_lease_events(monkeypatch: pytest.MonkeyPatch, events: list[str]) -> None:
+    from gflow_cli.profile_lease import ProfileLease
+
+    def acq(self: ProfileLease) -> ProfileLease:
+        events.append("acquire")
+        return self
+
+    def rel(self: ProfileLease) -> None:
+        events.append("release")
+
+    monkeypatch.setattr(ProfileLease, "acquire", acq)
+    monkeypatch.setattr(ProfileLease, "release", rel)
+
+
+async def test_capture_bearer_wraps_launch_in_profile_lease(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    """_capture_bearer_via_playwright owns the profile for its momentary context:
+    acquire before launch, release after close — even on the no-token error path."""
+    events: list[str] = []
+    _record_lease_events(monkeypatch, events)
+
+    page = MagicMock()
+    page.on = MagicMock()
+    page.goto = AsyncMock()
+    page.wait_for_timeout = AsyncMock()
+    ctx = MagicMock()
+    ctx.new_page = AsyncMock(return_value=page)
+    ctx.close = AsyncMock()
+
+    async def _launch(*_a: object, **_k: object) -> MagicMock:
+        events.append("launch")
+        return ctx
+
+    pw = MagicMock()
+    pw.chromium.launch_persistent_context = AsyncMock(side_effect=_launch)
+
+    monkeypatch.setattr("playwright.async_api.async_playwright", lambda: _FakePwCM(pw))
+    monkeypatch.setattr(
+        "gflow_cli.api.transports.experimental.bearer.capture_fingerprint",
+        AsyncMock(return_value=BrowserFingerprint()),
+    )
+
+    transport = BearerTransport()
+    with pytest.raises(AuthExpiredError):
+        await transport._capture_bearer_via_playwright(tmp_path)
+    # Acquire strictly before launch; released after ctx.close on the error path.
+    assert events == ["acquire", "launch", "release"]

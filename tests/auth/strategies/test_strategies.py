@@ -34,6 +34,21 @@ def _build_mock_proc() -> MagicMock:
     return mock_proc
 
 
+def _record_lease_events(monkeypatch: pytest.MonkeyPatch, events: list[str]) -> None:
+    """Patch ProfileLease.acquire/release to append to ``events`` — no real locks."""
+    from gflow_cli.profile_lease import ProfileLease
+
+    def acq(self: ProfileLease) -> ProfileLease:
+        events.append("acquire")
+        return self
+
+    def rel(self: ProfileLease) -> None:
+        events.append("release")
+
+    monkeypatch.setattr(ProfileLease, "acquire", acq)
+    monkeypatch.setattr(ProfileLease, "release", rel)
+
+
 # ---------------------------------------------------------------------------
 # RealChromeStrategy — Passive Capture (v0.6.0a3)
 # ---------------------------------------------------------------------------
@@ -110,6 +125,44 @@ class TestRealChromeStrategy:
         account_file = profile_dir / ".gflow_account"
         assert account_file.exists(), ".gflow_account must be written on successful login"
         assert account_file.read_text(encoding="utf-8") == "test@example.com"
+
+    @pytest.mark.asyncio
+    async def test_real_chrome_lease_released_before_verification(
+        self, tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+    ) -> None:
+        """The passive-capture profile lease wraps ONLY the running Chrome and is
+        released BEFORE verify_flow_profile runs (which owns its own probe lease
+        on the same profile — a nested lease would be a same-process
+        double-acquire) (D3)."""
+        strategy = RealChromeStrategy()
+        gflow_home = tmp_path / "gflow_home"
+        profile_dir = gflow_home / "profile_default"
+        gflow_home.mkdir()
+
+        events: list[str] = []
+        _record_lease_events(monkeypatch, events)
+
+        async def _verify(*_a: object, **_k: object) -> FlowSessionStatus:
+            events.append("verify")
+            return _status(FlowSessionOutcome.AUTHENTICATED, "test@example.com")
+
+        with (
+            patch("gflow_cli.auth.real_chrome.get_settings") as mock_settings,
+            patch(
+                "gflow_cli.auth.real_chrome.find_chrome_executable",
+                return_value=r"C:\fake\chrome.exe",
+            ),
+            patch(
+                "gflow_cli.auth.real_chrome.asyncio.create_subprocess_exec",
+                AsyncMock(return_value=_build_mock_proc()),
+            ),
+            patch("gflow_cli.auth.real_chrome.verify_flow_profile", _verify),
+        ):
+            mock_settings.return_value.home = gflow_home
+            await strategy.login(profile_dir, headless=False)
+
+        # Lease acquired then released around Chrome, THEN verification runs.
+        assert events == ["acquire", "release", "verify"]
 
     @pytest.mark.asyncio
     @pytest.mark.parametrize(
@@ -307,6 +360,53 @@ class TestInternalChromiumStrategy:
         account_file = profile_dir / ".gflow_account"
         assert account_file.exists(), ".gflow_account must be written on successful login"
         assert account_file.read_text(encoding="utf-8") == "test@example.com"
+
+    @pytest.mark.asyncio
+    async def test_internal_chromium_wraps_launch_in_profile_lease(
+        self, tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+    ) -> None:
+        """Internal Chromium login owns the profile: acquire before launch,
+        release after the login context closes (D3)."""
+        strategy = InternalChromiumStrategy()
+        gflow_home = tmp_path / "gflow_home"
+        gflow_home.mkdir()
+        profile_dir = gflow_home / "profile_internal"
+
+        events: list[str] = []
+        _record_lease_events(monkeypatch, events)
+
+        mock_resp = MagicMock(name="resp")
+        mock_resp.status = 200
+        mock_resp.text = AsyncMock(return_value='{"user": {"email": "test@example.com"}}')
+        mock_page = MagicMock(name="page")
+        mock_page.goto = AsyncMock()
+        mock_page.request.get = AsyncMock(return_value=mock_resp)
+        mock_ctx = MagicMock(name="ctx")
+        mock_ctx.pages = [mock_page]
+        mock_ctx.cookies = AsyncMock(return_value=[{"name": "SAPISID", "value": "x"}])
+        mock_ctx.close = AsyncMock()
+        mock_ctx.new_page = AsyncMock(return_value=mock_page)
+
+        async def _launch(*_a: object, **_k: object) -> MagicMock:
+            events.append("launch")
+            return mock_ctx
+
+        mock_pw_obj = MagicMock(name="pw")
+        mock_pw_obj.chromium.launch_persistent_context = AsyncMock(side_effect=_launch)
+        mock_cm = MagicMock(name="cm")
+        mock_cm.__aenter__ = AsyncMock(return_value=mock_pw_obj)
+        mock_cm.__aexit__ = AsyncMock(return_value=False)
+        mock_ap = MagicMock(name="async_playwright", return_value=mock_cm)
+
+        with (
+            patch("gflow_cli.auth.internal_chromium.get_settings") as mock_settings,
+            patch("gflow_cli.auth.strategies.async_playwright", mock_ap),
+            patch("asyncio.sleep", AsyncMock()),
+        ):
+            mock_settings.return_value.home = gflow_home
+            await strategy.login(profile_dir, headless=False)
+
+        assert events == ["acquire", "launch", "release"]
 
     @pytest.mark.asyncio
     async def test_internal_chromium_timeout_raises(self, tmp_path: Path) -> None:

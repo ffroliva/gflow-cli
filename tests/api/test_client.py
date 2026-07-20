@@ -314,6 +314,100 @@ async def test_client_with_string_transport_owns_lifecycle(
 
 
 # ---------------------------------------------------------------------------
+# Profile-lease ownership tests (Task D3)
+# ---------------------------------------------------------------------------
+
+
+def _record_lease_events(monkeypatch: pytest.MonkeyPatch) -> list[str]:
+    """Patch ProfileLease.acquire/release to record ordering without real locks."""
+    from gflow_cli.profile_lease import ProfileLease
+
+    events: list[str] = []
+
+    def rec_acquire(self: ProfileLease) -> ProfileLease:
+        events.append("acquire")
+        return self
+
+    def rec_release(self: ProfileLease) -> None:
+        events.append("release")
+
+    monkeypatch.setattr(ProfileLease, "acquire", rec_acquire)
+    monkeypatch.setattr(ProfileLease, "release", rec_release)
+    return events
+
+
+@pytest.mark.asyncio
+async def test_client_lease_wraps_persistent_context_launch(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    """The client-owned context launch acquires exactly one lease on enter and
+    releases it on exit — proving the profile is owned across the whole
+    persistent-context lifetime (D3)."""
+    monkeypatch.delenv("GFLOW_CLI_TRANSPORT", raising=False)
+    _patch_playwright(monkeypatch)
+    events = _record_lease_events(monkeypatch)
+    fake = _FakeTransport()
+    async with FlowApiClient(profile_dir=tmp_path, transport=fake):
+        # Acquired before/at launch, still held while the client is open.
+        assert events == ["acquire"]
+    assert events == ["acquire", "release"]
+
+
+@pytest.mark.asyncio
+async def test_preinitialized_transport_does_not_acquire_a_second_lease(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    """A pre-initialized (caller-owned) transport must NOT take its own lease:
+    the client owns the one-and-only context, so exactly one acquire/release
+    pair happens — the client's — with none added by the transport path.
+
+    (The brief sketch asserts ``== []`` by mocking the client launch away; here
+    the launch is faked realistically, so the client's single lease is present
+    and the assertion proves the transport added no *second* acquire.)"""
+    monkeypatch.delenv("GFLOW_CLI_TRANSPORT", raising=False)
+    _patch_playwright(monkeypatch)
+    events = _record_lease_events(monkeypatch)
+    fake = _FakeTransport()
+    async with FlowApiClient(profile_dir=tmp_path, transport=fake) as client:
+        assert client.transport is fake
+        assert fake.setup_called == 0  # caller-owned: setup never invoked
+    assert events == ["acquire", "release"]  # exactly one pair — the client's
+
+
+@pytest.mark.asyncio
+async def test_client_lease_contention_raises_before_launch(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    """When the profile is already held, entering the client raises
+    ProfileLockedError BEFORE Chrome launches — no persistent context is opened."""
+    from gflow_cli.errors import ProfileLockedError
+    from gflow_cli.profile_lease import ProfileLease
+
+    monkeypatch.delenv("GFLOW_CLI_TRANSPORT", raising=False)
+    _patch_playwright(monkeypatch)
+
+    def raise_locked(self: ProfileLease) -> ProfileLease:
+        raise ProfileLockedError(detail="held", remediation_hint="wait")
+
+    monkeypatch.setattr(ProfileLease, "acquire", raise_locked)
+
+    launch_calls: list[object] = []
+    original_launch = FlowApiClient._launch_persistent_context
+
+    async def spy_launch(self: FlowApiClient, kwargs: dict[str, object]) -> object:
+        launch_calls.append(kwargs)
+        return await original_launch(self, kwargs)
+
+    monkeypatch.setattr(FlowApiClient, "_launch_persistent_context", spy_launch)
+
+    client = FlowApiClient(profile_dir=tmp_path, transport=_FakeTransport())
+    with pytest.raises(ProfileLockedError):
+        await client.__aenter__()
+    assert launch_calls == []  # acquire failed BEFORE the launch was attempted
+    assert client._context is None
+
+
+# ---------------------------------------------------------------------------
 # Image-gen transport delegation test (Task A.7)
 # ---------------------------------------------------------------------------
 

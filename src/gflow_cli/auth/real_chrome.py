@@ -10,6 +10,7 @@ from rich.console import Console
 
 from gflow_cli.config import Settings, get_settings
 from gflow_cli.errors import AuthLoginTimeoutError, AuthMissingError, SecurityError
+from gflow_cli.profile_lease import ProfileLease
 
 from .base import AuthStrategy
 from .verification import FlowSessionOutcome, verify_flow_profile
@@ -191,17 +192,24 @@ class RealChromeStrategy(AuthStrategy):
         if not headless:
             _print_login_instructions()
 
-        # Tests MUST patch asyncio.create_subprocess_exec itself — patching
-        # subprocess.Popen instead lets the real asyncio transport run against a
-        # mock process, hanging proc.wait() forever on the loop's child watcher.
-        proc = await asyncio.create_subprocess_exec(
-            *chrome_args,
-            stdout=asyncio.subprocess.DEVNULL,
-            stderr=asyncio.subprocess.DEVNULL,
-        )
-        # Chrome holds an exclusive lock on its SQLite cookie store while running,
-        # so we must wait for it to close before probing the session.
-        await _await_chrome_close(proc, self._timeout_seconds)
+        # Own the profile while passive-capture Chrome runs (D3). The lease
+        # scope is ONLY the running browser: it is released before
+        # verify_flow_profile below, which momentarily owns its own probe context
+        # on the same profile (a nested lease would be a same-process double-
+        # acquire). Contention raises ProfileLockedError before Chrome launches.
+        async with ProfileLease(profile_dir):
+            # Tests MUST patch asyncio.create_subprocess_exec itself — patching
+            # subprocess.Popen instead lets the real asyncio transport run against
+            # a mock process, hanging proc.wait() forever on the loop's child
+            # watcher.
+            proc = await asyncio.create_subprocess_exec(
+                *chrome_args,
+                stdout=asyncio.subprocess.DEVNULL,
+                stderr=asyncio.subprocess.DEVNULL,
+            )
+            # Chrome holds an exclusive lock on its SQLite cookie store while
+            # running, so we must wait for it to close before probing the session.
+            await _await_chrome_close(proc, self._timeout_seconds)
         _console.print("\n[bold green]Browser closed.[/bold green] Verifying Flow session...")
 
         # Pre-write the Chrome marker so the verification fallback can use the
