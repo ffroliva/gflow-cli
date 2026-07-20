@@ -1,6 +1,6 @@
 # CLAUDE.md
 
-> Project memory hub for **Claude Code**. The universal coding-agent rules for any tool (Cursor, Codex, Aider, Gemini CLI, etc.) live in [AGENTS.md](AGENTS.md) — this file carries Claude-Code-specific session protocol only.
+> Project memory hub for **Claude Code**. The universal coding-agent rules for any tool (Cursor, Codex, Aider, Antigravity, etc.) live in [AGENTS.md](AGENTS.md) — this file carries Claude-Code-specific session protocol only.
 
 ## What this project is
 

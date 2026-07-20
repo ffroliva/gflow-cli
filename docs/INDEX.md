@@ -6,7 +6,7 @@ Welcome to the `gflow-cli` documentation. This index is the routing layer: it te
 |---|---|---|
 | [README](../README.md) | Project overview, install, quick start | First time landing on the repo |
 | [docs/DEMOS.md](DEMOS.md) | Gallery of `gflow` in action (terminal + split-screen Flow recordings) | You want to see what gflow looks like running |
-| [AGENTS.md](../AGENTS.md) | Universal coding-agent spec — Cursor / Codex / Aider / Gemini CLI / Jules / etc. | Any AI coding agent enters the repo |
+| [AGENTS.md](../AGENTS.md) | Universal coding-agent spec — Cursor / Codex / Aider / Antigravity / Jules / etc. | Any AI coding agent enters the repo |
 | [llms.txt](../llms.txt) | LLM-readable summary (llmstxt.org format) | A user pastes context about gflow into ChatGPT / Claude / Gemini |
 | [docs/PROJECT_STATUS.md](PROJECT_STATUS.md) | Full milestone history + lifecycle policy | Auditing where the project is in its lifecycle |
 | [docs/AGENT_GUIDE.md](AGENT_GUIDE.md) | Mandates and routing rules for AI agents (companion to AGENTS.md) | A coding agent needs the longer non-negotiable rules |
@@ -46,7 +46,7 @@ Welcome to the `gflow-cli` documentation. This index is the routing layer: it te
 | **[docs/AGENT_UI_RECON.md](AGENT_UI_RECON.md)** | Agentic Flow UI cohort: classic-vs-agentic DOM signature, server-side + volatile (flapping) A/B gating (no client-readable flag), why `_exit_agent_mode` fails, runtime-DOM-detection recommendation | Touching `_exit_agent_mode` / composer mode-switch, diagnosing exit 23 selector drift, or understanding Flow's agentic-UI A/B (#183/#174) |
 | **[docs/ASSET_TAGGING_RECON.md](ASSET_TAGGING_RECON.md)** | `@`-mention asset tagging research & integration design: what Flow's `@CharacterName`/`@me`/`@ingredient` tags are, how they map onto the already-verified `referenceEntities`/`referenceImages` wire, the H1-vs-H2 serialization hypothesis, the CLI-side mention-resolver proposal, and the pre-implementation capture spike plan | Working on inline `@` mentions in prompts, `video --character` reuse, or planning the mention-capture spike |
 | **[tasks/lessons.md](../tasks/lessons.md)** | Running notebook of patterns + reviewer findings, dated and traced to commits | Starting a new phase; debugging "why did the council flag this?" |
-| **[skills/README.md](../skills/README.md)** | Installable agent skill docs (gflow-cli, predict, pr-council-review, scenario) — cross-tool portable Markdown consumed by Claude Code, Cursor, Codex, Gemini CLI, Aider, etc. | Any agent wanting to use gflow-cli correctly |
+| **[skills/README.md](../skills/README.md)** | Installable agent skill docs (gflow-cli, predict, pr-council-review, scenario) — cross-tool portable Markdown consumed by Claude Code, Cursor, Codex, Antigravity, Aider, etc. | Any agent wanting to use gflow-cli correctly |
 | **[scripts/dev/skillopt/README.md](../scripts/dev/skillopt/README.md)** | SkillOpt mock harness — rollout→score loop for measuring and improving skill doc accuracy across multiple LLM providers | Measuring a skill edit's impact; comparing Claude vs GPT-4o vs Gemini on gflow tasks |
 | **[scripts/diag/README.md](../scripts/diag/README.md)** | Diagnostic investigation scripts — run against a live authenticated profile to capture wire samples, measure Chrome memory, or mint reCAPTCHA tokens | Running a one-off investigation against a live Flow session; establishing baseline measurements for issue #155 |
 | [docs/superpowers/specs/2026-07-04-pr-triage-autopilot-design.md](superpowers/specs/2026-07-04-pr-triage-autopilot-design.md) | PR-triage autopilot design spec: Stage 0/1 gate, Docker sandboxing, Telegram and audit ledger | Reviewing or auditing the automated PR-triage setup |
@@ -74,7 +74,7 @@ Slash commands for Claude Code, stored in `.claude/commands/gflow/`. All prefixe
 | `/gflow:scenario <feature>` | 12-dimension edge-case explorer → severity-ranked scenario table + BDD skeleton | After predict GO/CAUTION; before `/gflow:plan` |
 | `/gflow:pr-council-review [PR#]` | Multi-dimensional council review of an open PR (5 baseline + adaptive dimensions) | Before merging any non-trivial PR; mandatory for auth/transport/data changes |
 | `/gflow:branch-review` | Same council review run against the current local feature branch (no PR needed) | Pre-PR self-audit; after predict/scenario on a high-stakes branch |
-| `/gflow:llm-council [PR#\|--base <ref>] [--tier small\|medium\|high]` | Wraps `pr-council-review` with external CLI reviewers (`codex`/`gemini`, opt-in `agy`) for cross-model corroboration | High-stakes reviews where a same-model-family blind spot is a real risk |
+| `/gflow:llm-council [PR#\|--base <ref>] [--tier small\|medium\|high]` | Wraps `pr-council-review` with external CLI reviewers (`codex` + Antigravity `agy`) for cross-model corroboration | High-stakes reviews where a same-model-family blind spot is a real risk |
 | `/gflow:doc-review` | Systematic council-driven audit of documentation completeness and drift | Before cutting a release; after major documentation changes |
 
 **Governance:** commands are executable docs — they decay like any doc. When a phase advances or a file path changes, update the relevant command in the same commit. `/gflow:release` includes a staleness review step.
@@ -114,7 +114,7 @@ Slash commands for Claude Code, stored in `.claude/commands/gflow/`. All prefixe
 **"Where can I look up a media ID I generated yesterday?"** → [DATA_LAYER § Querying the data layer](DATA_LAYER.md#querying-the-data-layer)
 **"How do I stop gflow from storing my prompts?"** → [DATA_LAYER § Privacy and redaction](DATA_LAYER.md#privacy-and-redaction)
 **"What does exit code 16 mean and how do I recover?"** → [DATA_LAYER § Persistence-failure handling](DATA_LAYER.md#persistence-failure-handling)
-**"How do I use this project's skills in Cursor / Codex / Gemini CLI / Aider?"** → [skills/README.md](../skills/README.md#use-with-other-agents)
+**"How do I use this project's skills in Cursor / Codex / Antigravity / Aider?"** → [skills/README.md](../skills/README.md#use-with-other-agents)
 **"How do I benchmark a skill doc against real tasks?"** → [scripts/dev/skillopt/README.md](../scripts/dev/skillopt/README.md)
 **"How do I compare Claude vs GPT-4o vs Gemini on gflow tasks?"** → `python scripts/dev/skillopt/harness.py --provider openai --model gpt-4o` (see [skillopt README](../scripts/dev/skillopt/README.md))
 **"What does Chrome actually use in RAM during a generation?"** → run `uv run python scripts/diag/memory_profile.py --profile NAME` (see [scripts/diag/README.md](../scripts/diag/README.md))
