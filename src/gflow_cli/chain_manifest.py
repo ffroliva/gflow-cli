@@ -15,9 +15,7 @@ most links carry a prompt alone. A positional TSV would force empty sentinel
 columns on every line and make "field omitted" indistinguishable from "field set
 to empty"; JSON's explicit object keys express optionality directly, type the
 ``duration`` as a real number (no string-to-int reparse ambiguity), and tolerate
-field reordering. The batch parser in :mod:`gflow_cli.manifest` stays TSV because
-its five columns are dense and uniform; a chain manifest is sparse, so JSONL is
-the better fit.
+field reordering.
 
 Model and aspect strings are mapped through the SAME canonical path the CLI uses
 (:meth:`gflow_cli.api.video.VideoModel.from_cli` /

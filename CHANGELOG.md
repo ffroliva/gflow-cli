@@ -7,6 +7,65 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+## [0.41.0] — 2026-07-20
+
+### Added
+
+- **Cross-process profile lease** ([#357]): new `ProfileLease` with
+  process-local guard + kernel advisory lock (`msvcrt` on Windows, `fcntl`
+  on POSIX), keyed by canonical profile dir. `ProfileLockedError` (exit 11)
+  on contention. Integrated at all 10 persistent-context-owning boundaries.
+  Daemon's overwriteable `profile.lock` removed.
+- **Versioned worker queue payloads** ([#357]): `schema_version: 1` codec
+  validates before Playwright starts; unknown versions raise typed
+  `QueueSchemaError` (exit 30). Legacy V0 (missing field) still accepted.
+- **Atomic queue task claims** ([#357]): single SQLite `BEGIN IMMEDIATE`
+  transaction (select → decode → fail-invalid-without-browser → conditional
+  `pending→processing`) shared by daemon and MCP; duplicate per-profile lock
+  maps removed. Checkpointed execution phases (`claimed → submit_attempted →
+  remote_started → terminal`) with conservative `may_have_spent`.
+- **`/gflow:live-verify` skill**: pre-flight state check + per-feature
+  live-verification gate before claiming feature completion.
+- **Driver honesty improvements** ([#357]): removed classic driver's
+  `await_images()` that only raised; replaced late `driver._transport = self`
+  mutation with typed `SupportsSendPrompt` injection; agentic submit takes
+  request + expected count directly. Frozen `TransportSetup` applied through
+  public `apply_setup()` seam replacing client writes to transport-private
+  fields.
+
+### Changed
+
+- **Cancellation-safe browser teardown** ([#357]): per-step
+  `shield(wait_for(...))` bounded cleanup in required order (stop work →
+  cancel worker → persist state → close browser/driver → close stores →
+  release lease), re-raising original cancellation last.
+- **Mention-index outages fail closed** ([#357]): `MentionIndexUnavailableError`
+  (exit 29) with unavailable source name; mention-free prompts stay
+  pass-through. Empty source ≠ unavailable source.
+- **`OperationRecorder`/chain-repo datastore ownership** ([#357]): stores
+  only close the `DataStore` they create; injected stores never closed by a
+  non-owner.
+- External-CDP browser lifecycle removed by evidence (no production
+  consumer, unauthenticated debug port, ambiguous ownership, recorded
+  WAF-rejection); Chrome discovery/channel helpers preserved.
+
+### Removed
+
+- **`gflow video batch`** — the manifest-driven video batch command was
+  removed. It never worked end-to-end; every invocation exited immediately
+  with a stub error before reaching Flow. `gflow image batch` (manifest-driven
+  image generation) is unaffected and remains supported.
+- External-CDP browser lifecycle (no production consumer).
+
+### Security
+
+- Cancellation-safe teardown prevents resource leaks on interrupt.
+- Profile lease kernel advisory lock prevents concurrent profile access
+  across processes.
+
+[#357]: https://github.com/ffroliva/gflow-cli/pull/357
+[`docs/LIVE_VERIFICATION_v0.40.0-production-readiness.md`]: https://github.com/ffroliva/gflow-cli/blob/main/docs/LIVE_VERIFICATION_v0.40.0-production-readiness.md
+
 ## [0.40.0] — 2026-07-19
 
 ### Added
@@ -2110,7 +2169,8 @@ shell-script template that branches on these codes.
 
 First skeleton. Not functional end-to-end yet.
 
-[Unreleased]: https://github.com/ffroliva/gflow-cli/compare/v0.40.0...HEAD
+[Unreleased]: https://github.com/ffroliva/gflow-cli/compare/v0.41.0...HEAD
+[0.41.0]: https://github.com/ffroliva/gflow-cli/compare/v0.40.0...v0.41.0
 [0.40.0]: https://github.com/ffroliva/gflow-cli/compare/v0.39.0...v0.40.0
 [0.39.0]: https://github.com/ffroliva/gflow-cli/compare/v0.38.1...v0.39.0
 [0.38.1]: https://github.com/ffroliva/gflow-cli/compare/v0.38.0...v0.38.1

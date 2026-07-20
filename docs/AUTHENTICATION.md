@@ -36,14 +36,17 @@ This page documents the full lifecycle: capture, storage, reuse, refresh, multi-
                               └────────────┬─────────────────────────┘
                                            │
                                            ▼
-  $ gflow image t2i ...                    (later, headless)
+  $ gflow image t2i ...                    (later, headed by default)
                                            │
                                            ▼
                               ┌──────────────────────────────────────┐
-                              │  Playwright launches HEADLESS        │
-                              │  Chromium with the same profile dir; │
-                              │  page.request.post(...) auto-sends   │
-                              │  cookies. No token plumbing needed.  │
+                              │  Playwright launches HEADED Chrome   │
+                              │  with the same profile dir (the      │
+                              │  production default — reCAPTCHA      │
+                              │  Enterprise rejects headless outright│
+                              │  with a 403); page.request.post(...) │
+                              │  auto-sends cookies. No token         │
+                              │  plumbing needed.                     │
                               └──────────────────────────────────────┘
 ```
 
@@ -342,9 +345,9 @@ gflow image t2i "test"          --profile personal
 gflow image t2i "client work"   --profile client-a
 ```
 
-Each profile is fully isolated (its own cookies, its own Flow project history). You can run multiple `gflow` calls concurrently across profiles since each launches its own Chromium context — but **never run two concurrent calls against the same profile**, because Chromium will refuse to open a second persistent context on a locked user-data-dir.
+Each profile is fully isolated (its own cookies, its own Flow project history). **Different profiles run fully in parallel** — each acquires its own cross-process `ProfileLease` on its own canonical directory, so concurrent `gflow` calls across profiles never contend. **The same profile can only ever have one active holder.** A cross-process advisory lock (`ProfileLease`, kernel `flock`/`msvcrt.locking`) enforces this fail-fast: a second call against an already-leased profile — whether it's another `gflow` invocation, the `gflow serve` daemon, or an MCP tool call — is rejected immediately with `ProfileLockedError` (exit code 11); it never blocks or waits for the lease to free up.
 
-For automated multi-account batching: concurrency *within* one profile shipped in v0.4.0a2 — set `GFLOW_CLI_CONCURRENCY=N` (1–16) and `gflow video batch` fans out across N Playwright Pages on one shared BrowserContext. Cross-profile parallel batches are still "one shell per profile" (Chromium per-profile lock; see [KNOWN_ISSUES § Same profile can't be used in parallel](../KNOWN_ISSUES.md#same-profile-cant-be-used-in-parallel)).
+For automated multi-account work: a per-profile Page pool (`GFLOW_CLI_CONCURRENCY=N`, 1–16, shipped in v0.4.0a2) opens N Playwright Pages on one shared BrowserContext within a single profile, but no current CLI command drives more than one generation concurrently through it — the one caller that used to (a manifest-driven video batch runner) never worked and was removed. Cross-profile parallel runs remain "one shell per profile"; same-profile contention is a fast, typed rejection rather than a Chromium crash (see [KNOWN_ISSUES § Same profile can't be used in parallel](../KNOWN_ISSUES.md#same-profile-cant-be-used-in-parallel)).
 
 ## Refresh / expiry
 
@@ -400,7 +403,7 @@ For deeper guidance see [SECURITY.md](SECURITY.md).
 ## FAQ
 
 **Q: Can I use `gflow-cli` without a browser at all?**
-A: Not for `auth login` — that step needs Chromium so you can solve any 2FA/CAPTCHA challenge interactively. After login, all generation calls run headless. Plan to use a workstation for the one-time auth, then copy the profile dir to a headless server (re-running `auth login` there is recommended though, see threat model above).
+A: No — not for `auth login`, and not for generation either. `auth login` needs Chromium so you can solve any 2FA/CAPTCHA challenge interactively. Generation calls also launch a real, **headed** Chrome window by default (`GFLOW_CLI_HEADLESS=false`) — the `ui_automation` transport is gflow-cli's only production transport, and reCAPTCHA Enterprise rejects headless Chromium with an immediate 403, so there is no way to run production generation on a display-less machine without a virtual display (e.g. Xvfb) or a workstation. Plan for that when choosing where to run gflow-cli long-term; see [CONFIGURATION.md § `GFLOW_CLI_HEADLESS`](CONFIGURATION.md#gflow_cli_headless).
 
 **Q: Does this support Google Workspace SSO?**
 A: Yes — sign in normally during `auth login`. Whatever your IdP flow looks like in the browser, that's what you'll go through. The captured cookies are the same.

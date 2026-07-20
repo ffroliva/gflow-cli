@@ -22,6 +22,7 @@ import structlog
 
 from gflow_cli.config import get_settings
 from gflow_cli.errors import SecurityError
+from gflow_cli.profile_lease import ProfileLease
 
 from .cookies import get_chrome_cookie_snapshot
 
@@ -238,7 +239,11 @@ async def verify_flow_session(
     status_code: int
     body: str
     try:
-        async with async_playwright() as pw:
+        # Own the profile for this headless probe context (D3). Lease is the
+        # OUTER context so it releases only after the driver stops. Contention
+        # raises ProfileLockedError before Chrome launches; the fail-closed
+        # wrapper below maps it (like any probe failure) to VERIFICATION_ERROR.
+        async with ProfileLease(profile_dir), async_playwright() as pw:
             ctx = await pw.chromium.launch_persistent_context(
                 user_data_dir=str(profile_dir),
                 channel=channel,

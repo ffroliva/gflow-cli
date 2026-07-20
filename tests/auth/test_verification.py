@@ -165,6 +165,44 @@ class TestVerifyFlowSession:
         mock_ctx.close.assert_awaited_once()
 
     @pytest.mark.asyncio
+    async def test_probe_wraps_launch_in_profile_lease(
+        self, gflow_home: Path, monkeypatch: pytest.MonkeyPatch
+    ) -> None:
+        """verify_flow_session owns the profile for its headless probe context:
+        acquire before launch, release after the context closes (D3)."""
+        from gflow_cli.profile_lease import ProfileLease
+
+        profile = gflow_home / "profile_default"
+        profile.mkdir()
+
+        events: list[str] = []
+
+        def acq(self: ProfileLease) -> ProfileLease:
+            events.append("acquire")
+            return self
+
+        monkeypatch.setattr(ProfileLease, "acquire", acq)
+        monkeypatch.setattr(ProfileLease, "release", lambda self: events.append("release"))
+
+        mock_ap, mock_ctx = _build_verify_mock(response_body=AUTHENTICATED_BODY)
+        chromium = mock_ap.return_value.__aenter__.return_value.chromium
+        original_launch = chromium.launch_persistent_context
+
+        async def _launch(*a: object, **k: object) -> object:
+            events.append("launch")
+            return await original_launch(*a, **k)
+
+        chromium.launch_persistent_context = _launch
+
+        with (
+            patch("gflow_cli.auth.verification.get_settings") as mock_settings,
+            patch("gflow_cli.auth.strategies.async_playwright", mock_ap),
+        ):
+            mock_settings.return_value.home = gflow_home
+            await verify_flow_session(profile, channel="chrome", source="chrome")
+        assert events == ["acquire", "launch", "release"]
+
+    @pytest.mark.asyncio
     async def test_authenticated_profile_httpx(self, gflow_home: Path) -> None:
         profile = gflow_home / "profile_default"
         profile.mkdir()

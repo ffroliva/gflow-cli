@@ -7,11 +7,13 @@ pollute a real catalog (see memory: data-layer-test-pollution-trap).
 
 from __future__ import annotations
 
+import sqlite3
 from pathlib import Path
 
 import pytest
 
 from gflow_cli.chain import ChainLinkResult, ChainRecorder
+from gflow_cli.config import Settings
 from gflow_cli.data.chain_repo import ChainLinkRecorder
 from gflow_cli.data.models import ChainLinkRecord
 from gflow_cli.data.repository import DataRepository
@@ -219,3 +221,31 @@ def test_record_chain_link_wraps_sqlite_error_as_datastoreerror(
                     media_id="m",
                 ),
             )
+
+
+# ----------------------------------------------------------------------
+# Store ownership (Task B2): a recorder built from an INJECTED repository
+# must never close the caller's store; only ChainLinkRecorder.open() (which
+# creates its own store) may close it.
+# ----------------------------------------------------------------------
+
+
+def test_injected_repository_is_not_closed(tmp_path: Path) -> None:
+    store = DataStore.open(tmp_path / "db.sqlite")
+    recorder = _recorder(store, tmp_path)
+    recorder.close()
+    store.conn.execute("SELECT 1")  # still usable — recorder did not close it
+    store.close()
+
+
+def test_factory_owned_store_is_closed(tmp_path: Path) -> None:
+    recorder = ChainLinkRecorder.open(
+        Settings(home=tmp_path),
+        profile_name="default",
+        profile_dir=tmp_path / "profile_default",
+        chain_id="chain-1",
+    )
+    owned = recorder.repository.store
+    recorder.close()
+    with pytest.raises(sqlite3.ProgrammingError):
+        owned.conn.execute("SELECT 1")

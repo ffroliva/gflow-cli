@@ -1,7 +1,6 @@
 from __future__ import annotations
 
 import asyncio
-import contextlib
 import json
 from contextlib import asynccontextmanager
 from typing import Any
@@ -15,7 +14,7 @@ from gflow_cli.data.redaction import redact_metadata
 from gflow_cli.data.store import DataStore
 from gflow_cli.mcp.server import server
 from gflow_cli.worker.daemon import FlowWorker
-from gflow_cli.worker.queue import QueueRepository
+from gflow_cli.worker.queue import QueueRepository, recover_processing
 
 logger = structlog.get_logger()
 
@@ -31,22 +30,25 @@ async def lifespan(app: FastAPI):
         "Initializing gflow-daemon lifespan", profile_name=profile_name, db_path=str(db_path)
     )
 
-    # 1. Database sweep: clear processing tasks
+    # 1. Startup crash recovery: classify each hung 'processing' row by its
+    #    checkpoint instead of blanket-failing. A task whose submit may have spent
+    #    a credit becomes 'indeterminate' (never silently failed, never resubmit);
+    #    a pre-submit task becomes 'failed'. Never calls generation.
     with DataStore.open(db_path) as store:
         repo = QueueRepository(store)
-        swept_count = repo.fail_processing_tasks(
-            profile_name, "Daemon shut down or restarted unexpectedly."
-        )
-        if swept_count > 0:
-            logger.info("Swept hung processing tasks to failed on startup", count=swept_count)
+        recovered = recover_processing(repo, profile_name)
+        if recovered["failed"] or recovered["indeterminate"]:
+            logger.info(
+                "Recovered hung processing tasks on startup",
+                failed=recovered["failed"],
+                indeterminate=recovered["indeterminate"],
+            )
 
-    # Write daemon lockfile
-    import os
-
-    profile_dir = settings.profile_subdir(profile_name)
-    profile_dir.mkdir(parents=True, exist_ok=True)
-    daemon_lock = profile_dir / "profile.lock"
-    daemon_lock.write_text(str(os.getpid()))
+    # No daemon-lifetime profile lock (D3): the daemon does NOT own the profile
+    # while idle. Each browser-owning task acquires the cross-process
+    # ProfileLease inside FlowApiClient's launch path for exactly its own
+    # lifetime, so an overwriteable daemon-lifetime lock file would be both
+    # redundant and unsafe (any process could clobber it).
 
     # 2. Start FlowWorker loop in background
     worker = FlowWorker(profile_name, str(db_path))
@@ -54,23 +56,23 @@ async def lifespan(app: FastAPI):
     app.state.worker = worker
     app.state.worker_task = worker_task
 
-    yield
-
-    # Shutdown
-    logger.info("Shutting down gflow-daemon lifespan")
-    daemon_lock = settings.profile_subdir(profile_name) / "profile.lock"
-    if daemon_lock.exists():
-        with contextlib.suppress(FileNotFoundError):
-            daemon_lock.unlink()
-
-    worker.stop()
-    worker_task.cancel()
-    # Await the worker's completion. gather(..., return_exceptions=True) captures
-    # the worker task's own CancelledError as a result instead of swallowing a
-    # genuine cancellation of this lifespan task, which is re-raised.
-    await asyncio.gather(worker_task, return_exceptions=True)
-    worker.close()
-    logger.info("gflow-daemon worker stopped cleanly")
+    # try/finally (D4): shutdown MUST run even if the lifespan body is cancelled
+    # (Ctrl-C / ASGI server shutdown) — otherwise the worker task and its DB
+    # store leak. Teardown order: (1) stop accepting work -> (2) cancel + await
+    # the worker -> (5) close the store this component owns. The worker releases
+    # any per-task browser lease itself (D3/D4) as its own client tears down.
+    try:
+        yield
+    finally:
+        logger.info("Shutting down gflow-daemon lifespan")
+        worker.stop()  # (1) stop accepting new work
+        worker_task.cancel()  # (2) cancel...
+        # ...and await completion. gather(..., return_exceptions=True) captures
+        # the worker's own CancelledError as a result instead of swallowing a
+        # genuine cancellation of this lifespan task, which propagates out.
+        await asyncio.gather(worker_task, return_exceptions=True)
+        worker.close()  # (5) close the DB store owned here
+        logger.info("gflow-daemon worker stopped cleanly")
 
 
 app = FastAPI(title="gflow-daemon", lifespan=lifespan)

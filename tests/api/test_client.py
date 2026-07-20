@@ -21,6 +21,7 @@ from gflow_cli.api.client import (
 )
 from gflow_cli.api.dto import GeneratedImage
 from gflow_cli.api.image import AgentInstruction, Aspect, GenerateImageRequest, Model
+from gflow_cli.api.transports.base import SupportsTransportSetup, TransportSetup
 from gflow_cli.api.transports.ui_automation import UiAutomationTransport
 from gflow_cli.config import Settings
 from gflow_cli.errors import BrowserSessionClosedError
@@ -42,17 +43,19 @@ class TestConstruction:
         with pytest.raises(RuntimeError, match="not entered"):
             _ = c.page
 
-    def test_storage_uri_plumbs_to_ui_automation_transport(self, tmp_path: Path) -> None:
+    def test_storage_uri_applies_to_ui_automation_transport(self, tmp_path: Path) -> None:
+        # UiAutomationTransport opts into the typed seam and derives its own
+        # private slots from the immutable TransportSetup — the client no longer
+        # reaches into transport.__dict__.
         transport = UiAutomationTransport()
-        settings = Settings(storage_uri="s3://bucket/prefix/", output_dir=tmp_path / "out")
-        client = FlowApiClient(
-            profile_dir=tmp_path / "prof",
-            settings=settings,
-            transport=transport,
+        assert isinstance(transport, SupportsTransportSetup)
+
+        transport.apply_setup(
+            TransportSetup(storage_uri="s3://bucket/prefix/", output_dir=tmp_path / "out")
         )
 
-        client._plumb_storage_uri(transport)
-
+        assert transport.setup_config is not None
+        assert transport.setup_config.storage_uri == "s3://bucket/prefix/"
         assert transport._storage_uri == "s3://bucket/prefix/"
         assert transport._output_dir == tmp_path / "out"
 
@@ -314,6 +317,100 @@ async def test_client_with_string_transport_owns_lifecycle(
 
 
 # ---------------------------------------------------------------------------
+# Profile-lease ownership tests (Task D3)
+# ---------------------------------------------------------------------------
+
+
+def _record_lease_events(monkeypatch: pytest.MonkeyPatch) -> list[str]:
+    """Patch ProfileLease.acquire/release to record ordering without real locks."""
+    from gflow_cli.profile_lease import ProfileLease
+
+    events: list[str] = []
+
+    def rec_acquire(self: ProfileLease) -> ProfileLease:
+        events.append("acquire")
+        return self
+
+    def rec_release(self: ProfileLease) -> None:
+        events.append("release")
+
+    monkeypatch.setattr(ProfileLease, "acquire", rec_acquire)
+    monkeypatch.setattr(ProfileLease, "release", rec_release)
+    return events
+
+
+@pytest.mark.asyncio
+async def test_client_lease_wraps_persistent_context_launch(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    """The client-owned context launch acquires exactly one lease on enter and
+    releases it on exit — proving the profile is owned across the whole
+    persistent-context lifetime (D3)."""
+    monkeypatch.delenv("GFLOW_CLI_TRANSPORT", raising=False)
+    _patch_playwright(monkeypatch)
+    events = _record_lease_events(monkeypatch)
+    fake = _FakeTransport()
+    async with FlowApiClient(profile_dir=tmp_path, transport=fake):
+        # Acquired before/at launch, still held while the client is open.
+        assert events == ["acquire"]
+    assert events == ["acquire", "release"]
+
+
+@pytest.mark.asyncio
+async def test_preinitialized_transport_does_not_acquire_a_second_lease(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    """A pre-initialized (caller-owned) transport must NOT take its own lease:
+    the client owns the one-and-only context, so exactly one acquire/release
+    pair happens — the client's — with none added by the transport path.
+
+    (The brief sketch asserts ``== []`` by mocking the client launch away; here
+    the launch is faked realistically, so the client's single lease is present
+    and the assertion proves the transport added no *second* acquire.)"""
+    monkeypatch.delenv("GFLOW_CLI_TRANSPORT", raising=False)
+    _patch_playwright(monkeypatch)
+    events = _record_lease_events(monkeypatch)
+    fake = _FakeTransport()
+    async with FlowApiClient(profile_dir=tmp_path, transport=fake) as client:
+        assert client.transport is fake
+        assert fake.setup_called == 0  # caller-owned: setup never invoked
+    assert events == ["acquire", "release"]  # exactly one pair — the client's
+
+
+@pytest.mark.asyncio
+async def test_client_lease_contention_raises_before_launch(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    """When the profile is already held, entering the client raises
+    ProfileLockedError BEFORE Chrome launches — no persistent context is opened."""
+    from gflow_cli.errors import ProfileLockedError
+    from gflow_cli.profile_lease import ProfileLease
+
+    monkeypatch.delenv("GFLOW_CLI_TRANSPORT", raising=False)
+    _patch_playwright(monkeypatch)
+
+    def raise_locked(self: ProfileLease) -> ProfileLease:
+        raise ProfileLockedError(detail="held", remediation_hint="wait")
+
+    monkeypatch.setattr(ProfileLease, "acquire", raise_locked)
+
+    launch_calls: list[object] = []
+    original_launch = FlowApiClient._launch_persistent_context
+
+    async def spy_launch(self: FlowApiClient, kwargs: dict[str, object]) -> object:
+        launch_calls.append(kwargs)
+        return await original_launch(self, kwargs)
+
+    monkeypatch.setattr(FlowApiClient, "_launch_persistent_context", spy_launch)
+
+    client = FlowApiClient(profile_dir=tmp_path, transport=_FakeTransport())
+    with pytest.raises(ProfileLockedError):
+        await client.__aenter__()
+    assert launch_calls == []  # acquire failed BEFORE the launch was attempted
+    assert client._context is None
+
+
+# ---------------------------------------------------------------------------
 # Image-gen transport delegation test (Task A.7)
 # ---------------------------------------------------------------------------
 
@@ -367,38 +464,53 @@ async def test_client_delegates_image_gen_to_transport(
 # ---------------------------------------------------------------------------
 
 
-class _OutDirAwareTransport(_FakeTransport):
-    """Like _FakeTransport but exposes an `_out_dir` attribute the client can set."""
+class _ConfigAwareTransport(_FakeTransport):
+    """Fake that opts into the typed SupportsTransportSetup seam and records the
+    immutable config it was handed — no private-attribute writes involved."""
 
     def __init__(self) -> None:
         super().__init__()
-        self._out_dir: Path | None = None
+        self.setup_config: TransportSetup | None = None
+
+    def apply_setup(self, config: TransportSetup) -> None:
+        self.setup_config = config
 
 
 @pytest.mark.asyncio
-async def test_client_plumbs_out_dir_to_transport(
+async def test_client_passes_typed_output_configuration_to_transport(
     tmp_path: Path, monkeypatch: pytest.MonkeyPatch
 ) -> None:
-    """#18 — FlowApiClient.out_dir must propagate to transport._out_dir."""
+    """#18 — the client hands a transport an immutable TransportSetup through the
+    public seam (out_dir + storage_uri + output_dir), not private-field writes.
+
+    Driven through the real constructor/context-manager lifecycle rather than a
+    synthetic call, and against a PRE-INITIALIZED transport, so it also proves
+    the caller-owned path still receives configuration."""
     monkeypatch.delenv("GFLOW_CLI_TRANSPORT", raising=False)
     _patch_playwright(monkeypatch)
-    fake = _OutDirAwareTransport()
+    fake = _ConfigAwareTransport()
+    settings = Settings(storage_uri="s3://bucket/prefix/", output_dir=tmp_path / "out")
     out = tmp_path / "shots"
-    async with FlowApiClient(profile_dir=tmp_path, transport=fake, out_dir=out) as client:
-        assert client._out_dir == out
-        assert fake._out_dir == out
+    async with FlowApiClient(profile_dir=tmp_path, transport=fake, settings=settings, out_dir=out):
+        assert fake.setup_config is not None
+        assert fake.setup_config.out_dir == out
+        assert fake.setup_config.output_dir == tmp_path / "out"
+        assert fake.setup_config.storage_uri == "s3://bucket/prefix/"
 
 
 @pytest.mark.asyncio
-async def test_client_omits_out_dir_when_transport_lacks_attribute(
+async def test_client_does_not_write_transport_private_attributes(
     tmp_path: Path, monkeypatch: pytest.MonkeyPatch
 ) -> None:
-    """Transports without an `_out_dir` slot are left untouched (hasattr-guarded)."""
+    """A transport that does not implement the seam is left untouched — the
+    client never injects `_out_dir` into its __dict__ (replaces the old
+    hasattr-guarded private write)."""
     monkeypatch.delenv("GFLOW_CLI_TRANSPORT", raising=False)
     _patch_playwright(monkeypatch)
-    fake = _FakeTransport()  # NOTE: no _out_dir attribute
+    fake = _FakeTransport()  # does NOT implement apply_setup
+    assert not isinstance(fake, SupportsTransportSetup)
     async with FlowApiClient(profile_dir=tmp_path, transport=fake, out_dir=tmp_path / "shots"):
-        assert not hasattr(fake, "_out_dir")
+        assert "_out_dir" not in fake.__dict__
 
 
 def test_is_target_closed_recognises_marker() -> None:
@@ -631,3 +743,122 @@ async def test_get_agent_info_absent_brief_is_empty(tmp_path: Path) -> None:
 
     assert brief.enabled is False
     assert brief.cards == ()
+
+
+# ---------------------------------------------------------------------------
+# Cancellation-complete teardown (Task D4)
+# ---------------------------------------------------------------------------
+
+
+def _recording_playwright(
+    monkeypatch: pytest.MonkeyPatch,
+    order: list[str],
+    *,
+    context_close: object = None,
+) -> tuple[object, object]:
+    """Fake the Playwright stack, recording context.close / pw.stop into ``order``.
+
+    ``context_close`` overrides the context-close coroutine (e.g. one that
+    blocks so a cancellation can land mid-close). Returns (fake_context, fake_pw).
+    """
+    import asyncio
+    from unittest.mock import AsyncMock, MagicMock
+
+    fake_page = MagicMock()
+    fake_page.goto = AsyncMock()
+
+    fake_context = MagicMock()
+    fake_context.pages = [fake_page]
+    fake_context.new_page = AsyncMock(return_value=fake_page)
+    fake_context.add_init_script = AsyncMock()
+    # No real browser so close_context_bounded's force-close path is a no-op.
+    fake_context.browser = None
+
+    async def _default_close() -> None:
+        order.append("context_close")
+
+    fake_context.close = context_close or _default_close
+
+    fake_pw = MagicMock()
+
+    async def _stop() -> None:
+        order.append("driver_stop")
+
+    fake_pw.stop = _stop
+    fake_pw.chromium.launch_persistent_context = AsyncMock(return_value=fake_context)
+
+    starter = MagicMock()
+    starter.start = AsyncMock(return_value=fake_pw)
+    monkeypatch.setattr("gflow_cli.api.client.async_playwright", lambda: starter)
+    _ = asyncio  # keep the import referenced for symmetry with callers
+    return fake_context, fake_pw
+
+
+@pytest.mark.asyncio
+async def test_teardown_order_browser_before_lease(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    """D4 teardown order: the context closes and the driver stops (step 4)
+    BEFORE the profile lease is released (step 6) — proven with recording fakes."""
+    monkeypatch.delenv("GFLOW_CLI_TRANSPORT", raising=False)
+    from gflow_cli.profile_lease import ProfileLease
+
+    order: list[str] = []
+
+    def acq(self: ProfileLease) -> ProfileLease:
+        order.append("lease_acquire")
+        return self
+
+    def rel(self: ProfileLease) -> None:
+        order.append("lease_release")
+
+    monkeypatch.setattr(ProfileLease, "acquire", acq)
+    monkeypatch.setattr(ProfileLease, "release", rel)
+    _recording_playwright(monkeypatch, order)
+
+    async with FlowApiClient(profile_dir=tmp_path, transport=_FakeTransport()):
+        pass
+
+    assert order == ["lease_acquire", "context_close", "driver_stop", "lease_release"]
+
+
+@pytest.mark.asyncio
+async def test_cancel_during_context_close_still_stops_playwright(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    """D4: a CancelledError landing while the BrowserContext is still closing
+    must NOT skip the driver stop or the lease release, and must propagate."""
+    import asyncio
+
+    monkeypatch.delenv("GFLOW_CLI_TRANSPORT", raising=False)
+    from gflow_cli.profile_lease import ProfileLease
+
+    order: list[str] = []
+    released: list[bool] = []
+    monkeypatch.setattr(ProfileLease, "acquire", lambda self: self)
+    monkeypatch.setattr(ProfileLease, "release", lambda self: released.append(True))
+
+    close_started = asyncio.Event()
+
+    async def _blocking_close() -> None:
+        # Signal that we are inside context.close, then block until cancelled so
+        # the cancellation is guaranteed to land mid-close.
+        order.append("context_close_started")
+        close_started.set()
+        await asyncio.Event().wait()
+
+    _recording_playwright(monkeypatch, order, context_close=_blocking_close)
+
+    client = FlowApiClient(profile_dir=tmp_path, transport=_FakeTransport())
+    await client.__aenter__()
+
+    close_task = asyncio.create_task(client._close_browser_resources())
+    await asyncio.wait_for(close_started.wait(), timeout=1)
+    close_task.cancel()
+    with pytest.raises(asyncio.CancelledError):
+        await close_task
+
+    # Driver was still stopped despite the cancel landing mid-context-close, and
+    # the lease was released last.
+    assert "driver_stop" in order
+    assert released == [True]
