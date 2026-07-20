@@ -77,3 +77,16 @@ def test_changelog_unreleased_notes_video_batch_removal() -> None:
 
     assert "video batch" in unreleased
     assert "removed" in unreleased
+
+
+# Production-readiness hardening (task F1, design spec §9): headed real Chrome
+# is the production default for UI automation, not headless. Stale docs
+# claimed headless was the default and that flipping to headed was merely an
+# occasional reCAPTCHA workaround; `config.py`'s `headless` field defaults to
+# `False`. CONFIGURATION.md is the canonical reference doc and must state
+# both facts plainly.
+def test_current_docs_describe_headed_default_and_waf_safe_mode() -> None:
+    text = (ROOT / "docs/CONFIGURATION.md").read_text(encoding="utf-8")
+    assert "GFLOW_CLI_HEADLESS=false" in text
+    assert "headed" in text.lower()
+    assert "**Default:** `false`" in text

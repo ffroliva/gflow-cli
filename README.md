@@ -104,7 +104,7 @@ Onboard any agent in one line. Paste this into your agent of choice:
 ```text
 gflow CLI  →  Provider (interchangeable)  →  Flow (ui_automation) / Mock (tests) / [planned: Official Veo]
                                               ↓
-                                      Playwright Chromium (headed login, headless after)
+                                      Playwright Chromium (headed — login AND generation, by default)
                                               ↓
                               aisandbox-pa.googleapis.com  (Google's private Flow API)
 ```

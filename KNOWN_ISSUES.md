@@ -275,26 +275,6 @@ Re-running `auth login` reuses the existing profile dir (you typically just clic
 
 ---
 
-### Same profile can't be used in parallel
-
-- **Status:** Open (by design) · **Severity:** Low · **Affects:** all versions
-
-Chromium refuses to open two persistent contexts on the same `user-data-dir` simultaneously. So running two concurrent `gflow ...` calls with the same `--profile` will fail the second one with a "ProcessSingleton: profile is locked" error.
-
-**Workaround:** use different profiles for parallel work.
-
-```bash
-# Terminal 1
-gflow image batch ./batch-a.tsv --profile work
-
-# Terminal 2 — different profile, same time, OK
-gflow image batch ./batch-b.tsv --profile personal
-```
-
-**Roadmap:** Phase 4 (v0.4.0a2) added a per-worker Page pool on one shared BrowserContext (`GFLOW_CLI_CONCURRENCY=N`), intended to let one `gflow-cli` process fan out multiple in-flight generations, but no current CLI command drives more than one generation at a time through it — the only feature that did (a manifest-driven video batch runner) never worked and was removed. Cross-process same-profile serialization is a separate, still-open Chromium constraint we cannot work around without rewriting the auth model — multiple shells against the same profile remains a "use different profiles" workaround.
-
----
-
 ### Chromium cookie database locks block yt-dlp integrations (Instagram/restricted download paths)
 
 - **Status:** Mitigated · **Severity:** Low-Medium · **Affects:** any downstream helper calling `yt-dlp` (including `claude-video`, `cg-decode`/`refanalyzer`, or `experience-vault`)
@@ -361,6 +341,22 @@ playwright._impl._errors.TimeoutError: Locator.click: Timeout 30000ms exceeded.
 `gflow-cli` doesn't yet show how many Veo / Imagen credits remain on your Ultra/Pro subscription. You can check at <https://gemini.google/subscriptions/> in the meantime.
 
 **Roadmap:** v0.5 will surface remaining quota via `gflow auth status` once we capture the relevant Google API.
+
+---
+
+### `gflow serve` / MCP worker queue: interrupted post-submit tasks need manual reconciliation
+
+- **Status:** Open (by design — no automated reconciliation) · **Severity:** Low · **Affects:** `gflow serve` daemon and MCP worker paths only (not the plain CLI, which has no queue)
+
+The worker queue (`generation_queue`, used by the `gflow serve` daemon and MCP tool calls) checkpoints every task's progress through `claimed` → `submit_attempted` → `remote_started` → terminal. If a task is interrupted (daemon restart, crash, or cancellation) while still `claimed` (before any submit), gflow-cli safely marks it `failed` — nothing was spent, safe to retry. But if it's interrupted at `submit_attempted` or `remote_started` — **after** the credit-spending submit click may have fired — it is marked `indeterminate` instead: a credit *may* have been spent and the outcome is unknown. An `indeterminate` task is **never** silently reported as `failed` and **never** auto-resubmitted (that could double-spend a credit for one generation).
+
+**Why this can't be resolved automatically today:** Flow's generation-status REST endpoint rejects a bare, cookie-only `page.request` re-check with HTTP 401 — only a live, authenticated Playwright SPA re-poll (opening the project page and reading the DOM) can turn a preserved handle back into a real status, and that live re-poll path is not wired into recovery yet (tracked for a future phase; see the C1 handle-spike notes in `docs/superpowers/specs/2026-07-19-production-readiness-hardening-design.md` Appendix A).
+
+**Manual reconciliation:** an `indeterminate` row's checkpoint retains whatever handle/project info was captured before interruption. To resolve one by hand: open the relevant Flow project in the browser and check whether the expected asset appears.
+- **Found** — the generation completed; no action needed (the credit was spent as intended, just not auto-recorded locally).
+- **Not found after a few minutes** — it likely never completed; safe to resubmit the same prompt manually.
+
+**Queue payload schema (V0/V1):** the queue's `payload_json` carries an additive `schema_version` key. A payload with no `schema_version` key is legacy **V0** and decodes with the same field lookups as **V1** (the shape is otherwise identical) — both remain readable. The codec always *writes* the current version (`1`) on any re-encode. Any other version is treated as unknown and rejected with `QueueSchemaError` (**exit code 30**) rather than interpreted optimistically — this is a fail-closed guard against decoding a payload written by an incompatible future (or hand-edited) version.
 
 ---
 
@@ -729,6 +725,26 @@ fails unexpectedly: a Windows **DPAPI decrypt failure** (cross-user / cross-mach
 key — surfaces as a `RuntimeError` that `auth/cookies.py` normalizes to
 `PermissionError` to trigger the Playwright fallback) and a **locked cookie DB**
 (Chrome still running holds an exclusive SQLite lock). Both degrade fail-closed.
+
+---
+
+### Same profile can't be used in parallel
+
+- **Status:** Mitigated (crash → typed fail-fast rejection) · **Severity:** Low · **Affects:** all versions
+
+Chromium refuses to open two persistent contexts on the same `user-data-dir` simultaneously. Historically this surfaced as an unhelpful Chromium "ProcessSingleton: profile is locked" error partway through a run. As of the profile-lease hardening (production-readiness plan, slice D1/D3), gflow-cli enforces this itself: a cross-process advisory lock (`ProfileLease`, kernel `flock` on POSIX / `msvcrt.locking` on Windows) guards every profile directory. A second `gflow` invocation, `gflow serve` daemon task, or MCP call against an already-leased profile is rejected **immediately** — before any Chrome process starts — with a typed `ProfileLockedError` (**exit code 11**); it never waits and never silently corrupts the profile.
+
+**Workaround:** use different profiles for parallel work — different profiles acquire independent leases and run fully concurrently.
+
+```bash
+# Terminal 1
+gflow image batch ./batch-a.tsv --profile work
+
+# Terminal 2 — different profile, same time, OK
+gflow image batch ./batch-b.tsv --profile personal
+```
+
+**Roadmap:** Phase 4 (v0.4.0a2) added a per-worker Page pool on one shared BrowserContext (`GFLOW_CLI_CONCURRENCY=N`), intended to let one `gflow-cli` process fan out multiple in-flight generations, but no current CLI command drives more than one generation at a time through it — the only feature that did (a manifest-driven video batch runner) never worked and was removed. Cross-process same-profile serialization remains a hard constraint (Chromium can only own one persistent context per `user-data-dir`) — but it is now a clean, typed, fail-fast rejection instead of an unstructured crash. Multiple shells against the same profile remains a "use different profiles" workaround; there is no queueing/waiting mode.
 
 ---
 
