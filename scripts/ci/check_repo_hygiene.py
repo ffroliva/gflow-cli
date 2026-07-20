@@ -84,7 +84,6 @@ ROOT_DOC_ALLOWLIST: frozenset[str] = frozenset(
         "CONFIGURATION.md",
         "CONTRIBUTING.md",
         "DISCLAIMER.md",
-        "GEMINI.md",
         "KNOWN_ISSUES.md",
         "PLAN.md",
         "README.md",

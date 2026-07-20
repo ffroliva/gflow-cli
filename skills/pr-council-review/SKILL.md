@@ -8,7 +8,7 @@ description: Multi-dimensional LLM council review of an open PR (default) or a l
 
 Council-driven PR review. Dispatches **6 baseline + N adaptive** parallel reviewers, each scoped to one dimension, each invoking the relevant Claude Code specialized skill (e.g. `security-review`, `code-review`, `verify`), then synthesizes a single consensus verdict.
 
-This skill is the canonical body. The Claude Code slash command at `.claude/commands/gflow/pr-council-review.md` is a thin wrapper that invokes this skill. Non-Claude tools (Gemini CLI / Codex / Cursor / Aider) can consume this SKILL.md directly via their own skill loaders.
+This skill is the canonical body. The Claude Code slash command at `.claude/commands/gflow/pr-council-review.md` is a thin wrapper that invokes this skill. Non-Claude tools (Antigravity / Codex / Cursor / Aider) can consume this SKILL.md directly via their own skill loaders.
 
 **Three modes:**
 1. **No argument** → list open PRs ranked by review priority; user picks. (See § 1.)
@@ -320,7 +320,7 @@ Always end with an `AskUserQuestion`.
 - The command is **stateless** and **read-only** — concurrent invocations on different PRs don't share data. No `gh pr merge`, no `git push`, no `gh pr close`.
 - **Idempotence:** same PR SHA → comparable verdicts on different days. Drift usually means memory grew new precedents or the mandatory-slug table needs an update.
 - **Sibling commands.** `/review` is the single-agent Claude-Code built-in (one-pass, cheap) — use for spot-checks or draft iteration. `/gflow:pr-council-review` is the council version for pre-merge audits and high-risk surfaces.
-- **Cross-tool portability.** This SKILL.md is the canonical body. The Claude Code slash command at `.claude/commands/gflow/pr-council-review.md` is a thin wrapper. Other tools (Gemini CLI / Codex / Cursor / Aider) consume this file directly via their own skill-loading mechanism. See `[[pr-council-review-portability-backlog]]` for the cross-tool playbook.
+- **Cross-tool portability.** This SKILL.md is the canonical body. The Claude Code slash command at `.claude/commands/gflow/pr-council-review.md` is a thin wrapper. Other tools (Antigravity / Codex / Cursor / Aider) consume this file directly via their own skill-loading mechanism. See `[[pr-council-review-portability-backlog]]` for the cross-tool playbook.
 
 ---
 
