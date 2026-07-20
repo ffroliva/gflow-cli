@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 import asyncio
+import contextlib
 import os
 import sys
 from typing import TYPE_CHECKING
@@ -10,6 +11,7 @@ from rich.console import Console
 
 from gflow_cli.config import Settings, get_settings
 from gflow_cli.errors import AuthLoginTimeoutError, AuthMissingError, SecurityError
+from gflow_cli.profile_lease import ProfileLease
 
 from .base import AuthStrategy
 from .verification import FlowSessionOutcome, verify_flow_profile
@@ -68,12 +70,12 @@ def _build_chrome_args(chrome_exe: str, profile_dir: Path, headless: bool) -> li
         "--window-size=1920,1080",  # match the generation viewport (#315 consistency)
         "--password-store=basic",
         # No --remote-debugging-port: zero automation surface.
-        GEMINI_URL,  # open straight on the Flow sign-in page
     ]
     if headless:
         args.append("--headless=new")
-    # Open Flow directly so the user lands on the sign-in / app surface
-    # instead of a blank new-tab page.
+    # Open Flow directly (ONCE) so the user lands on the sign-in / app surface
+    # instead of a blank new-tab page. A second GEMINI_URL positional made
+    # Chrome open a duplicate Flow tab on every login.
     args.append(GEMINI_URL)
     return args
 
@@ -100,16 +102,38 @@ def _print_login_instructions() -> None:
     _console.print("Launching Chrome...")
 
 
+async def _terminate_and_reap(proc: asyncio.subprocess.Process) -> None:
+    """Terminate the child, then kill+reap it if it doesn't exit promptly.
+
+    Bounded so a wedged Chrome cannot hang teardown, and the final ``wait()``
+    reaps the process so it never lingers as a zombie holding the profile lock.
+    """
+    proc.terminate()
+    try:
+        await asyncio.wait_for(proc.wait(), timeout=5)
+    except (TimeoutError, asyncio.CancelledError):
+        proc.kill()
+        with contextlib.suppress(BaseException):
+            await proc.wait()
+
+
 async def _await_chrome_close(proc: asyncio.subprocess.Process, timeout_seconds: int) -> None:
-    """Wait for Chrome to exit; terminate/kill it when the timeout elapses."""
+    """Wait for Chrome to exit; terminate/kill it on timeout OR cancellation.
+
+    On cancellation (Ctrl-C / task cancel while waiting for the user to close
+    Chrome) the child would otherwise be orphaned — keeping the profile's
+    SQLite cookie lock (and therefore the ProfileLease) held. Terminate + reap
+    it before the cancellation propagates out through the enclosing
+    ``async with ProfileLease`` (which releases the lease), so chrome is dead
+    BEFORE the profile is freed.
+    """
     try:
         await asyncio.wait_for(proc.wait(), timeout=float(timeout_seconds))
+    except asyncio.CancelledError:
+        await _terminate_and_reap(proc)
+        raise
     except TimeoutError:
-        proc.terminate()
-        try:
-            await asyncio.wait_for(proc.wait(), timeout=5)
-        except TimeoutError:
-            proc.kill()
+        await _terminate_and_reap(proc)
         msg = f"Sign-in timed out after {timeout_seconds}s; Chrome was stopped."
         raise AuthLoginTimeoutError(
             msg,
@@ -191,17 +215,24 @@ class RealChromeStrategy(AuthStrategy):
         if not headless:
             _print_login_instructions()
 
-        # Tests MUST patch asyncio.create_subprocess_exec itself — patching
-        # subprocess.Popen instead lets the real asyncio transport run against a
-        # mock process, hanging proc.wait() forever on the loop's child watcher.
-        proc = await asyncio.create_subprocess_exec(
-            *chrome_args,
-            stdout=asyncio.subprocess.DEVNULL,
-            stderr=asyncio.subprocess.DEVNULL,
-        )
-        # Chrome holds an exclusive lock on its SQLite cookie store while running,
-        # so we must wait for it to close before probing the session.
-        await _await_chrome_close(proc, self._timeout_seconds)
+        # Own the profile while passive-capture Chrome runs (D3). The lease
+        # scope is ONLY the running browser: it is released before
+        # verify_flow_profile below, which momentarily owns its own probe context
+        # on the same profile (a nested lease would be a same-process double-
+        # acquire). Contention raises ProfileLockedError before Chrome launches.
+        async with ProfileLease(profile_dir):
+            # Tests MUST patch asyncio.create_subprocess_exec itself — patching
+            # subprocess.Popen instead lets the real asyncio transport run against
+            # a mock process, hanging proc.wait() forever on the loop's child
+            # watcher.
+            proc = await asyncio.create_subprocess_exec(
+                *chrome_args,
+                stdout=asyncio.subprocess.DEVNULL,
+                stderr=asyncio.subprocess.DEVNULL,
+            )
+            # Chrome holds an exclusive lock on its SQLite cookie store while
+            # running, so we must wait for it to close before probing the session.
+            await _await_chrome_close(proc, self._timeout_seconds)
         _console.print("\n[bold green]Browser closed.[/bold green] Verifying Flow session...")
 
         # Pre-write the Chrome marker so the verification fallback can use the

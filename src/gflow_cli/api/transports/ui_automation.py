@@ -47,12 +47,15 @@ from gflow_cli.errors import (
     WafRejectionError,
     WireFormatError,
 )
+from gflow_cli.profile_lease import ProfileLease
 
 if TYPE_CHECKING:
     from collections.abc import Callable
     from pathlib import Path
 
     from playwright.async_api import Locator, Page, ViewportSize
+
+    from gflow_cli.api.transports.base import TransportSetup
 
 # Lazy-imported at call time so ``import gflow_cli`` doesn't pay the
 # Playwright import cost when another transport is selected.
@@ -697,12 +700,22 @@ class UiAutomationTransport(VideoGenerationMixin):
         self._page: Page | None = None
         self._setup_done: bool = False
         self._owns_playwright: bool = False
-        # Optional directory for debug screenshots — set by FlowApiClient
-        # from its `out_dir` constructor arg (#18). When None, the internal
+        # Cross-process profile lease (D3). Held ONLY on the standalone-context
+        # path (setup with page=None), where this transport owns the persistent
+        # context. On the shared-page path the caller (FlowApiClient) owns both
+        # the context and the lease, so this stays None.
+        self._lease: ProfileLease | None = None
+        # Typed output/storage wiring handed in by FlowApiClient through the
+        # public apply_setup() seam (SupportsTransportSetup). The private slots
+        # below are this transport's own derived state — the client no longer
+        # writes them directly.
+        self.setup_config: TransportSetup | None = None
+        # Optional directory for debug screenshots — derived from the client's
+        # `out_dir` constructor arg (#18). When None, the internal
         # _capture_debug_screenshot helper is a no-op.
         self._out_dir: Path | None = None
-        # Optional cloud-storage configuration set by FlowApiClient. Video
-        # downloads read these slots inside VideoGenerationMixin._download_video.
+        # Optional cloud-storage configuration. Video downloads read these slots
+        # inside VideoGenerationMixin._download_video.
         self._storage_uri: str | None = None
         self._output_dir: Path | None = None
         # Serialize concurrent generate_images calls — a single Playwright Page
@@ -711,6 +724,20 @@ class UiAutomationTransport(VideoGenerationMixin):
         # converts the N-parallel fan-out from generate_images_batch into N
         # sequential Page interactions, eliminating all race conditions.
         self._generate_lock: asyncio.Lock = asyncio.Lock()
+
+    def apply_setup(self, config: TransportSetup) -> None:
+        """Accept output/storage wiring publicly (SupportsTransportSetup seam).
+
+        Stores the immutable record and derives the private slots the debug-
+        screenshot and video-download paths read. ``out_dir`` is only adopted
+        when set, preserving the prior "don't clobber with None" plumbing
+        behaviour; ``storage_uri``/``output_dir`` mirror the config as-is.
+        """
+        self.setup_config = config
+        if config.out_dir is not None:
+            self._out_dir = config.out_dir
+        self._storage_uri = config.storage_uri
+        self._output_dir = config.output_dir
 
     # ------------------------------------------------------------------
     # Lifecycle
@@ -778,6 +805,9 @@ class UiAutomationTransport(VideoGenerationMixin):
 
             from gflow_cli.browser_manager import channel_for_profile
 
+            # Own the profile BEFORE Chrome launches (D3). Contention raises
+            # ProfileLockedError here; the except below tears the driver back down.
+            self._lease = ProfileLease(profile_dir).acquire()
             locale_env = os.getenv("GFLOW_CLI_LOCALE", "en-US")
             ctx = await pw.chromium.launch_persistent_context(
                 str(profile_dir),
@@ -811,13 +841,38 @@ class UiAutomationTransport(VideoGenerationMixin):
                 "ui_automation.setup_own_context",
                 profile_dir=str(profile_dir),
             )
-        except Exception:
-            # Partial-setup leak guard. The context must be closed BEFORE the
+        except BaseException:
+            # Partial-setup leak guard. Catches BaseException (not just
+            # Exception) so a CancelledError mid-setup ALSO tears down the
+            # launched context (D4) — otherwise a cancelled launch would orphan
+            # chrome and leak the lease. The context must be closed BEFORE the
             # driver exits — stopping only the driver leaves the detached
-            # system-Chrome alive holding the profile dir (issue #293).
+            # system-Chrome alive holding the profile dir (issue #293). Each
+            # cleanup step is bounded + shielded so the cleanup itself cannot be
+            # interrupted before the lease release; the original error re-raises.
+            from gflow_cli.api._engine import (  # noqa: PLC0415
+                CONTEXT_TEARDOWN_TIMEOUT_S,
+                DRIVER_STOP_TIMEOUT_S,
+                run_teardown_step,
+            )
+
             if ctx is not None:
-                await close_context_bounded(ctx, owner="ui_automation")
-            await pw_cm.__aexit__(None, None, None)
+                await run_teardown_step(
+                    close_context_bounded(ctx, owner="ui_automation"),
+                    timeout=CONTEXT_TEARDOWN_TIMEOUT_S,
+                    owner="ui_automation",
+                    step="setup_context_close",
+                )
+            await run_teardown_step(
+                pw_cm.__aexit__(None, None, None),
+                timeout=DRIVER_STOP_TIMEOUT_S,
+                owner="ui_automation",
+                step="setup_driver_exit",
+            )
+            # Release the lease last — after context + driver are down (D3).
+            if self._lease is not None:
+                self._lease.release()
+                self._lease = None
             raise
 
     # ------------------------------------------------------------------
@@ -2123,9 +2178,9 @@ class UiAutomationTransport(VideoGenerationMixin):
         required_mode = infer_required_ui_mode(
             base_mode, has_instructions=bool(request.instructions)
         )
-        ui_driver = await get_ui_driver(page, ui_mode=required_mode)
-        if ui_driver.name == "classic":
-            ui_driver._transport = self  # type: ignore[union-attr]
+        # Inject ``self`` into the classic driver at construction (via the
+        # factory) — never mutate ``_transport`` onto the driver after the fact.
+        ui_driver = await get_ui_driver(page, ui_mode=required_mode, transport=self)
 
         # Select Image mode explicitly. If the account was last in Video mode,
         # an unguarded submission goes to the video endpoint and the image
@@ -2185,9 +2240,13 @@ class UiAutomationTransport(VideoGenerationMixin):
         async with self._intercept_reference_entities(page, expected_ents):
             # Agentic path: DOM scraping (page-level network capture is dead in this
             # cohort — requests are Web-Worker-delegated, so 0 entries are captured).
-            if ui_driver.name == "agentic":
-                await ui_driver.send_prompt(page, request.prompt, out_dir=out_dir)
-                return await ui_driver.await_images(page, request.count, out_dir=out_dir)
+            # The request + expected count are handed to the driver directly.
+            from gflow_cli.api.transports.drivers.agentic import (  # noqa: PLC0415
+                AgenticFlowUiDriver,
+            )
+
+            if isinstance(ui_driver, AgenticFlowUiDriver):
+                return await ui_driver.submit_images(page, request, request.count, out_dir=out_dir)
 
             # Classic path: network-capture via response listener (unchanged).
             # Attach the response listener SYNCHRONOUSLY before any prompt
@@ -2370,10 +2429,13 @@ class UiAutomationTransport(VideoGenerationMixin):
             return _fail(exc)
 
         # Agentic path: DOM scraping — no page-level listener (Web-Worker-delegated).
-        if ui_driver.name == "agentic":
+        from gflow_cli.api.transports.drivers.agentic import (  # noqa: PLC0415
+            AgenticFlowUiDriver,
+        )
+
+        if isinstance(ui_driver, AgenticFlowUiDriver):
             try:
-                await ui_driver.send_prompt(page, req.prompt, out_dir=out_dir)
-                images = await ui_driver.await_images(page, req.count, out_dir=out_dir)
+                images = await ui_driver.submit_images(page, req, req.count, out_dir=out_dir)
             except Exception as exc:
                 return _fail(exc)
             return (
@@ -2528,9 +2590,9 @@ class UiAutomationTransport(VideoGenerationMixin):
         # if batch ever gains instruction support.
         from gflow_cli.config import resolve_ui_mode
 
-        ui_driver = await get_ui_driver(page, ui_mode=resolve_ui_mode(None))
-        if ui_driver.name == "classic":
-            ui_driver._transport = self  # type: ignore[union-attr]
+        # Inject ``self`` into the classic driver at construction (via the
+        # factory) — never mutate ``_transport`` onto the driver after the fact.
+        ui_driver = await get_ui_driver(page, ui_mode=resolve_ui_mode(None), transport=self)
 
         try:
             await ui_driver.switch_to_image_mode(page, out_dir=out_dir)
@@ -3021,25 +3083,53 @@ class UiAutomationTransport(VideoGenerationMixin):
         """
         if not self._setup_done:
             return
-        if self._owns_playwright and self._pw_cm is not None:
-            from gflow_cli.api._engine import (  # noqa: PLC0415
-                DRIVER_STOP_TIMEOUT_S,
-                close_context_bounded,
-            )
+        from gflow_cli.api._engine import (  # noqa: PLC0415
+            CONTEXT_TEARDOWN_TIMEOUT_S,
+            DRIVER_STOP_TIMEOUT_S,
+            close_context_bounded,
+            run_teardown_step,
+        )
 
-            if self._ctx is not None:
-                # Bounded close + force-close fallback (issue #293) — same
-                # helper as FlowApiClient's teardown; this standalone path had
-                # the identical unbounded-close-and-swallow gap.
-                await close_context_bounded(self._ctx, owner="ui_automation")
-            try:
-                await asyncio.wait_for(
-                    self._pw_cm.__aexit__(None, None, None), timeout=DRIVER_STOP_TIMEOUT_S
+        # Cancellation-complete teardown (D4): each step is bounded + shielded so
+        # a CancelledError landing mid-close cannot skip the driver exit or the
+        # lease release in `finally`; the original cancellation re-raises last.
+        # Teardown order: (4) close context -> exit driver; (6) release lease.
+        cancelled: BaseException | None = None
+        try:
+            if self._owns_playwright and self._pw_cm is not None:
+                if self._ctx is not None:
+                    # Bounded close + force-close fallback (issue #293) — same
+                    # helper as FlowApiClient's teardown; this standalone path
+                    # had the identical unbounded-close-and-swallow gap.
+                    cancelled = (
+                        await run_teardown_step(
+                            close_context_bounded(self._ctx, owner="ui_automation"),
+                            timeout=CONTEXT_TEARDOWN_TIMEOUT_S,
+                            owner="ui_automation",
+                            step="context_close",
+                        )
+                        or cancelled
+                    )
+                cancelled = (
+                    await run_teardown_step(
+                        self._pw_cm.__aexit__(None, None, None),
+                        timeout=DRIVER_STOP_TIMEOUT_S,
+                        owner="ui_automation",
+                        step="driver_exit",
+                    )
+                    or cancelled
                 )
-            except Exception as e:
-                log.warning("ui_automation.playwright_exit_failed", error=str(e))
-        self._pw_cm = None
-        self._ctx = None
-        self._page = None
-        self._setup_done = False
-        self._owns_playwright = False
+        finally:
+            # Release the profile lease last — after the context is closed and
+            # the driver stopped (D3). No-op on the shared-page path (lease is
+            # None). Field resets survive even a cancelled teardown.
+            if self._lease is not None:
+                self._lease.release()
+                self._lease = None
+            self._pw_cm = None
+            self._ctx = None
+            self._page = None
+            self._setup_done = False
+            self._owns_playwright = False
+        if cancelled is not None:
+            raise cancelled

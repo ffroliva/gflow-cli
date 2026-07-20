@@ -543,22 +543,18 @@ gflow video t2v "establishing shot" --project PROJ123
 gflow video t2v "close-up reaction" --project PROJ123
 ```
 
-## `gflow video batch`
+## Batch video generation (shell loop)
 
-> ⚠️ **Not yet implemented.** The `batch` subcommand currently exits with
-> `[yellow]gflow video batch is not yet available.[/yellow]` (exit 1).
-> Manifest-driven batching on `UiAutomationTransport` is queued for a later
-> release (see Phase B follow-ups).
-
-### Workaround — shell for-loop
-
-Until the manifest runner lands, you can drive sequential video generations
-through a plain shell loop. Without `--project`, each `gflow video t2v` /
-`i2v` / `r2v` call opens its **own Flow project**, so the resulting videos
-will NOT share a `project_id` (unlike `gflow image batch`, which mounts one
-project across all prompts) — but they DO get generated and downloaded. Pass
-the same `--project <id>` to every call in the loop (see "Sharing one project
-across calls" above) if you want them to land in one project instead:
+`gflow video` has no `batch` subcommand — a manifest-driven video runner
+was scaffolded early on but never worked and was removed. `gflow image
+batch` (manifest-driven image generation) is unaffected and still ships. For
+video, drive sequential generations through a plain shell loop instead.
+Without `--project`, each `gflow video t2v` / `i2v` / `r2v` call opens its
+**own Flow project**, so the resulting videos will NOT share a `project_id`
+(unlike `gflow image batch`, which mounts one project across all prompts) —
+but they DO get generated and downloaded. Pass the same `--project <id>` to
+every call in the loop (see "Sharing one project across calls" above) if you
+want them to land in one project instead:
 
 ```bash
 # bash / WSL / macOS — one prompt per line
@@ -574,11 +570,11 @@ Get-Content prompts.txt | ForEach-Object {
 }
 ```
 
-The trade-off vs. a true manifest runner: separate `project_id`s mean each
+The trade-off vs. a manifest runner: separate `project_id`s mean each
 generation re-mints a reCAPTCHA (a few extra seconds per shot) and the
-videos won't appear together in your Flow gallery. The files on disk are
-identical to what `batch` would produce. The same pattern works for
-`gflow video i2v <image> "<prompt>"` and `gflow video r2v "<prompt>" --ref <img>`.
+videos won't appear together in your Flow gallery. The same pattern works
+for `gflow video i2v <image> "<prompt>"` and
+`gflow video r2v "<prompt>" --ref <img>`.
 
 ## `gflow video chain`
 
@@ -1217,13 +1213,13 @@ gflow image t2i "variations of a minimalist fox logo" -n 4 --aspect 1:1 --out ./
 
 ```bash
 # Terminal 1
-gflow video batch ./batch-a.tsv --profile work
+gflow image batch ./batch-a.tsv --profile work
 
 # Terminal 2 (different profile = different Chromium context = OK)
-gflow video batch ./batch-b.tsv --profile personal
+gflow image batch ./batch-b.tsv --profile personal
 ```
 
-(Same profile concurrently → second invocation fails with "Chromium profile locked". Use different profiles or wait.)
+(Same profile concurrently → the second invocation fails fast with `ProfileLockedError`, exit code 11, before any Chrome process starts. Use different profiles or wait.)
 
 ### JSON logs for piping into Loki/Datadog
 
@@ -1249,7 +1245,7 @@ shell scripts can branch on the failure mode without parsing stderr.
 | `8`  | `AuthMissingError`    | Required auth credential is absent from profile   | `gflow auth login --profile <name>`                        |
 | `9`  | `TransportTimeoutError` | Browser/API operation exceeded its timeout (incl. an i2v frame UUID not found in the media picker, #287) | Retry; raise the relevant timeout — or, for a frame-UUID miss, verify the UUID belongs to the `--project` passed |
 | `10` | `WafRejectionError`   | Flow security layer rejected the request          | Change prompt/request and retry                            |
-| `11` | `ConfigurationError`  | Local configuration or browser mode is invalid    | Fix the option/env var shown in the error                  |
+| `11` | `ConfigurationError`  | Local configuration or browser mode is invalid — includes `ProfileLockedError` (same-profile lease contention: another `gflow`/daemon/MCP call already owns this profile) | Fix the option/env var shown in the error, or wait / use a different `--profile` for lease contention |
 | `12` | `AuthLoginTimeoutError` | Browser sign-in was not completed in time       | Re-run login or raise `GFLOW_CLI_AUTH_LOGIN_TIMEOUT`       |
 | `13` | `SecurityError`       | Unsafe local profile or secret handling blocked   | Follow the error's safety guidance                         |
 | `14` | `AuthBrowserRejectedError` | Google rejected the login browser             | `gflow auth login --browser chrome`                        |
@@ -1267,6 +1263,8 @@ shell scripts can branch on the failure mode without parsing stderr.
 | `26` | `MediaAttributionError` | Generated media could not be reliably attributed to this request (issue #281) | Re-run; a dedicated project with fewer pre-existing assets avoids the ambiguity |
 | `27` | `MediaUploadRejectedError` | Flow's upload endpoint refused the input file (`uploadImage` 4xx, issue #287) | Re-encode the image (`ffmpeg -q:v 2 -map_metadata -1`), or reference the asset by its media UUID |
 | `28` | `UiModeUnavailableError` | The Flow UI arm this command required (`GFLOW_CLI_UI_MODE`, or inferred — `-i` forces agentic) couldn't be reached after a switch attempt; aborted before submitting — no credits spent (issue #299) | Retry (the cohort flaps per load); try another `--profile`; or relax `GFLOW_CLI_UI_MODE` |
+| `29` | `MentionIndexUnavailableError` | An `@mention` was present but the catalog source needed to resolve it (character entities or media assets) failed to load — distinct from an empty index, which is not an error | Check network connectivity (character source) or `GFLOW_CLI_DB_PATH` / filesystem permissions (media source), then retry |
+| `30` | `QueueSchemaError`    | A `gflow serve`/MCP worker-queue task payload has an unrecognized `schema_version` or fails validation against the typed request DTOs | Usually means gflow-cli was downgraded after a newer version enqueued the task, or the payload was hand-edited; re-enqueue with a compatible version |
 | `130`| SIGINT                | User-interrupted (Ctrl-C)                        | —                                                          |
 
 **Exit code 16 — data store / migration error.** Fires when:

@@ -1,8 +1,10 @@
 """ClassicFlowUiDriver — the classic Flow media-composer layout.
 
-Implements the six :class:`FlowUiDriver` protocol methods by delegating to the
+Implements the :class:`FlowUiDriver` protocol methods by delegating to the
 existing static helpers on ``UiAutomationTransport`` /
-``VideoGenerationMixin``.
+``VideoGenerationMixin``. Awaiting images is NOT a driver method for this
+cohort — the transport owns the classic network-capture path (see the note by
+``send_prompt``).
 
 **Circular-import discipline:** this module must never import
 ``ui_automation`` or ``ui_automation_video`` at module load time (the
@@ -20,7 +22,7 @@ releases it).
 
 from __future__ import annotations
 
-from typing import TYPE_CHECKING, Any
+from typing import TYPE_CHECKING
 
 import structlog
 
@@ -29,8 +31,8 @@ if TYPE_CHECKING:
 
     from playwright.async_api import Page
 
-    from gflow_cli.api.dto import GeneratedImage
     from gflow_cli.api.image import GenerateImageRequest
+    from gflow_cli.api.transports.drivers.base import SupportsSendPrompt
     from gflow_cli.api.video import GenerateVideoRequest
 
 log = structlog.get_logger(__name__)
@@ -41,10 +43,15 @@ class ClassicFlowUiDriver:
 
     name = "classic"
 
-    def __init__(self, transport: Any | None = None) -> None:
-        # ``transport`` is the live ``UiAutomationTransport`` instance; needed
-        # only by ``send_prompt`` (which delegates to two instance methods on it).
-        # Typed as ``Any`` to avoid a module-load-time import of ui_automation.
+    def __init__(self, transport: SupportsSendPrompt | None = None) -> None:
+        # ``transport`` is the live transport, injected at construction time
+        # (never mutated on late) — ``send_prompt`` delegates to its
+        # ``_send_prompt``. Typed as the narrow ``SupportsSendPrompt`` protocol
+        # (exactly what the driver uses), which both ``UiAutomationTransport``
+        # and its ``VideoGenerationMixin`` half satisfy structurally. The import
+        # is ``TYPE_CHECKING``-only, so this stays free of a module-load-time
+        # ui_automation import (the transport depends on ``drivers``, not the
+        # reverse).
         self._transport = transport
 
     # ------------------------------------------------------------------
@@ -189,36 +196,11 @@ class ClassicFlowUiDriver:
             page, prompt_text, out_dir
         )
 
-    # ------------------------------------------------------------------
-    # FlowUiDriver protocol — await_images
-    # ------------------------------------------------------------------
-
-    async def await_images(  # NOSONAR
-        self,
-        page: Page,  # NOSONAR
-        expected_count: int,  # NOSONAR
-        *,
-        out_dir: Path | None = None,  # NOSONAR
-    ) -> list[GeneratedImage]:
-        """Classic network-capture path.
-
-        NOTE: This method is intentionally NOT implemented here.  The classic
-        ``await_images`` flow is tightly entangled with the response listener
-        lifecycle (``_attach_batch_response_listener``, ``_attach_batch_request_logger``,
-        ``submit_time``, entity-id backstop) that must be established *before*
-        ``send_prompt`` is called.  Extracting it cleanly into the driver without
-        behavior risk would require the driver to own listener state and request-body
-        sinks — a larger change than Task 2 warrants.
-
-        The transport's ``_generate_images_locked`` continues to inline the
-        ``captured``/``detach``/``_await_captured``/``_images_from_responses``
-        sequence.  Task 3 will implement this method for the agentic path (DOM
-        scraping, no page-level network capture).
-
-        Raises ``NotImplementedError`` so any inadvertent call is loud.
-        """
-        msg = (
-            "ClassicFlowUiDriver.await_images is not extracted (see module docstring). "
-            "The transport inlines the classic network-capture path."
-        )
-        raise NotImplementedError(msg)
+    # NOTE: there is deliberately NO ``await_images`` on this driver. The
+    # classic network-capture flow (attach ``page.on('response')`` listener
+    # BEFORE the submit click, then drain ``batchGenerateImages``) is owned by
+    # ``UiAutomationTransport._generate_images_locked`` — it is entangled with
+    # listener/submit-time/entity-backstop state the transport holds. Exposing a
+    # driver method that only raises ``NotImplementedError`` advertised a
+    # capability the driver refuses; it is gone. Only the agentic driver, which
+    # genuinely scrapes the DOM, carries ``submit_images`` / ``await_images``.

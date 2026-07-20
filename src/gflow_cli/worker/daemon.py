@@ -1,21 +1,17 @@
 from __future__ import annotations
 
 import asyncio
+import os
 from pathlib import Path
 from typing import Any, cast
 
 import structlog
 
 from gflow_cli.api.client import FlowApiClient
-from gflow_cli.api.dto import ProjectInfo
-from gflow_cli.api.image import AgentInstruction, GenerateImageRequest, ImageRef
-from gflow_cli.api.image import Aspect as ImageAspect
-from gflow_cli.api.image import Model as ImageModel
-from gflow_cli.api.video import Aspect as VideoAspect
-from gflow_cli.api.video import GenerateVideoRequest, VideoModel, VideoStarted
-from gflow_cli.api.video import Mode as VideoMode
-from gflow_cli.api.video import Tier as VideoTier
-from gflow_cli.config import UiMode, get_settings
+from gflow_cli.api.dto import GenerationCheckpoint, ProjectInfo
+from gflow_cli.api.image import GenerateImageRequest
+from gflow_cli.api.video import GenerateVideoRequest, VideoStarted
+from gflow_cli.config import get_settings
 from gflow_cli.data.models import OperationKind
 from gflow_cli.data.recorder import (
     OperationRecorder,
@@ -29,53 +25,10 @@ from gflow_cli.errors import DataIntegrityError, DataStoreError, GFlowError
 from gflow_cli.observability import exception_message_hash
 from gflow_cli.paths import image_output_path
 from gflow_cli.storage import cloud_info_from_path
-from gflow_cli.worker.queue import QueueRepository, QueueTask
+from gflow_cli.worker import codec
+from gflow_cli.worker.queue import QueueRepository, QueueTask, mark_interrupted
 
 logger = structlog.get_logger()
-
-_PROFILE_LOCKS: dict[str, asyncio.Lock] = {}
-
-
-def get_profile_lock(profile_name: str) -> asyncio.Lock:
-    if profile_name not in _PROFILE_LOCKS:
-        _PROFILE_LOCKS[profile_name] = asyncio.Lock()
-    return _PROFILE_LOCKS[profile_name]
-
-
-def _instruction_from_dict(item: dict[str, object]) -> AgentInstruction:
-    """Build one AgentInstruction from a queue-payload dict item."""
-    enabled_val = item.get("enabled")
-    return AgentInstruction(
-        text=str(item.get("text") or ""),
-        enabled=bool(enabled_val) if enabled_val is not None else True,
-        image_media_ids=tuple(
-            str(m) for m in cast(list[object], item.get("image_media_ids") or [])
-        ),
-        character_ids=tuple(str(c) for c in cast(list[object], item.get("character_ids") or [])),
-        title=str(item.get("title") or ""),
-    )
-
-
-def _parse_agent_instructions(
-    instructions_val: object,
-) -> tuple[AgentInstruction, ...] | None:
-    """Parse queue-payload ``instructions`` into ``AgentInstruction`` objects.
-
-    Accepts a list of plain strings (ephemeral enabled cards) or dicts
-    (``text``/``enabled``/``image_media_ids``/``character_ids``/``title``).
-    Returns ``None`` when absent or not a list/tuple. Extracted from
-    ``_build_image_request`` to keep that builder under the cognitive-complexity
-    limit (Sonar S3776).
-    """
-    if not isinstance(instructions_val, (list, tuple)):
-        return None
-    insts: list[AgentInstruction] = []
-    for item in cast(list[object], instructions_val):
-        if isinstance(item, str):
-            insts.append(AgentInstruction(text=item, enabled=True))
-        elif isinstance(item, dict):
-            insts.append(_instruction_from_dict(cast(dict[str, object], item)))
-    return tuple(insts)
 
 
 class FlowWorker:
@@ -94,13 +47,17 @@ class FlowWorker:
 
     async def start(self) -> None:
         logger.info("Starting FlowWorker", profile_name=self.profile_name)
+        claimant = f"worker:{self.profile_name}:{os.getpid()}"
         while not self._stop:
             try:
-                task = self.repo.get_next_pending_task(self.profile_name)
+                # Atomic claim (C3/C4): pending -> processing in one
+                # BEGIN IMMEDIATE txn, so the MCP direct-exec path and this
+                # poll loop can never both take the same row. An invalid
+                # payload is failed inside the claim (no browser) and returns
+                # None here — same as an empty queue.
+                task = self.repo.claim_next_pending(self.profile_name, claimant)
                 if task:
-                    lock = get_profile_lock(self.profile_name)
-                    async with lock:
-                        await self.process_task(task)
+                    await self.process_task(task)
                 else:
                     await asyncio.sleep(1)
             except asyncio.CancelledError:
@@ -116,13 +73,72 @@ class FlowWorker:
                 await asyncio.sleep(5)
 
     async def process_task(self, task: QueueTask) -> None:
+        """Execute an ALREADY-CLAIMED (processing) task.
+
+        The pending -> processing transition belongs to the atomic claim
+        (``QueueRepository.claim_next_pending`` / ``claim_task``), never to
+        this method — that is what stops the MCP direct-exec path and the
+        daemon poll loop from both running the same row. ``task.decoded``
+        (when the caller went through a claim) carries the request validated
+        at claim time, so the payload mapping is not re-derived here.
+        """
         logger.info(
             "Processing task",
             task_id=task.task_id,
             task_type=task.task_type,
             profile_name=self.profile_name,
         )
-        self.repo.update_task_status(task.task_id, status="processing")
+
+        claimant = task.claimant or f"worker:{self.profile_name}:{os.getpid()}"
+        # Mutable holder so the observer sees the project id once it is resolved —
+        # an image task may auto-create its Flow project inside the client block.
+        checkpoint_project_id: list[str | None] = [task.payload.get("project_id")]
+
+        def save_checkpoint(
+            phase: str,
+            *,
+            may_have_spent: bool,
+            operation_id: str | None = None,
+            media_ids: tuple[str, ...] = (),
+            workflow_ids: tuple[str, ...] = (),
+        ) -> None:
+            # Observer-exception policy (C1 deferred decision): a checkpoint-persist
+            # failure MUST NOT abort a generation already in flight — that would
+            # waste a submit. Log and continue. Every write routes through
+            # update_checkpoint -> make_checkpoint_document (the redaction allow-list).
+            try:
+                self.repo.update_checkpoint(
+                    task.task_id,
+                    claimant=claimant,
+                    phase=phase,
+                    may_have_spent=may_have_spent,
+                    project_id=checkpoint_project_id[0],
+                    operation_id=operation_id,
+                    media_ids=media_ids,
+                    workflow_ids=workflow_ids,
+                )
+            except Exception as exc:
+                logger.warning(
+                    "checkpoint_persist_failed",
+                    task_id=task.task_id,
+                    phase=phase,
+                    exc_info=exc,
+                )
+
+        def observe_checkpoint(cp: GenerationCheckpoint) -> None:
+            # Any emitted phase is at/after submit_attempted (C1 emits it right
+            # before the credit gesture), so may_have_spent is always True here.
+            save_checkpoint(
+                cp.phase,
+                may_have_spent=True,
+                operation_id=cp.operation_id,
+                media_ids=cp.media_ids,
+                workflow_ids=cp.workflow_ids,
+            )
+
+        # Pre-submit checkpoint: nothing spent yet. A crash/cancel before the
+        # observer fires classifies as a safe failure (queue.classify_interrupted).
+        save_checkpoint("claimed", may_have_spent=False)
 
         settings = get_settings()
         profile_dir = settings.profile_subdir(task.profile_name)
@@ -140,7 +156,11 @@ class FlowWorker:
 
         try:
             if task.task_type in ("t2i", "i2i"):
-                req = self._build_image_request(task.payload)
+                req = (
+                    cast("GenerateImageRequest", task.decoded.request)
+                    if task.decoded is not None
+                    else self._build_image_request(task.payload)
+                )
                 count = task.payload.get("count", 1)
                 project_id = task.payload.get("project_id")
 
@@ -167,6 +187,9 @@ class FlowWorker:
                             project = await client.create_project(title=project_title)
                             project_flow_id = project.project_id
                             project_created = True
+                        # Now that the project is resolved, the observer can persist
+                        # it (the credit-free video recovery key; harmless for images).
+                        checkpoint_project_id[0] = project_flow_id
 
                         # Resolve @-mentions and expand --tool specs (shared helper).
                         from gflow_cli.services.mentions import resolve_and_apply
@@ -181,13 +204,18 @@ class FlowWorker:
                         )
 
                         if count == 1:
-                            img = await client.generate_image(project_id=project_flow_id, req=req)
+                            img = await client.generate_image(
+                                project_id=project_flow_id,
+                                req=req,
+                                on_checkpoint=observe_checkpoint,
+                            )
                             images = [img]
                         else:
                             images = await client.generate_images_batch(
                                 project_id=project_flow_id,
                                 req=req,
                                 count=count,
+                                on_checkpoint=observe_checkpoint,
                             )
 
                         recorder.verify_media_attribution(
@@ -254,7 +282,11 @@ class FlowWorker:
                 )
 
             elif task.task_type in ("t2v", "i2v", "r2v"):
-                req = self._build_video_request(task.payload)
+                req = (
+                    cast("GenerateVideoRequest", task.decoded.request)
+                    if task.decoded is not None
+                    else self._build_video_request(task.payload)
+                )
                 project_id = task.payload.get("project_id")
 
                 recorder = OperationRecorder(
@@ -301,6 +333,7 @@ class FlowWorker:
                             out_dir=out_dir,
                             download=True,
                             on_started=on_started,
+                            on_checkpoint=observe_checkpoint,
                         )
                         flow_media_id = result.status.media_id
 
@@ -343,6 +376,32 @@ class FlowWorker:
                 )
             else:
                 raise ValueError(f"Unknown task type: {task.task_type}")
+
+        except asyncio.CancelledError:
+            # Cooperative cancellation: persist a truthful terminal state from the
+            # checkpoint reached (pre-submit -> failed; after submit_attempted ->
+            # indeterminate — a submitted task is NEVER silently failed and NEVER
+            # resubmitted), then re-raise so the poll loop / lifespan sees the ack.
+            #
+            # Same observer-exception policy as save_checkpoint above: a DB
+            # failure here (e.g. DataStoreError) must never replace the
+            # cancellation being handled — log and continue, `raise` stays
+            # outside the guard so the original CancelledError always wins.
+            try:
+                status = mark_interrupted(
+                    self.repo,
+                    task.task_id,
+                    self.repo.read_checkpoint(task.task_id),
+                    "cancelled",
+                )
+                logger.info("task_cancelled", task_id=task.task_id, status=status)
+            except Exception as exc:
+                logger.warning(
+                    "cancel_state_persist_failed",
+                    task_id=task.task_id,
+                    exc_info=exc,
+                )
+            raise
 
         except Exception as exc:
             logger.exception(
@@ -410,94 +469,11 @@ class FlowWorker:
             )
 
     def _build_image_request(self, payload: dict[str, Any]) -> GenerateImageRequest:
-        prompt = payload["prompt"]
-
-        aspect_val = payload.get("aspect")
-        aspect = ImageAspect.from_cli(aspect_val) if aspect_val else ImageAspect.PORTRAIT
-
-        model_val = payload.get("model")
-        model = ImageModel.from_cli(model_val) if model_val else ImageModel.NARWHAL
-
-        # ref_meta (set by the MCP layer's _enrich_image_refs) carries the
-        # display_name + on-disk local_path per media-id ref, so the transport
-        # can select the EXISTING asset in the picker (preferred, no duplicate)
-        # and fall back to uploading local_path only if it can't be located.
-        ref_meta: dict[str, dict[str, str]] = payload.get("ref_meta", {})
-        refs = tuple(
-            ImageRef(
-                r,
-                display_name=ref_meta.get(r, {}).get("display_name", ""),
-                local_path=ref_meta.get(r, {}).get("local_path", ""),
-            )
-            for r in payload.get("refs", [])
-        )
-        ref_paths = tuple(Path(p) for p in payload.get("ref_paths", []))
-        # NOTE: the payload may carry "ref_names" (the MCP layer resolves them
-        # for the video request); the image transport attaches remote refs by
-        # media id, so GenerateImageRequest has no ref_names field and must
-        # not receive one.
-        reference_entities = tuple(payload.get("reference_entities", []))
-        reference_entity_names = tuple(payload.get("reference_entity_names", []))
-        count = payload.get("count", 1)
-
-        return GenerateImageRequest(
-            prompt=prompt,
-            aspect=aspect,
-            model=model,
-            refs=refs,
-            ref_paths=ref_paths,
-            reference_entities=reference_entities,
-            reference_entity_names=reference_entity_names,
-            count=count,
-            instructions=_parse_agent_instructions(payload.get("instructions")),
-            ui_mode=UiMode(payload["ui_mode"]) if payload.get("ui_mode") else None,
-        )
+        # Delegates to the codec (Task C2) — the single mapping from a queue
+        # payload dict to GenerateImageRequest, shared with decode_payload's
+        # pre-flight validation so the two can never drift apart.
+        return codec.build_image_request(payload)
 
     def _build_video_request(self, payload: dict[str, Any]) -> GenerateVideoRequest:
-        prompt = payload["prompt"]
-
-        mode_val = payload.get("mode")
-        mode = VideoMode(mode_val) if mode_val else VideoMode.T2V
-
-        aspect_val = payload.get("aspect")
-        aspect = VideoAspect.from_cli(aspect_val) if aspect_val else VideoAspect.PORTRAIT
-
-        tier_val = payload.get("tier")
-        tier = VideoTier(tier_val) if tier_val else VideoTier.FAST
-
-        model_val = payload.get("model")
-        model = VideoModel.from_cli(model_val) if model_val else None
-
-        duration = payload.get("duration")
-        count = payload.get("count", 1)
-        seed = payload.get("seed")
-
-        start_image = Path(payload["start_image"]) if payload.get("start_image") else None
-        start_image_ref_name = payload.get("start_image_ref_name")
-        end_image = Path(payload["end_image"]) if payload.get("end_image") else None
-        end_image_ref_name = payload.get("end_image_ref_name")
-        reference_images = tuple(Path(p) for p in payload.get("reference_images", []))
-        ref_names = tuple(payload.get("ref_names", []))
-        reference_entities = tuple(payload.get("reference_entities", []))
-        reference_entity_names = tuple(payload.get("reference_entity_names", []))
-        reference_audio = payload.get("reference_audio")
-
-        return GenerateVideoRequest(
-            prompt=prompt,
-            mode=mode,
-            aspect=aspect,
-            tier=tier,
-            model=model,
-            duration=duration,
-            count=count,
-            seed=seed,
-            start_image=start_image,
-            start_image_ref_name=start_image_ref_name,
-            end_image=end_image,
-            end_image_ref_name=end_image_ref_name,
-            reference_images=reference_images,
-            ref_names=ref_names,
-            reference_entities=reference_entities,
-            reference_entity_names=reference_entity_names,
-            reference_audio=reference_audio,
-        )
+        # Delegates to the codec (Task C2) — see _build_image_request.
+        return codec.build_video_request(payload)

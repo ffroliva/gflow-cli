@@ -4,13 +4,19 @@
 
 ## Current release
 
+**v0.41.0 — alpha.** **Production-readiness hardening** ([#357]): queue safety (versioned payloads, atomic claims, checkpointed execution phases), cross-process profile lease (`ProfileLockedError` exit 11), cancellation-safe browser teardown, driver honesty (typed `SupportsSendPrompt` injection, frozen `TransportSetup`), mention-index fail-closed (`MentionIndexUnavailableError` exit 29), and external-CDP lifecycle removal. Removed nonfunctional manifest-driven video batch command (never worked end-to-end; loop `gflow video t2v`/`i2v` from the shell instead). Also: `/gflow:live-verify` skill for per-feature live-verification enforcement. 2513 tests pass; live-verified against real Flow (stale-session fail-fast, free image gen, paid veo-lite T2V). See [LIVE_VERIFICATION_v0.40.0-production-readiness.md](LIVE_VERIFICATION_v0.40.0-production-readiness.md).
+
+**Develop (unreleased, post-v0.41.0):** *(empty — develop is the staging branch for the next release).*
+
+<details><summary>v0.40.0 — prompt @-mention resolution for asset tagging (#344)</summary>
+
 **v0.40.0 — alpha.** **Prompt `@`-mention resolution for asset tagging (#344).** `@Name` in a t2i/i2i/video prompt resolves to a staged, taggable character entity via `services/mentions.py`'s `resolve_and_apply`, shared by the `image`/`video` CLI paths, the async worker, and MCP tools. Media-asset (non-character) `@`-mentions also work, but on the **image path only** — video-path media mentions are Phase 3. A bare character with no reference images is rejected early with a clear error instead of failing deep in the UI attach. De-tagged prompts are persisted to the catalog. See [REFERENCE_STRATEGIES](REFERENCE_STRATEGIES.md) for `@`-mention vs `--reference-entity` vs `--ref`. Verification: [LIVE_VERIFICATION_v0.40.0](LIVE_VERIFICATION_v0.40.0.md) (`gflow character create` + `@Zoro` t2i passed live end-to-end against unmodified `develop`, ~2 Imagen credits; also records a same-cycle investigation dead end where a stale local WIP branch was mistaken for `develop`'s real state).
 
-**Develop (unreleased, post-v0.40.0):** *(empty — develop is the staging branch for the next release).*
+</details>
 
 <details><summary>v0.39.0 — failed-generation persistence + gflow data list errors</summary>
 
-**v0.39.0 — alpha.** **Failed generations are now persisted to the local catalog (#341).** Every paid-generation path (`video t2v/i2v/r2v`, `video chain`, `image t2i/i2i`, multi-prompt t2i, `gflow run`, `image batch`, `movie run`, and the async worker) now records a terminal `status="failed"` operation row — with a stable `error_type` derived from the exception's RFC 9457 `problem_type` and a redacted `error_detail` — before the error propagates, so WAF-403 block onset, duration, and recovery windows are measurable instead of reconstructed from memory. The new `gflow data list errors` subcommand browses failed operations newest-first, and videos whose poll returns `succeeded=false` are now recorded as `failed` (previously mis-recorded as `succeeded`). Bounded retention + export deferred to #345. Verification: [LIVE_VERIFICATION_v0.39.0](LIVE_VERIFICATION_v0.39.0.md) (a real `image t2i` HTTP-400 wire failure produced the first `failed` row in the production catalog, $0).
+**v0.39.0 — alpha.** **Failed generations are now persisted to the local catalog (#341).** Every paid-generation path (`video t2v/i2v/r2v`, `video chain`, `image t2i/i2i`, multi-prompt t2i, `gflow run`, `movie run`, and the async worker) now records a terminal `status="failed"` operation row — with a stable `error_type` derived from the exception's RFC 9457 `problem_type` and a redacted `error_detail` — before the error propagates, so WAF-403 block onset, duration, and recovery windows are measurable instead of reconstructed from memory. The new `gflow data list errors` subcommand browses failed operations newest-first, and videos whose poll returns `succeeded=false` are now recorded as `failed` (previously mis-recorded as `succeeded`). Bounded retention + export deferred to #345. Verification: [LIVE_VERIFICATION_v0.39.0](LIVE_VERIFICATION_v0.39.0.md) (a real `image t2i` HTTP-400 wire failure produced the first `failed` row in the production catalog, $0).
 
 </details>
 
@@ -244,7 +250,7 @@ reporter-verified e2e on macOS).
 | Agentic-pin recovery: opt-in reload after a real Agent-toggle click (#338) | ✅ done (v0.38.1) |
 | Failed generations persisted to the local catalog + `gflow data list errors` (#341) | ✅ done (v0.39.0) |
 | Prompt `@`-mention resolution for asset tagging (#344) | ✅ done (v0.40.0) |
-| `gflow video batch` (TSV manifest) on `ui_automation` | ⏳ Phase B |
+| Manifest-driven video batch runner on `ui_automation` | ❌ removed — never worked end-to-end, shipped as a nonfunctional stub; see v0.41.0 changelog. For multi-clip video, loop `gflow video t2v`/`i2v` from the shell; `gflow image batch` remains supported for images. |
 | Persistence layer (stay-mounted batch sessions across project boundaries) | ⏳ Phase B |
 | Provider abstraction for official Veo 3.1 API | ⏳ planned |
 | Signed-tag CI verification automation (no manual signing in CI yet) | ⏳ planned |

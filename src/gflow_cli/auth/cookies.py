@@ -11,6 +11,7 @@ import structlog
 from gflow_cli.browser_manager import channel_for_profile
 from gflow_cli.errors import SecurityError
 from gflow_cli.paths import get_cookies_path
+from gflow_cli.profile_lease import ProfileLease
 
 if TYPE_CHECKING:
     from pathlib import Path
@@ -148,7 +149,11 @@ async def _get_chrome_cookies_playwright(profile_dir: Path) -> ChromeCookieSnaps
     # Lazy import avoids strategies -> real_chrome -> verification import cycles.
     from .strategies import async_playwright
 
-    async with async_playwright() as pw:
+    # Own the profile for this momentary cookie-read context (D3). The lease is
+    # the OUTER context so it releases only after the driver stops (inner
+    # async_playwright exits first). Contention -> ProfileLockedError before the
+    # headless Chrome launches.
+    async with ProfileLease(profile_dir), async_playwright() as pw:
         ctx = await pw.chromium.launch_persistent_context(
             user_data_dir=str(profile_dir),
             channel=channel,

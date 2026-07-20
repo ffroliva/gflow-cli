@@ -99,17 +99,19 @@ def test_queue_repository_crud(temp_db: DataStore) -> None:
     assert task_fetched.status == "pending"
     assert task_fetched.payload == {"prompt": "test prompt", "aspect": "1:1"}
 
-    # 3. Get next pending task
-    pending = repo.get_next_pending_task("default")
-    assert pending is not None
-    assert pending.task_id == "task-123"
+    # 3. Claim the next pending task (atomic pending -> processing; get_next_pending_task
+    #    was retired — the claim is the only read-then-transition path now).
+    claimed = repo.claim_next_pending("default", "test-claimant")
+    assert claimed is not None
+    assert claimed.task_id == "task-123"
+    assert claimed.status == "processing"
+    assert claimed.claimant == "test-claimant"
 
-    # 4. Try getting pending task for a non-existent profile
-    none_pending = repo.get_next_pending_task("other_profile")
-    assert none_pending is None
+    # 4. No pending task remains for a non-existent profile
+    none_claimed = repo.claim_next_pending("other_profile", "test-claimant")
+    assert none_claimed is None
 
-    # 5. Update task status
-    repo.update_task_status("task-123", status="processing")
+    # 5. The claim already moved the row to processing
     task_updated = repo.get_task("task-123")
     assert task_updated is not None
     assert task_updated.status == "processing"
