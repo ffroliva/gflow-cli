@@ -87,6 +87,35 @@ jobs:
           path: coverage.xml
           retention-days: 1
 
+  # ── Focused OS matrix: ProfileLease cross-process contract (Task D2) ──────
+  # Everything else in this file runs Ubuntu-only (the `test` job above).
+  # This job exists because ProfileLease's kernel lock is genuinely
+  # OS-specific (msvcrt.locking on Windows vs. fcntl.flock on POSIX) and D1's
+  # local Windows-only run left the POSIX fcntl branch reasoned-but-unexecuted
+  # (see .superpowers/sdd/task-D1-report.md). Runs ONLY the lease unit +
+  # subprocess tests, not the full suite.
+  profile-lease-matrix:
+    name: ProfileLease (${{ matrix.os }})
+    runs-on: ${{ matrix.os }}
+    strategy:
+      fail-fast: false
+      matrix:
+        os: [windows-latest, macos-latest, ubuntu-latest]
+    steps:
+      - uses: actions/checkout@v7
+
+      - name: Install uv
+        uses: astral-sh/setup-uv@v7
+
+      - name: Set up Python
+        run: uv python install 3.13
+
+      - name: Install deps
+        run: uv sync --extra dev
+
+      - name: ProfileLease unit + subprocess tests
+        run: uv run python -m pytest tests/test_profile_lease.py tests/test_profile_lease_subprocess.py -q
+
   # ── SonarCloud analysis ───────────────────────────────────────────────────
   sonar:
     name: SonarCloud analysis
