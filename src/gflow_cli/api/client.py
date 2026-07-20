@@ -2344,6 +2344,56 @@ def _is_png_or_jpeg(data: bytes) -> bool:
     return data[:8] == b"\x89PNG\r\n\x1a\n" or data[:3] == b"\xff\xd8\xff"
 
 
+_CONTENT_SAFETY_REASONS: frozenset[str] = frozenset(
+    {
+        "PUBLIC_ERROR_UNSAFE_GENERATION",
+        "PUBLIC_ERROR_UNSAFE_CONTENT",
+        "PUBLIC_ERROR_UNSAFE_FACE",
+        "PUBLIC_ERROR_UNSAFE_IDENTITY",
+    }
+)
+
+
+def _classify_content_safety(body_text: str) -> str | None:
+    """Parse a Flow error body for content-safety rejection reasons.
+
+    Returns the matching ``reason`` string (e.g.
+    ``PUBLIC_ERROR_UNSAFE_GENERATION``) if the body contains a known
+    content-safety reason, or ``None`` otherwise.
+
+    Flow's HTTP 400 error shape::
+
+        {
+          "error": {
+            "code": 400,
+            "message": "Request contains an invalid argument.",
+            "status": "INVALID_ARGUMENT",
+            "details": [
+              {"@type": "...ErrorInfo", "reason": "PUBLIC_ERROR_UNSAFE_GENERATION"}
+            ]
+          }
+        }
+    """
+    try:
+        parsed: object = json.loads(body_text)
+    except (json.JSONDecodeError, ValueError):
+        return None
+    if not isinstance(parsed, dict):
+        return None
+    parsed_dict = cast("JsonObject", parsed)
+    error_obj = cast("JsonObject | None", parsed_dict.get("error"))
+    if not isinstance(error_obj, dict):
+        return None
+    details_obj = cast("list[JsonObject] | None", error_obj.get("details"))
+    if not isinstance(details_obj, list):
+        return None
+    for item in details_obj:
+        reason = cast("str", item.get("reason", ""))
+        if reason in _CONTENT_SAFETY_REASONS:
+            return reason
+    return None
+
+
 def _raise_for_non_retryable(resp: Any, body_text: str, *, route: str) -> None:
     """Classify a response that survived the retry loop.
 
@@ -2354,6 +2404,7 @@ def _raise_for_non_retryable(resp: Any, body_text: str, *, route: str) -> None:
 
     * 401 → :class:`AuthExpiredError`
     * 403 → :class:`WafRejectionError` (reCAPTCHA/WAF wall, not auth expiry)
+    * 400 with content-safety reason → :class:`ContentPolicyError`
     * other 4xx → :class:`WireFormatError` with discovery payload so
       ``grep error_class=WireFormatError`` reveals what was unexpected.
     """
@@ -2376,6 +2427,24 @@ def _raise_for_non_retryable(resp: Any, body_text: str, *, route: str) -> None:
             instance=instance,
             route=route,
         )
+    if resp.status == 400:
+        safety_reason = _classify_content_safety(body_text)
+        if safety_reason is not None:
+            raise ContentPolicyError(
+                detail=(
+                    f"HTTP 400: Flow refused the request on content-safety grounds "
+                    f"(reason={safety_reason})"
+                ),
+                status=resp.status,
+                instance=instance,
+                route=route,
+                remediation_hint=(
+                    f"Flow rejected the request due to content-safety policy "
+                    f"({safety_reason}). If using multiple human-face reference "
+                    f"images, reduce to one primary face and retry; or adjust the "
+                    f"prompt to be less people-dense."
+                ),
+            )
     if 400 <= resp.status < 500:
         raise WireFormatError(
             detail=f"HTTP {resp.status} on 4xx fallthrough",
