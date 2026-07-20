@@ -40,6 +40,7 @@ from gflow_cli.errors import (
     NetworkError,
     TransportTimeoutError,
 )
+from gflow_cli.profile_lease import ProfileLease
 
 log = structlog.get_logger(__name__)
 
@@ -204,7 +205,9 @@ class SapisidhashTransport:
         """One-shot Playwright launch to capture browser fingerprint headers."""
         from playwright.async_api import async_playwright  # lazy import
 
-        async with async_playwright() as pw:
+        # Own the profile for this momentary fingerprint-capture context (D3).
+        # Lease is the OUTER context so it releases only after the driver stops.
+        async with ProfileLease(profile_dir), async_playwright() as pw:
             ctx = await pw.chromium.launch_persistent_context(
                 user_data_dir=str(profile_dir),
                 headless=True,

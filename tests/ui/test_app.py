@@ -1,7 +1,6 @@
 from __future__ import annotations
 
 import asyncio
-import os
 from unittest.mock import AsyncMock, MagicMock, patch
 
 import pytest
@@ -105,20 +104,29 @@ def test_startup_recovery_classifies_by_checkpoint(mock_worker) -> None:
         assert "credit may have been spent" in post.error["detail"]
 
 
-def test_profile_lockfile_lifecycle(mock_worker) -> None:
+def test_daemon_holds_no_profile_lock_while_idle(mock_worker) -> None:
+    """D3: the daemon no longer writes an overwriteable ``profile.lock`` and
+    holds no profile lease while idle. Ownership is acquired per browser task
+    inside FlowApiClient's launch path, so an idle daemon leaves the profile
+    free — proven by a clean ProfileLease.try_acquire during its lifetime."""
+    from gflow_cli.profile_lease import ProfileLease
+
     settings = get_settings()
     profile_name = "default"
-    lockfile_path = settings.profile_subdir(profile_name) / "profile.lock"
-
-    if lockfile_path.exists():
-        lockfile_path.unlink()
+    profile_dir = settings.profile_subdir(profile_name)
+    legacy_lock = profile_dir / "profile.lock"
+    if legacy_lock.exists():
+        legacy_lock.unlink()
 
     with TestClient(app):
-        assert lockfile_path.exists()
-        pid = lockfile_path.read_text()
-        assert pid == str(os.getpid())
+        # No lifetime lock file is created, and the profile is not owned while
+        # the daemon idles: a fresh lease acquires cleanly and releases.
+        assert not legacy_lock.exists()
+        lease = ProfileLease(profile_dir)
+        assert lease.try_acquire() is True
+        lease.release()
 
-    assert not lockfile_path.exists()
+    assert not legacy_lock.exists()
 
 
 @pytest.mark.asyncio

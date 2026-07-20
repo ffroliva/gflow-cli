@@ -74,6 +74,7 @@ from gflow_cli.errors import (
     WireFormatError,
 )
 from gflow_cli.paths import adjust_key_extension, character_output_path, looks_like_video
+from gflow_cli.profile_lease import ProfileLease
 from gflow_cli.storage import AnyPath, storage_path, write_asset_async
 
 if TYPE_CHECKING:
@@ -293,6 +294,14 @@ class FlowApiClient:
         self._access_token_exp: float = 0.0  # epoch seconds; 0 = unknown/expired
         self._pw: Playwright | None = None
         self._context: BrowserContext | None = None
+        # Cross-process profile lease (D3). Acquired in _enter_setup immediately
+        # BEFORE the persistent context launches (so contention fails fast with
+        # ProfileLockedError instead of racing two Chromes onto one profile dir)
+        # and released in _close_browser_resources AFTER the context + driver
+        # shut down. This client is the owning boundary for its own context;
+        # transports it drives reuse this context (shared-page path) and never
+        # take a second lease.
+        self._lease: ProfileLease | None = None
         # Per-worker Page pool (Phase 4 T2). All Pages live inside ONE
         # persistent BrowserContext and therefore SHARE cookies + auth state
         # at the Context level — this is intentional and matches Playwright's
@@ -574,6 +583,13 @@ class FlowApiClient:
         await self._preread_flow_session_cookies()
         kwargs = self._persistent_context_kwargs()
         self._log_and_guard_launch(kwargs)
+        # Own the profile BEFORE Chrome launches. Acquire here (not earlier):
+        # _preread_flow_session_cookies above may itself momentarily own a
+        # headless context on this profile (its cookie-decrypt fallback), which
+        # takes and releases its own lease first — acquiring earlier would make
+        # this a same-process double-acquire. Contention raises ProfileLockedError
+        # (exit 11) here, before any Chrome process starts.
+        self._lease = ProfileLease(self.profile_dir).acquire()
         self._context = await self._launch_persistent_context(kwargs)
         # Hide the automation flag so reCAPTCHA Enterprise doesn't score
         # the session as a bot — navigator.webdriver=true causes low-score
@@ -757,6 +773,13 @@ class FlowApiClient:
             self._page = None
             self._context = None
             self._pw = None
+            # Release the profile lease LAST — after the context is closed and
+            # the driver stopped — so the profile dir is genuinely free before
+            # another process can acquire it (D3 release ordering). release() is
+            # idempotent and never unlinks the lock file.
+            if self._lease is not None:
+                self._lease.release()
+                self._lease = None
 
     async def _checkout_page(self) -> Page:
         """Block until a Page is available from the pool; FIFO.

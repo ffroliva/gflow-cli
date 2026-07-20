@@ -47,6 +47,7 @@ from gflow_cli.errors import (
     WafRejectionError,
     WireFormatError,
 )
+from gflow_cli.profile_lease import ProfileLease
 
 if TYPE_CHECKING:
     from collections.abc import Callable
@@ -697,6 +698,11 @@ class UiAutomationTransport(VideoGenerationMixin):
         self._page: Page | None = None
         self._setup_done: bool = False
         self._owns_playwright: bool = False
+        # Cross-process profile lease (D3). Held ONLY on the standalone-context
+        # path (setup with page=None), where this transport owns the persistent
+        # context. On the shared-page path the caller (FlowApiClient) owns both
+        # the context and the lease, so this stays None.
+        self._lease: ProfileLease | None = None
         # Optional directory for debug screenshots — set by FlowApiClient
         # from its `out_dir` constructor arg (#18). When None, the internal
         # _capture_debug_screenshot helper is a no-op.
@@ -778,6 +784,9 @@ class UiAutomationTransport(VideoGenerationMixin):
 
             from gflow_cli.browser_manager import channel_for_profile
 
+            # Own the profile BEFORE Chrome launches (D3). Contention raises
+            # ProfileLockedError here; the except below tears the driver back down.
+            self._lease = ProfileLease(profile_dir).acquire()
             locale_env = os.getenv("GFLOW_CLI_LOCALE", "en-US")
             ctx = await pw.chromium.launch_persistent_context(
                 str(profile_dir),
@@ -818,6 +827,10 @@ class UiAutomationTransport(VideoGenerationMixin):
             if ctx is not None:
                 await close_context_bounded(ctx, owner="ui_automation")
             await pw_cm.__aexit__(None, None, None)
+            # Release the lease last — after context + driver are down (D3).
+            if self._lease is not None:
+                self._lease.release()
+                self._lease = None
             raise
 
     # ------------------------------------------------------------------
@@ -3038,6 +3051,11 @@ class UiAutomationTransport(VideoGenerationMixin):
                 )
             except Exception as e:
                 log.warning("ui_automation.playwright_exit_failed", error=str(e))
+        # Release the profile lease last — after the context is closed and the
+        # driver stopped (D3). No-op on the shared-page path (lease is None).
+        if self._lease is not None:
+            self._lease.release()
+            self._lease = None
         self._pw_cm = None
         self._ctx = None
         self._page = None

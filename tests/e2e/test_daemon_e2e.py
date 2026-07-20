@@ -25,15 +25,19 @@ def _free_port(host: str) -> str:
 @pytest.mark.e2e_data
 @pytest.mark.asyncio
 async def test_daemon_e2e_lifecycle(e2e_env: dict[str, str], e2e_profile_dir: Path) -> None:
+    from gflow_cli.profile_lease import ProfileLease
+
     profile_name = e2e_env["GFLOW_CLI_PROFILE"]
     host = "127.0.0.1"
     port = _free_port(host)
 
-    lockfile_path = e2e_profile_dir / "profile.lock"
-    # NEVER delete a pre-existing lock: it means a real daemon already owns this
-    # profile. Trampling it would corrupt another process's lease — skip instead.
-    if lockfile_path.exists():
-        pytest.skip(f"profile lock already present at {lockfile_path}; a daemon owns this profile")
+    # D3: the daemon no longer writes an overwriteable ``profile.lock`` and holds
+    # no profile lease while idle. If the cross-process lease is already held,
+    # a real daemon or task owns this profile — skip rather than contend.
+    lease_probe = ProfileLease(e2e_profile_dir)
+    if not lease_probe.try_acquire():
+        pytest.skip(f"profile {e2e_profile_dir} is already leased; a daemon/task owns it")
+    lease_probe.release()
 
     # 1. Spawn the daemon process
     cmd = [
@@ -79,8 +83,13 @@ async def test_daemon_e2e_lifecycle(e2e_env: dict[str, str], e2e_profile_dir: Pa
                 f"Daemon failed to start on port {port}. stdout:\n{stdout}\nstderr:\n{stderr}"
             )
 
-        # Check lockfile exists
-        assert lockfile_path.exists()
+        # D3: an idle daemon owns no profile lease and writes no lock file. The
+        # profile stays reacquirable while the daemon runs (ownership is per
+        # browser task, not daemon-lifetime).
+        assert not (e2e_profile_dir / "profile.lock").exists()
+        idle_probe = ProfileLease(e2e_profile_dir)
+        assert idle_probe.try_acquire() is True
+        idle_probe.release()
 
         # 3. Connect to SSE stream and read endpoint
         session_id = None
@@ -154,11 +163,10 @@ async def test_daemon_e2e_lifecycle(e2e_env: dict[str, str], e2e_profile_dir: Pa
             proc.kill()
             proc.wait()
 
-    # After a clean shutdown the lock is released. Under the daemon's CURRENT
-    # lock-file semantics (write-on-start / unlink-on-stop) a freed lock means the
-    # profile is reacquirable — proven below by re-claiming the path. D3/D4 replaces
-    # this file-presence check with a real ProfileLease reacquire assertion.
-    assert not lockfile_path.exists()
-    lockfile_path.write_text("999999")
-    assert lockfile_path.exists()
-    lockfile_path.unlink()
+    # After a clean shutdown the profile is free — proven by a real ProfileLease
+    # reacquire on the profile dir (D3 lease world; replaces the old
+    # file-presence check on the removed profile.lock).
+    reacquire = ProfileLease(e2e_profile_dir)
+    assert reacquire.try_acquire() is True
+    reacquire.release()
+    assert not (e2e_profile_dir / "profile.lock").exists()

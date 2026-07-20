@@ -105,3 +105,57 @@ async def test_playwright_read_keeps_fx_scoped_session_token(
     assert "SAPISID" not in snapshot.httpx_cookies
     # google_session is still derived from the full jar (SAPISID present there).
     assert snapshot.google_session is True
+
+
+# ---------------------------------------------------------------------------
+# D3 — profile-lease ownership around the Playwright cookie-read fallback
+# ---------------------------------------------------------------------------
+
+
+def _record_lease_events(monkeypatch: pytest.MonkeyPatch, events: list[str]) -> None:
+    from gflow_cli.profile_lease import ProfileLease
+
+    def acq(self: ProfileLease) -> ProfileLease:
+        events.append("acquire")
+        return self
+
+    def rel(self: ProfileLease) -> None:
+        events.append("release")
+
+    monkeypatch.setattr(ProfileLease, "acquire", acq)
+    monkeypatch.setattr(ProfileLease, "release", rel)
+
+
+@pytest.mark.asyncio
+async def test_playwright_cookie_read_wraps_launch_in_profile_lease(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    """The marker-gated Playwright cookie-read owns the profile: acquire before
+    launch, release after the context closes (D3)."""
+    profile = tmp_path / "profile"
+    profile.mkdir()
+
+    events: list[str] = []
+    _record_lease_events(monkeypatch, events)
+
+    mock_ctx = MagicMock()
+    mock_ctx.cookies = AsyncMock(return_value=[])
+    mock_ctx.close = AsyncMock()
+
+    async def _launch(*_a: object, **_k: object) -> MagicMock:
+        events.append("launch")
+        return mock_ctx
+
+    mock_pw = MagicMock()
+    mock_pw.chromium.launch_persistent_context = AsyncMock(side_effect=_launch)
+    mock_cm = MagicMock()
+    mock_cm.__aenter__ = AsyncMock(return_value=mock_pw)
+    mock_cm.__aexit__ = AsyncMock(return_value=False)
+
+    monkeypatch.setattr(
+        "gflow_cli.auth.strategies.async_playwright", MagicMock(return_value=mock_cm)
+    )
+    monkeypatch.setattr(cookies_mod, "channel_for_profile", lambda _pd: "chrome")
+
+    await _get_chrome_cookies_playwright(profile)
+    assert events == ["acquire", "launch", "release"]
