@@ -5,6 +5,7 @@ See docs/superpowers/specs/2026-05-11-gflow-cli-b007-transport-strategy-design.m
 
 from __future__ import annotations
 
+from dataclasses import dataclass
 from typing import TYPE_CHECKING, Protocol, runtime_checkable
 
 if TYPE_CHECKING:
@@ -15,6 +16,38 @@ if TYPE_CHECKING:
     from gflow_cli.api.dto import GeneratedImage
     from gflow_cli.api.image import GenerateImageRequest
     from gflow_cli.api.video import GenerateVideoRequest, VideoResult, VideoStartedCallback
+
+
+@dataclass(frozen=True, slots=True)
+class TransportSetup:
+    """Immutable output/storage wiring the client hands a transport.
+
+    Replaces the old client-reaches-into-`transport.__dict__` plumbing (the
+    `hasattr(...)`-then-set-`_out_dir`/storage-field pattern): the client now
+    builds this typed record and passes it through the public
+    :class:`SupportsTransportSetup` seam. A transport that opts in owns its own
+    private slots, derived from this record — the client never writes them.
+    """
+
+    out_dir: Path | None = None
+    """Directory for debug screenshots (#18). ``None`` disables capture."""
+    storage_uri: str | None = None
+    """Cloud-storage target for video uploads. ``None`` keeps downloads local."""
+    output_dir: Path | None = None
+    """Local directory video downloads land in (``settings.output_dir``)."""
+
+
+@runtime_checkable
+class SupportsTransportSetup(Protocol):
+    """Narrow, structural seam a transport implements to accept output/storage
+    configuration publicly, instead of the client writing private attributes.
+
+    ``isinstance(transport, SupportsTransportSetup)`` gates the call, so
+    transports that need no such wiring (e.g. the fetch-based strategies) are
+    simply left untouched — exactly as the old ``hasattr`` guard behaved.
+    """
+
+    def apply_setup(self, config: TransportSetup) -> None: ...
 
 
 class FlowTransportStrategy(Protocol):

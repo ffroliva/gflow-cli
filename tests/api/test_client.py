@@ -21,6 +21,7 @@ from gflow_cli.api.client import (
 )
 from gflow_cli.api.dto import GeneratedImage
 from gflow_cli.api.image import AgentInstruction, Aspect, GenerateImageRequest, Model
+from gflow_cli.api.transports.base import SupportsTransportSetup, TransportSetup
 from gflow_cli.api.transports.ui_automation import UiAutomationTransport
 from gflow_cli.config import Settings
 from gflow_cli.errors import BrowserSessionClosedError
@@ -42,17 +43,19 @@ class TestConstruction:
         with pytest.raises(RuntimeError, match="not entered"):
             _ = c.page
 
-    def test_storage_uri_plumbs_to_ui_automation_transport(self, tmp_path: Path) -> None:
+    def test_storage_uri_applies_to_ui_automation_transport(self, tmp_path: Path) -> None:
+        # UiAutomationTransport opts into the typed seam and derives its own
+        # private slots from the immutable TransportSetup — the client no longer
+        # reaches into transport.__dict__.
         transport = UiAutomationTransport()
-        settings = Settings(storage_uri="s3://bucket/prefix/", output_dir=tmp_path / "out")
-        client = FlowApiClient(
-            profile_dir=tmp_path / "prof",
-            settings=settings,
-            transport=transport,
+        assert isinstance(transport, SupportsTransportSetup)
+
+        transport.apply_setup(
+            TransportSetup(storage_uri="s3://bucket/prefix/", output_dir=tmp_path / "out")
         )
 
-        client._plumb_storage_uri(transport)
-
+        assert transport.setup_config is not None
+        assert transport.setup_config.storage_uri == "s3://bucket/prefix/"
         assert transport._storage_uri == "s3://bucket/prefix/"
         assert transport._output_dir == tmp_path / "out"
 
@@ -461,38 +464,53 @@ async def test_client_delegates_image_gen_to_transport(
 # ---------------------------------------------------------------------------
 
 
-class _OutDirAwareTransport(_FakeTransport):
-    """Like _FakeTransport but exposes an `_out_dir` attribute the client can set."""
+class _ConfigAwareTransport(_FakeTransport):
+    """Fake that opts into the typed SupportsTransportSetup seam and records the
+    immutable config it was handed — no private-attribute writes involved."""
 
     def __init__(self) -> None:
         super().__init__()
-        self._out_dir: Path | None = None
+        self.setup_config: TransportSetup | None = None
+
+    def apply_setup(self, config: TransportSetup) -> None:
+        self.setup_config = config
 
 
 @pytest.mark.asyncio
-async def test_client_plumbs_out_dir_to_transport(
+async def test_client_passes_typed_output_configuration_to_transport(
     tmp_path: Path, monkeypatch: pytest.MonkeyPatch
 ) -> None:
-    """#18 — FlowApiClient.out_dir must propagate to transport._out_dir."""
+    """#18 — the client hands a transport an immutable TransportSetup through the
+    public seam (out_dir + storage_uri + output_dir), not private-field writes.
+
+    Driven through the real constructor/context-manager lifecycle rather than a
+    synthetic call, and against a PRE-INITIALIZED transport, so it also proves
+    the caller-owned path still receives configuration."""
     monkeypatch.delenv("GFLOW_CLI_TRANSPORT", raising=False)
     _patch_playwright(monkeypatch)
-    fake = _OutDirAwareTransport()
+    fake = _ConfigAwareTransport()
+    settings = Settings(storage_uri="s3://bucket/prefix/", output_dir=tmp_path / "out")
     out = tmp_path / "shots"
-    async with FlowApiClient(profile_dir=tmp_path, transport=fake, out_dir=out) as client:
-        assert client._out_dir == out
-        assert fake._out_dir == out
+    async with FlowApiClient(profile_dir=tmp_path, transport=fake, settings=settings, out_dir=out):
+        assert fake.setup_config is not None
+        assert fake.setup_config.out_dir == out
+        assert fake.setup_config.output_dir == tmp_path / "out"
+        assert fake.setup_config.storage_uri == "s3://bucket/prefix/"
 
 
 @pytest.mark.asyncio
-async def test_client_omits_out_dir_when_transport_lacks_attribute(
+async def test_client_does_not_write_transport_private_attributes(
     tmp_path: Path, monkeypatch: pytest.MonkeyPatch
 ) -> None:
-    """Transports without an `_out_dir` slot are left untouched (hasattr-guarded)."""
+    """A transport that does not implement the seam is left untouched — the
+    client never injects `_out_dir` into its __dict__ (replaces the old
+    hasattr-guarded private write)."""
     monkeypatch.delenv("GFLOW_CLI_TRANSPORT", raising=False)
     _patch_playwright(monkeypatch)
-    fake = _FakeTransport()  # NOTE: no _out_dir attribute
+    fake = _FakeTransport()  # does NOT implement apply_setup
+    assert not isinstance(fake, SupportsTransportSetup)
     async with FlowApiClient(profile_dir=tmp_path, transport=fake, out_dir=tmp_path / "shots"):
-        assert not hasattr(fake, "_out_dir")
+        assert "_out_dir" not in fake.__dict__
 
 
 def test_is_target_closed_recognises_marker() -> None:

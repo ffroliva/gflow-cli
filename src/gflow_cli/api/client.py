@@ -55,7 +55,12 @@ from gflow_cli.api.image_upscale import (
 from gflow_cli.api.recaptcha import TokenMinter
 from gflow_cli.api.scene import ConcatInput, Scene, SceneWorkflow
 from gflow_cli.api.transports import make_transport
-from gflow_cli.api.transports.base import FlowTransportStrategy, VideoCapableTransport
+from gflow_cli.api.transports.base import (
+    FlowTransportStrategy,
+    SupportsTransportSetup,
+    TransportSetup,
+    VideoCapableTransport,
+)
 from gflow_cli.browser_manager import channel_for_profile
 from gflow_cli.config import BrowserEngine, Settings
 from gflow_cli.errors import (
@@ -687,41 +692,44 @@ class FlowApiClient:
         public surface and constrain future evolution.
         """
         inp = self._transport_input
+        config = self._build_transport_setup()
         if inp is None or isinstance(inp, str):
             # Client-owned: resolve from factory, run full lifecycle.
             # Pass self._page so S1 can reuse the already-open context.
             # S2 and S3 accept and ignore the page= kwarg.
             self.transport = make_transport(inp)
-            # Plumb the client's out_dir to the transport so debug screenshots
-            # taken inside `_generate_images_locked` land somewhere the caller
-            # can inspect (#18). Guarded by hasattr so transports without an
-            # `_out_dir` slot are unaffected.
-            self._plumb_out_dir(self.transport)
-            self._plumb_storage_uri(self.transport)
+            # Hand the transport its output/storage wiring through the public
+            # typed seam so debug screenshots (#18) + video downloads land where
+            # the caller expects. Transports that don't opt in are left alone.
+            self._apply_transport_setup(self.transport, config)
             await self.transport.setup(self.profile_dir, page=self._page)
             self._owns_transport = True
         else:
             # Caller-owned: pre-initialized FlowTransportStrategy instance.
-            # Do NOT call setup() — the caller already did that.
+            # Do NOT call setup() — the caller already did that. Config is still
+            # applied (it's plain wiring, not a lifecycle resource we own).
             self.transport = inp
             self._owns_transport = False
-            self._plumb_out_dir(self.transport)
-            self._plumb_storage_uri(self.transport)
+            self._apply_transport_setup(self.transport, config)
 
-    def _plumb_out_dir(self, transport: FlowTransportStrategy) -> None:
-        """Forward ``self._out_dir`` onto a transport that exposes the slot."""
-        if self._out_dir is None:
-            return
-        if not hasattr(transport, "_out_dir"):
-            return
-        transport._out_dir = self._out_dir  # type: ignore[attr-defined]
+    def _build_transport_setup(self) -> TransportSetup:
+        """Assemble the immutable output/storage wiring handed to the transport."""
+        return TransportSetup(
+            out_dir=self._out_dir,
+            storage_uri=self.settings.storage_uri,
+            output_dir=self.settings.output_dir,
+        )
 
-    def _plumb_storage_uri(self, transport: FlowTransportStrategy) -> None:
-        """Forward ``self.settings.storage_uri`` and ``output_dir`` onto the transport."""
-        if not hasattr(transport, "_storage_uri"):
-            return
-        transport._storage_uri = self.settings.storage_uri  # type: ignore[attr-defined]
-        transport._output_dir = self.settings.output_dir  # type: ignore[attr-defined]
+    def _apply_transport_setup(
+        self, transport: FlowTransportStrategy, config: TransportSetup
+    ) -> None:
+        """Pass typed setup through the public seam, if the transport opts in.
+
+        Replaces the old ``hasattr``-guarded writes into ``transport.__dict__``:
+        the ``isinstance`` gate keeps transports that need no such wiring
+        untouched, exactly as the old guard did."""
+        if isinstance(transport, SupportsTransportSetup):
+            transport.apply_setup(config)
 
     async def __aexit__(self, *exc: object) -> None:
         # _close_browser_resources is fully guarded internally and always resets

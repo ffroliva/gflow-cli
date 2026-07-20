@@ -251,6 +251,33 @@ async def test_agentic_image_request_is_passed_without_pending_driver_state() ->
     assert not hasattr(driver, "_pending_model")
 
 
+@pytest.mark.asyncio
+@pytest.mark.parametrize(
+    ("aspect", "expected_label"),
+    [
+        (Aspect.PORTRAIT, "9:16"),
+        (Aspect.LANDSCAPE, "16:9"),
+        (Aspect.SQUARE, "1:1"),
+    ],
+)
+async def test_submit_images_threads_aspect_prompt_label(
+    aspect: Aspect, expected_label: str
+) -> None:
+    """submit_images maps request.aspect through _ASPECT_PROMPT_LABEL and threads
+    the human-readable label into send_prompt + await_images. Guards all three
+    core aspects (PORTRAIT→9:16, LANDSCAPE→16:9, SQUARE→1:1) against a mapping
+    regression."""
+    driver = AgenticFlowUiDriver()
+    driver.send_prompt = AsyncMock()  # type: ignore[method-assign]
+    driver.await_images = AsyncMock(return_value=[])  # type: ignore[method-assign]
+    req = _make_image_request(count=2, aspect=aspect)
+
+    await driver.submit_images(MagicMock(), req, expected_count=2)
+
+    assert driver.send_prompt.await_args.kwargs["aspect"] == expected_label
+    assert driver.await_images.await_args.kwargs["aspect"] == expected_label
+
+
 # ---------------------------------------------------------------------------
 # _enforce_image_count_via_settings_panel — issue #313 fallback (reworked)
 # ---------------------------------------------------------------------------
