@@ -67,7 +67,9 @@ On first run, the profile is created as `default` then auto-renamed to your emai
 Generate a text-to-image with the `--tool creative-director` flag, which expands your prompt with Google's 5-component formula before any credits are spent.
 
 ```bash
-gflow image t2i "a lighthouse in a storm, moody, cinematic" --tool creative-director
+gflow image t2i \
+  "a lighthouse in a storm, moody, cinematic" \
+  --tool creative-director
 ```
 
 ```
@@ -83,7 +85,9 @@ Files are saved to the output directory automatically — by default `./out/imag
 Turn that still into an 8-second Veo clip. This step costs 1 Veo credit.
 
 ```bash
-gflow video i2v out/images/2026-07-20/8f3a1b2c_1.png --aspect 9:16
+gflow video i2v \
+  out/images/2026-07-20/8f3a1b2c_1.png \
+  --aspect 9:16
 ```
 
 ```
