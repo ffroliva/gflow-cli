@@ -58,3 +58,29 @@ def test_factory_accepts_experimental_keys_without_env_gate(monkeypatch):
     monkeypatch.delenv("GFLOW_CLI_TRANSPORT", raising=False)
     t = make_transport("bearer")
     assert t.name == "bearer"
+
+
+def test_standalone_only_transports_are_the_lease_reacquiring_experimentals():
+    """bearer/sapisidhash discard the shared page and re-acquire their own
+    ProfileLease in setup(); evaluate_fetch is dual-mode (shares the page) so it
+    is intentionally NOT standalone-only."""
+    from gflow_cli.api.transports import STANDALONE_ONLY_TRANSPORTS
+
+    assert STANDALONE_ONLY_TRANSPORTS == frozenset({"bearer", "sapisidhash"})
+    # Every standalone-only key must be a real, registered experimental transport.
+    from gflow_cli.api.transports import EXPERIMENTAL_TRANSPORTS
+
+    assert STANDALONE_ONLY_TRANSPORTS <= set(EXPERIMENTAL_TRANSPORTS)
+
+
+def test_resolve_transport_name_precedence(monkeypatch):
+    """arg > GFLOW_CLI_TRANSPORT env > built-in default — same precedence
+    make_transport uses, exposed so the client guard resolves identically."""
+    from gflow_cli.api.transports import resolve_transport_name
+
+    monkeypatch.delenv("GFLOW_CLI_TRANSPORT", raising=False)
+    assert resolve_transport_name() == "ui_automation"
+    assert resolve_transport_name("bearer") == "bearer"
+    monkeypatch.setenv("GFLOW_CLI_TRANSPORT", "sapisidhash")
+    assert resolve_transport_name() == "sapisidhash"
+    assert resolve_transport_name("bearer") == "bearer"  # explicit arg wins over env

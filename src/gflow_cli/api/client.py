@@ -54,7 +54,11 @@ from gflow_cli.api.image_upscale import (
 )
 from gflow_cli.api.recaptcha import TokenMinter
 from gflow_cli.api.scene import ConcatInput, Scene, SceneWorkflow
-from gflow_cli.api.transports import make_transport
+from gflow_cli.api.transports import (
+    STANDALONE_ONLY_TRANSPORTS,
+    make_transport,
+    resolve_transport_name,
+)
 from gflow_cli.api.transports.base import (
     FlowTransportStrategy,
     SupportsTransportSetup,
@@ -694,6 +698,21 @@ class FlowApiClient:
         inp = self._transport_input
         config = self._build_transport_setup()
         if inp is None or isinstance(inp, str):
+            # Standalone-only guard: bearer/sapisidhash (S2/S3) discard the shared
+            # page and re-acquire the profile lease in their own setup(), so with
+            # this client already holding self._lease they self-lock with an opaque
+            # ProfileLockedError. Refuse fast with a clear message. Only fires when
+            # the lease is actually held (i.e. inside a live client), so the same
+            # transports stay usable standalone.
+            if self._lease is not None:
+                resolved = resolve_transport_name(inp)
+                if resolved in STANDALONE_ONLY_TRANSPORTS:
+                    raise ConfigurationError(
+                        f"Transport {resolved!r} cannot run inside FlowApiClient: it "
+                        "acquires its own profile lease during setup and would "
+                        "self-lock against the client's lease. Use 'ui_automation' or "
+                        f"'evaluate_fetch', or drive {resolved!r} standalone.",
+                    )
             # Client-owned: resolve from factory, run full lifecycle.
             # Pass self._page so S1 can reuse the already-open context.
             # S2 and S3 accept and ignore the page= kwarg.
