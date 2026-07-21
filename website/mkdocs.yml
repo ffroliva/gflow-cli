@@ -65,7 +65,6 @@ nav:
   - Getting started:
       - Introduction: index.md
       - Onboarding: onboarding.md
-      - Quickstart: quickstart.md
       - Installation: installation.md
       - Authentication: AUTHENTICATION.md
   - User Guide: USER_GUIDE.md
