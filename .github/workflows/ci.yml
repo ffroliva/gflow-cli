@@ -63,6 +63,9 @@ jobs:
       - name: Documentation links
         run: uv run python scripts/ci/check_doc_links.py
 
+      - name: Website docs PII guard (no private identifiers in the published mirror)
+        run: uv run python scripts/ci/check_website_docs_pii.py
+
       - name: Lint
         run: uv run ruff check src tests
 
