@@ -13,11 +13,12 @@ Run in order. Stop and report if a step fails after the fix pass.
 
 These steps mirror the CI `test` job in `.github/workflows/ci.yml` **in the same order**. Any command that CI runs as a *verify* (`--check`) is run here as a verify too — see step 4.
 
-**1. Repo hygiene + doc links** (read-only — CI runs both; a broken doc link fails CI)
+**1. Repo hygiene + doc links + website-docs PII guard** (read-only — CI runs all three; a broken doc link or a private identifier in the published `website/docs/` mirror fails CI)
 
 ```bash
 PYTHONUTF8=1 uv run python scripts/ci/check_repo_hygiene.py
 PYTHONUTF8=1 uv run python scripts/ci/check_doc_links.py
+PYTHONUTF8=1 uv run python scripts/ci/check_website_docs_pii.py
 ```
 
 **2. Auto-fix lint and formatting** (rewrites files in place)
