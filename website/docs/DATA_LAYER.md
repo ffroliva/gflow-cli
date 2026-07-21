@@ -239,7 +239,7 @@ See [`SECURITY.md`](SECURITY.md) for the broader threat model.
 gflow data list projects
 
 # All images for one profile, aggregated by asset by default
-gflow data list images --profile ffroliva --limit 50 --offset 0
+gflow data list images --profile your-name --limit 50 --offset 0
 
 # Show every local file copy instead of aggregating
 gflow data list images --all-copies
@@ -253,7 +253,7 @@ gflow data list profiles
 # Failed generations, newest first (#341): when, which command/mode/model,
 # stable error_type (waf-rejection, content-policy, ...) + redacted detail.
 # The dataset for WAF-cadence and reliability analysis.
-gflow data list errors --profile denon82 --json | jq '{started_at, error_type}'
+gflow data list errors --profile my-profile --json | jq '{started_at, error_type}'
 ```
 
 Flags shared by all five subcommands:
