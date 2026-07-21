@@ -87,6 +87,7 @@ Turn that still into an 8-second Veo clip. This step costs 1 Veo credit.
 ```bash
 gflow video i2v \
   out/images/2026-07-20/8f3a1b2c_1.png \
+  "slow cinematic push-in" \
   --aspect 9:16
 ```
 
@@ -105,7 +106,7 @@ Your first generation is ready. Image generations are free — only Veo video co
 
 **Try next:**
 
-- `gflow video t2i "..."` — text-to-video
+- `gflow video t2v "..."` — text-to-video
 - `gflow character create` — reusable face + body reference
 - `gflow image batch` — manifest-driven batch generation
 - `gflow mcp run` — let your AI assistant drive it

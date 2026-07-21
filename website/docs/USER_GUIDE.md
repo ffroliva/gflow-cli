@@ -291,7 +291,7 @@ jq -c '
 ' events.jsonl
 ```
 
-`body_prefix_redacted` is the first 200 chars of the body **after** `_redact_for_log` strips known token patterns. File a bug at <https://github.com/your-name/gflow-cli/issues> and paste this output — it's the actionable diagnostic, NOT your auth cookies.
+`body_prefix_redacted` is the first 200 chars of the body **after** `_redact_for_log` strips known token patterns. File a bug at <https://github.com/ffroliva/gflow-cli/issues> and paste this output — it's the actionable diagnostic, NOT your auth cookies.
 
 ### 6.4 Group recurring unhandled errors
 
@@ -620,7 +620,7 @@ If `retry_after` is present and reasonable, the retry-loop wait that's used per 
 If exit 4 or 5 keeps firing on a prompt that looks tame:
 
 1. Capture the full `error_raised` event with `2> events.jsonl`.
-2. Open an issue at <https://github.com/your-name/gflow-cli/issues> with the redacted prompt + the event dict.
+2. Open an issue at <https://github.com/ffroliva/gflow-cli/issues> with the redacted prompt + the event dict.
 3. While waiting, work around with a paraphrased prompt and lower concurrency.
 
 ---
@@ -668,7 +668,7 @@ cat ~/.local/share/gflow-cli/profile_<name>/.gflow_browser_strategy
 # → "chrome" means OK; no file or "internal" means the client will use bundled Chromium
 
 # Windows PowerShell
-type $env:LOCALAPPDATA\your-name\gflow-cli\profile_<name>\.gflow_browser_strategy
+type $env:LOCALAPPDATA\ffroliva\gflow-cli\profile_<name>\.gflow_browser_strategy
 ```
 
 If the file is missing or its content is not `chrome`, the marker is the problem.
@@ -694,7 +694,7 @@ async def probe(profile_dir: str, channel: str | None = None):
             print(f"  {c['name']:40} domain={c['domain']}")
         await ctx.close()
 
-asyncio.run(probe(r"C:\Users\<you>\AppData\Local\your-name\gflow-cli\profile_<name>"))
+asyncio.run(probe(r"C:\Users\<you>\AppData\Local\ffroliva\gflow-cli\profile_<name>"))
 ```
 
 - **`auth cookies: 0` with `channel=None`** → Playwright cannot decrypt; this is the bug.
@@ -707,7 +707,7 @@ asyncio.run(probe(r"C:\Users\<you>\AppData\Local\your-name\gflow-cli\profile_<na
 
 ```bash
 # Windows PowerShell
-$db = "$env:LOCALAPPDATA\your-name\gflow-cli\profile_<name>\Default\Network\Cookies"
+$db = "$env:LOCALAPPDATA\ffroliva\gflow-cli\profile_<name>\Default\Network\Cookies"
 # (fallback path: profile_<name>\Default\Cookies  or  profile_<name>\Cookies)
 uv run python -c "
 import sqlite3, sys
@@ -764,7 +764,7 @@ echo -n "chrome" > ~/.local/share/gflow-cli/profile_<name>/.gflow_browser_strate
 
 # Windows PowerShell
 "chrome" | Set-Content `
-    "$env:LOCALAPPDATA\your-name\gflow-cli\profile_<name>\.gflow_browser_strategy" `
+    "$env:LOCALAPPDATA\ffroliva\gflow-cli\profile_<name>\.gflow_browser_strategy" `
     -Encoding utf8 -NoNewline
 ```
 
