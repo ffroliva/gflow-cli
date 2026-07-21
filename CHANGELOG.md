@@ -7,6 +7,17 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+### Added
+
+- **`website/docs/` PII-leak CI guard** (`scripts/ci/check_website_docs_pii.py`).
+  The published mkdocs mirror under `website/docs/` is an anonymized copy of
+  canonical `docs/`; this new gate fails CI (and runs in `/gflow:check`) if a
+  known private identifier — `denon82`, the OS username `ffrol`, a real
+  name/email — appears in a published file, catching an anonymization miss
+  before it ships (the failure mode of #362). Public references such as
+  `github.com/ffroliva/gflow-cli` and the APP_AUTHOR path are trap-free by
+  construction, so the guard needs no allow-list.
+
 ## [0.42.0] — 2026-07-21
 
 ### Fixed
