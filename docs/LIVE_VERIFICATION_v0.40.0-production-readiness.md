@@ -265,12 +265,13 @@ step in the live sequence above ran to completion. What was deliberately
   run observed the handle capture but did not drive a crash-and-reconcile
   scenario live. Keep the underlying issue open; this is remaining work, not
   a regression.
-- **Remote macOS/Linux legs of the D2 `profile-lease-matrix` CI job** are
-  pending an authorized push — the POSIX `fcntl.flock` lease branch has not
-  been executed anywhere yet (Windows leg ran locally and is GREEN, see
-  Offline gates below). Per design-spec guidance, remote execution requires
-  explicit push/PR authorization and must not be reported as locally
-  executed.
+- **Remote macOS/Linux legs of the D2 `profile-lease-matrix` CI job**: this
+  gap is now CLOSED. PR #357 was pushed and its CI ran the
+  `profile-lease-matrix` job GREEN on all three OSes — `windows-latest`,
+  `macos-latest`, `ubuntu-latest` — exercising the POSIX `fcntl.flock` lease
+  branch on macOS/Linux for the first time (PR #357, `profile-lease-matrix`
+  job, merged 2026-07-20). This closes the CI-execution gap only; it is
+  CI-level evidence, not a live run against real Flow.
 - **omni-flash NULL-operation-id path** was not exercised — `veo-lite` was
   used deliberately for the T2V generation instead.
 - **D4's four live cancellation paths** (mid-launch cancel, mid-context.close
@@ -364,8 +365,12 @@ blocked paths" above for detail, not just offline-covered):
 - **Daemon/MCP live lifecycle and live queue-claim**: not exercised this
   pass — the live sequence used the direct `gflow image`/`gflow video`
   client path, not `gflow serve`/MCP.
-- **D2 remote CI legs (POSIX `fcntl` lease branch)**: pending an authorized
-  push; unexecuted anywhere in this branch's history.
+- **D2 remote CI legs (POSIX `fcntl` lease branch)**: CLOSED — PR #357 was
+  pushed and its CI ran the `profile-lease-matrix` job GREEN on all three
+  OSes (`windows-latest`, `macos-latest`, `ubuntu-latest`), exercising the
+  POSIX `fcntl.flock` lease branch on macOS/Linux (PR #357,
+  `profile-lease-matrix` job, merged 2026-07-20). CI-level evidence only —
+  not a live-Flow run.
 - **D4's four live cancellation paths**: unit-proven only, not driven live.
 - **omni-flash NULL-operation-id path**: not exercised (veo-lite used
   deliberately instead).
