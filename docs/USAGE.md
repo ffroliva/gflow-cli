@@ -370,6 +370,56 @@ gflow image i2i "place this hero in a snowy pass" --ref hero.png \
 > Ids are validated at the CLI boundary (letters/digits/hyphens, ≤128 chars).
 > The entity must already exist in `--project` (see `gflow character create`).
 
+## Referencing saved assets by name (`@Name` mentions)
+
+Instead of ids or paths, you can reference a saved **Character** — or, on image
+paths, a saved media asset — **inline in the prompt** by name, prefixed with `@`.
+The mention is resolved against the project's assets, staged through the same
+reference machinery as `--reference-entity` / `--ref`, then stripped from the text
+the model sees. Shipped in v0.40.0 (#344).
+
+```bash
+# One saved Character by name (t2i needs no image ref)
+gflow image t2i "@CaptainZoro on a rain-soaked neon rooftop, cinematic" --project <id>
+
+# Two saved Characters in one video prompt (each staged as a reference, cap-checked)
+gflow video r2v "@Zoro hands @Mika the sword" --project <id>
+```
+
+**Where `@Name` works** — character mentions on image **and** video; media/asset
+mentions on image **only**:
+
+| Path | Character `@Name` | Media/asset `@Name` |
+|---|---|---|
+| `image t2i` | ✅ | ✅ (in-project asset → `referenceImages`) |
+| `image i2i` | ✅ | ✅ |
+| `video t2v` / `i2v` / `r2v` | ✅ | ❌ — media-on-video is Phase 3; fails fast with **exit 11** |
+
+Rules:
+- **`--project <id>` is required** — mentions resolve against that project's assets.
+- A name resolves against **Characters** (`gflow character create`) *and* saved
+  media assets; on a name clash the **Character wins**. Matching is
+  **case-insensitive**.
+- A Character must have **at least one reference image** before it can be tagged,
+  or the mention fails early.
+- Write a **literal `@`** by doubling it: `@@` → `@` (e.g. `"ping me @@ 5pm"` →
+  `ping me @ 5pm`). An `@` glued to a preceding word (`user@host`) is never a
+  mention, so emails and handles are safe.
+- Unknown or ambiguous names fail fast with **exit 11** (`ConfigurationError`),
+  listing the available or colliding assets. If the asset catalog itself cannot be
+  loaded you get **exit 29** (`MentionIndexUnavailableError`) — so scripts can tell
+  "catalog unreachable" apart from "no such name".
+
+`@Name` and `--reference-entity <id>` resolve to the **same** wire
+(`referenceEntities`) and dedupe against each other: reach for `@Name` for the
+inline, by-name path — it's also the **only** name-based option on video, which
+has no `--reference-entity` flag — and `--reference-entity` when you'd rather pin
+an explicit entity id in a script (image paths only). `--ref` is different: it
+attaches an arbitrary **image** (`referenceImages`), not a saved identity, and can
+be combined with a `@Name` for "this identity, in this look".
+
+See [REFERENCE_STRATEGIES.md](REFERENCE_STRATEGIES.md) for the full decision guide.
+
 ## `gflow image batch`
 
 Generate multiple images from a single manifest file. The format is dispatched by file extension (`.json` or `.tsv`).
