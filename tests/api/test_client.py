@@ -24,7 +24,8 @@ from gflow_cli.api.image import AgentInstruction, Aspect, GenerateImageRequest, 
 from gflow_cli.api.transports.base import SupportsTransportSetup, TransportSetup
 from gflow_cli.api.transports.ui_automation import UiAutomationTransport
 from gflow_cli.config import Settings
-from gflow_cli.errors import BrowserSessionClosedError
+from gflow_cli.errors import BrowserSessionClosedError, ConfigurationError
+from gflow_cli.profile_lease import ProfileLease
 
 
 class TestConstruction:
@@ -321,6 +322,14 @@ async def test_client_with_string_transport_owns_lifecycle(
 # ---------------------------------------------------------------------------
 
 
+def _held_lease(profile_dir: Path) -> ProfileLease:
+    """A ProfileLease standing in for the one the live client holds. The constructor
+    does not acquire (no kernel/registry lock), and the standalone-only guard only
+    checks ``self._lease is not None`` — so an unacquired lease is a faithful,
+    side-effect-free stand-in for 'the client owns this profile'."""
+    return ProfileLease(profile_dir)
+
+
 def _record_lease_events(monkeypatch: pytest.MonkeyPatch) -> list[str]:
     """Patch ProfileLease.acquire/release to record ordering without real locks."""
     from gflow_cli.profile_lease import ProfileLease
@@ -408,6 +417,63 @@ async def test_client_lease_contention_raises_before_launch(
         await client.__aenter__()
     assert launch_calls == []  # acquire failed BEFORE the launch was attempted
     assert client._context is None
+
+
+@pytest.mark.asyncio
+@pytest.mark.parametrize("transport_name", ["bearer", "sapisidhash"])
+async def test_client_owned_standalone_transport_refused_before_setup(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch, transport_name: str
+) -> None:
+    """A client that already holds the profile lease must REFUSE a standalone-only
+    experimental transport (bearer/sapisidhash) with a clear ConfigurationError,
+    rather than let the transport's own ``ProfileLease.acquire()`` self-lock with an
+    opaque ProfileLockedError. The refusal fires before the transport is built."""
+    monkeypatch.delenv("GFLOW_CLI_TRANSPORT", raising=False)
+    made: list[str | None] = []
+
+    def spy_make(name: str | None = None) -> _FakeTransport:
+        made.append(name)
+        return _FakeTransport()
+
+    monkeypatch.setattr("gflow_cli.api.client.make_transport", spy_make)
+
+    client = FlowApiClient(profile_dir=tmp_path, transport=transport_name)
+    client._lease = _held_lease(tmp_path)  # simulate the client holding the lease
+    with pytest.raises(ConfigurationError) as exc:
+        await client._setup_transport()
+    assert transport_name in str(exc.value)
+    assert made == []  # refused BEFORE the transport was constructed
+
+
+@pytest.mark.asyncio
+async def test_client_owned_standalone_transport_via_env_is_refused(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    """The guard resolves GFLOW_CLI_TRANSPORT the same way make_transport does, so a
+    standalone-only transport chosen via env (transport=None on the client) is also
+    refused."""
+    monkeypatch.setenv("GFLOW_CLI_TRANSPORT", "bearer")
+    monkeypatch.setattr("gflow_cli.api.client.make_transport", lambda name=None: _FakeTransport())
+    client = FlowApiClient(profile_dir=tmp_path, transport=None)
+    client._lease = _held_lease(tmp_path)
+    with pytest.raises(ConfigurationError):
+        await client._setup_transport()
+
+
+@pytest.mark.asyncio
+async def test_client_owned_evaluate_fetch_is_not_refused(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    """evaluate_fetch shares the client's page (no second lease) so it is NOT
+    standalone-only — the guard must let it through even while the lease is held."""
+    monkeypatch.delenv("GFLOW_CLI_TRANSPORT", raising=False)
+    fake = _FakeTransport()
+    monkeypatch.setattr("gflow_cli.api.client.make_transport", lambda name=None: fake)
+    client = FlowApiClient(profile_dir=tmp_path, transport="evaluate_fetch")
+    client._lease = _held_lease(tmp_path)
+    await client._setup_transport()
+    assert client.transport is fake
+    assert fake.setup_called == 1
 
 
 # ---------------------------------------------------------------------------
