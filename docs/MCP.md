@@ -78,7 +78,7 @@ We analyzed whether a terminal-driven CLI guided by a text skill (e.g., `skills/
 | :--- | :--- | :--- |
 | **Output Fragility** | Ephemeral `stdout`/`stderr` log outputs are fragile to format adjustments, progress bars, and ANSI colors. | Strictly structured JSON payloads containing explicit metadata and absolute output file URIs. |
 | **Process Lifecycle**| High process startup overhead (Python import latency) on every individual execution. | Warm daemon process. Retains active caching of database metadata. |
-| **Concurrency** | Independent OS runs collide and crash the Chromium profile lock. | Serialized request execution via an internal `asyncio.Lock` queue. |
+| **Concurrency** | A second concurrent process against the same profile is rejected immediately by the cross-process `ProfileLease` with `ProfileLockedError` (exit code 11) — a clean fail-fast, never a crash, never a wait. Different profiles run fully in parallel. | Same `ProfileLease` enforcement applies to the daemon's requests — a same-profile call made while another is in flight (from the CLI or the MCP daemon) is rejected immediately with `ProfileLockedError` rather than queued or crashed; different profiles still run fully in parallel. |
 | **Error Handling** | Agent must scan logs for strings or parse exit codes to check status. | Strongly-typed JSON-RPC errors with mapped codes and clear remediation. |
 | **Transport Safety** | Volatile console printing. | Stdout is strictly isolated for JSON-RPC; all logs and warnings route to stderr. |
 
