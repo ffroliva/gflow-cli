@@ -1888,10 +1888,13 @@ class FlowApiClient:
 
         ``on_checkpoint`` (Task C1) receives a ``submit_attempted`` observation
         immediately before the credit-spending transport call, then a
-        ``remote_started`` observation carrying the ``batchAsyncGenerateVideo*``
-        operation name (via the transport's ``on_started`` hook — the first
-        point the video handle is observable; ``operation_id`` is ``None`` for
-        models whose response omits it, e.g. omni-flash).
+        ``remote_started`` observation (via the transport's ``on_started`` hook
+        — the first point the video handle is observable). ``operation_id`` is
+        best-effort/optional: it is captured when the generate response
+        includes ``operations[0].operation.name``, and is ``None`` when that
+        field is absent (observed on veo-lite too, not only omni-flash, live
+        2026-07-21). ``media_id`` is the canonical handle used for polling and
+        download.
 
         Raises:
             RuntimeError: transport is None (client not entered) or the transport
