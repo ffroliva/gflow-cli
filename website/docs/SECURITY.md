@@ -147,7 +147,7 @@ For users on shared / multi-user / production-adjacent machines:
 - [ ] **Use `--profile sandbox`** for short-lived experiments. Easy to delete (`rm -rf $GFLOW_CLI_HOME/profile_sandbox`) without disturbing your main profile.
 - [ ] **Rotate sessions monthly** by signing out of Google → re-running `gflow auth login`. Limits blast radius of an unnoticed session theft.
 - [ ] **Pin a gflow-cli version** in production (`uv tool install gflow-cli==0.5.0a1`) and review release diffs before upgrading.
-- [ ] **Keep the package up-to-date for security fixes.** Subscribe to GitHub Releases for `your-useriva/gflow-cli`.
+- [ ] **Keep the package up-to-date for security fixes.** Subscribe to GitHub Releases for `ffroliva/gflow-cli`.
 - [ ] **Scan your repo for accidentally-committed profiles** before pushing: `git ls-files | grep -E "profile_|cookies\.json|\.env$"`.
 
 ## "I committed a session by mistake"
@@ -225,9 +225,9 @@ Controls:
 
 | Issue type | How |
 |---|---|
-| **Security vulnerability** (RCE, auth bypass, secret leak in logs/output) | Email <your-useriva@gmail.com> with `gflow-cli SECURITY` in the subject. **Do not** open a public GitHub issue. PGP key available on request. |
-| **Suspected supply-chain compromise** | Email + open a private GitHub Security Advisory at <https://github.com/your-useriva/gflow-cli/security/advisories/new>. |
-| **Functional bug** (something just broke) | Public issue at <https://github.com/your-useriva/gflow-cli/issues> — include error output, OS, Python version. |
+| **Security vulnerability** (RCE, auth bypass, secret leak in logs/output) | Report privately via GitHub's [private vulnerability reporting](https://github.com/ffroliva/gflow-cli/security/advisories/new) form. **Do not** open a public GitHub issue. |
+| **Suspected supply-chain compromise** | Open a private GitHub Security Advisory at <https://github.com/ffroliva/gflow-cli/security/advisories/new>. |
+| **Functional bug** (something just broke) | Public issue at <https://github.com/ffroliva/gflow-cli/issues> — include error output, OS, Python version. |
 | **Documentation issue** (this page is wrong / unclear) | PR welcome. |
 
 Acknowledgement target: **48 hours** for security reports. Initial fix or mitigation: **7 days** for high/critical, best-effort for medium/low.
