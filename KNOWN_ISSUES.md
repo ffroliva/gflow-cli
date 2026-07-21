@@ -352,6 +352,8 @@ The worker queue (`generation_queue`, used by the `gflow serve` daemon and MCP t
 
 **Why this can't be resolved automatically today:** Flow's generation-status REST endpoint rejects a bare, cookie-only `page.request` re-check with HTTP 401 — only a live, authenticated Playwright SPA re-poll (opening the project page and reading the DOM) can turn a preserved handle back into a real status, and that live re-poll path is not wired into recovery yet (tracked for a future phase; see the C1 handle-spike notes in `docs/superpowers/specs/2026-07-19-production-readiness-hardening-design.md` Appendix A).
 
+**Decision (2026-07-21):** keep the safe stub — `recover_processing` marks post-submit interruptions `indeterminate` and never auto-resubmits, which is already correct. Building the auto-reconciler is deferred until **F1** (credit-free project-page re-entry) is confirmed against live Flow; until then a blind reconciler would be speculative code against unverified blackbox behavior. The `client` reconcile-hook seam and the live-gated `tests/e2e/test_crash_recovery_e2e.py` are already in place for when F1 lands.
+
 **Manual reconciliation:** an `indeterminate` row's checkpoint retains whatever handle/project info was captured before interruption. To resolve one by hand: open the relevant Flow project in the browser and check whether the expected asset appears.
 - **Found** — the generation completed; no action needed (the credit was spent as intended, just not auto-recorded locally).
 - **Not found after a few minutes** — it likely never completed; safe to resubmit the same prompt manually.
