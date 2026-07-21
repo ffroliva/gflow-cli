@@ -395,6 +395,8 @@ We attempted three pure-HTTP transport strategies before settling on `ui_automat
 
 All three now live as standalone modules under `src/gflow_cli/api/transports/experimental/` (`evaluate_fetch.py` / `bearer.py` / `sapisidhash.py`), preserved for reference and future iteration. None survives Google's anti-bot stack for mutation/generation endpoints, so the production path is `ui_automation`.
 
+**Standalone-only transports.** `bearer` and `sapisidhash` discard any caller-supplied Playwright page and launch their own browser under a fresh `ProfileLease`, so they are **standalone-only** — they cannot run inside a `FlowApiClient` that already holds the profile lease (the second acquire would self-lock with `ProfileLockedError`). Selecting either via `GFLOW_CLI_TRANSPORT` (or the Python API) while the client owns the profile now fails fast with a clear `ConfigurationError` naming the transport, rather than the opaque lock error. `evaluate_fetch` is exempt: it reuses the client's shared page and takes no second lease. The standalone-only set lives in `STANDALONE_ONLY_TRANSPORTS` (`api/transports/__init__.py`); to drive `bearer`/`sapisidhash`, run them outside an owning client.
+
 ### What this costs users
 
 - A **persistent Chrome profile** on disk (~150 MB after `playwright install chromium`).

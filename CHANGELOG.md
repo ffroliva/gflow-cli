@@ -18,6 +18,18 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   `github.com/ffroliva/gflow-cli` and the APP_AUTHOR path are trap-free by
   construction, so the guard needs no allow-list.
 
+### Fixed
+
+- **Experimental transport self-lockout.** The `bearer` and `sapisidhash`
+  transports discard a caller-supplied Playwright page and re-acquire the profile
+  `ProfileLease` in their own `setup()`. Driving one via `GFLOW_CLI_TRANSPORT`
+  inside a `FlowApiClient` (which already holds the lease) self-locked with an
+  opaque `ProfileLockedError`. `FlowApiClient` now refuses these standalone-only
+  transports up front with a clear `ConfigurationError` naming the transport and
+  pointing to `ui_automation`/`evaluate_fetch` or standalone use. `evaluate_fetch`
+  is unaffected (it shares the client's page). New `STANDALONE_ONLY_TRANSPORTS`
+  set + `resolve_transport_name()` helper in `api/transports`.
+
 ## [0.42.0] — 2026-07-21
 
 ### Fixed
