@@ -400,6 +400,16 @@ class TestOperationNameFromGenerateResponse:
     def test_returns_none_when_operations_empty(self) -> None:
         assert operation_name_from_generate_response({"operations": []}) is None
 
+    def test_real_t2v_capture_extracts_operation_name(self) -> None:
+        """Regression lock: a real classic-veo capture must still yield a
+        non-None operation name. Root-caused 2026-07-21 — flow_operation_id
+        is best-effort/optional (None is a legitimate outcome when the
+        generate response omits operations[0].operation.name), but when the
+        field IS present the parser must keep extracting it correctly.
+        """
+        name = operation_name_from_generate_response(_body("02_batchAsyncGenerateVideoText.json"))
+        assert name == "<UUID>"
+
 
 class TestVideoResult:
     def test_video_result_holds_fields(self) -> None:
