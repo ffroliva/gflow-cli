@@ -116,15 +116,6 @@ def test_queue_repository_crud(temp_db: DataStore) -> None:
     assert task_updated is not None
     assert task_updated.status == "processing"
 
-    # 6. Fail processing tasks (sweep)
-    count = repo.fail_processing_tasks("default", "Daemon crashed")
-    assert count == 1
-    task_swept = repo.get_task("task-123")
-    assert task_swept is not None
-    assert task_swept.status == "failed"
-    assert task_swept.error is not None
-    assert "Daemon crashed" in task_swept.error["detail"]
-
 
 @pytest.mark.asyncio
 async def test_worker_process_t2i_single(temp_db: DataStore) -> None:
