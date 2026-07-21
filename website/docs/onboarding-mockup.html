@@ -1,0 +1,738 @@
+<!DOCTYPE html>
+<html lang="en" data-md-color-scheme="slate">
+<head>
+  <meta charset="UTF-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1.0">
+  <title>gflow-cli — Onboarding</title>
+  <style>
+    /* ── Design tokens (from extra.css) ── */
+    :root {
+      --gf-mono: ui-monospace, "Cascadia Code", "SF Mono", "JetBrains Mono", Menlo, Consolas, monospace;
+      --gf-sans: -apple-system, BlinkMacSystemFont, "Segoe UI", system-ui, Roboto, Helvetica, Arial, sans-serif;
+      --gf-amber: #ffb03a;
+      --gf-amber-dim: rgba(255, 176, 58, .13);
+      --gf-ink: #ecebe5;
+      --gf-muted: #8c939d;
+      --gf-faint: #5c636e;
+      --gf-ground: #0e1014;
+      --gf-surface: #161a21;
+      --gf-hair: #262b34;
+      --gf-code-bg: #0b0d12;
+      --gf-green: #4ec9b0;
+      --gf-red: #f44747;
+      --gf-yellow: #dcdcaa;
+      --gf-blue: #569cd6;
+    }
+
+    [data-md-color-scheme="default"] {
+      --gf-ink: #1b1d22;
+      --gf-muted: #4a5058;
+      --gf-faint: #9aa0a7;
+      --gf-ground: #f6f3ec;
+      --gf-surface: #fffefa;
+      --gf-hair: #e3dfd5;
+      --gf-code-bg: #0b0d12;
+      --gf-amber-dim: rgba(185, 116, 15, .10);
+      --gf-amber: #b9740f;
+      --gf-green: #2d8b6f;
+      --gf-red: #c9302c;
+      --gf-yellow: #8a7024;
+      --gf-blue: #2563a8;
+    }
+
+    * { box-sizing: border-box; margin: 0; padding: 0; }
+
+    body {
+      font-family: var(--gf-sans);
+      background: var(--gf-ground);
+      color: var(--gf-ink);
+      line-height: 1.72;
+      font-size: 15px;
+      min-height: 100vh;
+    }
+
+    /* ── Theme toggle ── */
+    .theme-toggle {
+      position: fixed;
+      top: 16px;
+      right: 16px;
+      z-index: 100;
+      background: var(--gf-surface);
+      border: 1px solid var(--gf-hair);
+      border-radius: 8px;
+      padding: 8px 12px;
+      cursor: pointer;
+      font-size: 16px;
+      color: var(--gf-muted);
+      transition: color .2s;
+    }
+    .theme-toggle:hover { color: var(--gf-amber); }
+
+    /* ── Layout ── */
+    .container {
+      max-width: 760px;
+      margin: 0 auto;
+      padding: 48px 24px 80px;
+    }
+
+    /* ── Typography ── */
+    h1 {
+      font-family: var(--gf-mono);
+      font-size: 2rem;
+      font-weight: 600;
+      letter-spacing: -.035em;
+      line-height: 1.15;
+      color: var(--gf-ink);
+      margin-bottom: .5em;
+      text-wrap: balance;
+    }
+    h2 {
+      font-family: var(--gf-mono);
+      font-size: 1.4rem;
+      font-weight: 600;
+      letter-spacing: -.025em;
+      line-height: 1.2;
+      margin: 2.4em 0 .7em;
+      color: var(--gf-ink);
+    }
+    h3 {
+      font-family: var(--gf-mono);
+      font-size: 1.08rem;
+      font-weight: 600;
+      letter-spacing: -.02em;
+      margin: 1.8em 0 .5em;
+      color: var(--gf-ink);
+    }
+    p { margin-bottom: 1em; }
+
+    .subtitle {
+      font-size: 1.05rem;
+      color: var(--gf-muted);
+      margin-bottom: 2em;
+      line-height: 1.6;
+    }
+
+    /* ── Admonition (warning) ── */
+    .admonition {
+      background: var(--gf-surface);
+      border: 1px solid var(--gf-hair);
+      border-left: 4px solid var(--gf-yellow);
+      border-radius: 8px;
+      padding: 16px 20px;
+      margin-bottom: 2em;
+      font-size: .9rem;
+    }
+    .admonition-title {
+      font-family: var(--gf-mono);
+      font-weight: 600;
+      font-size: .82rem;
+      text-transform: uppercase;
+      letter-spacing: .06em;
+      color: var(--gf-yellow);
+      margin-bottom: 8px;
+      display: flex;
+      align-items: center;
+      gap: 6px;
+    }
+    .admonition-title::before { content: "⚠"; }
+
+    /* ── Stepper ── */
+    .steps {
+      counter-reset: step;
+      margin: 2em 0;
+    }
+    .step {
+      position: relative;
+      padding-left: 64px;
+      padding-bottom: 32px;
+      border-left: 2px solid var(--gf-hair);
+      margin-left: 15px;
+    }
+    .step:last-child { border-left-color: transparent; padding-bottom: 0; }
+    .step::before {
+      counter-increment: step;
+      content: counter(step);
+      position: absolute;
+      left: -17px;
+      top: 0;
+      width: 32px;
+      height: 32px;
+      background: var(--gf-amber);
+      color: var(--gf-ground);
+      font-family: var(--gf-mono);
+      font-weight: 700;
+      font-size: .85rem;
+      border-radius: 50%;
+      display: flex;
+      align-items: center;
+      justify-content: center;
+    }
+    .step.done::before {
+      content: "✓";
+      background: var(--gf-green);
+    }
+    .step.active::before {
+      box-shadow: 0 0 0 4px var(--gf-amber-dim);
+    }
+    .step-label {
+      font-family: var(--gf-mono);
+      font-weight: 600;
+      font-size: 1.08rem;
+      color: var(--gf-ink);
+      margin-bottom: 8px;
+    }
+    .step-desc {
+      color: var(--gf-muted);
+      font-size: .9rem;
+      margin-bottom: 12px;
+    }
+
+    /* ── Terminal block (command only — what the user copies) ── */
+    .terminal {
+      background: var(--gf-code-bg);
+      border: 1px solid var(--gf-hair);
+      border-radius: 11px;
+      overflow: hidden;
+      margin: 12px 0 16px;
+      font-family: var(--gf-mono);
+      font-size: .82rem;
+      line-height: 1.6;
+      position: relative;
+    }
+    .terminal-header {
+      display: flex;
+      align-items: center;
+      gap: 6px;
+      padding: 10px 16px;
+      background: rgba(255,255,255,.04);
+      border-bottom: 1px solid rgba(255,255,255,.08);
+    }
+    .terminal-dot {
+      width: 10px;
+      height: 10px;
+      border-radius: 50%;
+      background: var(--gf-faint);
+    }
+    .terminal-dot.red { background: var(--gf-red); }
+    .terminal-dot.yellow { background: var(--gf-yellow); }
+    .terminal-dot.green { background: var(--gf-green); }
+    .terminal-title {
+      font-size: .72rem;
+      color: #7a828d;
+      margin-left: 8px;
+      letter-spacing: .04em;
+    }
+    .terminal-body {
+      padding: 16px;
+      overflow-x: auto;
+      /* Fixed light colors — terminal background is always dark */
+      color: #d7dae0;
+    }
+    .terminal-body .prompt { color: #4ec9b0; }
+    .terminal-body .cmd { color: #d7dae0; }
+
+    /* ── Output block (separate, not copyable, visually dimmed) ── */
+    .output {
+      background: var(--gf-code-bg);
+      border: 1px solid var(--gf-hair);
+      border-radius: 11px;
+      margin-bottom: 16px;
+      font-family: var(--gf-mono);
+      font-size: .78rem;
+      line-height: 1.6;
+      padding: 12px 16px;
+      color: #7a828d;
+    }
+    .output .success { color: #4ec9b0; }
+    .output .error { color: #f44747; }
+    .output-label {
+      font-size: .68rem;
+      color: #5c636e;
+      letter-spacing: .06em;
+      text-transform: uppercase;
+      margin-bottom: 6px;
+    }
+
+    /* ── Copy button ── */
+    .copy-btn {
+      position: absolute;
+      top: 8px;
+      right: 8px;
+      background: transparent;
+      border: 1px solid rgba(255,255,255,.12);
+      border-radius: 6px;
+      padding: 4px 8px;
+      font-size: .7rem;
+      color: #7a828d;
+      cursor: pointer;
+      font-family: var(--gf-mono);
+      transition: color .2s, border-color .2s;
+    }
+    .copy-btn:hover { color: var(--gf-amber); border-color: var(--gf-amber); }
+
+    /* ── Terminal note (explanation below a terminal block) ── */
+    .terminal-note {
+      font-size: .82rem;
+      color: var(--gf-muted);
+      margin: 0 0 16px;
+      line-height: 1.6;
+    }
+    .terminal-note code {
+      font-size: .85em;
+    }
+
+    /* ── Error card ── */
+    .error-card {
+      background: var(--gf-surface);
+      border: 1px solid var(--gf-hair);
+      border-left: 4px solid var(--gf-red);
+      border-radius: 8px;
+      padding: 16px 20px;
+      margin: 12px 0 16px;
+    }
+    .error-card .error-title {
+      font-family: var(--gf-mono);
+      font-weight: 600;
+      font-size: .85rem;
+      color: var(--gf-red);
+      margin-bottom: 6px;
+    }
+    .error-card .error-detail {
+      font-size: .82rem;
+      color: var(--gf-muted);
+      margin-bottom: 10px;
+    }
+    .error-card .remediation {
+      background: rgba(78, 201, 176, .08);
+      border: 1px solid rgba(78, 201, 176, .2);
+      border-radius: 6px;
+      padding: 10px 14px;
+      font-size: .82rem;
+      color: var(--gf-green);
+    }
+    .error-card .remediation strong { color: var(--gf-green); }
+
+    /* ── Success card ── */
+    .success-card {
+      background: var(--gf-surface);
+      border: 1px solid rgba(78, 201, 176, .3);
+      border-left: 4px solid var(--gf-green);
+      border-radius: 8px;
+      padding: 20px 24px;
+      margin: 16px 0;
+      text-align: center;
+    }
+    .success-card .success-icon {
+      font-size: 2rem;
+      margin-bottom: 8px;
+    }
+    .success-card .success-title {
+      font-family: var(--gf-mono);
+      font-weight: 600;
+      font-size: 1.08rem;
+      color: var(--gf-green);
+      margin-bottom: 8px;
+    }
+    .success-card .success-detail {
+      font-size: .9rem;
+      color: var(--gf-muted);
+      margin-bottom: 12px;
+    }
+    .success-card .success-path {
+      font-family: var(--gf-mono);
+      font-size: .82rem;
+      background: var(--gf-code-bg);
+      border: 1px solid var(--gf-hair);
+      border-radius: 6px;
+      padding: 8px 14px;
+      display: inline-block;
+      color: var(--gf-ink);
+      margin-bottom: 12px;
+    }
+    .success-card .next-steps {
+      display: flex;
+      gap: 12px;
+      justify-content: center;
+      flex-wrap: wrap;
+    }
+    .success-card .next-step {
+      font-family: var(--gf-mono);
+      font-size: .78rem;
+      background: var(--gf-amber-dim);
+      border: 1px solid rgba(255,176,58,.25);
+      border-radius: 6px;
+      padding: 8px 14px;
+      color: var(--gf-amber);
+      text-decoration: none;
+      transition: background .2s;
+      cursor: pointer;
+    }
+    .success-card .next-step:hover {
+      background: rgba(255,176,58,.25);
+    }
+
+    /* ── Inline code ── */
+    code {
+      font-family: var(--gf-mono);
+      background: var(--gf-amber-dim);
+      color: var(--gf-amber);
+      padding: 2px 6px;
+      border-radius: 4px;
+      font-size: .88em;
+    }
+
+    /* ── Links ── */
+    a {
+      color: var(--gf-amber);
+      text-decoration: none;
+      text-underline-offset: 3px;
+    }
+    a:hover { text-decoration: underline; }
+
+    /* ── Requirement badges ── */
+    .req-badges {
+      display: flex;
+      gap: 8px;
+      flex-wrap: wrap;
+      margin: 12px 0 16px;
+    }
+    .req-badge {
+      font-family: var(--gf-mono);
+      font-size: .72rem;
+      background: var(--gf-surface);
+      border: 1px solid var(--gf-hair);
+      border-radius: 6px;
+      padding: 6px 12px;
+      color: var(--gf-muted);
+      display: flex;
+      align-items: center;
+      gap: 6px;
+    }
+    .req-badge .check { color: var(--gf-green); }
+    .req-badge .cross { color: var(--gf-red); }
+
+    /* ── Footer ── */
+    .footer {
+      margin-top: 4em;
+      padding-top: 2em;
+      border-top: 1px solid var(--gf-hair);
+      text-align: center;
+      font-size: .82rem;
+      color: var(--gf-faint);
+    }
+
+    /* ── Responsive ── */
+    @media (max-width: 600px) {
+      .container { padding: 32px 16px 60px; }
+      h1 { font-size: 1.5rem; }
+      h2 { font-size: 1.15rem; }
+      .step { padding-left: 48px; }
+      .success-card .next-steps { flex-direction: column; align-items: center; }
+    }
+  </style>
+</head>
+<body>
+
+<button class="theme-toggle" onclick="toggleTheme()" aria-label="Toggle theme">🌙</button>
+
+<div class="container">
+
+  <!-- ── Hero ── -->
+  <h1>Get started with gflow-cli</h1>
+  <p class="subtitle">From install to your first AI-generated image in about 5 minutes. Or hand the whole thing to your AI assistant.</p>
+
+  <div class="admonition">
+    <div class="admonition-title">Before you begin</div>
+    gflow-cli is <strong>unofficial, alpha, and reverse-engineered</strong>. It drives a headed browser on <em>your own</em> Google Flow session. It requires a Google AI <strong>Ultra or Pro</strong> subscription with Flow access, and every generation bills your account. Not affiliated with Google.
+  </div>
+
+  <!-- ── Requirements check ── -->
+  <h2>Prerequisites</h2>
+  <div class="req-badges">
+    <span class="req-badge"><span class="check">✓</span> Python 3.11+ (uv installs a managed Python)</span>
+    <span class="req-badge"><span class="check">✓</span> Google AI Ultra or Pro subscription</span>
+    <span class="req-badge"><span class="check">✓</span> Google Chrome installed</span>
+    <span class="req-badge"><span class="check">✓</span> Display for one-time browser login</span>
+  </div>
+
+  <!-- ── Steps ── -->
+  <div class="steps">
+
+    <!-- Step 1: Install -->
+    <div class="step done">
+      <div class="step-label">Install</div>
+      <p class="step-desc">One command puts <code>gflow</code> on your PATH. Then install the browser engine it needs (~150 MB).</p>
+
+      <p>Install the CLI:</p>
+      <div class="terminal">
+        <div class="terminal-header">
+          <span class="terminal-dot red"></span>
+          <span class="terminal-dot yellow"></span>
+          <span class="terminal-dot green"></span>
+          <span class="terminal-title">Terminal</span>
+          <button class="copy-btn" onclick="copyCode(this)">Copy</button>
+        </div>
+        <div class="terminal-body">
+<span class="prompt">$</span> <span class="cmd">uv tool install gflow-cli</span>
+        </div>
+      </div>
+
+      <p>Install Chromium (one-time, required by the browser transport):</p>
+      <div class="terminal">
+        <div class="terminal-header">
+          <span class="terminal-dot red"></span>
+          <span class="terminal-dot yellow"></span>
+          <span class="terminal-dot green"></span>
+          <span class="terminal-title">Terminal</span>
+          <button class="copy-btn" onclick="copyCode(this)">Copy</button>
+        </div>
+        <div class="terminal-body">
+<span class="prompt">$</span> <span class="cmd">uv tool run --from gflow-cli playwright install chromium</span>
+        </div>
+      </div>
+
+      <p>Verify the installation:</p>
+      <div class="terminal">
+        <div class="terminal-header">
+          <span class="terminal-dot red"></span>
+          <span class="terminal-dot yellow"></span>
+          <span class="terminal-dot green"></span>
+          <span class="terminal-title">Terminal</span>
+          <button class="copy-btn" onclick="copyCode(this)">Copy</button>
+        </div>
+        <div class="terminal-body">
+<span class="prompt">$</span> <span class="cmd">gflow --version</span>
+        </div>
+      </div>
+      <div class="output">
+        <div class="output-label">Output</div>
+        <div>gflow, version 0.41.0</div>
+      </div>
+    </div>
+
+    <!-- Step 2: Auth -->
+    <div class="step active">
+      <div class="step-label">Authenticate</div>
+      <p class="step-desc">A one-time login opens a real Chrome window. Sign in with your Google account, close the window when the Flow editor loads — gflow verifies automatically.</p>
+
+      <p>The <code>--browser chrome</code> flag is mandatory — Google rejects Playwright's bundled Chromium.</p>
+      <div class="terminal">
+        <div class="terminal-header">
+          <span class="terminal-dot red"></span>
+          <span class="terminal-dot yellow"></span>
+          <span class="terminal-dot green"></span>
+          <span class="terminal-title">Terminal</span>
+          <button class="copy-btn" onclick="copyCode(this)">Copy</button>
+        </div>
+        <div class="terminal-body">
+<span class="prompt">$</span> <span class="cmd">gflow auth login --browser chrome</span>
+        </div>
+      </div>
+      <div class="output">
+        <div class="output-label">What happens</div>
+        <div>A Chrome window opens at the Flow sign-in page.</div>
+        <div>Sign in with your Google account (2FA included).</div>
+        <div>Keep going until the Flow editor loads.</div>
+        <div>CLOSE THE BROWSER — gflow verifies automatically.</div>
+        <div></div>
+        <div><span class="success">Session saved.</span></div>
+        <div>Profile dir: ~/.local/share/gflow-cli/profile_default</div>
+        <div>Renamed profile from default to your-name (derived from Google account).</div>
+      </div>
+
+      <p class="terminal-note">
+        On first run, the profile is created as <code>default</code> then auto-renamed to your email's local-part (e.g. <code>your.name@gmail.com</code> → <code>your-name</code>). Single-account users never have to think about profiles. To use a custom name, pass <code>--profile myname</code>.
+      </p>
+    </div>
+
+    <!-- Step 3: Generate -->
+    <div class="step">
+      <div class="step-label">Generate</div>
+      <p class="step-desc">The shortest happy path — one command, real output. Images are free; only Veo video costs credits.</p>
+
+      <!-- Image generation -->
+      <p>Generate a text-to-image with the <code>--tool creative-director</code> flag, which expands your prompt with Google's 5-component formula before any credits are spent.</p>
+      <div class="terminal">
+        <div class="terminal-header">
+          <span class="terminal-dot red"></span>
+          <span class="terminal-dot yellow"></span>
+          <span class="terminal-dot green"></span>
+          <span class="terminal-title">Terminal</span>
+          <button class="copy-btn" onclick="copyCode(this)">Copy</button>
+        </div>
+        <div class="terminal-body">
+<span class="prompt">$</span> <span class="cmd">gflow image t2i "a lighthouse in a storm, moody, cinematic" --tool creative-director</span>
+        </div>
+      </div>
+      <div class="output">
+        <div class="output-label">Output</div>
+        <div>Flow project created: project/abc123</div>
+        <div>Generating images…</div>
+        <div><span class="success">✓</span> out/images/2026-07-20/8f3a1b2c_1.png</div>
+      </div>
+      <p class="terminal-note">
+        Files are saved to the output directory automatically — by default <code>./out/images/</code>.
+        Route outputs to S3, MinIO, or GCS with <a href="EXTERNAL_STORAGE.md">external storage</a>.
+      </p>
+
+      <!-- Video from still -->
+      <p>Turn that still into an 8-second Veo clip. This step costs 1 Veo credit.</p>
+      <div class="terminal">
+        <div class="terminal-header">
+          <span class="terminal-dot red"></span>
+          <span class="terminal-dot yellow"></span>
+          <span class="terminal-dot green"></span>
+          <span class="terminal-title">Terminal</span>
+          <button class="copy-btn" onclick="copyCode(this)">Copy</button>
+        </div>
+        <div class="terminal-body">
+<span class="prompt">$</span> <span class="cmd">gflow video i2v out/images/2026-07-20/8f3a1b2c_1.png "slow cinematic push-in" --aspect 9:16</span>
+        </div>
+      </div>
+      <div class="output">
+        <div class="output-label">Output</div>
+        <div>Generating video… (~60-90s)</div>
+        <div><span class="success">✓</span> out/videos/2026-07-20/9e4d7f2a.mp4</div>
+      </div>
+      <p class="terminal-note">
+        Video outputs land in <code>./out/videos/</code>.
+      </p>
+    </div>
+
+    <!-- Step 4: Success -->
+    <div class="step">
+      <div class="step-label">Success!</div>
+      <div class="success-card">
+        <div class="success-icon">🎬</div>
+        <div class="success-title">Your first generation is ready</div>
+        <div class="success-path">./out/images/YYYY-MM-DD/&lt;id&gt;_1.png</div>
+        <div class="success-detail">Files are saved automatically. Image generations are free — only Veo video costs credits.</div>
+        <div class="next-steps">
+          <a class="next-step" href="#">gflow video t2v "..."</a>
+          <a class="next-step" href="#">gflow character create</a>
+          <a class="next-step" href="#">gflow image batch</a>
+          <a class="next-step" href="#">gflow mcp run</a>
+        </div>
+      </div>
+    </div>
+
+  </div><!-- /steps -->
+
+  <!-- ── Common errors ── -->
+  <h2>Troubleshooting</h2>
+  <p class="terminal-note" style="margin-bottom: 16px;">If something goes wrong on this path, here are the most common errors and exactly how to fix them.</p>
+
+  <!-- Error: Chrome not found -->
+  <div class="error-card">
+    <div class="error-title">AuthBrowserRejectedError (exit 14)</div>
+    <div class="error-detail">Google rejected Playwright's bundled Chromium as an insecure browser.</div>
+    <div class="remediation">
+      <strong>Fix:</strong> Install Google Chrome from <a href="https://chrome.com">chrome.com</a>, then restart your terminal and run:<br>
+      <code>gflow auth login --browser chrome</code>
+    </div>
+  </div>
+
+  <!-- Error: No profiles -->
+  <div class="error-card">
+    <div class="error-title">No profiles found (exit 2)</div>
+    <div class="error-detail">You ran a generation command before authenticating.</div>
+    <div class="remediation">
+      <strong>Fix:</strong> Run the one-time login first:<br>
+      <code>gflow auth login --browser chrome</code>
+    </div>
+  </div>
+
+  <!-- Error: Auth expired -->
+  <div class="error-card">
+    <div class="error-title">Authentication expired (exit 3)</div>
+    <div class="error-detail">Your browser session is no longer valid.</div>
+    <div class="remediation">
+      <strong>Fix:</strong> Re-authenticate:<br>
+      <code>gflow auth login --browser chrome</code>
+    </div>
+  </div>
+
+  <!-- Error: Profile locked -->
+  <div class="error-card">
+    <div class="error-title">Profile locked (exit 11)</div>
+    <div class="error-detail">Another process holds this profile directory.</div>
+    <div class="remediation">
+      <strong>Fix:</strong> Close any running <code>gflow serve</code> daemon or stray Chrome windows, then retry.
+    </div>
+  </div>
+
+  <!-- ── Let your assistant drive it ── -->
+  <h2>Let your assistant drive it</h2>
+  <p>Everything above, an agent can do for you. Start the MCP server and point Claude, Cursor, or Copilot at it.</p>
+  <div class="terminal">
+    <div class="terminal-header">
+      <span class="terminal-dot red"></span>
+      <span class="terminal-dot yellow"></span>
+      <span class="terminal-dot green"></span>
+      <span class="terminal-title">Terminal</span>
+      <button class="copy-btn" onclick="copyCode(this)">Copy</button>
+    </div>
+    <div class="terminal-body">
+<span class="prompt">$</span> <span class="cmd">gflow mcp run</span>
+    </div>
+  </div>
+  <div class="output">
+    <div class="output-label">Output</div>
+    <div>serving over stdio:</div>
+    <div>  • gflow_generate_image</div>
+    <div>  • gflow_generate_video</div>
+    <div>ready — your assistant can drive Flow.</div>
+  </div>
+  <p class="terminal-note">
+    Just ask in plain language — the agent picks the model, aspect, and prompt tooling. See <a href="agents.md">Agent-driven</a> for the full setup.
+  </p>
+
+  <!-- ── Where to next ── -->
+  <h2>Where to next</h2>
+  <div class="req-badges">
+    <a class="req-badge" href="AUTHENTICATION.md">Authentication →</a>
+    <a class="req-badge" href="USER_GUIDE.md">User Guide (15 journeys) →</a>
+    <a class="req-badge" href="agents.md">Agent-driven (MCP) →</a>
+    <a class="req-badge" href="KNOWN_ISSUES.md">Known issues →</a>
+  </div>
+
+  <div class="footer">
+    gflow-cli · unofficial, not affiliated with Google · MIT-licensed<br>
+    Your credits, your account, your risk.
+  </div>
+
+</div>
+
+<script>
+  function toggleTheme() {
+    const html = document.documentElement;
+    const btn = document.querySelector('.theme-toggle');
+    if (html.dataset.mdColorScheme === 'slate') {
+      html.dataset.mdColorScheme = 'default';
+      btn.textContent = '☀️';
+    } else {
+      html.dataset.mdColorScheme = 'slate';
+      btn.textContent = '🌙';
+    }
+  }
+
+  function copyCode(btn) {
+    const terminal = btn.closest('.terminal');
+    const body = terminal.querySelector('.terminal-body');
+    // Copy only the command line(s) — lines starting with $
+    const lines = body.innerText.split('\n');
+    const commands = lines
+      .filter(l => l.trim().startsWith('$'))
+      .map(l => l.replace(/^\s*\$\s?/, '').trim());
+    navigator.clipboard.writeText(commands.join('\n')).then(() => {
+      btn.textContent = 'Copied!';
+      setTimeout(() => btn.textContent = 'Copy', 1500);
+    });
+  }
+
+  // Initialize theme icon
+  document.querySelector('.theme-toggle').textContent = '☀️';
+</script>
+
+</body>
+</html>

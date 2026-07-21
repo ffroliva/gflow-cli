@@ -64,7 +64,7 @@ nav:
   - Home ↗: https://ffroliva.github.io/gflow-cli/
   - Getting started:
       - Introduction: index.md
-      - Quickstart: quickstart.md
+      - Onboarding: onboarding.md
       - Installation: installation.md
       - Authentication: AUTHENTICATION.md
   - User Guide: USER_GUIDE.md

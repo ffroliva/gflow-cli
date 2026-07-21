@@ -13,7 +13,7 @@
 > implemented** — see [Backlog](#14-backlog--not-yet-implemented).
 
 > **Status (2026-06-02, LIVE-VERIFIED):** the create saga + character-editor UI generation are **shipped**
-> and verified end-to-end on denon82 (face + front/side/back triptych body, both reference slots bound,
+> and verified end-to-end on my-profile (face + front/side/back triptych body, both reference slots bound,
 > images downloaded, character read back). This document's selectors, editor URL, generation protocol
 > (Option B), `flow/entities` PATCH, and the CLI surface are **VERIFIED against shipped code**, not guesses.
 > The `nanopro` model picker is wired best-effort (non-fatal) and pending an explicit live confirmation — see
@@ -335,7 +335,7 @@ convenience later.
   `primaryMediaId`s, voice, personality. Model shallowly (raw ids) — the schema is reverse-engineered from one
   capture and may drift.
 - **Validation gate:** before production code, a `scripts/dev/` spike runs the full create→persist loop on
-  denon82 (≈1 credit) and asserts the character read-back carries `imageReferences[workflowId]`.
+  my-profile (≈1 credit) and asserts the character read-back carries `imageReferences[workflowId]`.
 - **Spike result (2026-06-02, 1 credit):** `createEntity` ✅ live. Generation step **disproved the
   `generate_image` reuse assumption** — it created a new project and the `flowWorkflows` PATCH 404'd. Root
   cause + fix captured in §6.2 (`entityContext` + existing-project gen). Orphans from the run: empty entity
@@ -385,7 +385,7 @@ convenience later.
 
 Language-agnostic (ligature/structural) selectors. Flow renders in the profile locale, so **never match on
 localized text** — use Material-Symbol ligatures (`i.google-symbols:text('<lig>')`) or structure. Rows marked
-**VERIFIED** are confirmed against the shipped `api/transports/ui_automation.py` + spike DOM dumps (denon82).
+**VERIFIED** are confirmed against the shipped `api/transports/ui_automation.py` + spike DOM dumps (my-profile).
 
 **Editor URL (VERIFIED — `/fx/` prefix required).** After REST `createEntity`, the character-editor path is
 
@@ -442,7 +442,7 @@ The `/gflow:plan` exit criteria must list each scenario as a named, covered test
 | **cross-platform / i18n** | non-EN Flow locale (ligature/structural selectors only); accented `--personality`/`--face-prompt` round-trip (PYTHONUTF8); Windows/macOS/Linux paths |
 | **observability** | each saga step emits a structlog event; `entityId` surfaced on every failure for recovery |
 
-Live-tier e2e (credit-spending: create, video reuse) gated behind explicit opt-in env and run on denon82 per
+Live-tier e2e (credit-spending: create, video reuse) gated behind explicit opt-in env and run on my-profile per
 the verification ledger (file count + dims + structlog invariants + read-back), not just mocked transports.
 
 ### Phase-2 coverage status (2026-06-02)
@@ -464,7 +464,7 @@ table → test mapping):
   Chrome-strategy guard at `__aenter__` is deferred to live e2e (Task 12)
 - #22 — face→body sequential (never gathered): saga sequential test
 
-**Remaining LIVE-e2e-only (Task 12):** the live binding/recovery/UTF-8 e2e on denon82 — real
+**Remaining LIVE-e2e-only (Task 12):** the live binding/recovery/UTF-8 e2e on my-profile — real
 `parentEntityId == entityId` against Flow's wire, mid-saga crash recovery against the real DB, and the
 slot-add `.nth(1)` + picker-include structural selectors under a non-EN locale.
 

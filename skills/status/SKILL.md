@@ -96,4 +96,4 @@ Just which plan is active and its goal. No task detail.
 
 - **Claude Code:** invoke via `/gflow:status`, `/gflow:next`, or `/gflow:active` (thin wrappers around this skill).
 - **Cursor / Aider / Codex:** include this file in context; call the variant by name.
-- **Gemini CLI:** read this file before asking "what's the next task?".
+- **Antigravity (`agy`):** read this file before asking "what's the next task?".

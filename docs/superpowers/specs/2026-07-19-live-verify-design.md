@@ -76,7 +76,7 @@ gflow-cli work done, especially anything touching a generation path — Part 2")
 proactive-invocation mechanism fires it at both points, the same way `brainstorming` already
 auto-triggers on "let's build X." This mechanism is specific to agents that honor the
 `using-superpowers` convention (this project's primary Claude Code workflow) — it is not a
-substitute for discoverability by other agents this repo explicitly supports (Cursor/Codex/Gemini
+substitute for discoverability by other agents this repo explicitly supports (Cursor/Codex/Antigravity
 CLI/Aider), which is why the `AGENTS.md` skills-reference table row (3.5) is required, not optional
 reinforcement.
 

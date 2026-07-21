@@ -7,6 +7,62 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+## [0.42.0] — 2026-07-21
+
+### Fixed
+
+- Content-safety `400` responses from Flow are now classified as
+  `ContentPolicyError` (exit code 5) instead of the misleading `WireFormatError`,
+  so callers can branch on a policy rejection deterministically. (#359)
+- Corrected a false `flow_operation_id` invariant. Live verification found
+  `veo-lite` can produce a `remote_started` checkpoint with `operation_id` unset,
+  contradicting the prior claim that only `omni-flash` omits the operation name.
+  `flow_operation_id` is best-effort/optional; `media_id` is the canonical handle
+  used by polling, download, and every CLI lookup. No behaviour change; a
+  regression test now locks the operation-name parser against the real veo
+  capture fixture. (#361)
+
+### Changed
+
+- **Replaced Gemini CLI with Antigravity (`agy`) as the supported Google coding
+  agent** across skills and docs (Google retired Gemini CLI in favor of the
+  Antigravity harness). Antigravity auto-discovers `AGENTS.md` natively, so the
+  dedicated `GEMINI.md` hub is **removed** and Antigravity is listed among the
+  auto-discovering tools in `AGENTS.md`. (#360)
+- **`llm-council` skill:** the `high` tier's second external reviewer is now
+  Antigravity (`agy`) instead of Gemini CLI; `agy` is promoted from an opt-in
+  tool to the pinned `high`-tier slot and the `--include-agy` flag is dropped.
+  When `agy` is unavailable or fails non-interactively, the skill suggests
+  installing Antigravity or substituting another external CLI coding agent rather
+  than failing. (#360)
+- Forward-looking agent references updated for consistency across `AGENTS.md`,
+  `CLAUDE.md`, `README.md`, `llms.txt`, `docs/INDEX.md`, `docs/AGENT_GUIDE.md`,
+  `skills/*`, and CI helper strings. Historical release notes and past
+  verification records are left unchanged. (#360)
+
+### Removed
+
+- Removed the dead `fail_processing_tasks` daemon-recovery method, superseded by
+  the checkpoint-classifying `recover_processing` (internal cleanup; no
+  user-facing behaviour change). (#361)
+
+### Documentation
+
+- Added an onboarding page and quickstart flow to the published docs site, and
+  anonymized personal account data across it. Security vulnerabilities now report
+  through GitHub's private vulnerability reporting rather than a personal email. (#362)
+- Corrected the same-profile concurrency framing (MCP page and docs) to the
+  cross-process `ProfileLease` fail-fast contract (`ProfileLockedError`, exit 11),
+  and recorded that the POSIX `fcntl.flock` lease was verified green on the
+  Windows/macOS/Linux CI matrix. (#361)
+
+### Tests
+
+- Added live-gated end-to-end tests for crash-recovery (a crashed post-submit task
+  recovers as `indeterminate` and is never resubmitted) and cancellation-safe
+  teardown (the profile lease releases on mid-launch cancel). Both were confirmed
+  against real Flow on 2026-07-21. (#361)
+
 ## [0.41.0] — 2026-07-20
 
 ### Added
@@ -2169,7 +2225,8 @@ shell-script template that branches on these codes.
 
 First skeleton. Not functional end-to-end yet.
 
-[Unreleased]: https://github.com/ffroliva/gflow-cli/compare/v0.41.0...HEAD
+[Unreleased]: https://github.com/ffroliva/gflow-cli/compare/v0.42.0...HEAD
+[0.42.0]: https://github.com/ffroliva/gflow-cli/compare/v0.41.0...v0.42.0
 [0.41.0]: https://github.com/ffroliva/gflow-cli/compare/v0.40.0...v0.41.0
 [0.40.0]: https://github.com/ffroliva/gflow-cli/compare/v0.39.0...v0.40.0
 [0.39.0]: https://github.com/ffroliva/gflow-cli/compare/v0.38.1...v0.39.0

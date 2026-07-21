@@ -124,7 +124,7 @@ is reserved in `check_materiality.py` (which already classifies every change).
 ### Satisfying a gate without Claude Code
 
 Every gate enforces a **deliverable**, not a Claude-specific command. Non-Claude agents
-(Cursor / Codex / Gemini CLI / Aider) and humans read the relevant `skills/<name>/SKILL.md`
+(Cursor / Codex / Antigravity / Aider) and humans read the relevant `skills/<name>/SKILL.md`
 directly and produce the same artifact — e.g. read `skills/predict/SKILL.md` and write the
 5-persona verdict into the PR, instead of running `/gflow:predict`.
 

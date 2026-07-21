@@ -219,7 +219,7 @@ PowerShell equivalent uses `$LASTEXITCODE` (per-call). This is a documentation-o
 
 **Context:** Claude python-reviewer's CRITICAL list claimed the README Python snippet had 4 bugs. I checked the actual signatures with `grep` against `src/gflow_cli/api/client.py` and `src/gflow_cli/api/dto.py`. Three of the 4 were real bugs; one was off by a different mechanism than the reviewer described. Codex independently flagged `tasks/lessons.md` as missing — the file existed at 195 lines (false positive).
 
-**Rule:** No reviewer (Claude, Codex, Gemini) earns a `✓verified` row in the council consensus matrix without a literal `grep`/`sed`/file-existence check against the actual source. The discipline is named "don't guess" — the consequence of skipping it is propagating a reviewer's invented "fix" into a release. Wire one `ctx_execute(language: shell)` block per audit that probes every CLI signature, dto shape, route name, and method that the reviewers reference.
+**Rule:** No reviewer (Claude, Codex, Antigravity) earns a `✓verified` row in the council consensus matrix without a literal `grep`/`sed`/file-existence check against the actual source. The discipline is named "don't guess" — the consequence of skipping it is propagating a reviewer's invented "fix" into a release. Wire one `ctx_execute(language: shell)` block per audit that probes every CLI signature, dto shape, route name, and method that the reviewers reference.
 
 **Source:** Commit `507de9a`. Multiple council audits.
 
