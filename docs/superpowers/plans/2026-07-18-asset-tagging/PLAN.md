@@ -1,7 +1,14 @@
 # Asset Tagging (`@` Mentions) Implementation Plan
 
-> **For agentic workers:** Run `/gflow:status --feature asset-tagging` to find the next
-> unchecked task. Implement one task at a time. Run `/gflow:check` before every commit.
+> **✅ SHIPPED — v0.40.0 ([#344](https://github.com/ffroliva/gflow-cli/issues/344)).**
+> This plan is **complete and archived for historical reference**. The `@Name` mention feature
+> (image `t2i`/`i2i` character + media mentions; video `t2v`/`i2v`/`r2v` character mentions) is live
+> and documented in [CHARACTER.md](../../../CHARACTER.md), [REFERENCE_STRATEGIES.md](../../../REFERENCE_STRATEGIES.md),
+> USAGE.md, and USER_GUIDE.md. The task checkboxes below were **not** individually back-ticked
+> (they were never a live post-ship record); treat this document as design history, not a live tracker.
+
+> **For agentic workers (historical):** this plan is done — do not resume it. Run
+> `/gflow:status` for current work.
 
 **Goal:** Users can reference project assets by name inside prompt text (`@CaptainZoro`, `@logo`)
 on `gflow video t2v/r2v` (character mentions) and `gflow image t2i/i2i` (character + media
