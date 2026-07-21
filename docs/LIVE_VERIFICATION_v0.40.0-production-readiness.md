@@ -15,6 +15,56 @@
 > and why, per the design spec's evidence rule
 > (`docs/superpowers/specs/2026-07-19-production-readiness-hardening-design.md`
 > § Evidence deliverable).
+>
+> **Update — see the "2026-07-21 live follow-up" section immediately below:** a
+> second live session closed the crash-recovery `remote_started` chain and the
+> D4 mid-launch cancellation path, added two durable live-gated e2e tests, and
+> corrected a false `flow_operation_id` invariant surfaced live. The lists in
+> this document describe the original v0.40.0 run; the follow-up section is the
+> authoritative update.
+
+## 2026-07-21 live follow-up (0.42.0 cycle)
+
+A second live session (profile `ffroliva`, 2026-07-21) closed several items left
+open by the original run and added durable live-gated e2e tests. `ffroliva` was
+on Flow's agentic UI cohort that day (classic mode unreachable, issue #174 A/B).
+
+**Crash-recovery `remote_started` chain — CONFIRMED (1 credit).** A real
+`veo-lite` t2v driven through the worker path with the C1 checkpoint observer
+completed, and the observer persisted a real `remote_started` checkpoint
+carrying the media handle to the DB — live-confirming the
+observer→checkpoint→DB chain for a *paid* generation. The recovery step
+(`remote_started` → `indeterminate`, never resubmit) is deterministic, proven by
+unit tests plus the credit-free phase-2 of the new e2e test. Durable artifact:
+`tests/e2e/test_crash_recovery_e2e.py` (live-gated, ~1 credit). Auto-reconciliation
+of a crashed paid job remains a deliberate **unimplemented** seam (the safe stub:
+`indeterminate` + manual reconcile).
+
+**Finding — `flow_operation_id` NULL on veo-lite → false invariant corrected.**
+That run also surfaced `operation_id=None` in the `remote_started` checkpoint for
+`veo-lite`, contradicting the prior claim that only omni-flash omits it.
+Root-caused: the operation-name parser is correct; `flow_operation_id` is
+best-effort/optional and `media_id` is the canonical handle (poll + download +
+every CLI lookup use it). The false invariant was corrected in `KNOWN_ISSUES.md`
+and the `client.py` docstring, and a regression test now locks the parser against
+the real veo fixture. No production behavior change — generation completed and
+downloaded correctly on the `None`.
+
+**D4 cancellation (mid-launch) — CONFIRMED (credit-free).** A real Chrome context
+was launched and the operation cancelled during `__aenter__` (before any submit
+gesture); the ProfileLease released (proven by successful re-acquisition) and no
+gflow-owned Chrome process remained. Durable artifact:
+`tests/e2e/test_cancellation_e2e.py` (live-gated, 0 credits). The other three D4
+cancellation sub-paths (mid-context-close with a wedged page, Ctrl-C during
+passive-capture reap, daemon SIGINT in-flight) remain deterministically
+unit-proven (`tests/api/test_concurrency.py`) and are not separately
+live-triggered — they are timing-fragile to reproduce live, and the mid-launch
+path exercises the same `run_teardown_step` release contract.
+
+**Still open (honest).** The full daemon/MCP lifecycle over HTTP (`gflow serve`)
+was not live-exercised (the worker path was exercised directly in the e2e test);
+auto-reconciliation remains unimplemented by design; the three fragile
+cancellation sub-paths remain unit-proven only.
 
 ## Commit and environment
 
