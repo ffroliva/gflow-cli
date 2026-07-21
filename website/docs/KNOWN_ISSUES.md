@@ -38,7 +38,7 @@ live-proven in the **Add-Media** dialog: v0.26.0 i2i-by-UUID, #282 scroll
 fixes). The **frame-slot** dialog carried a negative prior — #237's
 name-search there never surfaced generated media (v0.25.0 rework) — but the
 thumbnail-URL tile match succeeds where name search failed. Live evidence
-(2026-07-11, denon82): `frame_ref_attached {slot: Start}` → wire capture on
+(2026-07-11, my-profile): `frame_ref_attached {slot: Start}` → wire capture on
 `batchAsyncGenerateVideoStartImage` with the asset's `startImage` bound →
 SUCCESSFUL 720×1280 mp4; **zero** `image_uploaded` events (no duplicate
 upload). Negative check: a foreign UUID exits 9 pre-generation with a
@@ -57,7 +57,7 @@ The `duration_tab` selector cascade (`[role='tab']:text-is('4s')` /
 panel. Pre-fix this silently produced a clip of Flow's default length; since
 the #289 fix the run fails fast with `UiSelectorDriftError` (exit 23) and a
 `debug_no_duration_tab.png` screenshot — live-verified 2026-07-11 on the
-denon82 profile (aborted pre-submit, saving the 10-credit generation).
+my-profile profile (aborted pre-submit, saving the 10-credit generation).
 **Workaround:** omit `--duration` to accept Flow's default.
 
 **Root cause (confirmed live 2026-07-11, screenshot evidence on #288): the
@@ -150,7 +150,7 @@ to refresh the session before retrying 4K. Wire detail:
 > **Resolution (2026-05-20, v0.7.0):** the production `ui_automation` transport
 > drives the Flow web UI so Flow's own JS issues `batchGenerateImages` with
 > full auth context — bypassing the 401 on the `aisandbox-pa` HTTP path
-> entirely. Live-verified end-to-end on the `ffroliva` profile across four
+> entirely. Live-verified end-to-end on the `your-name` profile across four
 > aspect ratios (`9:16`, `16:9`, `1:1`, `4:3`); see
 > [`docs/LIVE_VERIFICATION_v0.7.0.md`](docs/LIVE_VERIFICATION_v0.7.0.md). The
 > 401 still hits the experimental HTTP transports
@@ -412,15 +412,15 @@ find "$HOME/Downloads/gflow-cli" -type f -mtime +30 -delete
 ### `batchGenerateImages` HTTP 403 — WAF / reCAPTCHA `PUBLIC_ERROR_UNUSUAL_ACTIVITY`
 
 - **Status:** Open · **Severity:** High (blocks affected profile until WAF score decays or profile is replaced)
-- **First observed:** 2026-05-23 on profile `denon82` during `gflow image batch` runs
+- **First observed:** 2026-05-23 on profile `my-profile` during `gflow image batch` runs
 - **Surfaces as:** `gflow_cli.errors.WafRejectionError: WAF rejection (HTTP 403): batchGenerateImages HTTP 403 — reCAPTCHA score too low or WAF fingerprint mismatch`
 - **structlog signature:** `ui_automation.batch_response_seen` with `status=403` followed by `ui_automation.batch_403_body` containing `'message': 'reCAPTCHA evaluation failed', 'status': 'PERMISSION_DENIED', 'reason': 'PUBLIC_ERROR_UNUSUAL_ACTIVITY'`
 
 Distinct from the historical `aisandbox-pa` 401 (resolved in v0.7.0). The 403
 here means Flow accepted the session as authenticated but reCAPTCHA Enterprise
-scored the request as bot-like and blocked the generation call. The `denon82`
+scored the request as bot-like and blocked the generation call. The `my-profile`
 profile reproducibly 403s on `batchGenerateImages` even after a fresh
-`gflow auth login --browser chrome`; the same code path on profile `ffroliva`
+`gflow auth login --browser chrome`; the same code path on profile `your-name`
 (re-authenticated the same day) succeeded end-to-end across one t2i + a 4-image
 batch — so it is not a global incompatibility but a per-profile WAF state.
 
@@ -510,7 +510,7 @@ issue and not blocked by any code change in this repo.
   `material-icons` (NOT `google-symbols`) and the slots are `<div type="button">`,
   not children of any `div > button` wrapper. Production I2V therefore relied on
   the English-text fallback and silently broke on non-EN profiles. Discovered
-  via DOM probe + LIVE e2e on `ffroliva` (de-DE → pt-BR effective). Replaced
+  via DOM probe + LIVE e2e on `your-name` (de-DE → pt-BR effective). Replaced
   with `FRAME_SLOTS_STRUCT = "div[type='button'][aria-haspopup='dialog']"` (a
   unique pattern in Flow's editor). Also added a `.first` fallback for the
   End-frame case — after Start is attached, only one structural slot remains
@@ -526,13 +526,13 @@ issue and not blocked by any code change in this repo.
   once that completes.
 
 - **Live e2e on `de-DE` (2026-05-25)** — `GFLOW_CLI_LOCALE=de-DE` T2V on
-  `ffroliva` (Pro) completed in 70.9 s and returned `MEDIA_GENERATION_STATUS_SUCCESSFUL`
+  `your-name` (Pro) completed in 70.9 s and returned `MEDIA_GENERATION_STATUS_SUCCESSFUL`
   with a 3.1 MB 1280×720 H.264 mp4 (8 s clip). Confirms the structural-first
   selectors and `GFLOW_CLI_LOCALE` env override work end-to-end on a locale
   outside the original 9-entry English/PT-BR list.
 
 - **Live I2V e2e on `de-DE` (2026-05-26, issue #63 closure)** —
-  `GFLOW_CLI_LOCALE=de-DE` I2V (Start + End frames) on `ffroliva` via
+  `GFLOW_CLI_LOCALE=de-DE` I2V (Start + End frames) on `your-name` via
   `tests/e2e/test_transports_e2e.py::test_e2e_i2v_start_end_frame_attach`
   completed in 124 s and returned a terminal `SUCCESSFUL` `VideoResult` with a
   downloaded mp4 carrying valid `ftyp` magic bytes. The test asserts on the
@@ -871,7 +871,7 @@ wrote to the wrong directory.
 profile directory immediately after the session is verified. `profile_store.list_profiles()`
 surfaces this as `ProfileMeta.google_account`, and `gflow auth list` (both table
 and `--json`) now includes a **Google account** column. The first-run `default`
-profile is automatically renamed to the email local-part (e.g. `profile_ffroliva`)
+profile is automatically renamed to the email local-part (e.g. `profile_your-name`)
 once the email is known, and `config.toml` is updated atomically.
 
 Profiles created before this fix continue to work and display `unknown` in the
@@ -907,7 +907,7 @@ why; re-run on the next release (≥ v0.9.0).
 
 The two long Open-section entries above (*Image generation returns HTTP 401* and *REST API 401 — all `aisandbox-pa.googleapis.com` generation endpoints blocked*) were closed by the same architectural change: `UiAutomationTransport` drives the Flow web UI so Flow's own JavaScript issues every generation request with the full browser auth context (cookies, reCAPTCHA, `Origin`/`Referer` headers). The 401 had affected every direct HTTP call from `evaluate_fetch` / `bearer` / `sapisidhash`; those transports now live under `src/gflow_cli/api/transports/experimental/` and are not on the production path.
 
-End-to-end live-verified on the `ffroliva` profile across `9:16`, `16:9`, `1:1`, and `4:3` aspect ratios; see [`docs/LIVE_VERIFICATION_v0.7.0.md`](docs/LIVE_VERIFICATION_v0.7.0.md) for timing, file sizes, and exact filenames. Video T2V uses the same approach (Phase A — PR #23 — merged 2026-05-19).
+End-to-end live-verified on the `your-name` profile across `9:16`, `16:9`, `1:1`, and `4:3` aspect ratios; see [`docs/LIVE_VERIFICATION_v0.7.0.md`](docs/LIVE_VERIFICATION_v0.7.0.md) for timing, file sizes, and exact filenames. Video T2V uses the same approach (Phase A — PR #23 — merged 2026-05-19).
 
 ---
 

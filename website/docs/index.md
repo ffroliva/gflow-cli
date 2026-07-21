@@ -19,7 +19,7 @@ Flow's web UI is fine for one-off clips. It's slow for real work — batches, ch
 
     Script Veo and Imagen from the terminal: `gflow image`, `gflow video`, `gflow character`, `gflow movie`, `gflow batch`.
 
-    [:octicons-arrow-right-24: Quickstart](quickstart.md)
+    [:octicons-arrow-right-24: Onboarding](onboarding.md)
 
 -   __Let your assistant drive it__
 
@@ -46,4 +46,4 @@ Flow's web UI is fine for one-off clips. It's slow for real work — batches, ch
 - `uv` (to install the tool) and a Chromium the browser transport can drive.
 - A display for the one-time browser login.
 
-Ready? [**Start with the Quickstart →**](quickstart.md)
+Ready? [**Start with the Onboarding →**](onboarding.md)
