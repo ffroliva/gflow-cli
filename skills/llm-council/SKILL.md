@@ -1,13 +1,13 @@
 ---
 name: llm-council
-description: Use when a pr-council-review (PR or branch mode) result needs independent corroboration from a different model family before trusting a GREEN verdict — high-stakes, security-sensitive, or architecturally significant reviews where same-model-family Claude subagents might share a blind spot. Also use when the user asks for "external", "second opinion", "cross-model", or names codex/gemini/agy alongside a review.
+description: Use when a pr-council-review (PR or branch mode) result needs independent corroboration from a different model family before trusting a GREEN verdict — high-stakes, security-sensitive, or architecturally significant reviews where same-model-family Claude subagents might share a blind spot. Also use when the user asks for "external", "second opinion", "cross-model", or names codex/antigravity (`agy`) or another external CLI coding agent alongside a review.
 ---
 
 # `llm-council` — external-tools review layer
 
 ## Overview
 
-Wraps `pr-council-review` (unchanged) and adds a layer of external CLI coding agents (`codex`, `gemini`, opt-in `agy`) as additional independent reviewers, then folds their verdicts into the same synthesis. Internal Claude subagents are independent per-dimension but share one model family's blind spots — a phrasing choice, a Windows-vs-POSIX nuance, or a syntax error that reads fine to one Claude reviewer reads fine to all of them. A different model family catches a different error distribution. Confirmed live: on one review, external tools caught 6 real, distinct issues (a wording-accuracy bug, a wrong test count, a Windows-only test-triviality nuance, a test-isolation gap, a missing test, a malformed markdown fence) that 12 internal Claude-subagent dispatches (6 dimensions × 2 rounds) had all missed.
+Wraps `pr-council-review` (unchanged) and adds a layer of external CLI coding agents (`codex`, plus Antigravity — the `agy` harness) as additional independent reviewers, then folds their verdicts into the same synthesis. Internal Claude subagents are independent per-dimension but share one model family's blind spots — a phrasing choice, a Windows-vs-POSIX nuance, or a syntax error that reads fine to one Claude reviewer reads fine to all of them. A different model family catches a different error distribution. Confirmed live: on one review, external tools caught 6 real, distinct issues (a wording-accuracy bug, a wrong test count, a Windows-only test-triviality nuance, a test-isolation gap, a missing test, a malformed markdown fence) that 12 internal Claude-subagent dispatches (6 dimensions × 2 rounds) had all missed.
 
 ## When to Use
 
@@ -20,8 +20,7 @@ Wraps `pr-council-review` (unchanged) and adds a layer of external CLI coding ag
 |---|---|---|
 | `small` (default) | ✅ full dimension council | none — identical to running `pr-council-review` directly |
 | `medium` | ✅ | `codex` |
-| `high` | ✅ | `codex` + `gemini` |
-| any tier + `--include-agy` | ✅ | + `agy` (opt-in only — see registry) |
+| `high` | ✅ | `codex` + Antigravity (`agy`) |
 
 Tier controls **tool breadth**, not review rounds. Fix → re-verify → repeat until GREEN (or a round cap) happens at every tier — that's how council review works, not a tier knob.
 
@@ -37,14 +36,12 @@ Fixed, tested invocation recipes. Do not improvise a command for a listed tool �
 - **Timeout budget:** real calls run 10-20 min at default (`xhigh`) reasoning effort. Always background it — never block synchronously.
 - **Orphan risk:** a killed/timed-out `codex exec` can leave `codex.exe` / `codex-code-mode-host.exe` / sandbox-helper processes running on Windows. After any kill, verify via `tasklist`/`ps` that the named PIDs are actually gone before retrying — a retry racing an orphan still writing the same output path silently corrupts the result.
 
-### `gemini`
+### Antigravity (`agy`)
 
-- No proven recipe yet — first real use in a given environment IS the recipe-discovery pass. Probe with `gemini --version` first regardless.
-
-### `agy` (opt-in only — excluded from all default tiers)
-
+- **What it is:** Google's Antigravity harness, invoked via `agy`. It supplies the `high`-tier's second, different-model-family opinion.
 - **Best-known recipe:** `agy --agent <gsd-agent-name> --new-project --add-dir <absolute-repo-dir> -p "<prompt>"` (run `agy agents` to list available agent names, e.g. `gsd-plan-checker` for reviewing a plan).
-- Has failed non-interactively in two different ways in testing (an interactive workspace prompt even with `--add-dir`; a bare unexplained termination error even with `--agent`/`--new-project`) — plausibly account-quota exhaustion, unconfirmed. Kept opt-in until proven reliable; do not silently retry past its probe if it fails.
+- **Probe:** `agy --version` first regardless — a fast binary-health check.
+- **If it's missing or fails:** Antigravity is a newer harness and has failed non-interactively in testing (an interactive workspace prompt even with `--add-dir`; a bare unexplained termination error even with `--agent`/`--new-project`) — plausibly account-quota exhaustion, unconfirmed. Don't silently retry past its probe. When `agy` isn't installed or won't run non-interactively, **suggest installing it (or substituting another external CLI coding agent — e.g. a codex-only `medium` run)** and continue best-effort with whatever did return; never block the whole round on it.
 
 ## Dispatch Flow
 
@@ -65,7 +62,7 @@ Fixed, tested invocation recipes. Do not improvise a command for a listed tool �
 | Treating one failed external tool as a reason to abandon the whole external layer | Best-effort: drop that tool for this round, disclose it, keep going with whatever did return |
 | Blocking synchronously on an external tool call | Always background it — internal dimensions and other external tools shouldn't wait |
 | Retrying a timed-out tool without checking for orphaned processes first | `tasklist`/`ps` check + explicit kill before any retry against the same output path |
-| Including `agy` by default | It's opt-in only until its non-interactive failures are understood — don't add it to `small`/`medium`/`high` silently |
+| Silently downgrading to codex-only when `agy` is unavailable | Disclose the drop and **suggest installing Antigravity or substituting another external CLI agent** — don't hide the reduced coverage |
 
 ## Cross-References
 

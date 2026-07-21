@@ -585,31 +585,37 @@ one of the 14 supported locales or in English.
 
 ---
 
-### `omni-flash` t2v response omits operation name — `flow_operation_id` persists NULL
+### t2v response can omit operation name — `flow_operation_id` persists NULL
 
 - **Status:** Open · **Severity:** Low · **Affects:** v0.9.0+ (data layer)
 
 The data layer's `on_started` callback captures
 `operations[0].operation.name` from each `batchAsyncGenerateVideoText`
-response and persists it as `operations.flow_operation_id`. The
-`omni-flash` model's response shape does not carry that field, so
-omni-flash rows end up with `flow_operation_id` NULL while `veo-*` rows
-carry the expected `operations/...` identifier. The rest of the row
-(prompt, model, aspect, started/completed timestamps, batch ID, output
-paths) is recorded normally.
+response and persists it as `operations.flow_operation_id`. This field
+is **best-effort, not guaranteed for any model**: `omni-flash`'s response
+shape does not carry it, so omni-flash rows end up with
+`flow_operation_id` NULL. **Update 2026-07-21 (live):** the same NULL
+was observed on a live `veo-lite` t2v run (`remote_started` checkpoint
+with `operation_id=None`), on an agentic-UI-cohort account — so `veo-*`
+is not a reliable guarantee either; the original claim that veo-* rows
+always carry the operation name was false. The rest of the row (prompt,
+model, aspect, started/completed timestamps, batch ID, output paths) is
+recorded normally regardless.
 
-**Impact:** cosmetic for now — `gflow data media <id>` and provenance
-lookup by Flow media ID still work. Any future feature that joins on
-`flow_operation_id` (none in the current CLI) would miss omni-flash
-rows.
+**Impact:** cosmetic/provenance-only — `media_id` is the canonical
+handle (poll, download, and every CLI lookup use it, not
+`flow_operation_id`). `gflow data media <id>` and provenance lookup by
+Flow media ID still work. Nothing in the current CLI queries by
+`flow_operation_id`; a future feature that did would miss rows on any
+model whose response omits the operation name.
 
 **Workaround:** none needed if you don't query by `flow_operation_id`.
 
-**Roadmap:** capture an `omni-flash` `batchAsyncGenerateVideoText`
-response sample, identify the equivalent provenance handle (if any), and
-either map it into `flow_operation_id` or document that omni-flash
-legitimately has no such identifier. Track via a follow-up issue once a
-sample is captured.
+**Roadmap:** capture response samples across models (including veo-lite)
+where the operation name is absent, identify the equivalent provenance
+handle (if any), and either map it into `flow_operation_id` or document
+that these cases legitimately have no such identifier. Track via a
+follow-up issue once samples are captured.
 
 ---
 

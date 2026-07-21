@@ -124,10 +124,11 @@ def emit_error_event(
 
     Per-class extensions:
 
-    * :class:`ContentPolicyError` → ``upstream_status=200``. Flow returns
-      HTTP 200 with empty ``media[]`` for content rejections; RFC 9457
-      forbids a 2xx ``status`` on a Problem Details payload, so we surface
-      the literal upstream status only as an event extension.
+    * :class:`ContentPolicyError` → ``upstream_status``. Flow returns
+      HTTP 200 with empty ``media[]`` for content rejections, or HTTP 400
+      with a content-safety reason (``PUBLIC_ERROR_UNSAFE_GENERATION`` et
+      al.). RFC 9457 forbids a 2xx ``status`` on a Problem Details payload,
+      so we surface the literal upstream status only as an event extension.
     * :class:`WireFormatError` → ``discovery`` payload (``route_name``,
       ``http_status``, ``content_type``, ``top_level_keys``, ...). Lets
       ``grep error_class=WireFormatError`` reveal what was unexpected.
@@ -138,7 +139,7 @@ def emit_error_event(
         "cli_command": cli_command,
     }
     if isinstance(exc, ContentPolicyError):
-        payload["upstream_status"] = 200
+        payload["upstream_status"] = exc.status if exc.status is not None else 200
     if isinstance(exc, WireFormatError):
         payload["discovery"] = exc.discovery
     logger.error("error_raised", **payload)

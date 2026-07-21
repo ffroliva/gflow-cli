@@ -309,31 +309,6 @@ class QueueRepository:
         except sqlite3.IntegrityError as exc:
             raise DataIntegrityError(detail=str(exc), route="queue.update_task_status") from exc
 
-    def fail_processing_tasks(self, profile_name: str, error_message: str) -> int:
-        now = _utc_now()
-        error_payload = {
-            "type": "https://gflow-cli.dev/errors/daemon-recovery",
-            "title": "Daemon Boot Recovery",
-            "status": 500,
-            "detail": error_message,
-        }
-        error_str = json.dumps(error_payload)
-        try:
-            with self._store.transaction(immediate=True):
-                cursor = self._store.conn.execute(
-                    """
-                    UPDATE generation_queue
-                    SET status = 'failed',
-                        error_json = ?,
-                        updated_at = ?
-                    WHERE profile_name = ? AND status = 'processing'
-                    """,
-                    (error_str, now, profile_name),
-                )
-                return cursor.rowcount
-        except sqlite3.IntegrityError as exc:
-            raise DataIntegrityError(detail=str(exc), route="queue.fail_processing_tasks") from exc
-
 
 def classify_interrupted(checkpoint: dict[str, Any] | None) -> str:
     """Truthful terminal status for a task interrupted (cancelled or crashed)

@@ -912,7 +912,7 @@ Default sort: newest first (by `created_at`). Exit codes: 0 success (including t
 gflow data list projects
 
 # All images for one profile, aggregated by asset by default
-gflow data list images --profile ffroliva --limit 50 --offset 0
+gflow data list images --profile your-name --limit 50 --offset 0
 
 # Show every local file copy separately
 gflow data list images --all-copies
@@ -925,7 +925,7 @@ gflow data list profiles
 
 # Failed generations, newest first (v0.39.0+, #341): started_at, command, mode,
 # model, profile, error_type (waf-rejection, content-policy, ...), redacted detail
-gflow data list errors --profile denon82 --json | jq '{started_at, error_type}'
+gflow data list errors --profile my-profile --json | jq '{started_at, error_type}'
 ```
 
 `errors` lists terminal `status="failed"` operation rows — every paid

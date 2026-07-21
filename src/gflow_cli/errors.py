@@ -197,15 +197,27 @@ class RateLimitError(FlowApiError):
 
 
 class ContentPolicyError(FlowApiError):
-    """Flow returned 200 with empty media[]. ``status`` is intentionally
-    omitted from to_problem_details() per RFC 9457 — ``status`` is the HTTP
-    status of the problem, and 200 conflates with success. The literal
-    upstream status (200) is recorded only via the ``error_raised`` log event
-    as an ``upstream_status`` extension (see observability.py).
+    """Flow rejected the request under its content policy.
 
-    Enforcement is at the class level (overrides to_problem_details) — relying
-    on callers to omit ``status=`` would silently break the RFC 9457 contract
-    the first time someone added it for symmetry with other error classes.
+    Two known raise sites:
+
+    1. **HTTP 200 with empty ``media[]``** — the classic content-safety path
+       (``_common.py``). ``status`` is omitted from ``to_problem_details()``
+       per RFC 9457 — 200 conflates with success. The literal upstream
+       status (200) is recorded only via the ``error_raised`` log event as
+       an ``upstream_status`` extension (see observability.py).
+
+    2. **HTTP 400 with a content-safety reason** — ``_raise_for_non_retryable``
+       in ``client.py``. The body carries ``details[].reason`` =
+       ``PUBLIC_ERROR_UNSAFE_GENERATION`` (or ``_CONTENT``,
+       ``_FACE``, ``_IDENTITY``). ``status=400`` is set on the exception
+       but stripped from ``to_problem_details()`` per the same RFC 9457
+       contract.
+
+    Enforcement is at the class level (overrides ``to_problem_details``) —
+    relying on callers to omit ``status=`` would silently break the RFC 9457
+    contract the first time someone added it for symmetry with other error
+    classes.
     """
 
     problem_type = "https://gflow-cli.dev/errors/content-policy"

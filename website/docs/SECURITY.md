@@ -119,7 +119,7 @@ The following controls are active on this repository to prevent accidental leaka
 
 Commit `369fd1e` (2026-05-16) pushed artefacts that have since been removed from HEAD via `git rm --cached`. The data exposed was:
 
-- Windows username (`ffrol`) and Google profile name (`denon82`) in script source files
+- Windows username (`your-user`) and Google profile name (`my-profile`) in script source files
 - A CDP browser lock file (contained browser PID and port — no auth tokens)
 - AI-generated JPG images (no PII)
 - Flow UI element dumps in JSON (no auth tokens, UI text only)
@@ -129,7 +129,7 @@ Commit `369fd1e` (2026-05-16) pushed artefacts that have since been removed from
 **To fully purge the history** (if your risk posture requires it):
 ```bash
 # Install: pip install git-filter-repo
-git filter-repo --path denon82/ --invert-paths --force
+git filter-repo --path my-profile/ --invert-paths --force
 git filter-repo --path-glob 'test_assets/smoke_*/' --invert-paths --force
 git filter-repo --path-glob 'test_assets/debug_*/' --invert-paths --force
 git push --force --all
@@ -225,8 +225,8 @@ Controls:
 
 | Issue type | How |
 |---|---|
-| **Security vulnerability** (RCE, auth bypass, secret leak in logs/output) | Email <ffroliva@gmail.com> with `gflow-cli SECURITY` in the subject. **Do not** open a public GitHub issue. PGP key available on request. |
-| **Suspected supply-chain compromise** | Email + open a private GitHub Security Advisory at <https://github.com/ffroliva/gflow-cli/security/advisories/new>. |
+| **Security vulnerability** (RCE, auth bypass, secret leak in logs/output) | Report privately via GitHub's [private vulnerability reporting](https://github.com/ffroliva/gflow-cli/security/advisories/new) form. **Do not** open a public GitHub issue. |
+| **Suspected supply-chain compromise** | Open a private GitHub Security Advisory at <https://github.com/ffroliva/gflow-cli/security/advisories/new>. |
 | **Functional bug** (something just broke) | Public issue at <https://github.com/ffroliva/gflow-cli/issues> — include error output, OS, Python version. |
 | **Documentation issue** (this page is wrong / unclear) | PR welcome. |
 
