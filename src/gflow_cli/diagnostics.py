@@ -15,14 +15,26 @@ from __future__ import annotations
 
 import hashlib
 import hmac
+import json
+import os
 import re
 import secrets
+import stat as stat_module
+import sys
 from collections import deque
 from dataclasses import dataclass
+from datetime import UTC, datetime
+from pathlib import Path
 from typing import cast
 from urllib.parse import urlsplit
 
+if sys.platform == "win32":
+    import msvcrt
+else:
+    import fcntl
+
 __all__ = [
+    "BundleDir",
     "CommandHasher",
     "ConsoleRecord",
     "ErrorBodySummary",
@@ -39,6 +51,7 @@ __all__ = [
     "reduce_error_body",
     "sanitize_url",
     "text_summary",
+    "validated_incidents_root",
 ]
 
 
@@ -418,3 +431,175 @@ class ListenerBookkeeping:
             return False
         self._attached.discard(target_id)
         return True
+
+
+# --- bundle filesystem (design §5, §7, §8) ---------------------------------
+
+_PENDING_MARKER_SCHEMA = "gflow-incident-pending-v1"
+_PENDING_MARKER_CAP_BYTES = 4096
+_CREATE_RETRIES = 3
+_SAFE_INCIDENT_ID_RE = re.compile(r"[\w\-]{1,80}")
+_SAFE_ARTIFACT_RE = re.compile(r"[\w\-.]{1,64}(?:/[\w\-.]{1,64})?")
+
+
+def _is_reparse_point(path: Path) -> bool:
+    """Symlink on every platform; junction / any reparse point on Windows."""
+    if path.is_symlink():
+        return True
+    if sys.platform == "win32":
+        try:
+            attrs = os.lstat(path).st_file_attributes
+        except OSError:
+            return False
+        return bool(attrs & stat_module.FILE_ATTRIBUTE_REPARSE_POINT)
+    return False
+
+
+def _kernel_lock_nonblocking(fd: int) -> None:
+    """Advisory lock on byte 0; raises OSError on contention.
+
+    Deliberately mirrors ``profile_lease._lock_nonblocking`` instead of
+    importing it: profile_lease gains a ``diagnostics.CommandHasher`` import
+    for owner-evidence identities, so diagnostics must stay leaf-level.
+    """
+    if sys.platform == "win32":
+        os.lseek(fd, 0, os.SEEK_SET)
+        msvcrt.locking(fd, msvcrt.LK_NBLCK, 1)
+    else:
+        fcntl.flock(fd, fcntl.LOCK_EX | fcntl.LOCK_NB)
+
+
+def _kernel_unlock(fd: int) -> None:
+    if sys.platform == "win32":
+        os.lseek(fd, 0, os.SEEK_SET)
+        msvcrt.locking(fd, msvcrt.LK_UNLCK, 1)
+    else:
+        fcntl.flock(fd, fcntl.LOCK_UN)
+
+
+def _write_new_file(path: Path, payload: bytes) -> None:
+    """Exclusive creation with restrictive mode from the first byte (S28)."""
+    fd = os.open(path, os.O_WRONLY | os.O_CREAT | os.O_EXCL | getattr(os, "O_BINARY", 0), 0o600)
+    try:
+        os.write(fd, payload)
+    finally:
+        os.close(fd)
+
+
+def validated_incidents_root(home: Path) -> Path | None:
+    """``<home>/incidents``, created ``0o700`` — or ``None`` when the root (or
+    home) is a symlink/junction/reparse point or escapes home (S27). Callers
+    treat ``None`` as capture-unavailable; nothing is ever written through a
+    link."""
+    try:
+        home_resolved = home.resolve()
+        root = home / "incidents"
+        if _is_reparse_point(home) or _is_reparse_point(root):
+            return None
+        root.mkdir(mode=0o700, parents=True, exist_ok=True)
+        if _is_reparse_point(root):  # re-check post-mkdir (pre-existing link)
+            return None
+        if not root.resolve().is_relative_to(home_resolved):
+            return None
+    except OSError:
+        return None
+    return root
+
+
+class BundleDir:
+    """One incident bundle directory: exclusive creation, a locked ``.pending``
+    marker while staged, and atomic manifest-last finalization (§5, §8)."""
+
+    __slots__ = ("_marker_fd", "path")
+
+    def __init__(self, path: Path, marker_fd: int) -> None:
+        self.path = path
+        self._marker_fd = marker_fd
+
+    @classmethod
+    def create_exclusive(
+        cls, root: Path, incident_id: str, *, now: datetime | None = None
+    ) -> BundleDir:
+        """``<root>/<YYYY-MM-DD>/<UTCstamp>-<incident_id>-<rand>/`` with a
+        collision-resistant random component and ``os.mkdir`` exclusivity —
+        a clock rollback or duplicate id cannot overwrite a bundle (S40)."""
+        if not _SAFE_INCIDENT_ID_RE.fullmatch(incident_id):
+            msg = f"unsafe incident id: {incident_id!r}"
+            raise ValueError(msg)
+        stamp_dt = now or datetime.now(UTC)
+        day_dir = root / stamp_dt.date().isoformat()
+        day_dir.mkdir(mode=0o700, exist_ok=True)
+        if _is_reparse_point(day_dir):
+            msg = f"incident day directory is a reparse point: {day_dir}"
+            raise OSError(msg)
+        stamp = stamp_dt.strftime("%Y%m%dT%H%M%SZ")
+        last_error: OSError | None = None
+        for _ in range(_CREATE_RETRIES):
+            candidate = day_dir / f"{stamp}-{incident_id}-{secrets.token_hex(3)}"
+            if not candidate.resolve().parent.is_relative_to(root.resolve()):
+                msg = f"incident bundle path escapes root: {candidate}"
+                raise OSError(msg)
+            try:
+                os.mkdir(candidate, mode=0o700)
+            except FileExistsError as exc:
+                last_error = exc
+                continue
+            marker_fd = cls._create_locked_marker(candidate)
+            return cls(candidate, marker_fd)
+        msg = f"could not create a unique incident directory under {day_dir}"
+        raise OSError(msg) from last_error
+
+    @staticmethod
+    def _create_locked_marker(bundle_path: Path) -> int:
+        marker = bundle_path / ".pending"
+        payload = json.dumps(
+            {
+                "schema": _PENDING_MARKER_SCHEMA,
+                "pid": os.getpid(),
+                "created_utc": datetime.now(UTC).isoformat(),
+            }
+        ).encode("utf-8")[:_PENDING_MARKER_CAP_BYTES]
+        flags = os.O_RDWR | os.O_CREAT | os.O_EXCL | getattr(os, "O_BINARY", 0)
+        fd = os.open(marker, flags, 0o600)
+        try:
+            # Byte 0 carries a sentinel so the locked region exists on Windows;
+            # the JSON body starts at offset 1 (same layout rule as the profile
+            # lease — never write metadata into the locked byte).
+            os.write(fd, b"\0")
+            _kernel_lock_nonblocking(fd)
+            os.lseek(fd, 1, os.SEEK_SET)
+            os.write(fd, payload)
+        except Exception:
+            os.close(fd)
+            raise
+        return fd
+
+    def write_artifact(self, name: str, payload: bytes) -> None:
+        """Write ``<bundle>/<name>`` (one optional subdir level, e.g.
+        ``sensitive/screenshot.png``) exclusively at mode 0600."""
+        if not _SAFE_ARTIFACT_RE.fullmatch(name) or ".." in name:
+            msg = f"unsafe artifact name: {name!r}"
+            raise ValueError(msg)
+        target = self.path / name
+        if not target.resolve().is_relative_to(self.path.resolve()):
+            msg = f"artifact path escapes bundle: {name!r}"
+            raise ValueError(msg)
+        if target.parent != self.path:
+            target.parent.mkdir(mode=0o700, exist_ok=True)
+        _write_new_file(target, payload)
+
+    def finalize(self, manifest: dict[str, object]) -> None:
+        """Write ``manifest.json`` last and atomically; then release the pending
+        lock and remove the marker. The manifest's presence is the marker that
+        a directory is a complete gflow-created bundle (§5)."""
+        payload = json.dumps(manifest, indent=2, ensure_ascii=False).encode("utf-8")
+        tmp = self.path / "manifest.json.tmp"
+        _write_new_file(tmp, payload)
+        os.replace(tmp, self.path / "manifest.json")
+        fd, self._marker_fd = self._marker_fd, -1
+        if fd >= 0:
+            try:
+                _kernel_unlock(fd)
+            finally:
+                os.close(fd)
+            (self.path / ".pending").unlink(missing_ok=True)
