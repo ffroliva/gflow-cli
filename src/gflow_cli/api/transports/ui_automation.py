@@ -1193,14 +1193,7 @@ class UiAutomationTransport(VideoGenerationMixin):
             MODE_SWITCH_TRIGGER_SELECTORS,
         )
         if trigger is None:
-            shot = await _capture_debug_screenshot(page, out_dir, "debug_no_mode_trigger.png")
-            raise UiSelectorDriftError(
-                selector_drift_detail(
-                    "mode_switch_trigger",
-                    "no matching element found on the Flow editor.",
-                    shot,
-                )
-            )
+            raise await VideoGenerationMixin._mode_switch_error(page, out_dir, media="image")
         await trigger.click()
         await page.wait_for_timeout(800)
         image_tab = await VideoGenerationMixin._probe_selector_cascade(
