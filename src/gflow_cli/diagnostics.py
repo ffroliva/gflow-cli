@@ -17,25 +17,42 @@ import hashlib
 import hmac
 import json
 import os
+import platform
 import re
 import secrets
 import stat as stat_module
 import sys
+import uuid
 from collections import deque
 from dataclasses import dataclass
 from datetime import UTC, datetime
 from pathlib import Path
-from typing import cast
+from typing import TYPE_CHECKING, cast
 from urllib.parse import urlsplit
+
+import structlog
 
 if sys.platform == "win32":
     import msvcrt
 else:
     import fcntl
 
+if TYPE_CHECKING:
+    from gflow_cli.config import Settings
+
+_log = structlog.get_logger(__name__)
+
 __all__ = [
     "BundleDir",
     "CommandHasher",
+    "build_manifest",
+    "emit_capture_completed",
+    "emit_capture_failed",
+    "emit_capture_started",
+    "emit_capture_suppressed",
+    "emit_owner_evidence_read",
+    "emit_retention_pruned",
+    "resolve_correlation_id",
     "ConsoleRecord",
     "ErrorBodySummary",
     "IncidentJournal",
@@ -603,3 +620,146 @@ class BundleDir:
             finally:
                 os.close(fd)
             (self.path / ".pending").unlink(missing_ok=True)
+
+
+# --- correlation, stable events, manifest (design §5.1, §9) ----------------
+
+
+def resolve_correlation_id() -> str:
+    """The command's bound correlation id, or a fresh short id when absent.
+
+    Callers bind the result ONCE per command/task (S42): every event,
+    directory name, and manifest in that command must reuse the same value.
+    """
+    bound = structlog.contextvars.get_contextvars().get("correlation_id", "")
+    return str(bound) if bound else uuid.uuid4().hex[:12]
+
+
+# Fixed-field constructors (S41): each event exposes exactly these parameters —
+# no **kwargs — so raw URLs, paths, owner metadata, exception text, prompts, or
+# browser objects cannot ride along as arbitrary logging fields.
+
+
+def emit_capture_started(incident_id: str) -> None:
+    _log.info("incident.capture_started", incident_id=incident_id)
+
+
+def emit_capture_completed(
+    incident_id: str, *, status: str, artifact_kinds: list[str], duration_ms: int
+) -> None:
+    _log.info(
+        "incident.capture_completed",
+        incident_id=incident_id,
+        status=status,
+        artifact_kinds=artifact_kinds,
+        duration_ms=duration_ms,
+    )
+
+
+def emit_capture_failed(incident_id: str, *, exc_class: str, artifact_kind: str) -> None:
+    """S25: the exception CLASS only — never raw capture-exception text."""
+    _log.warning(
+        "incident.capture_failed",
+        incident_id=incident_id,
+        exc_class=exc_class,
+        artifact_kind=artifact_kind,
+    )
+
+
+def emit_capture_suppressed(incident_id: str, *, count: int) -> None:
+    _log.info("incident.capture_suppressed", incident_id=incident_id, count=count)
+
+
+def emit_retention_pruned(*, complete_count: int, pending_count: int, bytes_freed: int) -> None:
+    _log.info(
+        "incident.retention_pruned",
+        complete_count=complete_count,
+        pending_count=pending_count,
+        bytes_freed=bytes_freed,
+    )
+
+
+def emit_owner_evidence_read(*, valid: bool) -> None:
+    """Valid/invalid only — owner values never enter structured logs (§6.4)."""
+    _log.info("profile_lease.owner_evidence_read", valid=valid)
+
+
+_MANIFEST_NOTICE = (
+    "Private local diagnostics. Never uploaded or auto-shared by gflow-cli. "
+    "Review before sharing; sensitive artifacts may contain account or media data."
+)
+
+
+def build_manifest(
+    *,
+    incident_id: str,
+    settings: Settings,
+    created_utc: str,
+    finalized_utc: str | None,
+    cli_version: str,
+    exc_class: str,
+    problem_type: str,
+    exit_code: int,
+    retryable: bool,
+    route: str,
+    phase: str,
+    command: str | None,
+    transport: str | None,
+    artifacts: dict[str, str],
+    artifact_status: dict[str, str],
+    har_state: str,
+    suppressed_count: int,
+    ui_mode: str | None = None,
+    model_alias: str | None = None,
+    aspect: str | None = None,
+    count: int | None = None,
+    locale: str | None = None,
+    has_profile: bool | None = None,
+    has_project: bool | None = None,
+    media_input_count: int | None = None,
+) -> dict[str, object]:
+    """Assemble ``manifest.json`` from an explicit allowlist (§5.1).
+
+    ``settings`` is consulted ONLY for named boolean/enum scalars — never
+    ``Settings.model_dump()``, which would serialize API keys, daemon tokens,
+    storage URIs, profile paths, and HAR paths (S01).
+    """
+    return {
+        "schema": "gflow-incident-v1",
+        "incident_id": incident_id,
+        "created_utc": created_utc,
+        "finalized_utc": finalized_utc,
+        "cli_version": cli_version,
+        "python_version": platform.python_version(),
+        "os_family": platform.system(),
+        "environment": {
+            "headless": settings.headless,
+            "provider": settings.provider.value,
+            "incident_capture": settings.incident_capture,
+        },
+        "command": command,
+        "transport": transport,
+        "request": {
+            "ui_mode": ui_mode,
+            "model_alias": model_alias,
+            "aspect": aspect,
+            "count": count,
+            "locale": locale,
+            "has_profile": has_profile,
+            "has_project": has_project,
+            "media_input_count": media_input_count,
+        },
+        "error": {
+            "class": exc_class,
+            "problem_type": problem_type,
+            "exit_code": exit_code,
+            "retryable": retryable,
+            "route": route,
+            "phase": phase,
+        },
+        "artifacts": dict(artifacts),
+        "artifact_status": dict(artifact_status),
+        "har_state": har_state,
+        "suppressed_count": suppressed_count,
+        "notice": _MANIFEST_NOTICE,
+    }
