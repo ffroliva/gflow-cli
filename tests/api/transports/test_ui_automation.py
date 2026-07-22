@@ -220,17 +220,20 @@ class TestSetup:
             "gflow_cli.api.transports.ui_automation.async_playwright",
             return_value=pw_cm,
         ):
-            await t.setup(tmp_path)
-        # launch_persistent_context called once with the expected kwargs.
-        fake_pw.chromium.launch_persistent_context.assert_called_once()
-        call_kwargs = fake_pw.chromium.launch_persistent_context.call_args.kwargs
-        call_args = fake_pw.chromium.launch_persistent_context.call_args.args
-        assert call_args[0] == str(tmp_path)
-        assert call_kwargs.get("headless") is False
-        assert call_kwargs.get("viewport") == {"width": 1920, "height": 1080}
-        assert call_kwargs.get("locale") == "en-US"
-        assert t._owns_playwright is True  # type: ignore[attr-defined]
-        assert t._setup_done is True  # type: ignore[attr-defined]
+            try:
+                await t.setup(tmp_path)
+                # launch_persistent_context called once with the expected kwargs.
+                fake_pw.chromium.launch_persistent_context.assert_called_once()
+                call_kwargs = fake_pw.chromium.launch_persistent_context.call_args.kwargs
+                call_args = fake_pw.chromium.launch_persistent_context.call_args.args
+                assert call_args[0] == str(tmp_path)
+                assert call_kwargs.get("headless") is False
+                assert call_kwargs.get("viewport") == {"width": 1920, "height": 1080}
+                assert call_kwargs.get("locale") == "en-US"
+                assert t._owns_playwright is True  # type: ignore[attr-defined]
+                assert t._setup_done is True  # type: ignore[attr-defined]
+            finally:
+                await t.teardown()
 
     @pytest.mark.asyncio
     async def test_own_context_acquires_and_releases_profile_lease(
@@ -283,9 +286,12 @@ class TestSetup:
             "gflow_cli.api.transports.ui_automation.async_playwright",
             return_value=pw_cm,
         ):
-            await t.setup(tmp_path)
-        assert t._page is existing_page  # type: ignore[attr-defined]
-        ctx.new_page.assert_not_called()
+            try:
+                await t.setup(tmp_path)
+                assert t._page is existing_page  # type: ignore[attr-defined]
+                ctx.new_page.assert_not_called()
+            finally:
+                await t.teardown()
 
     @pytest.mark.asyncio
     async def test_own_context_creates_new_page_if_none(self, tmp_path: Path) -> None:
@@ -297,8 +303,11 @@ class TestSetup:
             "gflow_cli.api.transports.ui_automation.async_playwright",
             return_value=pw_cm,
         ):
-            await t.setup(tmp_path)
-        ctx.new_page.assert_called_once()
+            try:
+                await t.setup(tmp_path)
+                ctx.new_page.assert_called_once()
+            finally:
+                await t.teardown()
 
     @pytest.mark.asyncio
     async def test_setup_navigates_to_flow_url(self, tmp_path: Path) -> None:
@@ -312,9 +321,12 @@ class TestSetup:
             "gflow_cli.api.transports.ui_automation.async_playwright",
             return_value=pw_cm,
         ):
-            await t.setup(tmp_path)
-        page.goto.assert_called_once()
-        assert page.goto.call_args.args[0] == FLOW_URL
+            try:
+                await t.setup(tmp_path)
+                page.goto.assert_called_once()
+                assert page.goto.call_args.args[0] == FLOW_URL
+            finally:
+                await t.teardown()
 
     @pytest.mark.asyncio
     async def test_setup_is_idempotent(self, tmp_path: Path) -> None:
@@ -326,10 +338,13 @@ class TestSetup:
             "gflow_cli.api.transports.ui_automation.async_playwright",
             return_value=pw_cm,
         ):
-            await t.setup(tmp_path)
-            await t.setup(tmp_path)
-        # Launched exactly once across the two calls.
-        assert fake_pw.chromium.launch_persistent_context.call_count == 1
+            try:
+                await t.setup(tmp_path)
+                await t.setup(tmp_path)
+                # Launched exactly once across the two calls.
+                assert fake_pw.chromium.launch_persistent_context.call_count == 1
+            finally:
+                await t.teardown()
 
     @pytest.mark.asyncio
     async def test_setup_swallows_initial_goto_failure(self, tmp_path: Path) -> None:
@@ -344,9 +359,12 @@ class TestSetup:
             "gflow_cli.api.transports.ui_automation.async_playwright",
             return_value=pw_cm,
         ):
-            # Should NOT raise.
-            await t.setup(tmp_path)
-        assert t._setup_done is True  # type: ignore[attr-defined]
+            try:
+                # Should NOT raise.
+                await t.setup(tmp_path)
+                assert t._setup_done is True  # type: ignore[attr-defined]
+            finally:
+                await t.teardown()
 
 
 # ---------------------------------------------------------------------------
