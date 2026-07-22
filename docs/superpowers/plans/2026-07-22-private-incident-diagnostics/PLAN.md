@@ -132,9 +132,9 @@ covered where they fall out naturally (design §13 gates only Critical + High).
 | S19 concurrent same-fingerprint | H | 6 | `test_diagnostics_recorder.py::test_concurrent_capture_same_fingerprint_yields_one_bundle` |
 | S20 cancellation-safe teardown | H | 10 | `test_client_incidents.py::test_cancellation_during_capture_still_releases_lease` |
 | S21 remote path privacy | H | 9 | `test_errors.py::test_problem_details_incident_is_opaque`; `tests/mcp/test_server.py::test_mcp_error_envelope_omits_local_path` |
-| S22 queue schema unchanged | M | 9 | `tests/worker/test_queue.py::test_error_payload_gains_retryable_without_schema_change` |
+| S22 queue schema unchanged | M | 1, 9 | `tests/worker/test_queue.py::test_invalid_payload_fails_without_browser_launch` (retryable key, no schema change) + Task 9 envelope test |
 | S23 capture failure → original wins | H | 6 | `test_diagnostics_recorder.py::test_capture_io_failure_preserves_original_exception` |
-| S24 retryable parity | H | 1 | `test_json_output.py::test_flow_app_and_agent_ui_errors_retryable`; `tests/mcp/test_server.py::test_mcp_retryable_matches_cli`; `tests/worker/test_queue.py::test_queue_retryable_matches_cli` |
+| S24 retryable parity | H | 1 | `test_json_output.py::test_flow_app_and_agent_ui_errors_retryable`; `tests/mcp/test_server.py::test_mcp_retryable_matches_cli`; `tests/worker/test_daemon.py::test_worker_error_json_retryable_matches_cli` |
 | S25 no raw exception text | C | 5, 6 | `test_diagnostics_events.py::test_capture_failed_event_carries_class_only` |
 | S26 unicode/space paths | H | 4 | `test_diagnostics_bundle.py::test_bundle_paths_with_spaces_and_unicode` |
 | S27 reparse containment | C | 4 | `test_diagnostics_bundle.py::test_symlink_and_reparse_roots_refused` (junction case Windows-marked) |
@@ -200,16 +200,16 @@ recorder code exists.
   ```
 
 **Steps:**
-- [ ] Write the red tests below; run them; observe FAIL (`is_retryable` undefined, MCP/queue payloads lack `retryable`, `incident_capture` unknown field).
-- [ ] Implement the changes above.
-- [ ] Run: `.venv/Scripts/python.exe -m pytest tests/test_json_output.py tests/test_config.py tests/mcp tests/worker -q` → expected: all pass.
-- [ ] `/gflow:check` scoped gates green; commit `fix(errors): share retryable classification across CLI, MCP, and worker` .
+- [x] Write the red tests below; run them; observe FAIL (`is_retryable` undefined, MCP/queue payloads lack `retryable`, `incident_capture` unknown field). *(8 failed as expected)*
+- [x] Implement the changes above.
+- [x] Run: `.venv/Scripts/python.exe -m pytest tests/test_json_output.py tests/test_config.py tests/mcp tests/worker -q` → all pass (278 incl. errors tests).
+- [x] `/gflow:check` scoped gates green; committed `fc11f55`.
 
 **Tests (red first):**
-- [ ] `tests/test_json_output.py::test_flow_app_and_agent_ui_errors_retryable` — `error_payload(FlowAppError(...))["error"]["retryable"] is True`; same for `FlowAgentUiError`; `ContentPolicyError` stays `False`. (S24)
-- [ ] `tests/mcp/test_server.py::test_mcp_retryable_matches_cli` — for each class in `RETRYABLE_ERRORS` + two terminal classes, the MCP error envelope's `retryable` equals `is_retryable(exc)`. (S24)
-- [ ] `tests/worker/test_queue.py::test_queue_retryable_matches_cli` — persisted failure payload carries the same flag; existing columns/keys otherwise unchanged. (S22, S24)
-- [ ] `tests/test_config.py::test_incident_capture_default_and_invalid` — default `True`; `GFLOW_CLI_INCIDENT_CAPTURE=false` → `False`; `=notabool` → pydantic `ValidationError` before any browser work. (S35)
+- [x] `tests/test_json_output.py::test_flow_app_and_agent_ui_errors_retryable` — `error_payload(FlowAppError(...))["error"]["retryable"] is True`; same for `FlowAgentUiError`; `ContentPolicyError` stays `False`. (S24) *(plus `test_retryable_derives_from_shared_classification`)*
+- [x] `tests/mcp/test_server.py::test_mcp_retryable_matches_cli` — for each class in `RETRYABLE_ERRORS` + two terminal classes, the MCP error envelope's `retryable` equals `is_retryable(exc)`. (S24)
+- [x] Worker parity — implemented as `tests/worker/test_daemon.py::test_worker_error_json_retryable_matches_cli` (daemon owns the GFlowError envelope; harness lives there) plus a `retryable is False` assertion in `tests/worker/test_queue.py::test_invalid_payload_fails_without_browser_launch` for the QueueSchemaError path. (S22, S24)
+- [x] `tests/test_config.py::TestIncidentCapture` — default `True`; `GFLOW_CLI_INCIDENT_CAPTURE=false` → `False`; `=notabool` → pydantic `ValidationError` before any browser work. (S35)
 
 ---
 
@@ -252,10 +252,10 @@ in `api/routes.py` — reduced to categories like `flow_app`, `aisandbox`, `goog
 `google_cdn`.
 
 **Steps:**
-- [ ] Write red tests (below) with canary fixtures: a fake reCAPTCHA token, cookie string, signed URL (`?X-Goog-Signature=...`), email, prompt text, ANSI escapes, astral-plane Unicode.
-- [ ] Run: `.venv/Scripts/python.exe -m pytest tests/test_diagnostics_sanitize.py -q` → expected: FAIL (module missing).
-- [ ] Implement; re-run → all pass.
-- [ ] `/gflow:check` green; commit `feat(diagnostics): sanitization primitives for incident capture`.
+- [x] Write red tests (below) with canary fixtures: a fake reCAPTCHA token, cookie string, signed URL (`?X-Goog-Signature=...`), email, prompt text, ANSI escapes, astral-plane Unicode.
+- [x] Run: `.venv/Scripts/python.exe -m pytest tests/test_diagnostics_sanitize.py -q` → FAIL (module missing) observed via pyright + collection.
+- [x] Implement; re-run → 15 passed.
+- [x] Gates green (ruff/format/pyright); committed `e8542e2`.
 
 **Tests (red first):**
 - [ ] `test_canary_secrets_never_survive_reduction` — every canary run through every primitive; assert canary substring not in `repr()` of any output. (S01)
