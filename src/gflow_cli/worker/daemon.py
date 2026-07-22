@@ -413,13 +413,15 @@ class FlowWorker:
 
             if isinstance(exc, GFlowError):
                 error_payload = dict(exc.to_problem_details())
-                from gflow_cli.errors import EXIT_CODE_MAP
+                from gflow_cli.errors import EXIT_CODE_MAP, is_retryable
 
                 exit_code = next(
                     (code for cls, code in EXIT_CODE_MAP.items() if isinstance(exc, cls)),
                     1,
                 )
                 error_payload["exit_code"] = exit_code
+                # §6.5: same shared retry classification as CLI --json / MCP.
+                error_payload["retryable"] = is_retryable(exc)
                 if "status" not in error_payload:
                     error_payload["status"] = 500
                 # #341: the queue row persists to the same DB as the redacted

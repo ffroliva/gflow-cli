@@ -16,34 +16,13 @@ import json
 import traceback
 from typing import TYPE_CHECKING, Any
 
-from gflow_cli.errors import (
-    EXIT_CODE_MAP,
-    BrowserSessionClosedError,
-    GFlowError,
-    NetworkError,
-    RateLimitError,
-    TransportTimeoutError,
-    WafRejectionError,
-)
+from gflow_cli.errors import EXIT_CODE_MAP, GFlowError, is_retryable
 
 if TYPE_CHECKING:
     from pathlib import Path
 
     from gflow_cli.api.dto import GeneratedImage
     from gflow_cli.api.video import GenerateVideoRequest, VideoResult
-
-# Transient failures the caller can retry without operator intervention — WAF
-# bounce, rate-limit/quota, transport timeout, network blip, a dropped browser
-# session. Everything else (auth/content-policy/config/security) is terminal:
-# retrying the identical request will fail the same way. A worker keys its
-# "retry vs absorb-and-stop" decision off this flag.
-_RETRYABLE: tuple[type[GFlowError], ...] = (
-    WafRejectionError,
-    RateLimitError,
-    TransportTimeoutError,
-    NetworkError,
-    BrowserSessionClosedError,
-)
 
 
 def emit(payload: dict[str, Any]) -> None:
@@ -86,7 +65,7 @@ def error_payload(exc: GFlowError) -> dict[str, Any]:
             **exc.to_problem_details(),
             "class": type(exc).__name__,
             "exit_code": _exit_code(exc),
-            "retryable": isinstance(exc, _RETRYABLE),
+            "retryable": is_retryable(exc),
         },
     }
 
