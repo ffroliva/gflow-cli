@@ -113,11 +113,11 @@ async def test_capture_ui_diagnostics_survives_evaluate_error(tmp_path: Path) ->
     assert await capture_ui_diagnostics(page, tmp_path, "x") is None
 
 
-# --- _fail_mode_switch (shared image+video raise site) -------------------------
+# --- _mode_switch_error (shared image+video raise site; RETURNS the exception) --
 
 
 @pytest.mark.asyncio
-async def test_fail_mode_switch_raises_flow_agent_ui_error_on_cohort(tmp_path: Path) -> None:
+async def test_mode_switch_error_is_flow_agent_ui_error_on_cohort(tmp_path: Path) -> None:
     from gflow_cli.errors import FlowAgentUiError
 
     lib = next(s for s in LIBRARY_UI_INDICATORS if "left_panel_close" in s)
@@ -125,20 +125,21 @@ async def test_fail_mode_switch_raises_flow_agent_ui_error_on_cohort(tmp_path: P
     page.evaluate = AsyncMock(return_value={"ligatures": [lib]})
     page.screenshot = AsyncMock()
 
-    with pytest.raises(FlowAgentUiError) as exc:
-        await VideoGenerationMixin._fail_mode_switch(page, tmp_path, media="image")
+    err = await VideoGenerationMixin._mode_switch_error(page, tmp_path, media="image")
 
-    msg = str(exc.value)
+    assert isinstance(err, FlowAgentUiError)
+    msg = str(err)
     assert "media-library" in msg and "image generation" in msg  # media verb interpolated
 
 
 @pytest.mark.asyncio
-async def test_fail_mode_switch_raises_drift_error_when_no_cohort(tmp_path: Path) -> None:
+async def test_mode_switch_error_is_drift_error_when_no_cohort(tmp_path: Path) -> None:
     from gflow_cli.errors import UiSelectorDriftError
 
     page = _page_with_present(set())  # genuine drift: no agentic/library marker
     page.evaluate = AsyncMock(return_value={"ligatures": []})
     page.screenshot = AsyncMock()
 
-    with pytest.raises(UiSelectorDriftError):
-        await VideoGenerationMixin._fail_mode_switch(page, tmp_path, media="video")
+    err = await VideoGenerationMixin._mode_switch_error(page, tmp_path, media="video")
+
+    assert isinstance(err, UiSelectorDriftError)

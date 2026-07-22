@@ -1193,7 +1193,7 @@ class UiAutomationTransport(VideoGenerationMixin):
             MODE_SWITCH_TRIGGER_SELECTORS,
         )
         if trigger is None:
-            await VideoGenerationMixin._fail_mode_switch(page, out_dir, media="image")
+            raise await VideoGenerationMixin._mode_switch_error(page, out_dir, media="image")
         await trigger.click()
         await page.wait_for_timeout(800)
         image_tab = await VideoGenerationMixin._probe_selector_cascade(

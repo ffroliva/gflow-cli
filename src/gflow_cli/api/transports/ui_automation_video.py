@@ -20,7 +20,7 @@ import random
 import time
 from collections.abc import AsyncGenerator
 from pathlib import Path
-from typing import TYPE_CHECKING, Any, NoReturn, cast
+from typing import TYPE_CHECKING, Any, cast
 
 import structlog
 
@@ -1267,17 +1267,21 @@ class VideoGenerationMixin:
         return None
 
     @staticmethod
-    async def _fail_mode_switch(page: Page, out_dir: Path | None, *, media: str) -> NoReturn:
-        """Raise the right error when the ``mode_switch_trigger`` probe misses on the
-        ``image``/``video`` path: dump DOM diagnostics, then a clean, retryable
-        :class:`FlowAgentUiError` for the known agentic/media-library A/B cohort
-        (#174/#183) or :class:`UiSelectorDriftError` for genuine selector drift.
-        Shared by ``_switch_to_image_mode`` and ``_switch_to_video_mode``."""
+    async def _mode_switch_error(
+        page: Page, out_dir: Path | None, *, media: str
+    ) -> FlowAgentUiError | UiSelectorDriftError:
+        """Build (do NOT raise — the caller raises) the right error for a
+        ``mode_switch_trigger`` miss on the ``image``/``video`` path: dump DOM
+        diagnostics, then a clean, retryable :class:`FlowAgentUiError` for the known
+        agentic/media-library A/B cohort (#174/#183) or :class:`UiSelectorDriftError`
+        for genuine drift. Returning the exception (vs raising here) keeps the
+        None-path terminating *visibly* at the two call sites. Shared by
+        ``_switch_to_image_mode`` and ``_switch_to_video_mode``."""
         diag = await capture_ui_diagnostics(page, out_dir, "diag_mode_switch_miss")
         diag_clause = f" Diagnostics: {diag}" if diag is not None else ""
         cohort = await VideoGenerationMixin._detect_non_classic_cohort(page)
         if cohort is not None:
-            raise FlowAgentUiError(
+            return FlowAgentUiError(
                 detail=(
                     "Flow opened this project in its new media-library / agentic "
                     f"composer (server-side A/B cohort, issues #174/#183; matched "
@@ -1286,7 +1290,7 @@ class VideoGenerationMixin:
                     f"minutes often lands the classic UI.{diag_clause}"
                 )
             )
-        raise UiSelectorDriftError(
+        return UiSelectorDriftError(
             selector_drift_detail(
                 "mode_switch_trigger", "no matching element found on the Flow editor.", None
             )
@@ -1373,7 +1377,7 @@ class VideoGenerationMixin:
             MODE_SWITCH_TRIGGER_SELECTORS,
         )
         if trigger is None:
-            await VideoGenerationMixin._fail_mode_switch(page, out_dir, media="video")
+            raise await VideoGenerationMixin._mode_switch_error(page, out_dir, media="video")
         await trigger.click()
         await page.wait_for_timeout(800)
         video_tab = await VideoGenerationMixin._probe_selector_cascade(
