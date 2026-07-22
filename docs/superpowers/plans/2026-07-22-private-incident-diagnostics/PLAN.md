@@ -309,8 +309,8 @@ class ListenerBookkeeping:
 ```
 
 **Steps:**
-- [ ] Red tests → run `.venv/Scripts/python.exe -m pytest tests/test_diagnostics_journal.py -q` → FAIL.
-- [ ] Implement; green; `/gflow:check`; commit `feat(diagnostics): bounded journals, timing map, and listener bookkeeping`.
+- [x] Red tests → collection error observed.
+- [x] Implement; 9 passed; gates green; committed `ee32259`.
 
 **Tests (red first):**
 - [ ] `test_rings_enforce_exact_caps` — push 150/150/80 records; lengths are 100/100/50; oldest evicted. (S18 support)
@@ -356,8 +356,8 @@ Reparse detection: `Path.is_symlink()` plus, on Windows, `os.lstat(p).st_file_at
 `p.resolve().is_relative_to(root.resolve())`.
 
 **Steps:**
-- [ ] Red tests → `.venv/Scripts/python.exe -m pytest tests/test_diagnostics_bundle.py -q` → FAIL.
-- [ ] Implement; green; `/gflow:check`; commit `feat(diagnostics): contained, exclusive, atomic incident bundle filesystem`.
+- [x] Red tests → collection error observed.
+- [x] Implement; 7 passed + 1 POSIX-only skip on Windows (junction-refusal case ran for real); gates green; committed `1dead7e`.
 
 **Tests (red first):**
 - [ ] `test_bundle_paths_with_spaces_and_unicode` — home under `tmp_path / "gflow höme with spaces"`; create + finalize succeeds; JSON is UTF-8. (S26)

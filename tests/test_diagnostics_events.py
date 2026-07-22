@@ -53,9 +53,7 @@ class TestEventConstructors:
         paths, owner metadata, exception text, or browser objects."""
         for fn in _EMITTERS:
             params = inspect.signature(fn).parameters.values()
-            assert not any(
-                p.kind in (p.VAR_KEYWORD, p.VAR_POSITIONAL) for p in params
-            ), fn.__name__
+            assert not any(p.kind in (p.VAR_KEYWORD, p.VAR_POSITIONAL) for p in params), fn.__name__
 
     def test_events_emit_stable_names_and_fixed_keys(self) -> None:
         cap = _install_log_capture()
