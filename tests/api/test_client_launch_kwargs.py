@@ -126,6 +126,7 @@ async def test_ui_automation_setup_passes_disable_dev_shm_usage(tmp_path: Path) 
     fake_ctx = MagicMock()
     fake_ctx.pages = [fake_page]
     fake_ctx.add_init_script = AsyncMock()
+    fake_ctx.close = AsyncMock()
 
     fake_chromium = MagicMock()
     fake_chromium.launch_persistent_context = AsyncMock(return_value=fake_ctx)
@@ -141,14 +142,20 @@ async def test_ui_automation_setup_passes_disable_dev_shm_usage(tmp_path: Path) 
 
     with patch("gflow_cli.api.transports.ui_automation.async_playwright", mock_async_playwright):
         transport = UiAutomationTransport()
-        await transport.setup(profile_dir=tmp_path)
+        try:
+            await transport.setup(profile_dir=tmp_path)
 
-    _call_kwargs = fake_chromium.launch_persistent_context.call_args
-    args_passed = _call_kwargs.kwargs.get(
-        "args",
-        _call_kwargs.args[1] if len(_call_kwargs.args) > 1 else [],
-    )
-    assert "--disable-dev-shm-usage" in args_passed
+            _call_kwargs = fake_chromium.launch_persistent_context.call_args
+            args_passed = _call_kwargs.kwargs.get(
+                "args",
+                _call_kwargs.args[1] if len(_call_kwargs.args) > 1 else [],
+            )
+            assert "--disable-dev-shm-usage" in args_passed
+        finally:
+            await transport.teardown()
+
+    fake_ctx.close.assert_awaited_once()
+    mock_cm.__aexit__.assert_awaited_once()
 
 
 # --- issue #222: chrome-strategy downgrade guard --------------------------------
