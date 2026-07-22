@@ -59,15 +59,24 @@ def error_payload(exc: GFlowError) -> dict[str, Any]:
     plus the concrete class name, mapped process exit code, and the retryable
     flag the caller branches on.
     """
-    return {
-        "status": "fail",
-        "error": {
-            **exc.to_problem_details(),
-            "class": type(exc).__name__,
-            "exit_code": _exit_code(exc),
-            "retryable": is_retryable(exc),
-        },
+    error: dict[str, Any] = {
+        **exc.to_problem_details(),
+        "class": type(exc).__name__,
+        "exit_code": _exit_code(exc),
+        "retryable": is_retryable(exc),
     }
+    ref = exc.incident_ref
+    if ref is not None and ref.path is not None:
+        # Local CLI surface only: enrich the remote-safe {id, capture_status}
+        # with the bundle path + artifact names (S21 — remote envelopes reuse
+        # to_problem_details() and never see these).
+        error["incident"] = {
+            "id": ref.id,
+            "capture_status": ref.capture_status,
+            "path": str(ref.path),
+            "artifacts": list(ref.artifacts),
+        }
+    return {"status": "fail", "error": error}
 
 
 def unexpected_payload(debug: BaseException | None = None) -> dict[str, Any]:

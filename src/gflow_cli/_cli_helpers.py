@@ -253,6 +253,13 @@ def _handle_gflow_error(exc: GFlowError, *, cli_command: str) -> int:
     _console.print(f"[red]{exc.title}:[/red] {exc.detail or ''}")
     if exc.remediation_hint:
         _console.print(f"[yellow]-> {exc.remediation_hint}[/yellow]")
+    ref = exc.incident_ref
+    if ref is not None and ref.path is not None:
+        _console.print(
+            f"Incident bundle: {ref.path} — review before sharing; sensitive "
+            "artifacts may contain account or media data.",
+            markup=False,
+        )
     return _exit_code_for(exc)
 
 

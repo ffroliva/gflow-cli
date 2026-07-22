@@ -622,3 +622,27 @@ def test_mcp_retryable_matches_cli() -> None:
         # RFC 9457 fields still carried through unchanged.
         assert error["title"]
         assert error["type"].startswith("https://gflow-cli.dev/errors/")
+
+
+def test_mcp_error_envelope_omits_local_path() -> None:
+    """S21: the MCP envelope reuses to_problem_details() — opaque incident
+    {id, capture_status} only, never the absolute local path or artifacts."""
+    import json
+    from pathlib import Path
+
+    from gflow_cli.diagnostics import IncidentRef
+    from gflow_cli.errors import FlowAppError
+    from gflow_cli.mcp.tools import _gflow_error_dict
+
+    exc = FlowAppError("crash")
+    exc.incident_ref = IncidentRef(
+        id="corr-fp",
+        capture_status="complete",
+        path=Path("C:/Users/CANARYUSER/gflow/incidents/x"),
+        artifacts=("ui.json", "sensitive/screenshot.png"),
+    )
+    error = _gflow_error_dict(exc)
+    assert error["incident"] == {"id": "corr-fp", "capture_status": "complete"}
+    blob = json.dumps(error)
+    assert "CANARYUSER" not in blob
+    assert "screenshot" not in blob
