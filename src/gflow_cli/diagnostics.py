@@ -17,13 +17,21 @@ import hashlib
 import hmac
 import re
 import secrets
+from collections import deque
 from dataclasses import dataclass
 from typing import cast
 from urllib.parse import urlsplit
 
 __all__ = [
     "CommandHasher",
+    "ConsoleRecord",
     "ErrorBodySummary",
+    "IncidentJournal",
+    "JournalSnapshot",
+    "ListenerBookkeeping",
+    "NetworkRecord",
+    "PageErrorRecord",
+    "RequestTimingMap",
     "SanitizedUrl",
     "TextSummary",
     "TitleClass",
@@ -268,3 +276,145 @@ def reduce_error_body(parsed: object) -> ErrorBodySummary:
         message_length=message_length,
         content_safety_signature=safety,
     )
+
+
+# --- bounded journals (design §5.3/§5.4, §6.2) -----------------------------
+#
+# Records are frozen primitive-only dataclasses: listener callbacks build them
+# synchronously and never retain a Playwright Request/Response/ConsoleMessage.
+
+_NETWORK_RING_CAP = 100
+_CONSOLE_RING_CAP = 100
+_PAGE_ERROR_RING_CAP = 50
+
+
+@dataclass(frozen=True, slots=True)
+class NetworkRecord:
+    ts_monotonic: float
+    ts_utc: str
+    method: str
+    host_category: str
+    route: str
+    resource_type: str
+    status_or_failure: str
+    duration_ms: float | None
+
+
+@dataclass(frozen=True, slots=True)
+class ConsoleRecord:
+    ts_utc: str
+    level: str
+    category: str
+    length: int
+    source_category: str
+    line: int | None
+    column: int | None
+
+
+@dataclass(frozen=True, slots=True)
+class PageErrorRecord:
+    ts_utc: str
+    error_class: str
+    length: int
+
+
+@dataclass(frozen=True, slots=True)
+class JournalSnapshot:
+    network: tuple[NetworkRecord, ...]
+    console: tuple[ConsoleRecord, ...]
+    page_errors: tuple[PageErrorRecord, ...]
+
+
+class IncidentJournal:
+    """Fixed-size event rings. ``freeze()`` runs before context close; every
+    ``add_*`` afterwards is a no-op so late callbacks cannot mutate evidence
+    mid-finalization (S17)."""
+
+    __slots__ = ("_console", "_frozen", "_network", "_page_errors")
+
+    def __init__(self) -> None:
+        self._network: deque[NetworkRecord] = deque(maxlen=_NETWORK_RING_CAP)
+        self._console: deque[ConsoleRecord] = deque(maxlen=_CONSOLE_RING_CAP)
+        self._page_errors: deque[PageErrorRecord] = deque(maxlen=_PAGE_ERROR_RING_CAP)
+        self._frozen = False
+
+    def freeze(self) -> None:
+        self._frozen = True
+
+    def add_network(self, rec: NetworkRecord) -> None:
+        if not self._frozen:
+            self._network.append(rec)
+
+    def add_console(self, rec: ConsoleRecord) -> None:
+        if not self._frozen:
+            self._console.append(rec)
+
+    def add_page_error(self, rec: PageErrorRecord) -> None:
+        if not self._frozen:
+            self._page_errors.append(rec)
+
+    def snapshot(self) -> JournalSnapshot:
+        return JournalSnapshot(
+            network=tuple(self._network),
+            console=tuple(self._console),
+            page_errors=tuple(self._page_errors),
+        )
+
+
+class RequestTimingMap:
+    """Primitive-only in-flight request timings (design §6.2).
+
+    Keys are caller-derived strings, values are monotonic start seconds —
+    never a retained Playwright object. Capped at 256 live entries with a
+    ten-minute expiry; when correlation is unsafe (expired, overflow, unknown)
+    the duration is simply omitted (S18).
+    """
+
+    __slots__ = ("_entries",)
+
+    _MAX_ENTRIES = 256
+    _EXPIRY_S = 600.0
+
+    def __init__(self) -> None:
+        self._entries: dict[str, float] = {}
+
+    def start(self, key: str, monotonic_ts: float) -> None:
+        self._purge(monotonic_ts)
+        if len(self._entries) >= self._MAX_ENTRIES:
+            return  # drop the newcomer — never evict a live in-flight entry
+        self._entries[key] = monotonic_ts
+
+    def finish(self, key: str, monotonic_ts: float) -> float | None:
+        started = self._entries.pop(key, None)
+        if started is None or monotonic_ts - started > self._EXPIRY_S:
+            return None
+        return (monotonic_ts - started) * 1000.0
+
+    def size(self) -> int:
+        return len(self._entries)
+
+    def _purge(self, now: float) -> None:
+        expired = [key for key, ts in self._entries.items() if now - ts > self._EXPIRY_S]
+        for key in expired:
+            del self._entries[key]
+
+
+class ListenerBookkeeping:
+    """Attach-at-most-once / detach-exactly-once accounting per target id (S16)."""
+
+    __slots__ = ("_attached",)
+
+    def __init__(self) -> None:
+        self._attached: set[int] = set()
+
+    def mark_attached(self, target_id: int) -> bool:
+        if target_id in self._attached:
+            return False
+        self._attached.add(target_id)
+        return True
+
+    def mark_detached(self, target_id: int) -> bool:
+        if target_id not in self._attached:
+            return False
+        self._attached.discard(target_id)
+        return True
