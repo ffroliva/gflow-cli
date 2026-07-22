@@ -184,9 +184,7 @@ class TestCaptureFailure:
         assert overlay["ligatures"] == ["close"]
         assert CANARY not in json.dumps(ui)
 
-    async def test_fullpage_screenshot_failure_falls_back_to_viewport(
-        self, tmp_path: Path
-    ) -> None:
+    async def test_fullpage_screenshot_failure_falls_back_to_viewport(self, tmp_path: Path) -> None:
         rec = _recorder(tmp_path)
         page = FakePage(fullpage_exc=TimeoutError("hang"))
         ref = await rec.capture_failure(FlowAppError("x"), page=page, phase="p")

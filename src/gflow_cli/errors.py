@@ -2,7 +2,10 @@ from __future__ import annotations
 
 from dataclasses import dataclass
 from pathlib import Path
-from typing import Any, TypedDict
+from typing import TYPE_CHECKING, Any, TypedDict
+
+if TYPE_CHECKING:
+    from gflow_cli.diagnostics import IncidentRef
 
 __all__ = [
     "EXIT_CODE_MAP",
@@ -59,6 +62,7 @@ class ProblemDetails(TypedDict, total=False):
     instance: str  # optional — `gflow:error:<correlation_id>`
     remediation_hint: str  # gflow extension
     route: str  # gflow extension — sanitized route name, NOT full URL
+    incident: dict[str, str]  # gflow extension — remote-safe {id, capture_status} ONLY
 
 
 class GFlowError(Exception):
@@ -77,6 +81,10 @@ class GFlowError(Exception):
     problem_type: str = "about:blank"
     title: str = "Error"
     _default_remediation: str = ""
+    #: Set post-raise by the incident capture boundary (diagnostics design).
+    #: ``to_problem_details()`` exposes only the remote-safe {id, capture_status}
+    #: projection; the local path/artifacts stay CLI-local (S21).
+    incident_ref: IncidentRef | None = None
 
     def __init__(
         self,
@@ -112,6 +120,11 @@ class GFlowError(Exception):
             out["remediation_hint"] = self.remediation_hint
         if self.route:
             out["route"] = self.route
+        if self.incident_ref is not None:
+            out["incident"] = {
+                "id": self.incident_ref.id,
+                "capture_status": self.incident_ref.capture_status,
+            }
         return out
 
 

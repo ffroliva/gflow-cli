@@ -166,6 +166,29 @@ class TestErrorPayload:
         ):
             assert json_output.error_payload(exc)["error"]["retryable"] is is_retryable(exc)
 
+    def test_local_cli_json_includes_path_and_artifacts(self) -> None:
+        """S21 (local half): the CLI --json error carries the full local
+        incident object so the operator can find the bundle."""
+        from gflow_cli.diagnostics import IncidentRef
+
+        exc = FlowAppError("crash")
+        exc.incident_ref = IncidentRef(
+            id="corr-fp",
+            capture_status="partial",
+            path=Path("C:/somewhere/incidents/x"),
+            artifacts=("ui.json",),
+        )
+        incident = json_output.error_payload(exc)["error"]["incident"]
+        assert incident == {
+            "id": "corr-fp",
+            "capture_status": "partial",
+            "path": str(Path("C:/somewhere/incidents/x")),
+            "artifacts": ["ui.json"],
+        }
+
+    def test_error_payload_without_ref_has_no_incident_key(self) -> None:
+        assert "incident" not in json_output.error_payload(FlowAppError("x"))["error"]
+
     def test_unexpected_is_privacy_safe_by_default(self) -> None:
         payload = json_output.unexpected_payload()
         assert payload["error"]["class"] == "UnexpectedError"
