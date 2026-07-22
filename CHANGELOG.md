@@ -32,8 +32,14 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   `gflow video` now raise a clear, retryable `FlowAgentUiError` ("this cohort
   flaps; retry shortly") instead of the misleading `UiSelectorDriftError`
   "file a bug". Detection is a runtime DOM scan at a new shared
-  `_fail_mode_switch` raise site covering **both** the image and video paths.
+  `_mode_switch_error` raise site covering **both** the image and video paths.
   Refs #174, #183.
+- **Flow web-app crashes now fail cleanly instead of "file a bug".** When Flow's
+  web app renders its client-side-exception error boundary (a transient Flow
+  crash) instead of the editor, the mode-switch raise site now raises a retryable
+  `FlowAppError` (exit code 31) — "transient Flow error, retry shortly" — rather
+  than the misleading `UiSelectorDriftError`. Detected via the Flow error-page
+  title; surfaced by the #183 UI-drift debug engine.
 - **Experimental transport self-lockout.** The `bearer` and `sapisidhash`
   transports discard a caller-supplied Playwright page and re-acquire the profile
   `ProfileLease` in their own `setup()`. Driving one via `GFLOW_CLI_TRANSPORT`
