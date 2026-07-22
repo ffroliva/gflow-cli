@@ -14,7 +14,12 @@ from gflow_cli.api.video import (
     VideoResult,
     VideoStatus,
 )
-from gflow_cli.errors import ContentPolicyError, WafRejectionError
+from gflow_cli.errors import (
+    ContentPolicyError,
+    FlowAgentUiError,
+    FlowAppError,
+    WafRejectionError,
+)
 
 
 def _img(media_name: str = "img-1") -> GeneratedImage:
@@ -138,6 +143,28 @@ class TestErrorPayload:
         assert payload["error"]["class"] == "ContentPolicyError"
         assert payload["error"]["retryable"] is False
         assert payload["error"]["exit_code"] == 5
+
+    def test_flow_app_and_agent_ui_errors_retryable(self) -> None:
+        """§6.5 retryable-contract correction (S24): both cohort/crash errors are
+        documented retryable and the JSON surface must agree."""
+        app = json_output.error_payload(FlowAppError("Flow web app crashed"))
+        assert app["error"]["retryable"] is True
+        assert app["error"]["exit_code"] == 31
+        agent = json_output.error_payload(FlowAgentUiError("agentic cohort"))
+        assert agent["error"]["retryable"] is True
+        assert agent["error"]["exit_code"] == 25
+
+    def test_retryable_derives_from_shared_classification(self) -> None:
+        """CLI JSON must key off errors.is_retryable — no private drift list (S24)."""
+        from gflow_cli.errors import is_retryable
+
+        for exc in (
+            FlowAppError("x"),
+            FlowAgentUiError("x"),
+            WafRejectionError("x"),
+            ContentPolicyError("x"),
+        ):
+            assert json_output.error_payload(exc)["error"]["retryable"] is is_retryable(exc)
 
     def test_unexpected_is_privacy_safe_by_default(self) -> None:
         payload = json_output.unexpected_payload()

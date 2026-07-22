@@ -451,6 +451,18 @@ class Settings(BaseSettings):
         return value
 
     # --- debugging ---------------------------------------------------------
+    incident_capture: bool = Field(
+        default=True,
+        description=(
+            "Automatically write a private incident bundle under "
+            "<GFLOW_CLI_HOME>/incidents/ on relevant operational failures "
+            "(Flow app crash, UI drift, transport timeout, WAF/network errors, "
+            "profile-lock contention). Bundles contain structural metadata only; "
+            "screenshots live under sensitive/ and must be reviewed before "
+            "sharing. Nothing is ever uploaded. Set false to disable. "
+            "Override via GFLOW_CLI_INCIDENT_CAPTURE."
+        ),
+    )
     har_path: Path | None = Field(
         default=None,
         description=(

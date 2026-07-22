@@ -5,6 +5,7 @@ from typing import Any, TypedDict
 
 __all__ = [
     "EXIT_CODE_MAP",
+    "RETRYABLE_ERRORS",
     "AisandboxAuthError",
     "AuthExpiredError",
     "AuthLoginTimeoutError",
@@ -41,6 +42,7 @@ __all__ = [
     "VideoModelSelectionError",
     "WafRejectionError",
     "WireFormatError",
+    "is_retryable",
 ]
 
 
@@ -949,3 +951,24 @@ EXIT_CODE_MAP: dict[type[GFlowError], int] = {
     SceneConcatError: 19,
     # FlowApiError omitted — falls through to default 1
 }
+
+# Transient failures the caller can retry without operator intervention — WAF
+# bounce, rate-limit/quota, transport timeout, network blip, a dropped browser
+# session, a Flow web-app crash (31), or an agentic-cohort flap (25). Everything
+# else (auth/content-policy/config/security) is terminal: retrying the identical
+# request will fail the same way. Single source of truth for the CLI --json, MCP,
+# and worker error envelopes — never fork a private copy of this list.
+RETRYABLE_ERRORS: tuple[type[GFlowError], ...] = (
+    WafRejectionError,
+    RateLimitError,
+    TransportTimeoutError,
+    NetworkError,
+    BrowserSessionClosedError,
+    FlowAppError,
+    FlowAgentUiError,
+)
+
+
+def is_retryable(exc: GFlowError) -> bool:
+    """Shared retry classification consumed by every machine-readable error surface."""
+    return isinstance(exc, RETRYABLE_ERRORS)
