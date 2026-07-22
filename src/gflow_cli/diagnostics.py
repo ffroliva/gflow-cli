@@ -13,6 +13,7 @@ inspection stays on the explicit opt-in HAR escalation path.
 
 from __future__ import annotations
 
+import asyncio
 import hashlib
 import hmac
 import json
@@ -24,10 +25,10 @@ import stat as stat_module
 import sys
 import uuid
 from collections import deque
-from dataclasses import dataclass
+from dataclasses import asdict, dataclass
 from datetime import UTC, datetime
 from pathlib import Path
-from typing import TYPE_CHECKING, cast
+from typing import TYPE_CHECKING, Protocol, cast
 from urllib.parse import urlsplit
 
 import structlog
@@ -45,6 +46,8 @@ _log = structlog.get_logger(__name__)
 __all__ = [
     "BundleDir",
     "CommandHasher",
+    "IncidentRecorder",
+    "IncidentRef",
     "build_manifest",
     "emit_capture_completed",
     "emit_capture_failed",
@@ -763,3 +766,668 @@ def build_manifest(
         "suppressed_count": suppressed_count,
         "notice": _MANIFEST_NOTICE,
     }
+
+
+# --- IncidentRecorder (design §4.2, §5.2, §6.1–§6.2) -----------------------
+
+
+@dataclass(frozen=True, slots=True)
+class IncidentRef:
+    """Local capture result. ``id``/``capture_status`` are remote-safe; ``path``
+    and ``artifacts`` are CLI-local only (S21)."""
+
+    id: str
+    capture_status: str
+    path: Path | None
+    artifacts: tuple[str, ...]
+
+
+class _CapturePage(Protocol):
+    async def evaluate(self, script: str, /) -> object: ...
+
+    async def screenshot(self, *, path: str, full_page: bool = ...) -> object: ...
+
+
+@dataclass(slots=True)
+class _StagedBundle:
+    ref: IncidentRef
+    bundle: BundleDir
+    exc_class: str
+    problem_type: str
+    exit_code: int
+    retryable: bool
+    route: str
+    phase: str
+    artifacts: dict[str, str]
+    artifact_status: dict[str, str]
+    created_utc: str
+    suppressed: int = 0
+    finalized: bool = False
+
+
+_MAX_BUNDLES_PER_COMMAND = 3
+_CAPTURE_BUDGET_S = 8.0
+_DOM_TIMEOUT_S = 3.0
+_SCREENSHOT_TIMEOUT_S = 4.0
+_MAX_OVERLAYS = 10
+_LIGATURE_RE = re.compile(r"[a-z0-9_]{1,40}")
+_OVERLAY_TAG_RE = re.compile(r"[a-z]{1,16}")
+_OVERLAY_ROLE_RE = re.compile(r"[a-z\-]{1,32}")
+_NET_FAILURE_RE = re.compile(r"net::[A-Z0-9_]{1,64}")
+
+# Structural-only DOM probe: allowlisted signals, counts, geometry, and
+# Material-Symbol ligatures. Raw title/url cross into Python memory only and
+# are reduced by classify_title/sanitize_url before persistence; every other
+# raw string is dropped by _validate_structural (S12).
+_STRUCTURAL_DOM_JS = r"""() => {
+  const syms = [...document.querySelectorAll('i.google-symbols')]
+    .map(e => (e.textContent || '').trim()).filter(Boolean);
+  const overlays = [...document.querySelectorAll(
+      '[role="dialog"],[aria-modal="true"],dialog')].slice(0, 10).map(el => {
+    const r = el.getBoundingClientRect();
+    const cs = getComputedStyle(el);
+    return {
+      tag: el.tagName.toLowerCase(),
+      role: el.getAttribute('role') || '',
+      ariaModal: el.getAttribute('aria-modal') === 'true',
+      visible: r.width > 0 && r.height > 0 && cs.visibility !== 'hidden',
+      rect: {x: r.x, y: r.y, width: r.width, height: r.height},
+      zIndex: parseInt(cs.zIndex, 10) || 0,
+      pointerEvents: cs.pointerEvents,
+      ligatures: [...el.querySelectorAll('i.google-symbols')]
+        .map(e => (e.textContent || '').trim()).filter(Boolean),
+    };
+  });
+  const tags = {};
+  for (const t of ['div','button','input','textarea','dialog','iframe','video','img']) {
+    tags[t] = document.getElementsByTagName(t).length;
+  }
+  return {
+    url: location.href,
+    title: document.title,
+    ligatures: [...new Set(syms)].sort(),
+    ligatureCount: syms.length,
+    cropPresent: syms.some(l => l.startsWith('crop')),
+    textboxes: document.querySelectorAll(
+      'textarea,[contenteditable="true"],[role="textbox"],div[data-slate-editor]').length,
+    tagCounts: tags,
+    viewport: {width: window.innerWidth, height: window.innerHeight},
+    scroll: {x: window.scrollX, y: window.scrollY},
+    overlays,
+  };
+}"""
+
+
+def _as_int(value: object, default: int = 0) -> int:
+    if isinstance(value, bool):
+        return default
+    if isinstance(value, int):
+        return value
+    if isinstance(value, float):
+        return int(value)
+    return default
+
+
+def _clean_ligatures(value: object) -> list[str]:
+    if not isinstance(value, list):
+        return []
+    items = cast("list[object]", value)
+    return [s for s in items if isinstance(s, str) and _LIGATURE_RE.fullmatch(s)][:100]
+
+
+class IncidentRecorder:
+    """Session-scoped private incident capture (one per ``FlowApiClient``).
+
+    Observation-only: apart from read-only DOM evaluation and screenshots it
+    never navigates, clicks, types, submits, retries, mints tokens, downloads,
+    or mutates queue state (S15). Capture failures are swallowed and reduced
+    to ``incident.capture_failed`` — the original exception always wins (S23).
+    """
+
+    def __init__(self, settings: Settings) -> None:
+        self._settings = settings
+        self.enabled: bool = settings.incident_capture
+        self.correlation_id: str = resolve_correlation_id()
+        self.hasher = CommandHasher()
+        self.journal = IncidentJournal()
+        self.timing = RequestTimingMap()
+        self.bookkeeping = ListenerBookkeeping()
+        self.command: str | None = None
+        self.transport: str | None = None
+        self._staged: dict[str, _StagedBundle] = {}
+        self._lock = asyncio.Lock()
+        self._frozen = False
+        self._har_path: Path | None = settings.har_path
+        self._har_snapshot: tuple[int, int] | None = None
+        self._har_snapshot_taken = False
+
+    # -- trigger classification (design §4.2) -------------------------------
+
+    def should_capture(self, exc: BaseException) -> bool:
+        from gflow_cli.errors import (
+            AuthExpiredError,
+            ContentPolicyError,
+            GFlowError,
+            ProfileLockedError,
+        )
+
+        if not self.enabled:
+            return False
+        if isinstance(exc, (ContentPolicyError, AuthExpiredError)):
+            return False  # deterministic operator remediation; DOM adds nothing
+        if isinstance(exc, ProfileLockedError):
+            return True  # metadata-only incident
+        if isinstance(exc, _capture_triggers()):
+            return True
+        if isinstance(exc, GFlowError):
+            return False  # usage/config/etc.
+        return True  # unexpected exception — runtime evidence changes diagnosis
+
+    @staticmethod
+    def _screenshot_wanted(exc: BaseException) -> bool:
+        return isinstance(exc, _screenshot_triggers())
+
+    # -- listener-facing primitives (called with extracted primitives only) --
+
+    def record_request(
+        self, *, url: str, method: str, resource_type: str, request_key: str, monotonic_ts: float
+    ) -> None:
+        if self._frozen:
+            return
+        # URL is intentionally unused here: requests only start timing;
+        # journaled records are responses/failures (§5.3).
+        del url
+        self.timing.start(request_key, monotonic_ts)
+
+    def record_response(
+        self,
+        *,
+        url: str,
+        method: str,
+        resource_type: str,
+        status: int,
+        request_key: str,
+        monotonic_ts: float,
+    ) -> None:
+        if self._frozen:
+            return
+        duration = self.timing.finish(request_key, monotonic_ts)
+        s = sanitize_url(url, self.hasher)
+        self.journal.add_network(
+            NetworkRecord(
+                ts_monotonic=monotonic_ts,
+                ts_utc=datetime.now(UTC).isoformat(),
+                method=method.upper()[:8],
+                host_category=s.host_category,
+                route=s.route,
+                resource_type=resource_type[:20],
+                status_or_failure=str(_as_int(status)),
+                duration_ms=duration,
+            )
+        )
+
+    def record_request_failed(
+        self,
+        *,
+        url: str,
+        method: str,
+        resource_type: str,
+        failure: str | None,
+        request_key: str,
+        monotonic_ts: float,
+    ) -> None:
+        if self._frozen:
+            return
+        self.timing.finish(request_key, monotonic_ts)
+        s = sanitize_url(url, self.hasher)
+        failure_category = (
+            failure
+            if failure is not None and _NET_FAILURE_RE.fullmatch(failure)
+            else "failed_other"
+        )
+        self.journal.add_network(
+            NetworkRecord(
+                ts_monotonic=monotonic_ts,
+                ts_utc=datetime.now(UTC).isoformat(),
+                method=method.upper()[:8],
+                host_category=s.host_category,
+                route=s.route,
+                resource_type=resource_type[:20],
+                status_or_failure=failure_category,
+                duration_ms=None,
+            )
+        )
+
+    def record_console(
+        self, *, level: str, text: str, url: str | None, line: int | None, column: int | None
+    ) -> None:
+        if self._frozen or level not in ("warning", "error"):
+            return
+        source = sanitize_url(url, self.hasher).host_category if url else "unknown"
+        summary = text_summary(text, f"console_{level}")
+        self.journal.add_console(
+            ConsoleRecord(
+                ts_utc=datetime.now(UTC).isoformat(),
+                level=level,
+                category=summary.category,
+                length=summary.length,
+                source_category=source,
+                line=line,
+                column=column,
+            )
+        )
+
+    def record_page_error(self, *, error_class: str, message: str) -> None:
+        if self._frozen:
+            return
+        self.journal.add_page_error(
+            PageErrorRecord(
+                ts_utc=datetime.now(UTC).isoformat(),
+                error_class=error_class[:64],
+                length=len(message),
+            )
+        )
+
+    # -- HAR honesty (design §5.6) ------------------------------------------
+
+    def note_har_pre_launch(self, har_path: Path | None) -> None:
+        self._har_path = har_path
+        self._har_snapshot = self._stat_har(har_path) if har_path is not None else None
+        self._har_snapshot_taken = True
+
+    @staticmethod
+    def _stat_har(path: Path) -> tuple[int, int] | None:
+        try:
+            st = os.stat(path)
+        except OSError:
+            return None
+        return (st.st_size, st.st_mtime_ns)
+
+    def resolve_har_state(self, *, close_ok: bool) -> str:
+        if self._har_path is None:
+            return "disabled"
+        if not self._har_snapshot_taken:
+            return "pending_flush"  # configured but the session never launched
+        if not close_ok:
+            return "possibly_incomplete"
+        current = self._stat_har(self._har_path)
+        if current is None:
+            return "possibly_incomplete"
+        if self._har_snapshot is None or current != self._har_snapshot:
+            return "complete"  # demonstrably created/changed by this session
+        return "possibly_incomplete"  # mere pre-existing file is not proof
+
+    # -- capture orchestration ----------------------------------------------
+
+    def detach_and_freeze(self) -> None:
+        """Stop accepting events before context close; late callbacks no-op."""
+        self._frozen = True
+        self.journal.freeze()
+
+    async def capture_failure(
+        self,
+        exc: BaseException,
+        *,
+        page: _CapturePage | None,
+        phase: str,
+        route: str | None = None,
+    ) -> IncidentRef | None:
+        """Stage an incident bundle while the page is alive. Never raises
+        (except re-raising cancellation); never finalizes the manifest."""
+        if not self.should_capture(exc):
+            return None
+        fingerprint = self._fingerprint(exc, route, phase)
+        incident_id = f"{self.correlation_id}-{fingerprint}"
+        try:
+            async with self._lock:
+                existing = self._staged.get(fingerprint)
+                if existing is not None:
+                    existing.suppressed += 1
+                    emit_capture_suppressed(incident_id, count=existing.suppressed)
+                    return existing.ref
+                if len(self._staged) >= _MAX_BUNDLES_PER_COMMAND:
+                    emit_capture_suppressed(incident_id, count=1)
+                    return None
+                staged = await asyncio.wait_for(
+                    self._stage_new(
+                        exc, incident_id=incident_id, page=page, phase=phase, route=route
+                    ),
+                    timeout=_CAPTURE_BUDGET_S,
+                )
+                if staged is not None:
+                    self._staged[fingerprint] = staged
+                    return staged.ref
+                return None
+        except asyncio.CancelledError:
+            raise
+        except Exception as capture_exc:  # noqa: BLE001 — original error must win (S23)
+            emit_capture_failed(
+                incident_id, exc_class=type(capture_exc).__name__, artifact_kind="bundle"
+            )
+            return None
+
+    async def capture_metadata_only(self, exc: BaseException, *, phase: str) -> IncidentRef | None:
+        """Bundle with no page-derived artifacts — profile contention before
+        Chrome launches, or partial setup with no page (S07/S34)."""
+        return await self.capture_failure(exc, page=None, phase=phase)
+
+    async def finalize_all(self, *, close_ok: bool) -> None:
+        """Atomically finalize every staged manifest after context close has
+        established the HAR state. Best-effort per bundle; never raises."""
+        try:
+            async with self._lock:
+                har_state = self.resolve_har_state(close_ok=close_ok)
+                for staged in self._staged.values():
+                    if staged.finalized:
+                        continue
+                    try:
+                        staged.bundle.finalize(self._manifest_for(staged, har_state))
+                        staged.finalized = True
+                        emit_capture_completed(
+                            staged.ref.id,
+                            status=staged.ref.capture_status,
+                            artifact_kinds=sorted(staged.artifacts),
+                            duration_ms=0,
+                        )
+                    except asyncio.CancelledError:
+                        raise
+                    except Exception as exc:  # noqa: BLE001 — best-effort (S23)
+                        emit_capture_failed(
+                            staged.ref.id, exc_class=type(exc).__name__, artifact_kind="manifest"
+                        )
+        except asyncio.CancelledError:
+            raise
+        except Exception as exc:  # noqa: BLE001
+            emit_capture_failed("unknown", exc_class=type(exc).__name__, artifact_kind="manifest")
+
+    # -- internals ----------------------------------------------------------
+
+    def _fingerprint(self, exc: BaseException, route: str | None, phase: str) -> str:
+        problem_type = str(getattr(exc, "problem_type", "unexpected"))
+        raw = f"{type(exc).__name__}|{problem_type}|{route or ''}|{phase}"
+        return hashlib.sha256(raw.encode("utf-8", "surrogatepass")).hexdigest()[:10]
+
+    def _cli_version(self) -> str:
+        try:
+            from importlib.metadata import version
+
+            return version("gflow-cli")
+        except Exception:  # noqa: BLE001 — manifest metadata is best-effort
+            return "unknown"
+
+    async def _stage_new(
+        self,
+        exc: BaseException,
+        *,
+        incident_id: str,
+        page: _CapturePage | None,
+        phase: str,
+        route: str | None,
+    ) -> _StagedBundle | None:
+        root = validated_incidents_root(self._settings.home)
+        if root is None:
+            emit_capture_failed(incident_id, exc_class="RootUnavailable", artifact_kind="root")
+            return None
+        bundle = BundleDir.create_exclusive(root, incident_id)
+        emit_capture_started(incident_id)
+        artifacts: dict[str, str] = {}
+        status: dict[str, str] = {}
+
+        if page is not None:
+            await self._stage_ui_json(bundle, page, incident_id, artifacts, status)
+            if self._screenshot_wanted(exc):
+                await self._stage_screenshot(bundle, page, incident_id, artifacts, status)
+
+        self._stage_journals(bundle, incident_id, artifacts, status)
+
+        overall = "complete"
+        if any(v != "complete" for v in status.values()):
+            overall = "partial" if any(v == "complete" for v in status.values()) else "failed"
+        ref = IncidentRef(
+            id=incident_id,
+            capture_status=overall,
+            path=bundle.path,
+            artifacts=tuple(sorted(artifacts)),
+        )
+        from gflow_cli.errors import GFlowError, is_retryable
+        from gflow_cli.json_output import exit_code_for
+
+        return _StagedBundle(
+            ref=ref,
+            bundle=bundle,
+            exc_class=type(exc).__name__,
+            problem_type=str(getattr(exc, "problem_type", "unexpected")),
+            exit_code=exit_code_for(exc) if isinstance(exc, GFlowError) else 1,
+            retryable=is_retryable(exc) if isinstance(exc, GFlowError) else False,
+            route=route or "",
+            phase=phase,
+            artifacts=artifacts,
+            artifact_status=status,
+            created_utc=datetime.now(UTC).isoformat(),
+        )
+
+    async def _stage_ui_json(
+        self,
+        bundle: BundleDir,
+        page: _CapturePage,
+        incident_id: str,
+        artifacts: dict[str, str],
+        status: dict[str, str],
+    ) -> None:
+        try:
+            raw = await asyncio.wait_for(page.evaluate(_STRUCTURAL_DOM_JS), _DOM_TIMEOUT_S)
+            validated = self._validate_structural(raw)
+            bundle.write_artifact(
+                "ui.json", json.dumps(validated, indent=2, ensure_ascii=False).encode("utf-8")
+            )
+            artifacts["ui.json"] = "automatic"
+            status["ui.json"] = "complete"
+        except asyncio.CancelledError:
+            raise
+        except Exception as exc:  # noqa: BLE001 — per-artifact best-effort
+            status["ui.json"] = "failed"
+            emit_capture_failed(incident_id, exc_class=type(exc).__name__, artifact_kind="dom")
+
+    async def _stage_screenshot(
+        self,
+        bundle: BundleDir,
+        page: _CapturePage,
+        incident_id: str,
+        artifacts: dict[str, str],
+        status: dict[str, str],
+    ) -> None:
+        target = bundle.path / "sensitive" / "screenshot.png"
+        target.parent.mkdir(mode=0o700, exist_ok=True)
+        name = "sensitive/screenshot.png"
+        try:
+            await asyncio.wait_for(
+                page.screenshot(path=str(target), full_page=True), _SCREENSHOT_TIMEOUT_S
+            )
+            artifacts[name] = "sensitive"
+            status[name] = "complete"
+            return
+        except asyncio.CancelledError:
+            raise
+        except Exception:  # noqa: BLE001 — fall back once to viewport (S13)
+            pass
+        try:
+            await asyncio.wait_for(
+                page.screenshot(path=str(target), full_page=False), _SCREENSHOT_TIMEOUT_S
+            )
+            artifacts[name] = "sensitive"
+            status[name] = "partial"
+        except asyncio.CancelledError:
+            raise
+        except Exception as exc:  # noqa: BLE001
+            status[name] = "failed"
+            emit_capture_failed(
+                incident_id, exc_class=type(exc).__name__, artifact_kind="screenshot"
+            )
+
+    def _stage_journals(
+        self,
+        bundle: BundleDir,
+        incident_id: str,
+        artifacts: dict[str, str],
+        status: dict[str, str],
+    ) -> None:
+        snap = self.journal.snapshot()
+        payloads = {
+            "network.json": {"records": [asdict(r) for r in snap.network]},
+            "browser.json": {
+                "console": [asdict(r) for r in snap.console],
+                "page_errors": [asdict(r) for r in snap.page_errors],
+            },
+        }
+        for name, payload in payloads.items():
+            try:
+                bundle.write_artifact(
+                    name, json.dumps(payload, indent=2, ensure_ascii=False).encode("utf-8")
+                )
+                artifacts[name] = "automatic"
+                status[name] = "complete"
+            except Exception as exc:  # noqa: BLE001
+                status[name] = "failed"
+                emit_capture_failed(incident_id, exc_class=type(exc).__name__, artifact_kind=name)
+
+    def _manifest_for(self, staged: _StagedBundle, har_state: str) -> dict[str, object]:
+        return build_manifest(
+            incident_id=staged.ref.id,
+            settings=self._settings,
+            created_utc=staged.created_utc,
+            finalized_utc=datetime.now(UTC).isoformat(),
+            cli_version=self._cli_version(),
+            exc_class=staged.exc_class,
+            problem_type=staged.problem_type,
+            exit_code=staged.exit_code,
+            retryable=staged.retryable,
+            route=staged.route,
+            phase=staged.phase,
+            command=self.command,
+            transport=self.transport,
+            artifacts=staged.artifacts,
+            artifact_status=staged.artifact_status,
+            har_state=har_state,
+            suppressed_count=staged.suppressed,
+        )
+
+    def _validate_structural(self, raw: object) -> dict[str, object]:
+        """Rebuild the DOM probe result from the allowlist — any unexpected key
+        or non-primitive value is dropped, never persisted (S12)."""
+        if not isinstance(raw, dict):
+            return {"invalid": True}
+        data = cast("dict[str, object]", raw)
+        ligatures = _clean_ligatures(data.get("ligatures"))
+        out: dict[str, object] = {
+            "ligatures": ligatures,
+            "ligature_count": _as_int(data.get("ligatureCount"), default=len(ligatures)),
+            "signals": {
+                "crop_present": bool(data.get("cropPresent")),
+                "textboxes": _as_int(data.get("textboxes")),
+            },
+        }
+        url = data.get("url")
+        if isinstance(url, str):
+            out["url"] = asdict(sanitize_url(url, self.hasher))
+        title = data.get("title")
+        if isinstance(title, str):
+            out["title"] = asdict(classify_title(title))
+        tag_counts = data.get("tagCounts")
+        if isinstance(tag_counts, dict):
+            counts = cast("dict[str, object]", tag_counts)
+            out["tag_counts"] = {
+                tag: _as_int(counts.get(tag))
+                for tag in (
+                    "div",
+                    "button",
+                    "input",
+                    "textarea",
+                    "dialog",
+                    "iframe",
+                    "video",
+                    "img",
+                )
+                if tag in counts
+            }
+        for key in ("viewport", "scroll"):
+            geom = data.get(key)
+            if isinstance(geom, dict):
+                g = cast("dict[str, object]", geom)
+                out[key] = {
+                    axis: _as_int(g.get(axis))
+                    for axis in ("x", "y", "width", "height")
+                    if axis in g
+                }
+        overlays = data.get("overlays")
+        if isinstance(overlays, list):
+            out["overlays"] = [
+                self._validate_overlay(cast("dict[str, object]", o))
+                for o in cast("list[object]", overlays)[:_MAX_OVERLAYS]
+                if isinstance(o, dict)
+            ]
+        return out
+
+    @staticmethod
+    def _validate_overlay(raw: dict[str, object]) -> dict[str, object]:
+        tag = raw.get("tag")
+        role = raw.get("role")
+        pointer = raw.get("pointerEvents")
+        rect_raw = raw.get("rect")
+        rect: dict[str, int] = {}
+        if isinstance(rect_raw, dict):
+            r = cast("dict[str, object]", rect_raw)
+            rect = {axis: _as_int(r.get(axis)) for axis in ("x", "y", "width", "height")}
+        return {
+            "tag": tag if isinstance(tag, str) and _OVERLAY_TAG_RE.fullmatch(tag) else "other",
+            "role": role if isinstance(role, str) and _OVERLAY_ROLE_RE.fullmatch(role) else "other",
+            "aria_modal": bool(raw.get("ariaModal")),
+            "visible": bool(raw.get("visible")),
+            "rect": rect,
+            "zIndex": _as_int(raw.get("zIndex")),
+            "pointer_events": pointer if pointer in ("auto", "none") else "other",
+            "ligatures": _clean_ligatures(raw.get("ligatures")),
+        }
+
+
+def _capture_triggers() -> tuple[type[BaseException], ...]:
+    from gflow_cli.errors import (
+        BrowserSessionClosedError,
+        FlowAgentUiError,
+        FlowAppError,
+        NetworkError,
+        TransportTimeoutError,
+        UiModeUnavailableError,
+        UiSelectorDriftError,
+        WafRejectionError,
+        WireFormatError,
+    )
+
+    return (
+        FlowAppError,
+        FlowAgentUiError,
+        UiModeUnavailableError,
+        UiSelectorDriftError,
+        TransportTimeoutError,
+        BrowserSessionClosedError,
+        WireFormatError,
+        WafRejectionError,
+        NetworkError,
+    )
+
+
+def _screenshot_triggers() -> tuple[type[BaseException], ...]:
+    from gflow_cli.errors import (
+        FlowAgentUiError,
+        FlowAppError,
+        TransportTimeoutError,
+        UiModeUnavailableError,
+        UiSelectorDriftError,
+    )
+
+    return (
+        FlowAppError,
+        FlowAgentUiError,
+        UiModeUnavailableError,
+        UiSelectorDriftError,
+        TransportTimeoutError,
+    )
