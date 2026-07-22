@@ -51,6 +51,7 @@ def _profile_locked_exit_code() -> int:
 
 
 _HOLDER_SCRIPT = """\
+import os
 import sys
 import time
 from pathlib import Path
@@ -63,7 +64,9 @@ stop_marker = Path(sys.argv[3])
 
 lease = ProfileLease(profile_dir)
 lease.acquire()
-ready_marker.write_text(str(lease.lock_path), encoding="utf-8")
+# Line 1: lock path. Line 2: the holder's REAL pid — Popen.pid can be a venv
+# launcher/trampoline pid on Windows, not the interpreter that owns the lock.
+ready_marker.write_text(f"{lease.lock_path}\\n{os.getpid()}", encoding="utf-8")
 
 deadline = time.monotonic() + 150.0  # must exceed _READY_TIMEOUT + _CONTENDER_TIMEOUT
 while not stop_marker.exists() and time.monotonic() < deadline:
@@ -95,7 +98,10 @@ except Exception as exc:
         if isinstance(exc, cls):
             code = mapped
             break
+    evidence = getattr(exc, "owner_evidence", None)
+    evidence_pid = getattr(evidence, "pid", None)
     print(f"CONTENDER_LOCKED:{exc.__class__.__name__}", file=sys.stderr)
+    print(f"CONTENDER_EVIDENCE:{evidence is not None}:{evidence_pid}", file=sys.stderr)
     sys.exit(code)
 else:
     print("CONTENDER_ACQUIRED")
@@ -175,6 +181,11 @@ def test_holder_wins_and_second_process_fails_fast(tmp_path: Path) -> None:
             f"stdout={result.stdout!r} stderr={result.stderr!r}"
         )
         assert "CONTENDER_LOCKED:ProfileLockedError" in result.stderr
+        # S08: the contender read the holder's offset-1 metadata from the
+        # kernel-locked file — TRUE two-process evidence, incl. on Windows
+        # where the locked byte 0 would have made legacy metadata unreadable.
+        holder_pid = ready_marker.read_text(encoding="utf-8").splitlines()[1]
+        assert f"CONTENDER_EVIDENCE:True:{holder_pid}" in result.stderr
     finally:
         stop_marker.touch()
         try:
@@ -196,7 +207,7 @@ def test_process_exit_releases_kernel_lock(tmp_path: Path) -> None:
     holder, ready_marker, _stop_marker = _launch_holder(tmp_path, profile_dir, env)
     try:
         _wait_for(ready_marker, timeout=_READY_TIMEOUT)
-        lock_path = Path(ready_marker.read_text(encoding="utf-8"))
+        lock_path = Path(ready_marker.read_text(encoding="utf-8").splitlines()[0])
 
         holder.kill()
         holder.communicate(timeout=_EXIT_TIMEOUT)

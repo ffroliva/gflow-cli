@@ -146,3 +146,161 @@ def test_lock_file_has_at_least_one_byte_for_windows(tmp_path: Path) -> None:
         assert lease.lock_path.stat().st_size >= 1
     finally:
         lease.release()
+
+
+# --- offset-1 owner metadata + private contention evidence (S07-S09) --------
+
+
+def test_lock_file_layout_byte0_sentinel_metadata_at_offset1(tmp_path: Path) -> None:
+    """Byte 0 is a reserved sentinel (the ONLY locked byte); versioned JSON
+    metadata begins at offset 1 so a Windows contender can read it while the
+    kernel lock is held (S08)."""
+    import json
+
+    lease = ProfileLease(tmp_path / "profile").acquire()
+    lease.release()
+    # Read AFTER release: while held, even byte 0 is unreadable from another
+    # fd on Windows — which is precisely why metadata must start at offset 1
+    # (the while-held read path is proven by the cross-process tests below).
+    raw = lease.lock_path.read_bytes()
+    assert raw[0:1] == b"\0"
+    metadata = json.loads(raw[1:].decode("utf-8"))
+    assert metadata["version"] == 1
+    assert metadata["pid"] == os.getpid()
+    assert set(metadata) == {
+        "version",
+        "pid",
+        "process_start_time",
+        "profile_name",
+        "owner_token",
+    }
+
+
+def test_same_process_contention_uses_registry_metadata(tmp_path: Path) -> None:
+    """S07: in-process contention reports validated evidence from the
+    registered owner's in-memory metadata — HMAC identities, never raw."""
+    first = ProfileLease(tmp_path / "profile").acquire()
+    try:
+        with pytest.raises(ProfileLockedError) as excinfo:
+            ProfileLease(tmp_path / "profile").acquire()
+        evidence = excinfo.value.owner_evidence
+        assert evidence is not None
+        assert evidence.pid == os.getpid()
+        raw_token = first.owner_metadata["owner_token"]
+        assert raw_token not in evidence.owner_token_identity
+        assert evidence.profile_identity != first.owner_metadata["profile_name"]
+    finally:
+        first.release()
+
+
+def test_cross_process_offset1_read_with_kernel_lock_held(tmp_path: Path) -> None:
+    """S08 (in-process simulation with a REAL kernel lock on byte 0): when the
+    registry is bypassed, the contender reads metadata from offset 1 of the
+    still-locked file. On Windows this only works because byte 0 is reserved."""
+    first = ProfileLease(tmp_path / "profile").acquire()
+    canonical = profile_lease._canonicalize(tmp_path / "profile")
+    profile_lease._registry.pop(canonical, None)
+    try:
+        with pytest.raises(ProfileLockedError) as excinfo:
+            ProfileLease(tmp_path / "profile").acquire()
+        evidence = excinfo.value.owner_evidence
+        assert evidence is not None
+        assert evidence.pid == os.getpid()
+    finally:
+        profile_lease._registry[canonical] = first
+        first.release()
+
+
+def test_legacy_byte0_metadata_reports_unavailable(tmp_path: Path) -> None:
+    """Pre-v1 files wrote JSON at byte 0 (inside the locked region): the
+    contender degrades to evidence=None — never a capture failure (S08)."""
+    import json
+
+    lease = ProfileLease(tmp_path / "profile")
+    lease.lock_path.parent.mkdir(parents=True, exist_ok=True)
+    legacy = json.dumps(
+        {"pid": 12345, "process_start_time": 1.0, "profile_name": "p", "owner_token": "t"}
+    ).encode()
+    fd = os.open(lease.lock_path, os.O_RDWR | os.O_CREAT | getattr(os, "O_BINARY", 0), 0o600)
+    try:
+        os.write(fd, legacy)
+        os.lseek(fd, 0, os.SEEK_SET)
+        profile_lease._lock_nonblocking(fd)
+        try:
+            with pytest.raises(ProfileLockedError) as excinfo:
+                ProfileLease(tmp_path / "profile").acquire()
+            assert excinfo.value.owner_evidence is None
+        finally:
+            profile_lease._unlock(fd)
+    finally:
+        os.close(fd)
+
+
+def test_stale_metadata_never_triggers_reclaim_or_unlink(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    """S09: hostile/stale metadata while the kernel lock rejects acquisition —
+    no os.kill, no unlink, no rename; the kernel lock stays authoritative."""
+    import json
+
+    def _forbidden(*_args: object, **_kwargs: object) -> None:
+        raise AssertionError("metadata must never authorize destructive action")
+
+    monkeypatch.setattr(os, "kill", _forbidden)
+    monkeypatch.setattr(os, "unlink", _forbidden)
+    monkeypatch.setattr(os, "rename", _forbidden)
+
+    lease = ProfileLease(tmp_path / "profile")
+    lease.lock_path.parent.mkdir(parents=True, exist_ok=True)
+    hostile = (
+        b"\0"
+        + json.dumps(
+            {
+                "version": 1,
+                "pid": 99999999,
+                "process_start_time": -1.0,
+                "profile_name": "x" * 300,
+                "owner_token": "junk",
+            }
+        ).encode()
+    )
+    fd = os.open(lease.lock_path, os.O_RDWR | os.O_CREAT | getattr(os, "O_BINARY", 0), 0o600)
+    try:
+        os.write(fd, hostile)
+        os.lseek(fd, 0, os.SEEK_SET)
+        profile_lease._lock_nonblocking(fd)
+        try:
+            with pytest.raises(ProfileLockedError):
+                ProfileLease(tmp_path / "profile").acquire()
+            assert lease.lock_path.exists()
+        finally:
+            profile_lease._unlock(fd)
+    finally:
+        os.close(fd)
+
+
+def test_owner_evidence_absent_from_problem_details_and_payloads(tmp_path: Path) -> None:
+    """§6.4: evidence rides a private attribute only — RFC 9457 problem
+    details, CLI JSON, and str() never carry owner values, lock paths, or
+    profile paths."""
+    import json
+
+    from gflow_cli.json_output import error_payload
+
+    first = ProfileLease(tmp_path / "profile").acquire()
+    try:
+        with pytest.raises(ProfileLockedError) as excinfo:
+            ProfileLease(tmp_path / "profile").acquire()
+        exc = excinfo.value
+        assert exc.owner_evidence is not None
+        problem_blob = json.dumps(exc.to_problem_details())
+        payload_blob = json.dumps(error_payload(exc))
+        raw_token = first.owner_metadata["owner_token"]
+        evidence = exc.owner_evidence
+        for blob in (problem_blob, payload_blob):
+            assert raw_token not in blob
+            assert evidence.owner_token_identity not in blob
+            assert evidence.profile_identity not in blob
+            assert str(first.lock_path) not in blob
+    finally:
+        first.release()
