@@ -109,6 +109,17 @@ reaches the submit** — the request carries no `referenceEntities`, so the
 submit backstops raise `WireFormatError` (**exit 7**) instead of silently
 returning a text-only generation as success.
 
+**Plain generation on this cohort now fails cleanly (#183).** When a project
+opens into this full-page library (or the agentic chat composer) there is no
+classic `crop_*` aspect/mode control, so `gflow image`/`gflow video` can't drive
+generation. Rather than the old opaque `UiSelectorDriftError` "file a bug", the
+mode-switch raise site now runs a runtime DOM scan and raises a clear, **retryable**
+`FlowAgentUiError` (**exit 25**, "this cohort flaps; retry shortly"), and dumps a
+DOM-signature diagnostics artifact (`diag_mode_switch_miss.json` + a full-page
+screenshot) for reporting. The cohort is server-assigned per page load and flaps
+within ~12h, so a re-run often lands the classic UI. Driving the new UI directly
+is still out of scope.
+
 **How to tell which UI your account has:** in the Flow web editor, click
 **Add Media** — a small dialog means the old (working) UI; a navigation to a
 full-page library means the affected new UI.
