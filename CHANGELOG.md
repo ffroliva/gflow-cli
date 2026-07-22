@@ -9,6 +9,12 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ### Added
 
+- **UI-drift debug engine** (`capture_ui_diagnostics`). On a `mode_switch_trigger`
+  failure, gflow now dumps the composer's DOM signature — the Material-Symbols
+  ligature inventory, `crop_*` presence, textbox count, URL, and a body-text
+  preview — to a JSON alongside a **full-page** screenshot, so a Flow frontend
+  change is diagnosable from one artifact instead of a bare (often black) viewport
+  shot. (#183)
 - **`website/docs/` PII-leak CI guard** (`scripts/ci/check_website_docs_pii.py`).
   The published mkdocs mirror under `website/docs/` is an anonymized copy of
   canonical `docs/`; this new gate fails CI (and runs in `/gflow:check`) if a
@@ -20,6 +26,14 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ### Fixed
 
+- **Flow's new media-library / agentic A/B cohort now fails cleanly.** When a
+  project opens into Flow's full-page media-library (or agentic chat) composer —
+  which has no classic `crop_*` aspect/mode control — `gflow image` and
+  `gflow video` now raise a clear, retryable `FlowAgentUiError` ("this cohort
+  flaps; retry shortly") instead of the misleading `UiSelectorDriftError`
+  "file a bug". Detection is a runtime DOM scan at a new shared
+  `_fail_mode_switch` raise site covering **both** the image and video paths.
+  Refs #174, #183.
 - **Experimental transport self-lockout.** The `bearer` and `sapisidhash`
   transports discard a caller-supplied Playwright page and re-acquire the profile
   `ProfileLease` in their own `setup()`. Driving one via `GFLOW_CLI_TRANSPORT`
