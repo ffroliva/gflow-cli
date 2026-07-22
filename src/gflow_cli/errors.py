@@ -21,6 +21,7 @@ __all__ = [
     "DataStoreError",
     "FlowAgentUiError",
     "FlowApiError",
+    "FlowAppError",
     "FrameExtractionError",
     "GFlowError",
     "MediaAttributionError",
@@ -485,6 +486,23 @@ class FlowAgentUiError(GFlowError):
     )
 
 
+class FlowAppError(GFlowError):
+    """Raised when Google Flow's web app itself crashed — a client-side exception
+    (its React error boundary), not a gflow-cli issue. The editor never rendered,
+    so no generation control exists to drive. **Transient and retryable** (exit
+    code 31). Detected at the mode-switch raise site via the Flow error-page title,
+    which otherwise surfaces as a misleading ``UiSelectorDriftError`` "file a bug".
+    """
+
+    problem_type = "https://gflow-cli.dev/errors/flow-app"
+    title = "Google Flow web app error"
+    _default_remediation = (
+        "Google Flow's web app failed to load (a client-side exception on "
+        "labs.google) — a transient Flow-side error, not a gflow-cli bug. Retry in a "
+        "moment; if it persists, check https://labs.google/fx and try a fresh session."
+    )
+
+
 class UiModeUnavailableError(GFlowError):
     """Raised when the Flow UI arm a command REQUIRES (``--ui-mode`` /
     ``GFLOW_CLI_UI_MODE``, or inferred — e.g. ``-i`` instructions force agentic)
@@ -898,6 +916,7 @@ EXIT_CODE_MAP: dict[type[GFlowError], int] = {
     # ConfigurationError (its parent) so the isinstance walk lands on 24, not 11.
     BrowserEngineUnavailableError: 24,
     FlowAgentUiError: 25,
+    FlowAppError: 31,
     # UiModeUnavailableError (issue #299): a command's required arm (--ui-mode /
     # inferred) couldn't be reached after a best-effort switch. Direct GFlowError
     # subclass — retryable policy abort, distinct from FlowAgentUiError (25).

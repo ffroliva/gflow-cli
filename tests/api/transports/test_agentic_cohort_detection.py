@@ -32,6 +32,7 @@ def _page_with_present(present: set[str]) -> MagicMock:
         return loc
 
     page.locator = MagicMock(side_effect=locator)
+    page.title = AsyncMock(return_value="Google Flow")  # not the app-crash error page
     return page
 
 
@@ -143,3 +144,20 @@ async def test_mode_switch_error_is_drift_error_when_no_cohort(tmp_path: Path) -
     err = await VideoGenerationMixin._mode_switch_error(page, tmp_path, media="video")
 
     assert isinstance(err, UiSelectorDriftError)
+
+
+@pytest.mark.asyncio
+async def test_mode_switch_error_is_flow_app_error_on_app_crash(tmp_path: Path) -> None:
+    from gflow_cli.errors import FlowAppError
+
+    # Flow's React error boundary rendered (title), not the editor — a transient
+    # Flow crash. Takes priority over cohort/drift classification.
+    page = _page_with_present(set())
+    page.title = AsyncMock(return_value="Application error: a client-side exception has occurred")
+    page.evaluate = AsyncMock(return_value={"ligatures": []})
+    page.screenshot = AsyncMock()
+
+    err = await VideoGenerationMixin._mode_switch_error(page, tmp_path, media="image")
+
+    assert isinstance(err, FlowAppError)
+    assert "crashed" in str(err)

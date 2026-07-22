@@ -44,6 +44,7 @@ from gflow_cli.api.video import (
 from gflow_cli.errors import (
     AuthExpiredError,
     FlowAgentUiError,
+    FlowAppError,
     MediaUploadRejectedError,
     ModelModeIncompatibilityError,
     TransportTimeoutError,
@@ -1267,18 +1268,38 @@ class VideoGenerationMixin:
         return None
 
     @staticmethod
+    async def _is_flow_app_crash(page: Page) -> bool:
+        """True if Flow's web app rendered its client-side-exception error boundary
+        (a transient Flow crash) instead of the editor — keyed on the (English,
+        Next.js-hardcoded) error-page title. Best-effort; never raises."""
+        try:
+            title = (await page.title()) or ""
+        except Exception:  # noqa: BLE001  # NOSONAR — best-effort probe
+            return False
+        return "application error" in title.lower()
+
+    @staticmethod
     async def _mode_switch_error(
         page: Page, out_dir: Path | None, *, media: str
-    ) -> FlowAgentUiError | UiSelectorDriftError:
+    ) -> FlowAppError | FlowAgentUiError | UiSelectorDriftError:
         """Build (do NOT raise — the caller raises) the right error for a
         ``mode_switch_trigger`` miss on the ``image``/``video`` path: dump DOM
-        diagnostics, then a clean, retryable :class:`FlowAgentUiError` for the known
-        agentic/media-library A/B cohort (#174/#183) or :class:`UiSelectorDriftError`
+        diagnostics, then classify — a transient :class:`FlowAppError` if Flow's app
+        crashed, a clean retryable :class:`FlowAgentUiError` for the known
+        agentic/media-library A/B cohort (#174/#183), else :class:`UiSelectorDriftError`
         for genuine drift. Returning the exception (vs raising here) keeps the
         None-path terminating *visibly* at the two call sites. Shared by
         ``_switch_to_image_mode`` and ``_switch_to_video_mode``."""
         diag = await capture_ui_diagnostics(page, out_dir, "diag_mode_switch_miss")
         diag_clause = f" Diagnostics: {diag}" if diag is not None else ""
+        if await VideoGenerationMixin._is_flow_app_crash(page):
+            return FlowAppError(
+                detail=(
+                    "Flow's web app crashed (client-side exception) before the editor "
+                    f"rendered, so there is no {media} generation control to drive."
+                    f"{diag_clause}"
+                )
+            )
         cohort = await VideoGenerationMixin._detect_non_classic_cohort(page)
         if cohort is not None:
             return FlowAgentUiError(
