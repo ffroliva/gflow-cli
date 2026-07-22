@@ -2,7 +2,7 @@
 
 **Date:** 2026-07-22
 **Target release:** v0.43.0
-**Status:** Architecture approved; written design awaiting review
+**Status:** Architecture amended by scenario analysis; written design awaiting review
 **Predict verdict:** GO — confidence 8.3/10 after the privacy mitigations below
 
 ## 1. Problem
@@ -67,9 +67,9 @@ relevant failures produce an incident bundle beneath:
 <GFLOW_CLI_HOME>/incidents/<YYYY-MM-DD>/<UTC timestamp>-<correlation-id>-<fingerprint>/
 ```
 
-Human-readable failures print one additional sentence containing the bundle path
-and `Review before sharing; sensitive artifacts may contain account or media data.`
-Machine-readable CLI JSON carries an optional `incident` object:
+Human-readable local CLI failures print one additional sentence containing the bundle
+path and `Review before sharing; sensitive artifacts may contain account or media
+data.` Local CLI JSON carries an optional `incident` object:
 
 ```json
 {
@@ -80,9 +80,12 @@ Machine-readable CLI JSON carries an optional `incident` object:
 }
 ```
 
-The MCP/worker error envelope carries the same optional object through the shared
-problem-details mapping. This is error metadata, not a new generation parameter,
-so CLI/MCP input-schema symmetry is unchanged.
+The shared RFC 9457 extension used by MCP, HTTP, and worker/queue surfaces is
+remote-safe and contains only `id` and `capture_status`. It never exposes an absolute
+local path, local username, artifact filenames, profile path, lock path, or lease-owner
+evidence. The local CLI renderer enriches that reference with `path` and `artifacts`
+from the in-process capture result. This is error metadata, not a new generation
+parameter, so CLI/MCP input-schema symmetry is unchanged.
 
 Setting `GFLOW_CLI_INCIDENT_CAPTURE=false` disables the automatic bundle. Existing
 ad-hoc screenshots outside the replaced mode-switch path and explicitly requested
@@ -127,7 +130,9 @@ Allowlisted fields only:
 - CLI version, Python version, OS family, and browser engine/channel;
 - command path, transport name, headed/headless state, locale, requested UI mode,
   model alias, aspect, and count;
-- hashed profile/project/media identifiers where present;
+- presence/count fields for profile/project/media inputs and, only where equality
+  correlation inside one command is required, a per-command HMAC digest whose random
+  key is never persisted;
 - exception class, RFC 9457 problem type, exit code, corrected retryable flag,
   sanitized route name, and lifecycle phase;
 - artifact paths and sensitivity classifications;
@@ -145,9 +150,9 @@ storage URIs, profile paths, and HAR paths.
 Structural evidence only:
 
 - query/fragment-free `scheme + host + canonical route`, with identifier-bearing
-  path segments replaced by stable placeholders or hashes;
-- a classified page title (`flow`, `flow_app_crash`, or `other`) plus title length
-  and SHA-256 hash, never the raw unknown title;
+  path segments replaced by stable placeholders or per-command HMAC identities;
+- a classified page title (`flow`, `flow_app_crash`, or `other`) plus title length,
+  never the raw unknown title or an unsalted digest of it;
 - unique Material-Symbol ligatures and total count;
 - known composer signal booleans (`crop_*`, Slate textbox, Agent toggle, media
   library markers);
@@ -179,13 +184,16 @@ the generation listener and include only allowlisted error fields:
 
 - numeric error code;
 - stable status/reason enum;
-- sorted top-level key names;
-- message length and SHA-256 hash; and
+- booleans for known top-level keys plus an unknown-key count, never arbitrary key
+  names;
+- message length, never the raw message or an unsalted digest of it; and
 - a boolean for known WAF/content-policy signatures.
 
-No raw message, header, cookie, query string, post data, response body, or signed
-URL enters `network.json`. Raw payload inspection remains the explicit HAR
-escalation path.
+Allowlisted Flow/Google hosts are reduced to stable host categories and canonical
+routes. Unknown hosts/routes become `other`; their raw host/path is not persisted.
+No raw message, header, cookie, query string, post data, response body, or signed URL
+enters `network.json`. Raw payload inspection remains the explicit HAR escalation
+path.
 
 ### 5.4 `browser.json`
 
@@ -196,9 +204,10 @@ Bounded journals:
 - up to 100 failed-request records shared with the network journal.
 
 Console arguments are never inspected or serialized. Messages/stacks are stored as
-class/category, length, and SHA-256 hash, with a query-free, identifier-scrubbed
-source route and line/column where available. Known Flow app-crash text is
-represented by a boolean classifier, not a raw string.
+class/category and length only, with an allowlisted source category/canonical route
+and line/column where available. Known Flow app-crash text is represented by a
+boolean classifier, not a raw string. No unsalted digest of low-entropy console,
+title, prompt, account, or error text is persisted.
 
 ### 5.5 `sensitive/screenshot.png`
 
@@ -214,8 +223,10 @@ is added in v0.43.0.
 ### 5.6 Raw HAR
 
 `GFLOW_CLI_HAR_PATH` remains unchanged and explicitly opt-in. Raw HAR is never
-copied into the incident directory. The incident manifest records only whether HAR
-was requested and whether the expected file appeared after graceful context close.
+copied into the incident directory. Before launch, the recorder snapshots whether
+the configured file already exists plus its size and modification identity. After
+context close it reports `complete` only when the current session demonstrably
+created or changed that file; mere post-close existence is insufficient.
 
 Because Playwright finalizes HAR during `BrowserContext.close()`, cancellation,
 process kill, timeout, or force-stop may leave it absent or incomplete. The CLI must
@@ -230,10 +241,13 @@ Create `src/gflow_cli/diagnostics.py` with a session-scoped `IncidentRecorder`.
 The module owns:
 
 - bounded immutable event records and `deque(maxlen=...)` journals;
-- safe URL/identifier normalization;
+- a bounded primitive-only request-timing map with expiry;
+- safe URL normalization and per-command keyed identifier reduction;
 - listener attach/detach bookkeeping;
+- a recorder-local capture/finalize state lock;
 - structural DOM capture;
-- bundle writing, atomic manifest finalization, and permissions;
+- exclusive bundle creation, recorder-owned pending markers, atomic manifest
+  finalization, and permissions;
 - per-command fingerprint suppression;
 - retention pruning; and
 - best-effort capture timeouts.
@@ -246,9 +260,14 @@ or transport behavior.
 `FlowApiClient` owns one recorder because it already owns the persistent browser
 context, pooled pages, teardown ordering, settings, and profile lease.
 
-1. Construct the recorder after settings and correlation context are available.
-2. Attach context-level request/response/request-failure listeners after context
-   launch.
+1. Construct the recorder after settings and correlation context are available but
+   before profile-lease acquisition, so contention can produce a metadata-only
+   incident without launching Chrome. Copy the correlation id once; if absent,
+   generate one once and use it for every event, directory, and manifest in the
+   command/task.
+2. Attach context-level request/response/request-failure listeners immediately after
+   context launch and before any navigation/submission that can produce relevant
+   traffic.
 3. Attach page console/page-error listeners to every pooled page and to any new page
    observed during the session.
 4. Pass the recorder to `UiAutomationTransport` through an optional typed field on
@@ -257,16 +276,26 @@ context, pooled pages, teardown ordering, settings, and profile lease.
    `capture_failure` while the page is still alive. This stages artifacts and returns
    the incident path without finalizing the manifest.
 6. Partial setup invokes metadata-only capture when no page exists.
-7. Detach listeners and flush the bounded incident journal before context close.
+7. Stop accepting events, detach listeners, and freeze primitive snapshots before
+   context close. Late callbacks become no-ops.
 8. Close the context, determine HAR completion state, and atomically finalize all
    staged manifests, including `possibly_incomplete` when close fails.
 9. Stop the driver and release the profile lease in the existing cancellation-safe
    order. Manifest finalization is best-effort and never masks a close/driver/lease
    failure.
 
-Listener callbacks perform synchronous metadata extraction and deque append only.
-They never perform file I/O, response-body reads, DOM evaluation, navigation,
-reloads, or additional network calls.
+Listener callbacks perform synchronous metadata extraction and deque/map mutation
+only. Request duration correlation uses a primitive key, never a retained Playwright
+`Request`/`Response`, and is capped at 256 in-flight entries with a ten-minute expiry;
+duration is omitted when safe correlation is unavailable. Callbacks never perform
+file I/O, response-body reads, DOM evaluation, navigation, reloads, or additional
+network calls. `capture_failure`, suppression updates, and finalization serialize
+through one recorder-local async lock so concurrent boundaries cannot create or
+overwrite the same incident.
+
+Capture is observation-only. Apart from read-only DOM evaluation and screenshot
+capture, it never clicks, types, navigates, reloads, mints a token, submits or retries
+generation, changes a queue checkpoint, downloads media, or mutates Flow state.
 
 ### 6.3 Existing UI diagnostic consolidation
 
@@ -278,19 +307,27 @@ formats. Existing error messages that name a diagnostic path continue to do so.
 ### 6.4 Profile lease evidence
 
 `ProfileLease` already writes PID, observed process-start proxy, profile name, and
-owner token. On kernel-lock contention it reads at most 4 KiB of metadata from the
-already-open descriptor, validates the JSON schema and primitive types, and adds
-diagnostic owner evidence to `ProfileLockedError`:
+owner token. The on-disk format changes so byte 0 is a reserved sentinel covered by
+the kernel lock, while bytes 1–4095 contain versioned bounded JSON. A contender never
+reads the locked byte. On same-process contention it uses the registered owner's
+in-memory metadata; on cross-process contention it reads at most 4095 bytes starting
+at offset 1 from the already-open descriptor, validates the version/schema and
+primitive types, and makes private diagnostic owner evidence available to the
+incident recorder and local human formatter:
 
 - PID;
 - observed start time;
-- hashed profile name;
-- lock path beneath `GFLOW_CLI_HOME`; and
-- owner-token hash prefix, never the raw token.
+- per-command HMAC profile identity;
+- per-command HMAC owner-token identity, never the raw token.
 
-The error and manifest explicitly state that the kernel lock is authoritative and
-the metadata can be stale. No reclaim, unlink, PID kill, or liveness conclusion is
-implemented.
+The evidence is carried on a private typed exception attribute and is never emitted by
+`to_problem_details()`, MCP, HTTP, worker/queue, or structured logs. The stable problem
+detail classifies contention as same-process or cross-process without embedding the
+canonical profile path, lock path, raw OS error, or owner values. The private manifest
+and local human output explicitly state that the kernel lock is authoritative and the
+metadata can be stale. Existing pre-v1 files whose metadata starts in locked byte 0
+may be unreadable on Windows; they report owner evidence as unavailable. No reclaim,
+unlink, rename, PID kill, or liveness conclusion is implemented.
 
 ### 6.5 Retryable contract correction
 
@@ -301,8 +338,12 @@ locks CLI JSON, MCP, and queue error envelopes to the same result.
 
 ## 7. Privacy and filesystem safety
 
-- The incidents root resolves strictly beneath `GFLOW_CLI_HOME`; any escape or
-  symlinked root/target raises a best-effort capture warning and writes nothing.
+- The incidents root resolves strictly beneath `GFLOW_CLI_HOME`; any escape,
+  symlink, Windows junction, or other reparse-point root/target raises a best-effort
+  capture warning and writes nothing.
+- Incident directories include a collision-resistant random component and are
+  created exclusively; a clock rollback or duplicate correlation/fingerprint cannot
+  overwrite an existing bundle.
 - POSIX directories are created with mode `0700` and files with `0600` from first
   creation, using exclusive creation where practical. Post-write chmod remains
   defense in depth.
@@ -319,16 +360,39 @@ locks CLI JSON, MCP, and queue error envelopes to the same result.
 - Network records: 100.
 - Console records: 100.
 - Page errors: 50.
+- In-flight request timings: 256, ten-minute expiry.
 - Bundles per command: 3.
 - Failure-capture wall-clock budget: 8 seconds total, with shorter per-artifact
   bounds.
-- Global retention: at most 50 complete incident directories and at most 250 MiB.
+- Complete-bundle retention: at most 50 directories and at most 250 MiB.
+- Recorder-owned pending retention: at most 20 directories and at most 100 MiB.
 
-At recorder startup, prune oldest complete bundles until both global limits hold.
-Pruning is restricted to direct child directories beneath the resolved incidents
-root whose atomically written manifest has schema `gflow-incident-v1`. Unknown
-directories, symlinks, incomplete directories, and invalid manifests are never
-deleted. Emit `incident.retention_pruned` with counts/bytes only.
+Each incident directory is created with a versioned `.pending` marker whose advisory
+lock is held by the recorder until finalization. The marker is bounded to 4 KiB and
+contains only fixed ownership/schema fields. `manifest.json` is written last; the
+pending lock is then released and the marker removed. If a process dies, the marker
+remains but its lock becomes acquirable.
+
+At recorder startup, take a non-blocking incidents-root retention lock; if another
+process owns it, skip pruning. Under that lock:
+
+- prune oldest complete bundles until both complete-bundle limits hold, but only for
+  direct child directories with a bounded (maximum 64 KiB), valid
+  `gflow-incident-v1` manifest and an exact allowlisted artifact set;
+- never follow symlinks, junctions, reparse points, or manifest paths while measuring
+  or deleting;
+- when a pending marker exists, first acquire its lock non-blocking; if acquisition
+  fails, treat the directory as active and never inspect, finalize, or prune it;
+- after acquiring an inactive marker lock, treat a valid manifest as complete and the
+  marker as a crash-left stale marker;
+- prune recorder-owned pending directories only after their marker lock can be
+  acquired/held (proving no recorder currently owns them) and they are older than 24
+  hours, or oldest-first when the pending count/byte cap is exceeded; and
+- leave unknown directories, unrecognized markers, locked/active pending bundles,
+  oversized/invalid manifests, and escaping content untouched.
+
+Emit `incident.retention_pruned` with counts/bytes only. Retention failure is
+best-effort and never recursively creates another incident.
 
 ## 9. Error handling and observability
 
@@ -341,6 +405,10 @@ Stable events:
 - `incident.retention_pruned`; and
 - `profile_lease.owner_evidence_read` (valid/invalid only; no owner values in logs).
 
+Each event is emitted through a fixed-field constructor; callers cannot add raw URLs,
+paths, owner metadata, exception text, prompts, or browser objects as arbitrary
+logging kwargs.
+
 The original exception, problem details, exit code, and traceback chain always win.
 Incident capture is shielded/bounded only long enough to write evidence; it cannot
 prevent the existing cancellation-safe browser teardown or lease release.
@@ -349,32 +417,48 @@ prevent the existing cancellation-safe browser teardown or lease release.
 
 ### 10.1 Unit tests
 
-- URL query/fragment removal and identifier hashing.
+- URL query/fragment removal, allowlisted host/route reduction, and per-command HMAC
+  identifier equality without persisted keys.
 - Structural DOM result validation rejects unexpected/raw fields.
 - Hostile token, cookie, signed-URL, prompt, email, ANSI, and Unicode fixtures do
-  not appear in sanitized JSON.
+  not appear in automatic JSON, logs, filenames, local CLI JSON, or remote error
+  envelopes.
+- Arbitrary upstream key names and unknown hosts/routes reduce to known booleans,
+  counts, and `other` rather than raw strings.
 - Console/page-error/network rings enforce their exact caps.
+- The primitive in-flight request map enforces its 256-entry cap/expiry and retains
+  no Playwright objects under 10,000 synthetic events.
 - Duplicate fingerprints create one staged bundle; finalization records the complete
-  suppression count atomically.
+  suppression count atomically under concurrent capture calls.
 - Explicit config allowlist cannot serialize API keys, daemon tokens, storage URIs,
   prompts, profile paths, or HAR paths.
 - Bundle paths handle spaces and Unicode on Windows/POSIX.
-- Symlinked incident roots/children are refused.
+- Symlinked/junction/reparse-point incident roots and children are refused.
 - POSIX modes are `0700`/`0600`; Windows tests assert behavior/documentation without
   making a false DACL claim.
-- Atomic manifest-last behavior distinguishes complete/incomplete bundles.
-- Retention deletes only valid direct-child bundles and respects count/byte limits.
+- Exclusive random-suffixed directory creation and atomic manifest-last behavior
+  distinguish collision, complete, and pending bundles.
+- Retention deletes only valid direct-child complete bundles or unlocked
+  recorder-owned pending bundles, respects both count/byte limits, parses bounded
+  manifests, and skips when the retention lock is held.
 - Capture I/O, screenshot, DOM, and timeout failures preserve the original error.
-- HAR state reports disabled/complete/possibly-incomplete honestly.
-- Lease metadata parsing is bounded, schema-validated, hashed, and never drives
-  reclaim behavior.
+- HAR state reports disabled/complete/possibly-incomplete honestly when the target
+  file was absent, pre-existing, unchanged, changed, or close failed.
+- Lease metadata offset-1 parsing is bounded, version/schema-validated, keyed, and
+  never drives reclaim behavior; legacy/unreadable files degrade to unavailable.
+- Profile-lock owner evidence remains private/local: RFC 9457, MCP, HTTP, queue, and
+  structured-log outputs omit profile paths, lock paths, raw OS errors, and owner
+  values.
 - `FlowAppError` and `FlowAgentUiError` are retryable across CLI JSON, MCP, and
   queue envelopes.
+- Local CLI incident output includes the path while remote MCP/HTTP/worker envelopes
+  contain only opaque id/status.
 
 ### 10.2 Playwright/transport integration tests
 
-- Listeners attach once to every pooled/new page and detach on normal teardown,
-  partial setup, repeated enter/exit, and cancellation.
+- Listeners attach before relevant navigation/submission, once to every pooled/new
+  page, and detach/freeze on normal teardown, partial setup, repeated enter/exit,
+  and cancellation; late callbacks are ignored.
 - Normal successful generation writes no incident bundle.
 - Relevant image/video exceptions capture before page/context close.
 - Expected usage/content-policy/auth failures do not capture.
@@ -382,6 +466,8 @@ prevent the existing cancellation-safe browser teardown or lease release.
   repeated systemic failure.
 - Context listener callbacks retain no `Request`, `Response`, `ConsoleMessage`, or
   JS-handle objects.
+- Cancellation during DOM, screenshot, context close, and finalization preserves the
+  original cancellation while releasing driver and profile lease.
 - Full-page screenshot failure falls back to viewport without masking the error.
 - Existing mode-switch diagnostics use the new bundle rather than duplicating a
   screenshot/JSON pair.
@@ -467,7 +553,9 @@ capability, not merely internal fixes.
 
 Do not cut the release until:
 
-1. all Critical/High scenarios from the follow-on scenario analysis are covered;
+1. all 9 Critical and 30 High scenarios in
+   `docs/superpowers/plans/2026-07-22-private-incident-diagnostics/SCENARIO.md`
+   are mapped to implementation tasks and pass their declared tests;
 2. the Impeccable Routine is green; an aggregate packaging failure is treated as a
    lifecycle/resource regression and is not waived merely because the packaging test
    passes in isolation;
