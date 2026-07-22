@@ -1,5 +1,6 @@
 from __future__ import annotations
 
+from dataclasses import dataclass
 from pathlib import Path
 from typing import Any, TypedDict
 
@@ -30,6 +31,7 @@ __all__ = [
     "MentionIndexUnavailableError",
     "ModelModeIncompatibilityError",
     "NetworkError",
+    "OwnerEvidence",
     "ProblemDetails",
     "QueueSchemaError",
     "RateLimitError",
@@ -326,6 +328,19 @@ class ConfigurationError(GFlowError):
     )
 
 
+@dataclass(frozen=True, slots=True)
+class OwnerEvidence:
+    """Private diagnostic evidence about the recorded lease owner (§6.4 of the
+    incident-diagnostics design). Identities are per-command HMACs — never the
+    raw profile name or owner token. The kernel lock is authoritative; this
+    metadata can be stale and never authorizes reclaim, unlink, or PID kill."""
+
+    pid: int
+    process_start_time: float
+    profile_identity: str
+    owner_token_identity: str
+
+
 class ProfileLockedError(ConfigurationError):
     """Raised when the profile directory is held by another process.
 
@@ -333,10 +348,16 @@ class ProfileLockedError(ConfigurationError):
     ``gflow serve`` daemon (browser_manager), or another Chrome — typically a
     stale browser leaked by a crashed prior run — holding the dir at
     persistent-context launch (issue #293).
+
+    ``owner_evidence`` is a PRIVATE typed attribute set by ``ProfileLease``
+    contention paths for the incident recorder and local human formatter only.
+    It is deliberately excluded from ``to_problem_details()`` and therefore
+    from every MCP/HTTP/worker/structured-log surface.
     """
 
     problem_type = "https://gflow-cli.dev/errors/profile-locked"
     title = "Profile locked"
+    owner_evidence: OwnerEvidence | None = None
     _default_remediation = (
         "Another process holds this profile: close a running gflow serve "
         "daemon or stray Chrome windows using the profile dir, or use a "
