@@ -69,6 +69,7 @@ __all__ = [
     "TitleClass",
     "classify_title",
     "reduce_error_body",
+    "run_retention",
     "sanitize_url",
     "text_summary",
     "validated_incidents_root",
@@ -1387,6 +1388,259 @@ class IncidentRecorder:
             "pointer_events": pointer if pointer in ("auto", "none") else "other",
             "ligatures": _clean_ligatures(raw.get("ligatures")),
         }
+
+
+# --- retention (design §8) — a security boundary (S37–S39) -----------------
+
+_RETENTION_MAX_COMPLETE = 50
+_RETENTION_MAX_COMPLETE_BYTES = 250 * 1024 * 1024
+_RETENTION_MAX_PENDING = 20
+_RETENTION_MAX_PENDING_BYTES = 100 * 1024 * 1024
+_RETENTION_MAX_PENDING_AGE_S = 24 * 3600.0
+_MANIFEST_PARSE_CAP_BYTES = 64 * 1024
+# The exact artifact universe a gflow bundle may contain. ANY other entry
+# marks the directory unknown → untouched.
+_ALLOWED_TOP_FILES = frozenset(
+    {"manifest.json", "ui.json", "network.json", "browser.json", ".pending"}
+)
+_ALLOWED_SENSITIVE_FILES = frozenset({"screenshot.png"})
+
+
+def run_retention(
+    root: Path,
+    *,
+    max_complete: int = _RETENTION_MAX_COMPLETE,
+    max_complete_bytes: int = _RETENTION_MAX_COMPLETE_BYTES,
+    max_pending: int = _RETENTION_MAX_PENDING,
+    max_pending_bytes: int = _RETENTION_MAX_PENDING_BYTES,
+    max_pending_age_s: float = _RETENTION_MAX_PENDING_AGE_S,
+) -> None:
+    """Prune old complete bundles and stale recorder-owned pending directories.
+
+    Holds a non-blocking incidents-root retention lock — if another process
+    owns it, returns silently. Deletes ONLY direct-grandchild directories that
+    are either (a) valid ``gflow-incident-v1`` bundles with an exactly
+    allowlisted artifact set, or (b) recorder-owned pending directories whose
+    marker lock is acquirable and which are stale/over-cap. Unknown content,
+    invalid/oversized manifests, and anything behind a link is never touched.
+    Best-effort: any OSError degrades to skipping, never raising.
+    """
+    try:
+        lock_fd = os.open(
+            root / ".retention", os.O_RDWR | os.O_CREAT | getattr(os, "O_BINARY", 0), 0o600
+        )
+    except OSError:
+        return
+    try:
+        if os.fstat(lock_fd).st_size == 0:
+            os.write(lock_fd, b"\0")
+            os.lseek(lock_fd, 0, os.SEEK_SET)
+        try:
+            _kernel_lock_nonblocking(lock_fd)
+        except OSError:
+            return  # another process owns retention this round
+        try:
+            _run_retention_locked(
+                root,
+                max_complete=max_complete,
+                max_complete_bytes=max_complete_bytes,
+                max_pending=max_pending,
+                max_pending_bytes=max_pending_bytes,
+                max_pending_age_s=max_pending_age_s,
+            )
+        finally:
+            _kernel_unlock(lock_fd)
+    except OSError:
+        return
+    finally:
+        os.close(lock_fd)
+
+
+@dataclass(frozen=True, slots=True)
+class _RetentionCandidate:
+    path: Path
+    size: int
+    sort_key: str  # timestamped name — lexicographic == chronological
+    marker_mtime: float
+
+
+def _run_retention_locked(
+    root: Path,
+    *,
+    max_complete: int,
+    max_complete_bytes: int,
+    max_pending: int,
+    max_pending_bytes: int,
+    max_pending_age_s: float,
+) -> None:
+    complete: list[_RetentionCandidate] = []
+    pending: list[_RetentionCandidate] = []
+    root_resolved = root.resolve()
+    for day in sorted(p for p in root.iterdir() if p.is_dir()):
+        if _is_reparse_point(day):
+            continue
+        for bundle in sorted(p for p in day.iterdir() if p.is_dir()):
+            try:
+                _classify_for_retention(bundle, root_resolved, complete, pending)
+            except OSError:
+                continue
+
+    freed = 0
+    pruned_complete = 0
+    pruned_pending = 0
+
+    # Complete bundles: keep the newest within BOTH caps, prune the rest.
+    complete.sort(key=lambda c: c.sort_key, reverse=True)  # newest first
+    kept_bytes = 0
+    for index, cand in enumerate(complete):
+        kept_bytes += cand.size
+        if index < max_complete and kept_bytes <= max_complete_bytes:
+            continue
+        got = _safe_delete_bundle(cand.path, root_resolved)
+        if got:
+            freed += got
+            pruned_complete += 1
+
+    # Pending (unlocked, no valid manifest): stale by age, then over-cap oldest-first.
+    import time
+
+    now = time.time()
+    pending.sort(key=lambda c: c.marker_mtime)  # oldest first
+    survivors: list[_RetentionCandidate] = []
+    for cand in pending:
+        if now - cand.marker_mtime > max_pending_age_s:
+            got = _safe_delete_bundle(cand.path, root_resolved)
+            if got:
+                freed += got
+                pruned_pending += 1
+                continue
+        survivors.append(cand)
+    total_pending_bytes = sum(c.size for c in survivors)
+    while survivors and (len(survivors) > max_pending or total_pending_bytes > max_pending_bytes):
+        cand = survivors.pop(0)
+        got = _safe_delete_bundle(cand.path, root_resolved)
+        if got:
+            freed += got
+            pruned_pending += 1
+            total_pending_bytes -= cand.size
+
+    if pruned_complete or pruned_pending:
+        emit_retention_pruned(
+            complete_count=pruned_complete, pending_count=pruned_pending, bytes_freed=freed
+        )
+
+
+def _classify_for_retention(
+    bundle: Path,
+    root_resolved: Path,
+    complete: list[_RetentionCandidate],
+    pending: list[_RetentionCandidate],
+) -> None:
+    if _is_reparse_point(bundle) or not bundle.resolve().is_relative_to(root_resolved):
+        return
+    marker = bundle / ".pending"
+    if marker.exists():
+        stale_complete = False
+        fd = os.open(marker, os.O_RDWR | getattr(os, "O_BINARY", 0))
+        try:
+            try:
+                _kernel_lock_nonblocking(fd)
+            except OSError:
+                return  # ACTIVE recorder owns it — never inspect or prune
+            try:
+                if _valid_manifest(bundle):
+                    stale_complete = True
+                else:
+                    pending.append(_candidate(bundle, marker_mtime=marker.stat().st_mtime))
+            finally:
+                _kernel_unlock(fd)
+        finally:
+            os.close(fd)
+        if stale_complete:
+            # Crash-left stale marker on a finalized bundle: clean the marker
+            # (after the fd is closed — Windows refuses unlink on open handles)
+            # and keep the bundle as complete.
+            marker.unlink(missing_ok=True)
+            complete.append(_candidate(bundle))
+        return
+    if _valid_manifest(bundle):
+        complete.append(_candidate(bundle))
+    # else: unknown directory — untouched (S37)
+
+
+def _candidate(bundle: Path, *, marker_mtime: float = 0.0) -> _RetentionCandidate:
+    size = 0
+    for dirpath, _dirnames, filenames in os.walk(bundle, followlinks=False):
+        for name in filenames:
+            try:
+                size += os.lstat(Path(dirpath) / name).st_size
+            except OSError:
+                continue
+    return _RetentionCandidate(
+        path=bundle, size=size, sort_key=str(bundle), marker_mtime=marker_mtime
+    )
+
+
+def _valid_manifest(bundle: Path) -> bool:
+    """Bounded parse + exact schema/artifact-set validation (S37)."""
+    manifest = bundle / "manifest.json"
+    try:
+        st = os.lstat(manifest)
+    except OSError:
+        return False
+    if stat_module.S_ISLNK(st.st_mode) or st.st_size > _MANIFEST_PARSE_CAP_BYTES:
+        return False
+    try:
+        parsed: object = json.loads(manifest.read_text(encoding="utf-8"))
+    except (OSError, ValueError):
+        return False
+    if (
+        not isinstance(parsed, dict)
+        or cast("dict[str, object]", parsed).get("schema") != "gflow-incident-v1"
+    ):
+        return False
+    # Exact artifact universe: any unknown entry → not ours → untouched.
+    try:
+        for entry in bundle.iterdir():
+            if entry.is_dir():
+                if entry.name != "sensitive" or _is_reparse_point(entry):
+                    return False
+                for sub in entry.iterdir():
+                    if not sub.is_file() or sub.name not in _ALLOWED_SENSITIVE_FILES:
+                        return False
+            elif entry.name not in _ALLOWED_TOP_FILES:
+                return False
+    except OSError:
+        return False
+    return True
+
+
+def _safe_delete_bundle(bundle: Path, root_resolved: Path) -> int:
+    """Delete a validated bundle without ever following a link. Returns bytes
+    freed, or 0 when refused/failed (the bundle is then left as-is)."""
+    try:
+        if _is_reparse_point(bundle) or not bundle.resolve().is_relative_to(root_resolved):
+            return 0
+        files: list[Path] = []
+        dirs: list[Path] = []
+        for dirpath, dirnames, filenames in os.walk(bundle, followlinks=False):
+            here = Path(dirpath)
+            if _is_reparse_point(here):
+                return 0
+            for name in dirnames:
+                if _is_reparse_point(here / name):
+                    return 0
+            dirs.append(here)
+            files.extend(here / name for name in filenames)
+        freed = 0
+        for file in files:
+            freed += os.lstat(file).st_size
+            os.unlink(file)
+        for directory in sorted(dirs, reverse=True):
+            os.rmdir(directory)
+    except OSError:
+        return 0
+    return freed
 
 
 def _capture_triggers() -> tuple[type[BaseException], ...]:
