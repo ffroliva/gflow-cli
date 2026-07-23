@@ -914,6 +914,8 @@ class IncidentRecorder:
 
         if not self.enabled:
             return False
+        if not isinstance(exc, Exception):
+            return False  # cancellation/KeyboardInterrupt/SystemExit are not incidents
         if isinstance(exc, (ContentPolicyError, AuthExpiredError)):
             return False  # deterministic operator remediation; DOM adds nothing
         if isinstance(exc, ProfileLockedError):
