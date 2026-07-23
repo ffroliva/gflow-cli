@@ -83,6 +83,9 @@ def test_invalid_payload_fails_without_browser_launch(
     assert failed.error is not None
     # detail is redacted and never echoes the payload
     assert failed.error.get("type", "").endswith("queue-schema")
+    # §6.5 (S24): persisted error payload carries the shared retryable flag —
+    # a malformed payload is terminal, never retryable.
+    assert failed.error["retryable"] is False
 
 
 def test_unknown_task_type_fails_at_claim(store: DataStore) -> None:

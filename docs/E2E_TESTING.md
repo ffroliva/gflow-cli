@@ -163,8 +163,22 @@ tests/
     ├── test_transports_e2e.py            # [e2e, e2e_{auth,image,batch,video}]
     ├── test_image_batch_e2e.py           # [e2e, e2e_batch]
     ├── test_video_t2v_e2e.py             # [e2e, e2e_video]
+    ├── test_incident_quality_e2e.py      # [e2e, e2e_auth] incident-bundle quality benchmark — 0 credits
     └── test_data_layer_e2e.py            # [e2e, e2e_{image,video,data}]
 ```
+
+### Incident-bundle quality benchmark
+
+`test_incident_quality_e2e.py` (marker `e2e_auth`, **0 credits**) is not a
+generation test — it drives a real UI-state failure plus real two-process
+profile contention and **grades the resulting incident bundles' diagnostic
+quality**, asserting hard floors so a regression that hollows out the captured
+evidence (empty journals, hosts all reduced to `other`, a null command, a
+leaked identifier) fails CI even though the artifacts still exist. It reuses the
+standalone scorer `scripts/dev/incident_bundle_quality.py` (also runnable on any
+field bundle a user emails), which is unit-covered offline by
+`tests/scripts/test_incident_bundle_quality.py`. See
+[DEBUGGING § Assessing a bundle's quality](DEBUGGING.md#assessing-a-bundles-quality).
 
 ### Smoke test inventory
 

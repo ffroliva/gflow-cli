@@ -1,10 +1,15 @@
 from __future__ import annotations
 
+from dataclasses import dataclass
 from pathlib import Path
-from typing import Any, TypedDict
+from typing import TYPE_CHECKING, Any, TypedDict
+
+if TYPE_CHECKING:
+    from gflow_cli.diagnostics import IncidentRef
 
 __all__ = [
     "EXIT_CODE_MAP",
+    "RETRYABLE_ERRORS",
     "AisandboxAuthError",
     "AuthExpiredError",
     "AuthLoginTimeoutError",
@@ -21,6 +26,7 @@ __all__ = [
     "DataStoreError",
     "FlowAgentUiError",
     "FlowApiError",
+    "FlowAppError",
     "FrameExtractionError",
     "GFlowError",
     "MediaAttributionError",
@@ -28,6 +34,7 @@ __all__ = [
     "MentionIndexUnavailableError",
     "ModelModeIncompatibilityError",
     "NetworkError",
+    "OwnerEvidence",
     "ProblemDetails",
     "QueueSchemaError",
     "RateLimitError",
@@ -40,6 +47,7 @@ __all__ = [
     "VideoModelSelectionError",
     "WafRejectionError",
     "WireFormatError",
+    "is_retryable",
 ]
 
 
@@ -54,6 +62,7 @@ class ProblemDetails(TypedDict, total=False):
     instance: str  # optional — `gflow:error:<correlation_id>`
     remediation_hint: str  # gflow extension
     route: str  # gflow extension — sanitized route name, NOT full URL
+    incident: dict[str, str]  # gflow extension — remote-safe {id, capture_status} ONLY
 
 
 class GFlowError(Exception):
@@ -72,6 +81,10 @@ class GFlowError(Exception):
     problem_type: str = "about:blank"
     title: str = "Error"
     _default_remediation: str = ""
+    #: Set post-raise by the incident capture boundary (diagnostics design).
+    #: ``to_problem_details()`` exposes only the remote-safe {id, capture_status}
+    #: projection; the local path/artifacts stay CLI-local (S21).
+    incident_ref: IncidentRef | None = None
 
     def __init__(
         self,
@@ -107,6 +120,11 @@ class GFlowError(Exception):
             out["remediation_hint"] = self.remediation_hint
         if self.route:
             out["route"] = self.route
+        if self.incident_ref is not None:
+            out["incident"] = {
+                "id": self.incident_ref.id,
+                "capture_status": self.incident_ref.capture_status,
+            }
         return out
 
 
@@ -323,6 +341,19 @@ class ConfigurationError(GFlowError):
     )
 
 
+@dataclass(frozen=True, slots=True)
+class OwnerEvidence:
+    """Private diagnostic evidence about the recorded lease owner (§6.4 of the
+    incident-diagnostics design). Identities are per-command HMACs — never the
+    raw profile name or owner token. The kernel lock is authoritative; this
+    metadata can be stale and never authorizes reclaim, unlink, or PID kill."""
+
+    pid: int
+    process_start_time: float
+    profile_identity: str
+    owner_token_identity: str
+
+
 class ProfileLockedError(ConfigurationError):
     """Raised when the profile directory is held by another process.
 
@@ -330,10 +361,16 @@ class ProfileLockedError(ConfigurationError):
     ``gflow serve`` daemon (browser_manager), or another Chrome — typically a
     stale browser leaked by a crashed prior run — holding the dir at
     persistent-context launch (issue #293).
+
+    ``owner_evidence`` is a PRIVATE typed attribute set by ``ProfileLease``
+    contention paths for the incident recorder and local human formatter only.
+    It is deliberately excluded from ``to_problem_details()`` and therefore
+    from every MCP/HTTP/worker/structured-log surface.
     """
 
     problem_type = "https://gflow-cli.dev/errors/profile-locked"
     title = "Profile locked"
+    owner_evidence: OwnerEvidence | None = None
     _default_remediation = (
         "Another process holds this profile: close a running gflow serve "
         "daemon or stray Chrome windows using the profile dir, or use a "
@@ -482,6 +519,23 @@ class FlowAgentUiError(GFlowError):
         "or wait for a future update. If you need to share a bug report, review the "
         "diagnostic screenshot first — the viewport may show personal info (do NOT "
         "include tokens or credentials)."
+    )
+
+
+class FlowAppError(GFlowError):
+    """Raised when Google Flow's web app itself crashed — a client-side exception
+    (its React error boundary), not a gflow-cli issue. The editor never rendered,
+    so no generation control exists to drive. **Transient and retryable** (exit
+    code 31). Detected at the mode-switch raise site via the Flow error-page title,
+    which otherwise surfaces as a misleading ``UiSelectorDriftError`` "file a bug".
+    """
+
+    problem_type = "https://gflow-cli.dev/errors/flow-app"
+    title = "Google Flow web app error"
+    _default_remediation = (
+        "Google Flow's web app failed to load (a client-side exception on "
+        "labs.google) — a transient Flow-side error, not a gflow-cli bug. Retry in a "
+        "moment; if it persists, check https://labs.google/fx and try a fresh session."
     )
 
 
@@ -898,6 +952,7 @@ EXIT_CODE_MAP: dict[type[GFlowError], int] = {
     # ConfigurationError (its parent) so the isinstance walk lands on 24, not 11.
     BrowserEngineUnavailableError: 24,
     FlowAgentUiError: 25,
+    FlowAppError: 31,
     # UiModeUnavailableError (issue #299): a command's required arm (--ui-mode /
     # inferred) couldn't be reached after a best-effort switch. Direct GFlowError
     # subclass — retryable policy abort, distinct from FlowAgentUiError (25).
@@ -930,3 +985,24 @@ EXIT_CODE_MAP: dict[type[GFlowError], int] = {
     SceneConcatError: 19,
     # FlowApiError omitted — falls through to default 1
 }
+
+# Transient failures the caller can retry without operator intervention — WAF
+# bounce, rate-limit/quota, transport timeout, network blip, a dropped browser
+# session, a Flow web-app crash (31), or an agentic-cohort flap (25). Everything
+# else (auth/content-policy/config/security) is terminal: retrying the identical
+# request will fail the same way. Single source of truth for the CLI --json, MCP,
+# and worker error envelopes — never fork a private copy of this list.
+RETRYABLE_ERRORS: tuple[type[GFlowError], ...] = (
+    WafRejectionError,
+    RateLimitError,
+    TransportTimeoutError,
+    NetworkError,
+    BrowserSessionClosedError,
+    FlowAppError,
+    FlowAgentUiError,
+)
+
+
+def is_retryable(exc: GFlowError) -> bool:
+    """Shared retry classification consumed by every machine-readable error surface."""
+    return isinstance(exc, RETRYABLE_ERRORS)

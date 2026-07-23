@@ -21,7 +21,7 @@ import sys
 import time
 from dataclasses import replace as _dataclass_replace
 from datetime import datetime
-from typing import TYPE_CHECKING, Any, Self, TypeVar, cast
+from typing import TYPE_CHECKING, Any, NoReturn, Self, TypeVar, cast
 from urllib.parse import quote, urlsplit, urlunsplit
 
 import structlog
@@ -54,7 +54,11 @@ from gflow_cli.api.image_upscale import (
 )
 from gflow_cli.api.recaptcha import TokenMinter
 from gflow_cli.api.scene import ConcatInput, Scene, SceneWorkflow
-from gflow_cli.api.transports import make_transport
+from gflow_cli.api.transports import (
+    STANDALONE_ONLY_TRANSPORTS,
+    make_transport,
+    resolve_transport_name,
+)
 from gflow_cli.api.transports.base import (
     FlowTransportStrategy,
     SupportsTransportSetup,
@@ -63,6 +67,7 @@ from gflow_cli.api.transports.base import (
 )
 from gflow_cli.browser_manager import channel_for_profile
 from gflow_cli.config import BrowserEngine, Settings
+from gflow_cli.diagnostics import IncidentRecorder, run_retention, validated_incidents_root
 from gflow_cli.errors import (
     AisandboxAuthError,
     AuthExpiredError,
@@ -309,6 +314,11 @@ class FlowApiClient:
         # transports it drives reuse this context (shared-page path) and never
         # take a second lease.
         self._lease: ProfileLease | None = None
+        # Session-scoped private incident recorder (incident-diagnostics design
+        # §6.2). Constructed in __aenter__ before lease acquisition so profile
+        # contention can produce a metadata-only incident without Chrome.
+        self._recorder: IncidentRecorder | None = None
+        self._recorder_handlers: list[tuple[Any, str, Any]] = []
         # Per-worker Page pool (Phase 4 T2). All Pages live inside ONE
         # persistent BrowserContext and therefore SHARE cookies + auth state
         # at the Context level — this is intentional and matches Playwright's
@@ -340,6 +350,22 @@ class FlowApiClient:
         # existing test monkeypatches still apply. Only the opt-in patchright
         # engine routes through the resolver (which raises a typed exit-24 error
         # if the optional package is missing).
+        # Incident recorder first (design §6.2 step 1): settings + correlation
+        # context are available, and lease contention below must be able to
+        # produce a metadata-only incident. Retention is pure cleanup and runs
+        # even when capture is DISABLED (an opt-out must not freeze previously
+        # accumulated bundles — incl. sensitive/ screenshots — on disk forever);
+        # the existing-dir guard just avoids creating incidents/ for users who
+        # never captured. to_thread keeps the sweep's stat/parse work off the
+        # event loop (the daemon/MCP server enter clients on their shared loop).
+        self._recorder = IncidentRecorder(self.settings)
+        if self._recorder.enabled or (self.settings.home / "incidents").is_dir():
+            try:
+                root = validated_incidents_root(self.settings.home)
+                if root is not None:
+                    await asyncio.to_thread(run_retention, root)
+            except Exception:  # noqa: BLE001 — retention must never block a command
+                logger.warning("incident.retention_error", exc_info=True)
         engine = active_engine()
         log_engine_selected(engine)
         if engine == BrowserEngine.PATCHRIGHT:
@@ -590,14 +616,28 @@ class FlowApiClient:
         await self._preread_flow_session_cookies()
         kwargs = self._persistent_context_kwargs()
         self._log_and_guard_launch(kwargs)
+        if self._recorder is not None:
+            self._recorder.note_har_pre_launch(self.settings.har_path)
         # Own the profile BEFORE Chrome launches. Acquire here (not earlier):
         # _preread_flow_session_cookies above may itself momentarily own a
         # headless context on this profile (its cookie-decrypt fallback), which
         # takes and releases its own lease first — acquiring earlier would make
         # this a same-process double-acquire. Contention raises ProfileLockedError
         # (exit 11) here, before any Chrome process starts.
-        self._lease = ProfileLease(self.profile_dir).acquire()
+        try:
+            self._lease = ProfileLease(self.profile_dir).acquire()
+        except ProfileLockedError as exc:
+            # Metadata-only incident BEFORE any Chrome exists (S07); the
+            # partial-setup guard's _close_browser_resources finalizes it.
+            if self._recorder is not None:
+                ref = await self._recorder.capture_metadata_only(exc, phase="profile_lease")
+                if ref is not None and exc.incident_ref is None:
+                    exc.incident_ref = ref
+            raise
         self._context = await self._launch_persistent_context(kwargs)
+        # Attach journal listeners BEFORE any navigation/submission that can
+        # produce relevant traffic (design §6.2 step 2, S30).
+        self._attach_recorder_context(self._context)
         # Hide the automation flag so reCAPTCHA Enterprise doesn't score
         # the session as a bot — navigator.webdriver=true causes low-score
         # tokens and HTTP 403 on batchGenerateImages.
@@ -613,6 +653,10 @@ class FlowApiClient:
         # default; reuse it as slot 0 to avoid an unused N+1 Page.
         n = max(1, self.settings.concurrency)
         self._pages = await self._open_page_pool(n)
+        # Console/page-error listeners on every pooled page; the context-level
+        # "page" event (attached above) covers pages observed later (S16).
+        for pooled in self._pages:
+            self._attach_recorder_page(pooled)
         # asyncio.Queue gives FIFO checkout/checkin with no manual locking.
         # ``maxsize=n`` makes the upper bound STRUCTURAL — a double-checkin
         # (bug in a future caller) raises QueueFull rather than silently
@@ -652,7 +696,7 @@ class FlowApiClient:
                 # the original error is carried in the detail and the wording
                 # hedges rather than asserts.
                 first_line = str(exc).splitlines()[0] if str(exc) else type(exc).__name__
-                raise ProfileLockedError(
+                locked = ProfileLockedError(
                     detail=(
                         f"the browser exited immediately while launching on profile "
                         f"dir {self.profile_dir} — most likely another Chrome holds "
@@ -667,7 +711,15 @@ class FlowApiClient:
                         "exists, the browser crashed at startup for another reason; "
                         "see the original error above."
                     ),
-                ) from exc
+                )
+                # This launch-crash contention (#293's stale-Chrome case) is the
+                # COMMON profile-lock path — it gets the same metadata-only
+                # incident the lease-contention raise does (S07).
+                if self._recorder is not None:
+                    ref = await self._recorder.capture_metadata_only(locked, phase="browser_launch")
+                    if ref is not None and locked.incident_ref is None:
+                        locked.incident_ref = ref
+                raise locked from exc
             raise
 
     async def _open_page_pool(self, n: int) -> list[Page]:
@@ -694,6 +746,21 @@ class FlowApiClient:
         inp = self._transport_input
         config = self._build_transport_setup()
         if inp is None or isinstance(inp, str):
+            # Standalone-only guard: bearer/sapisidhash (S2/S3) discard the shared
+            # page and re-acquire the profile lease in their own setup(), so with
+            # this client already holding self._lease they self-lock with an opaque
+            # ProfileLockedError. Refuse fast with a clear message. Only fires when
+            # the lease is actually held (i.e. inside a live client), so the same
+            # transports stay usable standalone.
+            if self._lease is not None:
+                resolved = resolve_transport_name(inp)
+                if resolved in STANDALONE_ONLY_TRANSPORTS:
+                    raise ConfigurationError(
+                        f"Transport {resolved!r} cannot run inside FlowApiClient: it "
+                        "acquires its own profile lease during setup and would "
+                        "self-lock against the client's lease. Use 'ui_automation' or "
+                        f"'evaluate_fetch', or drive {resolved!r} standalone.",
+                    )
             # Client-owned: resolve from factory, run full lifecycle.
             # Pass self._page so S1 can reuse the already-open context.
             # S2 and S3 accept and ignore the page= kwarg.
@@ -711,6 +778,10 @@ class FlowApiClient:
             self.transport = inp
             self._owns_transport = False
             self._apply_transport_setup(self.transport, config)
+        if self._recorder is not None:
+            self._recorder.transport = getattr(
+                self.transport, "name", type(self.transport).__name__
+            )
 
     def _build_transport_setup(self) -> TransportSetup:
         """Assemble the immutable output/storage wiring handed to the transport."""
@@ -757,14 +828,29 @@ class FlowApiClient:
         Teardown order: (4) close context/browser -> stop driver;
         (6) release the profile lease.
         """
+        # Stop accepting incident events and detach listeners BEFORE the
+        # context closes — late callbacks become no-ops (design §6.2 step 7).
+        self._detach_recorder()
         cancelled: BaseException | None = None
+        # Cell (not a bare bool) so the wrapper coroutine below can record the
+        # GRACEFUL-close outcome through run_teardown_step, which discards
+        # coroutine results and returns only cancellation. "not cancelled" is
+        # NOT "closed cleanly" — a timed-out/force-closed context must reach
+        # the recorder as close_ok=False or a truncated HAR could be stamped
+        # "complete" (har-honesty contract, design §5.6).
+        close_result = [False]
         try:
             if self._context is not None:
                 # Bounded close + force-close fallback (issue #293) — shared
                 # with the transports' own-context teardowns via _engine.
+                context = self._context
+
+                async def _close_context_recording() -> None:
+                    close_result[0] = await close_context_bounded(context, owner="client")
+
                 cancelled = (
                     await run_teardown_step(
-                        close_context_bounded(self._context, owner="client"),
+                        _close_context_recording(),
                         timeout=CONTEXT_TEARDOWN_TIMEOUT_S,
                         owner="client",
                         step="context_close",
@@ -776,12 +862,31 @@ class FlowApiClient:
                 # CDP lifecycle used to harden in browser_manager.py. Playwright
                 # writes the HAR lazily on this close, so this is the earliest
                 # point the file exists; best-effort only (never fail teardown
-                # over a permission tweak).
+                # over a permission tweak). Belongs on the context-present path:
+                # a context was launched, so the HAR was written here.
                 if self.settings.har_path is not None:
                     try:
                         self.settings.har_path.chmod(0o600)
                     except OSError:
                         logger.warning("client.har_chmod_failed", exc_info=True)
+            else:
+                # No context was ever launched (metadata-only incidents):
+                # nothing to flush, so finalization state is trivially clean.
+                close_result[0] = True
+            # Context close established the HAR state — finalize every staged
+            # manifest now (design §6.2 step 8). Bounded + shielded like every
+            # teardown step; finalize_all itself never raises, so it cannot
+            # mask a close/driver/lease failure.
+            if self._recorder is not None:
+                cancelled = (
+                    await run_teardown_step(
+                        self._recorder.finalize_all(close_ok=close_result[0] and cancelled is None),
+                        timeout=CONTEXT_TEARDOWN_TIMEOUT_S,
+                        owner="client",
+                        step="incident_finalize",
+                    )
+                    or cancelled
+                )
             if self._pw is not None:
                 # pw.stop() awaits the Node driver's exit with no deadline of
                 # its own — a wedged driver would hang teardown forever, so it
@@ -815,6 +920,142 @@ class FlowApiClient:
         # cancelled close still stopped Playwright and released the lease.
         if cancelled is not None:
             raise cancelled
+
+    # --- incident capture wiring (incident-diagnostics design §6.2) ---------
+
+    def _attach_recorder_context(self, context: Any) -> None:
+        """Context-level request/response/failure journal listeners plus the
+        "page" hook for late pages. Handlers extract primitives synchronously
+        and never retain Playwright objects (S17/S18)."""
+        rec = self._recorder
+        if rec is None or not rec.enabled or not rec.bookkeeping.mark_attached(id(context)):
+            return
+
+        def on_request(request: Any) -> None:
+            try:
+                rec.record_request(request_key=str(id(request)), monotonic_ts=time.monotonic())
+            except Exception:  # noqa: BLE001, S110 — observation only, never break the app
+                pass
+
+        def on_response(response: Any) -> None:
+            try:
+                request = response.request
+                rec.record_response(
+                    url=response.url,
+                    method=request.method,
+                    resource_type=request.resource_type,
+                    status=response.status,
+                    request_key=str(id(request)),
+                    monotonic_ts=time.monotonic(),
+                )
+            except Exception:  # noqa: BLE001, S110
+                pass
+
+        def on_request_failed(request: Any) -> None:
+            try:
+                rec.record_request_failed(
+                    url=request.url,
+                    method=request.method,
+                    resource_type=request.resource_type,
+                    failure=request.failure,
+                    request_key=str(id(request)),
+                    monotonic_ts=time.monotonic(),
+                )
+            except Exception:  # noqa: BLE001, S110
+                pass
+
+        def on_page(page: Any) -> None:
+            self._attach_recorder_page(page)
+
+        for event, handler in (
+            ("request", on_request),
+            ("response", on_response),
+            ("requestfailed", on_request_failed),
+            ("page", on_page),
+        ):
+            context.on(event, handler)  # pyright: ignore[reportCallIssue, reportUnknownMemberType, reportArgumentType]
+            self._recorder_handlers.append((context, event, handler))
+
+    def _attach_recorder_page(self, page: Any) -> None:
+        """Console/page-error listeners; attach-at-most-once per page (S16)."""
+        rec = self._recorder
+        if rec is None or not rec.enabled or not rec.bookkeeping.mark_attached(id(page)):
+            return
+
+        def on_console(msg: Any) -> None:
+            try:
+                location: dict[str, Any] = msg.location or {}
+                rec.record_console(
+                    level=msg.type,
+                    text=msg.text,
+                    url=location.get("url"),
+                    line=location.get("lineNumber"),
+                    column=location.get("columnNumber"),
+                )
+            except Exception:  # noqa: BLE001, S110
+                pass
+
+        def on_page_error(error: Any) -> None:
+            try:
+                # playwright wraps every ordinary JS pageerror in its single
+                # Error class; the JS constructor name (TypeError, ...) only
+                # survives on the .name property.
+                rec.record_page_error(
+                    error_class=getattr(error, "name", None) or type(error).__name__,
+                    message=str(error),
+                )
+            except Exception:  # noqa: BLE001, S110
+                pass
+
+        page.on("console", on_console)
+        page.on("pageerror", on_page_error)
+        self._recorder_handlers.append((page, "console", on_console))
+        self._recorder_handlers.append((page, "pageerror", on_page_error))
+
+    def _detach_recorder(self) -> None:
+        """Freeze journals and detach every registered listener exactly once;
+        anything arriving afterwards is a no-op (design §6.2 step 7)."""
+        rec = self._recorder
+        if rec is None:
+            return
+        rec.detach_and_freeze()
+        for target, event, handler in self._recorder_handlers:
+            rec.bookkeeping.mark_detached(id(target))
+            try:
+                target.remove_listener(event, handler)
+            except Exception:  # noqa: BLE001, S110 — target may already be closed
+                pass
+        self._recorder_handlers.clear()
+
+    async def _capture_incident(
+        self, exc: BaseException, *, phase: str, route: str | None = None
+    ) -> None:
+        """Stage a private incident bundle while the page is still alive.
+
+        Best-effort observation only: never raises, never masks the original
+        error. Attaches the local IncidentRef to the exception (any type,
+        best-effort) so the CLI error paths — typed AND unhandled — can
+        surface the bundle path (S21 local half)."""
+        rec = self._recorder
+        if rec is None:
+            return
+        ref = await rec.capture_failure(exc, page=self._page, phase=phase, route=route)
+        if ref is not None and getattr(exc, "incident_ref", None) is None:
+            try:
+                exc.incident_ref = ref  # type: ignore[attr-defined]
+            except (AttributeError, TypeError):  # __slots__/immutable exceptions
+                pass
+
+    async def _raise_with_incident(self, e: Exception, *, phase: str) -> NoReturn:
+        """Shared failure boundary for client entry points: map a closed
+        Playwright target to the typed retryable error, stage the incident
+        bundle while the page is alive, and re-raise (design §6.2 step 5)."""
+        if _is_target_closed(e):
+            wrapped = BrowserSessionClosedError()
+            await self._capture_incident(wrapped, phase=phase)
+            raise wrapped from e
+        await self._capture_incident(e, phase=phase)
+        raise e
 
     async def _checkout_page(self) -> Page:
         """Block until a Page is available from the pool; FIFO.
@@ -1562,6 +1803,29 @@ class FlowApiClient:
         out_path: Path,
         recaptcha_action: str = "IMAGE_GENERATION",
     ) -> AnyPath:
+        """Incident/typed-error boundary for the upscale path (WireFormat/WAF
+        failures here are exactly the discovery evidence the recorder exists
+        to keep — e.g. the open unexplained HTTP 400 class)."""
+        try:
+            return await self._upsample_image_impl(
+                media_id=media_id,
+                project_id=project_id,
+                target_resolution=target_resolution,
+                out_path=out_path,
+                recaptcha_action=recaptcha_action,
+            )
+        except Exception as e:
+            await self._raise_with_incident(e, phase="image_upscale")
+
+    async def _upsample_image_impl(
+        self,
+        *,
+        media_id: str,
+        project_id: str,
+        target_resolution: TargetResolution,
+        out_path: Path,
+        recaptcha_action: str = "IMAGE_GENERATION",
+    ) -> AnyPath:
         """Upscale a platform-generated image to 2K/4K via Flow's ``upsampleImage``.
 
         reCAPTCHA-gated (a Bearer-only call is 403-walled — REST is not viable),
@@ -1819,9 +2083,7 @@ class FlowApiClient:
                 on_checkpoint=on_checkpoint,
             )
         except Exception as e:
-            if _is_target_closed(e):
-                raise BrowserSessionClosedError from e
-            raise
+            await self._raise_with_incident(e, phase="image_generation")
 
     async def generate_images_batch(
         self,
@@ -1866,9 +2128,7 @@ class FlowApiClient:
                 on_checkpoint=on_checkpoint,
             )
         except Exception as e:
-            if _is_target_closed(e):
-                raise BrowserSessionClosedError from e
-            raise
+            await self._raise_with_incident(e, phase="image_batch")
 
     async def generate_video(
         self,
@@ -1940,9 +2200,7 @@ class FlowApiClient:
             )
 
         except Exception as e:
-            if _is_target_closed(e):
-                raise BrowserSessionClosedError from e
-            raise
+            await self._raise_with_incident(e, phase="video_generation")
 
     async def health_check(self) -> bool:
         """Return True if the browser context is alive and on a Google domain.
@@ -2128,6 +2386,29 @@ class FlowApiClient:
         )
 
     async def generate_character_image(
+        self,
+        *,
+        project_id: str,
+        entity_id: str,
+        req: CharacterImageRequest,
+        image_reference_index: int = 0,
+        locale: str = "en-US",
+    ) -> tuple[str, str, AnyPath | None]:
+        """Incident/typed-error boundary for the character generation path —
+        the same wrap+capture the generate_* methods get (a UI-driven path can
+        equally hit WAF/wire-format failures or a closed target)."""
+        try:
+            return await self._generate_character_image_impl(
+                project_id=project_id,
+                entity_id=entity_id,
+                req=req,
+                image_reference_index=image_reference_index,
+                locale=locale,
+            )
+        except Exception as e:
+            await self._raise_with_incident(e, phase="character_generation")
+
+    async def _generate_character_image_impl(
         self,
         *,
         project_id: str,

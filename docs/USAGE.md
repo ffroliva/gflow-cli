@@ -370,6 +370,56 @@ gflow image i2i "place this hero in a snowy pass" --ref hero.png \
 > Ids are validated at the CLI boundary (letters/digits/hyphens, ≤128 chars).
 > The entity must already exist in `--project` (see `gflow character create`).
 
+## Referencing saved assets by name (`@Name` mentions)
+
+Instead of ids or paths, you can reference a saved **Character** — or, on image
+paths, a saved media asset — **inline in the prompt** by name, prefixed with `@`.
+The mention is resolved against the project's assets, staged through the same
+reference machinery as `--reference-entity` / `--ref`, then stripped from the text
+the model sees. Shipped in v0.40.0 (#344).
+
+```bash
+# One saved Character by name (t2i needs no image ref)
+gflow image t2i "@CaptainZoro on a rain-soaked neon rooftop, cinematic" --project <id>
+
+# Two saved Characters in one video prompt (each staged as a reference, cap-checked)
+gflow video r2v "@Zoro hands @Mika the sword" --project <id>
+```
+
+**Where `@Name` works** — character mentions on image **and** video; media/asset
+mentions on image **only**:
+
+| Path | Character `@Name` | Media/asset `@Name` |
+|---|---|---|
+| `image t2i` | ✅ | ✅ (in-project asset → `referenceImages`) |
+| `image i2i` | ✅ | ✅ |
+| `video t2v` / `i2v` / `r2v` | ✅ | ❌ — media-on-video is Phase 3; fails fast with **exit 11** |
+
+Rules:
+- **`--project <id>` is required** — mentions resolve against that project's assets.
+- A name resolves against **Characters** (`gflow character create`) *and* saved
+  media assets; on a name clash the **Character wins**. Matching is
+  **case-insensitive**.
+- A Character must have **at least one reference image** before it can be tagged,
+  or the mention fails early.
+- Write a **literal `@`** by doubling it: `@@` → `@` (e.g. `"ping me @@ 5pm"` →
+  `ping me @ 5pm`). An `@` glued to a preceding word (`user@host`) is never a
+  mention, so emails and handles are safe.
+- Unknown or ambiguous names fail fast with **exit 11** (`ConfigurationError`),
+  listing the available or colliding assets. If the asset catalog itself cannot be
+  loaded you get **exit 29** (`MentionIndexUnavailableError`) — so scripts can tell
+  "catalog unreachable" apart from "no such name".
+
+`@Name` and `--reference-entity <id>` resolve to the **same** wire
+(`referenceEntities`) and dedupe against each other: reach for `@Name` for the
+inline, by-name path — it's also the **only** name-based option on video, which
+has no `--reference-entity` flag — and `--reference-entity` when you'd rather pin
+an explicit entity id in a script (image paths only). `--ref` is different: it
+attaches an arbitrary **image** (`referenceImages`), not a saved identity, and can
+be combined with a `@Name` for "this identity, in this look".
+
+See [REFERENCE_STRATEGIES.md](REFERENCE_STRATEGIES.md) for the full decision guide.
+
 ## `gflow image batch`
 
 Generate multiple images from a single manifest file. The format is dispatched by file extension (`.json` or `.tsv`).
@@ -404,11 +454,11 @@ Example: [`test_assets/sample_batch.json`](../test_assets/sample_batch.json).
 
 ### Session behaviour
 
-All prompts in a batch share one Flow project. The editor is opened once; each prompt is submitted in turn with a small random pause between submissions (default 0.5–1.5 seconds; tune with `--jitter` or `GFLOW_CLI_JITTER_RANGE`). This jitter is a **submission-cadence anti-bot-detection measure** — it spaces out the submission clicks, not the generation wait. All generations run in parallel inside Flow; only the click timing is jittered. The command returns once every submitted generation has resolved (success or failure), not after the last click. See [DEBUGGING § WAF cadence](DEBUGGING.md#waf-cadence) for when to widen the range.
+All prompts in a batch share one Flow project. The editor is opened once and stays mounted; the transport is **strictly serial** — each prompt is configured, submitted, and its generation awaited before the next prompt is submitted, so only one generation is in flight at a time. The small random pause between submissions (default 0.5–1.5 seconds; tune with `--jitter` or `GFLOW_CLI_JITTER_RANGE`) is a **submission-cadence anti-bot-detection measure** on top of that serial rhythm. The command returns once every row has resolved (success or failure). See [DEBUGGING § WAF cadence](DEBUGGING.md#waf-cadence) for when to widen the range.
 
 ### Flags
 
-- `--continue-on-error` / `--fail-fast` — keep going past row failures or stop at the first one (default: `--fail-fast`). On fail-fast, already-completed images are downloaded before the error is surfaced.
+- `--continue-on-error` / `--fail-fast` — keep going past row failures or stop at the first one (default: `--continue-on-error`, matching the CLI flag default). On fail-fast, already-completed images are downloaded before the error is surfaced.
 - `--jitter SPEC` — anti-bot pause between submissions: `MIN-MAX` seconds (e.g. `10-30`), a single number for `0`–`N`, or `0` to disable. Default `0.5-1.5`; widen if runs hit WAF 403s. `GFLOW_CLI_JITTER_RANGE` overrides the default, the flag beats both.
 
 ### Limits
@@ -1265,6 +1315,7 @@ shell scripts can branch on the failure mode without parsing stderr.
 | `28` | `UiModeUnavailableError` | The Flow UI arm this command required (`GFLOW_CLI_UI_MODE`, or inferred — `-i` forces agentic) couldn't be reached after a switch attempt; aborted before submitting — no credits spent (issue #299) | Retry (the cohort flaps per load); try another `--profile`; or relax `GFLOW_CLI_UI_MODE` |
 | `29` | `MentionIndexUnavailableError` | An `@mention` was present but the catalog source needed to resolve it (character entities or media assets) failed to load — distinct from an empty index, which is not an error | Check network connectivity (character source) or `GFLOW_CLI_DB_PATH` / filesystem permissions (media source), then retry |
 | `30` | `QueueSchemaError`    | A `gflow serve`/MCP worker-queue task payload has an unrecognized `schema_version` or fails validation against the typed request DTOs | Usually means gflow-cli was downgraded after a newer version enqueued the task, or the payload was hand-edited; re-enqueue with a compatible version |
+| `31` | `FlowAppError`        | Flow's web app hit a client-side exception (its error-boundary page rendered instead of the editor) — a transient Flow crash, not a gflow bug | Retry shortly; if it persists, Flow itself is degraded — wait and retry later |
 | `130`| SIGINT                | User-interrupted (Ctrl-C)                        | —                                                          |
 
 **Exit code 16 — data store / migration error.** Fires when:

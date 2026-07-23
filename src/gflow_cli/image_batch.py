@@ -1057,16 +1057,17 @@ async def run_manifest_image_batch(
     """Run a manifest batch via the transport's stay-mounted batch method.
 
     All prompts share one Flow project (always-same-project semantics; there
-    is no per-prompt project toggle). The transport opens the editor once,
-    submits all prompts sequentially with a random ``jitter_range`` pause
-    between each submission (``None`` resolves the configured range via
-    :func:`resolve_jitter_range`), awaits every generation in submission
-    order, and returns per-prompt ``BatchSubmissionResult`` records.
+    is no per-prompt project toggle). The transport opens the editor once and
+    runs **strictly serially**: each prompt is configured, submitted, and its
+    generation awaited before the next prompt is submitted (see
+    ``_run_one_prompt_in_batch`` — configure → attach listener → submit →
+    await → detach → parse), with a random ``jitter_range`` pause between
+    submissions (``None`` resolves the configured range via
+    :func:`resolve_jitter_range`). Returns per-prompt
+    ``BatchSubmissionResult`` records once every row has resolved.
 
-    Jitter is the *submission-cadence* anti-bot control — it spaces out the
-    submission clicks, not the generation wait. All generations run in parallel
-    inside Flow; only the click timing is jittered. The function returns once
-    every submitted generation has resolved (success or failure).
+    Jitter is the *submission-cadence* anti-bot control on top of that serial
+    rhythm — only one generation is ever in flight at a time.
 
     Raises:
         RuntimeError: if the resolved transport is not

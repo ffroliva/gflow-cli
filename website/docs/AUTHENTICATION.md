@@ -159,7 +159,7 @@ updates `config.toml`'s `default_profile` pointer atomically.
 
 The local-part is sanitized to a filesystem-safe name: any character outside
 letters, digits, `-`, and `_` is replaced with `-`. So `your.name@gmail.com`
-becomes `profile_your-name` and `user+flow@gmail.com` becomes `profile_user-flow`.
+becomes `profile_your.name-oliva` and `user+flow@gmail.com` becomes `profile_user-flow`.
 If nothing usable remains, the profile keeps the name `default`.
 
 ```text
@@ -167,8 +167,8 @@ $ gflow auth login
 Launching real Chrome...
 [OK] Flow session verified (your.name@gmail.com).
 Session saved. Profile dir: …/profile_your-name
-Renamed profile from default to your-name (derived from Google account).
-Set your-name as default profile.
+Renamed profile from default to ffroliva (derived from Google account).
+Set ffroliva as default profile.
 ```
 
 If a profile named after the email local-part already exists, the rename is skipped
@@ -220,7 +220,7 @@ $ gflow auth list
 Profiles in /home/you/.local/share/gflow-cli
 
   Default  Name       Google account          Session   Last used (UTC)        Profile dir
-    ●      your-name   your.name@gmail.com       present   2026-05-28 10:14:22    …/profile_your-name
+    ●      ffroliva   your.name@gmail.com       present   2026-05-28 10:14:22    …/profile_your-name
            work       alice@work.example.com   present   2026-05-27 08:30:01    …/profile_work
            old        unknown                  missing   -                      …/profile_old
 ```
@@ -233,7 +233,7 @@ until `gflow auth login` is re-run against them — the file is written on every
 
 ```bash
 $ gflow auth list --json | jq '.[] | {name, google_account}'
-{"name": "your-name", "google_account": "your.name@gmail.com"}
+{"name": "ffroliva", "google_account": "your.name@gmail.com"}
 {"name": "work",     "google_account": "alice@work.example.com"}
 {"name": "old",      "google_account": null}
 ```
@@ -307,7 +307,7 @@ Or rename it manually:
 gflow auth list
 
 # Then re-login under a meaningful name
-gflow auth login --profile your-name
+gflow auth login --profile ffroliva
 gflow auth logout --profile default --yes   # delete the old one
 ```
 
@@ -323,7 +323,7 @@ from a sandbox one.
 
 ```
 Default  Name           Google account           Session
-  ●      your-name       your.name@gmail.com        present
+  ●      ffroliva       your.name@gmail.com        present
          sandbox        your.name@gmail.com        present   ← same account, different dir
          work           alice@work.example.com    present
 ```

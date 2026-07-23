@@ -39,6 +39,7 @@ Run these gates in order before every commit:
 $env:PYTHONUTF8=1
 uv run python scripts/ci/check_repo_hygiene.py
 uv run python scripts/ci/check_doc_links.py
+uv run python scripts/ci/check_website_docs_pii.py
 uv run ruff check src tests
 uv run ruff format --check src tests
 uv run pyright src

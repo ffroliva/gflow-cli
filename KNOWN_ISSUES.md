@@ -14,6 +14,56 @@ Living list of behaviour that's broken, surprising, or limited by design — alo
 
 ## Open
 
+### One-time Flow banner/modal can cover the composer on first load
+
+- **Status:** Open ([#369](https://github.com/ffroliva/gflow-cli/issues/369))
+- **Severity:** Low (transient) · **Affected:** any UI-automation command on a profile that hasn't seen the banner yet
+
+A Flow-side one-time announcement banner/modal can overlay the composer and
+make the mode-switch / settings probes miss. It shows once per
+profile+cookie state, so it is gone on re-run and cannot be reproduced on
+demand. gflow does **not** guess a dismiss selector for unknown overlays
+(clicking unknown UI is riskier than failing). Since v0.43.0 the automatic
+incident bundle records the overlay's bounded geometry, `role`,
+`aria-modal`, `z-index`, `pointer-events`, and inner Material-Symbol
+ligatures (no raw text) plus a `sensitive/` screenshot — enough to write a
+targeted dismissal once the next occurrence is captured. **Workaround:**
+re-run the command; open the project once manually in Chrome to consume the
+banner.
+
+### Reported stale profile lock blocks acquisition (unreproduced)
+
+- **Status:** Open ([#370](https://github.com/ffroliva/gflow-cli/issues/370))
+- **Severity:** Medium (blocks the profile until resolved) · **Affected:** `ProfileLease` acquisition (exit 11)
+
+A user report of `ProfileLockedError` with no apparently-live owner. Not
+reproduced: in every observed case the kernel advisory lock was held by a
+real process (e.g. a pytest child that outlived its parent shell). The
+kernel lock is authoritative — a merely *stale metadata file* cannot block
+acquisition, and gflow will never auto-delete a lock file or kill a
+recorded PID based on metadata. Since v0.43.0, contention reports the
+recorded owner's PID and observed start time locally (lock-file metadata
+now starts at offset 1 so Windows contenders can read it while byte 0 is
+kernel-locked), and a metadata-only incident bundle is written before any
+Chrome launch. **Workaround:** find and close the owning process (the
+error's local output names its PID), or use a different `--profile`.
+
+### Unexplained image-generation HTTP 400 (observed live 2026-07-22)
+
+- **Status:** Open (no issue yet — evidence-gathering)
+- **Severity:** Low (single occurrence) · **Affected:** `image t2i` wire path
+
+One live `batchGenerateImages` call returned an HTTP 400 that was neither a
+content-safety rejection nor a known wire shape; the retry succeeded. Root
+cause unidentified and **not** claimed fixed by v0.43.0. A 400 that resolves
+on retry writes **no** incident bundle (successful commands capture nothing).
+The diagnostics help only when such a 400 *terminates* the command as a
+captured failure (e.g. a `WireFormatError`): its incident bundle's
+`network.json` then carries allowlisted discovery evidence for the failed
+request (numeric error code, status enum, known-key booleans, unknown-key
+count, message length — never the raw body), which is the evidence this entry
+is waiting on. **Workaround:** retry; the failure has not recurred.
+
 ### Flow's `uploadImage` endpoint rejects some JPEGs with HTTP 400 (metadata-sensitive)
 
 - **Status:** Open ([#287](https://github.com/ffroliva/gflow-cli/issues/287))
@@ -108,6 +158,17 @@ include action still lands (a chip appears), **but the staged entity never
 reaches the submit** — the request carries no `referenceEntities`, so the
 submit backstops raise `WireFormatError` (**exit 7**) instead of silently
 returning a text-only generation as success.
+
+**Plain generation on this cohort now fails cleanly (#183).** When a project
+opens into this full-page library (or the agentic chat composer) there is no
+classic `crop_*` aspect/mode control, so `gflow image`/`gflow video` can't drive
+generation. Rather than the old opaque `UiSelectorDriftError` "file a bug", the
+mode-switch raise site now runs a runtime DOM scan and raises a clear, **retryable**
+`FlowAgentUiError` (**exit 25**, "this cohort flaps; retry shortly"), and dumps a
+DOM-signature diagnostics artifact (`diag_mode_switch_miss.json` + a full-page
+screenshot) for reporting. The cohort is server-assigned per page load and flaps
+within ~12h, so a re-run often lands the classic UI. Driving the new UI directly
+is still out of scope.
 
 **How to tell which UI your account has:** in the Flow web editor, click
 **Add Media** — a small dialog means the old (working) UI; a navigation to a
@@ -351,6 +412,8 @@ playwright._impl._errors.TimeoutError: Locator.click: Timeout 30000ms exceeded.
 The worker queue (`generation_queue`, used by the `gflow serve` daemon and MCP tool calls) checkpoints every task's progress through `claimed` → `submit_attempted` → `remote_started` → terminal. If a task is interrupted (daemon restart, crash, or cancellation) while still `claimed` (before any submit), gflow-cli safely marks it `failed` — nothing was spent, safe to retry. But if it's interrupted at `submit_attempted` or `remote_started` — **after** the credit-spending submit click may have fired — it is marked `indeterminate` instead: a credit *may* have been spent and the outcome is unknown. An `indeterminate` task is **never** silently reported as `failed` and **never** auto-resubmitted (that could double-spend a credit for one generation).
 
 **Why this can't be resolved automatically today:** Flow's generation-status REST endpoint rejects a bare, cookie-only `page.request` re-check with HTTP 401 — only a live, authenticated Playwright SPA re-poll (opening the project page and reading the DOM) can turn a preserved handle back into a real status, and that live re-poll path is not wired into recovery yet (tracked for a future phase; see the C1 handle-spike notes in `docs/superpowers/specs/2026-07-19-production-readiness-hardening-design.md` Appendix A).
+
+**Decision (2026-07-21):** keep the safe stub — `recover_processing` marks post-submit interruptions `indeterminate` and never auto-resubmits, which is already correct. Building the auto-reconciler is deferred until **F1** (credit-free project-page re-entry) is confirmed against live Flow; until then a blind reconciler would be speculative code against unverified blackbox behavior. The `client` reconcile-hook seam and the live-gated `tests/e2e/test_crash_recovery_e2e.py` are already in place for when F1 lands.
 
 **Manual reconciliation:** an `indeterminate` row's checkpoint retains whatever handle/project info was captured before interruption. To resolve one by hand: open the relevant Flow project in the browser and check whether the expected asset appears.
 - **Found** — the generation completed; no action needed (the credit was spent as intended, just not auto-recorded locally).

@@ -593,3 +593,32 @@ def test_mention_index_unavailable_error_problem_details():
     assert pd["title"] == "Mention index unavailable"
     assert "remediation_hint" in pd
     assert err.remediation_hint != ""
+
+
+def test_problem_details_incident_is_opaque() -> None:
+    """S21: the shared RFC 9457 extension carries ONLY {id, capture_status} —
+    never the absolute local path, artifact names, or username."""
+    import json
+    from pathlib import Path
+
+    from gflow_cli.diagnostics import IncidentRef
+    from gflow_cli.errors import FlowAppError
+
+    exc = FlowAppError("crash")
+    exc.incident_ref = IncidentRef(
+        id="corr-fp",
+        capture_status="complete",
+        path=Path("/home/CANARYUSER/gflow/incidents/x"),
+        artifacts=("ui.json", "sensitive/screenshot.png"),
+    )
+    pd = exc.to_problem_details()
+    assert pd["incident"] == {"id": "corr-fp", "capture_status": "complete"}
+    blob = json.dumps(pd)
+    assert "CANARYUSER" not in blob
+    assert "screenshot" not in blob
+
+
+def test_problem_details_without_ref_has_no_incident_key() -> None:
+    from gflow_cli.errors import FlowAppError
+
+    assert "incident" not in FlowAppError("crash").to_problem_details()
