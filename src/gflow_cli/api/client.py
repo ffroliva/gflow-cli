@@ -67,6 +67,7 @@ from gflow_cli.api.transports.base import (
 )
 from gflow_cli.browser_manager import channel_for_profile
 from gflow_cli.config import BrowserEngine, Settings
+from gflow_cli.diagnostics import IncidentRecorder, run_retention, validated_incidents_root
 from gflow_cli.errors import (
     AisandboxAuthError,
     AuthExpiredError,
@@ -75,6 +76,7 @@ from gflow_cli.errors import (
     ConfigurationError,
     ContentPolicyError,
     FlowApiError,  # re-exported via gflow_cli.api.__init__
+    GFlowError,
     NetworkError,
     ProfileLockedError,
     RateLimitError,
@@ -313,6 +315,11 @@ class FlowApiClient:
         # transports it drives reuse this context (shared-page path) and never
         # take a second lease.
         self._lease: ProfileLease | None = None
+        # Session-scoped private incident recorder (incident-diagnostics design
+        # §6.2). Constructed in __aenter__ before lease acquisition so profile
+        # contention can produce a metadata-only incident without Chrome.
+        self._recorder: IncidentRecorder | None = None
+        self._recorder_handlers: list[tuple[Any, str, Any]] = []
         # Per-worker Page pool (Phase 4 T2). All Pages live inside ONE
         # persistent BrowserContext and therefore SHARE cookies + auth state
         # at the Context level — this is intentional and matches Playwright's
@@ -344,6 +351,17 @@ class FlowApiClient:
         # existing test monkeypatches still apply. Only the opt-in patchright
         # engine routes through the resolver (which raises a typed exit-24 error
         # if the optional package is missing).
+        # Incident recorder first (design §6.2 step 1): settings + correlation
+        # context are available, and lease contention below must be able to
+        # produce a metadata-only incident. Retention is best-effort.
+        self._recorder = IncidentRecorder(self.settings)
+        if self._recorder.enabled:
+            try:
+                root = validated_incidents_root(self.settings.home)
+                if root is not None:
+                    run_retention(root)
+            except Exception:  # noqa: BLE001 — retention must never block a command
+                logger.warning("incident.retention_error", exc_info=True)
         engine = active_engine()
         log_engine_selected(engine)
         if engine == BrowserEngine.PATCHRIGHT:
@@ -594,14 +612,28 @@ class FlowApiClient:
         await self._preread_flow_session_cookies()
         kwargs = self._persistent_context_kwargs()
         self._log_and_guard_launch(kwargs)
+        if self._recorder is not None:
+            self._recorder.note_har_pre_launch(self.settings.har_path)
         # Own the profile BEFORE Chrome launches. Acquire here (not earlier):
         # _preread_flow_session_cookies above may itself momentarily own a
         # headless context on this profile (its cookie-decrypt fallback), which
         # takes and releases its own lease first — acquiring earlier would make
         # this a same-process double-acquire. Contention raises ProfileLockedError
         # (exit 11) here, before any Chrome process starts.
-        self._lease = ProfileLease(self.profile_dir).acquire()
+        try:
+            self._lease = ProfileLease(self.profile_dir).acquire()
+        except ProfileLockedError as exc:
+            # Metadata-only incident BEFORE any Chrome exists (S07); the
+            # partial-setup guard's _close_browser_resources finalizes it.
+            if self._recorder is not None:
+                ref = await self._recorder.capture_metadata_only(exc, phase="profile_lease")
+                if ref is not None and exc.incident_ref is None:
+                    exc.incident_ref = ref
+            raise
         self._context = await self._launch_persistent_context(kwargs)
+        # Attach journal listeners BEFORE any navigation/submission that can
+        # produce relevant traffic (design §6.2 step 2, S30).
+        self._attach_recorder_context(self._context)
         # Hide the automation flag so reCAPTCHA Enterprise doesn't score
         # the session as a bot — navigator.webdriver=true causes low-score
         # tokens and HTTP 403 on batchGenerateImages.
@@ -617,6 +649,10 @@ class FlowApiClient:
         # default; reuse it as slot 0 to avoid an unused N+1 Page.
         n = max(1, self.settings.concurrency)
         self._pages = await self._open_page_pool(n)
+        # Console/page-error listeners on every pooled page; the context-level
+        # "page" event (attached above) covers pages observed later (S16).
+        for pooled in self._pages:
+            self._attach_recorder_page(pooled)
         # asyncio.Queue gives FIFO checkout/checkin with no manual locking.
         # ``maxsize=n`` makes the upper bound STRUCTURAL — a double-checkin
         # (bug in a future caller) raises QueueFull rather than silently
@@ -737,6 +773,7 @@ class FlowApiClient:
             out_dir=self._out_dir,
             storage_uri=self.settings.storage_uri,
             output_dir=self.settings.output_dir,
+            recorder=self._recorder,
         )
 
     def _apply_transport_setup(
@@ -776,6 +813,9 @@ class FlowApiClient:
         Teardown order: (4) close context/browser -> stop driver;
         (6) release the profile lease.
         """
+        # Stop accepting incident events and detach listeners BEFORE the
+        # context closes — late callbacks become no-ops (design §6.2 step 7).
+        self._detach_recorder()
         cancelled: BaseException | None = None
         try:
             if self._context is not None:
@@ -801,6 +841,20 @@ class FlowApiClient:
                         self.settings.har_path.chmod(0o600)
                     except OSError:
                         logger.warning("client.har_chmod_failed", exc_info=True)
+            # Context close established the HAR state — finalize every staged
+            # manifest now (design §6.2 step 8). Bounded + shielded like every
+            # teardown step; finalize_all itself never raises, so it cannot
+            # mask a close/driver/lease failure.
+            if self._recorder is not None:
+                cancelled = (
+                    await run_teardown_step(
+                        self._recorder.finalize_all(close_ok=cancelled is None),
+                        timeout=CONTEXT_TEARDOWN_TIMEOUT_S,
+                        owner="client",
+                        step="incident_finalize",
+                    )
+                    or cancelled
+                )
             if self._pw is not None:
                 # pw.stop() awaits the Node driver's exit with no deadline of
                 # its own — a wedged driver would hang teardown forever, so it
@@ -834,6 +888,127 @@ class FlowApiClient:
         # cancelled close still stopped Playwright and released the lease.
         if cancelled is not None:
             raise cancelled
+
+    # --- incident capture wiring (incident-diagnostics design §6.2) ---------
+
+    def _attach_recorder_context(self, context: Any) -> None:
+        """Context-level request/response/failure journal listeners plus the
+        "page" hook for late pages. Handlers extract primitives synchronously
+        and never retain Playwright objects (S17/S18)."""
+        rec = self._recorder
+        if rec is None or not rec.enabled or not rec.bookkeeping.mark_attached(id(context)):
+            return
+
+        def on_request(request: Any) -> None:
+            try:
+                rec.record_request(
+                    url=request.url,
+                    method=request.method,
+                    resource_type=request.resource_type,
+                    request_key=str(id(request)),
+                    monotonic_ts=time.monotonic(),
+                )
+            except Exception:  # noqa: BLE001, S110 — observation only, never break the app
+                pass
+
+        def on_response(response: Any) -> None:
+            try:
+                request = response.request
+                rec.record_response(
+                    url=response.url,
+                    method=request.method,
+                    resource_type=request.resource_type,
+                    status=response.status,
+                    request_key=str(id(request)),
+                    monotonic_ts=time.monotonic(),
+                )
+            except Exception:  # noqa: BLE001, S110
+                pass
+
+        def on_request_failed(request: Any) -> None:
+            try:
+                rec.record_request_failed(
+                    url=request.url,
+                    method=request.method,
+                    resource_type=request.resource_type,
+                    failure=request.failure,
+                    request_key=str(id(request)),
+                    monotonic_ts=time.monotonic(),
+                )
+            except Exception:  # noqa: BLE001, S110
+                pass
+
+        def on_page(page: Any) -> None:
+            self._attach_recorder_page(page)
+
+        for event, handler in (
+            ("request", on_request),
+            ("response", on_response),
+            ("requestfailed", on_request_failed),
+            ("page", on_page),
+        ):
+            context.on(event, handler)  # pyright: ignore[reportCallIssue, reportUnknownMemberType, reportArgumentType]
+            self._recorder_handlers.append((context, event, handler))
+
+    def _attach_recorder_page(self, page: Any) -> None:
+        """Console/page-error listeners; attach-at-most-once per page (S16)."""
+        rec = self._recorder
+        if rec is None or not rec.enabled or not rec.bookkeeping.mark_attached(id(page)):
+            return
+
+        def on_console(msg: Any) -> None:
+            try:
+                location: dict[str, Any] = msg.location or {}
+                rec.record_console(
+                    level=msg.type,
+                    text=msg.text,
+                    url=location.get("url"),
+                    line=location.get("lineNumber"),
+                    column=location.get("columnNumber"),
+                )
+            except Exception:  # noqa: BLE001, S110
+                pass
+
+        def on_page_error(error: Any) -> None:
+            try:
+                rec.record_page_error(error_class=type(error).__name__, message=str(error))
+            except Exception:  # noqa: BLE001, S110
+                pass
+
+        page.on("console", on_console)
+        page.on("pageerror", on_page_error)
+        self._recorder_handlers.append((page, "console", on_console))
+        self._recorder_handlers.append((page, "pageerror", on_page_error))
+
+    def _detach_recorder(self) -> None:
+        """Freeze journals and detach every registered listener exactly once;
+        anything arriving afterwards is a no-op (design §6.2 step 7)."""
+        rec = self._recorder
+        if rec is None:
+            return
+        rec.detach_and_freeze()
+        for target, event, handler in self._recorder_handlers:
+            rec.bookkeeping.mark_detached(id(target))
+            try:
+                target.remove_listener(event, handler)
+            except Exception:  # noqa: BLE001, S110 — target may already be closed
+                pass
+        self._recorder_handlers.clear()
+
+    async def _capture_incident(
+        self, exc: BaseException, *, phase: str, route: str | None = None
+    ) -> None:
+        """Stage a private incident bundle while the page is still alive.
+
+        Best-effort observation only: never raises, never masks the original
+        error. Attaches the local IncidentRef to GFlowErrors so the CLI error
+        path can surface the bundle path (S21 local half)."""
+        rec = self._recorder
+        if rec is None:
+            return
+        ref = await rec.capture_failure(exc, page=self._page, phase=phase, route=route)
+        if ref is not None and isinstance(exc, GFlowError) and exc.incident_ref is None:
+            exc.incident_ref = ref
 
     async def _checkout_page(self) -> Page:
         """Block until a Page is available from the pool; FIFO.
@@ -1839,7 +2014,10 @@ class FlowApiClient:
             )
         except Exception as e:
             if _is_target_closed(e):
-                raise BrowserSessionClosedError from e
+                wrapped = BrowserSessionClosedError()
+                await self._capture_incident(wrapped, phase="image_generation")
+                raise wrapped from e
+            await self._capture_incident(e, phase="image_generation")
             raise
 
     async def generate_images_batch(
@@ -1886,7 +2064,10 @@ class FlowApiClient:
             )
         except Exception as e:
             if _is_target_closed(e):
-                raise BrowserSessionClosedError from e
+                wrapped = BrowserSessionClosedError()
+                await self._capture_incident(wrapped, phase="image_batch")
+                raise wrapped from e
+            await self._capture_incident(e, phase="image_batch")
             raise
 
     async def generate_video(
@@ -1960,7 +2141,10 @@ class FlowApiClient:
 
         except Exception as e:
             if _is_target_closed(e):
-                raise BrowserSessionClosedError from e
+                wrapped = BrowserSessionClosedError()
+                await self._capture_incident(wrapped, phase="video_generation")
+                raise wrapped from e
+            await self._capture_incident(e, phase="video_generation")
             raise
 
     async def health_check(self) -> bool:

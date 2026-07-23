@@ -98,6 +98,12 @@ class TestShouldCapture:
         rec = _recorder(tmp_path, incident_capture=False)
         assert not rec.should_capture(FlowAppError("x"))
 
+    def test_cancellation_and_exits_never_capture(self, tmp_path: Path) -> None:
+        """S20: cancellation is not an incident — capture must not fire on it."""
+        rec = _recorder(tmp_path)
+        for exc in (asyncio.CancelledError(), KeyboardInterrupt(), SystemExit(1)):
+            assert not rec.should_capture(exc), type(exc).__name__
+
 
 @pytest.mark.asyncio
 class TestCaptureFailure:
