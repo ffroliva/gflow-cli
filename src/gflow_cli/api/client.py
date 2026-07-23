@@ -857,21 +857,22 @@ class FlowApiClient:
                     )
                     or cancelled
                 )
-            else:
-                # No context was ever launched (metadata-only incidents):
-                # nothing to flush, so finalization state is trivially clean.
-                close_result[0] = True
                 # HAR files hold live auth cookies/bearer tokens — higher
                 # sensitivity than the CDP lockfile the (now-removed) packaged
                 # CDP lifecycle used to harden in browser_manager.py. Playwright
                 # writes the HAR lazily on this close, so this is the earliest
                 # point the file exists; best-effort only (never fail teardown
-                # over a permission tweak).
+                # over a permission tweak). Belongs on the context-present path:
+                # a context was launched, so the HAR was written here.
                 if self.settings.har_path is not None:
                     try:
                         self.settings.har_path.chmod(0o600)
                     except OSError:
                         logger.warning("client.har_chmod_failed", exc_info=True)
+            else:
+                # No context was ever launched (metadata-only incidents):
+                # nothing to flush, so finalization state is trivially clean.
+                close_result[0] = True
             # Context close established the HAR state — finalize every staged
             # manifest now (design §6.2 step 8). Bounded + shielded like every
             # teardown step; finalize_all itself never raises, so it cannot
