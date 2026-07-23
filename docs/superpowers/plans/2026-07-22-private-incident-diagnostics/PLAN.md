@@ -722,9 +722,7 @@ suppression path.
 - `docs/INDEX.md` routing entries.
 
 **Steps:**
-- [ ] Write docs; run `uv run python scripts/ci/check_repo_hygiene.py`, `check_doc_links.py`, `check_website_docs_pii.py` → expected: all pass.
-- [ ] `tests/test_documentation_gate.py` green.
-- [ ] Commit `docs: incident diagnostics operator documentation + truth-source drift fixes`.
+- [x] Docs written; all three doc gates + `test_documentation_gate.py` green; committed `b9c6904`. Drift verified against code before editing (batch is strictly serial per `_run_one_prompt_in_batch`; CLI default is continue-on-error; #369/#370 titles confirmed via `gh issue view`). The 2026-07-22 live-attempt ledger is not cited in any repo doc — reconciliation applies only if a future doc cites it as a reliability metric.
 
 ---
 
@@ -733,14 +731,19 @@ suppression path.
 **What:** Whole-feature verification before PR.
 
 **Steps:**
-- [ ] Full Impeccable Routine (PowerShell, worktree venv):
-  `check_repo_hygiene` / `check_doc_links` / `check_website_docs_pii` / `ruff check` /
-  `ruff format --check` / `pyright src` / `python -m pytest -q --cov=gflow_cli`
-  → expected: all green, coverage ≥ 91% baseline zone (floor 80%), and the packaging test
-  passes **in the aggregate run** (an aggregate-only failure = lifecycle/resource
-  regression per design §13.2 — bisect, do not waive).
-- [ ] Audit this matrix: every Critical/High row's named test exists and passes; fix any drift.
-- [ ] Self-review diff for YAGNI/over-engineering (`/gflow:branch-review` optional but recommended before PR).
+- [x] Full Impeccable Routine green: hygiene/doc-links/PII ✓, ruff check + format ✓,
+  pyright src 0 errors, full aggregate `2666 passed, 5 skipped, 91% coverage`.
+  The first aggregate run DID reproduce the §13.2 failure class
+  (`test_built_distributions_contain_sql_migrations` aggregate-only) — bisected to
+  staged-but-unfinalized `BundleDir` marker fds (session-long kernel-locked bytes broke
+  Hatchling's sdist traversal on Windows), root-cause fixed in `BundleDir.__del__`
+  (crash-left semantics) + regression test, committed `6ca8180`; aggregate re-run green.
+- [x] Matrix audited mechanically: all 58 named tests exist (script check), rows
+  reconciled to as-implemented names.
+- [x] Live matrix §10.3 steps 1–3 executed 2026-07-23 ($0): 19/19 checks —
+  see `docs/LIVE_VERIFICATION_v0.43.0.md`. Step 4 (paid veo-lite, S43) awaits explicit
+  approval and is recorded as an unverified risk.
+- [ ] `/gflow:branch-review` (pre-PR council) — pending.
 - [ ] Push branch; open PR to `develop`; drive `/gflow:sonar` to zero new issues.
 
 ---
