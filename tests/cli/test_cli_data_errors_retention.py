@@ -167,3 +167,36 @@ def test_data_errors_prune_cli_reports_count(
     result = CliRunner().invoke(main, ["data", "errors", "prune", "--older-than", "90d"])
     assert result.exit_code == 0, result.output
     assert "Pruned 1" in result.output
+
+
+def test_data_errors_export_cli_stdout(tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> None:
+    db = tmp_path / "gflow.db"
+    _seed_failed_op(db)
+    monkeypatch.setenv("GFLOW_CLI_DB_PATH", str(db))
+    result = CliRunner().invoke(main, ["data", "errors", "export"])
+    assert result.exit_code == 0, result.output
+    assert json.loads(result.output.strip().splitlines()[-1])["error_type"] == "waf-rejection"
+
+
+def test_data_errors_prune_dry_run_cli(tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> None:
+    db = tmp_path / "gflow.db"
+    _seed_failed_op(db)
+    _backdate_all(db, days=100)
+    monkeypatch.setenv("GFLOW_CLI_DB_PATH", str(db))
+    result = CliRunner().invoke(
+        main, ["data", "errors", "prune", "--older-than", "90d", "--dry-run"]
+    )
+    assert result.exit_code == 0, result.output
+    assert "would be deleted" in result.output
+    assert len(list_errors(db_path=db, profile=None, limit=20, offset=0)) == 1
+
+
+def test_data_errors_prune_cli_nothing_to_delete(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    db = tmp_path / "gflow.db"
+    _seed_failed_op(db)  # recent — not older than 90d
+    monkeypatch.setenv("GFLOW_CLI_DB_PATH", str(db))
+    result = CliRunner().invoke(main, ["data", "errors", "prune", "--older-than", "90d"])
+    assert result.exit_code == 0, result.output
+    assert "No failed operations older than the cutoff." in result.output

@@ -69,6 +69,8 @@ _MCP_EXEMPT: dict[str, str] = {
     "character rm": "character mutations — not yet ported",
     "character show": "character mutations — not yet ported",
     "character voices": "character mutations — not yet ported",
+    "data errors export": "local catalog maintenance — deliberately CLI-only (#345)",
+    "data errors prune": "destructive local retention — deliberately CLI-only (#345)",
     "data list errors": "local catalog maintenance — not yet ported",
     "data list images": "local catalog maintenance — not yet ported",
     "data list profiles": "local catalog maintenance — not yet ported",
