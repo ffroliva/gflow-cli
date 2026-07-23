@@ -7,6 +7,113 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+## [0.43.0] — 2026-07-23
+
+### Added
+
+- **Private incident diagnostics** (`GFLOW_CLI_INCIDENT_CAPTURE`, default
+  **on**). Relevant operational failures — Flow app crashes, agentic-cohort /
+  UI-mode errors, selector drift, transport timeouts, WAF/network/wire-format
+  errors, profile-lock contention, unexpected exceptions — now automatically
+  write a bounded, **private** incident bundle under
+  `<GFLOW_CLI_HOME>/incidents/`: an allowlisted `manifest.json`, structural
+  `ui.json` (ligatures/signals/overlay geometry — never raw text),
+  `network.json` + `browser.json` ring journals (host categories, canonical
+  routes, status codes, text lengths — never prompts/tokens/cookies/bodies/
+  signed URLs), and a `sensitive/screenshot.png` for UI-state failures that
+  every surface marks review-before-sharing. Nothing is ever uploaded; remote
+  MCP/HTTP/worker error envelopes carry only an opaque `{id, capture_status}`
+  while the local CLI prints the bundle path. Retention is bounded
+  (50 bundles / 250 MiB) and validates ownership before pruning. Raw HAR
+  stays separate and opt-in; the manifest's `har_state` now reports honestly
+  whether the session's HAR demonstrably finalized. See
+  [DEBUGGING § Automatic incident bundles](docs/DEBUGGING.md#automatic-incident-bundles).
+  Refs #369, #370, #174, #183.
+- **Profile-lock owner evidence.** `ProfileLockedError` contention now
+  surfaces the recorded lease owner's PID and observed start time locally
+  (never in remote envelopes or logs; identities are per-command HMACs, never
+  the raw owner token). The lock-file layout is v1-versioned: byte 0 is the
+  kernel-locked sentinel and metadata starts at offset 1, so Windows
+  contenders can read it while the lock is held (legacy byte-0 files degrade
+  to "evidence unavailable"). The kernel lock remains authoritative — no
+  reclaim, unlink, or PID kill is ever performed from metadata. Refs #370.
+- **UI-drift debug engine** (`capture_ui_diagnostics`). On a `mode_switch_trigger`
+  failure, gflow dumps the composer's **structural** DOM signature — the
+  Material-Symbols ligature inventory, `crop_*` presence, textbox count, and
+  bounded overlay geometry — to a JSON alongside a **full-page** screenshot,
+  so a Flow frontend change is diagnosable from one artifact instead of a
+  bare (often black) viewport shot. Consolidated onto the incident-bundle
+  engine: the earlier in-development raw URL/title/body-text fields were
+  removed before release. (#183)
+- **`website/docs/` PII-leak CI guard** (`scripts/ci/check_website_docs_pii.py`).
+  The published mkdocs mirror under `website/docs/` is an anonymized copy of
+  canonical `docs/`; this new gate fails CI (and runs in `/gflow:check`) if a
+  known private identifier — `denon82`, the OS username `ffrol`, a real
+  name/email — appears in a published file, catching an anonymization miss
+  before it ships (the failure mode of #362). Public references such as
+  `github.com/ffroliva/gflow-cli` and the APP_AUTHOR path are trap-free by
+  construction, so the guard needs no allow-list.
+
+### Fixed
+
+- **Incident-capture hardening from the max-effort review** (14 confirmed
+  findings fixed pre-release): journals now stage first and page artifacts
+  share the 8s budget via a deadline, so a fully wedged renderer can no longer
+  cost the whole bundle or bypass suppression; the legacy mode-switch debug
+  dump writes structural JSON only (the unmarked full-page screenshot that
+  previously landed in the plain output dir on every ordinary run is gone —
+  the bundle's `sensitive/` screenshot is the one imagery artifact); capture
+  now also covers `generate_character_image` (which additionally gains the
+  exit-15 closed-browser mapping) and `upsample_image`, plus the common
+  stale-Chrome launch-crash contention path (#293); manifests report
+  `har_state: complete` only when the context demonstrably closed gracefully;
+  bundles staged for unexpected non-typed exceptions are now surfaced (path in
+  human output and `--json`); retention runs even when capture is disabled
+  (an opt-out no longer freezes previously captured bundles on disk), runs off
+  the event loop, and an undeletable pending bundle can no longer condemn
+  healthy ones; a Windows sharing violation during manifest finalization gets
+  a bounded retry; `browser.json` records the real JS error class
+  (`TypeError`/`ReferenceError`) instead of the constant `Error`; worker
+  daemon tasks rebind a per-task correlation id so incident ids are unique
+  and joinable to queue rows.
+- **`FlowAppError` and `FlowAgentUiError` now report `retryable: true` on
+  every machine-readable surface.** Both are documented (and presented to
+  humans) as transient/retryable, but the CLI `--json` payload said
+  `retryable: false` and the MCP / worker-queue error envelopes carried no
+  retry signal at all. The classification now lives in one shared
+  `errors.is_retryable()` consumed by CLI JSON, MCP tool envelopes, and
+  persisted worker-queue error payloads — the three surfaces can no longer
+  drift.
+- **Documentation drift corrected against the code:** `gflow image batch` docs
+  claimed generations run in parallel inside Flow (the transport is strictly
+  serial — each prompt's generation is awaited before the next submission)
+  and listed `--fail-fast` as the default (the CLI default is
+  `--continue-on-error`); the root plan still labeled the MCP server as
+  unshipped (shipped v0.21.0/v0.23.0).
+- **Flow's new media-library / agentic A/B cohort now fails cleanly.** When a
+  project opens into Flow's full-page media-library (or agentic chat) composer —
+  which has no classic `crop_*` aspect/mode control — `gflow image` and
+  `gflow video` now raise a clear, retryable `FlowAgentUiError` ("this cohort
+  flaps; retry shortly") instead of the misleading `UiSelectorDriftError`
+  "file a bug". Detection is a runtime DOM scan at a new shared
+  `_mode_switch_error` raise site covering **both** the image and video paths.
+  Refs #174, #183.
+- **Flow web-app crashes now fail cleanly instead of "file a bug".** When Flow's
+  web app renders its client-side-exception error boundary (a transient Flow
+  crash) instead of the editor, the mode-switch raise site now raises a retryable
+  `FlowAppError` (exit code 31) — "transient Flow error, retry shortly" — rather
+  than the misleading `UiSelectorDriftError`. Detected via the Flow error-page
+  title; surfaced by the #183 UI-drift debug engine.
+- **Experimental transport self-lockout.** The `bearer` and `sapisidhash`
+  transports discard a caller-supplied Playwright page and re-acquire the profile
+  `ProfileLease` in their own `setup()`. Driving one via `GFLOW_CLI_TRANSPORT`
+  inside a `FlowApiClient` (which already holds the lease) self-locked with an
+  opaque `ProfileLockedError`. `FlowApiClient` now refuses these standalone-only
+  transports up front with a clear `ConfigurationError` naming the transport and
+  pointing to `ui_automation`/`evaluate_fetch` or standalone use. `evaluate_fetch`
+  is unaffected (it shares the client's page). New `STANDALONE_ONLY_TRANSPORTS`
+  set + `resolve_transport_name()` helper in `api/transports`.
+
 ## [0.42.0] — 2026-07-21
 
 ### Fixed
@@ -2225,7 +2332,8 @@ shell-script template that branches on these codes.
 
 First skeleton. Not functional end-to-end yet.
 
-[Unreleased]: https://github.com/ffroliva/gflow-cli/compare/v0.42.0...HEAD
+[Unreleased]: https://github.com/ffroliva/gflow-cli/compare/v0.43.0...HEAD
+[0.43.0]: https://github.com/ffroliva/gflow-cli/compare/v0.42.0...v0.43.0
 [0.42.0]: https://github.com/ffroliva/gflow-cli/compare/v0.41.0...v0.42.0
 [0.41.0]: https://github.com/ffroliva/gflow-cli/compare/v0.40.0...v0.41.0
 [0.40.0]: https://github.com/ffroliva/gflow-cli/compare/v0.39.0...v0.40.0

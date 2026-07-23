@@ -44,6 +44,7 @@ from gflow_cli.api.video import (
 from gflow_cli.errors import (
     AuthExpiredError,
     FlowAgentUiError,
+    FlowAppError,
     MediaUploadRejectedError,
     ModelModeIncompatibilityError,
     TransportTimeoutError,
@@ -170,6 +171,24 @@ AGENTIC_UI_INDICATORS = (
     COMPOSER_AGENT_TOGGLE_SELECTOR,
     AGENT_CHAT_PANEL_CLOSE_SELECTOR,
 )
+
+# Locale-invariant markers of Flow's #174 full-page media-library cohort — the
+# left-nav library ("All Media / Characters / Scenes / Tools / Trash") a project
+# can open into INSTEAD of the generation composer. It has no ``crop_*`` aspect
+# trigger, so ``_switch_to_image_mode``/``_switch_to_video_mode`` cannot drive it.
+# Keyed on the collapse-sidebar control + the "All Media" grid nav (ligatures, not
+# UI text, to stay locale-independent). Confirmed live on ffroliva 2026-07-22.
+LIBRARY_UI_INDICATORS = (
+    "i.google-symbols:text-is('left_panel_close')",
+    "i.google-symbols:text-is('dashboard')",
+)
+
+# Union of markers that mean "the classic media composer is not reachable" —
+# either the forced agentic chat UI or the full-page media library. Consulted
+# ONLY after the ``crop_*`` trigger is confirmed absent AND agent-mode recovery
+# has already failed, so any match here is a decisive "stuck in a non-classic
+# cohort" signal (as opposed to a recoverable Agent pill/panel earlier in the flow).
+NON_CLASSIC_COHORT_INDICATORS = (*AGENTIC_UI_INDICATORS, *LIBRARY_UI_INDICATORS)
 
 # Output-count + duration tabs are selected by aria-label text in
 # `_set_output_count` / `_select_video_duration` — NOT by id-suffix: the count
@@ -635,6 +654,43 @@ def screenshot_clause(shot: Path | None) -> str:
     """' Screenshot: <path>' when one was captured, else '' — a capture
     failure must not put a phantom path (or 'None') in the error text."""
     return f" Screenshot: {shot}" if shot is not None else ""
+
+
+# DOM signature dumped on a UI-drift failure. Keyed on Material-Symbols ligatures
+# (locale-invariant) via the ONE structural DOM engine shared with the incident
+# recorder (incident-diagnostics design §6.3) — raw url/title/body text never
+# reach the artifact; only allowlisted structural fields survive validation.
+
+
+async def capture_ui_diagnostics(page: Any, out_dir: Path | None, name: str) -> Path | None:
+    """UI-drift debug engine (legacy opt-in wrapper): dump the composer's
+    STRUCTURAL DOM signature to ``<name>.json``. Consolidated onto
+    ``diagnostics.STRUCTURAL_DOM_JS`` + ``validate_structural_dom`` — the same
+    engine the automatic incident bundle uses; the old raw
+    url/title/bodyTextPreview fields are gone (S12), and this wrapper writes
+    **no screenshot**: ``out_dir`` is the user's plain output directory on
+    every ordinary run, so a full-page shot here would land unmarked, outside
+    the bundle's ``sensitive/`` review boundary and outside retention — the
+    incident bundle owns the (full-page) screenshot evidence.
+    Best-effort — returns the JSON path or ``None``; never raises."""
+    from gflow_cli.diagnostics import STRUCTURAL_DOM_JS, CommandHasher, validate_structural_dom
+
+    if out_dir is None:
+        return None
+    try:
+        diag = validate_structural_dom(await page.evaluate(STRUCTURAL_DOM_JS), CommandHasher())
+        out_dir.mkdir(parents=True, exist_ok=True)
+        json_path = out_dir / f"{name}.json"
+        json_path.write_text(json.dumps(diag, indent=2, ensure_ascii=False), encoding="utf-8")
+    except Exception as e:  # noqa: BLE001
+        log.debug("ui_automation_video.ui_diagnostics_failed", error=str(e)[:120])
+        return None
+    log.warning(
+        "ui_automation_video.ui_diagnostics_captured",
+        path=str(json_path),
+        note="structural ligature inventory; the incident bundle carries the screenshot",
+    )
+    return json_path
 
 
 async def _capture_picker_dom_dump(
@@ -1186,6 +1242,72 @@ class VideoGenerationMixin:
                 )
 
     @staticmethod
+    async def _detect_non_classic_cohort(page: Page) -> str | None:
+        """Return the first :data:`NON_CLASSIC_COHORT_INDICATORS` selector present,
+        else ``None``. Called at the mode-switch RAISE site — after ``crop_*`` is
+        confirmed absent AND the ~24s crop cascade has already elapsed, so the page
+        is fully rendered and one scan is decisive: the known agentic/media-library
+        cohort (#174/#183 → a clean :class:`FlowAgentUiError`) vs genuine drift."""
+        for sel in NON_CLASSIC_COHORT_INDICATORS:
+            try:
+                if await page.locator(sel).count() > 0:
+                    return sel
+            except Exception:  # noqa: BLE001  # NOSONAR — best-effort probe
+                continue
+        return None
+
+    @staticmethod
+    async def _is_flow_app_crash(page: Page) -> bool:
+        """True if Flow's web app rendered its client-side-exception error boundary
+        (a transient Flow crash) instead of the editor — keyed on the (English,
+        Next.js-hardcoded) error-page title. Best-effort; never raises."""
+        try:
+            title = (await page.title()) or ""
+        except Exception:  # noqa: BLE001  # NOSONAR — best-effort probe
+            return False
+        return "application error" in title.lower()
+
+    @staticmethod
+    async def _mode_switch_error(
+        page: Page, out_dir: Path | None, *, media: str
+    ) -> FlowAppError | FlowAgentUiError | UiSelectorDriftError:
+        """Build (do NOT raise — the caller raises) the right error for a
+        ``mode_switch_trigger`` miss on the ``image``/``video`` path: dump DOM
+        diagnostics, then classify — a transient :class:`FlowAppError` if Flow's app
+        crashed, a clean retryable :class:`FlowAgentUiError` for the known
+        agentic/media-library A/B cohort (#174/#183), else :class:`UiSelectorDriftError`
+        for genuine drift. Returning the exception (vs raising here) keeps the
+        None-path terminating *visibly* at the two call sites. Shared by
+        ``_switch_to_image_mode`` and ``_switch_to_video_mode``."""
+        diag = await capture_ui_diagnostics(page, out_dir, "diag_mode_switch_miss")
+        diag_clause = f" Diagnostics: {diag}" if diag is not None else ""
+        if await VideoGenerationMixin._is_flow_app_crash(page):
+            return FlowAppError(
+                detail=(
+                    "Flow's web app crashed (client-side exception) before the editor "
+                    f"rendered, so there is no {media} generation control to drive."
+                    f"{diag_clause}"
+                )
+            )
+        cohort = await VideoGenerationMixin._detect_non_classic_cohort(page)
+        if cohort is not None:
+            return FlowAgentUiError(
+                detail=(
+                    "Flow opened this project in its new media-library / agentic "
+                    f"composer (server-side A/B cohort, issues #174/#183; matched "
+                    f"{cohort!r}) — there is no classic aspect/mode control for gflow to "
+                    f"drive {media} generation here. This cohort flaps; retrying in a few "
+                    f"minutes often lands the classic UI.{diag_clause}"
+                )
+            )
+        return UiSelectorDriftError(
+            selector_drift_detail(
+                "mode_switch_trigger", "no matching element found on the Flow editor.", None
+            )
+            + diag_clause
+        )
+
+    @staticmethod
     async def _exit_agent_mode(
         page: Page, *, out_dir: Path | None = None, allow_reload: bool = False
     ) -> bool:
@@ -1265,14 +1387,7 @@ class VideoGenerationMixin:
             MODE_SWITCH_TRIGGER_SELECTORS,
         )
         if trigger is None:
-            shot = await _capture_debug_screenshot(page, out_dir, "debug_no_mode_trigger.png")
-            raise UiSelectorDriftError(
-                selector_drift_detail(
-                    "mode_switch_trigger",
-                    "no matching element found on the Flow editor.",
-                    shot,
-                )
-            )
+            raise await VideoGenerationMixin._mode_switch_error(page, out_dir, media="video")
         await trigger.click()
         await page.wait_for_timeout(800)
         video_tab = await VideoGenerationMixin._probe_selector_cascade(

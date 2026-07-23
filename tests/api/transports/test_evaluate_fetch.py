@@ -169,6 +169,7 @@ async def test_setup_launches_playwright_persistent_context(tmp_path: Path) -> N
 
     fake_ctx = MagicMock()
     fake_ctx.new_page = AsyncMock(return_value=fake_page)
+    fake_ctx.close = AsyncMock()
 
     fake_pw = _make_fake_playwright(fake_ctx)
 
@@ -177,17 +178,20 @@ async def test_setup_launches_playwright_persistent_context(tmp_path: Path) -> N
         "playwright.async_api.async_playwright",
         return_value=_AsyncCtxManager(fake_pw),
     ):
-        await transport.setup(tmp_path)
+        try:
+            await transport.setup(tmp_path)
 
-    fake_pw.chromium.launch_persistent_context.assert_awaited_once()
-    call_args = fake_pw.chromium.launch_persistent_context.call_args
-    # profile_dir must be the first positional arg (str(profile_dir))
-    assert call_args.args[0] == str(tmp_path)
+            fake_pw.chromium.launch_persistent_context.assert_awaited_once()
+            call_args = fake_pw.chromium.launch_persistent_context.call_args
+            # profile_dir must be the first positional arg (str(profile_dir))
+            assert call_args.args[0] == str(tmp_path)
 
-    # Page navigation to FLOW_URL must have happened
-    fake_page.goto.assert_awaited_once()
-    nav_url = fake_page.goto.call_args.args[0]
-    assert "labs.google" in nav_url
+            # Page navigation to FLOW_URL must have happened
+            fake_page.goto.assert_awaited_once()
+            nav_url = fake_page.goto.call_args.args[0]
+            assert "labs.google" in nav_url
+        finally:
+            await transport.teardown()
 
 
 async def test_setup_is_idempotent(tmp_path: Path) -> None:
@@ -198,17 +202,21 @@ async def test_setup_is_idempotent(tmp_path: Path) -> None:
     fake_page.goto = AsyncMock()
     fake_ctx = MagicMock()
     fake_ctx.new_page = AsyncMock(return_value=fake_page)
+    fake_ctx.close = AsyncMock()
     fake_pw = _make_fake_playwright(fake_ctx)
 
     with patch(
         "playwright.async_api.async_playwright",
         return_value=_AsyncCtxManager(fake_pw),
     ):
-        await transport.setup(tmp_path)
-        await transport.setup(tmp_path)  # second call
+        try:
+            await transport.setup(tmp_path)
+            await transport.setup(tmp_path)  # second call
 
-    # launch_persistent_context called exactly once despite two setup() calls
-    assert fake_pw.chromium.launch_persistent_context.await_count == 1
+            # launch_persistent_context called exactly once despite two setup() calls
+            assert fake_pw.chromium.launch_persistent_context.await_count == 1
+        finally:
+            await transport.teardown()
 
 
 # ---------------------------------------------------------------------------
@@ -484,18 +492,22 @@ async def test_setup_without_shared_page_opens_own_context(tmp_path: Path) -> No
     fake_page.goto = AsyncMock()
     fake_ctx = MagicMock()
     fake_ctx.new_page = AsyncMock(return_value=fake_page)
+    fake_ctx.close = AsyncMock()
     fake_pw = _make_fake_playwright(fake_ctx)
 
     with patch(
         "playwright.async_api.async_playwright",
         return_value=_AsyncCtxManager(fake_pw),
     ):
-        await transport.setup(tmp_path)
+        try:
+            await transport.setup(tmp_path)
 
-    # Must have opened its own context.
-    fake_pw.chromium.launch_persistent_context.assert_awaited_once()
-    assert transport._owns_playwright is True
-    assert transport._setup_done is True
+            # Must have opened its own context.
+            fake_pw.chromium.launch_persistent_context.assert_awaited_once()
+            assert transport._owns_playwright is True
+            assert transport._setup_done is True
+        finally:
+            await transport.teardown()
 
 
 async def test_teardown_noop_when_not_owning_playwright() -> None:

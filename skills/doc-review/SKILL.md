@@ -99,13 +99,84 @@ If `scripts/ci/check_doc_links.py` is absent, create it from the v0.8.1 plan (it
 
 ---
 
-## 5 · `.claude/commands/gflow/` skill files
+## 4b · Published website mirror (`website/docs/`)
+
+`website/docs/` is the mkdocs-material site published to GitHub Pages — an
+**anonymized copy** of canonical `docs/`. It has drifted silently for months
+before (PR #362 shipped a PII leak; content lagged canonical for whole
+releases) because nothing gates staleness. This section closes that.
+
+**1. PII gate (the CI check — a leak fails the build):**
+
+```powershell
+$env:PYTHONUTF8=1
+uv run python scripts/ci/check_website_docs_pii.py
+```
+
+Expected: `No private identifiers found across N published website/docs files.`
+
+**2. Content-drift check — the mirror is generated from canonical by
+`scripts/ci/generate_website_docs.py` (the anonymization map is data in that
+script). Verify it is in sync (this is the same check CI runs):**
+
+```powershell
+$env:PYTHONUTF8=1
+uv run python scripts/ci/generate_website_docs.py --check
+```
+
+Expected: `website/docs mirror in sync (N files).` Any `DRIFT:` line is a
+**FAIL** — a canonical doc changed and the mirror was not regenerated. Fix it:
+
+```bash
+uv run python scripts/ci/generate_website_docs.py   # regenerate, then stage website/docs/
+```
+
+`CHANGELOG.md` and the bespoke site pages (`index.md`, `agents.md`,
+`installation.md`, `onboarding*.md`) are intentionally NOT generated — the
+generator's `WEBSITE_ONLY` set excludes them. If a NEW canonical doc should be
+published, add its file under `website/docs/` and the generator maintains it
+thereafter.
+
+---
+
+## 4c · Code↔docs parity (git-driven — the highest-value lens)
+
+The mechanical checks and the council's drift auditor read *from the docs
+outward* ("does this doc claim match the code?"). They do NOT reliably catch
+the inverse — **shipped work that no doc mentions at all** — because no string
+sweep notices an *absent* doc. This lens (adapted from the
+`auditing-documentation` skill's dimension 3) reads *from the code outward*.
+
+```bash
+# Everything that shipped since the last release tag (or origin/develop on a feature branch).
+git log --oneline "$(git describe --tags --abbrev=0)"..HEAD
+git diff --stat "$(git describe --tags --abbrev=0)"..HEAD
+```
+
+For each shipped surface — new CLI flags/env vars, new modules under
+`src/gflow_cli/`, new operational behavior — name the doc that covers it, and
+assign a coverage grade: **D0** (nothing) · **D1** (docstrings only) · **D2**
+(one line in INDEX/README) · **D3** (dedicated how-to-operate doc) · **D4** (D3
++ troubleshooting + linked from an entrypoint). Anything operator-facing must
+be **D3+**; a new env var or command at **D0/D1** is a release-blocking finding.
+List every surface below D3 with its grade and the doc it needs.
+
+---
+
+## 5 · Skill files (`skills/` + `.claude/commands/gflow/`)
+
+Canonical skill CONTENT lives in `skills/<name>/SKILL.md`; `.claude/commands/gflow/`
+holds thin wrappers. Scan BOTH for stale phase/version references:
 
 Scan all skills for stale phase/version references:
 
 ```bash
-grep -rn "v[0-9]\+\.[0-9]\|Phase [A-Z0-9]" .claude/commands/gflow/
+grep -rn "v[0-9]\+\.[0-9]\|Phase [A-Z0-9]" skills/ .claude/commands/gflow/
 ```
+
+Also confirm the process skills stay in step with infra changes — e.g. when a
+new CI gate or published surface lands (`scripts/ci/*`, the `website/docs/`
+mirror), the skills that should run it (`check`, `doc-review`, `release`) name it.
 
 Update in the release prep commit if any references are wrong. The `release.md` skill's step list and the `plan.md` skill's phase pointers age fastest.
 

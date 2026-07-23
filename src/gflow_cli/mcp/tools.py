@@ -39,7 +39,7 @@ from gflow_cli.data.models import AssetLookup
 from gflow_cli.data.queries import list_projects
 from gflow_cli.data.repository import DataRepository
 from gflow_cli.data.store import DataStore
-from gflow_cli.errors import GFlowError
+from gflow_cli.errors import GFlowError, is_retryable
 from gflow_cli.mcp.server import server
 from gflow_cli.profile_store import NoDefaultProfileError, NoProfilesError, resolve_profile
 from gflow_cli.worker import codec
@@ -331,7 +331,7 @@ async def _run_generation_task(
         return {
             "status": "error",
             "task_id": task_id,
-            "error": dict(exc.to_problem_details()),
+            "error": _gflow_error_dict(exc),
         }
     except Exception as exc:
         log.exception("mcp.tool.unexpected_error", task_id=task_id, exc_info=exc)
@@ -1085,6 +1085,13 @@ def _error_payload(error: dict[str, Any]) -> dict[str, Any]:
     return {"status": "error", "error": error}
 
 
+def _gflow_error_dict(exc: GFlowError) -> dict[str, Any]:
+    """Problem-details dict + the shared retryable flag (``errors.is_retryable``)
+    so the MCP envelope's retry signal stays identical to CLI ``--json`` and the
+    worker queue — never fork a private retryable list here (§6.5)."""
+    return {**exc.to_problem_details(), "retryable": is_retryable(exc)}
+
+
 def _selector_error(title: str | None, card_id: str | None) -> dict[str, Any] | None:
     """Enforce exactly one of title / card_id (mirrors the CLI selector rule)."""
     if (title is None) == (card_id is None):
@@ -1131,7 +1138,7 @@ async def _run_instructions_op(
         return _bad_param("Invalid Instructions Request", str(exc))
     except GFlowError as exc:
         log.error("mcp.tool.instructions_gflow_error", tool=tool, error=str(exc))
-        return _error_payload(dict(exc.to_problem_details()))
+        return _error_payload(_gflow_error_dict(exc))
     except Exception as exc:
         log.exception("mcp.tool.instructions_unexpected_error", tool=tool, exc_info=exc)
         return _error_payload(

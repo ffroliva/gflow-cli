@@ -35,6 +35,10 @@ def _cascade_page(visible: set[str]) -> MagicMock:
         else:
             loc.wait_for = AsyncMock(side_effect=Exception("not visible"))
         loc.click = AsyncMock()
+        # No cohort markers by default → _detect_non_classic_cohort returns None,
+        # so a trigger miss routes to UiSelectorDriftError (genuine drift), not
+        # FlowAgentUiError. Cohort tests live in test_agentic_cohort_detection.py.
+        loc.count = AsyncMock(return_value=0)
         return loc
 
     page.locator = MagicMock(side_effect=_locator)
@@ -66,14 +70,19 @@ class TestSwitchToImageMode:
             await UiAutomationTransport._switch_to_image_mode(page, out_dir=None)
 
     @pytest.mark.asyncio
-    async def test_trigger_miss_detail_carries_screenshot_path(self, tmp_path: Path) -> None:
-        # The screenshot path is the diagnostic payload issue-#183 reporters
-        # need — assert it survives into the user-visible detail.
+    async def test_trigger_miss_detail_carries_diagnostics_path(self, tmp_path: Path) -> None:
+        # On a genuine drift (no cohort marker), the drift error points at the
+        # structural diagnostics JSON. The legacy full-page screenshot is GONE
+        # from this path (max-review fix): out_dir is the user's plain output
+        # directory on ordinary runs, so imagery lives only in the incident
+        # bundle's sensitive/ quarantine.
         page = _cascade_page(set())
+        page.evaluate = AsyncMock(return_value={"ligatures": [], "cropPresent": False})
         page.screenshot = AsyncMock()
-        with pytest.raises(UiSelectorDriftError, match="debug_no_mode_trigger.png"):
+        with pytest.raises(UiSelectorDriftError, match="diag_mode_switch_miss"):
             await UiAutomationTransport._switch_to_image_mode(page, out_dir=tmp_path)
-        page.screenshot.assert_awaited()
+        page.screenshot.assert_not_awaited()
+        assert (tmp_path / "diag_mode_switch_miss.json").exists()
 
     @pytest.mark.asyncio
     async def test_trigger_miss_detail_omits_screenshot_clause_without_out_dir(self) -> None:

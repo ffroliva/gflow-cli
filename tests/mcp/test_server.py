@@ -597,3 +597,52 @@ class TestMcpServerEntryPoints:
             mock_server.run_sse_async.assert_called_once()
             assert mock_server.settings.host == "127.0.0.1"
             assert mock_server.settings.port == 9999
+
+
+def test_mcp_retryable_matches_cli() -> None:
+    """§6.5 (S24): the MCP error envelope's retryable flag must derive from the
+    same shared classification the CLI JSON surface uses — no drift lists."""
+    from gflow_cli.errors import (
+        ContentPolicyError,
+        FlowAgentUiError,
+        FlowAppError,
+        WafRejectionError,
+        is_retryable,
+    )
+    from gflow_cli.mcp.tools import _gflow_error_dict
+
+    for exc in (
+        FlowAppError("crash"),
+        FlowAgentUiError("agentic"),
+        WafRejectionError("blocked"),
+        ContentPolicyError("nope"),
+    ):
+        error = _gflow_error_dict(exc)
+        assert error["retryable"] is is_retryable(exc)
+        # RFC 9457 fields still carried through unchanged.
+        assert error["title"]
+        assert error["type"].startswith("https://gflow-cli.dev/errors/")
+
+
+def test_mcp_error_envelope_omits_local_path() -> None:
+    """S21: the MCP envelope reuses to_problem_details() — opaque incident
+    {id, capture_status} only, never the absolute local path or artifacts."""
+    import json
+    from pathlib import Path
+
+    from gflow_cli.diagnostics import IncidentRef
+    from gflow_cli.errors import FlowAppError
+    from gflow_cli.mcp.tools import _gflow_error_dict
+
+    exc = FlowAppError("crash")
+    exc.incident_ref = IncidentRef(
+        id="corr-fp",
+        capture_status="complete",
+        path=Path("/home/CANARYUSER/gflow/incidents/x"),
+        artifacts=("ui.json", "sensitive/screenshot.png"),
+    )
+    error = _gflow_error_dict(exc)
+    assert error["incident"] == {"id": "corr-fp", "capture_status": "complete"}
+    blob = json.dumps(error)
+    assert "CANARYUSER" not in blob
+    assert "screenshot" not in blob
