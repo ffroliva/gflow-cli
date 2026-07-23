@@ -66,6 +66,9 @@ jobs:
       - name: Website docs PII guard (no private identifiers in the published mirror)
         run: uv run python scripts/ci/check_website_docs_pii.py
 
+      - name: Website docs mirror in sync (regenerate-and-diff)
+        run: uv run python scripts/ci/generate_website_docs.py --check
+
       - name: Lint
         run: uv run ruff check src tests
 

@@ -115,32 +115,27 @@ uv run python scripts/ci/check_website_docs_pii.py
 
 Expected: `No private identifiers found across N published website/docs files.`
 
-**2. Content-drift check — the mirror must match canonical except for the
-documented anonymization substitutions** (`denon82`→`my-profile`,
-`ffrol`→`your-user`, `profile_<name>`→`profile_your-name`, the maintainer
-email→GitHub private-vulnerability-reporting). For every file that exists in
-both trees, diff and confirm the ONLY deltas are those substitutions:
+**2. Content-drift check — the mirror is generated from canonical by
+`scripts/ci/generate_website_docs.py` (the anonymization map is data in that
+script). Verify it is in sync (this is the same check CI runs):**
 
-```bash
-for f in $(ls website/docs/*.md); do
-  base=$(basename "$f")
-  [ -f "docs/$base" ] || continue
-  # After normalizing the known anonymizations, canonical and mirror must be identical.
-  diff <(sed -e 's/denon82/my-profile/g' -e 's/\bffrol\b/your-user/g' "docs/$base") "$f" \
-    && echo "IN SYNC: $base" || echo "DRIFT (beyond anonymization): $base"
-done
+```powershell
+$env:PYTHONUTF8=1
+uv run python scripts/ci/generate_website_docs.py --check
 ```
 
-Any `DRIFT` line is a **FAIL** — re-sync that file from canonical (re-apply the
-anonymization) before continuing. Also confirm no canonical doc changed this
-release is *missing* from the mirror, and `CHANGELOG.md` is NOT mirrored (it is
-never a published page — a stray `website/docs/CHANGELOG.md` bypasses the PII
-gate's file set).
+Expected: `website/docs mirror in sync (N files).` Any `DRIFT:` line is a
+**FAIL** — a canonical doc changed and the mirror was not regenerated. Fix it:
 
-> **Backlog (tracked):** the mirror is hand-synced. A deterministic
-> `docs/`→`website/docs/` generator with the anonymization map as data, gated by
-> a regenerate-and-diff CI step, would make this section obsolete. Until then,
-> this manual gate is the backstop.
+```bash
+uv run python scripts/ci/generate_website_docs.py   # regenerate, then stage website/docs/
+```
+
+`CHANGELOG.md` and the bespoke site pages (`index.md`, `agents.md`,
+`installation.md`, `onboarding*.md`) are intentionally NOT generated — the
+generator's `WEBSITE_ONLY` set excludes them. If a NEW canonical doc should be
+published, add its file under `website/docs/` and the generator maintains it
+thereafter.
 
 ---
 
