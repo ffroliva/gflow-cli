@@ -3,7 +3,7 @@ from __future__ import annotations
 import dataclasses
 import json
 import sqlite3
-from datetime import UTC, datetime
+from datetime import UTC, datetime, timedelta
 from pathlib import Path
 from typing import TYPE_CHECKING, Any, cast
 
@@ -30,6 +30,11 @@ if TYPE_CHECKING:
 
 def _utc_now() -> str:
     return datetime.now(UTC).isoformat(timespec="milliseconds").replace("+00:00", "Z")
+
+
+def _coerce_utc(dt: datetime) -> datetime:
+    """UTC-aware view of a catalog timestamp; assume UTC if a legacy value is naive."""
+    return dt if dt.tzinfo is not None else dt.replace(tzinfo=UTC)
 
 
 _ASSET_LOOKUP_COLUMNS = (
@@ -315,6 +320,52 @@ class DataRepository:
                 """,
                 (status.value, completed_at, error_type, error_detail, operation_id),
             )
+
+    def prune_failed_operations(
+        self,
+        *,
+        older_than: timedelta,
+        profile: str | None = None,
+        dry_run: bool = False,
+    ) -> int:
+        """Delete failed operations older than *older_than*; return how many were
+        deleted (or, when *dry_run*, WOULD be deleted).
+
+        Explicit retention for #345 — never invoked automatically. Rows are
+        matched in Python against ``now - older_than`` (robust to timestamp
+        format), then deleted by id in chunks. Child ``operation_assets`` rows
+        (rare for failures, but not assumed absent) are removed first to satisfy
+        the ``operations(id)`` foreign key with ``PRAGMA foreign_keys = ON``.
+        """
+        cutoff = datetime.now(UTC) - older_than
+        rows = self._store.conn.execute(
+            "SELECT id, started_at FROM operations"
+            " WHERE status = 'failed'"
+            " AND (:profile IS NULL OR profile_name = :profile)",
+            {"profile": profile},
+        ).fetchall()
+        stale_ids = [
+            str(r["id"])
+            for r in rows
+            if _coerce_utc(datetime.fromisoformat(str(r["started_at"]))) < cutoff
+        ]
+        if dry_run or not stale_ids:
+            return len(stale_ids)
+        # SQLite variable limit is usually 999; 500 is safe.
+        chunk_size = 500
+        with self._store.transaction(immediate=True):
+            for i in range(0, len(stale_ids), chunk_size):
+                chunk = stale_ids[i : i + chunk_size]
+                placeholders = ",".join("?" * len(chunk))
+                self._store.conn.execute(
+                    f"DELETE FROM operation_assets WHERE operation_id IN ({placeholders})",
+                    chunk,
+                )
+                self._store.conn.execute(
+                    f"DELETE FROM operations WHERE id IN ({placeholders})",
+                    chunk,
+                )
+        return len(stale_ids)
 
     def set_operation_metadata(
         self,
