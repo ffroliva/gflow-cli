@@ -111,26 +111,26 @@ covered where they fall out naturally (design §13 gates only Critical + High).
 
 | Scenario | Sev | Task | Test (file :: name) |
 |---|---|---|---|
-| S01 canary never in artifacts | C | 2, 5, 6, 10 | `test_diagnostics_sanitize.py::test_canary_secrets_never_survive_reduction`; `test_diagnostics_events.py::test_manifest_allowlist_excludes_settings_secrets`; `test_client_incidents.py::test_bundle_json_contains_no_canary` |
+| S01 canary never in artifacts | C | 2, 5, 6, 10 | `test_diagnostics_sanitize.py::test_canary_secrets_never_survive_reduction`; `test_diagnostics_events.py::test_manifest_allowlist_excludes_settings_secrets`; `test_diagnostics_recorder.py::test_bundle_json_contains_no_canary`; `test_client_incidents.py::test_handlers_feed_recorder_with_reduced_primitives` |
 | S02 unknown upstream keys | C | 2 | `test_diagnostics_sanitize.py::test_unknown_top_level_keys_reduce_to_count` |
 | S03 low-entropy console/title text | H | 2 | `test_diagnostics_sanitize.py::test_text_stored_as_category_and_length_only`, `::test_hmac_identity_uses_random_unpersisted_key` |
-| S04 screenshot sensitivity | H | 6, 9 | `test_diagnostics_recorder.py::test_screenshot_lives_under_sensitive_and_manifest_marks_it`; `test_json_output.py::test_local_incident_output_warns_review_before_sharing` |
-| S05 HAR unset stays disabled | H | 10 | `test_client_incidents.py::test_har_state_disabled_when_unset_and_never_enabled` |
-| S06 auth expiry no-capture | M | 10 | `test_client_incidents.py::test_auth_expired_creates_no_bundle` |
+| S04 screenshot sensitivity | H | 6, 9 | `test_diagnostics_recorder.py::test_screenshot_lives_under_sensitive_and_manifest_marks_it`; `tests/cli/test_incident_output.py::test_local_incident_output_warns_review_before_sharing` |
+| S05 HAR unset stays disabled | H | 6, 10 | `test_diagnostics_recorder.py::TestHarState::test_har_disabled_when_unset`; `test_client_incidents.py::test_lease_contention_metadata_only_before_chrome` (`har_state == disabled`); pre-existing `test_client_launch_kwargs` coverage (no `record_har_path` when unset) |
+| S06 auth expiry no-capture | M | 6 | `test_diagnostics_recorder.py::test_expected_failures_create_no_bundle` (AuthExpired + ContentPolicy) |
 | S07 same-process owner evidence | H | 8 | `test_profile_lease.py::test_same_process_contention_uses_registry_metadata` |
-| S08 Windows offset-1 read | H | 8 | `test_profile_lease_subprocess.py::test_cross_process_offset1_metadata_read` (Windows-marked) |
+| S08 Windows offset-1 read | H | 8 | `test_profile_lease_subprocess.py::test_holder_wins_and_second_process_fails_fast` (CONTENDER_EVIDENCE assertion, true two-process); `test_profile_lease.py::test_cross_process_offset1_read_with_kernel_lock_held`, `::test_legacy_byte0_metadata_reports_unavailable` |
 | S09 kernel lock authoritative | C | 8 | `test_profile_lease.py::test_stale_metadata_never_triggers_reclaim_or_unlink` |
-| S10 FlowAppError staged pre-close | H | 6, 11 | `test_diagnostics_recorder.py::test_ui_failure_stages_dom_and_screenshot`; `test_client_incidents.py::test_capture_runs_before_context_close_and_exit_code_31_kept` |
+| S10 FlowAppError staged pre-close | H | 6, 11 | `test_diagnostics_recorder.py::test_ui_failure_stages_dom_and_screenshot` (+ exit 31 in manifest); `test_client_incidents.py::test_generation_boundary_captures_and_attaches_ref` |
 | S11 overlay geometry no text | H | 6 | `test_diagnostics_recorder.py::test_overlay_records_bounded_geometry_without_text` |
 | S12 hostile DOM rejected | C | 6 | `test_diagnostics_recorder.py::test_structural_result_rejects_non_allowlisted_fields` |
 | S13 screenshot timeout fallback | H | 6 | `test_diagnostics_recorder.py::test_fullpage_screenshot_failure_falls_back_to_viewport` |
 | S14 batch fingerprint suppression | H | 12 | `incident_diagnostics.feature::A systemic batch failure is captured once` |
 | S15 side-effect-free capture | C | 6, 12 | `test_diagnostics_recorder.py::test_capture_is_observation_only`; `incident_diagnostics.feature::Capture failure preserves the operational error` |
 | S16 attach-once/detach-once | H | 3, 10 | `test_diagnostics_journal.py::test_listener_bookkeeping_attach_idempotent`; `test_client_incidents.py::test_pooled_pages_each_attached_exactly_once` |
-| S17 late callbacks no-op | H | 3, 10 | `test_diagnostics_journal.py::test_events_after_freeze_are_ignored` |
-| S18 bounded timing map | H | 3 | `test_diagnostics_journal.py::test_timing_map_bounded_under_10k_synthetic_events` |
+| S17 late callbacks no-op | H | 3, 10 | `test_diagnostics_journal.py::test_events_after_freeze_are_ignored`; `test_client_incidents.py::test_late_callbacks_after_detach_are_noops` |
+| S18 bounded timing map | H | 3, 10 | `test_diagnostics_journal.py::test_timing_map_bounded_under_10k_synthetic_events`; `test_client_incidents.py::test_callbacks_retain_no_request_objects` |
 | S19 concurrent same-fingerprint | H | 6 | `test_diagnostics_recorder.py::test_concurrent_capture_same_fingerprint_yields_one_bundle` |
-| S20 cancellation-safe teardown | H | 10 | `test_client_incidents.py::test_cancellation_during_capture_still_releases_lease` |
+| S20 cancellation-safe teardown | H | 6, 10, 12 | `test_diagnostics_recorder.py::test_cancellation_and_exits_never_capture`; `test_client_incidents.py::test_teardown_detaches_freezes_then_finalizes_and_releases`; BDD `Cancellation leaves no browser or lease` |
 | S21 remote path privacy | H | 9 | `test_errors.py::test_problem_details_incident_is_opaque`; `tests/mcp/test_server.py::test_mcp_error_envelope_omits_local_path` |
 | S22 queue schema unchanged | M | 1, 9 | `tests/worker/test_queue.py::test_invalid_payload_fails_without_browser_launch` (retryable key, no schema change) + Task 9 envelope test |
 | S23 capture failure → original wins | H | 6 | `test_diagnostics_recorder.py::test_capture_io_failure_preserves_original_exception` |
@@ -140,19 +140,19 @@ covered where they fall out naturally (design §13 gates only Critical + High).
 | S27 reparse containment | C | 4 | `test_diagnostics_bundle.py::test_symlink_and_reparse_roots_refused` (junction case Windows-marked) |
 | S28 restrictive from creation | H | 4 | `test_diagnostics_bundle.py::test_posix_modes_0700_0600_from_creation` (POSIX-marked) + Windows doc assertion |
 | S29 HTTP 400 allowlisted discovery | H | 2 | `test_diagnostics_sanitize.py::test_error_body_reduction_is_allowlist_only` |
-| S30 listener ordering | H | 10 | `test_client_incidents.py::test_listeners_attach_before_first_navigation` |
+| S30 listener ordering | H | 10 | `test_client_incidents.py::test_context_listeners_cover_all_relevant_events` (registration set) + `_enter_setup` attaches immediately post-launch/pre-goto, pinned by `::test_lease_contention_metadata_only_before_chrome` exercising the real `_enter_setup` sequence |
 | S31 unknown host reduction | H | 2 | `test_diagnostics_sanitize.py::test_unknown_hosts_and_routes_become_other` |
-| S32 honest HAR completion | H | 10 | `test_client_incidents.py::test_har_complete_only_when_session_changed_file` |
-| S33 page crash partial finalize | H | 10 | `test_client_incidents.py::test_page_crash_finalizes_partial_and_teardown_completes` |
-| S34 metadata-only no display | M | 10 | `test_client_incidents.py::test_partial_setup_metadata_only_capture` |
-| S35 setting boundaries | M | 1 | `test_config.py::test_incident_capture_default_and_invalid` |
+| S32 honest HAR completion | H | 6 | `test_diagnostics_recorder.py::TestHarState::test_har_complete_only_when_session_changed_file`, `::test_har_created_by_session_is_complete` |
+| S33 page crash partial finalize | H | 6, 10 | `test_diagnostics_recorder.py::test_capture_io_failure_preserves_original_exception` (dead page → journals still staged, partial); `test_client_incidents.py::test_teardown_detaches_freezes_then_finalizes_and_releases` |
+| S34 metadata-only no display | M | 6, 10 | `test_diagnostics_recorder.py::test_metadata_only_capture_without_page`; `test_client_incidents.py::test_lease_contention_metadata_only_before_chrome` |
+| S35 setting boundaries | M | 1 | `test_config.py::TestIncidentCapture` (default true / env false / invalid → ValidationError) |
 | S36 disk full / read-only root | H | 6 | `test_diagnostics_recorder.py::test_readonly_root_reports_failed_capture_original_wins` |
 | S37 retention validation | C | 7 | `test_diagnostics_retention.py::test_retention_never_deletes_unknown_or_escaping_content` |
 | S38 pending marker lifecycle | H | 4, 7 | `test_diagnostics_bundle.py::test_pending_marker_locked_until_finalize`; `test_diagnostics_retention.py::test_stale_pending_pruned_only_after_lock_and_age` |
 | S39 multiprocess prune race | H | 7 | `test_diagnostics_retention.py::test_multiprocess_prune_is_race_safe` (subprocess) |
 | S40 collision-free creation | H | 4 | `test_diagnostics_bundle.py::test_exclusive_creation_survives_clock_rollback_collision` |
 | S41 fixed-field events | C | 5 | `test_diagnostics_events.py::test_event_constructors_accept_fixed_fields_only` |
-| S42 correlation binding | H | 5, 10 | `test_diagnostics_events.py::test_incident_id_bound_once_and_generated_when_absent` |
+| S42 correlation binding | H | 5, 10 | `test_diagnostics_events.py::TestResolveCorrelationId` (bound contextvar used; missing → generated); recorder binds once at construction and reuses `correlation_id` for every event/directory/manifest (`test_diagnostics_recorder.py::test_concurrent_capture_same_fingerprint_yields_one_bundle` — one id across 10 captures) |
 | S43 live Veo lifecycle | H | Release gate | §10.3 step 4 of the design — paid, user-approved; not an offline task |
 
 ---

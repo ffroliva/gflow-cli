@@ -611,6 +611,29 @@ class BundleDir:
             target.parent.mkdir(mode=0o700, exist_ok=True)
         _write_new_file(target, payload)
 
+    def __del__(self) -> None:
+        """Release the marker lock if the bundle is dropped without finalize.
+
+        Mirrors process-death semantics: the ``.pending`` file STAYS (retention
+        classifies it as crash-left and ages it out) but the advisory lock and
+        fd are freed. Without this, a staged-but-never-finalized bundle (an
+        abandoned recorder, or a unit test that stages without finalizing)
+        holds a kernel-locked fd for the rest of the process — on Windows that
+        made every later whole-tree file traversal (e.g. Hatchling's sdist
+        build in the aggregate test run) fail on the locked byte, the same
+        leaked-OS-resource failure class as commit 5a75043's leases.
+        """
+        fd, self._marker_fd = self._marker_fd, -1
+        if fd >= 0:
+            try:
+                _kernel_unlock(fd)
+            except OSError:
+                pass
+            try:
+                os.close(fd)
+            except OSError:
+                pass
+
     def finalize(self, manifest: dict[str, object]) -> None:
         """Write ``manifest.json`` last and atomically; then release the pending
         lock and remove the marker. The manifest's presence is the marker that

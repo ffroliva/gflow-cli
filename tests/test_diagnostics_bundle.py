@@ -98,6 +98,22 @@ class TestBundleDir:
         assert (bundle.path / "manifest.json").exists()
         assert not marker.exists()
 
+    def test_dropped_bundle_releases_marker_lock(self, tmp_path: Path) -> None:
+        """A staged BundleDir that is dropped without finalize must not hold
+        its marker lock for the rest of the process. Regression guard for the
+        aggregate-run packaging failure: session-long locked fds under the
+        repo-local pytest tmp tree broke Hatchling's sdist traversal on
+        Windows (same failure class as commit 5a75043's leaked leases)."""
+        import gc
+
+        bundle = BundleDir.create_exclusive(_root(tmp_path), "corr-fp", now=_NOW)
+        marker = bundle.path / ".pending"
+        assert _try_lock(marker) is False  # held while the bundle is alive
+        del bundle
+        gc.collect()
+        assert _try_lock(marker) is True  # released on GC — crash-left, not leaked
+        assert marker.exists()  # the marker itself stays; retention owns cleanup
+
     def test_atomic_manifest_last_no_manifest_before_finalize(self, tmp_path: Path) -> None:
         bundle = BundleDir.create_exclusive(_root(tmp_path), "corr-fp", now=_NOW)
         bundle.write_artifact("network.json", b"[]")
