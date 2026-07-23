@@ -14,6 +14,53 @@ Living list of behaviour that's broken, surprising, or limited by design — alo
 
 ## Open
 
+### One-time Flow banner/modal can cover the composer on first load
+
+- **Status:** Open ([#369](https://github.com/ffroliva/gflow-cli/issues/369))
+- **Severity:** Low (transient) · **Affected:** any UI-automation command on a profile that hasn't seen the banner yet
+
+A Flow-side one-time announcement banner/modal can overlay the composer and
+make the mode-switch / settings probes miss. It shows once per
+profile+cookie state, so it is gone on re-run and cannot be reproduced on
+demand. gflow does **not** guess a dismiss selector for unknown overlays
+(clicking unknown UI is riskier than failing). Since v0.43.0 the automatic
+incident bundle records the overlay's bounded geometry, `role`,
+`aria-modal`, `z-index`, `pointer-events`, and inner Material-Symbol
+ligatures (no raw text) plus a `sensitive/` screenshot — enough to write a
+targeted dismissal once the next occurrence is captured. **Workaround:**
+re-run the command; open the project once manually in Chrome to consume the
+banner.
+
+### Reported stale profile lock blocks acquisition (unreproduced)
+
+- **Status:** Open ([#370](https://github.com/ffroliva/gflow-cli/issues/370))
+- **Severity:** Medium (blocks the profile until resolved) · **Affected:** `ProfileLease` acquisition (exit 11)
+
+A user report of `ProfileLockedError` with no apparently-live owner. Not
+reproduced: in every observed case the kernel advisory lock was held by a
+real process (e.g. a pytest child that outlived its parent shell). The
+kernel lock is authoritative — a merely *stale metadata file* cannot block
+acquisition, and gflow will never auto-delete a lock file or kill a
+recorded PID based on metadata. Since v0.43.0, contention reports the
+recorded owner's PID and observed start time locally (lock-file metadata
+now starts at offset 1 so Windows contenders can read it while byte 0 is
+kernel-locked), and a metadata-only incident bundle is written before any
+Chrome launch. **Workaround:** find and close the owning process (the
+error's local output names its PID), or use a different `--profile`.
+
+### Unexplained image-generation HTTP 400 (observed live 2026-07-22)
+
+- **Status:** Open (no issue yet — evidence-gathering)
+- **Severity:** Low (single occurrence) · **Affected:** `image t2i` wire path
+
+One live `batchGenerateImages` call returned an HTTP 400 that was neither a
+content-safety rejection nor a known wire shape; the retry succeeded. Root
+cause unidentified and **not** claimed fixed by v0.43.0. Since v0.43.0 the
+next occurrence automatically produces allowlisted discovery evidence in
+`network.json` (numeric error code, status enum, known-key booleans,
+unknown-key count, message length — never the raw body), which is what this
+entry is waiting on. **Workaround:** retry; the failure has not recurred.
+
 ### Flow's `uploadImage` endpoint rejects some JPEGs with HTTP 400 (metadata-sensitive)
 
 - **Status:** Open ([#287](https://github.com/ffroliva/gflow-cli/issues/287))
@@ -109,6 +156,17 @@ reaches the submit** — the request carries no `referenceEntities`, so the
 submit backstops raise `WireFormatError` (**exit 7**) instead of silently
 returning a text-only generation as success.
 
+**Plain generation on this cohort now fails cleanly (#183).** When a project
+opens into this full-page library (or the agentic chat composer) there is no
+classic `crop_*` aspect/mode control, so `gflow image`/`gflow video` can't drive
+generation. Rather than the old opaque `UiSelectorDriftError` "file a bug", the
+mode-switch raise site now runs a runtime DOM scan and raises a clear, **retryable**
+`FlowAgentUiError` (**exit 25**, "this cohort flaps; retry shortly"), and dumps a
+DOM-signature diagnostics artifact (`diag_mode_switch_miss.json` + a full-page
+screenshot) for reporting. The cohort is server-assigned per page load and flaps
+within ~12h, so a re-run often lands the classic UI. Driving the new UI directly
+is still out of scope.
+
 **How to tell which UI your account has:** in the Flow web editor, click
 **Add Media** — a small dialog means the old (working) UI; a navigation to a
 full-page library means the affected new UI.
@@ -150,7 +208,7 @@ to refresh the session before retrying 4K. Wire detail:
 > **Resolution (2026-05-20, v0.7.0):** the production `ui_automation` transport
 > drives the Flow web UI so Flow's own JS issues `batchGenerateImages` with
 > full auth context — bypassing the 401 on the `aisandbox-pa` HTTP path
-> entirely. Live-verified end-to-end on the `your-name` profile across four
+> entirely. Live-verified end-to-end on the `ffroliva` profile across four
 > aspect ratios (`9:16`, `16:9`, `1:1`, `4:3`); see
 > [`docs/LIVE_VERIFICATION_v0.7.0.md`](docs/LIVE_VERIFICATION_v0.7.0.md). The
 > 401 still hits the experimental HTTP transports
@@ -344,6 +402,24 @@ playwright._impl._errors.TimeoutError: Locator.click: Timeout 30000ms exceeded.
 
 ---
 
+### `gflow serve` / MCP worker queue: interrupted post-submit tasks need manual reconciliation
+
+- **Status:** Open (by design — no automated reconciliation) · **Severity:** Low · **Affects:** `gflow serve` daemon and MCP worker paths only (not the plain CLI, which has no queue)
+
+The worker queue (`generation_queue`, used by the `gflow serve` daemon and MCP tool calls) checkpoints every task's progress through `claimed` → `submit_attempted` → `remote_started` → terminal. If a task is interrupted (daemon restart, crash, or cancellation) while still `claimed` (before any submit), gflow-cli safely marks it `failed` — nothing was spent, safe to retry. But if it's interrupted at `submit_attempted` or `remote_started` — **after** the credit-spending submit click may have fired — it is marked `indeterminate` instead: a credit *may* have been spent and the outcome is unknown. An `indeterminate` task is **never** silently reported as `failed` and **never** auto-resubmitted (that could double-spend a credit for one generation).
+
+**Why this can't be resolved automatically today:** Flow's generation-status REST endpoint rejects a bare, cookie-only `page.request` re-check with HTTP 401 — only a live, authenticated Playwright SPA re-poll (opening the project page and reading the DOM) can turn a preserved handle back into a real status, and that live re-poll path is not wired into recovery yet (tracked for a future phase; see the C1 handle-spike notes in `docs/superpowers/specs/2026-07-19-production-readiness-hardening-design.md` Appendix A).
+
+**Decision (2026-07-21):** keep the safe stub — `recover_processing` marks post-submit interruptions `indeterminate` and never auto-resubmits, which is already correct. Building the auto-reconciler is deferred until **F1** (credit-free project-page re-entry) is confirmed against live Flow; until then a blind reconciler would be speculative code against unverified blackbox behavior. The `client` reconcile-hook seam and the live-gated `tests/e2e/test_crash_recovery_e2e.py` are already in place for when F1 lands.
+
+**Manual reconciliation:** an `indeterminate` row's checkpoint retains whatever handle/project info was captured before interruption. To resolve one by hand: open the relevant Flow project in the browser and check whether the expected asset appears.
+- **Found** — the generation completed; no action needed (the credit was spent as intended, just not auto-recorded locally).
+- **Not found after a few minutes** — it likely never completed; safe to resubmit the same prompt manually.
+
+**Queue payload schema (V0/V1):** the queue's `payload_json` carries an additive `schema_version` key. A payload with no `schema_version` key is legacy **V0** and decodes with the same field lookups as **V1** (the shape is otherwise identical) — both remain readable. The codec always *writes* the current version (`1`) on any re-encode. Any other version is treated as unknown and rejected with `QueueSchemaError` (**exit code 30**) rather than interpreted optimistically — this is a fail-closed guard against decoding a payload written by an incompatible future (or hand-edited) version.
+
+---
+
 ### Aspect-ratio support depends on the Veo / Imagen model version
 
 - **Status:** Open · **Severity:** Low
@@ -355,6 +431,7 @@ Currently confirmed:
 Other ratios may be silently rejected or coerced server-side. We validate in the CLI to whitelisted values to fail fast.
 
 ---
+
 
 ### REST API 401 — all `aisandbox-pa.googleapis.com` generation endpoints blocked
 
@@ -420,7 +497,7 @@ Distinct from the historical `aisandbox-pa` 401 (resolved in v0.7.0). The 403
 here means Flow accepted the session as authenticated but reCAPTCHA Enterprise
 scored the request as bot-like and blocked the generation call. The `my-profile`
 profile reproducibly 403s on `batchGenerateImages` even after a fresh
-`gflow auth login --browser chrome`; the same code path on profile `your-name`
+`gflow auth login --browser chrome`; the same code path on profile `ffroliva`
 (re-authenticated the same day) succeeded end-to-end across one t2i + a 4-image
 batch — so it is not a global incompatibility but a per-profile WAF state.
 
@@ -510,7 +587,7 @@ issue and not blocked by any code change in this repo.
   `material-icons` (NOT `google-symbols`) and the slots are `<div type="button">`,
   not children of any `div > button` wrapper. Production I2V therefore relied on
   the English-text fallback and silently broke on non-EN profiles. Discovered
-  via DOM probe + LIVE e2e on `your-name` (de-DE → pt-BR effective). Replaced
+  via DOM probe + LIVE e2e on `ffroliva` (de-DE → pt-BR effective). Replaced
   with `FRAME_SLOTS_STRUCT = "div[type='button'][aria-haspopup='dialog']"` (a
   unique pattern in Flow's editor). Also added a `.first` fallback for the
   End-frame case — after Start is attached, only one structural slot remains
@@ -526,13 +603,13 @@ issue and not blocked by any code change in this repo.
   once that completes.
 
 - **Live e2e on `de-DE` (2026-05-25)** — `GFLOW_CLI_LOCALE=de-DE` T2V on
-  `your-name` (Pro) completed in 70.9 s and returned `MEDIA_GENERATION_STATUS_SUCCESSFUL`
+  `ffroliva` (Pro) completed in 70.9 s and returned `MEDIA_GENERATION_STATUS_SUCCESSFUL`
   with a 3.1 MB 1280×720 H.264 mp4 (8 s clip). Confirms the structural-first
   selectors and `GFLOW_CLI_LOCALE` env override work end-to-end on a locale
   outside the original 9-entry English/PT-BR list.
 
 - **Live I2V e2e on `de-DE` (2026-05-26, issue #63 closure)** —
-  `GFLOW_CLI_LOCALE=de-DE` I2V (Start + End frames) on `your-name` via
+  `GFLOW_CLI_LOCALE=de-DE` I2V (Start + End frames) on `ffroliva` via
   `tests/e2e/test_transports_e2e.py::test_e2e_i2v_start_end_frame_attach`
   completed in 124 s and returned a terminal `SUCCESSFUL` `VideoResult` with a
   downloaded mp4 carrying valid `ftyp` magic bytes. The test asserts on the
@@ -568,31 +645,37 @@ one of the 14 supported locales or in English.
 
 ---
 
-### `omni-flash` t2v response omits operation name — `flow_operation_id` persists NULL
+### t2v response can omit operation name — `flow_operation_id` persists NULL
 
 - **Status:** Open · **Severity:** Low · **Affects:** v0.9.0+ (data layer)
 
 The data layer's `on_started` callback captures
 `operations[0].operation.name` from each `batchAsyncGenerateVideoText`
-response and persists it as `operations.flow_operation_id`. The
-`omni-flash` model's response shape does not carry that field, so
-omni-flash rows end up with `flow_operation_id` NULL while `veo-*` rows
-carry the expected `operations/...` identifier. The rest of the row
-(prompt, model, aspect, started/completed timestamps, batch ID, output
-paths) is recorded normally.
+response and persists it as `operations.flow_operation_id`. This field
+is **best-effort, not guaranteed for any model**: `omni-flash`'s response
+shape does not carry it, so omni-flash rows end up with
+`flow_operation_id` NULL. **Update 2026-07-21 (live):** the same NULL
+was observed on a live `veo-lite` t2v run (`remote_started` checkpoint
+with `operation_id=None`), on an agentic-UI-cohort account — so `veo-*`
+is not a reliable guarantee either; the original claim that veo-* rows
+always carry the operation name was false. The rest of the row (prompt,
+model, aspect, started/completed timestamps, batch ID, output paths) is
+recorded normally regardless.
 
-**Impact:** cosmetic for now — `gflow data media <id>` and provenance
-lookup by Flow media ID still work. Any future feature that joins on
-`flow_operation_id` (none in the current CLI) would miss omni-flash
-rows.
+**Impact:** cosmetic/provenance-only — `media_id` is the canonical
+handle (poll, download, and every CLI lookup use it, not
+`flow_operation_id`). `gflow data media <id>` and provenance lookup by
+Flow media ID still work. Nothing in the current CLI queries by
+`flow_operation_id`; a future feature that did would miss rows on any
+model whose response omits the operation name.
 
 **Workaround:** none needed if you don't query by `flow_operation_id`.
 
-**Roadmap:** capture an `omni-flash` `batchAsyncGenerateVideoText`
-response sample, identify the equivalent provenance handle (if any), and
-either map it into `flow_operation_id` or document that omni-flash
-legitimately has no such identifier. Track via a follow-up issue once a
-sample is captured.
+**Roadmap:** capture response samples across models (including veo-lite)
+where the operation name is absent, identify the equivalent provenance
+handle (if any), and either map it into `flow_operation_id` or document
+that these cases legitimately have no such identifier. Track via a
+follow-up issue once samples are captured.
 
 ---
 
@@ -748,6 +831,21 @@ The underlying command no longer exists, so this gap is moot rather than
 fixed; kept here for searchability. `gflow image batch` (the real, working
 batch command) is unaffected. For video, loop `gflow video t2v`/`i2v` from
 the shell — see [`docs/USAGE.md` § Batch video generation (shell loop)](docs/USAGE.md#batch-video-generation-shell-loop).
+
+### False "forced agentic — not recoverable" aborts from an icon-heuristic cohort probe
+
+- **Status:** Resolved · **Severity:** Was-Medium (spurious exit-25 aborts on profiles that could in fact reach classic mode) · **Was-affecting:** `--ui-mode classic` and classic-only operations through v0.37.0 · **Fixed in:** 0.38.0 · **Tracked:** [#299](https://github.com/ffroliva/gflow-cli/issues/299), [#332](https://github.com/ffroliva/gflow-cli/issues/332)
+
+The forced-agentic detection keyed on UI icons including `apps_spark_2` — which is
+Flow's **Tools** button, present in BOTH cohorts — so a classic-capable profile could
+be misclassified as an unrecoverable agentic cohort and abort with exit 25. Recovery
+was a blind single click on the Agent pill with no state verification. v0.38.0
+replaces this with a state-aware mode controller (`mode_control.py`) that reads the
+Agent toggle's `aria-pressed` attribute (false = classic media, true = agent —
+locale-invariant), closes the expanded chat sidebar first, toggles off only when
+actually in agent mode, and re-verifies. Live-verified with a full
+classic→agent→classic round-trip and a real agentic→classic recovery in the v0.38.0
+release run ([evidence](docs/LIVE_VERIFICATION_v0.38.0.md)).
 
 ### Agentic image generation could silently attribute a pre-existing project asset as the "generated" image
 
@@ -907,7 +1005,7 @@ why; re-run on the next release (≥ v0.9.0).
 
 The two long Open-section entries above (*Image generation returns HTTP 401* and *REST API 401 — all `aisandbox-pa.googleapis.com` generation endpoints blocked*) were closed by the same architectural change: `UiAutomationTransport` drives the Flow web UI so Flow's own JavaScript issues every generation request with the full browser auth context (cookies, reCAPTCHA, `Origin`/`Referer` headers). The 401 had affected every direct HTTP call from `evaluate_fetch` / `bearer` / `sapisidhash`; those transports now live under `src/gflow_cli/api/transports/experimental/` and are not on the production path.
 
-End-to-end live-verified on the `your-name` profile across `9:16`, `16:9`, `1:1`, and `4:3` aspect ratios; see [`docs/LIVE_VERIFICATION_v0.7.0.md`](docs/LIVE_VERIFICATION_v0.7.0.md) for timing, file sizes, and exact filenames. Video T2V uses the same approach (Phase A — PR #23 — merged 2026-05-19).
+End-to-end live-verified on the `ffroliva` profile across `9:16`, `16:9`, `1:1`, and `4:3` aspect ratios; see [`docs/LIVE_VERIFICATION_v0.7.0.md`](docs/LIVE_VERIFICATION_v0.7.0.md) for timing, file sizes, and exact filenames. Video T2V uses the same approach (Phase A — PR #23 — merged 2026-05-19).
 
 ---
 
