@@ -124,7 +124,7 @@ class TestBuildManifest:
         """S01/§5.1: the manifest is built from an explicit allowlist — a
         Settings object full of canaries must not leak one byte of them."""
         settings = Settings(
-            home=Path("C:/Users/CANARYUSER/gflow"),
+            home=Path("/home/CANARYUSER/gflow"),
             gemini_api_key="CANARY-GEMINI-KEY",
             daemon_token="CANARY-DAEMON-TOKEN",
             storage_uri="s3://CANARY-BUCKET/media",
