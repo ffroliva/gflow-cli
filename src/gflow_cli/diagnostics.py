@@ -23,6 +23,7 @@ import re
 import secrets
 import stat as stat_module
 import sys
+import time
 import uuid
 from collections import deque
 from dataclasses import asdict, dataclass
@@ -640,8 +641,16 @@ class BundleDir:
         a directory is a complete gflow-created bundle (§5)."""
         payload = json.dumps(manifest, indent=2, ensure_ascii=False).encode("utf-8")
         tmp = self.path / "manifest.json.tmp"
+        tmp.unlink(missing_ok=True)  # a stale tmp from a failed finalize blocks O_EXCL
         _write_new_file(tmp, payload)
-        os.replace(tmp, self.path / "manifest.json")
+        try:
+            os.replace(tmp, self.path / "manifest.json")
+        except PermissionError:
+            # Windows AV/indexer sharing violation on the fresh tmp — one
+            # bounded retry; a second failure propagates (caught per-bundle in
+            # finalize_all) rather than silently stranding the evidence.
+            time.sleep(0.1)
+            os.replace(tmp, self.path / "manifest.json")
         fd, self._marker_fd = self._marker_fd, -1
         if fd >= 0:
             try:
@@ -901,7 +910,10 @@ class IncidentRecorder:
         self.journal = IncidentJournal()
         self.timing = RequestTimingMap()
         self.bookkeeping = ListenerBookkeeping()
-        self.command: str | None = None
+        # cli_command is bound at the CLI/worker boundary (run_with_handlers /
+        # the daemon's per-task rebind); absent → the manifest field stays null.
+        bound_command = structlog.contextvars.get_contextvars().get("cli_command")
+        self.command: str | None = str(bound_command) if bound_command else None
         self.transport: str | None = None
         self._staged: dict[str, _StagedBundle] = {}
         self._lock = asyncio.Lock()
@@ -1180,12 +1192,18 @@ class IncidentRecorder:
         artifacts: dict[str, str] = {}
         status: dict[str, str] = {}
 
-        if page is not None:
-            await self._stage_ui_json(bundle, page, incident_id, artifacts, status)
-            if self._screenshot_wanted(exc):
-                await self._stage_screenshot(bundle, page, incident_id, artifacts, status)
-
+        # Journals FIRST — they never touch the page, so even a fully wedged
+        # renderer cannot cost us the cheap evidence. Page-dependent artifacts
+        # then share the remaining capture budget via a deadline: the sum of
+        # per-artifact timeouts (3 + 4 + 4) exceeds 8s, so fixed bounds alone
+        # would let the outer backstop cancel mid-stage and lose the bundle.
         self._stage_journals(bundle, incident_id, artifacts, status)
+
+        if page is not None:
+            deadline = asyncio.get_running_loop().time() + _CAPTURE_BUDGET_S
+            await self._stage_ui_json(bundle, page, incident_id, artifacts, status, deadline)
+            if self._screenshot_wanted(exc):
+                await self._stage_screenshot(bundle, page, incident_id, artifacts, status, deadline)
 
         overall = "complete"
         if any(v != "complete" for v in status.values()):
@@ -1213,6 +1231,11 @@ class IncidentRecorder:
             created_utc=datetime.now(UTC).isoformat(),
         )
 
+    @staticmethod
+    def _remaining(deadline: float, cap: float) -> float:
+        """Per-artifact timeout: the fixed cap, clipped to the budget left."""
+        return min(cap, deadline - asyncio.get_running_loop().time())
+
     async def _stage_ui_json(
         self,
         bundle: BundleDir,
@@ -1220,9 +1243,13 @@ class IncidentRecorder:
         incident_id: str,
         artifacts: dict[str, str],
         status: dict[str, str],
+        deadline: float,
     ) -> None:
         try:
-            raw = await asyncio.wait_for(page.evaluate(STRUCTURAL_DOM_JS), _DOM_TIMEOUT_S)
+            timeout = self._remaining(deadline, _DOM_TIMEOUT_S)
+            if timeout <= 0.1:
+                raise TimeoutError("capture budget exhausted before DOM stage")
+            raw = await asyncio.wait_for(page.evaluate(STRUCTURAL_DOM_JS), timeout)
             validated = validate_structural_dom(raw, self.hasher)
             bundle.write_artifact(
                 "ui.json", json.dumps(validated, indent=2, ensure_ascii=False).encode("utf-8")
@@ -1242,25 +1269,30 @@ class IncidentRecorder:
         incident_id: str,
         artifacts: dict[str, str],
         status: dict[str, str],
+        deadline: float,
     ) -> None:
-        target = bundle.path / "sensitive" / "screenshot.png"
-        target.parent.mkdir(mode=0o700, exist_ok=True)
         name = "sensitive/screenshot.png"
         try:
-            await asyncio.wait_for(
-                page.screenshot(path=str(target), full_page=True), _SCREENSHOT_TIMEOUT_S
-            )
-            artifacts[name] = "sensitive"
-            status[name] = "complete"
-            return
-        except asyncio.CancelledError:
-            raise
-        except Exception:  # noqa: BLE001 — fall back once to viewport (S13)
-            pass
-        try:
-            await asyncio.wait_for(
-                page.screenshot(path=str(target), full_page=False), _SCREENSHOT_TIMEOUT_S
-            )
+            target = bundle.path / "sensitive" / "screenshot.png"
+            # Inside the guard: an mkdir OSError must degrade THIS artifact,
+            # never abort the whole capture.
+            target.parent.mkdir(mode=0o700, exist_ok=True)
+            timeout = self._remaining(deadline, _SCREENSHOT_TIMEOUT_S)
+            if timeout <= 0.1:
+                raise TimeoutError("capture budget exhausted before screenshot stage")
+            try:
+                await asyncio.wait_for(page.screenshot(path=str(target), full_page=True), timeout)
+                artifacts[name] = "sensitive"
+                status[name] = "complete"
+                return
+            except asyncio.CancelledError:
+                raise
+            except Exception:  # noqa: BLE001 — fall back once to viewport (S13)
+                pass
+            timeout = self._remaining(deadline, _SCREENSHOT_TIMEOUT_S)
+            if timeout <= 0.1:
+                raise TimeoutError("capture budget exhausted before viewport fallback")
+            await asyncio.wait_for(page.screenshot(path=str(target), full_page=False), timeout)
             artifacts[name] = "sensitive"
             status[name] = "partial"
         except asyncio.CancelledError:
@@ -1434,8 +1466,6 @@ def _run_retention_locked(
             pruned_complete += 1
 
     # Pending (unlocked, no valid manifest): stale by age, then over-cap oldest-first.
-    import time
-
     now = time.time()
     pending.sort(key=lambda c: c.marker_mtime)  # oldest first
     survivors: list[_RetentionCandidate] = []
@@ -1450,11 +1480,14 @@ def _run_retention_locked(
     total_pending_bytes = sum(c.size for c in survivors)
     while survivors and (len(survivors) > max_pending or total_pending_bytes > max_pending_bytes):
         cand = survivors.pop(0)
+        # Subtract on pop regardless of outcome: a bundle the loop cannot
+        # delete (reparse point, locked file) must not keep inflating the
+        # working total, or one refused bundle condemns every healthy one.
+        total_pending_bytes -= cand.size
         got = _safe_delete_bundle(cand.path, root_resolved)
         if got:
             freed += got
             pruned_pending += 1
-            total_pending_bytes -= cand.size
 
     if pruned_complete or pruned_pending:
         emit_retention_pruned(

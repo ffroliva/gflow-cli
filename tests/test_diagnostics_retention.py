@@ -13,6 +13,8 @@ import sys
 from datetime import UTC, datetime, timedelta
 from pathlib import Path
 
+import pytest
+
 from gflow_cli.diagnostics import (
     BundleDir,
     run_retention,
@@ -145,6 +147,42 @@ class TestPendingRetention:
         assert not stale_path.exists()
         assert crashed_path.exists()
         assert not (crashed_path / ".pending").exists()  # stale marker cleaned
+
+    def test_refused_deletion_does_not_condemn_healthy_bundles(
+        self, tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+    ) -> None:
+        """Review fix: a bundle the sweep cannot delete must not keep inflating
+        the working byte total and take every healthy pending bundle with it."""
+        import gflow_cli.diagnostics as diag
+
+        root = _root(tmp_path)
+        big = BundleDir.create_exclusive(root, "big", now=_NOW)
+        big.write_artifact("ui.json", b"x" * 5_000)  # dominates the byte total
+        big_path = big.path
+        _release_marker(big)
+        _age_marker(big_path, hours=30)  # oldest — the byte loop pops it first
+        healthy: list[Path] = []
+        for i in range(3):
+            b = _staged_bundle(root, f"ok{i}", now=_NOW.replace(minute=10 + i))
+            healthy.append(b.path)
+            _release_marker(b)
+            _age_marker(b.path, hours=1)  # young: only the byte cap can touch them
+
+        real_delete = diag._safe_delete_bundle
+
+        def _refusing_delete(bundle: Path, root_resolved: Path) -> int:
+            if bundle == big_path:
+                return 0  # simulates a locked/reparse refusal
+            return real_delete(bundle, root_resolved)
+
+        monkeypatch.setattr(diag, "_safe_delete_bundle", _refusing_delete)
+        # Total ≈ 5.3KB with a 6KB... no: cap 2KB < big alone, so the byte loop
+        # engages, pops the refused big bundle first, and — with its size
+        # subtracted on pop — the remaining total is under the cap, so the
+        # healthy bundles survive. Pre-fix, the stuck 5KB total condemned all.
+        run_retention(root, max_pending=10, max_pending_bytes=2_000)
+        assert big_path.exists()  # refused, left as-is
+        assert all(p.exists() for p in healthy)
 
     def test_retention_skips_when_lock_held(self, tmp_path: Path) -> None:
         root = _root(tmp_path)

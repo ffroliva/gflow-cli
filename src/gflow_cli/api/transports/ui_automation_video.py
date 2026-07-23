@@ -664,18 +664,19 @@ def screenshot_clause(shot: Path | None) -> str:
 
 async def capture_ui_diagnostics(page: Any, out_dir: Path | None, name: str) -> Path | None:
     """UI-drift debug engine (legacy opt-in wrapper): dump the composer's
-    STRUCTURAL DOM signature to ``<name>.json`` plus a **full-page** screenshot,
-    so a Flow frontend change is diagnosable from one artifact. Consolidated
-    onto ``diagnostics.STRUCTURAL_DOM_JS`` + ``validate_structural_dom`` — the
-    same engine the automatic incident bundle uses; the old raw
-    url/title/bodyTextPreview fields are gone (S12). Full-page renders reliably
-    where the viewport shot came out black (the #183 live finding).
+    STRUCTURAL DOM signature to ``<name>.json``. Consolidated onto
+    ``diagnostics.STRUCTURAL_DOM_JS`` + ``validate_structural_dom`` — the same
+    engine the automatic incident bundle uses; the old raw
+    url/title/bodyTextPreview fields are gone (S12), and this wrapper writes
+    **no screenshot**: ``out_dir`` is the user's plain output directory on
+    every ordinary run, so a full-page shot here would land unmarked, outside
+    the bundle's ``sensitive/`` review boundary and outside retention — the
+    incident bundle owns the (full-page) screenshot evidence.
     Best-effort — returns the JSON path or ``None``; never raises."""
     from gflow_cli.diagnostics import STRUCTURAL_DOM_JS, CommandHasher, validate_structural_dom
 
     if out_dir is None:
         return None
-    json_path: Path | None = None
     try:
         diag = validate_structural_dom(await page.evaluate(STRUCTURAL_DOM_JS), CommandHasher())
         out_dir.mkdir(parents=True, exist_ok=True)
@@ -684,14 +685,10 @@ async def capture_ui_diagnostics(page: Any, out_dir: Path | None, name: str) -> 
     except Exception as e:  # noqa: BLE001
         log.debug("ui_automation_video.ui_diagnostics_failed", error=str(e)[:120])
         return None
-    try:
-        await page.screenshot(path=str(out_dir / f"{name}.png"), full_page=True)
-    except Exception as e:  # noqa: BLE001
-        log.debug("ui_automation_video.ui_diagnostics_screenshot_failed", error=str(e)[:120])
     log.warning(
         "ui_automation_video.ui_diagnostics_captured",
         path=str(json_path),
-        note="structural ligature inventory + full-page screenshot; may show account PII",
+        note="structural ligature inventory; the incident bundle carries the screenshot",
     )
     return json_path
 

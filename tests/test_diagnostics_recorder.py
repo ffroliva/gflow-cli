@@ -283,6 +283,44 @@ class TestCaptureFailure:
             assert await rec.capture_failure(exc, page=FakePage(), phase="p") is None
         assert _bundles(tmp_path) == []
 
+    async def test_wedged_page_still_stages_journals_and_registers(
+        self, tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+    ) -> None:
+        """Review fix: a page that hangs past every timeout must not cost the
+        whole bundle — journals stage first, page artifacts share the budget
+        via a deadline, and the fingerprint still registers for suppression."""
+        import gflow_cli.diagnostics as diag
+
+        monkeypatch.setattr(diag, "_CAPTURE_BUDGET_S", 0.3)
+        monkeypatch.setattr(diag, "_DOM_TIMEOUT_S", 0.1)
+        monkeypatch.setattr(diag, "_SCREENSHOT_TIMEOUT_S", 0.1)
+
+        class _WedgedPage:
+            async def evaluate(self, script: str, /) -> dict[str, object]:
+                await asyncio.sleep(5)
+                return {}
+
+            async def screenshot(self, *, path: str, full_page: bool = False) -> None:
+                await asyncio.sleep(5)
+
+        rec = _recorder(tmp_path)
+        rec.record_response(
+            url="https://labs.google/fx/tools/flow",
+            method="GET",
+            resource_type="document",
+            status=200,
+            request_key="r1",
+            monotonic_ts=1.0,
+        )
+        ref = await rec.capture_failure(FlowAppError("wedged"), page=_WedgedPage(), phase="p")
+        assert ref is not None and ref.path is not None
+        assert (ref.path / "network.json").exists()  # journals survived the wedge
+        assert ref.capture_status == "partial"
+        # The fingerprint registered: a repeat suppresses instead of re-staging.
+        again = await rec.capture_failure(FlowAppError("wedged"), page=_WedgedPage(), phase="p")
+        assert again is not None and again.id == ref.id
+        assert len(_bundles(tmp_path)) == 1
+
     async def test_bundle_json_contains_no_canary(self, tmp_path: Path) -> None:
         """S01 end-to-end: canaries in URLs, console text, and error bodies
         never reach any written file."""

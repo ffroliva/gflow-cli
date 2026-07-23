@@ -199,6 +199,22 @@ class TestErrorPayload:
         assert "detail" not in payload["error"]
         assert "traceback" not in payload["error"]
 
+    def test_unexpected_payload_surfaces_incident_ref(self) -> None:
+        """Review fix: unexpected exceptions also get bundles — the JSON
+        surface must point at them or the evidence is never found."""
+        from gflow_cli.diagnostics import IncidentRef
+
+        ref = IncidentRef(
+            id="corr-fp",
+            capture_status="partial",
+            path=Path("C:/somewhere/incidents/x"),
+            artifacts=("network.json",),
+        )
+        payload = json_output.unexpected_payload(incident_ref=ref)
+        assert payload["error"]["incident"]["id"] == "corr-fp"
+        assert payload["error"]["incident"]["path"] == str(Path("C:/somewhere/incidents/x"))
+        assert "incident" not in json_output.unexpected_payload()["error"]
+
     def test_unexpected_with_debug_includes_detail_and_traceback(self) -> None:
         try:
             raise ValueError("boom")
