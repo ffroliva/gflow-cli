@@ -64,6 +64,7 @@ __all__ = [
     "NetworkRecord",
     "PageErrorRecord",
     "RequestTimingMap",
+    "STRUCTURAL_DOM_JS",
     "SanitizedUrl",
     "TextSummary",
     "TitleClass",
@@ -72,6 +73,7 @@ __all__ = [
     "run_retention",
     "sanitize_url",
     "text_summary",
+    "validate_structural_dom",
     "validated_incidents_root",
 ]
 
@@ -819,8 +821,10 @@ _NET_FAILURE_RE = re.compile(r"net::[A-Z0-9_]{1,64}")
 # Structural-only DOM probe: allowlisted signals, counts, geometry, and
 # Material-Symbol ligatures. Raw title/url cross into Python memory only and
 # are reduced by classify_title/sanitize_url before persistence; every other
-# raw string is dropped by _validate_structural (S12).
-_STRUCTURAL_DOM_JS = r"""() => {
+# raw string is dropped by validate_structural_dom (S12). Public: this is the
+# ONE DOM engine (design §6.3) — the legacy ui_automation capture wrapper
+# consumes it too.
+STRUCTURAL_DOM_JS = r"""() => {
   const syms = [...document.querySelectorAll('i.google-symbols')]
     .map(e => (e.textContent || '').trim()).filter(Boolean);
   const overlays = [...document.querySelectorAll(
@@ -1218,8 +1222,8 @@ class IncidentRecorder:
         status: dict[str, str],
     ) -> None:
         try:
-            raw = await asyncio.wait_for(page.evaluate(_STRUCTURAL_DOM_JS), _DOM_TIMEOUT_S)
-            validated = self._validate_structural(raw)
+            raw = await asyncio.wait_for(page.evaluate(STRUCTURAL_DOM_JS), _DOM_TIMEOUT_S)
+            validated = validate_structural_dom(raw, self.hasher)
             bundle.write_artifact(
                 "ui.json", json.dumps(validated, indent=2, ensure_ascii=False).encode("utf-8")
             )
@@ -1314,82 +1318,8 @@ class IncidentRecorder:
             suppressed_count=staged.suppressed,
         )
 
-    def _validate_structural(self, raw: object) -> dict[str, object]:
-        """Rebuild the DOM probe result from the allowlist — any unexpected key
-        or non-primitive value is dropped, never persisted (S12)."""
-        if not isinstance(raw, dict):
-            return {"invalid": True}
-        data = cast("dict[str, object]", raw)
-        ligatures = _clean_ligatures(data.get("ligatures"))
-        out: dict[str, object] = {
-            "ligatures": ligatures,
-            "ligature_count": _as_int(data.get("ligatureCount"), default=len(ligatures)),
-            "signals": {
-                "crop_present": bool(data.get("cropPresent")),
-                "textboxes": _as_int(data.get("textboxes")),
-            },
-        }
-        url = data.get("url")
-        if isinstance(url, str):
-            out["url"] = asdict(sanitize_url(url, self.hasher))
-        title = data.get("title")
-        if isinstance(title, str):
-            out["title"] = asdict(classify_title(title))
-        tag_counts = data.get("tagCounts")
-        if isinstance(tag_counts, dict):
-            counts = cast("dict[str, object]", tag_counts)
-            out["tag_counts"] = {
-                tag: _as_int(counts.get(tag))
-                for tag in (
-                    "div",
-                    "button",
-                    "input",
-                    "textarea",
-                    "dialog",
-                    "iframe",
-                    "video",
-                    "img",
-                )
-                if tag in counts
-            }
-        for key in ("viewport", "scroll"):
-            geom = data.get(key)
-            if isinstance(geom, dict):
-                g = cast("dict[str, object]", geom)
-                out[key] = {
-                    axis: _as_int(g.get(axis))
-                    for axis in ("x", "y", "width", "height")
-                    if axis in g
-                }
-        overlays = data.get("overlays")
-        if isinstance(overlays, list):
-            out["overlays"] = [
-                self._validate_overlay(cast("dict[str, object]", o))
-                for o in cast("list[object]", overlays)[:_MAX_OVERLAYS]
-                if isinstance(o, dict)
-            ]
-        return out
-
-    @staticmethod
-    def _validate_overlay(raw: dict[str, object]) -> dict[str, object]:
-        tag = raw.get("tag")
-        role = raw.get("role")
-        pointer = raw.get("pointerEvents")
-        rect_raw = raw.get("rect")
-        rect: dict[str, int] = {}
-        if isinstance(rect_raw, dict):
-            r = cast("dict[str, object]", rect_raw)
-            rect = {axis: _as_int(r.get(axis)) for axis in ("x", "y", "width", "height")}
-        return {
-            "tag": tag if isinstance(tag, str) and _OVERLAY_TAG_RE.fullmatch(tag) else "other",
-            "role": role if isinstance(role, str) and _OVERLAY_ROLE_RE.fullmatch(role) else "other",
-            "aria_modal": bool(raw.get("ariaModal")),
-            "visible": bool(raw.get("visible")),
-            "rect": rect,
-            "zIndex": _as_int(raw.get("zIndex")),
-            "pointer_events": pointer if pointer in ("auto", "none") else "other",
-            "ligatures": _clean_ligatures(raw.get("ligatures")),
-        }
+    # Structural validation is module-level (validate_structural_dom) so the
+    # legacy ui_automation capture wrapper shares the ONE engine (§6.3).
 
 
 # --- retention (design §8) — a security boundary (S37–S39) -----------------
@@ -1643,6 +1573,74 @@ def _safe_delete_bundle(bundle: Path, root_resolved: Path) -> int:
     except OSError:
         return 0
     return freed
+
+
+def validate_structural_dom(raw: object, hasher: CommandHasher) -> dict[str, object]:
+    """Rebuild the DOM probe result from the allowlist — any unexpected key or
+    non-primitive value is dropped, never persisted (S12). The ONE validation
+    used by both the recorder and the legacy ui_automation capture wrapper."""
+    if not isinstance(raw, dict):
+        return {"invalid": True}
+    data = cast("dict[str, object]", raw)
+    ligatures = _clean_ligatures(data.get("ligatures"))
+    out: dict[str, object] = {
+        "ligatures": ligatures,
+        "ligature_count": _as_int(data.get("ligatureCount"), default=len(ligatures)),
+        "signals": {
+            "crop_present": bool(data.get("cropPresent")),
+            "textboxes": _as_int(data.get("textboxes")),
+        },
+    }
+    url = data.get("url")
+    if isinstance(url, str):
+        out["url"] = asdict(sanitize_url(url, hasher))
+    title = data.get("title")
+    if isinstance(title, str):
+        out["title"] = asdict(classify_title(title))
+    tag_counts = data.get("tagCounts")
+    if isinstance(tag_counts, dict):
+        counts = cast("dict[str, object]", tag_counts)
+        out["tag_counts"] = {
+            tag: _as_int(counts.get(tag))
+            for tag in ("div", "button", "input", "textarea", "dialog", "iframe", "video", "img")
+            if tag in counts
+        }
+    for key in ("viewport", "scroll"):
+        geom = data.get(key)
+        if isinstance(geom, dict):
+            g = cast("dict[str, object]", geom)
+            out[key] = {
+                axis: _as_int(g.get(axis)) for axis in ("x", "y", "width", "height") if axis in g
+            }
+    overlays = data.get("overlays")
+    if isinstance(overlays, list):
+        out["overlays"] = [
+            _validate_overlay(cast("dict[str, object]", o))
+            for o in cast("list[object]", overlays)[:_MAX_OVERLAYS]
+            if isinstance(o, dict)
+        ]
+    return out
+
+
+def _validate_overlay(raw: dict[str, object]) -> dict[str, object]:
+    tag = raw.get("tag")
+    role = raw.get("role")
+    pointer = raw.get("pointerEvents")
+    rect_raw = raw.get("rect")
+    rect: dict[str, int] = {}
+    if isinstance(rect_raw, dict):
+        r = cast("dict[str, object]", rect_raw)
+        rect = {axis: _as_int(r.get(axis)) for axis in ("x", "y", "width", "height")}
+    return {
+        "tag": tag if isinstance(tag, str) and _OVERLAY_TAG_RE.fullmatch(tag) else "other",
+        "role": role if isinstance(role, str) and _OVERLAY_ROLE_RE.fullmatch(role) else "other",
+        "aria_modal": bool(raw.get("ariaModal")),
+        "visible": bool(raw.get("visible")),
+        "rect": rect,
+        "zIndex": _as_int(raw.get("zIndex")),
+        "pointer_events": pointer if pointer in ("auto", "none") else "other",
+        "ligatures": _clean_ligatures(raw.get("ligatures")),
+    }
 
 
 def _capture_triggers() -> tuple[type[BaseException], ...]:
