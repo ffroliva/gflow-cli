@@ -454,11 +454,11 @@ Example: [`test_assets/sample_batch.json`](../test_assets/sample_batch.json).
 
 ### Session behaviour
 
-All prompts in a batch share one Flow project. The editor is opened once; each prompt is submitted in turn with a small random pause between submissions (default 0.5–1.5 seconds; tune with `--jitter` or `GFLOW_CLI_JITTER_RANGE`). This jitter is a **submission-cadence anti-bot-detection measure** — it spaces out the submission clicks, not the generation wait. All generations run in parallel inside Flow; only the click timing is jittered. The command returns once every submitted generation has resolved (success or failure), not after the last click. See [DEBUGGING § WAF cadence](DEBUGGING.md#waf-cadence) for when to widen the range.
+All prompts in a batch share one Flow project. The editor is opened once and stays mounted; the transport is **strictly serial** — each prompt is configured, submitted, and its generation awaited before the next prompt is submitted, so only one generation is in flight at a time. The small random pause between submissions (default 0.5–1.5 seconds; tune with `--jitter` or `GFLOW_CLI_JITTER_RANGE`) is a **submission-cadence anti-bot-detection measure** on top of that serial rhythm. The command returns once every row has resolved (success or failure). See [DEBUGGING § WAF cadence](DEBUGGING.md#waf-cadence) for when to widen the range.
 
 ### Flags
 
-- `--continue-on-error` / `--fail-fast` — keep going past row failures or stop at the first one (default: `--fail-fast`). On fail-fast, already-completed images are downloaded before the error is surfaced.
+- `--continue-on-error` / `--fail-fast` — keep going past row failures or stop at the first one (default: `--continue-on-error`, matching the CLI flag default). On fail-fast, already-completed images are downloaded before the error is surfaced.
 - `--jitter SPEC` — anti-bot pause between submissions: `MIN-MAX` seconds (e.g. `10-30`), a single number for `0`–`N`, or `0` to disable. Default `0.5-1.5`; widen if runs hit WAF 403s. `GFLOW_CLI_JITTER_RANGE` overrides the default, the flag beats both.
 
 ### Limits

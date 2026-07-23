@@ -261,6 +261,15 @@ GFLOW_CLI_HISTORY_PROMPTS=redacted gflow image t2i "confidential brief"
 **When to set it:** capturing locale-invariant DOM via `scripts/dev/capture_locale_invariants.py`, or live-verifying a generation under a non-EN account language.
 **Important:** Chrome's *UI* language is independently forced to `en-US` via the `--lang=en-US` launch arg (so Flow keeps serving `/fx/tools/flow/` and the editor's localized text selectors keep working). This env var only affects request headers — not the editor UI you see. See [KNOWN_ISSUES § issue #24](../KNOWN_ISSUES.md) for the path to dropping `--lang=en-US`.
 
+### `GFLOW_CLI_INCIDENT_CAPTURE`
+
+**What:** Automatically writes a **private incident bundle** on relevant operational failures (Flow app crash, agentic-cohort/UI-mode errors, selector drift, transport timeouts, WAF/network/wire-format errors, profile-lock contention, unexpected exceptions while a page is alive) under `<GFLOW_CLI_HOME>/incidents/<YYYY-MM-DD>/<UTC-stamp>-<incident-id>-<rand>/`. See [DEBUGGING § Automatic incident bundles](DEBUGGING.md#automatic-incident-bundles) for the bundle layout and triggers.
+**Values:** `true` | `false`
+**Default:** `true`
+**When to disable:** shared machines where even structural failure metadata should not persist, or scripted runs that must write nothing outside the output dir.
+
+**Privacy:** the automatic JSON artifacts (`manifest.json`, `ui.json`, `network.json`, `browser.json`) are built from an explicit allowlist — no prompts, tokens, cookies, headers, request/response bodies, signed URLs, raw page titles, raw error/console text, or unknown hosts/routes ever enter them. The screenshot is inherently sensitive (it can show your account identity, prompts, and media) and therefore lives under the bundle's `sensitive/` subdirectory — **review it before sharing**. Nothing is ever uploaded; retention is bounded (at most 50 complete bundles / 250 MiB, pruned oldest-first at startup). Raw HAR capture stays separate and strictly opt-in via `GFLOW_CLI_HAR_PATH`.
+
 ### `GFLOW_CLI_HAR_PATH`
 
 **What:** Captures full Playwright network traffic (requests, responses, headers, cookies) to a HAR file for the session — useful for diagnosing wire-format surprises or WAF rejections.
