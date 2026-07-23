@@ -7,6 +7,20 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+### Fixed
+
+- **Profile-lock remediation message** now names the real cause and recovery.
+  `ProfileLockedError` (exit 11) previously told operators to "wait for it to
+  finish" — implying an unbounded wait — and to hunt for a `gflow`/Chrome
+  process. In practice a blocking lock is a kernel *advisory* lock held by a
+  **live** process (often a `python.exe` a `chrome.exe` scan misses); the OS
+  releases it the instant the holder dies, so a leftover lock *file* never
+  blocks acquisition. The message now points to the recorded owner PID
+  (surfaced locally since v0.43.0) and says to just retry when nothing is
+  running. The lock itself is unchanged — auto-reclaim was considered and
+  rejected as unsafe (an unlink→new-inode race could put two browsers on one
+  profile, the exact corruption the lease prevents). Refs #370.
+
 ## [0.43.0] — 2026-07-23
 
 ### Added

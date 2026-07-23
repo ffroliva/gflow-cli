@@ -169,8 +169,12 @@ def _raise_locked(
     err = ProfileLockedError(
         detail=f"profile {canonical} is locked ({reason})",
         remediation_hint=(
-            "Another gflow process or task currently holds this profile. Wait "
-            "for it to finish and retry, or run with a different --profile."
+            "A live process still holds this profile — commonly a prior gflow "
+            "command, a `gflow serve` daemon, or a leftover Chrome/python "
+            "process (the recorded owner PID is shown with this error). Close "
+            "it and retry, or use a different --profile. If nothing is running, "
+            "the lock is already released — a leftover lock file never blocks "
+            "acquisition, so just retry."
         ),
     )
     err.owner_evidence = evidence  # private; never serialized (design §6.4)
