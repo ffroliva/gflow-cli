@@ -689,7 +689,7 @@ suppression path.
   transports/pages — no live Flow.
 
 **Steps:**
-- [ ] Red (feature file + missing steps) → FAIL; implement steps against Tasks 1–11 surfaces; green; `/gflow:check`; commit `test(bdd): incident diagnostics feature scenarios`.
+- [x] Six SCENARIO.md gherkin scenarios verbatim, bound to recorder/client/MCP seams (image_batch CLI-path binding replaced by driving the capture boundary 50× — same contract, no fragile `_run_*` stub mirroring); 59 feature tests green; committed `f74a451`.
 
 **Tests (red first):**
 - [ ] `Capture failure preserves the operational error` — exit 31, read-only incident dir, no raw text, no retry. (S15, S23, S36)
