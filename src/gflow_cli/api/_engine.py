@@ -139,7 +139,7 @@ async def _force_close_browser(context: Any, *, owner: str) -> None:
         )
 
 
-async def close_context_bounded(context: Any, *, owner: str) -> None:
+async def close_context_bounded(context: Any, *, owner: str) -> bool:
     """Close a persistent BrowserContext without hanging or leaking chrome.
 
     Issue #293: an unbounded ``context.close()`` can hang forever on a wedged
@@ -148,6 +148,12 @@ async def close_context_bounded(context: Any, *, owner: str) -> None:
     Chrome to exit. Bounds the graceful close, then force-closes the browser
     on any failure. On cancellation (Ctrl-C mid-teardown) the force-close is
     still attempted best-effort before the cancellation propagates.
+
+    Returns ``True`` only when the GRACEFUL close completed — a timed-out or
+    failed close (force-close path) returns ``False`` so callers that need
+    honesty about finalization state (e.g. the incident recorder's HAR
+    reporting) can distinguish "closed cleanly" from "gave up and force-closed".
+    Existing callers that ignore the return value are unaffected.
     """
     try:
         await asyncio.wait_for(context.close(), timeout=_CONTEXT_CLOSE_TIMEOUT_S)
@@ -156,6 +162,8 @@ async def close_context_bounded(context: Any, *, owner: str) -> None:
         await _force_close_browser(context, owner=owner)
         if not isinstance(exc, Exception):
             raise
+        return False
+    return True
 
 
 def active_engine() -> BrowserEngine:

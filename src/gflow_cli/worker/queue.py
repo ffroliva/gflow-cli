@@ -6,7 +6,7 @@ from dataclasses import dataclass
 from datetime import UTC, datetime
 from typing import TYPE_CHECKING, Any, cast
 
-from gflow_cli.errors import DataIntegrityError, QueueSchemaError
+from gflow_cli.errors import DataIntegrityError, QueueSchemaError, is_retryable
 from gflow_cli.worker import codec
 
 if TYPE_CHECKING:
@@ -212,6 +212,8 @@ class QueueRepository:
         except QueueSchemaError as exc:
             error_payload = dict(exc.to_problem_details())
             error_payload.setdefault("status", 400)
+            # §6.5: same shared retry classification as CLI --json / MCP.
+            error_payload["retryable"] = is_retryable(exc)
             self._store.conn.execute(
                 "UPDATE generation_queue "
                 "SET status = 'failed', error_json = ?, updated_at = ? WHERE task_id = ?",

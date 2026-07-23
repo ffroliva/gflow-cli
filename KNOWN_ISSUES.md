@@ -14,6 +14,56 @@ Living list of behaviour that's broken, surprising, or limited by design — alo
 
 ## Open
 
+### One-time Flow banner/modal can cover the composer on first load
+
+- **Status:** Open ([#369](https://github.com/ffroliva/gflow-cli/issues/369))
+- **Severity:** Low (transient) · **Affected:** any UI-automation command on a profile that hasn't seen the banner yet
+
+A Flow-side one-time announcement banner/modal can overlay the composer and
+make the mode-switch / settings probes miss. It shows once per
+profile+cookie state, so it is gone on re-run and cannot be reproduced on
+demand. gflow does **not** guess a dismiss selector for unknown overlays
+(clicking unknown UI is riskier than failing). Since v0.43.0 the automatic
+incident bundle records the overlay's bounded geometry, `role`,
+`aria-modal`, `z-index`, `pointer-events`, and inner Material-Symbol
+ligatures (no raw text) plus a `sensitive/` screenshot — enough to write a
+targeted dismissal once the next occurrence is captured. **Workaround:**
+re-run the command; open the project once manually in Chrome to consume the
+banner.
+
+### Reported stale profile lock blocks acquisition (unreproduced)
+
+- **Status:** Open ([#370](https://github.com/ffroliva/gflow-cli/issues/370))
+- **Severity:** Medium (blocks the profile until resolved) · **Affected:** `ProfileLease` acquisition (exit 11)
+
+A user report of `ProfileLockedError` with no apparently-live owner. Not
+reproduced: in every observed case the kernel advisory lock was held by a
+real process (e.g. a pytest child that outlived its parent shell). The
+kernel lock is authoritative — a merely *stale metadata file* cannot block
+acquisition, and gflow will never auto-delete a lock file or kill a
+recorded PID based on metadata. Since v0.43.0, contention reports the
+recorded owner's PID and observed start time locally (lock-file metadata
+now starts at offset 1 so Windows contenders can read it while byte 0 is
+kernel-locked), and a metadata-only incident bundle is written before any
+Chrome launch. **Workaround:** find and close the owning process (the
+error's local output names its PID), or use a different `--profile`.
+
+### Unexplained image-generation HTTP 400 (observed live 2026-07-22)
+
+- **Status:** Open (no issue yet — evidence-gathering)
+- **Severity:** Low (single occurrence) · **Affected:** `image t2i` wire path
+
+One live `batchGenerateImages` call returned an HTTP 400 that was neither a
+content-safety rejection nor a known wire shape; the retry succeeded. Root
+cause unidentified and **not** claimed fixed by v0.43.0. A 400 that resolves
+on retry writes **no** incident bundle (successful commands capture nothing).
+The diagnostics help only when such a 400 *terminates* the command as a
+captured failure (e.g. a `WireFormatError`): its incident bundle's
+`network.json` then carries allowlisted discovery evidence for the failed
+request (numeric error code, status enum, known-key booleans, unknown-key
+count, message length — never the raw body), which is the evidence this entry
+is waiting on. **Workaround:** retry; the failure has not recurred.
+
 ### Flow's `uploadImage` endpoint rejects some JPEGs with HTTP 400 (metadata-sensitive)
 
 - **Status:** Open ([#287](https://github.com/ffroliva/gflow-cli/issues/287))

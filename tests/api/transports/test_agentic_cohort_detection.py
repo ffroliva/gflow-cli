@@ -82,7 +82,10 @@ async def test_swallows_locator_errors() -> None:
 
 
 @pytest.mark.asyncio
-async def test_capture_ui_diagnostics_writes_json_and_screenshot(tmp_path: Path) -> None:
+async def test_capture_ui_diagnostics_writes_json_and_no_screenshot(tmp_path: Path) -> None:
+    """Review fix: out_dir is the user's plain output directory on every
+    ordinary run, so the legacy wrapper writes structural JSON only — the
+    incident bundle owns the (full-page) screenshot under sensitive/."""
     page = MagicMock()
     page.evaluate = AsyncMock(
         return_value={
@@ -98,13 +101,39 @@ async def test_capture_ui_diagnostics_writes_json_and_screenshot(tmp_path: Path)
     assert out == tmp_path / "diag_mode_switch_miss.json"
     assert out is not None and out.exists()
     assert json.loads(out.read_text(encoding="utf-8"))["ligatures"] == ["dashboard"]
-    page.screenshot.assert_awaited_once()
-    assert page.screenshot.await_args.kwargs["full_page"] is True  # the black-shot fix
+    page.screenshot.assert_not_awaited()
+    assert not (tmp_path / "diag_mode_switch_miss.png").exists()
 
 
 @pytest.mark.asyncio
 async def test_capture_ui_diagnostics_none_without_out_dir() -> None:
     assert await capture_ui_diagnostics(MagicMock(), None, "x") is None
+
+
+@pytest.mark.asyncio
+async def test_capture_ui_diagnostics_uses_structural_engine_no_raw_text(tmp_path: Path) -> None:
+    """§6.3 consolidation (S12): ONE DOM engine — the legacy wrapper now runs
+    the diagnostics module's structural JS + allowlist validation, so raw
+    url/title/body text can never reach the artifact."""
+    canary = "SECRETCANARY-legacy"
+    page = MagicMock()
+    page.evaluate = AsyncMock(
+        return_value={
+            "url": f"https://labs.google/x?tok={canary}",
+            "title": f"My private {canary} doc",
+            "bodyTextPreview": f"prompt {canary}",
+            "ligatures": ["dashboard"],
+        }
+    )
+    page.screenshot = AsyncMock()
+
+    out = await capture_ui_diagnostics(page, tmp_path, "diag_mode_switch_miss")
+
+    assert out is not None
+    blob = out.read_text(encoding="utf-8")
+    assert canary not in blob
+    assert "bodyTextPreview" not in blob
+    assert json.loads(blob)["ligatures"] == ["dashboard"]
 
 
 @pytest.mark.asyncio
