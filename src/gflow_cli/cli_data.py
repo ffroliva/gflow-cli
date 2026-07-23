@@ -4,8 +4,9 @@ import dataclasses
 import functools
 import json
 import os
+import re
 import sys
-from datetime import datetime
+from datetime import datetime, timedelta
 from pathlib import Path
 from typing import Any
 
@@ -23,6 +24,7 @@ from gflow_cli.data.queries import (
     ProfileRow,
     ProjectRow,
     VideoRow,
+    export_errors,
     list_errors,
     list_images,
     list_profiles,
@@ -69,15 +71,20 @@ def _truncate(s: str | None, n: int = 40) -> str:
     return s if len(s) <= n else s[: n - 1] + "…"
 
 
+def _row_json(row: Any) -> str:
+    """Serialize a frozen catalog row to one JSON line (datetimes → ISO, Paths → str)."""
+    d = dataclasses.asdict(row)
+    for k, v in d.items():
+        if isinstance(v, datetime):
+            d[k] = v.isoformat()
+        elif isinstance(v, Path):
+            d[k] = str(v)
+    return json.dumps(d)
+
+
 def _emit_jsonl(rows: list[Any]) -> None:
     for row in rows:
-        d = dataclasses.asdict(row)
-        for k, v in d.items():
-            if isinstance(v, datetime):
-                d[k] = v.isoformat()
-            elif isinstance(v, Path):
-                d[k] = str(v)
-        click.echo(json.dumps(d))
+        click.echo(_row_json(row))
 
 
 def _emit_projects_table(rows: list[ProjectRow]) -> None:
@@ -492,3 +499,105 @@ def prune_cmd(dry_run: bool, profile: str | None) -> None:
                 pruned_count += len(chunk)
 
         click.echo(f"Pruned {pruned_count} dead local_files row(s).")
+
+
+# ---------------------------------------------------------------------------
+# `gflow data errors` — bounded retention + export for failed history (#345)
+# ---------------------------------------------------------------------------
+
+
+_AGE_RE = re.compile(r"^\s*(\d+)\s*([dhm])\s*$")
+_AGE_UNITS = {"d": "days", "h": "hours", "m": "minutes"}
+_OLDER_THAN_HELP = "Age like 90d / 24h / 30m (d=days, h=hours, m=minutes)."
+
+
+def _parse_older_than(text: str) -> timedelta:
+    """Parse a retention age like ``90d`` / ``24h`` / ``30m`` → ``timedelta``.
+
+    Units: ``d`` days, ``h`` hours, ``m`` minutes; the value must be a positive
+    integer. Raises ``click.BadParameter`` on anything else so deletion stays an
+    explicit, unambiguous operator choice.
+    """
+    match = _AGE_RE.match(text)
+    if match is None:
+        raise click.BadParameter(
+            f"Invalid age {text!r}. Use <number><unit> with unit d/h/m (e.g. 90d, 24h, 30m)."
+        )
+    value = int(match.group(1))
+    if value <= 0:
+        raise click.BadParameter(f"Age must be a positive number, got {text!r}.")
+    return timedelta(**{_AGE_UNITS[match.group(2)]: value})
+
+
+@data.group(name="errors")
+def errors_group() -> None:
+    """Maintain the failed-operation history: export (archive) and prune (#345)."""
+
+
+@errors_group.command(name="export")
+@_PROFILE_OPT
+@click.option(
+    "--older-than",
+    "older_than",
+    default=None,
+    metavar="AGE",
+    help=f"Only export failures older than this. {_OLDER_THAN_HELP} Default: all.",
+)
+@click.option(
+    "-o",
+    "--output",
+    "output",
+    type=click.Path(dir_okay=False, path_type=Path),
+    default=None,
+    help="Write JSONL to this file. Default: stdout.",
+)
+@_guard
+def errors_export_cmd(profile: str | None, older_than: str | None, output: Path | None) -> None:
+    """Export failed operations as JSONL — archive history before pruning (#345).
+
+    Unbounded (no --limit): dumps every failure newest-first. Pair with
+    ``gflow data errors prune`` to reclaim space after archiving.
+    """
+    delta = _parse_older_than(older_than) if older_than else None
+    rows = export_errors(db_path=_db_path(), profile=profile, older_than=delta)
+    if output is None:
+        _emit_jsonl(rows)
+        return
+    with output.open("w", encoding="utf-8") as fh:
+        for row in rows:
+            fh.write(_row_json(row) + "\n")
+    click.echo(f"Exported {len(rows)} failed operation(s) to {output}.")
+
+
+@errors_group.command(name="prune")
+@_PROFILE_OPT
+@click.option(
+    "--older-than",
+    "older_than",
+    required=True,
+    metavar="AGE",
+    help=f"Delete failures older than this (required). {_OLDER_THAN_HELP}",
+)
+@click.option("--dry-run", is_flag=True, help="Report what would be deleted without deleting.")
+@_guard
+def errors_prune_cmd(profile: str | None, older_than: str, dry_run: bool) -> None:
+    """Delete failed operations older than AGE — explicit retention (#345).
+
+    No automatic/background pruning: deletion is always a deliberate operator
+    action. Archive first with ``gflow data errors export`` if you need the
+    history for offline analysis. ``--older-than`` is required.
+    """
+    delta = _parse_older_than(older_than)
+    with DataStore.open(_db_path()) as store:
+        count = DataRepository(store).prune_failed_operations(
+            older_than=delta, profile=profile, dry_run=dry_run
+        )
+    if count == 0:
+        click.echo("No failed operations older than the cutoff.")
+    elif dry_run:
+        click.echo(
+            f"{count} failed operation(s) older than {older_than} would be deleted. "
+            "--dry-run: no changes made."
+        )
+    else:
+        click.echo(f"Pruned {count} failed operation(s) older than {older_than}.")
