@@ -401,7 +401,7 @@ Incident id: `f"{correlation_id}-{fingerprint}"`; correlation id copied once fro
 structlog contextvars at recorder construction, generated (`uuid4().hex[:12]`) when absent.
 
 **Steps:**
-- [ ] Red tests → FAIL; implement; green; `/gflow:check`; commit `feat(diagnostics): allowlisted manifest and fixed-field incident events`.
+- [x] Red tests → FAIL; implemented (7 passed); gates green; committed `2ff8a91` (+ `1180d21` format). Note: `ManifestTimestamps` simplified to `created_utc`/`finalized_utc` string params (YAGNI).
 
 **Tests (red first):**
 - [ ] `test_event_constructors_accept_fixed_fields_only` — signatures take no `**kwargs` (assert via `inspect.signature`); captured structlog output for each event contains only the fixed keys. (S41)
@@ -467,7 +467,7 @@ inner ligatures) — Python-side validation drops any unexpected key and rejects
 non-primitive values before serialization.
 
 **Steps:**
-- [ ] Red tests → FAIL; implement; green; `/gflow:check`; commit `feat(diagnostics): session-scoped IncidentRecorder with bounded private capture`.
+- [x] Red tests → FAIL; implemented (19 passed); gates green; committed `c162326`. HAR-state tests landed here (S05/S32 unit halves) rather than Task 10.
 
 **Tests (red first):**
 - [ ] `test_trigger_classification_matches_design` — table-driven `should_capture` over every class in §4.2 plus the non-triggers. (S06/S35 support)
@@ -509,7 +509,7 @@ def run_retention(root: Path) -> None: ...
 ```
 
 **Steps:**
-- [ ] Red tests → FAIL; implement; green; `/gflow:check`; commit `feat(diagnostics): lock-gated bounded incident retention`.
+- [x] Red tests → FAIL; implemented (6 passed incl. subprocess race + Windows junction case); gates green; committed `5e875d7`.
 
 **Tests (red first):**
 - [ ] `test_retention_never_deletes_unknown_or_escaping_content` — plant an unrelated dir, a dir with a 1 MiB manifest, a manifest with wrong schema, a symlinked child pointing at a user dir → all survive; only valid oldest bundles pruned. (S37)
@@ -560,7 +560,7 @@ class OwnerMetadata(TypedDict):
 ```
 
 **Steps:**
-- [ ] Red tests → FAIL; implement; green (including the existing lease suite unchanged in behavior); `/gflow:check`; commit `feat(lease): offset-1 owner metadata with private contention evidence`.
+- [x] Red tests → 6 FAIL observed; implemented; 21 passed + subprocess two-process evidence proof (holder pid via ready-marker — Popen.pid is the venv trampoline on Windows); gates green; committed `11c6ce8`.
 
 **Tests (red first):**
 - [ ] `test_lock_file_layout_byte0_sentinel_metadata_at_offset1` — acquire; file bytes: `b"\0"` then valid JSON; release leaves file (never unlinks).
@@ -591,7 +591,7 @@ extension, enrich local CLI output only.
   `tests/worker/test_queue.py`
 
 **Steps:**
-- [ ] Red tests → FAIL; implement; green; `/gflow:check`; commit `feat(errors): local-rich, remote-opaque incident references`.
+- [x] Red tests → 3 FAIL observed; implemented; 221 passed across errors/json/cli/mcp/worker; gates green; committed `f04fddf`. Human-sentence test lives in `tests/cli/test_incident_output.py`.
 
 **Tests (red first):**
 - [ ] `test_problem_details_incident_is_opaque` — with a ref whose path contains a username canary: `to_problem_details()["incident"]` has exactly `{id, capture_status}`; canary absent. (S21)
@@ -633,7 +633,7 @@ honest HAR state, finalize after close, cancellation-safe order preserved.
   `tests/api/test_client.py`).
 
 **Steps:**
-- [ ] Red tests → FAIL; implement; green; `/gflow:check`; commit `feat(client): wire IncidentRecorder through the browser lifecycle`.
+- [x] Implemented + tests green (10 wiring tests; 1173-test api/mcp sweep); gates green; committed `0d96649`. Deviation noted: wiring edits landed before the test file (tests written same task, assertions verified against the new behavior). Cancellation exclusion added to `should_capture` (non-`Exception` → never capture).
 
 **Tests (red first):**
 - [ ] `test_listeners_attach_before_first_navigation` — fake context records call order; `on(...)` registrations precede the bootstrap `goto`. (S30)
@@ -668,7 +668,7 @@ generalized path.
 - Modify: existing transport tests that asserted the old fields.
 
 **Steps:**
-- [ ] Red tests → FAIL; implement; green; `/gflow:check`; commit `refactor(ui): route mode-switch diagnostics through the incident recorder`.
+- [x] Red canary test → FAIL; implemented; 602 transport/ui tests green; committed `bb4ec82`. Consolidation shape: ONE engine (`STRUCTURAL_DOM_JS` + module-level `validate_structural_dom`) consumed by both recorder and the opt-in legacy wrapper; default runs (out_dir=None) get bundle-only evidence, so no duplicate pair exists on the automatic path.
 
 **Tests (red first):**
 - [ ] `tests/api/transports/...::test_mode_switch_diag_uses_incident_bundle` — mode-switch failure with recorder present → one incident bundle, no legacy side-by-side `diag_mode_switch_miss.json`/`.png` duplicate pair. (S10 consolidation, design §6.3)
