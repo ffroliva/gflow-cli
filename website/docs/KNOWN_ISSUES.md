@@ -31,22 +31,27 @@ targeted dismissal once the next occurrence is captured. **Workaround:**
 re-run the command; open the project once manually in Chrome to consume the
 banner.
 
-### Reported stale profile lock blocks acquisition (unreproduced)
+### Profile lock reported as "held by another process" with no obvious owner
 
-- **Status:** Open ([#370](https://github.com/ffroliva/gflow-cli/issues/370))
-- **Severity:** Medium (blocks the profile until resolved) · **Affected:** `ProfileLease` acquisition (exit 11)
+- **Status:** Resolved ([#370](https://github.com/ffroliva/gflow-cli/issues/370)) · remediation message clarified
+- **Severity:** Low (by design; fails closed — never corrupts) · **Affected:** `ProfileLease` acquisition (exit 11)
 
-A user report of `ProfileLockedError` with no apparently-live owner. Not
-reproduced: in every observed case the kernel advisory lock was held by a
-real process (e.g. a pytest child that outlived its parent shell). The
-kernel lock is authoritative — a merely *stale metadata file* cannot block
-acquisition, and gflow will never auto-delete a lock file or kill a
-recorded PID based on metadata. Since v0.43.0, contention reports the
-recorded owner's PID and observed start time locally (lock-file metadata
-now starts at offset 1 so Windows contenders can read it while byte 0 is
-kernel-locked), and a metadata-only incident bundle is written before any
-Chrome launch. **Workaround:** find and close the owning process (the
-error's local output names its PID), or use a different `--profile`.
+`ProfileLockedError` can surface when no `chrome.exe` / `gflow` process is
+obvious. This is **working as intended, not a stale-file bug.** The profile
+lock is a kernel *advisory* byte-range lock, which the OS releases the instant
+its holder dies — so a leftover lock *file* can never block acquisition. If
+`acquire` is blocked, a **live** process genuinely holds it, most often a
+`python.exe` (a prior gflow run, or a pytest child that outlived its shell)
+that a scan for `chrome.exe` misses. gflow deliberately never auto-deletes a
+lock file or kills a recorded PID from metadata: an unlink→new-inode race could
+put two browsers on one profile — the exact corruption the lease exists to
+prevent. Since v0.43.0 contention reports the recorded owner's PID and observed
+start time locally (metadata starts at offset 1 so Windows contenders can read
+it while byte 0 is kernel-locked), and the remediation message now names the
+live-owner reality and tells you to just retry when nothing is running.
+**Workaround:** close the process at the PID the error prints
+(`Get-Process -Id <pid>` / `ps -p <pid>`, then `Stop-Process -Id <pid>` /
+`kill <pid>`), or use a different `--profile`.
 
 ### Unexplained image-generation HTTP 400 (observed live 2026-07-22)
 

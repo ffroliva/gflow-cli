@@ -56,6 +56,28 @@ def test_release_allows_reacquire(tmp_path: Path) -> None:
     ProfileLease(tmp_path / "profile").acquire().release()
 
 
+def test_contention_remediation_names_live_owner_not_indefinite_wait(
+    tmp_path: Path,
+) -> None:
+    """#370: a blocking lock always has a *live* owner (the kernel releases an
+    advisory lock the instant its holder dies, so a leftover file never blocks).
+    The remediation must not tell a stuck operator to 'wait for it to finish'
+    (implies an unbounded wait) — it must name the live-owner reality and the
+    'just retry if nothing is running' escape. Guards the honest wording."""
+    first = ProfileLease(tmp_path / "profile").acquire()
+    canonical = profile_lease._canonicalize(tmp_path / "profile")
+    profile_lease._registry.pop(canonical, None)
+    try:
+        with pytest.raises(ProfileLockedError) as exc_info:
+            ProfileLease(tmp_path / "profile").acquire()
+    finally:
+        first.release()
+    hint = exc_info.value.remediation_hint
+    assert "Wait for it to finish" not in hint
+    assert "live process" in hint
+    assert "just retry" in hint
+
+
 def test_different_profiles_can_acquire_in_parallel(tmp_path: Path) -> None:
     first = ProfileLease(tmp_path / "one").acquire()
     second = ProfileLease(tmp_path / "two").acquire()
