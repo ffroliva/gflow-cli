@@ -94,3 +94,24 @@ kernel-locked `.pending` fd for the session (Hatchling's sdist traversal
 then failed on the locked byte, Windows). Root-cause fixed in
 `BundleDir.__del__` (crash-left semantics: marker stays, lock frees) with a
 regression test; the exact repro group and the full aggregate are green.
+
+## Pre-tag gates
+
+**`/gflow:check` (2026-07-23):** repo hygiene ✓, doc-links ✓ (27 files),
+`website/docs/` PII gate ✓ + mirror in-sync ✓, `ruff check` + `ruff format
+--check src tests` clean, `pyright src` 0 errors. Full suite is green on the
+release tree (CI **success** on the merge commit `abfa62f`, the exact tree cut
+into this release); version-sensitive tests re-run locally after the bump
+(`test_smoke` / `test_handoff` / `test_diagnostics_events` — 19 passed).
+
+**`/gflow:doc-review` council (2026-07-23):** verdict **GREEN / YELLOW /
+YELLOW** across the drift / completeness / cross-reference auditors — no RED,
+no release-blocking (Tier-1) findings. Two Tier-2 findings, both fixed in the
+release-prep commit: (1) exit code `31` (`FlowAppError`) was missing from the
+canonical exit-code table — added to `docs/USAGE.md`; (2) `docs/PROJECT_STATUS.md`
+"Current release" was stale at v0.41.0 (a prior release skipped its update) —
+promoted to v0.43.0 and backfilled the v0.42.0 + v0.41.0 history rows. The
+drift auditor verified every CHANGELOG `[0.43.0]` technical claim against real
+source (retention 50/250 MiB, offset-1 lock layout, honest `har_state`, single
+`errors.is_retryable()` across CLI-JSON / MCP / worker, exit 31/15 maps,
+version parity). Council reports at `tmp/council/0{1,2,3}-*.md` (local-only).
