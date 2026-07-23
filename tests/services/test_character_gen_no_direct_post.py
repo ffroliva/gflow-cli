@@ -229,15 +229,21 @@ def test_saga_source_has_no_generation_rest_call() -> None:
 
 
 def test_generate_character_image_body_has_no_generation_post() -> None:
-    """The generate_character_image method body must route only through the
-    transport — never _post_json or the generation-route builder."""
+    """The character-generation code must route only through the transport —
+    never _post_json or the generation-route builder. Since the incident
+    boundary landed, the public method is a thin wrapper delegating to
+    _generate_character_image_impl; the invariant is scanned on BOTH bodies."""
     src = Path(client_mod.__file__).read_text(encoding="utf-8")
-    body = _extract_method_body(src, "generate_character_image")
-    assert "_post_json" not in body, (
-        "generate_character_image makes a direct REST POST — Option B violation"
-    )
-    assert "batch_generate_images_url" not in body, (
-        "generate_character_image builds a generation REST url — Option B violation"
-    )
-    # Positive: it calls the UI transport entrypoint.
-    assert "generate_character_images" in body
+    wrapper = _extract_method_body(src, "generate_character_image")
+    impl = _extract_method_body(src, "_generate_character_image_impl")
+    for body, label in ((wrapper, "wrapper"), (impl, "impl")):
+        assert "_post_json" not in body, (
+            f"generate_character_image {label} makes a direct REST POST — Option B violation"
+        )
+        assert "batch_generate_images_url" not in body, (
+            f"generate_character_image {label} builds a generation REST url — Option B violation"
+        )
+    # Positive: the wrapper delegates to the impl, and the impl calls the UI
+    # transport entrypoint.
+    assert "_generate_character_image_impl" in wrapper
+    assert "generate_character_images" in impl

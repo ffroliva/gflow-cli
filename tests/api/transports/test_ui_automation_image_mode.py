@@ -71,15 +71,18 @@ class TestSwitchToImageMode:
 
     @pytest.mark.asyncio
     async def test_trigger_miss_detail_carries_diagnostics_path(self, tmp_path: Path) -> None:
-        # On a genuine drift (no cohort marker), the drift error now points at the
-        # richer debug-engine diagnostics artifact (ligature inventory + full-page
-        # screenshot) instead of a bare viewport shot — the payload #183 reporters need.
+        # On a genuine drift (no cohort marker), the drift error points at the
+        # structural diagnostics JSON. The legacy full-page screenshot is GONE
+        # from this path (max-review fix): out_dir is the user's plain output
+        # directory on ordinary runs, so imagery lives only in the incident
+        # bundle's sensitive/ quarantine.
         page = _cascade_page(set())
         page.evaluate = AsyncMock(return_value={"ligatures": [], "cropPresent": False})
         page.screenshot = AsyncMock()
         with pytest.raises(UiSelectorDriftError, match="diag_mode_switch_miss"):
             await UiAutomationTransport._switch_to_image_mode(page, out_dir=tmp_path)
-        page.screenshot.assert_awaited()
+        page.screenshot.assert_not_awaited()
+        assert (tmp_path / "diag_mode_switch_miss.json").exists()
 
     @pytest.mark.asyncio
     async def test_trigger_miss_detail_omits_screenshot_clause_without_out_dir(self) -> None:
