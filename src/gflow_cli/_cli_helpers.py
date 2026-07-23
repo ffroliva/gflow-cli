@@ -284,6 +284,16 @@ def _handle_unhandled_error(exc: BaseException, *, cli_command: str) -> int:
             "to see the real error. If this persists, file a bug at "
             "https://github.com/ffroliva/gflow-cli/issues.",
         )
+    # Unexpected exceptions ALSO get incident bundles (should_capture returns
+    # True for them) — surface the path or the evidence is written and never
+    # found before retention ages it out.
+    ref = getattr(exc, "incident_ref", None)
+    if ref is not None and getattr(ref, "path", None) is not None:
+        _console.print(
+            f"Incident bundle: {ref.path} — review before sharing; sensitive "
+            "artifacts may contain account or media data.",
+            markup=False,
+        )
     return 1
 
 
@@ -315,6 +325,10 @@ def run_with_handlers(
     """
     import asyncio
 
+    # Bind the command name so downstream fixed-field consumers (the incident
+    # manifest's `command`, log correlation) can read it from contextvars —
+    # the CLI boundary is the one place that knows it.
+    structlog.contextvars.bind_contextvars(cli_command=cli_command)
     try:
         asyncio.run(coro_factory())
     except GFlowError as e:
@@ -338,7 +352,11 @@ def run_with_handlers(
         if as_json:
             emit_unhandled_event(_logger, e, cli_command=cli_command)
             debug_exc = e if get_settings().debug_traceback else None
-            json_output.emit(json_output.unexpected_payload(debug=debug_exc))
+            json_output.emit(
+                json_output.unexpected_payload(
+                    debug=debug_exc, incident_ref=getattr(e, "incident_ref", None)
+                )
+            )
             sys.exit(1)
         sys.exit(_handle_unhandled_error(e, cli_command=cli_command))
 

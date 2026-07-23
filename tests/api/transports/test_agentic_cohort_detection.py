@@ -82,7 +82,10 @@ async def test_swallows_locator_errors() -> None:
 
 
 @pytest.mark.asyncio
-async def test_capture_ui_diagnostics_writes_json_and_screenshot(tmp_path: Path) -> None:
+async def test_capture_ui_diagnostics_writes_json_and_no_screenshot(tmp_path: Path) -> None:
+    """Review fix: out_dir is the user's plain output directory on every
+    ordinary run, so the legacy wrapper writes structural JSON only — the
+    incident bundle owns the (full-page) screenshot under sensitive/."""
     page = MagicMock()
     page.evaluate = AsyncMock(
         return_value={
@@ -98,8 +101,8 @@ async def test_capture_ui_diagnostics_writes_json_and_screenshot(tmp_path: Path)
     assert out == tmp_path / "diag_mode_switch_miss.json"
     assert out is not None and out.exists()
     assert json.loads(out.read_text(encoding="utf-8"))["ligatures"] == ["dashboard"]
-    page.screenshot.assert_awaited_once()
-    assert page.screenshot.await_args.kwargs["full_page"] is True  # the black-shot fix
+    page.screenshot.assert_not_awaited()
+    assert not (tmp_path / "diag_mode_switch_miss.png").exists()
 
 
 @pytest.mark.asyncio

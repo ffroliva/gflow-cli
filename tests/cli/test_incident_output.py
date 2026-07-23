@@ -45,3 +45,20 @@ def test_no_incident_sentence_without_a_bundle(captured_console: io.StringIO) ->
     code = cli_helpers._handle_gflow_error(FlowAppError("crash"), cli_command="video t2v")
     assert code == 31
     assert "Incident bundle:" not in captured_console.getvalue()
+
+
+def test_unhandled_error_surfaces_incident_bundle(captured_console: io.StringIO) -> None:
+    """Review fix: unexpected exceptions with a staged bundle must print the
+    path — otherwise the evidence is written and silently aged out."""
+    exc = RuntimeError("totally unexpected")
+    exc.incident_ref = IncidentRef(  # type: ignore[attr-defined]
+        id="corr-fp",
+        capture_status="partial",
+        path=Path("C:/gflow/incidents/2026-07-23/x"),
+        artifacts=("network.json",),
+    )
+    code = cli_helpers._handle_unhandled_error(exc, cli_command="video t2v")
+    out = captured_console.getvalue()
+    assert code == 1
+    assert "Incident bundle:" in out
+    assert str(Path("C:/gflow/incidents/2026-07-23/x")) in out

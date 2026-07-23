@@ -16,7 +16,6 @@ if TYPE_CHECKING:
     from gflow_cli.api.dto import GeneratedImage
     from gflow_cli.api.image import GenerateImageRequest
     from gflow_cli.api.video import GenerateVideoRequest, VideoResult, VideoStartedCallback
-    from gflow_cli.diagnostics import IncidentRecorder
 
 
 @dataclass(frozen=True, slots=True)
@@ -36,10 +35,6 @@ class TransportSetup:
     """Cloud-storage target for video uploads. ``None`` keeps downloads local."""
     output_dir: Path | None = None
     """Local directory video downloads land in (``settings.output_dir``)."""
-    recorder: IncidentRecorder | None = None
-    """Session incident recorder owned by FlowApiClient (incident-diagnostics
-    design §6.2 step 4). UiAutomationTransport uses it for failure-boundary
-    capture; other transports ignore it."""
 
 
 @runtime_checkable

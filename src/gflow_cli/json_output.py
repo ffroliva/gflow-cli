@@ -79,14 +79,18 @@ def error_payload(exc: GFlowError) -> dict[str, Any]:
     return {"status": "fail", "error": error}
 
 
-def unexpected_payload(debug: BaseException | None = None) -> dict[str, Any]:
+def unexpected_payload(
+    debug: BaseException | None = None, *, incident_ref: Any = None
+) -> dict[str, Any]:
     """Privacy-safe payload for a non-:class:`GFlowError`, by default.
 
     Mirrors ``_handle_unhandled_error``: never leaks the raw message or stack —
     only the fact that an unclassified error occurred — unless ``debug`` is
     passed (the caller has already confirmed GFLOW_CLI_DEBUG_TRACEBACK=1), in
     which case ``detail``/``traceback`` carry the real exception. Always exit
-    code 1.
+    code 1. ``incident_ref`` (an ``IncidentRef``, when capture staged a bundle
+    for the unexpected exception) surfaces the local bundle path — without it
+    the evidence would be written and never found.
     """
     error: dict[str, Any] = {
         "class": "UnexpectedError",
@@ -97,6 +101,13 @@ def unexpected_payload(debug: BaseException | None = None) -> dict[str, Any]:
     if debug is not None:
         error["detail"] = str(debug)
         error["traceback"] = "".join(traceback.format_exception(debug))
+    if incident_ref is not None and getattr(incident_ref, "path", None) is not None:
+        error["incident"] = {
+            "id": incident_ref.id,
+            "capture_status": incident_ref.capture_status,
+            "path": str(incident_ref.path),
+            "artifacts": list(incident_ref.artifacts),
+        }
     return {"status": "fail", "error": error}
 
 
