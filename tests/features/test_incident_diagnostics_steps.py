@@ -221,7 +221,7 @@ def _captured_incident() -> FlowAppError:
     exc.incident_ref = IncidentRef(
         id="corr-fp",
         capture_status="complete",
-        path=Path("C:/Users/CANARYUSER/gflow/incidents/2026-07-22/x"),
+        path=Path("/home/CANARYUSER/gflow/incidents/2026-07-22/x"),
         artifacts=("ui.json", "sensitive/screenshot.png"),
     )
     return exc

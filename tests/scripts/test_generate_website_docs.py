@@ -39,7 +39,7 @@ def test_render_strips_every_forbidden_pii_token() -> None:
     """Anything the PII guard forbids must be rewritten by the generator's map,
     on a synthetic doc packed with every private token."""
     dirty = (
-        "Profile `denon82`, user `C:/Users/ffrol/x`, dir `profile_ffroliva`, "
+        "Profile `denon82`, user `/home/ffrol/x`, dir `profile_ffroliva`, "
         "email `ffroliva@gmail.com`, name `flavio.oliva`, `Flavio`.\n"
         "Public URL github.com/ffroliva/gflow-cli must survive.\n"
     )

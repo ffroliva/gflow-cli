@@ -608,7 +608,7 @@ def test_problem_details_incident_is_opaque() -> None:
     exc.incident_ref = IncidentRef(
         id="corr-fp",
         capture_status="complete",
-        path=Path("C:/Users/CANARYUSER/gflow/incidents/x"),
+        path=Path("/home/CANARYUSER/gflow/incidents/x"),
         artifacts=("ui.json", "sensitive/screenshot.png"),
     )
     pd = exc.to_problem_details()

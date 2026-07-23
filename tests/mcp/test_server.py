@@ -638,7 +638,7 @@ def test_mcp_error_envelope_omits_local_path() -> None:
     exc.incident_ref = IncidentRef(
         id="corr-fp",
         capture_status="complete",
-        path=Path("C:/Users/CANARYUSER/gflow/incidents/x"),
+        path=Path("/home/CANARYUSER/gflow/incidents/x"),
         artifacts=("ui.json", "sensitive/screenshot.png"),
     )
     error = _gflow_error_dict(exc)
