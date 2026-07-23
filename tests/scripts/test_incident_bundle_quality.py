@@ -85,6 +85,78 @@ def _ui_failure_bundle(root: Path, *, extra: dict[str, object] | None = None) ->
     return b
 
 
+def _waf_bundle(root: Path) -> Path:
+    """A WafRejectionError network-failure bundle — real shape: a page exists
+    (so ``ui.json`` structural DOM IS staged) but WAF is NOT a screenshot
+    trigger, so there is no ``sensitive/`` shot, and the failed 403 request in
+    the network journal is the primary diagnostic payload.
+
+    Grades this class explicitly: the live benchmark can only floor-test the
+    two credit-free classes (UI-state crash + contention), so this offline
+    case proves the rubric handles the WAF/wire-format/network class that only
+    a real (paid or naturally-occurring) failure captures live."""
+    b = root / "waf-bundle"
+    b.mkdir()
+    _write(
+        b,
+        "manifest.json",
+        {
+            "schema": "gflow-incident-v1",
+            "incident_id": "corr-waf42",
+            "cli_version": "0.43.0",
+            "python_version": "3.13.7",
+            "os_family": "Windows",
+            "command": "image t2i",
+            "transport": "ui_automation",
+            "error": {
+                "class": "WafRejectionError",
+                "problem_type": "https://gflow-cli.dev/errors/waf-rejection",
+                "exit_code": 10,
+                "retryable": True,
+                "route": "/v1/projects/{id}/flowMedia:batchGenerateImages",
+                "phase": "image_generation",
+            },
+            "artifact_status": {
+                "network.json": "complete",
+                "browser.json": "complete",
+                "ui.json": "complete",
+            },
+            "har_state": "disabled",
+        },
+    )
+    # ui.json IS present (structural DOM, staged for any page-available
+    # failure); the screenshot is NOT (WAF is not a screenshot trigger).
+    _write(
+        b,
+        "ui.json",
+        {
+            "ligatures": ["send", "crop_landscape"],
+            "ligature_count": 18,
+            "tag_counts": {"div": 60, "button": 20},
+            "url": {"host_category": "flow_app", "route": "/fx/tools/flow"},
+            "overlays": [],
+        },
+    )
+    _write(
+        b,
+        "network.json",
+        {
+            "records": [
+                {
+                    "host_category": "aisandbox",
+                    "route": "/v1/projects/{id}/flowMedia:batchGenerateImages",
+                    "method": "POST",
+                    "status_or_failure": "403",
+                    "resource_type": "xhr",
+                },
+                {"host_category": "flow_app", "route": "/fx/trpc/x", "status_or_failure": "200"},
+            ]
+        },
+    )
+    _write(b, "browser.json", {"console": [], "page_errors": []})
+    return b
+
+
 def _contention_bundle(root: Path) -> Path:
     """A ProfileLockedError metadata-only bundle — page evidence is N/A."""
     b = root / "lock-bundle"
@@ -126,6 +198,25 @@ class TestGradeA:
         assert report.q5_contention_owner is None  # N/A for a UI failure
         assert report.fidelity == 1.0
         assert report.completeness == 1.0
+        assert report.privacy_clean
+
+
+class TestWafWireFormatClass:
+    def test_network_failure_bundle_captures_the_failed_request(self, tmp_path: Path) -> None:
+        """The WAF/wire-format class (real shape): structural ui.json present,
+        no sensitive/ screenshot, and the failed 403 in the network journal is
+        the diagnostic payload. Must grade A/B on that evidence."""
+        b = _waf_bundle(tmp_path)
+        report = score_bundle(b)
+        assert report.q1_what_failed is True
+        assert report.q2_ui_state is True  # structural DOM staged (page existed)
+        assert report.q3_recent_failures is True  # the 403 request IS the evidence
+        assert report.q4_har_honest is True
+        assert not (b / "sensitive").exists()  # WAF is correctly NOT screenshot-triggered
+        assert report.actionability == 1.0
+        assert report.fidelity == 1.0  # aisandbox host recognized; route canonical
+        assert report.grade in ("A", "B")
+        assert report.score >= 0.8
         assert report.privacy_clean
 
 

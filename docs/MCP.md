@@ -82,6 +82,23 @@ We analyzed whether a terminal-driven CLI guided by a text skill (e.g., `skills/
 | **Error Handling** | Agent must scan logs for strings or parse exit codes to check status. | Strongly-typed JSON-RPC errors with mapped codes and clear remediation. |
 | **Transport Safety** | Volatile console printing. | Stdout is strictly isolated for JSON-RPC; all logs and warnings route to stderr. |
 
+### Error envelope
+
+MCP tool failures return a structured error object built from the same RFC 9457
+Problem Details as the CLI, plus a **`retryable`** boolean. `retryable: true`
+marks a transient failure a scheduler can re-run without operator intervention —
+WAF/reCAPTCHA bounce (`WafRejectionError`), rate-limit (`RateLimitError`),
+transport timeout (`TransportTimeoutError`), network blip (`NetworkError`), a
+dropped browser session (`BrowserSessionClosedError`), a Flow web-app crash
+(`FlowAppError`), and an agentic-cohort flap (`FlowAgentUiError`). Everything
+else (auth, content-policy, configuration, security) is terminal
+(`retryable: false`): retrying the identical request fails the same way. This
+flag is the **same shared classification** the CLI `--json` payload and the
+worker-queue error record use (`errors.is_retryable`) — the three surfaces
+cannot drift. On a captured failure the envelope also carries a remote-safe
+`incident` object (`{id, capture_status}` only — never a local path); see
+[DEBUGGING § Automatic incident bundles](DEBUGGING.md#automatic-incident-bundles).
+
 ---
 
 ## 4. Setup Instructions

@@ -55,11 +55,14 @@ error's local output names its PID), or use a different `--profile`.
 
 One live `batchGenerateImages` call returned an HTTP 400 that was neither a
 content-safety rejection nor a known wire shape; the retry succeeded. Root
-cause unidentified and **not** claimed fixed by v0.43.0. Since v0.43.0 the
-next occurrence automatically produces allowlisted discovery evidence in
-`network.json` (numeric error code, status enum, known-key booleans,
-unknown-key count, message length — never the raw body), which is what this
-entry is waiting on. **Workaround:** retry; the failure has not recurred.
+cause unidentified and **not** claimed fixed by v0.43.0. A 400 that resolves
+on retry writes **no** incident bundle (successful commands capture nothing).
+The diagnostics help only when such a 400 *terminates* the command as a
+captured failure (e.g. a `WireFormatError`): its incident bundle's
+`network.json` then carries allowlisted discovery evidence for the failed
+request (numeric error code, status enum, known-key booleans, unknown-key
+count, message length — never the raw body), which is the evidence this entry
+is waiting on. **Workaround:** retry; the failure has not recurred.
 
 ### Flow's `uploadImage` endpoint rejects some JPEGs with HTTP 400 (metadata-sensitive)
 
