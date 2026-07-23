@@ -95,23 +95,22 @@ periodic health-check (before a milestone), not a per-release gate.
   offline; live capture requires a real WAF-403 or wire-format failure (paid
   or naturally-occurring). Fold into the first release where such a failure is
   captured live; do not force-spend to manufacture it.
-- **G2 — Website mirror is hand-synced; no generator.** doc-review §4b now
-  *catches* drift, but the durable fix is a deterministic `docs/`→`website/docs/`
-  generator with the anonymization map as data + a CI regen-diff gate. Tracked
-  as a follow-up (see §7 decision).
-- **G3 — Pre-existing mirror staleness** (unrelated to this branch):
-  `website/docs/{USER_GUIDE,CHARACTER,AUTHENTICATION,DATA_LAYER}.md` lag
-  canonical (USER_GUIDE missing "Journey 16"). Resolution pending the §7
-  decision.
+- **G2 — Website mirror hand-sync → RESOLVED.** Built
+  `scripts/ci/generate_website_docs.py` (anonymization map as data, mirroring
+  `check_website_docs_pii.py`'s FORBIDDEN set + a semantic SECURITY reporting
+  rewrite; bespoke site pages excluded). CI now runs `--check` (regenerate-and-
+  diff) next to the PII gate; `/gflow:check` + `/gflow:doc-review` + `/gflow:release`
+  all reference it. Offline-tested (`tests/scripts/test_generate_website_docs.py`).
+- **G3 — Pre-existing mirror staleness → RESOLVED.** Regenerated the 4 stale
+  files (USER_GUIDE now carries "Journey 16"; CHARACTER/AUTHENTICATION/DATA_LAYER
+  re-synced); PII gate + regen-diff both clean (18 mirrored files in sync).
 - **G4 — Cancellation-window reclassification** (review #12): accepted by
   design; if a scheduler ever needs the typed error to win over a mid-capture
-  cancel, revisit with `shield`.
+  cancel, revisit with `shield`. Only remaining tracked gap besides G1.
 
-## 7. Open decision (for the owner)
+## 7. Decision (owner: build generator + track) — DONE
 
-The pre-existing stale mirror (G3) + the missing generator (G2) are one
-question: hand-resync the 4 stale files now (fast, PII-gate-verified, but
-unrelated to incident-diagnostics), OR build the generator + CI gate now
-(deeper, prevents recurrence, more scope on a ready-to-ship branch), OR track
-both as a separate follow-up issue and keep this branch focused. Recorded here
-until decided.
+Chose the durable fix: a deterministic generator + CI regen-diff gate, which
+fixed the current staleness correctly (incl. the SECURITY email rewrite and the
+`your.name@gmail.com`/`profile_your-name` conventions a naive sed would miss)
+AND prevents recurrence. G2 + G3 closed above.
