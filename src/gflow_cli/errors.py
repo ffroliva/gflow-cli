@@ -372,9 +372,11 @@ class ProfileLockedError(ConfigurationError):
     title = "Profile locked"
     owner_evidence: OwnerEvidence | None = None
     _default_remediation = (
-        "Another process holds this profile: close a running gflow serve "
-        "daemon or stray Chrome windows using the profile dir, or use a "
-        "different profile name."
+        "A live process holds this profile: a gflow command, a `gflow serve` "
+        "daemon, or a Chrome/python process using the profile dir. Close it and "
+        "retry, or use a different profile name. If nothing is running, the "
+        "kernel lock is already released — a leftover lock file never blocks "
+        "acquisition, so just retry."
     )
 
 
