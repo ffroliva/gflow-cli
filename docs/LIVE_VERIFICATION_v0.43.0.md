@@ -1,7 +1,8 @@
 # Live verification — v0.43.0 (private incident diagnostics)
 
-> Evidence for the design's §10.3 live matrix
-> (`docs/superpowers/specs/2026-07-22-private-incident-diagnostics-design.md`).
+> Evidence for the private incident diagnostics live matrix (the design spec was
+> consolidated into `docs/ARCHITECTURE.md`, `docs/SECURITY.md`, and
+> `docs/DEBUGGING.md` at the v0.43.0 release; original in git history).
 > Offline coverage (2,600+ tests incl. 43-scenario traceability) verifies
 > gflow-cli's own behavior; this document records what was proven against
 > **real Google Flow**. Harness:
