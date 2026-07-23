@@ -287,13 +287,7 @@ class TestCaptureFailure:
         """S01 end-to-end: canaries in URLs, console text, and error bodies
         never reach any written file."""
         rec = _recorder(tmp_path)
-        rec.record_request(
-            url=f"https://evil.example/{CANARY}?tok={CANARY}",
-            method="POST",
-            resource_type="xhr",
-            request_key="r1",
-            monotonic_ts=1.0,
-        )
+        rec.record_request(request_key="r1", monotonic_ts=1.0)
         rec.record_response(
             url=f"https://aisandbox-pa.googleapis.com/v1/flow/uploadImage?sig={CANARY}",
             method="POST",

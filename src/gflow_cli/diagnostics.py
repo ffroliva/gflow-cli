@@ -738,14 +738,6 @@ def build_manifest(
     artifact_status: dict[str, str],
     har_state: str,
     suppressed_count: int,
-    ui_mode: str | None = None,
-    model_alias: str | None = None,
-    aspect: str | None = None,
-    count: int | None = None,
-    locale: str | None = None,
-    has_profile: bool | None = None,
-    has_project: bool | None = None,
-    media_input_count: int | None = None,
 ) -> dict[str, object]:
     """Assemble ``manifest.json`` from an explicit allowlist (§5.1).
 
@@ -764,20 +756,9 @@ def build_manifest(
         "environment": {
             "headless": settings.headless,
             "provider": settings.provider.value,
-            "incident_capture": settings.incident_capture,
         },
         "command": command,
         "transport": transport,
-        "request": {
-            "ui_mode": ui_mode,
-            "model_alias": model_alias,
-            "aspect": aspect,
-            "count": count,
-            "locale": locale,
-            "has_profile": has_profile,
-            "has_project": has_project,
-            "media_input_count": media_input_count,
-        },
         "error": {
             "class": exc_class,
             "problem_type": problem_type,
@@ -959,14 +940,10 @@ class IncidentRecorder:
 
     # -- listener-facing primitives (called with extracted primitives only) --
 
-    def record_request(
-        self, *, url: str, method: str, resource_type: str, request_key: str, monotonic_ts: float
-    ) -> None:
+    def record_request(self, *, request_key: str, monotonic_ts: float) -> None:
+        """Requests only start timing; journaled records are responses/failures (§5.3)."""
         if self._frozen:
             return
-        # URL is intentionally unused here: requests only start timing;
-        # journaled records are responses/failures (§5.3).
-        del url
         self.timing.start(request_key, monotonic_ts)
 
     def record_response(

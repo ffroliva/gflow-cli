@@ -901,13 +901,7 @@ class FlowApiClient:
 
         def on_request(request: Any) -> None:
             try:
-                rec.record_request(
-                    url=request.url,
-                    method=request.method,
-                    resource_type=request.resource_type,
-                    request_key=str(id(request)),
-                    monotonic_ts=time.monotonic(),
-                )
+                rec.record_request(request_key=str(id(request)), monotonic_ts=time.monotonic())
             except Exception:  # noqa: BLE001, S110 — observation only, never break the app
                 pass
 
