@@ -71,8 +71,12 @@ opaque `{id, capture_status}`.
 
 ### Layout
 
+The directory name embeds the **incident id** (`<correlation-id>-<fingerprint>`,
+the same value in `manifest.json`'s `incident_id` and the CLI's `incident`
+object) between the UTC timestamp and a collision-resistant random suffix:
+
 ```text
-<GFLOW_CLI_HOME>/incidents/<YYYY-MM-DD>/<UTC-stamp>-<correlation-fingerprint>-<rand>/
+<GFLOW_CLI_HOME>/incidents/<YYYY-MM-DD>/<UTC-stamp>-<incident-id>-<rand>/
 ├── manifest.json             # allowlisted facts: version/env, error class + exit
 │                             # code + retryable, sanitized route, phase, artifact
 │                             # classifications, HAR state, suppression count
@@ -121,6 +125,30 @@ payloads (wire-format surprises, WAF forensics), escalate explicitly to
 `har_state` field records honestly whether that session's HAR demonstrably
 finalized (`disabled` / `pending_flush` / `complete` / `possibly_incomplete`).
 Raw HAR is never enabled or copied automatically.
+
+### Assessing a bundle's quality
+
+To score how *useful* a bundle is — not just that it exists —
+`scripts/dev/incident_bundle_quality.py` grades any bundle directory against
+the five diagnostic questions above plus completeness/fidelity/actionability,
+with a hard privacy gate (any leaked identifier → grade F). Reusable on a
+bundle a user emails you:
+
+```bash
+.venv/Scripts/python.exe scripts/dev/incident_bundle_quality.py <bundle-dir> [known-secret ...]
+```
+
+It prints a scorecard (grade, per-question YES/NO/N/A, privacy verdict). The
+live e2e benchmark (`tests/e2e/test_incident_quality_e2e.py`, credit-free)
+enforces quality floors on real bundles so a regression that hollows out the
+evidence fails CI even though the artifacts still exist.
+
+### Worker / daemon correlation
+
+In the worker daemon each task rebinds a per-task correlation id (`wk-<task_id>`),
+so an incident bundle's id (`<correlation>-<fingerprint>`) is unique per task and
+joinable to the queue row and the task's structured-log events — two tasks that
+fail the same way no longer collide on one incident id.
 
 ## Inspecting Flow's live UI
 

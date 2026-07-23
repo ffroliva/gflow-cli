@@ -99,13 +99,89 @@ If `scripts/ci/check_doc_links.py` is absent, create it from the v0.8.1 plan (it
 
 ---
 
-## 5 · `.claude/commands/gflow/` skill files
+## 4b · Published website mirror (`website/docs/`)
+
+`website/docs/` is the mkdocs-material site published to GitHub Pages — an
+**anonymized copy** of canonical `docs/`. It has drifted silently for months
+before (PR #362 shipped a PII leak; content lagged canonical for whole
+releases) because nothing gates staleness. This section closes that.
+
+**1. PII gate (the CI check — a leak fails the build):**
+
+```powershell
+$env:PYTHONUTF8=1
+uv run python scripts/ci/check_website_docs_pii.py
+```
+
+Expected: `No private identifiers found across N published website/docs files.`
+
+**2. Content-drift check — the mirror must match canonical except for the
+documented anonymization substitutions** (`denon82`→`my-profile`,
+`ffrol`→`your-user`, `profile_<name>`→`profile_your-name`, the maintainer
+email→GitHub private-vulnerability-reporting). For every file that exists in
+both trees, diff and confirm the ONLY deltas are those substitutions:
+
+```bash
+for f in $(ls website/docs/*.md); do
+  base=$(basename "$f")
+  [ -f "docs/$base" ] || continue
+  # After normalizing the known anonymizations, canonical and mirror must be identical.
+  diff <(sed -e 's/denon82/my-profile/g' -e 's/\bffrol\b/your-user/g' "docs/$base") "$f" \
+    && echo "IN SYNC: $base" || echo "DRIFT (beyond anonymization): $base"
+done
+```
+
+Any `DRIFT` line is a **FAIL** — re-sync that file from canonical (re-apply the
+anonymization) before continuing. Also confirm no canonical doc changed this
+release is *missing* from the mirror, and `CHANGELOG.md` is NOT mirrored (it is
+never a published page — a stray `website/docs/CHANGELOG.md` bypasses the PII
+gate's file set).
+
+> **Backlog (tracked):** the mirror is hand-synced. A deterministic
+> `docs/`→`website/docs/` generator with the anonymization map as data, gated by
+> a regenerate-and-diff CI step, would make this section obsolete. Until then,
+> this manual gate is the backstop.
+
+---
+
+## 4c · Code↔docs parity (git-driven — the highest-value lens)
+
+The mechanical checks and the council's drift auditor read *from the docs
+outward* ("does this doc claim match the code?"). They do NOT reliably catch
+the inverse — **shipped work that no doc mentions at all** — because no string
+sweep notices an *absent* doc. This lens (adapted from the
+`auditing-documentation` skill's dimension 3) reads *from the code outward*.
+
+```bash
+# Everything that shipped since the last release tag (or origin/develop on a feature branch).
+git log --oneline "$(git describe --tags --abbrev=0)"..HEAD
+git diff --stat "$(git describe --tags --abbrev=0)"..HEAD
+```
+
+For each shipped surface — new CLI flags/env vars, new modules under
+`src/gflow_cli/`, new operational behavior — name the doc that covers it, and
+assign a coverage grade: **D0** (nothing) · **D1** (docstrings only) · **D2**
+(one line in INDEX/README) · **D3** (dedicated how-to-operate doc) · **D4** (D3
++ troubleshooting + linked from an entrypoint). Anything operator-facing must
+be **D3+**; a new env var or command at **D0/D1** is a release-blocking finding.
+List every surface below D3 with its grade and the doc it needs.
+
+---
+
+## 5 · Skill files (`skills/` + `.claude/commands/gflow/`)
+
+Canonical skill CONTENT lives in `skills/<name>/SKILL.md`; `.claude/commands/gflow/`
+holds thin wrappers. Scan BOTH for stale phase/version references:
 
 Scan all skills for stale phase/version references:
 
 ```bash
-grep -rn "v[0-9]\+\.[0-9]\|Phase [A-Z0-9]" .claude/commands/gflow/
+grep -rn "v[0-9]\+\.[0-9]\|Phase [A-Z0-9]" skills/ .claude/commands/gflow/
 ```
+
+Also confirm the process skills stay in step with infra changes — e.g. when a
+new CI gate or published surface lands (`scripts/ci/*`, the `website/docs/`
+mirror), the skills that should run it (`check`, `doc-review`, `release`) name it.
 
 Update in the release prep commit if any references are wrong. The `release.md` skill's step list and the `plan.md` skill's phase pointers age fastest.
 
