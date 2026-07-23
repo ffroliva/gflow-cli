@@ -108,6 +108,32 @@ async def test_capture_ui_diagnostics_none_without_out_dir() -> None:
 
 
 @pytest.mark.asyncio
+async def test_capture_ui_diagnostics_uses_structural_engine_no_raw_text(tmp_path: Path) -> None:
+    """§6.3 consolidation (S12): ONE DOM engine — the legacy wrapper now runs
+    the diagnostics module's structural JS + allowlist validation, so raw
+    url/title/body text can never reach the artifact."""
+    canary = "SECRETCANARY-legacy"
+    page = MagicMock()
+    page.evaluate = AsyncMock(
+        return_value={
+            "url": f"https://labs.google/x?tok={canary}",
+            "title": f"My private {canary} doc",
+            "bodyTextPreview": f"prompt {canary}",
+            "ligatures": ["dashboard"],
+        }
+    )
+    page.screenshot = AsyncMock()
+
+    out = await capture_ui_diagnostics(page, tmp_path, "diag_mode_switch_miss")
+
+    assert out is not None
+    blob = out.read_text(encoding="utf-8")
+    assert canary not in blob
+    assert "bodyTextPreview" not in blob
+    assert json.loads(blob)["ligatures"] == ["dashboard"]
+
+
+@pytest.mark.asyncio
 async def test_capture_ui_diagnostics_survives_evaluate_error(tmp_path: Path) -> None:
     page = MagicMock()
     page.evaluate = AsyncMock(side_effect=RuntimeError("no execution context"))
