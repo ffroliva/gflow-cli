@@ -740,9 +740,11 @@ suppression path.
   (crash-left semantics) + regression test, committed `6ca8180`; aggregate re-run green.
 - [x] Matrix audited mechanically: all 58 named tests exist (script check), rows
   reconciled to as-implemented names.
-- [x] Live matrix §10.3 steps 1–3 executed 2026-07-23 ($0): 19/19 checks —
-  see `docs/LIVE_VERIFICATION_v0.43.0.md`. Step 4 (paid veo-lite, S43) awaits explicit
-  approval and is recorded as an unverified risk.
+- [x] Live matrix §10.3 COMPLETE 2026-07-23: steps 1–3 ($0, 19/19 checks) AND step 4
+  (S43 — paid veo-lite, **explicit user approval given**, 1 credit): HTTP-200 submission,
+  `MEDIA_GENERATION_STATUS_SUCCESSFUL`, valid `ftyp` mp4, catalog provenance, no incident
+  bundle on success, lease re-acquirable. See `docs/LIVE_VERIFICATION_v0.43.0.md`.
+  One lifecycle proven; availability soak explicitly not claimed.
 - [ ] `/gflow:branch-review` (pre-PR council) — pending.
 - [ ] Push branch; open PR to `develop`; drive `/gflow:sonar` to zero new issues.
 

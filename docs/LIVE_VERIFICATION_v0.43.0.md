@@ -8,7 +8,7 @@
 > [`scripts/dev/spike_incident_live.py`](../scripts/dev/spike_incident_live.py).
 
 **Date:** 2026-07-23 · **Profile:** `denon82` (real Pro session) · **Credits
-spent: 0** (t2i is credit-free; no video was generated)
+spent: 1 Veo credit** (explicit operator approval; steps 1–3 were $0)
 
 ## Step 1 — recorder on a real authenticated Flow page (✅ 19/19 checks)
 
@@ -59,16 +59,30 @@ process** ran `image t2i`:
   `error.class=ProfileLockedError`, `exit_code=11`, leak-scan clean;
 - the holder's lock file and process were untouched (no reclaim).
 
-## Step 4 — paid `veo-lite` T2V lifecycle (⏸ NOT RUN — awaiting approval)
+## Step 4 — paid `veo-lite` T2V lifecycle (✅ S43, explicit approval, 1 credit)
 
-**Explicitly recorded as an unverified release risk, not silently omitted**
-(design §10.3): one real Veo generation with capture enabled (bounded
-journals over a long poll, listener cleanup, no incident on success — S43)
-requires a paid credit and therefore **separate explicit operator
-approval**. Until it runs, release notes must state that the long-running
-video lifecycle under the incident recorder is unverified. One successful
-run proves that lifecycle only — any availability/stability claim would
-additionally require a separately approved, budgeted soak.
+`gflow --verbose video t2v "a paper boat drifting across a calm pond at
+sunrise, gentle ripples" --profile denon82 --model veo-lite` with incident
+capture enabled end-to-end:
+
+- **Submission:** `ui_automation_video.generate_captured` — HTTP **200** on
+  the real `aisandbox-pa.googleapis.com/v1/video:batchAsyncGenerateVideoText`
+  endpoint (correlation `6525222c`).
+- **Polling:** `poll_terminal` → `MEDIA_GENERATION_STATUS_SUCCESSFUL` for
+  media `9e1750e7-df7a-4f4b-ad07-8e3672d55aa9` (~43 s of polling with the
+  journal listeners attached throughout).
+- **Valid MP4:** 2,337,517 bytes, `ftyp isom` magic bytes, saved to the
+  requested `--out-dir`.
+- **Provenance:** `gflow data list videos` shows the row (media id, profile,
+  project, prompt, `veo_3_1_lite`, local path, `copy_count: 1`).
+- **No incident on success:** incidents directory count unchanged (4 → 4)
+  and **zero** `incident.capture_started` events in the full verbose log.
+- **Listener cleanup / no leaked lease:** clean exit 0, and the `denon82`
+  `ProfileLease` was re-acquirable immediately after the run.
+
+**Scope honesty:** this proves ONE Veo lifecycle under the recorder. It is
+not a soak; any unattended-availability claim still requires a separately
+approved, budgeted soak with a declared run count and duration.
 
 ## Aggregate-gate note
 
