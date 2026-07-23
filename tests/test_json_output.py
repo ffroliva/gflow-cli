@@ -14,7 +14,12 @@ from gflow_cli.api.video import (
     VideoResult,
     VideoStatus,
 )
-from gflow_cli.errors import ContentPolicyError, WafRejectionError
+from gflow_cli.errors import (
+    ContentPolicyError,
+    FlowAgentUiError,
+    FlowAppError,
+    WafRejectionError,
+)
 
 
 def _img(media_name: str = "img-1") -> GeneratedImage:
@@ -139,6 +144,51 @@ class TestErrorPayload:
         assert payload["error"]["retryable"] is False
         assert payload["error"]["exit_code"] == 5
 
+    def test_flow_app_and_agent_ui_errors_retryable(self) -> None:
+        """§6.5 retryable-contract correction (S24): both cohort/crash errors are
+        documented retryable and the JSON surface must agree."""
+        app = json_output.error_payload(FlowAppError("Flow web app crashed"))
+        assert app["error"]["retryable"] is True
+        assert app["error"]["exit_code"] == 31
+        agent = json_output.error_payload(FlowAgentUiError("agentic cohort"))
+        assert agent["error"]["retryable"] is True
+        assert agent["error"]["exit_code"] == 25
+
+    def test_retryable_derives_from_shared_classification(self) -> None:
+        """CLI JSON must key off errors.is_retryable — no private drift list (S24)."""
+        from gflow_cli.errors import is_retryable
+
+        for exc in (
+            FlowAppError("x"),
+            FlowAgentUiError("x"),
+            WafRejectionError("x"),
+            ContentPolicyError("x"),
+        ):
+            assert json_output.error_payload(exc)["error"]["retryable"] is is_retryable(exc)
+
+    def test_local_cli_json_includes_path_and_artifacts(self) -> None:
+        """S21 (local half): the CLI --json error carries the full local
+        incident object so the operator can find the bundle."""
+        from gflow_cli.diagnostics import IncidentRef
+
+        exc = FlowAppError("crash")
+        exc.incident_ref = IncidentRef(
+            id="corr-fp",
+            capture_status="partial",
+            path=Path("C:/somewhere/incidents/x"),
+            artifacts=("ui.json",),
+        )
+        incident = json_output.error_payload(exc)["error"]["incident"]
+        assert incident == {
+            "id": "corr-fp",
+            "capture_status": "partial",
+            "path": str(Path("C:/somewhere/incidents/x")),
+            "artifacts": ["ui.json"],
+        }
+
+    def test_error_payload_without_ref_has_no_incident_key(self) -> None:
+        assert "incident" not in json_output.error_payload(FlowAppError("x"))["error"]
+
     def test_unexpected_is_privacy_safe_by_default(self) -> None:
         payload = json_output.unexpected_payload()
         assert payload["error"]["class"] == "UnexpectedError"
@@ -148,6 +198,22 @@ class TestErrorPayload:
         # unless the caller explicitly opts in via debug=.
         assert "detail" not in payload["error"]
         assert "traceback" not in payload["error"]
+
+    def test_unexpected_payload_surfaces_incident_ref(self) -> None:
+        """Review fix: unexpected exceptions also get bundles — the JSON
+        surface must point at them or the evidence is never found."""
+        from gflow_cli.diagnostics import IncidentRef
+
+        ref = IncidentRef(
+            id="corr-fp",
+            capture_status="partial",
+            path=Path("C:/somewhere/incidents/x"),
+            artifacts=("network.json",),
+        )
+        payload = json_output.unexpected_payload(incident_ref=ref)
+        assert payload["error"]["incident"]["id"] == "corr-fp"
+        assert payload["error"]["incident"]["path"] == str(Path("C:/somewhere/incidents/x"))
+        assert "incident" not in json_output.unexpected_payload()["error"]
 
     def test_unexpected_with_debug_includes_detail_and_traceback(self) -> None:
         try:

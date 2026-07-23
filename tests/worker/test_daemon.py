@@ -713,3 +713,36 @@ async def test_worker_failure_persists_failed_operation(temp_db: DataStore) -> N
     assert row[1] == "t2i"
     assert row[3] == "waf-rejection"
     worker.close()
+
+
+@pytest.mark.asyncio
+async def test_worker_error_json_retryable_matches_cli(temp_db: DataStore) -> None:
+    """§6.5 (S24): the persisted queue error payload carries the shared retryable
+    classification — FlowAppError must read retryable like every other surface."""
+    from gflow_cli.errors import FlowAppError, is_retryable
+
+    repo = QueueRepository(temp_db)
+    task = repo.enqueue_task(
+        task_id="task-t2i-flow-app",
+        profile_name="default",
+        task_type="t2i",
+        payload={"prompt": "scenic landscape"},
+    )
+
+    worker = FlowWorker("default", str(temp_db.path))
+    fake_client = FakeFlowApiClient()
+    fake_client.create_project.return_value = MagicMock(project_id="project-abc", title="T")
+    exc = FlowAppError("Flow web app crashed")
+    fake_client.generate_image.side_effect = exc
+
+    with patch("gflow_cli.worker.daemon.FlowApiClient", return_value=fake_client):
+        await worker.process_task(task)
+
+    updated = repo.get_task("task-t2i-flow-app")
+    assert updated is not None
+    assert updated.status == "failed"
+    assert updated.error is not None
+    assert updated.error["retryable"] is True
+    assert updated.error["retryable"] is is_retryable(exc)
+    assert updated.error["exit_code"] == 31
+    worker.close()

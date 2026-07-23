@@ -454,3 +454,23 @@ class TestDaemonSettings:
         monkeypatch.setenv("GFLOW_DAEMON_PORT", "70000")
         with pytest.raises(ValidationError):
             Settings()
+
+
+class TestIncidentCapture:
+    """GFLOW_CLI_INCIDENT_CAPTURE — private incident diagnostics (S35)."""
+
+    def test_defaults_to_true(self, clean_env: None) -> None:
+        assert Settings().incident_capture is True
+
+    def test_env_false_disables(self, monkeypatch: pytest.MonkeyPatch) -> None:
+        monkeypatch.setenv("GFLOW_CLI_INCIDENT_CAPTURE", "false")
+        assert Settings().incident_capture is False
+
+    def test_invalid_value_fails_at_settings_load(self, monkeypatch: pytest.MonkeyPatch) -> None:
+        """Invalid values fail through typed settings validation before any
+        browser work — never silently coerced (S35)."""
+        from pydantic import ValidationError
+
+        monkeypatch.setenv("GFLOW_CLI_INCIDENT_CAPTURE", "notabool")
+        with pytest.raises(ValidationError):
+            Settings()

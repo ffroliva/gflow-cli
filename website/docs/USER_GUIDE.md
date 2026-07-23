@@ -28,6 +28,7 @@
 - [Journey 13 — Diagnosing a persistent `AuthExpiredError` after a successful re-login](#journey-13--diagnosing-a-persistent-authexpirederror-after-a-successful-re-login)
 - [Journey 14 — Embedding `FlowApiClient` in a long-lived worker](#journey-14--embedding-flowapiclient-in-a-long-lived-worker)
 - [Journey 15 — Sending generated assets to S3, MinIO, or GCS](#journey-15--sending-generated-assets-to-s3-minio-or-gcs)
+- [Journey 16 — Consistent characters across a video (`@Name` mentions)](#journey-16--consistent-characters-across-a-video-name-mentions)
 - [Common errors quick-reference](#common-errors-quick-reference)
 
 ---
@@ -945,6 +946,61 @@ Expected: one or more `cloud_uri_N` rows. Then inspect the bucket with
 
 Deep details, object layout, and provider-specific notes live in
 [EXTERNAL_STORAGE.md](EXTERNAL_STORAGE.md).
+
+---
+
+## Journey 16 — Consistent characters across a video (`@Name` mentions)
+
+**Goal:** keep the *same* people on-model across a shot — or a whole sequence — by
+referencing saved Characters **by name, right in the prompt**. No per-shot image
+refs, no id juggling. Character mentions work on both image and video paths (media
+mentions are image-only) — full rules in
+[USAGE.md](USAGE.md#referencing-saved-assets-by-name-name-mentions).
+
+### 16.1 Create the Characters once
+
+Mint each recurring subject as a project-scoped Character. `character create`
+generates its reference image, which a mention needs to resolve.
+
+```bash
+PROJECT=7fa97443-…   # a real project you own
+
+gflow character create --project "$PROJECT" --name Zoro \
+  --face-prompt "weathered swordsman, green bandana, calm eyes"
+gflow character create --project "$PROJECT" --name Mika \
+  --face-prompt "young duelist, silver hair, sharp jaw"
+```
+
+### 16.2 Mention them by name in the prompt
+
+Prefix each name with `@`. Both are staged as references (checked against the
+model's reference cap) and stripped from the text the model actually sees.
+
+```bash
+gflow video r2v "@Zoro hands @Mika the sword at dawn, slow push-in" \
+  --project "$PROJECT"
+```
+
+`@Zoro` and `@Mika` resolve to their Characters, so the two subjects stay
+recognizably themselves. Reuse the same names in every shot for continuity:
+
+```bash
+gflow video r2v "@Mika parries, @Zoro steps back — wide shot" --project "$PROJECT"
+gflow video t2v "@Zoro alone on the cliff at night, rain" --project "$PROJECT"
+```
+
+### 16.3 When a mention doesn't resolve
+
+- `Unknown mention '@Zora'. Available assets: Zoro, Mika` — typo or wrong project.
+  Names are case-insensitive but must exist **in `--project`**. Exit **11**.
+- `@Zoro has no reference images …` — the Character was created without one;
+  re-create it (or add a reference image) before tagging.
+- Need a literal `@` in the prompt (a handle, a time)? Double it: `@@` → `@`. An
+  `@` glued to a word (`me@host`) is never a mention, so emails are safe.
+
+> On the **image** paths you can also mention a saved media asset by name (`@logo`)
+> and combine a `@Name` with `--ref look.png` for "this identity, in this look."
+> Media mentions on the video path are not supported yet (Phase 3).
 
 ---
 

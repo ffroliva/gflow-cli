@@ -16,34 +16,13 @@ import json
 import traceback
 from typing import TYPE_CHECKING, Any
 
-from gflow_cli.errors import (
-    EXIT_CODE_MAP,
-    BrowserSessionClosedError,
-    GFlowError,
-    NetworkError,
-    RateLimitError,
-    TransportTimeoutError,
-    WafRejectionError,
-)
+from gflow_cli.errors import EXIT_CODE_MAP, GFlowError, is_retryable
 
 if TYPE_CHECKING:
     from pathlib import Path
 
     from gflow_cli.api.dto import GeneratedImage
     from gflow_cli.api.video import GenerateVideoRequest, VideoResult
-
-# Transient failures the caller can retry without operator intervention — WAF
-# bounce, rate-limit/quota, transport timeout, network blip, a dropped browser
-# session. Everything else (auth/content-policy/config/security) is terminal:
-# retrying the identical request will fail the same way. A worker keys its
-# "retry vs absorb-and-stop" decision off this flag.
-_RETRYABLE: tuple[type[GFlowError], ...] = (
-    WafRejectionError,
-    RateLimitError,
-    TransportTimeoutError,
-    NetworkError,
-    BrowserSessionClosedError,
-)
 
 
 def emit(payload: dict[str, Any]) -> None:
@@ -80,25 +59,38 @@ def error_payload(exc: GFlowError) -> dict[str, Any]:
     plus the concrete class name, mapped process exit code, and the retryable
     flag the caller branches on.
     """
-    return {
-        "status": "fail",
-        "error": {
-            **exc.to_problem_details(),
-            "class": type(exc).__name__,
-            "exit_code": _exit_code(exc),
-            "retryable": isinstance(exc, _RETRYABLE),
-        },
+    error: dict[str, Any] = {
+        **exc.to_problem_details(),
+        "class": type(exc).__name__,
+        "exit_code": _exit_code(exc),
+        "retryable": is_retryable(exc),
     }
+    ref = exc.incident_ref
+    if ref is not None and ref.path is not None:
+        # Local CLI surface only: enrich the remote-safe {id, capture_status}
+        # with the bundle path + artifact names (S21 — remote envelopes reuse
+        # to_problem_details() and never see these).
+        error["incident"] = {
+            "id": ref.id,
+            "capture_status": ref.capture_status,
+            "path": str(ref.path),
+            "artifacts": list(ref.artifacts),
+        }
+    return {"status": "fail", "error": error}
 
 
-def unexpected_payload(debug: BaseException | None = None) -> dict[str, Any]:
+def unexpected_payload(
+    debug: BaseException | None = None, *, incident_ref: Any = None
+) -> dict[str, Any]:
     """Privacy-safe payload for a non-:class:`GFlowError`, by default.
 
     Mirrors ``_handle_unhandled_error``: never leaks the raw message or stack —
     only the fact that an unclassified error occurred — unless ``debug`` is
     passed (the caller has already confirmed GFLOW_CLI_DEBUG_TRACEBACK=1), in
     which case ``detail``/``traceback`` carry the real exception. Always exit
-    code 1.
+    code 1. ``incident_ref`` (an ``IncidentRef``, when capture staged a bundle
+    for the unexpected exception) surfaces the local bundle path — without it
+    the evidence would be written and never found.
     """
     error: dict[str, Any] = {
         "class": "UnexpectedError",
@@ -109,6 +101,13 @@ def unexpected_payload(debug: BaseException | None = None) -> dict[str, Any]:
     if debug is not None:
         error["detail"] = str(debug)
         error["traceback"] = "".join(traceback.format_exception(debug))
+    if incident_ref is not None and getattr(incident_ref, "path", None) is not None:
+        error["incident"] = {
+            "id": incident_ref.id,
+            "capture_status": incident_ref.capture_status,
+            "path": str(incident_ref.path),
+            "artifacts": list(incident_ref.artifacts),
+        }
     return {"status": "fail", "error": error}
 
 

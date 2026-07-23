@@ -52,6 +52,34 @@ Not used by v0.4.0a2's reverse-engineered Flow provider. Documented here in adva
 - **Content scrubbing:** Prompts, asset UUIDs, job IDs, profile names. No cookies, no tokens, no API keys.
 - The structured `error_unhandled` telemetry event is **always** SHA-256-hashed, regardless of any debug flag below — this guarantee is unconditional.
 
+### Automatic incident bundles (`GFLOW_CLI_INCIDENT_CAPTURE`, default on)
+
+- **Location:** `<GFLOW_CLI_HOME>/incidents/` only. Never uploaded, never
+  auto-attached to bug reports; remote error surfaces (MCP/HTTP/worker) see
+  an opaque `{id, capture_status}` — never the local path, artifact names,
+  profile paths, or lock paths.
+- **Two sensitivity tiers.** The automatic JSON artifacts are built from an
+  explicit allowlist: structural DOM signals, host *categories* + canonical
+  routes (query strings stripped, unknown hosts reduced to `other`), status
+  codes, and text *lengths/categories* — no prompts, tokens, cookies,
+  headers, bodies, signed URLs, raw titles, or raw error/console text, and
+  no unsalted hashes of low-entropy values (equality inside one command uses
+  a random per-command HMAC key that is never persisted). The
+  `sensitive/screenshot.png` tier CAN show your account identity, prompts,
+  and media — the manifest marks it `sensitive` and every operator surface
+  says review-before-sharing.
+- **Access:** POSIX directories are created `0700` and files `0600` from
+  first creation (not post-write chmod). On Windows there is no POSIX mode
+  bit — protection relies on the inherited per-user ACLs of
+  `%LOCALAPPDATA%`; gflow does not claim `chmod` creates a restrictive DACL
+  there.
+- **Bounded:** ≤100 network records, ≤100 console records, ≤50 page errors,
+  ≤3 bundles per command, ≤50 complete bundles / 250 MiB retained. Retention
+  validates schema + ownership before deleting anything and never follows
+  symlinks/junctions or touches unknown directories.
+- **Raw HAR is never enabled or copied** by the incident recorder — it stays
+  a separate, explicit opt-in (below).
+
 ### HAR capture (`GFLOW_CLI_HAR_PATH`, opt-in)
 
 - **Location:** wherever you point the env var. Not created unless explicitly set.

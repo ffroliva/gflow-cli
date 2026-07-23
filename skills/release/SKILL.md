@@ -130,7 +130,7 @@ rg -n "__version__|<OLD_VERSION>|version assertion" tests src pyproject.toml
 
 **10. Run the documentation review gate.**
 
-Run `/gflow:doc-review` — audit all version refs, INDEX completeness, evidence files, skill files, CHANGELOG footer, and memory files. Fix every **FAIL** before continuing. Fold all discovered fixes into the release prep commit.
+Run `/gflow:doc-review` — audit all version refs, INDEX completeness, evidence files, **the published `website/docs/` mirror (PII gate + content-drift check, §4b)**, **code↔docs parity via git log (§4c)**, skill files, CHANGELOG footer, and memory files. Fix every **FAIL** before continuing. Fold all discovered fixes into the release prep commit — **including any `website/docs/` re-sync** (the mirror is anonymized and hand-synced; a canonical doc change this release must be mirrored, and `CHANGELOG.md` must never appear under `website/docs/`).
 
 Also **consolidate shipped planning artifacts** here: extract any durable patterns
 into auto-memory, then remove the now-shipped `docs/superpowers/` plan / spec /
@@ -142,7 +142,7 @@ will fail the gate.
 
 ```bash
 git add pyproject.toml src/gflow_cli/__init__.py uv.lock CHANGELOG.md
-git add docs/ .claude/commands/gflow/        # include any doc-review fixes
+git add docs/ website/docs/ skills/ .claude/commands/gflow/   # include any doc-review + mirror fixes
 # doc-review version-currency fixes often also touch ROOT docs — stage them too:
 git add README.md PLAN.md KNOWN_ISSUES.md AGENTS.md llms.txt 2>/dev/null || true
 git status --short                            # review EVERYTHING staged before committing

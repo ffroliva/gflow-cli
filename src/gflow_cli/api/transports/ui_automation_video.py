@@ -657,49 +657,38 @@ def screenshot_clause(shot: Path | None) -> str:
 
 
 # DOM signature dumped on a UI-drift failure. Keyed on Material-Symbols ligatures
-# (locale-invariant) + a body-text preview so a Flow frontend change is diagnosable
-# from one artifact instead of a bare viewport screenshot.
-_UI_DIAG_JS = r"""() => {
-  const syms = [...document.querySelectorAll('i.google-symbols')]
-    .map(e => (e.textContent || '').trim()).filter(Boolean);
-  return {
-    url: location.href,
-    title: document.title,
-    ligatures: [...new Set(syms)].sort(),
-    ligatureCount: syms.length,
-    cropPresent: syms.some(l => l.startsWith('crop')),
-    textboxes: document.querySelectorAll(
-      'textarea,[contenteditable="true"],[role="textbox"],div[data-slate-editor]').length,
-    bodyTextPreview: (document.body.innerText || '').slice(0, 400),
-  };
-}"""
+# (locale-invariant) via the ONE structural DOM engine shared with the incident
+# recorder (incident-diagnostics design §6.3) — raw url/title/body text never
+# reach the artifact; only allowlisted structural fields survive validation.
 
 
 async def capture_ui_diagnostics(page: Any, out_dir: Path | None, name: str) -> Path | None:
-    """UI-drift debug engine: dump the composer's DOM signature (ligature inventory,
-    ``crop_*`` presence, textbox count, url, body-text preview) to ``<name>.json``
-    plus a **full-page** screenshot, so a Flow frontend change is diagnosable from one
-    artifact. Full-page renders reliably where the viewport shot came out black (the
-    #183 live finding). Best-effort — returns the JSON path or ``None``; never raises."""
+    """UI-drift debug engine (legacy opt-in wrapper): dump the composer's
+    STRUCTURAL DOM signature to ``<name>.json``. Consolidated onto
+    ``diagnostics.STRUCTURAL_DOM_JS`` + ``validate_structural_dom`` — the same
+    engine the automatic incident bundle uses; the old raw
+    url/title/bodyTextPreview fields are gone (S12), and this wrapper writes
+    **no screenshot**: ``out_dir`` is the user's plain output directory on
+    every ordinary run, so a full-page shot here would land unmarked, outside
+    the bundle's ``sensitive/`` review boundary and outside retention — the
+    incident bundle owns the (full-page) screenshot evidence.
+    Best-effort — returns the JSON path or ``None``; never raises."""
+    from gflow_cli.diagnostics import STRUCTURAL_DOM_JS, CommandHasher, validate_structural_dom
+
     if out_dir is None:
         return None
-    json_path: Path | None = None
     try:
-        diag = await page.evaluate(_UI_DIAG_JS)
+        diag = validate_structural_dom(await page.evaluate(STRUCTURAL_DOM_JS), CommandHasher())
         out_dir.mkdir(parents=True, exist_ok=True)
         json_path = out_dir / f"{name}.json"
         json_path.write_text(json.dumps(diag, indent=2, ensure_ascii=False), encoding="utf-8")
     except Exception as e:  # noqa: BLE001
         log.debug("ui_automation_video.ui_diagnostics_failed", error=str(e)[:120])
         return None
-    try:
-        await page.screenshot(path=str(out_dir / f"{name}.png"), full_page=True)
-    except Exception as e:  # noqa: BLE001
-        log.debug("ui_automation_video.ui_diagnostics_screenshot_failed", error=str(e)[:120])
     log.warning(
         "ui_automation_video.ui_diagnostics_captured",
         path=str(json_path),
-        note="ligature inventory + full-page screenshot; screenshot may show account PII",
+        note="structural ligature inventory; the incident bundle carries the screenshot",
     )
     return json_path
 

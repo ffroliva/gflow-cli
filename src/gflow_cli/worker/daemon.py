@@ -2,6 +2,7 @@ from __future__ import annotations
 
 import asyncio
 import os
+import re
 from pathlib import Path
 from typing import Any, cast
 
@@ -82,6 +83,17 @@ class FlowWorker:
         (when the caller went through a claim) carries the request validated
         at claim time, so the payload mapping is not re-derived here.
         """
+        # Per-task correlation rebind: the process-wide CLI binding would give
+        # every task's IncidentRecorder the same correlation id (colliding
+        # incident ids across tasks with one failure fingerprint). Tasks run
+        # strictly sequentially in this loop, so the cross-task-leakage concern
+        # that keeps binding out of concurrent async tasks (spec C6) does not
+        # apply; the sanitized task id makes bundles joinable to queue rows.
+        safe_task_id = re.sub(r"[^\w-]", "-", task.task_id)[:40] or "task"
+        structlog.contextvars.bind_contextvars(
+            correlation_id=f"wk-{safe_task_id}",
+            cli_command=f"worker {task.task_type}",
+        )
         logger.info(
             "Processing task",
             task_id=task.task_id,
@@ -413,13 +425,15 @@ class FlowWorker:
 
             if isinstance(exc, GFlowError):
                 error_payload = dict(exc.to_problem_details())
-                from gflow_cli.errors import EXIT_CODE_MAP
+                from gflow_cli.errors import EXIT_CODE_MAP, is_retryable
 
                 exit_code = next(
                     (code for cls, code in EXIT_CODE_MAP.items() if isinstance(exc, cls)),
                     1,
                 )
                 error_payload["exit_code"] = exit_code
+                # §6.5: same shared retry classification as CLI --json / MCP.
+                error_payload["retryable"] = is_retryable(exc)
                 if "status" not in error_payload:
                     error_payload["status"] = 500
                 # #341: the queue row persists to the same DB as the redacted

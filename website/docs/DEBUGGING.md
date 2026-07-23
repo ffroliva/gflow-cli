@@ -9,6 +9,7 @@
 
 | Symptom | First thing to try | Read |
 |---|---|---|
+| Any operational failure (crash, drift, timeout, WAF, lock) | Open the incident bundle path printed with the error | [Automatic incident bundles](#automatic-incident-bundles) |
 | `gflow image t2i` hangs ≥ 3 min then fails with `TimeoutError` | Re-run with `--verbose` and grep for `batch_response_seen` | [Listener log keys](#listener--http-layer-debugging) |
 | `aspect_ratio_set_failed` warning then wrong-aspect output | The aspect-tab selector cascade missed; capture a DOM snapshot of the gen-settings panel | [Inspecting Flow's live UI](#inspecting-flows-live-ui) |
 | `UnicodeEncodeError: 'charmap' codec can't encode` on Windows | Set `PYTHONUTF8=1` (PowerShell: `$env:PYTHONUTF8="1"`) before any `gflow` invocation | [Windows console](#windows-console-encoding) |
@@ -58,6 +59,96 @@ uv run gflow --verbose image t2i "prompt" --profile <name> --out tmp\debug 2>&1 
   Tee-Object tmp\debug\run.log |
   Select-String 'batch_response|aspect_ratio|prompt_submitted|error_unhandled'
 ```
+
+## Automatic incident bundles
+
+Since v0.43.0, relevant operational failures automatically write a **private
+incident bundle** (`GFLOW_CLI_INCIDENT_CAPTURE`, default `true` — see
+[CONFIGURATION § GFLOW_CLI_INCIDENT_CAPTURE](CONFIGURATION.md#gflow_cli_incident_capture)).
+The human error output prints the bundle path; `--json` carries it as the
+`error.incident` object; remote surfaces (MCP/HTTP/worker) receive only an
+opaque `{id, capture_status}`.
+
+### Layout
+
+The directory name embeds the **incident id** (`<correlation-id>-<fingerprint>`,
+the same value in `manifest.json`'s `incident_id` and the CLI's `incident`
+object) between the UTC timestamp and a collision-resistant random suffix:
+
+```text
+<GFLOW_CLI_HOME>/incidents/<YYYY-MM-DD>/<UTC-stamp>-<incident-id>-<rand>/
+├── manifest.json             # allowlisted facts: version/env, error class + exit
+│                             # code + retryable, sanitized route, phase, artifact
+│                             # classifications, HAR state, suppression count
+├── ui.json                   # structural DOM only: Material-Symbol ligatures,
+│                             # signal booleans, tag counts, viewport/scroll,
+│                             # bounded overlay geometry — never raw text/HTML
+├── network.json              # last ≤100 responses/failures: method, host
+│                             # category, canonical route, status, duration
+├── browser.json              # last ≤100 console warn/error + ≤50 page errors —
+│                             # class/category + length only, never message text
+├── sensitive/screenshot.png  # UI-state failures only — REVIEW BEFORE SHARING
+└── .pending                  # present only while a capture is still staging
+```
+
+`manifest.json` is written last and marks the bundle complete; a directory
+with only `.pending` is a crash leftover and is pruned automatically after
+24 h. Retention keeps at most 50 complete bundles / 250 MiB (oldest pruned
+at command startup).
+
+### What triggers a capture (and what never does)
+
+Captured: `FlowAppError` (31), `FlowAgentUiError` (25),
+`UiModeUnavailableError` (28), `UiSelectorDriftError` (23),
+`TransportTimeoutError` (9), `BrowserSessionClosedError` (15),
+`WireFormatError` (7), `WafRejectionError` (10), `NetworkError` (6),
+unexpected exceptions while a page is alive, and `ProfileLockedError` (11)
+as a **metadata-only** bundle (no Chrome is launched; the local human output
+also shows the recorded lock owner's PID/start-time evidence — advisory
+only, the kernel lock stays authoritative and nothing is ever reclaimed).
+
+Never captured: expected `ContentPolicyError`, ordinary `AuthExpiredError`,
+usage/config validation, cancellation (Ctrl-C). Successful commands write
+nothing. At most 3 bundles per command; repeats of the same failure
+fingerprint increment `suppressed_count` in the manifest instead.
+
+Capture is **observation-only** (it never retries, navigates, or submits)
+and best-effort: the original error, exit code, and traceback always win,
+and a capture problem surfaces only as an `incident.capture_failed` log
+event.
+
+### Escalation path
+
+The automatic bundle answers "what state was Flow in?". When you need raw
+payloads (wire-format surprises, WAF forensics), escalate explicitly to
+[`GFLOW_CLI_HAR_PATH`](CONFIGURATION.md#gflow_cli_har_path) — the manifest's
+`har_state` field records honestly whether that session's HAR demonstrably
+finalized (`disabled` / `pending_flush` / `complete` / `possibly_incomplete`).
+Raw HAR is never enabled or copied automatically.
+
+### Assessing a bundle's quality
+
+To score how *useful* a bundle is — not just that it exists —
+`scripts/dev/incident_bundle_quality.py` grades any bundle directory against
+the five diagnostic questions above plus completeness/fidelity/actionability,
+with a hard privacy gate (any leaked identifier → grade F). Reusable on a
+bundle a user emails you:
+
+```bash
+.venv/Scripts/python.exe scripts/dev/incident_bundle_quality.py <bundle-dir> [known-secret ...]
+```
+
+It prints a scorecard (grade, per-question YES/NO/N/A, privacy verdict). The
+live e2e benchmark (`tests/e2e/test_incident_quality_e2e.py`, credit-free)
+enforces quality floors on real bundles so a regression that hollows out the
+evidence fails CI even though the artifacts still exist.
+
+### Worker / daemon correlation
+
+In the worker daemon each task rebinds a per-task correlation id (`wk-<task_id>`),
+so an incident bundle's id (`<correlation>-<fingerprint>`) is unique per task and
+joinable to the queue row and the task's structured-log events — two tasks that
+fail the same way no longer collide on one incident id.
 
 ## Inspecting Flow's live UI
 

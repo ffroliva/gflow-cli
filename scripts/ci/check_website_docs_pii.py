@@ -34,8 +34,10 @@ from pathlib import Path
 
 # (compiled pattern, human-readable reason). Each targets a SPECIFIC private
 # token — never the bare substring ``ffroliva``, which appears in public repo
-# URLs and the APP_AUTHOR path and must pass. Keep in sync with the anonymization
-# map in the deferred docs-generator (see the tracking issue).
+# URLs and the APP_AUTHOR path and must pass. This is the sibling guard to the
+# anonymization map in ``scripts/ci/generate_website_docs.py`` (which PRODUCES
+# the mirror this check VERIFIES): every FORBIDDEN token here must be rewritten
+# by a substitution there. Keep the two in sync.
 FORBIDDEN: tuple[tuple[re.Pattern[str], str], ...] = (
     (re.compile(r"denon82"), "private Google profile name"),
     (re.compile(r"profile_ffroliva"), "private profile directory"),

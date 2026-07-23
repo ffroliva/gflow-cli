@@ -303,6 +303,41 @@ Format defaults to **human-readable on TTY**, **JSON when piped or `GFLOW_CLI_LO
 
 Pipes cleanly into `jq` / Loki / Datadog without configuration. See [`docs/USER_GUIDE.md` § Journey 6](USER_GUIDE.md#journey-6--read-the-structured-logs) for `jq` recipes.
 
+## Incident diagnostics (shipped, v0.43.0)
+
+`FlowApiClient` owns one session-scoped `IncidentRecorder`
+(`gflow_cli.diagnostics`) because it already owns the persistent
+`BrowserContext`, the Page pool, teardown ordering, settings, and the
+profile lease. Lifecycle, in order:
+
+1. **Construct before lease acquisition** (plus best-effort retention
+   pruning), so `ProfileLockedError` contention can produce a metadata-only
+   bundle without ever launching Chrome.
+2. **Attach listeners after context launch, before the bootstrap
+   navigation:** context-level `request`/`response`/`requestfailed` plus a
+   `page` hook, and `console`/`pageerror` on every pooled page. Callbacks do
+   synchronous primitive extraction into bounded ring journals only — they
+   never retain Playwright objects, read bodies, touch the DOM, or perform
+   I/O.
+3. **Capture at the generation boundaries** (`generate_image` /
+   `generate_images_batch` / `generate_video`) while the page is still
+   alive: structural DOM + sensitive screenshot + journal snapshots are
+   *staged*; the manifest is not yet written. Capture is observation-only
+   and serialized by a recorder-local lock; repeats of one failure
+   fingerprint only bump a suppression counter (max 3 bundles/command).
+4. **Teardown order (load-bearing):** detach + freeze journals → bounded
+   context close → resolve HAR state honestly from a pre-launch file
+   snapshot → atomically finalize staged manifests (`manifest.json` last)
+   → driver stop → lease release. Finalization runs through the same
+   bounded/shielded teardown-step helper as everything else and can never
+   mask a close/driver/lease failure or swallow a cancellation.
+
+The legacy `capture_ui_diagnostics` debug dump consumes the same structural
+DOM engine (`STRUCTURAL_DOM_JS` + `validate_structural_dom`) — there is one
+DOM/screenshot engine, not two artifact formats. See
+[DEBUGGING § Automatic incident bundles](DEBUGGING.md#automatic-incident-bundles)
+and [SECURITY § Automatic incident bundles](SECURITY.md#automatic-incident-bundles-gflow_cli_incident_capture-default-on).
+
 ## Testing topology
 
 | Layer | Test type | Where | Network? |

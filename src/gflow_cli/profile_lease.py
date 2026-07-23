@@ -38,10 +38,11 @@ import threading
 import time
 import uuid
 from pathlib import Path
-from typing import TYPE_CHECKING, NoReturn, TypedDict
+from typing import TYPE_CHECKING, NoReturn, TypedDict, cast
 
 from gflow_cli.config import get_settings
-from gflow_cli.errors import ProfileLockedError, SecurityError
+from gflow_cli.diagnostics import CommandHasher, emit_owner_evidence_read
+from gflow_cli.errors import OwnerEvidence, ProfileLockedError, SecurityError
 from gflow_cli.paths import locks_dir
 
 if sys.platform == "win32":
@@ -74,12 +75,77 @@ _registry_guard = threading.Lock()
 
 
 class OwnerMetadata(TypedDict):
-    """Diagnostic-only fields written into the lock file. Never authoritative."""
+    """Diagnostic-only fields written into the lock file. Never authoritative.
 
+    On-disk layout (v1): byte 0 is a reserved sentinel — the ONLY byte the
+    kernel lock covers on Windows — and this JSON begins at offset 1 so a
+    contender can read it while the lock is held. Legacy files whose JSON
+    starts at byte 0 are unreadable under a Windows lock and degrade to
+    evidence-unavailable.
+    """
+
+    version: int
     pid: int
     process_start_time: float
     profile_name: str
     owner_token: str
+
+
+_METADATA_VERSION = 1
+_METADATA_MAX_BYTES = 4095
+_METADATA_KEYS = frozenset({"version", "pid", "process_start_time", "profile_name", "owner_token"})
+
+# Per-process HMAC identities for contention evidence: random key, in-memory
+# only, never persisted (one CLI process == one command; see design §6.4).
+_evidence_hasher = CommandHasher()
+
+
+def _evidence_from_metadata(metadata: OwnerMetadata) -> OwnerEvidence:
+    return OwnerEvidence(
+        pid=metadata["pid"],
+        process_start_time=metadata["process_start_time"],
+        profile_identity=_evidence_hasher.identity(metadata["profile_name"]),
+        owner_token_identity=_evidence_hasher.identity(metadata["owner_token"]),
+    )
+
+
+def _read_owner_evidence(fd: int) -> OwnerEvidence | None:
+    """Best-effort offset-1 read of the owner's metadata from the already-open
+    descriptor after lock contention. Validates version/schema/primitive types;
+    ANY failure (legacy byte-0 files, torn writes, junk) degrades to ``None``.
+    Never reads the locked byte 0, never authorizes any destructive action."""
+    try:
+        os.lseek(fd, 1, os.SEEK_SET)
+        raw = os.read(fd, _METADATA_MAX_BYTES)
+        parsed: object = json.loads(raw.decode("utf-8"))
+        if not isinstance(parsed, dict):
+            return None
+        data = cast("dict[str, object]", parsed)
+        if set(data) != set(_METADATA_KEYS):
+            return None
+        version = data["version"]
+        pid = data["pid"]
+        start = data["process_start_time"]
+        name = data["profile_name"]
+        token = data["owner_token"]
+        if version != _METADATA_VERSION:
+            return None
+        if not isinstance(pid, int) or isinstance(pid, bool):
+            return None
+        if not isinstance(start, (int, float)) or isinstance(start, bool):
+            return None
+        if not isinstance(name, str) or not isinstance(token, str):
+            return None
+        if len(name) > 256 or len(token) > 128:
+            return None
+        return OwnerEvidence(
+            pid=pid,
+            process_start_time=float(start),
+            profile_identity=_evidence_hasher.identity(name),
+            owner_token_identity=_evidence_hasher.identity(token),
+        )
+    except (OSError, ValueError, KeyError, TypeError, UnicodeDecodeError):
+        return None
 
 
 def _canonicalize(profile_dir: Path | str) -> Path:
@@ -93,7 +159,13 @@ def _lock_filename(canonical: Path) -> str:
     return f"{safe_name}-{digest[:16]}.lock"
 
 
-def _raise_locked(reason: str, canonical: Path, *, cause: BaseException | None = None) -> NoReturn:
+def _raise_locked(
+    reason: str,
+    canonical: Path,
+    *,
+    cause: BaseException | None = None,
+    evidence: OwnerEvidence | None = None,
+) -> NoReturn:
     err = ProfileLockedError(
         detail=f"profile {canonical} is locked ({reason})",
         remediation_hint=(
@@ -101,6 +173,7 @@ def _raise_locked(reason: str, canonical: Path, *, cause: BaseException | None =
             "for it to finish and retry, or run with a different --profile."
         ),
     )
+    err.owner_evidence = evidence  # private; never serialized (design §6.4)
     if cause is not None:
         raise err from cause
     raise err
@@ -154,7 +227,16 @@ class ProfileLease:
     def acquire(self) -> ProfileLease:
         with _registry_guard:
             if self._canonical in _registry:
-                _raise_locked("already held in this process", self._canonical)
+                owner_metadata = _registry[self._canonical]._metadata  # noqa: SLF001
+                _raise_locked(
+                    "already held in this process",
+                    self._canonical,
+                    evidence=(
+                        _evidence_from_metadata(owner_metadata)
+                        if owner_metadata is not None
+                        else None
+                    ),
+                )
             _registry[self._canonical] = self
         try:
             self._acquire_kernel_lock()
@@ -235,18 +317,29 @@ class ProfileLease:
             try:
                 _lock_nonblocking(fd)
             except OSError as exc:
-                _raise_locked(f"held by another process ({exc})", self._canonical, cause=exc)
+                evidence = _read_owner_evidence(fd)
+                emit_owner_evidence_read(valid=evidence is not None)
+                _raise_locked(
+                    f"held by another process ({exc})",
+                    self._canonical,
+                    cause=exc,
+                    evidence=evidence,
+                )
 
             metadata: OwnerMetadata = {
+                "version": _METADATA_VERSION,
                 "pid": os.getpid(),
                 "process_start_time": _PROCESS_OBSERVED_START,
                 "profile_name": self._canonical.name,
                 "owner_token": uuid.uuid4().hex,
             }
             payload = json.dumps(metadata).encode("utf-8")
-            os.lseek(fd, 0, os.SEEK_SET)
+            # Byte 0 stays a reserved sentinel — the only byte the kernel lock
+            # covers on Windows. Metadata begins at offset 1 so a contender can
+            # read it while we hold the lock (design §6.4, S08).
+            os.lseek(fd, 1, os.SEEK_SET)
             os.write(fd, payload)
-            os.ftruncate(fd, len(payload))
+            os.ftruncate(fd, 1 + len(payload))
         except Exception:
             os.close(fd)
             raise
