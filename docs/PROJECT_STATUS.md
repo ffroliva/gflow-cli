@@ -4,9 +4,21 @@
 
 ## Current release
 
+**v0.43.0 — alpha.** **Private incident diagnostics (#369/#370/#174/#183).** Relevant operational failures — Flow app crashes, agentic-cohort / UI-mode errors, selector drift, transport timeouts, WAF/network/wire-format errors, profile-lock contention, unexpected exceptions — now automatically write a bounded, **private** incident bundle under `<GFLOW_CLI_HOME>/incidents/` (`GFLOW_CLI_INCIDENT_CAPTURE`, default **on**): an allowlisted `manifest.json`, structural `ui.json`, `network.json` / `browser.json` ring journals (host categories / canonical routes / status codes / lengths only — never prompts, tokens, cookies, bodies, or signed URLs), and a `sensitive/screenshot.png` for UI-state failures. Nothing is ever uploaded — remote MCP / HTTP / worker error envelopes carry only an opaque `{id, capture_status}` while the local CLI prints the bundle path; retention is bounded (50 bundles / 250 MiB) and validates ownership before pruning. Also: profile-lock owner evidence (offset-1 versioned lease metadata — PID + observed start time, per-command HMAC identities, no reclaim/kill), retryable-parity for `FlowAppError` / `FlowAgentUiError` across CLI-JSON / MCP / worker via one shared `errors.is_retryable()`, clean-fail on Flow's media-library / agentic cohort (`FlowAgentUiError`) and web-app crashes (`FlowAppError` exit 31), an experimental-transport self-lockout guard, and a `website/docs/` PII-leak CI gate. 2689 tests pass; live-verified against real Flow (real-editor recorder bundle 19/19 checks, real two-process contention → owner-evidence bundle, and an approved paid `veo-lite` T2V, all credit-accounted). See [LIVE_VERIFICATION_v0.43.0.md](LIVE_VERIFICATION_v0.43.0.md).
+
+**Develop (unreleased, post-v0.43.0):** *(empty — develop is the staging branch for the next release).*
+
+<details><summary>v0.42.0 — content-safety classification + Antigravity coding agent (#359/#360/#361)</summary>
+
+**v0.42.0 — alpha.** **Content-safety classification + Antigravity migration (#359/#360/#361).** Content-safety `400` responses from Flow are now classified as `ContentPolicyError` (exit 5) instead of the misleading `WireFormatError`, so callers can branch deterministically on a policy rejection. Corrected a false `flow_operation_id` invariant (`veo-lite` can emit a `remote_started` checkpoint with `operation_id` unset; `media_id` is the canonical handle used by polling, download, and lookup). Replaced the retired Gemini CLI with Antigravity (`agy`) as the supported Google coding agent across skills and docs — Antigravity auto-discovers `AGENTS.md`, so the dedicated `GEMINI.md` hub is removed and `agy` is the pinned `high`-tier `llm-council` external reviewer. See [LIVE_VERIFICATION_v0.42.0.md](LIVE_VERIFICATION_v0.42.0.md).
+
+</details>
+
+<details><summary>v0.41.0 — production-readiness hardening (#357)</summary>
+
 **v0.41.0 — alpha.** **Production-readiness hardening** ([#357]): queue safety (versioned payloads, atomic claims, checkpointed execution phases), cross-process profile lease (`ProfileLockedError` exit 11), cancellation-safe browser teardown, driver honesty (typed `SupportsSendPrompt` injection, frozen `TransportSetup`), mention-index fail-closed (`MentionIndexUnavailableError` exit 29), and external-CDP lifecycle removal. Removed nonfunctional manifest-driven video batch command (never worked end-to-end; loop `gflow video t2v`/`i2v` from the shell instead). Also: `/gflow:live-verify` skill for per-feature live-verification enforcement. 2513 tests pass; live-verified against real Flow (stale-session fail-fast, free image gen, paid veo-lite T2V). See [LIVE_VERIFICATION_v0.40.0-production-readiness.md](LIVE_VERIFICATION_v0.40.0-production-readiness.md).
 
-**Develop (unreleased, post-v0.41.0):** *(empty — develop is the staging branch for the next release).*
+</details>
 
 <details><summary>v0.40.0 — prompt @-mention resolution for asset tagging (#344)</summary>
 
