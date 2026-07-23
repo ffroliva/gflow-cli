@@ -14,7 +14,7 @@ from __future__ import annotations
 import sqlite3
 from contextlib import contextmanager
 from dataclasses import dataclass
-from datetime import datetime
+from datetime import UTC, datetime, timedelta
 from typing import TYPE_CHECKING, Any
 
 from gflow_cli.data.store import DataStore
@@ -404,6 +404,33 @@ class OperationErrorRow:
     error_detail: str | None
 
 
+def _as_utc(dt: datetime) -> datetime:
+    """Coerce a catalog timestamp to UTC-aware.
+
+    Timestamps are written UTC-aware ("…Z", see ``repository._utc_now``), but a
+    legacy/naive value must still compare against an aware cutoff without raising
+    — assume UTC when tzinfo is absent.
+    """
+    return dt if dt.tzinfo is not None else dt.replace(tzinfo=UTC)
+
+
+def _row_to_operation_error(r: Any) -> OperationErrorRow:
+    return OperationErrorRow(
+        started_at=datetime.fromisoformat(str(r["started_at"])),
+        completed_at=(
+            datetime.fromisoformat(str(r["completed_at"]))
+            if r["completed_at"] is not None
+            else None
+        ),
+        profile=str(r["profile"]),
+        command=str(r["command"]) if r["command"] is not None else None,
+        mode=str(r["mode"]),
+        model=str(r["model"]) if r["model"] is not None else None,
+        error_type=str(r["error_type"]) if r["error_type"] is not None else None,
+        error_detail=str(r["error_detail"]) if r["error_detail"] is not None else None,
+    )
+
+
 _LIST_ERRORS_SQL = """
     SELECT
         o.started_at   AS started_at,
@@ -446,23 +473,54 @@ def list_errors(
     params = {"profile": profile, "limit": limit, "offset": offset}
     with _safe_db(db_path) as conn:
         rows = conn.execute(_LIST_ERRORS_SQL, params).fetchall()
-    return [
-        OperationErrorRow(
-            started_at=datetime.fromisoformat(str(r["started_at"])),
-            completed_at=(
-                datetime.fromisoformat(str(r["completed_at"]))
-                if r["completed_at"] is not None
-                else None
-            ),
-            profile=str(r["profile"]),
-            command=str(r["command"]) if r["command"] is not None else None,
-            mode=str(r["mode"]),
-            model=str(r["model"]) if r["model"] is not None else None,
-            error_type=str(r["error_type"]) if r["error_type"] is not None else None,
-            error_detail=str(r["error_detail"]) if r["error_detail"] is not None else None,
-        )
-        for r in rows
-    ]
+    return [_row_to_operation_error(r) for r in rows]
+
+
+_EXPORT_ERRORS_SQL = """
+    SELECT
+        o.started_at   AS started_at,
+        o.completed_at AS completed_at,
+        o.profile_name AS profile,
+        o.command      AS command,
+        o.mode         AS mode,
+        o.model        AS model,
+        o.error_type   AS error_type,
+        o.error_detail AS error_detail
+    FROM operations o
+    WHERE o.status = 'failed'
+      AND (:profile IS NULL OR o.profile_name = :profile)
+    ORDER BY o.started_at DESC
+"""
+
+
+def export_errors(
+    *,
+    db_path: Path,
+    profile: str | None = None,
+    older_than: timedelta | None = None,
+) -> list[OperationErrorRow]:
+    """Return ALL failed operations newest-first, for archival (#345).
+
+    Like :func:`list_errors` but unbounded (no ``limit``/``offset``) and with an
+    optional ``older_than`` age filter, so an operator can archive the exact set
+    they are about to prune. Pure read; the CLI serializes the rows to JSONL.
+
+    Args:
+        db_path: Absolute path to the SQLite catalog.
+        profile: If given, only return failures belonging to this profile name.
+        older_than: If given, only return failures whose ``started_at`` is older
+            than ``now - older_than``. When ``None``, every failure is returned.
+
+    Returns:
+        A list of :class:`OperationErrorRow` instances ordered newest-first.
+    """
+    with _safe_db(db_path) as conn:
+        rows = conn.execute(_EXPORT_ERRORS_SQL, {"profile": profile}).fetchall()
+    result = [_row_to_operation_error(r) for r in rows]
+    if older_than is not None:
+        cutoff = datetime.now(UTC) - older_than
+        result = [row for row in result if _as_utc(row.started_at) < cutoff]
+    return result
 
 
 # ─── ProfileRow + list_profiles ───────────────────────────────────────────────

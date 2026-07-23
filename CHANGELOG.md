@@ -7,6 +7,17 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+### Added
+
+- **`gflow data errors` — bounded retention + export for failed-operation
+  history** (#345). `gflow data errors export [--older-than AGE] [-o FILE]`
+  dumps failed operations as JSONL (unbounded, newest-first) for offline
+  archival — also closing the export path deferred from #341. `gflow data
+  errors prune --older-than AGE [--dry-run]` deletes failures older than AGE
+  (`90d` / `24h` / `30m`); `--older-than` is **required** and there is no
+  automatic/background pruning — deletion is always an explicit operator
+  action. Both honor `--profile` and the exit-16 `DataStoreError` convention.
+
 ### Fixed
 
 - **Profile-lock remediation message** now names the real cause and recovery.
