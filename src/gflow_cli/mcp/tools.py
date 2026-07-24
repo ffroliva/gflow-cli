@@ -930,7 +930,13 @@ async def gflow_generate_video(
 
 @server.tool(
     name="gflow_list_tools",
-    description="List available gflow prompt tools (name, title, description, category).",
+    description=(
+        'List gflow\'s optional prompt-rewriting presets ("prompt tools", e.g. '
+        "creative-director), which can be passed via the `tools` parameter of "
+        "gflow_generate_image / gflow_generate_video to enhance a prompt before "
+        "generation. NOT this MCP server's tool catalog — to sanity-check the "
+        "connection, call gflow_list_projects instead."
+    ),
 )
 async def gflow_list_tools() -> dict[str, Any]:
     """List available prompt tools that can be passed to gflow_generate_image/video.

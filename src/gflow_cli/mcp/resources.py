@@ -59,7 +59,8 @@ Browse the local project catalog.
 Browse reusable Flow Character entities.
 
 ### gflow_list_tools
-List available gflow prompt tools (name, title, description, category).
+List optional prompt-rewriting presets ("prompt tools") for the generation
+tools' `tools` parameter. Not the MCP tool catalog.
 
 ## Important Rules
 1. **Use tools, not shell commands.** Do NOT run `gflow image t2i ...` via the terminal.

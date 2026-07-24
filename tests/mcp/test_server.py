@@ -39,6 +39,22 @@ class TestMcpToolListing:
             f"Missing tools: {expected - tool_names}. Found: {tool_names}"
         )
 
+    def test_server_ships_agent_instructions(self, mcp_server: Any) -> None:
+        """The initialize-time instructions must orient agents: how to verify the
+        connection, that video spends credits, and that gflow_list_tools lists
+        prompt presets rather than this server's tool catalog (#misread risk)."""
+        instructions = mcp_server.instructions
+        assert instructions
+        assert "gflow_list_projects" in instructions
+        assert "credits" in instructions.lower()
+
+    def test_list_tools_description_disambiguates_prompt_presets(self, mcp_server: Any) -> None:
+        """gflow_list_tools is about prompt-rewriting presets; its description must
+        say so explicitly, or agents read it as MCP-tool enumeration."""
+        description = mcp_server._tool_manager._tools["gflow_list_tools"].description
+        assert "prompt" in description.lower()
+        assert "not" in description.lower()
+
     def test_generate_image_tool_has_required_params(self, mcp_server: Any) -> None:
         """gflow_generate_image should accept prompt + model/aspect/count/seed/tools/profile."""
         tool = mcp_server._tool_manager._tools["gflow_generate_image"]

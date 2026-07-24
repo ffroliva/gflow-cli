@@ -27,8 +27,23 @@ log = structlog.get_logger()
 _SERVER_NAME = "gflow-cli"
 _SERVER_VERSION = __version__
 
+# Handed to clients at initialize; the first orientation an agent reads.
+_SERVER_INSTRUCTIONS = """\
+gflow-cli drives the user's own Google Flow session: Veo video and Imagen \
+image generation.
+
+- To verify the connection, call gflow_list_projects (fast, local, credits-free).
+- Image generation is credits-free; gflow_generate_video SPENDS the user's Veo \
+credits — confirm with the user before calling it.
+- gflow_list_tools lists optional prompt-rewriting presets ("prompt tools") for \
+the generation tools' `tools` parameter — it is NOT this server's tool catalog.
+- If a tool returns an auth error, tell the user to run \
+`gflow auth login --browser chrome`.
+"""
+
 server = FastMCP(
     name=_SERVER_NAME,
+    instructions=_SERVER_INSTRUCTIONS,
 )
 # FastMCP does not expose a public API to configure the server version.
 # As a workaround, we assign it directly to the underlying Server instance.
