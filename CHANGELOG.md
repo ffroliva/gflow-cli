@@ -20,6 +20,21 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ### Fixed
 
+- **`gflow character create` body step no longer overwrites the portrait
+  prompt.** The Flow character editor is a two-mode surface ("Portrait" /
+  "Create Body"), each mode with its own prompt box. The body step bound the
+  *first* Slate textbox — the **portrait** box — so when the Create-Body mode
+  switch had not settled, the self-contained triptych prompt was typed over the
+  portrait prompt and Flow autosaved the corruption via
+  `PATCH /v1/flowWorkflows/{id}` (observed live 2026-07-25 on 0.43.0; a
+  same-run `WireFormatError` at phase `character_generation` followed). The
+  body step now snapshots the Slate-box count before slot-add, polls until the
+  body composer's **own** box mounts (count rises — structural signal, no
+  localized button-text matching), types only into that newly-mounted box, and
+  reads both boxes back before submitting — aborting **before** the credited
+  submit if the body box never mounts or the triptych text landed in the
+  portrait box. Face-only creates are unchanged.
+
 - **Profile-lock remediation message** now names the real cause and recovery.
   `ProfileLockedError` (exit 11) previously told operators to "wait for it to
   finish" — implying an unbounded wait — and to hunt for a `gflow`/Chrome
