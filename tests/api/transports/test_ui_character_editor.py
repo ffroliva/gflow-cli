@@ -879,10 +879,10 @@ class TestClickCharacterSlotAddSelector:
 class _FakeSlateBox:
     """One Slate prompt box: focusable via click, holding mutable text.
 
-    ``click`` records focus on the page; the page-level keyboard fakes route
-    Ctrl+A/Delete (clear) and ``insert_text`` (type) to the FOCUSED box —
-    Playwright's real semantics, so a wrong-box click corrupts the wrong box
-    exactly like the live editor.  ``inner_text`` reads are recorded in
+    ``click`` records focus on the page. Locator-level ``press`` and
+    ``press_sequentially`` re-focus this exact box before editing, while the
+    page-level keyboard fakes follow the ambient focus. This distinction models
+    the live focus-bounce race. ``inner_text`` reads are recorded in
     ``page.events`` so tests can assert the pre-fill is never read before the
     replacement.
     """
@@ -901,6 +901,18 @@ class _FakeSlateBox:
     async def evaluate(self, _expression: str) -> bool:
         self._page.events.append(("focus-check", self.name))
         return self._page.focused_box is self
+
+    async def press(self, key: str) -> None:
+        self._page.focused_box = self
+        self._page.events.append(("press", self.name, key))
+        if key == "Delete":
+            self.text = ""
+
+    async def press_sequentially(self, text: str) -> None:
+        self._page.focused_box = self
+        self._page.inserted.append(text)
+        self._page.events.append(("insert", text))
+        self.text += text
 
 
 class _FakeSlateBoxList:
@@ -951,6 +963,7 @@ def _make_body_prompt_page(
     page.keyboard = MagicMock()
 
     inserted: list[str] = []
+    page.inserted = inserted
 
     def _press(key: str) -> None:
         # Ctrl+A selects all inside the focused Slate box; Delete clears it.
@@ -1173,9 +1186,11 @@ class TestSubmitBodyPrompt:
         assert submit_clicks == []
 
     @pytest.mark.asyncio
-    async def test_post_type_guard_catches_focus_bounce_after_precheck(self) -> None:
-        """A focus bounce after the pre-edit check is caught before submit."""
-        page, boxes, _inserted, submit_clicks = _make_body_prompt_page()
+    async def test_locator_scoped_input_survives_focus_bounce_after_precheck(self) -> None:
+        """A focus bounce cannot redirect locator-scoped edits to the portrait."""
+        from gflow_cli.api.transports.ui_automation import _BODY_TRIPTYCH_PREAMBLE
+
+        page, boxes, inserted, submit_clicks = _make_body_prompt_page()
         portrait, body = boxes
 
         def _verify_then_bounce(_expression: str) -> bool:
@@ -1185,12 +1200,17 @@ class TestSubmitBodyPrompt:
         body.evaluate = AsyncMock(side_effect=_verify_then_bounce)
         t = _make_transport(page=page)
 
-        with pytest.raises(RuntimeError, match="wrong prompt box"):
-            await t._submit_body_prompt(  # type: ignore[attr-defined]
-                page, "red raincoat", boxes_before=1
-            )
+        await t._submit_body_prompt(  # type: ignore[attr-defined]
+            page, "red raincoat", boxes_before=1
+        )
 
-        assert submit_clicks == []
+        expected = _BODY_TRIPTYCH_PREAMBLE + "red raincoat"
+        assert portrait.text == _PORTRAIT_PREFILL
+        assert body.text == expected
+        assert inserted == [expected]
+        assert len(submit_clicks) == 1
+        page.keyboard.press.assert_not_awaited()
+        page.keyboard.insert_text.assert_not_awaited()
 
     @pytest.mark.asyncio
     async def test_readback_failure_aborts_before_submit(self) -> None:
