@@ -1,15 +1,14 @@
 """Live E2E tests for project naming, dual-side sync, and gflow project subcommands (#381).
 
 These tests CODIFY the formal Statement of Done for Project Naming & Dual-Side Sync:
-1. Creating a project with custom title updates Google Flow tRPC server API AND local SQLite catalog.
+1. Creating a project with custom title updates Google Flow tRPC API and local catalog.
 2. Prompt slugging produces readable titles for auto-created scratch projects.
-3. Renaming a project updates both Google Flow tRPC server endpoint AND internal SQLite database.
+3. Renaming a project updates both Google Flow tRPC server endpoint and local database.
 """
 
 from __future__ import annotations
 
 import json
-import os
 import uuid
 from pathlib import Path
 from unittest.mock import AsyncMock, patch
@@ -18,10 +17,7 @@ import pytest
 from click.testing import CliRunner
 
 from gflow_cli._cli_helpers import slugify_project_name
-from gflow_cli.api.client import FlowApiClient
-from gflow_cli.api.dto import ProjectInfo
 from gflow_cli.cli import main
-from gflow_cli.config import get_settings
 from gflow_cli.data.models import ProjectRecord
 from gflow_cli.data.repository import DataRepository
 from gflow_cli.data.store import DataStore
