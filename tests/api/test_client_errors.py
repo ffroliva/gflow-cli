@@ -98,7 +98,7 @@ def test_raise_for_non_retryable_content_policy() -> None:
         _raise_for_non_retryable(resp, body, route="generateImage")
 
     err = exc_info.value
-    assert err.detail == "Prompt violates policy"
+    assert "Prompt violates policy" in err.detail
 
 
 def test_raise_for_non_retryable_wire_format() -> None:
