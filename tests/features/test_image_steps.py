@@ -84,6 +84,7 @@ def _make_fake_t2i(file_count: int):
         output_root: Path,
         transport: str | None = None,
         project_id: str | None = None,
+        project_name: str | None = None,
         as_json: bool = False,
         tool_specs: tuple[str, ...] = (),
     ) -> None:

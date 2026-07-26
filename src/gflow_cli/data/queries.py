@@ -53,6 +53,7 @@ class ProjectRow:
     created_at: datetime
     image_count: int
     video_count: int
+    title: str | None = None
 
 
 _LIST_PROJECTS_SQL = """
@@ -60,6 +61,7 @@ _LIST_PROJECTS_SQL = """
         p.flow_project_id AS project_id,
         p.profile_name    AS profile,
         p.created_at      AS created_at,
+        p.title           AS title,
         (SELECT COUNT(*) FROM assets
          WHERE kind = 'image'
            AND flow_project_id = p.flow_project_id
@@ -106,6 +108,7 @@ def list_projects(
             created_at=datetime.fromisoformat(str(r["created_at"])),
             image_count=int(r["image_count"]),
             video_count=int(r["video_count"]),
+            title=str(r["title"]) if r["title"] is not None else None,
         )
         for r in rows
     ]
