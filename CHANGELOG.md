@@ -31,9 +31,10 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   composer.** Flow can autosave the body triptych over the stored portrait
   prompt when the mode switch has not settled (observed live 2026-07-25 on
   0.43.0). Current Flow reuses one Slate editor and exposes Create Body through
-  the locale-independent `accessibility_new` icon; gflow now clicks that mode,
-  waits for the generated-face reference chip to mount, and verifies the
-  shared editor owns focus **before any clearing or typing**. The older
+  the locale-independent `accessibility_new` icon beside the portrait image;
+  gflow now clicks that scoped mode control, requires a new generated-face
+  reference chip to mount, and verifies the shared editor owns focus **before
+  any clearing or typing**. Readback failures abort before submit. The older
   `add_2`/second-box cohort remains supported through its count-rise gate.
   Post-type isolation still aborts before the credited submit. Live DOM
   evidence and the one-box failure were captured on 2026-07-26. Face-only

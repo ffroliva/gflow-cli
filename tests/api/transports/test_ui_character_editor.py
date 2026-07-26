@@ -726,8 +726,15 @@ class TestClickCharacterSlotAddSelector:
         page.wait_for_timeout = AsyncMock()
         page.screenshot = AsyncMock(return_value=b"")
 
+        references: list[_FakeCandidate] = []
+
+        async def _activate_body_mode() -> None:
+            body_mode.clicked = True
+            references.append(face_reference)
+
+        body_mode.click = AsyncMock(side_effect=_activate_body_mode)
         body_loc = _FakeSlotLocator([body_mode])
-        reference_loc = _FakeSlotLocator([face_reference])
+        reference_loc = _FakeSlotLocator(references)
         legacy_loc = _FakeSlotLocator([legacy])
 
         def _locator(sel: str) -> Any:
@@ -746,7 +753,78 @@ class TestClickCharacterSlotAddSelector:
 
         assert shared_body_box is True
         assert body_mode.clicked
-        face_reference.wait_for.assert_awaited_once()
+        assert references == [face_reference]
+        assert not legacy.clicked
+
+    @pytest.mark.asyncio
+    async def test_ignores_unscoped_accessibility_button(self) -> None:
+        """The project-level Characters control shares ``accessibility_new``;
+        body activation must use the button beside the portrait image."""
+        scoped_selector = (
+            "button:has(img) + button:has(i.google-symbols:text-is('accessibility_new'))"
+        )
+        unscoped_selector = "button:has(i.google-symbols:text-is('accessibility_new'))"
+        body_mode = _FakeCandidate(inner_text="accessibility_new Create Body")
+        navigation = _FakeCandidate(inner_text="accessibility_new Characters")
+        face_reference = _FakeCandidate(inner_text="cancel")
+        references: list[_FakeCandidate] = []
+
+        async def _activate_body_mode() -> None:
+            body_mode.clicked = True
+            references.append(face_reference)
+
+        body_mode.click = AsyncMock(side_effect=_activate_body_mode)
+        page = MagicMock()
+        page.url = "https://labs.google/fx/en/tools/flow/project/p1/character/e1"
+        page.wait_for_timeout = AsyncMock()
+        page.screenshot = AsyncMock(return_value=b"")
+
+        def _locator(sel: str) -> Any:
+            if sel == scoped_selector:
+                return _FakeSlotLocator([body_mode])
+            if sel == unscoped_selector:
+                return _FakeSlotLocator([navigation])
+            if sel == UiAutomationTransport._CHARACTER_BODY_REFERENCE_SELECTOR:
+                return _FakeSlotLocator(references)
+            if sel == UiAutomationTransport._CHARACTER_SLOT_ADD_SELECTOR:
+                return _FakeSlotLocator([])
+            raise AssertionError(f"unexpected selector: {sel}")
+
+        page.locator = MagicMock(side_effect=_locator)
+        t = _make_transport(page=page)
+
+        assert await t._click_character_slot_add(page) is True  # type: ignore[attr-defined]
+        assert body_mode.clicked
+        assert not navigation.clicked
+
+    @pytest.mark.asyncio
+    async def test_current_mode_settle_failure_does_not_fall_back_to_legacy(self) -> None:
+        """Once Create Body is clicked, a stale reference chip must fail
+        closed instead of mixing cohorts through the legacy add_2 path."""
+        body_mode = _FakeCandidate(inner_text="accessibility_new Create Body")
+        stale_reference = _FakeCandidate(inner_text="cancel")
+        legacy = _FakeCandidate(inner_text="add_2")
+        page = MagicMock()
+        page.url = "https://labs.google/fx/en/tools/flow/project/p1/character/e1"
+        page.wait_for_timeout = AsyncMock()
+        page.screenshot = AsyncMock(return_value=b"")
+
+        def _locator(sel: str) -> Any:
+            if sel == UiAutomationTransport._CHARACTER_BODY_MODE_SELECTOR:
+                return _FakeSlotLocator([body_mode])
+            if sel == UiAutomationTransport._CHARACTER_BODY_REFERENCE_SELECTOR:
+                return _FakeSlotLocator([stale_reference])
+            if sel == UiAutomationTransport._CHARACTER_SLOT_ADD_SELECTOR:
+                return _FakeSlotLocator([legacy])
+            raise AssertionError(f"unexpected selector: {sel}")
+
+        page.locator = MagicMock(side_effect=_locator)
+        t = _make_transport(page=page)
+
+        with pytest.raises(RuntimeError, match="reference did not mount"):
+            await t._click_character_slot_add(page)  # type: ignore[attr-defined]
+
+        assert body_mode.clicked
         assert not legacy.clicked
 
     @pytest.mark.asyncio
@@ -1092,6 +1170,41 @@ class TestSubmitBodyPrompt:
 
         assert portrait.text == _PORTRAIT_PREFILL
         assert inserted == []
+        assert submit_clicks == []
+
+    @pytest.mark.asyncio
+    async def test_post_type_guard_catches_focus_bounce_after_precheck(self) -> None:
+        """A focus bounce after the pre-edit check is caught before submit."""
+        page, boxes, _inserted, submit_clicks = _make_body_prompt_page()
+        portrait, body = boxes
+
+        def _verify_then_bounce(_expression: str) -> bool:
+            page.focused_box = portrait
+            return True
+
+        body.evaluate = AsyncMock(side_effect=_verify_then_bounce)
+        t = _make_transport(page=page)
+
+        with pytest.raises(RuntimeError, match="wrong prompt box"):
+            await t._submit_body_prompt(  # type: ignore[attr-defined]
+                page, "red raincoat", boxes_before=1
+            )
+
+        assert submit_clicks == []
+
+    @pytest.mark.asyncio
+    async def test_readback_failure_aborts_before_submit(self) -> None:
+        """An unstable/detached Slate box must fail closed after typing."""
+        page, boxes, _inserted, submit_clicks = _make_body_prompt_page()
+        _portrait, body = boxes
+        body.inner_text = AsyncMock(side_effect=RuntimeError("detached during readback"))
+        t = _make_transport(page=page)
+
+        with pytest.raises(RuntimeError, match="Could not verify body prompt isolation"):
+            await t._submit_body_prompt(  # type: ignore[attr-defined]
+                page, "red raincoat", boxes_before=1
+            )
+
         assert submit_clicks == []
 
     @pytest.mark.asyncio
