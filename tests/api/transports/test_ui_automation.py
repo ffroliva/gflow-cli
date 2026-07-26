@@ -3261,3 +3261,64 @@ class TestReferenceEntitiesInterception:
 
         # If unmodified, continue_ is called with no post_data argument
         mock_route.continue_.assert_awaited_once_with()
+
+
+def test_images_from_responses_raises_ratelimiterror_on_429():
+    """HTTP 429 response in _images_from_responses MUST raise RateLimitError with retry_after."""
+    from gflow_cli.api.transports.ui_automation import _images_from_responses
+    from gflow_cli.errors import RateLimitError
+
+    responses = [
+        {
+            "status": 429,
+            "url": "https://aisandbox-pa.googleapis.com/v1/projects/p1/flowMedia:batchGenerateImages",
+            "body": {"error": {"message": "Resource exhausted"}},
+            "headers": {"retry-after": "45"},
+        }
+    ]
+
+    with pytest.raises(RateLimitError) as exc_info:
+        _images_from_responses(responses)
+
+    err = exc_info.value
+    assert err.status == 429
+    assert err.retry_after == 45.0
+    assert "429" in str(err)
+    assert "45s" in str(err)
+
+
+@pytest.mark.asyncio
+async def test_attach_batch_response_listener_records_headers():
+    """_attach_batch_response_listener MUST capture response headers into the response dict."""
+    from gflow_cli.api.transports.ui_automation import UiAutomationTransport
+
+    fake_page = MagicMock()
+    listener_cb = None
+
+    def on_sub(event: str, cb: Any) -> None:
+        nonlocal listener_cb
+        if event == "response":
+            listener_cb = cb
+
+    fake_page.on = on_sub
+
+    captured, detach = UiAutomationTransport._attach_batch_response_listener(
+        fake_page, project_id="p123"
+    )
+    assert listener_cb is not None
+
+    fake_response = MagicMock()
+    fake_response.url = (
+        "https://aisandbox-pa.googleapis.com/v1/projects/p123/flowMedia:batchGenerateImages"
+    )
+    fake_response.status = 429
+    fake_response.headers = {"retry-after": "30", "content-type": "application/json"}
+    fake_response.json = AsyncMock(return_value={"error": "rate limit"})
+
+    await listener_cb(fake_response)
+
+    assert len(captured) == 1
+    assert captured[0]["status"] == 429
+    assert captured[0]["headers"] == {"retry-after": "30", "content-type": "application/json"}
+
+    detach()

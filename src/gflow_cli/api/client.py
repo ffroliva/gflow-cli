@@ -1984,10 +1984,13 @@ class FlowApiClient:
         req_with_token = _dc_replace(req, recaptcha_token=token)
         if on_checkpoint is not None:
             on_checkpoint(GenerationCheckpoint(phase="submit_attempted"))
-        images = await self.transport.generate_images(
-            project_id=project_id,
-            request=req_with_token,
-        )
+        images: list[GeneratedImage] = []
+        async for retrying in post_with_retry():
+            with retrying:
+                images = await self.transport.generate_images(
+                    project_id=project_id,
+                    request=req_with_token,
+                )
         if not images:
             raise ContentPolicyError(
                 detail="empty media[]",
