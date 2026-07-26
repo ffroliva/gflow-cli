@@ -312,3 +312,30 @@ def test_apply_tool_option_valid_style_does_not_raise(
     )
     assert sent == "EXPANDED"
     assert original == "cat"
+
+
+def test_slugify_project_name() -> None:
+    from gflow_cli._cli_helpers import slugify_project_name
+
+    assert slugify_project_name(None) == "gflow-project"
+    assert slugify_project_name("") == "gflow-project"
+    assert slugify_project_name("   ") == "gflow-project"
+    assert slugify_project_name("!!!") == "gflow-project"
+
+    assert slugify_project_name("A cute cat!") == "a-cute-cat"
+    assert slugify_project_name("A cute cat!", prefix="myprefix") == "a-cute-cat"
+    assert slugify_project_name(None, prefix="myprefix") == "myprefix-project"
+
+    assert (
+        slugify_project_name("  Complex,  with  multiple...  punctuation marks!!  ")
+        == "complex-with-multiple-punctuation-marks"
+    )
+
+    long_prompt = (
+        "A very long prompt description that goes on and on and exceeds forty characters"
+        " comfortably"
+    )
+    slug = slugify_project_name(long_prompt)
+    assert len(slug) <= 40
+    assert not slug.endswith("-")
+    assert slug == "a-very-long-prompt-description-that-goes"
