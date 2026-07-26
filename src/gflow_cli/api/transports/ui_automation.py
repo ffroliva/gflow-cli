@@ -238,6 +238,16 @@ _BODY_TRIPTYCH_PREAMBLE = (
     "across all angles, solid white background. "
 )
 
+# Body-mode settle gate — two-button character editor ("Portrait" / "Create
+# Body", observed live 2026-07-25/26 on 0.43.0). When the switch has not
+# settled, typing can land in the PORTRAIT composer and Flow autosaves the
+# corruption via PATCH /v1/flowWorkflows/{id}. Current Flow reuses one Slate
+# box; the auto-attached face reference proves it belongs to body mode. Legacy
+# cohorts mount a second Slate box, detected by the count rising. Both signals
+# are structural, never localized button text.
+_BODY_SLOT_MOUNT_TIMEOUT_S = 10.0
+_BODY_SLOT_MOUNT_POLL_MS = 250
+
 # "+ New project" CTA selectors.  Cascade discipline: structural / icon-first
 # (locale-stable) before localised text fallbacks spanning all 14 supported
 # locales.  The ``add_2`` Material Symbols ligature is locale-invariant — the
@@ -1305,24 +1315,28 @@ class UiAutomationTransport(VideoGenerationMixin):
         self,
         page: Page,
         body_description: str,
+        *,
+        boxes_before: int,
+        shared_body_box: bool = False,
         out_dir: Path | None = None,
     ) -> None:
-        """Submit a self-contained triptych body prompt, REPLACING Flow's template.
+        """Submit a self-contained triptych body prompt into the body slot's OWN box.
 
-        After clicking the character slot-add ("+"), Flow's JS pre-fills the new
-        prompt box with its own (localized) triptych template and auto-attaches
-        the generated face as a reference.  Rather than reading and parsing that
-        localized template, this helper ignores whatever the box was pre-filled
-        with and replaces the entire box with gflow's OWN self-contained,
-        locale-independent triptych instruction
-        (:data:`_BODY_TRIPTYCH_PREAMBLE`) followed by the body/clothing
-        description.
+        Activating Create Body auto-attaches the generated face as a reference.
+        Current Flow reuses the existing Slate box; legacy cohorts mount a new
+        one. Rather than parsing either cohort's localized placeholder/template,
+        this helper replaces the settled body composer with gflow's own
+        locale-independent triptych instruction plus the body description.
 
-        Live-verified 2026-06-02: this is MORE robust than the bracket-
-        substitution approach — it does not depend on Flow's template appearing,
-        the box timing, the bracket existing, or the UI locale.  The face
-        reference is still auto-attached by the slot-add ("+") click (Flow's JS),
-        independent of the text box.
+        :meth:`_locate_body_prompt_box` binds the shared box only after the face
+        reference mounts, or the legacy last box only after its count rises.
+        Observed live 2026-07-25 (0.43.0, incident 8ecd11cc): typing before the
+        mode settled replaced the stored portrait prompt, which Flow autosaved.
+
+        Before any destructive keyboard input, the helper verifies that the
+        selected body box retained focus. After typing,
+        :meth:`_verify_body_prompt_isolation` verifies the target and, when the
+        legacy portrait box is separately mounted, reads that box back too.
 
         ONE generation then yields all three angles (front/side/back) as a
         single triptych image, seeded by the auto-attached face reference.
@@ -1330,7 +1344,12 @@ class UiAutomationTransport(VideoGenerationMixin):
         Logs ``ui_automation.body_prompt_templated`` with ``template`` and the
         submitted length (NO body text).
         """
-        input_box = await self._locate_prompt_box(page, out_dir)
+        input_box = await self._locate_body_prompt_box(
+            page,
+            boxes_before=boxes_before,
+            shared_body_box=shared_body_box,
+            out_dir=out_dir,
+        )
 
         full_prompt = _BODY_TRIPTYCH_PREAMBLE + body_description
 
@@ -1339,10 +1358,15 @@ class UiAutomationTransport(VideoGenerationMixin):
         # events — select-all + Delete + insert_text, the same path _send_prompt
         # uses.
         await input_box.click()
+        await self._verify_body_prompt_focus(page, input_box, out_dir)
         await page.keyboard.press("Control+A")
         await page.keyboard.press("Delete")
         await page.keyboard.insert_text(full_prompt)
         await page.wait_for_timeout(500)
+
+        # Readback guard — abort BEFORE submit if the typing landed in the
+        # portrait box (mode switch not settled → the 2026-07-25 corruption).
+        await self._verify_body_prompt_isolation(page, input_box, out_dir)
 
         log.info(
             "ui_automation.body_prompt_templated",
@@ -1350,6 +1374,140 @@ class UiAutomationTransport(VideoGenerationMixin):
             prompt_len=len(full_prompt),
         )
         await self._click_submit(page)
+
+    async def _count_character_prompt_boxes(self, page: Page) -> int:
+        """Count Slate prompt boxes (legacy body-mode baseline)."""
+        return int(await page.locator(PROMPT_INPUT_SELECTORS[0]).count())
+
+    async def _locate_body_prompt_box(
+        self,
+        page: Page,
+        *,
+        boxes_before: int,
+        shared_body_box: bool = False,
+        out_dir: Path | None = None,
+    ) -> Any:
+        """Locate the body composer's OWN Slate prompt box — never the portrait's.
+
+        The character editor is a two-mode surface (Portrait / Create Body).
+        Typing before the switch settles can overwrite the stored portrait
+        prompt (observed live 2026-07-25, incident 8ecd11cc), so localized mode
+        labels are never treated as proof of the active composer.
+
+        The current editor (live 2026-07-26) reuses one Slate box and signals a
+        settled body mode by mounting the generated-face reference; callers
+        pass ``shared_body_box=True`` only after observing that signal. Older
+        cohorts mount a second box, so their count must exceed
+        ``boxes_before``. In either case the LAST mounted box is the target.
+        """
+        loc = page.locator(PROMPT_INPUT_SELECTORS[0])
+        deadline = time.monotonic() + _BODY_SLOT_MOUNT_TIMEOUT_S
+        count = int(await loc.count())
+        required_count = 0 if shared_body_box else boxes_before
+        while count <= required_count and time.monotonic() < deadline:
+            await page.wait_for_timeout(_BODY_SLOT_MOUNT_POLL_MS)
+            count = int(await loc.count())
+        if count <= required_count:
+            shot = await _capture_debug_screenshot(
+                page, out_dir, "debug_body_prompt_box_not_mounted.png"
+            )
+            settle_signal = (
+                "the shared body-mode box disappeared"
+                if shared_body_box
+                else "no additional body box mounted"
+            )
+            msg = (
+                f"Body prompt box did not mount within "
+                f"{_BODY_SLOT_MOUNT_TIMEOUT_S:.0f}s after body-mode activation "
+                f"(Slate boxes: {count}, before slot-add: {boxes_before}). "
+                f"The body-mode settle check reported that {settle_signal}. "
+                "Typing now would land in the portrait prompt box and "
+                "overwrite the stored portrait prompt — aborting the body "
+                f"step. URL: {page.url}.{screenshot_clause(shot)}"
+            )
+            raise RuntimeError(msg)
+        box = loc.nth(count - 1)
+        await box.wait_for(state="visible", timeout=10_000)
+        log.info(
+            "ui_automation.body_prompt_box_bound",
+            boxes_before=boxes_before,
+            boxes_now=count,
+        )
+        return box
+
+    async def _verify_body_prompt_focus(
+        self,
+        page: Page,
+        input_box: Any,
+        out_dir: Path | None = None,
+    ) -> None:
+        """Fail closed unless the body box owns focus before destructive input."""
+        try:
+            focused = bool(
+                await input_box.evaluate(
+                    "element => element === document.activeElement "
+                    "|| element.contains(document.activeElement)"
+                )
+            )
+        except Exception as e:
+            shot = await _capture_debug_screenshot(
+                page, out_dir, "debug_body_prompt_focus_unverified.png"
+            )
+            msg = (
+                "Could not verify body prompt focus before editing; aborting to preserve "
+                "the stored portrait prompt. "
+                f"URL: {page.url}.{screenshot_clause(shot)}"
+            )
+            raise RuntimeError(msg) from e
+        if not focused:
+            shot = await _capture_debug_screenshot(
+                page, out_dir, "debug_body_prompt_wrong_focus.png"
+            )
+            msg = (
+                "Body composer focus moved to the wrong prompt box before editing. "
+                "Aborting before destructive input so the stored portrait prompt is "
+                f"not overwritten. URL: {page.url}.{screenshot_clause(shot)}"
+            )
+            raise RuntimeError(msg)
+
+    async def _verify_body_prompt_isolation(
+        self,
+        page: Page,
+        input_box: Any,
+        out_dir: Path | None = None,
+    ) -> None:
+        """Post-type readback: the triptych text is in the body box ONLY.
+
+        A wrong-box landing (the portrait composer captured the typing while
+        the Create-Body mode switch was still settling) corrupts the entity's
+        stored portrait prompt — Flow autosaves the box via
+        PATCH /v1/flowWorkflows/{id} (observed live 2026-07-25, 0.43.0).
+        Abort BEFORE submit in that case.  Readback I/O errors only WARN —
+        the guard must not brick a healthy submit on its own fragility.
+        """
+        sentinel = _BODY_TRIPTYCH_PREAMBLE[:24]
+        try:
+            target_text = str(await input_box.inner_text() or "")
+            boxes = page.locator(PROMPT_INPUT_SELECTORS[0])
+            box_count = int(await boxes.count())
+            portrait_text = str(await boxes.first.inner_text() or "") if box_count > 1 else ""
+        except Exception as e:
+            log.warning(
+                "ui_automation.body_prompt_readback_failed",
+                error=str(e)[:120],
+            )
+            return
+        if sentinel in portrait_text or sentinel not in target_text:
+            shot = await _capture_debug_screenshot(page, out_dir, "debug_body_prompt_wrong_box.png")
+            msg = (
+                "Body triptych prompt landed in the wrong prompt box "
+                f"(portrait polluted: {sentinel in portrait_text}, "
+                f"body box has prompt: {sentinel in target_text}). "
+                "Aborting before submit so a corrupted portrait prompt is "
+                "never generated. Re-check the entity's portrait prompt "
+                f"in the Flow UI. URL: {page.url}.{screenshot_clause(shot)}"
+            )
+            raise RuntimeError(msg)
 
     # ------------------------------------------------------------------
     # Internal helpers — generation settings (aspect ratio + count)
@@ -2679,6 +2837,14 @@ class UiAutomationTransport(VideoGenerationMixin):
     # The exact ligature an icon-only slot-add candidate's inner_text reduces to.
     _CHARACTER_SLOT_ADD_LIGATURE = "add_2"
 
+    # Current two-mode character editor (live 2026-07-26): Create Body reuses
+    # the existing Slate prompt box instead of mounting a second one. The
+    # language-independent ``accessibility_new`` icon activates body mode; the
+    # generated-face reference chip (image + ``cancel`` icon) proves the mode
+    # transition settled before the shared prompt box is safe to edit.
+    _CHARACTER_BODY_MODE_SELECTOR = "button:has(i.google-symbols:text-is('accessibility_new'))"
+    _CHARACTER_BODY_REFERENCE_SELECTOR = "button:has(img):has(i.google-symbols:text-is('cancel'))"
+
     # Character-editor model picker.  The editor shows a model chip ("🍌 Nano
     # Banana 2") with an ``arrow_drop_down`` ligature; clicking it opens a menu
     # whose options are the product names.  Product names ("Nano Banana 2" /
@@ -2878,10 +3044,10 @@ class UiAutomationTransport(VideoGenerationMixin):
         results to the character entity via ``parentEntityId``.
 
         ``image_reference_index``:
-          - 0 → face slot (no slot-add interaction needed; the slot is
+          - 0 → face slot (no body-mode interaction needed; the slot is
             already active in the character editor).
-          - >= 1 → body / accessory slot; a click on the ``add_2`` slot-add
-            button is required before submitting the prompt.
+          - >= 1 → body / accessory slot; activate body mode and wait for its
+            structural settle signal before submitting the prompt.
 
         Returns ``(images, workflows)`` where each ``workflows`` entry carries
         at minimum ``name``, ``metadata.primaryMediaId``, ``projectId``, and
@@ -2931,15 +3097,19 @@ class UiAutomationTransport(VideoGenerationMixin):
         # generation is always exactly one image per slot.
         await self._select_character_model(page, request.model, out_dir)
 
-        # Slot-add: face (index 0) needs no interaction; body/accessories do.
-        # Clicking slot-add auto-attaches the generated face as a reference (Flow's
-        # JS) and pre-fills the new prompt box with Flow's localized triptych
-        # template. The body path REPLACES that box with gflow's own
-        # self-contained triptych prompt (locale-safe), independent of the
-        # auto-attached face reference.
+        # Face (index 0) needs no mode interaction; body/accessories do.
+        # Activating body mode auto-attaches the generated face as a reference.
+        # Current Flow reuses the Slate box; legacy cohorts mount another one.
+        # The body path replaces the settled composer with gflow's own prompt.
         is_body_slot = image_reference_index >= 1
+        boxes_before = 0
+        shared_body_box = False
         if is_body_slot:
-            await self._click_character_slot_add(page, out_dir)
+            # Snapshot the count for legacy cohorts before activating body
+            # mode. Current Flow proves the shared box is safe by mounting the
+            # generated-face reference; legacy Flow proves it by count rise.
+            boxes_before = await self._count_character_prompt_boxes(page)
+            shared_body_box = await self._click_character_slot_add(page, out_dir)
 
         # Attach listener BEFORE submit to eliminate the race condition.
         captured, detach = self._attach_batch_response_listener(page, project_id=project_id)
@@ -2947,7 +3117,13 @@ class UiAutomationTransport(VideoGenerationMixin):
         responses: list[dict[str, Any]] = []
         try:
             if is_body_slot:
-                await self._submit_body_prompt(page, request.prompt, out_dir)
+                await self._submit_body_prompt(
+                    page,
+                    request.prompt,
+                    boxes_before=boxes_before,
+                    shared_body_box=shared_body_box,
+                    out_dir=out_dir,
+                )
             else:
                 await self._send_prompt(page, request.prompt, out_dir)
             responses = await self._await_captured(
@@ -2982,10 +3158,16 @@ class UiAutomationTransport(VideoGenerationMixin):
         self,
         page: Any,
         out_dir: Any = None,
-    ) -> None:
-        """Click the slot-add (``add_2``) button for character image slots >= 1.
+    ) -> bool:
+        """Activate body mode; return whether it uses the settled shared box.
 
-        Live DOM evidence (2026-06-02 spike) showed the character editor renders
+        Current Flow (live 2026-07-26) exposes a Create Body button carrying
+        the locale-independent ``accessibility_new`` icon. Clicking it reuses
+        the existing Slate box. The generated-face reference chip must become
+        visible before this method returns ``True``; that structural signal
+        proves the shared box now belongs to body mode.
+
+        Legacy DOM evidence (2026-06-02 spike) showed the character editor renders
         two ``add_2`` ligatures that are STRUCTURALLY distinct (see the
         ``_CHARACTER_SLOT_ADD_SELECTOR`` constant for the full DOM): the slot-add
         target is a ``[role=button]`` whose accessible content is icon-ONLY,
@@ -3007,9 +3189,29 @@ class UiAutomationTransport(VideoGenerationMixin):
         The localised ``aria-label`` is intentionally NOT part of the predicate
         ([[flow-locale-leak-icon-ligatures]]); the icon-only test is the anchor.
 
-        Non-fatal: a miss is logged at WARNING so generation can proceed
-        (the prompt will apply to whichever slot is currently active).
+        The legacy path returns ``False`` because it mounts a second prompt
+        box. Non-fatal here: a miss is logged at WARNING.  Enforcement lives in
+        ``_locate_body_prompt_box`` — if the body composer's own prompt box
+        never mounts, the body step ABORTS instead of typing into whichever
+        slot is currently active (which would overwrite the portrait prompt).
         """
+        try:
+            body_mode = page.locator(self._CHARACTER_BODY_MODE_SELECTOR).first
+            await body_mode.wait_for(state="visible", timeout=5_000)
+            await body_mode.click()
+            face_reference = page.locator(self._CHARACTER_BODY_REFERENCE_SELECTOR).first
+            await face_reference.wait_for(state="visible", timeout=5_000)
+            await page.wait_for_timeout(400)
+            log.info(
+                "ui_automation.character_body_mode_activated",
+                selector=self._CHARACTER_BODY_MODE_SELECTOR,
+                settle_signal=self._CHARACTER_BODY_REFERENCE_SELECTOR,
+                shared_body_box=True,
+            )
+            return True
+        except Exception as exc:
+            body_mode_error = str(exc)[:120]
+
         try:
             loc = page.locator(self._CHARACTER_SLOT_ADD_SELECTOR)
             await loc.first.wait_for(state="visible", timeout=5_000)
@@ -3039,17 +3241,20 @@ class UiAutomationTransport(VideoGenerationMixin):
                 candidates=total,
                 chosen_index=chosen_index,
             )
+            return False
         except Exception as exc:
             shot = await _capture_debug_screenshot(page, out_dir, "debug_character_slot_add.png")
             log.warning(
                 "ui_automation.character_slot_add_failed",
                 error=str(exc)[:120],
+                body_mode_error=body_mode_error,
                 screenshot=str(shot),
                 note=(
-                    "slot-add button not found; prompt will be submitted "
-                    "to the currently-active slot"
+                    "slot-add button not found; the body step will abort "
+                    "unless the body prompt box is already mounted"
                 ),
             )
+            return False
 
     # ------------------------------------------------------------------
     # Protocol — refresh_auth (unit 3.10) + teardown (unit 3.11)
