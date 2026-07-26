@@ -2695,30 +2695,33 @@ def _extract_provider_error_message(body_text: str) -> str | None:
     if not body_text or not body_text.strip():
         return None
     try:
-        data = json.loads(body_text)
+        raw: object = json.loads(body_text)
     except Exception:
         return None
-    if not isinstance(data, dict):
+    if not isinstance(raw, dict):
         return None
+    data = cast("JsonObject", raw)
 
-    error_obj = data.get("error")
+    error_obj: object = data.get("error")
     if isinstance(error_obj, dict):
-        json_obj = error_obj.get("json")
+        err_dict = cast("JsonObject", error_obj)
+        json_obj: object = err_dict.get("json")
         if isinstance(json_obj, dict):
-            msg = json_obj.get("message")
+            j_dict = cast("JsonObject", json_obj)
+            msg: object = j_dict.get("message")
             if isinstance(msg, str) and msg.strip():
                 return msg.strip()
-        msg = error_obj.get("message")
+        msg: object = err_dict.get("message")
         if isinstance(msg, str) and msg.strip():
             return msg.strip()
     elif isinstance(error_obj, str) and error_obj.strip():
         return error_obj.strip()
 
-    msg = data.get("message")
+    msg: object = data.get("message")
     if isinstance(msg, str) and msg.strip():
         return msg.strip()
 
-    detail = data.get("detail")
+    detail: object = data.get("detail")
     if isinstance(detail, str) and detail.strip():
         return detail.strip()
 
