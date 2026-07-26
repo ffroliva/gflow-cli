@@ -11,6 +11,22 @@ uv sync --extra dev
 uv run playwright install chromium
 ```
 
+### Codex project skills
+
+Codex CLI and the Codex desktop app can install the repository's canonical `skills/`
+workflows as the `gflow` plugin. From the repository root, run:
+
+```bash
+codex plugin marketplace add .
+codex plugin add gflow@gflow-cli
+```
+
+Start a new Codex session after installation, then invoke a workflow with `$gflow:<skill>`
+(for example, `$gflow:status`, `$gflow:check`, or `$gflow:pr-council-review`). Claude Code
+continues to use the equivalent `/gflow:*` commands. The Codex IDE extension does not
+currently load plugins; include the relevant `skills/<name>/SKILL.md` directly when using
+that surface.
+
 ## Test-driven development (mandatory)
 
 `gflow-cli` is built test-first. Every change must include tests, and CI rejects PRs that lower coverage.
