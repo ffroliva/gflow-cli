@@ -34,7 +34,7 @@ def _ui_failure_bundle(root: Path, *, extra: dict[str, object] | None = None) ->
     manifest = {
         "schema": "gflow-incident-v1",
         "incident_id": "corr-abc123",
-        "cli_version": "0.43.0",
+        "cli_version": "0.44.0",
         "python_version": "3.13.7",
         "os_family": "Windows",
         "command": "video t2v",
@@ -103,7 +103,7 @@ def _waf_bundle(root: Path) -> Path:
         {
             "schema": "gflow-incident-v1",
             "incident_id": "corr-waf42",
-            "cli_version": "0.43.0",
+            "cli_version": "0.44.0",
             "python_version": "3.13.7",
             "os_family": "Windows",
             "command": "image t2i",
@@ -167,7 +167,7 @@ def _contention_bundle(root: Path) -> Path:
         {
             "schema": "gflow-incident-v1",
             "incident_id": "corr-lock99",
-            "cli_version": "0.43.0",
+            "cli_version": "0.44.0",
             "python_version": "3.13.7",
             "os_family": "Windows",
             "command": "image t2i",
