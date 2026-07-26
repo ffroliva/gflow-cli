@@ -20,6 +20,18 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ### Fixed
 
+- **`gflow character create` safely activates the current Create-Body
+  composer.** Flow can autosave the body triptych over the stored portrait
+  prompt when the mode switch has not settled (observed live 2026-07-25 on
+  0.43.0). Current Flow reuses one Slate editor and exposes Create Body through
+  the locale-independent `accessibility_new` icon; gflow now clicks that mode,
+  waits for the generated-face reference chip to mount, and verifies the
+  shared editor owns focus **before any clearing or typing**. The older
+  `add_2`/second-box cohort remains supported through its count-rise gate.
+  Post-type isolation still aborts before the credited submit. Live DOM
+  evidence and the one-box failure were captured on 2026-07-26. Face-only
+  creates are unchanged.
+
 - **Profile-lock remediation message** now names the real cause and recovery.
   `ProfileLockedError` (exit 11) previously told operators to "wait for it to
   finish" — implying an unbounded wait — and to hunt for a `gflow`/Chrome
