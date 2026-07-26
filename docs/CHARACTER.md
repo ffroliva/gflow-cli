@@ -38,20 +38,20 @@ seeding the second step with the first:
 
 1. **Face (slot 0).** gflow submits your `--face-prompt` and Flow generates the **face** image. This becomes
    the character's first reference image.
-2. **Body (slot 1).** gflow clicks the editor's slot-add ("+") button, which **auto-attaches the just-generated
-   face image as the reference seed** for the new slot. gflow then submits its **own self-contained
+2. **Body (slot 1).** gflow activates the editor's Create-Body mode, which **auto-attaches the just-generated
+   face image as the reference seed**. gflow then submits its **own self-contained
    front/side/back triptych prompt** (it wraps your `--body-prompt` body/outfit description). Because the face
    is attached as the seed, a **single credited generation** produces all three body angles — front, side, and
    back — that match the face.
 
-   The character editor is a **two-mode surface** ("Portrait" / "Create Body"): each mode has its **own**
-   prompt box. Before typing, gflow waits for the body composer's own box to **mount** (the Slate-box count
-   rising above the pre-slot-add baseline — the mode buttons are localized, so no button-text matching), then
-   verifies that box still owns focus **before clearing or typing**. It also reads both boxes back before
-   submitting. If focus bounced to the portrait composer, the body step aborts before any autosaved prompt edit;
-   if post-type isolation fails, it aborts before the credited submit. This guards the unsettled mode-switch
-   race that corrupted a stored portrait prompt live on 2026-07-25/0.43.0. Re-run `gflow character create` to
-   retry; the saga reuses the entity and the completed face slot (§4).
+   The character editor is a **two-mode surface** ("Portrait" / "Create Body"). Current Flow reuses one Slate
+   editor across both modes, so gflow anchors Create Body by its locale-independent `accessibility_new` icon and
+   waits for the generated-face reference chip to mount before using the shared box. Older cohorts that mount a
+   second prompt box remain supported through a Slate-count-rise gate. In both cases gflow verifies the selected
+   body box still owns focus **before clearing or typing**. If the structural mode signal or focus check fails,
+   the body step aborts before any autosaved prompt edit; post-type isolation failures abort before the credited
+   submit. This guards the race that corrupted a stored portrait prompt live on 2026-07-25/0.43.0. Re-run
+   `gflow character create` to retry; the saga reuses the entity and completed face slot (§4).
 
 The result: two generations (face + body-triptych), the body kept on-model by the face seed. Everything else —
 naming the character, setting the voice/personality, and saving — is free metadata (REST), not generation. See
@@ -278,7 +278,7 @@ is **shipped** (see the table below).
 
 | Command | Maps to |
 |---|---|
-| `gflow character create --project <id> --name <name> --face-prompt … [--body-prompt …] [--voice <Name>] [--personality …] [--model nano2\|nanopro] [--profile …] [--locale en-US] [--json]` *(SHIPPED v0.12.0 — shipped option names; characters have NO aspect-ratio control)* | createEntity → gen face (slot 0) → commit_workflow → optional gen body (slot 1) → commit_workflow → patch_entity, via the persist-before-spend saga (§4). `--body-prompt` is a **body/outfit DESCRIPTION** — gflow wraps it in a self-contained **front/side/back triptych** instruction and seeds it with the generated face (auto-attached as the slot-add reference), so one body generation yields all three angles. Generated images are **downloaded** to storage; the result reports each slot's local path. |
+| `gflow character create --project <id> --name <name> --face-prompt … [--body-prompt …] [--voice <Name>] [--personality …] [--model nano2\|nanopro] [--profile …] [--locale en-US] [--json]` *(SHIPPED v0.12.0 — shipped option names; characters have NO aspect-ratio control)* | createEntity → gen face (slot 0) → commit_workflow → optional gen body (slot 1) → commit_workflow → patch_entity, via the persist-before-spend saga (§4). `--body-prompt` is a **body/outfit DESCRIPTION** — gflow wraps it in a self-contained **front/side/back triptych** instruction and seeds it with the generated face (auto-attached as the body-mode reference), so one body generation yields all three angles. Generated images are **downloaded** to storage; the result reports each slot's local path. |
 | `gflow character list --project <id> [--json]` *(SHIPPED v0.12.0)* | projectInitialData → entities[CHARACTER] |
 | `gflow character show --project <id> (--id <entityId> \| --name <displayName>) [--json]` *(SHIPPED v0.12.0)* | projectInitialData (single); name collision → exit 11 with disambiguation hint |
 | `gflow character voices [--json]` *(SHIPPED v0.12.0)* | list the 29 preset voices (name / description / sample-url); language-agnostic discovery, mirrors `gflow models --json` |
@@ -412,7 +412,7 @@ Built by `routes.character_editor_url(locale, projectId, entityId)`. The **`/fx/
 without it Flow 404s (caught by spike T-A; the fix sourced the URL from `LABS_FX_BASE`). Navigating to this
 URL (not the new-project flow) is what makes Flow's JS set `entityContext` on the generation. Name / voice /
 personality are REST `PATCH flow/entities`. The only *new* generation selectors are the prompt/submit (already
-owned by gflow) and the slot-add.
+owned by gflow) and the body-mode activation/settle signals.
 
 | Purpose | Selector | Conf. |
 |---|---|---|
@@ -422,7 +422,7 @@ owned by gflow) and the slot-add.
 | Name field | `input[placeholder]` — localized placeholder; **do NOT rely on the text** (structural: it is the editor's lone placeholdered input) | **VERIFIED** |
 | Personality field | the panel `textarea` (localized placeholder) — **prefer REST PATCH** | **VERIFIED** |
 | Slot 0 image (face) | aria-label `"Imagem do personagem 1"` — **localized**, note only (do not load-bear on the text) | med (localized) |
-| **Slot-add (body / slot 1)** | `add_2` google-symbols ligature; the editor has **TWO** `add_2` buttons → slot-add is **`.nth(1)`** (`_CHARACTER_SLOT_ADD_SELECTOR = "button:has(i.google-symbols:text('add_2'))"`). The **first** `add_2` is the gallery "+ New project" CTA → positional disambiguation. ⚠️ confirm `.nth(1)` in the live body-gen e2e (Task 12). | **VERIFIED** (selector) / ⚠️ ordering |
+| **Body mode (slot 1)** | Current cohort: `button:has(i.google-symbols:text-is('accessibility_new'))`; settle signal: generated-face chip `button:has(img):has(i.google-symbols:text-is('cancel'))`. Legacy cohort fallback: icon-only `[role=button]` carrying exact `add_2`, followed by Slate-box count rise. No localized button text or positional index. | **VERIFIED** live 2026-07-26 |
 | Model picker (char editor) | `button[aria-haspopup='menu']:has(i.google-symbols:text-is('arrow_drop_down'))` *(normal editor uses `crop_16_9`)* | **VERIFIED** |
 | Voice picker | `voice_selection` google-symbols ligature | **VERIFIED** (ligature) |
 | Personagens nav (project) | `button:has(i.google-symbols:text-is('accessibility_new'))` (cards are `div[role=button]`; tag disambiguates) | high |
@@ -430,10 +430,10 @@ owned by gflow) and the slot-add.
 | Picker tab → Personagens | `[role=dialog] button[role=tab]:has(i.google-symbols:text-is('accessibility_new'))` | high |
 | **Picker "include in command"** | primary `button` in the dialog footer — **no ligature → structural anchor (last/primary dialog button)**; only appears *after* an option is selected | low ⚠️ |
 
-⚠️ **Documented risk (Task-12 e2e):** the slot-add `.nth(1)` ordering and the picker include button (no
-ligature, localized text only) are positional/structural anchors that must be confirmed under a live non-EN
-locale. Slot 0's `"Imagem do personagem N"` aria-label is **localized** — used as a note, never as a
-load-bearing selector.
+⚠️ **Documented risk (Task-12 e2e):** the picker include button (no ligature, localized text only) remains a
+positional/structural anchor to confirm under a live non-EN locale. Body mode no longer uses the stale
+`.nth(1)` selector; its mode and settle icons are locale-independent. Slot 0's `"Imagem do personagem N"`
+aria-label is **localized** — used as a note, never as a load-bearing selector.
 
 Shared chrome already automated by gflow (reuse as-is): `add_2` (+/Criar add-media → opens picker),
 `arrow_forward` (submit), the Slate prompt box, model dropdown, `check`/Concluir.
@@ -481,7 +481,7 @@ table → test mapping):
 
 **Remaining LIVE-e2e-only (Task 12):** the live binding/recovery/UTF-8 e2e on denon82 — real
 `parentEntityId == entityId` against Flow's wire, mid-saga crash recovery against the real DB, and the
-slot-add `.nth(1)` + picker-include structural selectors under a non-EN locale.
+body-mode icon/reference settle signals + picker-include structural selectors under a non-EN locale.
 
 ## 13.1 Known issues
 

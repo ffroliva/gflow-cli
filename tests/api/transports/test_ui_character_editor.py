@@ -231,7 +231,9 @@ class TestGenerateCharacterImages:
         t._select_character_model = _rec("select_model")  # type: ignore[attr-defined]
         t._send_prompt = _rec("send_prompt")  # type: ignore[attr-defined]
         t._submit_body_prompt = _rec("submit_body_prompt")  # type: ignore[attr-defined]
-        t._click_character_slot_add = _rec("slot_add")  # type: ignore[attr-defined]
+        t._click_character_slot_add = _rec(  # type: ignore[attr-defined]
+            "slot_add", return_value=True
+        )
         t._count_character_prompt_boxes = _rec("count_boxes", return_value=1)  # type: ignore[attr-defined]
 
         # _attach_batch_response_listener is sync — seed it with the fixture response.
@@ -333,6 +335,7 @@ class TestGenerateCharacterImages:
             f"the pre-slot-add box count must reach _submit_body_prompt as "
             f"boxes_before; got kwargs={body_kwargs}"
         )
+        assert body_kwargs.get("shared_body_box") is True
         assert len(images) >= 1
 
     @pytest.mark.asyncio
@@ -700,7 +703,7 @@ def _make_slot_add_page(candidates: list[_FakeCandidate]) -> MagicMock:
             return slot_loc
         other = MagicMock()
         other.first = other
-        other.wait_for = AsyncMock()
+        other.wait_for = AsyncMock(side_effect=Exception("not visible"))
         other.click = AsyncMock()
         return other
 
@@ -710,6 +713,41 @@ def _make_slot_add_page(candidates: list[_FakeCandidate]) -> MagicMock:
 
 class TestClickCharacterSlotAddSelector:
     """Proves the icon-only ``[role=button]`` is chosen, not ``.nth(1)``."""
+
+    @pytest.mark.asyncio
+    async def test_activates_current_body_mode_and_waits_for_face_reference(self) -> None:
+        """Live 2026-07-26: Create Body reuses one Slate box and mounts the
+        generated face reference; both signals are language-independent icons."""
+        body_mode = _FakeCandidate(inner_text="accessibility_new Create Body")
+        face_reference = _FakeCandidate(inner_text="cancel")
+        legacy = _FakeCandidate(inner_text="add_2")
+        page = MagicMock()
+        page.url = "https://labs.google/fx/en/tools/flow/project/p1/character/e1"
+        page.wait_for_timeout = AsyncMock()
+        page.screenshot = AsyncMock(return_value=b"")
+
+        body_loc = _FakeSlotLocator([body_mode])
+        reference_loc = _FakeSlotLocator([face_reference])
+        legacy_loc = _FakeSlotLocator([legacy])
+
+        def _locator(sel: str) -> Any:
+            if sel == UiAutomationTransport._CHARACTER_BODY_MODE_SELECTOR:
+                return body_loc
+            if sel == UiAutomationTransport._CHARACTER_BODY_REFERENCE_SELECTOR:
+                return reference_loc
+            if sel == UiAutomationTransport._CHARACTER_SLOT_ADD_SELECTOR:
+                return legacy_loc
+            raise AssertionError(f"unexpected selector: {sel}")
+
+        page.locator = MagicMock(side_effect=_locator)
+        t = _make_transport(page=page)
+
+        shared_body_box = await t._click_character_slot_add(page)  # type: ignore[attr-defined]
+
+        assert shared_body_box is True
+        assert body_mode.clicked
+        face_reference.wait_for.assert_awaited_once()
+        assert not legacy.clicked
 
     @pytest.mark.asyncio
     async def test_clicks_icon_only_candidate_not_decoy(self) -> None:
@@ -955,6 +993,29 @@ class TestSubmitBodyPrompt:
         )
         assert body.text == _BODY_TRIPTYCH_PREAMBLE + "red raincoat"
         assert len(submit_clicks) == 1, "the body prompt must be submitted exactly once"
+
+    @pytest.mark.asyncio
+    async def test_types_into_shared_box_after_body_mode_settles(self) -> None:
+        """Live 2026-07-26: Create Body reuses the one mounted Slate editor;
+        the attached-face settle signal makes that shared box safe to use."""
+        from gflow_cli.api.transports.ui_automation import _BODY_TRIPTYCH_PREAMBLE
+
+        page, boxes, inserted, submit_clicks = _make_body_prompt_page(box_count=1)
+        shared_box = boxes[0]
+        shared_box.text = "Describe body and outfit...."
+        shared_box.name = "shared-body"
+        t = _make_transport(page=page)
+
+        await t._submit_body_prompt(  # type: ignore[attr-defined]
+            page,
+            "red raincoat",
+            boxes_before=1,
+            shared_body_box=True,
+        )
+
+        assert inserted == [_BODY_TRIPTYCH_PREAMBLE + "red raincoat"]
+        assert shared_box.text == _BODY_TRIPTYCH_PREAMBLE + "red raincoat"
+        assert len(submit_clicks) == 1
 
     @pytest.mark.asyncio
     async def test_raises_when_body_box_never_mounts(self, monkeypatch: Any) -> None:
