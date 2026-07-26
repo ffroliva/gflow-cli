@@ -631,6 +631,7 @@ async def gflow_generate_image(
     tools: list[dict[str, Any]] | None = None,
     profile: str = _DEFAULT_PROFILE,
     project: str | None = None,
+    project_name: str | None = None,
     instructions: list[str] | None = None,
     ui_mode: str | None = None,
 ) -> dict[str, Any]:
@@ -662,6 +663,8 @@ async def gflow_generate_image(
         project: Optional existing Flow project id to generate into (mirrors the
             CLI ``--project`` flag). When omitted, a scratch project is created
             as before.
+        project_name: Optional human-readable project title to use when creating a
+            fresh Flow project.
         instructions: Optional list of custom agent instructions to add or enable
             (only in agentic mode).
         ui_mode: Required Flow UI arm — 'classic' (hard aspect controls),
@@ -726,6 +729,8 @@ async def gflow_generate_image(
         payload["seed"] = seed
     if project is not None:
         payload["project_id"] = project
+    if project_name is not None:
+        payload["project_name"] = project_name
 
     task_type = "t2i"
     if reference_images:
@@ -790,6 +795,7 @@ async def gflow_generate_video(
     tools: list[dict[str, Any]] | None = None,
     profile: str = _DEFAULT_PROFILE,
     project: str | None = None,
+    project_name: str | None = None,
 ) -> dict[str, Any]:
     """Generate a video via Google Flow's Veo.
 
@@ -826,6 +832,8 @@ async def gflow_generate_video(
         project: Optional existing Flow project id to generate into (mirrors the
             CLI ``--project`` flag on ``video t2v``/``i2v``/``r2v``). When
             omitted, a scratch project is created as before.
+        project_name: Optional human-readable project title to use when creating a
+            fresh Flow project.
 
     Returns:
         Dict with 'status', 'files' (list of local file paths), and metadata.
@@ -848,15 +856,22 @@ async def gflow_generate_video(
         log.warning("mcp.tool.rate_limited", tool="gflow_generate_video")
         return {
             "status": "rate_limited",
-            "error": "Too many requests. Please wait before generating again.",
+            "error": {
+                "type": "https://gflow-cli.dev/errors/rate-limited",
+                "title": "Rate Limited",
+                "status": 429,
+                "detail": (
+                    "Video generation rate limit reached (1 request per 30 seconds). "
+                    "Please wait before making another request."
+                ),
+            },
         }
 
     # Resolve and validate the profile BEFORE acquiring the per-profile lock so
     # that the lock key matches the real on-disk profile name, not the sentinel.
-    resolved = _resolve_and_validate_profile(profile)
-    if isinstance(resolved, dict):
-        return resolved  # profile error — bail out early
-    resolved_profile = resolved
+    resolved_profile = _resolve_and_validate_profile(profile)
+    if isinstance(resolved_profile, dict):
+        return resolved_profile  # profile error — bail out early
 
     log.info(
         "mcp.tool.generate_video",
@@ -900,6 +915,8 @@ async def gflow_generate_video(
         payload["tool_specs"] = list(tool_specs)
     if project is not None:
         payload["project_id"] = project
+    if project_name is not None:
+        payload["project_name"] = project_name
 
     # task_type matches the mode ("t2v", "i2v", "r2v")
     result = await _run_generation_task(
@@ -915,7 +932,7 @@ async def gflow_generate_video(
         "aspect": aspect,
         "initial_frame": initial_frame,
         "end_frame": end_frame,
-        "reference_images": reference_images,
+        "reference_images": reference_images or [],
         "model": model,
         "duration": duration,
         "count": count,
@@ -924,6 +941,7 @@ async def gflow_generate_video(
         "profile": resolved_profile,
         "requested_profile": profile,
         "project": project,
+        "project_name": project_name,
     }
     return result
 
@@ -985,6 +1003,7 @@ async def gflow_list_projects(
             "projects": [
                 {
                     "project_id": r.project_id,
+                    "title": r.title,
                     "profile": r.profile,
                     "created_at": r.created_at.isoformat(),
                     "image_count": r.image_count,

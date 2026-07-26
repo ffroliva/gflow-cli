@@ -181,6 +181,8 @@ def _mock_forced_agent_ui(monkeypatch: pytest.MonkeyPatch) -> None:
     async def _aexit(self: Any, *exc: object) -> bool:
         return False
 
+    monkeypatch.setattr("gflow_cli.cli_video._make_provider_dir", lambda p: Path("/tmp/prof"))
+    monkeypatch.setattr("gflow_cli.cli_video._resolve_profile", lambda p: "default")
     monkeypatch.setattr("gflow_cli.api.client.FlowApiClient.__aenter__", _aenter)
     monkeypatch.setattr("gflow_cli.api.client.FlowApiClient.__aexit__", _aexit)
     monkeypatch.setattr("gflow_cli.api.client.FlowApiClient.generate_video", _raise)
