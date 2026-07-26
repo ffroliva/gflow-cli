@@ -9,6 +9,11 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ### Added
 
+- **Dual-Side Project Naming & Management (`gflow project`)** (#381). Added
+  `gflow project` subcommand group (`list`, `show`, `rename`, `create`),
+  `--project-name` / `--project-title` options across `gflow image` and `gflow video`
+  generation commands, prompt slugging for scratch projects, and dual-side title sync
+  updating Google Flow's tRPC server/UI and local SQLite catalog in lockstep.
 - **Namespaced Codex project skills.** The canonical workflows under `skills/`
   now ship as a repo-local, skills-only Codex plugin. Register and install it
   with `codex plugin marketplace add .` followed by

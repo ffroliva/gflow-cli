@@ -1361,6 +1361,14 @@ class FlowApiClient:
         data = await self._post_json(routes.CREATE_PROJECT, body, content_type=_APPLICATION_JSON)
         return ProjectInfo.from_create_response(data)
 
+    async def rename_project(self, project_id: str, new_title: str) -> JsonObject:
+        """Rename an existing Flow project.
+
+        Maps to `POST .../trpc/project.renameProject`.
+        """
+        body = {"json": {"projectId": project_id, "projectTitle": new_title}}
+        return await self._post_json(routes.RENAME_PROJECT, body, content_type=_APPLICATION_JSON)
+
     async def patch_agent_info(
         self,
         project_id: str,

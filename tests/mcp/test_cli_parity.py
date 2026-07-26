@@ -40,6 +40,7 @@ CLI_TO_MCP: dict[str, str] = {
     "tools list": "gflow_list_tools",
     "tools show": "gflow_list_tools",  # list output carries the show detail
     "data list projects": "gflow_list_projects",
+    "project list": "gflow_list_projects",
     "character list": "gflow_list_characters",
     "instructions list": "gflow_instructions_list",
     "instructions add": "gflow_instructions_add",
@@ -83,6 +84,9 @@ _MCP_EXEMPT: dict[str, str] = {
     "video chain": "chain pipeline — not yet ported",
     "movie run": "movie pipeline — not yet ported (skills-audit Task 7 backlog)",
     "movie template": "movie pipeline — not yet ported (skills-audit Task 7 backlog)",
+    "project create": "project management — not yet ported",
+    "project rename": "project management — not yet ported",
+    "project show": "project management — not yet ported",
     "scene create": "scene tooling — not yet ported",
     "scene show": "scene tooling — not yet ported",
     "tools run": "standalone tool run — exercised via the `tools` param on the generate tools",

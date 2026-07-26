@@ -835,6 +835,7 @@ class VideoGenerationMixin:
             out_dir: Path | None = None,
             *,
             project_id: str | None = None,
+            project_name: str | None = None,
             locale: str = "en-US",
         ) -> None: ...
         async def _send_prompt(
