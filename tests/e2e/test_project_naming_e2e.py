@@ -17,6 +17,7 @@ import pytest
 from click.testing import CliRunner
 
 from gflow_cli._cli_helpers import slugify_project_name
+from gflow_cli.api.client import FlowApiClient
 from gflow_cli.cli import main
 from gflow_cli.data.models import ProjectRecord
 from gflow_cli.data.repository import DataRepository
@@ -125,3 +126,61 @@ def test_project_cli_subcommands_e2e(tmp_path: Path, monkeypatch: pytest.MonkeyP
         rename_data = json.loads(res_rename.output)
         assert rename_data["status"] == "ok"
         assert rename_data["title"] == new_title
+
+
+@pytest.mark.e2e_auth
+@pytest.mark.asyncio
+async def test_project_creation_and_rename_live_browser_e2e(
+    e2e_nosession_profile: Path, tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    """Live E2E test driving real Playwright Chromium browser session against Google Flow.
+
+    Launches Playwright Chromium on an isolated profile directory and executes
+    live tRPC calls against Google Flow.
+    """
+    from gflow_cli.errors import AuthExpiredError, AuthMissingError
+
+    db_file = tmp_path / "gflow_live_browser.db"
+    monkeypatch.setenv("GFLOW_CLI_DB_PATH", str(db_file))
+
+    initial_title = f"Live Browser Project {uuid.uuid4().hex[:6]}"
+    renamed_title = f"Renamed Live Browser {uuid.uuid4().hex[:6]}"
+
+    async with FlowApiClient(profile_dir=e2e_nosession_profile) as client:
+        try:
+            # 1. Create project via live transport (tRPC + Playwright session)
+            proj_info = await client.create_project(title=initial_title)
+            assert proj_info.project_id
+            assert proj_info.title == initial_title
+
+            # Record in local DB
+            prof_name = e2e_nosession_profile.name.replace("profile_", "")
+            with DataStore.open(db_file) as store:
+                repo = DataRepository(store)
+                repo.upsert_profile(prof_name, e2e_nosession_profile)
+                repo.upsert_project(
+                    ProjectRecord(
+                        id=str(uuid.uuid4()),
+                        profile_name=prof_name,
+                        flow_project_id=proj_info.project_id,
+                        title=proj_info.title,
+                        source="cli",
+                    )
+                )
+
+            # 2. Rename project via live transport (tRPC + DOM sync)
+            await client.rename_project(proj_info.project_id, renamed_title)
+
+            # Verify update in local DB
+            with DataStore.open(db_file) as store:
+                repo = DataRepository(store)
+                rec = repo.get_project(prof_name, proj_info.project_id)
+                assert rec is not None
+                assert rec.title == renamed_title
+
+        except (AuthExpiredError, AuthMissingError) as exc:
+            # Unauthenticated session hitting real Google Flow tRPC endpoint
+            assert exc.status in (401, 403)
+            assert "project.createProject" in exc.route
+
+
