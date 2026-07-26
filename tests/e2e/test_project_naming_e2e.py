@@ -38,7 +38,7 @@ def test_slugify_project_name_e2e() -> None:
 def test_project_creation_and_rename_dual_side_e2e(
     tmp_path: Path, monkeypatch: pytest.MonkeyPatch
 ) -> None:
-    """Verify project creation and dual-side rename state update across repository and API client."""
+    """Verify project creation and dual-side rename state update across repository and client."""
     db_file = tmp_path / "gflow_e2e.db"
     monkeypatch.setenv("GFLOW_CLI_DB_PATH", str(db_file))
 
@@ -74,9 +74,7 @@ def test_project_creation_and_rename_dual_side_e2e(
         assert updated_rec.title == renamed_title
 
 
-def test_project_cli_subcommands_e2e(
-    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
-) -> None:
+def test_project_cli_subcommands_e2e(tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> None:
     """Verify gflow project list / show / rename CLI surface end-to-end."""
     db_file = tmp_path / "gflow_cli_e2e.db"
     monkeypatch.setenv("GFLOW_CLI_DB_PATH", str(db_file))
