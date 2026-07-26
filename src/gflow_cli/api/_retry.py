@@ -20,7 +20,7 @@ Internal API (test-only):
 from __future__ import annotations
 
 import random
-from typing import TYPE_CHECKING, Any
+from typing import TYPE_CHECKING, Any, cast
 
 from tenacity import (
     AsyncRetrying,
@@ -40,18 +40,41 @@ MAX_ATTEMPTS = 3
 RETRY_AFTER_CAP_SECONDS = 60.0
 
 
+def _get_headers_dict(obj: Any) -> dict[str, str] | None:
+    if obj is None:
+        return None
+    headers_val: Any = getattr(obj, "headers", None)
+    if headers_val is None and isinstance(obj, dict):
+        d_obj: dict[Any, Any] = cast("dict[Any, Any]", obj)
+        headers_val = d_obj.get("headers")
+        if headers_val is None:
+            headers_val = d_obj
+    if headers_val is None:
+        return None
+    if isinstance(headers_val, dict):
+        d_hdr: dict[Any, Any] = cast("dict[Any, Any]", headers_val)
+        return {str(k).lower(): str(v) for k, v in d_hdr.items()}
+    if hasattr(headers_val, "get"):
+        get_fn: Any = headers_val.get
+        val: Any = get_fn("retry-after") or get_fn("Retry-After")
+        if val is not None:
+            return {"retry-after": str(val)}
+    return None
+
+
 def parse_retry_after(response: Any) -> float | None:
     """Extract the ``Retry-After`` header (seconds form only). Caps at 60s.
 
     Returns ``None`` if header absent or malformed. The HTTP-date form of
     ``Retry-After`` is intentionally NOT supported — Flow's upstream emits
     integer seconds in observed captures, and parsing RFC 7231 dates would
-    add a dependency without buying observable value.
+    add a dependency without buying observable value. Accepts objects with a
+    ``.headers`` attribute, dicts with a ``"headers"`` key, or direct header dicts.
     """
-    headers = getattr(response, "headers", None)
-    if headers is None:
+    headers_dict = _get_headers_dict(response)
+    if not headers_dict:
         return None
-    raw = headers.get("retry-after") if hasattr(headers, "get") else None
+    raw = headers_dict.get("retry-after")
     if not raw:
         return None
     try:
