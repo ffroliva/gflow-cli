@@ -1,0 +1,34 @@
+{
+  "name": "gflow",
+  "version": "0.43.0",
+  "description": "Reusable development and operations workflows for gflow-cli",
+  "author": {
+    "name": "Flavio Oliva",
+    "url": "https://github.com/ffroliva"
+  },
+  "homepage": "https://github.com/ffroliva/gflow-cli",
+  "repository": "https://github.com/ffroliva/gflow-cli",
+  "license": "MIT",
+  "keywords": [
+    "gflow-cli",
+    "codex",
+    "google-flow"
+  ],
+  "skills": "./skills/",
+  "interface": {
+    "displayName": "gflow-cli",
+    "shortDescription": "Develop, validate, review, and operate gflow-cli.",
+    "longDescription": "Project workflows for planning, validation, issue handling, reviews, releases, and Google Flow CLI operations.",
+    "developerName": "Flavio Oliva",
+    "category": "Developer Tools",
+    "capabilities": [
+      "Interactive",
+      "Write"
+    ],
+    "websiteURL": "https://github.com/ffroliva/gflow-cli",
+    "defaultPrompt": [
+      "Show the current gflow-cli task with $gflow:status.",
+      "Run the gflow-cli quality gates with $gflow:check."
+    ]
+  }
+}

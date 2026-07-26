@@ -9,6 +9,13 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ### Added
 
+- **Namespaced Codex project skills.** The canonical workflows under `skills/`
+  now ship as a repo-local, skills-only Codex plugin. Register and install it
+  with `codex plugin marketplace add .` followed by
+  `codex plugin add gflow@gflow-cli`, then invoke workflows such as
+  `$gflow:status`, `$gflow:check`, and `$gflow:pr-council-review` in a new
+  Codex CLI or desktop-app session. Claude Code's `/gflow:*` commands and the
+  agent-agnostic skill files remain unchanged.
 - **`gflow data errors` — bounded retention + export for failed-operation
   history** (#345). `gflow data errors export [--older-than AGE] [-o FILE]`
   dumps failed operations as JSONL (unbounded, newest-first) for offline

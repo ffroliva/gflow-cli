@@ -97,11 +97,18 @@ This branch now contains all of `develop` (⊇ `main`) plus your release prep. A
 release prep commits live here; the PR into `main` (step 14) carries the full
 integration history forward.
 
-**6. Bump version** in `pyproject.toml`:
+**6. Bump the shared release version** in `pyproject.toml` and
+`.codex-plugin/plugin.json`:
 
 ```toml
 [project]
 version = "<NEW_VERSION>"
+```
+
+```json
+{
+  "version": "<NEW_VERSION>"
+}
 ```
 
 **7. Bump package version** in `src/gflow_cli/__init__.py`:
@@ -113,7 +120,7 @@ __version__ = "<NEW_VERSION>"
 **8. Update version assertion tests** if present:
 
 ```bash
-rg -n "__version__|<OLD_VERSION>|version assertion" tests src pyproject.toml
+rg -n "__version__|<OLD_VERSION>|version assertion" tests src pyproject.toml .codex-plugin/plugin.json
 ```
 
 **9. Migrate CHANGELOG.**
@@ -141,7 +148,7 @@ will fail the gate.
 **11. Commit the release prep.**
 
 ```bash
-git add pyproject.toml src/gflow_cli/__init__.py uv.lock CHANGELOG.md
+git add pyproject.toml .codex-plugin/plugin.json src/gflow_cli/__init__.py uv.lock CHANGELOG.md
 git add docs/ website/docs/ skills/ .claude/commands/gflow/   # include any doc-review + mirror fixes
 # doc-review version-currency fixes often also touch ROOT docs — stage them too:
 git add README.md PLAN.md KNOWN_ISSUES.md AGENTS.md llms.txt 2>/dev/null || true
@@ -151,6 +158,8 @@ git commit -m "chore(release): v<NEW_VERSION>"
 
 - **`uv.lock` changes** on every version bump (the editable package version is
   pinned in the lockfile) — it is easy to forget and must ship in this commit.
+- **`.codex-plugin/plugin.json` tracks the package version** so marketplace installs
+  receive a new cache path for every release.
 - The release-prep commit must NOT carry a `Co-Authored-By` trailer (see reminders).
 
 **12. Tag the release commit.** Use `-s` for a signed annotated tag so GitHub shows **"Verified"** AND `.github/workflows/release.yml` passes the signed-tag gate (unsigned or lightweight tags are rejected by CI).
