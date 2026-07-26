@@ -9,6 +9,12 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ### Added
 
+- **Self-documenting error remediation & provider message pass-through (#380):** Added default `remediation_hint` strings across domain exception classes (`WireFormatError`, `ContentPolicyError`, `RateLimitError`, `DataStoreError`, `SceneConcatError`, `FrameExtractionError`), extracted and sanitized provider error messages from Google Flow tRPC/REST responses, and enriched MCP tool error envelopes and Rich CLI error displays with actionable recovery guidance at failure time.
+
+## [0.44.0] — 2026-07-26
+
+### Added
+
 - **Dual-Side Project Naming & Management (`gflow project`)** (#381). Added
   `gflow project` subcommand group (`list`, `show`, `rename`, `create`),
   `--project-name` / `--project-title` options across `gflow image` and `gflow video`

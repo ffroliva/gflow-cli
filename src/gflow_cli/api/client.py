@@ -2775,14 +2775,11 @@ def _raise_for_non_retryable(resp: Any, body_text: str, *, route: str) -> None:
     if resp.status == 400:
         safety_reason = _classify_content_safety(body_text)
         if safety_reason is not None:
-            detail = (
-                sanitized_msg
-                if sanitized_msg
-                else (
-                    f"HTTP 400: Flow refused the request on content-safety grounds "
-                    f"(reason={safety_reason})"
-                )
+            base_detail = (
+                f"HTTP 400: Flow refused the request on content-safety grounds "
+                f"(reason={safety_reason})"
             )
+            detail = f"{base_detail}: {sanitized_msg}" if sanitized_msg else base_detail
             raise ContentPolicyError(
                 detail=detail,
                 status=resp.status,

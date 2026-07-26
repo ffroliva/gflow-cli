@@ -269,7 +269,8 @@ class WireFormatError(FlowApiError):
     problem_type = "https://gflow-cli.dev/errors/wire-format"
     title = "Unexpected response shape from Flow"
     _default_remediation = (
-        "Check request payload parameters or retry with a simpler prompt text"
+        "Check request payload parameters or retry with a simpler prompt text. "
+        "File a bug at https://github.com/ffroliva/gflow-cli/issues with the discovery payload above."
     )
 
     def __init__(
@@ -855,7 +856,10 @@ class FrameExtractionError(GFlowError):
 
     problem_type = "https://gflow-cli.dev/errors/frame-extraction"
     title = "Last-frame extraction failed"
-    _default_remediation = "Verify input video file is readable and non-corrupt"
+    _default_remediation = (
+        "Verify input video file is readable and non-corrupt. Ensure "
+        "gflow-cli[chain] dependencies (PyAV) are installed."
+    )
 
 
 class ChainPartialError(GFlowError):

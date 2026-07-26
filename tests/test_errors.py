@@ -666,18 +666,15 @@ def test_specific_remediation_hints() -> None:
 
     assert (
         WireFormatError().remediation_hint
-        == "Check request payload parameters or retry with a simpler prompt text"
+        == "Check request payload parameters or retry with a simpler prompt text. File a bug at https://github.com/ffroliva/gflow-cli/issues with the discovery payload above."
     )
     assert (
         ContentPolicyError().remediation_hint
         == "Reduce prompt text or describe <= 1 person per scene"
     )
-    assert (
-        RateLimitError().remediation_hint
-        == (
-            "Daily or per-minute model quota reached; retry with a different model or "
-            "wait for quota reset"
-        )
+    assert RateLimitError().remediation_hint == (
+        "Daily or per-minute model quota reached; retry with a different model or "
+        "wait for quota reset"
     )
     assert (
         DataStoreError().remediation_hint
@@ -689,6 +686,5 @@ def test_specific_remediation_hints() -> None:
     )
     assert (
         FrameExtractionError().remediation_hint
-        == "Verify input video file is readable and non-corrupt"
+        == "Verify input video file is readable and non-corrupt. Ensure gflow-cli[chain] dependencies (PyAV) are installed."
     )
-
