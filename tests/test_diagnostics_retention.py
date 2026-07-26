@@ -119,10 +119,15 @@ class TestRetentionSafety:
 
 
 class TestPendingRetention:
-    def test_stale_pending_pruned_only_after_lock_and_age(self, tmp_path: Path) -> None:
+    def test_stale_pending_pruned_only_after_lock_and_age(
+        self, tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+    ) -> None:
         """S38: locked marker → active, untouched. Unlocked + young → kept.
         Unlocked + >24h → pruned. Unlocked + valid manifest → marker removed,
         bundle kept (crash-left stale marker)."""
+        import gflow_cli.diagnostics as diag
+
+        monkeypatch.setattr(diag.time, "time", lambda: _NOW.timestamp())
         root = _root(tmp_path)
         active = _staged_bundle(root, "active", now=_NOW)  # lock still held
         young = _staged_bundle(root, "young", now=_NOW.replace(minute=1))
@@ -155,6 +160,7 @@ class TestPendingRetention:
         the working byte total and take every healthy pending bundle with it."""
         import gflow_cli.diagnostics as diag
 
+        monkeypatch.setattr(diag.time, "time", lambda: _NOW.timestamp())
         root = _root(tmp_path)
         big = BundleDir.create_exclusive(root, "big", now=_NOW)
         big.write_artifact("ui.json", b"x" * 5_000)  # dominates the byte total
