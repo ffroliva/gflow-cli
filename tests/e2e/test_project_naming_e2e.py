@@ -182,5 +182,3 @@ async def test_project_creation_and_rename_live_browser_e2e(
             # Unauthenticated session hitting real Google Flow tRPC endpoint
             assert exc.status in (401, 403)
             assert "project.createProject" in exc.route
-
-
