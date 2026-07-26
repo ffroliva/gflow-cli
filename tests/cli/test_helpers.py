@@ -339,3 +339,31 @@ def test_slugify_project_name() -> None:
     assert len(slug) <= 40
     assert not slug.endswith("-")
     assert slug == "a-very-long-prompt-description-that-goes"
+
+
+def test_handle_gflow_error_displays_remediation_hint(capsys: pytest.CaptureFixture[str]) -> None:
+    from gflow_cli._cli_helpers import _handle_gflow_error
+    from gflow_cli.errors import ContentPolicyError
+
+    exc = ContentPolicyError("Prompt violates policy")
+    code = _handle_gflow_error(exc, cli_command="test")
+    captured = capsys.readouterr()
+    assert code == 5
+    assert exc.title in captured.out
+    assert "Prompt violates policy" in captured.out
+    assert "->" in captured.out
+    assert exc.remediation_hint in captured.out
+
+
+def test_handle_gflow_error_without_remediation_hint(capsys: pytest.CaptureFixture[str]) -> None:
+    from gflow_cli._cli_helpers import _handle_gflow_error
+    from gflow_cli.errors import GFlowError
+
+    exc = GFlowError("No remediation", remediation_hint="")
+    code = _handle_gflow_error(exc, cli_command="test")
+    captured = capsys.readouterr()
+    assert code == 1
+    assert "Error" in captured.out
+    assert "No remediation" in captured.out
+    assert "->" not in captured.out
+

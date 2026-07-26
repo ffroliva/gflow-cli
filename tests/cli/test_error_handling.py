@@ -65,11 +65,11 @@ def _patch_profile_resolution(monkeypatch: pytest.MonkeyPatch, tmp_path: Path, m
         (
             RateLimitError(detail="429", status=429, retry_after=42),
             4,
-            "Wait a few minutes",
+            "quota reset",
         ),
         (ContentPolicyError(detail="empty media[]"), 5, "content policy"),
         (NetworkError(detail="503 after retries", status=503), 6, "Check connectivity"),
-        (WireFormatError(detail="unknown shape"), 7, "File a bug"),
+        (WireFormatError(detail="unknown shape"), 7, "Check request payload"),
     ],
 )
 def test_cli_error_to_exit_code_and_remediation(

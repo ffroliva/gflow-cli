@@ -311,3 +311,38 @@ def test_resolve_payload_refs_image_enrich_partial_meta_only() -> None:
     err = _resolve_payload_refs(repo, "default", payload, task_type="i2i")
     assert err is None
     assert payload["ref_meta"] == {_A_UUID: {"display_name": "Named but pruned"}}
+
+
+def test_format_mcp_error_with_detail_and_remediation() -> None:
+    from gflow_cli.errors import ContentPolicyError
+    from gflow_cli.mcp.tools import _format_mcp_error, _gflow_error_dict
+
+    exc = ContentPolicyError("Prompt violates policy")
+    formatted = _format_mcp_error(exc)
+    expected = f"[ContentPolicyError] Prompt violates policy (Remediation: {exc.remediation_hint})"
+    assert formatted == expected
+
+    err_dict = _gflow_error_dict(exc)
+    assert err_dict["message"] == formatted
+    assert err_dict["remediation_hint"] == exc.remediation_hint
+
+
+def test_format_mcp_error_fallback_to_title_when_detail_empty() -> None:
+    from gflow_cli.errors import WireFormatError
+    from gflow_cli.mcp.tools import _format_mcp_error
+
+    exc = WireFormatError("")
+    formatted = _format_mcp_error(exc)
+    expected = f"[WireFormatError] {exc.title} (Remediation: {exc.remediation_hint})"
+    assert formatted == expected
+
+
+def test_format_mcp_error_without_remediation_hint() -> None:
+    from gflow_cli.errors import GFlowError
+    from gflow_cli.mcp.tools import _format_mcp_error
+
+    exc = GFlowError("Something failed", remediation_hint="")
+    formatted = _format_mcp_error(exc)
+    assert formatted == "[GFlowError] Something failed"
+    assert "(Remediation:" not in formatted
+
