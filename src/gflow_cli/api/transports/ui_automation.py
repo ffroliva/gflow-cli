@@ -24,6 +24,7 @@ from urllib.parse import urlparse
 
 import structlog
 
+from gflow_cli.api._retry import parse_retry_after
 from gflow_cli.api.character import CHARACTER_MODELS, CharacterImageRequest
 from gflow_cli.api.dto import BatchSubmissionResult, GeneratedImage
 from gflow_cli.api.image import Aspect, GenerateImageRequest, Model
@@ -43,6 +44,7 @@ from gflow_cli.errors import (
     BatchPartialError,
     ContentPolicyError,
     GFlowError,
+    RateLimitError,
     UiSelectorDriftError,
     WafRejectionError,
     WireFormatError,
@@ -539,8 +541,9 @@ def _images_from_responses(
     """Process captured batchGenerateImages responses.
 
     Returns ``(images, first_error_status, first_error_route)``. Raises
-    :class:`AuthExpiredError` on 401 and :class:`WafRejectionError` on 403,
-    which the caller must surface — these are not first-error candidates.
+    :class:`AuthExpiredError` on 401, :class:`WafRejectionError` on 403, and
+    :class:`RateLimitError` on 429, which the caller must surface — these are not
+    first-error candidates.
     """
     images: list[GeneratedImage] = []
     first_error_status: int | None = None
@@ -570,6 +573,23 @@ def _images_from_responses(
                 ),
                 status=403,
                 route=route_str,
+            )
+        if status == 429:
+            retry_after = parse_retry_after(response)
+            log.warning(
+                "ui_automation.batch_429_body",
+                body_prefix=str(body)[:200],
+                route=route_str,
+                retry_after=retry_after,
+            )
+            raise RateLimitError(
+                detail=(
+                    "batchGenerateImages HTTP 429 — rate limit hit."
+                    + (f" Retry after {retry_after:.0f}s." if retry_after is not None else "")
+                ),
+                status=429,
+                route=route_str,
+                retry_after=retry_after,
             )
         if status != 200:
             first_error_status = first_error_status or status
@@ -2036,11 +2056,23 @@ class UiAutomationTransport(VideoGenerationMixin):
                     url=response.url,
                 )
                 return
+            headers: dict[str, str] = {}
+            raw_hdrs: Any = getattr(response, "headers", None)
+            if raw_hdrs is not None:
+                try:
+                    if callable(raw_hdrs):
+                        raw_hdrs = raw_hdrs()
+                    if isinstance(raw_hdrs, dict):
+                        raw_dict: dict[Any, Any] = cast("dict[Any, Any]", raw_hdrs)
+                        headers = {str(k): str(v) for k, v in raw_dict.items()}
+                except Exception:
+                    pass
             captured.append(
                 {
                     "status": response.status,
                     "url": response.url,
                     "body": body,
+                    "headers": headers,
                     "ts": time.monotonic(),
                 },
             )
