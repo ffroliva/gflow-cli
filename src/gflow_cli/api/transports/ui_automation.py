@@ -1340,9 +1340,10 @@ class UiAutomationTransport(VideoGenerationMixin):
         body mode is active REPLACES the portrait prompt — Flow autosaves the
         corruption via PATCH /v1/flowWorkflows/{id}.
 
-        After typing, :meth:`_verify_body_prompt_isolation` reads BOTH boxes
-        back and aborts BEFORE submit if the triptych text landed in the
-        portrait box (never spend on a corrupted prompt).
+        Before any destructive keyboard input, the helper verifies that the
+        newly mounted body box retained focus.  After typing,
+        :meth:`_verify_body_prompt_isolation` reads BOTH boxes back and aborts
+        BEFORE submit if the triptych text landed in the portrait box.
 
         ONE generation then yields all three angles (front/side/back) as a
         single triptych image, seeded by the auto-attached face reference.
@@ -1361,6 +1362,7 @@ class UiAutomationTransport(VideoGenerationMixin):
         # events — select-all + Delete + insert_text, the same path _send_prompt
         # uses.
         await input_box.click()
+        await self._verify_body_prompt_focus(page, input_box, out_dir)
         await page.keyboard.press("Control+A")
         await page.keyboard.press("Delete")
         await page.keyboard.insert_text(full_prompt)
@@ -1431,6 +1433,41 @@ class UiAutomationTransport(VideoGenerationMixin):
             boxes_now=count,
         )
         return box
+
+    async def _verify_body_prompt_focus(
+        self,
+        page: Page,
+        input_box: Any,
+        out_dir: Path | None = None,
+    ) -> None:
+        """Fail closed unless the body box owns focus before destructive input."""
+        try:
+            focused = bool(
+                await input_box.evaluate(
+                    "element => element === document.activeElement "
+                    "|| element.contains(document.activeElement)"
+                )
+            )
+        except Exception as e:
+            shot = await _capture_debug_screenshot(
+                page, out_dir, "debug_body_prompt_focus_unverified.png"
+            )
+            msg = (
+                "Could not verify body prompt focus before editing; aborting to preserve "
+                "the stored portrait prompt. "
+                f"URL: {page.url}.{screenshot_clause(shot)}"
+            )
+            raise RuntimeError(msg) from e
+        if not focused:
+            shot = await _capture_debug_screenshot(
+                page, out_dir, "debug_body_prompt_wrong_focus.png"
+            )
+            msg = (
+                "Body composer focus moved to the wrong prompt box before editing. "
+                "Aborting before destructive input so the stored portrait prompt is "
+                f"not overwritten. URL: {page.url}.{screenshot_clause(shot)}"
+            )
+            raise RuntimeError(msg)
 
     async def _verify_body_prompt_isolation(
         self,

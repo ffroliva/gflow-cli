@@ -30,10 +30,11 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   same-run `WireFormatError` at phase `character_generation` followed). The
   body step now snapshots the Slate-box count before slot-add, polls until the
   body composer's **own** box mounts (count rises — structural signal, no
-  localized button-text matching), types only into that newly-mounted box, and
-  reads both boxes back before submitting — aborting **before** the credited
-  submit if the body box never mounts or the triptych text landed in the
-  portrait box. Face-only creates are unchanged.
+  localized button-text matching), verifies that box still owns focus before
+  clearing or typing, and reads both boxes back before submitting. It aborts
+  **before any autosaved edit** when focus moved to the portrait box, or before
+  the credited submit if post-type isolation fails. Face-only creates are
+  unchanged.
 
 - **Profile-lock remediation message** now names the real cause and recovery.
   `ProfileLockedError` (exit 11) previously told operators to "wait for it to

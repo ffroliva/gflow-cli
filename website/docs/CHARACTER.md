@@ -44,6 +44,15 @@ seeding the second step with the first:
    is attached as the seed, a **single credited generation** produces all three body angles — front, side, and
    back — that match the face.
 
+   The character editor is a **two-mode surface** ("Portrait" / "Create Body"): each mode has its **own**
+   prompt box. Before typing, gflow waits for the body composer's own box to **mount** (the Slate-box count
+   rising above the pre-slot-add baseline — the mode buttons are localized, so no button-text matching), then
+   verifies that box still owns focus **before clearing or typing**. It also reads both boxes back before
+   submitting. If focus bounced to the portrait composer, the body step aborts before any autosaved prompt edit;
+   if post-type isolation fails, it aborts before the credited submit. This guards the unsettled mode-switch
+   race that corrupted a stored portrait prompt live on 2026-07-25/0.43.0. Re-run `gflow character create` to
+   retry; the saga reuses the entity and the completed face slot (§4).
+
 The result: two generations (face + body-triptych), the body kept on-model by the face seed. Everything else —
 naming the character, setting the voice/personality, and saving — is free metadata (REST), not generation. See
 §4 for the full saga and §6.2 for the wire payload.

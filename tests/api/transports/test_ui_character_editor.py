@@ -782,6 +782,10 @@ class _FakeSlateBox:
         self._page.events.append(("read", self.name))
         return self.text
 
+    async def evaluate(self, _expression: str) -> bool:
+        self._page.events.append(("focus-check", self.name))
+        return self._page.focused_box is self
+
 
 class _FakeSlateBoxList:
     """The locator for ``PROMPT_INPUT_SELECTORS[0]``: N mounted Slate boxes."""
@@ -993,11 +997,10 @@ class TestSubmitBodyPrompt:
         assert len(submit_clicks) == 1
 
     @pytest.mark.asyncio
-    async def test_aborts_before_submit_when_typing_lands_in_portrait(self) -> None:
-        """Readback guard: if Flow bounces focus back to the portrait composer
-        (unsettled mode switch) the typing lands there — the step must abort
-        BEFORE submit so the corrupted portrait prompt is never generated."""
-        page, boxes, _inserted, submit_clicks = _make_body_prompt_page()
+    async def test_aborts_before_edit_when_body_box_does_not_retain_focus(self) -> None:
+        """If Flow bounces focus back to the portrait composer, abort before
+        any destructive input because Flow autosaves prompt edits via PATCH."""
+        page, boxes, inserted, submit_clicks = _make_body_prompt_page()
         portrait, body = boxes
         # Simulate the live race: clicking the body box leaves focus on PORTRAIT.
         body.click = AsyncMock(side_effect=lambda: setattr(page, "focused_box", portrait))
@@ -1008,7 +1011,27 @@ class TestSubmitBodyPrompt:
                 page, "red raincoat", boxes_before=1
             )
 
+        assert portrait.text == _PORTRAIT_PREFILL, "wrong focus must not mutate the portrait"
+        assert body.text == "localized Flow triptych template"
+        assert inserted == [], "must abort before typing into any prompt box"
         assert submit_clicks == [], "must abort BEFORE submit on a wrong-box landing"
+
+    @pytest.mark.asyncio
+    async def test_aborts_before_edit_when_focus_cannot_be_verified(self) -> None:
+        """A detached/unstable body box must fail closed before autosaved edits."""
+        page, boxes, inserted, submit_clicks = _make_body_prompt_page()
+        portrait, body = boxes
+        body.evaluate = AsyncMock(side_effect=RuntimeError("detached during focus check"))
+        t = _make_transport(page=page)
+
+        with pytest.raises(RuntimeError, match="Could not verify body prompt focus"):
+            await t._submit_body_prompt(  # type: ignore[attr-defined]
+                page, "red raincoat", boxes_before=1
+            )
+
+        assert portrait.text == _PORTRAIT_PREFILL
+        assert inserted == []
+        assert submit_clicks == []
 
     @pytest.mark.asyncio
     async def test_prefill_read_only_after_replacement(self) -> None:
