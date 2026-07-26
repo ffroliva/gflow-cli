@@ -87,6 +87,7 @@ from gflow_cli.errors import (
 )
 from gflow_cli.paths import adjust_key_extension, character_output_path, looks_like_video
 from gflow_cli.profile_lease import ProfileLease
+from gflow_cli.redaction import redact_sensitive_text
 from gflow_cli.storage import AnyPath, storage_path, write_asset_async
 
 if TYPE_CHECKING:
@@ -2689,6 +2690,44 @@ def _classify_content_safety(body_text: str) -> str | None:
     return None
 
 
+def _extract_provider_error_message(body_text: str) -> str | None:
+    """Extract human-readable error message from provider JSON response body if present."""
+    if not body_text or not body_text.strip():
+        return None
+    try:
+        raw: object = json.loads(body_text)
+    except Exception:
+        return None
+    if not isinstance(raw, dict):
+        return None
+    data = cast("JsonObject", raw)
+
+    error_obj: object = data.get("error")
+    if isinstance(error_obj, dict):
+        err_dict = cast("JsonObject", error_obj)
+        json_obj: object = err_dict.get("json")
+        if isinstance(json_obj, dict):
+            j_dict = cast("JsonObject", json_obj)
+            msg: object = j_dict.get("message")
+            if isinstance(msg, str) and msg.strip():
+                return msg.strip()
+        msg: object = err_dict.get("message")
+        if isinstance(msg, str) and msg.strip():
+            return msg.strip()
+    elif isinstance(error_obj, str) and error_obj.strip():
+        return error_obj.strip()
+
+    msg: object = data.get("message")
+    if isinstance(msg, str) and msg.strip():
+        return msg.strip()
+
+    detail: object = data.get("detail")
+    if isinstance(detail, str) and detail.strip():
+        return detail.strip()
+
+    return None
+
+
 def _raise_for_non_retryable(resp: Any, body_text: str, *, route: str) -> None:
     """Classify a response that survived the retry loop.
 
@@ -2706,18 +2745,29 @@ def _raise_for_non_retryable(resp: Any, body_text: str, *, route: str) -> None:
     if resp.status < 400:
         return
     instance = _make_instance()
+    provider_msg = _extract_provider_error_message(body_text)
+    sanitized_msg = redact_sensitive_text(provider_msg) if provider_msg else None
+
     if resp.status == 401:
+        detail = sanitized_msg if sanitized_msg else f"HTTP {resp.status}"
         raise AuthExpiredError(
-            detail=f"HTTP {resp.status}",
+            detail=detail,
+            status=resp.status,
+            instance=instance,
+            route=route,
+        )
+    if resp.status == 429:
+        detail = sanitized_msg if sanitized_msg else f"HTTP {resp.status}"
+        raise RateLimitError(
+            detail=detail,
             status=resp.status,
             instance=instance,
             route=route,
         )
     if resp.status == 403:
-        # 403 on a Flow route is the reCAPTCHA/WAF wall, NOT auth expiry
-        # (direct-REST generation is 403-walled — see docs/CHARACTER.md §11).
+        detail = sanitized_msg if sanitized_msg else f"HTTP {resp.status}"
         raise WafRejectionError(
-            detail=f"HTTP {resp.status}",
+            detail=detail,
             status=resp.status,
             instance=instance,
             route=route,
@@ -2725,11 +2775,13 @@ def _raise_for_non_retryable(resp: Any, body_text: str, *, route: str) -> None:
     if resp.status == 400:
         safety_reason = _classify_content_safety(body_text)
         if safety_reason is not None:
+            base_detail = (
+                f"HTTP 400: Flow refused the request on content-safety grounds "
+                f"(reason={safety_reason})"
+            )
+            detail = f"{base_detail}: {sanitized_msg}" if sanitized_msg else base_detail
             raise ContentPolicyError(
-                detail=(
-                    f"HTTP 400: Flow refused the request on content-safety grounds "
-                    f"(reason={safety_reason})"
-                ),
+                detail=detail,
                 status=resp.status,
                 instance=instance,
                 route=route,
@@ -2741,8 +2793,9 @@ def _raise_for_non_retryable(resp: Any, body_text: str, *, route: str) -> None:
                 ),
             )
     if 400 <= resp.status < 500:
+        detail = sanitized_msg if sanitized_msg else f"HTTP {resp.status} on 4xx fallthrough"
         raise WireFormatError(
-            detail=f"HTTP {resp.status} on 4xx fallthrough",
+            detail=detail,
             status=resp.status,
             instance=instance,
             route=route,
