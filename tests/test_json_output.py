@@ -143,6 +143,8 @@ class TestErrorPayload:
         assert payload["error"]["class"] == "ContentPolicyError"
         assert payload["error"]["retryable"] is False
         assert payload["error"]["exit_code"] == 5
+        assert "remediation_hint" in payload["error"]
+        assert payload["error"]["remediation_hint"] == ContentPolicyError("nope").remediation_hint
 
     def test_flow_app_and_agent_ui_errors_retryable(self) -> None:
         """§6.5 retryable-contract correction (S24): both cohort/crash errors are
