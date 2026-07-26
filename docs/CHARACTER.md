@@ -45,9 +45,10 @@ seeding the second step with the first:
    back — that match the face.
 
    The character editor is a **two-mode surface** ("Portrait" / "Create Body"). Current Flow reuses one Slate
-   editor across both modes, so gflow anchors Create Body by its locale-independent `accessibility_new` icon and
-   waits for the generated-face reference chip to mount before using the shared box. Older cohorts that mount a
-   second prompt box remain supported through a Slate-count-rise gate. In both cases gflow verifies the selected
+   editor across both modes, so gflow anchors Create Body by the locale-independent `accessibility_new` icon
+   beside the portrait-image button and requires a new generated-face reference chip to mount before using the
+   shared box. Older cohorts that mount a second prompt box remain supported through a Slate-count-rise gate. In
+   both cases gflow verifies the selected
    body box still owns focus **before clearing or typing**. If the structural mode signal or focus check fails,
    the body step aborts before any autosaved prompt edit; post-type isolation failures abort before the credited
    submit. This guards the race that corrupted a stored portrait prompt live on 2026-07-25/0.43.0. Re-run
@@ -422,7 +423,7 @@ owned by gflow) and the body-mode activation/settle signals.
 | Name field | `input[placeholder]` — localized placeholder; **do NOT rely on the text** (structural: it is the editor's lone placeholdered input) | **VERIFIED** |
 | Personality field | the panel `textarea` (localized placeholder) — **prefer REST PATCH** | **VERIFIED** |
 | Slot 0 image (face) | aria-label `"Imagem do personagem 1"` — **localized**, note only (do not load-bear on the text) | med (localized) |
-| **Body mode (slot 1)** | Current cohort: `button:has(i.google-symbols:text-is('accessibility_new'))`; settle signal: generated-face chip `button:has(img):has(i.google-symbols:text-is('cancel'))`. Legacy cohort fallback: icon-only `[role=button]` carrying exact `add_2`, followed by Slate-box count rise. No localized button text or positional index. | **VERIFIED** live 2026-07-26 |
+| **Body mode (slot 1)** | Current cohort: portrait-image sibling `button:has(img) + button:has(i.google-symbols:text-is('accessibility_new'))`; settle signal: a newly mounted generated-media card with an `img` and exact `cancel` icon. Legacy cohort fallback: icon-only `[role=button]` carrying exact `add_2`, followed by Slate-box count rise. No localized button text or positional index. | **VERIFIED** live 2026-07-26 |
 | Model picker (char editor) | `button[aria-haspopup='menu']:has(i.google-symbols:text-is('arrow_drop_down'))` *(normal editor uses `crop_16_9`)* | **VERIFIED** |
 | Voice picker | `voice_selection` google-symbols ligature | **VERIFIED** (ligature) |
 | Personagens nav (project) | `button:has(i.google-symbols:text-is('accessibility_new'))` (cards are `div[role=button]`; tag disambiguates) | high |

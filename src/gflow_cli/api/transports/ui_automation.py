@@ -1482,8 +1482,8 @@ class UiAutomationTransport(VideoGenerationMixin):
         the Create-Body mode switch was still settling) corrupts the entity's
         stored portrait prompt — Flow autosaves the box via
         PATCH /v1/flowWorkflows/{id} (observed live 2026-07-25, 0.43.0).
-        Abort BEFORE submit in that case.  Readback I/O errors only WARN —
-        the guard must not brick a healthy submit on its own fragility.
+        Abort BEFORE submit in that case. Readback I/O errors also fail closed:
+        unstable prompt state is not safe to submit on an autosaved surface.
         """
         sentinel = _BODY_TRIPTYCH_PREAMBLE[:24]
         try:
@@ -1496,7 +1496,15 @@ class UiAutomationTransport(VideoGenerationMixin):
                 "ui_automation.body_prompt_readback_failed",
                 error=str(e)[:120],
             )
-            return
+            shot = await _capture_debug_screenshot(
+                page, out_dir, "debug_body_prompt_readback_failed.png"
+            )
+            msg = (
+                "Could not verify body prompt isolation after editing. "
+                "Aborting before submit because the prompt boxes became unstable. "
+                f"URL: {page.url}.{screenshot_clause(shot)}"
+            )
+            raise RuntimeError(msg) from e
         if sentinel in portrait_text or sentinel not in target_text:
             shot = await _capture_debug_screenshot(page, out_dir, "debug_body_prompt_wrong_box.png")
             msg = (
@@ -2842,8 +2850,13 @@ class UiAutomationTransport(VideoGenerationMixin):
     # language-independent ``accessibility_new`` icon activates body mode; the
     # generated-face reference chip (image + ``cancel`` icon) proves the mode
     # transition settled before the shared prompt box is safe to edit.
-    _CHARACTER_BODY_MODE_SELECTOR = "button:has(i.google-symbols:text-is('accessibility_new'))"
-    _CHARACTER_BODY_REFERENCE_SELECTOR = "button:has(img):has(i.google-symbols:text-is('cancel'))"
+    _CHARACTER_BODY_MODE_SELECTOR = (
+        "button:has(img) + button:has(i.google-symbols:text-is('accessibility_new'))"
+    )
+    _CHARACTER_BODY_REFERENCE_SELECTOR = (
+        "button[data-card-open]:has(img[src*='media.getMediaUrlRedirect'])"
+        ":has(i.google-symbols:text-is('cancel'))"
+    )
 
     # Character-editor model picker.  The editor shows a model chip ("🍌 Nano
     # Banana 2") with an ``arrow_drop_down`` ligature; clicking it opens a menu
@@ -3195,22 +3208,44 @@ class UiAutomationTransport(VideoGenerationMixin):
         never mounts, the body step ABORTS instead of typing into whichever
         slot is currently active (which would overwrite the portrait prompt).
         """
+        body_mode = page.locator(self._CHARACTER_BODY_MODE_SELECTOR).first
         try:
-            body_mode = page.locator(self._CHARACTER_BODY_MODE_SELECTOR).first
             await body_mode.wait_for(state="visible", timeout=5_000)
+        except Exception as exc:
+            body_mode_error = str(exc)[:120]
+        else:
+            references_before = int(
+                await page.locator(self._CHARACTER_BODY_REFERENCE_SELECTOR).count()
+            )
             await body_mode.click()
-            face_reference = page.locator(self._CHARACTER_BODY_REFERENCE_SELECTOR).first
-            await face_reference.wait_for(state="visible", timeout=5_000)
+            try:
+                face_references = page.locator(self._CHARACTER_BODY_REFERENCE_SELECTOR)
+                await face_references.first.wait_for(state="visible", timeout=5_000)
+                references_now = int(await face_references.count())
+                if references_now <= references_before:
+                    raise RuntimeError(
+                        "generated-face reference did not mount after Create Body click"
+                    )
+            except Exception as exc:
+                shot = await _capture_debug_screenshot(
+                    page, out_dir, "debug_character_body_mode_unsettled.png"
+                )
+                msg = (
+                    "Create Body was selected, but its generated-face reference did not mount. "
+                    "Aborting before prompt editing; the legacy control will not be tried after "
+                    f"a partial mode transition. URL: {page.url}.{screenshot_clause(shot)}"
+                )
+                raise RuntimeError(msg) from exc
             await page.wait_for_timeout(400)
             log.info(
                 "ui_automation.character_body_mode_activated",
                 selector=self._CHARACTER_BODY_MODE_SELECTOR,
                 settle_signal=self._CHARACTER_BODY_REFERENCE_SELECTOR,
                 shared_body_box=True,
+                references_before=references_before,
+                references_now=references_now,
             )
             return True
-        except Exception as exc:
-            body_mode_error = str(exc)[:120]
 
         try:
             loc = page.locator(self._CHARACTER_SLOT_ADD_SELECTOR)
