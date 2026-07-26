@@ -20,21 +20,17 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ### Fixed
 
-- **`gflow character create` body step no longer overwrites the portrait
-  prompt.** The Flow character editor is a two-mode surface ("Portrait" /
-  "Create Body"), each mode with its own prompt box. The body step bound the
-  *first* Slate textbox — the **portrait** box — so when the Create-Body mode
-  switch had not settled, the self-contained triptych prompt was typed over the
-  portrait prompt and Flow autosaved the corruption via
-  `PATCH /v1/flowWorkflows/{id}` (observed live 2026-07-25 on 0.43.0; a
-  same-run `WireFormatError` at phase `character_generation` followed). The
-  body step now snapshots the Slate-box count before slot-add, polls until the
-  body composer's **own** box mounts (count rises — structural signal, no
-  localized button-text matching), verifies that box still owns focus before
-  clearing or typing, and reads both boxes back before submitting. It aborts
-  **before any autosaved edit** when focus moved to the portrait box, or before
-  the credited submit if post-type isolation fails. Face-only creates are
-  unchanged.
+- **`gflow character create` safely activates the current Create-Body
+  composer.** Flow can autosave the body triptych over the stored portrait
+  prompt when the mode switch has not settled (observed live 2026-07-25 on
+  0.43.0). Current Flow reuses one Slate editor and exposes Create Body through
+  the locale-independent `accessibility_new` icon; gflow now clicks that mode,
+  waits for the generated-face reference chip to mount, and verifies the
+  shared editor owns focus **before any clearing or typing**. The older
+  `add_2`/second-box cohort remains supported through its count-rise gate.
+  Post-type isolation still aborts before the credited submit. Live DOM
+  evidence and the one-box failure were captured on 2026-07-26. Face-only
+  creates are unchanged.
 
 - **Profile-lock remediation message** now names the real cause and recovery.
   `ProfileLockedError` (exit 11) previously told operators to "wait for it to
