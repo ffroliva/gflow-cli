@@ -1353,15 +1353,15 @@ class UiAutomationTransport(VideoGenerationMixin):
 
         full_prompt = _BODY_TRIPTYCH_PREAMBLE + body_description
 
-        # Clear Flow's pre-filled (localized) template and replace it wholesale
-        # with our self-contained triptych prompt. Slate.js needs real keyboard
-        # events — select-all + Delete + insert_text, the same path _send_prompt
-        # uses.
+        # Clear Flow's pre-filled (localized) template and replace it wholesale.
+        # Slate.js needs real keyboard events, but every event must stay bound to
+        # this locator: page-global keyboard calls can follow a late focus bounce
+        # into the autosaved portrait composer.
         await input_box.click()
         await self._verify_body_prompt_focus(page, input_box, out_dir)
-        await page.keyboard.press("Control+A")
-        await page.keyboard.press("Delete")
-        await page.keyboard.insert_text(full_prompt)
+        await input_box.press("Control+A")
+        await input_box.press("Delete")
+        await input_box.press_sequentially(full_prompt)
         await page.wait_for_timeout(500)
 
         # Readback guard — abort BEFORE submit if the typing landed in the
