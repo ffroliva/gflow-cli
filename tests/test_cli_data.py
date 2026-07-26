@@ -38,6 +38,28 @@ def test_data_list_projects_default(seeded_db: Path) -> None:
     result = CliRunner().invoke(main, ["data", "list", "projects"])
     assert result.exit_code == 0
     assert "alice" in result.output
+    assert "title" in result.output
+
+
+def test_emit_projects_table(capsys: pytest.CaptureFixture[str]) -> None:
+    from datetime import UTC, datetime
+
+    from gflow_cli.cli_data import _emit_projects_table
+    from gflow_cli.data.queries import ProjectRow
+
+    row = ProjectRow(
+        project_id="flow-proj-001",
+        profile="alice",
+        created_at=datetime.now(UTC),
+        image_count=2,
+        video_count=1,
+        title="My Project",
+    )
+    _emit_projects_table([row])
+    captured = capsys.readouterr().out
+    assert "PROJECT_ID" in captured
+    assert "TITLE" in captured
+    assert "My Project" in captured
 
 
 def test_data_list_projects_json(seeded_db: Path) -> None:
@@ -47,6 +69,8 @@ def test_data_list_projects_json(seeded_db: Path) -> None:
     assert len(rows) == 4
     assert "project_id" in rows[0]
     assert "image_count" in rows[0]
+    assert "title" in rows[0]
+    assert rows[0]["title"] is not None
 
 
 def test_data_list_projects_profile_filter(seeded_db: Path) -> None:

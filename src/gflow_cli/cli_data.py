@@ -40,6 +40,10 @@ console = Console()
 # DataStoreError ``route`` tag for `gflow data media` lookups (dedupe S1192).
 _ROUTE_DATA_MEDIA = "data.media"
 
+__all__ = [
+    "_db_path",
+    "_emit_projects_table",
+]
 
 # ---------------------------------------------------------------------------
 # Helpers for `gflow data list` output
@@ -89,11 +93,12 @@ def _emit_jsonl(rows: list[Any]) -> None:
 
 def _emit_projects_table(rows: list[ProjectRow]) -> None:
     tbl = Table(show_header=True, header_style="bold")
-    for col in ("PROJECT_ID", "PROFILE", "CREATED", "IMG", "VID"):
+    for col in ("PROJECT_ID", "TITLE", "PROFILE", "CREATED", "IMG", "VID"):
         tbl.add_column(col)
     for r in rows:
         tbl.add_row(
             r.project_id,
+            _truncate(r.title),
             r.profile,
             r.created_at.strftime("%Y-%m-%d %H:%M"),
             str(r.image_count),

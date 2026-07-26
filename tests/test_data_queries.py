@@ -117,6 +117,48 @@ def test_list_projects_returns_all_by_default(seeded: Path) -> None:
     rows = list_projects(db_path=seeded, profile=None, limit=20, offset=0)
     assert len(rows) == 4
     assert {r.profile for r in rows} == {"alice", "bob", "carol"}
+    assert {r.title for r in rows} == {
+        "alice project 0",
+        "alice project 1",
+        "bob project 0",
+        "carol project 0",
+    }
+
+
+def test_repository_update_project_title_and_get_project(tmp_path: Path) -> None:
+    db = tmp_path / "repo_project.db"
+    with DataStore.open(db) as store:
+        repo = DataRepository(store)
+        now = datetime.now(UTC).isoformat()
+        repo.upsert_profile("alice", tmp_path / "alice")
+        record = ProjectRecord(
+            id=str(uuid.uuid4()),
+            profile_name="alice",
+            flow_project_id="proj-123",
+            title="Initial Title",
+            source="cli",
+            created_at=now,
+        )
+        repo.upsert_project(record)
+
+        fetched = repo.get_project("alice", "proj-123")
+        assert fetched is not None
+        assert fetched.flow_project_id == "proj-123"
+        assert fetched.title == "Initial Title"
+
+        # Lookup without profile
+        fetched_no_prof = repo.get_project(None, "proj-123")
+        assert fetched_no_prof is not None
+        assert fetched_no_prof.title == "Initial Title"
+
+        # Update title
+        repo.update_project_title("alice", "proj-123", "New Renamed Title")
+        updated = repo.get_project("alice", "proj-123")
+        assert updated is not None
+        assert updated.title == "New Renamed Title"
+
+        # Unknown project returns None
+        assert repo.get_project("alice", "unknown-proj") is None
 
 
 def test_list_projects_filters_by_profile(seeded: Path) -> None:

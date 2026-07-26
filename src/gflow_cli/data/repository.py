@@ -103,6 +103,53 @@ class DataRepository:
             raise DataIntegrityError(detail=str(exc), route="data.upsert_project") from exc
         return cast("ProjectRecord", dataclasses.replace(record, created_at=created_at))  # pyright: ignore[reportUnnecessaryCast]
 
+    def update_project_title(self, profile_name: str, flow_project_id: str, title: str) -> None:
+        with self._store.transaction(immediate=True):
+            self._store.conn.execute(
+                """
+                UPDATE projects
+                SET title = ?
+                WHERE profile_name = ? AND flow_project_id = ?
+                """,
+                (title, profile_name, flow_project_id),
+            )
+
+    def get_project(
+        self,
+        profile_name: str | None,
+        flow_project_id: str,
+    ) -> ProjectRecord | None:
+        if profile_name is not None:
+            row = self._store.conn.execute(
+                """
+                SELECT id, profile_name, flow_project_id, title, source, created_at
+                FROM projects
+                WHERE profile_name = ? AND flow_project_id = ?
+                """,
+                (profile_name, flow_project_id),
+            ).fetchone()
+        else:
+            row = self._store.conn.execute(
+                """
+                SELECT id, profile_name, flow_project_id, title, source, created_at
+                FROM projects
+                WHERE flow_project_id = ?
+                ORDER BY created_at DESC
+                LIMIT 1
+                """,
+                (flow_project_id,),
+            ).fetchone()
+        if row is None:
+            return None
+        return ProjectRecord(
+            id=str(row["id"]),
+            profile_name=str(row["profile_name"]),
+            flow_project_id=str(row["flow_project_id"]),
+            title=str(row["title"]) if row["title"] is not None else None,
+            source=str(row["source"]),
+            created_at=str(row["created_at"]) if row["created_at"] is not None else None,
+        )
+
     # ------------------------------------------------------------------
     # Assets
     # ------------------------------------------------------------------
