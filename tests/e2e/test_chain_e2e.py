@@ -8,8 +8,10 @@ Hits the **real Google Flow API** and therefore:
   - Requires a logged-in Chrome profile (Pro/Ultra account) AND the ``chain``
     optional extra (PyAV) for the last-frame extractor:
     ``pip install 'gflow-cli[chain]'``.
-  - **Burns N Veo credits — one per link.** This test uses a 2-link manifest, so
-    it spends ~2 credits per run. Do NOT run in CI without gating.
+  - **Submits one pending Veo video operation per link, which may consume
+    credits.** This test uses a 2-link manifest (2 operations per run); current
+    credit use varies by model, duration, account tier, and Flow policy — check
+    Google Flow. Do NOT run in CI without gating.
 
 Criterion covered:
   CHAIN-E2E-1 — ``run_chain`` over a 2-link manifest (link 0 = T2V, link 1 = I2V
