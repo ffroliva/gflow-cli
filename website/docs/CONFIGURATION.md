@@ -343,9 +343,9 @@ each link in turn, so total wallclock is the sum of all link waits).
 |---|---|---|
 | `--model` | `veo-lite` | `veo-lite` / `veo-fast` / `veo-quality` / `veo-lite-lp`. `omni-flash` is rejected — it can't seed i2v links (issue #125). |
 | `--max-links N` | unset | Cap link count; exit 11 (`ConfigurationError`) if the manifest has more. A spend guardrail. |
-| `-y` / `--yes` | off | Skip the per-credit cost confirmation prompt. |
-| `--dry-run` | off | Print the plan + credit estimate and spend nothing. |
-| `--resume-from CHAIN_ID` | unset | Resume a prior chain by its id; already-paid links are skipped (not re-billed). |
+| `-y` / `--yes` | off | Skip the pending video operation confirmation prompt. |
+| `--dry-run` | off | Print the pending video operation plan and submit nothing. |
+| `--resume-from CHAIN_ID` | unset | Resume a prior chain by its id; already-completed links are skipped (not regenerated). |
 | `--jitter F` | `0.0` | Random `0..F` second pause **between** links (anti-bot cadence; never before link 0). |
 | `--seed-offset MS` | `0` | Extract the seed frame this many ms before EOF (fade-to-black guard). |
 | `--aspect` | `9:16` | `9:16` / `16:9`. Applied uniformly to every link (continuity requirement). |

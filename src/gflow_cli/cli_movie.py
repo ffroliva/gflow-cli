@@ -13,7 +13,7 @@ where **one scene = one clip = one generation**. The runner:
 
 By default the run is **generate-only**. Pass ``--stitch`` for an optional
 ffmpeg hard-concat *preview* (no transitions, not a deliverable). A dry-run
-(``--dry-run``) prints the plan and credit estimate without spending.
+(``--dry-run``) prints the pending video operation plan without making API calls.
 """
 
 from __future__ import annotations
@@ -178,7 +178,7 @@ def template(output: Path, force: bool) -> None:
     "--dry-run",
     is_flag=True,
     default=False,
-    help="Print plan and credit estimate; make no API calls.",
+    help="Print the pending video operation plan; make no API calls.",
 )
 @click.option(
     "--continue-on-error/--fail-fast",
@@ -287,7 +287,7 @@ def _style_tag(s: Scene, style: StyleSpec) -> str:
     return ("  " + " ".join(bits)) if bits else ""
 
 
-def _format_scene_line(s: Scene, style: StyleSpec, *, done: bool, stale: bool, cost: int) -> str:
+def _format_scene_line(s: Scene, style: StyleSpec, *, done: bool, stale: bool) -> str:
     """Return the single-line plan summary for one scene."""
     mode = "r2v" if s.characters else "t2v"
     refs = f"  refs=\\[{', '.join(s.characters)}]" if s.characters else ""
@@ -297,9 +297,9 @@ def _format_scene_line(s: Scene, style: StyleSpec, *, done: bool, stale: bool, c
     if done:
         status = "[dim]skip (done)[/dim]"
     elif stale:
-        status = f"re-run (style changed)  {cost} credit(s)"
+        status = "pending (re-run: style changed)"
     else:
-        status = f"{cost} credit(s)"
+        status = "pending"
     style_tag = _style_tag(s, style)
     return f"    \\[{mode}] {s.id!r}{framing_tag}{model_tag}{dur_tag}{refs}{style_tag}  {status}"
 
@@ -307,7 +307,7 @@ def _format_scene_line(s: Scene, style: StyleSpec, *, done: bool, stale: bool, c
 def _print_plan(manifest: MovieManifest, state: MovieState) -> None:
     console.print("\n[bold]Plan:[/bold]")
 
-    # Characters (text identity in P1 — no credits)
+    # Characters (text identity only in P1)
     if manifest.characters:
         console.print("\n  Characters:")
         for name, c in manifest.characters.items():
@@ -317,7 +317,7 @@ def _print_plan(manifest: MovieManifest, state: MovieState) -> None:
 
     # Scenes
     console.print("\n  Scenes:")
-    scene_credits = 0
+    pending_operations = 0
     for s in manifest.scenes:
         done_state = state.scenes.get(s.id)
         done = False
@@ -325,11 +325,16 @@ def _print_plan(manifest: MovieManifest, state: MovieState) -> None:
         if done_state is not None and done_state.status == "completed":
             stale = done_state.is_stale_for(compose_prompt(manifest.style, s, manifest.characters))
             done = not stale
-        cost = 0 if done else 1
-        scene_credits += cost
-        console.print(_format_scene_line(s, manifest.style, done=done, stale=stale, cost=cost))
+        if not done:
+            pending_operations += 1
+        console.print(_format_scene_line(s, manifest.style, done=done, stale=stale))
 
-    console.print(f"\n  Estimated credits: ~{scene_credits}")
+    operation_noun = "operation" if pending_operations == 1 else "operations"
+    console.print(f"\n  {pending_operations} pending video {operation_noun}")
+    console.print(
+        "  Video operations may consume credits. Current cost varies by model, duration, "
+        "account tier, and Flow policy; check Google Flow before submitting."
+    )
 
 
 # ---------------------------------------------------------------------------

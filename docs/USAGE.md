@@ -633,10 +633,13 @@ Link 0 is a text-to-video (T2V) generation; every later link is an
 image-to-video (I2V) generation **seeded by the extracted last frame of the
 previous clip**, giving visual continuity with no server-side stitching.
 
-> ⚠️ **Costs N credits — one per link.** A chain is N sequential paid Veo
-> generations. Run `--dry-run` first to print the plan and the credit estimate
-> without spending anything. The cost-confirmation prompt is shown unless you
-> pass `-y` / `--yes`.
+> ⚠️ **Each link is a pending video generation operation.** A chain submits N
+> sequential Veo generations that may consume credits; current cost varies by
+> model, duration, account tier, and Flow policy — check Google Flow before
+> submitting. An accepted operation may consume credits even if later polling
+> or download fails. Run `--dry-run` first to print the plan without
+> submitting anything. The confirmation prompt is shown unless you pass
+> `-y` / `--yes`.
 
 > **Requires the `chain` extra.** The last-frame extractor decodes the previous
 > clip with [PyAV](https://pyav.org/) (no system ffmpeg needed). Install it
@@ -708,13 +711,13 @@ concatenate them server-side.** Chain does not auto-concat: see the
 **Examples:**
 
 ```bash
-# Preview the plan + credit cost — spends nothing
+# Preview the pending video operation plan — submits nothing
 gflow video chain story.jsonl --dry-run
 
-# Generate the chain (one credit per link), no confirmation prompt
+# Generate the chain (one pending video operation per link), no confirmation prompt
 gflow video chain story.jsonl --model veo-fast --aspect 16:9 --yes
 
-# Resume a chain that died partway — already-paid links are skipped
+# Resume a chain that died partway — already-completed links are skipped
 gflow video chain story.jsonl --resume-from 1f2e3d4c-...
 
 # Seed 150 ms before EOF to dodge a fade-to-black final frame

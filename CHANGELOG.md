@@ -7,6 +7,16 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+### Fixed
+
+- **Tier-aware credit confirmations:** `gflow video chain` and `gflow movie run`
+  no longer present pending work as an exact one-credit-per-link/scene charge.
+  Plans, confirmation prompts, `--dry-run` output, Click help, and current docs
+  now report the count of *pending video operations* and direct operators to
+  Google Flow for current model/duration/tier pricing, which varies by account
+  tier and Flow policy. Execution, resume/stale accounting, `--yes`, JSON
+  output, flags, and exit codes are unchanged.
+
 ### Added
 
 - **Top Banner & Modal Dismissal (#369):** Expanded `_detect_overlay` and
