@@ -46,10 +46,26 @@ raises; both call sites previously caught-and-swallowed a `UiSelectorDriftError`
 ceremony. Matches the `_select_character_model` precedent: formatting is a nicety on a prompt that
 already submits fine.
 
-**⚠ OPEN — ligature unverified.** `personal_recommendations` has never been confirmed against live
-DOM. `scripts/dev/spike_character_prompt_format.py` dumps every `i.google-symbols` ligature in the
-editor; run it before trusting the primary selector. Until then the EN fallback is what will
-actually fire on an EN profile, and nothing fires on a localised one.
+**Live DOM verification — done 2026-07-27** via `scripts/dev/spike_character_prompt_format.py`:
+
+```html
+<button type="button" disabled="">
+  <i class="… google-symbols …">personal_recommendations</i><span>Format</span>
+</button>
+```
+
+- [x] Ligature **confirmed** as `personal_recommendations` — 1 match, unique among the editor's 14
+  google-symbols icons, `visible=True`.
+- [x] **No aria-label exists.** `button[aria-label*='Format']` matched `count=0`; the label is a
+  `<span>` child. That cascade entry was dead code — replaced with the structural
+  `button:has(span:text-is('Format'))`, still last-resort since Flow localises the span.
+- [x] **Bug found and fixed: the button ships `disabled` on an empty prompt.** A disabled button is
+  still *visible*, so the visible-only check would have handed it to `click()`, which auto-waits for
+  actionability and stalls the full timeout in front of the submit. Driver now checks `is_enabled()`
+  and passes an explicit 5s click timeout instead of inheriting Playwright's 30s default.
+
+The spike mints a free scratch entity when `--entity` is omitted: a character that already has
+images renders a saved view with no prompt composer, so the button is absent there.
 
 ---
 
@@ -88,9 +104,11 @@ Removed a dead `log.info("character_prompt_polished")` that fired before any gen
 
 **Steps:**
 - [x] `CHANGELOG.md` under `[Unreleased]`.
-- [x] `ruff` + `pyright` clean on touched files; `2770 passed` unit suite.
-- [ ] Live verification: run the spike, confirm the ligature, then one real
-  `gflow character create --format-prompt` end-to-end ([[done-means-e2e-verified]]).
+- [x] `ruff` + `pyright` clean on touched files; unit suite green.
+- [x] Live DOM verification via the spike (see Task 1).
+- [ ] One real `gflow character create --format-prompt` end-to-end — **costs credits**, so it is the
+  operator's call ([[done-means-e2e-verified]]). Everything up to the click is verified; what is
+  still unproven is that the click actually rewrites the prompt rather than merely landing.
 
 Stub signatures in `test_client_generate_character.py` and `test_character_gen_no_direct_post.py`
 were updated to mirror the new kwarg ([[bdd-stubs-mirror-runtime-signatures]]).
@@ -103,4 +121,5 @@ were updated to mirror the new kwarg ([[bdd-stubs-mirror-runtime-signatures]]).
 - [x] Locale-stable ligature is the primary anchor; EN text last-resort only
 - [x] `ruff` / `pyright` / `pytest` green
 - [x] `CHANGELOG.md` updated
-- [ ] Ligature confirmed against live DOM + one E2E run
+- [x] Ligature confirmed against live DOM
+- [ ] One paid E2E run confirming the click actually reshapes the prompt
