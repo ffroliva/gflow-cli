@@ -210,6 +210,7 @@ def _assert_exit_code(cli_result_holder: dict[str, Any], code: int) -> None:
     assert res is not None
     if res.exit_code != code and res.exception:
         import traceback
+
         print("EXC TRACEBACK:")
         traceback.print_exception(res.exception)
     assert res.exit_code == code

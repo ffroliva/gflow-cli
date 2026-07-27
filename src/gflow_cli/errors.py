@@ -270,7 +270,8 @@ class WireFormatError(FlowApiError):
     title = "Unexpected response shape from Flow"
     _default_remediation = (
         "Check request payload parameters or retry with a simpler prompt text. "
-        "File a bug at https://github.com/ffroliva/gflow-cli/issues with the discovery payload above."
+        "File a bug at https://github.com/ffroliva/gflow-cli/issues with the "
+        "discovery payload above."
     )
 
     def __init__(
@@ -305,9 +306,7 @@ class SceneConcatError(FlowApiError):
 
     problem_type = "https://gflow-cli.dev/errors/scene-concat"
     title = "Scene concatenation failed"
-    _default_remediation = (
-        "Ensure video clip dimensions and codecs match before concatenation"
-    )
+    _default_remediation = "Ensure video clip dimensions and codecs match before concatenation"
 
 
 class TransportTimeoutError(GFlowError):
