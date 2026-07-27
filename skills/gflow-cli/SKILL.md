@@ -179,7 +179,8 @@ gflow scene create --project "$PROJECT_ID" "$CLIP_A" "$CLIP_B" -o extended.mp4
 
 ```bash
 # manifest.jsonl: one JSON object per line. Link 0 = t2v; later links = i2v seeded by the
-# previous clip's last frame. One credit per link. veo models only.
+# previous clip's last frame. Each link is a pending video operation; credit
+# use varies by model/duration/tier — check Flow. veo models only.
 gflow video chain ./story.jsonl --out-dir ./out/ --dry-run   # preview the plan first
 gflow video chain ./story.jsonl --out-dir ./out/             # then run for real
 ```
