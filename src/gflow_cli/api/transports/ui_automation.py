@@ -419,7 +419,15 @@ CHANGELOG_IFRAME_SELECTORS = (
     "iframe[src*='/changelogs/']",
 )
 
-# Close-button selectors tried after a changelog iframe is detected.
+# Top banner / alert / announcement dialog selectors (#369).
+TOP_BANNER_SELECTORS: tuple[str, ...] = (
+    "[role='banner']",
+    "[role='alert']",
+    "[role='dialog']",
+    "div:has-text('What\\'s new')",
+)
+
+# Close-button selectors tried after a changelog iframe or banner overlay is detected.
 # Ordered from most-specific to most-generic so a precise match wins first.
 # All are tried before the Escape fallback.
 OVERLAY_CLOSE_BUTTON_SELECTORS = (
@@ -427,9 +435,14 @@ OVERLAY_CLOSE_BUTTON_SELECTORS = (
     "[aria-label='close']",
     "[aria-label='Dismiss']",
     "[aria-label='dismiss']",
+    "[aria-label*='Dismiss' i]",
     "[aria-label='Cancel']",
+    "button:has(i.google-symbols:text('clear'))",
+    "button:has(i:text('clear'))",
     "button:has(i.google-symbols:text('close'))",
     "button:has(i:text('close'))",
+    "[aria-label*='Got it' i]",
+    "button:has-text('Got it')",
     "[role='dialog'] button:has(i:text('close'))",
     "[role='dialog'] button[aria-label*='close' i]",
     "button[data-dismiss]",
@@ -985,8 +998,8 @@ class UiAutomationTransport(VideoGenerationMixin):
 
     @staticmethod
     async def _detect_overlay(page: Page) -> bool:
-        """Return True if any changelog iframe or welcome screen is currently visible."""
-        for sel in CHANGELOG_IFRAME_SELECTORS + WELCOME_SCREEN_SELECTORS:
+        """Return True if any changelog iframe, welcome screen, or top banner is visible."""
+        for sel in CHANGELOG_IFRAME_SELECTORS + WELCOME_SCREEN_SELECTORS + TOP_BANNER_SELECTORS:
             try:
                 if await page.locator(sel).first.is_visible(timeout=1500):
                     log.info("ui_automation.overlay_detected", selector=sel)

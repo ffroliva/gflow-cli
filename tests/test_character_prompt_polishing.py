@@ -37,6 +37,7 @@ async def test_format_character_prompt_clicks_first_visible_selector() -> None:
 
     mock_locator = MagicMock()
     mock_locator.is_visible = AsyncMock(return_value=True)
+    mock_locator.is_enabled = AsyncMock(return_value=True)
     mock_locator.click = AsyncMock()
 
     mock_page.locator.return_value.first = mock_locator
