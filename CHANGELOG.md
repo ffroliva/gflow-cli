@@ -9,6 +9,11 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ### Added
 
+- **Top Banner & Modal Dismissal (#369):** Expanded `_detect_overlay` and
+  `_dismiss_blocking_overlays` in `ui_automation.py` to detect top banners,
+  alert bars, and announcement dialogs (`[role='banner']`, `[role='alert']`,
+  `[role='dialog']`, `div:has-text('What\'s new')`), force-clicking locale-stable
+  close/clear/Got-it buttons and falling back to Escape before automation tasks.
 - **`gflow character create --format-prompt` (#383):** Opt-in flag that clicks
   Flow's in-editor **Format** button before submitting, letting Flow rewrite the
   prompt into its character prompt-engineering shape. Applies to both the face and
