@@ -666,7 +666,9 @@ def test_specific_remediation_hints() -> None:
 
     assert (
         WireFormatError().remediation_hint
-        == "Check request payload parameters or retry with a simpler prompt text. File a bug at https://github.com/ffroliva/gflow-cli/issues with the discovery payload above."
+        == "Check request payload parameters or retry with a simpler prompt text. "
+        "File a bug at https://github.com/ffroliva/gflow-cli/issues with the "
+        "discovery payload above."
     )
     assert (
         ContentPolicyError().remediation_hint
@@ -686,5 +688,6 @@ def test_specific_remediation_hints() -> None:
     )
     assert (
         FrameExtractionError().remediation_hint
-        == "Verify input video file is readable and non-corrupt. Ensure gflow-cli[chain] dependencies (PyAV) are installed."
+        == "Verify input video file is readable and non-corrupt. Ensure gflow-cli[chain] "
+        "dependencies (PyAV) are installed."
     )

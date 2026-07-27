@@ -48,8 +48,7 @@ def test_redact_sensitive_text() -> None:
     """Verify secrets and signed URLs are redacted from free-text strings."""
     assert redact_sensitive_text("Bearer ya29.a0AfH6SMA") == "<redacted:secret>"
     assert (
-        redact_sensitive_text("Error with SAPISIDHASH abc123def")
-        == "Error with <redacted:secret>"
+        redact_sensitive_text("Error with SAPISIDHASH abc123def") == "Error with <redacted:secret>"
     )
     assert (
         redact_sensitive_text("File at https://storage.googleapis.com/f.png?signature=123")

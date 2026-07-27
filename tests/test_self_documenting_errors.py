@@ -7,7 +7,7 @@ and CLI JSON output builders surface structured remediation hints and provider e
 from __future__ import annotations
 
 from typing import Any
-import httpx
+
 import pytest
 
 from gflow_cli._cli_helpers import _handle_gflow_error
@@ -18,7 +18,6 @@ from gflow_cli.errors import (
     ContentPolicyError,
     DataStoreError,
     FrameExtractionError,
-    GFlowError,
     RateLimitError,
     SceneConcatError,
     WireFormatError,
@@ -60,7 +59,9 @@ def test_all_domain_errors_have_non_empty_remediation_hints() -> None:
 
 def test_client_extracts_provider_json_error_message() -> None:
     """Verify that client parsing extracts error.json.message and populates detail."""
-    json_body = '{"error": {"json": {"message": "You have reached the daily limit for Nano Banana Pro."}}}'
+    json_body = (
+        '{"error": {"json": {"message": "You have reached the daily limit for Nano Banana Pro."}}}'
+    )
     resp = MockResponse(429, json_body)
 
     with pytest.raises(RateLimitError) as exc_info:
