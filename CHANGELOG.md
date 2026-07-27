@@ -14,8 +14,11 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   prompt into its character prompt-engineering shape. Applies to both the face and
   body slots. Best-effort by design — if the button is not found the prompt is
   submitted as typed rather than failing the generation. The selector cascade is
-  anchored on the locale-stable Material Symbols ligature, not the "Format" label,
-  which Flow localises to the Chrome profile language.
+  anchored on the locale-stable `personal_recommendations` Material Symbols
+  ligature (confirmed against live DOM 2026-07-27), not the "Format" label, which
+  Flow localises to the Chrome profile language. Flow ships the button `disabled`
+  on an empty prompt, so the driver checks enabled-ness — a disabled button is
+  still *visible*, and clicking one would stall on Playwright's actionability wait.
 - **Self-documenting error remediation & provider message pass-through (#380):** Added default `remediation_hint` strings across domain exception classes (`WireFormatError`, `ContentPolicyError`, `RateLimitError`, `DataStoreError`, `SceneConcatError`, `FrameExtractionError`), extracted and sanitized provider error messages from Google Flow tRPC/REST responses, and enriched MCP tool error envelopes and Rich CLI error displays with actionable recovery guidance at failure time.
 
 ## [0.44.0] — 2026-07-26
