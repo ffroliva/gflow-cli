@@ -212,6 +212,34 @@ SUBMIT_BUTTON_SELECTORS = (
     "button:has-text('arrow_forward')",
 )
 
+# Prompt-format button in the character editor ("Format" in EN) — rewrites the
+# typed prompt into Flow's character prompt-engineering shape.
+#
+# Live DOM, verified 2026-07-27 via ``scripts/dev/spike_character_prompt_format.py``
+# against a fresh entity's editor:
+#
+#   <button type="button" disabled="">
+#     <i class="… google-symbols …">personal_recommendations</i><span>Format</span>
+#   </button>
+#
+# Three things that dump settled:
+#  1. The ligature IS ``personal_recommendations`` (1 match, unique in the editor).
+#  2. There is NO aria-label — the label is a ``<span>`` child, so an
+#     ``[aria-label*=Format]`` selector matches nothing at all.  The EN fallback has
+#     to be structural (``span:text-is('Format')``), and it is a fallback only:
+#     Flow localises that span to the Chrome *profile* language, which is the
+#     incident-#56 failure mode ([[flow-locale-leak-icon-ligatures]]).
+#  3. The button ships ``disabled`` while the prompt box is empty — see
+#     :meth:`UiAutomationTransport.format_character_prompt` for why that matters.
+#
+# ``:text()`` not ``:has-text()`` (invalid inside ``:has()``); ``text-is`` exact
+# match so a longer ligature cannot partial-match.
+PROMPT_FORMAT_SELECTORS: tuple[str, ...] = (
+    "button:has(i.google-symbols:text-is('personal_recommendations'))",
+    "button:has(i:text-is('personal_recommendations'))",
+    "button:has(span:text-is('Format'))",
+)
+
 # Agent-mode activation. Clicking the in-composer "Agent" toggle
 # (:data:`COMPOSER_AGENT_TOGGLE_SELECTOR`) flips the classic composer into the
 # agentic chat layout — the ``crop_*`` media trigger disappears and the ``tune``
@@ -1294,11 +1322,47 @@ class UiAutomationTransport(VideoGenerationMixin):
         log.info("ui_automation.prompt_submitted", via="enter_key_fallback")
         await page.keyboard.press("Enter")
 
+    async def format_character_prompt(self, page: Page) -> bool:
+        """Click Flow's prompt-format button, trying selectors in priority order.
+
+        Best-effort, like :meth:`_select_character_model`: formatting is a nicety
+        on top of a prompt that already submits fine, so a missing button logs a
+        warning and returns ``False`` rather than failing the generation.
+
+        The enabled check is NOT redundant with the visible check.  Flow ships this
+        button ``disabled`` while the prompt box is empty (verified 2026-07-27), and
+        a disabled button is still *visible* — so visibility alone would hand a
+        disabled element to ``click()``, which auto-waits for actionability and
+        stalls for the full timeout before failing.  Callers invoke this only after
+        inserting prompt text, so a disabled button here means the editor has not
+        settled: skip it rather than block the submit behind a doomed wait.
+        """
+        for selector in PROMPT_FORMAT_SELECTORS:
+            try:
+                locator = page.locator(selector).first
+                if not await locator.is_visible(timeout=1000):
+                    continue
+                if not await locator.is_enabled():
+                    log.warning("ui_automation.format_button_disabled", selector=selector)
+                    return False
+                # Explicit short timeout: never inherit Playwright's 30s default on
+                # a best-effort nicety sitting in front of the submit.
+                await locator.click(timeout=5000)
+                await page.wait_for_timeout(500)
+                log.info("ui_automation.prompt_formatted", selector=selector)
+                return True
+            except Exception as e:
+                log.debug("ui_automation.format_selector_failed", selector=selector, error=str(e))
+
+        log.warning("ui_automation.format_button_not_found", selectors=PROMPT_FORMAT_SELECTORS)
+        return False
+
     async def _send_prompt(
         self,
         page: Page,
         prompt_text: str,
         out_dir: Path | None = None,
+        format_prompt: bool = False,
     ) -> None:
         """Type ``prompt_text`` into Flow's editor and submit.
 
@@ -1330,6 +1394,9 @@ class UiAutomationTransport(VideoGenerationMixin):
         await page.keyboard.insert_text(prompt_text)
         await page.wait_for_timeout(500)
 
+        if format_prompt:
+            await self.format_character_prompt(page)
+
         await self._click_submit(page)
 
     async def _submit_body_prompt(
@@ -1340,6 +1407,7 @@ class UiAutomationTransport(VideoGenerationMixin):
         boxes_before: int,
         shared_body_box: bool = False,
         out_dir: Path | None = None,
+        format_prompt: bool = False,
     ) -> None:
         """Submit a self-contained triptych body prompt into the body slot's OWN box.
 
@@ -1394,6 +1462,9 @@ class UiAutomationTransport(VideoGenerationMixin):
             template="self_contained",
             prompt_len=len(full_prompt),
         )
+        if format_prompt:
+            await self.format_character_prompt(page)
+
         await self._click_submit(page)
 
     async def _count_character_prompt_boxes(self, page: Page) -> int:
@@ -3080,6 +3151,7 @@ class UiAutomationTransport(VideoGenerationMixin):
         request: CharacterImageRequest,
         image_reference_index: int,
         locale: str,
+        format_prompt: bool = False,
     ) -> tuple[list[GeneratedImage], list[dict[str, Any]]]:
         """Navigate to the character editor and generate images via passive capture.
 
@@ -3110,6 +3182,7 @@ class UiAutomationTransport(VideoGenerationMixin):
                 request=request,
                 image_reference_index=image_reference_index,
                 locale=locale,
+                format_prompt=format_prompt,
             )
 
     async def _generate_character_images_locked(
@@ -3120,6 +3193,7 @@ class UiAutomationTransport(VideoGenerationMixin):
         request: CharacterImageRequest,
         image_reference_index: int,
         locale: str,
+        format_prompt: bool = False,
     ) -> tuple[list[GeneratedImage], list[dict[str, Any]]]:
         """Serialized body of generate_character_images — called under _generate_lock."""
         page: Any = self._page  # type: ignore[assignment]  # guard in caller
@@ -3169,9 +3243,10 @@ class UiAutomationTransport(VideoGenerationMixin):
                     boxes_before=boxes_before,
                     shared_body_box=shared_body_box,
                     out_dir=out_dir,
+                    format_prompt=format_prompt,
                 )
             else:
-                await self._send_prompt(page, request.prompt, out_dir)
+                await self._send_prompt(page, request.prompt, out_dir, format_prompt=format_prompt)
             responses = await self._await_captured(
                 captured,
                 expected_count=1,

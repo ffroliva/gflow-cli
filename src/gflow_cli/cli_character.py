@@ -94,6 +94,16 @@ def character() -> None:
     show_default=True,
     help="Character model: nano2 (Nano Banana 2, default) or nanopro (Nano Banana Pro).",
 )
+@click.option(
+    "--format-prompt",
+    is_flag=True,
+    default=False,
+    help=(
+        "Click Flow's in-editor Format button before submitting, letting Flow "
+        "rewrite the prompt into its character prompt-engineering shape. "
+        "Best-effort: if the button is not found the prompt is submitted as typed."
+    ),
+)
 @click.option("--profile", default=None, help="Profile name (overrides default).")
 @click.option("--locale", default="en-US", show_default=True, help="BCP-47 locale.")
 @click.option("--json", "as_json", is_flag=True, default=False, help="Emit JSON output.")
@@ -105,6 +115,7 @@ def create(
     voice: str | None,
     personality: str | None,
     model: str,
+    format_prompt: bool,
     profile: str | None,
     locale: str,
     as_json: bool,
@@ -131,6 +142,7 @@ def create(
             voice=voice,
             personality=personality,
             model=model,
+            format_prompt=format_prompt,
             locale=locale,
             as_json=as_json,
             settings=settings,
@@ -152,6 +164,7 @@ async def _run_create(
     voice: str | None,
     personality: str | None,
     model: str,
+    format_prompt: bool,
     locale: str,
     as_json: bool,
     settings: object,
@@ -184,6 +197,7 @@ async def _run_create(
                 voice=voice,
                 personality=personality,
                 locale=locale,
+                format_prompt=format_prompt,
             )
         finally:
             recorder.close()
