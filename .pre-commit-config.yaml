@@ -23,8 +23,10 @@
 default_stages: [pre-commit]
 
 repos:
+  # Keep this rev in lockstep with the `ruff==` pin in pyproject.toml. A hook that
+  # formats with an older ruff than CI checks with will fight CI on every commit.
   - repo: https://github.com/astral-sh/ruff-pre-commit
-    rev: v0.11.10
+    rev: v0.16.0
     hooks:
       - id: ruff
         args: [--fix]
